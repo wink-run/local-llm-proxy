@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Proxy Admin</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #0f1117;
+  color: #e2e8f0;
+  font-size: 14px;
+  min-height: 100vh;
+}
+
+/* ── Login ── */
+.login-overlay {
+  position: fixed; inset: 0;
+  background: #0f1117;
+  display: flex; align-items: center; justify-content: center;
+}
+.login-box {
+  background: #1a1d27;
+  border: 1px solid #2d3148;
+  border-radius: 12px;
+  padding: 40px;
+  width: 360px;
+  text-align: center;
+}
+.login-box h2 { font-size: 22px; margin-bottom: 8px; color: #fff; }
+.login-box p  { color: #64748b; margin-bottom: 24px; font-size: 13px; }
+.login-box input {
+  width: 100%; padding: 10px 14px;
+  background: #0f1117; border: 1px solid #2d3148;
+  border-radius: 8px; color: #e2e8f0; font-size: 14px; margin-bottom: 12px;
+  outline: none;
+}
+.login-box input:focus { border-color: #6366f1; }
+.btn-primary {
+  width: 100%; padding: 10px;
+  background: #6366f1; color: #fff;
+  border: none; border-radius: 8px; cursor: pointer; font-size: 14px;
+}
+.btn-primary:hover { background: #5254cc; }
+.error-msg { color: #f87171; margin-top: 10px; font-size: 13px; }
+
+/* ── Layout ── */
+.app { display: flex; flex-direction: column; height: 100vh; }
+
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px; height: 56px;
+  background: #1a1d27; border-bottom: 1px solid #2d3148;
+  flex-shrink: 0;
+}
+.header-title { font-size: 16px; font-weight: 600; color: #fff; }
+.header-title span { color: #6366f1; }
+
+nav {
+  display: flex; gap: 4px;
+  padding: 12px 24px 0;
+  background: #1a1d27; border-bottom: 1px solid #2d3148;
+  flex-shrink: 0;
+}
+nav button {
+  padding: 8px 18px;
+  background: transparent; border: none; border-radius: 6px 6px 0 0;
+  color: #94a3b8; cursor: pointer; font-size: 14px; transition: all .15s;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+nav button:hover  { color: #e2e8f0; }
+nav button.active { color: #6366f1; border-bottom-color: #6366f1; background: #0f1117; }
+
+.tab-content { flex: 1; overflow: auto; padding: 24px; }
+
+/* ── Toolbar ── */
+.toolbar {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 16px;
+}
+.toolbar-right { margin-left: auto; }
+
+/* ── Buttons ── */
+.btn {
+  padding: 7px 14px; border-radius: 6px; border: none;
+  cursor: pointer; font-size: 13px; transition: background .15s;
+}
+.btn-indigo { background: #6366f1; color: #fff; }
+.btn-indigo:hover { background: #5254cc; }
+.btn-sm { padding: 5px 12px; border-radius: 6px; border: 1px solid #2d3148; background: #1a1d27; color: #94a3b8; cursor: pointer; font-size: 12px; }
+.btn-sm:hover { color: #e2e8f0; border-color: #4a4f6a; }
+.btn-xs { padding: 3px 8px; border-radius: 4px; border: 1px solid #2d3148; background: transparent; color: #94a3b8; cursor: pointer; font-size: 11px; margin-left: 4px; }
+.btn-xs:hover { color: #e2e8f0; }
+.btn-danger { border-color: #7f1d1d; color: #f87171; }
+.btn-danger:hover { background: #450a0a; color: #fca5a5; }
+
+/* ── Table ── */
+table { width: 100%; border-collapse: collapse; }
+thead th {
+  text-align: left; padding: 10px 12px;
+  color: #64748b; font-weight: 500; font-size: 12px;
+  border-bottom: 1px solid #2d3148; white-space: nowrap;
+}
+tbody tr { border-bottom: 1px solid #1e2235; transition: background .1s; }
+tbody tr:hover { background: #1a1d27; }
+tbody tr.inactive { opacity: .5; }
+td { padding: 11px 12px; vertical-align: middle; }
+.empty-row td { text-align: center; color: #4a5568; padding: 40px; }
+
+/* ── Badges ── */
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; }
+.dot-online  { background: #22c55e; box-shadow: 0 0 6px #22c55e88; }
+.tag {
+  display: inline-block; padding: 2px 8px;
+  background: #1e2a4a; color: #93c5fd;
+  border-radius: 4px; font-size: 11px; margin: 2px;
+}
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+.badge-on  { background: #14532d; color: #86efac; }
+.badge-off { background: #1c1917; color: #78716c; }
+
+/* ── Key cell ── */
+.mono { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
+.key-val { color: #94a3b8; }
+
+/* ── Key form ── */
+.note-input {
+  padding: 7px 12px; background: #1a1d27; border: 1px solid #2d3148;
+  border-radius: 6px; color: #e2e8f0; font-size: 13px; width: 220px; outline: none;
+}
+.note-input:focus { border-color: #6366f1; }
+
+/* ── Debug tab ── */
+.debug-layout { display: flex; flex-direction: column; height: calc(100vh - 130px); }
+.debug-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-shrink: 0; }
+.model-select {
+  padding: 7px 12px; background: #1a1d27; border: 1px solid #2d3148;
+  border-radius: 6px; color: #e2e8f0; font-size: 13px; min-width: 200px; outline: none;
+}
+.model-select:focus { border-color: #6366f1; }
+
+.chat-area {
+  flex: 1; overflow-y: auto; padding: 16px;
+  background: #13151f; border: 1px solid #2d3148; border-radius: 8px;
+  margin-bottom: 12px; display: flex; flex-direction: column; gap: 12px;
+}
+.chat-placeholder { text-align: center; color: #4a5568; margin: auto; }
+
+.chat-msg { display: flex; flex-direction: column; max-width: 80%; }
+.chat-msg.user  { align-self: flex-end; align-items: flex-end; }
+.chat-msg.assistant { align-self: flex-start; align-items: flex-start; }
+
+.msg-label {
+  font-size: 11px; color: #4a5568; margin-bottom: 4px; padding: 0 4px;
+}
+.msg-bubble {
+  padding: 10px 14px; border-radius: 10px; line-height: 1.6;
+  white-space: pre-wrap; word-break: break-word;
+}
+.chat-msg.user     .msg-bubble { background: #3730a3; color: #e0e7ff; border-radius: 10px 2px 10px 10px; }
+.chat-msg.assistant .msg-bubble { background: #1a1d27; color: #e2e8f0; border-radius: 2px 10px 10px 10px; border: 1px solid #2d3148; }
+.cursor::after { content: "▋"; animation: blink .7s step-end infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+.chat-input-area { display: flex; gap: 8px; flex-shrink: 0; }
+.chat-input-area textarea {
+  flex: 1; padding: 10px 14px; resize: none; height: 70px;
+  background: #1a1d27; border: 1px solid #2d3148; border-radius: 8px;
+  color: #e2e8f0; font-size: 14px; font-family: inherit; outline: none;
+  line-height: 1.5;
+}
+.chat-input-area textarea:focus { border-color: #6366f1; }
+.chat-input-area textarea:disabled { opacity: .5; }
+.send-btn {
+  padding: 0 20px; background: #6366f1; color: #fff; border: none;
+  border-radius: 8px; cursor: pointer; font-size: 14px; white-space: nowrap;
+}
+.send-btn:hover:not(:disabled) { background: #5254cc; }
+.send-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2d3148; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Login -->
+  <div v-if="!loggedIn" class="login-overlay">
+    <div class="login-box">
+      <h2>LLM Proxy</h2>
+      <p>输入管理员密钥以继续</p>
+      <input v-model="loginKey" type="password" placeholder="Admin Key"
+             @keyup.enter="login" autofocus />
+      <button class="btn-primary" @click="login">登录</button>
+      <div v-if="loginErr" class="error-msg">{{ loginErr }}</div>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div v-else class="app">
+    <header>
+      <div class="header-title">LLM Proxy <span>Admin</span></div>
+      <button class="btn-sm" @click="logout">退出登录</button>
+    </header>
+
+    <nav>
+      <button v-for="t in tabs" :key="t.key"
+              :class="{ active: activeTab === t.key }"
+              @click="switchTab(t.key)">
+        {{ t.label }}
+        <span v-if="t.key === 'workers' && workers.length"> ({{ workers.length }})</span>
+      </button>
+    </nav>
+
+    <!-- Workers -->
+    <div v-show="activeTab === 'workers'" class="tab-content">
+      <div class="toolbar">
+        <span style="color:#64748b;font-size:13px;">每 5 秒自动刷新</span>
+        <button class="btn-sm toolbar-right" @click="fetchWorkers">手动刷新</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>名称</th>
+            <th>Worker ID</th>
+            <th>支持模型</th>
+            <th>接入时间</th>
+            <th>活跃请求</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="workers.length === 0" class="empty-row">
+            <td colspan="5">暂无在线 PC，等待 Agent 接入…</td>
+          </tr>
+          <tr v-for="w in workers" :key="w.worker_id">
+            <td><span class="dot dot-online"></span>{{ w.name }}</td>
+            <td class="mono">{{ w.worker_id }}</td>
+            <td>
+              <span v-for="m in w.models" :key="m" class="tag">{{ m }}</span>
+            </td>
+            <td style="color:#64748b">{{ fmtTime(w.connected_at) }}</td>
+            <td>{{ w.active_requests }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- API Keys -->
+    <div v-show="activeTab === 'keys'" class="tab-content">
+      <div class="toolbar">
+        <input v-model="newNote" class="note-input" placeholder="备注（可选）" @keyup.enter="createKey" />
+        <button class="btn btn-indigo" @click="createKey">＋ 新建 Key</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Key</th>
+            <th>备注</th>
+            <th>状态</th>
+            <th>创建时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="keys.length === 0" class="empty-row">
+            <td colspan="6">暂无 API Key，点击「新建 Key」创建</td>
+          </tr>
+          <tr v-for="k in keys" :key="k.id" :class="{ inactive: !k.is_active }">
+            <td style="color:#64748b">{{ k.id }}</td>
+            <td>
+              <span class="mono key-val">{{ maskKey(k.key) }}</span>
+              <button class="btn-xs" @click="copyKey(k.key)" title="复制完整Key">复制</button>
+            </td>
+            <td style="color:#94a3b8">{{ k.note || '—' }}</td>
+            <td>
+              <span :class="k.is_active ? 'badge badge-on' : 'badge badge-off'">
+                {{ k.is_active ? '启用' : '禁用' }}
+              </span>
+            </td>
+            <td style="color:#64748b">{{ fmtTime(k.created_at) }}</td>
+            <td>
+              <button class="btn-xs" @click="toggleKey(k)">
+                {{ k.is_active ? '禁用' : '启用' }}
+              </button>
+              <button class="btn-xs btn-danger" @click="removeKey(k.id)">删除</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Debug -->
+    <div v-show="activeTab === 'debug'" class="tab-content">
+      <div class="debug-layout">
+        <div class="debug-toolbar">
+          <select v-model="debugModel" class="model-select">
+            <option value="">— 选择模型 —</option>
+            <option v-for="m in allModels" :key="m" :value="m">{{ m }}</option>
+          </select>
+          <button class="btn-sm" @click="clearChat">清空对话</button>
+          <span v-if="allModels.length === 0" style="color:#f59e0b;font-size:12px;">
+            ⚠ 暂无在线模型
+          </span>
+        </div>
+
+        <div class="chat-area" ref="chatArea">
+          <div v-if="chatMsgs.length === 0" class="chat-placeholder">
+            选择模型后开始对话
+          </div>
+          <div v-for="m in chatMsgs" :key="m.id" :class="['chat-msg', m.role]">
+            <div class="msg-label">{{ m.role === 'user' ? '用户' : 'AI' }}</div>
+            <div :class="['msg-bubble', m.streaming ? 'cursor' : '']">{{ m.content }}</div>
+          </div>
+        </div>
+
+        <div class="chat-input-area">
+          <textarea
+            v-model="chatInput"
+            placeholder="输入消息… Enter 发送，Shift+Enter 换行"
+            :disabled="chatLoading"
+            @keydown.enter.exact.prevent="sendMsg"
+          ></textarea>
+          <button class="send-btn" :disabled="chatLoading || !debugModel" @click="sendMsg">
+            {{ chatLoading ? '…' : '发送' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const { createApp, ref, computed, onMounted, onUnmounted, nextTick, reactive } = Vue
+
+createApp({
+  setup() {
+    /* ── Auth ── */
+    const loggedIn = ref(!!localStorage.getItem('admin_key'))
+    const loginKey = ref('')
+    const loginErr = ref('')
+
+    function getKey() { return localStorage.getItem('admin_key') || '' }
+
+    async function login() {
+      const k = loginKey.value.trim()
+      if (!k) return
+      // Quick verify
+      try {
+        const r = await fetch('/admin/workers', {
+          headers: { Authorization: `Bearer ${k}` }
+        })
+        if (r.status === 401) { loginErr.value = '密钥错误'; return }
+        localStorage.setItem('admin_key', k)
+        loggedIn.value = true
+        loginErr.value = ''
+        boot()
+      } catch { loginErr.value = '无法连接服务器' }
+    }
+
+    function logout() {
+      localStorage.removeItem('admin_key')
+      loggedIn.value = false
+      loginKey.value = ''
+    }
+
+    /* ── Tabs ── */
+    const tabs = [
+      { key: 'workers', label: '在线 PC' },
+      { key: 'keys',    label: 'API Keys' },
+      { key: 'debug',   label: '调试' },
+    ]
+    const activeTab = ref('workers')
+    function switchTab(k) { activeTab.value = k }
+
+    /* ── API helper ── */
+    async function api(path, opts = {}) {
+      const r = await fetch(path, {
+        ...opts,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${getKey()}`,
+          ...(opts.headers || {}),
+        },
+      })
+      if (r.status === 401) { logout(); throw new Error('Unauthorized') }
+      return r
+    }
+
+    /* ── Workers ── */
+    const workers = ref([])
+    async function fetchWorkers() {
+      try {
+        const d = await (await api('/admin/workers')).json()
+        workers.value = d.workers || []
+      } catch {}
+    }
+
+    /* ── Keys ── */
+    const keys   = ref([])
+    const newNote = ref('')
+
+    async function fetchKeys() {
+      try {
+        const d = await (await api('/admin/keys')).json()
+        keys.value = d.keys || []
+      } catch {}
+    }
+
+    async function createKey() {
+      try {
+        const k = await (await api('/admin/keys', {
+          method: 'POST',
+          body: JSON.stringify({ note: newNote.value }),
+        })).json()
+        keys.value.unshift(k)
+        newNote.value = ''
+      } catch {}
+    }
+
+    async function toggleKey(k) {
+      try {
+        await api(`/admin/keys/${k.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ is_active: !k.is_active }),
+        })
+        k.is_active = !k.is_active
+      } catch {}
+    }
+
+    async function removeKey(id) {
+      if (!confirm('确认删除此 Key？删除后无法恢复。')) return
+      try {
+        await api(`/admin/keys/${id}`, { method: 'DELETE' })
+        keys.value = keys.value.filter(k => k.id !== id)
+      } catch {}
+    }
+
+    function maskKey(key) {
+      return key.slice(0, 10) + '••••••••' + key.slice(-4)
+    }
+
+    async function copyKey(key) {
+      await navigator.clipboard.writeText(key)
+    }
+
+    /* ── Debug ── */
+    const debugModel = ref('')
+    const chatMsgs   = ref([])
+    const chatInput  = ref('')
+    const chatLoading = ref(false)
+    const chatArea   = ref(null)
+    let   msgSeq     = 0
+
+    const allModels = computed(() => {
+      const s = new Set()
+      workers.value.forEach(w => w.models.forEach(m => s.add(m)))
+      return [...s].sort()
+    })
+
+    function clearChat() { chatMsgs.value = [] }
+
+    function scrollBottom() {
+      nextTick(() => {
+        if (chatArea.value) chatArea.value.scrollTop = chatArea.value.scrollHeight
+      })
+    }
+
+    async function sendMsg() {
+      const text = chatInput.value.trim()
+      if (!text || !debugModel.value || chatLoading.value) return
+
+      chatMsgs.value.push({ id: ++msgSeq, role: 'user', content: text, streaming: false })
+      chatInput.value = ''
+
+      const aMsg = reactive({ id: ++msgSeq, role: 'assistant', content: '', streaming: true })
+      chatMsgs.value.push(aMsg)
+      chatLoading.value = true
+      scrollBottom()
+
+      const history = chatMsgs.value
+        .slice(0, -1)
+        .map(m => ({ role: m.role, content: m.content }))
+
+      try {
+        const resp = await fetch('/admin/debug/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${getKey()}`,
+          },
+          body: JSON.stringify({ model: debugModel.value, messages: history, stream: true }),
+        })
+
+        if (!resp.ok) {
+          aMsg.content = `请求失败 (HTTP ${resp.status})`
+          aMsg.streaming = false
+          return
+        }
+
+        const reader  = resp.body.getReader()
+        const decoder = new TextDecoder()
+        let   buf     = ''
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buf += decoder.decode(value, { stream: true })
+          const lines = buf.split('\n')
+          buf = lines.pop() // keep incomplete line
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            const payload = line.slice(6)
+            if (payload === '[DONE]') break
+            try {
+              const chunk = JSON.parse(payload)
+              const delta = chunk.choices?.[0]?.delta?.content || ''
+              if (delta) { aMsg.content += delta; scrollBottom() }
+            } catch {}
+          }
+        }
+      } catch (e) {
+        aMsg.content = `错误: ${e.message}`
+      } finally {
+        aMsg.streaming = false
+        chatLoading.value = false
+        scrollBottom()
+      }
+    }
+
+    /* ── Utils ── */
+    function fmtTime(iso) {
+      if (!iso) return '—'
+      return new Date(iso).toLocaleString('zh-CN', { hour12: false })
+    }
+
+    /* ── Lifecycle ── */
+    let timer = null
+
+    function boot() {
+      fetchWorkers()
+      fetchKeys()
+    }
+
+    onMounted(() => {
+      if (loggedIn.value) boot()
+      timer = setInterval(fetchWorkers, 5000)
+    })
+
+    onUnmounted(() => clearInterval(timer))
+
+    return {
+      loggedIn, loginKey, loginErr, login, logout,
+      tabs, activeTab, switchTab,
+      workers, fetchWorkers,
+      keys, newNote, createKey, toggleKey, removeKey, maskKey, copyKey,
+      debugModel, chatMsgs, chatInput, chatLoading, chatArea, allModels,
+      clearChat, sendMsg,
+      fmtTime,
+    }
+  }
+}).mount('#app')
+</script>
+</body>
+</html>

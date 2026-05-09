@@ -1,0 +1,4 @@
+click==8.1.8
+# SOCKS 代理需要 socksio（httpx 的 socks 额外依赖）
+httpx[socks]==0.27.2
+websockets==13.1

@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+# 构建产物（含 agent PyInstaller 的 build/dist）
+dist/
+build/
+*.egg
+.wheels/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# 本地环境与密钥（保留 .env.example）
+.env
+.env.local
+.env.*.local
+
+# SQLite（本地 / 容器卷外的数据库文件）
+*.db
+*.sqlite
+*.sqlite3
+
+# 测试与类型检查
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# 操作系统与编辑器
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+*.swo

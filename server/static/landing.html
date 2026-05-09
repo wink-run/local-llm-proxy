@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Local LLM Proxy — 将闲置 token 额度与内网上游通过出站连接汇聚到云端，OpenAI 兼容 API，上游密钥不上云，随时停止共享。">
+  <title>Local LLM Proxy — 闲置 Token 额度 · 类 P2P · Token 自由</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=Syne:wght@600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #060708;
+      --bg-elev: #0d0f12;
+      --bg-card: #12151b;
+      --border: #242a36;
+      --text: #d1d5dc;
+      --muted: #8b93a5;
+      --accent: #2dd4bf;
+      --accent-dim: rgba(45, 212, 191, 0.12);
+      --warm: #fbbf24;
+      --glow: rgba(45, 212, 191, 0.35);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: "DM Sans", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 16px;
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* 背景：微网格 + 暗角 + 噪点感 */
+    .page-bg {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: -1;
+      background:
+        radial-gradient(ellipse 120% 80% at 50% -20%, rgba(45, 212, 191, 0.08), transparent 50%),
+        radial-gradient(ellipse 60% 40% at 100% 100%, rgba(251, 191, 36, 0.04), transparent),
+        linear-gradient(180deg, #060708 0%, #0a0c10 100%);
+    }
+    .page-bg::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black, transparent);
+    }
+
+    .wrap {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ── Nav ── */
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      border-bottom: 1px solid var(--border);
+      background: rgba(6, 7, 8, 0.85);
+      backdrop-filter: blur(12px);
+    }
+    .nav-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 64px;
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+    .logo {
+      font-family: "Syne", sans-serif;
+      font-weight: 800;
+      font-size: 1.05rem;
+      letter-spacing: -0.02em;
+      color: #fff;
+      text-decoration: none;
+    }
+    .logo span { color: var(--accent); }
+    .nav-links {
+      display: none;
+      gap: 28px;
+      align-items: center;
+    }
+    @media (min-width: 880px) {
+      .nav-links { display: flex; }
+    }
+    .nav-links a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--text); }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-decoration: none;
+      border: none;
+      cursor: pointer;
+      transition: transform 0.15s, box-shadow 0.2s, background 0.2s;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn-primary {
+      background: linear-gradient(135deg, #14b8a6, #0d9488);
+      color: #042f2e;
+      box-shadow: 0 0 24px var(--glow);
+    }
+    .btn-primary:hover {
+      box-shadow: 0 0 32px var(--glow);
+      filter: brightness(1.05);
+    }
+    .btn-ghost {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ── Hero ── */
+    .hero {
+      padding: 72px 0 88px;
+      position: relative;
+    }
+    .hero-badge {
+      display: inline-block;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.75rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      border: 1px solid var(--accent-dim);
+      background: var(--accent-dim);
+      padding: 6px 12px;
+      border-radius: 6px;
+      margin-bottom: 24px;
+      animation: fadeUp 0.7s ease both;
+    }
+    .hero h1 {
+      font-family: "Syne", sans-serif;
+      font-weight: 800;
+      font-size: clamp(2.2rem, 5vw, 3.35rem);
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+      color: #fff;
+      max-width: 18ch;
+      animation: fadeUp 0.7s 0.08s ease both;
+    }
+    .hero h1 em {
+      font-style: normal;
+      color: var(--warm);
+      text-decoration: underline;
+      text-decoration-color: rgba(251, 191, 36, 0.5);
+      text-underline-offset: 6px;
+    }
+    .hero-lead {
+      margin-top: 24px;
+      font-size: 1.125rem;
+      color: var(--muted);
+      max-width: 52ch;
+      animation: fadeUp 0.7s 0.16s ease both;
+    }
+    .hero-cta {
+      margin-top: 36px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      animation: fadeUp 0.7s 0.24s ease both;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(18px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Sections ── */
+    section { padding: 72px 0; }
+    section:nth-child(even) { background: rgba(13, 15, 18, 0.5); }
+    .section-head {
+      margin-bottom: 48px;
+    }
+    .section-head h2 {
+      font-family: "Syne", sans-serif;
+      font-size: clamp(1.75rem, 3vw, 2.25rem);
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.02em;
+    }
+    .section-head p {
+      margin-top: 12px;
+      color: var(--muted);
+      max-width: 56ch;
+    }
+
+    .grid-3 {
+      display: grid;
+      gap: 20px;
+      grid-template-columns: 1fr;
+    }
+    @media (min-width: 720px) {
+      .grid-3 { grid-template-columns: repeat(3, 1fr); }
+    }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px;
+      transition: border-color 0.2s, box-shadow 0.25s;
+    }
+    .card:hover {
+      border-color: rgba(45, 212, 191, 0.35);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+    }
+    .card-icon {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.7rem;
+      color: var(--accent);
+      margin-bottom: 14px;
+    }
+    .card h3 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 10px;
+    }
+    .card p { color: var(--muted); font-size: 0.95rem; }
+
+    /* 架构图 */
+    .diagram {
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px;
+      overflow-x: auto;
+    }
+    .diagram pre {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.72rem;
+      line-height: 1.45;
+      color: var(--muted);
+      white-space: pre;
+    }
+    .diagram pre .hl-c { color: var(--accent); }
+    .diagram pre .hl-w { color: var(--warm); }
+
+    /* 隐私条 */
+    .privacy-row {
+      display: grid;
+      gap: 20px;
+      grid-template-columns: 1fr;
+    }
+    @media (min-width: 768px) {
+      .privacy-row { grid-template-columns: 1fr 1fr; }
+    }
+    .privacy-box {
+      border-left: 3px solid var(--accent);
+      padding: 20px 24px;
+      background: var(--bg-card);
+      border-radius: 0 12px 12px 0;
+    }
+    .privacy-box h3 { color: #fff; font-size: 1.05rem; margin-bottom: 8px; }
+    .privacy-box p { color: var(--muted); font-size: 0.95rem; }
+
+    /* Code */
+    .code-block {
+      background: #0a0b0e;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 22px;
+      overflow-x: auto;
+      margin-top: 16px;
+    }
+    .code-block pre {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.8rem;
+      line-height: 1.55;
+      color: #a5b4c8;
+    }
+    .code-block .c { color: var(--accent); }
+    .code-block .s { color: #94a3b8; }
+    .quick-grid {
+      display: grid;
+      gap: 32px;
+      grid-template-columns: 1fr;
+    }
+    @media (min-width: 900px) {
+      .quick-grid { grid-template-columns: 1fr 1fr; }
+    }
+    .quick-item h3 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--warm);
+      margin-bottom: 8px;
+      font-family: "JetBrains Mono", monospace;
+    }
+
+    footer {
+      padding: 48px 24px 64px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.875rem;
+      border-top: 1px solid var(--border);
+    }
+    footer a { color: var(--accent); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="page-bg" aria-hidden="true"></div>
+
+  <header>
+    <nav class="nav-inner">
+      <a class="logo" href="#">Local <span>LLM</span> Proxy</a>
+      <div class="nav-links">
+        <a href="#value">核心价值</a>
+        <a href="#arch">架构</a>
+        <a href="#privacy">隐私</a>
+        <a href="#quickstart">快速开始</a>
+        <a href="/admin/ui" class="btn btn-ghost">管理后台</a>
+        <a href="#quickstart" class="btn btn-primary">部署指南</a>
+        <a href="https://github.com/wink-run/local-llm-proxy" class="btn btn-ghost" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero wrap">
+      <p class="hero-badge">Outbound · WebSocket · OpenAI-compatible</p>
+      <h1>闲置 Token 额度挂到公网<br><em>类 P2P</em>，更接近 Token 自由</h1>
+      <p class="hero-lead">
+        把套餐里<strong style="color:var(--text)">用不完的 API token 额度</strong>（以及仅内网可达的上游、本机模型），通过 Agent 主动连出一台 VPS，
+        对外提供统一的 OpenAI 兼容接口。上游密钥只留在本机，服务端不收集；随时停掉 Agent，共享即结束。
+      </p>
+      <div class="hero-cta">
+        <a href="#quickstart" class="btn btn-primary">快速开始</a>
+        <a href="/admin/ui" class="btn btn-ghost">打开控制台</a>
+      </div>
+    </section>
+
+    <section id="value">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>核心价值</h2>
+          <p>不是再把流量绑死在某一家云厂商的固定 Endpoint；而是<strong style="color:#fff">自愿接入、自带路由与上游</strong>，由代理只做鉴权与调度。</p>
+        </div>
+        <div class="grid-3">
+          <article class="card">
+            <div class="card-icon">01 / SHARE</div>
+            <h3>共享闲置 Token 额度</h3>
+            <p>月度 / 订阅里未用完的调用量、内网网关背后的上游，或本机 Ollama，通过长连接「挂」到统一入口，团队或可信用户按需调用。</p>
+          </article>
+          <article class="card">
+            <div class="card-icon">02 / MESH</div>
+            <h3>多节点、类 P2P</h3>
+            <p>每台机器自愿上线、声明模型列表；VPS 负责挑选 Worker 转发，请求从外网进、从你家出站。</p>
+          </article>
+          <article class="card">
+            <div class="card-icon">03 / SAFE</div>
+            <h3>无需暴露内网端口</h3>
+            <p>内网 LLM 不对公网监听；只有 Agent 主动连出，穿透 NAT，降低暴露面。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="arch">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>架构一瞥</h2>
+          <p>外部客户端使用 Bearer 用户 Key 访问 VPS；Worker 使用独立的 Worker Token 注册；<strong style="color:#fff">上游 LLM 的 API Key 从不经过代理持久化。</strong></p>
+        </div>
+        <div class="diagram">
+<pre>
+  <span class="hl-c">外部客户端</span>  ──HTTP  Bearer USER_API_KEY──▶  ┌─────────────────────────────┐
+                                           │  VPS · FastAPI :8000        │
+                                           │  /v1/*   /admin/*   /ws/worker │
+                                           └─────────────┬───────────────┘
+                                                         │ WebSocket（内网主动发起）
+                        ┌────────────────────────────────┼────────────────────────────────┐
+                        │                                │                                │
+                  ┌─────▼─────┐                    ┌─────▼─────┐                         │
+                  │  llm-agent │                    │  llm-agent │   ...                   │
+                  │  + 本地 LLM │                    │  + 本地 LLM │                         │
+                  │  <span class="hl-w">Bearer 仅在本机</span> │                    │            │                         │
+                  └───────────┘                    └───────────┘                         │
+</pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="privacy">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>隐私与控制权</h2>
+          <p>设计目标：共享 token 调用路径的同时，不把上游密钥交给代理托管。</p>
+        </div>
+        <div class="privacy-row">
+          <div class="privacy-box">
+            <h3>上游 API Key 不上云</h3>
+            <p><code style="color:var(--accent);font-size:0.9em;">--llm-token</code> 仅保存在本机 Agent 配置，用于直连你的上游；向代理注册时只上传 Worker 鉴权、节点名与模型列表，协议不包含上游密钥。</p>
+          </div>
+          <div class="privacy-box">
+            <h3>随时停止共享</h3>
+            <p>停止 Agent（如 Ctrl+C）或断网即不再承接请求，无需在服务端「解绑」。用户侧调用 VPS 所需的 Key 由管理后台签发（存于服务端数据库），与上游密钥是两回事。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="quickstart">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>快速开始</h2>
+          <p>以下为常用命令摘要；完整变量说明与本地开发见仓库内 <code style="color:var(--accent);">README.md</code>。</p>
+        </div>
+        <div class="quick-grid">
+          <div class="quick-item">
+            <h3>VPS · Docker</h3>
+            <p style="color:var(--muted);font-size:0.95rem;">复制 <code style="color:#fff;">.env.example</code> 为 <code style="color:#fff;">.env</code>，填写 WORKER_TOKEN、ADMIN_KEY 后：</p>
+            <div class="code-block">
+<pre><span class="c">cp</span> .env.example .env
+<span class="c">docker compose up -d --build</span>
+<span class="s"># 默认端口 8000，详见 README</span></pre>
+            </div>
+          </div>
+          <div class="quick-item">
+            <h3>内网 · Agent</h3>
+            <p style="color:var(--muted);font-size:0.95rem;">注册一次后 <code style="color:#fff;">start</code> 保持在线：</p>
+            <div class="code-block">
+<pre><span class="c">cd</span> agent && pip install -r requirements.txt
+<span class="c">python</span> agent.py register \
+  --server <span class="s">"ws://你的VPS:8000/ws/worker"</span> \
+  --token <span class="s">"$WORKER_TOKEN"</span> \
+  --models <span class="s">"模型A,模型B"</span> \
+  --llm-url <span class="s">"http://localhost:11434"</span>
+<span class="c">python</span> agent.py start</pre>
+            </div>
+          </div>
+        </div>
+        <p style="margin-top:32px;color:var(--muted);font-size:0.95rem;">
+          调用接口：<code style="color:#fff;">GET /v1/models</code>、<code style="color:#fff;">POST /v1/chat/completions</code>，请求头 <code style="color:#fff;">Authorization: Bearer &lt;后台创建的 Key&gt;</code>。
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Local LLM Proxy · OpenAI 兼容代理</p>
+    <p style="margin-top:8px;">
+      <a href="https://github.com/wink-run/local-llm-proxy" target="_blank" rel="noopener noreferrer">GitHub</a>
+      · <a href="/admin/ui">管理后台</a>
+    </p>
+  </footer>
+</body>
+</html>

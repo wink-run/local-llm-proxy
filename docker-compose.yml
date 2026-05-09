@@ -1,0 +1,20 @@
+services:
+  proxy:
+    build:
+      context: ./server
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      - DB_PATH=/app/data/proxy.db
+    volumes:
+      - db_data:/app/data
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  db_data:

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m venv .venv)",
+      "Bash(.venv/bin/pip install *)",
+      "Bash(../.venv/bin/python agent/agent.py register --server ws://127.0.0.1:8000/ws/worker --token test-worker --models mock-model --llm-url http://127.0.0.1:11434 --name test-pc)",
+      "Bash(.venv/bin/python agent/agent.py register --server ws://127.0.0.1:8000/ws/worker --token test-worker --models mock-model --llm-url http://127.0.0.1:11434 --name test-pc)",
+      "Bash(curl -s http://127.0.0.1:8000/admin/keys -H 'Authorization: Bearer test-admin')"
+    ]
+  }
+}
