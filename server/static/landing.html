@@ -312,6 +312,28 @@
       font-family: "JetBrains Mono", monospace;
     }
 
+    /* 落地页：预编译 llm-agent 下载 */
+    .download-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px 28px;
+      min-height: 72px;
+    }
+    .download-panel.loading { color: var(--muted); }
+    .download-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .download-row:last-child { border-bottom: none; padding-bottom: 0; }
+    .download-row:first-child { padding-top: 0; }
+    .download-meta { margin-top: 6px; font-size: 0.85rem; color: var(--muted); font-family: "JetBrains Mono", monospace; }
+
     footer {
       padding: 48px 24px 64px;
       text-align: center;
@@ -333,6 +355,7 @@
         <a href="#value">核心价值</a>
         <a href="#arch">架构</a>
         <a href="#privacy">隐私</a>
+        <a href="#download-agent">下载 Agent</a>
         <a href="#quickstart">快速开始</a>
         <a href="/admin/ui" class="btn btn-ghost">管理后台</a>
         <a href="#quickstart" class="btn btn-primary">部署指南</a>
@@ -351,6 +374,7 @@
       </p>
       <div class="hero-cta">
         <a href="#quickstart" class="btn btn-primary">快速开始</a>
+        <a href="#download-agent" class="btn btn-ghost">下载 llm-agent</a>
         <a href="/admin/ui" class="btn btn-ghost">打开控制台</a>
       </div>
     </section>
@@ -425,6 +449,18 @@
       </div>
     </section>
 
+    <section id="download-agent">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>下载 llm-agent</h2>
+          <p>单文件可执行客户端（PyInstaller），向内网 LLM 发起出站连接并注册到本代理。下列文件来自服务端目录 <code style="color:#fff;">static/downloads/</code>；亦可在本机克隆仓库后运行 <code style="color:var(--accent);">agent/build.sh</code> 自行打包。</p>
+        </div>
+        <div id="agent-download-list" class="download-panel loading">
+          <p style="margin:0;">正在加载可用构建…</p>
+        </div>
+      </div>
+    </section>
+
     <section id="quickstart">
       <div class="wrap">
         <div class="section-head">
@@ -443,7 +479,7 @@
           </div>
           <div class="quick-item">
             <h3>内网 · Agent</h3>
-            <p style="color:var(--muted);font-size:0.95rem;">注册一次后 <code style="color:#fff;">start</code> 保持在线：</p>
+            <p style="color:var(--muted);font-size:0.95rem;">优先使用上方「下载 llm-agent」；或用源码运行。注册一次后 <code style="color:#fff;">start</code> 保持在线：</p>
             <div class="code-block">
 <pre><span class="c">cd</span> agent && pip install -r requirements.txt
 <span class="c">python</span> agent.py register \
@@ -481,5 +517,56 @@
       仅供学习与研究；使用后果自负。详见仓库 README 免责声明。
     </p>
   </footer>
+
+  <script>
+  (function () {
+    var LABELS = {
+      "llm-agent-linux-amd64": "Linux · x86_64",
+      "llm-agent-linux-arm64": "Linux · ARM64",
+      "llm-agent-darwin-arm64": "macOS · Apple Silicon",
+      "llm-agent-darwin-amd64": "macOS · Intel",
+    };
+    function fmtBytes(n) {
+      if (typeof n !== "number" || n < 0) return "—";
+      if (n < 1024) return n + " B";
+      if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+      return (n / 1048576).toFixed(1) + " MB";
+    }
+    function run() {
+      var el = document.getElementById("agent-download-list");
+      if (!el) return;
+      fetch("/api/agent-downloads")
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          var items = data.items || [];
+          el.classList.remove("loading");
+          if (!items.length) {
+            el.innerHTML = "<p style=\"margin:0;color:var(--muted);line-height:1.65;\">当前没有可用的预编译文件。请在目标机器运行 <code style=\"color:var(--accent);font-size:0.9em;\">agent/build.sh</code>，再按脚本提示将二进制复制到服务端 <code style=\"color:#fff;font-size:0.9em;\">server/static/downloads/</code>（建议文件名含平台，如 <code style=\"color:#fff;font-size:0.9em;\">llm-agent-linux-amd64</code>），部署后刷新本页。</p>";
+            return;
+          }
+          var html = "";
+          for (var i = 0; i < items.length; i++) {
+            var it = items[i];
+            var label = LABELS[it.filename] || it.filename;
+            html += "<div class=\"download-row\">";
+            html += "<div><strong style=\"color:#fff;font-weight:600;\">" + label + "</strong>";
+            html += "<div class=\"download-meta\">" + it.filename + " · " + fmtBytes(it.bytes) + "</div></div>";
+            html += "<a class=\"btn btn-primary\" href=\"" + it.url + "\">下载</a>";
+            html += "</div>";
+          }
+          el.innerHTML = html;
+        })
+        .catch(function () {
+          el.classList.remove("loading");
+          el.innerHTML = "<p style=\"margin:0;color:#f87171;\">无法加载下载列表，请稍后重试。</p>";
+        });
+    }
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", run);
+    } else {
+      run();
+    }
+  })();
+  </script>
 </body>
 </html>

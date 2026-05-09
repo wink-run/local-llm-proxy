@@ -4,6 +4,7 @@ import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -24,6 +25,10 @@ logger = logging.getLogger("server")
 
 WORKER_TOKEN = os.getenv("WORKER_TOKEN", "change-me-worker")
 
+# 落地页可下载的 PyInstaller 产物目录（agent/build.sh 后复制至此）
+BASE_DIR = Path(__file__).resolve().parent
+DOWNLOADS_DIR = BASE_DIR / "static" / "downloads"
+
 _bearer = HTTPBearer()
 
 
@@ -42,6 +47,50 @@ app.include_router(admin_router, prefix="/admin")
 async def landing_page():
     """项目介绍落地页（静态 HTML）。"""
     return FileResponse("static/landing.html")
+
+
+@app.get("/api/agent-downloads")
+async def list_agent_downloads():
+    """列出 static/downloads/ 下可供下载的 llm-agent 构建文件。"""
+    items: list[dict] = []
+    if not DOWNLOADS_DIR.is_dir():
+        return {"items": items}
+    root = DOWNLOADS_DIR.resolve()
+    for p in sorted(DOWNLOADS_DIR.iterdir()):
+        if not p.is_file() or p.name.startswith("."):
+            continue
+        if p.name.upper().startswith("README"):
+            continue
+        if p.parent.resolve() != root:
+            continue
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        items.append({
+            "filename": p.name,
+            "url": f"/download/llm-agent/{p.name}",
+            "bytes": st.st_size,
+        })
+    return {"items": items}
+
+
+@app.get("/download/llm-agent/{filename}")
+async def download_llm_agent(filename: str):
+    """以附件形式下载，避免浏览器误判类型。"""
+    safe = Path(filename).name
+    if not safe or safe != filename:
+        raise HTTPException(400, "Invalid filename")
+    path = DOWNLOADS_DIR / safe
+    root = DOWNLOADS_DIR.resolve()
+    if not path.is_file() or path.parent.resolve() != root:
+        raise HTTPException(404, "Not found")
+    return FileResponse(
+        path,
+        filename=safe,
+        media_type="application/octet-stream",
+        content_disposition_type="attachment",
+    )
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")

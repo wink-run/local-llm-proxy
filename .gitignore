@@ -9,6 +9,9 @@ __pycache__/
 # 构建产物（含 agent PyInstaller 的 build/dist）
 dist/
 build/
+# 落地页提供下载的二进制（由运维放到 server/static/downloads/，勿提交）
+server/static/downloads/*
+!server/static/downloads/.gitkeep
 *.egg
 .wheels/
 
