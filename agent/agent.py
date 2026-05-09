@@ -10,7 +10,7 @@ from pathlib import Path
 import click
 import httpx
 import websockets
-from websockets.exceptions import ConnectionClosed, WebSocketException
+from websockets.exceptions import ConnectionClosed, InvalidStatus, WebSocketException
 
 CONFIG_PATH = Path.home() / ".llm-agent" / "config.json"
 RECONNECT_DELAY = 5
@@ -237,6 +237,17 @@ async def run_agent(cfg: dict) -> None:
     while True:
         try:
             await run_session(cfg)
+        except InvalidStatus as e:
+            # 404：服务端进程未挂载 /ws/worker（常见为 VPS 镜像未随仓库更新）
+            if getattr(e.response, "status_code", None) == 404:
+                click.echo(
+                    "[ws] HTTP 404：服务端未提供 WebSocket 路径 /ws/worker。"
+                    "请在 VPS 进入本仓库目录执行 docker compose up -d --build（或更新代码后重启 uvicorn），"
+                    "确保运行的是包含 @app.websocket(\"/ws/worker\") 的 server.py。",
+                    err=True,
+                )
+            else:
+                click.echo(f"[ws] {e}", err=True)
         except (ConnectionClosed, WebSocketException) as e:
             click.echo(f"[ws] {e}", err=True)
         except OSError as e:
