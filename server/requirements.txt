@@ -1,4 +1,9 @@
 fastapi==0.115.5
-uvicorn[standard]==0.32.1
+# 不用 uvicorn[standard]，避免 PyYAML 等依赖在部分 pip 源上解析失败；容器/Ubuntu 生产通常不需要 --reload
+uvicorn==0.32.1
+httptools==0.6.4
+# Linux/macOS 装 uvloop；Windows 本地开发可跳过（无此标记时 pip 可能在 Win 上报错）
+uvloop==0.21.0; sys_platform != "win32"
 aiosqlite==0.20.0
 python-multipart==0.0.12
+# Ubuntu 若提示编译失败或找不到 wheel：sudo apt install -y python3-dev build-essential
