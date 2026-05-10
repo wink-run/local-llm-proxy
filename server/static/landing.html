@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Local LLM Proxy — 将闲置 token 额度与内网上游通过出站连接汇聚到云端，OpenAI 兼容 API，上游密钥不上云，随时停止共享。">
-  <title>Local LLM Proxy — 闲置 Token 额度 · 类 P2P · Token 自由</title>
+  <meta name="description" content="Local LLM Proxy — 将自愿贡献的 token 调用路径与内网上游通过出站连接汇聚到云端，OpenAI 兼容 API，上游密钥不上云，随时停止共享。">
+  <title>Local LLM Proxy — 自愿共享 Token · 类 P2P · Token 自由</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=Syne:wght@600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -367,9 +367,9 @@
   <main>
     <section class="hero wrap">
       <p class="hero-badge">Outbound · WebSocket · OpenAI-compatible</p>
-      <h1>闲置 Token 额度挂到公网<br><em>类 P2P</em>，更接近 Token 自由</h1>
+      <h1>自愿共享 Token 路径挂到公网<br><em>类 P2P</em>，更接近 Token 自由</h1>
       <p class="hero-lead">
-        把套餐里<strong style="color:var(--text)">用不完的 API token 额度</strong>（以及仅内网可达的上游、本机模型），通过 Agent 主动连出一台 VPS，
+        将<strong style="color:var(--text)">本人自愿贡献的 API token 及其调用路径</strong>（以及仅内网可达的上游、本机模型），通过 Agent 主动连出一台 VPS，
         对外提供统一的 OpenAI 兼容接口。上游密钥只留在本机，服务端不收集；随时停掉 Agent，共享即结束。
       </p>
       <div class="hero-cta">
@@ -388,13 +388,13 @@
         <div class="grid-3">
           <article class="card">
             <div class="card-icon">01 / SHARE</div>
-            <h3>共享闲置 Token 额度</h3>
-            <p>月度 / 订阅里未用完的调用量、内网网关背后的上游，或本机 Ollama，通过长连接「挂」到统一入口，团队或可信用户按需调用。</p>
+            <h3>自愿贡献 Token 调用路径</h3>
+            <p>由你自行配置的 token 所指向的上游、内网网关背后的服务，或本机 Ollama，通过长连接「挂」到统一入口，团队或可信用户按需调用。</p>
           </article>
           <article class="card">
             <div class="card-icon">02 / MESH</div>
             <h3>多节点、类 P2P</h3>
-            <p>每台机器自愿上线、声明模型列表；VPS 负责挑选 Worker 转发，请求从外网进、从你家出站。</p>
+            <p>每台机器自愿上线、声明模型列表；VPS 负责挑选 Worker 转发，请求从外网进、从接入节点出站。</p>
           </article>
           <article class="card">
             <div class="card-icon">03 / SAFE</div>
@@ -501,7 +501,7 @@
       <div class="wrap" style="padding-bottom:48px;">
         <h2 id="disclaimer-heading" class="section-head" style="margin-bottom:16px;font-size:1.1rem;color:var(--muted);font-weight:600;">免责声明</h2>
         <p style="color:var(--muted);font-size:0.9rem;line-height:1.65;max-width:72ch;">
-          本项目仅供<strong style="color:var(--text);font-weight:600;">学习与研究</strong>使用。部署、共享 token 额度或转发请求须自行遵守法律法规及上游服务条款；由此产生的任何后果（含数据安全、费用、合规与纠纷）均由使用者<strong style="color:var(--text);font-weight:600;">自行承担</strong>。
+          本项目仅供<strong style="color:var(--text);font-weight:600;">学习与研究</strong>使用。部署、自愿共享 token 或转发请求须自行遵守法律法规及上游服务条款；由此产生的任何后果（含数据安全、费用、合规与纠纷）均由使用者<strong style="color:var(--text);font-weight:600;">自行承担</strong>。
         </p>
       </div>
     </section>
