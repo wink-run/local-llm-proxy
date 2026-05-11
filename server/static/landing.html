@@ -386,7 +386,7 @@
       <div class="wrap">
         <div class="section-head">
           <h2 data-i18n="nav.arch">架构一瞥</h2>
-          <p data-i18n-html="arch.sub">外部客户端使用 Bearer 用户 Key 访问 VPS；Worker 使用独立的 Worker Token 注册；<strong style="color:#fff">上游 LLM 的 API Key 从不经过代理持久化。</strong></p>
+          <p data-i18n-html="arch.sub">外部客户端使用 Bearer 用户 Key 访问 VPS；Worker 使用用户中心的 Worker Key（wk-…）注册并与账户绑定；<strong style="color:#fff">上游 LLM 的 API Key 从不经过代理持久化。</strong></p>
         </div>
         <div class="diagram">
 <pre>
@@ -523,7 +523,7 @@
         <div class="quick-grid">
           <div class="quick-item">
             <h3 data-i18n="qs.vps.title">VPS · Docker</h3>
-            <p style="color:var(--muted);font-size:.95rem;" data-i18n-html="qs.vps.desc">复制 <code style="color:#fff;">.env.example</code> 为 <code style="color:#fff;">.env</code>，填写 WORKER_TOKEN、ADMIN_KEY 后：</p>
+            <p style="color:var(--muted);font-size:.95rem;" data-i18n-html="qs.vps.desc">复制 <code style="color:#fff;">.env.example</code> 为 <code style="color:#fff;">.env</code>，填写 <code style="color:#fff;">ADMIN_KEY</code> 等：</p>
             <div class="code-block">
 <pre><span class="c">cp</span> .env.example .env
 <span class="c">docker compose up -d --build</span>
@@ -532,12 +532,12 @@
           </div>
           <div class="quick-item">
             <h3 data-i18n="qs.agent.title">LAN · Agent</h3>
-            <p style="color:var(--muted);font-size:.95rem;" data-i18n="qs.agent.desc">优先使用上方「下载 llm-agent」；或用源码运行。注册一次后 start 保持在线：</p>
+            <p style="color:var(--muted);font-size:.95rem;" data-i18n="qs.agent.desc">优先使用上方「下载 llm-agent」；或用源码运行。在用户中心复制 Worker Key（wk-…），注册一次后 start 保持在线：</p>
             <div class="code-block">
 <pre><span class="c">cd</span> agent && pip install -r requirements.txt
 <span class="c">python</span> agent.py register \
   --server <span class="s">"ws://YOUR_VPS:8000/ws/worker"</span> \
-  --token  <span class="s">"$WORKER_TOKEN"</span> \
+  --worker-key <span class="s">"wk-...from-user-portal"</span> \
   --models <span class="s">"model-a,model-b"</span> \
   --llm-url <span class="s">"http://localhost:11434"</span>
 <span class="c">python</span> agent.py start</pre>
@@ -632,7 +632,7 @@
       "value.c2.body":  "每台 Worker 自主上线声明模型；VPS 按延迟、在线时长、成功率计算质量系数，优先调用高质量节点，加成贡献积分。",
       "value.c3.title": "密钥不出本机，随时下线",
       "value.c3.body":  "上游 API Key 仅存本机，服务端不收集。Agent 不运行，立即退出资源池，无需解绑。",
-      "arch.sub":     "外部客户端使用 Bearer 用户 Key 访问 VPS；Worker 使用独立的 Worker Token 注册；<strong style=\"color:#fff\">上游 LLM 的 API Key 从不经过代理持久化。</strong>",
+      "arch.sub":     "外部客户端使用 Bearer 用户 Key 访问 VPS；Worker 使用用户中心的 Worker Key（wk-…）注册并与账户绑定；<strong style=\"color:#fff\">上游 LLM 的 API Key 从不经过代理持久化。</strong>",
       "privacy.sub":  "设计目标：共享 token 调用路径的同时，不把上游密钥交给代理托管。",
       "privacy.p1.title": "上游 API Key 不上云",
       "privacy.p1.body":  "<code style=\"color:var(--accent);font-size:.9em;\">--llm-token</code> 仅保存在本机 Agent 配置，用于直连你的上游；向代理注册时只上传 Worker 鉴权、节点名与模型列表，协议不包含上游密钥。",
@@ -644,9 +644,9 @@
       "download.err":     "无法加载下载列表，请稍后重试。",
       "qs.sub":      "以下为常用命令摘要；完整变量说明与本地开发见仓库内 <code style=\"color:var(--accent);\">README.md</code>。",
       "qs.vps.title":  "VPS · Docker",
-      "qs.vps.desc":   "复制 <code style=\"color:#fff;\">.env.example</code> 为 <code style=\"color:#fff;\">.env</code>，填写 WORKER_TOKEN、ADMIN_KEY 后：",
+      "qs.vps.desc":   "复制 <code style=\"color:#fff;\">.env.example</code> 为 <code style=\"color:#fff;\">.env</code>，填写 <code style=\"color:#fff;\">ADMIN_KEY</code> 等：",
       "qs.agent.title": "内网 · Agent",
-      "qs.agent.desc":  "优先使用上方「下载 llm-agent」；或用源码运行。注册一次后 start 保持在线：",
+      "qs.agent.desc":  "优先使用上方「下载 llm-agent」；或用源码运行。在用户中心复制 Worker Key（wk-…），注册一次后 start 保持在线：",
       "qs.note":       "调用接口：<code style=\"color:#fff;\">GET /v1/models</code>、<code style=\"color:#fff;\">POST /v1/chat/completions</code>，请求头 <code style=\"color:#fff;\">Authorization: Bearer &lt;用户中心创建的 Key&gt;</code>。",
       "disclaimer.title": "免责声明",
       "disclaimer.body":  "本项目仅供<strong style=\"color:var(--text);font-weight:600;\">学习与研究</strong>使用。部署、自愿共享 token 或转发请求须自行遵守法律法规及上游服务条款；由此产生的任何后果（含数据安全、费用、合规与纠纷）均由使用者<strong style=\"color:var(--text);font-weight:600;\">自行承担</strong>。",
@@ -707,7 +707,7 @@
       "value.c2.body":  "Each Worker registers its model list independently; the VPS scores quality by latency, uptime, and success rate — routing to the best node and crediting contributors accordingly.",
       "value.c3.title": "Keys stay local, disconnect anytime",
       "value.c3.body":  "Upstream API keys are stored only on your machine — never sent to the server. Stop the Agent and you immediately exit the pool; no server-side unbinding needed.",
-      "arch.sub":     "External clients authenticate with a Bearer user key; Workers register with a separate Worker Token; <strong style=\"color:#fff\">the upstream LLM API key is never stored by the proxy.</strong>",
+      "arch.sub":     "External clients authenticate with a Bearer user key; Workers authenticate with the account Worker Key (wk-…) from the User Portal; <strong style=\"color:#fff\">the upstream LLM API key is never stored by the proxy.</strong>",
       "privacy.sub":  "Design goal: share the token call path without handing upstream keys to the proxy.",
       "privacy.p1.title": "Upstream API Key Stays Local",
       "privacy.p1.body":  "<code style=\"color:var(--accent);font-size:.9em;\">--llm-token</code> is stored only in the local Agent config for direct upstream access. Registration sends only the worker auth token, node name and model list — not your upstream key.",
@@ -719,9 +719,9 @@
       "download.err":     "Failed to load download list. Please try again later.",
       "qs.sub":      "Common command reference; see <code style=\"color:var(--accent);\">README.md</code> for full variable docs and local dev instructions.",
       "qs.vps.title":  "VPS · Docker",
-      "qs.vps.desc":   "Copy <code style=\"color:#fff;\">.env.example</code> to <code style=\"color:#fff;\">.env</code>, fill in WORKER_TOKEN and ADMIN_KEY, then:",
+      "qs.vps.desc":   "Copy <code style=\"color:#fff;\">.env.example</code> to <code style=\"color:#fff;\">.env</code>, set <code style=\"color:#fff;\">ADMIN_KEY</code>, then:",
       "qs.agent.title": "LAN · Agent",
-      "qs.agent.desc":  "Download the pre-built binary above, or run from source. Register once, then start to stay online:",
+      "qs.agent.desc":  "Download the pre-built binary above, or run from source. Copy Worker Key (wk-…) from User Portal; register once, then start to stay online:",
       "qs.note":       "API usage: <code style=\"color:#fff;\">GET /v1/models</code>, <code style=\"color:#fff;\">POST /v1/chat/completions</code> with header <code style=\"color:#fff;\">Authorization: Bearer &lt;key from User Portal&gt;</code>.",
       "disclaimer.title": "Disclaimer",
       "disclaimer.body":  "This project is for <strong style=\"color:var(--text);font-weight:600;\">educational and research purposes only</strong>. Deploying, sharing tokens, or forwarding requests must comply with applicable laws and upstream service terms. All consequences (data security, costs, compliance, disputes) are solely the user's responsibility.",

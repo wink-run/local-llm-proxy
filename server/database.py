@@ -128,12 +128,11 @@ async def init_db() -> None:
 
         await db.commit()
 
-    # 对旧库做列迁移
     await _migrate()
 
 
 async def _migrate() -> None:
-    """为旧版数据库补充缺失列"""
+    """补齐早期 SQLite 库缺失列（仅 api_keys.user_id）"""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("PRAGMA table_info(api_keys)") as cur:
             cols = {r[1] for r in await cur.fetchall()}

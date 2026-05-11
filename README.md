@@ -12,7 +12,7 @@ git clone git@github.com:wink-run/local-llm-proxy.git
 
 **Local LLM Proxy** bridges locally-hosted or LAN-restricted LLMs to the public internet — without opening any inbound ports. Contributors share voluntary quota (Ollama, intranet gateways, or upstream API paths); consumers call a single OpenAI-compatible endpoint using credits — **rates and settlement rules are published** on the landing page and in the admin UI.
 
-Each participating machine runs a lightweight `llm-agent` that **dials out** over WebSocket to a VPS. The VPS exposes a unified **OpenAI-compatible HTTP API**. External clients use a **Bearer user API key**; workers register with a separate **Worker token**. **Upstream LLM credentials are never persisted by the proxy.** Clients send requests to the VPS; the VPS routes them to the right worker; the worker forwards them to its local LLM and streams the response back.
+Each participating machine runs a lightweight `llm-agent` that **dials out** over WebSocket to a VPS. The VPS exposes a unified **OpenAI-compatible HTTP API**. External clients use a **Bearer user API key**; workers authenticate with the account **Worker key** (`wk-…`, shown in the User Portal — stored per user in the database). **Upstream LLM credentials are never persisted by the proxy.** Clients send requests to the VPS; the VPS routes them to the right worker; the worker forwards them to its local LLM and streams the response back.
 
 **Principles** (same as the landing page)
 
@@ -42,7 +42,7 @@ Each participating machine runs a lightweight `llm-agent` that **dials out** ove
 
 **Privacy & control**
 
-- **Upstream API keys never leave your machine.** `--llm-token` stays in local agent config (`~/.llm-agent/config.json`) and is only used for the agent→LLM hop. Registration sends worker auth, node name, and model list — not your upstream key.
+- **Upstream API keys never leave your machine.** `--llm-token` stays in local agent config (`~/.llm-agent/config.json`) and is only used for the agent→LLM hop. Registration sends **worker_key**, node name, and model list — not your upstream key.
 - **User API keys** for calling the VPS are issued from the admin/user portal and stored server-side — they are **separate** from upstream keys.
 - **Stop contributing any time.** Kill the agent (`Ctrl+C`) or go offline — no server-side “unbind” step.
 
@@ -58,7 +58,7 @@ Copy and edit the environment file, then start:
 
 ```bash
 cp .env.example .env
-# set WORKER_TOKEN, ADMIN_KEY, and optionally REQUEST_TIMEOUT
+# set ADMIN_KEY, and optionally REQUEST_TIMEOUT
 docker compose up -d --build
 ```
 
@@ -67,7 +67,6 @@ SQLite database lives in the `db_data` Docker volume.
 
 | Variable | Description |
 |---|---|
-| `WORKER_TOKEN` | Shared secret that agents must supply when registering |
 | `ADMIN_KEY` | Password for the admin dashboard and admin API |
 | `REQUEST_TIMEOUT` | Per-request forwarding timeout in seconds (default `120`) |
 
@@ -83,7 +82,7 @@ pip install -r requirements.txt
 
 python agent.py register \
   --server "ws://YOUR_VPS:8000/ws/worker" \
-  --token  "same as WORKER_TOKEN" \
+  --worker-key "wk-...from-user-portal" \
   --models "model-a,model-b" \
   --llm-url "http://localhost:11434" \
   --name   "my-machine"
@@ -91,6 +90,7 @@ python agent.py register \
 python agent.py start
 ```
 
+Copy **`--worker-key`** from the User Portal (`/app`); it is the sole credential for worker WebSocket registration.  
 Add `--llm-token` if your local LLM requires a bearer token.  
 Config is saved to `~/.llm-agent/config.json`; subsequent runs just need `python agent.py start`.
 

@@ -452,7 +452,7 @@ local-llm-proxy/
 | 服务端框架 | FastAPI + uvicorn |
 | 数据库 | SQLite + aiosqlite |
 | 实时推送 | SSE（大屏）/ asyncio.Queue（Worker 消息） |
-| 认证 | JWT（用户）/ Bearer ADMIN_KEY（管理员）/ WORKER_TOKEN（Agent）|
+| 认证 | JWT（用户）/ Bearer ADMIN_KEY（管理员）/ Worker Key `wk-…`（Agent WebSocket，按用户存库）|
 | 前端 | Vue 3 CDN + 无构建步骤 |
 | 密码 | bcrypt |
 | Agent 分发 | PyInstaller 单文件二进制 |

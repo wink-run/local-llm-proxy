@@ -22,8 +22,8 @@ def explain_ws_close(exc: ConnectionClosed) -> str:
     reason = (getattr(exc, "reason", "") or "").strip()
     hints = {
         4001: (
-            "registration rejected: token must match server WORKER_TOKEN; "
-            "first WebSocket message must be JSON type=register with that token"
+            "registration rejected: server requires a valid user portal worker_key (wk-...); "
+            "copy from User Portal after login; re-run llm-agent register --worker-key ..."
         ),
         4008: (
             "registration timeout: server gave up waiting for the first message "
@@ -73,21 +73,20 @@ def cli():
 
 @cli.command()
 @click.option("--server",    required=True, help="代理服务 WebSocket 地址，如 ws://vps:8000/ws/worker")
-@click.option("--token",     required=True, help="Worker Token（由管理员提供）")
+@click.option("--worker-key", required=True, help="用户中心 Worker Key（wk-...），用于接入鉴权与积分归属")
 @click.option("--models",    required=True, help="支持的模型，逗号分隔，如 qwen3-32b,qwen3-7b")
 @click.option("--llm-url",   required=True, help="内网 LLM base URL，如 http://localhost:11434")
 @click.option("--llm-token",   default="",    help="内网 LLM 的 API Token（可选）")
 @click.option("--name",        default="",    help="节点名称（默认使用主机名）")
-@click.option("--worker-key",  default="",    help="用户 Worker Key（登录用户中心后获取，用于积分归属）")
 @click.option("--forward-log", is_flag=True, default=False, help="在配置中启用转发日志（也可用 start --forward-log 临时开启）")
 @click.option("--config",      default=str(CONFIG_PATH), help="配置文件保存路径")
-def register(server, token, models, llm_url, llm_token, name, worker_key, forward_log, config):
+def register(server, worker_key, models, llm_url, llm_token, name, forward_log, config):
     """注册并保存 Agent 配置"""
+    wk = worker_key.strip()
     cfg = {
         "server_url":   server,
-        "worker_token": token,
+        "worker_key":   wk,
         "name":         name.strip() or socket.gethostname(),
-        "worker_key":   worker_key,
         "models":       [m.strip() for m in models.split(",") if m.strip()],
         "llm_base_url": llm_url.rstrip("/"),
         "llm_token":    llm_token,
@@ -100,6 +99,7 @@ def register(server, token, models, llm_url, llm_token, name, worker_key, forwar
     click.echo(f"  节点名  : {cfg['name']}")
     click.echo(f"  模型    : {', '.join(cfg['models'])}")
     click.echo(f"  LLM URL : {llm_url}")
+    click.echo(f"  Worker Key: {wk[:12]}… (masked)")
     click.echo("\n运行 'llm-agent start' 启动 Agent")
 
 
@@ -114,6 +114,8 @@ def status(config):
     click.echo(f"  模型    : {', '.join(cfg['models'])}")
     click.echo(f"  LLM URL : {cfg['llm_base_url']}")
     click.echo(f"  LLM Token: {'已设置' if cfg.get('llm_token') else '未设置'}")
+    wk = (cfg.get("worker_key") or "").strip()
+    click.echo(f"  Worker Key: {wk[:12] + '…' if len(wk) > 12 else (wk or '(missing)')}")
     click.echo(f"  转发日志: {'开启' if cfg.get('forward_log') else '关闭'}")
 
 
@@ -125,6 +127,14 @@ def start(config, forward_log):
     cfg = load_config(Path(config))
     if forward_log is not None:
         cfg["forward_log"] = forward_log
+    wk = (cfg.get("worker_key") or "").strip()
+    if not wk:
+        click.echo(
+            "[agent] worker_key missing in config; run: llm-agent register --worker-key <wk-...>",
+            err=True,
+        )
+        sys.exit(1)
+    cfg["worker_key"] = wk
     click.echo(f"启动 LLM Agent: {cfg['name']}")
     click.echo(f"连接服务器: {cfg['server_url']}")
     click.echo(f"模型: {', '.join(cfg['models'])}")
@@ -237,16 +247,15 @@ async def run_session(cfg: dict) -> None:
         ping_interval=30,
         ping_timeout=10,
     ) as ws:
-        # Register（携带 worker_key 用于积分归属）
+        # Register: worker_key is the sole credential (matches DB users.worker_key)
         await ws.send(json.dumps({
             "type":       "register",
-            "token":      cfg["worker_token"],
             "name":       cfg["name"],
             "models":     cfg["models"],
-            "worker_key": cfg.get("worker_key", ""),
+            "worker_key": cfg["worker_key"],
         }))
 
-        # Server closes with 4001 if token invalid — recv raises ConnectionClosed, not JSON
+        # Server closes with 4001 if worker_key missing or unknown — recv raises ConnectionClosed
         try:
             raw = await ws.recv()
         except ConnectionClosed as e:

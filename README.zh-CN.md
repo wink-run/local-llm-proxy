@@ -10,7 +10,7 @@ git clone git@github.com:wink-run/local-llm-proxy.git
 
 ## 是什么、解决什么问题
 
-**Local LLM Proxy** 是一套「云端代理 + 本地 Agent」方案：内网或本机的大模型（Ollama、内网推理网关、你购买的上游 API 路径）通过 **Agent 主动出站连接 VPS**（无需向内网开入站端口），对外提供统一的 **OpenAI 兼容 HTTP API**。外部客户端使用 **Bearer 用户 Key**；Worker 使用独立的 **Worker Token** 注册；**上游 LLM 的 API Key 不由代理持久化。** 贡献端自愿提供算力赚取积分，消费端用积分调用 API——**贡献率、消费率、质量系数与结算逻辑**在落地页与管理后台可查。
+**Local LLM Proxy** 是一套「云端代理 + 本地 Agent」方案：内网或本机的大模型（Ollama、内网推理网关、你购买的上游 API 路径）通过 **Agent 主动出站连接 VPS**（无需向内网开入站端口），对外提供统一的 **OpenAI 兼容 HTTP API**。外部客户端使用 **Bearer 用户 Key**；Worker 使用用户中心签发的 **Worker Key（`wk-…`，与账户绑定、数据库存储）** 完成注册与鉴权；**上游 LLM 的 API Key 不由代理持久化。** 贡献端自愿提供算力赚取积分，消费端用积分调用 API——**贡献率、消费率、质量系数与结算逻辑**在落地页与管理后台可查。
 
 各台机器运行轻量 `llm-agent`，经 WebSocket 注册到 VPS；VPS 将请求路由到对应 Worker，Worker 转发至本机 LLM 并回传流式结果。
 
@@ -42,8 +42,8 @@ git clone git@github.com:wink-run/local-llm-proxy.git
 
 **隐私与控制权**
 
-- **上游 API Key 不上云**：`--llm-token` 仅存本机 `~/.llm-agent/config.json`，仅用于 Agent 直连上游；注册协议不包含上游密钥。
-- **用户调用 VPS 的 Key** 由管理后台/用户中心签发并存于服务端数据库，与上游密钥是两回事。
+- **上游 API Key 不上云**：`--llm-token` 仅存本机 `~/.llm-agent/config.json`，仅用于 Agent 直连上游；注册仅上传 **worker_key**、节点名与模型列表，不包含上游密钥。
+- **用户调用 VPS 的 API Key** 由管理后台/用户中心签发并存于服务端数据库；**worker_key** 与用户账户绑定，与上游密钥是两回事。
 - **随时停止共享**：停止 Agent（`Ctrl+C`）或断网即退出资源池，无需服务端「解绑」。
 
 更完整的协议与架构说明见 [DESIGN.md](./DESIGN.md)。
@@ -56,7 +56,7 @@ git clone git@github.com:wink-run/local-llm-proxy.git
 
 ```bash
 cp .env.example .env
-# 编辑 .env，修改 WORKER_TOKEN、ADMIN_KEY 等
+# 编辑 .env，设置 ADMIN_KEY 等
 docker compose up -d --build
 ```
 
@@ -64,7 +64,6 @@ docker compose up -d --build
 
 | 变量 | 说明 |
 |---|---|
-| `WORKER_TOKEN` | 本地 Agent 注册时使用的密钥，须与 Agent 配置一致 |
 | `ADMIN_KEY` | 管理后台与 Admin API 使用的密钥 |
 | `REQUEST_TIMEOUT` | 单次转发请求等待超时（秒），默认 `120` |
 
@@ -80,7 +79,7 @@ pip install -r requirements.txt
 
 python agent.py register \
   --server "ws://你的VPS:8000/ws/worker" \
-  --token  "与服务端 WORKER_TOKEN 相同" \
+  --worker-key "在用户中心复制的 wk-..." \
   --models "模型A,模型B" \
   --llm-url "http://localhost:11434" \
   --name   "我的主机"
@@ -88,6 +87,7 @@ python agent.py register \
 python agent.py start
 ```
 
+**`--worker-key`** 在用户中心（`/app`）复制，为 Worker 接入的唯一凭据。  
 内网 LLM 需要 Token 时加 `--llm-token`。配置写入 `~/.llm-agent/config.json`，后续只需 `python agent.py start`。
 
 **方式 B：打包成单文件二进制**（在目标操作系统上执行）：

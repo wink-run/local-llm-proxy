@@ -1,6 +1,4 @@
 import asyncio
-import hashlib
-import hmac
 import json
 import logging
 import os
@@ -25,20 +23,7 @@ from worker_pool import pool, WorkerConnection
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("server")
 
-WORKER_TOKEN = os.getenv("WORKER_TOKEN", "change-me-worker")
 BASE_DIR = Path(__file__).resolve().parent
-
-
-def _worker_token_valid(client_token: object) -> bool:
-    """常量时间比对 Worker Token（先 SHA256 再 compare_digest，避免长度差异与计时泄露）。"""
-    if not isinstance(client_token, str):
-        return False
-    try:
-        a = hashlib.sha256(client_token.encode("utf-8")).digest()
-        b = hashlib.sha256(WORKER_TOKEN.encode("utf-8")).digest()
-        return hmac.compare_digest(a, b)
-    except Exception:
-        return False
 DOWNLOADS_DIR = BASE_DIR / "static" / "downloads"
 
 _bearer = HTTPBearer(auto_error=False)
@@ -226,25 +211,37 @@ async def worker_ws(ws: WebSocket):
         raw = await asyncio.wait_for(ws.receive_text(), timeout=10)
         msg = json.loads(raw)
 
-        if msg.get("type") != "register" or not _worker_token_valid(msg.get("token")):
+        if msg.get("type") != "register":
             logger.warning(
-                "[worker/ws] register denied peer=%s reason=bad_type_or_token",
+                "[worker/ws] register denied peer=%s reason=bad_message_type",
                 peer,
             )
             await ws.close(code=4001, reason="Unauthorized")
             return
 
+        worker_key = (msg.get("worker_key") or "").strip()
+        if not worker_key:
+            logger.warning(
+                "[worker/ws] register denied peer=%s reason=missing_worker_key",
+                peer,
+            )
+            await ws.close(code=4001, reason="Unauthorized")
+            return
+
+        user = await db.get_user_by_worker_key(worker_key)
+        if not user:
+            logger.warning(
+                "[worker/ws] register denied peer=%s reason=unknown_worker_key",
+                peer,
+            )
+            await ws.close(code=4001, reason="Unauthorized")
+            return
+
+        user_id = user["id"]
+
         worker_id = str(uuid.uuid4())[:8]
         name = (msg.get("name") or "").strip() or f"worker-{worker_id}"
         models = [m.strip() for m in msg.get("models", []) if m.strip()]
-
-        # 通过 worker_key 关联用户
-        user_id: Optional[int] = None
-        worker_key = msg.get("worker_key", "")
-        if worker_key:
-            user = await db.get_user_by_worker_key(worker_key)
-            if user:
-                user_id = user["id"]
 
         worker = WorkerConnection(
             ws=ws, models=models, worker_id=worker_id,
