@@ -385,6 +385,31 @@ async def list_model_configs(enabled_only: bool = False) -> list[dict]:
             return [dict(r) for r in await cur.fetchall()]
 
 
+# Worker 首次上报、后台尚未配置的模型：自动按 open 层默认倍率入库（不覆盖管理员已有配置）
+_OPEN_DEFAULT_CONTRIBUTE = 8.0
+_OPEN_DEFAULT_CONSUME = 5.0
+
+
+async def ensure_default_open_models(names: list[str]) -> list[str]:
+    """names 中尚未存在于 model_configs 的条目，插入为 tier=open、默认贡献/消费倍率；返回本次新建的名称列表。"""
+    if not names:
+        return []
+    created: list[str] = []
+    async with aiosqlite.connect(DB_PATH) as db:
+        for name in names:
+            async with db.execute("SELECT 1 FROM model_configs WHERE name=?", (name,)) as cur:
+                if await cur.fetchone():
+                    continue
+            await db.execute(
+                """INSERT INTO model_configs(name,display_name,tier,contribute_rate,consume_rate,enabled)
+                   VALUES(?,?,?,?,?,?)""",
+                (name, name, "open", _OPEN_DEFAULT_CONTRIBUTE, _OPEN_DEFAULT_CONSUME, 1),
+            )
+            created.append(name)
+        await db.commit()
+    return created
+
+
 async def upsert_model_config(name: str, display_name: str, tier: str,
                               contribute_rate: float, consume_rate: float, enabled: bool) -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
@@ -426,21 +451,6 @@ async def get_consume_rate(model_name: str) -> Optional[float]:
         ) as cur:
             row = await cur.fetchone()
             return row[0] if row else None
-
-
-async def models_enabled_for_billing(names: list[str]) -> list[str]:
-    """在线 Worker 上报的模型名中，仅保留已在 model_configs 启用且可计费的名称（与 get_consume_rate 一致）。"""
-    if not names:
-        return []
-    uniq = sorted(set(names))
-    placeholders = ",".join("?" * len(uniq))
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            f"SELECT name FROM model_configs WHERE enabled=1 AND name IN ({placeholders}) ORDER BY name",
-            uniq,
-        ) as cur:
-            rows = await cur.fetchall()
-            return [r[0] for r in rows]
 
 
 # ── settlement_logs ───────────────────────────────────────────────────────────

@@ -243,6 +243,14 @@ async def worker_ws(ws: WebSocket):
         name = (msg.get("name") or "").strip() or f"worker-{worker_id}"
         models = [m.strip() for m in msg.get("models", []) if m.strip()]
 
+        # 首次出现的模型名自动写入 model_configs（open + 默认倍率），便于计费与列表一致
+        auto_models = await db.ensure_default_open_models(models)
+        if auto_models:
+            logger.info(
+                "[worker/ws] auto-created model_configs (open defaults): %s",
+                auto_models,
+            )
+
         worker = WorkerConnection(
             ws=ws, models=models, worker_id=worker_id,
             name=name, user_id=user_id,
@@ -339,16 +347,13 @@ async def auth_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bea
 
 
 @app.get("/v1/models")
-async def list_models(key_info: dict = Depends(auth_user)):
-    # Worker 上报的模型名须与后台 model_configs 一致才会计费；仅对用户 Key 过滤列表，避免出现「列表里有、调用却 404」
-    online = pool.all_models()
-    if key_info.get("user_id") is not None:
-        online = await db.models_enabled_for_billing(online)
+async def list_models(_key: dict = Depends(auth_user)):
+    # 列出当前在线 Worker 上报的全部模型名（与管理员「模型配置」是否录入无关，避免 Agent 在线却列表为空）
     return {
         "object": "list",
         "data": [
             {"id": m, "object": "model", "created": 0, "owned_by": "local"}
-            for m in online
+            for m in pool.all_models()
         ],
     }
 

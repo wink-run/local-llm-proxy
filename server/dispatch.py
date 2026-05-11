@@ -21,7 +21,10 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None):
         import database as db
         rate = await db.get_consume_rate(model)
         if rate is None:
-            raise HTTPException(404, f"Model '{model}' not found or disabled")
+            raise HTTPException(
+                400,
+                f"模型「{model}」未在后台启用或未配置消费率；请在管理端「模型配置」添加与 Worker 上报完全一致的模型名称。",
+            )
         # 粗估：先检查余额是否 > 0，实际扣费在请求完成后（非阻塞乐观扣费）
         user = await db.get_user_by_id(consumer_user_id)
         if not user or user["credits_balance"] <= 0:
