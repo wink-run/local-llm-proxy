@@ -538,3 +538,5 @@ async def get_wall_users(limit: int = 50) -> list[dict]:
             (limit,),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
+
+

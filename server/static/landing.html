@@ -138,6 +138,24 @@
       margin-top: 24px; font-size: 1.1rem; color: var(--muted); max-width: 52ch;
       animation: fadeUp .7s .16s ease both;
     }
+    /* 首页理念：互惠、透明、实惠（与 hero 动效节奏一致） */
+    .hero-principles {
+      margin-top: 28px; max-width: 58ch;
+      display: flex; flex-direction: column; gap: 10px;
+      list-style: none; padding: 0;
+      animation: fadeUp .7s .2s ease both;
+    }
+    .hero-principles li {
+      position: relative; padding-left: 18px;
+      font-size: .95rem; color: var(--muted); line-height: 1.55;
+    }
+    .hero-principles li::before {
+      content: ""; position: absolute; left: 0; top: .55em;
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--accent); box-shadow: 0 0 10px var(--glow);
+    }
+    .hero-principles strong { color: var(--text); font-weight: 600; }
+
     .hero-cta {
       margin-top: 36px; display: flex; flex-wrap: wrap; gap: 12px;
       animation: fadeUp .7s .24s ease both;
@@ -159,6 +177,13 @@
 
     .grid-3 { display: grid; gap: 20px; grid-template-columns: 1fr; }
     @media (min-width: 720px) { .grid-3 { grid-template-columns: repeat(3, 1fr); } }
+    .grid-2 { display: grid; gap: 20px; grid-template-columns: 1fr; margin-bottom: 20px; }
+    @media (min-width: 720px) { .grid-2 { grid-template-columns: 1fr 1fr; } }
+    .card-main { border-color: rgba(45,212,191,.2); background: linear-gradient(135deg, rgba(45,212,191,.04), var(--bg-card)); }
+    .card-main .card-icon { font-size: .75rem; letter-spacing: .08em; }
+    .value-examples { margin-top: 16px; display: flex; flex-direction: column; gap: 7px; }
+    .value-example { font-size: .82rem; color: var(--muted); padding: 6px 10px; background: rgba(0,0,0,.25); border-radius: 6px; border-left: 2px solid var(--accent); }
+    .value-example em { font-style: normal; color: var(--text); }
 
     .card {
       background: var(--bg-card); border: 1px solid var(--border);
@@ -286,10 +311,15 @@
     <!-- Hero -->
     <section class="hero wrap">
       <p class="hero-badge">Outbound · WebSocket · OpenAI-compatible</p>
-      <h1 data-i18n-html="hero.h1">自愿共享 Token 路径挂到公网<br><em>类 P2P</em>，更接近 Token 自由</h1>
+      <h1 data-i18n-html="hero.h1">把闲置的 Token 额度<br>变成<em>跨模型、跨时段</em>的通用积分</h1>
       <p class="hero-lead" data-i18n-html="hero.lead">
-        将<strong style="color:var(--text)">本人自愿贡献的 API token 及其调用路径</strong>（以及仅内网可达的上游、本机模型），通过 Agent 主动连出一台 VPS，对外提供统一的 OpenAI 兼容接口。上游密钥只留在本机，服务端不收集；随时停掉 Agent，共享即结束。
+        有用不完的 Claude 订阅？Ollama 开着没人调用？把这些<strong style="color:var(--text)">闲置算力贡献出去</strong>，换成积分——可以调用你没有的高级模型、境外模型，或存着留到晚上电脑关机后继续用。
       </p>
+      <ul class="hero-principles" aria-label="社区理念">
+        <li data-i18n-html="hero.p1"><strong>人人为我，我为人人</strong>：闲置算力互助入网，积分跨模型、跨时段通用。</li>
+        <li data-i18n-html="hero.p2"><strong>规则透明</strong>：贡献率、消费率、质量系数与结算逻辑可查可对账。</li>
+        <li data-i18n-html="hero.p3"><strong>低价实惠</strong>：消费者用积分调用 API，同等模型下往往比单独购买上游 Token 更省。</li>
+      </ul>
       <div class="hero-cta">
         <a href="#quickstart" class="btn btn-primary" data-i18n="cta.start">快速开始</a>
         <a href="/app"  class="btn btn-ghost" data-i18n="nav.user">用户中心</a>
@@ -302,24 +332,50 @@
     <section id="value">
       <div class="wrap">
         <div class="section-head">
-          <h2 data-i18n="nav.value">核心价值</h2>
-          <p data-i18n-html="value.sub">不是再把流量绑死在某一家云厂商的固定 Endpoint；而是<strong style="color:#fff">自愿接入、自带路由与上游</strong>，由代理只做鉴权与调度。</p>
+          <h2 data-i18n="nav.value">贡献算力的两大价值</h2>
+          <p data-i18n-html="value.sub">积分是跨越<strong style="color:#fff">模型差异</strong>和<strong style="color:#fff">时间差异</strong>的通用凭证——互助共享、规则透明；贡献者盘活闲置，消费者用更实惠的积分买到更多 Token 调用。</p>
         </div>
+
+        <!-- 两大核心价值 -->
+        <div class="grid-2">
+          <article class="card card-main">
+            <div class="card-icon">⇄ &nbsp;算力错配 · MODEL ARBITRAGE</div>
+            <h3 data-i18n="value.v1.title">跨模型兑换：把 A 模型换成 B 模型</h3>
+            <p data-i18n="value.v1.body">贡献你有的模型额度，赚到积分，消费你没有的模型。国内模型换境外模型，开源模型换高级模型，高质量贡献享质量系数加成。</p>
+            <div class="value-examples">
+              <div class="value-example" data-i18n-html="value.v1.ex1">国内 open 模型 → 积分 → <em>境外 premium 模型</em></div>
+              <div class="value-example" data-i18n-html="value.v1.ex2">贡献 1K premium token → 积分 → <em>消费 4K+ open token</em></div>
+              <div class="value-example" data-i18n-html="value.v1.ex3">闲置订阅额度 → 积分 → <em>团队共享任意模型</em></div>
+            </div>
+          </article>
+          <article class="card card-main">
+            <div class="card-icon">◷ &nbsp;时间错配 · TIME ARBITRAGE</div>
+            <h3 data-i18n="value.v2.title">跨时段储值：把现在存到未来</h3>
+            <p data-i18n="value.v2.body">把现在过剩的 token 额度贡献出去变成积分，留到以后再用。不管是 API 套餐月底剩余，还是电脑开着没人用，都能转化为以后可随时调用的算力储备。</p>
+            <div class="value-examples">
+              <div class="value-example" data-i18n-html="value.v2.ex1">白天电脑开着 → 贡献积分 → <em>晚上关机后继续调用</em></div>
+              <div class="value-example" data-i18n-html="value.v2.ex2">API 套餐月底剩余 → 转换积分 → <em>下月按需取用</em></div>
+              <div class="value-example" data-i18n-html="value.v2.ex3">出差 / 度假挂机 → 持续积累 → <em>回来即有储备</em></div>
+            </div>
+          </article>
+        </div>
+
+        <!-- 技术特性 -->
         <div class="grid-3">
           <article class="card">
             <div class="card-icon">01 / SHARE</div>
-            <h3 data-i18n="value.c1.title">自愿贡献 Token 调用路径</h3>
-            <p data-i18n="value.c1.body">由你自行配置的 token 所指向的上游、内网网关背后的服务，或本机 Ollama，通过长连接「挂」到统一入口，团队或可信用户按需调用。</p>
+            <h3 data-i18n="value.c1.title">贡献你自愿提供的额度</h3>
+            <p data-i18n="value.c1.body">本机 Ollama、内网推理网关、或你买的上游 API token，通过 Agent 主动连出 VPS，按你设定的模型列表接受调度。</p>
           </article>
           <article class="card">
             <div class="card-icon">02 / MESH</div>
-            <h3 data-i18n="value.c2.title">多节点、类 P2P</h3>
-            <p data-i18n="value.c2.body">每台机器自愿上线、声明模型列表；VPS 负责挑选 Worker 转发，请求从外网进、从接入节点出站。</p>
+            <h3 data-i18n="value.c2.title">多节点按质调度</h3>
+            <p data-i18n="value.c2.body">每台 Worker 自主上线声明模型；VPS 按延迟、在线时长、成功率计算质量系数，优先调用高质量节点，加成贡献积分。</p>
           </article>
           <article class="card">
             <div class="card-icon">03 / SAFE</div>
-            <h3 data-i18n="value.c3.title">无需暴露内网端口</h3>
-            <p data-i18n="value.c3.body">内网 LLM 不对公网监听；只有 Agent 主动连出，穿透 NAT，降低暴露面。</p>
+            <h3 data-i18n="value.c3.title">密钥不出本机，随时下线</h3>
+            <p data-i18n="value.c3.body">上游 API Key 仅存本机，服务端不收集。Agent 不运行，立即退出资源池，无需解绑。</p>
           </article>
         </div>
       </div>
@@ -376,7 +432,7 @@
       <div class="wrap">
         <div class="section-head">
           <h2 data-i18n="econ.title">积分体系</h2>
-          <p data-i18n="econ.sub">贡献算力赚取积分，消耗 API 花费积分；积分与 Token 按模型汇率换算，质量越高倍率越高。</p>
+          <p data-i18n-html="econ.sub">贡献算力赚取积分，消耗 API 花费积分；<strong style="color:#fff">汇率与规则公开</strong>，按模型换算、质量越高倍率越高——让消费者明明白白<strong style="color:var(--accent)">用更低成本调用 Token</strong>。</p>
         </div>
         <div class="economy-grid">
 
@@ -523,7 +579,7 @@
   var LANGS = {
     zh: {
       "econ.title": "积分体系",
-      "econ.sub":   "贡献算力赚取积分，消耗 API 花费积分；积分与 Token 按模型汇率换算，质量越高倍率越高。",
+      "econ.sub":   "贡献算力赚取积分，消耗 API 花费积分；<strong style=\"color:#fff\">汇率与规则公开</strong>，按模型换算、质量越高倍率越高——让消费者明明白白<strong style=\"color:var(--accent)\">用更低成本调用 Token</strong>。",
       "econ.earn.title": "贡献赚积分",
       "econ.earn.note":  "运行 Agent 后每处理一条请求，系统记录你产生的 <strong>输出 Token 数</strong>。每 5 分钟结算一次，按模型的「贡献率（积分/千 Token）」乘以当期质量系数累积积分。",
       "econ.mult.online": "在线时长占比",
@@ -536,6 +592,7 @@
       "econ.rates.model": "模型", "econ.rates.tier": "类型",
       "econ.rates.earn": "贡献率<br><small style='font-weight:400'>(积分/千Token)</small>",
       "econ.rates.spend": "消费率<br><small style='font-weight:400'>(积分/千Token)</small>",
+
       "econ.rates.loading": "加载中…", "econ.rates.empty": "暂无已启用模型",
       "econ.exchange.title": "跨类型折算矩阵",
       "econ.exchange.sub": "贡献 1K token（行）→ 可消费的 token 数量（列，千 token）",
@@ -544,7 +601,7 @@
       "econ.example.earn":  "贡献方：若某模型贡献率为 <strong style=\"color:var(--accent)\">8 积分/千 Token</strong>，5 分钟内产出 10,000 输出 Token，质量系数 1.2，则本期获得 <strong style=\"color:var(--accent)\">10 × 8 × 1.2 = 96 积分</strong>。",
       "econ.example.spend": "消费方：若消费率为 <strong style=\"color:var(--warm)\">5 积分/千 Token</strong>，一次调用共 2,000 Token（输入+输出），花费 <strong style=\"color:var(--warm)\">2 × 5 = 10 积分</strong>。",
       "econ.example.ratio": "即：贡献 1,000 输出 Token ≈ 赚取 8+ 积分；消耗 1,000 总 Token ≈ 花费 5 积分。<strong style=\"color:var(--text)\">多贡献多获益</strong>，剩余积分可购买高级模型调用。",
-      "nav.value":    "核心价值",
+      "nav.value":    "两大价值",
       "nav.arch":     "架构",
       "nav.privacy":  "隐私",
       "nav.download": "下载 Agent",
@@ -553,15 +610,28 @@
       "nav.wall":     "运营大屏",
       "footer.admin": "管理后台",
       "cta.start":    "快速开始",
-      "hero.h1":      "自愿共享 Token 路径挂到公网<br><em>类 P2P</em>，更接近 Token 自由",
-      "hero.lead":    "将<strong style=\"color:var(--text)\">本人自愿贡献的 API token 及其调用路径</strong>（以及仅内网可达的上游、本机模型），通过 Agent 主动连出一台 VPS，对外提供统一的 OpenAI 兼容接口。上游密钥只留在本机，服务端不收集；随时停掉 Agent，共享即结束。",
-      "value.sub":    "不是再把流量绑死在某一家云厂商的固定 Endpoint；而是<strong style=\"color:#fff\">自愿接入、自带路由与上游</strong>，由代理只做鉴权与调度。",
-      "value.c1.title": "自愿贡献 Token 调用路径",
-      "value.c1.body":  "由你自行配置的 token 所指向的上游、内网网关背后的服务，或本机 Ollama，通过长连接「挂」到统一入口，团队或可信用户按需调用。",
-      "value.c2.title": "多节点、类 P2P",
-      "value.c2.body":  "每台机器自愿上线、声明模型列表；VPS 负责挑选 Worker 转发，请求从外网进、从接入节点出站。",
-      "value.c3.title": "无需暴露内网端口",
-      "value.c3.body":  "内网 LLM 不对公网监听；只有 Agent 主动连出，穿透 NAT，降低暴露面。",
+      "hero.h1":      "把闲置的 Token <br>变成<em>跨模型、跨时段</em>的通用积分",
+      "hero.lead":    "有用不完的 Token？Ollama 开着没人调用？把这些<strong style=\"color:var(--text)\">闲置算力贡献出去</strong>，换成积分——可以调用你没有的高级模型、境外模型，或存着留到晚上电脑关机后继续用。",
+      "hero.p1":      "<strong>人人为我，我为人人</strong>：闲置算力互助入网，积分跨模型、跨时段通用。",
+      "hero.p2":      "<strong>规则透明</strong>：贡献率、消费率、质量系数与结算逻辑可查可对账。",
+      "hero.p3":      "<strong>低价实惠</strong>：消费者用积分调用 API，同等模型下往往比单独购买上游 Token 更省。",
+      "value.sub":    "积分是跨越<strong style=\"color:#fff\">模型差异</strong>和<strong style=\"color:#fff\">时间差异</strong>的通用凭证——互助共享、规则透明；贡献者盘活闲置，消费者用更实惠的积分买到更多 Token 调用。",
+      "value.v1.title": "跨模型兑换：把 A 模型换成 B 模型",
+      "value.v1.body":  "贡献你有的模型额度，赚到积分，消费你没有的模型。国内模型换境外模型，开源模型换高级模型，高质量贡献享质量系数加成。",
+      "value.v1.ex1":   "国内 open 模型 → 积分 → <em>境外 premium 模型</em>",
+      "value.v1.ex2":   "贡献 1K premium token → 积分 → <em>消费 4K+ open token</em>",
+      "value.v1.ex3":   "闲置订阅额度 → 积分 → <em>团队共享任意模型</em>",
+      "value.v2.title": "跨时段储值：把现在存到未来",
+      "value.v2.body":  "把现在过剩的 token 额度贡献出去变成积分，留到以后再用。不管是 API 套餐月底剩余，还是电脑开着没人用，都能转化为以后可随时调用的算力储备。",
+      "value.v2.ex1":   "白天电脑开着 → 贡献积分 → <em>晚上关机后继续调用</em>",
+      "value.v2.ex2":   "API 套餐月底剩余 → 转换积分 → <em>下月按需取用</em>",
+      "value.v2.ex3":   "出差 / 度假挂机 → 持续积累 → <em>回来即有储备</em>",
+      "value.c1.title": "贡献你自愿提供的额度",
+      "value.c1.body":  "本机 Ollama、内网推理网关、或你买的上游 API token，通过 Agent 主动连出 VPS，按你设定的模型列表接受调度。",
+      "value.c2.title": "多节点按质调度",
+      "value.c2.body":  "每台 Worker 自主上线声明模型；VPS 按延迟、在线时长、成功率计算质量系数，优先调用高质量节点，加成贡献积分。",
+      "value.c3.title": "密钥不出本机，随时下线",
+      "value.c3.body":  "上游 API Key 仅存本机，服务端不收集。Agent 不运行，立即退出资源池，无需解绑。",
       "arch.sub":     "外部客户端使用 Bearer 用户 Key 访问 VPS；Worker 使用独立的 Worker Token 注册；<strong style=\"color:#fff\">上游 LLM 的 API Key 从不经过代理持久化。</strong>",
       "privacy.sub":  "设计目标：共享 token 调用路径的同时，不把上游密钥交给代理托管。",
       "privacy.p1.title": "上游 API Key 不上云",
@@ -584,7 +654,7 @@
     },
     en: {
       "econ.title": "Credit Economy",
-      "econ.sub":   "Earn credits by contributing compute; spend credits by calling the API. Credits and tokens exchange at per-model rates — better quality earns a higher multiplier.",
+      "econ.sub":   "Earn credits by contributing compute; spend credits by calling the API. <strong style=\"color:#fff\">Rates and rules are published</strong> — per-model exchange and higher quality earns a higher multiplier — so consumers can <strong style=\"color:var(--accent)\">call tokens at lower effective cost</strong>.",
       "econ.earn.title": "Earn Credits by Contributing",
       "econ.earn.note":  "Every request your Agent handles, the system records your <strong>output token count</strong>. Every 5 minutes, credits are settled: output tokens ÷ 1000 × model contribute rate × quality multiplier.",
       "econ.mult.online": "Uptime ratio",
@@ -597,6 +667,7 @@
       "econ.rates.model": "Model", "econ.rates.tier": "Tier",
       "econ.rates.earn": "Earn Rate<br><small style='font-weight:400'>(credits/K tokens)</small>",
       "econ.rates.spend": "Spend Rate<br><small style='font-weight:400'>(credits/K tokens)</small>",
+
       "econ.rates.loading": "Loading…", "econ.rates.empty": "No enabled models yet",
       "econ.exchange.title": "Cross-Tier Exchange Matrix",
       "econ.exchange.sub": "Contribute 1K tokens (row) → consumable tokens in each tier (col, K tokens)",
@@ -605,7 +676,7 @@
       "econ.example.earn":  "Contributor: model earn rate = <strong style=\"color:var(--accent)\">8 credits/K tokens</strong>, 10,000 output tokens in 5 min, quality 1.2× → earns <strong style=\"color:var(--accent)\">10 × 8 × 1.2 = 96 credits</strong>.",
       "econ.example.spend": "Consumer: model spend rate = <strong style=\"color:var(--warm)\">5 credits/K tokens</strong>, one call uses 2,000 total tokens → costs <strong style=\"color:var(--warm)\">2 × 5 = 10 credits</strong>.",
       "econ.example.ratio": "In short: contributing 1,000 output tokens ≈ +8 credits; consuming 1,000 total tokens ≈ −5 credits. <strong style=\"color:var(--text)\">Contribute more, earn more.</strong>",
-      "nav.value":    "Features",
+      "nav.value":    "Two Core Values",
       "nav.arch":     "Architecture",
       "nav.privacy":  "Privacy",
       "nav.download": "Download Agent",
@@ -614,15 +685,28 @@
       "nav.wall":     "Live Dashboard",
       "footer.admin": "Admin",
       "cta.start":    "Get Started",
-      "hero.h1":      "Share your local LLM path to the internet<br><em>P2P-style</em>, decentralized AI access",
-      "hero.lead":    "Voluntarily expose your <strong style=\"color:var(--text)\">locally-authorized LLM endpoints</strong> (intranet-only upstreams, local Ollama, etc.) through an outbound WebSocket Agent to a VPS, providing a unified OpenAI-compatible API. Your upstream API key never leaves your machine.",
-      "value.sub":    "Instead of locking traffic to a single cloud provider's fixed endpoint — <strong style=\"color:#fff\">voluntarily connect with your own upstream</strong>, and let the proxy handle only auth and routing.",
-      "value.c1.title": "Voluntarily Share Token Paths",
-      "value.c1.body":  "Your locally-configured token's upstream, intranet gateway services, or local Ollama — hooked into a single entry point via persistent connection for your team or trusted users.",
-      "value.c2.title": "Multi-node, P2P-style",
-      "value.c2.body":  "Each machine voluntarily registers with its model list; the VPS selects and forwards to the right Worker. Requests enter from the internet and exit from contributor nodes.",
-      "value.c3.title": "No Inbound Port Exposure",
-      "value.c3.body":  "The intranet LLM never listens on a public port — only the Agent makes an outbound connection, penetrating NAT with a minimal attack surface.",
+      "hero.h1":      "Turn idle Token quota<br>into <em>cross-model, cross-time</em> universal credits",
+      "hero.lead":    "Got unused Claude subscription? Ollama running with no callers? <strong style=\"color:var(--text)\">Contribute that idle compute</strong> and earn credits — spend them on premium or overseas models you don't have access to, or save them for when your machine is off tonight.",
+      "hero.p1":      "<strong>All for one, one for all</strong>: peer surplus sharing — universal credits across models and time.",
+      "hero.p2":      "<strong>Transparent rules</strong>: earn/spend rates, quality factors, and settlement logic are auditable.",
+      "hero.p3":      "<strong>Affordable for buyers</strong>: calling via credits often yields cheaper per-token usage than buying upstream API alone.",
+      "value.sub":    "Credits bridge <strong style=\"color:#fff\">model gaps</strong> and <strong style=\"color:#fff\">time gaps</strong> — mutual aid with transparent rules: contributors monetize idle quota; consumers get more token calls per dollar.",
+      "value.v1.title": "Model Arbitrage: swap model A for model B",
+      "value.v1.body":  "Contribute quota from models you have, earn credits, spend them on models you don't. Domestic-to-overseas, open-to-premium — high-quality contributions earn a quality multiplier bonus.",
+      "value.v1.ex1":   "Domestic open model → credits → <em>overseas premium model</em>",
+      "value.v1.ex2":   "Contribute 1K premium tokens → credits → <em>consume 4K+ open tokens</em>",
+      "value.v1.ex3":   "Idle subscription quota → credits → <em>team-shared any model</em>",
+      "value.v2.title": "Time Arbitrage: bank today's surplus for the future",
+      "value.v2.body":  "Contribute your current surplus token quota and convert it to credits you can use later. Whether it's leftover API plan capacity at month-end or a machine running idle — all turns into on-demand compute reserves.",
+      "value.v2.ex1":   "PC on during the day → earn credits → <em>keep calling after it's off at night</em>",
+      "value.v2.ex2":   "Unused API quota at month-end → convert → <em>draw down next month as needed</em>",
+      "value.v2.ex3":   "Machine left on while traveling → accumulate → <em>reserves ready when you're back</em>",
+      "value.c1.title": "Contribute your voluntary quota",
+      "value.c1.body":  "Local Ollama, intranet inference gateway, or your purchased upstream API token — Agent dials out to the VPS and joins the pool under your declared model list.",
+      "value.c2.title": "Multi-node quality-weighted dispatch",
+      "value.c2.body":  "Each Worker registers its model list independently; the VPS scores quality by latency, uptime, and success rate — routing to the best node and crediting contributors accordingly.",
+      "value.c3.title": "Keys stay local, disconnect anytime",
+      "value.c3.body":  "Upstream API keys are stored only on your machine — never sent to the server. Stop the Agent and you immediately exit the pool; no server-side unbinding needed.",
       "arch.sub":     "External clients authenticate with a Bearer user key; Workers register with a separate Worker Token; <strong style=\"color:#fff\">the upstream LLM API key is never stored by the proxy.</strong>",
       "privacy.sub":  "Design goal: share the token call path without handing upstream keys to the proxy.",
       "privacy.p1.title": "Upstream API Key Stays Local",

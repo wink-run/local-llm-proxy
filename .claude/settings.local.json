@@ -43,7 +43,13 @@
       "Bash(timeout 4 ../.venv/bin/uvicorn server:app --host 127.0.0.1 --port 18765)",
       "Bash(../.venv/bin/uvicorn server:app --host 127.0.0.1 --port 18765)",
       "Bash(curl -s http://127.0.0.1:18765/api/rates)",
-      "Bash(kill %1)"
+      "Bash(kill %1)",
+      "Bash(../.venv/bin/uvicorn server:app --host 127.0.0.1 --port 18766)",
+      "Bash(curl -s http://127.0.0.1:18766/api/rates)",
+      "Bash(python3 -m json.tool --no-ensure-ascii)",
+      "Bash(../.venv/bin/uvicorn server:app --host 127.0.0.1 --port 18767)",
+      "Bash(curl -s http://127.0.0.1:18767/api/rates)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('credit_unit:', d.get\\('credit_unit'\\)\\); print\\('platform_fee_pct:', d.get\\('platform_fee_pct'\\)\\); print\\('withdraw_min_cny:', d.get\\('withdraw_min_cny'\\)\\)\")"
     ]
   }
 }
