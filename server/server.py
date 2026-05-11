@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -25,6 +27,18 @@ logger = logging.getLogger("server")
 
 WORKER_TOKEN = os.getenv("WORKER_TOKEN", "change-me-worker")
 BASE_DIR = Path(__file__).resolve().parent
+
+
+def _worker_token_valid(client_token: object) -> bool:
+    """常量时间比对 Worker Token（先 SHA256 再 compare_digest，避免长度差异与计时泄露）。"""
+    if not isinstance(client_token, str):
+        return False
+    try:
+        a = hashlib.sha256(client_token.encode("utf-8")).digest()
+        b = hashlib.sha256(WORKER_TOKEN.encode("utf-8")).digest()
+        return hmac.compare_digest(a, b)
+    except Exception:
+        return False
 DOWNLOADS_DIR = BASE_DIR / "static" / "downloads"
 
 _bearer = HTTPBearer(auto_error=False)
@@ -205,12 +219,18 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.websocket("/ws/worker")
 async def worker_ws(ws: WebSocket):
     await ws.accept()
+    peer = ws.client  # (host, port)，便于排查来源
+    logger.info("[worker/ws] connected peer=%s path=/ws/worker", peer)
     worker: Optional[WorkerConnection] = None
     try:
         raw = await asyncio.wait_for(ws.receive_text(), timeout=10)
         msg = json.loads(raw)
 
-        if msg.get("type") != "register" or msg.get("token") != WORKER_TOKEN:
+        if msg.get("type") != "register" or not _worker_token_valid(msg.get("token")):
+            logger.warning(
+                "[worker/ws] register denied peer=%s reason=bad_type_or_token",
+                peer,
+            )
             await ws.close(code=4001, reason="Unauthorized")
             return
 
@@ -232,7 +252,14 @@ async def worker_ws(ws: WebSocket):
         )
         pool.add(worker)
         await ws.send_text(json.dumps({"type": "registered", "worker_id": worker_id}))
-        logger.info(f"Worker online: {name} ({worker_id}) user={user_id} models={models}")
+        logger.info(
+            "[worker/ws] online peer=%s worker_id=%s name=%s user_id=%s models=%s",
+            peer,
+            worker_id,
+            name,
+            user_id,
+            models,
+        )
 
         while True:
             raw = await ws.receive_text()
@@ -268,18 +295,38 @@ async def worker_ws(ws: WebSocket):
                 worker.record_complete(entry["model"], 0, False, latency_ms)
 
     except WebSocketDisconnect:
-        pass
+        if worker is None:
+            logger.info("[worker/ws] disconnected before register peer=%s", peer)
     except asyncio.TimeoutError:
-        logger.warning("Worker registration timeout")
+        logger.warning("[worker/ws] registration timeout peer=%s", peer)
+        try:
+            await ws.close(code=4008, reason="Registration timeout")
+        except Exception:
+            pass
     except Exception as e:
-        logger.error(f"Worker WS error: {e}")
+        logger.error(
+            "[worker/ws] error peer=%s worker_id=%s: %s",
+            peer,
+            worker.worker_id if worker else None,
+            e,
+        )
+        if worker is None:
+            try:
+                await ws.close(code=1011, reason="Registration failed")
+            except Exception:
+                pass
     finally:
         if worker:
             pool.remove(worker)
             for entry in worker.pending.values():
                 await entry["queue"].put(("error", "worker disconnected"))
             worker.pending.clear()
-            logger.info(f"Worker offline: {worker.name} ({worker.worker_id})")
+            logger.info(
+                "[worker/ws] offline peer=%s worker_id=%s name=%s",
+                peer,
+                worker.worker_id,
+                worker.name,
+            )
 
 
 # ── 用户 LLM 接口 ─────────────────────────────────────────────────────────────

@@ -16,12 +16,39 @@ CONFIG_PATH = Path.home() / ".llm-agent" / "config.json"
 RECONNECT_DELAY = 5
 
 
+def explain_ws_close(exc: ConnectionClosed) -> str:
+    """Map server close codes to English hints (aligned with server/server.py)."""
+    code = getattr(exc, "code", None) or 0
+    reason = (getattr(exc, "reason", "") or "").strip()
+    hints = {
+        4001: (
+            "registration rejected: token must match server WORKER_TOKEN; "
+            "first WebSocket message must be JSON type=register with that token"
+        ),
+        4008: (
+            "registration timeout: server gave up waiting for the first message "
+            "(network too slow or stalled)"
+        ),
+        1011: "registration failed: server-side error (check VPS logs tagged [worker/ws])",
+        1000: "normal closure",
+        1006: (
+            "abnormal disconnect (no close frame received; often network loss or remote kill)"
+        ),
+    }
+    hint = hints.get(code, "see WebSocket close code documentation")
+    parts = [f"code={code}"]
+    if reason:
+        parts.append(f'reason="{reason}"')
+    parts.append(hint)
+    return " | ".join(parts)
+
+
 # ── Config ──────────────────────────────────────────────────────────────────
 
 def load_config(path: Path) -> dict:
     if not path.exists():
-        click.echo(f"[error] 配置文件不存在: {path}", err=True)
-        click.echo("请先运行 llm-agent register ...", err=True)
+        click.echo(f"[agent] config file not found: {path}", err=True)
+        click.echo("[agent] run `llm-agent register ...` first", err=True)
         sys.exit(1)
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -107,7 +134,7 @@ def start(config, forward_log):
     try:
         asyncio.run(run_agent(cfg))
     except KeyboardInterrupt:
-        click.echo("\n已停止")
+        click.echo("\n[agent] stopped")
 
 
 # ── Request handling ─────────────────────────────────────────────────────────
@@ -127,7 +154,7 @@ async def _forward_streaming(req_id: str, payload: dict, send_q: asyncio.Queue, 
                 "POST", "/v1/chat/completions", json=payload, headers=headers
             ) as resp:
                 resp.raise_for_status()
-                log_forward(cfg, f"[forward] stream http_status={resp.status_code} req_id={req_id}")
+                log_forward(cfg, f"[agent] forward stream http_status={resp.status_code} req_id={req_id}")
                 last_usage = None
                 async for line in resp.aiter_lines():
                     if not line:
@@ -148,10 +175,10 @@ async def _forward_streaming(req_id: str, payload: dict, send_q: asyncio.Queue, 
                         "req_id": req_id,
                         "data": line + "\n\n",
                     }))
-        log_forward(cfg, f"[forward] stream done req_id={req_id} sse_lines={chunk_lines}")
+        log_forward(cfg, f"[agent] forward stream done req_id={req_id} sse_lines={chunk_lines}")
         await send_q.put(json.dumps({"type": "done", "req_id": req_id, "usage": last_usage}))
     except Exception as e:
-        log_forward(cfg, f"[forward] stream error req_id={req_id} {e!r}")
+        log_forward(cfg, f"[agent] forward stream error req_id={req_id} detail={e!r}")
         await send_q.put(json.dumps({"type": "error", "req_id": req_id, "error": str(e)}))
 
 
@@ -170,7 +197,7 @@ async def _forward_non_streaming(req_id: str, payload: dict, send_q: asyncio.Que
             body = resp.text
             log_forward(
                 cfg,
-                f"[forward] json http_status={resp.status_code} req_id={req_id} bytes={len(body)}",
+                f"[agent] forward json http_status={resp.status_code} req_id={req_id} bytes={len(body)}",
             )
             usage = None
             try:
@@ -184,14 +211,14 @@ async def _forward_non_streaming(req_id: str, payload: dict, send_q: asyncio.Que
             }))
             await send_q.put(json.dumps({"type": "done", "req_id": req_id, "usage": usage}))
     except Exception as e:
-        log_forward(cfg, f"[forward] json error req_id={req_id} {e!r}")
+        log_forward(cfg, f"[agent] forward json error req_id={req_id} detail={e!r}")
         await send_q.put(json.dumps({"type": "error", "req_id": req_id, "error": str(e)}))
 
 
 async def handle_request(req_id: str, payload: dict, send_q: asyncio.Queue, cfg: dict):
     log_forward(
         cfg,
-        "[forward] begin "
+        "[agent] forward begin "
         f"req_id={req_id} model={payload.get('model', '')!r} stream={payload.get('stream', False)}",
     )
     if payload.get("stream", False):
@@ -219,11 +246,33 @@ async def run_session(cfg: dict) -> None:
             "worker_key": cfg.get("worker_key", ""),
         }))
 
-        resp = json.loads(await ws.recv())
-        if resp.get("type") != "registered":
-            raise RuntimeError(f"注册失败: {resp}")
+        # Server closes with 4001 if token invalid — recv raises ConnectionClosed, not JSON
+        try:
+            raw = await ws.recv()
+        except ConnectionClosed as e:
+            raise RuntimeError(
+                f"[agent] register aborted: server closed the socket before sending "
+                f"'registered' ({explain_ws_close(e)})"
+            ) from e
 
-        click.echo(f"[connected] worker_id={resp['worker_id']}")
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", errors="replace")
+
+        try:
+            resp = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(
+                f"[agent] register failed: response is not JSON (first 200 chars)={raw[:200]!r} "
+                f"| parse_error={e}"
+            ) from e
+
+        if resp.get("type") != "registered":
+            raise RuntimeError(
+                f"[agent] register failed: expected type='registered', "
+                f"got type={resp.get('type')!r} full_response={resp!r}"
+            )
+
+        click.echo(f"[agent] connected worker_id={resp['worker_id']}")
 
         # Dedicated sender — serialises all WebSocket writes
         async def _sender():
@@ -245,7 +294,7 @@ async def run_session(cfg: dict) -> None:
         finally:
             await send_q.put(None)
             sender_task.cancel()
-            click.echo("[disconnected]")
+            click.echo("[agent] disconnected from proxy WebSocket")
 
 
 # ── Reconnect loop ───────────────────────────────────────────────────────────
@@ -255,24 +304,34 @@ async def run_agent(cfg: dict) -> None:
         try:
             await run_session(cfg)
         except InvalidStatus as e:
-            # 404：服务端进程未挂载 /ws/worker（常见为 VPS 镜像未随仓库更新）
-            if getattr(e.response, "status_code", None) == 404:
+            sc = getattr(e.response, "status_code", None)
+            if sc == 404:
                 click.echo(
-                    "[ws] HTTP 404：服务端未提供 WebSocket 路径 /ws/worker。"
-                    "请在 VPS 进入本仓库目录执行 docker compose up -d --build（或更新代码后重启 uvicorn），"
-                    "确保运行的是包含 @app.websocket(\"/ws/worker\") 的 server.py。",
+                    "[agent] websocket handshake failed: HTTP 404 — no route /ws/worker on server. "
+                    "Redeploy from this repo (docker compose up -d --build) or fix reverse-proxy path.",
                     err=True,
                 )
             else:
-                click.echo(f"[ws] {e}", err=True)
-        except (ConnectionClosed, WebSocketException) as e:
-            click.echo(f"[ws] {e}", err=True)
+                click.echo(
+                    f"[agent] websocket handshake failed: HTTP {sc} "
+                    f"(expected 101 Switching Protocols). "
+                    f"Check URL scheme ws/wss, path ends with /ws/worker, "
+                    f"and proxy WebSocket upgrade headers. detail={e!r}",
+                    err=True,
+                )
+        except ConnectionClosed as e:
+            click.echo(f"[agent] websocket closed: {explain_ws_close(e)}", err=True)
+        except WebSocketException as e:
+            click.echo(f"[agent] websocket error: {e!r}", err=True)
         except OSError as e:
-            click.echo(f"[net] {e}", err=True)
+            click.echo(
+                f"[agent] network error (DNS/connect/refused): {e!r}",
+                err=True,
+            )
         except Exception as e:
-            click.echo(f"[error] {e}", err=True)
+            click.echo(f"[agent] session error: {e!r}", err=True)
 
-        click.echo(f"{RECONNECT_DELAY}s 后重连...")
+        click.echo(f"[agent] reconnecting in {RECONNECT_DELAY}s...")
         await asyncio.sleep(RECONNECT_DELAY)
 
 
