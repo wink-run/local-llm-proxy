@@ -340,11 +340,15 @@ async def auth_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bea
 
 @app.get("/v1/models")
 async def list_models(key_info: dict = Depends(auth_user)):
+    # Worker 上报的模型名须与后台 model_configs 一致才会计费；仅对用户 Key 过滤列表，避免出现「列表里有、调用却 404」
+    online = pool.all_models()
+    if key_info.get("user_id") is not None:
+        online = await db.models_enabled_for_billing(online)
     return {
         "object": "list",
         "data": [
             {"id": m, "object": "model", "created": 0, "owned_by": "local"}
-            for m in pool.all_models()
+            for m in online
         ],
     }
 

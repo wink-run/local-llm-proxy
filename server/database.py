@@ -428,6 +428,21 @@ async def get_consume_rate(model_name: str) -> Optional[float]:
             return row[0] if row else None
 
 
+async def models_enabled_for_billing(names: list[str]) -> list[str]:
+    """在线 Worker 上报的模型名中，仅保留已在 model_configs 启用且可计费的名称（与 get_consume_rate 一致）。"""
+    if not names:
+        return []
+    uniq = sorted(set(names))
+    placeholders = ",".join("?" * len(uniq))
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            f"SELECT name FROM model_configs WHERE enabled=1 AND name IN ({placeholders}) ORDER BY name",
+            uniq,
+        ) as cur:
+            rows = await cur.fetchall()
+            return [r[0] for r in rows]
+
+
 # ── settlement_logs ───────────────────────────────────────────────────────────
 
 async def log_settlement(worker_id: str, user_id: int, period_start: str, period_end: str,
