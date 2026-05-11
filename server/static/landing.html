@@ -3,8 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Local LLM Proxy — 将自愿贡献的 token 调用路径与内网上游通过出站连接汇聚到云端，OpenAI 兼容 API，上游密钥不上云，随时停止共享。">
-  <title>Local LLM Proxy — 自愿共享 Token · 类 P2P · Token 自由</title>
+  <title>Local LLM Proxy — P2P · OpenAI-compatible</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=Syne:wght@600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -21,11 +20,8 @@
       --warm: #fbbf24;
       --glow: rgba(45, 212, 191, 0.35);
     }
-
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     html { scroll-behavior: smooth; }
-
     body {
       font-family: "DM Sans", system-ui, sans-serif;
       background: var(--bg);
@@ -35,314 +31,200 @@
       overflow-x: hidden;
     }
 
-    /* 背景：微网格 + 暗角 + 噪点感 */
     .page-bg {
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      z-index: -1;
+      position: fixed; inset: 0; pointer-events: none; z-index: -1;
       background:
-        radial-gradient(ellipse 120% 80% at 50% -20%, rgba(45, 212, 191, 0.08), transparent 50%),
-        radial-gradient(ellipse 60% 40% at 100% 100%, rgba(251, 191, 36, 0.04), transparent),
+        radial-gradient(ellipse 120% 80% at 50% -20%, rgba(45,212,191,.08), transparent 50%),
+        radial-gradient(ellipse 60% 40% at 100% 100%, rgba(251,191,36,.04), transparent),
         linear-gradient(180deg, #060708 0%, #0a0c10 100%);
     }
     .page-bg::before {
-      content: "";
-      position: absolute;
-      inset: 0;
+      content: ""; position: absolute; inset: 0;
       background-image:
-        linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+        linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
       background-size: 48px 48px;
       mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black, transparent);
     }
 
-    .wrap {
-      max-width: 1120px;
-      margin: 0 auto;
-      padding: 0 24px;
-    }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
 
     /* ── Nav ── */
     header {
-      position: sticky;
-      top: 0;
-      z-index: 50;
+      position: sticky; top: 0; z-index: 50;
       border-bottom: 1px solid var(--border);
-      background: rgba(6, 7, 8, 0.85);
+      background: rgba(6,7,8,.88);
       backdrop-filter: blur(12px);
     }
     .nav-inner {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      height: 64px;
-      max-width: 1120px;
-      margin: 0 auto;
-      padding: 0 24px;
+      display: flex; align-items: center;
+      height: 60px;
+      max-width: 1200px; margin: 0 auto; padding: 0 24px;
+      gap: 0;
     }
     .logo {
-      font-family: "Syne", sans-serif;
-      font-weight: 800;
-      font-size: 1.05rem;
-      letter-spacing: -0.02em;
-      color: #fff;
-      text-decoration: none;
+      font-family: "Syne", sans-serif; font-weight: 800;
+      font-size: 1rem; letter-spacing: -.02em;
+      color: #fff; text-decoration: none; flex-shrink: 0;
+      margin-right: 32px;
     }
     .logo span { color: var(--accent); }
+
     .nav-links {
-      display: none;
-      gap: 28px;
-      align-items: center;
-    }
-    @media (min-width: 880px) {
-      .nav-links { display: flex; }
+      display: flex; align-items: center;
+      gap: 4px; flex: 1;
     }
     .nav-links a {
-      color: var(--muted);
-      text-decoration: none;
-      font-size: 0.9rem;
-      transition: color 0.2s;
+      color: var(--muted); text-decoration: none;
+      font-size: 0.875rem; padding: 6px 10px; border-radius: 6px;
+      transition: color .15s, background .15s; white-space: nowrap;
     }
-    .nav-links a:hover { color: var(--text); }
+    .nav-links a:hover { color: var(--text); background: rgba(255,255,255,.05); }
+
+    /* hide text links on narrow screens */
+    @media (max-width: 780px) {
+      .nav-links .text-link { display: none; }
+    }
+
+    .nav-right {
+      display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-left: auto;
+    }
+
     .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 10px 20px;
-      border-radius: 8px;
-      font-size: 0.9rem;
-      font-weight: 600;
-      text-decoration: none;
-      border: none;
-      cursor: pointer;
-      transition: transform 0.15s, box-shadow 0.2s, background 0.2s;
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 8px 16px; border-radius: 8px; font-size: 0.875rem; font-weight: 600;
+      text-decoration: none; border: none; cursor: pointer; white-space: nowrap;
+      transition: transform .15s, box-shadow .2s, background .15s, border-color .15s;
     }
-    .btn:active { transform: scale(0.98); }
+    .btn:active { transform: scale(.98); }
     .btn-primary {
-      background: linear-gradient(135deg, #14b8a6, #0d9488);
-      color: #042f2e;
-      box-shadow: 0 0 24px var(--glow);
+      background: linear-gradient(135deg,#14b8a6,#0d9488);
+      color: #042f2e; box-shadow: 0 0 20px var(--glow);
     }
-    .btn-primary:hover {
-      box-shadow: 0 0 32px var(--glow);
-      filter: brightness(1.05);
-    }
+    .btn-primary:hover { filter: brightness(1.06); box-shadow: 0 0 28px var(--glow); }
     .btn-ghost {
-      background: transparent;
-      color: var(--text);
+      background: transparent; color: var(--text);
       border: 1px solid var(--border);
     }
     .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-lang {
+      padding: 6px 10px; font-size: 0.8rem; font-weight: 600;
+      background: transparent; color: var(--muted);
+      border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+      transition: color .15s, border-color .15s;
+    }
+    .btn-lang:hover { color: var(--accent); border-color: var(--accent); }
 
     /* ── Hero ── */
-    .hero {
-      padding: 72px 0 88px;
-      position: relative;
-    }
+    .hero { padding: 72px 0 88px; }
     .hero-badge {
-      display: inline-block;
-      font-family: "JetBrains Mono", monospace;
-      font-size: 0.75rem;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--accent);
-      border: 1px solid var(--accent-dim);
-      background: var(--accent-dim);
-      padding: 6px 12px;
-      border-radius: 6px;
-      margin-bottom: 24px;
-      animation: fadeUp 0.7s ease both;
+      display: inline-block; font-family: "JetBrains Mono", monospace;
+      font-size: 0.75rem; letter-spacing: .12em; text-transform: uppercase;
+      color: var(--accent); border: 1px solid var(--accent-dim);
+      background: var(--accent-dim); padding: 6px 12px; border-radius: 6px;
+      margin-bottom: 24px; animation: fadeUp .7s ease both;
     }
     .hero h1 {
-      font-family: "Syne", sans-serif;
-      font-weight: 800;
-      font-size: clamp(2.2rem, 5vw, 3.35rem);
-      line-height: 1.1;
-      letter-spacing: -0.03em;
-      color: #fff;
-      max-width: 18ch;
-      animation: fadeUp 0.7s 0.08s ease both;
+      font-family: "Syne", sans-serif; font-weight: 800;
+      font-size: clamp(2rem, 5vw, 3.2rem); line-height: 1.1;
+      letter-spacing: -.03em; color: #fff; max-width: 20ch;
+      animation: fadeUp .7s .08s ease both;
     }
-    .hero h1 em {
-      font-style: normal;
-      color: var(--warm);
-      text-decoration: underline;
-      text-decoration-color: rgba(251, 191, 36, 0.5);
+    .hero h1 em { font-style: normal; color: var(--warm);
+      text-decoration: underline; text-decoration-color: rgba(251,191,36,.5);
       text-underline-offset: 6px;
     }
     .hero-lead {
-      margin-top: 24px;
-      font-size: 1.125rem;
-      color: var(--muted);
-      max-width: 52ch;
-      animation: fadeUp 0.7s 0.16s ease both;
+      margin-top: 24px; font-size: 1.1rem; color: var(--muted); max-width: 52ch;
+      animation: fadeUp .7s .16s ease both;
     }
     .hero-cta {
-      margin-top: 36px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 14px;
-      animation: fadeUp 0.7s 0.24s ease both;
+      margin-top: 36px; display: flex; flex-wrap: wrap; gap: 12px;
+      animation: fadeUp .7s .24s ease both;
     }
-
     @keyframes fadeUp {
       from { opacity: 0; transform: translateY(18px); }
-      to { opacity: 1; transform: translateY(0); }
+      to   { opacity: 1; transform: translateY(0); }
     }
 
     /* ── Sections ── */
     section { padding: 72px 0; }
-    section:nth-child(even) { background: rgba(13, 15, 18, 0.5); }
-    .section-head {
-      margin-bottom: 48px;
-    }
+    section:nth-child(even) { background: rgba(13,15,18,.5); }
+    .section-head { margin-bottom: 48px; }
     .section-head h2 {
-      font-family: "Syne", sans-serif;
-      font-size: clamp(1.75rem, 3vw, 2.25rem);
-      font-weight: 700;
-      color: #fff;
-      letter-spacing: -0.02em;
+      font-family: "Syne", sans-serif; font-size: clamp(1.7rem,3vw,2.2rem);
+      font-weight: 700; color: #fff; letter-spacing: -.02em;
     }
-    .section-head p {
-      margin-top: 12px;
-      color: var(--muted);
-      max-width: 56ch;
-    }
+    .section-head p { margin-top: 12px; color: var(--muted); max-width: 56ch; }
 
-    .grid-3 {
-      display: grid;
-      gap: 20px;
-      grid-template-columns: 1fr;
-    }
-    @media (min-width: 720px) {
-      .grid-3 { grid-template-columns: repeat(3, 1fr); }
-    }
+    .grid-3 { display: grid; gap: 20px; grid-template-columns: 1fr; }
+    @media (min-width: 720px) { .grid-3 { grid-template-columns: repeat(3, 1fr); } }
+
     .card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 28px;
-      transition: border-color 0.2s, box-shadow 0.25s;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 14px; padding: 28px;
+      transition: border-color .2s, box-shadow .25s;
     }
-    .card:hover {
-      border-color: rgba(45, 212, 191, 0.35);
-      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
-    }
-    .card-icon {
-      font-family: "JetBrains Mono", monospace;
-      font-size: 0.7rem;
-      color: var(--accent);
-      margin-bottom: 14px;
-    }
-    .card h3 {
-      font-size: 1.1rem;
-      font-weight: 700;
-      color: #fff;
-      margin-bottom: 10px;
-    }
-    .card p { color: var(--muted); font-size: 0.95rem; }
+    .card:hover { border-color: rgba(45,212,191,.35); box-shadow: 0 12px 40px rgba(0,0,0,.35); }
+    .card-icon { font-family: "JetBrains Mono", monospace; font-size: .7rem; color: var(--accent); margin-bottom: 14px; }
+    .card h3 { font-size: 1.05rem; font-weight: 700; color: #fff; margin-bottom: 10px; }
+    .card p { color: var(--muted); font-size: .95rem; }
 
-    /* 架构图 */
     .diagram {
-      background: var(--bg-elev);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 28px;
-      overflow-x: auto;
+      background: var(--bg-elev); border: 1px solid var(--border);
+      border-radius: 14px; padding: 28px; overflow-x: auto;
     }
     .diagram pre {
-      font-family: "JetBrains Mono", monospace;
-      font-size: 0.72rem;
-      line-height: 1.45;
-      color: var(--muted);
-      white-space: pre;
+      font-family: "JetBrains Mono", monospace; font-size: .72rem;
+      line-height: 1.45; color: var(--muted); white-space: pre;
     }
     .diagram pre .hl-c { color: var(--accent); }
     .diagram pre .hl-w { color: var(--warm); }
 
-    /* 隐私条 */
-    .privacy-row {
-      display: grid;
-      gap: 20px;
-      grid-template-columns: 1fr;
-    }
-    @media (min-width: 768px) {
-      .privacy-row { grid-template-columns: 1fr 1fr; }
-    }
+    .privacy-row { display: grid; gap: 20px; grid-template-columns: 1fr; }
+    @media (min-width: 768px) { .privacy-row { grid-template-columns: 1fr 1fr; } }
     .privacy-box {
-      border-left: 3px solid var(--accent);
-      padding: 20px 24px;
-      background: var(--bg-card);
-      border-radius: 0 12px 12px 0;
+      border-left: 3px solid var(--accent); padding: 20px 24px;
+      background: var(--bg-card); border-radius: 0 12px 12px 0;
     }
     .privacy-box h3 { color: #fff; font-size: 1.05rem; margin-bottom: 8px; }
-    .privacy-box p { color: var(--muted); font-size: 0.95rem; }
+    .privacy-box p { color: var(--muted); font-size: .95rem; }
 
-    /* Code */
     .code-block {
-      background: #0a0b0e;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 20px 22px;
-      overflow-x: auto;
-      margin-top: 16px;
+      background: #0a0b0e; border: 1px solid var(--border);
+      border-radius: 12px; padding: 20px 22px; overflow-x: auto; margin-top: 16px;
     }
     .code-block pre {
-      font-family: "JetBrains Mono", monospace;
-      font-size: 0.8rem;
-      line-height: 1.55;
-      color: #a5b4c8;
+      font-family: "JetBrains Mono", monospace; font-size: .8rem;
+      line-height: 1.55; color: #a5b4c8;
     }
     .code-block .c { color: var(--accent); }
     .code-block .s { color: #94a3b8; }
-    .quick-grid {
-      display: grid;
-      gap: 32px;
-      grid-template-columns: 1fr;
-    }
-    @media (min-width: 900px) {
-      .quick-grid { grid-template-columns: 1fr 1fr; }
-    }
+    .quick-grid { display: grid; gap: 32px; grid-template-columns: 1fr; }
+    @media (min-width: 900px) { .quick-grid { grid-template-columns: 1fr 1fr; } }
     .quick-item h3 {
-      font-size: 0.85rem;
-      font-weight: 600;
-      color: var(--warm);
-      margin-bottom: 8px;
-      font-family: "JetBrains Mono", monospace;
+      font-size: .85rem; font-weight: 600; color: var(--warm);
+      margin-bottom: 8px; font-family: "JetBrains Mono", monospace;
     }
 
-    /* 落地页：预编译 llm-agent 下载 */
-    .download-panel {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 24px 28px;
-      min-height: 72px;
-    }
+    .download-panel { background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 24px 28px; min-height: 72px; }
     .download-panel.loading { color: var(--muted); }
     .download-row {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 14px;
-      padding: 14px 0;
-      border-bottom: 1px solid var(--border);
+      display: flex; flex-wrap: wrap; align-items: center;
+      justify-content: space-between; gap: 14px;
+      padding: 14px 0; border-bottom: 1px solid var(--border);
     }
     .download-row:last-child { border-bottom: none; padding-bottom: 0; }
     .download-row:first-child { padding-top: 0; }
-    .download-meta { margin-top: 6px; font-size: 0.85rem; color: var(--muted); font-family: "JetBrains Mono", monospace; }
+    .download-meta { margin-top: 6px; font-size: .85rem; color: var(--muted); font-family: "JetBrains Mono", monospace; }
 
     footer {
-      padding: 48px 24px 64px;
-      text-align: center;
-      color: var(--muted);
-      font-size: 0.875rem;
-      border-top: 1px solid var(--border);
+      padding: 48px 24px 64px; text-align: center;
+      color: var(--muted); font-size: .875rem; border-top: 1px solid var(--border);
     }
     footer a { color: var(--accent); text-decoration: none; }
     footer a:hover { text-decoration: underline; }
+    .footer-links { display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -351,158 +233,168 @@
   <header>
     <nav class="nav-inner">
       <a class="logo" href="#">Local <span>LLM</span> Proxy</a>
+
       <div class="nav-links">
-        <a href="#value">核心价值</a>
-        <a href="#arch">架构</a>
-        <a href="#privacy">隐私</a>
-        <a href="#download-agent">下载 Agent</a>
-        <a href="#quickstart">快速开始</a>
-        <a href="/admin/ui" class="btn btn-ghost">管理后台</a>
-        <a href="/app" class="btn btn-ghost">用户中心</a>
-        <a href="/wall" class="btn btn-ghost">运营大屏</a>
+        <a class="text-link" href="#value"  data-i18n="nav.value">核心价值</a>
+        <a class="text-link" href="#arch"   data-i18n="nav.arch">架构</a>
+        <a class="text-link" href="#privacy" data-i18n="nav.privacy">隐私</a>
+        <a class="text-link" href="#download-agent" data-i18n="nav.download">下载 Agent</a>
+        <a class="text-link" href="#quickstart" data-i18n="nav.quickstart">快速开始</a>
+      </div>
+
+      <div class="nav-right">
+        <button class="btn-lang" id="lang-toggle" onclick="toggleLang()">EN</button>
+        <a href="/app"  class="btn btn-ghost" data-i18n="nav.user">用户中心</a>
+        <a href="/wall" class="btn btn-ghost" data-i18n="nav.wall">运营大屏</a>
         <a href="https://github.com/wink-run/local-llm-proxy" class="btn btn-ghost" target="_blank" rel="noopener noreferrer">GitHub</a>
       </div>
     </nav>
   </header>
 
   <main>
+    <!-- Hero -->
     <section class="hero wrap">
       <p class="hero-badge">Outbound · WebSocket · OpenAI-compatible</p>
-      <h1>自愿共享 Token 路径挂到公网<br><em>类 P2P</em>，更接近 Token 自由</h1>
-      <p class="hero-lead">
-        将<strong style="color:var(--text)">本人自愿贡献的 API token 及其调用路径</strong>（以及仅内网可达的上游、本机模型），通过 Agent 主动连出一台 VPS，
-        对外提供统一的 OpenAI 兼容接口。上游密钥只留在本机，服务端不收集；随时停掉 Agent，共享即结束。
+      <h1 data-i18n-html="hero.h1">自愿共享 Token 路径挂到公网<br><em>类 P2P</em>，更接近 Token 自由</h1>
+      <p class="hero-lead" data-i18n-html="hero.lead">
+        将<strong style="color:var(--text)">本人自愿贡献的 API token 及其调用路径</strong>（以及仅内网可达的上游、本机模型），通过 Agent 主动连出一台 VPS，对外提供统一的 OpenAI 兼容接口。上游密钥只留在本机，服务端不收集；随时停掉 Agent，共享即结束。
       </p>
       <div class="hero-cta">
-        <a href="#quickstart" class="btn btn-primary">快速开始</a>
-        <a href="/app" class="btn btn-ghost">用户中心</a>
-        <a href="/wall" class="btn btn-ghost">运营大屏</a>
-        <a href="#download-agent" class="btn btn-ghost">下载 Agent</a>
+        <a href="#quickstart" class="btn btn-primary" data-i18n="cta.start">快速开始</a>
+        <a href="/app"  class="btn btn-ghost" data-i18n="nav.user">用户中心</a>
+        <a href="/wall" class="btn btn-ghost" data-i18n="nav.wall">运营大屏</a>
+        <a href="#download-agent" class="btn btn-ghost" data-i18n="nav.download">下载 Agent</a>
       </div>
     </section>
 
+    <!-- Value -->
     <section id="value">
       <div class="wrap">
         <div class="section-head">
-          <h2>核心价值</h2>
-          <p>不是再把流量绑死在某一家云厂商的固定 Endpoint；而是<strong style="color:#fff">自愿接入、自带路由与上游</strong>，由代理只做鉴权与调度。</p>
+          <h2 data-i18n="nav.value">核心价值</h2>
+          <p data-i18n-html="value.sub">不是再把流量绑死在某一家云厂商的固定 Endpoint；而是<strong style="color:#fff">自愿接入、自带路由与上游</strong>，由代理只做鉴权与调度。</p>
         </div>
         <div class="grid-3">
           <article class="card">
             <div class="card-icon">01 / SHARE</div>
-            <h3>自愿贡献 Token 调用路径</h3>
-            <p>由你自行配置的 token 所指向的上游、内网网关背后的服务，或本机 Ollama，通过长连接「挂」到统一入口，团队或可信用户按需调用。</p>
+            <h3 data-i18n="value.c1.title">自愿贡献 Token 调用路径</h3>
+            <p data-i18n="value.c1.body">由你自行配置的 token 所指向的上游、内网网关背后的服务，或本机 Ollama，通过长连接「挂」到统一入口，团队或可信用户按需调用。</p>
           </article>
           <article class="card">
             <div class="card-icon">02 / MESH</div>
-            <h3>多节点、类 P2P</h3>
-            <p>每台机器自愿上线、声明模型列表；VPS 负责挑选 Worker 转发，请求从外网进、从接入节点出站。</p>
+            <h3 data-i18n="value.c2.title">多节点、类 P2P</h3>
+            <p data-i18n="value.c2.body">每台机器自愿上线、声明模型列表；VPS 负责挑选 Worker 转发，请求从外网进、从接入节点出站。</p>
           </article>
           <article class="card">
             <div class="card-icon">03 / SAFE</div>
-            <h3>无需暴露内网端口</h3>
-            <p>内网 LLM 不对公网监听；只有 Agent 主动连出，穿透 NAT，降低暴露面。</p>
+            <h3 data-i18n="value.c3.title">无需暴露内网端口</h3>
+            <p data-i18n="value.c3.body">内网 LLM 不对公网监听；只有 Agent 主动连出，穿透 NAT，降低暴露面。</p>
           </article>
         </div>
       </div>
     </section>
 
+    <!-- Arch -->
     <section id="arch">
       <div class="wrap">
         <div class="section-head">
-          <h2>架构一瞥</h2>
-          <p>外部客户端使用 Bearer 用户 Key 访问 VPS；Worker 使用独立的 Worker Token 注册；<strong style="color:#fff">上游 LLM 的 API Key 从不经过代理持久化。</strong></p>
+          <h2 data-i18n="nav.arch">架构一瞥</h2>
+          <p data-i18n-html="arch.sub">外部客户端使用 Bearer 用户 Key 访问 VPS；Worker 使用独立的 Worker Token 注册；<strong style="color:#fff">上游 LLM 的 API Key 从不经过代理持久化。</strong></p>
         </div>
         <div class="diagram">
 <pre>
-  <span class="hl-c">外部客户端</span>  ──HTTP  Bearer USER_API_KEY──▶  ┌─────────────────────────────┐
-                                           │  VPS · FastAPI :8000        │
-                                           │  /v1/*   /admin/*   /ws/worker │
-                                           └─────────────┬───────────────┘
-                                                         │ WebSocket（内网主动发起）
-                        ┌────────────────────────────────┼────────────────────────────────┐
-                        │                                │                                │
-                  ┌─────▼─────┐                    ┌─────▼─────┐                         │
-                  │  llm-agent │                    │  llm-agent │   ...                   │
-                  │  + 本地 LLM │                    │  + 本地 LLM │                         │
-                  │  <span class="hl-w">Bearer 仅在本机</span> │                    │            │                         │
-                  └───────────┘                    └───────────┘                         │
+  <span class="hl-c">External Client</span>  ──HTTP  Bearer USER_API_KEY──▶  ┌─────────────────────────────┐
+                                                   │  VPS · FastAPI :8000        │
+                                                   │  /v1/*  /admin/*  /ws/worker│
+                                                   └─────────────┬───────────────┘
+                                                                 │ WebSocket (outbound)
+                        ┌────────────────────────────────────────┼────────────────┐
+                        │                                        │                │
+                  ┌─────▼──────┐                          ┌─────▼──────┐        ...
+                  │  llm-agent  │                          │  llm-agent  │
+                  │  + Local LLM│                          │  + Local LLM│
+                  │  <span class="hl-w">key stays local</span>│                          │             │
+                  └────────────┘                          └────────────┘
 </pre>
         </div>
       </div>
     </section>
 
+    <!-- Privacy -->
     <section id="privacy">
       <div class="wrap">
         <div class="section-head">
-          <h2>隐私与控制权</h2>
-          <p>设计目标：共享 token 调用路径的同时，不把上游密钥交给代理托管。</p>
+          <h2 data-i18n="nav.privacy">隐私与控制权</h2>
+          <p data-i18n="privacy.sub">设计目标：共享 token 调用路径的同时，不把上游密钥交给代理托管。</p>
         </div>
         <div class="privacy-row">
           <div class="privacy-box">
-            <h3>上游 API Key 不上云</h3>
-            <p><code style="color:var(--accent);font-size:0.9em;">--llm-token</code> 仅保存在本机 Agent 配置，用于直连你的上游；向代理注册时只上传 Worker 鉴权、节点名与模型列表，协议不包含上游密钥。</p>
+            <h3 data-i18n="privacy.p1.title">上游 API Key 不上云</h3>
+            <p data-i18n-html="privacy.p1.body"><code style="color:var(--accent);font-size:.9em;">--llm-token</code> 仅保存在本机 Agent 配置，用于直连你的上游；向代理注册时只上传 Worker 鉴权、节点名与模型列表，协议不包含上游密钥。</p>
           </div>
           <div class="privacy-box">
-            <h3>随时停止共享</h3>
-            <p>停止 Agent（如 Ctrl+C）或断网即不再承接请求，无需在服务端「解绑」。用户侧调用 VPS 所需的 Key 由管理后台签发（存于服务端数据库），与上游密钥是两回事。</p>
+            <h3 data-i18n="privacy.p2.title">随时停止共享</h3>
+            <p data-i18n="privacy.p2.body">停止 Agent（如 Ctrl+C）或断网即不再承接请求，无需在服务端「解绑」。用户侧调用 VPS 所需的 Key 由管理后台签发（存于服务端数据库），与上游密钥是两回事。</p>
           </div>
         </div>
       </div>
     </section>
 
+    <!-- Download -->
     <section id="download-agent">
       <div class="wrap">
         <div class="section-head">
-          <h2>下载 llm-agent</h2>
-          <p>单文件可执行客户端（PyInstaller），向内网 LLM 发起出站连接并注册到本代理。下列文件来自服务端目录 <code style="color:#fff;">static/downloads/</code>；在仓库内运行 <code style="color:var(--accent);">agent/build.sh</code> 会默认编译并生成到此目录（按平台命名）。</p>
+          <h2 data-i18n="nav.download">下载 llm-agent</h2>
+          <p data-i18n-html="download.sub">单文件可执行客户端（PyInstaller），向内网 LLM 发起出站连接并注册到本代理。下列文件来自服务端目录 <code style="color:#fff;">static/downloads/</code>；在仓库内运行 <code style="color:var(--accent);">agent/build.sh</code> 会默认编译并生成到此目录（按平台命名）。</p>
         </div>
         <div id="agent-download-list" class="download-panel loading">
-          <p style="margin:0;">正在加载可用构建…</p>
+          <p style="margin:0;" data-i18n="download.loading">正在加载可用构建…</p>
         </div>
       </div>
     </section>
 
+    <!-- Quickstart -->
     <section id="quickstart">
       <div class="wrap">
         <div class="section-head">
-          <h2>快速开始</h2>
-          <p>以下为常用命令摘要；完整变量说明与本地开发见仓库内 <code style="color:var(--accent);">README.md</code>。</p>
+          <h2 data-i18n="nav.quickstart">快速开始</h2>
+          <p data-i18n-html="qs.sub">以下为常用命令摘要；完整变量说明与本地开发见仓库内 <code style="color:var(--accent);">README.md</code>。</p>
         </div>
         <div class="quick-grid">
           <div class="quick-item">
-            <h3>VPS · Docker</h3>
-            <p style="color:var(--muted);font-size:0.95rem;">复制 <code style="color:#fff;">.env.example</code> 为 <code style="color:#fff;">.env</code>，填写 WORKER_TOKEN、ADMIN_KEY 后：</p>
+            <h3 data-i18n="qs.vps.title">VPS · Docker</h3>
+            <p style="color:var(--muted);font-size:.95rem;" data-i18n-html="qs.vps.desc">复制 <code style="color:#fff;">.env.example</code> 为 <code style="color:#fff;">.env</code>，填写 WORKER_TOKEN、ADMIN_KEY 后：</p>
             <div class="code-block">
 <pre><span class="c">cp</span> .env.example .env
 <span class="c">docker compose up -d --build</span>
-<span class="s"># 默认端口 8000，详见 README</span></pre>
+<span class="s"># default port 8000</span></pre>
             </div>
           </div>
           <div class="quick-item">
-            <h3>内网 · Agent</h3>
-            <p style="color:var(--muted);font-size:0.95rem;">优先使用上方「下载 llm-agent」；或用源码运行。注册一次后 <code style="color:#fff;">start</code> 保持在线：</p>
+            <h3 data-i18n="qs.agent.title">LAN · Agent</h3>
+            <p style="color:var(--muted);font-size:.95rem;" data-i18n="qs.agent.desc">优先使用上方「下载 llm-agent」；或用源码运行。注册一次后 start 保持在线：</p>
             <div class="code-block">
 <pre><span class="c">cd</span> agent && pip install -r requirements.txt
 <span class="c">python</span> agent.py register \
-  --server <span class="s">"ws://你的VPS:8000/ws/worker"</span> \
-  --token <span class="s">"$WORKER_TOKEN"</span> \
-  --models <span class="s">"模型A,模型B"</span> \
+  --server <span class="s">"ws://YOUR_VPS:8000/ws/worker"</span> \
+  --token  <span class="s">"$WORKER_TOKEN"</span> \
+  --models <span class="s">"model-a,model-b"</span> \
   --llm-url <span class="s">"http://localhost:11434"</span>
 <span class="c">python</span> agent.py start</pre>
             </div>
           </div>
         </div>
-        <p style="margin-top:32px;color:var(--muted);font-size:0.95rem;">
-          调用接口：<code style="color:#fff;">GET /v1/models</code>、<code style="color:#fff;">POST /v1/chat/completions</code>，请求头 <code style="color:#fff;">Authorization: Bearer &lt;后台创建的 Key&gt;</code>。
+        <p style="margin-top:32px;color:var(--muted);font-size:.95rem;" data-i18n-html="qs.note">
+          调用接口：<code style="color:#fff;">GET /v1/models</code>、<code style="color:#fff;">POST /v1/chat/completions</code>，请求头 <code style="color:#fff;">Authorization: Bearer &lt;用户中心创建的 Key&gt;</code>。
         </p>
       </div>
     </section>
 
-    <section id="disclaimer" aria-labelledby="disclaimer-heading">
+    <!-- Disclaimer -->
+    <section id="disclaimer">
       <div class="wrap" style="padding-bottom:48px;">
-        <h2 id="disclaimer-heading" class="section-head" style="margin-bottom:16px;font-size:1.1rem;color:var(--muted);font-weight:600;">免责声明</h2>
-        <p style="color:var(--muted);font-size:0.9rem;line-height:1.65;max-width:72ch;">
+        <h2 class="section-head" style="margin-bottom:16px;font-size:1.05rem;color:var(--muted);font-weight:600;" data-i18n="disclaimer.title">免责声明</h2>
+        <p style="color:var(--muted);font-size:.9rem;line-height:1.65;max-width:72ch;" data-i18n-html="disclaimer.body">
           本项目仅供<strong style="color:var(--text);font-weight:600;">学习与研究</strong>使用。部署、自愿共享 token 或转发请求须自行遵守法律法规及上游服务条款；由此产生的任何后果（含数据安全、费用、合规与纠纷）均由使用者<strong style="color:var(--text);font-weight:600;">自行承担</strong>。
         </p>
       </div>
@@ -510,67 +402,174 @@
   </main>
 
   <footer>
-    <p>Local LLM Proxy · OpenAI 兼容代理</p>
-    <p style="margin-top:8px;">
-      <a href="/app">用户中心</a>
-      · <a href="/wall">运营大屏</a>
-      · <a href="/admin/ui">管理后台</a>
-      · <a href="https://github.com/wink-run/local-llm-proxy" target="_blank" rel="noopener noreferrer">GitHub</a>
-    </p>
-    <p style="margin-top:16px;font-size:0.75rem;color:#6b7280;max-width:520px;margin-left:auto;margin-right:auto;line-height:1.5;">
-      仅供学习与研究；使用后果自负。详见仓库 README 免责声明。
+    <p>Local LLM Proxy · OpenAI-compatible proxy</p>
+    <div class="footer-links">
+      <a href="/app"      data-i18n="nav.user">用户中心</a>
+      <a href="/wall"     data-i18n="nav.wall">运营大屏</a>
+      <a href="/admin/ui" data-i18n="footer.admin">管理后台</a>
+      <a href="https://github.com/wink-run/local-llm-proxy" target="_blank" rel="noopener noreferrer">GitHub</a>
+    </div>
+    <p style="margin-top:16px;font-size:.75rem;color:#6b7280;max-width:520px;margin-left:auto;margin-right:auto;line-height:1.5;" data-i18n="disclaimer.short">
+      仅供学习与研究；使用后果自负。
     </p>
   </footer>
 
   <script>
-  (function () {
-    var LABELS = {
-      "llm-agent-linux-amd64": "Linux · x86_64",
-      "llm-agent-linux-arm64": "Linux · ARM64",
-      "llm-agent-darwin-arm64": "macOS · Apple Silicon",
-      "llm-agent-darwin-amd64": "macOS · Intel",
-    };
-    function fmtBytes(n) {
-      if (typeof n !== "number" || n < 0) return "—";
-      if (n < 1024) return n + " B";
-      if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
-      return (n / 1048576).toFixed(1) + " MB";
+  /* ── i18n ── */
+  var LANGS = {
+    zh: {
+      "nav.value":    "核心价值",
+      "nav.arch":     "架构",
+      "nav.privacy":  "隐私",
+      "nav.download": "下载 Agent",
+      "nav.quickstart": "快速开始",
+      "nav.user":     "用户中心",
+      "nav.wall":     "运营大屏",
+      "footer.admin": "管理后台",
+      "cta.start":    "快速开始",
+      "hero.h1":      "自愿共享 Token 路径挂到公网<br><em>类 P2P</em>，更接近 Token 自由",
+      "hero.lead":    "将<strong style=\"color:var(--text)\">本人自愿贡献的 API token 及其调用路径</strong>（以及仅内网可达的上游、本机模型），通过 Agent 主动连出一台 VPS，对外提供统一的 OpenAI 兼容接口。上游密钥只留在本机，服务端不收集；随时停掉 Agent，共享即结束。",
+      "value.sub":    "不是再把流量绑死在某一家云厂商的固定 Endpoint；而是<strong style=\"color:#fff\">自愿接入、自带路由与上游</strong>，由代理只做鉴权与调度。",
+      "value.c1.title": "自愿贡献 Token 调用路径",
+      "value.c1.body":  "由你自行配置的 token 所指向的上游、内网网关背后的服务，或本机 Ollama，通过长连接「挂」到统一入口，团队或可信用户按需调用。",
+      "value.c2.title": "多节点、类 P2P",
+      "value.c2.body":  "每台机器自愿上线、声明模型列表；VPS 负责挑选 Worker 转发，请求从外网进、从接入节点出站。",
+      "value.c3.title": "无需暴露内网端口",
+      "value.c3.body":  "内网 LLM 不对公网监听；只有 Agent 主动连出，穿透 NAT，降低暴露面。",
+      "arch.sub":     "外部客户端使用 Bearer 用户 Key 访问 VPS；Worker 使用独立的 Worker Token 注册；<strong style=\"color:#fff\">上游 LLM 的 API Key 从不经过代理持久化。</strong>",
+      "privacy.sub":  "设计目标：共享 token 调用路径的同时，不把上游密钥交给代理托管。",
+      "privacy.p1.title": "上游 API Key 不上云",
+      "privacy.p1.body":  "<code style=\"color:var(--accent);font-size:.9em;\">--llm-token</code> 仅保存在本机 Agent 配置，用于直连你的上游；向代理注册时只上传 Worker 鉴权、节点名与模型列表，协议不包含上游密钥。",
+      "privacy.p2.title": "随时停止共享",
+      "privacy.p2.body":  "停止 Agent（如 Ctrl+C）或断网即不再承接请求，无需在服务端「解绑」。用户侧调用 VPS 所需的 Key 由管理后台签发（存于服务端数据库），与上游密钥是两回事。",
+      "download.sub":     "单文件可执行客户端（PyInstaller），向内网 LLM 发起出站连接并注册到本代理。下列文件来自服务端目录 <code style=\"color:#fff;\">static/downloads/</code>；在仓库内运行 <code style=\"color:var(--accent);\">agent/build.sh</code> 会默认编译并生成到此目录（按平台命名）。",
+      "download.loading": "正在加载可用构建…",
+      "download.empty":   "当前没有预编译文件。在仓库内执行 <code style=\"color:var(--accent);font-size:.9em;\">agent/build.sh</code> 生成，或将产物放到 <code style=\"color:#fff;font-size:.9em;\">server/static/downloads/</code> 后刷新。",
+      "download.err":     "无法加载下载列表，请稍后重试。",
+      "qs.sub":      "以下为常用命令摘要；完整变量说明与本地开发见仓库内 <code style=\"color:var(--accent);\">README.md</code>。",
+      "qs.vps.title":  "VPS · Docker",
+      "qs.vps.desc":   "复制 <code style=\"color:#fff;\">.env.example</code> 为 <code style=\"color:#fff;\">.env</code>，填写 WORKER_TOKEN、ADMIN_KEY 后：",
+      "qs.agent.title": "内网 · Agent",
+      "qs.agent.desc":  "优先使用上方「下载 llm-agent」；或用源码运行。注册一次后 start 保持在线：",
+      "qs.note":       "调用接口：<code style=\"color:#fff;\">GET /v1/models</code>、<code style=\"color:#fff;\">POST /v1/chat/completions</code>，请求头 <code style=\"color:#fff;\">Authorization: Bearer &lt;用户中心创建的 Key&gt;</code>。",
+      "disclaimer.title": "免责声明",
+      "disclaimer.body":  "本项目仅供<strong style=\"color:var(--text);font-weight:600;\">学习与研究</strong>使用。部署、自愿共享 token 或转发请求须自行遵守法律法规及上游服务条款；由此产生的任何后果（含数据安全、费用、合规与纠纷）均由使用者<strong style=\"color:var(--text);font-weight:600;\">自行承担</strong>。",
+      "disclaimer.short": "仅供学习与研究；使用后果自负。",
+    },
+    en: {
+      "nav.value":    "Features",
+      "nav.arch":     "Architecture",
+      "nav.privacy":  "Privacy",
+      "nav.download": "Download Agent",
+      "nav.quickstart": "Quickstart",
+      "nav.user":     "User Portal",
+      "nav.wall":     "Live Dashboard",
+      "footer.admin": "Admin",
+      "cta.start":    "Get Started",
+      "hero.h1":      "Share your local LLM path to the internet<br><em>P2P-style</em>, decentralized AI access",
+      "hero.lead":    "Voluntarily expose your <strong style=\"color:var(--text)\">locally-authorized LLM endpoints</strong> (intranet-only upstreams, local Ollama, etc.) through an outbound WebSocket Agent to a VPS, providing a unified OpenAI-compatible API. Your upstream API key never leaves your machine.",
+      "value.sub":    "Instead of locking traffic to a single cloud provider's fixed endpoint — <strong style=\"color:#fff\">voluntarily connect with your own upstream</strong>, and let the proxy handle only auth and routing.",
+      "value.c1.title": "Voluntarily Share Token Paths",
+      "value.c1.body":  "Your locally-configured token's upstream, intranet gateway services, or local Ollama — hooked into a single entry point via persistent connection for your team or trusted users.",
+      "value.c2.title": "Multi-node, P2P-style",
+      "value.c2.body":  "Each machine voluntarily registers with its model list; the VPS selects and forwards to the right Worker. Requests enter from the internet and exit from contributor nodes.",
+      "value.c3.title": "No Inbound Port Exposure",
+      "value.c3.body":  "The intranet LLM never listens on a public port — only the Agent makes an outbound connection, penetrating NAT with a minimal attack surface.",
+      "arch.sub":     "External clients authenticate with a Bearer user key; Workers register with a separate Worker Token; <strong style=\"color:#fff\">the upstream LLM API key is never stored by the proxy.</strong>",
+      "privacy.sub":  "Design goal: share the token call path without handing upstream keys to the proxy.",
+      "privacy.p1.title": "Upstream API Key Stays Local",
+      "privacy.p1.body":  "<code style=\"color:var(--accent);font-size:.9em;\">--llm-token</code> is stored only in the local Agent config for direct upstream access. Registration sends only the worker auth token, node name and model list — not your upstream key.",
+      "privacy.p2.title": "Stop Sharing Anytime",
+      "privacy.p2.body":  "Kill the Agent (Ctrl+C) or disconnect from the network to instantly stop accepting requests — no server-side unbinding needed. The user API key for accessing the VPS is separate from your upstream key.",
+      "download.sub":     "Single-file executable client (PyInstaller) that connects outbound to your intranet LLM and registers with this proxy. Files below come from <code style=\"color:#fff;\">static/downloads/</code>; run <code style=\"color:var(--accent);\">agent/build.sh</code> to compile and place them there.",
+      "download.loading": "Loading available builds…",
+      "download.empty":   "No pre-compiled binaries yet. Run <code style=\"color:var(--accent);font-size:.9em;\">agent/build.sh</code> in the repo root, or place your own builds in <code style=\"color:#fff;font-size:.9em;\">server/static/downloads/</code> and refresh.",
+      "download.err":     "Failed to load download list. Please try again later.",
+      "qs.sub":      "Common command reference; see <code style=\"color:var(--accent);\">README.md</code> for full variable docs and local dev instructions.",
+      "qs.vps.title":  "VPS · Docker",
+      "qs.vps.desc":   "Copy <code style=\"color:#fff;\">.env.example</code> to <code style=\"color:#fff;\">.env</code>, fill in WORKER_TOKEN and ADMIN_KEY, then:",
+      "qs.agent.title": "LAN · Agent",
+      "qs.agent.desc":  "Download the pre-built binary above, or run from source. Register once, then start to stay online:",
+      "qs.note":       "API usage: <code style=\"color:#fff;\">GET /v1/models</code>, <code style=\"color:#fff;\">POST /v1/chat/completions</code> with header <code style=\"color:#fff;\">Authorization: Bearer &lt;key from User Portal&gt;</code>.",
+      "disclaimer.title": "Disclaimer",
+      "disclaimer.body":  "This project is for <strong style=\"color:var(--text);font-weight:600;\">educational and research purposes only</strong>. Deploying, sharing tokens, or forwarding requests must comply with applicable laws and upstream service terms. All consequences (data security, costs, compliance, disputes) are solely the user's responsibility.",
+      "disclaimer.short": "For educational and research use only. Use at your own risk.",
     }
-    function run() {
-      var el = document.getElementById("agent-download-list");
-      if (!el) return;
-      fetch("/api/agent-downloads")
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-          var items = data.items || [];
-          el.classList.remove("loading");
-          if (!items.length) {
-            el.innerHTML = "<p style=\"margin:0;color:var(--muted);line-height:1.65;\">当前没有可用的预编译文件。在<strong style=\"color:#fff;\">与代理相同仓库</strong>下执行 <code style=\"color:var(--accent);font-size:0.9em;\">agent/build.sh</code>（默认会写入 <code style=\"color:#fff;font-size:0.9em;\">server/static/downloads/</code>），或将自建产物放到该目录后刷新本页。</p>";
-            return;
-          }
-          var html = "";
-          for (var i = 0; i < items.length; i++) {
-            var it = items[i];
-            var label = LABELS[it.filename] || it.filename;
-            html += "<div class=\"download-row\">";
-            html += "<div><strong style=\"color:#fff;font-weight:600;\">" + label + "</strong>";
-            html += "<div class=\"download-meta\">" + it.filename + " · " + fmtBytes(it.bytes) + "</div></div>";
-            html += "<a class=\"btn btn-primary\" href=\"" + it.url + "\">下载</a>";
-            html += "</div>";
-          }
-          el.innerHTML = html;
+  }
+
+  var currentLang = localStorage.getItem('lang') || 'zh'
+
+  function applyLang(lang) {
+    var dict = LANGS[lang]
+    // text nodes
+    document.querySelectorAll('[data-i18n]').forEach(function(el) {
+      var key = el.getAttribute('data-i18n')
+      if (dict[key] !== undefined) el.textContent = dict[key]
+    })
+    // html nodes
+    document.querySelectorAll('[data-i18n-html]').forEach(function(el) {
+      var key = el.getAttribute('data-i18n-html')
+      if (dict[key] !== undefined) el.innerHTML = dict[key]
+    })
+    document.getElementById('lang-toggle').textContent = lang === 'zh' ? 'EN' : '中'
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en'
+  }
+
+  function toggleLang() {
+    currentLang = currentLang === 'zh' ? 'en' : 'zh'
+    localStorage.setItem('lang', currentLang)
+    applyLang(currentLang)
+  }
+
+  /* ── Downloads ── */
+  var LABELS = {
+    "llm-agent-linux-amd64":   "Linux · x86_64",
+    "llm-agent-linux-arm64":   "Linux · ARM64",
+    "llm-agent-darwin-arm64":  "macOS · Apple Silicon",
+    "llm-agent-darwin-amd64":  "macOS · Intel",
+    "llm-agent-windows-amd64.exe": "Windows · x86_64",
+  }
+  function fmtBytes(n) {
+    if (typeof n !== 'number' || n < 0) return '—'
+    if (n < 1024) return n + ' B'
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB'
+    return (n / 1048576).toFixed(1) + ' MB'
+  }
+  function loadDownloads() {
+    var el = document.getElementById('agent-download-list')
+    if (!el) return
+    fetch('/api/agent-downloads')
+      .then(function(r) { return r.json() })
+      .then(function(data) {
+        var items = data.items || []
+        el.classList.remove('loading')
+        if (!items.length) {
+          el.innerHTML = '<p style="margin:0;color:var(--muted);line-height:1.65;">' + LANGS[currentLang]['download.empty'] + '</p>'
+          return
+        }
+        var html = ''
+        items.forEach(function(it) {
+          var label = LABELS[it.filename] || it.filename
+          html += '<div class="download-row">'
+          html += '<div><strong style="color:#fff;font-weight:600;">' + label + '</strong>'
+          html += '<div class="download-meta">' + it.filename + ' · ' + fmtBytes(it.bytes) + '</div></div>'
+          html += '<a class="btn btn-primary" href="' + it.url + '">Download</a>'
+          html += '</div>'
         })
-        .catch(function () {
-          el.classList.remove("loading");
-          el.innerHTML = "<p style=\"margin:0;color:#f87171;\">无法加载下载列表，请稍后重试。</p>";
-        });
-    }
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", run);
-    } else {
-      run();
-    }
-  })();
+        el.innerHTML = html
+      })
+      .catch(function() {
+        el.classList.remove('loading')
+        el.innerHTML = '<p style="margin:0;color:#f87171;">' + LANGS[currentLang]['download.err'] + '</p>'
+      })
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { applyLang(currentLang); loadDownloads() })
+  } else {
+    applyLang(currentLang)
+    loadDownloads()
+  }
   </script>
 </body>
 </html>
