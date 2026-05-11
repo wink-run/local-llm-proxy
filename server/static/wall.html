@@ -3,244 +3,147 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LLM Proxy — 运营大屏</title>
+<title>LLM Proxy — Live Dashboard</title>
 <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@700;800&display=swap');
-
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-:root {
-  --bg: #060810;
-  --bg2: #0b0e1a;
-  --card: #0f1322;
-  --border: #1e2540;
-  --accent: #2dd4bf;
-  --accent2: #6366f1;
-  --warm: #fbbf24;
-  --text: #c8d0e0;
-  --muted: #5a6480;
-  --green: #22c55e;
-  --red: #f87171;
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#060810;--bg2:#0b0e1a;--card:#0f1322;--border:#1e2540;
+  --accent:#2dd4bf;--accent2:#6366f1;--warm:#fbbf24;
+  --text:#c8d0e0;--muted:#5a6480;--green:#22c55e;--red:#f87171;
 }
-
-html, body { height: 100%; overflow: hidden; }
-
-body {
-  font-family: "JetBrains Mono", monospace;
-  background: var(--bg);
-  color: var(--text);
-  font-size: 13px;
-  /* scan-line overlay */
+html,body{height:100%;overflow:hidden}
+body{
+  font-family:"JetBrains Mono",monospace;background:var(--bg);color:var(--text);font-size:13px;
   background-image:
-    repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.04) 2px, rgba(0,0,0,.04) 4px),
-    radial-gradient(ellipse 100% 60% at 50% 0%, rgba(45,212,191,.06), transparent 60%);
+    repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.04) 2px,rgba(0,0,0,.04) 4px),
+    radial-gradient(ellipse 100% 60% at 50% 0%,rgba(45,212,191,.06),transparent 60%);
 }
-
-/* ── Top bar ── */
-.topbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 32px;
-  border-bottom: 1px solid var(--border);
-  background: rgba(6,8,16,.9);
-  backdrop-filter: blur(8px);
-  flex-shrink: 0;
+.topbar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 32px;border-bottom:1px solid var(--border);
+  background:rgba(6,8,16,.9);backdrop-filter:blur(8px);flex-shrink:0;
 }
-.topbar-logo {
-  font-family: "Syne", sans-serif; font-size: 18px; font-weight: 800;
-  color: #fff; letter-spacing: -.02em;
+.topbar-logo{font-family:"Syne",sans-serif;font-size:18px;font-weight:800;color:#fff;letter-spacing:-.02em}
+.topbar-logo span{color:var(--accent)}
+.topbar-meta{display:flex;gap:24px;align-items:center}
+.meta-item{display:flex;flex-direction:column;align-items:center;gap:2px}
+.meta-val{font-size:22px;font-weight:700;color:#fff;line-height:1}
+.meta-val.accent{color:var(--accent)}.meta-val.warm{color:var(--warm)}.meta-val.purple{color:var(--accent2)}
+.meta-label{font-size:10px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+.meta-sep{width:1px;height:36px;background:var(--border)}
+.clock{font-size:11px;color:var(--muted);text-align:right}
+.clock b{color:var(--text);font-size:16px;display:block}
+.main{
+  display:grid;grid-template-columns:1fr 340px;
+  height:calc(100vh - 65px);padding:20px 24px;gap:20px;overflow:hidden;
 }
-.topbar-logo span { color: var(--accent); }
-.topbar-meta { display: flex; gap: 24px; align-items: center; }
-.meta-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.meta-val { font-size: 22px; font-weight: 700; color: #fff; line-height: 1; }
-.meta-val.accent { color: var(--accent); }
-.meta-val.warm   { color: var(--warm); }
-.meta-val.purple { color: var(--accent2); }
-.meta-label { font-size: 10px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
-.meta-sep { width: 1px; height: 36px; background: var(--border); }
-.clock { font-size: 11px; color: var(--muted); text-align: right; }
-.clock b { color: var(--text); font-size: 16px; display: block; }
-
-/* ── Layout ── */
-.main {
-  display: grid;
-  grid-template-columns: 1fr 340px;
-  grid-template-rows: 1fr auto;
-  height: calc(100vh - 65px);
-  padding: 20px 24px;
-  gap: 20px;
-  overflow: hidden;
+.workers-panel{overflow:hidden;display:flex;flex-direction:column}
+.panel-title{
+  font-size:11px;color:var(--muted);letter-spacing:.12em;text-transform:uppercase;
+  margin-bottom:14px;display:flex;align-items:center;gap:8px;
 }
-
-/* ── Worker grid ── */
-.workers-panel { overflow: hidden; display: flex; flex-direction: column; }
-.panel-title {
-  font-size: 11px; color: var(--muted);
-  letter-spacing: .12em; text-transform: uppercase;
-  margin-bottom: 14px; display: flex; align-items: center; gap: 8px;
+.panel-title::after{content:"";flex:1;height:1px;background:var(--border)}
+.workers-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));
+  gap:14px;overflow-y:auto;padding-right:4px;align-content:start;
 }
-.panel-title::after { content: ""; flex: 1; height: 1px; background: var(--border); }
-
-.workers-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 14px;
-  overflow-y: auto;
-  padding-right: 4px;
-  align-content: start;
+.worker-card{
+  background:var(--card);border:1px solid var(--border);border-radius:10px;
+  padding:16px;transition:border-color .3s,box-shadow .3s;
+  animation:cardIn .4s ease both;position:relative;overflow:hidden;
 }
-
-.worker-card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 16px;
-  transition: border-color .3s, box-shadow .3s;
-  animation: cardIn .4s ease both;
-  position: relative;
-  overflow: hidden;
+.worker-card::before{
+  content:"";position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,var(--accent),var(--accent2));opacity:0;transition:opacity .3s;
 }
-.worker-card::before {
-  content: "";
-  position: absolute; top: 0; left: 0; right: 0; height: 2px;
-  background: linear-gradient(90deg, var(--accent), var(--accent2));
-  opacity: 0;
-  transition: opacity .3s;
+.worker-card:hover{border-color:var(--accent);box-shadow:0 0 24px rgba(45,212,191,.1)}
+.worker-card:hover::before{opacity:1}
+@keyframes cardIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+.card-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.card-name{font-size:15px;font-weight:700;color:#fff}
+.online-dot{
+  width:8px;height:8px;border-radius:50%;background:var(--green);
+  box-shadow:0 0 8px rgba(34,197,94,.8);animation:pulse 2s ease-in-out infinite;
 }
-.worker-card:hover { border-color: var(--accent); box-shadow: 0 0 24px rgba(45,212,191,.1); }
-.worker-card:hover::before { opacity: 1; }
-@keyframes cardIn {
-  from { opacity: 0; transform: translateY(12px); }
-  to   { opacity: 1; transform: translateY(0); }
+@keyframes pulse{0%,100%{box-shadow:0 0 8px rgba(34,197,94,.8)}50%{box-shadow:0 0 16px rgba(34,197,94,.4)}}
+.stars{display:flex;gap:2px;margin-bottom:8px}
+.star{font-size:13px}.star.on{color:var(--warm)}.star.off{color:var(--border)}
+.card-models{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px}
+.model-tag{
+  font-size:10px;padding:2px 7px;
+  background:rgba(99,102,241,.15);color:var(--accent2);
+  border:1px solid rgba(99,102,241,.25);border-radius:4px;
 }
-
-.card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.card-name { font-size: 15px; font-weight: 700; color: #fff; }
-.online-dot {
-  width: 8px; height: 8px; border-radius: 50%; background: var(--green);
-  box-shadow: 0 0 8px rgba(34,197,94,.8);
-  animation: pulse 2s ease-in-out infinite;
+.card-stats{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.stat{display:flex;flex-direction:column;gap:2px}
+.stat-val{font-size:14px;font-weight:700;color:#fff;line-height:1}
+.stat-lbl{font-size:10px;color:var(--muted)}
+.empty-state{
+  grid-column:1/-1;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;padding:60px 20px;color:var(--muted);text-align:center;gap:12px;
 }
-@keyframes pulse {
-  0%, 100% { box-shadow: 0 0 8px rgba(34,197,94,.8); }
-  50%       { box-shadow: 0 0 16px rgba(34,197,94,.4); }
+.empty-icon{font-size:36px;opacity:.3}
+.right-panel{display:flex;flex-direction:column;gap:20px;overflow:hidden}
+.wall-list{overflow-y:auto;flex:1}
+.wall-item{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)}
+.wall-item:last-child{border-bottom:none}
+.wall-rank{color:var(--muted);font-size:11px;min-width:22px}
+.wall-rank.top{color:var(--warm);font-weight:700}
+.wall-name{flex:1;font-size:13px;color:var(--text)}
+.wall-score{color:var(--accent);font-size:12px;font-weight:700}
+.ticker-wrap{border-top:1px solid var(--border);padding:8px 0;overflow:hidden;white-space:nowrap;flex-shrink:0}
+.ticker-inner{display:inline-block;animation:ticker 30s linear infinite}
+@keyframes ticker{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.ticker-sep{color:var(--border);margin:0 16px}
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.back-link{
+  position:fixed;bottom:16px;right:20px;font-size:11px;color:var(--muted);
+  text-decoration:none;padding:5px 12px;border:1px solid var(--border);border-radius:6px;
+  transition:color .15s,border-color .15s;
 }
-
-.stars { display: flex; gap: 2px; margin-bottom: 8px; }
-.star { font-size: 13px; }
-.star.on  { color: var(--warm); }
-.star.off { color: var(--border); }
-
-.card-models { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
-.model-tag {
-  font-size: 10px; padding: 2px 7px;
-  background: rgba(99,102,241,.15); color: var(--accent2);
-  border: 1px solid rgba(99,102,241,.25); border-radius: 4px;
+.back-link:hover{color:var(--accent);border-color:var(--accent)}
+.btn-lang{
+  font-size:11px;font-weight:700;color:var(--muted);background:transparent;
+  border:1px solid var(--border);border-radius:5px;padding:3px 8px;cursor:pointer;
+  transition:color .15s,border-color .15s;
 }
-
-.card-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.stat { display: flex; flex-direction: column; gap: 2px; }
-.stat-val { font-size: 14px; font-weight: 700; color: #fff; line-height: 1; }
-.stat-lbl { font-size: 10px; color: var(--muted); }
-
-.empty-state {
-  grid-column: 1/-1;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 60px 20px; color: var(--muted); text-align: center; gap: 12px;
-}
-.empty-icon { font-size: 36px; opacity: .3; }
-
-/* ── Right panel ── */
-.right-panel { display: flex; flex-direction: column; gap: 20px; overflow: hidden; }
-
-/* Thanks wall */
-.wall-list { overflow-y: auto; flex: 1; }
-.wall-item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 9px 0;
-  border-bottom: 1px solid var(--border);
-}
-.wall-item:last-child { border-bottom: none; }
-.wall-rank { color: var(--muted); font-size: 11px; min-width: 22px; }
-.wall-rank.top { color: var(--warm); font-weight: 700; }
-.wall-name { flex: 1; font-size: 13px; color: var(--text); }
-.wall-score { color: var(--accent); font-size: 12px; font-weight: 700; }
-
-/* Ticker tape */
-.ticker-wrap {
-  border-top: 1px solid var(--border);
-  padding: 8px 0;
-  overflow: hidden;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-.ticker-inner {
-  display: inline-block;
-  animation: ticker 30s linear infinite;
-}
-@keyframes ticker {
-  from { transform: translateX(0); }
-  to   { transform: translateX(-50%); }
-}
-.ticker-sep { color: var(--border); margin: 0 16px; }
-
-/* Scrollbar */
-::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-
-.back-link {
-  position: fixed; bottom: 16px; right: 20px;
-  font-size: 11px; color: var(--muted); text-decoration: none;
-  padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px;
-  transition: color .15s, border-color .15s;
-}
-.back-link:hover { color: var(--accent); border-color: var(--accent); }
+.btn-lang:hover{color:var(--accent);border-color:var(--accent)}
 </style>
 </head>
 <body>
 <div id="app">
-
-  <!-- Top bar -->
   <div class="topbar">
-    <div class="topbar-logo">Local <span>LLM</span> Proxy <span style="color:var(--muted);font-size:12px;margin-left:8px;font-family:sans-serif;">运营大屏</span></div>
+    <div class="topbar-logo">Local <span>LLM</span> Proxy
+      <span style="color:var(--muted);font-size:12px;margin-left:8px;font-family:sans-serif">
+        {{ T.title }}
+      </span>
+    </div>
     <div class="topbar-meta">
-      <div class="meta-item">
-        <div class="meta-val accent">{{ workers.length }}</div>
-        <div class="meta-label">在线节点</div>
-      </div>
+      <div class="meta-item"><div class="meta-val accent">{{ workers.length }}</div><div class="meta-label">{{ T.nodes }}</div></div>
       <div class="meta-sep"></div>
-      <div class="meta-item">
-        <div class="meta-val warm">{{ totalModels }}</div>
-        <div class="meta-label">可用模型</div>
-      </div>
+      <div class="meta-item"><div class="meta-val warm">{{ totalModels }}</div><div class="meta-label">{{ T.models }}</div></div>
       <div class="meta-sep"></div>
-      <div class="meta-item">
-        <div class="meta-val purple">{{ totalActive }}</div>
-        <div class="meta-label">处理中请求</div>
-      </div>
+      <div class="meta-item"><div class="meta-val purple">{{ totalActive }}</div><div class="meta-label">{{ T.active }}</div></div>
       <div class="meta-sep"></div>
-      <div class="meta-item">
-        <div class="meta-val">{{ wallUsers.length }}</div>
-        <div class="meta-label">贡献者</div>
-      </div>
+      <div class="meta-item"><div class="meta-val">{{ wallUsers.length }}</div><div class="meta-label">{{ T.contributors }}</div></div>
       <div class="meta-sep"></div>
       <div class="clock"><b>{{ clock }}</b>{{ dateStr }}</div>
+      <button class="btn-lang" @click="toggleLang">{{ lang === 'zh' ? 'EN' : '中' }}</button>
     </div>
   </div>
 
-  <!-- Main -->
   <div class="main">
-
-    <!-- Worker cards -->
     <div class="workers-panel">
-      <div class="panel-title">在线贡献节点</div>
+      <div class="panel-title">{{ T.onlineNodes }}</div>
       <div class="workers-grid">
         <div v-if="workers.length === 0" class="empty-state">
           <div class="empty-icon">📡</div>
-          <div>等待节点接入…</div>
-          <div style="font-size:11px">部署 llm-agent 后节点将自动出现在此</div>
+          <div>{{ T.waitingNodes }}</div>
+          <div style="font-size:11px">{{ T.waitingNodesSub }}</div>
         </div>
         <div v-for="w in workers" :key="w.worker_id" class="worker-card">
           <div class="card-top">
@@ -254,103 +157,97 @@ body {
             <span v-for="m in w.models" :key="m" class="model-tag">{{ m }}</span>
           </div>
           <div class="card-stats">
+            <div class="stat"><div class="stat-val">{{ w.active_requests }}</div><div class="stat-lbl">{{ T.statReqs }}</div></div>
+            <div class="stat"><div class="stat-val">{{ w.avg_latency_ms > 0 ? w.avg_latency_ms + 'ms' : '—' }}</div><div class="stat-lbl">{{ T.statLatency }}</div></div>
+            <div class="stat"><div class="stat-val">{{ w.period_tokens > 0 ? fmtNum(w.period_tokens) : '—' }}</div><div class="stat-lbl">{{ T.statTokens }}</div></div>
             <div class="stat">
-              <div class="stat-val">{{ w.active_requests }}</div>
-              <div class="stat-lbl">当前请求</div>
-            </div>
-            <div class="stat">
-              <div class="stat-val">{{ w.avg_latency_ms > 0 ? w.avg_latency_ms + 'ms' : '—' }}</div>
-              <div class="stat-lbl">平均延迟</div>
-            </div>
-            <div class="stat">
-              <div class="stat-val">{{ w.period_tokens > 0 ? fmtNum(w.period_tokens) : '—' }}</div>
-              <div class="stat-lbl">本期 Token</div>
-            </div>
-            <div class="stat">
-              <div class="stat-val" :style="w.multiplier >= 1 ? 'color:var(--green)' : 'color:var(--warm)'">
-                ×{{ w.multiplier.toFixed(2) }}
-              </div>
-              <div class="stat-lbl">质量系数</div>
+              <div class="stat-val" :style="w.multiplier >= 1 ? 'color:var(--green)' : 'color:var(--warm)'">×{{ w.multiplier.toFixed(2) }}</div>
+              <div class="stat-lbl">{{ T.statMult }}</div>
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Right: thanks wall + ticker -->
     <div class="right-panel">
       <div style="display:flex;flex-direction:column;flex:1;overflow:hidden">
-        <div class="panel-title">贡献者鸣谢</div>
+        <div class="panel-title">{{ T.thankWall }}</div>
         <div class="wall-list">
-          <div v-if="wallUsers.length === 0" style="color:var(--muted);font-size:12px;padding:20px 0;text-align:center">
-            暂无贡献者
-          </div>
+          <div v-if="wallUsers.length === 0" style="color:var(--muted);font-size:12px;padding:20px 0;text-align:center">{{ T.noContributors }}</div>
           <div v-for="(u, i) in wallUsers" :key="u.id" class="wall-item">
             <div class="wall-rank" :class="i < 3 ? 'top' : ''">#{{ i + 1 }}</div>
             <div class="wall-name">{{ displayName(u) }}</div>
-            <div class="wall-score">{{ u.credits_earned.toFixed(0) }} 积分</div>
+            <div class="wall-score">{{ u.credits_earned.toFixed(0) }} {{ T.credits }}</div>
           </div>
         </div>
       </div>
-
-      <!-- Ticker -->
       <div v-if="tickerItems.length > 0" class="ticker-wrap">
         <div class="ticker-inner">
           <template v-for="_ in 2">
-            <template v-for="(t, i) in tickerItems" :key="i + '_' + _">
-              <span style="color:var(--muted)">{{ t }}</span>
+            <template v-for="(item, i) in tickerItems" :key="i+'_'+_">
+              <span style="color:var(--muted)">{{ item }}</span>
               <span class="ticker-sep">·</span>
             </template>
           </template>
         </div>
       </div>
     </div>
-
   </div>
 
-  <a href="/" class="back-link">← 返回首页</a>
+  <a href="/" class="back-link">← {{ T.backHome }}</a>
 </div>
 
 <script>
 const { createApp, ref, computed, onMounted, onUnmounted } = Vue
 
+const LANGS = {
+  zh: {
+    title: '运营大屏', nodes: '在线节点', models: '可用模型', active: '处理中请求',
+    contributors: '贡献者', onlineNodes: '在线贡献节点', thankWall: '贡献者鸣谢',
+    waitingNodes: '等待节点接入…', waitingNodesSub: '部署 llm-agent 后节点将自动出现在此',
+    statReqs: '当前请求', statLatency: '平均延迟', statTokens: '本期 Token', statMult: '质量系数',
+    noContributors: '暂无贡献者', credits: '积分',
+    backHome: '返回首页',
+    creditsSuffix: (e) => `贡献 ${e.toFixed(0)} 积分`,
+  },
+  en: {
+    title: 'Live Dashboard', nodes: 'Online Nodes', models: 'Models', active: 'Active Reqs',
+    contributors: 'Contributors', onlineNodes: 'Online Contributor Nodes', thankWall: 'Contributor Wall',
+    waitingNodes: 'Waiting for nodes…', waitingNodesSub: 'Nodes appear here once llm-agent connects',
+    statReqs: 'Active Reqs', statLatency: 'Avg Latency', statTokens: 'Period Tokens', statMult: 'Quality',
+    noContributors: 'No contributors yet', credits: 'credits',
+    backHome: 'Back to Home',
+    creditsSuffix: (e) => `${e.toFixed(0)} credits`,
+  }
+}
+
 createApp({
   setup() {
-    const workers   = ref([])
+    const lang = ref(localStorage.getItem('lang') || 'zh')
+    const T = computed(() => LANGS[lang.value])
+    function toggleLang() {
+      lang.value = lang.value === 'zh' ? 'en' : 'zh'
+      localStorage.setItem('lang', lang.value)
+      document.documentElement.lang = lang.value === 'zh' ? 'zh-CN' : 'en'
+    }
+
+    const workers = ref([])
     const wallUsers = ref([])
-    const clock     = ref('')
-    const dateStr   = ref('')
+    const clock = ref(''), dateStr = ref('')
 
-    const totalModels = computed(() => {
-      const s = new Set()
-      workers.value.forEach(w => w.models.forEach(m => s.add(m)))
-      return s.size
-    })
-
-    const totalActive = computed(() =>
-      workers.value.reduce((a, w) => a + w.active_requests, 0)
-    )
+    const totalModels = computed(() => { const s = new Set(); workers.value.forEach(w => w.models.forEach(m => s.add(m))); return s.size })
+    const totalActive = computed(() => workers.value.reduce((a, w) => a + w.active_requests, 0))
 
     const tickerItems = computed(() => {
       const items = []
-      workers.value.forEach(w => {
-        w.models.forEach(m => {
-          items.push(`${w.name} · ${m}`)
-        })
-      })
-      wallUsers.value.slice(0, 5).forEach(u => {
-        items.push(`${displayName(u)} 贡献 ${u.credits_earned.toFixed(0)} 积分`)
-      })
+      workers.value.forEach(w => w.models.forEach(m => items.push(`${w.name} · ${m}`)))
+      wallUsers.value.slice(0, 5).forEach(u => items.push(`${displayName(u)} — ${T.value.creditsSuffix(u.credits_earned)}`))
       return items
     })
 
     async function fetchWorkers() {
-      try {
-        const d = await (await fetch('/api/workers-wall')).json()
-        workers.value = d.workers || []
-      } catch {}
+      try { const d = await (await fetch('/api/workers-wall')).json(); workers.value = d.workers || [] } catch {}
     }
-
     async function fetchWall() {
       try {
         const d = await (await fetch('/api/wall')).json()
@@ -359,45 +256,34 @@ createApp({
     }
 
     function displayName(u) {
-      if (!u.wall_display || u.wall_display === 'hidden') return '匿名用户'
+      if (!u.wall_display || u.wall_display === 'hidden') return lang.value === 'zh' ? '匿名用户' : 'Anonymous'
       if (u.wall_display === 'nickname') return u.nickname || '—'
-      // masked
       const n = u.nickname || ''
       if (!n) return '***'
       if (n.length <= 2) return n[0] + '*'
       return n[0] + '*'.repeat(n.length - 2) + n[n.length - 1]
     }
-
     function fmtNum(n) {
-      if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
-      if (n >= 1000)    return (n / 1000).toFixed(1) + 'K'
+      if (n >= 1e6) return (n/1e6).toFixed(1)+'M'
+      if (n >= 1e3) return (n/1e3).toFixed(1)+'K'
       return String(n)
     }
-
     function updateClock() {
       const now = new Date()
       clock.value = now.toLocaleTimeString('zh-CN', { hour12: false })
-      dateStr.value = now.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit', weekday: 'short' })
+      dateStr.value = now.toLocaleDateString(lang.value === 'zh' ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit', weekday: 'short' })
     }
 
     let timers = []
-
     onMounted(() => {
-      fetchWorkers()
-      fetchWall()
-      updateClock()
+      fetchWorkers(); fetchWall(); updateClock()
       timers.push(setInterval(fetchWorkers, 5000))
       timers.push(setInterval(fetchWall, 30000))
       timers.push(setInterval(updateClock, 1000))
     })
-
     onUnmounted(() => timers.forEach(clearInterval))
 
-    return {
-      workers, wallUsers, clock, dateStr,
-      totalModels, totalActive, tickerItems,
-      displayName, fmtNum,
-    }
+    return { lang, T, toggleLang, workers, wallUsers, clock, dateStr, totalModels, totalActive, tickerItems, displayName, fmtNum }
   }
 }).mount('#app')
 </script>

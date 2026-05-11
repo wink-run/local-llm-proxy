@@ -61,6 +61,50 @@ async def wall_page():
     return FileResponse("static/wall.html")
 
 
+@app.get("/api/rates")
+async def public_rates():
+    """公开接口：模型汇率 + 跨层折算矩阵"""
+    all_models = await db.list_model_configs()
+    enabled = [m for m in all_models if m.get("enabled")]
+
+    model_list = [
+        {
+            "name": m["name"],
+            "display_name": m.get("display_name") or m["name"],
+            "tier": m["tier"],
+            "contribute_rate": m["contribute_rate"],
+            "consume_rate": m["consume_rate"],
+        }
+        for m in enabled
+    ]
+
+    # 按 tier 分组，计算每层的平均贡献率 / 消费率
+    tier_stats: dict[str, dict] = {}
+    for m in enabled:
+        t = m["tier"]
+        s = tier_stats.setdefault(t, {"contribute": [], "consume": []})
+        s["contribute"].append(m["contribute_rate"])
+        s["consume"].append(m["consume_rate"])
+
+    tiers = {}
+    for t, s in tier_stats.items():
+        avg_c = sum(s["contribute"]) / len(s["contribute"])
+        avg_x = sum(s["consume"])    / len(s["consume"])
+        tiers[t] = {"avg_contribute_rate": round(avg_c, 2),
+                    "avg_consume_rate":    round(avg_x, 2)}
+
+    # 跨层折算矩阵：贡献 tier A 的 1K tokens 能消耗 tier B 的多少 K tokens
+    # exchange[from_tier][to_tier] = avg_contribute_rate(A) / avg_consume_rate(B)
+    exchange: dict[str, dict] = {}
+    for from_tier, fs in tiers.items():
+        exchange[from_tier] = {}
+        for to_tier, ts in tiers.items():
+            ratio = round(fs["avg_contribute_rate"] / ts["avg_consume_rate"], 2) if ts["avg_consume_rate"] else 0
+            exchange[from_tier][to_tier] = ratio
+
+    return {"models": model_list, "tiers": tiers, "exchange": exchange}
+
+
 @app.get("/api/wall")
 async def wall():
     users = await db.get_wall_users()

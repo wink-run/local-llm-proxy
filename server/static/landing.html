@@ -207,6 +207,37 @@
       margin-bottom: 8px; font-family: "JetBrains Mono", monospace;
     }
 
+    /* ── Economy ── */
+    .economy-grid { display: grid; gap: 20px; grid-template-columns: 1fr; }
+    @media (min-width: 760px) { .economy-grid { grid-template-columns: 1fr 1fr; } }
+    .econ-card {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 28px;
+    }
+    .econ-card h3 { font-size: 1.05rem; font-weight: 700; color: #fff; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+    .econ-card h3 .icon { font-size: 1.3rem; }
+    .formula-box {
+      background: #0a0b0e; border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px 18px; font-family: "JetBrains Mono", monospace; font-size: .8rem;
+      line-height: 1.8; color: #a5b4c8; margin-bottom: 14px;
+    }
+    .formula-box .hi-g { color: var(--accent); }
+    .formula-box .hi-y { color: var(--warm); }
+    .formula-box .hi-p { color: #a78bfa; }
+    .formula-note { font-size: .875rem; color: var(--muted); line-height: 1.6; }
+    .formula-note strong { color: var(--text); }
+    .mult-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 14px; }
+    .mult-item { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; text-align: center; }
+    .mult-item .label { font-size: .7rem; color: var(--muted); margin-bottom: 4px; }
+    .mult-item .val { font-size: .85rem; font-weight: 700; color: var(--accent); font-family: "JetBrains Mono", monospace; }
+    .rates-table { width: 100%; border-collapse: collapse; font-size: .875rem; margin-top: 14px; }
+    .rates-table th { text-align: left; color: var(--muted); font-weight: 500; font-size: .75rem; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+    .rates-table td { padding: 8px 10px; border-bottom: 1px solid rgba(36,42,54,.5); color: var(--text); }
+    .rates-table tr:last-child td { border-bottom: none; }
+    .tier-badge { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: .7rem; font-family: "JetBrains Mono", monospace; }
+    .tier-open    { background: rgba(34,197,94,.15); color: #4ade80; border: 1px solid rgba(34,197,94,.25); }
+    .tier-premium { background: rgba(99,102,241,.15); color: #a5b4fc; border: 1px solid rgba(99,102,241,.25); }
+    .rates-empty { color: var(--muted); font-size: .875rem; text-align: center; padding: 20px; }
+
     .download-panel { background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 24px 28px; min-height: 72px; }
     .download-panel.loading { color: var(--muted); }
     .download-row {
@@ -340,6 +371,79 @@
       </div>
     </section>
 
+    <!-- Economy -->
+    <section id="economy">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 data-i18n="econ.title">积分体系</h2>
+          <p data-i18n="econ.sub">贡献算力赚取积分，消耗 API 花费积分；积分与 Token 按模型汇率换算，质量越高倍率越高。</p>
+        </div>
+        <div class="economy-grid">
+
+          <!-- Earn -->
+          <div class="econ-card">
+            <h3><span class="icon">⬆</span> <span data-i18n="econ.earn.title">贡献赚积分</span></h3>
+            <div class="formula-box">
+<span class="hi-g">积分</span> = (<span class="hi-y">output_tokens</span> / 1000)
+     × <span class="hi-p">模型贡献率</span>
+     × <span class="hi-g">质量系数</span>
+            </div>
+            <p class="formula-note" data-i18n-html="econ.earn.note">
+              运行 Agent 后每处理一条请求，系统记录你产生的 <strong>输出 Token 数</strong>。
+              每 5 分钟结算一次，按模型的「贡献率（积分/千 Token）」乘以当期质量系数累积积分。
+            </p>
+            <div class="mult-grid">
+              <div class="mult-item"><div class="label" data-i18n="econ.mult.online">在线时长占比</div><div class="val">0.5–1.3×</div></div>
+              <div class="mult-item"><div class="label" data-i18n="econ.mult.latency">响应延迟</div><div class="val">0.6–1.5×</div></div>
+              <div class="mult-item"><div class="label" data-i18n="econ.mult.stability">请求成功率</div><div class="val">0.5–1.2×</div></div>
+            </div>
+            <p style="margin-top:10px;font-size:.8rem;color:var(--muted);" data-i18n-html="econ.mult.formula">
+              质量系数 = 0.4×在线因子 + 0.4×延迟因子 + 0.2×稳定性因子，范围 <strong style="color:var(--accent);">0.5 ~ 1.5</strong>
+            </p>
+          </div>
+
+          <!-- Spend -->
+          <div class="econ-card">
+            <h3><span class="icon">⬇</span> <span data-i18n="econ.spend.title">调用花积分</span></h3>
+            <div class="formula-box">
+<span class="hi-y">花费</span> = (<span class="hi-y">prompt + completion tokens</span> / 1000)
+     × <span class="hi-p">模型消费率</span>
+            </div>
+            <p class="formula-note" data-i18n-html="econ.spend.note">
+              每次 API 调用完成后，按 <strong>输入 + 输出 Token 总量</strong> 乘以该模型的「消费率（积分/千 Token）」扣除积分。
+              贡献率 > 消费率，激励贡献者长期在线。
+            </p>
+            <p style="margin-top:16px;font-size:.85rem;font-weight:600;color:var(--text);" data-i18n="econ.rates.title">当前模型汇率</p>
+            <table class="rates-table" id="rates-table">
+              <thead>
+                <tr>
+                  <th data-i18n="econ.rates.model">模型</th>
+                  <th data-i18n="econ.rates.tier">类型</th>
+                  <th data-i18n="econ.rates.earn">贡献率<br><small style="font-weight:400">(积分/千Token)</small></th>
+                  <th data-i18n="econ.rates.spend">消费率<br><small style="font-weight:400">(积分/千Token)</small></th>
+                </tr>
+              </thead>
+              <tbody id="rates-tbody">
+                <tr><td colspan="4" class="rates-empty" data-i18n="econ.rates.loading">加载中…</td></tr>
+              </tbody>
+            </table>
+            <div id="exchange-matrix" style="margin-top:18px"></div>
+          </div>
+
+        </div>
+
+        <!-- Example -->
+        <div style="margin-top:24px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:28px;">
+          <p style="font-size:.875rem;font-weight:600;color:var(--text);margin-bottom:16px;" data-i18n="econ.example.title">📌 举例</p>
+          <div style="display:grid;gap:12px;grid-template-columns:1fr;font-size:.875rem;color:var(--muted);line-height:1.8;" id="econ-examples">
+            <p data-i18n-html="econ.example.earn">贡献方：若某模型贡献率为 <strong style="color:var(--accent)">8 积分/千 Token</strong>，5 分钟内产出 10,000 输出 Token，质量系数 1.2，则本期获得 <strong style="color:var(--accent)">10 × 8 × 1.2 = 96 积分</strong>。</p>
+            <p data-i18n-html="econ.example.spend">消费方：若消费率为 <strong style="color:var(--warm)">5 积分/千 Token</strong>，一次调用共 2,000 Token（输入+输出），花费 <strong style="color:var(--warm)">2 × 5 = 10 积分</strong>。</p>
+            <p data-i18n-html="econ.example.ratio">即：贡献 1,000 输出 Token ≈ 赚取 8+ 积分；消耗 1,000 总 Token ≈ 花费 5 积分。<strong style="color:var(--text)">多贡献多获益</strong>，剩余积分可购买高级模型调用。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- Download -->
     <section id="download-agent">
       <div class="wrap">
@@ -418,6 +522,28 @@
   /* ── i18n ── */
   var LANGS = {
     zh: {
+      "econ.title": "积分体系",
+      "econ.sub":   "贡献算力赚取积分，消耗 API 花费积分；积分与 Token 按模型汇率换算，质量越高倍率越高。",
+      "econ.earn.title": "贡献赚积分",
+      "econ.earn.note":  "运行 Agent 后每处理一条请求，系统记录你产生的 <strong>输出 Token 数</strong>。每 5 分钟结算一次，按模型的「贡献率（积分/千 Token）」乘以当期质量系数累积积分。",
+      "econ.mult.online": "在线时长占比",
+      "econ.mult.latency": "响应延迟",
+      "econ.mult.stability": "请求成功率",
+      "econ.mult.formula": "质量系数 = 0.4×在线因子 + 0.4×延迟因子 + 0.2×稳定性因子，范围 <strong style=\"color:var(--accent);\">0.5 ~ 1.5</strong>",
+      "econ.spend.title": "调用花积分",
+      "econ.spend.note":  "每次 API 调用完成后，按 <strong>输入 + 输出 Token 总量</strong> 乘以该模型的「消费率（积分/千 Token）」扣除积分。贡献率 > 消费率，激励贡献者长期在线。",
+      "econ.rates.title": "当前模型汇率",
+      "econ.rates.model": "模型", "econ.rates.tier": "类型",
+      "econ.rates.earn": "贡献率<br><small style='font-weight:400'>(积分/千Token)</small>",
+      "econ.rates.spend": "消费率<br><small style='font-weight:400'>(积分/千Token)</small>",
+      "econ.rates.loading": "加载中…", "econ.rates.empty": "暂无已启用模型",
+      "econ.exchange.title": "跨类型折算矩阵",
+      "econ.exchange.sub": "贡献 1K token（行）→ 可消费的 token 数量（列，千 token）",
+      "econ.exchange.from": "贡献层 ↓ / 消费层 →",
+      "econ.example.title": "📌 举例",
+      "econ.example.earn":  "贡献方：若某模型贡献率为 <strong style=\"color:var(--accent)\">8 积分/千 Token</strong>，5 分钟内产出 10,000 输出 Token，质量系数 1.2，则本期获得 <strong style=\"color:var(--accent)\">10 × 8 × 1.2 = 96 积分</strong>。",
+      "econ.example.spend": "消费方：若消费率为 <strong style=\"color:var(--warm)\">5 积分/千 Token</strong>，一次调用共 2,000 Token（输入+输出），花费 <strong style=\"color:var(--warm)\">2 × 5 = 10 积分</strong>。",
+      "econ.example.ratio": "即：贡献 1,000 输出 Token ≈ 赚取 8+ 积分；消耗 1,000 总 Token ≈ 花费 5 积分。<strong style=\"color:var(--text)\">多贡献多获益</strong>，剩余积分可购买高级模型调用。",
       "nav.value":    "核心价值",
       "nav.arch":     "架构",
       "nav.privacy":  "隐私",
@@ -457,6 +583,28 @@
       "disclaimer.short": "仅供学习与研究；使用后果自负。",
     },
     en: {
+      "econ.title": "Credit Economy",
+      "econ.sub":   "Earn credits by contributing compute; spend credits by calling the API. Credits and tokens exchange at per-model rates — better quality earns a higher multiplier.",
+      "econ.earn.title": "Earn Credits by Contributing",
+      "econ.earn.note":  "Every request your Agent handles, the system records your <strong>output token count</strong>. Every 5 minutes, credits are settled: output tokens ÷ 1000 × model contribute rate × quality multiplier.",
+      "econ.mult.online": "Uptime ratio",
+      "econ.mult.latency": "Response latency",
+      "econ.mult.stability": "Success rate",
+      "econ.mult.formula": "Quality = 0.4×uptime + 0.4×latency + 0.2×stability, range <strong style=\"color:var(--accent);\">0.5 ~ 1.5</strong>",
+      "econ.spend.title": "Spend Credits by Calling API",
+      "econ.spend.note":  "After each API call, <strong>total tokens (prompt + completion)</strong> ÷ 1000 × model consume rate is deducted. Contribute rate > consume rate by design — rewards long-term contributors.",
+      "econ.rates.title": "Current Model Rates",
+      "econ.rates.model": "Model", "econ.rates.tier": "Tier",
+      "econ.rates.earn": "Earn Rate<br><small style='font-weight:400'>(credits/K tokens)</small>",
+      "econ.rates.spend": "Spend Rate<br><small style='font-weight:400'>(credits/K tokens)</small>",
+      "econ.rates.loading": "Loading…", "econ.rates.empty": "No enabled models yet",
+      "econ.exchange.title": "Cross-Tier Exchange Matrix",
+      "econ.exchange.sub": "Contribute 1K tokens (row) → consumable tokens in each tier (col, K tokens)",
+      "econ.exchange.from": "Contribute ↓ / Consume →",
+      "econ.example.title": "📌 Example",
+      "econ.example.earn":  "Contributor: model earn rate = <strong style=\"color:var(--accent)\">8 credits/K tokens</strong>, 10,000 output tokens in 5 min, quality 1.2× → earns <strong style=\"color:var(--accent)\">10 × 8 × 1.2 = 96 credits</strong>.",
+      "econ.example.spend": "Consumer: model spend rate = <strong style=\"color:var(--warm)\">5 credits/K tokens</strong>, one call uses 2,000 total tokens → costs <strong style=\"color:var(--warm)\">2 × 5 = 10 credits</strong>.",
+      "econ.example.ratio": "In short: contributing 1,000 output tokens ≈ +8 credits; consuming 1,000 total tokens ≈ −5 credits. <strong style=\"color:var(--text)\">Contribute more, earn more.</strong>",
       "nav.value":    "Features",
       "nav.arch":     "Architecture",
       "nav.privacy":  "Privacy",
@@ -564,11 +712,65 @@
       })
   }
 
+  function loadRates() {
+    var tbody = document.getElementById('rates-tbody')
+    if (!tbody) return
+    fetch('/api/rates')
+      .then(function(r) { return r.json() })
+      .then(function(data) {
+        var models = data.models || []
+        if (!models.length) {
+          tbody.innerHTML = '<tr><td colspan="4" class="rates-empty">' + LANGS[currentLang]['econ.rates.empty'] + '</td></tr>'
+        } else {
+          tbody.innerHTML = models.map(function(m) {
+            var tierCls = m.tier === 'premium' ? 'tier-premium' : 'tier-open'
+            var name = m.display_name || m.name
+            return '<tr><td style="font-family:\'JetBrains Mono\',monospace;font-size:.8rem">' + name + '</td>'
+              + '<td><span class="tier-badge ' + tierCls + '">' + m.tier + '</span></td>'
+              + '<td style="color:#2dd4bf;font-weight:700">' + m.contribute_rate + '</td>'
+              + '<td style="color:#fbbf24;font-weight:700">' + m.consume_rate + '</td></tr>'
+          }).join('')
+        }
+
+        // Cross-tier exchange matrix
+        var exchange = data.exchange || {}
+        var tiers = Object.keys(exchange)
+        var matrixEl = document.getElementById('exchange-matrix')
+        if (matrixEl && tiers.length > 1) {
+          var L = LANGS[currentLang]
+          var tierColor = function(t) { return t === 'premium' ? '#a5b4fc' : '#4ade80' }
+          var headerCols = tiers.map(function(t) {
+            return '<th style="color:' + tierColor(t) + ';padding:6px 14px;text-align:center;white-space:nowrap">' + t + '</th>'
+          }).join('')
+          var bodyRows = tiers.map(function(from) {
+            var cells = tiers.map(function(to) {
+              var val = (exchange[from] || {})[to]
+              var color = from === to ? '#e2e8f0' : (val > 1 ? '#4ade80' : '#f87171')
+              return '<td style="text-align:center;padding:6px 14px;color:' + color + ';font-weight:700">' + (val !== undefined ? val + 'K' : '—') + '</td>'
+            }).join('')
+            return '<tr><td style="color:' + tierColor(from) + ';padding:6px 14px;white-space:nowrap;font-weight:600">' + from + '</td>' + cells + '</tr>'
+          }).join('')
+          matrixEl.innerHTML = '<p style="font-size:.82rem;font-weight:600;color:var(--muted);margin-bottom:8px">'
+            + L['econ.exchange.title'] + '</p>'
+            + '<p style="font-size:.75rem;color:var(--muted);margin-bottom:10px">' + L['econ.exchange.sub'] + '</p>'
+            + '<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:.82rem;min-width:280px">'
+            + '<thead><tr><th style="padding:6px 14px;color:var(--muted);text-align:left;white-space:nowrap">' + L['econ.exchange.from'] + '</th>' + headerCols + '</thead>'
+            + '<tbody>' + bodyRows + '</tbody></table></div>'
+        } else if (matrixEl) {
+          matrixEl.innerHTML = ''
+        }
+      })
+      .catch(function() {
+        tbody.innerHTML = '<tr><td colspan="4" class="rates-empty">—</td></tr>'
+      })
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() { applyLang(currentLang); loadDownloads() })
+    document.addEventListener('DOMContentLoaded', function() { applyLang(currentLang); loadDownloads(); loadRates() })
   } else {
     applyLang(currentLang)
     loadDownloads()
+    loadRates()
   }
   </script>
 </body>

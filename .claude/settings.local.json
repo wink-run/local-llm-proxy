@@ -36,7 +36,14 @@
       "Bash(ADMIN_KEY=x WORKER_TOKEN=x JWT_SECRET=x ../.venv/bin/uvicorn server:app --port 8099 --log-level warning)",
       "Bash(curl -s -o /dev/null -w '%{http_code}' http://localhost:8099/)",
       "Bash(echo \"HTTP status: $\\(curl -s -o /dev/null -w '%{http_code}' http://localhost:8099/\\)\")",
-      "Bash(curl -s http://localhost:8099/)"
+      "Bash(curl -s http://localhost:8099/)",
+      "Bash(curl -s -o /dev/null -w '%{http_code}' http://localhost:8099__TRACKED_VAR__)",
+      "Bash(.venv/bin/python -c \"import server.server; print\\('OK'\\)\")",
+      "Bash(../.venv/bin/python -c \"import server; print\\('OK'\\)\")",
+      "Bash(timeout 4 ../.venv/bin/uvicorn server:app --host 127.0.0.1 --port 18765)",
+      "Bash(../.venv/bin/uvicorn server:app --host 127.0.0.1 --port 18765)",
+      "Bash(curl -s http://127.0.0.1:18765/api/rates)",
+      "Bash(kill %1)"
     ]
   }
 }
