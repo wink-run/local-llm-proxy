@@ -2,11 +2,15 @@
 
 **P2P · OpenAI-compatible · Outbound WebSocket** — turn idle token/compute into **universal credits** you can spend across models and time.
 
-[中文文档](./README.zh-CN.md) · [Source](https://github.com/wink-run/local-llm-proxy)
+[中文文档](./README.zh-CN.md)
+
+<!--
+ · [Source](https://github.com/wink-run/local-llm-proxy)
 
 ```bash
 git clone git@github.com:wink-run/local-llm-proxy.git
 ```
+-->
 
 ## What it does
 

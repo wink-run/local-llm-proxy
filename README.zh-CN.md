@@ -2,11 +2,15 @@
 
 **P2P · OpenAI 兼容 · 出站 WebSocket** —— 把闲置的 Token 额度变成可**跨模型、跨时段**通用的积分。
 
-[English](./README.md) · [源码仓库](https://github.com/wink-run/local-llm-proxy)
+[English](./README.md)
+
+<!--
+ · [源码仓库](https://github.com/wink-run/local-llm-proxy)
 
 ```bash
 git clone git@github.com:wink-run/local-llm-proxy.git
 ```
+-->
 
 ## 是什么、解决什么问题
 
