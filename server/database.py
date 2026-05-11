@@ -40,7 +40,7 @@ async def init_db() -> None:
                 referred_by       INTEGER REFERENCES users(id),
                 show_on_wall      INTEGER DEFAULT 1,
                 wall_display      TEXT DEFAULT 'masked',
-                can_create_apikey INTEGER DEFAULT 0,
+                can_create_apikey INTEGER DEFAULT 1,
                 worker_key        TEXT UNIQUE,
                 created_at        TEXT DEFAULT (datetime('now'))
             )
@@ -129,6 +129,7 @@ async def init_db() -> None:
         await db.commit()
 
     await _migrate()
+    await _migrate_apikey_default_open()
 
 
 async def _migrate() -> None:
@@ -138,6 +139,21 @@ async def _migrate() -> None:
             cols = {r[1] for r in await cur.fetchall()}
         if "user_id" not in cols:
             await db.execute("ALTER TABLE api_keys ADD COLUMN user_id INTEGER REFERENCES users(id)")
+        await db.commit()
+
+
+async def _migrate_apikey_default_open() -> None:
+    """一次性迁移：全体用户默认可自助创建 API Key（无需管理员预先开通）"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT 1 FROM system_config WHERE key='migrate_selfserve_apikey_v1'"
+        ) as cur:
+            if await cur.fetchone():
+                return
+        await db.execute("UPDATE users SET can_create_apikey=1")
+        await db.execute(
+            "INSERT INTO system_config(key,value) VALUES('migrate_selfserve_apikey_v1','1')"
+        )
         await db.commit()
 
 
@@ -216,8 +232,9 @@ async def create_user(email: str, nickname: str, password_hash: str, referred_by
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """INSERT INTO users
-               (email, nickname, password_hash, referral_code, referred_by, worker_key)
-               VALUES (?,?,?,?,?,?)""",
+               (email, nickname, password_hash, referral_code, referred_by, worker_key,
+                can_create_apikey)
+               VALUES (?,?,?,?,?,?,1)""",
             (email, nickname, password_hash, ref_code, referred_by, worker_key),
         )
         await db.commit()
