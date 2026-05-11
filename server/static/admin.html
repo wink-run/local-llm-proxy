@@ -534,7 +534,21 @@ createApp({
       try { await api(`/admin/keys/${id}`,{method:'DELETE'}); keys.value=keys.value.filter(k=>k.id!==id) } catch {}
     }
     function maskKey(key) { return key.slice(0,10)+'••••••••'+key.slice(-4) }
-    async function copyKey(key) { try { await navigator.clipboard.writeText(key) } catch {} }
+    async function copyKey(key) {
+      if (!key) return
+      try { await navigator.clipboard.writeText(key); return } catch (_) {}
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = key
+        ta.setAttribute('readonly', '')
+        ta.style.position = 'fixed'
+        ta.style.left = '-9999px'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      } catch (_) {}
+    }
 
     /* ── Models ── */
     const models = ref([]), modelMsg = ref('')

@@ -82,6 +82,29 @@ td{padding:10px 12px;vertical-align:middle}
 .note-input{padding:7px 12px;background:#1a1d27;border:1px solid #2d3148;border-radius:6px;color:#e2e8f0;font-size:13px;width:200px;outline:none}
 .note-input:focus{border-color:#6366f1}
 .contact-box{background:#1e2a4a;border:1px solid #2d4070;border-radius:8px;padding:14px 16px;color:#93c5fd;font-size:13px;line-height:1.7;white-space:pre-wrap;word-break:break-all}
+/* API 调试（与 admin 调试区样式一致，便于流式对话） */
+.debug-layout{display:flex;flex-direction:column;height:calc(100vh - 220px);min-height:320px}
+.debug-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-shrink:0;flex-wrap:wrap}
+.model-select{padding:7px 12px;background:#1a1d27;border:1px solid #2d3148;border-radius:6px;color:#e2e8f0;font-size:13px;min-width:200px;outline:none;max-width:100%}
+.model-select:focus{border-color:#6366f1}
+.chat-area{flex:1;overflow-y:auto;padding:16px;background:#13151f;border:1px solid #2d3148;border-radius:8px;margin-bottom:12px;display:flex;flex-direction:column;gap:12px}
+.chat-placeholder{text-align:center;color:#4a5568;margin:auto}
+.chat-msg{display:flex;flex-direction:column;max-width:80%}
+.chat-msg.user{align-self:flex-end;align-items:flex-end}
+.chat-msg.assistant{align-self:flex-start;align-items:flex-start}
+.msg-label{font-size:11px;color:#4a5568;margin-bottom:4px;padding:0 4px}
+.msg-bubble{padding:10px 14px;border-radius:10px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.chat-msg.user .msg-bubble{background:#3730a3;color:#e0e7ff;border-radius:10px 2px 10px 10px}
+.chat-msg.assistant .msg-bubble{background:#1a1d27;color:#e2e8f0;border-radius:2px 10px 10px 10px;border:1px solid #2d3148}
+.cursor::after{content:"▋";animation:blink .7s step-end infinite}
+@keyframes blink{50%{opacity:0}}
+.chat-input-area{display:flex;gap:8px;flex-shrink:0}
+.chat-input-area textarea{flex:1;padding:10px 14px;resize:none;height:70px;background:#1a1d27;border:1px solid #2d3148;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;outline:none;line-height:1.5}
+.chat-input-area textarea:focus{border-color:#6366f1}
+.chat-input-area textarea:disabled{opacity:.5}
+.send-btn{padding:0 20px;background:#6366f1;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;white-space:nowrap}
+.send-btn:hover:not(:disabled){background:#5254cc}
+.send-btn:disabled{opacity:.4;cursor:not-allowed}
 .toolbar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
 .toolbar-right{margin-left:auto}
 ::-webkit-scrollbar{width:6px}
@@ -163,8 +186,9 @@ td{padding:10px 12px;vertical-align:middle}
         <div class="section-title">Worker Key</div>
         <p style="color:#64748b;font-size:13px;margin-bottom:12px">{{ T.workerKeyDesc }}</p>
         <div class="copy-row">
-          <div class="copy-val mono">{{ profile.worker_key || '—' }}</div>
-          <button class="btn-sm" @click="copy(profile.worker_key)">{{ T.copy }}</button>
+          <div class="copy-val mono">{{ workerKeyVisible ? (profile.worker_key || '—') : maskKey(profile.worker_key || '') }}</div>
+          <button type="button" class="btn-sm" @click="workerKeyVisible = !workerKeyVisible">{{ workerKeyVisible ? T.hide : T.show }}</button>
+          <button type="button" class="btn-sm" @click="copy(profile.worker_key)">{{ T.copy }}</button>
         </div>
       </div>
       <div class="card">
@@ -248,7 +272,11 @@ td{padding:10px 12px;vertical-align:middle}
           <tr v-if="myKeys.length === 0" class="empty-row"><td colspan="6">{{ T.noKeys }}</td></tr>
           <tr v-for="k in myKeys" :key="k.id" :style="k.is_active ? '' : 'opacity:.5'">
             <td style="color:#64748b">{{ k.id }}</td>
-            <td><span class="mono key-val">{{ maskKey(k.key) }}</span><button class="btn-xs" @click="copy(k.key)" style="margin-left:6px">{{ T.copy }}</button></td>
+            <td>
+              <span class="mono key-val">{{ keyReveal[k.id] ? k.key : maskKey(k.key) }}</span>
+              <button type="button" class="btn-xs" @click="toggleKeyReveal(k.id)" style="margin-left:6px">{{ keyReveal[k.id] ? T.hide : T.show }}</button>
+              <button type="button" class="btn-xs" @click="copy(k.key)">{{ T.copy }}</button>
+            </td>
             <td style="color:#94a3b8">{{ k.note || '—' }}</td>
             <td><span :class="k.is_active ? 'badge badge-on' : 'badge badge-off'">{{ k.is_active ? T.enabled : T.disabled }}</span></td>
             <td style="color:#64748b">{{ fmtTime(k.created_at) }}</td>
@@ -354,6 +382,46 @@ td{padding:10px 12px;vertical-align:middle}
       </div>
     </div>
 
+    <!-- ══ API Debug（使用与本站 OpenAI 兼容接口相同的 Key） ══ -->
+    <div v-show="activeTab === 'debug'" class="tab-content">
+      <div class="card" style="margin-bottom:16px">
+        <div class="section-title">{{ T.debugTitle }}</div>
+        <p style="color:#64748b;font-size:13px;margin-bottom:12px">{{ T.debugHint }}</p>
+        <div class="form-row" style="align-items:flex-end">
+          <div class="form-group" style="flex:1;min-width:220px">
+            <label>{{ T.debugPickKey }}</label>
+            <select v-model="debugApiKey" class="form-input" style="width:100%;max-width:440px;cursor:pointer" @change="fetchDebugModels">
+              <option value="">— {{ T.selectApiKey }} —</option>
+              <option v-for="k in keysForDebug" :key="k.id" :value="k.key">{{ (k.note || ('#' + k.id)) + ' · ' + maskKey(k.key) }}</option>
+            </select>
+          </div>
+          <button type="button" class="btn-sm" @click="fetchDebugModels">{{ T.refreshModels }}</button>
+        </div>
+        <p v-if="keysForDebug.length === 0" style="color:#f59e0b;font-size:12px;margin-top:8px">{{ T.debugNoKeys }}</p>
+      </div>
+      <div class="debug-layout">
+        <div class="debug-toolbar">
+          <select v-model="debugModel" class="model-select">
+            <option value="">— {{ T.selectModel }} —</option>
+            <option v-for="m in debugModels" :key="m" :value="m">{{ m }}</option>
+          </select>
+          <button type="button" class="btn-sm" @click="clearDebugChat">{{ T.clearChat }}</button>
+          <span v-if="debugModels.length === 0 && debugApiKey" style="color:#f59e0b;font-size:12px">⚠ {{ T.noOnlineModels }}</span>
+        </div>
+        <div class="chat-area" ref="debugChatArea">
+          <div v-if="debugChatMsgs.length === 0" class="chat-placeholder">{{ T.chatPlaceholder }}</div>
+          <div v-for="m in debugChatMsgs" :key="m.id" :class="['chat-msg', m.role]">
+            <div class="msg-label">{{ m.role === 'user' ? T.you : 'AI' }}</div>
+            <div :class="['msg-bubble', m.streaming ? 'cursor' : '']">{{ m.content }}</div>
+          </div>
+        </div>
+        <div class="chat-input-area">
+          <textarea v-model="debugChatInput" :placeholder="T.chatInputHint" :disabled="debugChatLoading" @keydown.enter.exact.prevent="sendDebugMsg"></textarea>
+          <button type="button" class="send-btn" :disabled="debugChatLoading || !debugModel || !debugApiKey" @click="sendDebugMsg">{{ debugChatLoading ? '…' : T.send }}</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ══ Referral ══ -->
     <div v-show="activeTab === 'referral'" class="tab-content">
       <div class="card">
@@ -375,7 +443,7 @@ td{padding:10px 12px;vertical-align:middle}
 </div>
 
 <script>
-const { createApp, ref, computed, onMounted } = Vue
+const { createApp, ref, computed, onMounted, nextTick, reactive } = Vue
 
 const LANGS = {
   zh: {
@@ -384,12 +452,12 @@ const LANGS = {
     email: '邮箱', password: '密码', nickname: '昵称（可选）', nicknamePlaceholder: '留空使用邮箱前缀',
     referralCode: '推荐码（可选）', referralPlaceholder: '好友推荐码',
     portalTitle: '用户中心', logout: '退出',
-    tabs: { overview:'积分概览', keys:'我的 API Keys', settlements:'结算明细', transactions:'积分流水', purchase:'购买积分', referral:'推荐分享' },
+    tabs: { overview:'积分概览', keys:'我的 API Keys', debug:'API 调试', settlements:'结算明细', transactions:'积分流水', purchase:'购买积分', referral:'推荐分享' },
     balance: '当前余额', earned: '累计获得', spent: '累计消费', credits: '积分',
     accountInfo: '账户信息', nickname2: '昵称', registeredAt: '注册时间',
     apikeyPerm: 'API Key 权限', permGranted: '已开通', permNotGranted: '未开通（线下购买后开通）',
     workerKeyDesc: '将此 Key 填入 Agent 注册命令中，贡献算力可自动累积积分。',
-    copy: '复制',
+    copy: '复制', show: '显示', hide: '隐藏',
     notePlaceholder: '备注（可选）', newKey: '新建 Key', note: '备注', status: '状态',
     createdAt: '创建时间', actions: '操作', noKeys: '暂无 API Key，点击「新建 Key」创建',
     enabled: '启用', disabled: '禁用', enable: '启用', disable: '禁用', delete: '删除',
@@ -416,6 +484,12 @@ const LANGS = {
     model: '模型', tier: '类型',
     earnRate: '贡献率（积分/千Token）', spendRate: '消费率（积分/千Token）',
     econNote: '质量系数范围 0.5 ~ 1.5，由在线时长占比（40%）+ 响应延迟（40%）+ 请求成功率（20%）综合决定。贡献率 > 消费率，持续在线贡献可积累大量可用积分。',
+    debugTitle: 'API 调试', debugHint: '使用下方列表中的 Key 作为 Bearer，请求与 OpenAI 兼容的 /v1/chat/completions（流式），消耗积分规则与外部调用一致。',
+    debugPickKey: '用于调试的 API Key', selectApiKey: '请选择 Key', refreshModels: '刷新模型列表',
+    debugNoKeys: '请先在「我的 API Keys」中创建 Key。',
+    selectModel: '选择模型', clearChat: '清空对话', noOnlineModels: '当前无可用模型（请确认 Agent 已上线）',
+    chatPlaceholder: '选择模型并输入消息后发送', chatInputHint: '输入消息… Enter 发送，Shift+Enter 换行',
+    you: '我', send: '发送',
   },
   en: {
     authSubtitle: 'Contribute · Earn Credits · Enjoy AI',
@@ -423,12 +497,12 @@ const LANGS = {
     email: 'Email', password: 'Password', nickname: 'Nickname (optional)', nicknamePlaceholder: 'Defaults to email prefix',
     referralCode: 'Referral code (optional)', referralPlaceholder: "Friend's referral code",
     portalTitle: 'User Portal', logout: 'Sign Out',
-    tabs: { overview:'Credits', keys:'API Keys', settlements:'Settlements', transactions:'Transactions', purchase:'Buy Credits', referral:'Referral' },
+    tabs: { overview:'Credits', keys:'API Keys', debug:'API Debug', settlements:'Settlements', transactions:'Transactions', purchase:'Buy Credits', referral:'Referral' },
     balance: 'Balance', earned: 'Total Earned', spent: 'Total Spent', credits: 'credits',
     accountInfo: 'Account Info', nickname2: 'Nickname', registeredAt: 'Registered',
     apikeyPerm: 'API Key Access', permGranted: 'Enabled', permNotGranted: 'Not enabled (purchase credits to unlock)',
     workerKeyDesc: 'Add this key to your Agent registration command to earn credits automatically.',
-    copy: 'Copy',
+    copy: 'Copy', show: 'Show', hide: 'Hide',
     notePlaceholder: 'Note (optional)', newKey: 'New Key', note: 'Note', status: 'Status',
     createdAt: 'Created', actions: 'Actions', noKeys: 'No API keys yet — click "New Key"',
     enabled: 'Active', disabled: 'Disabled', enable: 'Enable', disable: 'Disable', delete: 'Delete',
@@ -455,6 +529,12 @@ const LANGS = {
     model: 'Model', tier: 'Tier',
     earnRate: 'Earn Rate (credits/K tokens)', spendRate: 'Spend Rate (credits/K tokens)',
     econNote: 'Quality multiplier range: 0.5 ~ 1.5 — weighted by uptime (40%) + latency (40%) + success rate (20%). Earn rate > spend rate by design: active contributors accumulate credits over time.',
+    debugTitle: 'API Debug', debugHint: 'Uses your API key as Bearer against OpenAI-compatible POST /v1/chat/completions (streaming). Billing matches external clients.',
+    debugPickKey: 'API key for debug', selectApiKey: 'Select a key', refreshModels: 'Refresh models',
+    debugNoKeys: 'Create a key under API Keys first.',
+    selectModel: 'Model', clearChat: 'Clear', noOnlineModels: 'No models available — ensure an Agent is online',
+    chatPlaceholder: 'Pick a model and type a message', chatInputHint: 'Message… Enter to send, Shift+Enter newline',
+    you: 'You', send: 'Send',
   }
 }
 
@@ -479,6 +559,7 @@ createApp({
       const all = [
         { key:'overview',     label: tabs.overview },
         { key:'keys',         label: tabs.keys, requireApikey: true },
+        { key:'debug',        label: tabs.debug, requireApikey: true },
         { key:'settlements',  label: tabs.settlements },
         { key:'transactions', label: tabs.transactions },
         { key:'purchase',     label: tabs.purchase },
@@ -539,6 +620,7 @@ createApp({
     function switchTab(k) {
       activeTab.value = k
       if (k === 'keys')         fetchMyKeys()
+      if (k === 'debug')        { fetchMyKeys().then(() => initDebugTab()) }
       if (k === 'settlements')  fetchSettlements()
       if (k === 'transactions') fetchTransactions()
       if (k === 'purchase')     fetchPurchaseOrders()
@@ -556,7 +638,16 @@ createApp({
       if (!confirm(T.value.confirmDelete)) return
       try { await userApi(`/user/keys/${id}`,{method:'DELETE'}); myKeys.value=myKeys.value.filter(k=>k.id!==id) } catch {}
     }
-    function maskKey(key) { return key.slice(0,10)+'••••••••'+key.slice(-4) }
+    function maskKey(key) {
+      if (!key || key.length < 12) return key ? key.slice(0, 4) + '••••' : '—'
+      return key.slice(0, 10) + '••••••••' + key.slice(-4)
+    }
+    // API Key 行：切换明文显示（默认脱敏）
+    const keyReveal = ref({})
+    function toggleKeyReveal(id) {
+      keyReveal.value = { ...keyReveal.value, [id]: !keyReveal.value[id] }
+    }
+    const workerKeyVisible = ref(false)
 
     const settlements = ref([])
     async function fetchSettlements() { try { const d = await (await userApi('/user/settlements')).json(); settlements.value=d.settlements||[] } catch {} }
@@ -584,7 +675,114 @@ createApp({
 
     const referralLink = computed(() => profile.value.referral_code ? `${location.origin}/app?ref=${profile.value.referral_code}` : '')
 
-    async function copy(text) { if (text) try { await navigator.clipboard.writeText(text) } catch {} }
+    /** 复制：clipboard API 在非 HTTPS 下常失败，备用 execCommand */
+    async function copy(text) {
+      if (!text) return
+      try {
+        await navigator.clipboard.writeText(text)
+        return
+      } catch (_) { /* 降级 */ }
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.setAttribute('readonly', '')
+        ta.style.position = 'fixed'
+        ta.style.left = '-9999px'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      } catch (_) {}
+    }
+
+    /* ── API 调试：Bearer 使用用户 Key，走 /v1/chat/completions ── */
+    const debugApiKey = ref('')
+    const debugModel = ref('')
+    const debugModels = ref([])
+    const debugChatMsgs = ref([])
+    const debugChatInput = ref('')
+    const debugChatLoading = ref(false)
+    const debugChatArea = ref(null)
+    let debugMsgSeq = 0
+    const keysForDebug = computed(() => (myKeys.value || []).filter(k => k.is_active))
+
+    async function fetchDebugModels() {
+      const k = (debugApiKey.value || '').trim()
+      if (!k) { debugModels.value = []; return }
+      try {
+        const r = await fetch('/v1/models', { headers: { Authorization: `Bearer ${k}` } })
+        if (!r.ok) { debugModels.value = []; return }
+        const d = await r.json()
+        debugModels.value = (d.data || []).map(x => x.id).sort()
+      } catch { debugModels.value = [] }
+    }
+
+    function initDebugTab() {
+      const list = keysForDebug.value
+      if (!debugApiKey.value && list.length) debugApiKey.value = list[0].key
+      fetchDebugModels()
+    }
+
+    function clearDebugChat() { debugChatMsgs.value = [] }
+    function scrollDebugBottom() {
+      nextTick(() => {
+        if (debugChatArea.value) debugChatArea.value.scrollTop = debugChatArea.value.scrollHeight
+      })
+    }
+
+    async function sendDebugMsg() {
+      const text = debugChatInput.value.trim()
+      const ak = (debugApiKey.value || '').trim()
+      if (!text || !debugModel.value || debugChatLoading.value || !ak) return
+      debugChatMsgs.value.push({ id: ++debugMsgSeq, role: 'user', content: text, streaming: false })
+      debugChatInput.value = ''
+      const aMsg = reactive({ id: ++debugMsgSeq, role: 'assistant', content: '', streaming: true })
+      debugChatMsgs.value.push(aMsg)
+      debugChatLoading.value = true
+      scrollDebugBottom()
+      const history = debugChatMsgs.value.slice(0, -1).map(m => ({ role: m.role, content: m.content }))
+      try {
+        const resp = await fetch('/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ak}` },
+          body: JSON.stringify({ model: debugModel.value, messages: history, stream: true }),
+        })
+        if (!resp.ok) {
+          aMsg.content = `HTTP ${resp.status}`
+          aMsg.streaming = false
+          return
+        }
+        const reader = resp.body.getReader()
+        const decoder = new TextDecoder()
+        let buf = ''
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buf += decoder.decode(value, { stream: true })
+          const lines = buf.split('\n')
+          buf = lines.pop()
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            const payload = line.slice(6)
+            if (payload === '[DONE]') break
+            try {
+              const chunk = JSON.parse(payload)
+              const delta = chunk.choices?.[0]?.delta?.content || ''
+              if (delta) {
+                aMsg.content += delta
+                scrollDebugBottom()
+              }
+            } catch (_) {}
+          }
+        }
+      } catch (e) {
+        aMsg.content = `Error: ${e.message}`
+      } finally {
+        aMsg.streaming = false
+        debugChatLoading.value = false
+        scrollDebugBottom()
+      }
+    }
 
     function fmtTime(iso) { if (!iso) return '—'; return new Date(iso).toLocaleString(lang.value==='zh'?'zh-CN':'en-US',{hour12:false}) }
     function fmt1(n) { return n==null?'…':Number(n).toFixed(1) }
@@ -627,6 +825,9 @@ createApp({
       purchaseAmt, purchaseNote, purchaseLoading, purchaseMsg, purchaseMsgOk,
       purchaseOrders, contactInfo, submitPurchase, fetchPurchaseOrders,
       rateModels, rateExchange, exchangeTiers, referralLink, copy, fmtTime, fmt1, fmt2, fmt0, pct,
+      keyReveal, toggleKeyReveal, workerKeyVisible,
+      debugApiKey, debugModel, debugModels, keysForDebug, fetchDebugModels, initDebugTab,
+      debugChatMsgs, debugChatInput, debugChatLoading, debugChatArea, clearDebugChat, sendDebugMsg,
       txLabel, txBadge, orderLabel, orderBadge,
     }
   }
