@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import time
 import uuid
 
 from fastapi import HTTPException
@@ -11,9 +12,20 @@ from worker_pool import pool
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "120"))
 
 
-async def handle_chat(body: dict):
+async def handle_chat(body: dict, consumer_user_id: int | None = None):
     model = body.get("model", "")
     streaming = body.get("stream", False)
+
+    # 消费积分检查（user_id 有值时）
+    if consumer_user_id is not None:
+        import database as db
+        rate = await db.get_consume_rate(model)
+        if rate is None:
+            raise HTTPException(404, f"Model '{model}' not found or disabled")
+        # 粗估：先检查余额是否 > 0，实际扣费在请求完成后（非阻塞乐观扣费）
+        user = await db.get_user_by_id(consumer_user_id)
+        if not user or user["credits_balance"] <= 0:
+            raise HTTPException(402, "Insufficient credits")
 
     worker = pool.pick(model)
     if not worker:
@@ -21,7 +33,11 @@ async def handle_chat(body: dict):
 
     req_id = str(uuid.uuid4())
     q: asyncio.Queue = asyncio.Queue()
-    worker.pending[req_id] = q
+    worker.pending[req_id] = {
+        "queue": q,
+        "model": model,
+        "dispatch_time": time.time(),
+    }
     worker.active_requests += 1
 
     try:
@@ -52,7 +68,6 @@ async def handle_chat(body: dict):
             headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
         )
 
-    # Non-streaming: wait for single chunk containing full JSON response
     try:
         while True:
             kind, data = await asyncio.wait_for(q.get(), timeout=REQUEST_TIMEOUT)

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -15,43 +16,114 @@ from fastapi.staticfiles import StaticFiles
 import database as db
 from admin_router import router as admin_router
 from dispatch import handle_chat
+from settler import run_settler
+from user_router import router as user_router
 from worker_pool import pool, WorkerConnection
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("server")
 
 WORKER_TOKEN = os.getenv("WORKER_TOKEN", "change-me-worker")
-
-# 落地页可下载的 PyInstaller 产物目录（agent/build.sh 后复制至此）
 BASE_DIR = Path(__file__).resolve().parent
 DOWNLOADS_DIR = BASE_DIR / "static" / "downloads"
 
-_bearer = HTTPBearer()
+_bearer = HTTPBearer(auto_error=False)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.init_db()
     logger.info("Database ready")
+    task = asyncio.create_task(run_settler())
     yield
+    task.cancel()
 
 
 app = FastAPI(title="LLM Proxy", lifespan=lifespan)
 app.include_router(admin_router, prefix="/admin")
+app.include_router(user_router, prefix="/user")
 
+
+# ── 静态文件 & 落地页 ─────────────────────────────────────────────────────────
 
 @app.get("/")
-async def landing_page():
-    """项目介绍落地页（静态 HTML）。"""
+async def landing():
     return FileResponse("static/landing.html")
 
 
+@app.get("/app")
+async def user_app():
+    return FileResponse("static/app.html")
+
+
+@app.get("/wall")
+async def wall_page():
+    return FileResponse("static/wall.html")
+
+
+@app.get("/api/wall")
+async def wall():
+    users = await db.get_wall_users()
+    return {"users": users}
+
+
+def _mask_name(name: str) -> str:
+    """T***r 脱敏：保留首尾字符，中间用星号"""
+    if not name:
+        return "***"
+    if len(name) <= 2:
+        return name[0] + "*"
+    return name[0] + "*" * (len(name) - 2) + name[-1]
+
+
+def _stars(multiplier: float) -> int:
+    if multiplier >= 1.3: return 5
+    if multiplier >= 1.1: return 4
+    if multiplier >= 0.9: return 3
+    if multiplier >= 0.7: return 2
+    return 1
+
+
+@app.get("/api/workers-wall")
+async def workers_wall():
+    """公开接口：大屏展示用，脱敏后返回在线 Worker 列表"""
+    rows = []
+    for w in pool.all_workers():
+        stats = w.period_stats
+        total_req = sum(s["requests"] for s in stats.values())
+        total_success = sum(s["success"] for s in stats.values())
+        total_latency = sum(s["latency_sum"] for s in stats.values())
+        total_tokens = sum(s["output_tokens"] for s in stats.values())
+
+        avg_latency = total_latency / total_req if total_req > 0 else 0
+        success_rate = total_success / total_req if total_req > 0 else 1.0
+        online_mins = w.period_online_mins()
+
+        # 简单估算当前质量分
+        multiplier = 1.0
+        if total_req > 0:
+            online_f = min(0.5 + 0.8 * min(online_mins / 5, 1.0), 1.3)
+            latency_f = max(0.6, min(1.5, 500 / avg_latency)) if avg_latency > 0 else 1.0
+            stability_f = 0.5 + 0.7 * success_rate
+            multiplier = round(max(0.5, min(1.5, 0.4 * online_f + 0.4 * latency_f + 0.2 * stability_f)), 3)
+
+        rows.append({
+            "worker_id": w.worker_id,
+            "name": _mask_name(w.name),
+            "models": w.models,
+            "active_requests": w.active_requests,
+            "period_tokens": total_tokens,
+            "avg_latency_ms": round(avg_latency),
+            "multiplier": multiplier,
+            "stars": _stars(multiplier),
+            "online_mins": round(online_mins, 1),
+            "connected_at": w.connected_at.isoformat(),
+        })
+    return {"workers": rows, "total": len(rows)}
+
+
 @app.get("/api/agent-downloads")
-async def list_agent_downloads():
-    """列出 static/downloads/ 下可供下载的 llm-agent 构建文件。"""
+async def agent_downloads():
     items: list[dict] = []
     if not DOWNLOADS_DIR.is_dir():
         return {"items": items}
@@ -59,47 +131,32 @@ async def list_agent_downloads():
     for p in sorted(DOWNLOADS_DIR.iterdir()):
         if not p.is_file() or p.name.startswith("."):
             continue
-        if p.name.upper().startswith("README"):
-            continue
         if p.parent.resolve() != root:
             continue
         try:
             st = p.stat()
         except OSError:
             continue
-        items.append({
-            "filename": p.name,
-            "url": f"/download/llm-agent/{p.name}",
-            "bytes": st.st_size,
-        })
+        items.append({"filename": p.name, "url": f"/download/llm-agent/{p.name}", "bytes": st.st_size})
     return {"items": items}
 
 
 @app.get("/download/llm-agent/{filename}")
-async def download_llm_agent(filename: str):
-    """以附件形式下载，避免浏览器误判类型。"""
+async def download_agent(filename: str):
     safe = Path(filename).name
     if not safe or safe != filename:
         raise HTTPException(400, "Invalid filename")
     path = DOWNLOADS_DIR / safe
-    root = DOWNLOADS_DIR.resolve()
-    if not path.is_file() or path.parent.resolve() != root:
+    if not path.is_file() or path.parent.resolve() != DOWNLOADS_DIR.resolve():
         raise HTTPException(404, "Not found")
-    return FileResponse(
-        path,
-        filename=safe,
-        media_type="application/octet-stream",
-        content_disposition_type="attachment",
-    )
+    return FileResponse(path, filename=safe, media_type="application/octet-stream",
+                        content_disposition_type="attachment")
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-async def auth_user(creds: HTTPAuthorizationCredentials = Depends(_bearer)):
-    if not await db.verify_key(creds.credentials):
-        raise HTTPException(401, "Invalid API key")
-
+# ── Worker WebSocket ──────────────────────────────────────────────────────────
 
 @app.websocket("/ws/worker")
 async def worker_ws(ws: WebSocket):
@@ -117,10 +174,21 @@ async def worker_ws(ws: WebSocket):
         name = (msg.get("name") or "").strip() or f"worker-{worker_id}"
         models = [m.strip() for m in msg.get("models", []) if m.strip()]
 
-        worker = WorkerConnection(ws=ws, models=models, worker_id=worker_id, name=name)
+        # 通过 worker_key 关联用户
+        user_id: Optional[int] = None
+        worker_key = msg.get("worker_key", "")
+        if worker_key:
+            user = await db.get_user_by_worker_key(worker_key)
+            if user:
+                user_id = user["id"]
+
+        worker = WorkerConnection(
+            ws=ws, models=models, worker_id=worker_id,
+            name=name, user_id=user_id,
+        )
         pool.add(worker)
         await ws.send_text(json.dumps({"type": "registered", "worker_id": worker_id}))
-        logger.info(f"Worker online: {name} ({worker_id}) models={models}")
+        logger.info(f"Worker online: {name} ({worker_id}) user={user_id} models={models}")
 
         while True:
             raw = await ws.receive_text()
@@ -129,18 +197,31 @@ async def worker_ws(ws: WebSocket):
             if not req_id or req_id not in worker.pending:
                 continue
 
-            q = worker.pending[req_id]
+            entry = worker.pending[req_id]
+            q = entry["queue"]
             kind = msg.get("type")
+
             if kind == "chunk":
                 await q.put(("chunk", msg.get("data", "")))
+
             elif kind == "done":
                 await q.put(("done", None))
                 worker.pending.pop(req_id, None)
                 worker.active_requests = max(0, worker.active_requests - 1)
+                # 记录周期统计
+                usage = msg.get("usage") or {}
+                output_tokens = int(
+                    usage.get("completion_tokens") or usage.get("output_tokens") or 0
+                )
+                latency_ms = (time.time() - entry["dispatch_time"]) * 1000
+                worker.record_complete(entry["model"], output_tokens, True, latency_ms)
+
             elif kind == "error":
                 await q.put(("error", msg.get("error", "worker error")))
                 worker.pending.pop(req_id, None)
                 worker.active_requests = max(0, worker.active_requests - 1)
+                latency_ms = (time.time() - entry["dispatch_time"]) * 1000
+                worker.record_complete(entry["model"], 0, False, latency_ms)
 
     except WebSocketDisconnect:
         pass
@@ -151,14 +232,26 @@ async def worker_ws(ws: WebSocket):
     finally:
         if worker:
             pool.remove(worker)
-            for q in worker.pending.values():
-                await q.put(("error", "worker disconnected"))
+            for entry in worker.pending.values():
+                await entry["queue"].put(("error", "worker disconnected"))
             worker.pending.clear()
             logger.info(f"Worker offline: {worker.name} ({worker.worker_id})")
 
 
-@app.get("/v1/models", dependencies=[Depends(auth_user)])
-async def list_models():
+# ── 用户 LLM 接口 ─────────────────────────────────────────────────────────────
+
+async def auth_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer)):
+    """验证用户 API Key，返回 (key_info_dict)"""
+    if not creds:
+        raise HTTPException(401, "Missing API key")
+    info = await db.verify_key(creds.credentials)
+    if not info:
+        raise HTTPException(401, "Invalid or disabled API key")
+    return info
+
+
+@app.get("/v1/models")
+async def list_models(key_info: dict = Depends(auth_user)):
     return {
         "object": "list",
         "data": [
@@ -168,6 +261,24 @@ async def list_models():
     }
 
 
-@app.post("/v1/chat/completions", dependencies=[Depends(auth_user)])
-async def chat_completions(request: Request):
-    return await handle_chat(await request.json())
+@app.post("/v1/chat/completions")
+async def chat_completions(request: Request, key_info: dict = Depends(auth_user)):
+    body = await request.json()
+    consumer_user_id: Optional[int] = key_info.get("user_id")
+    resp = await handle_chat(body, consumer_user_id=consumer_user_id)
+
+    # 非流式：异步扣费（已从 handle_chat 拿到响应）
+    if consumer_user_id and isinstance(resp, dict):
+        model = body.get("model", "")
+        usage = resp.get("usage") or {}
+        total_tokens = int(
+            (usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+            + (usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+        )
+        if total_tokens > 0:
+            rate = await db.get_consume_rate(model)
+            if rate:
+                cost = total_tokens / 1000 * rate
+                await db.deduct_credits(consumer_user_id, cost, model_name=model, tokens=total_tokens)
+
+    return resp

@@ -49,16 +49,18 @@ def cli():
 @click.option("--token",     required=True, help="Worker Token（由管理员提供）")
 @click.option("--models",    required=True, help="支持的模型，逗号分隔，如 qwen3-32b,qwen3-7b")
 @click.option("--llm-url",   required=True, help="内网 LLM base URL，如 http://localhost:11434")
-@click.option("--llm-token", default="",    help="内网 LLM 的 API Token（可选）")
-@click.option("--name",      default="",    help="节点名称（默认使用主机名）")
+@click.option("--llm-token",   default="",    help="内网 LLM 的 API Token（可选）")
+@click.option("--name",        default="",    help="节点名称（默认使用主机名）")
+@click.option("--worker-key",  default="",    help="用户 Worker Key（登录用户中心后获取，用于积分归属）")
 @click.option("--forward-log", is_flag=True, default=False, help="在配置中启用转发日志（也可用 start --forward-log 临时开启）")
-@click.option("--config",    default=str(CONFIG_PATH), help="配置文件保存路径")
-def register(server, token, models, llm_url, llm_token, name, forward_log, config):
+@click.option("--config",      default=str(CONFIG_PATH), help="配置文件保存路径")
+def register(server, token, models, llm_url, llm_token, name, worker_key, forward_log, config):
     """注册并保存 Agent 配置"""
     cfg = {
         "server_url":   server,
         "worker_token": token,
         "name":         name.strip() or socket.gethostname(),
+        "worker_key":   worker_key,
         "models":       [m.strip() for m in models.split(",") if m.strip()],
         "llm_base_url": llm_url.rstrip("/"),
         "llm_token":    llm_token,
@@ -126,19 +128,28 @@ async def _forward_streaming(req_id: str, payload: dict, send_q: asyncio.Queue, 
             ) as resp:
                 resp.raise_for_status()
                 log_forward(cfg, f"[forward] stream http_status={resp.status_code} req_id={req_id}")
+                last_usage = None
                 async for line in resp.aiter_lines():
                     if not line:
                         continue
                     if line == "data: [DONE]":
                         break
                     chunk_lines += 1
+                    # 尝试提取 usage（OpenAI 在最后一个 chunk 里携带）
+                    if line.startswith("data: "):
+                        try:
+                            chunk_data = json.loads(line[6:])
+                            if chunk_data.get("usage"):
+                                last_usage = chunk_data["usage"]
+                        except Exception:
+                            pass
                     await send_q.put(json.dumps({
                         "type": "chunk",
                         "req_id": req_id,
                         "data": line + "\n\n",
                     }))
         log_forward(cfg, f"[forward] stream done req_id={req_id} sse_lines={chunk_lines}")
-        await send_q.put(json.dumps({"type": "done", "req_id": req_id}))
+        await send_q.put(json.dumps({"type": "done", "req_id": req_id, "usage": last_usage}))
     except Exception as e:
         log_forward(cfg, f"[forward] stream error req_id={req_id} {e!r}")
         await send_q.put(json.dumps({"type": "error", "req_id": req_id, "error": str(e)}))
@@ -161,12 +172,17 @@ async def _forward_non_streaming(req_id: str, payload: dict, send_q: asyncio.Que
                 cfg,
                 f"[forward] json http_status={resp.status_code} req_id={req_id} bytes={len(body)}",
             )
+            usage = None
+            try:
+                usage = resp.json().get("usage")
+            except Exception:
+                pass
             await send_q.put(json.dumps({
                 "type": "chunk",
                 "req_id": req_id,
                 "data": body,
             }))
-            await send_q.put(json.dumps({"type": "done", "req_id": req_id}))
+            await send_q.put(json.dumps({"type": "done", "req_id": req_id, "usage": usage}))
     except Exception as e:
         log_forward(cfg, f"[forward] json error req_id={req_id} {e!r}")
         await send_q.put(json.dumps({"type": "error", "req_id": req_id, "error": str(e)}))
@@ -194,12 +210,13 @@ async def run_session(cfg: dict) -> None:
         ping_interval=30,
         ping_timeout=10,
     ) as ws:
-        # Register
+        # Register（携带 worker_key 用于积分归属）
         await ws.send(json.dumps({
-            "type":   "register",
-            "token":  cfg["worker_token"],
-            "name":   cfg["name"],
-            "models": cfg["models"],
+            "type":       "register",
+            "token":      cfg["worker_token"],
+            "name":       cfg["name"],
+            "models":     cfg["models"],
+            "worker_key": cfg.get("worker_key", ""),
         }))
 
         resp = json.loads(await ws.recv())

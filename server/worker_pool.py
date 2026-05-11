@@ -1,6 +1,7 @@
 import asyncio
 import json
 import random
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
@@ -12,14 +13,40 @@ class WorkerConnection:
     models: list
     worker_id: str
     name: str
+    user_id: Optional[int] = None
     connected_at: datetime = field(default_factory=datetime.now)
     active_requests: int = 0
+    # req_id -> {queue, model, dispatch_time}
     pending: dict = field(default_factory=dict)
     _send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # 5 分钟周期统计
+    period_start: float = field(default_factory=time.time)
+    # {model: {output_tokens, requests, success, latency_sum}}
+    period_stats: dict = field(default_factory=dict)
 
     async def send(self, data: dict) -> None:
         async with self._send_lock:
             await self.ws.send_text(json.dumps(data))
+
+    def record_complete(self, model: str, output_tokens: int, success: bool, latency_ms: float) -> None:
+        s = self.period_stats.setdefault(
+            model, {"output_tokens": 0, "requests": 0, "success": 0, "latency_sum": 0.0}
+        )
+        s["output_tokens"] += output_tokens
+        s["requests"] += 1
+        if success:
+            s["success"] += 1
+        s["latency_sum"] += latency_ms
+
+    def take_period(self) -> dict:
+        """取走当前周期数据并重置，返回快照"""
+        snapshot = dict(self.period_stats)
+        self.period_stats = {}
+        self.period_start = time.time()
+        return snapshot
+
+    def period_online_mins(self) -> float:
+        return (time.time() - self.period_start) / 60
 
     def to_dict(self) -> dict:
         return {
@@ -28,6 +55,7 @@ class WorkerConnection:
             "models": self.models,
             "connected_at": self.connected_at.isoformat(),
             "active_requests": self.active_requests,
+            "user_id": self.user_id,
         }
 
 
@@ -53,6 +81,9 @@ class WorkerPool:
 
     def list_workers(self) -> list[dict]:
         return [w.to_dict() for w in self._workers]
+
+    def all_workers(self) -> list[WorkerConnection]:
+        return list(self._workers)
 
 
 pool = WorkerPool()

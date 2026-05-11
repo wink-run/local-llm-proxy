@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Proxy — 用户中心</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #0f1117;
+  color: #e2e8f0;
+  font-size: 14px;
+  min-height: 100vh;
+}
+
+/* ── Auth ── */
+.auth-overlay {
+  position: fixed; inset: 0;
+  background: #0f1117;
+  display: flex; align-items: center; justify-content: center;
+}
+.auth-box {
+  background: #1a1d27;
+  border: 1px solid #2d3148;
+  border-radius: 12px;
+  padding: 36px 40px;
+  width: 400px;
+}
+.auth-box h2 { font-size: 22px; margin-bottom: 4px; color: #fff; text-align: center; }
+.auth-box .subtitle { color: #64748b; font-size: 13px; text-align: center; margin-bottom: 24px; }
+
+.auth-tabs { display: flex; gap: 0; margin-bottom: 24px; border-bottom: 1px solid #2d3148; }
+.auth-tabs button {
+  flex: 1; padding: 10px; background: transparent; border: none;
+  color: #64748b; cursor: pointer; font-size: 14px;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.auth-tabs button.active { color: #6366f1; border-bottom-color: #6366f1; }
+
+label { display: block; color: #94a3b8; font-size: 12px; margin-bottom: 5px; }
+.field { margin-bottom: 14px; }
+input[type=text], input[type=email], input[type=password] {
+  width: 100%; padding: 9px 13px;
+  background: #0f1117; border: 1px solid #2d3148;
+  border-radius: 8px; color: #e2e8f0; font-size: 14px;
+  outline: none; transition: border-color .15s;
+}
+input:focus { border-color: #6366f1; }
+
+.btn-block {
+  width: 100%; padding: 10px;
+  background: #6366f1; color: #fff;
+  border: none; border-radius: 8px; cursor: pointer; font-size: 14px;
+  margin-top: 4px; transition: background .15s;
+}
+.btn-block:hover:not(:disabled) { background: #5254cc; }
+.btn-block:disabled { opacity: .5; cursor: not-allowed; }
+.err { color: #f87171; font-size: 13px; margin-top: 10px; text-align: center; }
+.ok  { color: #4ade80; font-size: 13px; margin-top: 10px; text-align: center; }
+
+/* ── Layout ── */
+.app { display: flex; flex-direction: column; min-height: 100vh; }
+
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px; height: 56px;
+  background: #1a1d27; border-bottom: 1px solid #2d3148; flex-shrink: 0;
+}
+.header-title { font-size: 16px; font-weight: 600; color: #fff; }
+.header-title span { color: #6366f1; }
+.header-user { display: flex; align-items: center; gap: 12px; }
+.header-user .email { color: #64748b; font-size: 13px; }
+.credit-badge {
+  background: #1e2a4a; color: #93c5fd;
+  padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 600;
+}
+
+nav {
+  display: flex; gap: 4px;
+  padding: 12px 24px 0;
+  background: #1a1d27; border-bottom: 1px solid #2d3148; flex-shrink: 0;
+  overflow-x: auto;
+}
+nav button {
+  padding: 8px 18px; white-space: nowrap;
+  background: transparent; border: none; border-radius: 6px 6px 0 0;
+  color: #94a3b8; cursor: pointer; font-size: 14px; transition: all .15s;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+nav button:hover  { color: #e2e8f0; }
+nav button.active { color: #6366f1; border-bottom-color: #6366f1; background: #0f1117; }
+
+.tab-content { flex: 1; padding: 24px; max-width: 900px; width: 100%; margin: 0 auto; }
+
+/* ── Buttons ── */
+.btn { padding: 7px 14px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px; transition: background .15s; }
+.btn-indigo { background: #6366f1; color: #fff; }
+.btn-indigo:hover { background: #5254cc; }
+.btn-sm { padding: 5px 12px; border-radius: 6px; border: 1px solid #2d3148; background: #1a1d27; color: #94a3b8; cursor: pointer; font-size: 12px; }
+.btn-sm:hover { color: #e2e8f0; border-color: #4a4f6a; }
+.btn-xs { padding: 3px 8px; border-radius: 4px; border: 1px solid #2d3148; background: transparent; color: #94a3b8; cursor: pointer; font-size: 11px; }
+.btn-xs:hover { color: #e2e8f0; }
+.btn-danger { border-color: #7f1d1d; color: #f87171; }
+.btn-danger:hover { background: #450a0a; color: #fca5a5; }
+
+/* ── Cards ── */
+.card {
+  background: #1a1d27; border: 1px solid #2d3148;
+  border-radius: 10px; padding: 20px; margin-bottom: 20px;
+}
+.card-title { font-size: 13px; color: #64748b; margin-bottom: 8px; }
+.card-value { font-size: 28px; font-weight: 700; color: #fff; }
+.card-value .unit { font-size: 14px; color: #64748b; margin-left: 4px; }
+.cards-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 24px; }
+
+/* ── Section ── */
+.section-title {
+  font-size: 15px; font-weight: 600; color: #e2e8f0;
+  margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid #2d3148;
+  display: flex; align-items: center; gap: 8px;
+}
+
+/* ── Table ── */
+table { width: 100%; border-collapse: collapse; }
+thead th {
+  text-align: left; padding: 10px 12px;
+  color: #64748b; font-weight: 500; font-size: 12px;
+  border-bottom: 1px solid #2d3148; white-space: nowrap;
+}
+tbody tr { border-bottom: 1px solid #1e2235; transition: background .1s; }
+tbody tr:hover { background: #1a1d27; }
+td { padding: 10px 12px; vertical-align: middle; }
+.empty-row td { text-align: center; color: #4a5568; padding: 36px; }
+.mono { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
+
+/* ── Badges ── */
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+.badge-on  { background: #14532d; color: #86efac; }
+.badge-off { background: #1c1917; color: #78716c; }
+.badge-green { background: #14532d; color: #86efac; }
+.badge-red   { background: #450a0a; color: #fca5a5; }
+.badge-blue  { background: #1e2a4a; color: #93c5fd; }
+.badge-yellow { background: #422006; color: #fcd34d; }
+.tag { display: inline-block; padding: 2px 8px; background: #1e2a4a; color: #93c5fd; border-radius: 4px; font-size: 11px; margin: 2px; }
+
+/* ── Key cell ── */
+.key-val { color: #94a3b8; }
+
+/* ── Worker Key box ── */
+.wkey-box {
+  background: #0f1117; border: 1px solid #2d3148; border-radius: 8px;
+  padding: 14px 16px; font-family: monospace; font-size: 13px;
+  letter-spacing: .5px; color: #93c5fd; word-break: break-all;
+}
+
+/* ── Copy row ── */
+.copy-row { display: flex; align-items: center; gap: 10px; }
+.copy-row .copy-val {
+  flex: 1; background: #0f1117; border: 1px solid #2d3148; border-radius: 8px;
+  padding: 10px 14px; font-size: 13px; color: #94a3b8; word-break: break-all;
+}
+
+/* ── Credit form ── */
+.form-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.form-group { display: flex; flex-direction: column; gap: 6px; }
+.form-group label { font-size: 12px; color: #94a3b8; }
+.form-input {
+  padding: 8px 12px; background: #0f1117; border: 1px solid #2d3148;
+  border-radius: 6px; color: #e2e8f0; font-size: 13px; outline: none; width: 160px;
+}
+.form-input:focus { border-color: #6366f1; }
+
+/* ── Multiplier pills ── */
+.mult-info { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.mult-pill {
+  font-size: 11px; padding: 2px 8px; border-radius: 4px;
+  background: #1e293b; color: #94a3b8;
+}
+.mult-pill b { color: #e2e8f0; }
+
+/* ── Note input ── */
+.note-input {
+  padding: 7px 12px; background: #1a1d27; border: 1px solid #2d3148;
+  border-radius: 6px; color: #e2e8f0; font-size: 13px; width: 200px; outline: none;
+}
+.note-input:focus { border-color: #6366f1; }
+
+/* ── Purchase order ── */
+.contact-box {
+  background: #1e2a4a; border: 1px solid #2d4070; border-radius: 8px;
+  padding: 14px 16px; color: #93c5fd; font-size: 13px; line-height: 1.7;
+  white-space: pre-wrap; word-break: break-all;
+}
+
+/* ── Toolbar ── */
+.toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+.toolbar-right { margin-left: auto; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2d3148; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Auth -->
+  <div v-if="!loggedIn" class="auth-overlay">
+    <div class="auth-box">
+      <h2>LLM Proxy</h2>
+      <p class="subtitle">贡献算力 · 换取积分 · 畅享 AI</p>
+      <div class="auth-tabs">
+        <button :class="{ active: authTab === 'login' }"    @click="authTab = 'login'">登录</button>
+        <button :class="{ active: authTab === 'register' }" @click="authTab = 'register'">注册</button>
+      </div>
+
+      <!-- Login -->
+      <div v-if="authTab === 'login'">
+        <div class="field"><label>邮箱</label><input v-model="form.email" type="email" placeholder="you@example.com" @keyup.enter="doLogin" /></div>
+        <div class="field"><label>密码</label><input v-model="form.password" type="password" placeholder="••••••" @keyup.enter="doLogin" /></div>
+        <button class="btn-block" :disabled="authLoading" @click="doLogin">{{ authLoading ? '登录中…' : '登录' }}</button>
+      </div>
+
+      <!-- Register -->
+      <div v-else>
+        <div class="field"><label>邮箱</label><input v-model="form.email" type="email" placeholder="you@example.com" /></div>
+        <div class="field"><label>昵称（可选）</label><input v-model="form.nickname" type="text" placeholder="留空使用邮箱前缀" /></div>
+        <div class="field"><label>密码（至少 6 位）</label><input v-model="form.password" type="password" placeholder="••••••" /></div>
+        <div class="field"><label>推荐码（可选）</label><input v-model="form.referral_code" type="text" placeholder="好友推荐码" /></div>
+        <button class="btn-block" :disabled="authLoading" @click="doRegister">{{ authLoading ? '注册中…' : '注册' }}</button>
+      </div>
+
+      <div v-if="authErr" class="err">{{ authErr }}</div>
+      <div v-if="authOk"  class="ok">{{ authOk }}</div>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div v-else class="app">
+    <header>
+      <div class="header-title">LLM Proxy <span>用户中心</span></div>
+      <div class="header-user">
+        <span class="credit-badge">💎 {{ profile.credits_balance?.toFixed(1) ?? '…' }}</span>
+        <span class="email">{{ profile.email }}</span>
+        <button class="btn-sm" @click="logout">退出</button>
+      </div>
+    </header>
+
+    <nav>
+      <button v-for="t in visibleTabs" :key="t.key"
+              :class="{ active: activeTab === t.key }"
+              @click="switchTab(t.key)">{{ t.label }}</button>
+    </nav>
+
+    <!-- ══ 积分概览 ══ -->
+    <div v-show="activeTab === 'overview'" class="tab-content">
+      <div class="cards-row">
+        <div class="card">
+          <div class="card-title">当前余额</div>
+          <div class="card-value">{{ fmt1(profile.credits_balance) }}<span class="unit">积分</span></div>
+        </div>
+        <div class="card">
+          <div class="card-title">累计获得</div>
+          <div class="card-value">{{ fmt1(profile.credits_earned) }}<span class="unit">积分</span></div>
+        </div>
+        <div class="card">
+          <div class="card-title">累计消费</div>
+          <div class="card-value">{{ fmt1(profile.credits_spent) }}<span class="unit">积分</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">账户信息</div>
+        <table>
+          <tbody>
+            <tr>
+              <td style="color:#64748b;width:140px">昵称</td>
+              <td>{{ profile.nickname }}</td>
+            </tr>
+            <tr>
+              <td style="color:#64748b">邮箱</td>
+              <td>{{ profile.email }}</td>
+            </tr>
+            <tr>
+              <td style="color:#64748b">注册时间</td>
+              <td style="color:#64748b">{{ fmtTime(profile.created_at) }}</td>
+            </tr>
+            <tr>
+              <td style="color:#64748b">API Key 权限</td>
+              <td>
+                <span v-if="profile.can_create_apikey" class="badge badge-green">已开通</span>
+                <span v-else class="badge badge-off">未开通（线下购买后开通）</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="section-title">Worker Key（接入积分）</div>
+        <p style="color:#64748b;font-size:13px;margin-bottom:12px">将此 Key 填入 Agent 注册命令中，贡献算力可自动累积积分。</p>
+        <div class="copy-row">
+          <div class="copy-val mono">{{ profile.worker_key || '—' }}</div>
+          <button class="btn-sm" @click="copy(profile.worker_key)">复制</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ 我的 API Keys ══ -->
+    <div v-show="activeTab === 'keys'" class="tab-content">
+      <div class="toolbar">
+        <input v-model="newKeyNote" class="note-input" placeholder="备注（可选）" @keyup.enter="createKey" />
+        <button class="btn btn-indigo" @click="createKey">＋ 新建 Key</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th><th>Key</th><th>备注</th><th>状态</th><th>创建时间</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="myKeys.length === 0" class="empty-row">
+            <td colspan="6">暂无 API Key，点击「新建 Key」创建</td>
+          </tr>
+          <tr v-for="k in myKeys" :key="k.id" :style="k.is_active ? '' : 'opacity:.5'">
+            <td style="color:#64748b">{{ k.id }}</td>
+            <td>
+              <span class="mono key-val">{{ maskKey(k.key) }}</span>
+              <button class="btn-xs" @click="copy(k.key)" style="margin-left:6px">复制</button>
+            </td>
+            <td style="color:#94a3b8">{{ k.note || '—' }}</td>
+            <td><span :class="k.is_active ? 'badge badge-on' : 'badge badge-off'">{{ k.is_active ? '启用' : '禁用' }}</span></td>
+            <td style="color:#64748b">{{ fmtTime(k.created_at) }}</td>
+            <td>
+              <button class="btn-xs" @click="toggleKey(k)">{{ k.is_active ? '禁用' : '启用' }}</button>
+              <button class="btn-xs btn-danger" style="margin-left:4px" @click="deleteKey(k.id)">删除</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ══ 结算明细 ══ -->
+    <div v-show="activeTab === 'settlements'" class="tab-content">
+      <div class="toolbar">
+        <span style="color:#64748b;font-size:13px">每 5 分钟自动结算一次</span>
+        <button class="btn-sm toolbar-right" @click="fetchSettlements">刷新</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>结算时间</th><th>Worker</th><th>模型</th>
+            <th>Token</th><th>质量系数</th><th>获得积分</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="settlements.length === 0" class="empty-row">
+            <td colspan="6">暂无结算记录</td>
+          </tr>
+          <tr v-for="s in settlements" :key="s.id">
+            <td style="color:#64748b">{{ fmtTime(s.period_end) }}</td>
+            <td class="mono" style="color:#64748b">{{ s.worker_id }}</td>
+            <td><span class="tag">{{ s.model_name || '—' }}</span></td>
+            <td>{{ s.output_tokens?.toLocaleString() }}</td>
+            <td>
+              <span class="badge badge-blue">× {{ fmt2(s.multiplier) }}</span>
+              <div class="mult-info">
+                <span class="mult-pill">在线 <b>{{ fmt0(s.online_mins) }}min</b></span>
+                <span class="mult-pill">延迟 <b>{{ fmt0(s.avg_latency) }}ms</b></span>
+                <span class="mult-pill">成功率 <b>{{ pct(s.success_rate) }}</b></span>
+              </div>
+            </td>
+            <td style="color:#4ade80;font-weight:600">+{{ fmt2(s.credits_awarded) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ══ 积分流水 ══ -->
+    <div v-show="activeTab === 'transactions'" class="tab-content">
+      <div class="toolbar">
+        <button class="btn-sm toolbar-right" @click="fetchTransactions">刷新</button>
+      </div>
+      <table>
+        <thead>
+          <tr><th>时间</th><th>类型</th><th>模型</th><th>Token</th><th>变动</th><th>余额</th><th>备注</th></tr>
+        </thead>
+        <tbody>
+          <tr v-if="transactions.length === 0" class="empty-row">
+            <td colspan="7">暂无流水记录</td>
+          </tr>
+          <tr v-for="t in transactions" :key="t.id">
+            <td style="color:#64748b">{{ fmtTime(t.created_at) }}</td>
+            <td>
+              <span :class="txBadge(t.type)">{{ txLabel(t.type) }}</span>
+            </td>
+            <td><span v-if="t.model_name" class="tag">{{ t.model_name }}</span><span v-else style="color:#4a5568">—</span></td>
+            <td style="color:#64748b">{{ t.tokens ? t.tokens.toLocaleString() : '—' }}</td>
+            <td :style="t.delta > 0 ? 'color:#4ade80;font-weight:600' : 'color:#f87171;font-weight:600'">
+              {{ t.delta > 0 ? '+' : '' }}{{ fmt2(t.delta) }}
+            </td>
+            <td style="color:#94a3b8">{{ fmt2(t.balance_after) }}</td>
+            <td style="color:#64748b;font-size:12px">{{ t.note || '—' }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ══ 购买积分 ══ -->
+    <div v-show="activeTab === 'purchase'" class="tab-content">
+      <div class="card">
+        <div class="section-title">提交购买申请</div>
+        <p style="color:#64748b;font-size:13px;margin-bottom:20px">
+          提交申请后，请按下方联系方式完成线下付款，管理员确认后自动充值。
+        </p>
+        <div class="form-row" style="margin-bottom:16px">
+          <div class="form-group">
+            <label>积分数量</label>
+            <input v-model.number="purchaseAmt" class="form-input" type="number" min="1" placeholder="如 500" />
+          </div>
+          <div class="form-group">
+            <label>备注（可选）</label>
+            <input v-model="purchaseNote" class="form-input" type="text" placeholder="支付方式/金额" />
+          </div>
+          <div class="form-group" style="justify-content:flex-end">
+            <button class="btn btn-indigo" :disabled="purchaseLoading || !purchaseAmt" @click="submitPurchase">
+              {{ purchaseLoading ? '提交中…' : '提交申请' }}
+            </button>
+          </div>
+        </div>
+        <div v-if="purchaseMsg" :class="purchaseMsgOk ? 'ok' : 'err'" style="text-align:left;margin-bottom:16px">{{ purchaseMsg }}</div>
+        <div class="section-title" style="margin-top:8px">联系方式</div>
+        <div v-if="contactInfo" class="contact-box">{{ contactInfo }}</div>
+        <div v-else style="color:#4a5568;font-size:13px">管理员暂未配置联系方式</div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">我的购买记录</div>
+        <table>
+          <thead>
+            <tr><th>申请时间</th><th>积分</th><th>状态</th><th>备注</th><th>管理员备注</th></tr>
+          </thead>
+          <tbody>
+            <tr v-if="purchaseOrders.length === 0" class="empty-row">
+              <td colspan="5">暂无购买记录</td>
+            </tr>
+            <tr v-for="o in purchaseOrders" :key="o.id">
+              <td style="color:#64748b">{{ fmtTime(o.created_at) }}</td>
+              <td style="font-weight:600">{{ o.amount_credits }}</td>
+              <td>
+                <span :class="orderBadge(o.status)">{{ orderLabel(o.status) }}</span>
+              </td>
+              <td style="color:#64748b">{{ o.note || '—' }}</td>
+              <td style="color:#64748b">{{ o.admin_note || '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <button class="btn-sm" style="margin-top:12px" @click="fetchPurchaseOrders">刷新</button>
+      </div>
+    </div>
+
+    <!-- ══ 推荐分享 ══ -->
+    <div v-show="activeTab === 'referral'" class="tab-content">
+      <div class="card">
+        <div class="section-title">我的推荐码</div>
+        <p style="color:#64748b;font-size:13px;margin-bottom:16px">
+          分享推荐码给好友，好友注册后你将获得推荐奖励积分。
+        </p>
+        <div class="copy-row" style="margin-bottom:20px">
+          <div class="copy-val mono" style="font-size:18px;letter-spacing:2px">{{ profile.referral_code }}</div>
+          <button class="btn-sm" @click="copy(profile.referral_code)">复制</button>
+        </div>
+        <div class="section-title">注册链接</div>
+        <div class="copy-row">
+          <div class="copy-val" style="font-size:12px">{{ referralLink }}</div>
+          <button class="btn-sm" @click="copy(referralLink)">复制</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const { createApp, ref, computed, onMounted } = Vue
+
+createApp({
+  setup() {
+    /* ── Auth state ── */
+    const loggedIn  = ref(!!localStorage.getItem('user_token'))
+    const authTab   = ref('login')
+    const authLoading = ref(false)
+    const authErr   = ref('')
+    const authOk    = ref('')
+
+    const form = ref({ email: '', password: '', nickname: '', referral_code: '' })
+
+    function getToken() { return localStorage.getItem('user_token') || '' }
+
+    async function userApi(path, opts = {}) {
+      const r = await fetch(path, {
+        ...opts,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${getToken()}`,
+          ...(opts.headers || {}),
+        },
+      })
+      if (r.status === 401) { logout(); throw new Error('Unauthorized') }
+      return r
+    }
+
+    async function doLogin() {
+      authErr.value = ''; authOk.value = ''
+      if (!form.value.email || !form.value.password) { authErr.value = '请填写邮箱和密码'; return }
+      authLoading.value = true
+      try {
+        const r = await fetch('/user/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: form.value.email, password: form.value.password }),
+        })
+        const d = await r.json()
+        if (!r.ok) { authErr.value = d.detail || '登录失败'; return }
+        localStorage.setItem('user_token', d.token)
+        loggedIn.value = true
+        boot()
+      } catch { authErr.value = '无法连接服务器' }
+      finally { authLoading.value = false }
+    }
+
+    async function doRegister() {
+      authErr.value = ''; authOk.value = ''
+      if (!form.value.email || !form.value.password) { authErr.value = '请填写邮箱和密码'; return }
+      authLoading.value = true
+      try {
+        const r = await fetch('/user/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: form.value.email,
+            password: form.value.password,
+            nickname: form.value.nickname,
+            referral_code: form.value.referral_code,
+          }),
+        })
+        const d = await r.json()
+        if (!r.ok) { authErr.value = d.detail || '注册失败'; return }
+        authOk.value = '注册成功！正在登录…'
+        localStorage.setItem('user_token', d.token)
+        setTimeout(() => { loggedIn.value = true; boot() }, 800)
+      } catch { authErr.value = '无法连接服务器' }
+      finally { authLoading.value = false }
+    }
+
+    function logout() {
+      localStorage.removeItem('user_token')
+      loggedIn.value = false
+      form.value = { email: '', password: '', nickname: '', referral_code: '' }
+    }
+
+    /* ── Profile ── */
+    const profile = ref({})
+
+    async function fetchProfile() {
+      try {
+        const d = await (await userApi('/user/profile')).json()
+        profile.value = d
+      } catch {}
+    }
+
+    /* ── Tabs ── */
+    const allTabs = [
+      { key: 'overview',     label: '积分概览' },
+      { key: 'keys',         label: '我的 API Keys', requireApikey: true },
+      { key: 'settlements',  label: '结算明细' },
+      { key: 'transactions', label: '积分流水' },
+      { key: 'purchase',     label: '购买积分' },
+      { key: 'referral',     label: '推荐分享' },
+    ]
+
+    const visibleTabs = computed(() =>
+      allTabs.filter(t => !t.requireApikey || profile.value.can_create_apikey)
+    )
+
+    const activeTab = ref('overview')
+    function switchTab(k) {
+      activeTab.value = k
+      if (k === 'keys')         fetchMyKeys()
+      if (k === 'settlements')  fetchSettlements()
+      if (k === 'transactions') fetchTransactions()
+      if (k === 'purchase')     fetchPurchaseOrders()
+    }
+
+    /* ── My API Keys ── */
+    const myKeys    = ref([])
+    const newKeyNote = ref('')
+
+    async function fetchMyKeys() {
+      try {
+        const d = await (await userApi('/user/keys')).json()
+        myKeys.value = d.keys || []
+      } catch {}
+    }
+
+    async function createKey() {
+      try {
+        const k = await (await userApi('/user/keys', {
+          method: 'POST',
+          body: JSON.stringify({ note: newKeyNote.value }),
+        })).json()
+        myKeys.value.unshift(k)
+        newKeyNote.value = ''
+      } catch {}
+    }
+
+    async function toggleKey(k) {
+      try {
+        await userApi(`/user/keys/${k.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ is_active: !k.is_active }),
+        })
+        k.is_active = !k.is_active
+      } catch {}
+    }
+
+    async function deleteKey(id) {
+      if (!confirm('确认删除此 Key？')) return
+      try {
+        await userApi(`/user/keys/${id}`, { method: 'DELETE' })
+        myKeys.value = myKeys.value.filter(k => k.id !== id)
+      } catch {}
+    }
+
+    function maskKey(key) {
+      return key.slice(0, 10) + '••••••••' + key.slice(-4)
+    }
+
+    /* ── Settlements ── */
+    const settlements = ref([])
+    async function fetchSettlements() {
+      try {
+        const d = await (await userApi('/user/settlements')).json()
+        settlements.value = d.settlements || []
+      } catch {}
+    }
+
+    /* ── Transactions ── */
+    const transactions = ref([])
+    async function fetchTransactions() {
+      try {
+        const d = await (await userApi('/user/transactions')).json()
+        transactions.value = d.transactions || []
+      } catch {}
+    }
+
+    /* ── Purchase ── */
+    const purchaseAmt    = ref(null)
+    const purchaseNote   = ref('')
+    const purchaseLoading = ref(false)
+    const purchaseMsg    = ref('')
+    const purchaseMsgOk  = ref(false)
+    const purchaseOrders = ref([])
+    const contactInfo    = ref('')
+
+    async function fetchContact() {
+      try {
+        const r = await fetch('/user/purchase-order', { method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+          body: JSON.stringify({ amount_credits: 0.001, note: '__probe__' }) })
+        // We just need contact_info; but let's use a simpler approach
+      } catch {}
+    }
+
+    async function fetchPurchaseOrders() {
+      try {
+        const d = await (await userApi('/user/purchase-orders')).json()
+        purchaseOrders.value = d.orders || []
+      } catch {}
+    }
+
+    async function submitPurchase() {
+      if (!purchaseAmt.value || purchaseAmt.value <= 0) return
+      purchaseLoading.value = true; purchaseMsg.value = ''
+      try {
+        const r = await userApi('/user/purchase-order', {
+          method: 'POST',
+          body: JSON.stringify({ amount_credits: purchaseAmt.value, note: purchaseNote.value }),
+        })
+        const d = await r.json()
+        if (!r.ok) { purchaseMsg.value = d.detail || '提交失败'; purchaseMsgOk.value = false; return }
+        purchaseMsgOk.value = true
+        purchaseMsg.value = '申请已提交，请按联系方式完成付款'
+        if (d.contact_info) contactInfo.value = d.contact_info
+        purchaseAmt.value = null; purchaseNote.value = ''
+        purchaseOrders.value.unshift(d.order)
+      } catch { purchaseMsg.value = '网络错误'; purchaseMsgOk.value = false }
+      finally { purchaseLoading.value = false }
+    }
+
+    /* ── Referral ── */
+    const referralLink = computed(() => {
+      if (!profile.value.referral_code) return ''
+      return `${location.origin}/app?ref=${profile.value.referral_code}`
+    })
+
+    /* ── Helpers ── */
+    async function copy(text) {
+      if (!text) return
+      try { await navigator.clipboard.writeText(text) } catch {}
+    }
+
+    function fmtTime(iso) {
+      if (!iso) return '—'
+      return new Date(iso).toLocaleString('zh-CN', { hour12: false })
+    }
+
+    function fmt1(n) { return n == null ? '…' : Number(n).toFixed(1) }
+    function fmt2(n) { return n == null ? '—' : Number(n).toFixed(2) }
+    function fmt0(n) { return n == null ? '—' : Math.round(n) }
+    function pct(n)  { return n == null ? '—' : (n * 100).toFixed(0) + '%' }
+
+    function txLabel(type) {
+      return { contribute: '贡献', consume: '消费', referral: '推荐', purchase: '充值', adjust: '调整' }[type] || type
+    }
+    function txBadge(type) {
+      return { contribute: 'badge badge-green', consume: 'badge badge-red',
+               referral: 'badge badge-blue', purchase: 'badge badge-blue',
+               adjust: 'badge badge-yellow' }[type] || 'badge'
+    }
+    function orderLabel(s) {
+      return { pending: '待审核', approved: '已通过', rejected: '已拒绝' }[s] || s
+    }
+    function orderBadge(s) {
+      return { pending: 'badge badge-yellow', approved: 'badge badge-green', rejected: 'badge badge-red' }[s] || 'badge'
+    }
+
+    /* ── Boot ── */
+    async function loadContactInfo() {
+      // Load contact info on purchase tab open by trying a dummy request
+      // Better: expose a public config endpoint — here we read from page load
+    }
+
+    async function boot() {
+      await fetchProfile()
+    }
+
+    onMounted(() => {
+      if (loggedIn.value) boot()
+      // Pre-fill referral code from URL
+      const params = new URLSearchParams(location.search)
+      const ref = params.get('ref')
+      if (ref) form.value.referral_code = ref
+    })
+
+    return {
+      loggedIn, authTab, authLoading, authErr, authOk, form,
+      doLogin, doRegister, logout,
+      profile, activeTab, visibleTabs, switchTab,
+      myKeys, newKeyNote, createKey, toggleKey, deleteKey, maskKey,
+      settlements, fetchSettlements,
+      transactions, fetchTransactions,
+      purchaseAmt, purchaseNote, purchaseLoading, purchaseMsg, purchaseMsgOk,
+      purchaseOrders, contactInfo, submitPurchase, fetchPurchaseOrders,
+      referralLink,
+      copy, fmtTime, fmt1, fmt2, fmt0, pct,
+      txLabel, txBadge, orderLabel, orderBadge,
+    }
+  }
+}).mount('#app')
+</script>
+</body>
+</html>

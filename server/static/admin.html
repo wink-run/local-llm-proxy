@@ -185,6 +185,37 @@ td { padding: 11px 12px; vertical-align: middle; }
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #2d3148; border-radius: 3px; }
+
+/* ── Form ── */
+.form-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 16px; }
+.form-group { display: flex; flex-direction: column; gap: 6px; }
+.form-group label { font-size: 12px; color: #94a3b8; }
+.form-input {
+  padding: 8px 12px; background: #0f1117; border: 1px solid #2d3148;
+  border-radius: 6px; color: #e2e8f0; font-size: 13px; outline: none;
+}
+.form-input:focus { border-color: #6366f1; }
+select.form-input { cursor: pointer; }
+.form-input-sm { width: 120px; }
+.form-input-md { width: 200px; }
+.form-input-lg { width: 280px; }
+
+/* ── Cards ── */
+.info-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.info-pill { background: #1e293b; color: #94a3b8; font-size: 12px; padding: 3px 10px; border-radius: 4px; }
+.info-pill b { color: #e2e8f0; }
+
+/* ── Badges ── */
+.badge-green  { background: #14532d; color: #86efac; }
+.badge-red    { background: #450a0a; color: #fca5a5; }
+.badge-yellow { background: #422006; color: #fcd34d; }
+.badge-blue   { background: #1e2a4a; color: #93c5fd; }
+
+/* ── Toggle ── */
+.toggle-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #1e2235; }
+.toggle-row:last-child { border-bottom: none; }
+.toggle-label { flex: 1; font-size: 13px; }
+.toggle-sub { font-size: 12px; color: #64748b; }
 </style>
 </head>
 <body>
@@ -296,6 +327,165 @@ td { padding: 11px 12px; vertical-align: middle; }
       </table>
     </div>
 
+    <!-- Models -->
+    <div v-show="activeTab === 'models'" class="tab-content">
+      <div style="background:#1a1d27;border:1px solid #2d3148;border-radius:10px;padding:20px;margin-bottom:20px">
+        <div style="font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #2d3148">
+          新增 / 编辑模型
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>模型名称 *</label>
+            <input v-model="modelForm.name" class="form-input form-input-md" placeholder="如 qwen3-32b" />
+          </div>
+          <div class="form-group">
+            <label>显示名称</label>
+            <input v-model="modelForm.display_name" class="form-input form-input-md" placeholder="如 Qwen3-32B" />
+          </div>
+          <div class="form-group">
+            <label>类型</label>
+            <select v-model="modelForm.tier" class="form-input form-input-sm">
+              <option value="open">open（开源）</option>
+              <option value="premium">premium（高级）</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>贡献率（积分/千token）</label>
+            <input v-model.number="modelForm.contribute_rate" class="form-input form-input-sm" type="number" min="0" step="0.1" />
+          </div>
+          <div class="form-group">
+            <label>消费率（积分/千token）</label>
+            <input v-model.number="modelForm.consume_rate" class="form-input form-input-sm" type="number" min="0" step="0.1" />
+          </div>
+          <div class="form-group">
+            <label>启用</label>
+            <select v-model="modelForm.enabled" class="form-input form-input-sm">
+              <option :value="true">是</option>
+              <option :value="false">否</option>
+            </select>
+          </div>
+          <div class="form-group" style="justify-content:flex-end">
+            <button class="btn btn-indigo" @click="upsertModel">保存</button>
+          </div>
+        </div>
+        <div v-if="modelMsg" style="color:#4ade80;font-size:13px">{{ modelMsg }}</div>
+      </div>
+      <table>
+        <thead>
+          <tr><th>名称</th><th>显示名</th><th>类型</th><th>贡献率</th><th>消费率</th><th>状态</th><th>操作</th></tr>
+        </thead>
+        <tbody>
+          <tr v-if="models.length === 0" class="empty-row"><td colspan="7">暂无模型配置</td></tr>
+          <tr v-for="m in models" :key="m.name">
+            <td class="mono">{{ m.name }}</td>
+            <td style="color:#94a3b8">{{ m.display_name || '—' }}</td>
+            <td>
+              <span :class="m.tier === 'premium' ? 'badge badge-blue' : 'badge badge-on'">{{ m.tier }}</span>
+            </td>
+            <td>{{ m.contribute_rate }}</td>
+            <td>{{ m.consume_rate }}</td>
+            <td><span :class="m.enabled ? 'badge badge-on' : 'badge badge-off'">{{ m.enabled ? '启用' : '禁用' }}</span></td>
+            <td>
+              <button class="btn-xs" @click="editModel(m)">编辑</button>
+              <button class="btn-xs btn-danger" style="margin-left:4px" @click="deleteModel(m.name)">删除</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Users -->
+    <div v-show="activeTab === 'users'" class="tab-content">
+      <div class="toolbar">
+        <span style="color:#64748b;font-size:13px">共 {{ users.length }} 位用户</span>
+        <button class="btn-sm toolbar-right" @click="fetchUsers">刷新</button>
+      </div>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>邮箱</th><th>昵称</th><th>余额</th><th>累计获得</th><th>API Key 权限</th><th>调整积分</th></tr>
+        </thead>
+        <tbody>
+          <tr v-if="users.length === 0" class="empty-row"><td colspan="7">暂无用户</td></tr>
+          <tr v-for="u in users" :key="u.id">
+            <td style="color:#64748b">{{ u.id }}</td>
+            <td>{{ u.email }}</td>
+            <td style="color:#94a3b8">{{ u.nickname }}</td>
+            <td style="font-weight:600">{{ Number(u.credits_balance).toFixed(1) }}</td>
+            <td style="color:#64748b">{{ Number(u.credits_earned).toFixed(1) }}</td>
+            <td>
+              <span :class="u.can_create_apikey ? 'badge badge-on' : 'badge badge-off'" style="cursor:pointer" @click="toggleApikey(u)">
+                {{ u.can_create_apikey ? '已开通' : '未开通' }}
+              </span>
+            </td>
+            <td>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input v-model="userCreditDelta[u.id]" class="form-input" type="number" style="width:90px" placeholder="±积分" />
+                <input v-model="userCreditNote[u.id]"  class="form-input" type="text" style="width:120px" placeholder="备注" />
+                <button class="btn-xs" @click="adjustCredit(u)">调整</button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Purchase Orders -->
+    <div v-show="activeTab === 'orders'" class="tab-content">
+      <div class="toolbar">
+        <button class="btn-sm toolbar-right" @click="fetchOrders">刷新</button>
+      </div>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>用户ID</th><th>积分</th><th>状态</th><th>申请时间</th><th>用户备注</th><th>管理员备注</th><th>操作</th></tr>
+        </thead>
+        <tbody>
+          <tr v-if="orders.length === 0" class="empty-row"><td colspan="8">暂无购买申请</td></tr>
+          <tr v-for="o in orders" :key="o.id">
+            <td style="color:#64748b">{{ o.id }}</td>
+            <td style="color:#64748b">{{ o.user_id }}</td>
+            <td style="font-weight:600">{{ o.amount_credits }}</td>
+            <td>
+              <span :class="{ 'badge badge-yellow': o.status==='pending', 'badge badge-on': o.status==='approved', 'badge badge-red': o.status==='rejected' }">
+                {{ { pending:'待审核', approved:'已通过', rejected:'已拒绝' }[o.status] || o.status }}
+              </span>
+            </td>
+            <td style="color:#64748b">{{ fmtTime(o.created_at) }}</td>
+            <td style="color:#94a3b8">{{ o.note || '—' }}</td>
+            <td style="color:#64748b">{{ o.admin_note || '—' }}</td>
+            <td>
+              <template v-if="o.status === 'pending'">
+                <input v-model="orderNote[o.id]" class="form-input" type="text" style="width:110px;margin-right:4px" placeholder="备注" />
+                <label style="font-size:12px;color:#94a3b8;margin-right:6px;cursor:pointer">
+                  <input type="checkbox" v-model="orderGrantApikey[o.id]" style="margin-right:3px" />开通 Key 权限
+                </label>
+                <button class="btn-xs badge-on" style="border:none;cursor:pointer;margin-right:4px" @click="approveOrder(o)">通过</button>
+                <button class="btn-xs btn-danger" @click="rejectOrder(o)">拒绝</button>
+              </template>
+              <span v-else style="color:#4a5568">—</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- System Config -->
+    <div v-show="activeTab === 'config'" class="tab-content">
+      <div style="background:#1a1d27;border:1px solid #2d3148;border-radius:10px;padding:20px;max-width:600px">
+        <div style="font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid #2d3148">
+          系统配置
+        </div>
+        <div v-for="(kv, key) in sysConfig" :key="key" class="toggle-row">
+          <div class="toggle-label">
+            <div>{{ { newcomer_reward:'新人注册礼包积分', referral_reward:'推荐奖励积分', contact_info:'联系方式（付款信息）' }[key] || key }}</div>
+            <div class="toggle-sub">{{ key }}</div>
+          </div>
+          <input v-model="sysConfig[key]" class="form-input form-input-md" :type="key.includes('reward') ? 'number' : 'text'" />
+          <button class="btn-xs" :disabled="configSaving[key]" @click="saveConfig(key)">{{ configSaving[key] ? '保存中' : '保存' }}</button>
+        </div>
+        <div v-if="Object.keys(sysConfig).length === 0" style="color:#4a5568;font-size:13px">暂无配置项，加载中…</div>
+      </div>
+    </div>
+
     <!-- Debug -->
     <div v-show="activeTab === 'debug'" class="tab-content">
       <div class="debug-layout">
@@ -375,9 +565,19 @@ createApp({
       { key: 'workers', label: '在线 PC' },
       { key: 'keys',    label: 'API Keys' },
       { key: 'debug',   label: '调试' },
+      { key: 'models',  label: '模型配置' },
+      { key: 'users',   label: '用户管理' },
+      { key: 'orders',  label: '购买审批' },
+      { key: 'config',  label: '系统配置' },
     ]
     const activeTab = ref('workers')
-    function switchTab(k) { activeTab.value = k }
+    function switchTab(k) {
+      activeTab.value = k
+      if (k === 'models') fetchModels()
+      if (k === 'users')  fetchUsers()
+      if (k === 'orders') fetchOrders()
+      if (k === 'config') fetchConfig()
+    }
 
     /* ── API helper ── */
     async function api(path, opts = {}) {
@@ -534,6 +734,110 @@ createApp({
       }
     }
 
+    /* ── Models ── */
+    const models = ref([])
+    const modelForm = ref({ name: '', display_name: '', tier: 'open', contribute_rate: 8, consume_rate: 5, enabled: true })
+    const modelMsg  = ref('')
+
+    async function fetchModels() {
+      try { const d = await (await api('/admin/models')).json(); models.value = d.models || [] } catch {}
+    }
+
+    async function upsertModel() {
+      modelMsg.value = ''
+      try {
+        const r = await api('/admin/models', { method: 'POST', body: JSON.stringify(modelForm.value) })
+        if (!r.ok) { const d = await r.json(); modelMsg.value = d.detail || '保存失败'; return }
+        modelMsg.value = '已保存'
+        await fetchModels()
+      } catch { modelMsg.value = '网络错误' }
+    }
+
+    async function deleteModel(name) {
+      if (!confirm(`确认删除模型 ${name}？`)) return
+      try { await api(`/admin/models/${encodeURIComponent(name)}`, { method: 'DELETE' }); await fetchModels() } catch {}
+    }
+
+    function editModel(m) {
+      modelForm.value = { name: m.name, display_name: m.display_name || '', tier: m.tier, contribute_rate: m.contribute_rate, consume_rate: m.consume_rate, enabled: m.enabled }
+    }
+
+    /* ── Users ── */
+    const users = ref([])
+    const userCreditDelta = ref({})
+    const userCreditNote  = ref({})
+
+    async function fetchUsers() {
+      try { const d = await (await api('/admin/users')).json(); users.value = d.users || [] } catch {}
+    }
+
+    async function toggleApikey(u) {
+      try {
+        await api(`/admin/users/${u.id}`, { method: 'PATCH', body: JSON.stringify({ can_create_apikey: !u.can_create_apikey }) })
+        u.can_create_apikey = !u.can_create_apikey
+      } catch {}
+    }
+
+    async function adjustCredit(u) {
+      const delta = parseFloat(userCreditDelta.value[u.id] || 0)
+      if (!delta) return
+      try {
+        const r = await api(`/admin/users/${u.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ credit_delta: delta, credit_note: userCreditNote.value[u.id] || '' }),
+        })
+        const d = await r.json()
+        if (d.new_balance != null) u.credits_balance = d.new_balance
+        userCreditDelta.value[u.id] = ''
+        userCreditNote.value[u.id]  = ''
+      } catch {}
+    }
+
+    /* ── Purchase Orders ── */
+    const orders    = ref([])
+    const orderNote = ref({})
+    const orderGrantApikey = ref({})
+
+    async function fetchOrders() {
+      try { const d = await (await api('/admin/purchase-orders')).json(); orders.value = d.orders || [] } catch {}
+    }
+
+    async function approveOrder(o) {
+      try {
+        await api(`/admin/purchase-orders/${o.id}/approve`, {
+          method: 'POST',
+          body: JSON.stringify({ admin_note: orderNote.value[o.id] || '', grant_apikey: !!orderGrantApikey.value[o.id] }),
+        })
+        o.status = 'approved'
+      } catch {}
+    }
+
+    async function rejectOrder(o) {
+      try {
+        await api(`/admin/purchase-orders/${o.id}/reject`, {
+          method: 'POST',
+          body: JSON.stringify({ admin_note: orderNote.value[o.id] || '' }),
+        })
+        o.status = 'rejected'
+      } catch {}
+    }
+
+    /* ── System Config ── */
+    const sysConfig = ref({})
+    const configSaving = ref({})
+
+    async function fetchConfig() {
+      try { const d = await (await api('/admin/config')).json(); sysConfig.value = d } catch {}
+    }
+
+    async function saveConfig(key) {
+      configSaving.value[key] = true
+      try {
+        await api('/admin/config', { method: 'PUT', body: JSON.stringify({ key, value: String(sysConfig.value[key] ?? '') }) })
+      } catch {}
+      finally { configSaving.value[key] = false }
+    }
+
     /* ── Utils ── */
     function fmtTime(iso) {
       if (!iso) return '—'
@@ -562,6 +866,10 @@ createApp({
       keys, newNote, createKey, toggleKey, removeKey, maskKey, copyKey,
       debugModel, chatMsgs, chatInput, chatLoading, chatArea, allModels,
       clearChat, sendMsg,
+      models, modelForm, modelMsg, upsertModel, deleteModel, editModel,
+      users, userCreditDelta, userCreditNote, toggleApikey, adjustCredit,
+      orders, orderNote, orderGrantApikey, fetchOrders, approveOrder, rejectOrder,
+      sysConfig, configSaving, saveConfig,
       fmtTime,
     }
   }

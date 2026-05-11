@@ -1,0 +1,196 @@
+"""用户接口：注册、登录、个人看板、API Key 自助管理、购买申请"""
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, EmailStr, field_validator
+
+import database as db
+from auth import create_token, get_current_user_id, hash_password, verify_password
+
+router = APIRouter()
+
+
+# ── 注册 / 登录 ───────────────────────────────────────────────────────────────
+
+class RegisterRequest(BaseModel):
+    email: str
+    nickname: str = ""
+    password: str
+    referral_code: str = ""
+
+    @field_validator("password")
+    @classmethod
+    def pw_len(cls, v: str) -> str:
+        if len(v) < 6:
+            raise ValueError("密码至少 6 位")
+        return v
+
+
+@router.post("/register")
+async def register(req: RegisterRequest):
+    existing = await db.get_user_by_email(req.email)
+    if existing:
+        raise HTTPException(400, "该邮箱已注册")
+
+    referred_by = None
+    referrer = None
+    if req.referral_code:
+        referrer = await db.get_user_by_referral_code(req.referral_code)
+        if referrer:
+            referred_by = referrer["id"]
+
+    pw_hash = hash_password(req.password)
+    user = await db.create_user(req.email, req.nickname or req.email.split("@")[0], pw_hash, referred_by)
+
+    # 新人礼包
+    newcomer_reward = float(await db.get_config("newcomer_reward", "50"))
+    if newcomer_reward > 0:
+        await db.award_credits(user["id"], newcomer_reward, type_="referral", note="新人注册礼包")
+
+    # 推荐人奖励
+    if referrer:
+        referral_reward = float(await db.get_config("referral_reward", "100"))
+        if referral_reward > 0:
+            await db.award_credits(referrer["id"], referral_reward, type_="referral",
+                                   note=f"推荐新用户 {req.email}")
+
+    token = create_token(user["id"])
+    return {"token": token, "user_id": user["id"], "email": req.email}
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+@router.post("/login")
+async def login(req: LoginRequest):
+    user = await db.get_user_by_email(req.email)
+    if not user or not verify_password(req.password, user["password_hash"]):
+        raise HTTPException(401, "邮箱或密码错误")
+    token = create_token(user["id"])
+    return {"token": token, "user_id": user["id"], "email": user["email"]}
+
+
+# ── 个人资料 ──────────────────────────────────────────────────────────────────
+
+@router.get("/profile")
+async def profile(uid: int = Depends(get_current_user_id)):
+    user = await db.get_user_by_id(uid)
+    if not user:
+        raise HTTPException(404, "User not found")
+    return {
+        "id": user["id"],
+        "email": user["email"],
+        "nickname": user["nickname"],
+        "credits_balance": user["credits_balance"],
+        "credits_earned": user["credits_earned"],
+        "credits_spent": user["credits_spent"],
+        "referral_code": user["referral_code"],
+        "worker_key": user["worker_key"],
+        "can_create_apikey": bool(user["can_create_apikey"]),
+        "show_on_wall": bool(user["show_on_wall"]),
+        "wall_display": user["wall_display"],
+        "created_at": user["created_at"],
+    }
+
+
+class UpdateProfileRequest(BaseModel):
+    nickname: str | None = None
+    show_on_wall: bool | None = None
+    wall_display: str | None = None
+
+
+@router.patch("/profile")
+async def update_profile(req: UpdateProfileRequest, uid: int = Depends(get_current_user_id)):
+    import aiosqlite
+    from database import DB_PATH
+    updates, params = [], []
+    if req.nickname is not None:
+        updates.append("nickname=?"); params.append(req.nickname)
+    if req.show_on_wall is not None:
+        updates.append("show_on_wall=?"); params.append(int(req.show_on_wall))
+    if req.wall_display is not None:
+        if req.wall_display not in ("nickname", "masked", "hidden"):
+            raise HTTPException(400, "wall_display 必须是 nickname/masked/hidden")
+        updates.append("wall_display=?"); params.append(req.wall_display)
+    if updates:
+        params.append(uid)
+        async with aiosqlite.connect(DB_PATH) as conn:
+            await conn.execute(f"UPDATE users SET {','.join(updates)} WHERE id=?", params)
+            await conn.commit()
+    return {"ok": True}
+
+
+# ── 用户自助 API Key ───────────────────────────────────────────────────────────
+
+async def _require_apikey_permission(uid: int) -> None:
+    user = await db.get_user_by_id(uid)
+    if not user or not user["can_create_apikey"]:
+        raise HTTPException(403, "尚未开通 API Key 创建权限，请先购买积分")
+
+
+@router.get("/keys")
+async def list_my_keys(uid: int = Depends(get_current_user_id)):
+    await _require_apikey_permission(uid)
+    return {"keys": await db.list_keys(user_id=uid)}
+
+
+class CreateKeyRequest(BaseModel):
+    note: str = ""
+
+
+@router.post("/keys")
+async def create_my_key(req: CreateKeyRequest, uid: int = Depends(get_current_user_id)):
+    await _require_apikey_permission(uid)
+    return await db.create_key(req.note, user_id=uid)
+
+
+class UpdateKeyRequest(BaseModel):
+    is_active: bool
+
+
+@router.patch("/keys/{key_id}")
+async def toggle_my_key(key_id: int, req: UpdateKeyRequest, uid: int = Depends(get_current_user_id)):
+    await _require_apikey_permission(uid)
+    await db.set_key_active(key_id, req.is_active, user_id=uid)
+    return {"ok": True}
+
+
+@router.delete("/keys/{key_id}")
+async def delete_my_key(key_id: int, uid: int = Depends(get_current_user_id)):
+    await _require_apikey_permission(uid)
+    await db.delete_key(key_id, user_id=uid)
+    return {"ok": True}
+
+
+# ── 积分流水 / 结算明细 ───────────────────────────────────────────────────────
+
+@router.get("/transactions")
+async def my_transactions(uid: int = Depends(get_current_user_id)):
+    return {"transactions": await db.get_transactions(uid)}
+
+
+@router.get("/settlements")
+async def my_settlements(uid: int = Depends(get_current_user_id)):
+    return {"settlements": await db.get_settlements(uid)}
+
+
+# ── 购买积分 ──────────────────────────────────────────────────────────────────
+
+class PurchaseRequest(BaseModel):
+    amount_credits: float
+    note: str = ""
+
+
+@router.post("/purchase-order")
+async def create_purchase_order(req: PurchaseRequest, uid: int = Depends(get_current_user_id)):
+    if req.amount_credits <= 0:
+        raise HTTPException(400, "积分数量必须大于 0")
+    contact = await db.get_config("contact_info", "")
+    order = await db.create_purchase_order(uid, req.amount_credits, req.note)
+    return {"order": order, "contact_info": contact}
+
+
+@router.get("/purchase-orders")
+async def my_purchase_orders(uid: int = Depends(get_current_user_id)):
+    return {"orders": await db.get_user_purchase_orders(uid)}
