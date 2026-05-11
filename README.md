@@ -1,5 +1,7 @@
 # Local LLM Proxy
 
+**P2P · OpenAI-compatible · Outbound WebSocket** — turn idle token/compute into **universal credits** you can spend across models and time.
+
 [中文文档](./README.zh-CN.md) · [Source](https://github.com/wink-run/local-llm-proxy)
 
 ```bash
@@ -8,21 +10,41 @@ git clone git@github.com:wink-run/local-llm-proxy.git
 
 ## What it does
 
-**Local LLM Proxy** bridges locally-hosted or LAN-restricted LLMs to the public internet — without opening any inbound ports.
+**Local LLM Proxy** bridges locally-hosted or LAN-restricted LLMs to the public internet — without opening any inbound ports. Contributors share voluntary quota (Ollama, intranet gateways, or upstream API paths); consumers call a single OpenAI-compatible endpoint using credits — **rates and settlement rules are published** on the landing page and in the admin UI.
 
-Each participating machine runs a lightweight `llm-agent` that **dials out** over WebSocket to a VPS. The VPS exposes a unified **OpenAI-compatible HTTP API**. Clients send requests to the VPS; the VPS routes them to the right worker; the worker forwards them to its local LLM and streams the response back.
+Each participating machine runs a lightweight `llm-agent` that **dials out** over WebSocket to a VPS. The VPS exposes a unified **OpenAI-compatible HTTP API**. External clients use a **Bearer user API key**; workers register with a separate **Worker token**. **Upstream LLM credentials are never persisted by the proxy.** Clients send requests to the VPS; the VPS routes them to the right worker; the worker forwards them to its local LLM and streams the response back.
+
+**Principles** (same as the landing page)
+
+- **All for one, one for all** — peer surplus sharing; credits work across models and time.
+- **Neutral & transparent** — breaks the traditional relay black box; multi-party dynamics with published rules; code is open source.
+- **Affordable for buyers** — calling via credits often beats buying upstream API alone for the same model tier.
+
+**Two ways credits add value**
+
+- **Model arbitrage** — contribute quota from models you have, earn credits, spend on models you don’t (e.g. domestic → overseas, open → premium). Workers are scored by latency, uptime, and success rate; higher quality earns a **quality multiplier** on contributed credits.
+- **Time arbitrage** — bank today’s surplus (month-end API leftovers, idle desktops) as credits for later (e.g. after your machine is off, or next month).
 
 **Key benefits**
 
-- Models running on private LANs (Ollama, self-hosted inference, internal API endpoints) become reachable from anywhere.
-- Multiple workers with different models pool together — the VPS load-balances automatically.
-- No inbound firewall rules, no NAT traversal tricks needed; workers initiate all connections.
-- Resembles a **P2P compute pool**: contributors run workers voluntarily and earn credits; consumers spend credits to call the API.
+- Models on private LANs become reachable from anywhere; **no inbound firewall rules** — workers initiate all connections.
+- **Multi-node pool** — different models and workers aggregate behind one `/v1` API.
+- **P2P-style economy** — voluntary workers earn credits; API callers spend credits.
+
+**Credit economy** (summary; live rates on `/` and `/admin/ui`)
+
+- **Earn (settles every 5 minutes):**  
+  `credits = (output_tokens / 1000) × model_contribute_rate × quality_multiplier`  
+  Quality ≈ `0.4×uptime + 0.4×latency + 0.2×stability`, clamped to **0.5–1.5×**.
+- **Spend (per API call):**  
+  `cost = ((prompt + completion tokens) / 1000) × model_consume_rate`  
+  By design, **contribute rate > consume rate** so long-term contributors are rewarded.
 
 **Privacy & control**
 
-- **Upstream API keys never leave your machine.** Any `--llm-token` you configure in the agent stays in a local config file (`~/.llm-agent/config.json`) and is only used for the direct agent→LLM connection. The proxy server never sees or stores it.
-- **Stop contributing any time.** Kill the agent process (`Ctrl+C`) and the worker immediately drops off the pool — no "unregister" step needed.
+- **Upstream API keys never leave your machine.** `--llm-token` stays in local agent config (`~/.llm-agent/config.json`) and is only used for the agent→LLM hop. Registration sends worker auth, node name, and model list — not your upstream key.
+- **User API keys** for calling the VPS are issued from the admin/user portal and stored server-side — they are **separate** from upstream keys.
+- **Stop contributing any time.** Kill the agent (`Ctrl+C`) or go offline — no server-side “unbind” step.
 
 Full protocol and architecture details: [DESIGN.md](./DESIGN.md)
 
@@ -80,7 +102,7 @@ chmod +x build.sh && ./build.sh
 # use ./dist/llm-agent instead of python agent.py
 ```
 
-Pre-built binaries (if available) can be downloaded from the `/` landing page of a running instance.
+Pre-built binaries (if available) are listed under **Download Agent** on the `/` landing page (`static/downloads/`; build via `agent/build.sh`).
 
 The agent forwards to the local LLM's **`POST /v1/chat/completions`** endpoint.
 
@@ -88,7 +110,11 @@ The agent forwards to the local LLM's **`POST /v1/chat/completions`** endpoint.
 
 ## Usage
 
-After deploying, open `http://YOUR_VPS:8000` in a browser to see the landing page.
+After deploying, open `http://YOUR_VPS:8000` in a browser to see the landing page (model rates, credit examples, and agent downloads).
+
+### Live operations dashboard
+
+Open `http://YOUR_VPS:8000/wall` for the **live operations wall** (aggregated runtime view).
 
 ### Admin dashboard
 
