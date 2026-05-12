@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const agent = require('./agent-worker');
 
-const isDev = process.env.NODE_ENV !== 'production';
+const isDev = !app.isPackaged;
 const VITE_URL = 'http://localhost:5173';
 const AGENT_CONFIG_PATH = path.join(os.homedir(), '.llm-agent', 'config.json');
 
