@@ -129,7 +129,6 @@ function connect(cfg) {
     if (msg.type === 'registered') {
       log(`[agent] connected worker_id=${msg.worker_id}`);
       log(`[agent] models: ${cfg.models.join(', ')}`);
-      _onStatus?.({ running: true });
       return;
     }
 
@@ -162,11 +161,13 @@ function connect(cfg) {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 function start({ onLog, onStatus } = {}) {
+  console.log('[agent-worker] start called, running=', running);
   if (running) return;
   _onLog = onLog;
   _onStatus = onStatus;
 
   const cfg = loadConfig();
+  console.log('[agent-worker] config loaded:', cfg ? 'ok' : 'null');
   if (!cfg) {
     onLog?.('[agent] config not found — save Agent config first');
     onStatus?.({ running: false, error: 'config missing' });
@@ -179,6 +180,7 @@ function start({ onLog, onStatus } = {}) {
   }
 
   running = true;
+  _onStatus?.({ running: true });
   log(`[agent] starting: ${cfg.name || 'unnamed'}`);
   connect(cfg);
 }

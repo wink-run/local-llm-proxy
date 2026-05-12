@@ -82,7 +82,14 @@
       "Bash(git -C /Users/ully/githubprojects/local-llm-proxy add client/src/pages/Profile.jsx)",
       "Bash(git -C /Users/ully/githubprojects/local-llm-proxy commit -m \"feat: add Profile page with credits balance and transaction history\")",
       "Bash(git -C /Users/ully/githubprojects/local-llm-proxy add client/src/components/RateChart.jsx client/src/pages/Agent.jsx)",
-      "Bash(git -C /Users/ully/githubprojects/local-llm-proxy commit -m \"feat: add Agent page with start/stop controls, live rate chart, and settlement history\")"
+      "Bash(git -C /Users/ully/githubprojects/local-llm-proxy commit -m \"feat: add Agent page with start/stop controls, live rate chart, and settlement history\")",
+      "Bash(python3 agent.py start --config ~/.llm-agent/config.json)",
+      "Bash(wait)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(node --check /Users/ully/githubprojects/local-llm-proxy/client/electron/main.js)",
+      "Bash(node --check /Users/ully/githubprojects/local-llm-proxy/client/electron/agent-worker.js)",
+      "Bash(./node_modules/.bin/electron --version)",
+      "Bash(node -e \"require\\('ws'\\)\")"
     ]
   }
 }
