@@ -1,8 +1,8 @@
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
+const agent = require('./agent-worker');
 
 const isDev = process.env.NODE_ENV !== 'production';
 const VITE_URL = 'http://localhost:5173';
@@ -10,7 +10,6 @@ const AGENT_CONFIG_PATH = path.join(os.homedir(), '.llm-agent', 'config.json');
 
 let mainWindow = null;
 let tray = null;
-let agentProcess = null;
 
 // ── Icons ──────────────────────────────────────────────────────────────────────
 
@@ -49,7 +48,6 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => mainWindow.show());
 
   mainWindow.on('close', (e) => {
-    // On macOS, hide instead of quit when clicking the red X
     if (process.platform === 'darwin') {
       e.preventDefault();
       mainWindow.hide();
@@ -63,14 +61,11 @@ function createTray() {
   tray = new Tray(getTrayIcon('stopped'));
   tray.setToolTip('LLM Proxy');
   updateTrayMenu();
-  tray.on('double-click', () => {
-    mainWindow?.show();
-    mainWindow?.focus();
-  });
+  tray.on('double-click', () => { mainWindow?.show(); mainWindow?.focus(); });
 }
 
 function updateTrayMenu() {
-  const running = agentProcess !== null;
+  const running = agent.isRunning();
   const menu = Menu.buildFromTemplate([
     { label: running ? 'Agent 运行中' : 'Agent 已停止', enabled: false },
     { type: 'separator' },
@@ -85,57 +80,30 @@ function updateTrayMenu() {
   tray.setImage(getTrayIcon(running ? 'running' : 'stopped'));
 }
 
-// ── Agent subprocess ──────────────────────────────────────────────────────────
-
-function getAgentCmd() {
-  if (isDev) {
-    // In dev, run the Python agent directly
-    const agentScript = path.join(__dirname, '..', '..', 'agent', 'agent.py');
-    return { cmd: 'python3', extraArgs: [agentScript] };
-  }
-  // In production, use the bundled binary placed by electron-builder extraResources
-  const ext = process.platform === 'win32' ? '.exe' : '';
-  return { cmd: path.join(process.resourcesPath, `llm-agent${ext}`), extraArgs: [] };
-}
+// ── Agent ─────────────────────────────────────────────────────────────────────
 
 function startAgent() {
-  if (agentProcess) return;
-  if (!fs.existsSync(AGENT_CONFIG_PATH)) {
-    mainWindow?.webContents.send('agent:status', { running: false, error: 'config missing — save Agent config first' });
-    return;
-  }
-  const { cmd, extraArgs } = getAgentCmd();
-  const args = [...extraArgs, 'start', '--config', AGENT_CONFIG_PATH];
-  agentProcess = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-
-  agentProcess.stdout.on('data', (d) => mainWindow?.webContents.send('agent:log', d.toString()));
-  agentProcess.stderr.on('data', (d) => mainWindow?.webContents.send('agent:log', d.toString()));
-  agentProcess.on('exit', () => {
-    agentProcess = null;
-    mainWindow?.webContents.send('agent:status', { running: false });
-    updateTrayMenu();
+  agent.start({
+    onLog: (line) => mainWindow?.webContents.send('agent:log', line),
+    onStatus: (status) => {
+      mainWindow?.webContents.send('agent:status', status);
+      updateTrayMenu();
+    },
   });
-
-  mainWindow?.webContents.send('agent:status', { running: true });
+  // Optimistically update tray immediately
   updateTrayMenu();
 }
 
 function stopAgent() {
-  if (!agentProcess) return;
-  agentProcess.kill('SIGTERM');
-  agentProcess = null;
-  mainWindow?.webContents.send('agent:status', { running: false });
+  agent.stop();
   updateTrayMenu();
 }
 
 // ── Agent config helpers ──────────────────────────────────────────────────────
 
 function readAgentConfig() {
-  try {
-    return JSON.parse(fs.readFileSync(AGENT_CONFIG_PATH, 'utf-8'));
-  } catch {
-    return null;
-  }
+  try { return JSON.parse(fs.readFileSync(AGENT_CONFIG_PATH, 'utf-8')); }
+  catch { return null; }
 }
 
 function writeAgentConfig(cfg) {
@@ -146,10 +114,10 @@ function writeAgentConfig(cfg) {
 // ── IPC handlers ──────────────────────────────────────────────────────────────
 
 function registerIPC() {
-  ipcMain.handle('agent:start', () => { startAgent(); return { running: !!agentProcess }; });
-  ipcMain.handle('agent:stop', () => { stopAgent(); return { running: false }; });
-  ipcMain.handle('agent:status', () => ({ running: !!agentProcess }));
-  ipcMain.handle('config:read', () => readAgentConfig());
+  ipcMain.handle('agent:start', () => { startAgent(); return { running: agent.isRunning() }; });
+  ipcMain.handle('agent:stop',  () => { stopAgent();  return { running: false }; });
+  ipcMain.handle('agent:status', () => ({ running: agent.isRunning() }));
+  ipcMain.handle('config:read',  () => readAgentConfig());
   ipcMain.handle('config:write', (_e, cfg) => { writeAgentConfig(cfg); return { ok: true }; });
 }
 
@@ -162,7 +130,7 @@ app.whenReady().then(() => {
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
-    else { mainWindow?.show(); }
+    else mainWindow?.show();
   });
 });
 
@@ -170,6 +138,4 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => {
-  if (agentProcess) agentProcess.kill('SIGTERM');
-});
+app.on('before-quit', () => agent.stop());
