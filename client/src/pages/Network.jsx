@@ -44,6 +44,27 @@ export default function Network() {
           </div>
 
           <section>
+            <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-3">在线模型</h2>
+            {(() => {
+              const counts = {};
+              data.workers.forEach((w) => (w.models ?? []).forEach((m) => { counts[m] = (counts[m] ?? 0) + 1; }));
+              const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+              return entries.length === 0 ? (
+                <p className="text-gray-400 dark:text-gray-500 text-sm">暂无在线模型</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {entries.map(([name, count]) => (
+                    <div key={name} className="flex items-center gap-1.5 bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-lg px-3 py-1.5">
+                      <span className="text-sm text-gray-800 dark:text-gray-200 font-mono">{name}</span>
+                      <span className="text-xs text-gray-400 dark:text-gray-500">{count} 节点</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </section>
+
+          <section>
             <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-3">在线节点</h2>
             {data.workers.length === 0 ? (
               <p className="text-gray-400 dark:text-gray-500 text-sm">暂无在线节点</p>
