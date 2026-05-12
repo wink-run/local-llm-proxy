@@ -5,6 +5,7 @@
   "main": "electron/main.js",
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "prebuild": "node scripts/gen-icons.js",
     "build": "vite build && electron-builder",
     "gen-icons": "node scripts/gen-icons.js"
   },
@@ -18,11 +19,13 @@
     "ws": "^8.20.0"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.20",
     "concurrently": "^8.2.2",
     "electron": "^33.4.11",
     "electron-builder": "^25.0.5",
+    "png2icons": "^2.0.1",
     "pngjs": "^7.0.0",
     "postcss": "^8.4.41",
     "tailwindcss": "^3.4.10",
@@ -40,10 +43,12 @@
       "electron/**/*"
     ],
     "mac": {
+      "icon": "build/icon.icns",
       "target": "dmg",
       "category": "public.app-category.utilities"
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": "nsis"
     },
     "linux": {

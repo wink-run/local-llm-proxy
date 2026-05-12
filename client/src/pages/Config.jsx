@@ -63,12 +63,13 @@ export default function Config() {
   const [models, setModels] = useState('');
   const [nodeName, setNodeName] = useState('');
   const [autoStart, setAutoStart] = useState(false);
+  const [firstRun, setFirstRun] = useState(false);
 
   // Load existing agent config into form fields
   useEffect(() => {
     if (!window.electronAPI) return;
     window.electronAPI.config.read().then((cfg) => {
-      if (!cfg) return;
+      if (!cfg) { setFirstRun(true); return; }
       setLlmUrl(cfg.llm_base_url || '');
       setLlmToken(cfg.llm_token || '');
       setModels((cfg.models || []).join(', '));
@@ -141,6 +142,12 @@ export default function Config() {
   return (
     <div className="max-w-lg mx-auto p-8 space-y-8">
       <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">设置</h1>
+
+      {firstRun && (
+        <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-xl px-4 py-3 text-sm text-blue-700 dark:text-blue-300">
+          首次使用，请先配置服务器地址并登录账户。
+        </div>
+      )}
 
       {/* Server URL */}
       <section className="space-y-4">

@@ -117,7 +117,7 @@ function connect(cfg) {
     ws.send(JSON.stringify({
       type: 'register',
       worker_key: cfg.worker_key,
-      models: cfg.models,
+      models: cfg.models || [],
       name: cfg.name || os.hostname(),
     }));
   });
@@ -128,7 +128,7 @@ function connect(cfg) {
 
     if (msg.type === 'registered') {
       log(`[agent] connected worker_id=${msg.worker_id}`);
-      log(`[agent] models: ${cfg.models.join(', ')}`);
+      log(`[agent] models: ${(cfg.models || []).join(', ')}`);
       return;
     }
 
@@ -174,8 +174,13 @@ function start({ onLog, onStatus } = {}) {
     return;
   }
   if (!cfg.worker_key) {
-    onLog?.('[agent] worker_key missing in config');
+    onLog?.('[agent] worker_key missing — please log in first');
     onStatus?.({ running: false, error: 'worker_key missing' });
+    return;
+  }
+  if (!cfg.llm_base_url) {
+    onLog?.('[agent] llm_base_url missing — set your local LLM address in Agent config');
+    onStatus?.({ running: false, error: 'llm_base_url missing' });
     return;
   }
 

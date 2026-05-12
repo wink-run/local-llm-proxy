@@ -1,4 +1,6 @@
 const { PNG } = require('pngjs');
+const { Resvg } = require('@resvg/resvg-js');
+const png2icons = require('png2icons');
 const fs = require('fs');
 const path = require('path');
 
@@ -23,4 +25,26 @@ const assetsDir = path.join(__dirname, '..', 'assets');
 fs.mkdirSync(assetsDir, { recursive: true });
 fs.writeFileSync(path.join(assetsDir, 'tray-green.png'), makeCirclePNG(34, 197, 94));
 fs.writeFileSync(path.join(assetsDir, 'tray-gray.png'), makeCirclePNG(107, 114, 128));
-console.log('Icons generated in assets/');
+console.log('Tray icons generated in assets/');
+
+// ── App icons from SVG logo ───────────────────────────────────────────────────
+
+const svgPath = path.join(__dirname, '..', 'src', 'assets', 'logo.svg');
+const svgContent = fs.readFileSync(svgPath, 'utf-8');
+
+const resvg = new Resvg(svgContent, { fitTo: { mode: 'width', value: 1024 } });
+const pngBuffer = Buffer.from(resvg.render().asPng());
+
+const buildDir = path.join(__dirname, '..', 'build');
+fs.mkdirSync(buildDir, { recursive: true });
+
+fs.writeFileSync(path.join(buildDir, 'icon.png'), pngBuffer);
+console.log('App icon PNG generated (1024×1024)');
+
+const icns = png2icons.createICNS(pngBuffer, png2icons.BILINEAR, 0);
+if (icns) { fs.writeFileSync(path.join(buildDir, 'icon.icns'), icns); console.log('icon.icns generated'); }
+else console.warn('Warning: ICNS generation failed');
+
+const ico = png2icons.createICO(pngBuffer, png2icons.BILINEAR, 0, true);
+if (ico) { fs.writeFileSync(path.join(buildDir, 'icon.ico'), ico); console.log('icon.ico generated'); }
+else console.warn('Warning: ICO generation failed');
