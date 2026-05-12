@@ -30,27 +30,18 @@
     "wait-on": "^7.2.0"
   },
   "build": {
-    "appId": "com.local-llm-proxy.client",
-    "productName": "LLM Proxy",
+    "appId": "com.tokenbank.app",
+    "productName": "Token Bank",
     "directories": {
       "output": "dist-app"
     },
     "files": [
       "dist/**/*",
-      "electron/**/*",
-      "assets/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "../agent/dist/llm-agent",
-        "to": "llm-agent",
-        "filter": [
-          "**/*"
-        ]
-      }
+      "electron/**/*"
     ],
     "mac": {
-      "target": "dmg"
+      "target": "dmg",
+      "category": "public.app-category.utilities"
     },
     "win": {
       "target": "nsis"
