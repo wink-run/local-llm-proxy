@@ -20,7 +20,7 @@
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.20",
     "concurrently": "^8.2.2",
-    "electron": "^33.0.0",
+    "electron": "^33.4.11",
     "electron-builder": "^25.0.5",
     "pngjs": "^7.0.0",
     "postcss": "^8.4.41",
@@ -31,13 +31,31 @@
   "build": {
     "appId": "com.local-llm-proxy.client",
     "productName": "LLM Proxy",
-    "directories": { "output": "dist-app" },
-    "files": ["dist/**/*", "electron/**/*", "assets/**/*"],
-    "extraResources": [
-      { "from": "../agent/dist/llm-agent", "to": "llm-agent", "filter": ["**/*"] }
+    "directories": {
+      "output": "dist-app"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "assets/**/*"
     ],
-    "mac": { "target": "dmg" },
-    "win": { "target": "nsis" },
-    "linux": { "target": "AppImage" }
+    "extraResources": [
+      {
+        "from": "../agent/dist/llm-agent",
+        "to": "llm-agent",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "mac": {
+      "target": "dmg"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
   }
 }
