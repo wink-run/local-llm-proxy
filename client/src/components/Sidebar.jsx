@@ -20,8 +20,8 @@ export default function Sidebar() {
           🤖
         </div>
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">LLM Proxy</p>
-          <p className="text-xs text-gray-400 dark:text-gray-500 leading-tight">去中心化推理</p>
+          <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">Token Bank</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 leading-tight">token 共享网络</p>
         </div>
       </div>
 
