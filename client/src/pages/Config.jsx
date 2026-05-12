@@ -2,18 +2,46 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { login, getProfile } from '../api/client';
 import { useAuth } from '../store/index';
+import { useTheme } from '../store/theme';
 
 function Field({ label, type = 'text', value, onChange, placeholder }) {
   return (
     <div>
-      <label className="block text-sm text-gray-400 mb-1">{label}</label>
+      <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">{label}</label>
       <input
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+        className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-500"
       />
+    </div>
+  );
+}
+
+const THEMES = [
+  { value: 'light', label: '浅色' },
+  { value: 'system', label: '跟随系统' },
+  { value: 'dark', label: '深色' },
+];
+
+function ThemeSelector() {
+  const { theme, setTheme } = useTheme();
+  return (
+    <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+      {THEMES.map((t) => (
+        <button
+          key={t.value}
+          onClick={() => setTheme(t.value)}
+          className={`flex-1 py-2 text-sm font-medium transition-colors ${
+            theme === t.value
+              ? 'bg-blue-600 text-white'
+              : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+          }`}
+        >
+          {t.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -109,11 +137,11 @@ export default function Config() {
 
   return (
     <div className="max-w-lg mx-auto p-8 space-y-8">
-      <h1 className="text-2xl font-bold text-gray-100">设置</h1>
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">设置</h1>
 
       {/* Server URL */}
       <section className="space-y-4">
-        <h2 className="text-lg font-semibold text-gray-300">服务器</h2>
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">服务器</h2>
         <Field
           label="服务端地址 (HTTP/HTTPS)"
           value={serverUrl}
@@ -124,12 +152,12 @@ export default function Config() {
 
       {/* Account */}
       <section className="space-y-4">
-        <h2 className="text-lg font-semibold text-gray-300">账户</h2>
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">账户</h2>
         {user ? (
-          <div className="flex items-center justify-between bg-gray-800 rounded-xl p-4">
+          <div className="flex items-center justify-between bg-gray-100 dark:bg-gray-800 rounded-xl p-4">
             <div>
-              <p className="text-gray-100 font-medium">{user.nickname}</p>
-              <p className="text-gray-400 text-sm">{user.email}</p>
+              <p className="text-gray-900 dark:text-gray-100 font-medium">{user.nickname}</p>
+              <p className="text-gray-500 dark:text-gray-400 text-sm">{user.email}</p>
             </div>
             <button
               onClick={handleLogout}
@@ -142,7 +170,7 @@ export default function Config() {
           <form onSubmit={handleLogin} className="space-y-3">
             <Field label="邮箱" type="email" value={email} onChange={setEmail} placeholder="you@example.com" />
             <Field label="密码" type="password" value={password} onChange={setPassword} placeholder="••••••" />
-            {error && <p className="text-red-400 text-sm">{error}</p>}
+            {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
             <button
               type="submit"
               disabled={saving}
@@ -156,7 +184,7 @@ export default function Config() {
 
       {/* Agent config */}
       <section className="space-y-4">
-        <h2 className="text-lg font-semibold text-gray-300">Agent 配置（贡献者）</h2>
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">Agent 配置（贡献者）</h2>
         <Field
           label="本地 LLM 地址"
           value={llmUrl}
@@ -184,10 +212,16 @@ export default function Config() {
         />
         <button
           onClick={handleSaveAgentConfig}
-          className="w-full py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors"
+          className="w-full py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-100 rounded-lg text-sm font-medium transition-colors"
         >
           保存 Agent 配置
         </button>
+      </section>
+
+      {/* Theme */}
+      <section className="space-y-4">
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">主题</h2>
+        <ThemeSelector />
       </section>
     </div>
   );

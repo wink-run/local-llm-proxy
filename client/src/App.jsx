@@ -7,9 +7,7 @@ import Profile from './pages/Profile';
 import Agent from './pages/Agent';
 import Network from './pages/Network';
 import Config from './pages/Config';
-
-// Debug page will be added in Task 6 — stub for now
-function Debug() { return null; }
+import Debug from './pages/Debug';
 
 function Layout() {
   const { user, loading } = useAuth();
