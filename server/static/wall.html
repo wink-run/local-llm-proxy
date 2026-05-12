@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>LLM Proxy — Live Dashboard</title>
 <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
 <style>
@@ -13,12 +13,23 @@
   --accent:#2dd4bf;--accent2:#6366f1;--warm:#fbbf24;
   --text:#c8d0e0;--muted:#5a6480;--green:#22c55e;--red:#f87171;
 }
-html,body{height:100%;overflow:hidden}
+html,body{min-height:100%;overflow-x:hidden}
 body{
   font-family:"JetBrains Mono",monospace;background:var(--bg);color:var(--text);font-size:13px;
   background-image:
     repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.04) 2px,rgba(0,0,0,.04) 4px),
     radial-gradient(ellipse 100% 60% at 50% 0%,rgba(45,212,191,.06),transparent 60%);
+}
+/* 桌面：整屏一视窗，内部滚动 */
+@media (min-width:901px){
+  html,body{height:100%;overflow:hidden}
+}
+#app{
+  display:flex;flex-direction:column;
+  min-height:100%;
+}
+@media (min-width:901px){
+  #app{height:100vh;height:100dvh}
 }
 .topbar{
   display:flex;align-items:center;justify-content:space-between;
@@ -35,9 +46,13 @@ body{
 .meta-sep{width:1px;height:36px;background:var(--border)}
 .clock{font-size:11px;color:var(--muted);text-align:right}
 .clock b{color:var(--text);font-size:16px;display:block}
+.topbar-meta-end{display:flex;align-items:center;gap:12px;margin-left:4px}
+.topbar-meta-end .clock{text-align:right}
 .main{
   display:grid;grid-template-columns:1fr 340px;
-  height:calc(100vh - 65px);padding:20px 24px;gap:20px;overflow:hidden;
+  flex:1;min-height:0;
+  height:calc(100vh - 65px);height:calc(100dvh - 65px);
+  padding:20px 24px;gap:20px;overflow:hidden;
 }
 .workers-panel{overflow:hidden;display:flex;flex-direction:column}
 .panel-title{
@@ -101,9 +116,12 @@ body{
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 .back-link{
-  position:fixed;bottom:16px;right:20px;font-size:11px;color:var(--muted);
+  position:fixed;bottom:max(16px,env(safe-area-inset-bottom,0px));
+  right:max(20px,env(safe-area-inset-right,0px));
+  font-size:11px;color:var(--muted);
   text-decoration:none;padding:5px 12px;border:1px solid var(--border);border-radius:6px;
   transition:color .15s,border-color .15s;
+  background:rgba(6,8,16,.85);backdrop-filter:blur(6px);
 }
 .back-link:hover{color:var(--accent);border-color:var(--accent)}
 .btn-lang{
@@ -112,6 +130,64 @@ body{
   transition:color .15s,border-color .15s;
 }
 .btn-lang:hover{color:var(--accent);border-color:var(--accent)}
+
+/* 平板 / 手机：顶栏换行、主区单列、整页可滚 */
+@media (max-width:900px){
+  .topbar{padding:12px 16px;flex-wrap:wrap;row-gap:8px}
+  .topbar-logo{min-width:0}
+  .topbar-meta{flex-wrap:wrap;gap:12px 16px;justify-content:flex-end}
+  #app{min-height:100dvh}
+  .main{
+    grid-template-columns:1fr;
+    height:auto;min-height:0;flex:1 1 auto;
+    padding:12px 14px 88px;gap:16px;overflow:visible;
+  }
+  .workers-panel{min-height:0}
+  .workers-grid{
+    grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
+    overflow-y:visible;padding-right:0;
+  }
+  .right-panel{
+    order:2;
+    min-height:200px;
+    max-height:min(50vh,420px);
+  }
+  .wall-list{max-height:min(38vh,360px)}
+}
+@media (max-width:520px){
+  .topbar{
+    flex-direction:column;align-items:stretch;
+    padding:10px 14px;gap:10px;
+  }
+  .topbar-logo{font-size:15px}
+  .topbar-meta{
+    display:flex;flex-wrap:wrap;align-items:flex-start;
+    justify-content:space-between;gap:10px 8px;
+  }
+  .meta-sep{display:none}
+  .meta-item{
+    flex:1 1 calc(50% - 8px);min-width:0;max-width:calc(50% - 4px);
+    align-items:center;
+  }
+  .meta-val{font-size:17px}
+  .meta-label{font-size:9px}
+  .topbar-meta-end{
+    flex:1 1 100%;
+    justify-content:space-between;align-items:center;
+    padding-top:8px;margin:0;border-top:1px solid var(--border);
+  }
+  .topbar-meta-end .clock{text-align:left}
+  .topbar-meta-end .clock b{display:inline;margin-right:8px;font-size:14px}
+  .workers-grid{grid-template-columns:1fr}
+  .worker-card{padding:12px}
+  .card-stats{grid-template-columns:repeat(2,1fr);gap:8px}
+  .ticker-inner{animation-duration:45s}
+  .back-link{
+    left:max(14px,env(safe-area-inset-left,0px));
+    right:max(14px,env(safe-area-inset-right,0px));
+    width:auto;text-align:center;
+  }
+}
 </style>
 </head>
 <body>
@@ -131,8 +207,10 @@ body{
       <div class="meta-sep"></div>
       <div class="meta-item"><div class="meta-val">{{ wallUsers.length }}</div><div class="meta-label">{{ T.contributors }}</div></div>
       <div class="meta-sep"></div>
-      <div class="clock"><b>{{ clock }}</b>{{ dateStr }}</div>
-      <button class="btn-lang" @click="toggleLang">{{ lang === 'zh' ? 'EN' : '中' }}</button>
+      <div class="topbar-meta-end">
+        <div class="clock"><b>{{ clock }}</b>{{ dateStr }}</div>
+        <button type="button" class="btn-lang" @click="toggleLang">{{ lang === 'zh' ? 'EN' : '中' }}</button>
+      </div>
     </div>
   </div>
 
