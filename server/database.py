@@ -458,6 +458,7 @@ async def get_consume_rate(model_name: str) -> Optional[float]:
 async def log_settlement(worker_id: str, user_id: int, period_start: str, period_end: str,
                          online_mins: float, output_tokens: int, avg_latency: float,
                          success_rate: float, multiplier: float, credits_awarded: float) -> None:
+    """avg_latency 写入 avg_latency_ms 列：语义为首 Token 平均延迟（ms）。"""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """INSERT INTO settlement_logs

@@ -40,6 +40,7 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None):
         "queue": q,
         "model": model,
         "dispatch_time": time.time(),
+        "ttft_ms": None,  # 首个 chunk 到达时写入（首 Token 延迟）
     }
     worker.active_requests += 1
 

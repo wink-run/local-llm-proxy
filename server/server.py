@@ -135,18 +135,20 @@ async def workers_wall():
         stats = w.period_stats
         total_req = sum(s["requests"] for s in stats.values())
         total_success = sum(s["success"] for s in stats.values())
-        total_latency = sum(s["latency_sum"] for s in stats.values())
+        total_ttft = sum(s.get("ttft_sum", 0) for s in stats.values())
+        total_ttft_count = sum(s.get("ttft_count", 0) for s in stats.values())
         total_tokens = sum(s["output_tokens"] for s in stats.values())
 
-        avg_latency = total_latency / total_req if total_req > 0 else 0
+        # 仅成功且已记录 TTFT 的请求参与平均；无样本时按 0 处理（延迟因子取中性 1.0）
+        avg_ttft_ms = total_ttft / total_ttft_count if total_ttft_count > 0 else 0
         success_rate = total_success / total_req if total_req > 0 else 1.0
         online_mins = w.period_online_mins()
 
-        # 简单估算当前质量分
+        # 简单估算当前质量分（与 settler 一致：首 Token 平均延迟）
         multiplier = 1.0
         if total_req > 0:
             online_f = min(0.5 + 0.8 * min(online_mins / 5, 1.0), 1.3)
-            latency_f = max(0.6, min(1.5, 500 / avg_latency)) if avg_latency > 0 else 1.0
+            latency_f = max(0.6, min(1.5, 500 / avg_ttft_ms)) if avg_ttft_ms > 0 else 1.0
             stability_f = 0.5 + 0.7 * success_rate
             multiplier = round(max(0.5, min(1.5, 0.4 * online_f + 0.4 * latency_f + 0.2 * stability_f)), 3)
 
@@ -156,7 +158,7 @@ async def workers_wall():
             "models": w.models,
             "active_requests": w.active_requests,
             "period_tokens": total_tokens,
-            "avg_latency_ms": round(avg_latency),
+            "avg_latency_ms": round(avg_ttft_ms),
             "multiplier": multiplier,
             "stars": _stars(multiplier),
             "online_mins": round(online_mins, 1),
@@ -278,26 +280,31 @@ async def worker_ws(ws: WebSocket):
             kind = msg.get("type")
 
             if kind == "chunk":
+                # 首包到达时间 = 首 Token 延迟（TTFT）；非流式单次 body 也在首 chunk 时记一次
+                if entry.get("ttft_ms") is None:
+                    entry["ttft_ms"] = (time.time() - entry["dispatch_time"]) * 1000
                 await q.put(("chunk", msg.get("data", "")))
 
             elif kind == "done":
                 await q.put(("done", None))
                 worker.pending.pop(req_id, None)
                 worker.active_requests = max(0, worker.active_requests - 1)
-                # 记录周期统计
+                # 周期统计：成功请求用 TTFT；若从未收到 chunk（异常）则用总耗时
                 usage = msg.get("usage") or {}
                 output_tokens = int(
                     usage.get("completion_tokens") or usage.get("output_tokens") or 0
                 )
-                latency_ms = (time.time() - entry["dispatch_time"]) * 1000
-                worker.record_complete(entry["model"], output_tokens, True, latency_ms)
+                ttft_ms = entry.get("ttft_ms")
+                if ttft_ms is None:
+                    ttft_ms = (time.time() - entry["dispatch_time"]) * 1000
+                worker.record_complete(entry["model"], output_tokens, True, ttft_ms)
 
             elif kind == "error":
                 await q.put(("error", msg.get("error", "worker error")))
                 worker.pending.pop(req_id, None)
                 worker.active_requests = max(0, worker.active_requests - 1)
-                latency_ms = (time.time() - entry["dispatch_time"]) * 1000
-                worker.record_complete(entry["model"], 0, False, latency_ms)
+                # 失败请求不参与首 Token 平均
+                worker.record_complete(entry["model"], 0, False, None)
 
     except WebSocketDisconnect:
         if worker is None:

@@ -21,22 +21,26 @@ class WorkerConnection:
     _send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # 5 分钟周期统计
     period_start: float = field(default_factory=time.time)
-    # {model: {output_tokens, requests, success, latency_sum}}
+    # {model: {output_tokens, requests, success, ttft_sum, ttft_count}}
     period_stats: dict = field(default_factory=dict)
 
     async def send(self, data: dict) -> None:
         async with self._send_lock:
             await self.ws.send_text(json.dumps(data))
 
-    def record_complete(self, model: str, output_tokens: int, success: bool, latency_ms: float) -> None:
+    def record_complete(self, model: str, output_tokens: int, success: bool, ttft_ms: float | None) -> None:
+        """success 且 ttft_ms 有效时累加首 Token 延迟（用于周期内平均 TTFT）。"""
         s = self.period_stats.setdefault(
-            model, {"output_tokens": 0, "requests": 0, "success": 0, "latency_sum": 0.0}
+            model,
+            {"output_tokens": 0, "requests": 0, "success": 0, "ttft_sum": 0.0, "ttft_count": 0},
         )
         s["output_tokens"] += output_tokens
         s["requests"] += 1
         if success:
             s["success"] += 1
-        s["latency_sum"] += latency_ms
+        if success and ttft_ms is not None and ttft_ms >= 0:
+            s["ttft_sum"] += ttft_ms
+            s["ttft_count"] += 1
 
     def take_period(self) -> dict:
         """取走当前周期数据并重置，返回快照"""

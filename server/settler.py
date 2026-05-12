@@ -13,16 +13,16 @@ INTERVAL = 5 * 60  # 300 秒
 
 
 def _quality_multiplier(online_mins: float, period_mins: float,
-                        avg_latency_ms: float, success_rate: float) -> float:
+                        avg_ttft_ms: float, success_rate: float) -> float:
     # 在线因子：周期内在线比例，0.5 ~ 1.3
     ratio = min(online_mins / max(period_mins, 1), 1.0)
     online_f = 0.5 + 0.8 * ratio
 
-    # 延迟因子：500ms 为基准 1.0，越快越高，0.6 ~ 1.5
-    if avg_latency_ms <= 0:
+    # 首 Token 延迟因子：500ms 为基准 1.0，越快越高，0.6 ~ 1.5（无样本时中性 1.0）
+    if avg_ttft_ms <= 0:
         latency_f = 1.0
     else:
-        latency_f = max(0.6, min(1.5, 500 / avg_latency_ms))
+        latency_f = max(0.6, min(1.5, 500 / avg_ttft_ms))
 
     # 稳定性因子：成功率，0.5 ~ 1.2
     stability_f = 0.5 + 0.7 * max(0.0, min(1.0, success_rate))
@@ -46,13 +46,15 @@ async def settle_once() -> None:
             continue
 
         total_success = sum(s["success"] for s in stats.values())
-        total_latency = sum(s["latency_sum"] for s in stats.values())
+        total_ttft = sum(s.get("ttft_sum", 0) for s in stats.values())
+        total_ttft_count = sum(s.get("ttft_count", 0) for s in stats.values())
         total_tokens = sum(s["output_tokens"] for s in stats.values())
 
-        avg_latency = total_latency / total_req
+        # 本周期内「成功请求」的首 Token 平均延迟（ms）；无样本时 0，延迟因子取中性
+        avg_ttft_ms = total_ttft / total_ttft_count if total_ttft_count > 0 else 0.0
         success_rate = total_success / total_req
         multiplier = _quality_multiplier(
-            online_mins, INTERVAL / 60, avg_latency, success_rate
+            online_mins, INTERVAL / 60, avg_ttft_ms, success_rate
         )
 
         total_credits = 0.0
@@ -87,7 +89,7 @@ async def settle_once() -> None:
                 period_end=period_end,
                 online_mins=online_mins,
                 output_tokens=total_tokens,
-                avg_latency=avg_latency,
+                avg_latency=avg_ttft_ms,
                 success_rate=success_rate,
                 multiplier=multiplier,
                 credits_awarded=total_credits,

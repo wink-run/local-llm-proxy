@@ -370,7 +370,7 @@
           <article class="card">
             <div class="card-icon">02 / MESH</div>
             <h3 data-i18n="value.c2.title">多节点按质调度</h3>
-            <p data-i18n="value.c2.body">每台 Worker 自主上线声明模型；VPS 按延迟、在线时长、成功率计算质量系数，优先调用高质量节点，加成贡献积分。</p>
+            <p data-i18n="value.c2.body">每台 Worker 自主上线声明模型；VPS 按首 Token 延迟、在线时长、成功率计算质量系数，优先调用高质量节点，加成贡献积分。</p>
           </article>
           <article class="card">
             <div class="card-icon">03 / SAFE</div>
@@ -450,11 +450,11 @@
             </p>
             <div class="mult-grid">
               <div class="mult-item"><div class="label" data-i18n="econ.mult.online">在线时长占比</div><div class="val">0.5–1.3×</div></div>
-              <div class="mult-item"><div class="label" data-i18n="econ.mult.latency">响应延迟</div><div class="val">0.6–1.5×</div></div>
+              <div class="mult-item"><div class="label" data-i18n="econ.mult.latency">首 Token 延迟</div><div class="val">0.6–1.5×</div></div>
               <div class="mult-item"><div class="label" data-i18n="econ.mult.stability">请求成功率</div><div class="val">0.5–1.2×</div></div>
             </div>
             <p style="margin-top:10px;font-size:.8rem;color:var(--muted);" data-i18n-html="econ.mult.formula">
-              质量系数 = 0.4×在线因子 + 0.4×延迟因子 + 0.2×稳定性因子，范围 <strong style="color:var(--accent);">0.5 ~ 1.5</strong>
+              质量系数 = 0.4×在线因子 + 0.4×首 Token 延迟因子 + 0.2×稳定性因子，范围 <strong style="color:var(--accent);">0.5 ~ 1.5</strong>
             </p>
           </div>
 
@@ -583,9 +583,9 @@
       "econ.earn.title": "贡献赚积分",
       "econ.earn.note":  "运行 Agent 后每处理一条请求，系统记录你产生的 <strong>输出 Token 数</strong>。每 5 分钟结算一次，按模型的「贡献率（积分/千 Token）」乘以当期质量系数累积积分。",
       "econ.mult.online": "在线时长占比",
-      "econ.mult.latency": "响应延迟",
+      "econ.mult.latency": "首 Token 延迟",
       "econ.mult.stability": "请求成功率",
-      "econ.mult.formula": "质量系数 = 0.4×在线因子 + 0.4×延迟因子 + 0.2×稳定性因子，范围 <strong style=\"color:var(--accent);\">0.5 ~ 1.5</strong>",
+      "econ.mult.formula": "质量系数 = 0.4×在线因子 + 0.4×首 Token 延迟因子 + 0.2×稳定性因子，范围 <strong style=\"color:var(--accent);\">0.5 ~ 1.5</strong>",
       "econ.spend.title": "调用花积分",
       "econ.spend.note":  "每次 API 调用完成后，按 <strong>输入 + 输出 Token 总量</strong> 乘以该模型的「消费率（积分/千 Token）」扣除积分。贡献率 > 消费率，激励贡献者长期在线。",
       "econ.rates.title": "当前模型汇率",
@@ -629,7 +629,7 @@
       "value.c1.title": "贡献你自愿提供的额度",
       "value.c1.body":  "本机 Ollama、内网推理网关、或你买的上游 API token，通过 Agent 主动连出 VPS，按你设定的模型列表接受调度。",
       "value.c2.title": "多节点按质调度",
-      "value.c2.body":  "每台 Worker 自主上线声明模型；VPS 按延迟、在线时长、成功率计算质量系数，优先调用高质量节点，加成贡献积分。",
+      "value.c2.body":  "每台 Worker 自主上线声明模型；VPS 按首 Token 延迟、在线时长、成功率计算质量系数，优先调用高质量节点，加成贡献积分。",
       "value.c3.title": "密钥不出本机，随时下线",
       "value.c3.body":  "上游 API Key 仅存本机，服务端不收集。Agent 不运行，立即退出资源池，无需解绑。",
       "arch.sub":     "外部客户端使用 Bearer 用户 Key 访问 VPS；Worker 使用用户中心的 Worker Key（wk-…）注册并与账户绑定；<strong style=\"color:#fff\">上游 LLM 的 API Key 从不经过代理持久化。</strong>",
@@ -658,9 +658,9 @@
       "econ.earn.title": "Earn Credits by Contributing",
       "econ.earn.note":  "Every request your Agent handles, the system records your <strong>output token count</strong>. Every 5 minutes, credits are settled: output tokens ÷ 1000 × model contribute rate × quality multiplier.",
       "econ.mult.online": "Uptime ratio",
-      "econ.mult.latency": "Response latency",
+      "econ.mult.latency": "Time to first token",
       "econ.mult.stability": "Success rate",
-      "econ.mult.formula": "Quality = 0.4×uptime + 0.4×latency + 0.2×stability, range <strong style=\"color:var(--accent);\">0.5 ~ 1.5</strong>",
+      "econ.mult.formula": "Quality = 0.4×uptime + 0.4×TTFT + 0.2×stability, range <strong style=\"color:var(--accent);\">0.5 ~ 1.5</strong>",
       "econ.spend.title": "Spend Credits by Calling API",
       "econ.spend.note":  "After each API call, <strong>total tokens (prompt + completion)</strong> ÷ 1000 × model consume rate is deducted. Contribute rate > consume rate by design — rewards long-term contributors.",
       "econ.rates.title": "Current Model Rates",
@@ -704,7 +704,7 @@
       "value.c1.title": "Contribute your voluntary quota",
       "value.c1.body":  "Local Ollama, intranet inference gateway, or your purchased upstream API token — Agent dials out to the VPS and joins the pool under your declared model list.",
       "value.c2.title": "Multi-node quality-weighted dispatch",
-      "value.c2.body":  "Each Worker registers its model list independently; the VPS scores quality by latency, uptime, and success rate — routing to the best node and crediting contributors accordingly.",
+      "value.c2.body":  "Each Worker registers its model list independently; the VPS scores quality by time-to-first-token, uptime, and success rate — routing to the best node and crediting contributors accordingly.",
       "value.c3.title": "Keys stay local, disconnect anytime",
       "value.c3.body":  "Upstream API keys are stored only on your machine — never sent to the server. Stop the Agent and you immediately exit the pool; no server-side unbinding needed.",
       "arch.sub":     "External clients authenticate with a Bearer user key; Workers authenticate with the account Worker Key (wk-…) from the User Portal; <strong style=\"color:#fff\">the upstream LLM API key is never stored by the proxy.</strong>",
