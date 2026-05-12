@@ -62,6 +62,7 @@ export default function Config() {
   const [llmToken, setLlmToken] = useState('');
   const [models, setModels] = useState('');
   const [nodeName, setNodeName] = useState('');
+  const [autoStart, setAutoStart] = useState(false);
 
   // Load existing agent config into form fields
   useEffect(() => {
@@ -72,6 +73,7 @@ export default function Config() {
       setLlmToken(cfg.llm_token || '');
       setModels((cfg.models || []).join(', '));
       setNodeName(cfg.name || '');
+      setAutoStart(!!cfg.auto_start);
     });
   }, []);
 
@@ -125,6 +127,7 @@ export default function Config() {
       llm_token: llmToken,
       models: models.split(',').map((m) => m.trim()).filter(Boolean),
       name: nodeName,
+      auto_start: autoStart,
     });
     localStorage.setItem('serverUrl', serverUrl);
     alert('Agent 配置已保存');
@@ -210,6 +213,15 @@ export default function Config() {
           onChange={setNodeName}
           placeholder="留空使用主机名"
         />
+        <label className="flex items-center gap-3 cursor-pointer select-none">
+          <div
+            onClick={() => setAutoStart((v) => !v)}
+            className={`relative w-10 h-6 rounded-full transition-colors ${autoStart ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}
+          >
+            <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${autoStart ? 'translate-x-5' : 'translate-x-1'}`} />
+          </div>
+          <span className="text-sm text-gray-700 dark:text-gray-300">启动应用时自动运行 Agent</span>
+        </label>
         <button
           onClick={handleSaveAgentConfig}
           className="w-full py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-100 rounded-lg text-sm font-medium transition-colors"

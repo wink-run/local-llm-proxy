@@ -45,7 +45,10 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+    if (isDev) mainWindow.webContents.openDevTools({ mode: 'detach' });
+  });
 
   mainWindow.on('close', (e) => {
     if (process.platform === 'darwin') {
@@ -83,14 +86,18 @@ function updateTrayMenu() {
 // ── Agent ─────────────────────────────────────────────────────────────────────
 
 function startAgent() {
+  console.log('[main] startAgent called, isRunning=', agent.isRunning());
   agent.start({
-    onLog: (line) => mainWindow?.webContents.send('agent:log', line),
+    onLog: (line) => {
+      console.log('[agent-log]', line);
+      mainWindow?.webContents.send('agent:log', line);
+    },
     onStatus: (status) => {
+      console.log('[main] agent status', status);
       mainWindow?.webContents.send('agent:status', status);
       updateTrayMenu();
     },
   });
-  // Optimistically update tray immediately
   updateTrayMenu();
 }
 
@@ -127,6 +134,12 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   registerIPC();
+
+  // Auto-start agent if configured
+  const cfg = readAgentConfig();
+  if (cfg?.auto_start && cfg?.worker_key) {
+    startAgent();
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
