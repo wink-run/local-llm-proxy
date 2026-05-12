@@ -223,6 +223,16 @@ export default function Config() {
         <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">主题</h2>
         <ThemeSelector />
       </section>
+
+      {/* Credits */}
+      <p className="text-xs text-gray-400 dark:text-gray-600 text-center pt-2">
+        基于{' '}
+        <a href="https://github.com/wink-run/local-llm-proxy" target="_blank" rel="noreferrer"
+          className="underline hover:text-gray-600 dark:hover:text-gray-400 transition-colors">
+          local-llm-proxy
+        </a>{' '}
+        开源项目
+      </p>
     </div>
   );
 }
