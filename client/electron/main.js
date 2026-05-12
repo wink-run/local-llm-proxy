@@ -42,7 +42,7 @@ function createWindow() {
   if (isDev) {
     mainWindow.loadURL(VITE_URL);
   } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+    mainWindow.loadFile(path.join(app.getAppPath(), 'dist', 'index.html'));
   }
 
   mainWindow.once('ready-to-show', () => {
