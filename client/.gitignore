@@ -2,3 +2,4 @@ node_modules/
 dist/
 dist-app/
 assets/
+!src/assets/

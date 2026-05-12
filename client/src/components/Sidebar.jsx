@@ -1,6 +1,7 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../store/index';
+import logoSvg from '../assets/logo.svg';
 
 const NAV = [
   { to: '/', icon: '👤', label: '我的账户' },
@@ -16,9 +17,7 @@ export default function Sidebar() {
     <aside className="w-44 flex flex-col py-5 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 shrink-0">
       {/* Logo */}
       <div className="flex items-center gap-2.5 px-4 mb-6 select-none">
-        <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white text-base shrink-0">
-          🤖
-        </div>
+        <img src={logoSvg} alt="Token Bank" className="w-8 h-8 shrink-0" />
         <div className="min-w-0">
           <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">Token Bank</p>
           <p className="text-xs text-gray-400 dark:text-gray-500 leading-tight">token 共享网络</p>

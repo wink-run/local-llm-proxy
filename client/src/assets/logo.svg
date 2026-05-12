@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <radialGradient id="coin" cx="42%" cy="38%" r="60%">
+      <stop offset="0%" stop-color="#FFD055"/>
+      <stop offset="100%" stop-color="#E8940A"/>
+    </radialGradient>
+    <!-- subtle rim shadow -->
+    <filter id="rim" x="-4%" y="-4%" width="108%" height="108%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#B86E00" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <!-- Coin body -->
+  <circle cx="60" cy="60" r="56" fill="url(#coin)" filter="url(#rim)"/>
+
+  <!-- Coin rim groove -->
+  <circle cx="60" cy="60" r="56" fill="none" stroke="#C97D00" stroke-width="3.5" opacity="0.5"/>
+  <circle cx="60" cy="60" r="51" fill="none" stroke="#FFE07A" stroke-width="1.5" opacity="0.6"/>
+
+  <!-- Star eye (left) — ★ -->
+  <polygon
+    points="38,34 40.6,41.8 48.8,41.8 42.1,46.6 44.7,54.4 38,49.6 31.3,54.4 33.9,46.6 27.2,41.8 35.4,41.8"
+    fill="#5C3D00"
+  />
+
+  <!-- Wink dash (right eye) -->
+  <rect x="64" y="42" width="22" height="7" rx="3.5" fill="#5C3D00"/>
+
+  <!-- Smile -->
+  <path d="M 32 72 Q 60 96 88 72" stroke="#5C3D00" stroke-width="7" stroke-linecap="round" fill="none"/>
+</svg>
