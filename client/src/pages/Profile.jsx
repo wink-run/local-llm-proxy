@@ -12,9 +12,9 @@ const TX_LABEL = {
 
 function StatCard({ label, value }) {
   return (
-    <div className="bg-gray-800 rounded-xl p-4">
-      <p className="text-xs text-gray-500 mb-1">{label}</p>
-      <p className="text-2xl font-bold text-gray-100">{value}</p>
+    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4">
+      <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">{label}</p>
+      <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{value}</p>
     </div>
   );
 }
@@ -37,18 +37,16 @@ export default function Profile() {
 
   return (
     <div className="p-8 space-y-8">
-      {/* Header */}
       <div className="flex items-center gap-4">
-        <div className="w-14 h-14 rounded-full bg-blue-700 flex items-center justify-center text-2xl font-bold shrink-0">
+        <div className="w-14 h-14 rounded-full bg-blue-700 flex items-center justify-center text-2xl font-bold text-white shrink-0">
           {(user.nickname || user.email || '?')[0].toUpperCase()}
         </div>
         <div className="min-w-0">
-          <p className="text-xl font-bold text-gray-100 truncate">{user.nickname}</p>
-          <p className="text-sm text-gray-400 truncate">{user.email}</p>
+          <p className="text-xl font-bold text-gray-900 dark:text-gray-100 truncate">{user.nickname}</p>
+          <p className="text-sm text-gray-400 dark:text-gray-400 truncate">{user.email}</p>
         </div>
       </div>
 
-      {/* Balance */}
       <div className="bg-gradient-to-br from-blue-700 to-blue-900 rounded-2xl p-6">
         <p className="text-sm text-blue-300 mb-1">积分余额</p>
         <p className="text-5xl font-bold text-white">
@@ -56,40 +54,36 @@ export default function Profile() {
         </p>
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-2 gap-4">
         <StatCard label="累计贡献积分" value={Math.floor(user.credits_earned ?? 0).toLocaleString()} />
         <StatCard label="累计消耗积分" value={Math.floor(user.credits_spent ?? 0).toLocaleString()} />
       </div>
 
-      {/* Transaction list */}
       <section>
-        <h2 className="text-lg font-semibold text-gray-300 mb-3">积分流水</h2>
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-3">积分流水</h2>
         {loadingTxs ? (
-          <p className="text-gray-500 text-sm">加载中…</p>
+          <p className="text-gray-400 dark:text-gray-500 text-sm">加载中…</p>
         ) : txError ? (
-          <p className="text-red-400 text-sm">加载失败，请刷新重试</p>
+          <p className="text-red-500 dark:text-red-400 text-sm">加载失败，请刷新重试</p>
         ) : txs.length === 0 ? (
-          <p className="text-gray-500 text-sm">暂无记录</p>
+          <p className="text-gray-400 dark:text-gray-500 text-sm">暂无记录</p>
         ) : (
           <div className="space-y-2">
             {txs.map((tx) => (
-              <div
-                key={tx.id}
-                className="flex items-center justify-between bg-gray-800 rounded-xl px-4 py-3"
-              >
+              <div key={tx.id}
+                className="flex items-center justify-between bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-3">
                 <div>
-                  <p className="text-sm text-gray-300">
+                  <p className="text-sm text-gray-700 dark:text-gray-300">
                     {TX_LABEL[tx.type] || tx.type}
                     {tx.model_name ? ` · ${tx.model_name}` : ''}
                   </p>
-                  <p className="text-xs text-gray-500">{tx.created_at?.slice(0, 16)}</p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">{tx.created_at?.slice(0, 16)}</p>
                 </div>
                 <div className="text-right">
-                  <p className={`text-sm font-medium ${(tx.delta ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  <p className={`text-sm font-medium ${(tx.delta ?? 0) >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
                     {(tx.delta ?? 0) >= 0 ? '+' : ''}{(tx.delta ?? 0).toFixed(1)}
                   </p>
-                  <p className="text-xs text-gray-500">余额 {(tx.balance ?? 0).toFixed(1)}</p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">余额 {(tx.balance ?? 0).toFixed(1)}</p>
                 </div>
               </div>
             ))}
