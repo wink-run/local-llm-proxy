@@ -5,6 +5,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 
 import database as db
 from auth import create_token, get_current_user_id, hash_password, verify_password
+from worker_pool import pool as _pool
 
 router = APIRouter()
 
@@ -196,9 +197,6 @@ async def my_purchase_orders(uid: int = Depends(get_current_user_id)):
     return {"orders": await db.get_user_purchase_orders(uid)}
 
 
-from worker_pool import pool as _pool
-
-
 @router.get("/stats")
 async def user_stats(uid: int = Depends(get_current_user_id)):
     user_workers = [w for w in _pool.all_workers() if w.user_id == uid]
@@ -206,9 +204,7 @@ async def user_stats(uid: int = Depends(get_current_user_id)):
         sum(s["requests"] for s in w.period_stats.values())
         for w in user_workers
     )
-    total_online_mins = max(
-        max((w.period_online_mins() for w in user_workers), default=1), 1
-    )
+    total_online_mins = max(sum(w.period_online_mins() for w in user_workers), 1)
     contribute_req_per_min = round(total_req / total_online_mins, 2) if user_workers else 0.0
     return {
         "contribute_req_per_min": contribute_req_per_min,
