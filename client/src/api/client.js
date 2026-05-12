@@ -34,3 +34,19 @@ export function getSettlements() {
 export function getNetwork() {
   return http.get('/public/network');
 }
+
+export function listKeys() {
+  return http.get('/user/keys');
+}
+
+export function createKey(note = '') {
+  return http.post('/user/keys', { note });
+}
+
+export function toggleKey(keyId, isActive) {
+  return http.patch(`/user/keys/${keyId}`, { is_active: isActive });
+}
+
+export function deleteKey(keyId) {
+  return http.delete(`/user/keys/${keyId}`);
+}
