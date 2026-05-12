@@ -19,10 +19,14 @@ export default function Agent() {
   useEffect(() => {
     if (!window.electronAPI) return;
     window.electronAPI.agent.getStatus().then(({ running: r }) => setRunning(r));
-    window.electronAPI.agent.onStatus(({ running: r }) => setRunning(r));
-    window.electronAPI.agent.onLog((line) =>
+    const disposeStatus = window.electronAPI.agent.onStatus(({ running: r }) => setRunning(r));
+    const disposeLog = window.electronAPI.agent.onLog((line) =>
       setLogs((prev) => [...prev.slice(-99), line.trimEnd()])
     );
+    return () => {
+      disposeStatus?.();
+      disposeLog?.();
+    };
   }, []);
 
   // Auto-scroll log tail
@@ -56,8 +60,8 @@ export default function Agent() {
       .catch(() => {});
   }, []);
 
-  const handleStart = async () => window.electronAPI?.agent.start();
-  const handleStop = async () => window.electronAPI?.agent.stop();
+  const handleStart = () => window.electronAPI?.agent.start();
+  const handleStop = () => window.electronAPI?.agent.stop();
 
   return (
     <div className="p-8 space-y-6">
@@ -127,7 +131,7 @@ export default function Agent() {
           <div className="space-y-2">
             {settlements.map((s) => (
               <div
-                key={s.id}
+                key={s.id ?? s.period_end}
                 className="bg-gray-800 rounded-xl px-4 py-3 grid grid-cols-5 gap-2 text-sm items-center"
               >
                 <span className="text-gray-400 text-xs">{s.period_end?.slice(0, 16)}</span>
