@@ -23,12 +23,13 @@ export default function Profile() {
   const { user, refreshUser } = useAuth();
   const [txs, setTxs] = useState([]);
   const [loadingTxs, setLoadingTxs] = useState(true);
+  const [txError, setTxError] = useState(false);
 
   useEffect(() => {
     refreshUser();
     getTransactions()
       .then((r) => setTxs(r.data.transactions || []))
-      .catch(() => {})
+      .catch(() => { setTxError(true); })
       .finally(() => setLoadingTxs(false));
   }, []);
 
@@ -39,7 +40,7 @@ export default function Profile() {
       {/* Header */}
       <div className="flex items-center gap-4">
         <div className="w-14 h-14 rounded-full bg-blue-700 flex items-center justify-center text-2xl font-bold shrink-0">
-          {(user.nickname || user.email)[0].toUpperCase()}
+          {(user.nickname || user.email || '?')[0].toUpperCase()}
         </div>
         <div className="min-w-0">
           <p className="text-xl font-bold text-gray-100 truncate">{user.nickname}</p>
@@ -51,14 +52,14 @@ export default function Profile() {
       <div className="bg-gradient-to-br from-blue-700 to-blue-900 rounded-2xl p-6">
         <p className="text-sm text-blue-300 mb-1">积分余额</p>
         <p className="text-5xl font-bold text-white">
-          {Math.floor(user.credits_balance).toLocaleString()}
+          {Math.floor(user.credits_balance ?? 0).toLocaleString()}
         </p>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-4">
-        <StatCard label="累计贡献积分" value={Math.floor(user.credits_earned).toLocaleString()} />
-        <StatCard label="累计消耗积分" value={Math.floor(user.credits_spent).toLocaleString()} />
+        <StatCard label="累计贡献积分" value={Math.floor(user.credits_earned ?? 0).toLocaleString()} />
+        <StatCard label="累计消耗积分" value={Math.floor(user.credits_spent ?? 0).toLocaleString()} />
       </div>
 
       {/* Transaction list */}
@@ -66,6 +67,8 @@ export default function Profile() {
         <h2 className="text-lg font-semibold text-gray-300 mb-3">积分流水</h2>
         {loadingTxs ? (
           <p className="text-gray-500 text-sm">加载中…</p>
+        ) : txError ? (
+          <p className="text-red-400 text-sm">加载失败，请刷新重试</p>
         ) : txs.length === 0 ? (
           <p className="text-gray-500 text-sm">暂无记录</p>
         ) : (
@@ -83,10 +86,10 @@ export default function Profile() {
                   <p className="text-xs text-gray-500">{tx.created_at?.slice(0, 16)}</p>
                 </div>
                 <div className="text-right">
-                  <p className={`text-sm font-medium ${tx.delta >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                    {tx.delta >= 0 ? '+' : ''}{tx.delta.toFixed(1)}
+                  <p className={`text-sm font-medium ${(tx.delta ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {(tx.delta ?? 0) >= 0 ? '+' : ''}{(tx.delta ?? 0).toFixed(1)}
                   </p>
-                  <p className="text-xs text-gray-500">余额 {tx.balance.toFixed(1)}</p>
+                  <p className="text-xs text-gray-500">余额 {(tx.balance ?? 0).toFixed(1)}</p>
                 </div>
               </div>
             ))}
