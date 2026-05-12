@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { getNetwork } from '../api/client';
 
 function starsStr(n) {
-  return '★'.repeat(n) + '☆'.repeat(5 - n);
+  const clamped = Math.max(0, Math.min(5, n ?? 0));
+  return '★'.repeat(clamped) + '☆'.repeat(5 - clamped);
 }
 
 export default function Network() {
@@ -13,7 +14,7 @@ export default function Network() {
     function fetch_() {
       getNetwork()
         .then((r) => setData(r.data))
-        .catch(() => {})
+        .catch(() => { setData(null); })
         .finally(() => setLoading(false));
     }
     fetch_();
@@ -52,14 +53,14 @@ export default function Network() {
               <div className="space-y-2">
                 {data.workers.map((w) => (
                   <div
-                    key={w.worker_id}
+                    key={w.worker_id ?? w.name}
                     className="bg-gray-800 rounded-xl px-4 py-3 grid grid-cols-4 gap-3 items-center text-sm"
                   >
                     <div className="min-w-0">
                       <p className="text-gray-100 font-medium truncate">{w.name}</p>
                       <p className="text-gray-500 text-xs">{Math.round(w.online_mins ?? 0)} min</p>
                     </div>
-                    <p className="text-gray-400 text-xs truncate">{w.models.join(', ')}</p>
+                    <p className="text-gray-400 text-xs truncate">{(w.models ?? []).join(', ')}</p>
                     <p className="text-yellow-400 text-xs">{starsStr(w.stars ?? 3)}</p>
                     <div className="text-right">
                       <p className="text-gray-300">{(w.period_tokens ?? 0).toLocaleString()} tok</p>
