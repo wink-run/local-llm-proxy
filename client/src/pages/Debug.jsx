@@ -1,6 +1,25 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-function fetchModels(source, localCfg) {
+// Fetch the first active API key for the current user via the /user/keys endpoint.
+// /user/keys uses the JWT session token; the returned key.key is used for /v1/* calls.
+async function resolveApiKey() {
+  const serverUrl = localStorage.getItem('serverUrl') || 'http://localhost:8000';
+  const jwt = localStorage.getItem('token');
+  if (!jwt) return null;
+  try {
+    const r = await fetch(`${serverUrl}/user/keys`, {
+      headers: { Authorization: `Bearer ${jwt}` },
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    const active = (data.keys || []).find((k) => k.is_active);
+    return active?.key ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function fetchModels(source, localCfg, apiKey) {
   if (source === 'local') {
     if (!localCfg?.llm_base_url) return Promise.resolve([]);
     const headers = {};
@@ -11,8 +30,7 @@ function fetchModels(source, localCfg) {
       .catch(() => []);
   } else {
     const serverUrl = localStorage.getItem('serverUrl') || 'http://localhost:8000';
-    const token = localStorage.getItem('token');
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
     return fetch(`${serverUrl}/v1/models`, { headers })
       .then((r) => r.json())
       .then((d) => (d.data || []).map((m) => m.id))
@@ -20,7 +38,7 @@ function fetchModels(source, localCfg) {
   }
 }
 
-async function streamChat({ source, localCfg, model, messages, stream, onChunk, onDone, onError }) {
+async function streamChat({ source, localCfg, apiKey, model, messages, stream, onChunk, onDone, onError }) {
   let baseUrl, headers;
   if (source === 'local') {
     baseUrl = localCfg?.llm_base_url || '';
@@ -29,8 +47,7 @@ async function streamChat({ source, localCfg, model, messages, stream, onChunk, 
   } else {
     baseUrl = localStorage.getItem('serverUrl') || 'http://localhost:8000';
     headers = { 'Content-Type': 'application/json' };
-    const token = localStorage.getItem('token');
-    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
   const startTime = Date.now();
@@ -94,6 +111,8 @@ async function streamChat({ source, localCfg, model, messages, stream, onChunk, 
 export default function Debug() {
   const [source, setSource] = useState('local');
   const [localCfg, setLocalCfg] = useState(null);
+  const [apiKey, setApiKey] = useState(null);      // active API key for network calls
+  const [apiKeyErr, setApiKeyErr] = useState(false); // true if no active key found
   const [models, setModels] = useState([]);
   const [model, setModel] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
@@ -112,14 +131,26 @@ export default function Debug() {
     window.electronAPI?.config.read().then((cfg) => setLocalCfg(cfg));
   }, []);
 
+  // Resolve API key when switching to network source
+  useEffect(() => {
+    if (source !== 'network') return;
+    setApiKey(null);
+    setApiKeyErr(false);
+    resolveApiKey().then((key) => {
+      setApiKey(key);
+      setApiKeyErr(!key);
+    });
+  }, [source]);
+
   useEffect(() => {
     setModels([]);
     setModel('');
-    fetchModels(source, localCfg).then((list) => {
+    if (source === 'network' && apiKeyErr) return;
+    fetchModels(source, localCfg, apiKey).then((list) => {
       setModels(list);
       if (list.length > 0) setModel(list[0]);
     });
-  }, [source, localCfg]);
+  }, [source, localCfg, apiKey, apiKeyErr]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -150,7 +181,7 @@ export default function Debug() {
     setConversation((prev) => [...prev, { role: 'assistant', content: '', streaming: true }]);
 
     await streamChat({
-      source, localCfg, model,
+      source, localCfg, apiKey, model,
       messages: apiMessages,
       stream: streamMode,
       onChunk: (delta) => {
@@ -219,7 +250,11 @@ export default function Debug() {
           </div>
 
           {/* Model selector */}
-          {models.length > 0 ? (
+          {apiKeyErr ? (
+            <span className="text-xs text-red-500 dark:text-red-400">
+              需要先在「我的账户」中创建 API Key
+            </span>
+          ) : models.length > 0 ? (
             <select value={model} onChange={(e) => setModel(e.target.value)}
               className="bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500 max-w-[200px]">
               {models.map((m) => <option key={m} value={m}>{m}</option>)}
