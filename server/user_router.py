@@ -194,3 +194,24 @@ async def create_purchase_order(req: PurchaseRequest, uid: int = Depends(get_cur
 @router.get("/purchase-orders")
 async def my_purchase_orders(uid: int = Depends(get_current_user_id)):
     return {"orders": await db.get_user_purchase_orders(uid)}
+
+
+from worker_pool import pool as _pool
+
+
+@router.get("/stats")
+async def user_stats(uid: int = Depends(get_current_user_id)):
+    user_workers = [w for w in _pool.all_workers() if w.user_id == uid]
+    total_req = sum(
+        sum(s["requests"] for s in w.period_stats.values())
+        for w in user_workers
+    )
+    total_online_mins = max(
+        max((w.period_online_mins() for w in user_workers), default=1), 1
+    )
+    contribute_req_per_min = round(total_req / total_online_mins, 2) if user_workers else 0.0
+    return {
+        "contribute_req_per_min": contribute_req_per_min,
+        "active_workers": len(user_workers),
+        "active_requests": sum(w.active_requests for w in user_workers),
+    }

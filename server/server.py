@@ -167,6 +167,53 @@ async def workers_wall():
     return {"workers": rows, "total": len(rows)}
 
 
+@app.get("/public/network")
+async def public_network():
+    """公开：全局运营统计 + 在线 Worker 列表（脱敏）"""
+    workers_data = []
+    for w in pool.all_workers():
+        stats = w.period_stats
+        total_req = sum(s["requests"] for s in stats.values())
+        total_success = sum(s["success"] for s in stats.values())
+        total_ttft = sum(s.get("ttft_sum", 0) for s in stats.values())
+        total_ttft_count = sum(s.get("ttft_count", 0) for s in stats.values())
+        total_tokens = sum(s["output_tokens"] for s in stats.values())
+        avg_ttft_ms = total_ttft / total_ttft_count if total_ttft_count > 0 else 0
+        success_rate = total_success / total_req if total_req > 0 else 1.0
+        online_mins = w.period_online_mins()
+
+        multiplier = 1.0
+        if total_req > 0:
+            online_f = min(0.5 + 0.8 * min(online_mins / 5, 1.0), 1.3)
+            latency_f = max(0.6, min(1.5, 500 / avg_ttft_ms)) if avg_ttft_ms > 0 else 1.0
+            stability_f = 0.5 + 0.7 * success_rate
+            multiplier = round(
+                max(0.5, min(1.5, 0.4 * online_f + 0.4 * latency_f + 0.2 * stability_f)), 3
+            )
+
+        workers_data.append({
+            "worker_id": w.worker_id,
+            "name": _mask_name(w.name),
+            "models": w.models,
+            "active_requests": w.active_requests,
+            "period_tokens": total_tokens,
+            "avg_latency_ms": round(avg_ttft_ms),
+            "multiplier": multiplier,
+            "stars": _stars(multiplier),
+            "online_mins": round(online_mins, 1),
+            "connected_at": w.connected_at.isoformat(),
+        })
+
+    distinct_users = len({w.user_id for w in pool.all_workers() if w.user_id})
+    return {
+        "summary": {
+            "online_workers": len(workers_data),
+            "active_users": distinct_users,
+        },
+        "workers": workers_data,
+    }
+
+
 @app.get("/api/agent-downloads")
 async def agent_downloads():
     items: list[dict] = []
