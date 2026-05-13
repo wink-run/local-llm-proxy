@@ -9,6 +9,8 @@ function multiplierToStars(m) {
 
 
 function LLMConfigCard() {
+  const [cfg, setCfg]               = useState(null);   // saved config
+  const [editing, setEditing]       = useState(false);
   const [llmUrl, setLlmUrl]         = useState('');
   const [llmToken, setLlmToken]     = useState('');
   const [modelsText, setModelsText] = useState('');
@@ -19,45 +21,54 @@ function LLMConfigCard() {
 
   useEffect(() => {
     if (!window.electronAPI) return;
-    window.electronAPI.config.read().then(async (cfg) => {
-      if (cfg?.llm_base_url) {
-        // already configured — just populate form
-        setLlmUrl(cfg.llm_base_url);
-        setLlmToken(cfg.llm_token || '');
-        setModelsText((cfg.models || []).join(', '));
-        setNodeName(cfg.name || '');
-        setAutoStart(!!cfg.auto_start);
+    window.electronAPI.config.read().then(async (saved) => {
+      if (saved?.llm_base_url) {
+        setCfg(saved);
       } else {
-        // first run — silently scan and fill best match
-        setNodeName(cfg?.name || '');
-        setAutoStart(!!cfg?.auto_start);
+        // silently scan and auto-save the best match
         try {
           const results = await window.electronAPI.config.scan();
           const best = results[0];
-          if (best) {
-            if (best.base_url) setLlmUrl(best.base_url);
-            if (best.token)    setLlmToken(best.token);
-            if (best.models?.length) setModelsText(best.models.join(', '));
+          if (best?.base_url) {
+            const models = best.models || [];
+            const current = saved || {};
+            const updated = {
+              ...current,
+              llm_base_url: best.base_url,
+              llm_token:    best.token || '',
+              models,
+            };
+            await window.electronAPI.config.write(updated);
+            setCfg(updated);
+            return;
           }
         } catch {}
+        // nothing found — open the manual form
+        setCfg(saved || {});
+        setEditing(true);
       }
     });
   }, []);
 
-  async function saveAll() {
+  function openEdit() {
+    setLlmUrl(cfg?.llm_base_url || '');
+    setLlmToken(cfg?.llm_token || '');
+    setModelsText((cfg?.models || []).join(', '));
+    setNodeName(cfg?.name || '');
+    setAutoStart(!!cfg?.auto_start);
+    setEditing(true);
+  }
+
+  async function save() {
     if (!window.electronAPI) return;
     setSaving(true);
     try {
       const models  = modelsText.split(',').map(s => s.trim()).filter(Boolean);
       const current = (await window.electronAPI.config.read()) || {};
-      await window.electronAPI.config.write({
-        ...current,
-        llm_base_url: llmUrl,
-        llm_token:    llmToken,
-        models,
-        name:         nodeName,
-        auto_start:   autoStart,
-      });
+      const updated = { ...current, llm_base_url: llmUrl, llm_token: llmToken, models, name: nodeName, auto_start: autoStart };
+      await window.electronAPI.config.write(updated);
+      setCfg(updated);
+      setEditing(false);
       setSavedMsg('已保存');
       setTimeout(() => setSavedMsg(''), 2000);
     } finally {
@@ -65,16 +76,48 @@ function LLMConfigCard() {
     }
   }
 
-  const configured = !!(llmUrl && modelsText);
+  const configured = !!(cfg?.llm_base_url && cfg?.models?.length);
 
+  // ── View mode ────────────────────────────────────────────────────────────────
+  if (!editing) {
+    return (
+      <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className={`w-2 h-2 rounded-full ${configured ? 'bg-green-400' : 'bg-yellow-400'}`} />
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-200">本地 LLM 配置</span>
+            {savedMsg && <span className="text-xs text-green-600 dark:text-green-400">{savedMsg}</span>}
+          </div>
+          <button onClick={openEdit}
+            className="px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 transition-colors">
+            手动配置
+          </button>
+        </div>
+        {configured ? (
+          <div className="mt-3 space-y-1 text-xs text-gray-500 dark:text-gray-400">
+            <p><span className="text-gray-400 dark:text-gray-500 inline-block w-12">端点</span>{cfg.llm_base_url}</p>
+            <p><span className="text-gray-400 dark:text-gray-500 inline-block w-12">模型</span>{cfg.models.join(', ')}</p>
+            {cfg.name && <p><span className="text-gray-400 dark:text-gray-500 inline-block w-12">节点</span>{cfg.name}</p>}
+          </div>
+        ) : (
+          <p className="mt-3 text-xs text-yellow-600 dark:text-yellow-400">未找到可用配置，请点击「手动配置」填写。</p>
+        )}
+      </div>
+    );
+  }
+
+  // ── Edit mode ────────────────────────────────────────────────────────────────
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
-      <div className="flex items-center gap-2 mb-1">
-        <span className={`w-2 h-2 rounded-full ${configured ? 'bg-green-400' : 'bg-yellow-400'}`} />
+      <div className="flex items-center justify-between mb-1">
         <span className="text-sm font-medium text-gray-700 dark:text-gray-200">本地 LLM 配置</span>
-        {configured && <span className="text-xs text-green-600 dark:text-green-400">已配置</span>}
+        {cfg?.llm_base_url && (
+          <button onClick={() => setEditing(false)}
+            className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors">
+            取消
+          </button>
+        )}
       </div>
-
       <div>
         <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">本地 LLM 地址</label>
         <input value={llmUrl} onChange={e => setLlmUrl(e.target.value)}
@@ -106,12 +149,11 @@ function LLMConfigCard() {
         </div>
         <span className="text-sm text-gray-700 dark:text-gray-300">启动应用时自动运行 Agent</span>
       </label>
-      <div className="flex items-center gap-3 pt-1">
-        <button onClick={saveAll} disabled={saving}
+      <div className="pt-1">
+        <button onClick={save} disabled={saving || !llmUrl}
           className="px-5 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium transition-colors">
           {saving ? '保存中…' : '保存配置'}
         </button>
-        {savedMsg && <span className="text-sm text-green-600 dark:text-green-400">{savedMsg}</span>}
       </div>
     </div>
   );
