@@ -34,18 +34,22 @@ function LLMConfigCard() {
   const [showManual, setShowManual]     = useState(false);
   const [manualUrl, setManualUrl]       = useState('');
   const [manualToken, setManualToken]   = useState('');
+  const [nodeName, setNodeName]         = useState('');
+  const [autoStart, setAutoStart]       = useState(false);
   // model picker state
   const [availModels, setAvailModels]   = useState(null); // null=not fetched
   const [fetchingMod, setFetchingMod]   = useState(false);
   const [modelErr, setModelErr]         = useState('');
   const [selModels, setSelModels]       = useState([]);   // user selection
-  const [savingMod, setSavingMod]       = useState(false);
+  const [saving, setSaving]             = useState(false);
   const [savedMsg, setSavedMsg]         = useState('');
 
   useEffect(() => {
     if (!window.electronAPI) return;
     window.electronAPI.config.read().then((cfg) => {
       setAgentCfg(cfg);
+      setNodeName(cfg?.name || '');
+      setAutoStart(!!cfg?.auto_start);
       if (cfg?.llm_base_url) {
         loadModels(cfg.llm_base_url, cfg.llm_token, cfg.models || []);
       } else {
@@ -76,17 +80,23 @@ function LLMConfigCard() {
     setSelModels(prev => prev.includes(id) ? prev.filter(m => m !== id) : [...prev, id]);
   }
 
-  async function saveModels() {
+  async function saveAll() {
     if (!window.electronAPI) return;
-    setSavingMod(true);
+    setSaving(true);
     try {
       const current = (await window.electronAPI.config.read()) || {};
-      await window.electronAPI.config.write({ ...current, models: selModels });
-      setAgentCfg(prev => ({ ...prev, models: selModels }));
+      const updated = {
+        ...current,
+        models: selModels,
+        name: nodeName,
+        auto_start: autoStart,
+      };
+      await window.electronAPI.config.write(updated);
+      setAgentCfg(prev => ({ ...prev, models: selModels, name: nodeName, auto_start: autoStart }));
       setSavedMsg('已保存');
       setTimeout(() => setSavedMsg(''), 2000);
     } finally {
-      setSavingMod(false);
+      setSaving(false);
     }
   }
 
@@ -247,14 +257,34 @@ function LLMConfigCard() {
           )}
 
           {!fetchingMod && availModels !== null && availModels.length > 0 && (
-            <div className="flex items-center gap-3">
-              <button onClick={saveModels} disabled={savingMod || selModels.length === 0}
-                className="px-4 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition-colors">
-                {savingMod ? '保存中…' : '保存模型配置'}
-              </button>
-              {savedMsg && <span className="text-xs text-green-600 dark:text-green-400">{savedMsg}</span>}
-            </div>
+            <p className="text-xs text-gray-400 dark:text-gray-500">点击模型名称切换是否贡献</p>
           )}
+        </div>
+      )}
+
+      {/* Node name + auto-start + save — shown when endpoint is set */}
+      {configured && (
+        <div className="border-t border-gray-100 dark:border-gray-700 pt-3 space-y-3">
+          <div>
+            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">节点名称</label>
+            <input value={nodeName} onChange={e => setNodeName(e.target.value)}
+              placeholder="留空使用主机名"
+              className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
+          </div>
+          <label className="flex items-center gap-3 cursor-pointer select-none">
+            <div onClick={() => setAutoStart(v => !v)}
+              className={`relative w-9 h-5 rounded-full transition-colors ${autoStart ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}>
+              <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${autoStart ? 'translate-x-4' : 'translate-x-0.5'}`} />
+            </div>
+            <span className="text-xs text-gray-700 dark:text-gray-300">启动应用时自动运行 Agent</span>
+          </label>
+          <div className="flex items-center gap-3">
+            <button onClick={saveAll} disabled={saving}
+              className="px-4 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition-colors">
+              {saving ? '保存中…' : '保存配置'}
+            </button>
+            {savedMsg && <span className="text-xs text-green-600 dark:text-green-400">{savedMsg}</span>}
+          </div>
         </div>
       )}
     </div>
