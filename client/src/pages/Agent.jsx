@@ -98,6 +98,7 @@ function LLMConfigCard() {
             <p><span className="text-gray-400 dark:text-gray-500 inline-block w-12">端点</span>{cfg.llm_base_url}</p>
             <p><span className="text-gray-400 dark:text-gray-500 inline-block w-12">模型</span>{cfg.models.join(', ')}</p>
             {cfg.name && <p><span className="text-gray-400 dark:text-gray-500 inline-block w-12">节点</span>{cfg.name}</p>}
+            <p><span className="text-gray-400 dark:text-gray-500 inline-block w-12">自启动</span>{cfg.auto_start ? '开启' : '关闭'}</p>
           </div>
         ) : (
           <p className="mt-3 text-xs text-yellow-600 dark:text-yellow-400">未找到可用配置，请点击「手动配置」填写。</p>
