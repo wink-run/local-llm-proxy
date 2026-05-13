@@ -106,12 +106,18 @@ function parseAnthropicSSE(buf, model) {
 
 // ── HTTP forward ──────────────────────────────────────────────────────────────
 
+function buildUrl(baseUrl, anthropic) {
+  // Strip trailing slashes, normalize /v1 dedup, then append endpoint.
+  const base = baseUrl.replace(/\/+$/, '');
+  const v1Base = base.endsWith('/v1') ? base : base + '/v1';
+  return new URL(v1Base + (anthropic ? '/messages' : '/chat/completions'));
+}
+
 function forwardRequest(reqId, payload, cfg) {
-  const anthropic = isAnthropicStyle(cfg.llm_base_url);
-  const endpoint  = anthropic ? '/v1/messages' : '/v1/chat/completions';
+  const anthropic  = isAnthropicStyle(cfg.llm_base_url);
   const outPayload = anthropic ? openaiToAnthropic(payload) : payload;
 
-  const url = new URL(endpoint, cfg.llm_base_url);
+  const url = buildUrl(cfg.llm_base_url, anthropic);
   const mod = url.protocol === 'https:' ? https : http;
   const streaming = payload.stream === true;
   const body = JSON.stringify(outPayload);
