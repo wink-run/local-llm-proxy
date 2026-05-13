@@ -13,24 +13,82 @@ function mask(s) {
   return s.slice(0, 8) + '●●●●' + s.slice(-4);
 }
 
+async function fetchModels(baseUrl, token) {
+  const url = baseUrl.replace(/\/?$/, '') + '/models';
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  const res = await fetch(url, { headers });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  // OpenAI format: { data: [{ id }] }  |  plain array  |  { models: [{ name/id }] }
+  const list = Array.isArray(json) ? json
+    : Array.isArray(json.data) ? json.data
+    : Array.isArray(json.models) ? json.models
+    : [];
+  return list.map(m => (typeof m === 'string' ? m : m.id || m.name)).filter(Boolean);
+}
+
 function LLMConfigCard() {
-  const [agentCfg, setAgentCfg] = useState(null);      // current saved config
-  const [scanResults, setScanResults] = useState(null); // null=not scanned, []=scanned
-  const [scanning, setScanning] = useState(false);
-  const [applying, setApplying] = useState(false);
-  const [applied, setApplied] = useState(false);
-  const [showManual, setShowManual] = useState(false);
-  const [manualUrl, setManualUrl] = useState('');
-  const [manualToken, setManualToken] = useState('');
+  const [agentCfg, setAgentCfg]         = useState(null);
+  const [scanResults, setScanResults]   = useState(null); // null=idle, []=scanned
+  const [scanning, setScanning]         = useState(false);
+  const [showManual, setShowManual]     = useState(false);
+  const [manualUrl, setManualUrl]       = useState('');
+  const [manualToken, setManualToken]   = useState('');
+  // model picker state
+  const [availModels, setAvailModels]   = useState(null); // null=not fetched
+  const [fetchingMod, setFetchingMod]   = useState(false);
+  const [modelErr, setModelErr]         = useState('');
+  const [selModels, setSelModels]       = useState([]);   // user selection
+  const [savingMod, setSavingMod]       = useState(false);
+  const [savedMsg, setSavedMsg]         = useState('');
 
   useEffect(() => {
     if (!window.electronAPI) return;
     window.electronAPI.config.read().then((cfg) => {
       setAgentCfg(cfg);
-      // auto-scan on first load if not yet configured
-      if (!cfg?.llm_base_url) handleScan();
+      if (cfg?.llm_base_url) {
+        loadModels(cfg.llm_base_url, cfg.llm_token, cfg.models || []);
+      } else {
+        handleScan();
+      }
     });
   }, []);
+
+  async function loadModels(url, token, savedList) {
+    setFetchingMod(true);
+    setModelErr('');
+    try {
+      const ids = await fetchModels(url, token);
+      setAvailModels(ids);
+      // pre-select: saved list if any, else all fetched
+      setSelModels(savedList.length ? savedList.filter(m => ids.includes(m)) : ids);
+    } catch (e) {
+      setModelErr(`获取模型失败: ${e.message}`);
+      // fall back to saved list as editable text
+      setAvailModels([]);
+      setSelModels(savedList);
+    } finally {
+      setFetchingMod(false);
+    }
+  }
+
+  function toggleModel(id) {
+    setSelModels(prev => prev.includes(id) ? prev.filter(m => m !== id) : [...prev, id]);
+  }
+
+  async function saveModels() {
+    if (!window.electronAPI) return;
+    setSavingMod(true);
+    try {
+      const current = (await window.electronAPI.config.read()) || {};
+      await window.electronAPI.config.write({ ...current, models: selModels });
+      setAgentCfg(prev => ({ ...prev, models: selModels }));
+      setSavedMsg('已保存');
+      setTimeout(() => setSavedMsg(''), 2000);
+    } finally {
+      setSavingMod(false);
+    }
+  }
 
   async function handleScan() {
     if (!window.electronAPI) return;
@@ -46,53 +104,38 @@ function LLMConfigCard() {
 
   async function applyResult(result) {
     if (!window.electronAPI) return;
-    setApplying(true);
-    try {
-      const current = (await window.electronAPI.config.read()) || {};
-      await window.electronAPI.config.write({
-        ...current,
-        llm_base_url: result.base_url || current.llm_base_url || '',
-        llm_token:    result.token    || current.llm_token    || '',
-      });
-      setAgentCfg((prev) => ({ ...prev, llm_base_url: result.base_url, llm_token: result.token }));
-      setApplied(true);
-      setScanResults(null);
-    } finally {
-      setApplying(false);
-    }
+    const current = (await window.electronAPI.config.read()) || {};
+    const newUrl   = result.base_url || current.llm_base_url || '';
+    const newToken = result.token    || current.llm_token    || '';
+    await window.electronAPI.config.write({ ...current, llm_base_url: newUrl, llm_token: newToken });
+    const updated = { ...current, llm_base_url: newUrl, llm_token: newToken };
+    setAgentCfg(updated);
+    setScanResults(null);
+    loadModels(newUrl, newToken, updated.models || []);
   }
 
   async function applyManual() {
     if (!window.electronAPI || !manualUrl) return;
-    setApplying(true);
-    try {
-      const current = (await window.electronAPI.config.read()) || {};
-      await window.electronAPI.config.write({
-        ...current,
-        llm_base_url: manualUrl,
-        llm_token:    manualToken,
-      });
-      setAgentCfg((prev) => ({ ...prev, llm_base_url: manualUrl, llm_token: manualToken }));
-      setShowManual(false);
-      setApplied(true);
-    } finally {
-      setApplying(false);
-    }
+    const current = (await window.electronAPI.config.read()) || {};
+    await window.electronAPI.config.write({ ...current, llm_base_url: manualUrl, llm_token: manualToken });
+    const updated = { ...current, llm_base_url: manualUrl, llm_token: manualToken };
+    setAgentCfg(updated);
+    setShowManual(false);
+    loadModels(manualUrl, manualToken, updated.models || []);
   }
 
   const configured = !!agentCfg?.llm_base_url;
+  const modelsOk   = (agentCfg?.models || []).length > 0;
 
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-4">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${configured ? 'bg-green-400' : 'bg-yellow-400'}`} />
+          <span className={`w-2 h-2 rounded-full ${configured && modelsOk ? 'bg-green-400' : 'bg-yellow-400'}`} />
           <span className="text-sm font-medium text-gray-700 dark:text-gray-200">本地 LLM 配置</span>
-          {configured && !applied && (
-            <span className="text-xs text-green-600 dark:text-green-400 font-medium">已配置</span>
-          )}
-          {applied && (
-            <span className="text-xs text-green-600 dark:text-green-400 font-medium">✓ 配置已应用</span>
+          {configured && modelsOk && (
+            <span className="text-xs text-green-600 dark:text-green-400">已配置</span>
           )}
         </div>
         <div className="flex gap-2">
@@ -100,19 +143,19 @@ function LLMConfigCard() {
             className="px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 disabled:opacity-50 transition-colors">
             {scanning ? '扫描中…' : '自动检测'}
           </button>
-          <button onClick={() => { setShowManual((v) => !v); setScanResults(null); }}
+          <button onClick={() => { setShowManual(v => !v); setScanResults(null); }}
             className="px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 transition-colors">
             手动配置
           </button>
         </div>
       </div>
 
-      {/* Current config summary */}
+      {/* Current endpoint */}
       {configured && (
         <div className="text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
-          <p><span className="text-gray-400 dark:text-gray-500">端点  </span>{agentCfg.llm_base_url}</p>
+          <p><span className="text-gray-400 dark:text-gray-500 w-10 inline-block">端点</span>{agentCfg.llm_base_url}</p>
           {agentCfg.llm_token && (
-            <p><span className="text-gray-400 dark:text-gray-500">Token </span>{mask(agentCfg.llm_token)}</p>
+            <p><span className="text-gray-400 dark:text-gray-500 w-10 inline-block">Token</span>{mask(agentCfg.llm_token)}</p>
           )}
         </div>
       )}
@@ -137,8 +180,8 @@ function LLMConfigCard() {
                   {r.base_url && <p className="text-gray-700 dark:text-gray-200 truncate">{r.base_url}</p>}
                   {r.token    && <p className="text-gray-500 dark:text-gray-400 font-mono">{mask(r.token)}</p>}
                 </div>
-                <button onClick={() => applyResult(r)} disabled={applying}
-                  className="shrink-0 px-3 py-1 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition-colors">
+                <button onClick={() => applyResult(r)}
+                  className="shrink-0 px-3 py-1 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors">
                   应用
                 </button>
               </div>
@@ -150,21 +193,68 @@ function LLMConfigCard() {
       {/* Manual config */}
       {showManual && (
         <div className="space-y-2">
-          <input
-            value={manualUrl} onChange={(e) => setManualUrl(e.target.value)}
+          <input value={manualUrl} onChange={e => setManualUrl(e.target.value)}
             placeholder="http://localhost:11434/v1"
-            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
-          />
-          <input
-            value={manualToken} onChange={(e) => setManualToken(e.target.value)}
-            placeholder="API Token（无则留空）"
-            type="password"
-            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
-          />
-          <button onClick={applyManual} disabled={applying || !manualUrl}
+            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
+          <input value={manualToken} onChange={e => setManualToken(e.target.value)}
+            placeholder="API Token（无则留空）" type="password"
+            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
+          <button onClick={applyManual} disabled={!manualUrl}
             className="px-4 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition-colors">
-            {applying ? '保存中…' : '保存'}
+            确认并获取模型
           </button>
+        </div>
+      )}
+
+      {/* Model picker — shown when endpoint is set */}
+      {configured && (
+        <div className="border-t border-gray-100 dark:border-gray-700 pt-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-gray-600 dark:text-gray-300">
+              贡献的模型
+              {modelsOk && <span className="ml-1.5 text-green-600 dark:text-green-400">({agentCfg.models.length} 个)</span>}
+            </span>
+            <button onClick={() => loadModels(agentCfg.llm_base_url, agentCfg.llm_token, agentCfg?.models || [])}
+              disabled={fetchingMod}
+              className="text-xs text-blue-500 hover:text-blue-400 disabled:opacity-50 transition-colors">
+              {fetchingMod ? '加载中…' : '刷新'}
+            </button>
+          </div>
+
+          {modelErr && <p className="text-xs text-red-500 dark:text-red-400">{modelErr}</p>}
+
+          {fetchingMod && (
+            <p className="text-xs text-gray-400 dark:text-gray-500">正在从端点获取模型列表…</p>
+          )}
+
+          {!fetchingMod && availModels !== null && (
+            availModels.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {availModels.map(id => (
+                  <button key={id} onClick={() => toggleModel(id)}
+                    className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                      selModels.includes(id)
+                        ? 'bg-blue-600 border-blue-600 text-white'
+                        : 'bg-gray-100 dark:bg-gray-700 border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300'
+                    }`}>
+                    {id}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400 dark:text-gray-500">未检测到模型，请在设置页手动填写。</p>
+            )
+          )}
+
+          {!fetchingMod && availModels !== null && availModels.length > 0 && (
+            <div className="flex items-center gap-3">
+              <button onClick={saveModels} disabled={savingMod || selModels.length === 0}
+                className="px-4 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition-colors">
+                {savingMod ? '保存中…' : '保存模型配置'}
+              </button>
+              {savedMsg && <span className="text-xs text-green-600 dark:text-green-400">{savedMsg}</span>}
+            </div>
+          )}
         </div>
       )}
     </div>
