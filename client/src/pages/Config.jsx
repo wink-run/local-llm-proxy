@@ -206,14 +206,14 @@ export default function Config() {
         <LangSelector />
       </section>
 
-      {/* Credits */}
+      {/* 页脚：开源来源与免责（文案见 i18n config.footer.*） */}
       <p className="text-xs text-gray-400 dark:text-gray-600 text-center pt-2">
-        基于{' '}
+        {t('config.footer.beforeLink')}
         <a href="https://github.com/wink-run/local-llm-proxy" target="_blank" rel="noreferrer"
           className="underline hover:text-gray-600 dark:hover:text-gray-400 transition-colors">
           local-llm-proxy
-        </a>{' '}
-        开源项目
+        </a>
+        {t('config.footer.afterLink')}
       </p>
     </div>
   );

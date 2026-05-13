@@ -17,6 +17,9 @@ const locales = {
     'config.loginFailed': '登录失败，请检查邮箱和密码',
     'config.theme':       '主题',
     'config.lang':        '语言',
+    'config.footer.beforeLink': '基于 ',
+    'config.footer.afterLink':
+      ' 开源项目，仅用于学习，不得用于非法用途或因不可抗力，导致积分清零等，本网站概不负责',
     'theme.light':  '浅色',
     'theme.system': '跟随系统',
     'theme.dark':   '深色',
@@ -41,6 +44,9 @@ const locales = {
     'config.loginFailed': 'Sign-in failed — check your email and password',
     'config.theme':       'Theme',
     'config.lang':        'Language',
+    'config.footer.beforeLink': 'Based on the ',
+    'config.footer.afterLink':
+      ' open-source project. For learning only. Do not use it for unlawful purposes. This site disclaims liability for credit resets and similar consequences arising from force majeure or other causes beyond our control.',
     'theme.light':  'Light',
     'theme.system': 'System',
     'theme.dark':   'Dark',
