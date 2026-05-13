@@ -7,6 +7,7 @@ import uuid
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
+import database as db
 from worker_pool import pool
 
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "120"))
@@ -18,7 +19,6 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None):
 
     # 消费积分检查（user_id 有值时）
     if consumer_user_id is not None:
-        import database as db
         rate = await db.get_consume_rate(model)
         if rate is None:
             raise HTTPException(
@@ -57,6 +57,12 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None):
                 while True:
                     kind, data = await asyncio.wait_for(q.get(), timeout=REQUEST_TIMEOUT)
                     if kind == "done":
+                        # 流式不会在 chat_completions 拿到 dict，须在此按 Worker 上报的 usage 扣费
+                        usage = data if isinstance(data, dict) else {}
+                        if consumer_user_id:
+                            await db.consume_credits_for_usage(
+                                consumer_user_id, model, usage
+                            )
                         yield "data: [DONE]\n\n"
                         return
                     if kind == "error":

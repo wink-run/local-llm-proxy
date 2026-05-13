@@ -308,7 +308,9 @@ async def worker_ws(ws: WebSocket):
                 await q.put(("chunk", msg.get("data", "")))
 
             elif kind == "done":
-                await q.put(("done", None))
+                # 附带 usage，供流式响应结束时扣积分（与 Agent done 消息一致）
+                usage_done = msg.get("usage") or {}
+                await q.put(("done", usage_done))
                 worker.pending.pop(req_id, None)
                 worker.active_requests = max(0, worker.active_requests - 1)
                 # 周期统计：成功请求用 TTFT；若从未收到 chunk（异常）则用总耗时
@@ -393,18 +395,10 @@ async def chat_completions(request: Request, key_info: dict = Depends(auth_user)
     consumer_user_id: Optional[int] = key_info.get("user_id")
     resp = await handle_chat(body, consumer_user_id=consumer_user_id)
 
-    # 非流式：异步扣费（已从 handle_chat 拿到响应）
+    # 非流式：拿到完整 JSON 后按 usage 扣费（流式在 dispatch 内 SSE 结束时扣）
     if consumer_user_id and isinstance(resp, dict):
-        model = body.get("model", "")
-        usage = resp.get("usage") or {}
-        total_tokens = int(
-            (usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
-            + (usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+        await db.consume_credits_for_usage(
+            consumer_user_id, body.get("model", ""), resp.get("usage") or {}
         )
-        if total_tokens > 0:
-            rate = await db.get_consume_rate(model)
-            if rate:
-                cost = total_tokens / 1000 * rate
-                await db.deduct_credits(consumer_user_id, cost, model_name=model, tokens=total_tokens)
 
     return resp

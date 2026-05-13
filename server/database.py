@@ -419,6 +419,27 @@ async def deduct_credits(user_id: int, delta: float, model_name: str = "", token
         return True, new_balance
 
 
+async def consume_credits_for_usage(
+    user_id: int | None, model: str, usage: dict | None
+) -> None:
+    """按 OpenAI/兼容 usage 与模型消费率扣积分；无 user_id、无 tokens 或费率为 0 时跳过。"""
+    if not user_id or not usage:
+        return
+    u = usage
+    total_tokens = int(
+        (u.get("prompt_tokens") or u.get("input_tokens") or 0)
+        + (u.get("completion_tokens") or u.get("output_tokens") or 0)
+    )
+    if total_tokens <= 0 and u.get("total_tokens"):
+        total_tokens = int(u["total_tokens"])
+    if total_tokens <= 0:
+        return
+    rate = await get_consume_rate(model)
+    if rate:
+        cost = total_tokens / 1000 * rate
+        await deduct_credits(user_id, cost, model_name=model, tokens=total_tokens)
+
+
 async def get_transactions(user_id: int, limit: int = 50) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row

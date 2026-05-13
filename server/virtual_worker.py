@@ -127,6 +127,7 @@ class VirtualWorkerConnection:
                         return
                     buf = ""
                     output_tokens = 0
+                    last_usage: dict | None = None
                     async for text in resp.aiter_text():
                         if entry.get("ttft_ms") is None:
                             entry["ttft_ms"] = (time.time() - entry["dispatch_time"]) * 1000
@@ -140,13 +141,16 @@ class VirtualWorkerConnection:
                             if s.startswith("data: "):
                                 try:
                                     d = json.loads(s[6:])
+                                    if d.get("usage"):
+                                        last_usage = d["usage"]
                                     delta = d.get("choices", [{}])[0].get("delta", {}).get("content", "")
                                     if delta:
                                         output_tokens += len(delta)
                                 except Exception:
                                     pass
                                 await q.put(("chunk", line + "\n"))
-                    await q.put(("done", None))
+                    # 流式扣费依赖 done 上的 usage；上游未带时按估算 completion 计费
+                    await q.put(("done", last_usage or {"completion_tokens": output_tokens}))
                     self.record_complete(model, output_tokens, True, entry.get("ttft_ms"))
             else:
                 resp = await client.post(url, json=payload, headers=headers)
@@ -206,7 +210,9 @@ class VirtualWorkerConnection:
                                         await q.put(("chunk", _openai_sse_chunk(delta_text, model)))
                                 except Exception:
                                     pass
-                    await q.put(("done", None))
+                    await q.put(
+                        ("done", {"prompt_tokens": 0, "completion_tokens": output_tokens})
+                    )
                     self.record_complete(model, output_tokens, True, entry.get("ttft_ms"))
             else:
                 resp = await client.post(url, json=body, headers=headers)
