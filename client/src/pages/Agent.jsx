@@ -7,52 +7,42 @@ function multiplierToStars(m) {
   return '★'.repeat(n) + '☆'.repeat(5 - n);
 }
 
-function mask(s) {
-  if (!s) return '';
-  if (s.length <= 12) return s.slice(0, 4) + '●●●●';
-  return s.slice(0, 8) + '●●●●' + s.slice(-4);
-}
 
 function LLMConfigCard() {
-  const [scanResults, setScanResults] = useState(null);
-  const [scanning, setScanning]       = useState(false);
-  const [llmUrl, setLlmUrl]           = useState('');
-  const [llmToken, setLlmToken]       = useState('');
-  const [modelsText, setModelsText]   = useState('');
-  const [nodeName, setNodeName]       = useState('');
-  const [autoStart, setAutoStart]     = useState(false);
-  const [saving, setSaving]           = useState(false);
-  const [savedMsg, setSavedMsg]       = useState('');
+  const [llmUrl, setLlmUrl]         = useState('');
+  const [llmToken, setLlmToken]     = useState('');
+  const [modelsText, setModelsText] = useState('');
+  const [nodeName, setNodeName]     = useState('');
+  const [autoStart, setAutoStart]   = useState(false);
+  const [saving, setSaving]         = useState(false);
+  const [savedMsg, setSavedMsg]     = useState('');
 
   useEffect(() => {
     if (!window.electronAPI) return;
-    window.electronAPI.config.read().then((cfg) => {
-      setLlmUrl(cfg?.llm_base_url || '');
-      setLlmToken(cfg?.llm_token || '');
-      setModelsText((cfg?.models || []).join(', '));
-      setNodeName(cfg?.name || '');
-      setAutoStart(!!cfg?.auto_start);
-      if (!cfg?.llm_base_url) handleScan();
+    window.electronAPI.config.read().then(async (cfg) => {
+      if (cfg?.llm_base_url) {
+        // already configured — just populate form
+        setLlmUrl(cfg.llm_base_url);
+        setLlmToken(cfg.llm_token || '');
+        setModelsText((cfg.models || []).join(', '));
+        setNodeName(cfg.name || '');
+        setAutoStart(!!cfg.auto_start);
+      } else {
+        // first run — silently scan and fill best match
+        setNodeName(cfg?.name || '');
+        setAutoStart(!!cfg?.auto_start);
+        try {
+          const results = await window.electronAPI.config.scan();
+          const best = results[0];
+          if (best) {
+            if (best.base_url) setLlmUrl(best.base_url);
+            if (best.token)    setLlmToken(best.token);
+            if (best.models?.length) setModelsText(best.models.join(', '));
+          }
+        } catch {}
+      }
     });
   }, []);
-
-  async function handleScan() {
-    if (!window.electronAPI) return;
-    setScanning(true);
-    setScanResults(null);
-    try {
-      setScanResults(await window.electronAPI.config.scan());
-    } finally {
-      setScanning(false);
-    }
-  }
-
-  function fillFromResult(r) {
-    if (r.base_url) setLlmUrl(r.base_url);
-    if (r.token)    setLlmToken(r.token);
-    if (r.models?.length) setModelsText(r.models.join(', '));
-    setScanResults(null);
-  }
 
   async function saveAll() {
     if (!window.electronAPI) return;
@@ -78,81 +68,50 @@ function LLMConfigCard() {
   const configured = !!(llmUrl && modelsText);
 
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${configured ? 'bg-green-400' : 'bg-yellow-400'}`} />
-          <span className="text-sm font-medium text-gray-700 dark:text-gray-200">本地 LLM 配置</span>
-          {configured && <span className="text-xs text-green-600 dark:text-green-400">已配置</span>}
-        </div>
-        <button onClick={handleScan} disabled={scanning}
-          className="px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 disabled:opacity-50 transition-colors">
-          {scanning ? '扫描中…' : '自动检测'}
-        </button>
+    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+      <div className="flex items-center gap-2 mb-1">
+        <span className={`w-2 h-2 rounded-full ${configured ? 'bg-green-400' : 'bg-yellow-400'}`} />
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">本地 LLM 配置</span>
+        {configured && <span className="text-xs text-green-600 dark:text-green-400">已配置</span>}
       </div>
 
-      {/* Scan results — shown as a pre-fill chooser */}
-      {Array.isArray(scanResults) && (
-        scanResults.length === 0
-          ? <p className="text-xs text-gray-400 dark:text-gray-500">未找到配置，请手动填写。</p>
-          : <div className="space-y-1.5">
-              <p className="text-xs text-gray-400 dark:text-gray-500">检测到以下配置，点击填入：</p>
-              {scanResults.map((r, i) => (
-                <button key={i} onClick={() => fillFromResult(r)}
-                  className="w-full text-left flex items-start gap-2 bg-gray-50 dark:bg-gray-700/50 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-xl px-3 py-2 transition-colors">
-                  <div className="text-xs space-y-0.5 min-w-0 flex-1">
-                    <p className="text-gray-400 dark:text-gray-500 font-mono truncate">~/{r.source}</p>
-                    {r.base_url && <p className="text-gray-700 dark:text-gray-200 truncate">{r.base_url}</p>}
-                    {r.token    && <p className="text-gray-500 dark:text-gray-400 font-mono">{mask(r.token)}</p>}
-                    {r.models?.length > 0 && <p className="text-gray-500 dark:text-gray-400 truncate">{r.models.join(', ')}</p>}
-                  </div>
-                  <span className="shrink-0 text-xs text-blue-500 dark:text-blue-400 mt-0.5">填入 →</span>
-                </button>
-              ))}
-            </div>
-      )}
-
-      {/* Unified form */}
-      <div className="space-y-3">
-        <div>
-          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">本地 LLM 地址</label>
-          <input value={llmUrl} onChange={e => setLlmUrl(e.target.value)}
-            placeholder="http://localhost:11434/v1"
-            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
+      <div>
+        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">本地 LLM 地址</label>
+        <input value={llmUrl} onChange={e => setLlmUrl(e.target.value)}
+          placeholder="http://localhost:11434/v1"
+          className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
+      </div>
+      <div>
+        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">LLM Token（可选）</label>
+        <input value={llmToken} onChange={e => setLlmToken(e.target.value)}
+          placeholder="无则留空" type="password"
+          className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
+      </div>
+      <div>
+        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">支持的模型（逗号分隔）</label>
+        <input value={modelsText} onChange={e => setModelsText(e.target.value)}
+          placeholder="qwen3-32b, qwen3-7b"
+          className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
+      </div>
+      <div>
+        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">节点名称</label>
+        <input value={nodeName} onChange={e => setNodeName(e.target.value)}
+          placeholder="留空使用主机名"
+          className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
+      </div>
+      <label className="flex items-center gap-3 cursor-pointer select-none pt-1">
+        <div onClick={() => setAutoStart(v => !v)}
+          className={`relative w-10 h-6 rounded-full transition-colors ${autoStart ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}>
+          <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${autoStart ? 'translate-x-5' : 'translate-x-1'}`} />
         </div>
-        <div>
-          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">LLM Token（可选）</label>
-          <input value={llmToken} onChange={e => setLlmToken(e.target.value)}
-            placeholder="无则留空" type="password"
-            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">支持的模型（逗号分隔）</label>
-          <input value={modelsText} onChange={e => setModelsText(e.target.value)}
-            placeholder="qwen3-32b, qwen3-7b"
-            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">节点名称</label>
-          <input value={nodeName} onChange={e => setNodeName(e.target.value)}
-            placeholder="留空使用主机名"
-            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
-        </div>
-        <label className="flex items-center gap-3 cursor-pointer select-none">
-          <div onClick={() => setAutoStart(v => !v)}
-            className={`relative w-10 h-6 rounded-full transition-colors ${autoStart ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}>
-            <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${autoStart ? 'translate-x-5' : 'translate-x-1'}`} />
-          </div>
-          <span className="text-sm text-gray-700 dark:text-gray-300">启动应用时自动运行 Agent</span>
-        </label>
-        <div className="flex items-center gap-3 pt-1">
-          <button onClick={saveAll} disabled={saving}
-            className="px-5 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium transition-colors">
-            {saving ? '保存中…' : '保存配置'}
-          </button>
-          {savedMsg && <span className="text-sm text-green-600 dark:text-green-400">{savedMsg}</span>}
-        </div>
+        <span className="text-sm text-gray-700 dark:text-gray-300">启动应用时自动运行 Agent</span>
+      </label>
+      <div className="flex items-center gap-3 pt-1">
+        <button onClick={saveAll} disabled={saving}
+          className="px-5 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium transition-colors">
+          {saving ? '保存中…' : '保存配置'}
+        </button>
+        {savedMsg && <span className="text-sm text-green-600 dark:text-green-400">{savedMsg}</span>}
       </div>
     </div>
   );
