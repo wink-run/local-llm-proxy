@@ -128,6 +128,9 @@ const TOKEN_KEYS = [
   'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY',
   'LLM_TOKEN', 'LLM_API_KEY', 'API_KEY',
 ];
+const MODEL_KEYS = ['MODELS', 'LLM_MODELS', 'DEFAULT_MODEL'];
+// keys like ANTHROPIC_DEFAULT_HAIKU_MODEL whose values are model IDs
+const ANTHROPIC_MODEL_KEYS = /^ANTHROPIC_DEFAULT_\w+_MODEL$/;
 
 const SCAN_FILES = [
   { rel: '.claude/settings.json',       fmt: 'json-env' },
@@ -180,8 +183,27 @@ function scanLLMConfigs() {
       const base_url = BASE_URL_KEYS.map(k => envMap[k]).find(v => v && v.startsWith('http'));
       const token    = TOKEN_KEYS.map(k => envMap[k]).find(Boolean);
 
+      // collect model names: explicit MODELS key (comma-sep) or ANTHROPIC_DEFAULT_*_MODEL values
+      let models = [];
+      const modelsStr = MODEL_KEYS.map(k => envMap[k]).find(Boolean);
+      if (modelsStr) models = modelsStr.split(',').map(s => s.trim()).filter(Boolean);
+      if (!models.length) {
+        const anthropicModels = Object.entries(envMap)
+          .filter(([k]) => ANTHROPIC_MODEL_KEYS.test(k))
+          .map(([, v]) => v.trim())
+          .filter(Boolean);
+        models = [...new Set(anthropicModels)];
+      }
+      // also pick up json-flat "models" array
+      if (!models.length && fmt === 'json-flat') {
+        try {
+          const json = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+          if (Array.isArray(json.models)) models = json.models.filter(m => typeof m === 'string');
+        } catch {}
+      }
+
       if (base_url || token) {
-        results.push({ source: rel, base_url: base_url || null, token: token || null });
+        results.push({ source: rel, base_url: base_url || null, token: token || null, models });
       }
     } catch {}
   }
