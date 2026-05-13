@@ -381,6 +381,75 @@ select.form-input{cursor:pointer}
       </div>
     </div>
 
+    <!-- Virtual Agents -->
+    <div v-show="activeTab === 'virtual'" class="tab-content">
+      <div class="toolbar">
+        <span style="color:#64748b;font-size:13px">{{ T.vaList }}</span>
+        <button class="btn btn-indigo toolbar-right" @click="openVaModal(null)">＋ {{ T.vaAdd }}</button>
+      </div>
+      <table>
+        <thead><tr><th>{{ T.vaName }}</th><th>{{ T.vaBaseUrl }}</th><th>{{ T.vaApiStyle }}</th><th>{{ T.vaModels }}</th><th>{{ T.vaEnabled }}</th><th>{{ T.actions }}</th></tr></thead>
+        <tbody>
+          <tr v-if="virtualAgents.length === 0" class="empty-row"><td colspan="6">{{ T.noVirtualAgents }}</td></tr>
+          <tr v-for="a in virtualAgents" :key="a.id" :class="{ inactive: !a.enabled }">
+            <td>{{ a.name }}</td>
+            <td class="mono" style="font-size:12px;color:#94a3b8">{{ a.base_url }}</td>
+            <td><span class="tag">{{ a.api_style }}</span></td>
+            <td><span v-for="m in a.models" :key="m" class="tag">{{ m }}</span></td>
+            <td><span :class="a.enabled ? 'badge badge-on' : 'badge badge-off'">{{ a.enabled ? T.enabled : T.disabled }}</span></td>
+            <td>
+              <button class="btn-xs" @click="openVaModal(a)">{{ T.edit }}</button>
+              <button class="btn-xs btn-danger" @click="deleteVirtualAgent(a)">{{ T.delete }}</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Modal -->
+      <div v-if="vaModalOpen" style="position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100" @click.self="closeVaModal">
+        <div style="background:#1a1d27;border:1px solid #2d3148;border-radius:12px;padding:28px;width:480px;max-width:95vw">
+          <div style="font-size:14px;font-weight:600;color:#e2e8f0;margin-bottom:18px">{{ vaEditId ? T.vaEdit : T.vaAdd }}</div>
+          <div class="form-group" style="margin-bottom:12px">
+            <label>{{ T.vaName }} *</label>
+            <input v-model="vaForm.name" class="form-input" style="width:100%" placeholder="My LLM Service" />
+          </div>
+          <div class="form-group" style="margin-bottom:12px">
+            <label>{{ T.vaBaseUrl }} *</label>
+            <input v-model="vaForm.base_url" class="form-input" style="width:100%" placeholder="https://api.example.com" />
+          </div>
+          <div class="form-group" style="margin-bottom:12px">
+            <label>{{ T.vaApiKey }} {{ vaEditId ? '（留空则不修改）' : '*' }}</label>
+            <input v-model="vaForm.api_key" class="form-input" style="width:100%" type="password" placeholder="sk-..." autocomplete="new-password" />
+          </div>
+          <div class="form-row" style="gap:12px;margin-bottom:12px">
+            <div class="form-group" style="flex:1">
+              <label>{{ T.vaApiStyle }}</label>
+              <select v-model="vaForm.api_style" class="form-input" style="width:100%">
+                <option value="openai">openai</option>
+                <option value="anthropic">anthropic</option>
+              </select>
+            </div>
+            <div class="form-group" style="flex:1">
+              <label>{{ T.vaEnabled }}</label>
+              <select v-model="vaForm.enabled" class="form-input" style="width:100%">
+                <option :value="true">{{ T.yes }}</option>
+                <option :value="false">{{ T.no }}</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom:16px">
+            <label>{{ T.vaModels }}</label>
+            <input v-model="vaForm.models" class="form-input" style="width:100%" placeholder="gpt-4o, gpt-4o-mini" />
+          </div>
+          <div v-if="vaMsg" style="color:#f87171;font-size:13px;margin-bottom:10px">{{ vaMsg }}</div>
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn-sm" @click="closeVaModal">{{ T.vaCancel }}</button>
+            <button class="btn btn-indigo" @click="saveVirtualAgent">{{ T.vaSave }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -396,7 +465,7 @@ const LANGS = {
     notePlaceholder: '备注（可选）', newKey: '新建 Key', note: '备注', status: '状态',
     createdAt: '创建时间', actions: '操作', noKeys: '暂无 API Key',
     copy: '复制', enabled: '启用', disabled: '禁用', enable: '启用', disable: '禁用', delete: '删除',
-    tabs: { workers:'在线 PC', keys:'API Keys', models:'模型配置', users:'用户管理', orders:'购买审批', config:'系统配置', debug:'调试' },
+    tabs: { workers:'在线 PC', keys:'API Keys', models:'模型配置', users:'用户管理', orders:'购买审批', config:'系统配置', debug:'调试', virtual:'虚拟 Agent' },
     addEditModel: '新增 / 编辑模型', modelName: '模型名称', displayName: '显示名称', tier: '类型',
     contributeRate: '贡献率（积分/千token）', consumeRate: '消费率（积分/千token）',
     yes: '是', no: '否', save: '保存', saving: '保存中', edit: '编辑',
@@ -425,6 +494,11 @@ const LANGS = {
     exchangeNote: '注：实际结算以最终周期统计为准，高质量贡献享有倍率加成',
     confirmDeleteKey: '确认删除此 Key？删除后无法恢复。',
     confirmDeleteModel: (n) => `确认删除模型 ${n}？`,
+    vaList: '虚拟 Agent 列表', vaAdd: '新增虚拟 Agent', vaEdit: '编辑虚拟 Agent',
+    vaName: '名称', vaBaseUrl: 'Base URL', vaApiKey: 'API Key', vaApiStyle: 'API 样式',
+    vaModels: '模型列表（逗号分隔）', vaEnabled: '启用',
+    noVirtualAgents: '暂无虚拟 Agent', confirmDeleteVa: (n) => `确认删除虚拟 Agent "${n}"？`,
+    vaSaving: '保存中…', vaSave: '保存', vaCancel: '取消',
   },
   en: {
     loginHint: 'Enter admin key to continue', adminKey: 'Admin Key', loginBtn: 'Sign In', adminTitle: 'Admin', logout: 'Sign Out',
@@ -434,7 +508,7 @@ const LANGS = {
     notePlaceholder: 'Note (optional)', newKey: 'New Key', note: 'Note', status: 'Status',
     createdAt: 'Created', actions: 'Actions', noKeys: 'No API keys yet',
     copy: 'Copy', enabled: 'Active', disabled: 'Disabled', enable: 'Enable', disable: 'Disable', delete: 'Delete',
-    tabs: { workers:'Workers', keys:'API Keys', models:'Models', users:'Users', orders:'Orders', config:'Config', debug:'Debug' },
+    tabs: { workers:'Workers', keys:'API Keys', models:'Models', users:'Users', orders:'Orders', config:'Config', debug:'Debug', virtual:'Virtual Agents' },
     addEditModel: 'Add / Edit Model', modelName: 'Model Name', displayName: 'Display Name', tier: 'Tier',
     contributeRate: 'Contribute Rate (credits/K tokens)', consumeRate: 'Consume Rate (credits/K tokens)',
     yes: 'Yes', no: 'No', save: 'Save', saving: 'Saving…', edit: 'Edit',
@@ -463,6 +537,11 @@ const LANGS = {
     exchangeNote: 'Note: actual settlement uses period stats; high-quality contributions earn a quality multiplier',
     confirmDeleteKey: 'Delete this key? This cannot be undone.',
     confirmDeleteModel: (n) => `Delete model ${n}?`,
+    vaList: 'Virtual Agent List', vaAdd: 'Add Virtual Agent', vaEdit: 'Edit Virtual Agent',
+    vaName: 'Name', vaBaseUrl: 'Base URL', vaApiKey: 'API Key', vaApiStyle: 'API Style',
+    vaModels: 'Models (comma-separated)', vaEnabled: 'Enabled',
+    noVirtualAgents: 'No virtual agents', confirmDeleteVa: (n) => `Delete virtual agent "${n}"?`,
+    vaSaving: 'Saving…', vaSave: 'Save', vaCancel: 'Cancel',
   }
 }
 
@@ -486,6 +565,7 @@ createApp({
         { key:'orders',  label: tl.orders },
         { key:'config',  label: tl.config },
         { key:'debug',   label: tl.debug },
+        { key:'virtual', label: tl.virtual },
       ]
     })
 
@@ -513,6 +593,7 @@ createApp({
       if (k === 'users')  fetchUsers()
       if (k === 'orders') fetchOrders()
       if (k === 'config') fetchConfig()
+      if (k === 'virtual') fetchVirtualAgents()
     }
     async function api(path, opts = {}) {
       const r = await fetch(path, { ...opts, headers: { 'Content-Type':'application/json', Authorization:`Bearer ${getKey()}`, ...(opts.headers||{}) } })
@@ -647,6 +728,54 @@ createApp({
       finally { aMsg.streaming=false; chatLoading.value=false; scrollBottom() }
     }
 
+    /* ── Virtual Agents ── */
+    const virtualAgents = ref([])
+    const vaModalOpen = ref(false)
+    const vaEditId = ref(null)
+    const vaForm = ref({ name:'', base_url:'', api_key:'', api_style:'openai', models:'', enabled:true })
+    const vaMsg = ref('')
+    async function fetchVirtualAgents() {
+      try { const d = await (await api('/admin/virtual-agents')).json(); virtualAgents.value = d.agents||[] } catch {}
+    }
+    function openVaModal(agent) {
+      vaMsg.value = ''
+      if (agent) {
+        vaEditId.value = agent.id
+        vaForm.value = { name:agent.name, base_url:agent.base_url, api_key:'', api_style:agent.api_style, models:agent.models.join(', '), enabled:agent.enabled }
+      } else {
+        vaEditId.value = null
+        vaForm.value = { name:'', base_url:'', api_key:'', api_style:'openai', models:'', enabled:true }
+      }
+      vaModalOpen.value = true
+    }
+    function closeVaModal() { vaModalOpen.value = false }
+    async function saveVirtualAgent() {
+      vaMsg.value = ''
+      const payload = {
+        name: vaForm.value.name.trim(),
+        base_url: vaForm.value.base_url.trim(),
+        api_key: vaForm.value.api_key.trim(),
+        api_style: vaForm.value.api_style,
+        models: vaForm.value.models.split(',').map(s=>s.trim()).filter(Boolean),
+        enabled: vaForm.value.enabled,
+      }
+      try {
+        let r
+        if (vaEditId.value) {
+          r = await api(`/admin/virtual-agents/${vaEditId.value}`, {method:'PATCH', body:JSON.stringify(payload)})
+        } else {
+          r = await api('/admin/virtual-agents', {method:'POST', body:JSON.stringify(payload)})
+        }
+        if (!r.ok) { const d = await r.json(); vaMsg.value = d.detail || 'Error'; return }
+        vaModalOpen.value = false
+        await fetchVirtualAgents()
+      } catch { vaMsg.value = 'Error' }
+    }
+    async function deleteVirtualAgent(agent) {
+      if (!confirm(T.value.confirmDeleteVa(agent.name))) return
+      try { await api(`/admin/virtual-agents/${agent.id}`, {method:'DELETE'}); await fetchVirtualAgents() } catch {}
+    }
+
     /* ── Utils ── */
     function fmtTime(iso) { if (!iso) return '—'; return new Date(iso).toLocaleString(lang.value==='zh'?'zh-CN':'en-US',{hour12:false}) }
 
@@ -666,6 +795,7 @@ createApp({
       orders, orderNote, orderGrantApikey, fetchOrders, approveOrder, rejectOrder,
       sysConfig, configSaving, saveConfig,
       debugModel, chatMsgs, chatInput, chatLoading, chatArea, allModels, clearChat, sendMsg,
+      virtualAgents, vaModalOpen, vaEditId, vaForm, vaMsg, fetchVirtualAgents, openVaModal, closeVaModal, saveVirtualAgent, deleteVirtualAgent,
       fmtTime,
     }
   }

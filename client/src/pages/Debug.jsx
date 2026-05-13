@@ -1,22 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { getServerUrl } from '../config';
 
-// Fetch the first active API key for the current user via the /user/keys endpoint.
-// /user/keys uses the JWT session token; the returned key.key is used for /v1/* calls.
-async function resolveApiKey() {
+async function fetchApiKeys() {
   const serverUrl = getServerUrl();
   const jwt = localStorage.getItem('token');
-  if (!jwt) return null;
+  if (!jwt) return [];
   try {
     const r = await fetch(`${serverUrl}/user/keys`, {
       headers: { Authorization: `Bearer ${jwt}` },
     });
-    if (!r.ok) return null;
+    if (!r.ok) return [];
     const data = await r.json();
-    const active = (data.keys || []).find((k) => k.is_active);
-    return active?.key ?? null;
+    return (data.keys || []).filter((k) => k.is_active);
   } catch {
-    return null;
+    return [];
   }
 }
 
@@ -210,8 +207,8 @@ async function streamChat({ source, localCfg, apiKey, model, messages, stream, o
 export default function Debug() {
   const [source, setSource] = useState('local');
   const [localCfg, setLocalCfg] = useState(null);
-  const [apiKey, setApiKey] = useState(null);      // active API key for network calls
-  const [apiKeyErr, setApiKeyErr] = useState(false); // true if no active key found
+  const [apiKeys, setApiKeys] = useState([]);       // list of active keys for network
+  const [apiKey, setApiKey] = useState('');          // selected key value
   const [models, setModels] = useState([]);
   const [model, setModel] = useState('');
   const [loadingModels, setLoadingModels] = useState(false);
@@ -231,27 +228,29 @@ export default function Debug() {
     window.electronAPI?.config.read().then((cfg) => setLocalCfg(cfg));
   }, []);
 
-  // Resolve API key when switching to network source
+  // Load API keys when switching to network source
   useEffect(() => {
     if (source !== 'network') return;
-    setApiKey(null);
-    setApiKeyErr(false);
-    resolveApiKey().then((key) => {
-      setApiKey(key);
-      setApiKeyErr(!key);
+    setApiKeys([]);
+    setApiKey('');
+    fetchApiKeys().then((keys) => {
+      setApiKeys(keys);
+      if (keys.length > 0) setApiKey(keys[0].key);
     });
   }, [source]);
+
+  const apiKeyErr = source === 'network' && apiKeys.length === 0;
 
   useEffect(() => {
     setModels([]);
     setModel('');
-    if (source === 'network' && apiKeyErr) return;
+    if (source === 'network' && !apiKey) return;
     setLoadingModels(true);
     fetchModels(source, localCfg, apiKey).then((list) => {
       setModels(list);
       if (list.length > 0) setModel(list[0]);
     }).finally(() => setLoadingModels(false));
-  }, [source, localCfg, apiKey, apiKeyErr]);
+  }, [source, localCfg, apiKey]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -351,11 +350,7 @@ export default function Debug() {
           </div>
 
           {/* Model selector */}
-          {apiKeyErr ? (
-            <span className="text-xs text-red-500 dark:text-red-400">
-              需要先在「我的账户」中创建 API Key
-            </span>
-          ) : models.length > 0 ? (
+          {!apiKeyErr && (models.length > 0 ? (
             <select value={model} onChange={(e) => setModel(e.target.value)}
               className="bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500 max-w-[200px]">
               {models.map((m) => <option key={m} value={m}>{m}</option>)}
@@ -366,7 +361,7 @@ export default function Debug() {
             <span className="text-xs text-gray-400 dark:text-gray-500">
               {source === 'local' && !localCfg?.llm_base_url ? '请先配置本地 LLM 地址' : '暂无可用模型'}
             </span>
-          )}
+          ))}
 
           {/* Stream toggle */}
           <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 cursor-pointer select-none">
@@ -381,8 +376,35 @@ export default function Debug() {
             System
           </button>
 
-          {/* Clear */}
-          {conversation.length > 0 && (
+          {/* API Key selector (network only) — pushed to right */}
+          {source === 'network' && (
+            <div className="ml-auto flex items-center gap-2">
+              {apiKeys.length === 0 ? (
+                <span className="text-xs text-red-500 dark:text-red-400">
+                  需要先在「Agent → 消费」中创建 API Key
+                </span>
+              ) : (
+                <select value={apiKey} onChange={(e) => setApiKey(e.target.value)}
+                  className="bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500 max-w-[180px]"
+                  title="API Key">
+                  {apiKeys.map((k) => (
+                    <option key={k.id} value={k.key}>
+                      {k.note ? k.note : k.key.slice(0, 16) + '…'}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {conversation.length > 0 && (
+                <button onClick={handleClear}
+                  className="text-xs text-gray-400 dark:text-gray-500 hover:text-red-500 dark:hover:text-red-400 transition-colors">
+                  清空对话
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Clear (local source) */}
+          {source !== 'network' && conversation.length > 0 && (
             <button onClick={handleClear}
               className="ml-auto text-xs text-gray-400 dark:text-gray-500 hover:text-red-500 dark:hover:text-red-400 transition-colors">
               清空对话

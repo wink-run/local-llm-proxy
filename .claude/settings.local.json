@@ -91,7 +91,19 @@
       "Bash(./node_modules/.bin/electron --version)",
       "Bash(node -e \"require\\('ws'\\)\")",
       "Bash(git tag *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(python -c \"import database; print\\('OK'\\)\")",
+      "Bash(python3 -c \"import database; print\\('OK'\\)\")",
+      "Bash(python3 -c \"from virtual_worker import VirtualWorkerConnection; print\\('OK'\\)\")",
+      "Bash(python3 -c \"from worker_pool import pool; print\\('OK'\\)\")",
+      "Bash(python3 -c \"import admin_router; import server; print\\('OK'\\)\")",
+      "Bash(python3 -m py_compile admin_router.py server.py)",
+      "Bash(python3 -m pip show httpx)",
+      "Bash(python3 -m py_compile server.py admin_router.py worker_pool.py virtual_worker.py database.py)",
+      "Bash(uvicorn --version)",
+      "Bash(find /Users/ully -name \"fastapi\" -type d 2>/dev/null | head -5 & *)",
+      "Bash(/Users/ully/githubprojects/local-llm-proxy/.venv/bin/python -m py_compile /Users/ully/githubprojects/local-llm-proxy/server/virtual_worker.py)",
+      "Bash(/Users/ully/githubprojects/local-llm-proxy/.venv/bin/pip show *)"
     ]
   }
 }
