@@ -17,7 +17,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
   config: {
-    read: () => ipcRenderer.invoke('config:read'),
+    read:  () => ipcRenderer.invoke('config:read'),
     write: (cfg) => ipcRenderer.invoke('config:write', cfg),
+    scan:  () => ipcRenderer.invoke('config:scan'),
   },
 });

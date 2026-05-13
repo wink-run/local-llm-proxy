@@ -118,6 +118,77 @@ function writeAgentConfig(cfg) {
   fs.writeFileSync(AGENT_CONFIG_PATH, JSON.stringify(cfg, null, 2), 'utf-8');
 }
 
+// ── LLM config scanner ────────────────────────────────────────────────────────
+
+const BASE_URL_KEYS = [
+  'ANTHROPIC_BASE_URL', 'OPENAI_BASE_URL', 'OPENAI_API_BASE',
+  'LLM_BASE_URL', 'API_BASE_URL', 'OLLAMA_HOST',
+];
+const TOKEN_KEYS = [
+  'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY',
+  'LLM_TOKEN', 'LLM_API_KEY', 'API_KEY',
+];
+
+const SCAN_FILES = [
+  { rel: '.claude/settings.json',       fmt: 'json-env' },
+  { rel: '.claude/settings.local.json', fmt: 'json-env' },
+  { rel: '.env',                         fmt: 'dotenv'   },
+  { rel: '.config/openai/credentials',  fmt: 'dotenv'   },
+  { rel: '.zshrc',                       fmt: 'shell'    },
+  { rel: '.bashrc',                      fmt: 'shell'    },
+  { rel: '.profile',                     fmt: 'shell'    },
+  { rel: '.bash_profile',                fmt: 'shell'    },
+  // openclaw / common agent tools
+  { rel: '.openclaw/config.json',        fmt: 'json-flat' },
+  { rel: '.config/openclaw/config.json', fmt: 'json-flat' },
+  { rel: '.llm/config.json',             fmt: 'json-flat' },
+  { rel: '.config/llm/config.json',      fmt: 'json-flat' },
+];
+
+function parseDotenv(content) {
+  const map = {};
+  for (const line of content.split('\n')) {
+    const m = line.match(/^(?:export\s+)?([A-Z_][A-Z0-9_]*)=["']?([^"'\n#]*)["']?/);
+    if (m) map[m[1]] = m[2].trim();
+  }
+  return map;
+}
+
+function scanLLMConfigs() {
+  const home = os.homedir();
+  const results = [];
+
+  for (const { rel, fmt } of SCAN_FILES) {
+    const filePath = path.join(home, rel);
+    if (!fs.existsSync(filePath)) continue;
+    try {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      let envMap = {};
+
+      if (fmt === 'json-env') {
+        const json = JSON.parse(content);
+        envMap = json.env || {};
+      } else if (fmt === 'json-flat') {
+        const json = JSON.parse(content);
+        // accept both camelCase and UPPER_SNAKE_CASE keys
+        for (const k of Object.keys(json)) envMap[k.toUpperCase().replace(/([a-z])([A-Z])/g, '$1_$2')] = json[k];
+        Object.assign(envMap, json);
+      } else {
+        envMap = parseDotenv(content);
+      }
+
+      const base_url = BASE_URL_KEYS.map(k => envMap[k]).find(v => v && v.startsWith('http'));
+      const token    = TOKEN_KEYS.map(k => envMap[k]).find(Boolean);
+
+      if (base_url || token) {
+        results.push({ source: rel, base_url: base_url || null, token: token || null });
+      }
+    } catch {}
+  }
+
+  return results;
+}
+
 // ── IPC handlers ──────────────────────────────────────────────────────────────
 
 function registerIPC() {
@@ -126,6 +197,7 @@ function registerIPC() {
   ipcMain.handle('agent:status', () => ({ running: agent.isRunning() }));
   ipcMain.handle('config:read',  () => readAgentConfig());
   ipcMain.handle('config:write', (_e, cfg) => { writeAgentConfig(cfg); return { ok: true }; });
+  ipcMain.handle('config:scan',  () => scanLLMConfigs());
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────

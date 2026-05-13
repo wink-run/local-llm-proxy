@@ -7,6 +7,170 @@ function multiplierToStars(m) {
   return '★'.repeat(n) + '☆'.repeat(5 - n);
 }
 
+function mask(s) {
+  if (!s) return '';
+  if (s.length <= 12) return s.slice(0, 4) + '●●●●';
+  return s.slice(0, 8) + '●●●●' + s.slice(-4);
+}
+
+function LLMConfigCard() {
+  const [agentCfg, setAgentCfg] = useState(null);      // current saved config
+  const [scanResults, setScanResults] = useState(null); // null=not scanned, []=scanned
+  const [scanning, setScanning] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [applied, setApplied] = useState(false);
+  const [showManual, setShowManual] = useState(false);
+  const [manualUrl, setManualUrl] = useState('');
+  const [manualToken, setManualToken] = useState('');
+
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    window.electronAPI.config.read().then((cfg) => {
+      setAgentCfg(cfg);
+      // auto-scan on first load if not yet configured
+      if (!cfg?.llm_base_url) handleScan();
+    });
+  }, []);
+
+  async function handleScan() {
+    if (!window.electronAPI) return;
+    setScanning(true);
+    setScanResults(null);
+    try {
+      const results = await window.electronAPI.config.scan();
+      setScanResults(results);
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  async function applyResult(result) {
+    if (!window.electronAPI) return;
+    setApplying(true);
+    try {
+      const current = (await window.electronAPI.config.read()) || {};
+      await window.electronAPI.config.write({
+        ...current,
+        llm_base_url: result.base_url || current.llm_base_url || '',
+        llm_token:    result.token    || current.llm_token    || '',
+      });
+      setAgentCfg((prev) => ({ ...prev, llm_base_url: result.base_url, llm_token: result.token }));
+      setApplied(true);
+      setScanResults(null);
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  async function applyManual() {
+    if (!window.electronAPI || !manualUrl) return;
+    setApplying(true);
+    try {
+      const current = (await window.electronAPI.config.read()) || {};
+      await window.electronAPI.config.write({
+        ...current,
+        llm_base_url: manualUrl,
+        llm_token:    manualToken,
+      });
+      setAgentCfg((prev) => ({ ...prev, llm_base_url: manualUrl, llm_token: manualToken }));
+      setShowManual(false);
+      setApplied(true);
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  const configured = !!agentCfg?.llm_base_url;
+
+  return (
+    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${configured ? 'bg-green-400' : 'bg-yellow-400'}`} />
+          <span className="text-sm font-medium text-gray-700 dark:text-gray-200">本地 LLM 配置</span>
+          {configured && !applied && (
+            <span className="text-xs text-green-600 dark:text-green-400 font-medium">已配置</span>
+          )}
+          {applied && (
+            <span className="text-xs text-green-600 dark:text-green-400 font-medium">✓ 配置已应用</span>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <button onClick={handleScan} disabled={scanning}
+            className="px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 disabled:opacity-50 transition-colors">
+            {scanning ? '扫描中…' : '自动检测'}
+          </button>
+          <button onClick={() => { setShowManual((v) => !v); setScanResults(null); }}
+            className="px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 transition-colors">
+            手动配置
+          </button>
+        </div>
+      </div>
+
+      {/* Current config summary */}
+      {configured && (
+        <div className="text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
+          <p><span className="text-gray-400 dark:text-gray-500">端点  </span>{agentCfg.llm_base_url}</p>
+          {agentCfg.llm_token && (
+            <p><span className="text-gray-400 dark:text-gray-500">Token </span>{mask(agentCfg.llm_token)}</p>
+          )}
+        </div>
+      )}
+
+      {/* Not configured hint */}
+      {!configured && !scanResults && !scanning && !showManual && (
+        <p className="text-xs text-yellow-600 dark:text-yellow-400">
+          未配置本地 LLM 端点，点击「自动检测」从常见配置文件中读取。
+        </p>
+      )}
+
+      {/* Scan results */}
+      {Array.isArray(scanResults) && (
+        scanResults.length === 0 ? (
+          <p className="text-xs text-gray-400 dark:text-gray-500">未找到配置，请手动填写。</p>
+        ) : (
+          <div className="space-y-2">
+            {scanResults.map((r, i) => (
+              <div key={i} className="flex items-start justify-between gap-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl px-3 py-2">
+                <div className="text-xs space-y-0.5 min-w-0">
+                  <p className="text-gray-400 dark:text-gray-500 font-mono truncate">~/{r.source}</p>
+                  {r.base_url && <p className="text-gray-700 dark:text-gray-200 truncate">{r.base_url}</p>}
+                  {r.token    && <p className="text-gray-500 dark:text-gray-400 font-mono">{mask(r.token)}</p>}
+                </div>
+                <button onClick={() => applyResult(r)} disabled={applying}
+                  className="shrink-0 px-3 py-1 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition-colors">
+                  应用
+                </button>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {/* Manual config */}
+      {showManual && (
+        <div className="space-y-2">
+          <input
+            value={manualUrl} onChange={(e) => setManualUrl(e.target.value)}
+            placeholder="http://localhost:11434/v1"
+            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
+          />
+          <input
+            value={manualToken} onChange={(e) => setManualToken(e.target.value)}
+            placeholder="API Token（无则留空）"
+            type="password"
+            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
+          />
+          <button onClick={applyManual} disabled={applying || !manualUrl}
+            className="px-4 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition-colors">
+            {applying ? '保存中…' : '保存'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Agent() {
   const [running, setRunning] = useState(false);
   const [stats, setStats] = useState(null);
@@ -76,6 +240,8 @@ export default function Agent() {
           </button>
         </div>
       </div>
+
+      <LLMConfigCard />
 
       {stats && (
         <div className="grid grid-cols-3 gap-4">
