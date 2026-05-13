@@ -14,13 +14,10 @@ function mask(s) {
 }
 
 function LLMConfigCard() {
-  const [agentCfg, setAgentCfg]       = useState(null);
-  const [scanResults, setScanResults] = useState(null); // null=idle, []=scanned
+  const [scanResults, setScanResults] = useState(null);
   const [scanning, setScanning]       = useState(false);
-  const [showManual, setShowManual]   = useState(false);
-  const [manualUrl, setManualUrl]     = useState('');
-  const [manualToken, setManualToken] = useState('');
-  // form fields (kept in sync with saved config)
+  const [llmUrl, setLlmUrl]           = useState('');
+  const [llmToken, setLlmToken]       = useState('');
   const [modelsText, setModelsText]   = useState('');
   const [nodeName, setNodeName]       = useState('');
   const [autoStart, setAutoStart]     = useState(false);
@@ -30,7 +27,8 @@ function LLMConfigCard() {
   useEffect(() => {
     if (!window.electronAPI) return;
     window.electronAPI.config.read().then((cfg) => {
-      setAgentCfg(cfg);
+      setLlmUrl(cfg?.llm_base_url || '');
+      setLlmToken(cfg?.llm_token || '');
       setModelsText((cfg?.models || []).join(', '));
       setNodeName(cfg?.name || '');
       setAutoStart(!!cfg?.auto_start);
@@ -43,41 +41,33 @@ function LLMConfigCard() {
     setScanning(true);
     setScanResults(null);
     try {
-      const results = await window.electronAPI.config.scan();
-      setScanResults(results);
+      setScanResults(await window.electronAPI.config.scan());
     } finally {
       setScanning(false);
     }
   }
 
-  async function applyResult(result) {
-    if (!window.electronAPI) return;
-    const current = (await window.electronAPI.config.read()) || {};
-    const newUrl   = result.base_url || current.llm_base_url || '';
-    const newToken = result.token    || current.llm_token    || '';
-    const newModels = result.models?.length ? result.models : (current.models || []);
-    await window.electronAPI.config.write({ ...current, llm_base_url: newUrl, llm_token: newToken, models: newModels });
-    setAgentCfg(prev => ({ ...prev, llm_base_url: newUrl, llm_token: newToken, models: newModels }));
-    setModelsText(newModels.join(', '));
+  function fillFromResult(r) {
+    if (r.base_url) setLlmUrl(r.base_url);
+    if (r.token)    setLlmToken(r.token);
+    if (r.models?.length) setModelsText(r.models.join(', '));
     setScanResults(null);
-  }
-
-  async function applyManual() {
-    if (!window.electronAPI || !manualUrl) return;
-    const current = (await window.electronAPI.config.read()) || {};
-    await window.electronAPI.config.write({ ...current, llm_base_url: manualUrl, llm_token: manualToken });
-    setAgentCfg(prev => ({ ...prev, llm_base_url: manualUrl, llm_token: manualToken }));
-    setShowManual(false);
   }
 
   async function saveAll() {
     if (!window.electronAPI) return;
     setSaving(true);
     try {
-      const models = modelsText.split(',').map(s => s.trim()).filter(Boolean);
+      const models  = modelsText.split(',').map(s => s.trim()).filter(Boolean);
       const current = (await window.electronAPI.config.read()) || {};
-      await window.electronAPI.config.write({ ...current, models, name: nodeName, auto_start: autoStart });
-      setAgentCfg(prev => ({ ...prev, models, name: nodeName, auto_start: autoStart }));
+      await window.electronAPI.config.write({
+        ...current,
+        llm_base_url: llmUrl,
+        llm_token:    llmToken,
+        models,
+        name:         nodeName,
+        auto_start:   autoStart,
+      });
       setSavedMsg('已保存');
       setTimeout(() => setSavedMsg(''), 2000);
     } finally {
@@ -85,114 +75,85 @@ function LLMConfigCard() {
     }
   }
 
-  const configured = !!agentCfg?.llm_base_url;
-  const modelsOk   = (agentCfg?.models || []).length > 0;
+  const configured = !!(llmUrl && modelsText);
 
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${configured && modelsOk ? 'bg-green-400' : 'bg-yellow-400'}`} />
+          <span className={`w-2 h-2 rounded-full ${configured ? 'bg-green-400' : 'bg-yellow-400'}`} />
           <span className="text-sm font-medium text-gray-700 dark:text-gray-200">本地 LLM 配置</span>
-          {configured && modelsOk && <span className="text-xs text-green-600 dark:text-green-400">已配置</span>}
+          {configured && <span className="text-xs text-green-600 dark:text-green-400">已配置</span>}
         </div>
-        <div className="flex gap-2">
-          <button onClick={handleScan} disabled={scanning}
-            className="px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 disabled:opacity-50 transition-colors">
-            {scanning ? '扫描中…' : '自动检测'}
-          </button>
-          <button onClick={() => { setShowManual(v => !v); setScanResults(null); }}
-            className="px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 transition-colors">
-            手动配置
-          </button>
-        </div>
+        <button onClick={handleScan} disabled={scanning}
+          className="px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 disabled:opacity-50 transition-colors">
+          {scanning ? '扫描中…' : '自动检测'}
+        </button>
       </div>
 
-      {/* Current endpoint summary */}
-      {configured && !showManual && (
-        <div className="text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
-          <p><span className="text-gray-400 dark:text-gray-500 w-10 inline-block">端点</span>{agentCfg.llm_base_url}</p>
-          {agentCfg.llm_token && <p><span className="text-gray-400 dark:text-gray-500 w-10 inline-block">Token</span>{mask(agentCfg.llm_token)}</p>}
-        </div>
-      )}
-
-      {/* Not configured hint */}
-      {!configured && !scanResults && !scanning && !showManual && (
-        <p className="text-xs text-yellow-600 dark:text-yellow-400">
-          未配置本地 LLM 端点，点击「自动检测」从常见配置文件中读取。
-        </p>
-      )}
-
-      {/* Scan results */}
+      {/* Scan results — shown as a pre-fill chooser */}
       {Array.isArray(scanResults) && (
         scanResults.length === 0
           ? <p className="text-xs text-gray-400 dark:text-gray-500">未找到配置，请手动填写。</p>
-          : <div className="space-y-2">
+          : <div className="space-y-1.5">
+              <p className="text-xs text-gray-400 dark:text-gray-500">检测到以下配置，点击填入：</p>
               {scanResults.map((r, i) => (
-                <div key={i} className="flex items-start justify-between gap-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl px-3 py-2">
-                  <div className="text-xs space-y-0.5 min-w-0">
+                <button key={i} onClick={() => fillFromResult(r)}
+                  className="w-full text-left flex items-start gap-2 bg-gray-50 dark:bg-gray-700/50 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-xl px-3 py-2 transition-colors">
+                  <div className="text-xs space-y-0.5 min-w-0 flex-1">
                     <p className="text-gray-400 dark:text-gray-500 font-mono truncate">~/{r.source}</p>
                     {r.base_url && <p className="text-gray-700 dark:text-gray-200 truncate">{r.base_url}</p>}
                     {r.token    && <p className="text-gray-500 dark:text-gray-400 font-mono">{mask(r.token)}</p>}
                     {r.models?.length > 0 && <p className="text-gray-500 dark:text-gray-400 truncate">{r.models.join(', ')}</p>}
                   </div>
-                  <button onClick={() => applyResult(r)}
-                    className="shrink-0 px-3 py-1 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors">
-                    应用
-                  </button>
-                </div>
+                  <span className="shrink-0 text-xs text-blue-500 dark:text-blue-400 mt-0.5">填入 →</span>
+                </button>
               ))}
             </div>
       )}
 
-      {/* Manual URL + token */}
-      {showManual && (
-        <div className="space-y-2">
-          <input value={manualUrl} onChange={e => setManualUrl(e.target.value)}
+      {/* Unified form */}
+      <div className="space-y-3">
+        <div>
+          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">本地 LLM 地址</label>
+          <input value={llmUrl} onChange={e => setLlmUrl(e.target.value)}
             placeholder="http://localhost:11434/v1"
-            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
-          <input value={manualToken} onChange={e => setManualToken(e.target.value)}
-            placeholder="API Token（无则留空）" type="password"
-            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
-          <button onClick={applyManual} disabled={!manualUrl}
-            className="px-4 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition-colors">
-            确认
+            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">LLM Token（可选）</label>
+          <input value={llmToken} onChange={e => setLlmToken(e.target.value)}
+            placeholder="无则留空" type="password"
+            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">支持的模型（逗号分隔）</label>
+          <input value={modelsText} onChange={e => setModelsText(e.target.value)}
+            placeholder="qwen3-32b, qwen3-7b"
+            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">节点名称</label>
+          <input value={nodeName} onChange={e => setNodeName(e.target.value)}
+            placeholder="留空使用主机名"
+            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
+        </div>
+        <label className="flex items-center gap-3 cursor-pointer select-none">
+          <div onClick={() => setAutoStart(v => !v)}
+            className={`relative w-10 h-6 rounded-full transition-colors ${autoStart ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}>
+            <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${autoStart ? 'translate-x-5' : 'translate-x-1'}`} />
+          </div>
+          <span className="text-sm text-gray-700 dark:text-gray-300">启动应用时自动运行 Agent</span>
+        </label>
+        <div className="flex items-center gap-3 pt-1">
+          <button onClick={saveAll} disabled={saving}
+            className="px-5 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium transition-colors">
+            {saving ? '保存中…' : '保存配置'}
           </button>
+          {savedMsg && <span className="text-sm text-green-600 dark:text-green-400">{savedMsg}</span>}
         </div>
-      )}
-
-      {/* Full config form — models, node name, auto-start */}
-      {configured && (
-        <div className="border-t border-gray-100 dark:border-gray-700 pt-3 space-y-3">
-          <div>
-            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">支持的模型（逗号分隔）</label>
-            <input value={modelsText} onChange={e => setModelsText(e.target.value)}
-              placeholder="qwen3-32b, qwen3-7b"
-              className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">节点名称</label>
-            <input value={nodeName} onChange={e => setNodeName(e.target.value)}
-              placeholder="留空使用主机名"
-              className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
-          </div>
-          <label className="flex items-center gap-3 cursor-pointer select-none">
-            <div onClick={() => setAutoStart(v => !v)}
-              className={`relative w-9 h-5 rounded-full transition-colors ${autoStart ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}>
-              <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${autoStart ? 'translate-x-4' : 'translate-x-0.5'}`} />
-            </div>
-            <span className="text-xs text-gray-700 dark:text-gray-300">启动应用时自动运行 Agent</span>
-          </label>
-          <div className="flex items-center gap-3">
-            <button onClick={saveAll} disabled={saving}
-              className="px-4 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition-colors">
-              {saving ? '保存中…' : '保存配置'}
-            </button>
-            {savedMsg && <span className="text-xs text-green-600 dark:text-green-400">{savedMsg}</span>}
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
