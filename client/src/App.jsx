@@ -2,6 +2,7 @@ import React from 'react';
 import { MemoryRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './store/index';
 import { ThemeProvider } from './store/theme';
+import { LangProvider } from './store/lang';
 import Sidebar from './components/Sidebar';
 import Profile from './pages/Profile';
 import Agent from './pages/Agent';
@@ -41,9 +42,11 @@ export default function App() {
   return (
     <MemoryRouter>
       <ThemeProvider>
-        <AuthProvider>
-          <Layout />
-        </AuthProvider>
+        <LangProvider>
+          <AuthProvider>
+            <Layout />
+          </AuthProvider>
+        </LangProvider>
       </ThemeProvider>
     </MemoryRouter>
   );

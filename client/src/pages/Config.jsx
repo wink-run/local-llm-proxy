@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { login, getProfile } from '../api/client';
 import { useAuth } from '../store/index';
 import { useTheme } from '../store/theme';
+import { useLang } from '../store/lang';
 import { DEFAULT_SERVER_URL } from '../config';
 
 function Field({ label, type = 'text', value, onChange, placeholder }) {
@@ -20,27 +21,53 @@ function Field({ label, type = 'text', value, onChange, placeholder }) {
   );
 }
 
-const THEMES = [
-  { value: 'light', label: '浅色' },
-  { value: 'system', label: '跟随系统' },
-  { value: 'dark', label: '深色' },
-];
-
 function ThemeSelector() {
   const { theme, setTheme } = useTheme();
+  const { t } = useLang();
+  const THEMES = [
+    { value: 'light',  label: t('theme.light') },
+    { value: 'system', label: t('theme.system') },
+    { value: 'dark',   label: t('theme.dark') },
+  ];
   return (
     <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
-      {THEMES.map((t) => (
+      {THEMES.map((th) => (
         <button
-          key={t.value}
-          onClick={() => setTheme(t.value)}
+          key={th.value}
+          onClick={() => setTheme(th.value)}
           className={`flex-1 py-2 text-sm font-medium transition-colors ${
-            theme === t.value
+            theme === th.value
               ? 'bg-blue-600 text-white'
               : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
           }`}
         >
-          {t.label}
+          {th.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const LANGS = [
+  { value: 'zh', labelKey: 'lang.zh' },
+  { value: 'en', labelKey: 'lang.en' },
+];
+
+function LangSelector() {
+  const { lang, setLang, t } = useLang();
+  return (
+    <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+      {LANGS.map((l) => (
+        <button
+          key={l.value}
+          onClick={() => setLang(l.value)}
+          className={`flex-1 py-2 text-sm font-medium transition-colors ${
+            lang === l.value
+              ? 'bg-blue-600 text-white'
+              : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+          }`}
+        >
+          {t(l.labelKey)}
         </button>
       ))}
     </div>
@@ -49,6 +76,7 @@ function ThemeSelector() {
 
 export default function Config() {
   const { user, loginSuccess, logout } = useAuth();
+  const { t } = useLang();
   const navigate = useNavigate();
 
   const [serverUrl, setServerUrl] = useState(
@@ -93,7 +121,7 @@ export default function Config() {
       navigate('/');
     } catch (err) {
       localStorage.removeItem('token');
-      setError(err.response?.data?.detail || '登录失败，请检查邮箱和密码');
+      setError(err.response?.data?.detail || t('config.loginFailed'));
     } finally {
       setSaving(false);
     }
@@ -106,19 +134,19 @@ export default function Config() {
 
   return (
     <div className="max-w-lg mx-auto p-8 space-y-8">
-      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">设置</h1>
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{t('config.title')}</h1>
 
       {firstRun && (
         <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-xl px-4 py-3 text-sm text-blue-700 dark:text-blue-300">
-          首次使用，请先配置服务器地址并登录账户。
+          {t('config.firstRun')}
         </div>
       )}
 
       {/* Server URL */}
       <section className="space-y-4">
-        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">服务器</h2>
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">{t('config.server')}</h2>
         <div>
-          <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">服务端地址 (HTTP/HTTPS)</label>
+          <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">{t('config.serverUrl')}</label>
           <input
             type="text"
             value={serverUrl}
@@ -136,7 +164,7 @@ export default function Config() {
 
       {/* Account */}
       <section className="space-y-4">
-        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">账户</h2>
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">{t('config.account')}</h2>
         {user ? (
           <div className="flex items-center justify-between bg-gray-100 dark:bg-gray-800 rounded-xl p-4">
             <div>
@@ -147,20 +175,20 @@ export default function Config() {
               onClick={handleLogout}
               className="px-4 py-2 bg-red-700 hover:bg-red-600 rounded-lg text-sm text-white transition-colors"
             >
-              退出登录
+              {t('config.logout')}
             </button>
           </div>
         ) : (
           <form onSubmit={handleLogin} className="space-y-3">
-            <Field label="邮箱" type="email" value={email} onChange={setEmail} placeholder="you@example.com" />
-            <Field label="密码" type="password" value={password} onChange={setPassword} placeholder="••••••" />
+            <Field label={t('config.email')} type="email" value={email} onChange={setEmail} placeholder="you@example.com" />
+            <Field label={t('config.password')} type="password" value={password} onChange={setPassword} placeholder="••••••" />
             {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
             <button
               type="submit"
               disabled={saving}
               className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
             >
-              {saving ? '登录中…' : '登录'}
+              {saving ? t('config.loggingIn') : t('config.login')}
             </button>
           </form>
         )}
@@ -168,8 +196,14 @@ export default function Config() {
 
       {/* Theme */}
       <section className="space-y-4">
-        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">主题</h2>
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">{t('config.theme')}</h2>
         <ThemeSelector />
+      </section>
+
+      {/* Language */}
+      <section className="space-y-4">
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">{t('config.lang')}</h2>
+        <LangSelector />
       </section>
 
       {/* Credits */}
