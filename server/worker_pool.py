@@ -4,7 +4,9 @@ import random
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+if TYPE_CHECKING:
+    from virtual_worker import VirtualWorkerConnection
 
 
 @dataclass
@@ -66,6 +68,7 @@ class WorkerConnection:
 class WorkerPool:
     def __init__(self):
         self._workers: list[WorkerConnection] = []
+        self._virtual: list = []   # list[VirtualWorkerConnection]
 
     def add(self, worker: WorkerConnection) -> None:
         self._workers.append(worker)
@@ -76,18 +79,39 @@ class WorkerPool:
         except ValueError:
             pass
 
+    def sync_virtual(self, agents: list[dict]) -> None:
+        """从数据库 agent 列表重建虚拟 Worker 列表，立即生效。"""
+        from virtual_worker import VirtualWorkerConnection
+        self._virtual = [
+            VirtualWorkerConnection(
+                base_url=a["base_url"],
+                api_key=a["api_key"],
+                api_style=a["api_style"],
+                models=a["models"],
+                worker_id=f"vw-{a['id']}",
+                name=a["name"],
+                user_id=a.get("user_id"),
+            )
+            for a in agents
+            if a.get("enabled")
+        ]
+
     def pick(self, model: str) -> Optional[WorkerConnection]:
-        available = [w for w in self._workers if model in w.models]
-        return random.choice(available) if available else None
+        """真实 Worker 优先；无真实 Worker 时选虚拟 Worker。"""
+        real = [w for w in self._workers if model in w.models]
+        if real:
+            return random.choice(real)
+        virtual = [v for v in self._virtual if model in v.models]
+        return random.choice(virtual) if virtual else None
 
     def all_models(self) -> list[str]:
-        return sorted({m for w in self._workers for m in w.models})
+        return sorted({m for w in self._workers + self._virtual for m in w.models})
 
     def list_workers(self) -> list[dict]:
-        return [w.to_dict() for w in self._workers]
+        return [w.to_dict() for w in self._workers + self._virtual]
 
-    def all_workers(self) -> list[WorkerConnection]:
-        return list(self._workers)
+    def all_workers(self) -> list:
+        return list(self._workers + self._virtual)
 
 
 pool = WorkerPool()
