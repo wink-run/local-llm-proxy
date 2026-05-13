@@ -1,10 +1,9 @@
 import React from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../store/index';
 import logoSvg from '../assets/logo.svg';
 
 const NAV = [
-  { to: '/', icon: '👤', label: '我的账户' },
   { to: '/agent', icon: '⚙️', label: 'Agent' },
   { to: '/network', icon: '🌐', label: '网络' },
   { to: '/debug', icon: '🐛', label: '调试' },
@@ -13,6 +12,9 @@ const NAV = [
 
 export default function Sidebar() {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const profileActive = location.pathname === '/';
   return (
     <aside className="w-44 flex flex-col pb-5 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 shrink-0">
       {/* Logo — pt-9 clears macOS hiddenInset traffic lights (~28px) */}
@@ -43,12 +45,20 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* User footer */}
+      {/* User footer — click to open Profile */}
       {user && (
-        <div className="px-4 pt-3 border-t border-gray-100 dark:border-gray-800 mt-2">
-          <p className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate">{user.nickname}</p>
+        <button
+          onClick={() => navigate('/')}
+          className={
+            'mx-2 px-3 py-2.5 rounded-lg border text-left transition-colors ' +
+            (profileActive
+              ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700'
+              : 'border-gray-100 dark:border-gray-800 hover:bg-gray-100 dark:hover:bg-gray-800')
+          }
+        >
+          <p className={`text-xs font-medium truncate ${profileActive ? 'text-blue-700 dark:text-blue-300' : 'text-gray-700 dark:text-gray-300'}`}>{user.nickname}</p>
           <p className="text-xs text-gray-400 dark:text-gray-500 truncate">{user.email}</p>
-        </div>
+        </button>
       )}
     </aside>
   );
