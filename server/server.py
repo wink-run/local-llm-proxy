@@ -34,6 +34,9 @@ _bearer = HTTPBearer(auto_error=False)
 async def lifespan(app: FastAPI):
     await db.init_db()
     logger.info("Database ready")
+    from admin_router import _sync_virtual_pool
+    await _sync_virtual_pool()
+    logger.info("Virtual agents synced")
     task = asyncio.create_task(run_settler())
     yield
     task.cancel()

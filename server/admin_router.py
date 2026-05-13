@@ -12,6 +12,12 @@ from dispatch import handle_chat
 from worker_pool import pool
 
 ADMIN_KEY = os.getenv("ADMIN_KEY", "change-me-admin")
+
+
+async def _sync_virtual_pool() -> None:
+    """从数据库重新加载所有启用的虚拟 Agent 到 pool。"""
+    agents = await db.list_virtual_agents(enabled_only=True)
+    pool.sync_virtual(agents)
 _bearer = HTTPBearer()
 router = APIRouter()
 
@@ -184,4 +190,75 @@ class ConfigRequest(BaseModel):
 @router.put("/config", dependencies=[Depends(auth_admin)])
 async def set_config(req: ConfigRequest):
     await db.set_config(req.key, req.value)
+    return {"ok": True}
+
+
+# ── 虚拟 Agent ────────────────────────────────────────────────────────────────
+
+@router.get("/virtual-agents", dependencies=[Depends(auth_admin)])
+async def list_virtual_agents():
+    agents = await db.list_virtual_agents()
+    for a in agents:
+        a["api_key"] = a["api_key"][:6] + "****" if len(a.get("api_key", "")) > 6 else "****"
+    return {"agents": agents}
+
+
+class VirtualAgentRequest(BaseModel):
+    name: str
+    base_url: str
+    api_key: str
+    api_style: str = "openai"
+    models: list[str] = []
+    enabled: bool = True
+
+
+@router.post("/virtual-agents", dependencies=[Depends(auth_admin)])
+async def create_virtual_agent(req: VirtualAgentRequest):
+    if req.api_style not in ("openai", "anthropic"):
+        raise HTTPException(400, "api_style 必须是 openai 或 anthropic")
+    if not req.name.strip():
+        raise HTTPException(400, "name 不能为空")
+    if not req.base_url.strip():
+        raise HTTPException(400, "base_url 不能为空")
+    if not req.api_key.strip():
+        raise HTTPException(400, "api_key 不能为空")
+    agent = await db.create_virtual_agent(
+        req.name.strip(), req.base_url.strip(), req.api_key.strip(),
+        req.api_style, req.models, req.enabled,
+    )
+    await _sync_virtual_pool()
+    return {"ok": True, "agent": agent}
+
+
+class UpdateVirtualAgentRequest(BaseModel):
+    name: str
+    base_url: str
+    api_key: str = ""
+    api_style: str = "openai"
+    models: list[str] = []
+    enabled: bool = True
+
+
+@router.patch("/virtual-agents/{agent_id}", dependencies=[Depends(auth_admin)])
+async def update_virtual_agent(agent_id: int, req: UpdateVirtualAgentRequest):
+    if req.api_style not in ("openai", "anthropic"):
+        raise HTTPException(400, "api_style 必须是 openai 或 anthropic")
+    existing = await db.get_virtual_agent(agent_id)
+    if not existing:
+        raise HTTPException(404, "Virtual agent not found")
+    await db.update_virtual_agent(
+        agent_id, req.name.strip(), req.base_url.strip(), req.api_key.strip(),
+        req.api_style, req.models, req.enabled,
+    )
+    await _sync_virtual_pool()
+    return {"ok": True}
+
+
+@router.delete("/virtual-agents/{agent_id}", dependencies=[Depends(auth_admin)])
+async def delete_virtual_agent(agent_id: int):
+    existing = await db.get_virtual_agent(agent_id)
+    if not existing:
+        raise HTTPException(404, "Virtual agent not found")
+    await db.delete_virtual_agent(agent_id)
+    await _sync_virtual_pool()
     return {"ok": True}
