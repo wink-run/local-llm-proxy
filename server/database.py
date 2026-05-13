@@ -144,6 +144,7 @@ async def init_db() -> None:
     await _migrate()
     await _migrate_apikey_default_open()
     await _migrate_checkins()
+    await _migrate_virtual_agents()
 
 
 async def _migrate() -> None:
@@ -172,6 +173,29 @@ async def _migrate_checkins() -> None:
         await db.execute(
             "INSERT OR IGNORE INTO system_config(key,value) VALUES('checkin_reward','5')"
         )
+        await db.commit()
+
+
+async def _migrate_virtual_agents() -> None:
+    """补齐 virtual_agents 表和 users.is_virtual 列（早期数据库无此结构）"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("PRAGMA table_info(users)") as cur:
+            cols = {r[1] for r in await cur.fetchall()}
+        if "is_virtual" not in cols:
+            await db.execute("ALTER TABLE users ADD COLUMN is_virtual INTEGER DEFAULT 0")
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS virtual_agents (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name       TEXT NOT NULL,
+                base_url   TEXT NOT NULL,
+                api_key    TEXT NOT NULL,
+                api_style  TEXT NOT NULL DEFAULT 'openai',
+                models     TEXT NOT NULL DEFAULT '[]',
+                enabled    INTEGER DEFAULT 1,
+                user_id    INTEGER REFERENCES users(id),
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
         await db.commit()
 
 
@@ -643,6 +667,101 @@ async def get_checkin_status(user_id: int) -> dict:
         "total_checkins": total,
         "reward": reward,
     }
+
+
+# ── virtual_agents ────────────────────────────────────────────────────────────
+
+async def create_virtual_agent(name: str, base_url: str, api_key: str,
+                                api_style: str, models_list: list,
+                                enabled: bool = True) -> dict:
+    """创建虚拟 Agent，同时创建关联虚拟账户，返回新记录。"""
+    import json as _json
+    ref_code = "VREF-" + secrets.token_urlsafe(6).upper()
+    worker_key = "vwk-" + secrets.token_urlsafe(32)
+    virtual_email = f"virtual-{secrets.token_urlsafe(8)}@virtual.local"
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """INSERT INTO users
+               (email, nickname, password_hash, referral_code, worker_key, is_virtual, can_create_apikey)
+               VALUES (?,?,?,?,?,1,0)""",
+            (virtual_email, name, "", ref_code, worker_key),
+        )
+        virtual_user_id = cur.lastrowid
+        models_json = _json.dumps(models_list)
+        cur2 = await db.execute(
+            """INSERT INTO virtual_agents (name, base_url, api_key, api_style, models, enabled, user_id)
+               VALUES (?,?,?,?,?,?,?)""",
+            (name, base_url, api_key, api_style, models_json, int(enabled), virtual_user_id),
+        )
+        await db.commit()
+        return {
+            "id": cur2.lastrowid, "name": name, "base_url": base_url,
+            "api_style": api_style, "models": models_list,
+            "enabled": int(enabled), "user_id": virtual_user_id,
+        }
+
+
+async def list_virtual_agents(enabled_only: bool = False) -> list:
+    import json as _json
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        sql = "SELECT * FROM virtual_agents"
+        if enabled_only:
+            sql += " WHERE enabled=1"
+        sql += " ORDER BY created_at DESC"
+        async with db.execute(sql) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+    for r in rows:
+        r["models"] = _json.loads(r["models"] or "[]")
+    return rows
+
+
+async def get_virtual_agent(agent_id: int) -> Optional[dict]:
+    import json as _json
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM virtual_agents WHERE id=?", (agent_id,)) as cur:
+            r = await cur.fetchone()
+            if not r:
+                return None
+            row = dict(r)
+    row["models"] = _json.loads(row["models"] or "[]")
+    return row
+
+
+async def update_virtual_agent(agent_id: int, name: str, base_url: str,
+                                api_key: str, api_style: str,
+                                models_list: list, enabled: bool) -> None:
+    """api_key 为空串时不更新密钥字段。"""
+    import json as _json
+    models_json = _json.dumps(models_list)
+    async with aiosqlite.connect(DB_PATH) as db:
+        if api_key:
+            await db.execute(
+                """UPDATE virtual_agents
+                   SET name=?,base_url=?,api_key=?,api_style=?,models=?,enabled=?
+                   WHERE id=?""",
+                (name, base_url, api_key, api_style, models_json, int(enabled), agent_id),
+            )
+        else:
+            await db.execute(
+                """UPDATE virtual_agents
+                   SET name=?,base_url=?,api_style=?,models=?,enabled=?
+                   WHERE id=?""",
+                (name, base_url, api_style, models_json, int(enabled), agent_id),
+            )
+        await db.execute(
+            "UPDATE users SET nickname=? WHERE id=(SELECT user_id FROM virtual_agents WHERE id=?)",
+            (name, agent_id),
+        )
+        await db.commit()
+
+
+async def delete_virtual_agent(agent_id: int) -> None:
+    """删除虚拟 Agent 记录（保留虚拟用户账户以保留积分历史）。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM virtual_agents WHERE id=?", (agent_id,))
+        await db.commit()
 
 
 async def get_wall_users(limit: int = 50) -> list[dict]:
