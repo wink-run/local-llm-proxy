@@ -1,6 +1,7 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../store/index';
-import { getTransactions, listKeys, createKey, toggleKey, deleteKey } from '../api/client';
+import { getTransactions, checkin, getCheckinStatus } from '../api/client';
+import { getServerUrl } from '../config';
 
 const TX_LABEL = {
   contribute: '贡献',
@@ -19,112 +20,6 @@ function StatCard({ label, value }) {
   );
 }
 
-function ApiKeysSection({ canCreate }) {
-  const [keys, setKeys] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [note, setNote] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [newKey, setNewKey] = useState('');
-
-  const load = useCallback(() => {
-    listKeys()
-      .then((r) => setKeys(r.data.keys || []))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => { if (canCreate) load(); else setLoading(false); }, [canCreate, load]);
-
-  async function handleCreate() {
-    setCreating(true);
-    setNewKey('');
-    try {
-      const r = await createKey(note.trim());
-      setNewKey(r.data.key);
-      setNote('');
-      load();
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  async function handleToggle(k) {
-    await toggleKey(k.id, !k.is_active).catch(() => {});
-    load();
-  }
-
-  async function handleDelete(k) {
-    if (!window.confirm(`删除 Key ${k.key?.slice(0, 12)}…？`)) return;
-    await deleteKey(k.id).catch(() => {});
-    load();
-  }
-
-  if (!canCreate) {
-    return (
-      <section>
-        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-3">API Key</h2>
-        <p className="text-sm text-gray-400 dark:text-gray-500">尚未开通 API Key 权限，请先购买积分。</p>
-      </section>
-    );
-  }
-
-  return (
-    <section className="space-y-3">
-      <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">API Key</h2>
-
-      {/* Create form */}
-      <div className="flex gap-2">
-        <input
-          value={note} onChange={(e) => setNote(e.target.value)}
-          placeholder="备注（可选）"
-          className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
-        />
-        <button onClick={handleCreate} disabled={creating}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors whitespace-nowrap">
-          {creating ? '创建中…' : '创建'}
-        </button>
-      </div>
-
-      {/* Newly created key — show once */}
-      {newKey && (
-        <div className="bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 rounded-xl px-4 py-3">
-          <p className="text-xs text-green-600 dark:text-green-400 mb-1">Key 已创建，请立即复制保存，之后不再显示</p>
-          <p className="font-mono text-sm text-green-800 dark:text-green-300 break-all select-all">{newKey}</p>
-        </div>
-      )}
-
-      {/* Key list */}
-      {loading ? (
-        <p className="text-sm text-gray-400 dark:text-gray-500">加载中…</p>
-      ) : keys.length === 0 ? (
-        <p className="text-sm text-gray-400 dark:text-gray-500">暂无 API Key</p>
-      ) : (
-        <div className="space-y-2">
-          {keys.map((k) => (
-            <div key={k.id}
-              className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-3 flex items-center gap-3">
-              <div className="flex-1 min-w-0">
-                <p className="font-mono text-xs text-gray-700 dark:text-gray-300 truncate">{k.key}</p>
-                {k.note && <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{k.note}</p>}
-              </div>
-              <span className={`text-xs px-2 py-0.5 rounded-full ${k.is_active ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300' : 'bg-gray-100 dark:bg-gray-700 text-gray-500'}`}>
-                {k.is_active ? '启用' : '禁用'}
-              </span>
-              <button onClick={() => handleToggle(k)}
-                className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 transition-colors">
-                {k.is_active ? '禁用' : '启用'}
-              </button>
-              <button onClick={() => handleDelete(k)}
-                className="text-xs text-red-400 hover:text-red-600 dark:hover:text-red-300 transition-colors">
-                删除
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
 
 function CopyButton({ text }) {
   const [copied, setCopied] = useState(false);
@@ -143,7 +38,7 @@ function CopyButton({ text }) {
 }
 
 function ReferralSection({ referralCode }) {
-  const serverUrl = localStorage.getItem('serverUrl') || 'http://localhost:8000';
+  const serverUrl = getServerUrl();
   const link = referralCode ? `${serverUrl}/app?ref=${referralCode}` : '';
   return (
     <section className="space-y-3">
@@ -169,6 +64,69 @@ function ReferralSection({ referralCode }) {
         )}
       </div>
     </section>
+  );
+}
+
+function CheckinCard({ onCheckinSuccess }) {
+  const [status, setStatus] = useState(null);   // null while loading
+  const [checking, setChecking] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  useEffect(() => {
+    getCheckinStatus()
+      .then((r) => setStatus(r.data))
+      .catch(() => {});
+  }, []);
+
+  async function handleCheckin() {
+    setChecking(true);
+    setMsg('');
+    try {
+      const r = await checkin();
+      setMsg(`+${r.data.credits} 积分`);
+      setStatus((s) => ({ ...s, checked_in_today: true, credits_today: r.data.credits, total_checkins: (s?.total_checkins || 0) + 1 }));
+      onCheckinSuccess?.();
+    } catch (e) {
+      setMsg(e.response?.data?.detail || '签到失败');
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  const done = status?.checked_in_today;
+
+  return (
+    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl px-5 py-4 flex items-center justify-between">
+      <div className="flex items-center gap-3">
+        <span className="text-2xl select-none">📅</span>
+        <div>
+          <p className="text-sm font-medium text-gray-700 dark:text-gray-200">每日签到</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500">
+            {status === null ? '加载中…'
+              : done ? `今日已签到，+${status.credits_today} 积分`
+              : `签到得 ${status.reward} 积分 · 累计 ${status.total_checkins} 天`}
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        {msg && (
+          <span className={`text-xs font-medium ${msg.startsWith('+') ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+            {msg}
+          </span>
+        )}
+        <button
+          onClick={handleCheckin}
+          disabled={checking || done}
+          className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+            done
+              ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-default'
+              : 'bg-blue-600 hover:bg-blue-500 text-white'
+          } disabled:opacity-60`}
+        >
+          {checking ? '签到中…' : done ? '已签到 ✓' : '签到'}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -212,7 +170,7 @@ export default function Profile() {
         <StatCard label="累计消耗积分" value={Math.floor(user.credits_spent ?? 0).toLocaleString()} />
       </div>
 
-      <ApiKeysSection canCreate={!!user.can_create_apikey} />
+      <CheckinCard onCheckinSuccess={refreshUser} />
 
       <ReferralSection referralCode={user.referral_code} />
 

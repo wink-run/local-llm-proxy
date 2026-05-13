@@ -2,6 +2,8 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage } = require('electr
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const http = require('http');
+const https = require('https');
 const agent = require('./agent-worker');
 
 const isDev = !app.isPackaged;
@@ -211,6 +213,31 @@ function scanLLMConfigs() {
   return results;
 }
 
+// ── Node-side HTTP proxy (avoids CORS in renderer) ───────────────────────────
+
+function nodeRequest(url, method, headers, body) {
+  return new Promise((resolve) => {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const opts = {
+      hostname: u.hostname,
+      port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + (u.search || ''),
+      method, headers, timeout: 120000,
+    };
+    const req = mod.request(opts, (res) => {
+      const chunks = [];
+      res.on('data', (d) => chunks.push(d));
+      res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString() }));
+      res.on('error', (e) => resolve({ status: 0, body: e.message }));
+    });
+    req.on('error', (e) => resolve({ status: 0, body: e.message }));
+    req.on('timeout', () => { req.destroy(); resolve({ status: 0, body: 'Request timeout' }); });
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
 // ── IPC handlers ──────────────────────────────────────────────────────────────
 
 function registerIPC() {
@@ -220,6 +247,69 @@ function registerIPC() {
   ipcMain.handle('config:read',  () => readAgentConfig());
   ipcMain.handle('config:write', (_e, cfg) => { writeAgentConfig(cfg); return { ok: true }; });
   ipcMain.handle('config:scan',  () => scanLLMConfigs());
+
+  // Write Claude Code config into ~/.claude/settings.local.json
+  ipcMain.handle('claude:configure', async (_e, { baseUrl, apiKey, models = [] }) => {
+    const settingsPath = path.join(os.homedir(), '.claude', 'settings.local.json');
+    let settings = {};
+    try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')); } catch {}
+    settings.env = settings.env || {};
+    settings.env.ANTHROPIC_BASE_URL = baseUrl;
+    settings.env.ANTHROPIC_AUTH_TOKEN = apiKey;
+
+    // Map available models to Claude tier env vars
+    // Claude Code uses these to select models per task complexity
+    if (models.length > 0) {
+      const fast   = models[0];
+      const mid    = models[Math.min(1, models.length - 1)];
+      const heavy  = models[Math.min(2, models.length - 1)];
+      settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL   = fast;
+      settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL  = mid;
+      settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL    = heavy;
+      // Also write MODELS so other tools can discover them
+      settings.env.MODELS = models.join(',');
+    }
+
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+    return { ok: true };
+  });
+
+  // Read current Claude Code config status
+  ipcMain.handle('claude:status', () => {
+    const settingsPath = path.join(os.homedir(), '.claude', 'settings.local.json');
+    try {
+      const s = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+      return { configured: !!(s.env?.ANTHROPIC_BASE_URL && s.env?.ANTHROPIC_AUTH_TOKEN) };
+    } catch { return { configured: false }; }
+  });
+
+  // Buffered HTTP request (for models list, non-streaming chat)
+  ipcMain.handle('llm:fetch', async (_e, { url, method = 'GET', headers = {}, body }) => {
+    return nodeRequest(url, method, headers, body);
+  });
+
+  // Streaming HTTP request — sends chunks back via webContents events
+  ipcMain.on('llm:stream', (event, { reqId, url, method, headers, body }) => {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const opts = {
+      hostname: u.hostname,
+      port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + (u.search || ''),
+      method, headers, timeout: 120000,
+    };
+    const send = (ch, data) => { if (!event.sender.isDestroyed()) event.sender.send(ch, data); };
+    const req = mod.request(opts, (res) => {
+      res.on('data', (chunk) => send('llm:stream-chunk', { reqId, data: chunk.toString() }));
+      res.on('end', () => send('llm:stream-done', { reqId }));
+      res.on('error', (e) => send('llm:stream-error', { reqId, error: e.message }));
+    });
+    req.on('error', (e) => send('llm:stream-error', { reqId, error: e.message }));
+    req.on('timeout', () => { req.destroy(); send('llm:stream-error', { reqId, error: 'Request timeout' }); });
+    if (body) req.write(body);
+    req.end();
+  });
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────

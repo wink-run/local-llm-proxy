@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { getServerUrl } from '../config';
 
 // Fetch the first active API key for the current user via the /user/keys endpoint.
 // /user/keys uses the JWT session token; the returned key.key is used for /v1/* calls.
 async function resolveApiKey() {
-  const serverUrl = localStorage.getItem('serverUrl') || 'http://localhost:8000';
+  const serverUrl = getServerUrl();
   const jwt = localStorage.getItem('token');
   if (!jwt) return null;
   try {
@@ -19,17 +20,58 @@ async function resolveApiKey() {
   }
 }
 
+function isAnthropicStyle(baseUrl) {
+  try {
+    const u = new URL(baseUrl);
+    return u.pathname.toLowerCase().includes('anthropic') ||
+           u.hostname.toLowerCase().includes('anthropic');
+  } catch { return false; }
+}
+
+function buildLocalUrl(baseUrl, anthropic) {
+  const base = baseUrl.replace(/\/+$/, '');
+  const v1Base = base.endsWith('/v1') ? base : base + '/v1';
+  return v1Base + (anthropic ? '/messages' : '/chat/completions');
+}
+
+function toAnthropicBody(messages, model, stream) {
+  const sys = messages.find((m) => m.role === 'system');
+  const sysText = !sys ? undefined
+    : typeof sys.content === 'string' ? sys.content
+    : Array.isArray(sys.content) ? sys.content.map((b) => b.text || '').join('') : '';
+  return {
+    model,
+    max_tokens: 8096,
+    stream: !!stream,
+    messages: messages.filter((m) => m.role !== 'system'),
+    ...(sysText ? { system: sysText } : {}),
+  };
+}
+
 function fetchModels(source, localCfg, apiKey) {
   if (source === 'local') {
     if (!localCfg?.llm_base_url) return Promise.resolve([]);
+    // Anthropic endpoints don't expose /v1/models — fall back to configured list
+    if (isAnthropicStyle(localCfg.llm_base_url)) {
+      return Promise.resolve(localCfg.models || []);
+    }
+    const base = localCfg.llm_base_url.replace(/\/+$/, '');
+    const url = (base.endsWith('/v1') ? base : base + '/v1') + '/models';
     const headers = {};
     if (localCfg.llm_token) headers['Authorization'] = `Bearer ${localCfg.llm_token}`;
-    return fetch(`${localCfg.llm_base_url}/v1/models`, { headers })
+    // Route through main process to avoid CORS
+    if (window.electronAPI?.llm) {
+      return window.electronAPI.llm.fetch(url, { headers })
+        .then((r) => JSON.parse(r.body))
+        .then((d) => (d.data || []).map((m) => m.id))
+        .catch(() => localCfg.models || []);
+    }
+    return fetch(url, { headers })
       .then((r) => r.json())
       .then((d) => (d.data || []).map((m) => m.id))
-      .catch(() => []);
+      .catch(() => localCfg.models || []);
   } else {
-    const serverUrl = localStorage.getItem('serverUrl') || 'http://localhost:8000';
+    const serverUrl = getServerUrl();
     const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
     return fetch(`${serverUrl}/v1/models`, { headers })
       .then((r) => r.json())
@@ -38,37 +80,107 @@ function fetchModels(source, localCfg, apiKey) {
   }
 }
 
-async function streamChat({ source, localCfg, apiKey, model, messages, stream, onChunk, onDone, onError }) {
-  let baseUrl, headers;
-  if (source === 'local') {
-    baseUrl = localCfg?.llm_base_url || '';
-    headers = { 'Content-Type': 'application/json' };
-    if (localCfg?.llm_token) headers['Authorization'] = `Bearer ${localCfg.llm_token}`;
-  } else {
-    baseUrl = localStorage.getItem('serverUrl') || 'http://localhost:8000';
-    headers = { 'Content-Type': 'application/json' };
-    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+function parseSseLines(lines, anthropic, firstTokenTime, startTime, onChunk, currentEventRef) {
+  for (const line of lines) {
+    const trimmed = line.trimEnd();
+    if (!trimmed) { currentEventRef.v = null; continue; }
+    if (anthropic) {
+      if (trimmed.startsWith('event: ')) {
+        currentEventRef.v = trimmed.slice(7).trim();
+      } else if (trimmed.startsWith('data: ') && currentEventRef.v === 'content_block_delta') {
+        try {
+          const d = JSON.parse(trimmed.slice(6));
+          const text = d.delta?.type === 'text_delta' ? d.delta.text : '';
+          if (text) { onChunk(text, firstTokenTime.v === null ? (firstTokenTime.v = Date.now()) : null); }
+        } catch {}
+      }
+    } else {
+      if (trimmed === 'data: [DONE]') continue;
+      if (trimmed.startsWith('data: ')) {
+        try {
+          const d = JSON.parse(trimmed.slice(6));
+          const delta = d.choices?.[0]?.delta?.content ?? '';
+          if (delta) { onChunk(delta, firstTokenTime.v === null ? (firstTokenTime.v = Date.now()) : null); }
+        } catch {}
+      }
+    }
   }
+}
+
+async function streamChat({ source, localCfg, apiKey, model, messages, stream, onChunk, onDone, onError }) {
+  const isLocal = source === 'local';
+  const anthropic = isLocal && isAnthropicStyle(localCfg?.llm_base_url || '');
+  const useIpc = isLocal && !!window.electronAPI?.llm;
+
+  const url = isLocal
+    ? buildLocalUrl(localCfg?.llm_base_url || '', anthropic)
+    : `${getServerUrl()}/v1/chat/completions`;
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (isLocal && localCfg?.llm_token) headers['Authorization'] = `Bearer ${localCfg.llm_token}`;
+  if (isLocal && anthropic) headers['anthropic-version'] = '2023-06-01';
+  if (!isLocal && apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+
+  const body = anthropic
+    ? JSON.stringify(toAnthropicBody(messages, model, stream))
+    : JSON.stringify({ model, messages, stream });
 
   const startTime = Date.now();
-  let firstTokenTime = null;
+  const firstTokenTime = { v: null };
 
-  try {
-    const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ model, messages, stream }),
-    });
-
-    if (!resp.ok) {
-      const errText = await resp.text();
-      onError(`HTTP ${resp.status}: ${errText}`);
+  // ── IPC path (Electron, avoids CORS) ───────────────────────────────────────
+  if (useIpc) {
+    if (!stream) {
+      const result = await window.electronAPI.llm.fetch(url, { method: 'POST', headers, body });
+      if (result.status < 200 || result.status >= 300) {
+        onError(`HTTP ${result.status}: ${result.body}`);
+        return;
+      }
+      try {
+        const data = JSON.parse(result.body);
+        const content = anthropic
+          ? (data.content || []).map((b) => b.text || '').join('')
+          : (data.choices?.[0]?.message?.content ?? '');
+        onChunk(content);
+      } catch { onChunk(result.body); }
+      onDone({ firstTokenMs: Date.now() - startTime, totalMs: Date.now() - startTime });
       return;
     }
 
+    await new Promise((resolve) => {
+      let buf = '';
+      const currentEventRef = { v: null };
+      window.electronAPI.llm.stream(
+        { url, method: 'POST', headers, body },
+        (raw) => {
+          buf += raw;
+          const lines = buf.split('\n');
+          buf = lines.pop();
+          parseSseLines(lines, anthropic, firstTokenTime, startTime, (text) => {
+            if (firstTokenTime.v === null) firstTokenTime.v = Date.now();
+            onChunk(text);
+          }, currentEventRef);
+        },
+        () => {
+          onDone({ firstTokenMs: firstTokenTime.v ? firstTokenTime.v - startTime : null, totalMs: Date.now() - startTime });
+          resolve();
+        },
+        (err) => { onError(err); resolve(); }
+      );
+    });
+    return;
+  }
+
+  // ── fetch path (web / localhost where CORS isn't an issue) ─────────────────
+  try {
+    const resp = await fetch(url, { method: 'POST', headers, body });
+    if (!resp.ok) { onError(`HTTP ${resp.status}: ${await resp.text()}`); return; }
+
     if (!stream) {
       const data = await resp.json();
-      const content = data.choices?.[0]?.message?.content ?? '';
+      const content = anthropic
+        ? (data.content || []).map((b) => b.text || '').join('')
+        : (data.choices?.[0]?.message?.content ?? '');
       onChunk(content);
       onDone({ firstTokenMs: Date.now() - startTime, totalMs: Date.now() - startTime });
       return;
@@ -77,32 +189,19 @@ async function streamChat({ source, localCfg, apiKey, model, messages, stream, o
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
-
+    const currentEventRef = { v: null };
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
       const lines = buf.split('\n');
       buf = lines.pop();
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed === 'data: [DONE]') continue;
-        if (trimmed.startsWith('data: ')) {
-          try {
-            const d = JSON.parse(trimmed.slice(6));
-            const delta = d.choices?.[0]?.delta?.content ?? '';
-            if (delta) {
-              if (firstTokenTime === null) firstTokenTime = Date.now();
-              onChunk(delta);
-            }
-          } catch {}
-        }
-      }
+      parseSseLines(lines, anthropic, firstTokenTime, startTime, (text) => {
+        if (firstTokenTime.v === null) firstTokenTime.v = Date.now();
+        onChunk(text);
+      }, currentEventRef);
     }
-    onDone({
-      firstTokenMs: firstTokenTime ? firstTokenTime - startTime : null,
-      totalMs: Date.now() - startTime,
-    });
+    onDone({ firstTokenMs: firstTokenTime.v ? firstTokenTime.v - startTime : null, totalMs: Date.now() - startTime });
   } catch (e) {
     onError(e.message);
   }
@@ -115,6 +214,7 @@ export default function Debug() {
   const [apiKeyErr, setApiKeyErr] = useState(false); // true if no active key found
   const [models, setModels] = useState([]);
   const [model, setModel] = useState('');
+  const [loadingModels, setLoadingModels] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState('');
   const [showSystem, setShowSystem] = useState(false);
   const [streamMode, setStreamMode] = useState(true);
@@ -146,10 +246,11 @@ export default function Debug() {
     setModels([]);
     setModel('');
     if (source === 'network' && apiKeyErr) return;
+    setLoadingModels(true);
     fetchModels(source, localCfg, apiKey).then((list) => {
       setModels(list);
       if (list.length > 0) setModel(list[0]);
-    });
+    }).finally(() => setLoadingModels(false));
   }, [source, localCfg, apiKey, apiKeyErr]);
 
   useEffect(() => {
@@ -259,9 +360,11 @@ export default function Debug() {
               className="bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500 max-w-[200px]">
               {models.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
+          ) : loadingModels ? (
+            <span className="text-xs text-gray-400 dark:text-gray-500">加载模型…</span>
           ) : (
             <span className="text-xs text-gray-400 dark:text-gray-500">
-              {source === 'local' && !localCfg?.llm_base_url ? '请先配置本地 LLM 地址' : '加载模型…'}
+              {source === 'local' && !localCfg?.llm_base_url ? '请先配置本地 LLM 地址' : '暂无可用模型'}
             </span>
           )}
 

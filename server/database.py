@@ -116,11 +116,24 @@ async def init_db() -> None:
             )
         """)
 
+        # checkins
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS checkins (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id    INTEGER NOT NULL REFERENCES users(id),
+                date       TEXT NOT NULL,
+                credits    REAL NOT NULL DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(user_id, date)
+            )
+        """)
+
         # 默认配置项
         for k, v in [
             ("referral_reward", "100"),
             ("newcomer_reward", "50"),
             ("contact_info", ""),
+            ("checkin_reward", "5"),
         ]:
             await db.execute(
                 "INSERT OR IGNORE INTO system_config(key,value) VALUES(?,?)", (k, v)
@@ -130,6 +143,7 @@ async def init_db() -> None:
 
     await _migrate()
     await _migrate_apikey_default_open()
+    await _migrate_checkins()
 
 
 async def _migrate() -> None:
@@ -139,6 +153,25 @@ async def _migrate() -> None:
             cols = {r[1] for r in await cur.fetchall()}
         if "user_id" not in cols:
             await db.execute("ALTER TABLE api_keys ADD COLUMN user_id INTEGER REFERENCES users(id)")
+        await db.commit()
+
+
+async def _migrate_checkins() -> None:
+    """补齐 checkins 表和 checkin_reward 配置（早期数据库无此表）"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS checkins (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id    INTEGER NOT NULL REFERENCES users(id),
+                date       TEXT NOT NULL,
+                credits    REAL NOT NULL DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(user_id, date)
+            )
+        """)
+        await db.execute(
+            "INSERT OR IGNORE INTO system_config(key,value) VALUES('checkin_reward','5')"
+        )
         await db.commit()
 
 
@@ -565,6 +598,52 @@ async def get_all_configs() -> dict:
 
 
 # ── 鸣谢墙 ────────────────────────────────────────────────────────────────────
+
+# ── 每日签到 ──────────────────────────────────────────────────────────────────
+
+async def do_checkin(user_id: int) -> dict:
+    """执行签到：已签到返回 already=True；否则发放积分并记录。"""
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT credits FROM checkins WHERE user_id=? AND date=?", (user_id, today)
+        ) as cur:
+            row = await cur.fetchone()
+        if row:
+            return {"already": True, "credits": row[0], "date": today}
+        reward = float(await get_config("checkin_reward", "5"))
+        try:
+            await db.execute(
+                "INSERT INTO checkins(user_id, date, credits) VALUES(?,?,?)",
+                (user_id, today, reward),
+            )
+            await db.commit()
+        except Exception:
+            # race condition: another request just inserted — treat as already done
+            return {"already": True, "credits": reward, "date": today}
+    new_balance = await award_credits(user_id, reward, type_="checkin", note=f"每日签到 {today}")
+    return {"already": False, "credits": reward, "new_balance": new_balance, "date": today}
+
+
+async def get_checkin_status(user_id: int) -> dict:
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    reward = float(await get_config("checkin_reward", "5"))
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT credits FROM checkins WHERE user_id=? AND date=?", (user_id, today)
+        ) as cur:
+            row = await cur.fetchone()
+        async with db.execute(
+            "SELECT COUNT(*) FROM checkins WHERE user_id=?", (user_id,)
+        ) as cur:
+            total = (await cur.fetchone())[0]
+    return {
+        "checked_in_today": row is not None,
+        "credits_today": row[0] if row else 0,
+        "total_checkins": total,
+        "reward": reward,
+    }
+
 
 async def get_wall_users(limit: int = 50) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:

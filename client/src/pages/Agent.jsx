@@ -1,5 +1,7 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { getStats, getSettlements } from '../api/client';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { getStats, getSettlements, listKeys, createKey, toggleKey, deleteKey } from '../api/client';
+import { useAuth } from '../store/index';
+import { getServerUrl } from '../config';
 import RateChart from '../components/RateChart';
 
 function multiplierToStars(m) {
@@ -18,6 +20,7 @@ function LLMConfigCard() {
   const [autoStart, setAutoStart]   = useState(false);
   const [saving, setSaving]         = useState(false);
   const [savedMsg, setSavedMsg]     = useState('');
+  const [scanning, setScanning]     = useState(false);
 
   useEffect(() => {
     if (!window.electronAPI) return;
@@ -59,6 +62,33 @@ function LLMConfigCard() {
     setEditing(true);
   }
 
+  async function autoScan() {
+    if (!window.electronAPI) return;
+    setScanning(true);
+    try {
+      const results = await window.electronAPI.config.scan();
+      const best = results[0];
+      if (best?.base_url) {
+        const current = (await window.electronAPI.config.read()) || {};
+        const updated = {
+          ...current,
+          llm_base_url: best.base_url,
+          llm_token:    best.token || '',
+          models:       best.models || [],
+        };
+        await window.electronAPI.config.write(updated);
+        setCfg(updated);
+        setSavedMsg('已自动配置');
+        setTimeout(() => setSavedMsg(''), 2000);
+      } else {
+        setSavedMsg('未找到配置');
+        setTimeout(() => setSavedMsg(''), 2000);
+      }
+    } finally {
+      setScanning(false);
+    }
+  }
+
   async function save() {
     if (!window.electronAPI) return;
     setSaving(true);
@@ -85,17 +115,23 @@ function LLMConfigCard() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${configured ? 'bg-green-400' : 'bg-yellow-400'}`} />
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-200">本地 LLM 配置</span>
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-200">贡献节点配置</span>
             {savedMsg && <span className="text-xs text-green-600 dark:text-green-400">{savedMsg}</span>}
           </div>
-          <button onClick={openEdit}
-            className="px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 transition-colors">
-            手动配置
-          </button>
+          <div className="flex gap-2">
+            <button onClick={autoScan} disabled={scanning}
+              className="px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 disabled:opacity-50 transition-colors">
+              {scanning ? '扫描中…' : '自动配置'}
+            </button>
+            <button onClick={openEdit}
+              className="px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 transition-colors">
+              手动配置
+            </button>
+          </div>
         </div>
         {configured ? (
           <div className="mt-3 space-y-1 text-xs text-gray-500 dark:text-gray-400">
-            <p><span className="text-gray-400 dark:text-gray-500 inline-block w-12">端点</span>{cfg.llm_base_url}</p>
+            <p><span className="text-gray-400 dark:text-gray-500 inline-block w-16">BaseURL</span>{cfg.llm_base_url}</p>
             <p><span className="text-gray-400 dark:text-gray-500 inline-block w-12">模型</span>{cfg.models.join(', ')}</p>
             {cfg.name && <p><span className="text-gray-400 dark:text-gray-500 inline-block w-12">节点</span>{cfg.name}</p>}
             <p><span className="text-gray-400 dark:text-gray-500 inline-block w-12">自启动</span>{cfg.auto_start ? '开启' : '关闭'}</p>
@@ -111,7 +147,7 @@ function LLMConfigCard() {
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
       <div className="flex items-center justify-between mb-1">
-        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">本地 LLM 配置</span>
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">贡献节点配置</span>
         {cfg?.llm_base_url && (
           <button onClick={() => setEditing(false)}
             className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors">
@@ -120,13 +156,13 @@ function LLMConfigCard() {
         )}
       </div>
       <div>
-        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">本地 LLM 地址</label>
+        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Base URL</label>
         <input value={llmUrl} onChange={e => setLlmUrl(e.target.value)}
           placeholder="http://localhost:11434/v1"
           className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
       </div>
       <div>
-        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">LLM Token（可选）</label>
+        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">API Key（可选）</label>
         <input value={llmToken} onChange={e => setLlmToken(e.target.value)}
           placeholder="无则留空" type="password"
           className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
@@ -160,7 +196,354 @@ function LLMConfigCard() {
   );
 }
 
+function ApiKeysSection({ canCreate }) {
+  const [keys, setKeys] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [note, setNote] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [newKey, setNewKey] = useState('');
+
+  const load = useCallback(() => {
+    listKeys()
+      .then((r) => setKeys(r.data.keys || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { if (canCreate) load(); else setLoading(false); }, [canCreate, load]);
+
+  async function handleCreate() {
+    setCreating(true);
+    setNewKey('');
+    try {
+      const r = await createKey(note.trim());
+      setNewKey(r.data.key);
+      setNote('');
+      load();
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleToggle(k) {
+    await toggleKey(k.id, !k.is_active).catch(() => {});
+    load();
+  }
+
+  async function handleDelete(k) {
+    if (!window.confirm(`删除 Key ${k.key?.slice(0, 12)}…？`)) return;
+    await deleteKey(k.id).catch(() => {});
+    load();
+  }
+
+  if (!canCreate) {
+    return <p className="text-sm text-gray-400 dark:text-gray-500">尚未开通 API Key 权限，请先购买积分。</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        <input value={note} onChange={(e) => setNote(e.target.value)}
+          placeholder="备注（可选）"
+          className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
+        <button onClick={handleCreate} disabled={creating}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors whitespace-nowrap">
+          {creating ? '创建中…' : '创建 Key'}
+        </button>
+      </div>
+
+      {newKey && (
+        <div className="bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 rounded-xl px-4 py-3">
+          <p className="text-xs text-green-600 dark:text-green-400 mb-1">Key 已创建，请立即复制保存，之后不再显示</p>
+          <p className="font-mono text-sm text-green-800 dark:text-green-300 break-all select-all">{newKey}</p>
+        </div>
+      )}
+
+      {loading ? (
+        <p className="text-sm text-gray-400 dark:text-gray-500">加载中…</p>
+      ) : keys.length === 0 ? (
+        <p className="text-sm text-gray-400 dark:text-gray-500">暂无 API Key</p>
+      ) : (
+        <div className="space-y-2">
+          {keys.map((k) => (
+            <div key={k.id}
+              className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-3 flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="font-mono text-xs text-gray-700 dark:text-gray-300 truncate">{k.key}</p>
+                {k.note && <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{k.note}</p>}
+              </div>
+              <span className={`text-xs px-2 py-0.5 rounded-full ${k.is_active ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300' : 'bg-gray-100 dark:bg-gray-700 text-gray-500'}`}>
+                {k.is_active ? '启用' : '禁用'}
+              </span>
+              <button onClick={() => handleToggle(k)}
+                className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 transition-colors">
+                {k.is_active ? '禁用' : '启用'}
+              </button>
+              <button onClick={() => handleDelete(k)}
+                className="text-xs text-red-400 hover:text-red-600 dark:hover:text-red-300 transition-colors">
+                删除
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CopyButton({ text, label = '复制' }) {
+  const [copied, setCopied] = useState(false);
+  function copy() {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+  return (
+    <button onClick={copy}
+      className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
+      {copied ? '已复制 ✓' : label}
+    </button>
+  );
+}
+
+
+function ModelsSection({ serverUrl }) {
+  const [models, setModels] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const base = serverUrl.replace(/\/+$/, '');
+    const jwt = localStorage.getItem('token');
+
+    // /v1/models requires an API key, not a JWT — resolve it first
+    fetch(`${base}/user/keys`, { headers: { Authorization: `Bearer ${jwt}` } })
+      .then((r) => r.ok ? r.json() : { keys: [] })
+      .then((d) => {
+        const apiKey = (d.keys || []).find((k) => k.is_active)?.key;
+        return fetch(`${base}/v1/models`, {
+          headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+        });
+      })
+      .then((r) => r.json())
+      .then((d) => setModels((d.data || []).map((m) => m.id || m)))
+      .catch(() => setModels([]))
+      .finally(() => setLoading(false));
+  }, [serverUrl]);
+
+  return (
+    <section className="space-y-3">
+      <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">可用模型</h2>
+      {loading ? (
+        <p className="text-sm text-gray-400 dark:text-gray-500">加载中…</p>
+      ) : models.length === 0 ? (
+        <p className="text-sm text-gray-400 dark:text-gray-500">暂无可用模型</p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {models.map((m) => (
+            <span key={m}
+              className="inline-flex items-center gap-1.5 bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-lg px-3 py-1.5 text-xs text-gray-700 dark:text-gray-300">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
+              {m}
+            </span>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ConsumeTab({ user }) {
+  const serverUrl = getServerUrl();
+  const base      = serverUrl.replace(/\/+$/, '');
+  const openaiUrl = base + '/v1';
+  const anthropicUrl = base;   // Anthropic SDK appends /v1/messages itself
+
+  const [style, setStyle] = useState('openai');       // 'openai' | 'anthropic'
+  const [activeSnippet, setActiveSnippet] = useState(0);
+
+  // Claude Code one-click config state
+  const [ccStatus, setCcStatus]       = useState(null);  // null | true | false
+  const [ccConfiguring, setCcConfiguring] = useState(false);
+  const [ccMsg, setCcMsg]             = useState('');
+
+  useEffect(() => {
+    window.electronAPI?.claude.status().then((r) => setCcStatus(r.configured));
+  }, []);
+
+  async function handleClaudeConfigure() {
+    setCcConfiguring(true);
+    setCcMsg('');
+    try {
+      const keysRes = await listKeys().catch(() => ({ data: { keys: [] } }));
+      const activeKey = (keysRes.data.keys || []).find((k) => k.is_active);
+      if (!activeKey) { setCcMsg('请先创建并启用一个 API Key'); return; }
+      const modelsData = await fetch(`${base}/v1/models`, {
+        headers: { Authorization: `Bearer ${activeKey.key}` },
+      }).then((r) => r.json()).catch(() => ({ data: [] }));
+      const models = (modelsData.data || []).map((m) => m.id || m);
+      await window.electronAPI.claude.configure(base, activeKey.key, models);
+      setCcStatus(true);
+      setCcMsg(`配置成功${models.length ? `，${models.length} 个模型` : ''}，重启 Claude Code 生效`);
+      setTimeout(() => setCcMsg(''), 4000);
+    } finally {
+      setCcConfiguring(false);
+    }
+  }
+
+  const STYLES = [
+    { id: 'openai',    label: 'OpenAI 风格' },
+    { id: 'anthropic', label: 'Anthropic 风格' },
+  ];
+
+  const snippetsByStyle = {
+    openai: [
+      {
+        label: '环境变量',
+        code: `export OPENAI_BASE_URL="${openaiUrl}"\nexport OPENAI_API_KEY="<你的 API Key>"`,
+      },
+      {
+        label: 'Python',
+        code: `from openai import OpenAI\n\nclient = OpenAI(\n    base_url="${openaiUrl}",\n    api_key="<你的 API Key>",\n)`,
+      },
+      {
+        label: 'Node.js',
+        code: `import OpenAI from 'openai';\n\nconst client = new OpenAI({\n  baseURL: '${openaiUrl}',\n  apiKey: '<你的 API Key>',\n});`,
+      },
+    ],
+    anthropic: [
+      {
+        label: '环境变量',
+        code: `export ANTHROPIC_BASE_URL="${anthropicUrl}"\nexport ANTHROPIC_AUTH_TOKEN="<你的 API Key>"`,
+      },
+      {
+        label: 'Claude Code',
+        code: `ANTHROPIC_BASE_URL="${anthropicUrl}" \\\nANTHROPIC_AUTH_TOKEN="<你的 API Key>" \\\nclaude`,
+      },
+      {
+        label: 'Python',
+        code: `import anthropic\n\nclient = anthropic.Anthropic(\n    base_url="${anthropicUrl}",\n    api_key="<你的 API Key>",\n)`,
+      },
+      {
+        label: 'Node.js',
+        code: `import Anthropic from '@anthropic-ai/sdk';\n\nconst client = new Anthropic({\n  baseURL: '${anthropicUrl}',\n  apiKey: '<你的 API Key>',\n});`,
+      },
+    ],
+  };
+
+  const snippets = snippetsByStyle[style];
+
+  // Reset snippet index when switching style
+  function switchStyle(s) {
+    setStyle(s);
+    setActiveSnippet(0);
+  }
+
+  const endpointUrl = style === 'openai' ? openaiUrl : anthropicUrl;
+  const endpointDesc = style === 'openai'
+    ? 'POST /v1/chat/completions'
+    : 'POST /v1/messages';
+
+  return (
+    <div className="space-y-6">
+      {/* Endpoint card */}
+      <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">接入配置</h2>
+          {/* Style toggle */}
+          <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+            {STYLES.map(({ id, label }) => (
+              <button key={id} onClick={() => switchStyle(id)}
+                className={`px-3 py-1 text-xs font-medium transition-colors ${
+                  style === id
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                }`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3 bg-gray-50 dark:bg-gray-900 rounded-xl px-4 py-3">
+            <div className="min-w-0">
+              <p className="text-xs text-gray-400 dark:text-gray-500 mb-0.5">Base URL</p>
+              <p className="font-mono text-sm text-gray-800 dark:text-gray-200 truncate">{endpointUrl}</p>
+            </div>
+            <CopyButton text={endpointUrl} />
+          </div>
+          <div className="flex items-center gap-3 bg-gray-50 dark:bg-gray-900 rounded-xl px-4 py-3">
+            <div>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mb-0.5">Chat 端点</p>
+              <p className="font-mono text-sm text-gray-700 dark:text-gray-300">{endpointDesc}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Usage snippets */}
+        <div>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mb-2">快速接入</p>
+          <div className="flex gap-1 mb-2 flex-wrap">
+            {snippets.map((s, i) => (
+              <button key={i} onClick={() => setActiveSnippet(i)}
+                className={`px-3 py-1 text-xs rounded-lg transition-colors ${
+                  activeSnippet === i
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+                }`}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+          <div className="relative bg-gray-900 dark:bg-gray-950 rounded-xl px-4 py-3">
+            <pre className="font-mono text-xs text-gray-300 whitespace-pre-wrap leading-relaxed pr-12">
+              {snippets[activeSnippet].code}
+            </pre>
+            <div className="absolute top-2.5 right-3">
+              <CopyButton text={snippets[activeSnippet].code} />
+            </div>
+          </div>
+
+          {/* Claude Code one-click config — shown only on Anthropic / Claude Code tab */}
+          {style === 'anthropic' && snippets[activeSnippet].label === 'Claude Code' && window.electronAPI?.claude && (
+            <div className="mt-2 flex items-center justify-between gap-3 bg-gray-50 dark:bg-gray-900 rounded-xl px-4 py-2.5">
+              <div className="flex items-center gap-2 min-w-0">
+                {ccStatus !== null && (
+                  <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${ccStatus ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300' : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}>
+                    {ccStatus ? '已配置' : '未配置'}
+                  </span>
+                )}
+                {ccMsg
+                  ? <span className={`text-xs truncate ${ccMsg.includes('成功') ? 'text-green-600 dark:text-green-400' : 'text-yellow-600 dark:text-yellow-400'}`}>{ccMsg}</span>
+                  : <span className="text-xs text-gray-400 dark:text-gray-500 truncate">写入 ~/.claude/settings.local.json</span>
+                }
+              </div>
+              <button onClick={handleClaudeConfigure} disabled={ccConfiguring}
+                className="shrink-0 px-3 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium transition-colors">
+                {ccConfiguring ? '配置中…' : '一键配置'}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <ModelsSection serverUrl={serverUrl} />
+
+      {/* API Key section */}
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">API Key</h2>
+        <ApiKeysSection canCreate={!!user?.can_create_apikey} />
+      </section>
+    </div>
+  );
+}
+
 export default function Agent() {
+  const { user } = useAuth();
+  const [tab, setTab] = useState('consume');
+
+  // ── 贡献 state ─────────────────────────────────────────────────────────────
   const [running, setRunning] = useState(false);
   const [stats, setStats] = useState(null);
   const [chartData, setChartData] = useState([]);
@@ -209,82 +592,106 @@ export default function Agent() {
   const handleStart = () => window.electronAPI?.agent.start();
   const handleStop = () => window.electronAPI?.agent.stop();
 
+  const TABS = [{ id: 'consume', label: '消费' }, { id: 'contribute', label: '贡献' }];
+
   return (
     <div className="p-8 space-y-6">
       <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Agent</h1>
 
-      <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-6 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className={`w-3 h-3 rounded-full ${running ? 'bg-green-400 animate-pulse' : 'bg-gray-400 dark:bg-gray-600'}`} />
-          <span className="text-lg font-medium text-gray-700 dark:text-gray-200">{running ? '运行中' : '已停止'}</span>
-        </div>
-        <div className="flex gap-3">
-          <button onClick={handleStart} disabled={running}
-            className="px-5 py-2 bg-green-700 hover:bg-green-600 disabled:opacity-40 rounded-lg text-sm font-medium text-white transition-colors">
-            启动
+      {/* Tab bar */}
+      <div className="flex rounded-xl overflow-hidden border border-gray-200 dark:border-gray-700 w-fit">
+        {TABS.map(({ id, label }) => (
+          <button key={id} onClick={() => setTab(id)}
+            className={`px-6 py-2 text-sm font-medium transition-colors ${
+              tab === id
+                ? 'bg-blue-600 text-white'
+                : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+            }`}>
+            {label}
           </button>
-          <button onClick={handleStop} disabled={!running}
-            className="px-5 py-2 bg-red-700 hover:bg-red-600 disabled:opacity-40 rounded-lg text-sm font-medium text-white transition-colors">
-            停止
-          </button>
-        </div>
+        ))}
       </div>
 
-      <LLMConfigCard />
+      {/* ── 消费 Tab ─────────────────────────────────────────────────────────── */}
+      {tab === 'consume' && <ConsumeTab user={user} />}
 
-      {stats && (
-        <div className="grid grid-cols-3 gap-4">
-          <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4">
-            <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">贡献速率</p>
-            <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{stats.contribute_req_per_min ?? 0}</p>
-            <p className="text-xs text-gray-400 dark:text-gray-500">req/min</p>
+      {/* ── 贡献 Tab ─────────────────────────────────────────────────────────── */}
+      {tab === 'contribute' && (
+        <div className="space-y-6">
+          <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-6 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className={`w-3 h-3 rounded-full ${running ? 'bg-green-400 animate-pulse' : 'bg-gray-400 dark:bg-gray-600'}`} />
+              <span className="text-lg font-medium text-gray-700 dark:text-gray-200">{running ? '运行中' : '已停止'}</span>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={handleStart} disabled={running}
+                className="px-5 py-2 bg-green-700 hover:bg-green-600 disabled:opacity-40 rounded-lg text-sm font-medium text-white transition-colors">
+                启动
+              </button>
+              <button onClick={handleStop} disabled={!running}
+                className="px-5 py-2 bg-red-700 hover:bg-red-600 disabled:opacity-40 rounded-lg text-sm font-medium text-white transition-colors">
+                停止
+              </button>
+            </div>
           </div>
-          <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4">
-            <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">活跃请求</p>
-            <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.active_requests ?? 0}</p>
+
+          <LLMConfigCard />
+
+          {stats && (
+            <div className="grid grid-cols-3 gap-4">
+              <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4">
+                <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">贡献速率</p>
+                <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{stats.contribute_req_per_min ?? 0}</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500">req/min</p>
+              </div>
+              <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4">
+                <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">活跃请求</p>
+                <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.active_requests ?? 0}</p>
+              </div>
+              <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4">
+                <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">在线节点</p>
+                <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.active_workers ?? 0}</p>
+              </div>
+            </div>
+          )}
+
+          <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-4">
+            <p className="text-sm text-gray-400 dark:text-gray-400 mb-2">贡献请求速率 (req/min)</p>
+            <RateChart data={chartData} />
           </div>
-          <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4">
-            <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">在线节点</p>
-            <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.active_workers ?? 0}</p>
-          </div>
+
+          <section>
+            <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-3">最近结算</h2>
+            {settlements.length === 0 ? (
+              <p className="text-gray-400 dark:text-gray-500 text-sm">暂无结算记录</p>
+            ) : (
+              <div className="space-y-2">
+                {settlements.map((s) => (
+                  <div key={s.id ?? s.period_end}
+                    className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-3 grid grid-cols-5 gap-2 text-sm items-center">
+                    <span className="text-gray-400 dark:text-gray-400 text-xs">{s.period_end?.slice(0, 16)}</span>
+                    <span className="text-gray-700 dark:text-gray-300">{(s.output_tokens ?? 0).toLocaleString()} tok</span>
+                    <span className="text-yellow-500 dark:text-yellow-400 text-xs">{multiplierToStars(s.multiplier ?? 1)}</span>
+                    <span className="text-gray-700 dark:text-gray-300">{(s.multiplier ?? 1).toFixed(2)}×</span>
+                    <span className="text-green-600 dark:text-green-400 font-medium">+{(s.credits_awarded ?? 0).toFixed(1)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-2">Agent 日志</h2>
+            <div ref={logRef}
+              className="bg-gray-100 dark:bg-gray-900 rounded-xl p-3 h-36 overflow-y-auto font-mono text-xs text-gray-600 dark:text-gray-400 space-y-0.5">
+              {logs.length === 0
+                ? <span className="text-gray-400 dark:text-gray-600">（日志为空）</span>
+                : logs.map((line, i) => <div key={i}>{line}</div>)
+              }
+            </div>
+          </section>
         </div>
       )}
-
-      <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-4">
-        <p className="text-sm text-gray-400 dark:text-gray-400 mb-2">贡献请求速率 (req/min)</p>
-        <RateChart data={chartData} />
-      </div>
-
-      <section>
-        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-3">最近结算</h2>
-        {settlements.length === 0 ? (
-          <p className="text-gray-400 dark:text-gray-500 text-sm">暂无结算记录</p>
-        ) : (
-          <div className="space-y-2">
-            {settlements.map((s) => (
-              <div key={s.id ?? s.period_end}
-                className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-3 grid grid-cols-5 gap-2 text-sm items-center">
-                <span className="text-gray-400 dark:text-gray-400 text-xs">{s.period_end?.slice(0, 16)}</span>
-                <span className="text-gray-700 dark:text-gray-300">{(s.output_tokens ?? 0).toLocaleString()} tok</span>
-                <span className="text-yellow-500 dark:text-yellow-400 text-xs">{multiplierToStars(s.multiplier ?? 1)}</span>
-                <span className="text-gray-700 dark:text-gray-300">{(s.multiplier ?? 1).toFixed(2)}×</span>
-                <span className="text-green-600 dark:text-green-400 font-medium">+{(s.credits_awarded ?? 0).toFixed(1)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section>
-        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-2">Agent 日志</h2>
-        <div ref={logRef}
-          className="bg-gray-100 dark:bg-gray-900 rounded-xl p-3 h-36 overflow-y-auto font-mono text-xs text-gray-600 dark:text-gray-400 space-y-0.5">
-          {logs.length === 0
-            ? <span className="text-gray-400 dark:text-gray-600">（日志为空）</span>
-            : logs.map((line, i) => <div key={i}>{line}</div>)
-          }
-        </div>
-      </section>
     </div>
   );
 }

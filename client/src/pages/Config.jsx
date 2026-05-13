@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { login, getProfile } from '../api/client';
 import { useAuth } from '../store/index';
 import { useTheme } from '../store/theme';
+import { DEFAULT_SERVER_URL } from '../config';
 
 function Field({ label, type = 'text', value, onChange, placeholder }) {
   return (
@@ -51,7 +52,7 @@ export default function Config() {
   const navigate = useNavigate();
 
   const [serverUrl, setServerUrl] = useState(
-    () => localStorage.getItem('serverUrl') || 'http://localhost:8000'
+    () => localStorage.getItem('serverUrl') || DEFAULT_SERVER_URL
   );
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -116,12 +117,21 @@ export default function Config() {
       {/* Server URL */}
       <section className="space-y-4">
         <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">服务器</h2>
-        <Field
-          label="服务端地址 (HTTP/HTTPS)"
-          value={serverUrl}
-          onChange={setServerUrl}
-          placeholder="http://your-vps:8000"
-        />
+        <div>
+          <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">服务端地址 (HTTP/HTTPS)</label>
+          <input
+            type="text"
+            value={serverUrl}
+            onChange={(e) => setServerUrl(e.target.value)}
+            onBlur={(e) => {
+              const v = e.target.value.trim() || DEFAULT_SERVER_URL;
+              setServerUrl(v);
+              localStorage.setItem('serverUrl', v);
+            }}
+            placeholder={DEFAULT_SERVER_URL}
+            className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-500"
+          />
+        </div>
       </section>
 
       {/* Account */}

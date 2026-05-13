@@ -89,7 +89,9 @@
       "Bash(node --check /Users/ully/githubprojects/local-llm-proxy/client/electron/main.js)",
       "Bash(node --check /Users/ully/githubprojects/local-llm-proxy/client/electron/agent-worker.js)",
       "Bash(./node_modules/.bin/electron --version)",
-      "Bash(node -e \"require\\('ws'\\)\")"
+      "Bash(node -e \"require\\('ws'\\)\")",
+      "Bash(git tag *)",
+      "Bash(git push *)"
     ]
   }
 }

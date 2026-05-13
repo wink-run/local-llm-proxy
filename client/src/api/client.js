@@ -1,10 +1,11 @@
 import axios from 'axios';
+import { getServerUrl } from '../config';
 
 const http = axios.create({ timeout: 10000 });
 
 // Read serverUrl and token from localStorage on every request
 http.interceptors.request.use((config) => {
-  const base = localStorage.getItem('serverUrl') || 'http://localhost:8000';
+  const base = getServerUrl();
   config.baseURL = base;
   const token = localStorage.getItem('token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
@@ -49,4 +50,12 @@ export function toggleKey(keyId, isActive) {
 
 export function deleteKey(keyId) {
   return http.delete(`/user/keys/${keyId}`);
+}
+
+export function checkin() {
+  return http.post('/user/checkin');
+}
+
+export function getCheckinStatus() {
+  return http.get('/user/checkin/status');
 }

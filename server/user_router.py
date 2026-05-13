@@ -197,6 +197,21 @@ async def my_purchase_orders(uid: int = Depends(get_current_user_id)):
     return {"orders": await db.get_user_purchase_orders(uid)}
 
 
+# ── 每日签到 ──────────────────────────────────────────────────────────────────
+
+@router.post("/checkin")
+async def checkin(uid: int = Depends(get_current_user_id)):
+    result = await db.do_checkin(uid)
+    if result["already"]:
+        raise HTTPException(400, f"今日已签到，获得 {result['credits']} 积分")
+    return result
+
+
+@router.get("/checkin/status")
+async def checkin_status(uid: int = Depends(get_current_user_id)):
+    return await db.get_checkin_status(uid)
+
+
 @router.get("/stats")
 async def user_stats(uid: int = Depends(get_current_user_id)):
     user_workers = [w for w in _pool.all_workers() if w.user_id == uid]
