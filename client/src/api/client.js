@@ -68,3 +68,11 @@ export function getPurchaseOrders() {
 export function createPurchaseOrder(amount_credits, note = '') {
   return http.post('/user/purchase-order', { amount_credits, note });
 }
+
+export function spin() {
+  return http.post('/user/spin');
+}
+
+export function getSpinStatus() {
+  return http.get('/user/spin/status');
+}
