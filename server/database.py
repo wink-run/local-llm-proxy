@@ -1,6 +1,7 @@
 """SQLite 数据库操作层（全部异步）"""
 
 import os
+import random
 import secrets
 from datetime import datetime
 from typing import Optional
@@ -718,6 +719,62 @@ async def get_checkin_status(user_id: int) -> dict:
         "credits_today": row[0] if row else 0,
         "total_checkins": total,
         "reward": reward,
+    }
+
+
+# ── 转盘抽奖 ──────────────────────────────────────────────────────────────
+
+def _weighted_spin_credits() -> int:
+    """Return a random integer 0-50 with probability weighted toward 0-10."""
+    r = random.random()
+    if r < 0.70:
+        return random.randint(0, 10)
+    elif r < 0.95:
+        return random.randint(11, 30)
+    else:
+        return random.randint(31, 50)
+
+
+async def do_spin(user_id: int) -> dict:
+    """Execute one spin. Returns already=True if daily limit reached."""
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    daily_limit = int(await get_config("spin_daily_limit", "3"))
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM spin_logs WHERE user_id=? AND date=?", (user_id, today)
+        ) as cur:
+            spins_used = (await cur.fetchone())[0]
+        if spins_used >= daily_limit:
+            return {"already": True, "spins_used": spins_used, "spins_left": 0}
+        credits = _weighted_spin_credits()
+        await db.execute(
+            "INSERT INTO spin_logs(user_id, date, credits) VALUES(?,?,?)",
+            (user_id, today, credits),
+        )
+        await db.commit()
+    spins_used += 1
+    new_balance = await award_credits(user_id, credits, type_="spin", note=f"转盘抽奖 {today}")
+    return {
+        "already": False,
+        "credits": credits,
+        "spins_used": spins_used,
+        "spins_left": max(0, daily_limit - spins_used),
+        "new_balance": new_balance,
+    }
+
+
+async def get_spin_status(user_id: int) -> dict:
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    daily_limit = int(await get_config("spin_daily_limit", "3"))
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM spin_logs WHERE user_id=? AND date=?", (user_id, today)
+        ) as cur:
+            spins_used = (await cur.fetchone())[0]
+    return {
+        "spins_used": spins_used,
+        "spins_left": max(0, daily_limit - spins_used),
+        "daily_limit": daily_limit,
     }
 
 
