@@ -298,12 +298,22 @@ function CheckinCard({ onCheckinSuccess }) {
   );
 }
 
+const WHEEL_SEGMENTS = [
+  { label: '0-5',   angle: 30,  light: false },
+  { label: '6-10',  angle: 90,  light: false },
+  { label: '11-20', angle: 150, light: true  },
+  { label: '21-30', angle: 210, light: true  },
+  { label: '31-40', angle: 270, light: true  },
+  { label: '41-50', angle: 330, light: true  },
+];
+
 function SpinCard({ onSpinSuccess }) {
   const [status, setStatus] = useState(null);
   const [spinning, setSpinning] = useState(false);
   const [rotation, setRotation] = useState(0);
   const [result, setResult] = useState(null);
   const [msg, setMsg] = useState('');
+  const [expanded, setExpanded] = useState(false);
   const timerRef = useRef(null);
 
   useEffect(() => {
@@ -316,6 +326,7 @@ function SpinCard({ onSpinSuccess }) {
 
   async function handleSpin() {
     if (spinning || status?.spins_left === 0) return;
+    setExpanded(true);
     setSpinning(true);
     setMsg('');
     setResult(null);
@@ -333,7 +344,6 @@ function SpinCard({ onSpinSuccess }) {
       setSpinning(false);
       return;
     }
-    // Animate: 3-5 full rotations + random extra degrees
     const extraSpins = 3 + Math.floor(Math.random() * 3);
     const extraDeg = Math.floor(Math.random() * 360);
     setRotation((prev) => prev + extraSpins * 360 + extraDeg);
@@ -348,9 +358,10 @@ function SpinCard({ onSpinSuccess }) {
   const exhausted = status?.spins_left === 0;
 
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl px-5 py-5">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
+    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl px-5 py-4">
+      {/* Header row — compact, same style as CheckinCard */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
           <span className="text-2xl select-none">🎡</span>
           <div>
             <p className="text-sm font-medium text-gray-700 dark:text-gray-200">每日转盘</p>
@@ -363,59 +374,79 @@ function SpinCard({ onSpinSuccess }) {
             </p>
           </div>
         </div>
-        {msg && (
-          <span className={`text-sm font-medium ${msg.startsWith('+') ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
-            {msg}
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {msg && (
+            <span className={`text-xs font-medium ${msg.startsWith('+') ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+              {msg}
+            </span>
+          )}
+          <button
+            onClick={handleSpin}
+            disabled={spinning || exhausted || status === null}
+            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+              exhausted
+                ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-default'
+                : spinning
+                ? 'bg-blue-400 text-white cursor-wait'
+                : 'bg-blue-600 hover:bg-blue-500 text-white'
+            } disabled:opacity-60`}
+          >
+            {spinning ? '抽奖中…' : exhausted ? '明日再来' : '抽奖'}
+          </button>
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors text-xs w-6 text-center select-none"
+            aria-label={expanded ? '收起' : '展开'}
+          >
+            {expanded ? '▲' : '▼'}
+          </button>
+        </div>
       </div>
 
-      <div className="flex flex-col items-center gap-4">
-        {/* Wheel */}
-        <div className="relative w-36 h-36">
-          {/* Fixed pointer */}
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1 z-10 text-xl select-none">▼</div>
-          {/* Spinning wheel */}
-          <div
-            className="w-36 h-36 rounded-full border-4 border-blue-600 dark:border-blue-500"
-            style={{
-              transform: `rotate(${rotation}deg)`,
-              transition: spinning ? 'transform 2.5s cubic-bezier(0.17,0.67,0.12,0.99)' : 'none',
-              background: 'conic-gradient(#3b82f6 0deg 60deg, #60a5fa 60deg 120deg, #93c5fd 120deg 180deg, #bfdbfe 180deg 240deg, #dbeafe 240deg 300deg, #eff6ff 300deg 360deg)',
-            }}
-          />
-          {/* Center label */}
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="w-12 h-12 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center shadow">
-              <span className="text-base font-bold text-blue-700 dark:text-blue-300 select-none">
-                {result !== null ? result : '?'}
-              </span>
+      {/* Expandable wheel */}
+      {expanded && (
+        <div className="flex flex-col items-center gap-3 mt-5">
+          <div className="relative w-44 h-44">
+            {/* Fixed pointer */}
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1 z-10 text-xl select-none">▼</div>
+            {/* Spinning wheel */}
+            <div
+              className="relative w-44 h-44 rounded-full border-4 border-blue-600 dark:border-blue-500"
+              style={{
+                transform: `rotate(${rotation}deg)`,
+                transition: spinning ? 'transform 2.5s cubic-bezier(0.17,0.67,0.12,0.99)' : 'none',
+                background: 'conic-gradient(#3b82f6 0deg 60deg, #60a5fa 60deg 120deg, #93c5fd 120deg 180deg, #bfdbfe 180deg 240deg, #dbeafe 240deg 300deg, #eff6ff 300deg 360deg)',
+              }}
+            >
+              {/* Segment labels — rotate each label to its sector center */}
+              {WHEEL_SEGMENTS.map(({ label, angle, light }) => (
+                <div
+                  key={label}
+                  className="absolute inset-0 flex items-start justify-center pointer-events-none"
+                  style={{ transform: `rotate(${angle}deg)` }}
+                >
+                  <span className={`text-[10px] font-bold select-none mt-7 ${light ? 'text-blue-800' : 'text-white drop-shadow'}`}>
+                    {label}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {/* Center label — non-rotating */}
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="w-14 h-14 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center shadow">
+                <span className="text-base font-bold text-blue-700 dark:text-blue-300 select-none">
+                  {result !== null ? result : '?'}
+                </span>
+              </div>
             </div>
           </div>
+          {status && (
+            <p className="text-xs text-gray-400 dark:text-gray-500">
+              已用 {status.spins_used}/{status.daily_limit ?? '?'} 次
+            </p>
+          )}
         </div>
-
-        {/* Button */}
-        <button
-          onClick={handleSpin}
-          disabled={spinning || exhausted || status === null}
-          className={`px-6 py-2 rounded-lg text-sm font-medium transition-colors ${
-            exhausted
-              ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-default'
-              : spinning
-              ? 'bg-blue-400 text-white cursor-wait'
-              : 'bg-blue-600 hover:bg-blue-500 text-white'
-          } disabled:opacity-60`}
-        >
-          {spinning ? '抽奖中…' : exhausted ? '明日再来' : '开始抽奖'}
-        </button>
-
-        {/* Usage counter */}
-        {status && (
-          <p className="text-xs text-gray-400 dark:text-gray-500">
-            已用 {status.spins_used}/{status.daily_limit ?? '?'} 次
-          </p>
-        )}
-      </div>
+      )}
     </div>
   );
 }
