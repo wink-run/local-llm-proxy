@@ -214,6 +214,21 @@ async def checkin_status(uid: int = Depends(get_current_user_id)):
     return await db.get_checkin_status(uid)
 
 
+# ── 转盘抽奖 ──────────────────────────────────────────────────────────────────
+
+@router.post("/spin")
+async def spin(uid: int = Depends(get_current_user_id)):
+    result = await db.do_spin(uid)
+    if result["already"]:
+        raise HTTPException(400, f"今日抽奖次数已用完（{result['spins_used']}/{result['spins_used']} 次）")
+    return result
+
+
+@router.get("/spin/status")
+async def spin_status(uid: int = Depends(get_current_user_id)):
+    return await db.get_spin_status(uid)
+
+
 @router.get("/stats")
 async def user_stats(uid: int = Depends(get_current_user_id)):
     user_workers = [w for w in _pool.all_workers() if w.user_id == uid]
