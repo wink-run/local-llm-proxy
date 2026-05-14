@@ -724,29 +724,32 @@ async def get_checkin_status(user_id: int) -> dict:
 
 # ── 转盘抽奖 ──────────────────────────────────────────────────────────────
 
-def _weighted_spin_credits() -> int:
-    """Return a random integer 0-50 with probability weighted toward 0-10."""
+def _weighted_spin_credits(max_credits: int = 50) -> int:
+    """Return a weighted random integer, with probability concentrated in the low range."""
     r = random.random()
     if r < 0.70:
-        return random.randint(0, 10)
+        return random.randint(0, min(10, max_credits))
     elif r < 0.95:
-        return random.randint(11, 30)
+        return random.randint(min(11, max_credits), min(30, max_credits))
     else:
-        return random.randint(31, 50)
+        return random.randint(min(31, max_credits), max_credits)
 
 
 async def do_spin(user_id: int) -> dict:
     """Execute one spin. Returns already=True if daily limit reached."""
     today = datetime.utcnow().strftime("%Y-%m-%d")
     daily_limit = int(await get_config("spin_daily_limit", "3"))
+    max_credits = int(await get_config("spin_max_credits", "50"))
     async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("BEGIN IMMEDIATE")
         async with db.execute(
             "SELECT COUNT(*) FROM spin_logs WHERE user_id=? AND date=?", (user_id, today)
         ) as cur:
             spins_used = (await cur.fetchone())[0]
         if spins_used >= daily_limit:
+            await db.execute("ROLLBACK")
             return {"already": True, "spins_used": spins_used, "spins_left": 0}
-        credits = _weighted_spin_credits()
+        credits = _weighted_spin_credits(max_credits)
         await db.execute(
             "INSERT INTO spin_logs(user_id, date, credits) VALUES(?,?,?)",
             (user_id, today, credits),
