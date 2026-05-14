@@ -235,14 +235,29 @@ function PurchaseSection() {
   );
 }
 
-const WHEEL_SEGMENTS = [
-  { label: '0-5',   angle: 30,  light: false },
-  { label: '6-10',  angle: 90,  light: false },
-  { label: '11-20', angle: 150, light: true  },
-  { label: '21-30', angle: 210, light: true  },
-  { label: '31-40', angle: 270, light: true  },
-  { label: '41-50', angle: 330, light: true  },
+// Fixed prize values — prob must sum to 1
+const PRIZES = [
+  { value: 1,  prob: 0.25, color: '#3b82f6', light: false },
+  { value: 3,  prob: 0.25, color: '#60a5fa', light: false },
+  { value: 5,  prob: 0.20, color: '#93c5fd', light: false },
+  { value: 15, prob: 0.15, color: '#bfdbfe', light: true  },
+  { value: 25, prob: 0.10, color: '#dbeafe', light: true  },
+  { value: 50, prob: 0.05, color: '#eff6ff', light: true  },
 ];
+
+// Precompute segment geometry once (static)
+const WHEEL_SEGMENTS = (() => {
+  let acc = 0;
+  return PRIZES.map((p) => {
+    const start = acc;
+    acc += p.prob * 360;
+    const end = acc;
+    const midRad = ((start + end) / 2) * (Math.PI / 180);
+    return { ...p, start, end, lx: 50 + 32 * Math.sin(midRad), ly: 50 - 32 * Math.cos(midRad) };
+  });
+})();
+const WHEEL_BG = `conic-gradient(${WHEEL_SEGMENTS.map((s) => `${s.color} ${s.start}deg ${s.end}deg`).join(', ')})`;
+
 
 function CheckinCard({ onSuccess }) {
   const [status, setStatus] = useState(null);
@@ -385,27 +400,40 @@ function SpinCard({ onSuccess }) {
       {expanded && (
         <div className="flex flex-col items-center gap-2 pt-1">
           <div className="relative w-36 h-36">
+            {/* Fixed pointer */}
             <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1 z-10 text-base select-none">▼</div>
+            {/* Spinning wheel */}
             <div
-              className="relative w-36 h-36 rounded-full border-4 border-blue-600 dark:border-blue-500"
+              className="w-36 h-36 rounded-full border-4 border-blue-600 dark:border-blue-500"
               style={{
                 transform: `rotate(${rotation}deg)`,
                 transition: spinning ? 'transform 2.5s cubic-bezier(0.17,0.67,0.12,0.99)' : 'none',
-                background: 'conic-gradient(#3b82f6 0deg 60deg, #60a5fa 60deg 120deg, #93c5fd 120deg 180deg, #bfdbfe 180deg 240deg, #dbeafe 240deg 300deg, #eff6ff 300deg 360deg)',
+                background: WHEEL_BG,
+                position: 'relative',
               }}
             >
-              {WHEEL_SEGMENTS.map(({ label, angle, light }) => (
-                <div
-                  key={label}
-                  className="absolute inset-0 flex items-start justify-center pointer-events-none"
-                  style={{ transform: `rotate(${angle}deg)` }}
+              {/* Labels positioned by x/y — rotate with wheel, staying in their sector */}
+              {WHEEL_SEGMENTS.map((s) => (
+                <span
+                  key={s.value}
+                  style={{
+                    position: 'absolute',
+                    left: `${s.lx}%`,
+                    top: `${s.ly}%`,
+                    transform: 'translate(-50%, -50%)',
+                    fontSize: s.prob < 0.08 ? '8px' : '10px',
+                    fontWeight: 'bold',
+                    color: s.light ? '#1e3a8a' : 'white',
+                    textShadow: s.light ? 'none' : '0 1px 2px rgba(0,0,0,0.35)',
+                    userSelect: 'none',
+                    pointerEvents: 'none',
+                  }}
                 >
-                  <span className={`text-[9px] font-bold select-none mt-5 ${light ? 'text-blue-800' : 'text-white drop-shadow'}`}>
-                    {label}
-                  </span>
-                </div>
+                  {s.value}
+                </span>
               ))}
             </div>
+            {/* Center hub — non-rotating */}
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="w-12 h-12 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center shadow">
                 <span className="text-sm font-bold text-blue-700 dark:text-blue-300 select-none">

@@ -724,15 +724,17 @@ async def get_checkin_status(user_id: int) -> dict:
 
 # ── 转盘抽奖 ──────────────────────────────────────────────────────────────
 
+_SPIN_PRIZES  = [1,    3,    5,    15,   25,   50  ]
+_SPIN_WEIGHTS = [0.25, 0.25, 0.20, 0.15, 0.10, 0.05]
+
 def _weighted_spin_credits(max_credits: int = 50) -> int:
-    """Return a weighted random integer, with probability concentrated in the low range."""
-    r = random.random()
-    if r < 0.70:
-        return random.randint(0, min(10, max_credits))
-    elif r < 0.95:
-        return random.randint(min(11, max_credits), min(30, max_credits))
-    else:
-        return random.randint(min(31, max_credits), max_credits)
+    """Return a fixed prize value sampled by probability, capped to max_credits."""
+    valid = [(v, w) for v, w in zip(_SPIN_PRIZES, _SPIN_WEIGHTS) if v <= max_credits]
+    if not valid:
+        return 0
+    values, weights = zip(*valid)
+    total = sum(weights)
+    return random.choices(values, weights=[w / total for w in weights], k=1)[0]
 
 
 async def do_spin(user_id: int) -> dict:
