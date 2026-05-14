@@ -748,7 +748,7 @@ async def do_spin(user_id: int) -> dict:
             spins_used = (await cur.fetchone())[0]
         if spins_used >= daily_limit:
             await db.execute("ROLLBACK")
-            return {"already": True, "spins_used": spins_used, "spins_left": 0}
+            return {"already": True, "spins_used": spins_used, "spins_left": 0, "daily_limit": daily_limit}
         credits = _weighted_spin_credits(max_credits)
         await db.execute(
             "INSERT INTO spin_logs(user_id, date, credits) VALUES(?,?,?)",

@@ -220,7 +220,7 @@ async def checkin_status(uid: int = Depends(get_current_user_id)):
 async def spin(uid: int = Depends(get_current_user_id)):
     result = await db.do_spin(uid)
     if result["already"]:
-        raise HTTPException(400, f"今日抽奖次数已用完（{result['spins_used']}/{result['spins_used']} 次）")
+        raise HTTPException(400, f"今日抽奖次数已用完（{result['spins_used']}/{result['daily_limit']} 次）")
     return result
 
 
