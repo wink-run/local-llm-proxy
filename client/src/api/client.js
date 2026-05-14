@@ -59,3 +59,12 @@ export function checkin() {
 export function getCheckinStatus() {
   return http.get('/user/checkin/status');
 }
+
+/** 购买记录 + contact_info（管理员配置的付款方式） */
+export function getPurchaseOrders() {
+  return http.get('/user/purchase-orders');
+}
+
+export function createPurchaseOrder(amount_credits, note = '') {
+  return http.post('/user/purchase-order', { amount_credits, note });
+}

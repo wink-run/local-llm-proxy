@@ -106,18 +106,40 @@ function parseAnthropicSSE(buf, model) {
 
 // ── HTTP forward ──────────────────────────────────────────────────────────────
 
-function buildUrl(baseUrl, anthropic) {
-  // Strip trailing slashes, normalize /v1 dedup, then append endpoint.
+function openaiCompletionPath(baseUrl, explicitChatPath) {
+  const e = (explicitChatPath || '').trim().replace(/^\//, '');
+  if (e) return e;
+  const base = baseUrl.trim().replace(/\/+$/, '');
+  const lower = base.toLowerCase();
+  if (
+    /\/v\d+(\/|$)/.test(base) ||
+    lower.includes('compatible-mode') ||
+    lower.includes('bigmodel.cn') ||
+    lower.includes('volces.com/api') ||
+    lower.includes('qianfan.baidubce.com') ||
+    (lower.includes('generativelanguage.googleapis.com') && lower.includes('openai'))
+  ) {
+    return 'chat/completions';
+  }
+  return 'v1/chat/completions';
+}
+
+function buildUrl(baseUrl, anthropic, explicitChatPath) {
   const base = baseUrl.replace(/\/+$/, '');
-  const v1Base = base.endsWith('/v1') ? base : base + '/v1';
-  return new URL(v1Base + (anthropic ? '/messages' : '/chat/completions'));
+  if (anthropic) {
+    const v1Base = base.endsWith('/v1') ? base : `${base}/v1`;
+    return new URL(`${v1Base}/messages`);
+  }
+  const path = openaiCompletionPath(baseUrl, explicitChatPath);
+  const baseForJoin = base.endsWith('/') ? base : `${base}/`;
+  return new URL(path, baseForJoin);
 }
 
 function forwardRequest(reqId, payload, cfg) {
   const anthropic  = isAnthropicStyle(cfg.llm_base_url);
   const outPayload = anthropic ? openaiToAnthropic(payload) : payload;
 
-  const url = buildUrl(cfg.llm_base_url, anthropic);
+  const url = buildUrl(cfg.llm_base_url, anthropic, cfg.llm_chat_path);
   const mod = url.protocol === 'https:' ? https : http;
   const streaming = payload.stream === true;
   const body = JSON.stringify(outPayload);

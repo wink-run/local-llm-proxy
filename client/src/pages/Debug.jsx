@@ -204,25 +204,34 @@ async function streamChat({ source, localCfg, apiKey, model, messages, stream, o
   }
 }
 
+const defaultPanel = () => ({
+  conversation: [],
+  input: '',
+  systemPrompt: '',
+  showSystem: false,
+  streamMode: true,
+});
+
 export default function Debug() {
-  const [source, setSource] = useState('local');
+  // 默认「全球网络」；local / network 各自一套面板状态，切换 tab 不串内容
+  const [source, setSource] = useState('network');
+  const [panels, setPanels] = useState(() => ({
+    local: defaultPanel(),
+    network: defaultPanel(),
+  }));
   const [localCfg, setLocalCfg] = useState(null);
   const [apiKeys, setApiKeys] = useState([]);       // list of active keys for network
   const [apiKey, setApiKey] = useState('');          // selected key value
   const [models, setModels] = useState([]);
   const [model, setModel] = useState('');
   const [loadingModels, setLoadingModels] = useState(false);
-  const [systemPrompt, setSystemPrompt] = useState('');
-  const [showSystem, setShowSystem] = useState(false);
-  const [streamMode, setStreamMode] = useState(true);
-
-  // conversation: [{role, content, timing?, error?}]
-  const [conversation, setConversation] = useState([]);
-  const [input, setInput] = useState('');
-  const [sending, setSending] = useState(false);
+  const [sending, setSending] = useState({ local: false, network: false });
 
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
+
+  const panel = panels[source];
+  const { conversation, input, systemPrompt, showSystem, streamMode } = panel;
 
   useEffect(() => {
     window.electronAPI?.config.read().then((cfg) => setLocalCfg(cfg));
@@ -254,16 +263,14 @@ export default function Debug() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [conversation]);
+  }, [conversation, source]);
 
   async function handleSend() {
     const text = input.trim();
-    if (!text || !model || sending) return;
+    const tabKey = source;
+    if (!text || !model || sending[tabKey]) return;
 
-    setInput('');
-    setSending(true);
-
-    // Build full message list for the API (system + history + new user msg)
+    // Build full消息列表（固定用当前 tab 的快照，避免发送途中切换 tab 写错面板）
     const apiMessages = [];
     if (systemPrompt.trim()) apiMessages.push({ role: 'system', content: systemPrompt.trim() });
     conversation.forEach((m) => {
@@ -273,39 +280,53 @@ export default function Debug() {
     });
     apiMessages.push({ role: 'user', content: text });
 
-    // Append user message immediately
-    setConversation((prev) => [...prev, { role: 'user', content: text }]);
-
-    // Append empty assistant message to stream into
     const assistantIdx = conversation.length + 1;
-    setConversation((prev) => [...prev, { role: 'assistant', content: '', streaming: true }]);
+    setPanels((prev) => {
+      const p = prev[tabKey];
+      const conv = [...p.conversation];
+      return {
+        ...prev,
+        [tabKey]: {
+          ...p,
+          input: '',
+          conversation: [...conv, { role: 'user', content: text }, { role: 'assistant', content: '', streaming: true }],
+        },
+      };
+    });
+    setSending((s) => ({ ...s, [tabKey]: true }));
 
     await streamChat({
-      source, localCfg, apiKey, model,
+      source: tabKey,
+      localCfg,
+      apiKey,
+      model,
       messages: apiMessages,
       stream: streamMode,
       onChunk: (delta) => {
-        setConversation((prev) => {
-          const next = [...prev];
+        setPanels((prev) => {
+          const p = prev[tabKey];
+          const next = [...p.conversation];
           next[assistantIdx] = { ...next[assistantIdx], content: next[assistantIdx].content + delta };
-          return next;
+          return { ...prev, [tabKey]: { ...p, conversation: next } };
         });
       },
       onDone: (timing) => {
-        setConversation((prev) => {
-          const next = [...prev];
+        setPanels((prev) => {
+          const p = prev[tabKey];
+          const next = [...p.conversation];
           next[assistantIdx] = { ...next[assistantIdx], streaming: false, timing };
-          return next;
+          return { ...prev, [tabKey]: { ...p, conversation: next } };
         });
-        setSending(false);
+        setSending((s) => ({ ...s, [tabKey]: false }));
       },
       onError: (msg) => {
-        setConversation((prev) => {
-          const next = [...prev];
+        setPanels((prev) => {
+          const p = prev[tabKey];
+          const next = [...p.conversation];
           next[assistantIdx] = { ...next[assistantIdx], streaming: false, error: msg };
-          return next;
+          return { ...prev, [tabKey]: { ...p, conversation: next } };
         });
-        setSending(false);
+        setSending((s) => ({ ...s, [tabKey]: false }));
       },
     });
   }
@@ -318,13 +339,16 @@ export default function Debug() {
   }
 
   function handleClear() {
-    setConversation([]);
-    setInput('');
+    setPanels((prev) => ({
+      ...prev,
+      [source]: { ...prev[source], conversation: [], input: '' },
+    }));
   }
 
   // Auto-resize textarea
   function handleInputChange(e) {
-    setInput(e.target.value);
+    const v = e.target.value;
+    setPanels((prev) => ({ ...prev, [source]: { ...prev[source], input: v } }));
     const el = textareaRef.current;
     if (el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 160) + 'px'; }
   }
@@ -365,13 +389,23 @@ export default function Debug() {
 
           {/* Stream toggle */}
           <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 cursor-pointer select-none">
-            <input type="checkbox" checked={streamMode} onChange={(e) => setStreamMode(e.target.checked)}
+            <input
+              type="checkbox"
+              checked={streamMode}
+              onChange={(e) => {
+                const c = e.target.checked;
+                setPanels((prev) => ({ ...prev, [source]: { ...prev[source], streamMode: c } }));
+              }}
               className="w-3.5 h-3.5 accent-blue-600" />
             流式
           </label>
 
           {/* System prompt toggle */}
-          <button onClick={() => setShowSystem((v) => !v)}
+          <button
+            onClick={() => setPanels((prev) => ({
+              ...prev,
+              [source]: { ...prev[source], showSystem: !prev[source].showSystem },
+            }))}
             className={`text-xs px-2 py-1 rounded-md transition-colors ${showSystem ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}>
             System
           </button>
@@ -414,7 +448,12 @@ export default function Debug() {
 
         {/* System prompt textarea */}
         {showSystem && (
-          <textarea value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)}
+          <textarea
+            value={systemPrompt}
+            onChange={(e) => {
+              const v = e.target.value;
+              setPanels((prev) => ({ ...prev, [source]: { ...prev[source], systemPrompt: v } }));
+            }}
             rows={2} placeholder="System Prompt（可选）"
             className="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500 resize-none" />
         )}
@@ -483,10 +522,10 @@ export default function Debug() {
           />
           <button
             onClick={handleSend}
-            disabled={sending || !input.trim() || !model}
+            disabled={sending[source] || !input.trim() || !model}
             className="shrink-0 w-9 h-9 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded-xl flex items-center justify-center transition-colors"
           >
-            {sending
+            {sending[source]
               ? <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
               : <span className="text-white text-sm">↑</span>
             }

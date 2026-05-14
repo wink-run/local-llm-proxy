@@ -3,12 +3,15 @@
 
 import asyncio
 import json
+import re
 import socket
 import sys
 from pathlib import Path
 
-import click
 import httpx
+from httpx import URL
+
+import click
 import websockets
 from websockets.exceptions import ConnectionClosed, InvalidStatus, WebSocketException
 
@@ -149,19 +152,57 @@ def start(config, forward_log):
 
 # ── Request handling ─────────────────────────────────────────────────────────
 
+def _is_anthropic_base(llm_base_url: str) -> bool:
+    """与 Debug / agent-worker 一致，用于识别 Claude 官方 API。"""
+    lower = (llm_base_url or "").lower()
+    return "anthropic" in lower
+
+
+def _chat_completions_url(cfg: dict) -> str:
+    """OpenAI 兼容 chat 完整 URL（与 Electron agent-worker 规则一致）。"""
+    base_raw = (cfg.get("llm_base_url") or "").strip().rstrip("/")
+    if not base_raw:
+        raise ValueError("llm_base_url missing")
+    explicit = (cfg.get("llm_chat_path") or "").strip().lstrip("/")
+    if explicit:
+        rel = explicit
+    else:
+        lower = base_raw.lower()
+        if (
+            re.search(r"/v\d+(/|$)", base_raw)
+            or "compatible-mode" in lower
+            or "bigmodel.cn" in lower
+            or "volces.com/api" in lower
+            or "qianfan.baidubce.com" in lower
+            or ("generativelanguage.googleapis.com" in lower and "openai" in lower)
+        ):
+            rel = "chat/completions"
+        else:
+            rel = "v1/chat/completions"
+    return str(URL(base_raw + "/").join(rel))
+
+
 async def _forward_streaming(req_id: str, payload: dict, send_q: asyncio.Queue, cfg: dict):
+    if _is_anthropic_base(cfg.get("llm_base_url", "")):
+        err = (
+            "命令行 llm-agent 暂不支持直连 Anthropic API；请改用 OpenAI 兼容中转，"
+            "或使用 Token Bank 桌面端内置 Agent（已支持 Claude）。"
+        )
+        log_forward(cfg, f"[agent] anthropic not supported in CLI req_id={req_id}")
+        await send_q.put(json.dumps({"type": "error", "req_id": req_id, "error": err}))
+        return
     headers = {"Content-Type": "application/json"}
     if cfg.get("llm_token"):
         headers["Authorization"] = f"Bearer {cfg['llm_token']}"
 
     chunk_lines = 0
     try:
+        url = _chat_completions_url(cfg)
         async with httpx.AsyncClient(
-            base_url=cfg["llm_base_url"],
             timeout=httpx.Timeout(connect=10, read=120, write=30, pool=5),
         ) as client:
             async with client.stream(
-                "POST", "/v1/chat/completions", json=payload, headers=headers
+                "POST", url, json=payload, headers=headers
             ) as resp:
                 resp.raise_for_status()
                 log_forward(cfg, f"[agent] forward stream http_status={resp.status_code} req_id={req_id}")
@@ -193,16 +234,23 @@ async def _forward_streaming(req_id: str, payload: dict, send_q: asyncio.Queue, 
 
 
 async def _forward_non_streaming(req_id: str, payload: dict, send_q: asyncio.Queue, cfg: dict):
+    if _is_anthropic_base(cfg.get("llm_base_url", "")):
+        err = (
+            "命令行 llm-agent 暂不支持直连 Anthropic API；请改用 OpenAI 兼容中转，"
+            "或使用 Token Bank 桌面端内置 Agent（已支持 Claude）。"
+        )
+        await send_q.put(json.dumps({"type": "error", "req_id": req_id, "error": err}))
+        return
     headers = {"Content-Type": "application/json"}
     if cfg.get("llm_token"):
         headers["Authorization"] = f"Bearer {cfg['llm_token']}"
 
     try:
+        url = _chat_completions_url(cfg)
         async with httpx.AsyncClient(
-            base_url=cfg["llm_base_url"],
             timeout=httpx.Timeout(connect=10, read=120, write=30, pool=5),
         ) as client:
-            resp = await client.post("/v1/chat/completions", json=payload, headers=headers)
+            resp = await client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
             body = resp.text
             log_forward(

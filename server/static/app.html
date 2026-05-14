@@ -657,7 +657,7 @@ createApp({
 
     const purchaseAmt=ref(null),purchaseNote=ref(''),purchaseLoading=ref(false)
     const purchaseMsg=ref(''),purchaseMsgOk=ref(false),purchaseOrders=ref([]),contactInfo=ref('')
-    async function fetchPurchaseOrders() { try { const d = await (await userApi('/user/purchase-orders')).json(); purchaseOrders.value=d.orders||[] } catch {} }
+    async function fetchPurchaseOrders() { try { const d = await (await userApi('/user/purchase-orders')).json(); purchaseOrders.value=d.orders||[]; if (d.contact_info) contactInfo.value=d.contact_info } catch {} }
     async function submitPurchase() {
       if (!purchaseAmt.value||purchaseAmt.value<=0) return
       purchaseLoading.value=true; purchaseMsg.value=''

@@ -194,7 +194,9 @@ async def create_purchase_order(req: PurchaseRequest, uid: int = Depends(get_cur
 
 @router.get("/purchase-orders")
 async def my_purchase_orders(uid: int = Depends(get_current_user_id)):
-    return {"orders": await db.get_user_purchase_orders(uid)}
+    # 与网页版一致：列表接口同时返回管理员配置的付款联系方式，便于用户未下单前也能看到指引
+    contact = await db.get_config("contact_info", "")
+    return {"orders": await db.get_user_purchase_orders(uid), "contact_info": contact}
 
 
 # ── 每日签到 ──────────────────────────────────────────────────────────────────

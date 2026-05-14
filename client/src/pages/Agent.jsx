@@ -1,8 +1,10 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { getStats, getSettlements, listKeys, createKey, toggleKey, deleteKey } from '../api/client';
 import { useAuth } from '../store/index';
 import { getServerUrl } from '../config';
 import RateChart from '../components/RateChart';
+import { LLM_PROVIDER_PRESETS, matchPresetId } from '../data/llmProviderPresets';
 
 function multiplierToStars(m) {
   const n = m >= 1.3 ? 5 : m >= 1.1 ? 4 : m >= 0.9 ? 3 : m >= 0.7 ? 2 : 1;
@@ -13,6 +15,7 @@ function multiplierToStars(m) {
 function LLMConfigCard() {
   const [cfg, setCfg]               = useState(null);   // saved config
   const [editing, setEditing]       = useState(false);
+  const [providerId, setProviderId] = useState('custom');
   const [llmUrl, setLlmUrl]         = useState('');
   const [llmToken, setLlmToken]     = useState('');
   const [modelsText, setModelsText] = useState('');
@@ -21,6 +24,13 @@ function LLMConfigCard() {
   const [saving, setSaving]         = useState(false);
   const [savedMsg, setSavedMsg]     = useState('');
   const [scanning, setScanning]     = useState(false);
+  /** 贡献节点 API Key：是否明文显示（默认隐藏） */
+  const [showLlmToken, setShowLlmToken] = useState(false);
+  /** 用于「推荐模型」下拉重置，便于连续选同一项 */
+  const [modelPickNonce, setModelPickNonce] = useState(0);
+
+  const presetHint = LLM_PROVIDER_PRESETS.find((p) => p.id === providerId)?.hint || '';
+  const suggestedModels = LLM_PROVIDER_PRESETS.find((p) => p.id === providerId)?.defaultModels || [];
 
   useEffect(() => {
     if (!window.electronAPI) return;
@@ -54,12 +64,34 @@ function LLMConfigCard() {
   }, []);
 
   function openEdit() {
-    setLlmUrl(cfg?.llm_base_url || '');
+    const url = cfg?.llm_base_url || '';
+    setLlmUrl(url);
+    setProviderId(matchPresetId(url));
     setLlmToken(cfg?.llm_token || '');
     setModelsText((cfg?.models || []).join(', '));
     setNodeName(cfg?.name || '');
     setAutoStart(!!cfg?.auto_start);
+    setShowLlmToken(false);
     setEditing(true);
+  }
+
+  /** 选择厂商模板时仅更新 Base URL（模型由下方下拉追加或手工填写，不自动填充） */
+  function onProviderChange(id) {
+    setProviderId(id);
+    if (id === 'custom') return;
+    const p = LLM_PROVIDER_PRESETS.find((x) => x.id === id);
+    if (!p?.baseUrl) return;
+    setLlmUrl(p.baseUrl);
+  }
+
+  /** 从当前厂商推荐列表追加一个模型（去重，逗号分隔） */
+  function appendSuggestedModel(m) {
+    if (!m) return;
+    setModelsText((prev) => {
+      const parts = prev.split(',').map((s) => s.trim()).filter(Boolean);
+      if (parts.includes(m)) return prev;
+      return parts.length ? `${parts.join(', ')}, ${m}` : m;
+    });
   }
 
   async function autoScan() {
@@ -156,22 +188,76 @@ function LLMConfigCard() {
         )}
       </div>
       <div>
-        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Base URL</label>
-        <input value={llmUrl} onChange={e => setLlmUrl(e.target.value)}
-          placeholder="http://localhost:11434/v1"
+        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">厂商模板</label>
+        <select
+          value={providerId}
+          onChange={(e) => onProviderChange(e.target.value)}
+          className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500 mb-1.5"
+        >
+          {LLM_PROVIDER_PRESETS.map((p) => (
+            <option key={p.id} value={p.id}>{p.label}</option>
+          ))}
+        </select>
+        {presetHint && (
+          <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed mb-2">{presetHint}</p>
+        )}
+      </div>
+      <div>
+        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Base URL（可手工修改）</label>
+        <input value={llmUrl} onChange={(e) => { setLlmUrl(e.target.value); setProviderId('custom'); }}
+          placeholder="http://127.0.0.1:11434/v1 或 https://api.openai.com/v1"
           className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
       </div>
       <div>
         <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">API Key（可选）</label>
-        <input value={llmToken} onChange={e => setLlmToken(e.target.value)}
-          placeholder="无则留空" type="password"
-          className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
+        <div className="flex gap-2 items-stretch">
+          <input
+            value={llmToken}
+            onChange={(e) => setLlmToken(e.target.value)}
+            placeholder="无则留空"
+            type={showLlmToken ? 'text' : 'password'}
+            autoComplete="off"
+            className="flex-1 min-w-0 bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
+          />
+          <button
+            type="button"
+            onClick={() => setShowLlmToken((v) => !v)}
+            aria-label={showLlmToken ? '隐藏 API Key' : '显示 API Key'}
+            className="shrink-0 px-3 py-2 text-xs font-medium rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+          >
+            {showLlmToken ? '隐藏' : '显示'}
+          </button>
+        </div>
       </div>
       <div>
-        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">支持的模型（逗号分隔）</label>
-        <input value={modelsText} onChange={e => setModelsText(e.target.value)}
-          placeholder="qwen3-32b, qwen3-7b"
-          className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
+        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">支持的模型</label>
+        {suggestedModels.length > 0 ? (
+          <select
+            key={`${providerId}-${modelPickNonce}`}
+            defaultValue=""
+            aria-label="从当前厂商推荐列表追加模型"
+            onChange={(e) => {
+              const v = e.target.value;
+              if (!v) return;
+              appendSuggestedModel(v);
+              setModelPickNonce((n) => n + 1);
+            }}
+            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500 mb-2"
+          >
+            <option value="">— 从推荐列表选择（追加到下方）—</option>
+            {suggestedModels.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        ) : (
+          <p className="text-xs text-gray-400 dark:text-gray-500 mb-2">当前模板无内置推荐列表，请在下方手工填写模型 ID。</p>
+        )}
+        <input
+          value={modelsText}
+          onChange={(e) => { setModelsText(e.target.value); setProviderId('custom'); }}
+          placeholder="多个模型用英文逗号分隔，例如：qwen2.5:7b, gpt-4o-mini"
+          className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
+        />
       </div>
       <div>
         <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">节点名称</label>
@@ -237,7 +323,14 @@ function ApiKeysSection({ canCreate }) {
   }
 
   if (!canCreate) {
-    return <p className="text-sm text-gray-400 dark:text-gray-500">尚未开通 API Key 权限，请先购买积分。</p>;
+    return (
+      <div className="text-sm text-gray-400 dark:text-gray-500 space-y-2">
+        <p>尚未开通 API Key 权限。请先购买积分：打开左侧「个人中心」，在「购买积分」中提交申请并按管理员提供的联系方式完成线下付款，审核通过后即可在此创建 Key。</p>
+        <p>
+          <Link to="/" className="text-blue-600 dark:text-blue-400 hover:underline font-medium">前往个人中心 → 购买积分</Link>
+        </p>
+      </div>
+    );
   }
 
   return (
