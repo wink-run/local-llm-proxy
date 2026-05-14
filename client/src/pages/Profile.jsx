@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../store/index';
 import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus } from '../api/client';
 import { getServerUrl } from '../config';
@@ -304,12 +304,15 @@ function SpinCard({ onSpinSuccess }) {
   const [rotation, setRotation] = useState(0);
   const [result, setResult] = useState(null);
   const [msg, setMsg] = useState('');
+  const timerRef = useRef(null);
 
   useEffect(() => {
     getSpinStatus()
       .then((r) => setStatus(r.data))
       .catch(() => {});
   }, []);
+
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
   async function handleSpin() {
     if (spinning || status?.spins_left === 0) return;
@@ -334,7 +337,7 @@ function SpinCard({ onSpinSuccess }) {
     const extraSpins = 3 + Math.floor(Math.random() * 3);
     const extraDeg = Math.floor(Math.random() * 360);
     setRotation((prev) => prev + extraSpins * 360 + extraDeg);
-    setTimeout(() => {
+    timerRef.current = setTimeout(() => {
       setResult(credits);
       setMsg(`+${credits} 积分`);
       setSpinning(false);
@@ -383,9 +386,11 @@ function SpinCard({ onSpinSuccess }) {
           />
           {/* Center label */}
           <div className="absolute inset-0 flex items-center justify-center">
-            <span className="text-lg font-bold text-white drop-shadow select-none">
-              {result !== null ? result : '?'}
-            </span>
+            <div className="w-12 h-12 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center shadow">
+              <span className="text-base font-bold text-blue-700 dark:text-blue-300 select-none">
+                {result !== null ? result : '?'}
+              </span>
+            </div>
           </div>
         </div>
 
@@ -407,7 +412,7 @@ function SpinCard({ onSpinSuccess }) {
         {/* Usage counter */}
         {status && (
           <p className="text-xs text-gray-400 dark:text-gray-500">
-            已用 {status.spins_used}/{status.daily_limit} 次
+            已用 {status.spins_used}/{status.daily_limit ?? '?'} 次
           </p>
         )}
       </div>
