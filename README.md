@@ -164,6 +164,13 @@ Provide `.env` variables or export them manually before starting.
 
 ---
 
+## License
+
+This project is licensed under the **Apache License 2.0** — see [`LICENSE`](./LICENSE).  
+Attribution requirements for redistributors and downstream users are stated in [`NOTICE`](./NOTICE) (must retain NOTICE and visibly credit **Local LLM Proxy** with a link to the source repository).
+
+---
+
 ## Disclaimer
 
 This project is for **educational and research purposes only**. Users are responsible for complying with applicable laws, regulations, and upstream service terms. The authors assume no liability for any consequences arising from deployment, token sharing, or request forwarding.

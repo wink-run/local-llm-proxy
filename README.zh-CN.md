@@ -158,6 +158,15 @@ uvicorn server:app --host 0.0.0.0 --port 8000
 
 ---
 
+## 许可证
+
+本项目采用 **Apache License 2.0**，全文见仓库根目录 [`LICENSE`](./LICENSE)。  
+引用、再分发或基于本仓库制作衍生作品时，须遵守 [`NOTICE`](./NOTICE) 中的说明：**保留 NOTICE 与 LICENSE**，并**显著标注来源**——注明 **Local LLM Proxy** 项目名称及官方源码地址：
+
+https://github.com/wink-run/local-llm-proxy
+
+---
+
 ## 免责声明
 
 本项目仅供**学习与研究**使用。使用者须自行遵守所在地法律法规及上游服务条款；因部署、自愿共享 token、转发请求等行为所产生的任何后果，均由使用者**自行承担**，作者与贡献者不承担任何责任。

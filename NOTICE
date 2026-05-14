@@ -1,0 +1,26 @@
+Local LLM Proxy
+Copyright 2026 wink-run and contributors
+
+This product includes software developed for the Local LLM Proxy project.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License at https://www.apache.org/licenses/LICENSE-2.0
+
+================================================================================
+Attribution (NOTICE under Apache License, Section 4(d))
+================================================================================
+
+If you redistribute this software (in source or binary form), create derivative
+works, or incorporate substantial portions into your own product or public
+materials, you must:
+
+  1. Retain this NOTICE file (or its full text), the copyright line above, and
+     the LICENSE file with the Apache License 2.0; and
+
+  2. Provide clear, visible attribution to the **Local LLM Proxy** project,
+     including the project name and a link to the official source repository:
+
+        https://github.com/wink-run/local-llm-proxy
+
+This is in addition to all other conditions of the Apache License, Version 2.0.
