@@ -235,69 +235,6 @@ function PurchaseSection() {
   );
 }
 
-function CheckinCard({ onCheckinSuccess }) {
-  const [status, setStatus] = useState(null);   // null while loading
-  const [checking, setChecking] = useState(false);
-  const [msg, setMsg] = useState('');
-
-  useEffect(() => {
-    getCheckinStatus()
-      .then((r) => setStatus(r.data))
-      .catch(() => {});
-  }, []);
-
-  async function handleCheckin() {
-    setChecking(true);
-    setMsg('');
-    try {
-      const r = await checkin();
-      setMsg(`+${r.data.credits} 积分`);
-      setStatus((s) => ({ ...s, checked_in_today: true, credits_today: r.data.credits, total_checkins: (s?.total_checkins || 0) + 1 }));
-      onCheckinSuccess?.();
-    } catch (e) {
-      setMsg(e.response?.data?.detail || '签到失败');
-    } finally {
-      setChecking(false);
-    }
-  }
-
-  const done = status?.checked_in_today;
-
-  return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl px-5 py-4 flex items-center justify-between">
-      <div className="flex items-center gap-3">
-        <span className="text-2xl select-none">📅</span>
-        <div>
-          <p className="text-sm font-medium text-gray-700 dark:text-gray-200">每日签到</p>
-          <p className="text-xs text-gray-400 dark:text-gray-500">
-            {status === null ? '加载中…'
-              : done ? `今日已签到，+${status.credits_today} 积分`
-              : `签到得 ${status.reward} 积分 · 累计 ${status.total_checkins} 天`}
-          </p>
-        </div>
-      </div>
-      <div className="flex items-center gap-2">
-        {msg && (
-          <span className={`text-xs font-medium ${msg.startsWith('+') ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
-            {msg}
-          </span>
-        )}
-        <button
-          onClick={handleCheckin}
-          disabled={checking || done}
-          className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-            done
-              ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-default'
-              : 'bg-blue-600 hover:bg-blue-500 text-white'
-          } disabled:opacity-60`}
-        >
-          {checking ? '签到中…' : done ? '已签到 ✓' : '签到'}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 const WHEEL_SEGMENTS = [
   { label: '0-5',   angle: 30,  light: false },
   { label: '6-10',  angle: 90,  light: false },
@@ -307,91 +244,139 @@ const WHEEL_SEGMENTS = [
   { label: '41-50', angle: 330, light: true  },
 ];
 
-function SpinCard({ onSpinSuccess }) {
-  const [status, setStatus] = useState(null);
+function DailyCard({ onSuccess }) {
+  // checkin state
+  const [checkinStatus, setCheckinStatus] = useState(null);
+  const [checking, setChecking] = useState(false);
+  const [checkinMsg, setCheckinMsg] = useState('');
+  // spin state
+  const [spinStatus, setSpinStatus] = useState(null);
   const [spinning, setSpinning] = useState(false);
   const [rotation, setRotation] = useState(0);
   const [result, setResult] = useState(null);
-  const [msg, setMsg] = useState('');
+  const [spinMsg, setSpinMsg] = useState('');
   const [expanded, setExpanded] = useState(false);
   const timerRef = useRef(null);
 
   useEffect(() => {
-    getSpinStatus()
-      .then((r) => setStatus(r.data))
-      .catch(() => {});
+    getCheckinStatus().then((r) => setCheckinStatus(r.data)).catch(() => {});
+    getSpinStatus().then((r) => setSpinStatus(r.data)).catch(() => {});
   }, []);
 
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
+  async function handleCheckin() {
+    setChecking(true);
+    setCheckinMsg('');
+    try {
+      const r = await checkin();
+      setCheckinMsg(`+${r.data.credits} 积分`);
+      setCheckinStatus((s) => ({ ...s, checked_in_today: true, credits_today: r.data.credits, total_checkins: (s?.total_checkins || 0) + 1 }));
+      onSuccess?.();
+    } catch (e) {
+      setCheckinMsg(e.response?.data?.detail || '签到失败');
+    } finally {
+      setChecking(false);
+    }
+  }
+
   async function handleSpin() {
-    if (spinning || status?.spins_left === 0) return;
+    if (spinning || spinStatus?.spins_left === 0) return;
     setExpanded(true);
     setSpinning(true);
-    setMsg('');
+    setSpinMsg('');
     setResult(null);
     let credits = null;
     try {
       const r = await spin();
       credits = r.data.credits;
-      setStatus((s) => ({
-        ...s,
-        spins_used: r.data.spins_used,
-        spins_left: r.data.spins_left,
-      }));
+      setSpinStatus((s) => ({ ...s, spins_used: r.data.spins_used, spins_left: r.data.spins_left }));
     } catch (e) {
-      setMsg(e.response?.data?.detail || '抽奖失败');
+      setSpinMsg(e.response?.data?.detail || '抽奖失败');
       setSpinning(false);
       return;
     }
     const extraSpins = 3 + Math.floor(Math.random() * 3);
-    const extraDeg = Math.floor(Math.random() * 360);
-    setRotation((prev) => prev + extraSpins * 360 + extraDeg);
+    setRotation((prev) => prev + extraSpins * 360 + Math.floor(Math.random() * 360));
     timerRef.current = setTimeout(() => {
       setResult(credits);
-      setMsg(`+${credits} 积分`);
+      setSpinMsg(`+${credits} 积分`);
       setSpinning(false);
-      onSpinSuccess?.();
+      onSuccess?.();
     }, 2600);
   }
 
-  const exhausted = status?.spins_left === 0;
+  const checkinDone = checkinStatus?.checked_in_today;
+  const spinExhausted = spinStatus?.spins_left === 0;
 
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl px-5 py-4">
-      {/* Header row — compact, same style as CheckinCard */}
+    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl px-5 py-4 space-y-3">
+      {/* 签到行 */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className="text-2xl select-none">📅</span>
+          <div>
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-200">每日签到</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500">
+              {checkinStatus === null ? '加载中…'
+                : checkinDone ? `今日已签到，+${checkinStatus.credits_today} 积分`
+                : `签到得 ${checkinStatus.reward} 积分 · 累计 ${checkinStatus.total_checkins} 天`}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {checkinMsg && (
+            <span className={`text-xs font-medium ${checkinMsg.startsWith('+') ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+              {checkinMsg}
+            </span>
+          )}
+          <button
+            onClick={handleCheckin}
+            disabled={checking || checkinDone}
+            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+              checkinDone
+                ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-default'
+                : 'bg-blue-600 hover:bg-blue-500 text-white'
+            } disabled:opacity-60`}
+          >
+            {checking ? '签到中…' : checkinDone ? '已签到 ✓' : '签到'}
+          </button>
+        </div>
+      </div>
+
+      <div className="border-t border-gray-100 dark:border-gray-700" />
+
+      {/* 抽奖行 */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="text-2xl select-none">🎡</span>
           <div>
             <p className="text-sm font-medium text-gray-700 dark:text-gray-200">每日转盘</p>
             <p className="text-xs text-gray-400 dark:text-gray-500">
-              {status === null
-                ? '加载中…'
-                : exhausted
-                ? '今日次数已用完'
-                : `今日剩余 ${status.spins_left} 次`}
+              {spinStatus === null ? '加载中…'
+                : spinExhausted ? '今日次数已用完'
+                : `今日剩余 ${spinStatus.spins_left} 次`}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {msg && (
-            <span className={`text-xs font-medium ${msg.startsWith('+') ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
-              {msg}
+          {spinMsg && (
+            <span className={`text-xs font-medium ${spinMsg.startsWith('+') ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+              {spinMsg}
             </span>
           )}
           <button
             onClick={handleSpin}
-            disabled={spinning || exhausted || status === null}
+            disabled={spinning || spinExhausted || spinStatus === null}
             className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-              exhausted
+              spinExhausted
                 ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-default'
                 : spinning
                 ? 'bg-blue-400 text-white cursor-wait'
                 : 'bg-blue-600 hover:bg-blue-500 text-white'
             } disabled:opacity-60`}
           >
-            {spinning ? '抽奖中…' : exhausted ? '明日再来' : '抽奖'}
+            {spinning ? '抽奖中…' : spinExhausted ? '明日再来' : '抽奖'}
           </button>
           <button
             onClick={() => setExpanded((v) => !v)}
@@ -403,13 +388,11 @@ function SpinCard({ onSpinSuccess }) {
         </div>
       </div>
 
-      {/* Expandable wheel */}
+      {/* 可展开的转盘 */}
       {expanded && (
-        <div className="flex flex-col items-center gap-3 mt-5">
+        <div className="flex flex-col items-center gap-3 pt-2">
           <div className="relative w-44 h-44">
-            {/* Fixed pointer */}
             <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1 z-10 text-xl select-none">▼</div>
-            {/* Spinning wheel */}
             <div
               className="relative w-44 h-44 rounded-full border-4 border-blue-600 dark:border-blue-500"
               style={{
@@ -418,7 +401,6 @@ function SpinCard({ onSpinSuccess }) {
                 background: 'conic-gradient(#3b82f6 0deg 60deg, #60a5fa 60deg 120deg, #93c5fd 120deg 180deg, #bfdbfe 180deg 240deg, #dbeafe 240deg 300deg, #eff6ff 300deg 360deg)',
               }}
             >
-              {/* Segment labels — rotate each label to its sector center */}
               {WHEEL_SEGMENTS.map(({ label, angle, light }) => (
                 <div
                   key={label}
@@ -431,7 +413,6 @@ function SpinCard({ onSpinSuccess }) {
                 </div>
               ))}
             </div>
-            {/* Center label — non-rotating */}
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="w-14 h-14 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center shadow">
                 <span className="text-base font-bold text-blue-700 dark:text-blue-300 select-none">
@@ -440,9 +421,9 @@ function SpinCard({ onSpinSuccess }) {
               </div>
             </div>
           </div>
-          {status && (
+          {spinStatus && (
             <p className="text-xs text-gray-400 dark:text-gray-500">
-              已用 {status.spins_used}/{status.daily_limit ?? '?'} 次
+              已用 {spinStatus.spins_used}/{spinStatus.daily_limit ?? '?'} 次
             </p>
           )}
         </div>
@@ -491,8 +472,7 @@ export default function Profile() {
         <StatCard label="累计消耗积分" value={Math.floor(user.credits_spent ?? 0).toLocaleString()} />
       </div>
 
-      <CheckinCard onCheckinSuccess={refreshUser} />
-      <SpinCard onSpinSuccess={refreshUser} />
+      <DailyCard onSuccess={refreshUser} />
 
       <PurchaseSection />
 
