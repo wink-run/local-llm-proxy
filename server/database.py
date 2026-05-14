@@ -128,12 +128,25 @@ async def init_db() -> None:
             )
         """)
 
+        # spin_logs
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS spin_logs (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id    INTEGER NOT NULL REFERENCES users(id),
+                date       TEXT NOT NULL,
+                credits    REAL NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+
         # 默认配置项
         for k, v in [
             ("referral_reward", "100"),
             ("newcomer_reward", "50"),
             ("contact_info", ""),
             ("checkin_reward", "5"),
+            ("spin_daily_limit", "3"),
+            ("spin_max_credits", "50"),
         ]:
             await db.execute(
                 "INSERT OR IGNORE INTO system_config(key,value) VALUES(?,?)", (k, v)
@@ -144,6 +157,7 @@ async def init_db() -> None:
     await _migrate()
     await _migrate_apikey_default_open()
     await _migrate_checkins()
+    await _migrate_spin_logs()
     await _migrate_virtual_agents()
 
 
@@ -173,6 +187,23 @@ async def _migrate_checkins() -> None:
         await db.execute(
             "INSERT OR IGNORE INTO system_config(key,value) VALUES('checkin_reward','5')"
         )
+        await db.commit()
+
+
+async def _migrate_spin_logs() -> None:
+    """Add spin_logs table and config keys for databases created before this feature."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS spin_logs (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id    INTEGER NOT NULL REFERENCES users(id),
+                date       TEXT NOT NULL,
+                credits    REAL NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        await db.execute("INSERT OR IGNORE INTO system_config(key,value) VALUES('spin_daily_limit','3')")
+        await db.execute("INSERT OR IGNORE INTO system_config(key,value) VALUES('spin_max_credits','50')")
         await db.commit()
 
 
