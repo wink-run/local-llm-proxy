@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../store/index';
-import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder } from '../api/client';
+import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus } from '../api/client';
 import { getServerUrl } from '../config';
 
 const TX_LABEL = {
@@ -9,6 +9,7 @@ const TX_LABEL = {
   referral: '推荐',
   purchase: '充值',
   adjust: '调整',
+  spin: '转盘抽奖',
 };
 
 const ORDER_STATUS = {
@@ -297,6 +298,123 @@ function CheckinCard({ onCheckinSuccess }) {
   );
 }
 
+function SpinCard({ onSpinSuccess }) {
+  const [status, setStatus] = useState(null);
+  const [spinning, setSpinning] = useState(false);
+  const [rotation, setRotation] = useState(0);
+  const [result, setResult] = useState(null);
+  const [msg, setMsg] = useState('');
+
+  useEffect(() => {
+    getSpinStatus()
+      .then((r) => setStatus(r.data))
+      .catch(() => {});
+  }, []);
+
+  async function handleSpin() {
+    if (spinning || status?.spins_left === 0) return;
+    setSpinning(true);
+    setMsg('');
+    setResult(null);
+    let credits = null;
+    try {
+      const r = await spin();
+      credits = r.data.credits;
+      setStatus((s) => ({
+        ...s,
+        spins_used: r.data.spins_used,
+        spins_left: r.data.spins_left,
+      }));
+    } catch (e) {
+      setMsg(e.response?.data?.detail || '抽奖失败');
+      setSpinning(false);
+      return;
+    }
+    // Animate: 3-5 full rotations + random extra degrees
+    const extraSpins = 3 + Math.floor(Math.random() * 3);
+    const extraDeg = Math.floor(Math.random() * 360);
+    setRotation((prev) => prev + extraSpins * 360 + extraDeg);
+    setTimeout(() => {
+      setResult(credits);
+      setMsg(`+${credits} 积分`);
+      setSpinning(false);
+      onSpinSuccess?.();
+    }, 2600);
+  }
+
+  const exhausted = status?.spins_left === 0;
+
+  return (
+    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl px-5 py-5">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <span className="text-2xl select-none">🎡</span>
+          <div>
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-200">每日转盘</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500">
+              {status === null
+                ? '加载中…'
+                : exhausted
+                ? '今日次数已用完'
+                : `今日剩余 ${status.spins_left} 次`}
+            </p>
+          </div>
+        </div>
+        {msg && (
+          <span className={`text-sm font-medium ${msg.startsWith('+') ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+            {msg}
+          </span>
+        )}
+      </div>
+
+      <div className="flex flex-col items-center gap-4">
+        {/* Wheel */}
+        <div className="relative w-36 h-36">
+          {/* Fixed pointer */}
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1 z-10 text-xl select-none">▼</div>
+          {/* Spinning wheel */}
+          <div
+            className="w-36 h-36 rounded-full border-4 border-blue-600 dark:border-blue-500"
+            style={{
+              transform: `rotate(${rotation}deg)`,
+              transition: spinning ? 'transform 2.5s cubic-bezier(0.17,0.67,0.12,0.99)' : 'none',
+              background: 'conic-gradient(#3b82f6 0deg 60deg, #60a5fa 60deg 120deg, #93c5fd 120deg 180deg, #bfdbfe 180deg 240deg, #dbeafe 240deg 300deg, #eff6ff 300deg 360deg)',
+            }}
+          />
+          {/* Center label */}
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-lg font-bold text-white drop-shadow select-none">
+              {result !== null ? result : '?'}
+            </span>
+          </div>
+        </div>
+
+        {/* Button */}
+        <button
+          onClick={handleSpin}
+          disabled={spinning || exhausted || status === null}
+          className={`px-6 py-2 rounded-lg text-sm font-medium transition-colors ${
+            exhausted
+              ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-default'
+              : spinning
+              ? 'bg-blue-400 text-white cursor-wait'
+              : 'bg-blue-600 hover:bg-blue-500 text-white'
+          } disabled:opacity-60`}
+        >
+          {spinning ? '抽奖中…' : exhausted ? '明日再来' : '开始抽奖'}
+        </button>
+
+        {/* Usage counter */}
+        {status && (
+          <p className="text-xs text-gray-400 dark:text-gray-500">
+            已用 {status.spins_used}/{status.daily_limit} 次
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Profile() {
   const { user, refreshUser } = useAuth();
   const [txs, setTxs] = useState([]);
@@ -338,6 +456,7 @@ export default function Profile() {
       </div>
 
       <CheckinCard onCheckinSuccess={refreshUser} />
+      <SpinCard onSpinSuccess={refreshUser} />
 
       <PurchaseSection />
 
