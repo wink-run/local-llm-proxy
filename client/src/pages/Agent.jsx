@@ -401,35 +401,11 @@ function CopyButton({ text, label = '复制' }) {
 }
 
 
-function ModelsSection({ serverUrl }) {
-  const [models, setModels] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const base = serverUrl.replace(/\/+$/, '');
-    const jwt = localStorage.getItem('token');
-
-    // /v1/models requires an API key, not a JWT — resolve it first
-    fetch(`${base}/user/keys`, { headers: { Authorization: `Bearer ${jwt}` } })
-      .then((r) => r.ok ? r.json() : { keys: [] })
-      .then((d) => {
-        const apiKey = (d.keys || []).find((k) => k.is_active)?.key;
-        return fetch(`${base}/v1/models`, {
-          headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
-        });
-      })
-      .then((r) => r.json())
-      .then((d) => setModels((d.data || []).map((m) => m.id || m)))
-      .catch(() => setModels([]))
-      .finally(() => setLoading(false));
-  }, [serverUrl]);
-
+function ModelsSection({ models }) {
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">可用模型</h2>
-      {loading ? (
-        <p className="text-sm text-gray-400 dark:text-gray-500">加载中…</p>
-      ) : models.length === 0 ? (
+      {models.length === 0 ? (
         <p className="text-sm text-gray-400 dark:text-gray-500">暂无可用模型</p>
       ) : (
         <div className="flex flex-wrap gap-2">
@@ -450,15 +426,37 @@ function ConsumeTab({ user }) {
   const serverUrl = getServerUrl();
   const base      = serverUrl.replace(/\/+$/, '');
   const openaiUrl = base + '/v1';
-  const anthropicUrl = base;   // Anthropic SDK appends /v1/messages itself
+  const anthropicUrl = base;
 
-  const [style, setStyle] = useState('openai');       // 'openai' | 'anthropic'
+  const [style, setStyle] = useState('openai');
   const [activeSnippet, setActiveSnippet] = useState(0);
+  const [models, setModels] = useState([]);
+  const [selectedModel, setSelectedModel] = useState('');
 
   // Claude Code one-click config state
-  const [ccStatus, setCcStatus]       = useState(null);  // null | true | false
+  const [ccStatus, setCcStatus]       = useState(null);
   const [ccConfiguring, setCcConfiguring] = useState(false);
   const [ccMsg, setCcMsg]             = useState('');
+
+  // Fetch available models once
+  useEffect(() => {
+    const jwt = localStorage.getItem('token');
+    fetch(`${base}/user/keys`, { headers: { Authorization: `Bearer ${jwt}` } })
+      .then((r) => r.ok ? r.json() : { keys: [] })
+      .then((d) => {
+        const apiKey = (d.keys || []).find((k) => k.is_active)?.key;
+        return fetch(`${base}/v1/models`, {
+          headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+        });
+      })
+      .then((r) => r.json())
+      .then((d) => {
+        const ids = (d.data || []).map((m) => m.id || m);
+        setModels(ids);
+        if (ids.length) setSelectedModel(ids[0]);
+      })
+      .catch(() => {});
+  }, [base]);
 
   useEffect(() => {
     window.electronAPI?.claude.status().then((r) => setCcStatus(r.configured));
@@ -471,10 +469,6 @@ function ConsumeTab({ user }) {
       const keysRes = await listKeys().catch(() => ({ data: { keys: [] } }));
       const activeKey = (keysRes.data.keys || []).find((k) => k.is_active);
       if (!activeKey) { setCcMsg('请先创建并启用一个 API Key'); return; }
-      const modelsData = await fetch(`${base}/v1/models`, {
-        headers: { Authorization: `Bearer ${activeKey.key}` },
-      }).then((r) => r.json()).catch(() => ({ data: [] }));
-      const models = (modelsData.data || []).map((m) => m.id || m);
       await window.electronAPI.claude.configure(base, activeKey.key, models);
       setCcStatus(true);
       setCcMsg(`配置成功${models.length ? `，${models.length} 个模型` : ''}，重启 Claude Code 生效`);
@@ -489,6 +483,8 @@ function ConsumeTab({ user }) {
     { id: 'anthropic', label: 'Anthropic 风格' },
   ];
 
+  const m = selectedModel || '<模型名>';
+
   const snippetsByStyle = {
     openai: [
       {
@@ -497,15 +493,15 @@ function ConsumeTab({ user }) {
       },
       {
         label: 'curl',
-        code: `curl "${openaiUrl}/chat/completions" \\\n  -H "Authorization: Bearer <你的 API Key>" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"<模型名>","messages":[{"role":"user","content":"Hello"}]}'`,
+        code: `curl "${openaiUrl}/chat/completions" \\\n  -H "Authorization: Bearer <你的 API Key>" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${m}","messages":[{"role":"user","content":"Hello"}]}'`,
       },
       {
         label: 'Python',
-        code: `from openai import OpenAI\n\nclient = OpenAI(\n    base_url="${openaiUrl}",\n    api_key="<你的 API Key>",\n)`,
+        code: `from openai import OpenAI\n\nclient = OpenAI(\n    base_url="${openaiUrl}",\n    api_key="<你的 API Key>",\n)\n\nresponse = client.chat.completions.create(\n    model="${m}",\n    messages=[{"role": "user", "content": "Hello"}],\n)\nprint(response.choices[0].message.content)`,
       },
       {
         label: 'Node.js',
-        code: `import OpenAI from 'openai';\n\nconst client = new OpenAI({\n  baseURL: '${openaiUrl}',\n  apiKey: '<你的 API Key>',\n});`,
+        code: `import OpenAI from 'openai';\n\nconst client = new OpenAI({\n  baseURL: '${openaiUrl}',\n  apiKey: '<你的 API Key>',\n});\n\nconst response = await client.chat.completions.create({\n  model: '${m}',\n  messages: [{ role: 'user', content: 'Hello' }],\n});\nconsole.log(response.choices[0].message.content);`,
       },
     ],
     anthropic: [
@@ -519,31 +515,28 @@ function ConsumeTab({ user }) {
       },
       {
         label: 'curl',
-        code: `curl "${anthropicUrl}/v1/messages" \\\n  -H "x-api-key: <你的 API Key>" \\\n  -H "anthropic-version: 2023-06-01" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"<模型名>","max_tokens":1024,"messages":[{"role":"user","content":"Hello"}]}'`,
+        code: `curl "${anthropicUrl}/v1/messages" \\\n  -H "x-api-key: <你的 API Key>" \\\n  -H "anthropic-version: 2023-06-01" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${m}","max_tokens":1024,"messages":[{"role":"user","content":"Hello"}]}'`,
       },
       {
         label: 'Python',
-        code: `import anthropic\n\nclient = anthropic.Anthropic(\n    base_url="${anthropicUrl}",\n    api_key="<你的 API Key>",\n)`,
+        code: `import anthropic\n\nclient = anthropic.Anthropic(\n    base_url="${anthropicUrl}",\n    api_key="<你的 API Key>",\n)\n\nmessage = client.messages.create(\n    model="${m}",\n    max_tokens=1024,\n    messages=[{"role": "user", "content": "Hello"}],\n)\nprint(message.content[0].text)`,
       },
       {
         label: 'Node.js',
-        code: `import Anthropic from '@anthropic-ai/sdk';\n\nconst client = new Anthropic({\n  baseURL: '${anthropicUrl}',\n  apiKey: '<你的 API Key>',\n});`,
+        code: `import Anthropic from '@anthropic-ai/sdk';\n\nconst client = new Anthropic({\n  baseURL: '${anthropicUrl}',\n  apiKey: '<你的 API Key>',\n});\n\nconst message = await client.messages.create({\n  model: '${m}',\n  max_tokens: 1024,\n  messages: [{ role: 'user', content: 'Hello' }],\n});\nconsole.log(message.content[0].text);`,
       },
     ],
   };
 
   const snippets = snippetsByStyle[style];
 
-  // Reset snippet index when switching style
   function switchStyle(s) {
     setStyle(s);
     setActiveSnippet(0);
   }
 
   const endpointUrl = style === 'openai' ? openaiUrl : anthropicUrl;
-  const endpointDesc = style === 'openai'
-    ? 'POST /v1/chat/completions'
-    : 'POST /v1/messages';
+  const endpointDesc = style === 'openai' ? 'POST /v1/chat/completions' : 'POST /v1/messages';
 
   return (
     <div className="space-y-6">
@@ -551,7 +544,6 @@ function ConsumeTab({ user }) {
       <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">接入配置</h2>
-          {/* Style toggle */}
           <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
             {STYLES.map(({ id, label }) => (
               <button key={id} onClick={() => switchStyle(id)}
@@ -584,7 +576,18 @@ function ConsumeTab({ user }) {
 
         {/* Usage snippets */}
         <div>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mb-2">快速接入</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs text-gray-400 dark:text-gray-500">快速接入</p>
+            {models.length > 0 && (
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className="text-xs bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1 text-gray-700 dark:text-gray-300 focus:outline-none focus:border-blue-500"
+              >
+                {models.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            )}
+          </div>
           <div className="flex gap-1 mb-2 flex-wrap">
             {snippets.map((s, i) => (
               <button key={i} onClick={() => setActiveSnippet(i)}
@@ -606,7 +609,6 @@ function ConsumeTab({ user }) {
             </div>
           </div>
 
-          {/* Claude Code one-click config — shown only on Anthropic / Claude Code tab */}
           {style === 'anthropic' && snippets[activeSnippet].label === 'Claude Code' && window.electronAPI?.claude && (
             <div className="mt-2 flex items-center justify-between gap-3 bg-gray-50 dark:bg-gray-900 rounded-xl px-4 py-2.5">
               <div className="flex items-center gap-2 min-w-0">
@@ -629,7 +631,7 @@ function ConsumeTab({ user }) {
         </div>
       </div>
 
-      <ModelsSection serverUrl={serverUrl} />
+      <ModelsSection serverUrl={serverUrl} models={models} />
 
       {/* API Key section */}
       <section className="space-y-3">
