@@ -496,6 +496,10 @@ function ConsumeTab({ user }) {
         code: `export OPENAI_BASE_URL="${openaiUrl}"\nexport OPENAI_API_KEY="<你的 API Key>"`,
       },
       {
+        label: 'curl',
+        code: `curl "${openaiUrl}/chat/completions" \\\n  -H "Authorization: Bearer <你的 API Key>" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"<模型名>","messages":[{"role":"user","content":"Hello"}]}'`,
+      },
+      {
         label: 'Python',
         code: `from openai import OpenAI\n\nclient = OpenAI(\n    base_url="${openaiUrl}",\n    api_key="<你的 API Key>",\n)`,
       },
@@ -512,6 +516,10 @@ function ConsumeTab({ user }) {
       {
         label: 'Claude Code',
         code: `ANTHROPIC_BASE_URL="${anthropicUrl}" \\\nANTHROPIC_AUTH_TOKEN="<你的 API Key>" \\\nclaude`,
+      },
+      {
+        label: 'curl',
+        code: `curl "${anthropicUrl}/v1/messages" \\\n  -H "x-api-key: <你的 API Key>" \\\n  -H "anthropic-version: 2023-06-01" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"<模型名>","max_tokens":1024,"messages":[{"role":"user","content":"Hello"}]}'`,
       },
       {
         label: 'Python',
