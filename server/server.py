@@ -10,7 +10,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 
@@ -402,3 +402,122 @@ async def chat_completions(request: Request, key_info: dict = Depends(auth_user)
         )
 
     return resp
+
+
+# ── Anthropic Messages API (/v1/messages) ────────────────────────────────────
+
+async def _auth_anthropic(request: Request) -> dict:
+    """Accept x-api-key (Anthropic style) or Authorization: Bearer."""
+    api_key = request.headers.get("x-api-key") or request.headers.get("X-Api-Key")
+    if not api_key:
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            api_key = auth[7:]
+    if not api_key:
+        raise HTTPException(401, "Missing API key")
+    info = await db.verify_key(api_key)
+    if not info:
+        raise HTTPException(401, "Invalid or disabled API key")
+    return info
+
+
+def _anthropic_to_openai(body: dict) -> dict:
+    """Anthropic Messages request → OpenAI Chat Completions request."""
+    messages = list(body.get("messages", []))
+    if body.get("system"):
+        messages = [{"role": "system", "content": body["system"]}] + messages
+    oai: dict = {
+        "model": body.get("model", ""),
+        "messages": messages,
+        "stream": body.get("stream", False),
+    }
+    for key, oai_key in [("max_tokens", "max_tokens"), ("temperature", "temperature"),
+                          ("top_p", "top_p")]:
+        if key in body:
+            oai[oai_key] = body[key]
+    if "stop_sequences" in body:
+        oai["stop"] = body["stop_sequences"]
+    return oai
+
+
+def _openai_to_anthropic(oai: dict, model: str) -> dict:
+    """OpenAI Chat Completions response → Anthropic Messages response."""
+    choice = (oai.get("choices") or [{}])[0]
+    text = (choice.get("message") or {}).get("content") or ""
+    finish = choice.get("finish_reason", "stop")
+    stop_reason = "end_turn" if finish in ("stop", None) else finish
+    usage = oai.get("usage") or {}
+    return {
+        "id": oai.get("id", "msg_" + uuid.uuid4().hex[:24]),
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "text", "text": text}],
+        "model": model,
+        "stop_reason": stop_reason,
+        "stop_sequence": None,
+        "usage": {
+            "input_tokens": usage.get("prompt_tokens", 0),
+            "output_tokens": usage.get("completion_tokens", 0),
+        },
+    }
+
+
+@app.post("/v1/messages")
+async def messages(request: Request, key_info: dict = Depends(_auth_anthropic)):
+    body = await request.json()
+    consumer_user_id: Optional[int] = key_info.get("user_id")
+    model = body.get("model", "")
+    streaming = body.get("stream", False)
+
+    oai_body = _anthropic_to_openai(body)
+    resp = await handle_chat(oai_body, consumer_user_id=consumer_user_id)
+
+    if streaming:
+        msg_id = "msg_" + uuid.uuid4().hex[:24]
+
+        async def anthropic_sse():
+            yield (
+                f'event: message_start\ndata: {{"type":"message_start","message":{{"id":"{msg_id}",'
+                f'"type":"message","role":"assistant","content":[],"model":"{model}",'
+                f'"stop_reason":null,"stop_sequence":null,"usage":{{"input_tokens":0,"output_tokens":0}}}}}}\n\n'
+            )
+            yield 'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n'
+            yield 'event: ping\ndata: {"type":"ping"}\n\n'
+
+            output_tokens = 0
+            async for chunk in resp.body_iterator:
+                if isinstance(chunk, bytes):
+                    chunk = chunk.decode()
+                for line in chunk.splitlines():
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:]
+                    if data_str == "[DONE]":
+                        continue
+                    try:
+                        oai_chunk = json.loads(data_str)
+                    except Exception:
+                        continue
+                    delta = (oai_chunk.get("choices") or [{}])[0].get("delta") or {}
+                    text = delta.get("content") or ""
+                    finish = (oai_chunk.get("choices") or [{}])[0].get("finish_reason")
+                    if text:
+                        output_tokens += 1
+                        yield f'event: content_block_delta\ndata: {{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":{json.dumps(text)}}}}}\n\n'
+                    if finish:
+                        stop_reason = "end_turn" if finish == "stop" else finish
+                        yield f'event: content_block_stop\ndata: {{"type":"content_block_stop","index":0}}\n\n'
+                        yield f'event: message_delta\ndata: {{"type":"message_delta","delta":{{"stop_reason":"{stop_reason}","stop_sequence":null}},"usage":{{"output_tokens":{output_tokens}}}}}\n\n'
+                        yield 'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+
+        return StreamingResponse(
+            anthropic_sse(),
+            media_type="text/event-stream",
+            headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+        )
+
+    # Non-streaming: consume credits then convert format
+    if consumer_user_id and isinstance(resp, dict):
+        await db.consume_credits_for_usage(consumer_user_id, model, resp.get("usage") or {})
+
+    return _openai_to_anthropic(resp, model)
