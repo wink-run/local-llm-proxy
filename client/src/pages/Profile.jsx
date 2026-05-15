@@ -77,9 +77,9 @@ function ReferralSection({ referralCode }) {
 /** 与网页版 app.html「购买积分」一致：说明、联系方式、提交申请、历史记录 */
 function PurchaseSection() {
   const [orders, setOrders] = useState([]);
-  const [contactInfo, setContactInfo] = useState('');
+  const [adminInfo, setAdminInfo] = useState('');
   const [loading, setLoading] = useState(true);
-  const [amount, setAmount] = useState('');
+  const [contact, setContact] = useState('');
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState('');
@@ -90,29 +90,26 @@ function PurchaseSection() {
     getPurchaseOrders()
       .then((r) => {
         setOrders(r.data.orders || []);
-        if (r.data.contact_info) setContactInfo(String(r.data.contact_info));
+        if (r.data.contact_info) setAdminInfo(String(r.data.contact_info));
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => {
-    load();
-  }, []);
+  useEffect(() => { load(); }, []);
 
   async function handleSubmit(e) {
     e.preventDefault();
-    const n = Number(amount);
-    if (!n || n <= 0) return;
+    if (!contact.trim()) return;
     setSubmitting(true);
     setMsg('');
     try {
-      const r = await createPurchaseOrder(n, note.trim());
+      const r = await createPurchaseOrder(0, `联系方式：${contact.trim()}${note.trim() ? `；${note.trim()}` : ''}`);
       setMsgOk(true);
-      setMsg('申请已提交，请按下方联系方式完成付款，管理员确认后自动充值。');
-      if (r.data.contact_info) setContactInfo(String(r.data.contact_info));
+      setMsg('申请已提交，管理员将与你联系确定积分额度。');
+      if (r.data.contact_info) setAdminInfo(String(r.data.contact_info));
       setOrders((prev) => [r.data.order, ...prev]);
-      setAmount('');
+      setContact('');
       setNote('');
     } catch (err) {
       setMsgOk(false);
@@ -124,41 +121,42 @@ function PurchaseSection() {
 
   return (
     <section className="space-y-3">
-      <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">购买积分</h2>
+      <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">直接申领积分</h2>
       <p className="text-sm text-gray-500 dark:text-gray-400">
-        提交申请后，请按下方联系方式完成线下付款；管理员审核通过后会自动充值并视情况开通 API Key 创建权限。
+        提交申请后，并填写联系方式，管理员将与你联系确定积分额度。
       </p>
 
-      <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4 space-y-4">
-        <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row sm:flex-wrap gap-3 items-end">
-          <div className="flex-1 min-w-[120px]">
-            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">积分数量</label>
+      <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4 space-y-3">
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div>
+            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+              联系方式 <span className="text-red-400">*</span>
+            </label>
             <input
-              type="number"
-              min={1}
-              step={1}
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="例如 500"
+              type="text"
+              value={contact}
+              onChange={(e) => setContact(e.target.value)}
+              placeholder="手机 / 微信 / 邮箱"
+              required
               className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
             />
           </div>
-          <div className="flex-[2] min-w-[160px]">
+          <div>
             <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">备注（可选）</label>
             <input
               type="text"
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="支付方式 / 金额说明"
+              placeholder="期望积分数量或其他说明"
               className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
             />
           </div>
           <button
             type="submit"
-            disabled={submitting || !amount || Number(amount) <= 0}
-            className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition-colors whitespace-nowrap"
+            disabled={submitting || !contact.trim()}
+            className="w-full py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition-colors"
           >
-            {submitting ? '提交中…' : '提交购买申请'}
+            {submitting ? '提交中…' : '提交申领'}
           </button>
         </form>
 
@@ -168,21 +166,19 @@ function PurchaseSection() {
           </p>
         )}
 
-        <div>
-          <p className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-2">联系方式（付款信息）</p>
-          {contactInfo ? (
+        {adminInfo && (
+          <div>
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">管理员附加信息</p>
             <div className="text-sm text-gray-700 dark:text-gray-200 whitespace-pre-wrap bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-700 rounded-lg px-3 py-2">
-              {contactInfo}
+              {adminInfo}
             </div>
-          ) : (
-            <p className="text-xs text-gray-400 dark:text-gray-500">管理员暂未配置联系方式，请稍后再试或联系运营。</p>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       <div>
         <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">我的购买记录</h3>
+          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">我的申领记录</h3>
           <button
             type="button"
             onClick={load}
@@ -195,7 +191,7 @@ function PurchaseSection() {
         {loading && orders.length === 0 ? (
           <p className="text-sm text-gray-400 dark:text-gray-500">加载中…</p>
         ) : orders.length === 0 ? (
-          <p className="text-sm text-gray-400 dark:text-gray-500">暂无购买记录</p>
+          <p className="text-sm text-gray-400 dark:text-gray-500">暂无申领记录</p>
         ) : (
           <div className="space-y-2">
             {orders.map((o) => (
@@ -205,7 +201,9 @@ function PurchaseSection() {
               >
                 <div className="flex flex-wrap justify-between gap-2">
                   <span className="text-gray-500 dark:text-gray-400 text-xs">{o.created_at?.slice(0, 19)?.replace('T', ' ')}</span>
-                  <span className="font-semibold text-gray-900 dark:text-gray-100">{o.amount_credits} 积分</span>
+                  {o.amount_credits > 0 && (
+                    <span className="font-semibold text-gray-900 dark:text-gray-100">{o.amount_credits} 积分</span>
+                  )}
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   <span
@@ -222,8 +220,8 @@ function PurchaseSection() {
                 </div>
                 {(o.note || o.admin_note) && (
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 space-y-0.5">
-                    {o.note ? <span className="block">备注：{o.note}</span> : null}
-                    {o.admin_note ? <span className="block">管理员：{o.admin_note}</span> : null}
+                    {o.note ? <span className="block">{o.note}</span> : null}
+                    {o.admin_note ? <span className="block text-blue-600 dark:text-blue-400">管理员：{o.admin_note}</span> : null}
                   </p>
                 )}
               </div>

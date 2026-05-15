@@ -185,8 +185,8 @@ class PurchaseRequest(BaseModel):
 
 @router.post("/purchase-order")
 async def create_purchase_order(req: PurchaseRequest, uid: int = Depends(get_current_user_id)):
-    if req.amount_credits <= 0:
-        raise HTTPException(400, "积分数量必须大于 0")
+    if req.amount_credits < 0:
+        raise HTTPException(400, "积分数量不能为负数")
     contact = await db.get_config("contact_info", "")
     order = await db.create_purchase_order(uid, req.amount_credits, req.note)
     return {"order": order, "contact_info": contact}
