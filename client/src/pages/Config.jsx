@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { login, getProfile } from '../api/client';
 import { useAuth } from '../store/index';
 import { useTheme } from '../store/theme';
+import logo from '../assets/logo.svg';
 import { useLang } from '../store/lang';
 import { DEFAULT_SERVER_URL } from '../config';
 
@@ -137,7 +138,11 @@ export default function Config() {
     return (
       <div className="flex h-full items-center justify-center bg-gray-50 dark:bg-gray-950">
         <div className="w-full max-w-sm px-8 py-10 space-y-6">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 text-center">{t('config.title')}</h1>
+          {/* Brand */}
+          <div className="flex flex-col items-center gap-2 mb-2">
+            <img src={logo} alt="Token Bank" className="w-16 h-16" />
+            <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Token Bank</h1>
+          </div>
 
           {firstRun && (
             <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-xl px-4 py-3 text-sm text-blue-700 dark:text-blue-300">
@@ -173,6 +178,16 @@ export default function Config() {
               {saving ? t('config.loggingIn') : t('config.login')}
             </button>
           </form>
+
+          {/* Disclaimer */}
+          <p className="text-xs text-gray-400 dark:text-gray-600 text-center leading-relaxed pt-2">
+            {t('config.footer.beforeLink')}
+            <a href="https://github.com/wink-run/local-llm-proxy" target="_blank" rel="noreferrer"
+              className="underline hover:text-gray-600 dark:hover:text-gray-400 transition-colors">
+              local-llm-proxy
+            </a>
+            {t('config.footer.afterLink')}
+          </p>
         </div>
       </div>
     );
