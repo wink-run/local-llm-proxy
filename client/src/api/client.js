@@ -16,6 +16,10 @@ export function login(email, password) {
   return http.post('/user/login', { email, password });
 }
 
+export function register(email, password, nickname = '', referral_code = '') {
+  return http.post('/user/register', { email, password, nickname, referral_code });
+}
+
 export function getProfile() {
   return http.get('/user/profile');
 }

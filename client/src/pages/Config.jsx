@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { login, getProfile } from '../api/client';
+import { login, register, getProfile } from '../api/client';
 import { useAuth } from '../store/index';
 import { useTheme } from '../store/theme';
 import logo from '../assets/logo.svg';
@@ -83,8 +83,11 @@ export default function Config() {
   const [serverUrl, setServerUrl] = useState(
     () => localStorage.getItem('serverUrl') || DEFAULT_SERVER_URL
   );
+  const [mode, setMode] = useState('login'); // 'login' | 'register'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [nickname, setNickname] = useState('');
+  const [referralCode, setReferralCode] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -95,6 +98,18 @@ export default function Config() {
     window.electronAPI.config.read().then((cfg) => { if (!cfg) setFirstRun(true); });
   }, []);
 
+  async function afterAuth(token) {
+    localStorage.setItem('token', token);
+    const profileRes = await getProfile();
+    loginSuccess(token, profileRes.data);
+    if (window.electronAPI) {
+      const current = (await window.electronAPI.config.read()) || {};
+      const wsUrl = serverUrl.replace(/^https?/, (m) => (m === 'https' ? 'wss' : 'ws')) + '/ws/worker';
+      await window.electronAPI.config.write({ ...current, server_url: wsUrl, worker_key: profileRes.data.worker_key || '' });
+    }
+    navigate('/');
+  }
+
   async function handleLogin(e) {
     e.preventDefault();
     setError('');
@@ -102,30 +117,34 @@ export default function Config() {
     try {
       localStorage.setItem('serverUrl', serverUrl);
       const res = await login(email, password);
-      const { token } = res.data;
-      // Set token before calling getProfile so the interceptor picks it up
-      localStorage.setItem('token', token);
-      const profileRes = await getProfile();
-      loginSuccess(token, profileRes.data);
-
-      // Write server credentials to ~/.llm-agent/config.json
-      if (window.electronAPI) {
-        const current = (await window.electronAPI.config.read()) || {};
-        const wsUrl = serverUrl.replace(/^https?/, (m) => (m === 'https' ? 'wss' : 'ws')) + '/ws/worker';
-        await window.electronAPI.config.write({
-          ...current,
-          server_url: wsUrl,
-          worker_key: profileRes.data.worker_key || '',
-        });
-      }
-
-      navigate('/');
+      await afterAuth(res.data.token);
     } catch (err) {
       localStorage.removeItem('token');
       setError(err.response?.data?.detail || t('config.loginFailed'));
     } finally {
       setSaving(false);
     }
+  }
+
+  async function handleRegister(e) {
+    e.preventDefault();
+    setError('');
+    setSaving(true);
+    try {
+      localStorage.setItem('serverUrl', serverUrl);
+      const res = await register(email, password, nickname, referralCode);
+      await afterAuth(res.data.token);
+    } catch (err) {
+      localStorage.removeItem('token');
+      setError(err.response?.data?.detail || '注册失败，请重试');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function switchMode(m) {
+    setMode(m);
+    setError('');
   }
 
   function handleLogout() {
@@ -166,18 +185,45 @@ export default function Config() {
             />
           </div>
 
-          <form onSubmit={handleLogin} className="space-y-3">
-            <Field label={t('config.email')} type="email" value={email} onChange={setEmail} placeholder="you@example.com" />
-            <Field label={t('config.password')} type="password" value={password} onChange={setPassword} placeholder="••••••" />
-            {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
+          {/* Mode toggle */}
+          <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
             <button
-              type="submit"
-              disabled={saving}
-              className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
+              onClick={() => switchMode('login')}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${mode === 'login' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
             >
-              {saving ? t('config.loggingIn') : t('config.login')}
+              {t('config.login')}
             </button>
-          </form>
+            <button
+              onClick={() => switchMode('register')}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${mode === 'register' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+            >
+              注册
+            </button>
+          </div>
+
+          {mode === 'login' ? (
+            <form onSubmit={handleLogin} className="space-y-3">
+              <Field label={t('config.email')} type="email" value={email} onChange={setEmail} placeholder="you@example.com" />
+              <Field label={t('config.password')} type="password" value={password} onChange={setPassword} placeholder="••••••" />
+              {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
+              <button type="submit" disabled={saving}
+                className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors">
+                {saving ? t('config.loggingIn') : t('config.login')}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleRegister} className="space-y-3">
+              <Field label={t('config.email')} type="email" value={email} onChange={setEmail} placeholder="you@example.com" />
+              <Field label="昵称（可选）" type="text" value={nickname} onChange={setNickname} placeholder="你的昵称" />
+              <Field label={t('config.password')} type="password" value={password} onChange={setPassword} placeholder="至少 6 位" />
+              <Field label="邀请码（可选）" type="text" value={referralCode} onChange={setReferralCode} placeholder="推荐人邀请码" />
+              {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
+              <button type="submit" disabled={saving}
+                className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors">
+                {saving ? '注册中…' : '注册'}
+              </button>
+            </form>
+          )}
 
           {/* Disclaimer */}
           <p className="text-xs text-gray-400 dark:text-gray-600 text-center leading-relaxed pt-2">
