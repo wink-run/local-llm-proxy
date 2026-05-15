@@ -345,8 +345,20 @@ function SpinCard({ onSuccess }) {
       setSpinning(false);
       return;
     }
+    // Find the winning segment and compute the rotation that places it under the pointer (top, 0°).
+    // After rotating the wheel by R degrees, a segment at angle θ from origin appears at (θ+R)%360.
+    // We want (mid + R) % 360 === 0  →  R_target = (360 - mid % 360) % 360.
+    const seg = WHEEL_SEGMENTS.find((s) => s.value === credits) ?? WHEEL_SEGMENTS[0];
+    const mid = (seg.start + seg.end) / 2;
+    // Small random jitter within the segment so it doesn't always land dead-center.
+    const jitter = (Math.random() - 0.5) * (seg.end - seg.start) * 0.6;
+    const targetMod = (360 - ((mid + jitter) % 360) + 360) % 360;
     const extraSpins = 3 + Math.floor(Math.random() * 3);
-    setRotation((prev) => prev + extraSpins * 360 + Math.floor(Math.random() * 360));
+    setRotation((prev) => {
+      const currentMod = ((prev % 360) + 360) % 360;
+      const delta = (targetMod - currentMod + 360) % 360;
+      return prev + extraSpins * 360 + delta;
+    });
     timerRef.current = setTimeout(() => {
       setResult(credits);
       setMsg(`+${credits} 积分`);
