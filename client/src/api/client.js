@@ -76,3 +76,7 @@ export function spin() {
 export function getSpinStatus() {
   return http.get('/user/spin/status');
 }
+
+export function getRates() {
+  return http.get('/api/rates');
+}

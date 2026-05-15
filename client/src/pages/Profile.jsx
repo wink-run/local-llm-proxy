@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../store/index';
-import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus } from '../api/client';
+import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getRates } from '../api/client';
 import { getServerUrl } from '../config';
 
 const TX_LABEL = {
@@ -71,6 +71,65 @@ function ReferralSection({ referralCode }) {
         )}
       </div>
     </section>
+  );
+}
+
+function ContributeSection() {
+  const [models, setModels] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    getRates()
+      .then((r) => setModels(r.data.models ?? []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl px-5 py-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <span className="text-2xl select-none">💡</span>
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-200">贡献得积分</h2>
+      </div>
+
+      <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
+        在本机运行 Worker，接入网络后台自动结算。每生成 <span className="font-medium text-gray-700 dark:text-gray-300">1000 个输出 Token</span>，
+        即可获得对应模型的贡献积分；积分可用于消耗其他模型的 API 调用。
+      </p>
+
+      {loading ? (
+        <p className="text-sm text-gray-400 dark:text-gray-500">加载中…</p>
+      ) : models.length === 0 ? (
+        <p className="text-sm text-gray-400 dark:text-gray-500">暂无已启用的模型</p>
+      ) : (
+        <div className="overflow-hidden rounded-xl border border-gray-100 dark:border-gray-700">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 dark:bg-gray-700/50 text-gray-500 dark:text-gray-400 text-xs">
+                <th className="text-left px-4 py-2 font-medium">模型</th>
+                <th className="text-right px-4 py-2 font-medium">贡献积分 / 千 tokens</th>
+                <th className="text-right px-4 py-2 font-medium">消耗积分 / 千 tokens</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+              {models.map((m) => (
+                <tr key={m.name} className="hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
+                  <td className="px-4 py-2.5 text-gray-700 dark:text-gray-300 truncate max-w-[160px]">
+                    {m.display_name || m.name}
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-green-600 dark:text-green-400 font-medium">
+                    +{m.contribute_rate}
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-red-500 dark:text-red-400 font-medium">
+                    -{m.consume_rate}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -502,6 +561,8 @@ export default function Profile() {
         <CheckinCard onSuccess={refreshUser} />
         <SpinCard onSuccess={refreshUser} />
       </div>
+
+      <ContributeSection />
 
       <PurchaseSection />
 
