@@ -30,7 +30,7 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None):
         if not user or user["credits_balance"] <= 0:
             raise HTTPException(402, "Insufficient credits")
 
-    worker = pool.pick(model)
+    worker = pool.pick(model, model_type="chat")
     if not worker:
         raise HTTPException(503, f"No worker available for model '{model}'")
 

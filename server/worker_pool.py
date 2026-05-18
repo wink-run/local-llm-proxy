@@ -119,18 +119,18 @@ class WorkerPool:
                 user_id=a.get("user_id"),
             ))
 
-    def pick(self, model: str, model_type: str = "chat") -> Optional[WorkerConnection]:
-        """Real workers first; fall back to virtual. Filters by model name AND type."""
-        real = [
-            w for w in self._workers
-            if model in w.models and w.model_types.get(model, "chat") == model_type
-        ]
+    def pick(self, model: str, model_type: Optional[str] = None) -> Optional[WorkerConnection]:
+        """Real workers first; fall back to virtual.
+        If model_type is given, only workers whose declared type matches are considered.
+        If None (default), any worker carrying the model is eligible."""
+        def _matches(w) -> bool:
+            return model in w.models and (
+                model_type is None or w.model_types.get(model, "chat") == model_type
+            )
+        real = [w for w in self._workers if _matches(w)]
         if real:
             return random.choice(real)
-        virtual = [
-            v for v in self._virtual
-            if model in v.models and v.model_types.get(model, "chat") == model_type
-        ]
+        virtual = [v for v in self._virtual if _matches(v)]
         return random.choice(virtual) if virtual else None
 
     def all_models(self) -> list[str]:
