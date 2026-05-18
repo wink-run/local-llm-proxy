@@ -212,7 +212,7 @@ class VirtualAgentRequest(BaseModel):
     base_url: str
     api_key: str
     api_style: str = "openai"
-    models: list[str] = []
+    models: list = []   # list[str | {name, type}]
     enabled: bool = True
 
 
@@ -239,7 +239,7 @@ class UpdateVirtualAgentRequest(BaseModel):
     base_url: str
     api_key: str = ""
     api_style: str = "openai"
-    models: list[str] = []
+    models: list = []   # list[str | {name, type}]
     enabled: bool = True
 
 

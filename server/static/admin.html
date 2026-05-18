@@ -395,7 +395,7 @@ select.form-input{cursor:pointer}
             <td>{{ a.name }}</td>
             <td class="mono" style="font-size:12px;color:#94a3b8">{{ a.base_url }}</td>
             <td><span class="tag">{{ a.api_style }}</span></td>
-            <td><span v-for="m in a.models" :key="m" class="tag">{{ m }}</span></td>
+            <td><span v-for="m in a.models" :key="vaModelName(m)" class="tag">{{ vaModelName(m) }}<span v-if="vaModelType(m)==='image'" style="margin-left:3px;color:#a78bfa;font-size:10px">图</span></span></td>
             <td><span :class="a.enabled ? 'badge badge-on' : 'badge badge-off'">{{ a.enabled ? T.enabled : T.disabled }}</span></td>
             <td>
               <button class="btn-xs" @click="openVaModal(a)">{{ T.edit }}</button>
@@ -439,7 +439,25 @@ select.form-input{cursor:pointer}
           </div>
           <div class="form-group" style="margin-bottom:16px">
             <label>{{ T.vaModels }}</label>
-            <input v-model="vaForm.models" class="form-input" style="width:100%" placeholder="gpt-4o, gpt-4o-mini" />
+            <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px">
+              <div v-for="(m, i) in vaForm.models" :key="i" style="display:flex;align-items:center;gap:6px">
+                <input v-model="vaForm.models[i].name" class="form-input" style="flex:1;min-width:0" placeholder="模型 ID" />
+                <div style="display:flex;border:1px solid #2d3148;border-radius:6px;overflow:hidden;flex-shrink:0">
+                  <button type="button"
+                    :style="m.type==='chat' ? 'background:#4f46e5;color:#fff' : 'background:#1e2130;color:#94a3b8'"
+                    style="padding:4px 10px;font-size:12px;border:none;cursor:pointer"
+                    @click="vaSetModelType(i,'chat')">对话</button>
+                  <button type="button"
+                    :style="m.type==='image' ? 'background:#4f46e5;color:#fff' : 'background:#1e2130;color:#94a3b8'"
+                    style="padding:4px 10px;font-size:12px;border:none;cursor:pointer"
+                    @click="vaSetModelType(i,'image')">图像</button>
+                </div>
+                <button type="button" @click="vaRemoveModel(i)"
+                  style="background:none;border:none;color:#64748b;cursor:pointer;font-size:18px;line-height:1;padding:0 4px">×</button>
+              </div>
+            </div>
+            <button type="button" @click="vaAddModel"
+              style="background:none;border:none;color:#818cf8;font-size:12px;cursor:pointer;padding:0">＋ 添加模型</button>
           </div>
           <div v-if="vaMsg" style="color:#f87171;font-size:13px;margin-bottom:10px">{{ vaMsg }}</div>
           <div style="display:flex;gap:8px;justify-content:flex-end">
@@ -732,23 +750,32 @@ createApp({
     const virtualAgents = ref([])
     const vaModalOpen = ref(false)
     const vaEditId = ref(null)
-    const vaForm = ref({ name:'', base_url:'', api_key:'', api_style:'openai', models:'', enabled:true })
+    const vaForm = ref({ name:'', base_url:'', api_key:'', api_style:'openai', models:[], enabled:true })
     const vaMsg = ref('')
     async function fetchVirtualAgents() {
       try { const d = await (await api('/admin/virtual-agents')).json(); virtualAgents.value = d.agents||[] } catch {}
     }
+    function normalizeVaModels(raw) {
+      return (raw||[]).map(m => typeof m === 'string' ? {name:m, type:'chat'} : {name:m.name||'', type:m.type||'chat'})
+    }
+    function vaModelName(m) { return typeof m === 'string' ? m : (m.name || '') }
+    function vaModelType(m) { return typeof m === 'string' ? 'chat' : (m.type || 'chat') }
     function openVaModal(agent) {
       vaMsg.value = ''
       if (agent) {
         vaEditId.value = agent.id
-        vaForm.value = { name:agent.name, base_url:agent.base_url, api_key:'', api_style:agent.api_style, models:agent.models.join(', '), enabled:agent.enabled }
+        vaForm.value = { name:agent.name, base_url:agent.base_url, api_key:'', api_style:agent.api_style,
+          models: normalizeVaModels(agent.models), enabled:agent.enabled }
       } else {
         vaEditId.value = null
-        vaForm.value = { name:'', base_url:'', api_key:'', api_style:'openai', models:'', enabled:true }
+        vaForm.value = { name:'', base_url:'', api_key:'', api_style:'openai', models:[], enabled:true }
       }
       vaModalOpen.value = true
     }
     function closeVaModal() { vaModalOpen.value = false }
+    function vaAddModel() { vaForm.value.models.push({name:'', type:'chat'}) }
+    function vaRemoveModel(i) { vaForm.value.models.splice(i, 1) }
+    function vaSetModelType(i, t) { vaForm.value.models[i].type = t }
     async function saveVirtualAgent() {
       vaMsg.value = ''
       const payload = {
@@ -756,7 +783,7 @@ createApp({
         base_url: vaForm.value.base_url.trim(),
         api_key: vaForm.value.api_key.trim(),
         api_style: vaForm.value.api_style,
-        models: vaForm.value.models.split(',').map(s=>s.trim()).filter(Boolean),
+        models: vaForm.value.models.filter(m=>m.name.trim()).map(m=>({name:m.name.trim(), type:m.type})),
         enabled: vaForm.value.enabled,
       }
       try {
@@ -796,6 +823,7 @@ createApp({
       sysConfig, configSaving, saveConfig,
       debugModel, chatMsgs, chatInput, chatLoading, chatArea, allModels, clearChat, sendMsg,
       virtualAgents, vaModalOpen, vaEditId, vaForm, vaMsg, fetchVirtualAgents, openVaModal, closeVaModal, saveVirtualAgent, deleteVirtualAgent,
+      vaAddModel, vaRemoveModel, vaSetModelType, vaModelName, vaModelType,
       fmtTime,
     }
   }

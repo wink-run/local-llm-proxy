@@ -94,19 +94,30 @@ class WorkerPool:
     def sync_virtual(self, agents: list[dict]) -> None:
         """从数据库 agent 列表重建虚拟 Worker 列表，立即生效。"""
         from virtual_worker import VirtualWorkerConnection
-        self._virtual = [
-            VirtualWorkerConnection(
+        self._virtual = []
+        for a in agents:
+            if not a.get("enabled"):
+                continue
+            names, model_types = [], {}
+            for m in a.get("models", []):
+                if isinstance(m, str):
+                    names.append(m)
+                    model_types[m] = "chat"
+                else:
+                    n = m.get("name", "")
+                    if n:
+                        names.append(n)
+                        model_types[n] = m.get("type", "chat")
+            self._virtual.append(VirtualWorkerConnection(
                 base_url=a["base_url"],
                 api_key=a["api_key"],
                 api_style=a["api_style"],
-                models=a["models"],
+                models=names,
+                model_types=model_types,
                 worker_id=f"vw-{a['id']}",
                 name=a["name"],
                 user_id=a.get("user_id"),
-            )
-            for a in agents
-            if a.get("enabled")
-        ]
+            ))
 
     def pick(self, model: str, model_type: str = "chat") -> Optional[WorkerConnection]:
         """Real workers first; fall back to virtual. Filters by model name AND type."""
