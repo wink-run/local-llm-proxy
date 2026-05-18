@@ -32,9 +32,9 @@ async def handle_image(body: dict, consumer_user_id: int | None = None):
         if not user or user["credits_balance"] <= 0:
             raise HTTPException(402, "Insufficient credits")
 
-    worker = pool.pick(model, model_type="image")
+    worker = pool.pick(model)
     if not worker:
-        raise HTTPException(503, f"No image worker available for model '{model}'")
+        raise HTTPException(503, f"No worker available for model '{model}'")
 
     req_id = str(uuid.uuid4())
     q: asyncio.Queue = asyncio.Queue()
