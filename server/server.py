@@ -265,7 +265,21 @@ async def worker_ws(ws: WebSocket):
 
         worker_id = str(uuid.uuid4())[:8]
         name = (msg.get("name") or "").strip() or f"worker-{worker_id}"
-        models = [m.strip() for m in msg.get("models", []) if m.strip()]
+        raw_models = msg.get("models", [])
+        models = []
+        model_types: dict[str, str] = {}
+        for entry in raw_models:
+            if isinstance(entry, str):
+                name = entry.strip()
+                if name:
+                    models.append(name)
+                    model_types[name] = "chat"
+            elif isinstance(entry, dict):
+                name = (entry.get("name") or "").strip()
+                mtype = entry.get("type", "chat")
+                if name and mtype in ("chat", "image"):
+                    models.append(name)
+                    model_types[name] = mtype
 
         # 首次出现的模型名自动写入 model_configs（open + 默认倍率），便于计费与列表一致
         auto_models = await db.ensure_default_open_models(models)
@@ -278,6 +292,7 @@ async def worker_ws(ws: WebSocket):
         worker = WorkerConnection(
             ws=ws, models=models, worker_id=worker_id,
             name=name, user_id=user_id,
+            model_types=model_types,
         )
         pool.add(worker)
         await ws.send_text(json.dumps({"type": "registered", "worker_id": worker_id}))
