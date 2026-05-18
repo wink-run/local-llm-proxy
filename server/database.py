@@ -160,6 +160,7 @@ async def init_db() -> None:
     await _migrate_checkins()
     await _migrate_spin_logs()
     await _migrate_virtual_agents()
+    await _migrate_image_support()
 
 
 async def _migrate() -> None:
@@ -228,6 +229,21 @@ async def _migrate_virtual_agents() -> None:
                 created_at TEXT DEFAULT (datetime('now'))
             )
         """)
+        await db.commit()
+
+
+async def _migrate_image_support() -> None:
+    """Add model_type column to model_configs and image_tokens_weight system config."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("PRAGMA table_info(model_configs)") as cur:
+            cols = {r[1] for r in await cur.fetchall()}
+        if "model_type" not in cols:
+            await db.execute(
+                "ALTER TABLE model_configs ADD COLUMN model_type TEXT NOT NULL DEFAULT 'chat'"
+            )
+        await db.execute(
+            "INSERT OR IGNORE INTO system_config(key,value) VALUES('image_tokens_weight','2000')"
+        )
         await db.commit()
 
 
@@ -500,43 +516,53 @@ _OPEN_DEFAULT_CONTRIBUTE = 8.0
 _OPEN_DEFAULT_CONSUME = 5.0
 
 
-async def ensure_default_open_models(names: list[str]) -> list[str]:
-    """names 中尚未存在于 model_configs 的条目，插入为 tier=open、默认贡献/消费倍率；返回本次新建的名称列表。"""
+async def ensure_default_open_models(
+    names: list[str], model_types: dict[str, str] | None = None
+) -> list[str]:
+    """Insert missing model names with open defaults. model_types maps name→type."""
     if not names:
         return []
+    model_types = model_types or {}
     created: list[str] = []
     async with aiosqlite.connect(DB_PATH) as db:
         for name in names:
             async with db.execute("SELECT 1 FROM model_configs WHERE name=?", (name,)) as cur:
                 if await cur.fetchone():
                     continue
+            mtype = model_types.get(name, "chat")
             await db.execute(
-                """INSERT INTO model_configs(name,display_name,tier,contribute_rate,consume_rate,enabled)
-                   VALUES(?,?,?,?,?,?)""",
-                (name, name, "open", _OPEN_DEFAULT_CONTRIBUTE, _OPEN_DEFAULT_CONSUME, 1),
+                """INSERT INTO model_configs
+                   (name,display_name,tier,contribute_rate,consume_rate,enabled,model_type)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (name, name, "open", _OPEN_DEFAULT_CONTRIBUTE, _OPEN_DEFAULT_CONSUME, 1, mtype),
             )
             created.append(name)
         await db.commit()
     return created
 
 
-async def upsert_model_config(name: str, display_name: str, tier: str,
-                              contribute_rate: float, consume_rate: float, enabled: bool) -> dict:
+async def upsert_model_config(
+    name: str, display_name: str, tier: str,
+    contribute_rate: float, consume_rate: float,
+    enabled: bool, model_type: str = "chat"
+) -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            """INSERT INTO model_configs(name,display_name,tier,contribute_rate,consume_rate,enabled)
-               VALUES(?,?,?,?,?,?)
+            """INSERT INTO model_configs
+               (name,display_name,tier,contribute_rate,consume_rate,enabled,model_type)
+               VALUES(?,?,?,?,?,?,?)
                ON CONFLICT(name) DO UPDATE SET
                  display_name=excluded.display_name,
                  tier=excluded.tier,
                  contribute_rate=excluded.contribute_rate,
                  consume_rate=excluded.consume_rate,
-                 enabled=excluded.enabled""",
-            (name, display_name, tier, contribute_rate, consume_rate, int(enabled)),
+                 enabled=excluded.enabled,
+                 model_type=excluded.model_type""",
+            (name, display_name, tier, contribute_rate, consume_rate, int(enabled), model_type),
         )
         await db.commit()
-        return {"name": name, "tier": tier, "contribute_rate": contribute_rate,
-                "consume_rate": consume_rate, "enabled": enabled}
+    return {"name": name, "tier": tier, "contribute_rate": contribute_rate,
+            "consume_rate": consume_rate, "enabled": enabled, "model_type": model_type}
 
 
 async def delete_model_config(name: str) -> None:
@@ -561,6 +587,14 @@ async def get_consume_rate(model_name: str) -> Optional[float]:
         ) as cur:
             row = await cur.fetchone()
             return row[0] if row else None
+
+
+async def get_image_tokens_weight() -> int:
+    val = await get_config("image_tokens_weight", "2000")
+    try:
+        return int(val)
+    except ValueError:
+        return 2000
 
 
 # ── settlement_logs ───────────────────────────────────────────────────────────
