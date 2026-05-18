@@ -521,27 +521,3 @@ async def messages(request: Request, key_info: dict = Depends(_auth_anthropic)):
         await db.consume_credits_for_usage(consumer_user_id, model, resp.get("usage") or {})
 
     return _openai_to_anthropic(resp, model)
-
-
-# ── 图像生成 (/v1/images/generations) ────────────────────────────────────────
-
-@app.post("/v1/images/generations")
-async def image_generations(request: Request, key_info: dict = Depends(auth_user)):
-    body = await request.json()
-    consumer_user_id: Optional[int] = key_info.get("user_id")
-    model = body.get("model", "")
-    n = max(1, int(body.get("n", 1)))
-
-    if consumer_user_id is not None:
-        rate = await db.get_consume_rate(model)
-        user = await db.get_user_by_id(consumer_user_id)
-        if not user or user["credits_balance"] <= 0:
-            raise HTTPException(402, "Insufficient credits")
-        cost = (rate or 1.0) * n
-        ok, _ = await db.deduct_credits(consumer_user_id, cost, model_name=model)
-        if not ok:
-            raise HTTPException(402, "Insufficient credits")
-
-    # Reuse the same worker dispatch (non-streaming); worker returns image JSON as a chunk
-    resp = await handle_chat(body, consumer_user_id=None)
-    return resp

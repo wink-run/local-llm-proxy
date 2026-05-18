@@ -212,139 +212,16 @@ const defaultPanel = () => ({
   streamMode: true,
 });
 
-const IMAGE_SIZES = ['512x512', '1024x1024', '1024x1792', '1792x1024'];
-
-function ImagePanel({ source, localCfg, apiKey, model }) {
-  const [prompt, setPrompt] = useState('');
-  const [size, setSize] = useState('1024x1024');
-  const [n, setN] = useState(1);
-  const [generating, setGenerating] = useState(false);
-  const [history, setHistory] = useState([]);   // [{prompt, images:[{url?,b64_json?}], ms, error?}]
-
-  async function handleGenerate() {
-    if (!prompt.trim() || !model || generating) return;
-    setGenerating(true);
-    const start = Date.now();
-    try {
-      const serverUrl = getServerUrl();
-      const isLocal = source === 'local';
-      const base = isLocal
-        ? (localCfg?.llm_base_url || '').replace(/\/+$/, '')
-        : serverUrl.replace(/\/+$/, '');
-      const url = base + '/v1/images/generations';
-      const headers = { 'Content-Type': 'application/json' };
-      if (isLocal && localCfg?.llm_token) headers['Authorization'] = `Bearer ${localCfg.llm_token}`;
-      if (!isLocal && apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-      const body = JSON.stringify({ model, prompt: prompt.trim(), n, size, response_format: 'b64_json' });
-
-      let resp;
-      if (isLocal && window.electronAPI?.llm) {
-        const r = await window.electronAPI.llm.fetch(url, { method: 'POST', headers, body });
-        if (r.status < 200 || r.status >= 300) throw new Error(`HTTP ${r.status}: ${r.body}`);
-        resp = JSON.parse(r.body);
-      } else {
-        const r = await fetch(url, { method: 'POST', headers, body });
-        if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
-        resp = await r.json();
-      }
-      const images = (resp.data || []).map((d) => ({
-        src: d.b64_json ? `data:image/png;base64,${d.b64_json}` : d.url,
-        revised_prompt: d.revised_prompt,
-      }));
-      setHistory((h) => [{ prompt: prompt.trim(), images, ms: Date.now() - start }, ...h]);
-      setPrompt('');
-    } catch (e) {
-      setHistory((h) => [{ prompt: prompt.trim(), images: [], ms: Date.now() - start, error: e.message }, ...h]);
-    } finally {
-      setGenerating(false);
-    }
-  }
-
-  return (
-    <div className="flex flex-col flex-1 overflow-hidden">
-      {/* Controls */}
-      <div className="shrink-0 px-4 py-3 flex gap-2 items-center flex-wrap border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-        <select value={size} onChange={(e) => setSize(e.target.value)}
-          className="bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500">
-          {IMAGE_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <div className="flex items-center gap-1 text-xs text-gray-600 dark:text-gray-400">
-          数量
-          <button onClick={() => setN((v) => Math.max(1, v - 1))}
-            className="w-6 h-6 rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center font-bold">−</button>
-          <span className="w-4 text-center font-medium">{n}</span>
-          <button onClick={() => setN((v) => Math.min(4, v + 1))}
-            className="w-6 h-6 rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center font-bold">+</button>
-        </div>
-      </div>
-
-      {/* Image history */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
-        {history.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 dark:text-gray-600 select-none">
-            <p className="text-3xl mb-2">🎨</p>
-            <p className="text-sm">输入提示词生成图像</p>
-          </div>
-        )}
-        {history.map((item, i) => (
-          <div key={i} className="space-y-2">
-            <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">"{item.prompt}"
-              <span className="ml-2 text-gray-400 dark:text-gray-600">{item.ms} ms</span>
-            </p>
-            {item.error ? (
-              <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-xl px-4 py-2 text-sm text-red-600 dark:text-red-400">{item.error}</div>
-            ) : (
-              <div className="flex flex-wrap gap-3">
-                {item.images.map((img, j) => (
-                  <div key={j} className="relative group">
-                    <img src={img.src} alt={item.prompt}
-                      className="rounded-xl border border-gray-100 dark:border-gray-700 max-w-[280px] max-h-[280px] object-cover" />
-                    <a href={img.src} download={`image-${i}-${j}.png`}
-                      className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 text-white text-xs px-2 py-1 rounded-lg">
-                      下载
-                    </a>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {/* Prompt input */}
-      <div className="shrink-0 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-4 py-3">
-        <div className="flex gap-2 items-end">
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleGenerate(); }}
-            placeholder="描述要生成的图像… (Cmd+Enter 生成)"
-            rows={2}
-            style={{ resize: 'none' }}
-            className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
-          />
-          <button onClick={handleGenerate} disabled={generating || !prompt.trim() || !model}
-            className="shrink-0 px-4 h-10 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded-xl text-white text-sm font-medium transition-colors flex items-center gap-1.5">
-            {generating
-              ? <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-              : '生成'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function Debug() {
+  // 默认「全球网络」；local / network 各自一套面板状态，切换 tab 不串内容
   const [source, setSource] = useState('network');
-  const [mode, setMode] = useState('chat');          // 'chat' | 'image'
   const [panels, setPanels] = useState(() => ({
     local: defaultPanel(),
     network: defaultPanel(),
   }));
   const [localCfg, setLocalCfg] = useState(null);
-  const [apiKeys, setApiKeys] = useState([]);
-  const [apiKey, setApiKey] = useState('');
+  const [apiKeys, setApiKeys] = useState([]);       // list of active keys for network
+  const [apiKey, setApiKey] = useState('');          // selected key value
   const [models, setModels] = useState([]);
   const [model, setModel] = useState('');
   const [loadingModels, setLoadingModels] = useState(false);
@@ -496,20 +373,6 @@ export default function Debug() {
             ))}
           </div>
 
-          {/* Mode toggle */}
-          <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 shrink-0">
-            {[{ v: 'chat', l: '对话' }, { v: 'image', l: '图像生成' }].map(({ v, l }) => (
-              <button key={v} onClick={() => setMode(v)}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  mode === v
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
-                }`}>
-                {l}
-              </button>
-            ))}
-          </div>
-
           {/* Model selector */}
           {!apiKeyErr && (models.length > 0 ? (
             <select value={model} onChange={(e) => setModel(e.target.value)}
@@ -524,32 +387,28 @@ export default function Debug() {
             </span>
           ))}
 
-          {/* Stream toggle (chat only) */}
-          {mode === 'chat' && (
-            <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={streamMode}
-                onChange={(e) => {
-                  const c = e.target.checked;
-                  setPanels((prev) => ({ ...prev, [source]: { ...prev[source], streamMode: c } }));
-                }}
-                className="w-3.5 h-3.5 accent-blue-600" />
-              流式
-            </label>
-          )}
+          {/* Stream toggle */}
+          <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={streamMode}
+              onChange={(e) => {
+                const c = e.target.checked;
+                setPanels((prev) => ({ ...prev, [source]: { ...prev[source], streamMode: c } }));
+              }}
+              className="w-3.5 h-3.5 accent-blue-600" />
+            流式
+          </label>
 
-          {/* System prompt toggle (chat only) */}
-          {mode === 'chat' && (
-            <button
-              onClick={() => setPanels((prev) => ({
-                ...prev,
-                [source]: { ...prev[source], showSystem: !prev[source].showSystem },
-              }))}
-              className={`text-xs px-2 py-1 rounded-md transition-colors ${showSystem ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}>
-              System
-            </button>
-          )}
+          {/* System prompt toggle */}
+          <button
+            onClick={() => setPanels((prev) => ({
+              ...prev,
+              [source]: { ...prev[source], showSystem: !prev[source].showSystem },
+            }))}
+            className={`text-xs px-2 py-1 rounded-md transition-colors ${showSystem ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}>
+            System
+          </button>
 
           {/* API Key selector (network only) — pushed to right */}
           {source === 'network' && (
@@ -587,8 +446,8 @@ export default function Debug() {
           )}
         </div>
 
-        {/* System prompt textarea (chat only) */}
-        {mode === 'chat' && showSystem && (
+        {/* System prompt textarea */}
+        {showSystem && (
           <textarea
             value={systemPrompt}
             onChange={(e) => {
@@ -600,85 +459,79 @@ export default function Debug() {
         )}
       </div>
 
-      {/* ── Image mode ── */}
-      {mode === 'image' && (
-        <ImagePanel source={source} localCfg={localCfg} apiKey={apiKey} model={model} />
-      )}
-
-      {/* ── Chat mode ── */}
-      {mode === 'chat' && <>
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-          {conversation.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 dark:text-gray-600 select-none">
-              <p className="text-3xl mb-2">🐛</p>
-              <p className="text-sm">选择来源和模型，发送消息开始调试</p>
-            </div>
-          )}
-
-          {conversation.map((msg, i) => (
-            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              {msg.role === 'assistant' && (
-                <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs shrink-0 mt-0.5 mr-2">
-                  AI
-                </div>
-              )}
-              <div className="max-w-[75%]">
-                {msg.error ? (
-                  <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-2xl px-4 py-2.5 text-sm text-red-600 dark:text-red-400">
-                    {msg.error}
-                  </div>
-                ) : (
-                  <div className={`rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap ${
-                    msg.role === 'user'
-                      ? 'bg-blue-600 text-white rounded-br-sm'
-                      : 'bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent text-gray-900 dark:text-gray-100 rounded-bl-sm'
-                  }`}>
-                    {msg.content}
-                    {msg.streaming && <span className="animate-pulse text-blue-300 dark:text-blue-400 ml-0.5">▊</span>}
-                  </div>
-                )}
-                {msg.timing && (
-                  <p className="text-xs text-gray-400 dark:text-gray-600 mt-1 px-1">
-                    {msg.timing.firstTokenMs != null ? `首 token ${msg.timing.firstTokenMs} ms · ` : ''}
-                    总计 {msg.timing.totalMs} ms
-                  </p>
-                )}
-              </div>
-              {msg.role === 'user' && (
-                <div className="w-7 h-7 rounded-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center text-gray-600 dark:text-gray-300 text-xs shrink-0 mt-0.5 ml-2">
-                  我
-                </div>
-              )}
-            </div>
-          ))}
-          <div ref={messagesEndRef} />
-        </div>
-
-        <div className="shrink-0 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-4 py-3">
-          <div className="flex gap-2 items-end">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
-              placeholder="输入消息… (Cmd+Enter 发送)"
-              rows={1}
-              style={{ resize: 'none' }}
-              className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500 overflow-hidden"
-            />
-            <button
-              onClick={handleSend}
-              disabled={sending[source] || !input.trim() || !model}
-              className="shrink-0 w-9 h-9 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded-xl flex items-center justify-center transition-colors"
-            >
-              {sending[source]
-                ? <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                : <span className="text-white text-sm">↑</span>
-              }
-            </button>
+      {/* ── Message list ── */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        {conversation.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 dark:text-gray-600 select-none">
+            <p className="text-3xl mb-2">🐛</p>
+            <p className="text-sm">选择来源和模型，发送消息开始调试</p>
           </div>
+        )}
+
+        {conversation.map((msg, i) => (
+          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            {msg.role === 'assistant' && (
+              <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs shrink-0 mt-0.5 mr-2">
+                AI
+              </div>
+            )}
+            <div className="max-w-[75%]">
+              {msg.error ? (
+                <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-2xl px-4 py-2.5 text-sm text-red-600 dark:text-red-400">
+                  {msg.error}
+                </div>
+              ) : (
+                <div className={`rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap ${
+                  msg.role === 'user'
+                    ? 'bg-blue-600 text-white rounded-br-sm'
+                    : 'bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent text-gray-900 dark:text-gray-100 rounded-bl-sm'
+                }`}>
+                  {msg.content}
+                  {msg.streaming && <span className="animate-pulse text-blue-300 dark:text-blue-400 ml-0.5">▊</span>}
+                </div>
+              )}
+              {msg.timing && (
+                <p className="text-xs text-gray-400 dark:text-gray-600 mt-1 px-1">
+                  {msg.timing.firstTokenMs != null ? `首 token ${msg.timing.firstTokenMs} ms · ` : ''}
+                  总计 {msg.timing.totalMs} ms
+                </p>
+              )}
+            </div>
+            {msg.role === 'user' && (
+              <div className="w-7 h-7 rounded-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center text-gray-600 dark:text-gray-300 text-xs shrink-0 mt-0.5 ml-2">
+                我
+              </div>
+            )}
+          </div>
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* ── Input bar ── */}
+      <div className="shrink-0 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-4 py-3">
+        <div className="flex gap-2 items-end">
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={handleInputChange}
+            onKeyDown={handleKeyDown}
+            placeholder="输入消息… (Cmd+Enter 发送)"
+            rows={1}
+            style={{ resize: 'none' }}
+            className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500 overflow-hidden"
+          />
+          <button
+            onClick={handleSend}
+            disabled={sending[source] || !input.trim() || !model}
+            className="shrink-0 w-9 h-9 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded-xl flex items-center justify-center transition-colors"
+          >
+            {sending[source]
+              ? <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+              : <span className="text-white text-sm">↑</span>
+            }
+          </button>
         </div>
-      </>}
+      </div>
     </div>
   );
 }
