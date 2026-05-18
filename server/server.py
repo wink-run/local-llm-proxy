@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 import database as db
 from admin_router import router as admin_router
-from dispatch import handle_chat
+from dispatch import handle_chat, handle_image
 from settler import run_settler
 from user_router import router as user_router
 from worker_pool import pool, WorkerConnection
@@ -542,6 +542,5 @@ async def image_generations(request: Request, key_info: dict = Depends(auth_user
         if not ok:
             raise HTTPException(402, "Insufficient credits")
 
-    # Reuse the same worker dispatch (non-streaming); worker returns image JSON as a chunk
-    resp = await handle_chat(body, consumer_user_id=None)
+    resp = await handle_image(body, consumer_user_id=None)
     return resp
