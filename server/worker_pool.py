@@ -136,6 +136,14 @@ class WorkerPool:
     def all_models(self) -> list[str]:
         return sorted({m for w in self._workers + self._virtual for m in w.models})
 
+    def all_model_types(self) -> dict[str, str]:
+        """Returns {model_name: model_type} for all online models. Last writer wins."""
+        result: dict[str, str] = {}
+        for w in self._workers + self._virtual:
+            for m in w.models:
+                result[m] = w.model_types.get(m, "chat")
+        return result
+
     def list_workers(self) -> list[dict]:
         return [w.to_dict() for w in self._workers + self._virtual]
 

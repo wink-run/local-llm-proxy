@@ -417,11 +417,13 @@ async def auth_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bea
 @app.get("/v1/models")
 async def list_models(_key: dict = Depends(auth_user)):
     # 列出当前在线 Worker 上报的全部模型名（与管理员「模型配置」是否录入无关，避免 Agent 在线却列表为空）
+    model_types = pool.all_model_types()
     return {
         "object": "list",
         "data": [
-            {"id": m, "object": "model", "created": 0, "owned_by": "local"}
-            for m in pool.all_models()
+            {"id": m, "object": "model", "created": 0, "owned_by": "local",
+             "model_type": model_types.get(m, "chat")}
+            for m in sorted(model_types)
         ],
     }
 
