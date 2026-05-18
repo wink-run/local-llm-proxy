@@ -107,6 +107,16 @@ function parseAnthropicSSE(buf, model) {
 // ── Per-model config resolution ───────────────────────────────────────────────
 
 function resolveModelCfg(cfg, modelName) {
+  if (cfg.model_groups?.length) {
+    const group = cfg.model_groups.find(g =>
+      (g.models || []).some(m => (typeof m === 'string' ? m : m.name) === modelName)
+    );
+    if (group?.base_url) {
+      return { ...cfg, llm_base_url: group.base_url, llm_token: group.token || '' };
+    }
+    return cfg;
+  }
+  // legacy per-model base_url
   const entry = (cfg.models || []).find(m =>
     (typeof m === 'string' ? m : m.name) === modelName
   );
@@ -308,10 +318,13 @@ function connect(cfg) {
   ws = new WebSocket(cfg.server_url, { handshakeTimeout: 10000 });
 
   ws.on('open', () => {
+    const models = cfg.model_groups?.length
+      ? cfg.model_groups.flatMap(g => g.models || [])
+      : (cfg.models || []);
     ws.send(JSON.stringify({
       type: 'register',
       worker_key: cfg.worker_key,
-      models: cfg.models || [],
+      models,
       name: cfg.name || os.hostname(),
     }));
   });
@@ -322,7 +335,10 @@ function connect(cfg) {
 
     if (msg.type === 'registered') {
       log(`[agent] connected worker_id=${msg.worker_id}`);
-      const modelsSummary = (cfg.models || [])
+      const allModels = cfg.model_groups?.length
+        ? cfg.model_groups.flatMap(g => g.models || [])
+        : (cfg.models || []);
+      const modelsSummary = allModels
         .map(m => typeof m === 'string' ? m : `${m.name}(${m.type || 'chat'})`)
         .join(', ');
       log(`[agent] models: ${modelsSummary}`);
@@ -386,7 +402,8 @@ function start({ onLog, onStatus } = {}) {
     onStatus?.({ running: false, error: 'worker_key missing' });
     return;
   }
-  if (!cfg.llm_base_url) {
+  const hasGroups = cfg.model_groups?.length > 0 && cfg.model_groups.some(g => g.base_url);
+  if (!hasGroups && !cfg.llm_base_url) {
     onLog?.('[agent] llm_base_url missing — set your local LLM address in Agent config');
     onStatus?.({ running: false, error: 'llm_base_url missing' });
     return;
