@@ -155,7 +155,7 @@ select.form-input{cursor:pointer}
           <tr v-for="w in workers" :key="w.worker_id">
             <td><span class="dot dot-online"></span>{{ w.name }}</td>
             <td class="mono">{{ w.worker_id }}</td>
-            <td><span v-for="m in w.models" :key="m" class="tag">{{ m }}</span></td>
+            <td><span v-for="m in w.models" :key="m" class="tag">{{ m }}<span v-if="(w.model_types||{})[m]==='image'" style="margin-left:3px;color:#a78bfa;font-size:10px">图</span></span></td>
             <td style="color:#64748b">{{ fmtTime(w.connected_at) }}</td>
             <td>{{ w.active_requests }}</td>
           </tr>

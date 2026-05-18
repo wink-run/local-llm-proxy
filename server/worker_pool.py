@@ -71,6 +71,7 @@ class WorkerConnection:
             "worker_id": self.worker_id,
             "name": self.name,
             "models": self.models,
+            "model_types": self.model_types,
             "connected_at": self.connected_at.isoformat(),
             "active_requests": self.active_requests,
             "user_id": self.user_id,
