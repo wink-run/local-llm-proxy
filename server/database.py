@@ -519,24 +519,32 @@ _OPEN_DEFAULT_CONSUME = 5.0
 async def ensure_default_open_models(
     names: list[str], model_types: dict[str, str] | None = None
 ) -> list[str]:
-    """Insert missing model names with open defaults. model_types maps name→type."""
+    """Insert missing model names with open defaults; update model_type if it changed.
+    model_types maps name → type ('chat' | 'image')."""
     if not names:
         return []
     model_types = model_types or {}
     created: list[str] = []
     async with aiosqlite.connect(DB_PATH) as db:
         for name in names:
-            async with db.execute("SELECT 1 FROM model_configs WHERE name=?", (name,)) as cur:
-                if await cur.fetchone():
-                    continue
             mtype = model_types.get(name, "chat")
-            await db.execute(
-                """INSERT INTO model_configs
-                   (name,display_name,tier,contribute_rate,consume_rate,enabled,model_type)
-                   VALUES(?,?,?,?,?,?,?)""",
-                (name, name, "open", _OPEN_DEFAULT_CONTRIBUTE, _OPEN_DEFAULT_CONSUME, 1, mtype),
-            )
-            created.append(name)
+            async with db.execute(
+                "SELECT model_type FROM model_configs WHERE name=?", (name,)
+            ) as cur:
+                row = await cur.fetchone()
+            if row is None:
+                await db.execute(
+                    """INSERT INTO model_configs
+                       (name,display_name,tier,contribute_rate,consume_rate,enabled,model_type)
+                       VALUES(?,?,?,?,?,?,?)""",
+                    (name, name, "open", _OPEN_DEFAULT_CONTRIBUTE, _OPEN_DEFAULT_CONSUME, 1, mtype),
+                )
+                created.append(name)
+            elif row[0] != mtype:
+                # Worker re-registered with a different type — sync the column
+                await db.execute(
+                    "UPDATE model_configs SET model_type=? WHERE name=?", (mtype, name)
+                )
         await db.commit()
     return created
 
