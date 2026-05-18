@@ -85,13 +85,12 @@ class VirtualWorkerConnection:
         """dispatch.py 调用此方法分发请求；spawn task 避免阻塞事件循环。"""
         req_id = data.get("req_id")
         payload = data.get("payload", {})
-        endpoint = data.get("endpoint", "chat")
         if not req_id:
             return
         self.active_requests += 1
-        asyncio.create_task(self._dispatch(req_id, payload, endpoint))
+        asyncio.create_task(self._dispatch(req_id, payload))
 
-    async def _dispatch(self, req_id: str, payload: dict, endpoint: str = "chat") -> None:
+    async def _dispatch(self, req_id: str, payload: dict) -> None:
         entry = self.pending.get(req_id)
         if not entry:
             self.active_requests = max(0, self.active_requests - 1)
@@ -100,9 +99,7 @@ class VirtualWorkerConnection:
         stream = payload.get("stream", False)
         model = payload.get("model", "")
         try:
-            if endpoint == "images":
-                await self._dispatch_image(entry, q, payload, model)
-            elif self.api_style == "anthropic":
+            if self.api_style == "anthropic":
                 await self._dispatch_anthropic(entry, q, payload, stream, model)
             else:
                 await self._dispatch_openai(entry, q, payload, stream, model)
@@ -170,24 +167,6 @@ class VirtualWorkerConnection:
                 await q.put(("chunk", resp.text))
                 await q.put(("done", None))
                 self.record_complete(model, output_tokens, True, entry.get("ttft_ms"))
-
-    async def _dispatch_image(self, entry: dict, q: asyncio.Queue,
-                               payload: dict, model: str) -> None:
-        url = self.base_url.rstrip("/") + "/v1/images/generations"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}",
-        }
-        async with httpx.AsyncClient(timeout=300) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            if resp.status_code >= 400:
-                await q.put(("error", f"HTTP {resp.status_code}: {resp.text}"))
-                self.record_complete(model, 0, False, None)
-                return
-            entry["ttft_ms"] = (time.time() - entry["dispatch_time"]) * 1000
-            await q.put(("chunk", resp.text))
-            await q.put(("done", None))
-            self.record_complete(model, payload.get("n", 1), True, entry.get("ttft_ms"))
 
     async def _dispatch_anthropic(self, entry: dict, q: asyncio.Queue,
                                    payload: dict, stream: bool, model: str) -> None:
