@@ -258,36 +258,44 @@ function LLMConfigCard() {
         )}
         <div className="space-y-2 mb-2">
           {modelsList.map((item, idx) => (
-            <div key={idx} className="flex items-center gap-2">
-              <input
-                value={item.name}
-                onChange={(e) => setModelsList(prev => prev.map((m, i) => i === idx ? { ...m, name: e.target.value } : m))}
-                placeholder="模型 ID，例如 flux-dev"
-                className="flex-1 min-w-0 bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
-              />
-              <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-600 shrink-0">
-                {['chat', 'image'].map(t => (
-                  <button key={t} type="button"
-                    onClick={() => setModelsList(prev => prev.map((m, i) => i === idx ? { ...m, type: t } : m))}
-                    className={`px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                      item.type === t
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
-                    }`}>
-                    {t === 'chat' ? '对话' : '图像'}
-                  </button>
-                ))}
+            <div key={idx} className="bg-gray-50 dark:bg-gray-700/50 rounded-xl p-2.5 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <input
+                  value={item.name}
+                  onChange={(e) => setModelsList(prev => prev.map((m, i) => i === idx ? { ...m, name: e.target.value } : m))}
+                  placeholder="模型 ID，例如 flux-dev"
+                  className="flex-1 min-w-0 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
+                />
+                <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-600 shrink-0">
+                  {['chat', 'image'].map(t => (
+                    <button key={t} type="button"
+                      onClick={() => setModelsList(prev => prev.map((m, i) => i === idx ? { ...m, type: t } : m))}
+                      className={`px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                        item.type === t
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                      }`}>
+                      {t === 'chat' ? '对话' : '图像'}
+                    </button>
+                  ))}
+                </div>
+                <button type="button"
+                  onClick={() => setModelsList(prev => prev.filter((_, i) => i !== idx))}
+                  className="text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors shrink-0 text-lg leading-none px-1">
+                  ×
+                </button>
               </div>
-              <button type="button"
-                onClick={() => setModelsList(prev => prev.filter((_, i) => i !== idx))}
-                className="text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors shrink-0 text-lg leading-none">
-                ×
-              </button>
+              <input
+                value={item.base_url || ''}
+                onChange={(e) => setModelsList(prev => prev.map((m, i) => i === idx ? { ...m, base_url: e.target.value } : m))}
+                placeholder="独立 Base URL（留空使用上方全局地址）"
+                className="w-full bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
+              />
             </div>
           ))}
         </div>
         <button type="button"
-          onClick={() => setModelsList(prev => [...prev, { name: '', type: 'chat' }])}
+          onClick={() => setModelsList(prev => [...prev, { name: '', type: 'chat', base_url: '' }])}
           className="text-xs text-blue-600 dark:text-blue-400 hover:underline">
           + 添加模型
         </button>

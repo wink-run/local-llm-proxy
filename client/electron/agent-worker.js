@@ -104,6 +104,16 @@ function parseAnthropicSSE(buf, model) {
   return { lines, usage };
 }
 
+// ── Per-model config resolution ───────────────────────────────────────────────
+
+function resolveModelCfg(cfg, modelName) {
+  const entry = (cfg.models || []).find(m =>
+    (typeof m === 'string' ? m : m.name) === modelName
+  );
+  if (!entry || typeof entry === 'string' || !entry.base_url) return cfg;
+  return { ...cfg, llm_base_url: entry.base_url };
+}
+
 // ── HTTP forward ──────────────────────────────────────────────────────────────
 
 function openaiCompletionPath(baseUrl, explicitChatPath) {
@@ -323,7 +333,7 @@ function connect(cfg) {
       const { req_id, payload } = msg;
       log(`[agent] → req_id=${req_id} model=${payload.model} stream=${!!payload.stream}`);
       try {
-        await forwardRequest(req_id, payload, cfg);
+        await forwardRequest(req_id, payload, resolveModelCfg(cfg, payload.model));
       } catch (e) {
         log(`[agent] error req_id=${req_id}: ${e.message}`);
         send({ type: 'error', req_id, error: e.message });
@@ -334,7 +344,7 @@ function connect(cfg) {
       const { req_id, payload } = msg;
       log(`[agent] image → req_id=${req_id} model=${payload.model}`);
       try {
-        await forwardImageRequest(req_id, payload, cfg);
+        await forwardImageRequest(req_id, payload, resolveModelCfg(cfg, payload.model));
       } catch (e) {
         log(`[agent] image error req_id=${req_id}: ${e.message}`);
         send({ type: 'error', req_id, error: e.message });
