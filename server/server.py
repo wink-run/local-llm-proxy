@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 import database as db
 from admin_router import router as admin_router
 from dispatch import handle_chat
+from dispatch_image import handle_image
 from settler import run_settler
 from user_router import router as user_router
 from worker_pool import pool, WorkerConnection
@@ -37,9 +38,24 @@ async def lifespan(app: FastAPI):
     from admin_router import _sync_virtual_pool
     await _sync_virtual_pool()
     logger.info("Virtual agents synced")
+    _cleanup_img_cache()
     task = asyncio.create_task(run_settler())
     yield
     task.cancel()
+
+
+def _cleanup_img_cache() -> None:
+    """Delete img_cache files older than 1 hour on startup."""
+    from dispatch_image import IMG_CACHE_DIR
+    if not IMG_CACHE_DIR.is_dir():
+        return
+    cutoff = time.time() - 3600
+    for p in IMG_CACHE_DIR.iterdir():
+        if p.is_file() and p.stat().st_mtime < cutoff:
+            try:
+                p.unlink()
+            except OSError:
+                pass
 
 
 app = FastAPI(title="LLM Proxy", lifespan=lifespan)
@@ -423,6 +439,13 @@ async def chat_completions(request: Request, key_info: dict = Depends(auth_user)
         )
 
     return resp
+
+
+@app.post("/v1/images/generations")
+async def image_generations(request: Request, key_info: dict = Depends(auth_user)):
+    body = await request.json()
+    consumer_user_id: Optional[int] = key_info.get("user_id")
+    return await handle_image(body, consumer_user_id=consumer_user_id)
 
 
 # ── Anthropic Messages API (/v1/messages) ────────────────────────────────────
