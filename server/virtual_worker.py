@@ -74,6 +74,7 @@ class VirtualWorkerConnection:
     models: list
     worker_id: str
     name: str
+    model_types: dict = field(default_factory=dict)
     user_id: Optional[int] = None
     connected_at: datetime = field(default_factory=datetime.now)
     active_requests: int = 0
