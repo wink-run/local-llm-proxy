@@ -282,7 +282,7 @@ async def worker_ws(ws: WebSocket):
                     model_types[name] = mtype
 
         # 首次出现的模型名自动写入 model_configs（open + 默认倍率），便于计费与列表一致
-        auto_models = await db.ensure_default_open_models(models)
+        auto_models = await db.ensure_default_open_models(models, model_types)
         if auto_models:
             logger.info(
                 "[worker/ws] auto-created model_configs (open defaults): %s",
