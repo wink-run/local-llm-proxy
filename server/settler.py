@@ -63,23 +63,41 @@ async def settle_once() -> None:
         ).isoformat(timespec="seconds")
 
         for model_name, s in stats.items():
-            if s["output_tokens"] == 0:
-                continue
-            rate = await db.get_contribute_rate(model_name)
-            if rate is None:
-                continue
-            credits = (s["output_tokens"] / 1000) * rate * multiplier
-            total_credits += credits
-            await db.award_credits(
-                user_id=worker.user_id,
-                delta=credits,
-                type_="contribute",
-                model_name=model_name,
-                tokens=s["output_tokens"],
-                base_credits=(s["output_tokens"] / 1000) * rate,
-                multiplier=multiplier,
-                note=f"worker={worker.worker_id}",
-            )
+            image_count = s.get("image_count", 0)
+            output_tokens = s["output_tokens"]
+
+            if image_count > 0:
+                rate = await db.get_contribute_rate(model_name)
+                if rate is None:
+                    continue
+                credits = image_count * rate * multiplier
+                total_credits += credits
+                await db.award_credits(
+                    user_id=worker.user_id,
+                    delta=credits,
+                    type_="contribute",
+                    model_name=model_name,
+                    tokens=0,
+                    base_credits=image_count * rate,
+                    multiplier=multiplier,
+                    note=f"worker={worker.worker_id} images={image_count}",
+                )
+            elif output_tokens > 0:
+                rate = await db.get_contribute_rate(model_name)
+                if rate is None:
+                    continue
+                credits = (output_tokens / 1000) * rate * multiplier
+                total_credits += credits
+                await db.award_credits(
+                    user_id=worker.user_id,
+                    delta=credits,
+                    type_="contribute",
+                    model_name=model_name,
+                    tokens=output_tokens,
+                    base_credits=(output_tokens / 1000) * rate,
+                    multiplier=multiplier,
+                    note=f"worker={worker.worker_id}",
+                )
 
         if total_credits > 0:
             await db.log_settlement(
