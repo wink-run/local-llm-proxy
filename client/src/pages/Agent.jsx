@@ -18,7 +18,7 @@ function LLMConfigCard() {
   const [providerId, setProviderId] = useState('custom');
   const [llmUrl, setLlmUrl]         = useState('');
   const [llmToken, setLlmToken]     = useState('');
-  const [modelsText, setModelsText] = useState('');
+  const [modelsList, setModelsList] = useState([]);  // [{name, type}]
   const [nodeName, setNodeName]     = useState('');
   const [autoStart, setAutoStart]   = useState(false);
   const [saving, setSaving]         = useState(false);
@@ -68,7 +68,11 @@ function LLMConfigCard() {
     setLlmUrl(url);
     setProviderId(matchPresetId(url));
     setLlmToken(cfg?.llm_token || '');
-    setModelsText((cfg?.models || []).join(', '));
+    // support both old string[] and new {name,type}[] formats
+    const parsed = (cfg?.models || []).map(m =>
+      typeof m === 'string' ? { name: m, type: 'chat' } : m
+    );
+    setModelsList(parsed);
     setNodeName(cfg?.name || '');
     setAutoStart(!!cfg?.auto_start);
     setShowLlmToken(false);
@@ -84,13 +88,12 @@ function LLMConfigCard() {
     setLlmUrl(p.baseUrl);
   }
 
-  /** 从当前厂商推荐列表追加一个模型（去重，逗号分隔） */
+  /** 从当前厂商推荐列表追加一个模型（去重） */
   function appendSuggestedModel(m) {
     if (!m) return;
-    setModelsText((prev) => {
-      const parts = prev.split(',').map((s) => s.trim()).filter(Boolean);
-      if (parts.includes(m)) return prev;
-      return parts.length ? `${parts.join(', ')}, ${m}` : m;
+    setModelsList((prev) => {
+      if (prev.some(item => item.name === m)) return prev;
+      return [...prev, { name: m, type: 'chat' }];
     });
   }
 
@@ -125,7 +128,7 @@ function LLMConfigCard() {
     if (!window.electronAPI) return;
     setSaving(true);
     try {
-      const models  = modelsText.split(',').map(s => s.trim()).filter(Boolean);
+      const models = modelsList.filter(m => m.name.trim());
       const current = (await window.electronAPI.config.read()) || {};
       const updated = { ...current, llm_base_url: llmUrl, llm_token: llmToken, models, name: nodeName, auto_start: autoStart };
       await window.electronAPI.config.write(updated);
@@ -139,6 +142,9 @@ function LLMConfigCard() {
   }
 
   const configured = !!(cfg?.llm_base_url && cfg?.models?.length);
+  const modelsDisplay = (cfg?.models || []).map(m =>
+    typeof m === 'string' ? m : `${m.name}(${m.type === 'image' ? '图像' : '对话'})`
+  ).join(', ');
 
   // ── View mode ────────────────────────────────────────────────────────────────
   if (!editing) {
@@ -164,7 +170,7 @@ function LLMConfigCard() {
         {configured ? (
           <div className="mt-3 space-y-1 text-xs text-gray-500 dark:text-gray-400">
             <p><span className="text-gray-400 dark:text-gray-500 inline-block w-16">BaseURL</span>{cfg.llm_base_url}</p>
-            <p><span className="text-gray-400 dark:text-gray-500 inline-block w-12">模型</span>{cfg.models.join(', ')}</p>
+            <p><span className="text-gray-400 dark:text-gray-500 inline-block w-12">模型</span>{modelsDisplay}</p>
             {cfg.name && <p><span className="text-gray-400 dark:text-gray-500 inline-block w-12">节点</span>{cfg.name}</p>}
             <p><span className="text-gray-400 dark:text-gray-500 inline-block w-12">自启动</span>{cfg.auto_start ? '开启' : '关闭'}</p>
           </div>
@@ -231,7 +237,7 @@ function LLMConfigCard() {
       </div>
       <div>
         <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">支持的模型</label>
-        {suggestedModels.length > 0 ? (
+        {suggestedModels.length > 0 && (
           <select
             key={`${providerId}-${modelPickNonce}`}
             defaultValue=""
@@ -249,15 +255,42 @@ function LLMConfigCard() {
               <option key={m} value={m}>{m}</option>
             ))}
           </select>
-        ) : (
-          <p className="text-xs text-gray-400 dark:text-gray-500 mb-2">当前模板无内置推荐列表，请在下方手工填写模型 ID。</p>
         )}
-        <input
-          value={modelsText}
-          onChange={(e) => { setModelsText(e.target.value); setProviderId('custom'); }}
-          placeholder="多个模型用英文逗号分隔，例如：qwen2.5:7b, gpt-4o-mini"
-          className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
-        />
+        <div className="space-y-2 mb-2">
+          {modelsList.map((item, idx) => (
+            <div key={idx} className="flex items-center gap-2">
+              <input
+                value={item.name}
+                onChange={(e) => setModelsList(prev => prev.map((m, i) => i === idx ? { ...m, name: e.target.value } : m))}
+                placeholder="模型 ID，例如 flux-dev"
+                className="flex-1 min-w-0 bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
+              />
+              <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-600 shrink-0">
+                {['chat', 'image'].map(t => (
+                  <button key={t} type="button"
+                    onClick={() => setModelsList(prev => prev.map((m, i) => i === idx ? { ...m, type: t } : m))}
+                    className={`px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                      item.type === t
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                    }`}>
+                    {t === 'chat' ? '对话' : '图像'}
+                  </button>
+                ))}
+              </div>
+              <button type="button"
+                onClick={() => setModelsList(prev => prev.filter((_, i) => i !== idx))}
+                className="text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors shrink-0 text-lg leading-none">
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+        <button type="button"
+          onClick={() => setModelsList(prev => [...prev, { name: '', type: 'chat' }])}
+          className="text-xs text-blue-600 dark:text-blue-400 hover:underline">
+          + 添加模型
+        </button>
       </div>
       <div>
         <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">节点名称</label>

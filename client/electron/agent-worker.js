@@ -232,6 +232,59 @@ function forwardRequest(reqId, payload, cfg) {
   });
 }
 
+// ── Image generation forward ──────────────────────────────────────────────────
+
+function imageGenPath(baseUrl) {
+  const base = baseUrl.replace(/\/+$/, '');
+  if (/\/v\d+(\/|$)/.test(base)) return 'images/generations';
+  return 'v1/images/generations';
+}
+
+function forwardImageRequest(reqId, payload, cfg) {
+  const base = cfg.llm_base_url.replace(/\/+$/, '');
+  const p = imageGenPath(cfg.llm_base_url);
+  const url = new URL(`${base.endsWith('/') ? base : base + '/'}${p}`);
+  const mod = url.protocol === 'https:' ? https : http;
+
+  // Always request b64_json so agent can relay raw bytes without file I/O
+  const outPayload = { ...payload, response_format: 'b64_json' };
+  const body = JSON.stringify(outPayload);
+  const headers = {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(body),
+  };
+  if (cfg.llm_token) headers['Authorization'] = `Bearer ${cfg.llm_token}`;
+
+  return new Promise((resolve) => {
+    const req = mod.request(
+      { hostname: url.hostname, port: url.port || (url.protocol === 'https:' ? 443 : 80),
+        path: url.pathname, method: 'POST', headers, timeout: 120000 },
+      (res) => {
+        const chunks = [];
+        res.on('data', (d) => chunks.push(d));
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(Buffer.concat(chunks).toString());
+            const images = (json.data || []).map(item => ({
+              b64: item.b64_json || '',
+              revised_prompt: item.revised_prompt,
+            }));
+            send({ type: 'image_done', req_id: reqId, images });
+          } catch (e) {
+            send({ type: 'error', req_id: reqId, error: `image parse error: ${e.message}` });
+          }
+          resolve();
+        });
+        res.on('error', (e) => { send({ type: 'error', req_id: reqId, error: e.message }); resolve(); });
+      }
+    );
+    req.on('error', (e) => { send({ type: 'error', req_id: reqId, error: e.message }); resolve(); });
+    req.on('timeout', () => { req.destroy(); send({ type: 'error', req_id: reqId, error: 'image request timeout' }); resolve(); });
+    req.write(body);
+    req.end();
+  });
+}
+
 // ── WebSocket helpers ─────────────────────────────────────────────────────────
 
 function send(obj) {
@@ -259,7 +312,10 @@ function connect(cfg) {
 
     if (msg.type === 'registered') {
       log(`[agent] connected worker_id=${msg.worker_id}`);
-      log(`[agent] models: ${(cfg.models || []).join(', ')}`);
+      const modelsSummary = (cfg.models || [])
+        .map(m => typeof m === 'string' ? m : `${m.name}(${m.type || 'chat'})`)
+        .join(', ');
+      log(`[agent] models: ${modelsSummary}`);
       return;
     }
 
@@ -270,6 +326,17 @@ function connect(cfg) {
         await forwardRequest(req_id, payload, cfg);
       } catch (e) {
         log(`[agent] error req_id=${req_id}: ${e.message}`);
+        send({ type: 'error', req_id, error: e.message });
+      }
+    }
+
+    if (msg.type === 'image_request') {
+      const { req_id, payload } = msg;
+      log(`[agent] image → req_id=${req_id} model=${payload.model}`);
+      try {
+        await forwardImageRequest(req_id, payload, cfg);
+      } catch (e) {
+        log(`[agent] image error req_id=${req_id}: ${e.message}`);
         send({ type: 'error', req_id, error: e.message });
       }
     }
