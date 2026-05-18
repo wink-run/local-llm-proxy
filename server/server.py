@@ -322,6 +322,12 @@ async def worker_ws(ws: WebSocket):
                     entry["ttft_ms"] = (time.time() - entry["dispatch_time"]) * 1000
                 await q.put(("chunk", msg.get("data", "")))
 
+            elif kind == "image_done":
+                images = msg.get("images", [])
+                await q.put(("done", images))
+                worker.pending.pop(req_id, None)
+                worker.active_requests = max(0, worker.active_requests - 1)
+
             elif kind == "done":
                 # 附带 usage，供流式响应结束时扣积分（与 Agent done 消息一致）
                 usage_done = msg.get("usage") or {}
