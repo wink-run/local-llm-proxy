@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 class WorkerConnection:
     ws: object
     models: list
+    model_types: dict = field(default_factory=dict)
     worker_id: str
     name: str
     user_id: Optional[int] = None
@@ -96,12 +97,18 @@ class WorkerPool:
             if a.get("enabled")
         ]
 
-    def pick(self, model: str) -> Optional[WorkerConnection]:
-        """真实 Worker 优先；无真实 Worker 时选虚拟 Worker。"""
-        real = [w for w in self._workers if model in w.models]
+    def pick(self, model: str, model_type: str = "chat") -> Optional[WorkerConnection]:
+        """Real workers first; fall back to virtual. Filters by model name AND type."""
+        real = [
+            w for w in self._workers
+            if model in w.models and w.model_types.get(model, "chat") == model_type
+        ]
         if real:
             return random.choice(real)
-        virtual = [v for v in self._virtual if model in v.models]
+        virtual = [
+            v for v in self._virtual
+            if model in v.models and v.model_types.get(model, "chat") == model_type
+        ]
         return random.choice(virtual) if virtual else None
 
     def all_models(self) -> list[str]:
