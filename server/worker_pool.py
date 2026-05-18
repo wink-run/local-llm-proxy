@@ -13,9 +13,9 @@ if TYPE_CHECKING:
 class WorkerConnection:
     ws: object
     models: list
-    model_types: dict = field(default_factory=dict)
     worker_id: str
     name: str
+    model_types: dict = field(default_factory=dict)
     user_id: Optional[int] = None
     connected_at: datetime = field(default_factory=datetime.now)
     active_requests: int = 0
