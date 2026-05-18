@@ -481,11 +481,26 @@ function ConsumeTab({ user }) {
   const STYLES = [
     { id: 'openai',    label: 'OpenAI 风格' },
     { id: 'anthropic', label: 'Anthropic 风格' },
+    { id: 'image',     label: '图像生成' },
   ];
 
   const m = selectedModel || '<模型名>';
 
   const snippetsByStyle = {
+    image: [
+      {
+        label: 'curl',
+        code: `curl "${base}/v1/images/generations" \\\n  -H "Authorization: Bearer <你的 API Key>" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${m}","prompt":"a cat","n":1,"size":"1024x1024","response_format":"b64_json"}'`,
+      },
+      {
+        label: 'Python',
+        code: `from openai import OpenAI\n\nclient = OpenAI(\n    base_url="${openaiUrl}",\n    api_key="<你的 API Key>",\n)\n\nresponse = client.images.generate(\n    model="${m}",\n    prompt="a cat",\n    n=1,\n    size="1024x1024",\n    response_format="b64_json",\n)\nprint(response.data[0].b64_json[:40], "...")`,
+      },
+      {
+        label: 'Node.js',
+        code: `import OpenAI from 'openai';\n\nconst client = new OpenAI({\n  baseURL: '${openaiUrl}',\n  apiKey: '<你的 API Key>',\n});\n\nconst response = await client.images.generate({\n  model: '${m}',\n  prompt: 'a cat',\n  n: 1,\n  size: '1024x1024',\n  response_format: 'b64_json',\n});\nconsole.log(response.data[0].b64_json.slice(0, 40), '...');`,
+      },
+    ],
     openai: [
       {
         label: '环境变量',
@@ -535,8 +550,10 @@ function ConsumeTab({ user }) {
     setActiveSnippet(0);
   }
 
-  const endpointUrl = style === 'openai' ? openaiUrl : anthropicUrl;
-  const endpointDesc = style === 'openai' ? 'POST /v1/chat/completions' : 'POST /v1/messages';
+  const endpointUrl = style === 'anthropic' ? anthropicUrl : base;
+  const endpointDesc = style === 'openai' ? 'POST /v1/chat/completions'
+    : style === 'anthropic' ? 'POST /v1/messages'
+    : 'POST /v1/images/generations';
 
   return (
     <div className="space-y-6">
