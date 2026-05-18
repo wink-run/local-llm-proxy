@@ -85,8 +85,8 @@ async def handle_image(body: dict, consumer_user_id: int | None = None):
         virtual_usage = {"completion_tokens": n * weight}
         await db.consume_credits_for_usage(consumer_user_id, model, virtual_usage)
 
+    # active_requests / pending already cleaned up by server.py image_done handler;
+    # only record stats here (does not touch ws state)
     worker.record_image_complete(model, n)
-    worker.active_requests = max(0, worker.active_requests - 1)
-    worker.pending.pop(req_id, None)
 
     return {"created": created, "data": result_items}

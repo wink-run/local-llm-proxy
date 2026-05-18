@@ -243,6 +243,16 @@ class VirtualWorkerConnection:
             s["ttft_sum"] += ttft_ms
             s["ttft_count"] += 1
 
+    def record_image_complete(self, model: str, image_count: int) -> None:
+        s = self.period_stats.setdefault(
+            model,
+            {"output_tokens": 0, "requests": 0, "success": 0,
+             "ttft_sum": 0.0, "ttft_count": 0, "image_count": 0},
+        )
+        s["requests"] += 1
+        s["success"] += 1
+        s["image_count"] = s.get("image_count", 0) + image_count
+
     def take_period(self) -> dict:
         snapshot = dict(self.period_stats)
         self.period_stats = {}
