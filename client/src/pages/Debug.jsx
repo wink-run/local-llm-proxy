@@ -232,7 +232,7 @@ async function streamChat({ source, localCfg, apiKey, model, messages, stream, o
   } catch (e) { onError(e.message); }
 }
 
-async function generateImage({ source, localCfg, apiKey, model, prompt, onDone, onError }) {
+async function generateImage({ source, localCfg, apiKey, model, prompt, ratio, resolution, onDone, onError }) {
   const isLocal = source === 'local';
   const group = isLocal ? resolveLocalGroup(localCfg, model) : null;
   const url = isLocal
@@ -243,7 +243,10 @@ async function generateImage({ source, localCfg, apiKey, model, prompt, onDone, 
   if (isLocal && group?.token) headers['Authorization'] = `Bearer ${group.token}`;
   if (!isLocal && apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
-  const body = JSON.stringify({ model, prompt, n: 1, response_format: 'b64_json' });
+  const extra = {};
+  if (ratio) extra.ratio = ratio;
+  if (resolution) extra.resolution = resolution;
+  const body = JSON.stringify({ model, prompt, n: 1, response_format: 'b64_json', ...extra });
 
   const startTime = Date.now();
 
@@ -281,6 +284,8 @@ const defaultPanel = () => ({
   showSystem: false,
   streamMode: true,
   imageMode: false,
+  imageRatio: '',
+  imageResolution: '',
 });
 
 export default function Debug() {
@@ -294,11 +299,13 @@ export default function Debug() {
   const [loadingModels, setLoadingModels] = useState(false);
   const [sending, setSending] = useState({ local: false, network: false });
 
+  const [lightbox, setLightbox] = useState(null); // imgSrc or null
+
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
 
   const panel = panels[source];
-  const { conversation, input, systemPrompt, showSystem, streamMode, imageMode } = panel;
+  const { conversation, input, systemPrompt, showSystem, streamMode, imageMode, imageRatio, imageResolution } = panel;
 
   // Derived: models filtered to current mode
   const chatModels = models.filter((m) => m.model_type !== 'image');
@@ -352,6 +359,7 @@ export default function Debug() {
       setSending((s) => ({ ...s, [tabKey]: true }));
       await generateImage({
         source: tabKey, localCfg, apiKey, model, prompt: text,
+        ratio: imageRatio || undefined, resolution: imageResolution || undefined,
         onDone: ({ images, totalMs }) => {
           setPanels((prev) => {
             const p = prev[tabKey];
@@ -471,6 +479,22 @@ export default function Debug() {
             </span>
           ))}
 
+          {/* Image-only controls */}
+          {imageMode && (
+            <>
+              <select value={imageRatio} onChange={(e) => setPanel({ imageRatio: e.target.value })}
+                className="bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500">
+                <option value="">比例(默认)</option>
+                {['1:1','4:3','3:4','16:9','9:16','3:2','2:3','21:9'].map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+              <select value={imageResolution} onChange={(e) => setPanel({ imageResolution: e.target.value })}
+                className="bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-indigo-500">
+                <option value="">分辨率(默认)</option>
+                {['1k','2k','4k'].map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </>
+          )}
+
           {/* Chat-only controls */}
           {!imageMode && (
             <>
@@ -550,12 +574,37 @@ export default function Debug() {
                     </div>
                   ) : (msg.images || []).length > 0 ? (
                     <div className="space-y-2 p-2">
-                      {msg.images.map((src, j) => (
-                        <img key={j}
-                          src={src.startsWith('data:') ? src : src.startsWith('http') ? src : `data:image/png;base64,${src}`}
-                          alt={`generated-${j}`}
-                          className="rounded-xl max-w-full" />
-                      ))}
+                      {msg.images.map((src, j) => {
+                        const imgSrc = src.startsWith('data:') ? src : src.startsWith('http') ? src : `data:image/png;base64,${src}`;
+                        const handleSave = () => {
+                          const a = document.createElement('a');
+                          a.href = imgSrc;
+                          a.download = `generated-${Date.now()}.png`;
+                          a.click();
+                        };
+                        const handleCopy = async () => {
+                          try {
+                            const resp = await fetch(imgSrc);
+                            const blob = await resp.blob();
+                            await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+                          } catch {}
+                        };
+                        return (
+                          <div key={j} className="relative group">
+                            <img src={imgSrc} alt={`generated-${j}`} className="rounded-xl max-w-full cursor-zoom-in" onClick={() => setLightbox(imgSrc)} />
+                            <div className="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={handleCopy}
+                                className="px-2 py-1 text-xs bg-black/60 hover:bg-black/80 text-white rounded-lg backdrop-blur-sm">
+                                复制
+                              </button>
+                              <button onClick={handleSave}
+                                className="px-2 py-1 text-xs bg-black/60 hover:bg-black/80 text-white rounded-lg backdrop-blur-sm">
+                                保存
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="px-4 py-3 text-sm text-gray-400 dark:text-gray-500">无图像返回</div>
@@ -604,6 +653,16 @@ export default function Debug() {
           </button>
         </div>
       </div>
+
+      {/* ── Lightbox ── */}
+      {lightbox && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center"
+          onClick={() => setLightbox(null)}>
+          <img src={lightbox} alt="preview" className="max-w-full max-h-full object-contain" onClick={(e) => e.stopPropagation()} />
+          <button onClick={() => setLightbox(null)}
+            className="absolute top-4 right-4 text-white/70 hover:text-white text-2xl leading-none">✕</button>
+        </div>
+      )}
     </div>
   );
 }

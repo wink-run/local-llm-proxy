@@ -62,7 +62,21 @@ td{padding:11px 12px;vertical-align:middle}
 .note-input{padding:7px 12px;background:#1a1d27;border:1px solid #2d3148;border-radius:6px;color:#e2e8f0;font-size:13px;width:220px;outline:none}
 .note-input:focus{border-color:#6366f1}
 .debug-layout{display:flex;flex-direction:column;height:calc(100vh - 130px)}
-.debug-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-shrink:0}
+.debug-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-shrink:0;flex-wrap:wrap}
+.debug-mode-btn{padding:5px 14px;border-radius:6px;font-size:12px;font-weight:500;border:1px solid #2d3148;cursor:pointer;transition:background .15s,color .15s}
+.debug-mode-btn.active{background:#6366f1;color:#fff;border-color:#6366f1}
+.debug-mode-btn:not(.active){background:#1a1d27;color:#94a3b8}
+.debug-mode-btn:not(.active):hover{background:#2d3148}
+.img-result-wrap{position:relative;display:inline-block}
+.img-result-wrap img{border-radius:8px;max-width:100%;cursor:zoom-in;display:block}
+.img-actions{position:absolute;bottom:8px;right:8px;display:flex;gap:4px;opacity:0;transition:opacity .15s}
+.img-result-wrap:hover .img-actions{opacity:1}
+.img-action-btn{padding:3px 10px;font-size:11px;background:rgba(0,0,0,.65);color:#fff;border:none;border-radius:6px;cursor:pointer;backdrop-filter:blur(4px)}
+.img-action-btn:hover{background:rgba(0,0,0,.85)}
+.lightbox{position:fixed;inset:0;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;z-index:1000;cursor:zoom-out}
+.lightbox img{max-width:95vw;max-height:95vh;object-fit:contain;border-radius:6px;cursor:default}
+.lightbox-close{position:absolute;top:16px;right:20px;color:rgba(255,255,255,.7);font-size:24px;cursor:pointer;line-height:1}
+.lightbox-close:hover{color:#fff}
 .model-select{padding:7px 12px;background:#1a1d27;border:1px solid #2d3148;border-radius:6px;color:#e2e8f0;font-size:13px;min-width:200px;outline:none}
 .model-select:focus{border-color:#6366f1}
 .chat-area{flex:1;overflow-y:auto;padding:16px;background:#13151f;border:1px solid #2d3148;border-radius:8px;margin-bottom:12px;display:flex;flex-direction:column;gap:12px}
@@ -360,24 +374,59 @@ select.form-input{cursor:pointer}
     <div v-show="activeTab === 'debug'" class="tab-content">
       <div class="debug-layout">
         <div class="debug-toolbar">
+          <!-- Mode toggle -->
+          <button :class="['debug-mode-btn', debugMode==='chat'?'active':'']" @click="switchDebugMode('chat')">对话</button>
+          <button :class="['debug-mode-btn', debugMode==='image'?'active':'']" @click="switchDebugMode('image')">图像</button>
+          <!-- Model selector -->
           <select v-model="debugModel" class="model-select">
             <option value="">— {{ T.selectModel }} —</option>
-            <option v-for="m in allModels" :key="m" :value="m">{{ m }}</option>
+            <option v-for="m in debugFilteredModels" :key="m" :value="m">{{ m }}</option>
           </select>
+          <!-- Image params -->
+          <template v-if="debugMode==='image'">
+            <select v-model="debugRatio" class="model-select" style="min-width:90px">
+              <option value="">比例(默认)</option>
+              <option v-for="r in ['1:1','4:3','3:4','16:9','9:16','3:2','2:3','21:9']" :key="r" :value="r">{{ r }}</option>
+            </select>
+            <select v-model="debugResolution" class="model-select" style="min-width:100px">
+              <option value="">分辨率(默认)</option>
+              <option v-for="r in ['1k','2k','4k']" :key="r" :value="r">{{ r }}</option>
+            </select>
+          </template>
           <button class="btn-sm" @click="clearChat">{{ T.clearChat }}</button>
           <span v-if="allModels.length === 0" style="color:#f59e0b;font-size:12px">⚠ {{ T.noOnlineModels }}</span>
         </div>
         <div class="chat-area" ref="chatArea">
-          <div v-if="chatMsgs.length === 0" class="chat-placeholder">{{ T.chatPlaceholder }}</div>
+          <div v-if="chatMsgs.length === 0" class="chat-placeholder">{{ debugMode==='image' ? '输入提示词生成图片' : T.chatPlaceholder }}</div>
           <div v-for="m in chatMsgs" :key="m.id" :class="['chat-msg', m.role]">
             <div class="msg-label">{{ m.role === 'user' ? T.you : 'AI' }}</div>
-            <div :class="['msg-bubble', m.streaming ? 'cursor' : '']">{{ m.content }}</div>
+            <!-- Image result -->
+            <template v-if="m.images !== undefined">
+              <div v-if="m.generating" class="msg-bubble" style="color:#64748b">生成中…</div>
+              <div v-else-if="m.images && m.images.length" style="display:flex;flex-wrap:wrap;gap:8px">
+                <div v-for="(src,j) in m.images" :key="j" class="img-result-wrap">
+                  <img :src="src" @click="lightboxSrc=src" />
+                  <div class="img-actions">
+                    <button class="img-action-btn" @click.stop="copyImg(src)">复制</button>
+                    <button class="img-action-btn" @click.stop="saveImg(src)">保存</button>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="msg-bubble" style="color:#64748b">无图像返回</div>
+            </template>
+            <!-- Chat result -->
+            <div v-else :class="['msg-bubble', m.streaming ? 'cursor' : '']">{{ m.content }}</div>
           </div>
         </div>
         <div class="chat-input-area">
-          <textarea v-model="chatInput" :placeholder="T.chatInputHint" :disabled="chatLoading" @keydown.enter.exact.prevent="sendMsg"></textarea>
-          <button class="send-btn" :disabled="chatLoading || !debugModel" @click="sendMsg">{{ chatLoading ? '…' : T.send }}</button>
+          <textarea v-model="chatInput" :placeholder="debugMode==='image' ? '输入图像提示词… (Enter 发送)' : T.chatInputHint" :disabled="chatLoading" @keydown.enter.exact.prevent="debugMode==='image'?sendImage():sendMsg()"></textarea>
+          <button class="send-btn" :disabled="chatLoading || !debugModel" @click="debugMode==='image'?sendImage():sendMsg()">{{ chatLoading ? '…' : T.send }}</button>
         </div>
+      </div>
+      <!-- Lightbox -->
+      <div v-if="lightboxSrc" class="lightbox" @click="lightboxSrc=null">
+        <img :src="lightboxSrc" @click.stop />
+        <span class="lightbox-close" @click="lightboxSrc=null">✕</span>
       </div>
     </div>
 
@@ -712,11 +761,46 @@ createApp({
 
     /* ── Debug ── */
     const debugModel = ref(''), chatMsgs = ref([]), chatInput = ref(''), chatLoading = ref(false)
+    const debugMode = ref('chat'), debugRatio = ref(''), debugResolution = ref('')
+    const lightboxSrc = ref(null)
     const chatArea = ref(null)
     let msgSeq = 0
     const allModels = computed(() => { const s = new Set(); workers.value.forEach(w => w.models.forEach(m => s.add(m))); return [...s].sort() })
+    const allModelTypes = computed(() => { const r = {}; workers.value.forEach(w => w.models.forEach(m => { r[m] = (w.model_types||{})[m]||'chat' })); return r })
+    const debugFilteredModels = computed(() => allModels.value.filter(m => debugMode.value==='image' ? allModelTypes.value[m]==='image' : allModelTypes.value[m]!=='image'))
+    function switchDebugMode(m) {
+      debugMode.value = m
+      const first = debugFilteredModels.value[0]
+      if (first && !debugFilteredModels.value.includes(debugModel.value)) debugModel.value = first
+    }
     function clearChat() { chatMsgs.value = [] }
     function scrollBottom() { nextTick(() => { if (chatArea.value) chatArea.value.scrollTop = chatArea.value.scrollHeight }) }
+    async function copyImg(src) {
+      try { const b = await (await fetch(src)).blob(); await navigator.clipboard.write([new ClipboardItem({[b.type]:b})]) } catch {}
+    }
+    function saveImg(src) { const a = document.createElement('a'); a.href=src; a.download=`generated-${Date.now()}.png`; a.click() }
+    async function sendImage() {
+      const text = chatInput.value.trim()
+      if (!text || !debugModel.value || chatLoading.value) return
+      chatMsgs.value.push({ id:++msgSeq, role:'user', content:text })
+      chatInput.value = ''
+      const aMsg = reactive({ id:++msgSeq, role:'assistant', images:undefined, generating:true })
+      chatMsgs.value.push(aMsg); chatLoading.value = true; scrollBottom()
+      const body = { model:debugModel.value, prompt:text, n:1, response_format:'b64_json' }
+      if (debugRatio.value) body.ratio = debugRatio.value
+      if (debugResolution.value) body.resolution = debugResolution.value
+      try {
+        const resp = await fetch('/admin/debug/image', { method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${getKey()}`}, body:JSON.stringify(body) })
+        if (!resp.ok) { aMsg.generating=false; aMsg.images=[]; aMsg.error=`HTTP ${resp.status}: ${await resp.text()}`; return }
+        const data = await resp.json()
+        const imgs = (data.data||[]).map(item => {
+          const s = item.b64_json||item.url||''
+          return s.startsWith('data:')||s.startsWith('http') ? s : `data:image/png;base64,${s}`
+        })
+        aMsg.images = imgs; aMsg.generating = false
+      } catch(e) { aMsg.generating=false; aMsg.images=[]; aMsg.error=e.message }
+      finally { chatLoading.value=false; scrollBottom() }
+    }
     async function sendMsg() {
       const text = chatInput.value.trim()
       if (!text || !debugModel.value || chatLoading.value) return
@@ -821,7 +905,9 @@ createApp({
       users, userCreditDelta, userCreditNote, fetchUsers, toggleApikey, adjustCredit,
       orders, orderNote, orderGrantApikey, fetchOrders, approveOrder, rejectOrder,
       sysConfig, configSaving, saveConfig,
-      debugModel, chatMsgs, chatInput, chatLoading, chatArea, allModels, clearChat, sendMsg,
+      debugModel, chatMsgs, chatInput, chatLoading, chatArea, allModels, allModelTypes,
+      debugMode, debugRatio, debugResolution, debugFilteredModels, lightboxSrc,
+      switchDebugMode, clearChat, sendMsg, sendImage, copyImg, saveImg,
       virtualAgents, vaModalOpen, vaEditId, vaForm, vaMsg, fetchVirtualAgents, openVaModal, closeVaModal, saveVirtualAgent, deleteVirtualAgent,
       vaAddModel, vaRemoveModel, vaSetModelType, vaModelName, vaModelType,
       fmtTime,

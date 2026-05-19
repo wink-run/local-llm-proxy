@@ -80,6 +80,12 @@ async def debug_chat(request: Request):
     return await handle_chat(await request.json())
 
 
+@router.post("/debug/image", dependencies=[Depends(auth_admin)])
+async def debug_image(request: Request):
+    from dispatch_image import handle_image
+    return await handle_image(await request.json())
+
+
 # ── 模型配置 ──────────────────────────────────────────────────────────────────
 
 @router.get("/models", dependencies=[Depends(auth_admin)])

@@ -284,11 +284,21 @@ function forwardImageRequest(reqId, payload, cfg) {
         res.on('data', (d) => chunks.push(d));
         res.on('end', () => {
           try {
-            const json = JSON.parse(Buffer.concat(chunks).toString());
+            const rawStr = Buffer.concat(chunks).toString();
+            log(`[agent] image upstream status=${res.statusCode} body[:300]=${rawStr.slice(0, 300)}`);
+            if (res.statusCode >= 400) {
+              send({ type: 'error', req_id: reqId, error: `HTTP ${res.statusCode}: ${rawStr.slice(0, 300)}` });
+              resolve();
+              return;
+            }
+            const json = JSON.parse(rawStr);
             const images = (json.data || []).map(item => ({
               b64: item.b64_json || '',
               revised_prompt: item.revised_prompt,
             }));
+            if (images.length === 0) {
+              log(`[agent] image upstream returned no images, full body: ${rawStr.slice(0, 500)}`);
+            }
             send({ type: 'image_done', req_id: reqId, images });
           } catch (e) {
             send({ type: 'error', req_id: reqId, error: `image parse error: ${e.message}` });

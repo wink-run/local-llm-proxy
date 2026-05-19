@@ -185,31 +185,20 @@ export default function Config() {
             />
           </div>
 
-          {/* Mode toggle */}
-          <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
-            <button
-              onClick={() => switchMode('login')}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${mode === 'login' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
-            >
-              {t('config.login')}
-            </button>
-            <button
-              onClick={() => switchMode('register')}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${mode === 'register' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
-            >
-              注册
-            </button>
-          </div>
-
           {mode === 'login' ? (
             <form onSubmit={handleLogin} className="space-y-3">
               <Field label={t('config.email')} type="email" value={email} onChange={setEmail} placeholder="you@example.com" />
               <Field label={t('config.password')} type="password" value={password} onChange={setPassword} placeholder="••••••" />
               {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
               <button type="submit" disabled={saving}
-                className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors">
+                className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors">
                 {saving ? t('config.loggingIn') : t('config.login')}
               </button>
+              <p className="text-center text-sm text-gray-400 dark:text-gray-500">
+                没有账户？
+                <button type="button" onClick={() => switchMode('register')}
+                  className="text-blue-500 hover:underline ml-1">去注册</button>
+              </p>
             </form>
           ) : (
             <form onSubmit={handleRegister} className="space-y-3">
@@ -219,9 +208,14 @@ export default function Config() {
               <Field label="邀请码（可选）" type="text" value={referralCode} onChange={setReferralCode} placeholder="推荐人邀请码" />
               {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
               <button type="submit" disabled={saving}
-                className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors">
+                className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors">
                 {saving ? '注册中…' : '注册'}
               </button>
+              <p className="text-center text-sm text-gray-400 dark:text-gray-500">
+                已有账户？
+                <button type="button" onClick={() => switchMode('login')}
+                  className="text-blue-500 hover:underline ml-1">去登录</button>
+              </p>
             </form>
           )}
 
