@@ -62,7 +62,7 @@ export default function Sidebar() {
             <p className="text-xs text-gray-400 dark:text-gray-500 truncate">{user.email}</p>
             {user.credits_balance != null && (
               <p className="text-xs font-medium text-blue-500 dark:text-blue-400 mt-0.5">
-                💎 {Number(user.credits_balance).toLocaleString(undefined, { maximumFractionDigits: 0 })} 积分
+                💎 {Math.floor(user.credits_balance ?? 0).toLocaleString()} 积分
               </p>
             )}
           </button>
