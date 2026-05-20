@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const http = require('http');
 const https = require('https');
+const { autoUpdater } = require('electron-updater');
 const agent = require('./agent-worker');
 
 const isDev = !app.isPackaged;
@@ -62,11 +63,27 @@ function createWindow() {
 
 // ── Tray ──────────────────────────────────────────────────────────────────────
 
+let trayStatsTimer = null;
+
+function updateTrayTitle() {
+  if (!tray) return;
+  if (process.platform !== 'darwin') return;
+  const { running: r, activeRequests, tokensPerMin } = agent.getStats();
+  if (!r) { tray.setTitle(''); return; }
+  const parts = [];
+  if (activeRequests > 0) parts.push(`${activeRequests}req`);
+  if (tokensPerMin > 0) parts.push(`${tokensPerMin}tok/m`);
+  tray.setTitle(parts.length ? parts.join(' ') : '●');
+}
+
 function createTray() {
   tray = new Tray(getTrayIcon('stopped'));
   tray.setToolTip('LLM Proxy');
   updateTrayMenu();
   tray.on('double-click', () => { mainWindow?.show(); mainWindow?.focus(); });
+  if (process.platform === 'darwin') {
+    trayStatsTimer = setInterval(updateTrayTitle, 2000);
+  }
 }
 
 function updateTrayMenu() {
@@ -106,6 +123,36 @@ function startAgent() {
 function stopAgent() {
   agent.stop();
   updateTrayMenu();
+}
+
+// ── Auto updater ──────────────────────────────────────────────────────────────
+
+function setupAutoUpdater() {
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('update-available', (info) => {
+    mainWindow?.webContents.send('update:available', {
+      version: info.version,
+      releaseNotes: info.releaseNotes ?? null,
+    });
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    mainWindow?.webContents.send('update:progress', {
+      percent: Math.round(progress.percent),
+    });
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    mainWindow?.webContents.send('update:downloaded', { version: info.version });
+  });
+
+  autoUpdater.on('error', (err) => {
+    console.error('[updater] error:', err.message);
+  });
+
+  setTimeout(() => autoUpdater.checkForUpdates(), 5000);
 }
 
 // ── Agent config helpers ──────────────────────────────────────────────────────
@@ -310,6 +357,10 @@ function registerIPC() {
     if (body) req.write(body);
     req.end();
   });
+
+  ipcMain.handle('update:install', () => {
+    autoUpdater.quitAndInstall();
+  });
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
@@ -318,6 +369,8 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   registerIPC();
+
+  if (!isDev) setupAutoUpdater();
 
   // Auto-start agent if configured
   const cfg = readAgentConfig();
