@@ -60,6 +60,11 @@ export default function Sidebar() {
           >
             <p className={`text-xs font-medium truncate ${profileActive ? 'text-blue-700 dark:text-blue-300' : 'text-gray-700 dark:text-gray-300'}`}>{user.nickname}</p>
             <p className="text-xs text-gray-400 dark:text-gray-500 truncate">{user.email}</p>
+            {user.credits_balance != null && (
+              <p className="text-xs font-medium text-blue-500 dark:text-blue-400 mt-0.5">
+                💎 {Number(user.credits_balance).toLocaleString()} 积分
+              </p>
+            )}
           </button>
           <button
             onClick={() => navigate('/config')}
