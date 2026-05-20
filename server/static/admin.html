@@ -403,6 +403,7 @@ select.form-input{cursor:pointer}
             <!-- Image result -->
             <template v-if="m.images !== undefined">
               <div v-if="m.generating" class="msg-bubble" style="color:#64748b">生成中…</div>
+              <div v-else-if="m.error" class="msg-bubble" style="color:#f87171;background:#2d1515;border-color:#7f1d1d;white-space:pre-wrap;word-break:break-all">{{ m.error }}</div>
               <div v-else-if="m.images && m.images.length" style="display:flex;flex-wrap:wrap;gap:8px">
                 <div v-for="(src,j) in m.images" :key="j" class="img-result-wrap">
                   <img :src="src" @click="lightboxSrc=src" />
@@ -792,11 +793,14 @@ createApp({
       try {
         const resp = await fetch('/admin/debug/image', { method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${getKey()}`}, body:JSON.stringify(body) })
         if (!resp.ok) { aMsg.generating=false; aMsg.images=[]; aMsg.error=`HTTP ${resp.status}: ${await resp.text()}`; return }
-        const data = await resp.json()
+        const rawText = await resp.text()
+        let data; try { data = JSON.parse(rawText) } catch { aMsg.generating=false; aMsg.images=[]; aMsg.error=`响应解析失败：${rawText.slice(0,200)}`; return }
+        if (data.detail || data.error) { aMsg.generating=false; aMsg.images=[]; aMsg.error=data.detail||data.error?.message||'Error'; return }
         const imgs = (data.data||[]).map(item => {
           const s = item.b64_json||item.url||''
-          return s.startsWith('data:')||s.startsWith('http') ? s : `data:image/png;base64,${s}`
-        })
+          return s ? (s.startsWith('data:')||s.startsWith('http') ? s : `data:image/png;base64,${s}`) : ''
+        }).filter(Boolean)
+        if (imgs.length === 0) { aMsg.generating=false; aMsg.images=[]; aMsg.error=`上游返回空图像列表，原始响应：${rawText.slice(0,300)}`; return }
         aMsg.images = imgs; aMsg.generating = false
       } catch(e) { aMsg.generating=false; aMsg.images=[]; aMsg.error=e.message }
       finally { chatLoading.value=false; scrollBottom() }

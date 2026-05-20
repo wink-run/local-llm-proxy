@@ -447,6 +447,7 @@ function CopyButton({ text, label = '复制' }) {
 
 
 function ModelsSection({ models }) {
+  // models is [{id, model_type}]
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">可用模型</h2>
@@ -454,11 +455,12 @@ function ModelsSection({ models }) {
         <p className="text-sm text-gray-400 dark:text-gray-500">暂无可用模型</p>
       ) : (
         <div className="flex flex-wrap gap-2">
-          {models.map((m) => (
-            <span key={m}
+          {models.map(({ id, model_type }) => (
+            <span key={id}
               className="inline-flex items-center gap-1.5 bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-lg px-3 py-1.5 text-xs text-gray-700 dark:text-gray-300">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
-              {m}
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${model_type === 'image' ? 'bg-purple-400' : 'bg-green-400'}`} />
+              {id}
+              {model_type === 'image' && <span className="text-purple-400">图</span>}
             </span>
           ))}
         </div>
@@ -475,7 +477,7 @@ function ConsumeTab({ user }) {
 
   const [style, setStyle] = useState('openai');
   const [activeSnippet, setActiveSnippet] = useState(0);
-  const [models, setModels] = useState([]);
+  const [models, setModels] = useState([]); // [{id, model_type}]
   const [selectedModel, setSelectedModel] = useState('');
 
   // Claude Code one-click config state
@@ -483,7 +485,7 @@ function ConsumeTab({ user }) {
   const [ccConfiguring, setCcConfiguring] = useState(false);
   const [ccMsg, setCcMsg]             = useState('');
 
-  // Fetch available models once
+  // Fetch available models with type info
   useEffect(() => {
     const jwt = localStorage.getItem('token');
     fetch(`${base}/user/keys`, { headers: { Authorization: `Bearer ${jwt}` } })
@@ -496,9 +498,8 @@ function ConsumeTab({ user }) {
       })
       .then((r) => r.json())
       .then((d) => {
-        const ids = (d.data || []).map((m) => m.id || m);
-        setModels(ids);
-        if (ids.length) setSelectedModel(ids[0]);
+        const entries = (d.data || []).map((m) => ({ id: m.id || m, model_type: m.model_type || 'chat' }));
+        setModels(entries);
       })
       .catch(() => {});
   }, [base]);
@@ -514,9 +515,9 @@ function ConsumeTab({ user }) {
       const keysRes = await listKeys().catch(() => ({ data: { keys: [] } }));
       const activeKey = (keysRes.data.keys || []).find((k) => k.is_active);
       if (!activeKey) { setCcMsg('请先创建并启用一个 API Key'); return; }
-      await window.electronAPI.claude.configure(base, activeKey.key, models);
+      await window.electronAPI.claude.configure(base, activeKey.key, chatModels);
       setCcStatus(true);
-      setCcMsg(`配置成功${models.length ? `，${models.length} 个模型` : ''}，重启 Claude Code 生效`);
+      setCcMsg(`配置成功${chatModels.length ? `，${chatModels.length} 个模型` : ''}，重启 Claude Code 生效`);
       setTimeout(() => setCcMsg(''), 4000);
     } finally {
       setCcConfiguring(false);
@@ -526,7 +527,13 @@ function ConsumeTab({ user }) {
   const STYLES = [
     { id: 'openai',    label: 'OpenAI 风格' },
     { id: 'anthropic', label: 'Anthropic 风格' },
+    { id: 'image',     label: '图像生成' },
   ];
+
+  // Filter models by style
+  const chatModels  = models.filter((m) => m.model_type !== 'image').map((m) => m.id);
+  const imageModels = models.filter((m) => m.model_type === 'image').map((m) => m.id);
+  const styleModels = style === 'image' ? imageModels : chatModels;
 
   const m = selectedModel || '<模型名>';
 
@@ -571,6 +578,24 @@ function ConsumeTab({ user }) {
         code: `import Anthropic from '@anthropic-ai/sdk';\n\nconst client = new Anthropic({\n  baseURL: '${anthropicUrl}',\n  apiKey: '<你的 API Key>',\n});\n\nconst message = await client.messages.create({\n  model: '${m}',\n  max_tokens: 1024,\n  messages: [{ role: 'user', content: 'Hello' }],\n});\nconsole.log(message.content[0].text);`,
       },
     ],
+    image: [
+      {
+        label: 'curl',
+        code: `curl "${openaiUrl}/images/generations" \\\n  -H "Authorization: Bearer <你的 API Key>" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "model": "${m}",\n    "prompt": "a cute cat",\n    "n": 1,\n    "response_format": "b64_json",\n    "ratio": "16:9",\n    "resolution": "2k"\n  }'`,
+      },
+      {
+        label: 'Python',
+        code: `from openai import OpenAI\nimport base64\n\nclient = OpenAI(\n    base_url="${openaiUrl}",\n    api_key="<你的 API Key>",\n)\n\nresponse = client.images.generate(\n    model="${m}",\n    prompt="a cute cat",\n    n=1,\n    response_format="b64_json",\n    extra_body={"ratio": "16:9", "resolution": "2k"},\n)\nimgdata = base64.b64decode(response.data[0].b64_json)\nwith open("output.png", "wb") as f:\n    f.write(imgdata)`,
+      },
+      {
+        label: 'Node.js',
+        code: `import OpenAI from 'openai';\nimport fs from 'fs';\n\nconst client = new OpenAI({\n  baseURL: '${openaiUrl}',\n  apiKey: '<你的 API Key>',\n});\n\nconst response = await client.images.generate({\n  model: '${m}',\n  prompt: 'a cute cat',\n  n: 1,\n  response_format: 'b64_json',\n  // @ts-ignore extended params\n  ratio: '16:9',\n  resolution: '2k',\n});\nconst buf = Buffer.from(response.data[0].b64_json, 'base64');\nfs.writeFileSync('output.png', buf);`,
+      },
+      {
+        label: 'curl (url)',
+        code: `curl "${openaiUrl}/images/generations" \\\n  -H "Authorization: Bearer <你的 API Key>" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "model": "${m}",\n    "prompt": "a cute cat",\n    "n": 1,\n    "response_format": "url",\n    "ratio": "16:9",\n    "resolution": "2k"\n  }'`,
+      },
+    ],
   };
 
   const snippets = snippetsByStyle[style];
@@ -578,10 +603,14 @@ function ConsumeTab({ user }) {
   function switchStyle(s) {
     setStyle(s);
     setActiveSnippet(0);
+    // auto-select first matching model
+    const list = s === 'image' ? imageModels : chatModels;
+    if (list.length && !list.includes(selectedModel)) setSelectedModel(list[0]);
   }
 
-  const endpointUrl = style === 'openai' ? openaiUrl : anthropicUrl;
-  const endpointDesc = style === 'openai' ? 'POST /v1/chat/completions' : 'POST /v1/messages';
+  const endpointUrl  = style === 'image' ? openaiUrl : style === 'openai' ? openaiUrl : anthropicUrl;
+  const endpointPath = style === 'image' ? 'POST /v1/images/generations' : style === 'openai' ? 'POST /v1/chat/completions' : 'POST /v1/messages';
+  const endpointLabel = style === 'image' ? '图像端点' : 'Chat 端点';
 
   return (
     <div className="space-y-6">
@@ -613,8 +642,8 @@ function ConsumeTab({ user }) {
           </div>
           <div className="flex items-center gap-3 bg-gray-50 dark:bg-gray-900 rounded-xl px-4 py-3">
             <div>
-              <p className="text-xs text-gray-400 dark:text-gray-500 mb-0.5">Chat 端点</p>
-              <p className="font-mono text-sm text-gray-700 dark:text-gray-300">{endpointDesc}</p>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mb-0.5">{endpointLabel}</p>
+              <p className="font-mono text-sm text-gray-700 dark:text-gray-300">{endpointPath}</p>
             </div>
           </div>
         </div>
@@ -623,13 +652,13 @@ function ConsumeTab({ user }) {
         <div>
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs text-gray-400 dark:text-gray-500">快速接入</p>
-            {models.length > 0 && (
+            {styleModels.length > 0 && (
               <select
                 value={selectedModel}
                 onChange={(e) => setSelectedModel(e.target.value)}
                 className="text-xs bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1 text-gray-700 dark:text-gray-300 focus:outline-none focus:border-blue-500"
               >
-                {models.map((m) => <option key={m} value={m}>{m}</option>)}
+                {styleModels.map((id) => <option key={id} value={id}>{id}</option>)}
               </select>
             )}
           </div>

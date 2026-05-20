@@ -250,13 +250,17 @@ async function generateImage({ source, localCfg, apiKey, model, prompt, ratio, r
 
   const startTime = Date.now();
 
-  const doFetch = async (fetchFn) => {
+  const doFetch = async (fetchFn, rawBody) => {
     const result = await fetchFn();
     const totalMs = Date.now() - startTime;
     try {
       const data = typeof result === 'string' ? JSON.parse(result) : result;
       if (data.detail || data.error) throw new Error(data.detail || data.error?.message || 'Error');
-      const images = (data.data || []).map((item) => item.b64_json || item.url || '');
+      const images = (data.data || []).map((item) => item.b64_json || item.url || '').filter(Boolean);
+      if (images.length === 0) {
+        const hint = rawBody ? rawBody.slice(0, 300) : JSON.stringify(data).slice(0, 300);
+        throw new Error(`上游返回空图像列表，原始响应：${hint}`);
+      }
       onDone({ images, totalMs });
     } catch (e) { onError(e.message); }
   };
@@ -265,7 +269,7 @@ async function generateImage({ source, localCfg, apiKey, model, prompt, ratio, r
     try {
       const r = await window.electronAPI.llm.fetch(url, { method: 'POST', headers, body });
       if (r.status < 200 || r.status >= 300) { onError(`HTTP ${r.status}: ${r.body}`); return; }
-      await doFetch(() => Promise.resolve(JSON.parse(r.body)));
+      await doFetch(() => Promise.resolve(JSON.parse(r.body)), r.body);
     } catch (e) { onError(e.message); }
     return;
   }
@@ -273,7 +277,8 @@ async function generateImage({ source, localCfg, apiKey, model, prompt, ratio, r
   try {
     const resp = await fetch(url, { method: 'POST', headers, body });
     if (!resp.ok) { onError(`HTTP ${resp.status}: ${await resp.text()}`); return; }
-    await doFetch(() => resp.json());
+    const rawText = await resp.text();
+    await doFetch(() => Promise.resolve(JSON.parse(rawText)), rawText);
   } catch (e) { onError(e.message); }
 }
 
