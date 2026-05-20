@@ -9,6 +9,7 @@ import Agent from './pages/Agent';
 import Network from './pages/Network';
 import Config from './pages/Config';
 import Debug from './pages/Debug';
+import UpdateNotification from './components/UpdateNotification';
 
 function Layout() {
   const { user, loading } = useAuth();
@@ -34,6 +35,7 @@ function Layout() {
           <Route path="*" element={<Navigate to={user ? '/' : '/config'} replace />} />
         </Routes>
       </main>
+      <UpdateNotification />
     </div>
   );
 }
