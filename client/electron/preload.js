@@ -60,6 +60,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('update:downloaded', h);
       return () => ipcRenderer.removeListener('update:downloaded', h);
     },
+    onError: (cb) => {
+      const h = () => cb();
+      ipcRenderer.on('update:error', h);
+      return () => ipcRenderer.removeListener('update:error', h);
+    },
     install: () => ipcRenderer.invoke('update:install'),
   },
 });

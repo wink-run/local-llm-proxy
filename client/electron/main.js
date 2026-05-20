@@ -150,9 +150,12 @@ function setupAutoUpdater() {
 
   autoUpdater.on('error', (err) => {
     console.error('[updater] error:', err.message);
+    mainWindow?.webContents.send('update:error');
   });
 
-  setTimeout(() => autoUpdater.checkForUpdates(), 5000);
+  setTimeout(() => autoUpdater.checkForUpdates().catch((err) => {
+    console.error('[updater] checkForUpdates error:', err.message);
+  }), 5000);
 }
 
 // ── Agent config helpers ──────────────────────────────────────────────────────

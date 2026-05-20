@@ -23,10 +23,15 @@ export default function UpdateNotification() {
       setPhase('ready');
     });
 
+    const offError = window.electronAPI.updater.onError(() => {
+      setPhase('idle');
+    });
+
     return () => {
       offAvailable();
       offProgress();
       offDownloaded();
+      offError();
     };
   }, []);
 
