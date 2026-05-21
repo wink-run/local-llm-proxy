@@ -9,6 +9,7 @@ import Agent from './pages/Agent';
 import Network from './pages/Network';
 import Config from './pages/Config';
 import Debug from './pages/Debug';
+import Onboarding from './pages/Onboarding';
 
 function Layout() {
   const { user, loading } = useAuth();
@@ -29,6 +30,7 @@ function Layout() {
           <Route path="/" element={user ? <Profile /> : <Navigate to="/config" replace />} />
           <Route path="/agent" element={user ? <Agent /> : <Navigate to="/config" replace />} />
           <Route path="/network" element={<Network />} />
+          <Route path="/onboarding" element={<Onboarding />} />
           <Route path="/config" element={<Config />} />
           <Route path="/debug" element={<Debug />} />
           <Route path="*" element={<Navigate to={user ? '/' : '/config'} replace />} />

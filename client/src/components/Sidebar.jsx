@@ -11,9 +11,10 @@ export default function Sidebar() {
   const location = useLocation();
 
   const NAV = [
-    { to: '/agent',   icon: '⚙️', label: t('nav.agent') },
-    { to: '/network', icon: '🌐', label: t('nav.network') },
-    { to: '/debug',   icon: '🐛', label: t('nav.debug') },
+    { to: '/onboarding', icon: '🔌', label: t('nav.onboarding') },
+    { to: '/agent',      icon: '⚙️', label: t('nav.agent') },
+    { to: '/network',    icon: '🌐', label: t('nav.network') },
+    { to: '/debug',      icon: '🐛', label: t('nav.debug') },
   ];
   const profileActive = location.pathname === '/';
   return (
