@@ -1,0 +1,67 @@
+# 板块② Layer 1：免费 Provider 目录
+# 字段说明见 DESIGN_v2.md §2.3
+# 修改 yaml 后重启本地网关生效；用户私人覆盖请放 ~/.local-llm-proxy/free_providers.user.yaml
+
+providers:
+  - id: ollama
+    display: "本地 Ollama"
+    tier: free
+    base_url: "http://127.0.0.1:11434/v1"
+    auth: { type: "none" }
+    signup_url: "https://ollama.com/download"
+    guide_md: "guides/free/ollama.md"
+    models: []           # 用户机器上 ollama list 决定
+    quota_hint: "无限（本地推理）"
+    notes: "不需要 API key；模型由本机 Ollama 服务提供。"
+
+  - id: groq
+    display: "Groq Cloud"
+    tier: free
+    base_url: "https://api.groq.com/openai/v1"
+    auth: { type: "bearer", env: "GROQ_API_KEY" }
+    signup_url: "https://console.groq.com/keys"
+    guide_md: "guides/free/groq.md"
+    models:
+      - "llama-3.3-70b-versatile"
+      - "llama-3.1-8b-instant"
+      - "mixtral-8x7b-32768"
+    quota_hint: "免费档 RPM 30 / TPM 6k"
+
+  - id: cerebras
+    display: "Cerebras Cloud"
+    tier: free
+    base_url: "https://api.cerebras.ai/v1"
+    auth: { type: "bearer", env: "CEREBRAS_API_KEY" }
+    signup_url: "https://cloud.cerebras.ai/platform/"
+    guide_md: "guides/free/cerebras.md"
+    models:
+      - "llama3.1-8b"
+      - "llama-3.3-70b"
+    quota_hint: "免费档每日 1M tokens"
+
+  - id: gemini-ai-studio
+    display: "Google AI Studio"
+    tier: free
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
+    auth: { type: "bearer", env: "GEMINI_API_KEY" }
+    signup_url: "https://aistudio.google.com/apikey"
+    guide_md: "guides/free/gemini.md"
+    models:
+      - "gemini-2.0-flash"
+      - "gemini-2.0-flash-lite"
+      - "gemini-1.5-pro"
+    quota_hint: "免费档 RPM 15 / TPM 1M / 1500 RPD"
+
+  - id: openrouter-free
+    display: "OpenRouter（免费模型）"
+    tier: free
+    base_url: "https://openrouter.ai/api/v1"
+    auth: { type: "bearer", env: "OPENROUTER_API_KEY" }
+    signup_url: "https://openrouter.ai/settings/keys"
+    guide_md: "guides/free/openrouter.md"
+    models:
+      - "meta-llama/llama-3.3-70b-instruct:free"
+      - "deepseek/deepseek-chat:free"
+      - "qwen/qwen-2.5-72b-instruct:free"
+    quota_hint: "免费 RPD 50 / 含 :free 后缀模型免费"
+    notes: "调用时模型名必须含 :free 后缀，否则会按付费计费。"

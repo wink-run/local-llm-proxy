@@ -9,3 +9,6 @@ python-multipart==0.0.12
 PyJWT==2.9.0
 bcrypt==4.2.1
 httpx==0.27.2
+# local_gateway (DESIGN_v2 板块①) 依赖：
+PyYAML==6.0.2
+keyring==25.5.0
