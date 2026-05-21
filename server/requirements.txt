@@ -12,3 +12,4 @@ httpx==0.27.2
 # local_gateway (DESIGN_v2 板块①) 依赖：
 PyYAML==6.0.2
 keyring==25.5.0
+tomlkit==0.13.2

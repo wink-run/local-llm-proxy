@@ -10,6 +10,7 @@ import Network from './pages/Network';
 import Config from './pages/Config';
 import Debug from './pages/Debug';
 import Onboarding from './pages/Onboarding';
+import Apps from './pages/Apps';
 
 function Layout() {
   const { user, loading } = useAuth();
@@ -24,16 +25,17 @@ function Layout() {
 
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100">
-      {user && <Sidebar />}
+      <Sidebar />
       <main className="flex-1 overflow-y-auto">
         <Routes>
-          <Route path="/" element={user ? <Profile /> : <Navigate to="/config" replace />} />
+          <Route path="/" element={user ? <Profile /> : <Navigate to="/onboarding" replace />} />
           <Route path="/agent" element={user ? <Agent /> : <Navigate to="/config" replace />} />
           <Route path="/network" element={<Network />} />
           <Route path="/onboarding" element={<Onboarding />} />
+          <Route path="/apps" element={<Apps />} />
           <Route path="/config" element={<Config />} />
           <Route path="/debug" element={<Debug />} />
-          <Route path="*" element={<Navigate to={user ? '/' : '/config'} replace />} />
+          <Route path="*" element={<Navigate to={user ? '/' : '/onboarding'} replace />} />
         </Routes>
       </main>
     </div>

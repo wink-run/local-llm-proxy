@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import time
 from pathlib import Path
 from typing import Optional
@@ -243,6 +244,26 @@ async def list_tos_acks(limit: int = 50) -> list[dict]:
             "SELECT * FROM tos_acks ORDER BY created_at DESC LIMIT ?", (limit,)
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
+
+
+# ── gateway API key（生成一次、长期持有；写入到客户端工具配置中） ──────────
+
+
+async def get_or_create_gateway_key() -> str:
+    """返回长期 gateway API key。首次调用时生成 'lp-{32 char urlsafe}' 并入库。"""
+    existing = await get_setting("gateway_api_key", "")
+    if existing:
+        return existing
+    new = "lp-" + secrets.token_urlsafe(32)
+    await set_setting("gateway_api_key", new)
+    return new
+
+
+async def rotate_gateway_key() -> str:
+    """轮换 key。用户需要手动重写所有 app binding。"""
+    new = "lp-" + secrets.token_urlsafe(32)
+    await set_setting("gateway_api_key", new)
+    return new
 
 
 # ── app_bindings ────────────────────────────────────────────────────────────

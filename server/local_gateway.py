@@ -38,6 +38,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+import app_writers
 import keystore
 import local_db
 
@@ -82,6 +83,9 @@ async def lifespan(app: FastAPI):
     log.info("local.db ready at %s", local_db.LOCAL_DB_PATH)
     log.info("keystore backend: %s", keystore.backend_name())
     log.info("free provider catalog: %d entries", len(load_free_providers_catalog()))
+    # 触发 gateway key 生成（首次启动）
+    gw_key = await local_db.get_or_create_gateway_key()
+    log.info("gateway key ready: %s", keystore.mask(gw_key))
     yield
 
 
@@ -340,13 +344,123 @@ class StrategyUpdate(BaseModel):
 
 @app.get("/__local__/health")
 async def local_health():
+    gw_key = await local_db.get_or_create_gateway_key()
     return {
         "ok": True,
         "strategy": await local_db.get_setting("strategy", "cost"),
         "advanced_mode": (await local_db.get_setting("advanced_mode", "0")) == "1",
         "keystore_backend": keystore.backend_name(),
         "local_db": local_db.LOCAL_DB_PATH,
+        "gateway_url": f"http://127.0.0.1:{os.getenv('LLP_PORT', '11435')}",
+        "gateway_key_masked": keystore.mask(gw_key),
     }
+
+
+@app.get("/__local__/gateway-key")
+async def reveal_gateway_key():
+    """返回未脱敏 key。仅本机回环访问，且由 UI 显式调用（点「显示」按钮）。
+
+    TODO: 加 Bearer 校验前应严格限制此端点，并对 /v1/* 强制验 key。
+    """
+    return {
+        "gateway_key": await local_db.get_or_create_gateway_key(),
+        "gateway_url": f"http://127.0.0.1:{os.getenv('LLP_PORT', '11435')}",
+    }
+
+
+@app.post("/__local__/gateway-key/rotate")
+async def rotate_gateway_key():
+    new_key = await local_db.rotate_gateway_key()
+    return {"gateway_key": new_key, "rotated": True}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 板块① Path B —— 一键写入器（M2）
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/__local__/apps")
+async def list_apps():
+    """列出所有支持的客户端工具 + 当前 DB 中的 binding 状态。"""
+    schemas = app_writers.list_schemas()
+    bindings = {b["app_name"]: b for b in await local_db.list_app_bindings()}
+    out = []
+    for s in schemas:
+        b = bindings.get(s["app_name"])
+        out.append({
+            **s,
+            "bound": bool(b),
+            "binding": b,
+        })
+    return {"apps": out}
+
+
+@app.get("/__local__/apps/{app_name}/preview")
+async def preview_app(app_name: str, preferred_model: Optional[str] = None):
+    gw_key = await local_db.get_or_create_gateway_key()
+    gw_url = f"http://127.0.0.1:{os.getenv('LLP_PORT', '11435')}/v1"
+    ctx = {"base_url": gw_url, "api_key": gw_key, "preferred_model": preferred_model}
+    try:
+        return app_writers.preview(app_name, ctx)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+
+
+class WriteAppBindingPayload(BaseModel):
+    preferred_model: Optional[str] = None
+
+
+@app.post("/__local__/apps/{app_name}/write")
+async def write_app(app_name: str, payload: WriteAppBindingPayload):
+    if app_name not in app_writers.SCHEMAS:
+        raise HTTPException(404, f"Unknown app: {app_name}")
+    gw_key = await local_db.get_or_create_gateway_key()
+    gw_url = f"http://127.0.0.1:{os.getenv('LLP_PORT', '11435')}/v1"
+    ctx = {
+        "base_url": gw_url,
+        "api_key": gw_key,
+        "preferred_model": payload.preferred_model,
+    }
+    result = app_writers.write(app_name, ctx)
+    if result.ok:
+        await local_db.upsert_app_binding(
+            app_name=result.app_name,
+            base_url=gw_url,
+            api_key_masked=keystore.mask(gw_key),
+            last_error="",
+        )
+    else:
+        await local_db.upsert_app_binding(
+            app_name=app_name,
+            base_url=gw_url,
+            api_key_masked=keystore.mask(gw_key),
+            last_error=result.error or "",
+        )
+    return {
+        "ok": result.ok,
+        "app_name": result.app_name,
+        "display": result.display,
+        "path": result.path,
+        "backup_path": result.backup_path,
+        "needs_env_var": result.needs_env_var,
+        "env_var_hint": result.env_var_hint,
+        "error": result.error,
+    }
+
+
+@app.delete("/__local__/apps/{app_name}/binding")
+async def delete_app_binding(app_name: str):
+    """仅清除 DB 中 binding 记录（不撤销文件写入）。
+
+    用户若想恢复工具原配置，需到 ~/.local-llm-proxy/backups/ 找备份手动还原。
+    """
+    if app_name not in app_writers.SCHEMAS:
+        raise HTTPException(404, f"Unknown app: {app_name}")
+    import aiosqlite
+    async with aiosqlite.connect(local_db.LOCAL_DB_PATH) as db:
+        await db.execute("DELETE FROM app_bindings WHERE app_name = ?", (app_name,))
+        await db.commit()
+    return {"ok": True, "note": "DB record removed; file unchanged. Check ~/.local-llm-proxy/backups/ for prior state."}
 
 
 @app.get("/__local__/strategy")
