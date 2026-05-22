@@ -225,44 +225,68 @@
 
 ---
 
-## 自动化测试（pytest）
+## 自动化测试（pytest）—— **45 个用例全通过 / 4 秒**
 
-| 文件 | 覆盖 |
-|---|---|
-| `tests/test_app_writers.py` | TC-M2-003 / 004 / 005 / 007（backfill / atomic / backup / preferred_model） |
-| `tests/mock_llm.py` | （已存在）通用 mock 上游 LLM，可用于 TC-①-302/304/305 故障转移测试 |
-| `tests/mock_image_llm.py` | （已存在）mock 图像生成 |
+| 文件 | 用例数 | 覆盖 |
+|---|---|---|
+| `tests/test_app_writers.py` | 10 | TC-M2-003/004/005/006/007/008/009/010/012/013 |
+| `tests/test_prompt_cache.py` | 18 | TC-①-601/602/603/604/605/606/607/608/609 + cache_key 稳定性 + hit_counter |
+| `tests/test_tos_acks.py` | 10 | TC-③-104/105/201/202/203/204/205/206 |
+| `tests/test_gateway_routing.py` | 7 | TC-①-301/302/303/305 + 602 cache 命中跳过上游 + cost 策略排序 |
+| `tests/mock_llm.py` | — | （已存在）通用 mock 上游 LLM，可用于扩展 |
+| `tests/mock_image_llm.py` | — | （已存在）mock 图像生成 |
 
 ### 运行方式
 
 ```bash
 cd local-llm-proxy
-pip install pytest
-python -m pytest tests/ -v
+pip install pytest httpx pyyaml tomlkit
+python -m pytest tests/ -v          # 全部
+python -m pytest tests/test_prompt_cache.py -v   # 单文件
+python -m pytest tests/ -k cache    # 关键词过滤
 ```
+
+### 隔离保证
+
+- 所有测试用 `tmp_path` + `monkeypatch.setattr(local_db, "LOCAL_DB_PATH", ...)` 重定向 SQLite
+- 所有 schema 写入用 `monkeypatch` 重定向 `SCHEMAS[name].path` 到 tmp
+- **不会触碰用户真实的 ~/.local-llm-proxy/local.db、~/.claude、~/.cursor 等**
+- 上游 HTTP 调用全部 `patch("httpx.AsyncClient.post")` 桩掉，不发任何外部请求
 
 ---
 
-## 测试覆盖率快照（2026-05-21）
+## 测试覆盖率快照（2026-05-21 — 加完 pytest 之后）
 
-| 板块 / 能力 | ✅ 已验证 | ⏳ 待补 | ⚠ 已知 fail |
-|---|---|---|---|
-| 板块① 后端 API | 14 | 12 | 0 |
-| 板块② Layer 1/2/3 | 5 | 5 | 0 |
-| 板块③ 三层 + 高级模式 | 1 | 9 | 0 |
-| M2 一键写入器 | 7 | 8 | 0 |
-| Electron 集成 | 3 | 5 | 0 |
-| P1 订阅层 | 2 | 0 | 1（预期，未实现） |
-| **合计** | **32** | **39** | **1** |
+| 板块 / 能力 | ✅ 已验证 | 🔄 已自动化 | ⏳ 待补 | ⚠ 已知 fail |
+|---|---|---|---|---|
+| 板块① 后端 API | 14 | **22** | 5 | 0 |
+| 板块② Layer 1/2/3 | 5 | 0 | 5 | 0 |
+| 板块③ 三层 + 高级模式 | 1 | **10** | 0 | 0 |
+| M2 一键写入器 | 7 | **10** | 4 | 0 |
+| Electron 集成 | 3 | 0 | 5 | 0 |
+| P1 订阅层 | 2 | 0 | 0 | 1（预期，未实现） |
+| **合计** | **32** | **42** | **19** | **1** |
+
+新增自动化覆盖率（同一用例被两栏计入 = ✅ 通过 + 🔄 写成 pytest）：
+- M2 backfill / atomic / backup / 8 工具写入器 → `test_app_writers.py`
+- prompt-cache 全部 9 个边界 → `test_prompt_cache.py`
+- 高级模式 + ack + subscription 守门 → `test_tos_acks.py`
+- 候选链 5xx/4xx/全失败/wildcard/cost 排序 → `test_gateway_routing.py`
 
 ---
 
 ## 下一步推荐补的高价值用例
 
-按"如果挂了用户立刻感知 / 数据丢失 / 回滚困难"排序：
+5 条原本高优用例已 4 条自动化：
+- ✅ TC-M2-010 / 013 — Continue 去重 + 损坏 JSON（`test_app_writers.py`）
+- ✅ TC-③-202 / 203 — ack 入库审计（`test_tos_acks.py`）
+- ✅ TC-①-302 / 305 — 候选链故障转移 + 4xx 不重试（`test_gateway_routing.py`）
+- ✅ TC-①-601…608 — prompt-cache 边界（`test_prompt_cache.py`）
+- ⏳ TC-EL-004 / 005 — 子进程重启 + 退出清理 —— **需要 Node 侧测试框架**（Vitest/Jest），单独建 `client/electron/__tests__/`，暂未做
 
-1. **TC-M2-010 / 013** —— Continue 去重 + 损坏 JSON 错误处理（避免误覆盖用户已有 model 列表）
-2. **TC-③-202 / 203** —— ack 流程入库（合规审计依赖）
-3. **TC-EL-004 / 005** —— 子进程重启 + 退出清理（避免泄端口 / 僵尸进程）
-4. **TC-①-302 / 305** —— 候选链 5xx 故障转移 + 4xx 不重试（核心路由正确性）
-5. **TC-①-601…608** —— prompt-cache 边界条件（误命中代价大）
+剩余 19 条 ⏳ 用例按类型可继续补：
+- Layer 2 / 3 端点行为（cc-switch 真实导入、share-pool 接通 VPS）—— 需要 fixture 模拟 cc-switch.db
+- Electron 主进程（gateway-process.js）—— Node 侧测试，**P3**
+- 流式 SSE 响应直通（TC-①-304）—— 需要 httpx mock stream
+- 用户级 free_providers.user.yaml 覆盖（TC-②-102）—— fixture
+- key 轮换 + Keystore 清理（TC-①-204 / 503）—— pytest 可加
