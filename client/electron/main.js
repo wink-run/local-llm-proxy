@@ -5,6 +5,7 @@ const os = require('os');
 const http = require('http');
 const https = require('https');
 const agent = require('./agent-worker');
+const gateway = require('./gateway-process');
 
 const isDev = !app.isPackaged;
 const VITE_URL = 'http://localhost:5173';
@@ -70,19 +71,24 @@ function createTray() {
 }
 
 function updateTrayMenu() {
-  const running = agent.isRunning();
+  const agentRunning = agent.isRunning();
+  const gwRunning = gateway.isRunning();
   const menu = Menu.buildFromTemplate([
-    { label: running ? 'Agent 运行中' : 'Agent 已停止', enabled: false },
+    { label: gwRunning ? 'Gateway: 运行中 (127.0.0.1:11435)' : 'Gateway: 已停止', enabled: false },
+    { label: agentRunning ? 'Agent: 运行中' : 'Agent: 已停止', enabled: false },
     { type: 'separator' },
-    { label: '启动 Agent', enabled: !running, click: startAgent },
-    { label: '停止 Agent', enabled: running, click: stopAgent },
+    { label: '启动 Gateway', enabled: !gwRunning, click: () => { gateway.start(); updateTrayMenu(); } },
+    { label: '停止 Gateway', enabled: gwRunning, click: () => { gateway.stop(); updateTrayMenu(); } },
+    { type: 'separator' },
+    { label: '启动 Agent', enabled: !agentRunning, click: startAgent },
+    { label: '停止 Agent', enabled: agentRunning, click: stopAgent },
     { type: 'separator' },
     { label: '打开主窗口', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
     { type: 'separator' },
     { label: '退出', click: () => app.quit() },
   ]);
   tray.setContextMenu(menu);
-  tray.setImage(getTrayIcon(running ? 'running' : 'stopped'));
+  tray.setImage(getTrayIcon((gwRunning || agentRunning) ? 'running' : 'stopped'));
 }
 
 // ── Agent ─────────────────────────────────────────────────────────────────────
@@ -244,6 +250,14 @@ function registerIPC() {
   ipcMain.handle('agent:start', () => { startAgent(); return { running: agent.isRunning() }; });
   ipcMain.handle('agent:stop',  () => { stopAgent();  return { running: false }; });
   ipcMain.handle('agent:status', () => ({ running: agent.isRunning() }));
+  ipcMain.handle('gateway:start', () => { gateway.start(); updateTrayMenu(); return { running: gateway.isRunning() }; });
+  ipcMain.handle('gateway:stop',  () => { gateway.stop();  updateTrayMenu(); return { running: false }; });
+  ipcMain.handle('gateway:status', async () => ({
+    running: gateway.isRunning(),
+    alive: await gateway.isAlive(),
+    port: gateway.GATEWAY_PORT,
+    host: gateway.GATEWAY_HOST,
+  }));
   ipcMain.handle('config:read',  () => readAgentConfig());
   ipcMain.handle('config:write', (_e, cfg) => { writeAgentConfig(cfg); return { ok: true }; });
   ipcMain.handle('config:scan',  () => scanLLMConfigs());
@@ -314,12 +328,24 @@ function registerIPC() {
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   createWindow();
   createTray();
   registerIPC();
 
-  // Auto-start agent if configured
+  // Auto-start gateway if not already running externally
+  const alreadyAlive = await gateway.isAlive();
+  if (!alreadyAlive) {
+    gateway.attachListeners({
+      onLog: (line) => mainWindow?.webContents.send('gateway:log', line),
+      onStatus: (s) => { mainWindow?.webContents.send('gateway:status', s); updateTrayMenu(); },
+    });
+    gateway.start();
+  } else {
+    console.log('[main] Gateway already running externally; skipping autostart');
+  }
+
+  // Auto-start agent if configured (legacy VPS worker)
   const cfg = readAgentConfig();
   if (cfg?.auto_start && cfg?.worker_key) {
     startAgent();
@@ -335,4 +361,7 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => agent.stop());
+app.on('before-quit', () => {
+  agent.stop();
+  gateway.stop();
+});

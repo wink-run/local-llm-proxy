@@ -110,6 +110,7 @@ async def init_local_db() -> None:
         )
 
         await db.commit()
+    await init_contribution_sources()
 
 
 # ── local_providers ─────────────────────────────────────────────────────────
@@ -264,6 +265,79 @@ async def rotate_gateway_key() -> str:
     new = "lp-" + secrets.token_urlsafe(32)
     await set_setting("gateway_api_key", new)
     return new
+
+
+# ── contribution_sources（板块③ 本机贡献清单） ──────────────────────────
+
+
+async def init_contribution_sources() -> None:
+    """幂等创建 contribution_sources 表。"""
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS contribution_sources (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_kind  TEXT NOT NULL,         -- 'local' | 'gateway' | 'subscription'
+                display_name TEXT NOT NULL,
+                base_url     TEXT DEFAULT '',       -- local 不填；gateway / subscription 填
+                models       TEXT DEFAULT '[]',     -- JSON
+                enabled      INTEGER DEFAULT 0,
+                quota_unit   TEXT DEFAULT '',       -- usd / tokens / rpm
+                quota_total  REAL DEFAULT 0,
+                quota_used   REAL DEFAULT 0,
+                schedule     TEXT DEFAULT '',       -- 自由文本：'24/7' / '09-18' 等
+                notes        TEXT DEFAULT '',
+                created_at   TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        await db.commit()
+
+
+async def list_contribution_sources() -> list[dict]:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM contribution_sources ORDER BY source_kind, id"
+        ) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+    for r in rows:
+        try:
+            r["models"] = json.loads(r["models"] or "[]")
+        except json.JSONDecodeError:
+            r["models"] = []
+    return rows
+
+
+async def add_contribution_source(
+    source_kind: str, display_name: str,
+    base_url: str = "", models: list[str] | None = None,
+    quota_unit: str = "", quota_total: float = 0.0,
+    schedule: str = "", notes: str = "",
+) -> int:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        cur = await db.execute(
+            """INSERT INTO contribution_sources
+               (source_kind, display_name, base_url, models, quota_unit, quota_total, schedule, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (source_kind, display_name, base_url, json.dumps(models or []),
+             quota_unit, quota_total, schedule, notes),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def toggle_contribution_source(row_id: int, enabled: bool) -> None:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        await db.execute(
+            "UPDATE contribution_sources SET enabled = ? WHERE id = ?",
+            (int(enabled), row_id),
+        )
+        await db.commit()
+
+
+async def delete_contribution_source(row_id: int) -> None:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        await db.execute("DELETE FROM contribution_sources WHERE id = ?", (row_id,))
+        await db.commit()
 
 
 # ── app_bindings ────────────────────────────────────────────────────────────

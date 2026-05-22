@@ -1,0 +1,90 @@
+# 板块② Layer 2：订阅 / 付费 Provider 目录
+# 字段说明见 DESIGN_v2.md §2.4
+#
+# 自维护清单 —— 与 cc-switch 共享但不实时同步。
+# 「从 cc-switch 一次性导入」按钮可拉取 cc-switch 已选 partner 合并进来。
+
+providers:
+  # ── 官方直连 ──────────────────────────────────────────────────────────
+  - id: openai-official
+    display: "OpenAI 官方"
+    tier: paid
+    base_url: "https://api.openai.com/v1"
+    auth: { type: "bearer", env: "OPENAI_API_KEY" }
+    signup_url: "https://platform.openai.com/api-keys"
+    affiliate: false
+    quota_hint: "Pay-as-you-go，无最低充值"
+    notes: "国内访问可能需要代理"
+
+  - id: anthropic-official
+    display: "Anthropic 官方 (Claude)"
+    tier: paid
+    base_url: "https://api.anthropic.com"
+    auth: { type: "anthropic", env: "ANTHROPIC_API_KEY" }
+    signup_url: "https://console.anthropic.com/settings/keys"
+    affiliate: false
+    quota_hint: "Pay-as-you-go，需信用卡"
+    notes: "原生 Messages 协议；通过本地网关 /v1/messages 调用"
+
+  - id: deepseek-official
+    display: "DeepSeek 官方"
+    tier: paid
+    base_url: "https://api.deepseek.com/v1"
+    auth: { type: "bearer", env: "DEEPSEEK_API_KEY" }
+    signup_url: "https://platform.deepseek.com/api_keys"
+    affiliate: false
+    quota_hint: "新用户送 ¥5"
+    models: ["deepseek-chat", "deepseek-reasoner"]
+
+  - id: zhipu-glm
+    display: "智谱 AI (GLM)"
+    tier: paid
+    base_url: "https://open.bigmodel.cn/api/paas/v4"
+    auth: { type: "bearer", env: "ZHIPU_API_KEY" }
+    signup_url: "https://open.bigmodel.cn/usercenter/apikeys"
+    affiliate: false
+    quota_hint: "新用户送 ¥1+赠 token 包"
+    models: ["glm-4-plus", "glm-4-air", "glm-4-flash"]
+
+  - id: moonshot-kimi
+    display: "Moonshot AI (Kimi)"
+    tier: paid
+    base_url: "https://api.moonshot.cn/v1"
+    auth: { type: "bearer", env: "MOONSHOT_API_KEY" }
+    signup_url: "https://platform.moonshot.cn/console/api-keys"
+    affiliate: false
+    quota_hint: "新用户 ¥15 试用额度"
+
+  # ── 一线中转/聚合（cc-switch 同款，但我们自维护折扣） ────────────────────
+  - id: openrouter-paid
+    display: "OpenRouter（付费模型）"
+    tier: paid
+    base_url: "https://openrouter.ai/api/v1"
+    auth: { type: "bearer", env: "OPENROUTER_API_KEY" }
+    signup_url: "https://openrouter.ai/settings/keys"
+    affiliate: false
+    quota_hint: "300+ 模型聚合，按 token 计费"
+    notes: "免费模型见 Layer 1 的 openrouter-free"
+
+  # ── 包月 Plan（需要订阅层 P1 配合，目前仅展示） ──────────────────────
+  - id: claude-pro
+    display: "Claude Pro（订阅）"
+    tier: subscription
+    base_url: ""               # 通过 P1 订阅代理转换得到
+    auth: { type: "cookie" }   # 待实现
+    signup_url: "https://claude.ai/upgrade"
+    affiliate: false
+    quota_hint: "$20/月，无限对话 + 200 fast tokens"
+    notes: "需要订阅层 P1 才能转 API 使用；当前仅作占位"
+    requires_p1: true
+
+  - id: chatgpt-plus
+    display: "ChatGPT Plus（订阅）"
+    tier: subscription
+    base_url: ""
+    auth: { type: "cookie" }
+    signup_url: "https://chatgpt.com/#pricing"
+    affiliate: false
+    quota_hint: "$20/月"
+    notes: "需要订阅层 P1 才能转 API；法律风险用户自担"
+    requires_p1: true

@@ -16,6 +16,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener('agent:log', handler);
     },
   },
+  gateway: {
+    start: () => ipcRenderer.invoke('gateway:start'),
+    stop: () => ipcRenderer.invoke('gateway:stop'),
+    getStatus: () => ipcRenderer.invoke('gateway:status'),
+    onStatus: (cb) => {
+      const handler = (_e, data) => cb(data);
+      ipcRenderer.on('gateway:status', handler);
+      return () => ipcRenderer.removeListener('gateway:status', handler);
+    },
+    onLog: (cb) => {
+      const handler = (_e, line) => cb(line);
+      ipcRenderer.on('gateway:log', handler);
+      return () => ipcRenderer.removeListener('gateway:log', handler);
+    },
+  },
   config: {
     read:  () => ipcRenderer.invoke('config:read'),
     write: (cfg) => ipcRenderer.invoke('config:write', cfg),

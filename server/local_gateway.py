@@ -39,8 +39,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 import app_writers
+import ccswitch_import
 import keystore
 import local_db
+import prompt_cache
+import subscription_providers
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s — %(message)s"
@@ -68,11 +71,33 @@ def load_free_providers_catalog() -> list[dict]:
     base = _load_yaml(DATA_DIR / "free_providers.yaml").get("providers", [])
     user_path = Path.home() / ".local-llm-proxy" / "free_providers.user.yaml"
     user = _load_yaml(user_path).get("providers", []) if user_path.exists() else []
-    # user 覆盖 base：按 id merge
     by_id = {p["id"]: p for p in base}
     for p in user:
         by_id[p["id"]] = {**by_id.get(p["id"], {}), **p}
     return list(by_id.values())
+
+
+def load_paid_providers_catalog() -> list[dict]:
+    """Layer 2 内置目录 + 用户覆盖（含导入自 cc-switch 的条目）。"""
+    base = _load_yaml(DATA_DIR / "paid_providers.yaml").get("providers", [])
+    user_path = Path.home() / ".local-llm-proxy" / "paid_providers.user.yaml"
+    user = _load_yaml(user_path).get("providers", []) if user_path.exists() else []
+    by_id = {p["id"]: p for p in base}
+    for p in user:
+        by_id[p["id"]] = {**by_id.get(p["id"], {}), **p}
+    return list(by_id.values())
+
+
+def save_user_paid_providers(providers: list[dict]) -> None:
+    """合并写入 ~/.local-llm-proxy/paid_providers.user.yaml。"""
+    user_path = Path.home() / ".local-llm-proxy" / "paid_providers.user.yaml"
+    user_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = _load_yaml(user_path).get("providers", []) if user_path.exists() else []
+    by_id = {p["id"]: p for p in existing}
+    for p in providers:
+        by_id[p["id"]] = {**by_id.get(p["id"], {}), **p}
+    with user_path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump({"providers": list(by_id.values())}, f, allow_unicode=True, sort_keys=False)
 
 
 # ── Lifecycle ───────────────────────────────────────────────────────────────
@@ -86,6 +111,10 @@ async def lifespan(app: FastAPI):
     # 触发 gateway key 生成（首次启动）
     gw_key = await local_db.get_or_create_gateway_key()
     log.info("gateway key ready: %s", keystore.mask(gw_key))
+    # P1 订阅层 scaffold 表
+    await subscription_providers.init_subscription_db()
+    # prompt-cache 表（M9 Step 1）
+    await prompt_cache.init_cache_db()
     yield
 
 
@@ -202,6 +231,17 @@ async def _forward_openai(request: Request, *, path_suffix: str):
     if not model:
         raise HTTPException(400, "Missing 'model' field")
 
+    # prompt-cache 查找（仅 chat/completions 且满足 cacheable 条件）
+    cache_hit_resp = None
+    cache_key = None
+    headers_lower = {k.lower(): v for k, v in request.headers.items()}
+    if path_suffix == "/chat/completions" and prompt_cache.is_cacheable_request(body, headers_lower):
+        cache_key = prompt_cache.compute_cache_key(body)
+        cache_hit_resp = await prompt_cache.get(cache_key)
+        if cache_hit_resp is not None:
+            log.info("prompt-cache HIT key=%s model=%s", cache_key[:12], model)
+            return JSONResponse(content={**cache_hit_resp, "_llp_cached": True})
+
     candidates = await _candidates_for_model(model)
     if not candidates:
         raise HTTPException(
@@ -236,8 +276,17 @@ async def _forward_openai(request: Request, *, path_suffix: str):
                 await local_db.update_provider(
                     p["id"], last_used_at=time.strftime("%Y-%m-%dT%H:%M:%S"), last_error=""
                 )
+                # 成功响应且可缓存：写入 prompt-cache
+                resp_data = r.json() if "application/json" in r.headers.get("content-type", "") else None
+                if cache_key and r.status_code < 300 and resp_data:
+                    ttl_hdr = headers_lower.get("x-llp-cache-ttl")
+                    try:
+                        ttl = int(ttl_hdr) if ttl_hdr else prompt_cache.DEFAULT_TTL_SECONDS
+                    except ValueError:
+                        ttl = prompt_cache.DEFAULT_TTL_SECONDS
+                    await prompt_cache.put(cache_key, model, resp_data, ttl_seconds=ttl)
                 return JSONResponse(
-                    content=r.json() if "application/json" in r.headers.get("content-type", "") else r.text,
+                    content=resp_data if resp_data is not None else r.text,
                     status_code=r.status_code,
                 )
         except httpx.HTTPError as e:
@@ -495,7 +544,6 @@ async def list_local_providers():
 async def free_catalog():
     """暴露 free_providers.yaml 的目录给 Onboarding UI。"""
     catalog = load_free_providers_catalog()
-    # 加上 guide markdown 内联（UI 直接渲染）
     out = []
     for entry in catalog:
         guide_path = DATA_DIR / entry.get("guide_md", "")
@@ -507,6 +555,190 @@ async def free_catalog():
                 pass
         out.append({**entry, "guide_text": guide_text})
     return {"providers": out}
+
+
+@app.get("/__local__/paid-catalog")
+async def paid_catalog():
+    """Layer 2 付费/订阅目录。"""
+    return {"providers": load_paid_providers_catalog()}
+
+
+@app.get("/__local__/share-pool")
+async def share_pool():
+    """Layer 3 用户分享池 —— 来自板块③ 贡献网络。
+
+    本地网关单独运行时无法获取真实分享池（需要 VPS 端 worker_pool）。
+    返回空列表 + 提示，等 P2 接入板块③ 时再填充。
+    """
+    return {
+        "providers": [],
+        "available": False,
+        "notice": "分享池需要连接 VPS 贡献网络（板块③）。"
+                  "请到「Agent」页登录账号、启动 worker，"
+                  "并到 Onboarding 页配置 VPS URL 才能看到。",
+    }
+
+
+@app.get("/__local__/ccswitch/available")
+async def ccswitch_available():
+    """检测本机是否安装 cc-switch。"""
+    return {
+        "available": ccswitch_import.is_available(),
+        "db_path": str(ccswitch_import.CCSWITCH_DB),
+    }
+
+
+@app.post("/__local__/ccswitch/import")
+async def do_ccswitch_import():
+    """一次性导入 cc-switch 的 provider 条目到 paid_providers.user.yaml。"""
+    if not ccswitch_import.is_available():
+        raise HTTPException(404, "cc-switch is not installed on this machine.")
+    imported = ccswitch_import.read_providers()
+    if imported:
+        save_user_paid_providers(imported)
+    return {"imported": len(imported), "items": imported}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 板块③ 贡献体系（Phase C）—— 三层 source_kind + 高级模式 + ToS ack
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/__local__/contribute/sources")
+async def list_contribute_sources():
+    return {
+        "sources": await local_db.list_contribution_sources(),
+        "advanced_mode": (await local_db.get_setting("advanced_mode", "0")) == "1",
+    }
+
+
+class AddSourcePayload(BaseModel):
+    source_kind: str = Field(..., pattern="^(local|gateway|subscription)$")
+    display_name: str
+    base_url: str = ""
+    models: list[str] = []
+    quota_unit: str = ""
+    quota_total: float = 0.0
+    schedule: str = ""
+    notes: str = ""
+
+
+@app.post("/__local__/contribute/sources")
+async def add_contribute_source(payload: AddSourcePayload):
+    if payload.source_kind == "subscription":
+        if (await local_db.get_setting("advanced_mode", "0")) != "1":
+            raise HTTPException(
+                403,
+                "Subscription sources are gated behind advanced mode. "
+                "Enable it first via POST /__local__/contribute/advanced-mode/enable with ack.",
+            )
+    row_id = await local_db.add_contribution_source(
+        source_kind=payload.source_kind,
+        display_name=payload.display_name,
+        base_url=payload.base_url,
+        models=payload.models,
+        quota_unit=payload.quota_unit,
+        quota_total=payload.quota_total,
+        schedule=payload.schedule,
+        notes=payload.notes,
+    )
+    return {"id": row_id, "ok": True}
+
+
+@app.post("/__local__/contribute/sources/{row_id}/toggle")
+async def toggle_contribute_source(row_id: int, enabled: bool):
+    await local_db.toggle_contribution_source(row_id, enabled)
+    return {"id": row_id, "enabled": enabled}
+
+
+@app.delete("/__local__/contribute/sources/{row_id}")
+async def remove_contribute_source(row_id: int):
+    await local_db.delete_contribution_source(row_id)
+    return {"ok": True}
+
+
+# 高级模式开关 + 三重 ack
+
+ADVANCED_MODE_ACK_TEXT = """
+启用高风险贡献源（订阅账号转 API）涉及以下 4 条具体风险：
+
+1. **上游服务条款（ToS）**：OpenAI / Anthropic / Google 等订阅协议明确禁止
+   把账号 / Cookie / 会话 token 分享或用于第三方代理调用，违反将导致永久封号。
+2. **共享 IP 风控**：你的贡献流量与其他用户的请求会混合，
+   触发上游的滥用检测后可能整批被风控；不仅你受影响。
+3. **本地法律合规**：在部分地区"未授权转售算力 / 账号"可能违反相关条款；
+   产生的法律责任由你本人承担。
+4. **数据隐私**：消费者的 prompt 内容会经你的账号转发上游，
+   上游服务商和你的账号都会看到这些数据。
+
+我已阅读并理解以上 4 条具体风险，并自愿承担相应后果。
+"""
+
+
+class EnableAdvancedPayload(BaseModel):
+    ack: bool = False
+    user_hint: str = ""
+
+
+@app.post("/__local__/contribute/advanced-mode/enable")
+async def enable_advanced_mode(payload: EnableAdvancedPayload):
+    if not payload.ack:
+        raise HTTPException(400, "Must acknowledge the 4 specific risks before enabling.")
+    await local_db.record_tos_ack(
+        action="enable_advanced",
+        ack_text=ADVANCED_MODE_ACK_TEXT.strip(),
+        user_hint=payload.user_hint,
+    )
+    await local_db.set_setting("advanced_mode", "1")
+    return {"advanced_mode": True}
+
+
+@app.post("/__local__/contribute/advanced-mode/disable")
+async def disable_advanced_mode():
+    await local_db.record_tos_ack(
+        action="disable_advanced",
+        ack_text="user disabled advanced mode",
+    )
+    await local_db.set_setting("advanced_mode", "0")
+    return {"advanced_mode": False}
+
+
+@app.get("/__local__/contribute/advanced-mode/text")
+async def advanced_mode_text():
+    return {"text": ADVANCED_MODE_ACK_TEXT.strip()}
+
+
+@app.get("/__local__/contribute/tos-acks")
+async def list_acks(limit: int = 50):
+    return {"acks": await local_db.list_tos_acks(limit=limit)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# P1 订阅层 scaffold（仅平台清单 + 状态查询，dispatch 未实现）
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/__local__/cache/stats")
+async def cache_stats():
+    return await prompt_cache.stats()
+
+
+@app.post("/__local__/cache/clear")
+async def cache_clear():
+    cleared = await prompt_cache.clear()
+    return {"cleared": cleared}
+
+
+@app.get("/__local__/subscription/platforms")
+async def list_subscription_platforms():
+    return {
+        "platforms": subscription_providers.list_supported_platforms(),
+        "status": "scaffold-only",
+        "notice": (
+            "订阅层正在开发中（P1 / M10）。当前仅展示支持的平台清单与 schema；"
+            "实际的 cookie 持久化 + 浏览器自动化 + ToS-risky 调用通路尚未启用。"
+        ),
+    }
 
 
 # ── Provider CRUD（从 free catalog 派生） ──────────────────────────────────

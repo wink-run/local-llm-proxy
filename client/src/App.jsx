@@ -11,6 +11,7 @@ import Config from './pages/Config';
 import Debug from './pages/Debug';
 import Onboarding from './pages/Onboarding';
 import Apps from './pages/Apps';
+import Contribute from './pages/Contribute';
 
 function Layout() {
   const { user, loading } = useAuth();
@@ -33,6 +34,7 @@ function Layout() {
           <Route path="/network" element={<Network />} />
           <Route path="/onboarding" element={<Onboarding />} />
           <Route path="/apps" element={<Apps />} />
+          <Route path="/contribute" element={<Contribute />} />
           <Route path="/config" element={<Config />} />
           <Route path="/debug" element={<Debug />} />
           <Route path="*" element={<Navigate to={user ? '/' : '/onboarding'} replace />} />
