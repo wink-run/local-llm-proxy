@@ -67,4 +67,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     install: () => ipcRenderer.invoke('update:install'),
   },
+  gateway: {
+    status:        () => ipcRenderer.invoke('gateway:status'),
+    getLog:        () => ipcRenderer.invoke('gateway:getLog'),
+    getDailyStats: () => ipcRenderer.invoke('gateway:getDailyStats'),
+    setStrategy:   (s) => ipcRenderer.invoke('gateway:setStrategy', s),
+    testProvider:  (p) => ipcRenderer.invoke('gateway:testProvider', p),
+  },
 });

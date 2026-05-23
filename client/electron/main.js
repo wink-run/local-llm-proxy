@@ -6,6 +6,7 @@ const http = require('http');
 const https = require('https');
 const { autoUpdater } = require('electron-updater');
 const agent = require('./agent-worker');
+const gateway = require('./local-gateway');
 
 const isDev = !app.isPackaged;
 const VITE_URL = 'http://localhost:5173';
@@ -364,6 +365,25 @@ function registerIPC() {
   ipcMain.handle('update:install', () => {
     autoUpdater.quitAndInstall();
   });
+
+  ipcMain.handle('gateway:status',        () => gateway.getStatus());
+  ipcMain.handle('gateway:getLog',        () => gateway.getLog());
+  ipcMain.handle('gateway:getDailyStats', () => gateway.getDailyStats());
+  ipcMain.handle('gateway:setStrategy',   (_e, strategy) => { gateway.setStrategy(strategy); return { ok: true }; });
+
+  ipcMain.handle('gateway:testProvider', async (_e, { base_url, token }) => {
+    try {
+      const result = await nodeRequest(
+        base_url.replace(/\/$/, '') + '/models',
+        'GET',
+        token ? { Authorization: `Bearer ${token}` } : {},
+        null,
+      );
+      return { ok: result.status >= 200 && result.status < 400, status: result.status };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
@@ -372,6 +392,7 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   registerIPC();
+  gateway.start(11430, readAgentConfig);
 
   if (!isDev) setupAutoUpdater();
 
