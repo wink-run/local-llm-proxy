@@ -369,12 +369,17 @@ function registerIPC() {
   ipcMain.handle('gateway:status',        () => gateway.getStatus());
   ipcMain.handle('gateway:getLog',        () => gateway.getLog());
   ipcMain.handle('gateway:getDailyStats', () => gateway.getDailyStats());
-  ipcMain.handle('gateway:setStrategy',   (_e, strategy) => { gateway.setStrategy(strategy); return { ok: true }; });
+  ipcMain.handle('gateway:setStrategy', (_e, strategy) => {
+    if (strategy !== 'cost' && strategy !== 'quality') return { ok: false, error: 'invalid_strategy' };
+    gateway.setStrategy(strategy);
+    return { ok: true };
+  });
 
-  ipcMain.handle('gateway:testProvider', async (_e, { base_url, token }) => {
+  ipcMain.handle('gateway:testProvider', async (_e, { base_url, token } = {}) => {
+    if (!base_url || typeof base_url !== 'string') return { ok: false, error: 'base_url required' };
     try {
       const result = await nodeRequest(
-        base_url.replace(/\/$/, '') + '/models',
+        base_url.replace(/\/$/, '') + '/v1/models',
         'GET',
         token ? { Authorization: `Bearer ${token}` } : {},
         null,
@@ -412,4 +417,4 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => agent.stop());
+app.on('before-quit', () => { agent.stop(); gateway.stop(); });
