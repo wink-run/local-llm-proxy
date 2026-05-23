@@ -21,10 +21,15 @@ function ProviderCard({ provider, onUpdate, onTest }) {
   async function handleTest() {
     if (!provider.base_url) { setTestMsg('请先填写 Base URL'); return; }
     setTesting(true); setTestMsg('');
-    const result = await onTest(provider.base_url, provider.token);
-    setTestMsg(result.ok ? '✓ 连接成功' : `✗ ${result.error || `HTTP ${result.status}`}`);
-    setTimeout(() => setTestMsg(''), 3000);
-    setTesting(false);
+    try {
+      const result = await onTest(provider.base_url, provider.token);
+      setTestMsg(result.ok ? '✓ 连接成功' : `✗ ${result.error || `HTTP ${result.status}`}`);
+    } catch (e) {
+      setTestMsg(`✗ ${e.message || '未知错误'}`);
+    } finally {
+      setTimeout(() => setTestMsg(''), 3000);
+      setTesting(false);
+    }
   }
 
   const isOllama = provider.id === 'ollama';
@@ -92,7 +97,7 @@ export default function Providers() {
   const [savedMsg,  setSavedMsg]  = useState('');
 
   useEffect(() => {
-    window.electronAPI?.config.read().then(cfg => {
+    window.electronAPI?.config?.read().then(cfg => {
       if (cfg?.providers?.length) {
         setProviders(prev => prev.map(def => {
           const saved = cfg.providers.find(p => p.id === def.id);
@@ -109,8 +114,8 @@ export default function Providers() {
   async function save() {
     setSaving(true);
     try {
-      const cfg = (await window.electronAPI?.config.read()) || {};
-      await window.electronAPI?.config.write({ ...cfg, providers });
+      const cfg = (await window.electronAPI?.config?.read()) || {};
+      await window.electronAPI?.config?.write({ ...cfg, providers });
       setSavedMsg('已保存');
       setTimeout(() => setSavedMsg(''), 2000);
     } finally { setSaving(false); }
