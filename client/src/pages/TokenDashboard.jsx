@@ -134,12 +134,14 @@ export default function TokenDashboard() {
 
   const loadData = useCallback(async () => {
     if (!window.electronAPI?.gateway) return;
-    const [s, lg] = await Promise.all([
-      window.electronAPI.gateway.getDailyStats(),
-      window.electronAPI.gateway.getLog(),
-    ]);
-    setStats(s);
-    setLog(lg.slice(0, 5));
+    try {
+      const [s, lg] = await Promise.all([
+        window.electronAPI.gateway.getDailyStats(),
+        window.electronAPI.gateway.getLog(),
+      ]);
+      setStats(s);
+      setLog(lg.slice(0, 5));
+    } catch {}
   }, []);
 
   useEffect(() => {
@@ -149,7 +151,8 @@ export default function TokenDashboard() {
     getPurchaseOrders().then(r => { setOrders(r.data.orders || []); if (r.data.contact_info) setAdminInfo(String(r.data.contact_info)); }).catch(() => {});
     const id = setInterval(loadData, 10_000);
     return () => clearInterval(id);
-  }, [loadData, refreshUser]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadData]);
 
   if (!user) return null;
 
@@ -162,7 +165,7 @@ export default function TokenDashboard() {
 
   async function handleOrder(e) {
     e.preventDefault();
-    if (!contact.trim()) return;
+    if (submitting || !contact.trim()) return;
     setSubmitting(true); setOrderMsg('');
     try {
       const r = await createPurchaseOrder(0, `联系方式：${contact.trim()}${note.trim() ? `；${note.trim()}` : ''}`);
@@ -236,7 +239,7 @@ export default function TokenDashboard() {
             {logEntries.map((e, i) => {
               const meta = PROVIDER_COLORS[e.via] || {};
               return (
-                <div key={i} className="flex items-center gap-2 text-xs px-2 py-1.5 rounded-lg bg-gray-50 dark:bg-gray-900">
+                <div key={`${e.ts}-${e.via}-${i}`} className="flex items-center gap-2 text-xs px-2 py-1.5 rounded-lg bg-gray-50 dark:bg-gray-900">
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${e.status === 'ok' ? 'bg-green-400' : 'bg-red-400'}`} />
                   <span className="text-gray-500 shrink-0">{new Date(e.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
                   <span className="flex-1 text-gray-700 dark:text-gray-300 truncate font-mono">{e.model || '—'}</span>
