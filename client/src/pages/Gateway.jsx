@@ -76,7 +76,7 @@ export default function Gateway() {
 
   useEffect(() => {
     refresh();
-    window.electronAPI?.claude?.status().then(r => setCcStatus(r?.configured));
+    window.electronAPI?.claude?.status().then(r => setCcStatus(r?.configured)).catch(() => {});
     const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
   }, [refresh]);
@@ -92,7 +92,7 @@ export default function Gateway() {
       const keysRes = await listKeys().catch(() => ({ data: { keys: [] } }));
       const activeKey = (keysRes.data.keys || []).find(k => k.is_active);
       if (!activeKey) { setCcMsg('请先在供给源页面创建并启用 API Key'); return; }
-      await window.electronAPI.claude.configure(localBase, activeKey.key, []);
+      await window.electronAPI?.claude?.configure(localBase, activeKey.key, []);
       setCcStatus(true);
       setCcMsg('配置成功，重启 Claude Code 生效');
       setTimeout(() => setCcMsg(''), 4000);
@@ -165,7 +165,7 @@ export default function Gateway() {
         ) : (
           <div className="space-y-1.5">
             {logEntries.map((e, i) => (
-              <div key={i} className="flex items-center gap-3 text-xs px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-900">
+              <div key={`${e.ts}-${e.via}-${i}`} className="flex items-center gap-3 text-xs px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-900">
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${e.status === 'ok' ? 'bg-green-400' : 'bg-red-400'}`} />
                 <span className="font-mono text-gray-500 dark:text-gray-500 shrink-0 w-12">
                   {new Date(e.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
