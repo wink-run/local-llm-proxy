@@ -22,8 +22,8 @@ function newDayStats() {
     date: today(),
     calls: 0,
     errors: 0,
-    by_provider: {},  // id → { calls, tokens }
-    by_model:    {},  // name → { calls, tokens }
+    by_provider: {},  // id → { calls }
+    by_model:    {},  // name → { calls }
   };
 }
 
@@ -38,7 +38,11 @@ function ensureTodayStats() {
 // ── Provider helpers ──────────────────────────────────────────────────────────
 
 function orderedProviders() {
-  const cfg = _getConfig ? _getConfig() : {};
+  if (!_getConfig) {
+    console.warn('[gateway] _getConfig not set — no providers available');
+    return [];
+  }
+  const cfg = _getConfig();
   const providers = (cfg.providers || []).filter(p => p.enabled && p.base_url);
   const typeOrder = _strategy === 'cost'
     ? ['free', 'p2p', 'paid']
@@ -81,6 +85,10 @@ function proxyRequest(provider, reqPath, body, res) {
         proxyRes.resume();
         return reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode }));
       }
+      if (res.headersSent) {
+        proxyRes.resume();
+        return reject(new Error('headers_already_sent'));
+      }
       res.writeHead(proxyRes.statusCode, {
         'Content-Type':          proxyRes.headers['content-type'] || 'text/event-stream',
         'Cache-Control':         'no-cache',
@@ -89,7 +97,10 @@ function proxyRequest(provider, reqPath, body, res) {
       });
       proxyRes.pipe(res);
       proxyRes.on('end',   () => resolve({ provider: provider.id, latency: Date.now() - t0 }));
-      proxyRes.on('error', reject);
+      proxyRes.on('error', (err) => {
+        res.destroy(err);
+        resolve({ provider: provider.id, latency: Date.now() - t0 });
+      });
     });
 
     proxyReq.on('error',   reject);
@@ -127,8 +138,10 @@ async function route(model, reqPath, body, res) {
   // All providers failed
   pushLog({ ts: t0, model, via: null, latency_ms: Date.now() - t0, status: 'error', error: lastErr?.message });
   _stats.errors++;
-  res.writeHead(502, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: 'all_providers_failed', detail: lastErr?.message }));
+  if (!res.headersSent) {
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'all_providers_failed', detail: lastErr?.message }));
+  }
 }
 
 function pushLog(entry) {
@@ -138,12 +151,12 @@ function pushLog(entry) {
 
 function recordStats(providerId, model) {
   _stats.calls++;
-  const ps = _stats.by_provider[providerId] || { calls: 0, tokens: 0 };
+  const ps = _stats.by_provider[providerId] || { calls: 0 };
   ps.calls++;
   _stats.by_provider[providerId] = ps;
 
   if (model) {
-    const ms = _stats.by_model[model] || { calls: 0, tokens: 0 };
+    const ms = _stats.by_model[model] || { calls: 0 };
     ms.calls++;
     _stats.by_model[model] = ms;
   }
@@ -182,6 +195,14 @@ function handleRequest(req, res) {
     return;
   }
 
+  req.on('error', (err) => {
+    console.error('[gateway] request error:', err.message);
+    if (!res.headersSent) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'request_error' }));
+    }
+  });
+
   const chunks = [];
   req.on('data', c => chunks.push(c));
   req.on('end', async () => {
@@ -216,8 +237,11 @@ function start(port, getConfig) {
 
 function stop() {
   if (!_server) return;
-  _server.close();
+  const s = _server;
   _server = null;
+  s.close(() => {
+    console.log('[gateway] stopped');
+  });
 }
 
 function setStrategy(s) {
