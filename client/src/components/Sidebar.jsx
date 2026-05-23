@@ -11,9 +11,11 @@ export default function Sidebar() {
   const location = useLocation();
 
   const NAV = [
-    { to: '/agent',   icon: '⚙️', label: t('nav.agent') },
-    { to: '/network', icon: '🌐', label: t('nav.network') },
-    { to: '/debug',   icon: '🐛', label: t('nav.debug') },
+    { to: '/gateway',   icon: '🔀', label: '网关' },
+    { to: '/providers', icon: '⚡', label: '供给源' },
+    { to: '/contribute',icon: '💪', label: '贡献' },
+    { to: '/network',   icon: '🌐', label: t('nav.network') },
+    { to: '/debug',     icon: '🐛', label: t('nav.debug') },
   ];
   const profileActive = location.pathname === '/';
   return (
@@ -61,7 +63,7 @@ export default function Sidebar() {
             <p className={`text-xs font-medium truncate ${profileActive ? 'text-blue-700 dark:text-blue-300' : 'text-gray-700 dark:text-gray-300'}`}>{user.nickname}</p>
             <p className="text-xs text-gray-400 dark:text-gray-500 truncate">{user.email}</p>
             {user.credits_balance != null && (
-              <p className="text-xs font-medium text-blue-500 dark:text-blue-400 mt-0.5">
+              <p className="text-xs text-gray-400 dark:text-gray-500 truncate mt-0.5">
                 💎 {Math.floor(user.credits_balance ?? 0).toLocaleString()} 积分
               </p>
             )}
