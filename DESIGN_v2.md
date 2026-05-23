@@ -475,8 +475,9 @@ CREATE TABLE contribution_quotas (
 | M8 | 质量打分 + 故障转移 + 审计日志完整版 | ①③ | M5 |
 | M9 | **生态整合 Step 1**（高价值/低风险）：prompt-cache 中间件 + FreeLLMAPI 导入到板块② Layer 1 | ①② | M1, M3 |
 | M10 | **生态整合 Step 2**（高价值/需谨慎）：订阅贡献者 Worker 类型（参考 CCSwitch / Sub2API 核心逻辑） | ③ | M7 |
+| **M11–M16** | **用户体验主线 v2.1（dashboard / 三级供给 / quickstart / 应用级策略）+ v2.2（场景级策略）** | UI + ① | 见 §8.6 详细 |
 
-> **关键取舍**：Path B 内置实现为主线（一次性投入几百行 Node/Python），cc-switch 仅作参考实现 + 可选导出目标。避免把核心功能挂在外部产品版本节奏上、降低首次使用门槛。富余订阅 key 类贡献延后到 M7 并锁在高级模式后。生态整合分两步走详见 §6。
+> **关键取舍**：Path B 内置实现为主线（一次性投入几百行 Node/Python），cc-switch 仅作参考实现 + 可选导出目标。避免把核心功能挂在外部产品版本节奏上、降低首次使用门槛。富余订阅 key 类贡献延后到 M7 并锁在高级模式后。生态整合分两步走详见 §6。用户体验主线（Dashboard / 三级 token / QuickStart / 策略精细化）详见 §8。
 
 ---
 
@@ -572,7 +573,233 @@ CREATE TABLE contribution_quotas (
 
 ---
 
-## 8. 关键技术决策（2026-05-20 定稿）
+## 8. 用户体验主线（v2.1 新增）
+
+> 用户角度的需求（2026-05-22）：
+> 1. 看到「我的 token 全貌」
+> 2. 三级 token 供给（自由切换）
+> 3. 快速接入使用（最短路径上手）
+> 4. 按策略精细化供给：**先到应用粒度**，**未来到场景粒度**
+
+四件事共用一条主线：**「Token 是平台的统一货币，用户决定怎么消费」**。
+
+### 8.1 我的 Token 看板（Dashboard）—— 默认首屏
+
+启动后落到 `/dashboard` 而非 `/onboarding`（已接入的老用户）；零接入的新用户重定向到 `/quickstart`。
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  我的 Token                                          [今日 / 本月] │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
+│  │ 🎁 Tier 1     │  │ 💳 Tier 2     │  │ 🤝 Tier 3     │          │
+│  │ 免费层        │  │ 付费层        │  │ 共享层        │          │
+│  │              │  │              │  │              │          │
+│  │  ∞ 无限       │  │ $42.50       │  │  168 积分     │          │
+│  │  Ollama+Groq │  │ 4 个 key      │  │  从贡献获得   │          │
+│  │              │  │              │  │              │          │
+│  │ 今日 12K tok │  │ 今日 8K tok  │  │ 今日 0 tok   │          │
+│  │ ████░░ 50%   │  │ ██░░░░ 25%   │  │ ░░░░░░ 0%    │          │
+│  └──────────────┘  └──────────────┘  └──────────────┘          │
+├─────────────────────────────────────────────────────────────────┤
+│  应用接入状态                                                    │
+│  📝 Claude Code      → Tier 1 (Groq llama-3.3)  · 今日 280 调用 │
+│  📝 Cursor           → Tier 2 (OpenAI gpt-4o)   · 今日  42 调用 │
+│  📝 Codex CLI        → cost 策略 · 全 tier 自动                  │
+│  📝 5 个工具未接入   [→ 写入]                                   │
+├─────────────────────────────────────────────────────────────────┤
+│  最近 10 条调用（脱敏）                                           │
+│  18:42  Claude Code → Tier1 / groq / llama-3.3-70b · 421 tok    │
+│  18:41  Cursor      → Tier2 / openai / gpt-4o     · 89 tok      │
+│  ...                                                            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+数据来源：
+- Tier 1/2 余额 / 速率：从 `local_providers` 聚合 + 各上游 `/usage` 端点（OpenAI / Anthropic 等支持的）
+- Tier 3 积分：从 VPS `/user/stats` 拉
+- 应用接入状态：`app_bindings` 表 + 该 binding 关联的 policy
+- 最近调用：新增 `call_logs` 表，每次 `/v1/*` 转发后写一条（model / tier / token / latency / app_source，**不含 prompt 内容**）
+
+### 8.2 三级 Token 供给（Token Supply Tiers）
+
+把现有的"Layer / source_kind"概念统一成**用户能直接对话的 Tier**：
+
+| Tier | 名称 | 来源 | 用户付出 | 计价单位 |
+|---|---|---|---|---|
+| **Tier 1** | 免费层 | Ollama / Groq / Cerebras / Gemini AI Studio / OpenRouter:free | 0 | tokens（有限额） |
+| **Tier 2** | 付费层 | 用户自有 API key（OpenAI / Anthropic / DeepSeek / GLM …） | $ / ¥ | tokens（按上游单价） |
+| **Tier 3** | 共享层 | 板块③ 贡献网络积分兑换 | 积分 / 充值 | tokens（按 model.consume_rate） |
+
+#### 实现：把 tier 提升为一等公民
+
+- 现 `local_providers.tier` 已有此列（free / paid / shared），但只是分类标签。
+- v2.1：加 `routing_policies.tier_order` —— 决定调用一个 model 时三个 tier 的优先级
+- 默认策略：
+  - **cost-first**：Tier 1 → Tier 3 → Tier 2（共享积分通常便宜过付费 key）
+  - **quality-first**：Tier 2 → Tier 1 → Tier 3（付费源 SLA 最好）
+  - **free-only**：仅 Tier 1（科研 / 试用）
+  - **paid-only**：仅 Tier 2（生产，避免共享池不稳定）
+
+切换策略的 UI 在 Dashboard 顶部，一键改 default policy；同时**每个应用可单独覆盖**（见 §8.4）。
+
+### 8.3 快速接入使用（QuickStart）—— ≤ 60 秒可用
+
+**目标**：用户首次启动到「在 Claude Code 里 ask claude 收到回复」≤ 60 秒。
+
+```
+首启动 →  /quickstart 一屏 wizard
+  ┌──────────────────────────────────────────┐
+  │  60 秒上手 Token Bank                      │
+  │                                          │
+  │  STEP 1 · 选一个免费 token 来源          │
+  │   ⦿ 本地 Ollama  ← 自动检测，已就绪    │
+  │   ◯ Groq Cloud  · 注册免费 key 1 分钟  │
+  │   ◯ Google AI Studio · 注册免费 key     │
+  │                                          │
+  │  STEP 2 · 选一个常用工具                  │
+  │   ☑ Claude Code  ← 已检测到本机配置     │
+  │   ☐ Cursor       · 未安装               │
+  │   ☐ Codex CLI    · 未检测                │
+  │                                          │
+  │  STEP 3 · [一键完成]                      │
+  │   → 把 Ollama 加入 Pool                  │
+  │   → 用 atomic write 改 ~/.claude/...     │
+  │   → 显示「打开 Claude Code 测试」        │
+  └──────────────────────────────────────────┘
+```
+
+后端 API（v2.1 新增）：
+- `GET /__local__/quickstart/detect` —— 一次性返回：本机是否装 Ollama、`~/.claude` 是否存在、`~/.codex` 是否存在...（聚合多个探测）
+- `POST /__local__/quickstart/run` —— 单事务执行：add provider + write app binding，失败回滚
+
+**关键设计**：QuickStart 是路径不是页面 —— 完成后用户进入 Dashboard，看到 Tier 1 已就绪 + Claude Code 已接入，可以立刻发起对话。
+
+### 8.4 策略精细化：应用粒度（v2.1） → 场景粒度（v2.2+）
+
+#### 8.4.1 当前阶段：**应用粒度策略**（v2.1 即实现）
+
+每个 `app_bindings` 行可以关联一条 `routing_policies`：
+
+```sql
+CREATE TABLE routing_policies (
+    id              INTEGER PRIMARY KEY,
+    name            TEXT NOT NULL,          -- 'cost-first' / 'quality-first' / 自定义
+    tier_order      TEXT NOT NULL,          -- JSON: ["tier1","tier3","tier2"]
+    allowed_tiers   TEXT NOT NULL,          -- JSON: ["tier1","tier3"]，约束可用 tier
+    model_preference TEXT DEFAULT '',       -- 优先 model alias
+    max_cost_per_1m  REAL DEFAULT 0,        -- $/1M token 上限（0 = 不限）
+    fallback_enabled INTEGER DEFAULT 1,     -- 是否允许跨 tier 故障转移
+    created_at      TEXT DEFAULT (datetime('now'))
+);
+
+ALTER TABLE app_bindings ADD COLUMN routing_policy_id INTEGER REFERENCES routing_policies(id);
+```
+
+UI 在 📝 写入应用页每张卡上加「策略」下拉：
+
+```
+Claude Code         路径: ~/.claude/settings.local.json
+  策略: ⚡省钱（仅 Tier 1+3）  ▼
+  模型: llama-3.3-70b-versatile  ▼
+  [预览 diff]  [写入]
+```
+
+预置策略：
+| 策略 ID | 名称 | tier_order | allowed_tiers | 适合场景 |
+|---|---|---|---|---|
+| `cost-first` | 省钱优先 | [1,3,2] | all | 日常学习 / 试用 |
+| `quality-first` | 质量优先 | [2,1,3] | all | 生产代码评审 |
+| `free-only` | 仅免费 | [1] | [1] | 科研 / 演示 |
+| `paid-only` | 仅付费 | [2] | [2] | 严格生产 / 避免不稳定 |
+| `under-budget` | 限额内 | [1,3,2] | all + max_cost_per_1m=0.5 | 控制成本上限 |
+
+调用链：客户端 → 本地网关 `/v1/*` → 根据 `X-Source-App` 头查 app_binding → 拿到 routing_policy → 按 policy 决定候选链。
+
+#### 8.4.2 未来阶段：**场景粒度策略**（v2.2+，路线图）
+
+「应用」太粗：同一个 Claude Code 里，写 commit message 和重构整个仓库需要的模型质量差 10 倍。v2.2 引入「场景」概念：
+
+```sql
+CREATE TABLE scenario_rules (
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL,            -- 'code-review' / 'commit-msg' / 'design-doc'
+    match_kind  TEXT NOT NULL,            -- 'system_prompt_regex' | 'tool_set' | 'header_hint' | 'token_count'
+    match_value TEXT NOT NULL,            -- 具体 regex / 工具集合 / header 值 / token 阈值
+    policy_id   INTEGER REFERENCES routing_policies(id),
+    priority    INTEGER DEFAULT 100,      -- 多条匹配时取小者
+    enabled     INTEGER DEFAULT 1
+);
+```
+
+识别场景的三种渠道：
+1. **客户端显式提示**：请求头 `X-LLP-Scenario: code-review`（Claude Code / Cursor 等修改 client 后支持）
+2. **从 system prompt 特征推断**：含「review the following code」→ `code-review`；含「write a commit message」→ `commit-msg`
+3. **从 token 量 + tool_choice 推断**：>10k input token → `long-context`；带 tools 调用 → `agent-loop`
+
+匹配优先级：**显式 hint > pattern 推断 > 应用默认 policy > 全局默认 policy**。
+
+UI 在 v2.2 新增 `/scenarios` 页，列出预置场景 + 自定义规则。
+
+#### 8.4.3 为什么把场景推到 v2.2
+
+- 应用粒度（v2.1）已经能覆盖 80% 用户痛点（Claude Code 全用 Tier1 / Cursor 全用 Tier2）
+- 场景粒度需要客户端协作或可靠的 pattern 推断，前者要等工具迭代、后者有误判风险
+- 先 ship v2.1 收反馈，再决定场景 schema 的精确字段
+
+### 8.5 数据模型新增 / 修改汇总
+
+```sql
+-- 新增：调用流水（Dashboard 「最近调用」用）
+CREATE TABLE call_logs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp   TEXT NOT NULL DEFAULT (datetime('now')),
+    app_source  TEXT DEFAULT '',          -- X-Source-App 头，可空
+    model       TEXT NOT NULL,            -- 客户端请求的逻辑 model
+    routed_to   TEXT NOT NULL,            -- 实际打的 provider_id
+    tier        TEXT NOT NULL,            -- tier1 / tier2 / tier3
+    input_tokens  INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    latency_ms    INTEGER DEFAULT 0,
+    success     INTEGER DEFAULT 1,
+    error_msg   TEXT DEFAULT ''
+);
+CREATE INDEX idx_call_logs_ts ON call_logs(timestamp DESC);
+CREATE INDEX idx_call_logs_app ON call_logs(app_source, timestamp DESC);
+
+-- 新增：路由策略
+CREATE TABLE routing_policies (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL UNIQUE,
+    tier_order      TEXT NOT NULL,
+    allowed_tiers   TEXT NOT NULL,
+    model_preference TEXT DEFAULT '',
+    max_cost_per_1m  REAL DEFAULT 0,
+    fallback_enabled INTEGER DEFAULT 1,
+    is_builtin      INTEGER DEFAULT 0,    -- 内置策略不可删
+    created_at      TEXT DEFAULT (datetime('now'))
+);
+
+-- 修改：app_bindings
+ALTER TABLE app_bindings ADD COLUMN routing_policy_id INTEGER REFERENCES routing_policies(id);
+
+-- v2.2 预留：scenario_rules（schema 上面已列）
+```
+
+### 8.6 v2.1 增量里程碑
+
+| M | 目标 | 涉及 | 依赖 |
+|---|---|---|---|
+| M11 | call_logs 表 + 网关写入 + Dashboard 后端 API（aggregate by tier / app） | ① | M1, M2 |
+| M12 | Dashboard 页面（替代默认首屏） | UI | M11 |
+| M13 | routing_policies 表 + 5 个内置策略 + 网关按 policy 决候选链 | ① | M1 |
+| M14 | app_bindings.routing_policy_id 字段 + 写入器接受 policy 参数 + UI 下拉 | ①UI | M2, M13 |
+| M15 | QuickStart wizard：detect + 一键 run + 路由到 dashboard | UI | M2, M11 |
+| M16（v2.2）| scenario_rules 表 + system prompt 推断引擎 + `/scenarios` 页 | ① | M13, M14 |
+
+---
+
+## 9. 关键技术决策（2026-05-20 定稿）
 
 | # | 议题 | 决策 | 一句话理由 | 何时重新考虑 |
 |---|---|---|---|---|
