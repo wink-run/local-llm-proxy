@@ -520,7 +520,7 @@ export default function Debug() {
           {/* API Key + clear — right side */}
           <div className="ml-auto flex items-center gap-2">
             {source === 'network' && (apiKeys.length === 0 ? (
-              <span className="text-xs text-red-500 dark:text-red-400">需要先在「Agent → 消费」中创建 API Key</span>
+              <span className="text-xs text-red-500 dark:text-red-400">需要先在「供给源」中创建 API Key</span>
             ) : (
               <select value={apiKey} onChange={(e) => setApiKey(e.target.value)}
                 className="bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500 max-w-[180px]"

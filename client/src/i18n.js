@@ -1,6 +1,5 @@
 const locales = {
   zh: {
-    'nav.agent':   'Agent',
     'nav.network': '网络',
     'nav.debug':   '调试',
     'nav.settings': '设置',
@@ -27,7 +26,6 @@ const locales = {
     'lang.en': 'English',
   },
   en: {
-    'nav.agent':   'Agent',
     'nav.network': 'Network',
     'nav.debug':   'Debug',
     'nav.settings': 'Settings',
