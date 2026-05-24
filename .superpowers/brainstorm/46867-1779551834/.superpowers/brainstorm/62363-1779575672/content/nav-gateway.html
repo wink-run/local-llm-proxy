@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="zh" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>网关 — Token Bank</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif; }
+.chip { display:inline-flex;align-items:center;gap:4px;font-size:10px;font-family:monospace;background:rgb(31,41,55);border:1px solid rgb(55,65,81);color:rgb(209,213,219);padding:2px 8px 2px 6px;border-radius:4px; }
+.chip-free { display:inline-flex;align-items:center;gap:4px;font-size:10px;font-family:monospace;background:rgba(5,46,22,0.7);border:1px solid rgba(34,197,94,0.3);color:rgb(134,239,172);padding:2px 8px 2px 6px;border-radius:4px; }
+.chip-free::before { content:'';display:inline-block;width:5px;height:5px;border-radius:50%;background:#4ade80;flex-shrink:0; }
+.chip-p2p { display:inline-flex;align-items:center;gap:4px;font-size:10px;font-family:monospace;background:rgba(23,37,84,0.7);border:1px solid rgba(59,130,246,0.3);color:rgb(147,197,253);padding:2px 8px 2px 6px;border-radius:4px; }
+.chip-p2p::before { content:'';display:inline-block;width:5px;height:5px;border-radius:50%;background:#60a5fa;flex-shrink:0; }
+.chip-paid { display:inline-flex;align-items:center;gap:4px;font-size:10px;font-family:monospace;background:rgba(69,26,3,0.7);border:1px solid rgba(245,158,11,0.3);color:rgb(252,211,77);padding:2px 8px 2px 6px;border-radius:4px; }
+.chip-paid::before { content:'';display:inline-block;width:5px;height:5px;border-radius:50%;background:#f59e0b;flex-shrink:0; }
+.arrow { color:rgb(75,85,99);font-size:12px;margin:0 2px; }
+textarea { field-sizing: content; }
+</style>
+</head>
+<body class="bg-gray-950 text-gray-100 flex min-h-screen">
+
+<!-- Sidebar -->
+<nav class="w-52 bg-gray-900 border-r border-gray-800 flex flex-col py-4 gap-1 shrink-0">
+  <div class="px-4 mb-4">
+    <div class="text-sm font-bold text-gray-200">Token Bank</div>
+    <div class="text-xs text-gray-600 mt-0.5">本地 AI 网关</div>
+  </div>
+  <a href="nav-gateway.html" class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg bg-gray-800 text-white text-sm font-medium"><span>🔀</span> 网关</a>
+  <a href="nav-providers.html" class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm hover:bg-gray-800/50 hover:text-gray-200 transition-colors"><span>⚡</span> 供给源</a>
+  <a href="nav-contribute.html" class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm hover:bg-gray-800/50 hover:text-gray-200 transition-colors"><span>💪</span> 贡献</a>
+  <a href="nav-dashboard.html" class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm hover:bg-gray-800/50 hover:text-gray-200 transition-colors"><span>📊</span> 盘点</a>
+  <button onclick="openDebug()" class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm hover:bg-gray-800/50 hover:text-gray-200 transition-colors text-left"><span>🐛</span> 调试请求</button>
+  <div class="flex-1"></div>
+  <a href="nav-settings.html" class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm hover:bg-gray-800/50 hover:text-gray-200 transition-colors"><span>⚙️</span> 设置</a>
+  <div class="mx-2 p-3 rounded-lg border border-gray-800 flex items-center gap-3 cursor-pointer hover:border-gray-700">
+    <div class="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xs font-bold">U</div>
+    <div class="flex-1 min-w-0">
+      <div class="text-xs font-medium text-gray-200 truncate">user@example.com</div>
+      <div class="text-xs text-gray-500">2,340 积分</div>
+    </div>
+  </div>
+</nav>
+
+<!-- Main -->
+<main class="flex-1 overflow-y-auto p-6 space-y-4">
+
+  <div class="flex items-center gap-3">
+    <span class="relative flex h-2.5 w-2.5">
+      <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+      <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+    </span>
+    <h1 class="text-xl font-semibold">网关</h1>
+    <span class="text-xs bg-green-900/30 text-green-400 border border-green-800/50 px-2 py-0.5 rounded-full">运行中 · :11430</span>
+  </div>
+
+  <!-- Stats -->
+  <div class="grid grid-cols-4 gap-3">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">今日请求</div><div class="text-2xl font-bold mt-1">284</div></div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">免费命中率</div><div class="text-2xl font-bold text-green-400 mt-1">67%</div></div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">错误率</div><div class="text-2xl font-bold text-amber-400 mt-1">1.4%</div></div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">平均延迟</div><div class="text-2xl font-bold mt-1">320ms</div></div>
+  </div>
+
+  <!-- Endpoint -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wide font-medium mb-2">接入端点</div>
+    <div class="flex items-center gap-2">
+      <code class="flex-1 text-sm font-mono text-green-400 bg-gray-800 rounded-lg px-3 py-2 border border-gray-700">http://127.0.0.1:11430/v1</code>
+      <button onclick="copyEndpoint(this)" class="text-xs bg-gray-800 text-gray-400 px-2.5 py-2 rounded-lg border border-gray-700 hover:bg-gray-700 transition-colors min-w-[48px]">复制</button>
+    </div>
+  </div>
+
+  <!-- 场景路由 -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+      <div>
+        <h2 class="text-sm font-semibold text-gray-200">场景路由</h2>
+        <p class="text-xs text-gray-500 mt-0.5">定义每个场景的降级链规则</p>
+      </div>
+      <button onclick="addScene()" class="text-xs bg-gray-800 border border-gray-700 text-gray-400 px-3 py-1.5 rounded-lg hover:bg-gray-700 transition-colors">+ 新建场景</button>
+    </div>
+    <div id="sceneList" class="divide-y divide-gray-800/60">
+
+      <!-- Scene: Claude Code -->
+      <div class="scene-row">
+        <div class="flex items-start gap-4 px-5 py-3.5 cursor-pointer hover:bg-gray-800/20" onclick="toggleScene('cc')">
+          <span class="text-lg mt-0.5">🤖</span>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium text-gray-200">Claude Code</div>
+            <div class="flex items-center gap-1.5 mt-1.5 flex-wrap" id="cc-chain">
+              <span class="chip-free">Groq / llama-3.3-70b</span><span class="arrow">→</span>
+              <span class="chip-free">Ollama / llama3.2</span><span class="arrow">→</span>
+              <span class="chip-paid">OpenRouter / claude-3-haiku</span>
+            </div>
+          </div>
+          <span class="text-[10px] text-green-500 shrink-0 mt-1">活跃 · 24次</span>
+          <span id="cc-chevron" class="text-gray-600 text-xs mt-1 transition-transform duration-200">▼</span>
+        </div>
+        <!-- Inline editor -->
+        <div id="cc-editor" class="hidden border-t border-gray-800/60 bg-gray-800/20 px-5 py-4 space-y-3">
+          <div class="text-xs text-gray-500 font-medium">降级链编辑 <span class="text-gray-700">· 失败时按顺序尝试下一步</span></div>
+          <div class="space-y-2" id="cc-steps">
+            <div class="flex items-center gap-2 group">
+              <span class="text-[10px] text-gray-600 w-4 text-right shrink-0">1</span>
+              <select class="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500">
+                <optgroup label="🟢 免费层"><option selected>Groq / llama-3.3-70b-versatile</option><option>Groq / llama-3.1-8b-instant</option><option>Ollama / llama3.2:latest</option><option>DeepSeek / deepseek-chat</option></optgroup>
+                <optgroup label="🔵 P2P 层"><option>P2P / qwen2.5-72b</option><option>P2P / llama-3.3-70b</option></optgroup>
+                <optgroup label="🟡 付费层"><option>OpenRouter / claude-3-haiku</option><option>OpenAI / gpt-4o-mini</option></optgroup>
+              </select>
+              <button class="text-[10px] text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity">✕</button>
+            </div>
+            <div class="flex items-center gap-2 group">
+              <span class="text-[10px] text-gray-600 w-4 text-right shrink-0">2</span>
+              <select class="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500">
+                <optgroup label="🟢 免费层"><option>Groq / llama-3.3-70b-versatile</option><option selected>Ollama / llama3.2:latest</option><option>DeepSeek / deepseek-chat</option></optgroup>
+                <optgroup label="🔵 P2P 层"><option>P2P / qwen2.5-72b</option><option>P2P / llama-3.3-70b</option></optgroup>
+                <optgroup label="🟡 付费层"><option>OpenRouter / claude-3-haiku</option><option>OpenAI / gpt-4o-mini</option></optgroup>
+              </select>
+              <button class="text-[10px] text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity">✕</button>
+            </div>
+            <div class="flex items-center gap-2 group">
+              <span class="text-[10px] text-gray-600 w-4 text-right shrink-0">3</span>
+              <select class="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500">
+                <optgroup label="🟢 免费层"><option>Groq / llama-3.3-70b-versatile</option><option>Ollama / llama3.2:latest</option></optgroup>
+                <optgroup label="🔵 P2P 层"><option>P2P / qwen2.5-72b</option><option>P2P / llama-3.3-70b</option></optgroup>
+                <optgroup label="🟡 付费层"><option selected>OpenRouter / claude-3-haiku</option><option>OpenAI / gpt-4o-mini</option></optgroup>
+              </select>
+              <button class="text-[10px] text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity">✕</button>
+            </div>
+          </div>
+          <button class="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1">+ 添加步骤</button>
+          <div class="flex gap-2 pt-1">
+            <button onclick="toggleScene('cc')" class="text-xs bg-gray-700 border border-gray-600 text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-600">取消</button>
+            <button onclick="saveScene('cc',this)" class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg font-medium">保存</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scene: 写文章 -->
+      <div class="scene-row">
+        <div class="flex items-start gap-4 px-5 py-3.5 cursor-pointer hover:bg-gray-800/20" onclick="toggleScene('wr')">
+          <span class="text-lg mt-0.5">✍️</span>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium text-gray-200">写文章</div>
+            <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
+              <span class="chip-free">DeepSeek / deepseek-chat</span><span class="arrow">→</span>
+              <span class="chip-free">Groq / mixtral-8x7b</span>
+            </div>
+          </div>
+          <span class="text-[10px] text-gray-500 shrink-0 mt-1">8次</span>
+          <span id="wr-chevron" class="text-gray-600 text-xs mt-1 transition-transform duration-200">▼</span>
+        </div>
+        <div id="wr-editor" class="hidden border-t border-gray-800/60 bg-gray-800/20 px-5 py-4 space-y-3">
+          <div class="text-xs text-gray-500 font-medium">降级链编辑</div>
+          <div class="space-y-2">
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] text-gray-600 w-4 text-right shrink-0">1</span>
+              <select class="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500">
+                <optgroup label="🟢 免费层"><option selected>DeepSeek / deepseek-chat</option><option>Groq / mixtral-8x7b</option><option>Groq / llama-3.3-70b-versatile</option><option>Ollama / llama3.2:latest</option></optgroup>
+                <optgroup label="🔵 P2P 层"><option>P2P / qwen2.5-72b</option></optgroup>
+                <optgroup label="🟡 付费层"><option>OpenRouter / claude-3-haiku</option></optgroup>
+              </select>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] text-gray-600 w-4 text-right shrink-0">2</span>
+              <select class="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500">
+                <optgroup label="🟢 免费层"><option>DeepSeek / deepseek-chat</option><option selected>Groq / mixtral-8x7b</option><option>Ollama / llama3.2:latest</option></optgroup>
+                <optgroup label="🔵 P2P 层"><option>P2P / qwen2.5-72b</option></optgroup>
+                <optgroup label="🟡 付费层"><option>OpenRouter / claude-3-haiku</option></optgroup>
+              </select>
+            </div>
+          </div>
+          <button class="text-xs text-blue-400 hover:text-blue-300">+ 添加步骤</button>
+          <div class="flex gap-2 pt-1">
+            <button onclick="toggleScene('wr')" class="text-xs bg-gray-700 border border-gray-600 text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-600">取消</button>
+            <button onclick="saveScene('wr',this)" class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg font-medium">保存</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scene: 数据分析 -->
+      <div class="scene-row">
+        <div class="flex items-start gap-4 px-5 py-3.5 cursor-pointer hover:bg-gray-800/20" onclick="toggleScene('da')">
+          <span class="text-lg mt-0.5">📊</span>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium text-gray-200">数据分析</div>
+            <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
+              <span class="chip-free">Ollama / qwen2.5-coder</span><span class="arrow">→</span>
+              <span class="chip-free">Groq / llama-3.1-70b</span>
+            </div>
+          </div>
+          <span class="text-[10px] text-gray-600 shrink-0 mt-1">0次</span>
+          <span id="da-chevron" class="text-gray-600 text-xs mt-1 transition-transform duration-200">▼</span>
+        </div>
+        <div id="da-editor" class="hidden border-t border-gray-800/60 bg-gray-800/20 px-5 py-4 space-y-3">
+          <div class="text-xs text-gray-500 font-medium">降级链编辑</div>
+          <div class="space-y-2">
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] text-gray-600 w-4 text-right shrink-0">1</span>
+              <select class="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500">
+                <optgroup label="🟢 免费层"><option selected>Ollama / qwen2.5-coder:7b</option><option>Groq / llama-3.1-70b</option><option>Groq / llama-3.3-70b-versatile</option></optgroup>
+                <optgroup label="🔵 P2P 层"><option>P2P / deepseek-r1:32b</option><option>P2P / qwen2.5-72b</option></optgroup>
+                <optgroup label="🟡 付费层"><option>OpenAI / gpt-4o-mini</option></optgroup>
+              </select>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] text-gray-600 w-4 text-right shrink-0">2</span>
+              <select class="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500">
+                <optgroup label="🟢 免费层"><option>Ollama / qwen2.5-coder:7b</option><option selected>Groq / llama-3.1-70b</option></optgroup>
+                <optgroup label="🔵 P2P 层"><option>P2P / deepseek-r1:32b</option></optgroup>
+                <optgroup label="🟡 付费层"><option>OpenAI / gpt-4o-mini</option></optgroup>
+              </select>
+            </div>
+          </div>
+          <button class="text-xs text-blue-400 hover:text-blue-300">+ 添加步骤</button>
+          <div class="flex gap-2 pt-1">
+            <button onclick="toggleScene('da')" class="text-xs bg-gray-700 border border-gray-600 text-gray-300 px-3 py-1.5 rounded-lg">取消</button>
+            <button onclick="saveScene('da',this)" class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg font-medium">保存</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 场景应用 -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+    <div class="px-5 pt-4 pb-0 border-b border-gray-800">
+      <div class="mb-3">
+        <h2 class="text-sm font-semibold text-gray-200">场景应用</h2>
+        <p class="text-xs text-gray-500 mt-0.5">创建接入凭证，关联到路由规则</p>
+      </div>
+      <div class="flex">
+        <button id="tabAutoBtn" onclick="switchTab('auto')" class="px-4 py-2 text-xs font-medium border-b-2 border-blue-500 text-blue-400 -mb-px transition-colors">写入工具</button>
+        <button id="tabManualBtn" onclick="switchTab('manual')" class="px-4 py-2 text-xs font-medium border-b-2 border-transparent text-gray-500 -mb-px hover:text-gray-300 transition-colors">手工设置</button>
+      </div>
+    </div>
+
+    <!-- 写入工具 tab -->
+    <div id="tabAuto" class="p-5 space-y-4">
+      <div class="space-y-2">
+        <div class="text-xs text-gray-400 flex items-center gap-1.5">
+          <span class="w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center font-bold shrink-0">1</span> 选择工具
+        </div>
+        <div class="grid grid-cols-4 gap-2">
+          <label onclick="selectTool(this)" class="tool-card selected flex flex-col items-center gap-2 bg-gray-800 border border-blue-600 rounded-xl p-4 cursor-pointer transition-colors">
+            <input type="radio" name="tool_auto" checked class="sr-only">
+            <span class="text-2xl">🤖</span><span class="text-xs font-semibold text-gray-200">Claude Code</span>
+            <span class="text-[10px] text-blue-400">已检测到</span>
+          </label>
+          <label onclick="selectTool(this)" class="tool-card flex flex-col items-center gap-2 bg-gray-800 border border-gray-700 rounded-xl p-4 cursor-pointer hover:border-gray-500 transition-colors">
+            <input type="radio" name="tool_auto" class="sr-only">
+            <span class="text-2xl">🔮</span><span class="text-xs font-semibold text-gray-300">Cursor</span>
+            <span class="text-[10px] text-gray-600">手动配置</span>
+          </label>
+          <label onclick="selectTool(this)" class="tool-card flex flex-col items-center gap-2 bg-gray-800 border border-gray-700 rounded-xl p-4 cursor-pointer hover:border-gray-500 transition-colors">
+            <input type="radio" name="tool_auto" class="sr-only">
+            <span class="text-2xl">🪟</span><span class="text-xs font-semibold text-gray-300">Continue</span>
+            <span class="text-[10px] text-gray-600">手动配置</span>
+          </label>
+          <label onclick="selectTool(this)" class="tool-card flex flex-col items-center gap-2 bg-gray-800 border border-gray-700 rounded-xl p-4 cursor-pointer hover:border-gray-500 transition-colors">
+            <input type="radio" name="tool_auto" class="sr-only">
+            <span class="text-2xl">📋</span><span class="text-xs font-semibold text-gray-300">其他</span>
+            <span class="text-[10px] text-gray-600">复制即可</span>
+          </label>
+        </div>
+      </div>
+      <div class="space-y-2">
+        <div class="text-xs text-gray-400 flex items-center gap-1.5">
+          <span class="w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center font-bold shrink-0">2</span> 绑定路由
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <label id="autoOptScene" onclick="autoRoute('scene')" class="flex items-start gap-3 bg-gray-800 border border-blue-600 rounded-xl p-4 cursor-pointer transition-colors">
+            <input type="radio" name="auto_route" checked class="mt-0.5 accent-blue-500 shrink-0">
+            <div class="flex-1">
+              <div class="text-sm font-semibold text-gray-200">使用场景路由</div>
+              <div class="text-xs text-gray-500 mt-0.5">按场景降级链转发请求</div>
+              <div id="autoSceneDrop" class="mt-3">
+                <select class="w-full bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-2 text-xs text-gray-200 focus:outline-none focus:border-blue-500">
+                  <option>🤖 Claude Code · Groq → Ollama → OR</option>
+                  <option>✍️ 写文章 · DeepSeek → Groq</option>
+                  <option>📊 数据分析 · Ollama → Groq</option>
+                </select>
+              </div>
+            </div>
+          </label>
+          <label id="autoOptModel" onclick="autoRoute('model')" class="flex items-start gap-3 bg-gray-800 border border-gray-700 rounded-xl p-4 cursor-pointer hover:border-gray-600 transition-colors">
+            <input type="radio" name="auto_route" class="mt-0.5 accent-blue-500 shrink-0">
+            <div class="flex-1">
+              <div class="text-sm font-semibold text-gray-300">指定模型</div>
+              <div class="text-xs text-gray-500 mt-0.5">固定一个模型，不走降级链</div>
+              <div id="autoModelDrop" class="mt-3 opacity-40 pointer-events-none">
+                <select class="w-full bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-2 text-xs text-gray-400 focus:outline-none">
+                  <optgroup label="免费 · Groq"><option>llama-3.3-70b-versatile</option><option>llama-3.1-8b-instant</option></optgroup>
+                  <optgroup label="免费 · Ollama"><option>llama3.2:latest</option></optgroup>
+                  <optgroup label="P2P"><option>gpt-4o-mini</option></optgroup>
+                </select>
+              </div>
+            </div>
+          </label>
+        </div>
+      </div>
+      <div class="space-y-2">
+        <div class="flex items-center justify-between">
+          <div class="text-xs text-gray-400 flex items-center gap-1.5">
+            <span class="w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center font-bold shrink-0">3</span> 生成 Key 并配置
+          </div>
+          <span id="autoKeyStatus" class="text-[10px] text-gray-600">尚未生成</span>
+        </div>
+        <div id="autoBeforeKey">
+          <button onclick="autoGenKey()" class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors">
+            <span>⚡</span> 生成 Key
+          </button>
+        </div>
+        <div id="autoAfterKey" class="hidden space-y-3">
+          <div class="bg-gray-800/60 border border-gray-700/40 rounded-xl p-4 space-y-2">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-[10px] text-green-400 font-medium">✓ Key 已生成</span>
+              <button onclick="autoResetKey()" class="text-[10px] text-gray-600 hover:text-gray-400">重新生成</button>
+            </div>
+            <pre class="text-xs font-mono text-gray-300 leading-relaxed overflow-x-auto"><code>{
+  <span class="text-blue-400">"env"</span>: {
+    <span class="text-green-400">"ANTHROPIC_BASE_URL"</span>: <span class="text-amber-300">"http://127.0.0.1:11430/v1"</span>,
+    <span class="text-green-400">"ANTHROPIC_API_KEY"</span>:  <span class="text-amber-300">"tb-cc-a1b2c3d4e5f6g7h8i9j0"</span>
+  }
+}</code></pre>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="bg-gray-800/50 border border-gray-700/50 rounded-xl p-3.5 space-y-2.5">
+              <div class="text-xs font-medium text-gray-300">⚡ 自动写入</div>
+              <div class="text-[10px] text-gray-500">写入 ~/.claude/settings.json</div>
+              <button id="autoWriteBtn" onclick="autoDoWrite(this)" class="w-full py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors">写入 Claude Code 配置</button>
+              <div id="autoWriteOK" class="hidden text-center text-[10px] text-green-400">✓ 已写入配置文件</div>
+            </div>
+            <div class="bg-gray-800/50 border border-gray-700/50 rounded-xl p-3.5 space-y-2.5">
+              <div class="text-xs font-medium text-gray-300">🔑 手动配置</div>
+              <div class="text-[10px] text-gray-500">复制后自行填入工具设置</div>
+              <div class="flex gap-1.5">
+                <button onclick="copyText('tb-cc-a1b2c3d4e5f6g7h8i9j0',this)" class="flex-1 py-1.5 bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-300 text-xs rounded-lg">复制 Key</button>
+                <button onclick="copyText('ANTHROPIC_BASE_URL=http://127.0.0.1:11430/v1\nANTHROPIC_API_KEY=tb-cc-a1b2c3d4e5f6g7h8i9j0',this)" class="flex-1 py-1.5 bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-300 text-xs rounded-lg">复制全部</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 手工设置 tab -->
+    <div id="tabManual" class="hidden">
+      <div class="p-5 space-y-4 border-b border-gray-800">
+        <div class="grid grid-cols-2 gap-4">
+          <div class="space-y-3">
+            <div class="space-y-1.5">
+              <label class="text-xs text-gray-400">场景名称</label>
+              <input id="manualName" type="text" placeholder="如：工作用 Claude Code"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-600" />
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs text-gray-400">路由方式</label>
+              <div class="space-y-2">
+                <label id="manOptScene" onclick="manRoute('scene')" class="flex items-center gap-2.5 bg-gray-800 border border-blue-600 rounded-lg px-3 py-2.5 cursor-pointer transition-colors">
+                  <input type="radio" name="man_route" checked class="accent-blue-500 shrink-0">
+                  <div class="flex-1">
+                    <div class="text-xs font-medium text-gray-200">使用场景路由</div>
+                    <div id="manSceneDrop" class="mt-1.5">
+                      <select class="w-full bg-gray-700 border border-gray-600 rounded-md px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500">
+                        <option>🤖 Claude Code · Groq → Ollama → OR</option>
+                        <option>✍️ 写文章 · DeepSeek → Groq</option>
+                        <option>📊 数据分析 · Ollama → Groq</option>
+                      </select>
+                    </div>
+                  </div>
+                </label>
+                <label id="manOptModel" onclick="manRoute('model')" class="flex items-center gap-2.5 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 cursor-pointer hover:border-gray-600 transition-colors">
+                  <input type="radio" name="man_route" class="accent-blue-500 shrink-0">
+                  <div class="flex-1">
+                    <div class="text-xs font-medium text-gray-300">指定模型</div>
+                    <div id="manModelDrop" class="mt-1.5 opacity-40 pointer-events-none">
+                      <select class="w-full bg-gray-700 border border-gray-600 rounded-md px-2 py-1.5 text-xs text-gray-400 focus:outline-none">
+                        <optgroup label="Groq"><option>llama-3.3-70b-versatile</option></optgroup>
+                        <optgroup label="Ollama"><option>llama3.2:latest</option></optgroup>
+                      </select>
+                    </div>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="flex flex-col gap-3">
+            <div class="flex-1 bg-gray-800/50 border border-gray-700/40 rounded-xl p-3.5 space-y-2">
+              <div class="text-[10px] text-gray-500 uppercase tracking-wide font-medium">创建后将生成</div>
+              <div class="space-y-1.5 text-[10px] font-mono">
+                <div class="flex items-center gap-2">
+                  <span class="text-gray-600 w-20 shrink-0">名称</span>
+                  <span id="previewName" class="text-gray-400 truncate">工作用 Claude Code</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-gray-600 w-20 shrink-0">BASE_URL</span>
+                  <span class="text-amber-300/70">127.0.0.1:11430/v1</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-gray-600 w-20 shrink-0">API_KEY</span>
+                  <span class="text-gray-600">（创建后生成）</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-gray-600 w-20 shrink-0">路由</span>
+                  <span id="previewRoute" class="text-gray-400">Claude Code 场景链</span>
+                </div>
+              </div>
+            </div>
+            <button onclick="manCreate()" class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors">
+              <span>+</span> 创建场景应用
+            </button>
+          </div>
+        </div>
+      </div>
+      <!-- Instance list -->
+      <div>
+        <div class="px-5 py-3 flex items-center justify-between border-b border-gray-800/60">
+          <span class="text-xs text-gray-500 font-medium">已创建的场景应用 <span class="text-gray-700 ml-1">· 供 Dashboard 分析使用</span></span>
+          <span id="instanceCount" class="text-[10px] text-gray-600">3 个</span>
+        </div>
+        <div id="instanceList" class="divide-y divide-gray-800/40">
+          <div class="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-800/20">
+            <div class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0"></div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2"><span class="text-sm font-medium text-gray-200">工作 Claude Code</span><span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-400 border border-blue-800/40">场景路由</span></div>
+              <div class="flex items-center gap-3 mt-1"><code class="text-[10px] font-mono text-gray-500">tb-cc-a1b2c3d4...</code><span class="text-[10px] text-gray-600">Claude Code 链</span></div>
+            </div>
+            <div class="text-right shrink-0"><div class="text-xs font-medium text-gray-300">24 次</div><div class="text-[10px] text-gray-600">今日</div></div>
+            <div class="flex items-center gap-3 shrink-0">
+              <button onclick="copyText('tb-cc-a1b2c3d4e5f6g7h8',this)" class="text-[10px] text-gray-600 hover:text-gray-400">复制 Key</button>
+              <button onclick="deleteInstance(this)" class="text-[10px] text-gray-600 hover:text-red-400">删除</button>
+            </div>
+          </div>
+          <div class="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-800/20">
+            <div class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0"></div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2"><span class="text-sm font-medium text-gray-200">家庭写文章</span><span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-400 border border-blue-800/40">场景路由</span></div>
+              <div class="flex items-center gap-3 mt-1"><code class="text-[10px] font-mono text-gray-500">tb-wr-e5f6g7h8...</code><span class="text-[10px] text-gray-600">写文章链</span></div>
+            </div>
+            <div class="text-right shrink-0"><div class="text-xs font-medium text-gray-300">8 次</div><div class="text-[10px] text-gray-600">今日</div></div>
+            <div class="flex items-center gap-3 shrink-0">
+              <button onclick="copyText('tb-wr-e5f6g7h8i9j0k1l2',this)" class="text-[10px] text-gray-600 hover:text-gray-400">复制 Key</button>
+              <button onclick="deleteInstance(this)" class="text-[10px] text-gray-600 hover:text-red-400">删除</button>
+            </div>
+          </div>
+          <div class="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-800/20">
+            <div class="w-1.5 h-1.5 rounded-full bg-gray-600 shrink-0"></div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2"><span class="text-sm font-medium text-gray-300">测试固定模型</span><span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700">指定模型</span></div>
+              <div class="flex items-center gap-3 mt-1"><code class="text-[10px] font-mono text-gray-500">tb-dm-m3n4o5p6...</code><span class="text-[10px] text-gray-600">llama-3.3-70b</span></div>
+            </div>
+            <div class="text-right shrink-0"><div class="text-xs font-medium text-gray-500">0 次</div><div class="text-[10px] text-gray-600">今日</div></div>
+            <div class="flex items-center gap-3 shrink-0">
+              <button onclick="copyText('tb-dm-m3n4o5p6q7r8s9t0',this)" class="text-[10px] text-gray-600 hover:text-gray-400">复制 Key</button>
+              <button onclick="deleteInstance(this)" class="text-[10px] text-gray-600 hover:text-red-400">删除</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- Debug Modal -->
+<div id="debugModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-6">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeDebug()"></div>
+  <div class="relative w-full max-w-2xl h-[560px] bg-gray-900 border border-gray-700 rounded-2xl flex flex-col overflow-hidden shadow-2xl">
+    <div class="flex items-center gap-2 px-3 py-2.5 border-b border-gray-800 shrink-0">
+      <div class="flex rounded-lg border border-gray-700 overflow-hidden text-xs">
+        <button id="stratScene" onclick="setStrat('scene',this)" class="px-3 py-1.5 bg-gray-700 text-gray-200 font-medium">场景路由</button>
+        <button id="stratModel" onclick="setStrat('model',this)" class="px-3 py-1.5 text-gray-500 hover:bg-gray-800 transition-colors">指定模型</button>
+      </div>
+      <select id="debugRouteSelect" class="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-300 focus:outline-none">
+        <option>🤖 Claude Code 链</option>
+        <option>✍️ 写文章链</option>
+        <option>📊 数据分析链</option>
+      </select>
+      <label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+        <input type="checkbox" checked class="accent-blue-500"> Stream
+      </label>
+      <div class="flex-1"></div>
+      <button onclick="clearChat()" class="text-[10px] text-gray-600 hover:text-gray-400 px-2">清空</button>
+      <button onclick="closeDebug()" class="text-gray-500 hover:text-gray-300 text-xl leading-none px-1">×</button>
+    </div>
+    <div id="chatMessages" class="flex-1 overflow-y-auto p-4 space-y-4">
+      <div class="flex items-start gap-3">
+        <div class="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center text-[10px] font-bold text-gray-300 shrink-0 mt-0.5">AI</div>
+        <div class="bg-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 max-w-[85%]">
+          <p class="text-sm text-gray-200">你好！我是通过 Token Bank 网关路由的 AI。有什么可以帮到你？</p>
+          <div class="flex items-center gap-3 mt-2 pt-2 border-t border-gray-700/50">
+            <span class="text-[10px] text-gray-600">Groq / llama-3.3-70b</span>
+            <span class="text-[10px] text-gray-600">↳ Claude Code 链</span>
+            <span class="text-[10px] text-green-600">312ms</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="px-4 py-3 border-t border-gray-800 flex items-end gap-3 shrink-0">
+      <textarea id="chatInput" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行…"
+        class="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-gray-200 focus:outline-none focus:border-blue-500 resize-none placeholder-gray-600 min-h-[40px] max-h-[120px]"
+        onkeydown="handleChatKey(event)"></textarea>
+      <button onclick="sendMessage()" class="w-9 h-9 rounded-full bg-blue-600 hover:bg-blue-500 flex items-center justify-center shrink-0 transition-colors">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+// Debug modal
+function openDebug() { document.getElementById('debugModal').classList.remove('hidden'); }
+function closeDebug() { document.getElementById('debugModal').classList.add('hidden'); }
+function clearChat() { document.getElementById('chatMessages').innerHTML = ''; }
+function setStrat(t, btn) {
+  document.getElementById('stratScene').className = 'px-3 py-1.5 text-gray-500 hover:bg-gray-800 transition-colors';
+  document.getElementById('stratModel').className = 'px-3 py-1.5 text-gray-500 hover:bg-gray-800 transition-colors';
+  btn.className = 'px-3 py-1.5 bg-gray-700 text-gray-200 font-medium';
+  const sel = document.getElementById('debugRouteSelect');
+  if (t === 'scene') {
+    sel.innerHTML = '<option>🤖 Claude Code 链</option><option>✍️ 写文章链</option><option>📊 数据分析链</option>';
+  } else {
+    sel.innerHTML = '<option>llama-3.3-70b-versatile</option><option>llama3.2:latest</option><option>deepseek-r1:8b</option>';
+  }
+}
+function handleChatKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }
+const responses = [
+  '好的，我来帮你处理这个问题。根据你的描述，建议从以下几个方向着手...',
+  '这是个很好的问题！让我分析一下：首先需要考虑的是场景上下文，其次...',
+  '明白了。Token Bank 网关已经成功路由了你的请求。我正在通过 Groq 的 llama-3.3-70b 模型为你生成回复...',
+  '收到！这个任务我可以帮你完成。我会按照以下步骤来处理...',
+];
+let resIdx = 0;
+function sendMessage() {
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if (!text) return;
+  const msgs = document.getElementById('chatMessages');
+  msgs.innerHTML += `<div class="flex justify-end"><div class="bg-blue-600 rounded-2xl rounded-tr-sm px-4 py-3 max-w-[85%]"><p class="text-sm text-white">${text.replace(/</g,'&lt;')}</p></div></div>`;
+  input.value = '';
+  msgs.scrollTop = msgs.scrollHeight;
+  const thinkEl = document.createElement('div');
+  thinkEl.className = 'flex items-start gap-3';
+  thinkEl.innerHTML = `<div class="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center text-[10px] font-bold text-gray-300 shrink-0 mt-0.5">AI</div><div class="bg-gray-800 rounded-2xl rounded-tl-sm px-4 py-3"><span class="text-sm text-gray-500 animate-pulse">思考中…</span></div>`;
+  msgs.appendChild(thinkEl);
+  msgs.scrollTop = msgs.scrollHeight;
+  setTimeout(() => {
+    const resp = responses[resIdx++ % responses.length];
+    const ms = 200 + Math.floor(Math.random()*400);
+    thinkEl.innerHTML = `<div class="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center text-[10px] font-bold text-gray-300 shrink-0 mt-0.5">AI</div><div class="bg-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 max-w-[85%]"><p class="text-sm text-gray-200">${resp}</p><div class="flex items-center gap-3 mt-2 pt-2 border-t border-gray-700/50"><span class="text-[10px] text-gray-600">Groq / llama-3.3-70b</span><span class="text-[10px] text-green-600">${ms}ms</span></div></div>`;
+    msgs.scrollTop = msgs.scrollHeight;
+  }, 900);
+}
+
+// Endpoint copy
+function copyEndpoint(btn) { btn.textContent = '已复制!'; btn.classList.add('text-green-400'); setTimeout(()=>{ btn.textContent='复制'; btn.classList.remove('text-green-400'); }, 1500); }
+function copyText(text, btn) { const orig = btn.textContent; btn.textContent = '✓'; setTimeout(()=>{ btn.textContent=orig; }, 1200); }
+
+// Scene routing
+const openScenes = {};
+function toggleScene(id) {
+  openScenes[id] = !openScenes[id];
+  document.getElementById(id+'-editor').classList.toggle('hidden', !openScenes[id]);
+  document.getElementById(id+'-chevron').style.transform = openScenes[id] ? 'rotate(180deg)' : '';
+}
+function saveScene(id, btn) {
+  const orig = btn.textContent; btn.textContent = '已保存 ✓'; btn.classList.add('bg-green-600');
+  setTimeout(()=>{ btn.textContent=orig; btn.classList.remove('bg-green-600'); toggleScene(id); }, 800);
+}
+function addScene() {
+  const name = prompt('场景名称（如：代码审查）');
+  if (!name) return;
+  alert(`场景 "${name}" 已创建，可在编辑器中配置降级链。`);
+}
+
+// Tab switching
+function switchTab(tab) {
+  const isAuto = tab === 'auto';
+  document.getElementById('tabAuto').classList.toggle('hidden', !isAuto);
+  document.getElementById('tabManual').classList.toggle('hidden', isAuto);
+  document.getElementById('tabAutoBtn').className = isAuto ? 'px-4 py-2 text-xs font-medium border-b-2 border-blue-500 text-blue-400 -mb-px' : 'px-4 py-2 text-xs font-medium border-b-2 border-transparent text-gray-500 -mb-px hover:text-gray-300';
+  document.getElementById('tabManualBtn').className = !isAuto ? 'px-4 py-2 text-xs font-medium border-b-2 border-blue-500 text-blue-400 -mb-px' : 'px-4 py-2 text-xs font-medium border-b-2 border-transparent text-gray-500 -mb-px hover:text-gray-300';
+}
+
+// Tool selection
+function selectTool(el) {
+  document.querySelectorAll('.tool-card').forEach(c => { c.classList.remove('border-blue-600'); c.classList.add('border-gray-700'); });
+  el.classList.add('border-blue-600'); el.classList.remove('border-gray-700');
+}
+
+// Route binding
+function autoRoute(type) {
+  const ss = document.getElementById('autoOptScene'), sm = document.getElementById('autoOptModel');
+  const sd = document.getElementById('autoSceneDrop'), md = document.getElementById('autoModelDrop');
+  if (type === 'scene') {
+    ss.classList.add('border-blue-600'); ss.classList.remove('border-gray-700');
+    sm.classList.remove('border-blue-600'); sm.classList.add('border-gray-700');
+    sd.style.opacity='1'; sd.style.pointerEvents='auto';
+    md.classList.add('opacity-40','pointer-events-none');
+  } else {
+    sm.classList.add('border-blue-600'); sm.classList.remove('border-gray-700');
+    ss.classList.remove('border-blue-600'); ss.classList.add('border-gray-700');
+    md.classList.remove('opacity-40','pointer-events-none');
+    sd.style.opacity='0.4'; sd.style.pointerEvents='none';
+  }
+}
+function autoGenKey() {
+  document.getElementById('autoBeforeKey').classList.add('hidden');
+  document.getElementById('autoAfterKey').classList.remove('hidden');
+  document.getElementById('autoKeyStatus').textContent='tb-cc-a1b2...';
+  document.getElementById('autoKeyStatus').className='text-[10px] text-green-400 font-mono';
+}
+function autoResetKey() {
+  document.getElementById('autoBeforeKey').classList.remove('hidden');
+  document.getElementById('autoAfterKey').classList.add('hidden');
+  document.getElementById('autoKeyStatus').textContent='尚未生成';
+  document.getElementById('autoKeyStatus').className='text-[10px] text-gray-600';
+  document.getElementById('autoWriteOK').classList.add('hidden');
+  document.getElementById('autoWriteBtn').classList.remove('hidden');
+}
+function autoDoWrite(btn) { btn.classList.add('hidden'); document.getElementById('autoWriteOK').classList.remove('hidden'); }
+
+// Manual tab
+function manRoute(type) {
+  const ss=document.getElementById('manOptScene'),sm=document.getElementById('manOptModel');
+  const sd=document.getElementById('manSceneDrop'),md=document.getElementById('manModelDrop');
+  const pr=document.getElementById('previewRoute');
+  if (type==='scene') {
+    ss.classList.add('border-blue-600'); ss.classList.remove('border-gray-700');
+    sm.classList.remove('border-blue-600'); sm.classList.add('border-gray-700');
+    sd.style.opacity='1'; sd.style.pointerEvents='auto';
+    md.classList.add('opacity-40','pointer-events-none');
+    pr.textContent='Claude Code 场景链';
+  } else {
+    sm.classList.add('border-blue-600'); sm.classList.remove('border-gray-700');
+    ss.classList.remove('border-blue-600'); ss.classList.add('border-gray-700');
+    md.classList.remove('opacity-40','pointer-events-none');
+    sd.style.opacity='0.4'; sd.style.pointerEvents='none';
+    pr.textContent='llama-3.3-70b（固定）';
+  }
+}
+document.getElementById('manualName').addEventListener('input', e => {
+  document.getElementById('previewName').textContent = e.target.value || '工作用 Claude Code';
+});
+function manCreate() {
+  const name = document.getElementById('manualName').value.trim() || '新场景应用';
+  const list = document.getElementById('instanceList');
+  const div = document.createElement('div');
+  div.className = 'flex items-center gap-4 px-5 py-3.5 bg-blue-900/10 border-l-2 border-blue-600 hover:bg-gray-800/20';
+  div.innerHTML = `<div class="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0"></div><div class="flex-1 min-w-0"><div class="flex items-center gap-2"><span class="text-sm font-medium text-blue-300">${name}</span><span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-400 border border-blue-800/40">场景路由</span><span class="text-[10px] text-green-400">刚刚创建</span></div><div class="flex items-center gap-3 mt-1"><code class="text-[10px] font-mono text-blue-400/70">tb-cc-x9y8z7w6...</code></div></div><button onclick="copyText('tb-cc-x9y8z7w6v5u4t3s2',this)" class="text-[10px] text-gray-600 hover:text-gray-400">复制 Key</button><button onclick="deleteInstance(this)" class="text-[10px] text-gray-600 hover:text-red-400">删除</button>`;
+  list.appendChild(div);
+  document.getElementById('manualName').value = '';
+  const cnt = document.getElementById('instanceCount');
+  cnt.textContent = list.children.length + ' 个';
+}
+function deleteInstance(btn) {
+  if (!confirm('确认删除这个场景应用？')) return;
+  btn.closest('.flex').remove();
+  const list = document.getElementById('instanceList');
+  document.getElementById('instanceCount').textContent = list.children.length + ' 个';
+}
+</script>
+</body>
+</html>

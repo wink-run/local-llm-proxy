@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>供给源 — Token Bank</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<style>body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif; }
+.toggle { @apply relative w-9 h-5 rounded-full cursor-pointer transition-colors duration-200; }
+</style>
+</head>
+<body class="bg-gray-950 text-gray-100 flex min-h-screen">
+
+<nav class="w-52 bg-gray-900 border-r border-gray-800 flex flex-col py-4 gap-1 shrink-0">
+  <div class="px-4 mb-4"><div class="text-sm font-bold text-gray-200">Token Bank</div><div class="text-xs text-gray-600 mt-0.5">本地 AI 网关</div></div>
+  <a href="nav-gateway.html" class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm hover:bg-gray-800/50 hover:text-gray-200 transition-colors"><span>🔀</span> 网关</a>
+  <a href="nav-providers.html" class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg bg-gray-800 text-white text-sm font-medium"><span>⚡</span> 供给源</a>
+  <a href="nav-contribute.html" class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm hover:bg-gray-800/50 hover:text-gray-200 transition-colors"><span>💪</span> 贡献</a>
+  <a href="nav-dashboard.html" class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm hover:bg-gray-800/50 hover:text-gray-200 transition-colors"><span>📊</span> 盘点</a>
+  <button onclick="openDebug()" class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm hover:bg-gray-800/50 hover:text-gray-200 transition-colors text-left"><span>🐛</span> 调试请求</button>
+  <div class="flex-1"></div>
+  <a href="nav-settings.html" class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm hover:bg-gray-800/50 hover:text-gray-200 transition-colors"><span>⚙️</span> 设置</a>
+  <div class="mx-2 p-3 rounded-lg border border-gray-800 flex items-center gap-3">
+    <div class="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xs font-bold">U</div>
+    <div class="flex-1 min-w-0"><div class="text-xs font-medium text-gray-200 truncate">user@example.com</div><div class="text-xs text-gray-500">2,340 积分</div></div>
+  </div>
+</nav>
+
+<main class="flex-1 overflow-y-auto p-6 space-y-6">
+  <div><h1 class="text-xl font-semibold">供给源</h1><p class="text-sm text-gray-500 mt-0.5">启用供给源后，网关可按场景路由请求</p></div>
+
+  <!-- 免费层 -->
+  <section class="space-y-3">
+    <div class="flex items-center gap-2">
+      <span class="w-2 h-2 rounded-full bg-green-500"></span>
+      <h2 class="text-sm font-semibold text-gray-200">免费层</h2>
+      <span class="text-xs text-gray-600">不消耗额度，优先路由</span>
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+
+      <!-- Ollama -->
+      <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 flex items-start gap-3">
+        <div class="w-9 h-9 rounded-xl bg-gray-800 flex items-center justify-center text-base shrink-0">🦙</div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-medium text-gray-200">Ollama</span>
+              <span class="text-[10px] bg-green-900/50 text-green-400 border border-green-800/50 px-1.5 py-0.5 rounded-full">● 已连接</span>
+            </div>
+            <div onclick="toggleSwitch(this)" data-on="true" class="w-9 h-5 rounded-full bg-blue-600 cursor-pointer relative shrink-0 transition-colors"><span class="absolute top-0.5 right-0.5 w-4 h-4 bg-white rounded-full shadow transition-all"></span></div>
+          </div>
+          <p class="text-xs text-gray-500 mt-1">自动检测本地实例，无需配置</p>
+          <div class="flex flex-wrap gap-1 mt-2">
+            <span class="text-[10px] font-mono bg-gray-800 border border-gray-700 text-gray-400 px-1.5 py-0.5 rounded">llama3.2:latest</span>
+            <span class="text-[10px] font-mono bg-gray-800 border border-gray-700 text-gray-400 px-1.5 py-0.5 rounded">qwen2.5-coder:7b</span>
+            <span class="text-[10px] font-mono bg-gray-800 border border-gray-700 text-gray-400 px-1.5 py-0.5 rounded">deepseek-r1:8b</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Groq -->
+      <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 flex items-start gap-3">
+        <div class="w-9 h-9 rounded-xl bg-gray-800 flex items-center justify-center text-base shrink-0">⚡</div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-medium text-gray-200">Groq</span>
+              <span class="text-[10px] bg-green-900/50 text-green-400 border border-green-800/50 px-1.5 py-0.5 rounded-full">● 已启用</span>
+            </div>
+            <div onclick="toggleSwitch(this)" data-on="true" class="w-9 h-5 rounded-full bg-blue-600 cursor-pointer relative shrink-0 transition-colors"><span class="absolute top-0.5 right-0.5 w-4 h-4 bg-white rounded-full shadow transition-all"></span></div>
+          </div>
+          <div class="flex items-center gap-2 mt-1.5">
+            <code class="text-xs text-gray-500 bg-gray-800 px-2 py-1 rounded font-mono">gsk_••••••••••••••</code>
+            <button onclick="editKey(this,'Groq')" class="text-xs text-gray-500 hover:text-gray-300">修改</button>
+          </div>
+          <div class="flex flex-wrap gap-1 mt-2">
+            <span class="text-[10px] font-mono bg-gray-800 border border-gray-700 text-gray-400 px-1.5 py-0.5 rounded">llama-3.3-70b</span>
+            <span class="text-[10px] font-mono bg-gray-800 border border-gray-700 text-gray-400 px-1.5 py-0.5 rounded">llama-3.1-8b</span>
+            <span class="text-[10px] font-mono bg-gray-800 border border-gray-700 text-gray-400 px-1.5 py-0.5 rounded">mixtral-8x7b</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- GitHub Models: inline setup -->
+      <div id="ghCard" class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden col-span-1">
+        <div class="flex items-start gap-3 p-4">
+          <div class="w-9 h-9 rounded-xl bg-gray-800 flex items-center justify-center text-base shrink-0">🐙</div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-sm font-medium text-gray-400">GitHub Models</span>
+              <button onclick="expandSetup('gh')" class="shrink-0 text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-blue-400 border border-gray-700 rounded-lg transition-colors">立即启用 →</button>
+            </div>
+            <p class="text-xs text-gray-600 mt-1">免费调用 GPT-4o、Llama，需 GitHub PAT</p>
+          </div>
+        </div>
+        <div id="gh-setup" class="hidden border-t border-gray-800 px-4 py-4 space-y-3 bg-gray-800/30">
+          <div class="flex items-center gap-2.5 opacity-50">
+            <div class="w-4 h-4 rounded-full bg-green-900 text-green-400 text-[9px] flex items-center justify-center shrink-0">✓</div>
+            <span class="text-xs text-gray-500 line-through">登录 GitHub 账号</span>
+          </div>
+          <div class="flex items-start gap-2.5">
+            <div class="w-4 h-4 rounded-full bg-blue-600 text-white text-[9px] flex items-center justify-center shrink-0 mt-0.5 font-bold">2</div>
+            <div class="flex-1 space-y-2">
+              <div class="text-xs font-medium text-gray-200">粘贴 Personal Access Token</div>
+              <div class="flex gap-2">
+                <input id="ghPat" type="password" placeholder="github_pat_…" class="flex-1 bg-gray-800 border border-blue-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 font-mono focus:outline-none placeholder-gray-600" />
+                <button onclick="verifyGH()" class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 rounded-lg transition-colors">验证</button>
+              </div>
+              <div id="ghVerifyMsg" class="hidden text-[10px] text-green-400">✓ 验证成功，已加入路由</div>
+            </div>
+          </div>
+          <div id="ghStep3" class="flex items-center gap-2.5 opacity-40">
+            <div class="w-4 h-4 rounded-full bg-gray-800 text-gray-500 text-[9px] flex items-center justify-center shrink-0 border border-gray-700">3</div>
+            <div class="text-xs text-gray-400">验证并启用</div>
+          </div>
+          <button onclick="collapseSetup('gh')" class="text-[10px] text-gray-600 hover:text-gray-400">取消</button>
+        </div>
+      </div>
+
+      <!-- SiliconFlow -->
+      <div id="sfCard" class="bg-gray-900 border border-dashed border-gray-700 rounded-2xl overflow-hidden">
+        <div class="flex items-start gap-3 p-4 opacity-70">
+          <div class="w-9 h-9 rounded-xl bg-gray-800 flex items-center justify-center text-base shrink-0 opacity-60">🌊</div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-sm font-medium text-gray-400">SiliconFlow</span>
+              <button onclick="expandSetup('sf')" class="shrink-0 text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-blue-400 border border-gray-700 rounded-lg transition-colors">立即启用 →</button>
+            </div>
+            <p class="text-xs text-gray-600 mt-1">国内免费托管，支持 Qwen、DeepSeek</p>
+          </div>
+        </div>
+        <div id="sf-setup" class="hidden border-t border-gray-800 px-4 py-4 space-y-3 bg-gray-800/30">
+          <div class="text-xs font-medium text-gray-300">填入 API Key</div>
+          <div class="flex gap-2">
+            <input type="password" placeholder="sk-…" class="flex-1 bg-gray-800 border border-blue-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 font-mono focus:outline-none placeholder-gray-600" />
+            <button onclick="verifySF()" class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 rounded-lg">验证</button>
+          </div>
+          <div id="sfVerifyMsg" class="hidden text-[10px] text-green-400">✓ 验证成功，已加入路由</div>
+          <button onclick="collapseSetup('sf')" class="text-[10px] text-gray-600 hover:text-gray-400">取消</button>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- P2P 层 -->
+  <section class="space-y-3">
+    <div class="flex items-center gap-2">
+      <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+      <h2 class="text-sm font-semibold text-gray-200">P2P 层</h2>
+      <span class="text-xs text-gray-600">消耗积分，使用社区算力</span>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+      <div class="flex items-center gap-4 p-4 border-b border-gray-800/60">
+        <div class="w-9 h-9 rounded-xl bg-blue-900/30 flex items-center justify-center text-base shrink-0">🌐</div>
+        <div class="flex-1">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-medium text-gray-200">P2P 分享网络</span>
+            <span class="text-[10px] bg-blue-900/50 text-blue-400 border border-blue-800/50 px-1.5 py-0.5 rounded-full">● 运行中</span>
+          </div>
+          <div class="flex items-center gap-3 mt-0.5">
+            <span class="text-xs text-gray-500">余额 <span class="text-gray-300 font-medium">340</span> 积分</span>
+            <span class="text-gray-700">·</span>
+            <span class="text-xs text-gray-500">网络节点 <span class="text-gray-300 font-medium">142</span></span>
+          </div>
+        </div>
+        <div onclick="toggleSwitch(this)" data-on="true" class="w-9 h-5 rounded-full bg-blue-600 cursor-pointer relative shrink-0 transition-colors"><span class="absolute top-0.5 right-0.5 w-4 h-4 bg-white rounded-full shadow transition-all"></span></div>
+      </div>
+      <div class="p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-xs text-gray-500">当前可用模型 <span class="text-gray-600 ml-1">· 社区节点提供</span></div>
+          <a href="nav-p2p-network.html" class="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors">🌐 全球网络 →</a>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div class="flex items-center gap-3 bg-gray-800/60 border border-gray-700/40 rounded-xl px-3 py-2.5">
+            <span class="relative flex h-2 w-2 shrink-0"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span></span>
+            <div class="flex-1 min-w-0"><div class="text-xs font-mono font-medium text-gray-200 truncate">llama-3.3-70b</div><div class="text-[10px] text-gray-500 mt-0.5">12 节点 · avg 1.8s</div></div>
+          </div>
+          <div class="flex items-center gap-3 bg-gray-800/60 border border-gray-700/40 rounded-xl px-3 py-2.5">
+            <span class="relative flex h-2 w-2 shrink-0"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span></span>
+            <div class="flex-1 min-w-0"><div class="text-xs font-mono font-medium text-gray-200 truncate">qwen2.5-72b</div><div class="text-[10px] text-gray-500 mt-0.5">8 节点 · avg 2.3s</div></div>
+          </div>
+          <div class="flex items-center gap-3 bg-gray-800/60 border border-gray-700/40 rounded-xl px-3 py-2.5">
+            <span class="relative flex h-2 w-2 shrink-0"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span></span>
+            <div class="flex-1 min-w-0"><div class="text-xs font-mono font-medium text-gray-200 truncate">deepseek-r1:32b</div><div class="text-[10px] text-gray-500 mt-0.5">5 节点 · avg 3.1s</div></div>
+          </div>
+          <div class="flex items-center gap-3 bg-gray-800/60 border border-gray-700/40 rounded-xl px-3 py-2.5">
+            <span class="w-2 h-2 rounded-full bg-amber-500 shrink-0"></span>
+            <div class="flex-1 min-w-0"><div class="text-xs font-mono font-medium text-gray-300 truncate">mixtral-8x7b</div><div class="text-[10px] text-amber-600 mt-0.5">2 节点 · 繁忙</div></div>
+          </div>
+          <div class="flex items-center gap-3 bg-gray-800/60 border border-gray-700/40 rounded-xl px-3 py-2.5">
+            <span class="w-2 h-2 rounded-full bg-green-500 shrink-0"></span>
+            <div class="flex-1 min-w-0"><div class="text-xs font-mono font-medium text-gray-200 truncate">gemma2:27b</div><div class="text-[10px] text-gray-500 mt-0.5">7 节点 · avg 2.0s</div></div>
+          </div>
+          <div class="flex items-center gap-3 bg-gray-800/60 border border-gray-700/40 rounded-xl px-3 py-2.5">
+            <span class="w-2 h-2 rounded-full bg-gray-600 shrink-0"></span>
+            <div class="flex-1 min-w-0"><div class="text-xs font-mono font-medium text-gray-500 truncate">phi4:14b</div><div class="text-[10px] text-gray-600 mt-0.5">0 节点 · 暂不可用</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 付费层 -->
+  <section class="space-y-3">
+    <div class="flex items-center gap-2">
+      <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+      <h2 class="text-sm font-semibold text-gray-200">付费层</h2>
+      <span class="text-xs text-gray-600">兜底使用，直接计费</span>
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      <div id="oaiCard" class="bg-gray-900 border border-dashed border-gray-700 rounded-2xl overflow-hidden">
+        <div class="flex items-start gap-3 p-4 opacity-70">
+          <div class="w-9 h-9 rounded-xl bg-gray-800 flex items-center justify-center text-base shrink-0 opacity-60">🤖</div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-sm font-medium text-gray-400">OpenAI</span>
+              <button onclick="expandSetup('oai')" class="shrink-0 text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-blue-400 border border-gray-700 rounded-lg transition-colors">立即启用 →</button>
+            </div>
+            <p class="text-xs text-gray-600 mt-1">GPT-4o、o1，使用官方 Key 直接计费</p>
+          </div>
+        </div>
+        <div id="oai-setup" class="hidden border-t border-gray-800 px-4 py-4 space-y-3 bg-gray-800/30">
+          <div class="text-xs font-medium text-gray-300">填入 OpenAI API Key</div>
+          <div class="flex gap-2">
+            <input type="password" placeholder="sk-…" class="flex-1 bg-gray-800 border border-blue-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 font-mono focus:outline-none placeholder-gray-600" />
+            <button onclick="verifyOAI()" class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 rounded-lg">验证</button>
+          </div>
+          <div id="oaiVerifyMsg" class="hidden text-[10px] text-green-400">✓ 已启用，GPT-4o 可用</div>
+          <button onclick="collapseSetup('oai')" class="text-[10px] text-gray-600 hover:text-gray-400">取消</button>
+        </div>
+      </div>
+      <div id="orCard" class="bg-gray-900 border border-dashed border-gray-700 rounded-2xl overflow-hidden">
+        <div class="flex items-start gap-3 p-4 opacity-70">
+          <div class="w-9 h-9 rounded-xl bg-gray-800 flex items-center justify-center text-base shrink-0 opacity-60">🔷</div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-sm font-medium text-gray-400">OpenRouter</span>
+              <button onclick="expandSetup('or')" class="shrink-0 text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-blue-400 border border-gray-700 rounded-lg transition-colors">立即启用 →</button>
+            </div>
+            <p class="text-xs text-gray-600 mt-1">统一接口访问多家模型，按量计费</p>
+          </div>
+        </div>
+        <div id="or-setup" class="hidden border-t border-gray-800 px-4 py-4 space-y-3 bg-gray-800/30">
+          <div class="text-xs font-medium text-gray-300">填入 OpenRouter API Key</div>
+          <div class="flex gap-2">
+            <input type="password" placeholder="sk-or-…" class="flex-1 bg-gray-800 border border-blue-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 font-mono focus:outline-none placeholder-gray-600" />
+            <button onclick="verifyOR()" class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 rounded-lg">验证</button>
+          </div>
+          <div id="orVerifyMsg" class="hidden text-[10px] text-green-400">✓ 已启用，可路由到 200+ 模型</div>
+          <button onclick="collapseSetup('or')" class="text-[10px] text-gray-600 hover:text-gray-400">取消</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- Debug Modal -->
+<div id="debugModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-6">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeDebug()"></div>
+  <div class="relative w-full max-w-2xl h-[560px] bg-gray-900 border border-gray-700 rounded-2xl flex flex-col overflow-hidden shadow-2xl">
+    <div class="flex items-center gap-2 px-3 py-2.5 border-b border-gray-800 shrink-0">
+      <div class="flex rounded-lg border border-gray-700 overflow-hidden text-xs">
+        <button class="px-3 py-1.5 bg-gray-700 text-gray-200 font-medium">场景路由</button>
+        <button class="px-3 py-1.5 text-gray-500 hover:bg-gray-800">指定模型</button>
+      </div>
+      <select class="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-300 focus:outline-none">
+        <option>🤖 Claude Code 链</option><option>✍️ 写文章链</option>
+      </select>
+      <label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer"><input type="checkbox" checked class="accent-blue-500"> Stream</label>
+      <div class="flex-1"></div>
+      <button onclick="clearChat()" class="text-[10px] text-gray-600 hover:text-gray-400 px-2">清空</button>
+      <button onclick="closeDebug()" class="text-gray-500 hover:text-gray-300 text-xl leading-none px-1">×</button>
+    </div>
+    <div id="chatMessages" class="flex-1 overflow-y-auto p-4 space-y-4">
+      <div class="flex items-start gap-3">
+        <div class="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center text-[10px] font-bold text-gray-300 shrink-0 mt-0.5">AI</div>
+        <div class="bg-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 max-w-[85%]">
+          <p class="text-sm text-gray-200">你好！有什么可以帮到你？</p>
+          <div class="flex items-center gap-3 mt-2 pt-2 border-t border-gray-700/50"><span class="text-[10px] text-gray-600">Groq / llama-3.3-70b</span><span class="text-[10px] text-green-600">312ms</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="px-4 py-3 border-t border-gray-800 flex items-end gap-3 shrink-0">
+      <textarea id="chatInput" rows="1" placeholder="输入消息…" class="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-gray-200 focus:outline-none focus:border-blue-500 resize-none placeholder-gray-600 min-h-[40px] max-h-[120px]" onkeydown="handleChatKey(event)"></textarea>
+      <button onclick="sendMessage()" class="w-9 h-9 rounded-full bg-blue-600 hover:bg-blue-500 flex items-center justify-center shrink-0 transition-colors">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+function openDebug(){document.getElementById('debugModal').classList.remove('hidden');}
+function closeDebug(){document.getElementById('debugModal').classList.add('hidden');}
+function clearChat(){document.getElementById('chatMessages').innerHTML='';}
+function handleChatKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}}
+const responses=['好的，我来帮你。','明白了，这是我的分析…','收到！正在处理…','根据你的描述，建议从以下几个方向着手…'];
+let ri=0;
+function sendMessage(){
+  const inp=document.getElementById('chatInput'),t=inp.value.trim();if(!t)return;
+  const m=document.getElementById('chatMessages');
+  m.innerHTML+=`<div class="flex justify-end"><div class="bg-blue-600 rounded-2xl rounded-tr-sm px-4 py-3 max-w-[85%]"><p class="text-sm text-white">${t.replace(/</g,'&lt;')}</p></div></div>`;
+  inp.value='';m.scrollTop=m.scrollHeight;
+  const el=document.createElement('div');el.className='flex items-start gap-3';
+  el.innerHTML=`<div class="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center text-[10px] font-bold text-gray-300 shrink-0 mt-0.5">AI</div><div class="bg-gray-800 rounded-2xl rounded-tl-sm px-4 py-3"><span class="text-sm text-gray-500 animate-pulse">思考中…</span></div>`;
+  m.appendChild(el);m.scrollTop=m.scrollHeight;
+  setTimeout(()=>{const ms=200+Math.floor(Math.random()*400);el.innerHTML=`<div class="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center text-[10px] font-bold text-gray-300 shrink-0 mt-0.5">AI</div><div class="bg-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 max-w-[85%]"><p class="text-sm text-gray-200">${responses[ri++%responses.length]}</p><div class="flex items-center gap-3 mt-2 pt-2 border-t border-gray-700/50"><span class="text-[10px] text-gray-600">Groq/llama-3.3-70b</span><span class="text-[10px] text-green-600">${ms}ms</span></div></div>`;m.scrollTop=m.scrollHeight;},900);
+}
+
+// Toggle switches
+function toggleSwitch(el){
+  const on=el.dataset.on==='true';
+  el.dataset.on=(!on).toString();
+  el.className=`w-9 h-5 rounded-full cursor-pointer relative shrink-0 transition-colors ${!on?'bg-blue-600':'bg-gray-700'}`;
+  el.querySelector('span').className=`absolute top-0.5 ${!on?'right-0.5':'left-0.5'} w-4 h-4 bg-white rounded-full shadow transition-all`;
+}
+function editKey(btn,name){
+  const nk=prompt(`修改 ${name} API Key:`);
+  if(nk){btn.previousElementSibling.textContent=nk.slice(0,4)+'••••••••••••';}
+}
+function expandSetup(id){document.getElementById(id+'-setup').classList.remove('hidden');}
+function collapseSetup(id){document.getElementById(id+'-setup').classList.add('hidden');}
+function verifyGH(){
+  setTimeout(()=>{
+    document.getElementById('ghVerifyMsg').classList.remove('hidden');
+    document.getElementById('ghStep3').classList.remove('opacity-40');
+  },800);
+}
+function verifySF(){setTimeout(()=>{document.getElementById('sfVerifyMsg').classList.remove('hidden');},800);}
+function verifyOAI(){setTimeout(()=>{document.getElementById('oaiVerifyMsg').classList.remove('hidden');},800);}
+function verifyOR(){setTimeout(()=>{document.getElementById('orVerifyMsg').classList.remove('hidden');},800);}
+</script>
+</body>
+</html>

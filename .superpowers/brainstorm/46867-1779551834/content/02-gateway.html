@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>网关 — Gateway Mockup</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif; }
+</style>
+</head>
+<body class="bg-gray-950 text-gray-100 flex min-h-screen">
+
+<!-- Sidebar (same as dashboard, different active) -->
+<nav class="w-52 bg-gray-900 border-r border-gray-800 flex flex-col py-4 gap-1 shrink-0">
+  <div class="px-4 mb-4">
+    <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Token Bank</div>
+  </div>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm">
+    <span class="text-base">🏦</span> Token 盘点
+  </a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg bg-gray-800 text-white text-sm font-medium">
+    <span class="text-base">🔀</span> 网关
+  </a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm">
+    <span class="text-base">⚡</span> 供给源
+  </a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm">
+    <span class="text-base">💪</span> 贡献
+  </a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm">
+    <span class="text-base">🌐</span> 网络
+  </a>
+  <div class="flex-1"></div>
+  <div class="mx-2 p-3 rounded-lg border border-gray-800 flex items-center gap-3">
+    <div class="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xs font-bold">U</div>
+    <div class="flex-1 min-w-0">
+      <div class="text-xs font-medium text-gray-200 truncate">user@example.com</div>
+      <div class="text-xs text-gray-500">2,340 积分</div>
+    </div>
+  </div>
+</nav>
+
+<main class="flex-1 overflow-y-auto p-6 space-y-5">
+
+  <!-- Header with live status -->
+  <div class="flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2">
+        <span class="relative flex h-2.5 w-2.5">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+        </span>
+        <h1 class="text-xl font-semibold text-gray-100">网关</h1>
+      </div>
+      <span class="text-xs bg-green-900/30 text-green-400 border border-green-800/50 px-2 py-0.5 rounded-full">运行中 · 11430</span>
+    </div>
+    <!-- Strategy toggle -->
+    <div class="flex items-center gap-2 bg-gray-800 border border-gray-700 rounded-lg p-1">
+      <button class="text-xs px-3 py-1.5 rounded-md bg-gray-700 text-white font-medium">省钱优先</button>
+      <button class="text-xs px-3 py-1.5 rounded-md text-gray-400 hover:text-gray-200">质量优先</button>
+    </div>
+  </div>
+
+  <!-- Endpoint card + Claude Code config -->
+  <div class="grid grid-cols-2 gap-4">
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-2">
+      <div class="text-xs text-gray-500 font-medium uppercase tracking-wide">接入端点</div>
+      <div class="flex items-center gap-2">
+        <code class="flex-1 text-sm font-mono text-green-400 bg-gray-800 rounded-lg px-3 py-2">http://127.0.0.1:11430/v1</code>
+        <button class="text-xs bg-gray-800 text-gray-400 hover:text-gray-200 px-2.5 py-2 rounded-lg border border-gray-700">复制</button>
+      </div>
+      <p class="text-xs text-gray-600">将此地址填入任意 OpenAI 兼容工具的 Base URL</p>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-2">
+      <div class="text-xs text-gray-500 font-medium uppercase tracking-wide">快速配置</div>
+      <div class="space-y-1.5">
+        <button class="w-full text-left text-sm text-gray-300 bg-gray-800 hover:bg-gray-700 px-3 py-2 rounded-lg flex items-center gap-2 transition-colors">
+          <span class="text-base">🤖</span>
+          <div>
+            <div class="font-medium text-xs">Claude Code</div>
+            <div class="text-xs text-gray-500">自动写入 ~/.claude/settings.json</div>
+          </div>
+          <span class="ml-auto text-gray-600 text-xs">→</span>
+        </button>
+        <button class="w-full text-left text-sm text-gray-300 bg-gray-800 hover:bg-gray-700 px-3 py-2 rounded-lg flex items-center gap-2 transition-colors">
+          <span class="text-base">📋</span>
+          <div>
+            <div class="font-medium text-xs">复制 curl 示例</div>
+            <div class="text-xs text-gray-500">测试网关是否工作</div>
+          </div>
+          <span class="ml-auto text-gray-600 text-xs">→</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stats row: 4 cards -->
+  <div class="grid grid-cols-4 gap-3">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3 space-y-1">
+      <div class="text-xs text-gray-500">今日请求</div>
+      <div class="text-2xl font-bold text-gray-100">284</div>
+      <div class="text-xs text-green-500">↑ 12% vs 昨日</div>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3 space-y-1">
+      <div class="text-xs text-gray-500">免费命中率</div>
+      <div class="text-2xl font-bold text-green-400">67%</div>
+      <div class="text-xs text-gray-600">190 次免费</div>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3 space-y-1">
+      <div class="text-xs text-gray-500">错误率</div>
+      <div class="text-2xl font-bold text-amber-400">1.4%</div>
+      <div class="text-xs text-gray-600">4 次失败</div>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3 space-y-1">
+      <div class="text-xs text-gray-500">平均延迟</div>
+      <div class="text-2xl font-bold text-gray-100">320ms</div>
+      <div class="text-xs text-gray-600">P95: 890ms</div>
+    </div>
+  </div>
+
+  <!-- Route log: full-width table -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+    <div class="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+      <h2 class="text-sm font-semibold text-gray-300">路由日志</h2>
+      <div class="flex items-center gap-2 text-xs text-gray-500">
+        <span class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-green-500"></span> 实时</span>
+        <span>最近 50 条</span>
+      </div>
+    </div>
+    <!-- Table header -->
+    <div class="grid text-xs text-gray-600 uppercase tracking-wider px-4 py-2 bg-gray-900/50 border-b border-gray-800/50" style="grid-template-columns: 80px 60px 1fr 120px 70px 60px 50px">
+      <span>时间</span>
+      <span>层级</span>
+      <span>模型</span>
+      <span>供给源</span>
+      <span>延迟</span>
+      <span>Tokens</span>
+      <span>状态</span>
+    </div>
+    <!-- Rows -->
+    <div class="divide-y divide-gray-800/50">
+      <div class="grid text-xs px-4 py-2.5 hover:bg-gray-800/30 items-center" style="grid-template-columns: 80px 60px 1fr 120px 70px 60px 50px">
+        <span class="text-gray-600 font-mono">14:32:01</span>
+        <span><span class="bg-green-900/50 text-green-400 px-1.5 py-0.5 rounded text-[10px]">免费</span></span>
+        <span class="text-gray-300 truncate">gpt-4o-mini</span>
+        <span class="text-gray-500">Groq</span>
+        <span class="text-gray-400">210ms</span>
+        <span class="text-gray-500">1,240</span>
+        <span class="text-green-500">✓</span>
+      </div>
+      <div class="grid text-xs px-4 py-2.5 hover:bg-gray-800/30 items-center" style="grid-template-columns: 80px 60px 1fr 120px 70px 60px 50px">
+        <span class="text-gray-600 font-mono">14:31:47</span>
+        <span><span class="bg-blue-900/50 text-blue-400 px-1.5 py-0.5 rounded text-[10px]">P2P</span></span>
+        <span class="text-gray-300 truncate">claude-3-haiku</span>
+        <span class="text-gray-500">P2P 网络</span>
+        <span class="text-gray-400">890ms</span>
+        <span class="text-gray-500">880</span>
+        <span class="text-green-500">✓</span>
+      </div>
+      <div class="grid text-xs px-4 py-2.5 hover:bg-gray-800/30 items-center bg-red-950/10" style="grid-template-columns: 80px 60px 1fr 120px 70px 60px 50px">
+        <span class="text-gray-600 font-mono">14:30:55</span>
+        <span><span class="bg-green-900/50 text-green-400 px-1.5 py-0.5 rounded text-[10px]">免费</span></span>
+        <span class="text-gray-300 truncate">llama-3-70b</span>
+        <span class="text-red-400 text-[10px]">Groq → <span class="text-amber-400">P2P 降级</span></span>
+        <span class="text-gray-400">1.2s</span>
+        <span class="text-gray-500">320</span>
+        <span class="text-amber-400">↓</span>
+      </div>
+      <div class="grid text-xs px-4 py-2.5 hover:bg-gray-800/30 items-center" style="grid-template-columns: 80px 60px 1fr 120px 70px 60px 50px">
+        <span class="text-gray-600 font-mono">14:29:12</span>
+        <span><span class="bg-amber-900/50 text-amber-400 px-1.5 py-0.5 rounded text-[10px]">付费</span></span>
+        <span class="text-gray-300 truncate">gpt-4o</span>
+        <span class="text-gray-500">OpenAI</span>
+        <span class="text-gray-400">1.8s</span>
+        <span class="text-gray-500">2,100</span>
+        <span class="text-green-500">✓</span>
+      </div>
+      <div class="grid text-xs px-4 py-2.5 hover:bg-gray-800/30 items-center" style="grid-template-columns: 80px 60px 1fr 120px 70px 60px 50px">
+        <span class="text-gray-600 font-mono">14:27:03</span>
+        <span><span class="bg-blue-900/50 text-blue-400 px-1.5 py-0.5 rounded text-[10px]">P2P</span></span>
+        <span class="text-gray-300 truncate">gpt-4o-mini</span>
+        <span class="text-gray-500">P2P 网络</span>
+        <span class="text-gray-400">720ms</span>
+        <span class="text-gray-500">—</span>
+        <span class="text-red-400">✗</span>
+      </div>
+    </div>
+  </div>
+
+</main>
+</body>
+</html>

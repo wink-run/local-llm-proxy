@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>个人页 — Token 盘点</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<style>body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif; }</style>
+</head>
+<body class="bg-gray-950 text-gray-100 flex min-h-screen">
+
+<nav class="w-52 bg-gray-900 border-r border-gray-800 flex flex-col py-4 gap-1 shrink-0">
+  <div class="px-4 mb-4">
+    <div class="text-sm font-bold text-gray-200">Token Bank</div>
+    <div class="text-xs text-gray-600 mt-0.5">本地 AI 网关</div>
+  </div>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm">
+    <span class="text-base">🔀</span> 网关
+  </a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm">
+    <span class="text-base">⚡</span> 供给源
+  </a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm">
+    <span class="text-base">💪</span> 贡献
+  </a>
+  <div class="flex-1"></div>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm">
+    <span class="text-base">⚙️</span> 设置
+  </a>
+  <!-- Active: user card -->
+  <div class="mx-2 p-3 rounded-lg bg-gray-800 border border-blue-600/50 flex items-center gap-3 cursor-pointer">
+    <div class="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xs font-bold">U</div>
+    <div class="flex-1 min-w-0">
+      <div class="text-xs font-medium text-white truncate">user@example.com</div>
+      <div class="text-xs text-blue-400">Token 盘点</div>
+    </div>
+  </div>
+</nav>
+
+<main class="flex-1 overflow-y-auto p-6 space-y-5">
+
+  <!-- User header -->
+  <div class="flex items-center gap-4">
+    <div class="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xl font-bold">U</div>
+    <div>
+      <h1 class="text-xl font-semibold">user@example.com</h1>
+      <div class="flex items-center gap-3 mt-1">
+        <span class="text-sm text-blue-400 font-medium">2,340 积分</span>
+        <span class="text-gray-700">·</span>
+        <span class="text-xs text-gray-500">本月节省 ¥38.4</span>
+        <button class="text-xs text-gray-600 hover:text-red-400 transition-colors ml-2">退出登录</button>
+      </div>
+    </div>
+    <div class="ml-auto">
+      <select class="bg-gray-800 border border-gray-700 text-gray-300 text-xs rounded-lg px-3 py-1.5 focus:outline-none">
+        <option>本月</option>
+        <option>上月</option>
+        <option>近7天</option>
+        <option>全部</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Token 盘点 hero: savings ring -->
+  <div class="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-5">
+    <div class="flex items-center gap-8">
+      <!-- Ring -->
+      <div class="relative shrink-0 w-28 h-28">
+        <svg viewBox="0 0 100 100" class="w-full h-full -rotate-90">
+          <circle cx="50" cy="50" r="38" fill="none" stroke="#1f2937" stroke-width="14"/>
+          <circle cx="50" cy="50" r="38" fill="none" stroke="#22c55e" stroke-width="14" stroke-dasharray="148 91" stroke-dashoffset="0" stroke-linecap="round"/>
+          <circle cx="50" cy="50" r="38" fill="none" stroke="#3b82f6" stroke-width="14" stroke-dasharray="55 184" stroke-dashoffset="-148" stroke-linecap="round"/>
+          <circle cx="50" cy="50" r="38" fill="none" stroke="#f59e0b" stroke-width="14" stroke-dasharray="36 203" stroke-dashoffset="-203" stroke-linecap="round"/>
+        </svg>
+        <div class="absolute inset-0 flex flex-col items-center justify-center">
+          <div class="text-lg font-bold">¥38.4</div>
+          <div class="text-[10px] text-gray-400">本月节省</div>
+        </div>
+      </div>
+      <!-- Stats -->
+      <div class="flex-1 grid grid-cols-3 gap-4">
+        <div>
+          <div class="flex items-center gap-1.5 mb-1"><span class="w-2 h-2 rounded-full bg-green-500"></span><span class="text-xs text-gray-400">免费层替代</span></div>
+          <div class="text-xl font-bold text-green-400">¥23.8</div>
+          <div class="text-xs text-gray-500 mt-0.5">1,240 次调用</div>
+          <div class="text-xs text-green-500 mt-0.5">↑ 18%</div>
+        </div>
+        <div>
+          <div class="flex items-center gap-1.5 mb-1"><span class="w-2 h-2 rounded-full bg-blue-500"></span><span class="text-xs text-gray-400">P2P 积分抵扣</span></div>
+          <div class="text-xl font-bold text-blue-400">¥9.6</div>
+          <div class="text-xs text-gray-500 mt-0.5">340 积分消耗</div>
+          <div class="text-xs text-green-500 mt-0.5">↑ 5%</div>
+        </div>
+        <div>
+          <div class="flex items-center gap-1.5 mb-1"><span class="w-2 h-2 rounded-full bg-amber-500"></span><span class="text-xs text-gray-400">付费层实支</span></div>
+          <div class="text-xl font-bold text-amber-400">¥5.0</div>
+          <div class="text-xs text-gray-500 mt-0.5">实际支出</div>
+          <div class="text-xs text-red-400 mt-0.5">↓ 3%</div>
+        </div>
+      </div>
+    </div>
+    <!-- Distribution bar -->
+    <div class="mt-4 space-y-1.5">
+      <div class="flex justify-between text-xs text-gray-500"><span>调用分布</span><span>共 1,680 次</span></div>
+      <div class="h-2 rounded-full overflow-hidden flex gap-0.5">
+        <div class="h-full rounded-l-full" style="width:62%;background:linear-gradient(90deg,#22c55e,#16a34a)"></div>
+        <div class="h-full" style="width:23%;background:#3b82f6"></div>
+        <div class="h-full rounded-r-full" style="width:15%;background:#f59e0b"></div>
+      </div>
+      <div class="flex gap-4 text-xs text-gray-500">
+        <span><span class="text-green-400">●</span> 免费 62%</span>
+        <span><span class="text-blue-400">●</span> P2P 23%</span>
+        <span><span class="text-amber-400">●</span> 付费 15%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Model usage + Credits section -->
+  <div class="grid grid-cols-2 gap-4">
+
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-3">
+      <h2 class="text-sm font-semibold text-gray-300">模型用量排行</h2>
+      <div class="space-y-2.5">
+        <div class="space-y-1">
+          <div class="flex justify-between text-xs"><span class="text-gray-300">gpt-4o-mini</span><span class="text-gray-500">24次</span></div>
+          <div class="h-1.5 bg-gray-800 rounded-full"><div class="h-full rounded-full bg-green-500" style="width:72%"></div></div>
+        </div>
+        <div class="space-y-1">
+          <div class="flex justify-between text-xs"><span class="text-gray-300">llama-3.1-8b</span><span class="text-gray-500">18次</span></div>
+          <div class="h-1.5 bg-gray-800 rounded-full"><div class="h-full rounded-full bg-green-500" style="width:55%"></div></div>
+        </div>
+        <div class="space-y-1">
+          <div class="flex justify-between text-xs"><span class="text-gray-300">claude-3-haiku</span><span class="text-gray-500">11次</span></div>
+          <div class="h-1.5 bg-gray-800 rounded-full"><div class="h-full rounded-full bg-blue-500" style="width:33%"></div></div>
+        </div>
+        <div class="space-y-1">
+          <div class="flex justify-between text-xs"><span class="text-gray-300">gpt-4o</span><span class="text-gray-500">3次</span></div>
+          <div class="h-1.5 bg-gray-800 rounded-full"><div class="h-full rounded-full bg-amber-500" style="width:9%"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-3">
+      <h2 class="text-sm font-semibold text-gray-300">积分与贡献</h2>
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="text-2xl font-bold text-blue-400">2,340</div>
+          <div class="text-xs text-gray-500 mt-0.5">当前积分</div>
+        </div>
+        <div class="text-right">
+          <div class="text-sm font-medium text-green-400">+ 180</div>
+          <div class="text-xs text-gray-500">本月贡献所得</div>
+        </div>
+      </div>
+      <div class="h-1.5 bg-gray-800 rounded-full">
+        <div class="h-full rounded-full bg-blue-500" style="width:68%"></div>
+      </div>
+      <div class="text-xs text-gray-600">贡献时长 8.4h · 共享 340 次调用</div>
+      <button class="w-full text-xs bg-gray-800 hover:bg-gray-700 text-blue-400 border border-gray-700 py-1.5 rounded-lg transition-colors">兑换积分 / 购买 →</button>
+    </div>
+  </div>
+
+</main>
+</body>
+</html>

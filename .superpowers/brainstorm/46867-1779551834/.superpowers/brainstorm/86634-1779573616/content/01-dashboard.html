@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="zh" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Token 盘点 — Dashboard Mockup</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif; }
+  .savings-ring { 
+    background: conic-gradient(#22c55e 0% 62%, #3b82f6 62% 85%, #f59e0b 85% 100%);
+    border-radius: 50%;
+  }
+  .bar-free { background: linear-gradient(90deg, #22c55e, #16a34a); }
+  .bar-p2p  { background: linear-gradient(90deg, #3b82f6, #2563eb); }
+  .bar-paid { background: linear-gradient(90deg, #f59e0b, #d97706); }
+  .stat-up { color: #22c55e; }
+  .stat-down { color: #ef4444; }
+</style>
+</head>
+<body class="bg-gray-950 text-gray-100 flex min-h-screen">
+
+<!-- Sidebar -->
+<nav class="w-52 bg-gray-900 border-r border-gray-800 flex flex-col py-4 gap-1 shrink-0">
+  <div class="px-4 mb-4">
+    <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Token Bank</div>
+  </div>
+  <!-- Active: dashboard -->
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg bg-gray-800 text-white text-sm font-medium">
+    <span class="text-base">🏦</span> Token 盘点
+  </a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 hover:text-gray-200 hover:bg-gray-800 text-sm">
+    <span class="text-base">🔀</span> 网关
+  </a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 hover:text-gray-200 hover:bg-gray-800 text-sm">
+    <span class="text-base">⚡</span> 供给源
+  </a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 hover:text-gray-200 hover:bg-gray-800 text-sm">
+    <span class="text-base">💪</span> 贡献
+  </a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 hover:text-gray-200 hover:bg-gray-800 text-sm">
+    <span class="text-base">🌐</span> 网络
+  </a>
+  <div class="flex-1"></div>
+  <!-- User info at bottom -->
+  <div class="mx-2 p-3 rounded-lg border border-gray-800 flex items-center gap-3">
+    <div class="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xs font-bold">U</div>
+    <div class="flex-1 min-w-0">
+      <div class="text-xs font-medium text-gray-200 truncate">user@example.com</div>
+      <div class="text-xs text-gray-500">2,340 积分</div>
+    </div>
+  </div>
+</nav>
+
+<!-- Main content -->
+<main class="flex-1 overflow-y-auto p-6 space-y-6">
+
+  <!-- Page header -->
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-xl font-semibold text-gray-100">Token 盘点</h1>
+      <p class="text-sm text-gray-500 mt-0.5">本月节省成本概览</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <select class="bg-gray-800 border border-gray-700 text-gray-300 text-xs rounded-lg px-3 py-1.5 focus:outline-none">
+        <option>本月</option>
+        <option>上月</option>
+        <option>近7天</option>
+        <option>全部</option>
+      </select>
+      <button class="text-xs bg-gray-800 border border-gray-700 text-gray-400 px-3 py-1.5 rounded-lg hover:bg-gray-700">导出报告</button>
+    </div>
+  </div>
+
+  <!-- HERO: 节省金额可视化 -->
+  <div class="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-6">
+    <div class="flex items-start gap-8">
+      <!-- Ring chart area -->
+      <div class="relative shrink-0">
+        <div class="w-36 h-36 savings-ring flex items-center justify-center">
+          <div class="w-24 h-24 bg-gray-900 rounded-full flex flex-col items-center justify-center">
+            <div class="text-xl font-bold text-white">¥38.4</div>
+            <div class="text-xs text-gray-400">本月节省</div>
+          </div>
+        </div>
+      </div>
+      <!-- Stats right of ring -->
+      <div class="flex-1 grid grid-cols-3 gap-4">
+        <!-- Stat: free tier savings -->
+        <div class="space-y-1">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-green-500"></span>
+            <span class="text-xs text-gray-400">免费层替代</span>
+          </div>
+          <div class="text-2xl font-bold text-green-400">¥23.8</div>
+          <div class="text-xs text-gray-500">1,240 次调用</div>
+          <div class="text-xs stat-up">↑ 18% vs 上月</div>
+        </div>
+        <!-- Stat: P2P savings -->
+        <div class="space-y-1">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+            <span class="text-xs text-gray-400">P2P 积分抵扣</span>
+          </div>
+          <div class="text-2xl font-bold text-blue-400">¥9.6</div>
+          <div class="text-xs text-gray-500">340 积分消耗</div>
+          <div class="text-xs stat-up">↑ 5% vs 上月</div>
+        </div>
+        <!-- Stat: paid fallback -->
+        <div class="space-y-1">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+            <span class="text-xs text-gray-400">付费层兜底</span>
+          </div>
+          <div class="text-2xl font-bold text-amber-400">¥5.0</div>
+          <div class="text-xs text-gray-500">实际支出</div>
+          <div class="text-xs stat-down">↓ 3% vs 上月</div>
+        </div>
+      </div>
+    </div>
+    <!-- Bottom legend bar -->
+    <div class="mt-5 space-y-2">
+      <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
+        <span>调用分布</span>
+        <span>共 1,680 次</span>
+      </div>
+      <div class="h-2 w-full rounded-full overflow-hidden flex gap-0.5">
+        <div class="h-full rounded-l-full" style="width:62%; background:linear-gradient(90deg,#22c55e,#16a34a)"></div>
+        <div class="h-full" style="width:23%; background:#3b82f6"></div>
+        <div class="h-full rounded-r-full" style="width:15%; background:#f59e0b"></div>
+      </div>
+      <div class="flex gap-4 text-xs text-gray-500">
+        <span><span class="text-green-400">●</span> 免费层 62%</span>
+        <span><span class="text-blue-400">●</span> P2P 层 23%</span>
+        <span><span class="text-amber-400">●</span> 付费层 15%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Grid row: Today + Per-provider -->
+  <div class="grid grid-cols-2 gap-4">
+    <!-- Today's usage -->
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-gray-300">今日用量</h2>
+        <span class="text-xs text-gray-600">2026-05-23</span>
+      </div>
+      <div class="space-y-2.5">
+        <!-- Model rows -->
+        <div class="space-y-1.5">
+          <div class="flex justify-between text-xs">
+            <span class="text-gray-300">gpt-4o-mini</span>
+            <span class="text-gray-500">386 tokens · 24次</span>
+          </div>
+          <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+            <div class="h-full bar-free" style="width:72%"></div>
+          </div>
+        </div>
+        <div class="space-y-1.5">
+          <div class="flex justify-between text-xs">
+            <span class="text-gray-300">claude-3-haiku</span>
+            <span class="text-gray-500">210 tokens · 11次</span>
+          </div>
+          <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+            <div class="h-full bar-p2p" style="width:40%"></div>
+          </div>
+        </div>
+        <div class="space-y-1.5">
+          <div class="flex justify-between text-xs">
+            <span class="text-gray-300">glm-4-flash</span>
+            <span class="text-gray-500">88 tokens · 6次</span>
+          </div>
+          <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+            <div class="h-full bar-free" style="width:18%"></div>
+          </div>
+        </div>
+        <div class="space-y-1.5">
+          <div class="flex justify-between text-xs">
+            <span class="text-gray-300">gpt-4o</span>
+            <span class="text-gray-500">42 tokens · 3次</span>
+          </div>
+          <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+            <div class="h-full bar-paid" style="width:8%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Provider breakdown -->
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-gray-300">供给源状态</h2>
+        <span class="text-xs text-green-500 flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-green-500 inline-block"></span> 3 活跃</span>
+      </div>
+      <div class="space-y-2">
+        <div class="flex items-center justify-between py-2 border-b border-gray-800">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-green-400"></span>
+            <span class="text-xs text-gray-300">Ollama 本地</span>
+          </div>
+          <div class="text-right">
+            <div class="text-xs text-gray-400">386ms · 0% err</div>
+            <div class="text-xs text-green-500">24次今日</div>
+          </div>
+        </div>
+        <div class="flex items-center justify-between py-2 border-b border-gray-800">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-green-400"></span>
+            <span class="text-xs text-gray-300">Groq</span>
+          </div>
+          <div class="text-right">
+            <div class="text-xs text-gray-400">210ms · 0% err</div>
+            <div class="text-xs text-green-500">11次今日</div>
+          </div>
+        </div>
+        <div class="flex items-center justify-between py-2 border-b border-gray-800">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+            <span class="text-xs text-gray-300">P2P 网络</span>
+          </div>
+          <div class="text-right">
+            <div class="text-xs text-gray-400">890ms · 2% err</div>
+            <div class="text-xs text-blue-400">6次今日</div>
+          </div>
+        </div>
+        <div class="flex items-center justify-between py-2">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-gray-500"></span>
+            <span class="text-xs text-gray-500">OpenAI</span>
+          </div>
+          <div class="text-right">
+            <div class="text-xs text-gray-600">待机中</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent activity log -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-3">
+    <div class="flex items-center justify-between">
+      <h2 class="text-sm font-semibold text-gray-300">最近调用</h2>
+      <a class="text-xs text-blue-400 hover:text-blue-300">查看完整日志 →</a>
+    </div>
+    <div class="space-y-1">
+      <!-- Log row template -->
+      <div class="flex items-center gap-3 text-xs py-1.5 border-b border-gray-800/50">
+        <span class="text-gray-600 w-16 shrink-0">14:32:01</span>
+        <span class="bg-green-900/40 text-green-400 px-1.5 py-0.5 rounded text-[10px] shrink-0">免费</span>
+        <span class="text-gray-300 flex-1 truncate">gpt-4o-mini</span>
+        <span class="text-gray-600">via Groq</span>
+        <span class="text-gray-500 w-12 text-right shrink-0">210ms</span>
+        <span class="text-green-500 w-8 text-right shrink-0">✓</span>
+      </div>
+      <div class="flex items-center gap-3 text-xs py-1.5 border-b border-gray-800/50">
+        <span class="text-gray-600 w-16 shrink-0">14:31:47</span>
+        <span class="bg-blue-900/40 text-blue-400 px-1.5 py-0.5 rounded text-[10px] shrink-0">P2P</span>
+        <span class="text-gray-300 flex-1 truncate">claude-3-haiku</span>
+        <span class="text-gray-600">via P2P网络</span>
+        <span class="text-gray-500 w-12 text-right shrink-0">890ms</span>
+        <span class="text-green-500 w-8 text-right shrink-0">✓</span>
+      </div>
+      <div class="flex items-center gap-3 text-xs py-1.5 border-b border-gray-800/50">
+        <span class="text-gray-600 w-16 shrink-0">14:30:12</span>
+        <span class="bg-amber-900/40 text-amber-400 px-1.5 py-0.5 rounded text-[10px] shrink-0">付费</span>
+        <span class="text-gray-300 flex-1 truncate">gpt-4o</span>
+        <span class="text-gray-600">via OpenAI</span>
+        <span class="text-gray-500 w-12 text-right shrink-0">1.2s</span>
+        <span class="text-green-500 w-8 text-right shrink-0">✓</span>
+      </div>
+      <div class="flex items-center gap-3 text-xs py-1.5 border-b border-gray-800/50">
+        <span class="text-gray-600 w-16 shrink-0">14:28:55</span>
+        <span class="bg-green-900/40 text-green-400 px-1.5 py-0.5 rounded text-[10px] shrink-0">免费</span>
+        <span class="text-gray-300 flex-1 truncate">glm-4-flash</span>
+        <span class="text-gray-600">via Ollama</span>
+        <span class="text-gray-500 w-12 text-right shrink-0">386ms</span>
+        <span class="text-green-500 w-8 text-right shrink-0">✓</span>
+      </div>
+      <div class="flex items-center gap-3 text-xs py-1.5">
+        <span class="text-gray-600 w-16 shrink-0">14:27:03</span>
+        <span class="bg-blue-900/40 text-blue-400 px-1.5 py-0.5 rounded text-[10px] shrink-0">P2P</span>
+        <span class="text-gray-300 flex-1 truncate">gpt-4o-mini</span>
+        <span class="text-gray-600">via P2P网络</span>
+        <span class="text-gray-500 w-12 text-right shrink-0">720ms</span>
+        <span class="text-red-400 w-8 text-right shrink-0">✗</span>
+      </div>
+    </div>
+  </div>
+
+</main>
+</body>
+</html>
