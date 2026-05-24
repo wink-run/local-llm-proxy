@@ -117,47 +117,49 @@ function ContributionConfigCard() {
 
   if (!editing) {
     return (
-      <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5">
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${configured ? 'bg-green-400' : 'bg-yellow-400'}`} />
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-200">贡献节点配置</span>
-            {savedMsg && <span className="text-xs text-green-600 dark:text-green-400">{savedMsg}</span>}
+            <span className="text-sm font-medium text-gray-200">贡献节点配置</span>
+            {savedMsg && <span className="text-xs text-green-400">{savedMsg}</span>}
           </div>
           <div className="flex gap-2">
             <button onClick={autoScan} disabled={scanning}
-              className="px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 disabled:opacity-50 transition-colors">
+              className="px-3 py-1 text-xs rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50 transition-colors">
               {scanning ? '扫描中…' : '自动配置'}
             </button>
             <button onClick={openEdit}
-              className="px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 transition-colors">
+              className="px-3 py-1 text-xs rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors">
               手动配置
             </button>
           </div>
         </div>
         {configured ? (
-          <div className="mt-3 space-y-2 text-xs text-gray-500 dark:text-gray-400">
+          <div className="mt-3 space-y-2 text-xs text-gray-500">
             {viewGroups.map((g, i) => {
               const ms = (g.models || []).map(m => typeof m === 'string' ? m : `${m.name}(${m.type === 'image' ? '图像' : '对话'})`).join(', ');
               return (
-                <div key={i} className="bg-gray-50 dark:bg-gray-700/40 rounded-xl px-3 py-2 space-y-0.5">
-                  <p className="font-mono truncate text-gray-600 dark:text-gray-300">{g.base_url}</p>
-                  {ms && <p className="text-gray-400 dark:text-gray-500">{ms}</p>}
+                <div key={i} className="bg-gray-800/50 rounded-xl px-3 py-2 space-y-1">
+                  <p className="font-mono truncate text-gray-300">{g.base_url}</p>
+                  {ms && <p className="text-gray-500">{ms}</p>}
                 </div>
               );
             })}
-            {cfg?.name && <p><span className="text-gray-400 inline-block w-12">节点</span>{cfg.name}</p>}
-            <p><span className="text-gray-400 inline-block w-12">自启动</span>{cfg?.auto_start ? '开启' : '关闭'}</p>
+            <div className="flex items-center gap-4 text-[10px] text-gray-600">
+              {cfg?.name && <span>节点名：<span className="text-gray-400">{cfg.name}</span></span>}
+              <span>自启动：<span className="text-gray-400">{cfg?.auto_start ? '开启' : '关闭'}</span></span>
+            </div>
           </div>
         ) : (
-          <p className="mt-3 text-xs text-yellow-600 dark:text-yellow-400">未找到可用配置，请点击「手动配置」填写。</p>
+          <p className="mt-3 text-xs text-yellow-400">未找到可用配置，请点击「手动配置」填写。</p>
         )}
       </div>
     );
   }
 
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-4">
+    <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 space-y-4">
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-gray-700 dark:text-gray-200">贡献节点配置</span>
         {configured && <button onClick={() => setEditing(false)} className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">取消</button>}
@@ -167,13 +169,13 @@ function ContributionConfigCard() {
       <div>
         <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">快速选择 Provider</label>
         <select value={presetId} onChange={e => applyPreset(e.target.value)}
-          className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500">
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500">
           {LLM_PROVIDER_PRESETS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
         </select>
       </div>
 
       {groups.map((g, gIdx) => (
-        <div key={gIdx} className="border border-gray-200 dark:border-gray-700 rounded-xl p-3 space-y-2.5">
+        <div key={gIdx} className="border border-gray-700 rounded-xl p-3 space-y-2.5 bg-gray-800/40">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-gray-500 dark:text-gray-400">分组 {gIdx + 1}</span>
             {groups.length > 1 && <button type="button" onClick={() => setGroups(prev => prev.filter((_, i) => i !== gIdx))} className="text-xs text-red-400 hover:text-red-600">删除分组</button>}
@@ -283,65 +285,71 @@ export default function Contribute() {
   }, []);
 
   return (
-    <div className="p-8 space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">贡献</h1>
-      <p className="text-sm text-gray-500 dark:text-gray-400 -mt-4">
-        将你的本地算力或 API Key 共享到 P2P 网络，赚取积分用于消费其他模型。
-      </p>
+    <div className="p-6 space-y-5">
+      <div>
+        <h1 className="text-xl font-semibold text-gray-100">贡献</h1>
+        <p className="text-sm text-gray-500 mt-0.5">将本地算力或 API Key 共享到 P2P 网络，赚取积分用于消费其他模型</p>
+      </div>
 
       {/* Start/Stop */}
-      <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-6 flex items-center justify-between">
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl px-5 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className={`w-3 h-3 rounded-full ${running ? 'bg-green-400 animate-pulse' : 'bg-gray-400 dark:bg-gray-600'}`} />
-          <span className="text-lg font-medium text-gray-700 dark:text-gray-200">{running ? '贡献中' : '已停止'}</span>
+          <span className="relative flex h-3 w-3">
+            {running && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />}
+            <span className={`relative inline-flex rounded-full h-3 w-3 ${running ? 'bg-green-500' : 'bg-gray-600'}`} />
+          </span>
+          <span className="text-base font-medium text-gray-200">{running ? '贡献中' : '已停止'}</span>
+          {stats && running && (
+            <span className="text-xs text-gray-500">agent 运行中 · {stats.contribute_req_per_min ?? 0} req/min</span>
+          )}
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-2">
           <button onClick={() => window.electronAPI?.agent.start()} disabled={running}
-            className="px-5 py-2 bg-green-700 hover:bg-green-600 disabled:opacity-40 rounded-lg text-sm font-medium text-white transition-colors">启动</button>
+            className="px-4 py-2 bg-green-700 hover:bg-green-600 disabled:opacity-40 rounded-lg text-sm font-medium text-white transition-colors">启动</button>
           <button onClick={() => window.electronAPI?.agent.stop()} disabled={!running}
-            className="px-5 py-2 bg-red-700 hover:bg-red-600 disabled:opacity-40 rounded-lg text-sm font-medium text-white transition-colors">停止</button>
+            className="px-4 py-2 bg-red-700 hover:bg-red-600 disabled:opacity-40 rounded-lg text-sm font-medium text-white transition-colors">停止</button>
         </div>
       </div>
 
       <ContributionConfigCard />
 
       {stats && (
-        <div className="grid grid-cols-3 gap-4">
-          <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4">
-            <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">贡献速率</p>
-            <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{stats.contribute_req_per_min ?? 0}</p>
-            <p className="text-xs text-gray-400">req/min</p>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-3">
+            <p className="text-xs text-gray-500 mb-1">贡献速率</p>
+            <p className="text-2xl font-bold text-blue-400">{stats.contribute_req_per_min ?? 0}</p>
+            <p className="text-xs text-gray-600">req/min</p>
           </div>
-          <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4">
-            <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">活跃请求</p>
-            <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.active_requests ?? 0}</p>
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-3">
+            <p className="text-xs text-gray-500 mb-1">活跃请求</p>
+            <p className="text-2xl font-bold text-gray-100">{stats.active_requests ?? 0}</p>
           </div>
-          <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4">
-            <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">在线节点</p>
-            <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.active_workers ?? 0}</p>
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-3">
+            <p className="text-xs text-gray-500 mb-1">在线节点</p>
+            <p className="text-2xl font-bold text-gray-100">{stats.active_workers ?? 0}</p>
           </div>
         </div>
       )}
 
-      <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-4">
-        <p className="text-sm text-gray-400 mb-2">贡献请求速率 (req/min)</p>
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+        <p className="text-xs text-gray-500 mb-3">贡献请求速率 (req/min)</p>
         <RateChart data={chartData} />
       </div>
 
       <section>
-        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-3">最近结算</h2>
+        <h2 className="text-sm font-semibold text-gray-200 mb-3">最近结算</h2>
         {settlements.length === 0 ? (
-          <p className="text-gray-400 dark:text-gray-500 text-sm">暂无结算记录</p>
+          <p className="text-gray-500 text-sm">暂无结算记录</p>
         ) : (
           <div className="space-y-2">
             {settlements.map(s => (
               <div key={s.id ?? s.period_end}
-                className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-3 grid grid-cols-5 gap-2 text-sm items-center">
-                <span className="text-gray-400 text-xs">{s.period_end?.slice(0, 16)}</span>
-                <span className="text-gray-700 dark:text-gray-300">{(s.output_tokens ?? 0).toLocaleString()} tok</span>
+                className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 grid grid-cols-5 gap-2 text-sm items-center">
+                <span className="text-gray-500 text-xs">{s.period_end?.slice(0, 16)}</span>
+                <span className="text-gray-300">{(s.output_tokens ?? 0).toLocaleString()} tok</span>
                 <span className="text-yellow-500 text-xs">{multiplierToStars(s.multiplier ?? 1)}</span>
-                <span className="text-gray-700 dark:text-gray-300">{(s.multiplier ?? 1).toFixed(2)}×</span>
-                <span className="text-green-600 dark:text-green-400 font-medium">+{(s.credits_awarded ?? 0).toFixed(1)}</span>
+                <span className="text-gray-300">{(s.multiplier ?? 1).toFixed(2)}×</span>
+                <span className="text-green-400 font-medium">+{(s.credits_awarded ?? 0).toFixed(1)}</span>
               </div>
             ))}
           </div>
@@ -349,9 +357,9 @@ export default function Contribute() {
       </section>
 
       <section>
-        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-2">Agent 日志</h2>
-        <div ref={logRef} className="bg-gray-100 dark:bg-gray-900 rounded-xl p-3 h-36 overflow-y-auto font-mono text-xs text-gray-600 dark:text-gray-400 space-y-0.5">
-          {logs.length === 0 ? <span className="text-gray-400">（日志为空）</span> : logs.map((line, i) => <div key={i}>{line}</div>)}
+        <h2 className="text-sm font-semibold text-gray-200 mb-2">Agent 日志</h2>
+        <div ref={logRef} className="bg-gray-950 border border-gray-800 rounded-xl p-3 h-36 overflow-y-auto font-mono text-xs text-gray-400 space-y-0.5">
+          {logs.length === 0 ? <span className="text-gray-600">（日志为空）</span> : logs.map((line, i) => <div key={i}>{line}</div>)}
         </div>
       </section>
     </div>
