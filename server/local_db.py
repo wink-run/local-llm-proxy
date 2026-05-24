@@ -120,6 +120,7 @@ async def init_local_db() -> None:
     await init_call_logs()
     await init_routing_policies()
     await init_scenarios()
+    await init_provider_cooldowns()
 
 
 # ── local_providers ─────────────────────────────────────────────────────────
@@ -646,6 +647,77 @@ def _slugify(name: str) -> str:
 def make_scenario_key(name: str) -> str:
     """tb-{slug}-{16char hex} —— scenario 的 API Key 格式。"""
     return f"tb-{_slugify(name)}-{secrets.token_hex(8)}"
+
+
+async def init_provider_cooldowns() -> None:
+    """provider 临时下线表（429 / 上游 quota 耗尽 / 网络重试用）。
+
+    cooldown_until 是 unix epoch；过了即视为恢复。
+    """
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS provider_cooldowns (
+                provider_id    INTEGER PRIMARY KEY,        -- local_providers.id
+                cooldown_until INTEGER NOT NULL,           -- unix seconds; > now() = in cooldown
+                reason         TEXT DEFAULT '',
+                count_429      INTEGER DEFAULT 0,
+                last_429_at    INTEGER DEFAULT 0,
+                updated_at     TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        await db.commit()
+
+
+async def set_provider_cooldown(
+    provider_row_id: int,
+    cooldown_seconds: int,
+    reason: str = "",
+) -> int:
+    """标记 provider 冷却 N 秒。返回 cooldown_until 时间戳。"""
+    cooldown_until = int(time.time()) + max(1, cooldown_seconds)
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO provider_cooldowns(provider_id, cooldown_until, reason, count_429, last_429_at)
+               VALUES (?, ?, ?, 1, ?)
+               ON CONFLICT(provider_id) DO UPDATE SET
+                 cooldown_until = excluded.cooldown_until,
+                 reason         = excluded.reason,
+                 count_429      = count_429 + 1,
+                 last_429_at    = excluded.last_429_at,
+                 updated_at     = datetime('now')""",
+            (provider_row_id, cooldown_until, reason, int(time.time())),
+        )
+        await db.commit()
+    return cooldown_until
+
+
+async def get_provider_cooldown(provider_row_id: int) -> dict | None:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM provider_cooldowns WHERE provider_id = ?", (provider_row_id,)
+        ) as cur:
+            r = await cur.fetchone()
+            return dict(r) if r else None
+
+
+async def list_active_cooldowns() -> dict[int, dict]:
+    """返回 {provider_row_id: cooldown_record}，只含未到期的。"""
+    now_ts = int(time.time())
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM provider_cooldowns WHERE cooldown_until > ?", (now_ts,)
+        ) as cur:
+            return {r["provider_id"]: dict(r) for r in await cur.fetchall()}
+
+
+async def clear_provider_cooldown(provider_row_id: int) -> None:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM provider_cooldowns WHERE provider_id = ?", (provider_row_id,)
+        )
+        await db.commit()
 
 
 async def init_scenarios() -> None:

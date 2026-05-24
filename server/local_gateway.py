@@ -141,6 +141,14 @@ app.add_middleware(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+async def _filter_cooled_down(candidates: list[dict]) -> list[dict]:
+    """剔除当前在 cooldown 的 provider（429 等）。"""
+    cooled = await local_db.list_active_cooldowns()
+    if not cooled:
+        return candidates
+    return [c for c in candidates if c["id"] not in cooled]
+
+
 async def _candidates_from_scenario(scenario: dict, model_hint: str | None = None) -> list[dict]:
     """从 scenario.degradation_chain 展开成扁平 candidate 列表。
 
@@ -232,6 +240,18 @@ async def _candidates_for_model(model: str, *, policy: dict | None = None) -> li
         candidates.sort(key=lambda p: p.get("priority") or 100)
 
     return candidates
+
+
+def _parse_retry_after(headers, default: int = 300) -> int:
+    """从 Retry-After 头解析秒数；缺失则返回 default。"""
+    val = headers.get("retry-after") or headers.get("Retry-After")
+    if not val:
+        return default
+    try:
+        return max(1, int(val))
+    except (ValueError, TypeError):
+        # HTTP-date 格式较罕见，简化忽略
+        return default
 
 
 def _auth_headers(provider: dict) -> dict[str, str]:
@@ -342,6 +362,9 @@ async def _forward_openai(request: Request, *, path_suffix: str):
     else:
         candidates = await _candidates_for_model(model, policy=policy)
 
+    # 剔除 cooldown 中的 provider（429 临时禁用）
+    candidates = await _filter_cooled_down(candidates)
+
     if not candidates:
         await local_db.log_call(
             model=model, routed_to="none", tier="none",
@@ -399,6 +422,23 @@ async def _forward_openai(request: Request, *, path_suffix: str):
                             "provider_id": p["provider_id"], "model": p.get("_forced_model") or model,
                             "step": p.get("_step_label", ""), "status": r.status_code,
                             "outcome": "5xx, fallback",
+                        })
+                    continue
+                # 429 = 配额耗尽 / 速率限制：标 cooldown 并 fallback
+                if r.status_code == 429:
+                    retry_after = _parse_retry_after(r.headers, default=300)
+                    until_ts = await local_db.set_provider_cooldown(
+                        p["id"], cooldown_seconds=retry_after,
+                        reason=f"upstream 429: {r.text[:120]}",
+                    )
+                    last_err = f"{p['display_name']} → 429 quota exhausted, cooldown {retry_after}s"
+                    log.warning(last_err)
+                    await local_db.update_provider(p["id"], last_error=last_err)
+                    if debug_mode:
+                        debug_attempts.append({
+                            "provider_id": p["provider_id"], "model": p.get("_forced_model") or model,
+                            "step": p.get("_step_label", ""), "status": 429,
+                            "outcome": f"429 cooldown {retry_after}s, fallback",
                         })
                     continue
                 # 4xx 视为客户端问题，直接返回不重试
@@ -733,15 +773,28 @@ async def set_strategy(payload: StrategyUpdate):
 @app.get("/__local__/providers")
 async def list_local_providers():
     providers = await local_db.list_providers()
-    # 不返回 key_ref 之外的敏感信息，且把 key 是否可用算出来
+    cooldowns = await local_db.list_active_cooldowns()
+    now_ts = int(time.time())
     for p in providers:
         ref = p.get("key_ref") or ""
         secret = keystore.get_key(ref) if ref else None
         p["key_present"] = bool(secret) if p.get("auth_type") != "none" else True
         p["key_masked"] = keystore.mask(secret) if secret else ""
-        # 不暴露 key 本身
         p.pop("key_ref", None)
+        cd = cooldowns.get(p["id"])
+        if cd:
+            p["cooldown_remaining_sec"] = max(0, cd["cooldown_until"] - now_ts)
+            p["cooldown_reason"] = cd.get("reason", "")
+            p["cooldown_count_429"] = cd.get("count_429", 0)
+        else:
+            p["cooldown_remaining_sec"] = 0
     return {"providers": providers, "strategy": await local_db.get_setting("strategy", "cost")}
+
+
+@app.post("/__local__/providers/{row_id}/clear-cooldown")
+async def clear_cooldown_endpoint(row_id: int):
+    await local_db.clear_provider_cooldown(row_id)
+    return {"ok": True}
 
 
 # ── Free catalog ────────────────────────────────────────────────────────────
@@ -1530,6 +1583,7 @@ class CreateFromCatalog(BaseModel):
     provider_id: str           # free_providers.yaml 中的 id
     api_key: str = ""          # 用户填写的 key（auth_type=none 时为空）
     models: Optional[list[str]] = None  # 若用户改了模型列表
+    account_id: Optional[str] = None    # Cloudflare 类需要的 {ACCOUNT_ID} 模板填充
 
 
 @app.post("/__local__/providers/from-catalog")
@@ -1560,17 +1614,24 @@ async def create_from_catalog(payload: CreateFromCatalog):
                 payload.provider_id.upper().replace("-", "_") + "_API_KEY",
             )
 
+    # 模板替换：{ACCOUNT_ID} 等
+    base_url = entry.get("base_url", "")
+    if entry.get("requires_account_id"):
+        if not payload.account_id:
+            raise HTTPException(400, "account_id is required for this provider (Cloudflare, etc.)")
+        base_url = base_url.replace("{ACCOUNT_ID}", payload.account_id.strip())
+    # 同时按 yaml 中其它 {{...}} 占位符简单 format 处理（预留）
     row_id = await local_db.add_provider(
         provider_id=payload.provider_id,
         display_name=entry.get("display") or payload.provider_id,
         tier=entry.get("tier", "free"),
-        base_url=entry.get("base_url", ""),
+        base_url=base_url,
         auth_type=auth_type,
         key_ref=key_ref,
         models=payload.models if payload.models is not None else (entry.get("models") or []),
         protocol=entry.get("protocol", "openai"),
     )
-    return {"id": row_id, "provider_id": payload.provider_id, "protocol": entry.get("protocol", "openai")}
+    return {"id": row_id, "provider_id": payload.provider_id, "protocol": entry.get("protocol", "openai"), "base_url": base_url}
 
 
 @app.delete("/__local__/providers/{row_id}")

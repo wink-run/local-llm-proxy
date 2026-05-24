@@ -8,6 +8,7 @@ providers:
     tier: free
     base_url: "http://127.0.0.1:11434/v1"
     auth: { type: "none" }
+    protocol: openai
     signup_url: "https://ollama.com/download"
     guide_md: "guides/free/ollama.md"
     models: []           # 用户机器上 ollama list 决定
@@ -19,6 +20,7 @@ providers:
     tier: free
     base_url: "https://api.groq.com/openai/v1"
     auth: { type: "bearer", env: "GROQ_API_KEY" }
+    protocol: openai
     signup_url: "https://console.groq.com/keys"
     guide_md: "guides/free/groq.md"
     models:
@@ -34,6 +36,7 @@ providers:
     tier: free
     base_url: "https://api.cerebras.ai/v1"
     auth: { type: "bearer", env: "CEREBRAS_API_KEY" }
+    protocol: openai
     signup_url: "https://cloud.cerebras.ai/platform/"
     guide_md: "guides/free/cerebras.md"
     models:
@@ -77,6 +80,7 @@ providers:
     tier: free
     base_url: "https://openrouter.ai/api/v1"
     auth: { type: "bearer", env: "OPENROUTER_API_KEY" }
+    protocol: openai
     signup_url: "https://openrouter.ai/settings/keys"
     guide_md: "guides/free/openrouter.md"
     models:
@@ -93,6 +97,7 @@ providers:
     tier: free
     base_url: "https://models.inference.ai.azure.com"
     auth: { type: "bearer", env: "GITHUB_PAT" }
+    protocol: openai
     signup_url: "https://github.com/settings/tokens?type=beta"
     guide_md: "guides/free/github-models.md"
     models:
@@ -113,6 +118,7 @@ providers:
     tier: free
     base_url: "https://api.siliconflow.cn/v1"
     auth: { type: "bearer", env: "SILICONFLOW_API_KEY" }
+    protocol: openai
     signup_url: "https://cloud.siliconflow.cn/i/drGuwc9k"
     guide_md: "guides/free/siliconflow.md"
     models:
@@ -122,3 +128,86 @@ providers:
       - "deepseek-ai/DeepSeek-R1"
       - "01-ai/Yi-2-9B-Chat-32K"
     quota_hint: "国内免费供应商，支持 Qwen 3 / DeepSeek V3.1 / R1，新人 ¥16 赠送"
+    new_user_bonus: true
+    bonus_value: "新人 ¥16"
+
+  - id: nvidia-nim
+    display: "NVIDIA NIM"
+    tier: free
+    base_url: "https://integrate.api.nvidia.com/v1"
+    auth: { type: "bearer", env: "NVIDIA_API_KEY" }
+    protocol: openai
+    signup_url: "https://build.nvidia.com"
+    guide_md: "guides/free/nvidia.md"
+    models:
+      - "meta/llama-4-405b-instruct"
+      - "meta/llama-4-70b-instruct"
+      - "deepseek-ai/deepseek-r1"
+      - "deepseek-ai/deepseek-v3"
+      - "qwen/qwen3-coder-32b-instruct"
+      - "nvidia/nemotron-4-340b-instruct"
+    quota_hint: "新用户开发免费，含 Llama 4 / DeepSeek R1 / Nemotron 等旗舰"
+    new_user_bonus: true
+    bonus_value: "新人 1000 次免费调用"
+
+  - id: sambanova
+    display: "SambaNova Cloud"
+    tier: free
+    base_url: "https://api.sambanova.ai/v1"
+    auth: { type: "bearer", env: "SAMBANOVA_API_KEY" }
+    protocol: openai
+    signup_url: "https://cloud.sambanova.ai"
+    guide_md: "guides/free/sambanova.md"
+    models:
+      - "Meta-Llama-4-405B-Instruct"
+      - "Meta-Llama-4-70B-Instruct"
+      - "DeepSeek-R1"
+      - "Qwen3-32B"
+    quota_hint: "免费档极速推理；Llama 4 405B 公开访问"
+
+  - id: cohere
+    display: "Cohere"
+    tier: free
+    base_url: "https://api.cohere.ai/compatibility/v1"
+    auth: { type: "bearer", env: "COHERE_API_KEY" }
+    protocol: openai
+    signup_url: "https://dashboard.cohere.com/api-keys"
+    guide_md: "guides/free/cohere.md"
+    models:
+      - "command-r-plus-08-2024"
+      - "command-r-08-2024"
+      - "command-light"
+    quota_hint: "Trial key 免费档：1000 调用/月，速率 20 RPM"
+    new_user_bonus: true
+    bonus_value: "Trial Key 1000 调用/月"
+
+  - id: cloudflare-workers-ai
+    display: "Cloudflare Workers AI"
+    tier: free
+    base_url: "https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/v1"
+    auth: { type: "bearer", env: "CLOUDFLARE_API_TOKEN" }
+    protocol: openai
+    signup_url: "https://dash.cloudflare.com/profile/api-tokens"
+    guide_md: "guides/free/cloudflare.md"
+    requires_account_id: true
+    models:
+      - "@cf/meta/llama-4-8b-instruct"
+      - "@cf/qwen/qwen3-7b-instruct"
+      - "@cf/deepseek-ai/deepseek-coder-6.7b-instruct"
+    quota_hint: "免费档 10K 次/天；需 Cloudflare Account ID + API Token"
+    notes: "添加时需填 Cloudflare Account ID（在 dash.cloudflare.com 右下角）"
+
+  - id: mistral
+    display: "Mistral AI"
+    tier: free
+    base_url: "https://api.mistral.ai/v1"
+    auth: { type: "bearer", env: "MISTRAL_API_KEY" }
+    protocol: openai
+    signup_url: "https://console.mistral.ai/api-keys"
+    guide_md: "guides/free/mistral.md"
+    models:
+      - "mistral-large-latest"
+      - "mistral-small-latest"
+      - "open-mixtral-8x22b"
+      - "codestral-latest"
+    quota_hint: "免费档 1 RPS / 500K tokens 每月（codestral 单独 30 RPS）"

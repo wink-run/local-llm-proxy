@@ -35,9 +35,15 @@ const ICON_BY_ID = {
   groq:               { emoji: '⚡', bg: 'bg-orange-100 dark:bg-orange-900/30', tone: 'text-orange-700 dark:text-orange-300' },
   cerebras:           { emoji: '🌀', bg: 'bg-rose-100 dark:bg-rose-900/30', tone: 'text-rose-700 dark:text-rose-300' },
   'gemini-ai-studio': { emoji: '✨', bg: 'bg-blue-100 dark:bg-blue-900/30', tone: 'text-blue-700 dark:text-blue-300' },
+  'gemini-native':    { emoji: '✨', bg: 'bg-red-100 dark:bg-red-900/30', tone: 'text-red-700 dark:text-red-300' },
   'openrouter-free':  { emoji: '🛣', bg: 'bg-cyan-100 dark:bg-cyan-900/30', tone: 'text-cyan-700 dark:text-cyan-300' },
   'github-models':    { emoji: '🐙', bg: 'bg-slate-100 dark:bg-slate-800', tone: 'text-slate-700 dark:text-slate-200' },
   siliconflow:        { emoji: '🧪', bg: 'bg-emerald-100 dark:bg-emerald-900/30', tone: 'text-emerald-700 dark:text-emerald-300' },
+  'nvidia-nim':       { emoji: '🟢', bg: 'bg-green-100 dark:bg-green-900/30', tone: 'text-green-700 dark:text-green-300' },
+  sambanova:          { emoji: '🟪', bg: 'bg-violet-100 dark:bg-violet-900/30', tone: 'text-violet-700 dark:text-violet-300' },
+  cohere:             { emoji: '🐬', bg: 'bg-sky-100 dark:bg-sky-900/30', tone: 'text-sky-700 dark:text-sky-300' },
+  'cloudflare-workers-ai': { emoji: '☁', bg: 'bg-amber-100 dark:bg-amber-900/30', tone: 'text-amber-700 dark:text-amber-300' },
+  mistral:            { emoji: '🌪', bg: 'bg-yellow-100 dark:bg-yellow-900/30', tone: 'text-yellow-700 dark:text-yellow-300' },
 };
 
 function statusBadge(status) {
@@ -46,9 +52,17 @@ function statusBadge(status) {
     enabled:   { label: '已启用', cls: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300' },
     configuring: { label: '配置中', cls: 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300' },
     inactive:  { label: '未启用', cls: 'bg-gray-100 dark:bg-gray-800 text-gray-500' },
+    cooldown:  { label: '配额耗尽', cls: 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300' },
   };
   const m = map[status] || map.inactive;
   return <span className={`text-[10px] px-1.5 py-0.5 rounded ${m.cls}`}>{m.label}</span>;
+}
+
+function formatCooldown(seconds) {
+  if (seconds <= 0) return '';
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.ceil(seconds / 60)} min`;
+  return `${Math.ceil(seconds / 3600)} h`;
 }
 
 function protocolBadge(protocol) {
@@ -78,14 +92,18 @@ function ProviderCard({ entry, installed, onChanged }) {
   const installedRow = installed.find((p) => p.provider_id === entry.id);
   const isPublic = (entry.auth?.type || 'bearer') === 'none';
   const enabled = !!(installedRow && installedRow.enabled);
+  const cooldownLeft = installedRow?.cooldown_remaining_sec || 0;
+  const inCooldown = cooldownLeft > 0;
 
   // 状态判定
   let status = 'inactive';
-  if (installedRow && installedRow.enabled && installedRow.key_present) status = isPublic ? 'connected' : 'enabled';
-  else if (installedRow && !installedRow.enabled) status = 'inactive';
+  if (inCooldown)                                                 status = 'cooldown';
+  else if (installedRow && installedRow.enabled && installedRow.key_present) status = isPublic ? 'connected' : 'enabled';
+  else if (installedRow && !installedRow.enabled)                  status = 'inactive';
 
   const [wizardOpen, setWizardOpen] = useState(false);
   const [apiKey, setApiKey] = useState('');
+  const [accountId, setAccountId] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [stepIdx, setStepIdx] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -133,16 +151,30 @@ function ProviderCard({ entry, installed, onChanged }) {
   };
 
   const handleEnable = async () => {
+    if (entry.requires_account_id && !accountId.trim()) {
+      setTestResult({ ok: false, error: 'account_id 是必填项' });
+      return;
+    }
     setBusy(true);
-    const { ok } = await api('/__local__/providers/from-catalog', {
+    const payload = { provider_id: entry.id, api_key: apiKey };
+    if (entry.requires_account_id) payload.account_id = accountId.trim();
+    const { ok, body } = await api('/__local__/providers/from-catalog', {
       method: 'POST',
-      body: JSON.stringify({ provider_id: entry.id, api_key: apiKey }),
+      body: JSON.stringify(payload),
     });
     setBusy(false);
     if (ok) {
-      setApiKey(''); setTestResult(null); setWizardOpen(false);
+      setApiKey(''); setAccountId(''); setTestResult(null); setWizardOpen(false);
       onChanged?.();
+    } else {
+      setTestResult({ ok: false, error: body?.detail || JSON.stringify(body) });
     }
+  };
+
+  const clearCooldown = async () => {
+    if (!installedRow) return;
+    await api(`/__local__/providers/${installedRow.id}/clear-cooldown`, { method: 'POST' });
+    onChanged?.();
   };
 
   const steps = entry.setup_steps || (isPublic ? [] : [
@@ -166,6 +198,11 @@ function ProviderCard({ entry, installed, onChanged }) {
               ℹ 客户端用 OpenAI Chat 调用时，网关自动转 {entry.protocol === 'anthropic' ? 'Anthropic Messages' : 'Gemini Native'} 格式
             </p>
           )}
+          {entry.new_user_bonus && (
+            <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">
+              🎁 {entry.bonus_value || '新用户福利'}
+            </p>
+          )}
           {installedRow && installedRow.key_present && !isPublic && !wizardOpen ? (
             <div className="flex items-center gap-1.5 mt-0.5 text-xs">
               <code className="font-mono text-gray-500">{installedRow.key_masked || '••••••'}</code>
@@ -183,6 +220,16 @@ function ProviderCard({ entry, installed, onChanged }) {
           <Toggle on={enabled} onChange={toggleEnabled} />
         )}
       </div>
+
+      {/* Cooldown 红条 */}
+      {inCooldown && (
+        <div className="px-4 pb-3 -mt-1">
+          <div className="flex items-center justify-between text-xs px-3 py-1.5 rounded bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-300">
+            <span>⏳ Cooling down · 剩余 {formatCooldown(cooldownLeft)} · 已触发 {installedRow.cooldown_count_429 || 1} 次 429</span>
+            <button onClick={clearCooldown} className="text-[11px] underline hover:text-red-900 dark:hover:text-red-100">手动清除</button>
+          </div>
+        </div>
+      )}
 
       {/* 下半：内联 wizard */}
       {wizardOpen && (
@@ -209,6 +256,14 @@ function ProviderCard({ entry, installed, onChanged }) {
                     )}
                     {isCurrent && step.action === 'test_and_enable' && (
                       <div className="mt-2 space-y-2">
+                        {entry.requires_account_id && (
+                          <div>
+                            <label className="text-[11px] text-gray-500 block mb-1">Account ID（必填，dash.cloudflare.com 右下角）</label>
+                            <input type="text" value={accountId} onChange={(e) => setAccountId(e.target.value)}
+                                   placeholder="32 位 hex，例如 ab12cd34..."
+                                   className="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-3 py-1.5 text-sm font-mono" />
+                          </div>
+                        )}
                         <div className="flex items-center gap-2">
                           <input type={showKey ? 'text' : 'password'} value={apiKey}
                                  onChange={(e) => setApiKey(e.target.value)}
@@ -248,9 +303,10 @@ function ProviderCard({ entry, installed, onChanged }) {
 // ── 主页 ───────────────────────────────────────────────────────────────
 
 const SECTIONS = [
-  { tier: 'free', title: '免费层', subtitle: '不消耗额度，优先选择' },
-  { tier: 'paid', title: '订阅 / 付费层', subtitle: '自有 API key 余额（按 token 计费）' },
-  { tier: 'shared', title: '分享层', subtitle: 'P2P 算力（板块③ 接通后启用）' },
+  { tier: 'bonus', title: '🎁 新用户福利', subtitle: '注册即送 / 限时免费配额；用完再换其它 free 源' },
+  { tier: 'free',  title: '免费层',        subtitle: '不消耗额度，优先选择' },
+  { tier: 'paid',  title: '订阅 / 付费层', subtitle: '自有 API key 余额（按 token 计费）' },
+  { tier: 'shared', title: '分享层',       subtitle: 'P2P 算力（板块③ 接通后启用）' },
 ];
 
 export default function Sources() {
@@ -280,9 +336,15 @@ export default function Sources() {
     return <div className="p-8 max-w-2xl mx-auto text-sm">本地网关未启动</div>;
   }
 
+  // 提取 bonus 类（free + paid 中含 new_user_bonus 的）到独立 section，但仍在原 section 显示
+  const bonusEntries = [
+    ...freeCatalog.filter((p) => p.new_user_bonus),
+    ...paidCatalog.filter((p) => p.new_user_bonus && !p.requires_p1),
+  ];
   const sectionEntries = {
-    free: freeCatalog,
-    paid: paidCatalog.filter((p) => !p.requires_p1),
+    bonus:  bonusEntries,
+    free:   freeCatalog,
+    paid:   paidCatalog.filter((p) => !p.requires_p1),
     shared: [],
   };
 
@@ -296,6 +358,7 @@ export default function Sources() {
       {SECTIONS.map((sec) => {
         const items = sectionEntries[sec.tier];
         if (sec.tier === 'shared') return null;  // 暂隐
+        if (sec.tier === 'bonus' && items.length === 0) return null;  // 没福利就不显示
         return (
           <section key={sec.tier} className="mb-6">
             <div className="flex items-baseline gap-2 mb-3">
