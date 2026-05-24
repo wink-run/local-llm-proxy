@@ -40,10 +40,12 @@ from pydantic import BaseModel, Field
 
 import app_writers
 import ccswitch_import
+import dashboard as dashboard_mod
 import keystore
 import local_db
 import prompt_cache
 import subscription_providers
+import subscriptions as subscriptions_mod
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s — %(message)s"
@@ -115,6 +117,10 @@ async def lifespan(app: FastAPI):
     await subscription_providers.init_subscription_db()
     # prompt-cache 表（M9 Step 1）
     await prompt_cache.init_cache_db()
+    # 订阅管理（DASH-B）
+    await subscriptions_mod.init_subscriptions_table()
+    # 加载 model_prices.yaml（dashboard 节省估值）
+    dashboard_mod.load_model_prices()
     yield
 
 
@@ -1255,6 +1261,94 @@ async def delete_scenario_endpoint(scenario_id: int):
 # ── Gateway KPIs（v2.1 redesign Gateway 页顶部 4 个数字） ──────────────
 
 
+# ── Dashboard 数据端点（DASH-A） ────────────────────────────────────
+
+@app.get("/__local__/dashboard/trend")
+async def dashboard_trend(window: str = "7d"):
+    return await dashboard_mod.aggregate_trend(window=window)
+
+
+@app.get("/__local__/dashboard/attribution")
+async def dashboard_attribution(window: str = "today", limit: int = 10):
+    since = _today_iso() if window == "today" else (_month_iso() if window == "month" else None)
+    items = await dashboard_mod.aggregate_attribution(since_iso=since, limit=limit)
+    return {"window": window, "items": items}
+
+
+@app.get("/__local__/dashboard/savings")
+async def dashboard_savings(window: str = "today"):
+    since = _today_iso() if window == "today" else (_month_iso() if window == "month" else None)
+    return await dashboard_mod.aggregate_savings(since_iso=since)
+
+
+# ── 订阅 CRUD（DASH-B） ──────────────────────────────────────────────
+
+@app.get("/__local__/subscriptions")
+async def list_subs_endpoint():
+    subs = await subscriptions_mod.list_subscriptions()
+    enriched = [await subscriptions_mod.enrich_subscription(s) for s in subs]
+    return {"subscriptions": enriched}
+
+
+class CreateSubPayload(BaseModel):
+    provider_id: str
+    display_name: str
+    plan_kind: str = "payg"   # plan / payg / prepaid
+    plan_name: str = ""
+    monthly_cost: float = 0
+    currency: str = "USD"
+    quota_total: float = 0
+    balance_remaining: Optional[float] = None
+    renews_at: Optional[str] = None
+    auto_renew: bool = False
+    alert_balance_pct: float = 20
+    alert_days_before: int = 1
+    alert_enabled: bool = True
+    notes: str = ""
+
+
+@app.post("/__local__/subscriptions")
+async def create_sub_endpoint(payload: CreateSubPayload):
+    sid = await subscriptions_mod.create_subscription(**payload.model_dump())
+    return await subscriptions_mod.get_subscription(sid)
+
+
+class UpdateSubPayload(BaseModel):
+    display_name: Optional[str] = None
+    plan_kind: Optional[str] = None
+    plan_name: Optional[str] = None
+    monthly_cost: Optional[float] = None
+    quota_total: Optional[float] = None
+    balance_remaining: Optional[float] = None
+    renews_at: Optional[str] = None
+    auto_renew: Optional[bool] = None
+    alert_balance_pct: Optional[float] = None
+    alert_days_before: Optional[int] = None
+    alert_enabled: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+@app.patch("/__local__/subscriptions/{sub_id}")
+async def update_sub_endpoint(sub_id: int, payload: UpdateSubPayload):
+    safe = {k: v for k, v in payload.model_dump().items() if v is not None}
+    await subscriptions_mod.update_subscription(sub_id, **safe)
+    return await subscriptions_mod.get_subscription(sub_id)
+
+
+@app.delete("/__local__/subscriptions/{sub_id}")
+async def delete_sub_endpoint(sub_id: int):
+    await subscriptions_mod.delete_subscription(sub_id)
+    return {"ok": True}
+
+
+@app.get("/__local__/alerts")
+async def alerts_endpoint():
+    return {"alerts": await subscriptions_mod.compute_alerts()}
+
+
+# ── 原 KPI 加 savings 字段 ──────────────────────────────────────────
+
+
 @app.get("/__local__/gateway/kpis")
 async def gateway_kpis(window: str = "today"):
     if window == "today":
@@ -1287,12 +1381,17 @@ async def gateway_kpis(window: str = "today"):
             err_rate = round((r["errs"] or 0) / r["total"] * 100, 2)
             avg_latency = int(r["lat"] or 0)
 
+    # 加上 savings（DASH-B：今日节省）
+    savings = await dashboard_mod.aggregate_savings(since_iso=since)
     return {
         "window": window,
         "total_calls": total_calls,
         "free_hit_rate": free_hit_rate,
         "error_rate": err_rate,
         "avg_latency_ms": avg_latency,
+        "saved_usd": savings["saved_usd"],
+        "saved_pct": savings["saved_pct"],
+        "paid_equivalent_usd": savings["paid_equivalent_usd"],
     }
 
 

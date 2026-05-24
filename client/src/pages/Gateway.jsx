@@ -13,6 +13,8 @@
  *   └──────────────────────────────────────────────────────────────────┘
  */
 import React, { useEffect, useState } from 'react';
+import Overview from './gateway/Overview';
+import Subscriptions from './gateway/Subscriptions';
 
 const LOCAL_GATEWAY_URL =
   typeof window !== 'undefined' && window.localStorage?.getItem('llp.gatewayUrl')
@@ -415,6 +417,7 @@ export default function Gateway() {
   const [appsBindable, setAppsBindable] = useState([]);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
+  const [tab, setTab] = useState('overview');  // overview / routing / subscriptions
 
   useEffect(() => {
     let alive = true;
@@ -494,28 +497,30 @@ export default function Gateway() {
         </button>
       </header>
 
-      {/* KPI 行 */}
-      <div className="flex gap-3 mb-4">
-        <Kpi label="今日请求" value={kpis?.total_calls ?? '—'} />
-        <Kpi label="免费命中率" value={kpis ? `${kpis.free_hit_rate}%` : '—'} color="text-green-600 dark:text-green-400" />
-        <Kpi label="错误率" value={kpis ? `${kpis.error_rate}%` : '—'} color={(kpis?.error_rate || 0) > 5 ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-200'} />
-        <Kpi label="平均延迟" value={kpis ? `${kpis.avg_latency_ms}ms` : '—'} />
+      {/* Tabs */}
+      <div className="mb-4 flex gap-1 border-b border-gray-200 dark:border-gray-800">
+        {[
+          { id: 'overview',      icon: '📊', label: '总览' },
+          { id: 'routing',       icon: '🛣', label: '场景路由' },
+          { id: 'subscriptions', icon: '💳', label: '订阅与余额' },
+        ].map((t) => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === t.id ? 'border-blue-600 text-blue-600 dark:text-blue-400' : 'border-transparent text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}>
+            {t.icon} {t.label}
+          </button>
+        ))}
       </div>
 
-      {/* 接入端点 */}
-      <div className="mb-6 px-4 py-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-        <p className="text-xs text-gray-500 mb-2">接入端点</p>
-        <div className="flex items-center gap-2 flex-wrap">
-          <code className="flex-1 min-w-0 font-mono text-sm bg-gray-100 dark:bg-gray-800 rounded px-3 py-2 truncate">{health.gateway_url}/v1</code>
-          <button onClick={() => copy(`${health.gateway_url}/v1`)} className="text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800">复制</button>
-          <button onClick={() => selected && writeToApp(selected, 'claude_code')} disabled={!selected} className="text-xs px-2 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40">⚙ 配置到 Claude Code</button>
-        </div>
-        <p className="text-[11px] text-gray-400 mt-2">
-          不同应用使用独立的 API Key 区分场景，填入工具的 API Key 字段即可
-        </p>
-      </div>
+      {/* Tab 1: 总览 */}
+      {tab === 'overview' && (
+        <Overview health={health} onConfigureClaude={() => selected && writeToApp(selected, 'claude_code')} />
+      )}
 
-      {/* 场景路由 */}
+      {/* Tab 3: 订阅与余额 */}
+      {tab === 'subscriptions' && <Subscriptions />}
+
+      {/* Tab 2: 场景路由 */}
+      {tab === 'routing' && (
       <div className="border border-gray-200 dark:border-gray-800 rounded-lg bg-white dark:bg-gray-900">
         <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
           <div>
@@ -557,6 +562,7 @@ export default function Gateway() {
           </div>
         </div>
       </div>
+      )}
 
       {showTemplates && (
         <TemplateModal
