@@ -45,6 +45,7 @@ import dashboard as dashboard_mod
 import keystore
 import local_db
 import prompt_cache
+import prompt_router
 import subscription_providers
 import subscriptions as subscriptions_mod
 
@@ -340,6 +341,16 @@ async def _forward_openai(request: Request, *, path_suffix: str):
         if binding and binding.get("policy"):
             policy = binding["policy"]
 
+    # PROMPT-2：规则引擎匹配。命中后改写 body.model 和优先 provider
+    rules = await local_db.list_routing_rules(enabled_only=True)
+    rule_match = prompt_router.match_rules(rules, body, headers_lower)
+    if rule_match and rule_match.target_model:
+        original_model = model
+        model = rule_match.target_model
+        body = {**body, "model": model}
+        log.info("prompt-rule '%s' matched: %s → model=%s",
+                 rule_match.rule_name, rule_match.matched_value, model)
+
     # prompt-cache 查找
     cache_key = None
     if path_suffix == "/chat/completions" and prompt_cache.is_cacheable_request(body, headers_lower):
@@ -364,6 +375,10 @@ async def _forward_openai(request: Request, *, path_suffix: str):
 
     # 剔除 cooldown 中的 provider（429 临时禁用）
     candidates = await _filter_cooled_down(candidates)
+
+    # 规则引擎指定的 target_provider 抬到候选链最前
+    if rule_match and rule_match.target_provider:
+        candidates.sort(key=lambda c: 0 if c["provider_id"] == rule_match.target_provider else 1)
 
     if not candidates:
         await local_db.log_call(
@@ -495,6 +510,13 @@ async def _forward_openai(request: Request, *, path_suffix: str):
                             "protocol":      p.get("protocol", "openai"),
                             "latency_ms":    latency,
                             "attempts":      debug_attempts,
+                            "rule_match":    None if not rule_match else {
+                                "rule_name":     rule_match.rule_name,
+                                "match_kind":    rule_match.match_kind,
+                                "matched_value": rule_match.matched_value,
+                                "target_model":  rule_match.target_model,
+                                "target_provider": rule_match.target_provider,
+                            },
                         },
                     }
                 return JSONResponse(
@@ -976,6 +998,45 @@ async def list_acks(limit: int = 50):
 # ═══════════════════════════════════════════════════════════════════════════
 # P1 订阅层 scaffold（仅平台清单 + 状态查询，dispatch 未实现）
 # ═══════════════════════════════════════════════════════════════════════════
+
+
+# ── PROMPT-1/2/3 routing_rules CRUD ─────────────────────────────────
+
+
+@app.get("/__local__/rules")
+async def list_rules_endpoint():
+    return {"rules": await local_db.list_routing_rules()}
+
+
+class UpsertRulePayload(BaseModel):
+    name: str
+    match_kind: str = Field(..., pattern="^(token_count_gt|has_tools|system_regex|message_regex|header_hint)$")
+    match_value: str
+    target_model: str = ""
+    target_provider: str = ""
+    priority: int = 100
+    enabled: bool = True
+    description: str = ""
+
+
+@app.post("/__local__/rules")
+async def upsert_rule_endpoint(payload: UpsertRulePayload):
+    rid = await local_db.upsert_routing_rule(**payload.model_dump())
+    return {"id": rid, "ok": True}
+
+
+@app.post("/__local__/rules/{rule_id}/toggle")
+async def toggle_rule_endpoint(rule_id: int, enabled: bool):
+    await local_db.toggle_routing_rule(rule_id, enabled)
+    return {"id": rule_id, "enabled": enabled}
+
+
+@app.delete("/__local__/rules/{rule_id}")
+async def delete_rule_endpoint(rule_id: int):
+    ok = await local_db.delete_routing_rule(rule_id)
+    if not ok:
+        raise HTTPException(400, "Cannot delete builtin rule")
+    return {"ok": True}
 
 
 @app.get("/__local__/cache/stats")

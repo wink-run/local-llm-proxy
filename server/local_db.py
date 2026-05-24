@@ -121,6 +121,7 @@ async def init_local_db() -> None:
     await init_routing_policies()
     await init_scenarios()
     await init_provider_cooldowns()
+    await init_routing_rules()
 
 
 # ── local_providers ─────────────────────────────────────────────────────────
@@ -647,6 +648,156 @@ def _slugify(name: str) -> str:
 def make_scenario_key(name: str) -> str:
     """tb-{slug}-{16char hex} —— scenario 的 API Key 格式。"""
     return f"tb-{_slugify(name)}-{secrets.token_hex(8)}"
+
+
+BUILTIN_ROUTING_RULES = [
+    {
+        "name": "long-context-quality",
+        "match_kind": "token_count_gt",
+        "match_value": "8000",
+        "target_model": "claude-opus-4-7",
+        "target_provider": "",      # 空 = 任意 provider，仅强制 model
+        "priority": 10,
+        "enabled": 1,
+        "description": "长上下文（≥8K tokens）走 Claude Opus 4.7（1M ctx）/ Gemini 2.5 Pro",
+    },
+    {
+        "name": "tools-quality",
+        "match_kind": "has_tools",
+        "match_value": "true",
+        "target_model": "gpt-5.5",
+        "target_provider": "",
+        "priority": 20,
+        "enabled": 1,
+        "description": "含工具调用走 GPT-5.5（agent 场景 tools 准确度更高）",
+    },
+    {
+        "name": "code-review",
+        "match_kind": "system_regex",
+        "match_value": "(?i)\\b(review|critique|refactor|代码评审|重构|审计)\\b",
+        "target_model": "claude-sonnet-4-6",
+        "target_provider": "",
+        "priority": 30,
+        "enabled": 1,
+        "description": "system prompt 含 review/critique/重构 → Claude Sonnet 4.6",
+    },
+    {
+        "name": "commit-msg-cheap",
+        "match_kind": "system_regex",
+        "match_value": "(?i)\\b(commit message|git commit|生成提交)\\b",
+        "target_model": "llama-4-8b-instant",
+        "target_provider": "groq",
+        "priority": 40,
+        "enabled": 1,
+        "description": "commit message 这种短任务走 Groq Llama-4-8b 免费快速",
+    },
+    {
+        "name": "translation-cheap",
+        "match_kind": "system_regex",
+        "match_value": "(?i)\\b(translate|翻译|译成)\\b",
+        "target_model": "qwen-3-32b",
+        "target_provider": "groq",
+        "priority": 50,
+        "enabled": 1,
+        "description": "翻译任务走 Qwen 3 32B（中英都强）",
+    },
+    {
+        "name": "explicit-hint",
+        "match_kind": "header_hint",
+        "match_value": "*",               # 任意 X-LLP-Hint 值都触发
+        "target_model": "",                # 由 header 值决定 model
+        "target_provider": "",
+        "priority": 1,                     # 最高优先级
+        "enabled": 1,
+        "description": "客户端显式 X-LLP-Hint 头时取头值作 model 名",
+    },
+]
+
+
+async def init_routing_rules() -> None:
+    """Prompt 分析规则表 + 6 条 builtin 规则灌入。"""
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS routing_rules (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                name            TEXT UNIQUE NOT NULL,
+                match_kind      TEXT NOT NULL,
+                match_value     TEXT NOT NULL,
+                target_model    TEXT DEFAULT '',
+                target_provider TEXT DEFAULT '',
+                priority        INTEGER DEFAULT 100,
+                enabled         INTEGER DEFAULT 1,
+                is_builtin      INTEGER DEFAULT 0,
+                description     TEXT DEFAULT '',
+                created_at      TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        for r in BUILTIN_ROUTING_RULES:
+            await db.execute(
+                """INSERT OR IGNORE INTO routing_rules
+                   (name, match_kind, match_value, target_model, target_provider,
+                    priority, enabled, is_builtin, description)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)""",
+                (r["name"], r["match_kind"], r["match_value"], r["target_model"],
+                 r["target_provider"], r["priority"], r["enabled"], r["description"]),
+            )
+        await db.commit()
+
+
+async def list_routing_rules(enabled_only: bool = False) -> list[dict]:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        sql = "SELECT * FROM routing_rules"
+        if enabled_only:
+            sql += " WHERE enabled = 1"
+        sql += " ORDER BY priority ASC, id ASC"
+        async with db.execute(sql) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def upsert_routing_rule(name: str, match_kind: str, match_value: str,
+                                target_model: str = "", target_provider: str = "",
+                                priority: int = 100, enabled: bool = True,
+                                description: str = "") -> int:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO routing_rules
+               (name, match_kind, match_value, target_model, target_provider,
+                priority, enabled, is_builtin, description)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+               ON CONFLICT(name) DO UPDATE SET
+                 match_kind = excluded.match_kind,
+                 match_value = excluded.match_value,
+                 target_model = excluded.target_model,
+                 target_provider = excluded.target_provider,
+                 priority = excluded.priority,
+                 enabled = excluded.enabled,
+                 description = excluded.description""",
+            (name, match_kind, match_value, target_model, target_provider,
+             priority, int(enabled), description),
+        )
+        async with db.execute("SELECT id FROM routing_rules WHERE name = ?", (name,)) as cur:
+            row = await cur.fetchone()
+        await db.commit()
+    return row[0] if row else 0
+
+
+async def toggle_routing_rule(rule_id: int, enabled: bool) -> None:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        await db.execute("UPDATE routing_rules SET enabled = ? WHERE id = ?", (int(enabled), rule_id))
+        await db.commit()
+
+
+async def delete_routing_rule(rule_id: int) -> bool:
+    """非内置规则才能删。"""
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        async with db.execute("SELECT is_builtin FROM routing_rules WHERE id = ?", (rule_id,)) as cur:
+            r = await cur.fetchone()
+        if not r or r[0]:
+            return False
+        await db.execute("DELETE FROM routing_rules WHERE id = ?", (rule_id,))
+        await db.commit()
+    return True
 
 
 async def init_provider_cooldowns() -> None:

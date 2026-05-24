@@ -15,6 +15,7 @@
 import React, { useEffect, useState } from 'react';
 import Overview from './gateway/Overview';
 import Subscriptions from './gateway/Subscriptions';
+import Rules from './gateway/Rules';
 
 const LOCAL_GATEWAY_URL =
   typeof window !== 'undefined' && window.localStorage?.getItem('llp.gatewayUrl')
@@ -196,6 +197,14 @@ function DebugModal({ scenarios, defaultScenarioId, onClose, gatewayUrl }) {
                     <div className="text-gray-500">tier</div><div>{dbg.tier}</div>
                     <div className="text-gray-500">协议</div><div>{dbg.protocol || 'openai'}{dbg.protocol && dbg.protocol !== 'openai' ? ' (自动转换)' : ''}</div>
                     <div className="text-gray-500">延迟</div><div>{dbg.latency_ms}ms</div>
+                    {dbg.rule_match && (
+                      <>
+                        <div className="text-gray-500">命中规则</div>
+                        <div className="text-purple-700 dark:text-purple-300">
+                          {dbg.rule_match.rule_name} · {dbg.rule_match.matched_value}
+                        </div>
+                      </>
+                    )}
                   </div>
                   {dbg.attempts && dbg.attempts.length > 1 && (
                     <div className="mt-2 pt-2 border-t border-blue-200 dark:border-blue-900">
@@ -510,6 +519,7 @@ export default function Gateway() {
         {[
           { id: 'overview',      icon: '📊', label: '总览' },
           { id: 'routing',       icon: '🛣', label: '场景路由' },
+          { id: 'rules',         icon: '📐', label: '智能路由' },
           { id: 'subscriptions', icon: '💳', label: '订阅与余额' },
         ].map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)}
@@ -524,7 +534,10 @@ export default function Gateway() {
         <Overview health={health} onConfigureClaude={() => selected && writeToApp(selected, 'claude_code')} />
       )}
 
-      {/* Tab 3: 订阅与余额 */}
+      {/* Tab 3: 智能路由（规则引擎） */}
+      {tab === 'rules' && <Rules />}
+
+      {/* Tab 4: 订阅与余额 */}
       {tab === 'subscriptions' && <Subscriptions />}
 
       {/* Tab 2: 场景路由 */}
