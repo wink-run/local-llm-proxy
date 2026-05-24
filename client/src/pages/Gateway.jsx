@@ -138,14 +138,7 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
   );
 }
 
-// ── IntegrationExamples ───────────────────────────────────────────────────────
-
-const LANG_TABS = [
-  { id: 'curl',   label: 'curl' },
-  { id: 'python', label: 'Python' },
-  { id: 'nodejs', label: 'Node.js' },
-  { id: 'openai', label: 'OpenAI SDK' },
-];
+// ── Code snippets ─────────────────────────────────────────────────────────────
 
 function codeSnippet(lang, baseUrl, apiKey, model = 'claude-opus-4-5') {
   switch (lang) {
@@ -197,40 +190,31 @@ resp = client.chat.completions.create(
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(resp.choices[0].message.content)`;
+    case 'curl-oai':
+      return `curl ${baseUrl}/chat/completions \\
+  -H "Authorization: Bearer ${apiKey}" \\
+  -H "content-type: application/json" \\
+  -d '{
+    "model": "${model}",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'`;
     default: return '';
   }
 }
 
-function IntegrationExamples({ baseUrl, apiKey, model }) {
-  const [lang, setLang] = useState('curl');
-  const code = codeSnippet(lang, baseUrl, apiKey, model);
-  return (
-    <div className="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-      <div className="flex items-center bg-gray-50 dark:bg-gray-800/60 border-b border-gray-200 dark:border-gray-700">
-        {LANG_TABS.map(t => (
-          <button key={t.id} onClick={() => setLang(t.id)}
-            className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors ${
-              lang === t.id
-                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
-            }`}>
-            {t.label}
-          </button>
-        ))}
-        <div className="flex-1" />
-        <CopyButton text={code} label="复制" className="mx-2 py-1 text-[10px]" />
-      </div>
-      <pre className="px-4 py-3 text-[11px] font-mono leading-relaxed text-gray-700 dark:text-gray-300 overflow-x-auto bg-gray-50/30 dark:bg-gray-900/30 whitespace-pre">
-        {code}
-      </pre>
-    </div>
-  );
-}
-
 // ── KeyConfigPanel ────────────────────────────────────────────────────────────
 
+const CONFIG_TABS = [
+  { id: 'curl',     label: 'curl' },
+  { id: 'curl-oai', label: 'curl (OAI)' },
+  { id: 'python',   label: 'Python' },
+  { id: 'nodejs',   label: 'Node.js' },
+  { id: 'openai',   label: 'OpenAI SDK' },
+  { id: 'auto',     label: '⚡ 自动配置' },
+];
+
 function KeyConfigPanel({ apiKey, localBase, model }) {
-  const [tab,     setTab]     = useState('auto');
+  const [tab,     setTab]     = useState('curl');
   const [tool,    setTool]    = useState('claude-code');
   const [writeOk, setWriteOk] = useState(false);
 
@@ -250,21 +234,39 @@ function KeyConfigPanel({ apiKey, localBase, model }) {
     }
   }
 
+  const isCodeTab = tab !== 'auto';
+  const code = isCodeTab ? codeSnippet(tab, localBase, apiKey, model) : '';
+
   return (
     <div className="border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
-      <div className="flex border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
-        {[['auto', '自动配置'], ['manual', '手工配置']].map(([id, label]) => (
-          <button key={id} onClick={() => setTab(id)}
-            className={`px-5 py-2.5 text-xs font-medium border-b-2 -mb-px transition-colors ${
-              tab === id
-                ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-900'
+      {/* Tab bar */}
+      <div className="flex items-center bg-gray-50 dark:bg-gray-800/60 border-b border-gray-200 dark:border-gray-700">
+        {CONFIG_TABS.map(t => (
+          <button key={t.id} onClick={() => { setTab(t.id); setWriteOk(false); }}
+            className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
+              tab === t.id
+                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
                 : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
             }`}>
-            {label}
+            {t.label}
           </button>
         ))}
+        {isCodeTab && (
+          <>
+            <div className="flex-1" />
+            <CopyButton text={code} label="复制" className="mx-2 py-1 text-[10px]" />
+          </>
+        )}
       </div>
 
+      {/* Code snippet */}
+      {isCodeTab && (
+        <pre className="px-4 py-3 text-[11px] font-mono leading-relaxed text-gray-700 dark:text-gray-300 overflow-x-auto bg-gray-50/30 dark:bg-gray-900/30 whitespace-pre">
+          {code}
+        </pre>
+      )}
+
+      {/* Auto-configure tab */}
       {tab === 'auto' && (
         <div className="p-4 space-y-4">
           {/* Model name badge */}
@@ -310,64 +312,122 @@ function KeyConfigPanel({ apiKey, localBase, model }) {
           )}
         </div>
       )}
-
-      {tab === 'manual' && (
-        <div className="p-4">
-          <IntegrationExamples baseUrl={localBase} apiKey={apiKey} model={model} />
-        </div>
-      )}
     </div>
   );
 }
 
 // ── InstanceList ──────────────────────────────────────────────────────────────
 
-function InstanceList({ keysScene, onDelete, localBase }) {
-  const [expandedId, setExpandedId] = useState(null);
+function InstanceList({ keysScene, onDelete, localBase, newKeyId }) {
+  const [expandedId, setExpandedId] = useState(newKeyId ?? null);
+
+  // Auto-expand whenever a brand-new key is passed in
+  React.useEffect(() => { if (newKeyId) setExpandedId(newKeyId); }, [newKeyId]);
+
+  // Newest first — ids are random hex; sort by created_at ISO string (lexicographic = chronological)
+  const sorted = [...keysScene].sort((a, b) =>
+    (b.created_at || '').localeCompare(a.created_at || ''));
+  // { [keyId]: { busy, ok, latency, error } | null }
+  const [testState, setTestState]   = useState({});
+
+  async function runTest(k) {
+    setTestState(s => ({ ...s, [k.id]: { busy: true } }));
+    const model = k.model_key || 'claude-opus-4-5';
+    const start = Date.now();
+    try {
+      const res = await fetch(`${localBase}/messages`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': k.key,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 16,
+          messages: [{ role: 'user', content: 'Hi' }],
+        }),
+      });
+      const latency = Date.now() - start;
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const msg  = body?.error?.message || `HTTP ${res.status}`;
+        setTestState(s => ({ ...s, [k.id]: { ok: false, error: msg, latency } }));
+      } else {
+        setTestState(s => ({ ...s, [k.id]: { ok: true, latency } }));
+      }
+    } catch (e) {
+      const latency = Date.now() - start;
+      setTestState(s => ({ ...s, [k.id]: { ok: false, error: e.message || '连接失败', latency } }));
+    }
+    setTimeout(() => setTestState(s => ({ ...s, [k.id]: null })), 6000);
+  }
+
   if (keysScene.length === 0) return null;
   return (
     <div className="border-t border-gray-200 dark:border-gray-800">
       <div className="px-5 py-3 flex items-center justify-between">
-        <span className="text-xs text-gray-500 font-medium">已创建的 Key</span>
+        <span className="text-xs text-gray-500 font-medium">应用列表</span>
         <span className="text-[10px] text-gray-400">{keysScene.length} 个</span>
       </div>
-      <div className="divide-y divide-gray-100 dark:divide-gray-800/60">
-        {keysScene.map(k => (
-          <div key={k.id}>
-            <div
-              className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/20 transition-colors cursor-pointer"
-              onClick={() => setExpandedId(expandedId === k.id ? null : k.id)}
-            >
-              <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${k.is_active ? 'bg-green-500' : 'bg-gray-400'}`} />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{k.app_name || k.note || '未命名'}</span>
-                  {k.scene_name && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40 shrink-0">
-                      {k.icon} {k.scene_name}
+      <div className="max-h-96 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-800/60">
+        {sorted.map(k => {
+          const ts = testState[k.id];
+          return (
+            <div key={k.id}>
+              <div
+                className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/20 transition-colors cursor-pointer"
+                onClick={() => setExpandedId(expandedId === k.id ? null : k.id)}
+              >
+                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${k.is_active ? 'bg-green-500' : 'bg-gray-400'}`} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{k.app_name || k.note || '未命名'}</span>
+                    {k.scene_name && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40 shrink-0">
+                        {k.icon} {k.scene_name}
+                      </span>
+                    )}
+                  </div>
+                  <code className="text-[10px] font-mono text-gray-400 mt-0.5 block">{k.key?.slice(0, 20)}…</code>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+                  {/* Test result badge */}
+                  {ts && !ts.busy && (
+                    <span className={`text-[10px] font-mono shrink-0 max-w-[120px] truncate ${ts.ok ? 'text-green-500 dark:text-green-400' : 'text-red-400'}`}
+                      title={ts.ok ? `${ts.latency}ms` : ts.error}>
+                      {ts.ok ? `✓ ${ts.latency}ms` : `✗ ${ts.error}`}
                     </span>
                   )}
+                  <button
+                    onClick={() => runTest(k)}
+                    disabled={ts?.busy}
+                    className={`text-[10px] px-2 py-1 rounded border transition-colors shrink-0 ${
+                      ts?.busy
+                        ? 'border-gray-300 dark:border-gray-600 text-gray-400 opacity-60 cursor-wait'
+                        : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-500 dark:hover:text-blue-400'
+                    }`}>
+                    {ts?.busy ? '测试中…' : '测试'}
+                  </button>
+                  <CopyButton text={k.key} label="复制" className="text-[10px] py-1 px-2 min-w-0" />
+                  <button onClick={() => onDelete(k.id)}
+                    className="text-[10px] text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors">删除</button>
                 </div>
-                <code className="text-[10px] font-mono text-gray-400 mt-0.5 block">{k.key?.slice(0, 20)}…</code>
+                <span className="text-gray-400 text-[10px] shrink-0">{expandedId === k.id ? '▲' : '▼'}</span>
               </div>
-              <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
-                <CopyButton text={k.key} label="复制" className="text-[10px] py-1 px-2 min-w-0" />
-                <button onClick={() => onDelete(k.id)}
-                  className="text-[10px] text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors">删除</button>
-              </div>
-              <span className="text-gray-400 text-[10px] shrink-0">{expandedId === k.id ? '▲' : '▼'}</span>
+              {expandedId === k.id && (
+                <div className="px-5 pb-4 pt-1">
+                  <KeyConfigPanel
+                    apiKey={k.key}
+                    localBase={localBase}
+                    model={k.model_key || undefined}
+                  />
+                </div>
+              )}
             </div>
-            {expandedId === k.id && (
-              <div className="px-5 pb-4 pt-1">
-                <KeyConfigPanel
-                  apiKey={k.key}
-                  localBase={localBase}
-                  model={k.model_key || undefined}
-                />
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -397,16 +457,16 @@ export default function Gateway() {
 
   // Keys list
   const [keysScene, setKeysScene] = useState([]);
+  const [newKeyId,  setNewKeyId]  = useState(null);  // auto-expand after creation
 
   // 场景应用 — new unified flow
-  const [appNote,           setAppNote]           = useState('');
-  const [appBusy,           setAppBusy]           = useState(false);
-  const [appKey,            setAppKey]            = useState(null);    // created key object
-  const [appRouteMode,      setAppRouteMode]      = useState(null);    // 'scene' | 'model'
-  const [appSceneId,        setAppSceneId]        = useState('');
-  const [appModelId,        setAppModelId]        = useState('');
-  const [appRouteConfirmed, setAppRouteConfirmed] = useState(false);
-  const [appRouterModel,    setAppRouterModel]    = useState('');
+  const [appNote,        setAppNote]        = useState('');
+  const [appBusy,        setAppBusy]        = useState(false);
+  const [appKey,         setAppKey]         = useState(null);   // created key object
+  const [appRouteMode,   setAppRouteMode]   = useState(null);   // 'scene' | 'model'
+  const [appSceneId,     setAppSceneId]     = useState('');
+  const [appModelId,     setAppModelId]     = useState('');
+  const [appRouterModel, setAppRouterModel] = useState('');     // resolved model/router key
 
   const localBase = status?.port
     ? `http://127.0.0.1:${status.port}/v1`
@@ -444,14 +504,28 @@ export default function Gateway() {
   }, []);
 
   const loadAvailableModels = useCallback(async () => {
+    const models = [];
+    const seen   = new Set();
+    const add    = (id, tier) => { if (!seen.has(id)) { seen.add(id); models.push({ id, tier }); } };
+
+    // Free / paid models from configured provider model lists
+    try {
+      const cfg = await window.electronAPI?.config?.read();
+      for (const p of (cfg?.providers || [])) {
+        if (!p.enabled || p.type === 'p2p') continue;
+        for (const m of (p.models || [])) add(typeof m === 'string' ? m : m.name, p.type);
+      }
+    } catch {}
+
+    // P2P models from backend rates (includes all registered models)
     try {
       const res = await getRates();
-      setAvailableModels(
-        (res.data?.models || []).map(m => ({ id: m.name, tier: normTier(m.tier) }))
-      );
+      for (const m of (res.data?.models || [])) add(m.name, normTier(m.tier));
     } catch (e) {
-      console.error('loadAvailableModels', e);
+      console.error('loadAvailableModels p2p', e);
     }
+
+    setAvailableModels(models);
   }, []);
 
   useEffect(() => {
@@ -514,32 +588,17 @@ export default function Gateway() {
     setAppRouteMode(null);
     setAppSceneId('');
     setAppModelId('');
-    setAppRouteConfirmed(false);
     setAppRouterModel('');
     try {
       const key = await window.electronAPI.localConfig.createKey({ note: appNote.trim() });
       setAppKey(key);
+      setNewKeyId(key.id);
       await loadSceneData();
     } catch (e) {
       alert('创建失败: ' + e.message);
     } finally {
       setAppBusy(false);
     }
-  }
-
-  async function handleConfirmRoute() {
-    if (!appKey || !appRouteMode) return;
-    if (appRouteMode === 'scene' && appSceneId) {
-      const selectedRoute = routes.find(r => r.id === appSceneId);
-      if (selectedRoute) {
-        await window.electronAPI.localConfig.bindKey({ id: appKey.id, model_key: selectedRoute.model_key });
-        setAppRouterModel(selectedRoute.model_key);
-      }
-    } else if (appRouteMode === 'model' && appModelId) {
-      setAppRouterModel(appModelId);
-    }
-    await loadSceneData();
-    setAppRouteConfirmed(true);
   }
 
   async function handleDeleteKey(keyId) {
@@ -700,8 +759,8 @@ export default function Gateway() {
             </div>
           )}
 
-          {/* Step 2: Route selection (shown after key created, before confirmed) */}
-          {appKey && !appRouteConfirmed && (
+          {/* Step 2: Route selection (shown after key created) */}
+          {appKey && (
             <div className="space-y-3">
               <p className="text-xs font-medium text-gray-700 dark:text-gray-300">选择模型路由</p>
 
@@ -712,7 +771,7 @@ export default function Gateway() {
                   { id: 'model', icon: '🧠', label: '指定模型', hint: '固定单一模型' },
                 ].map(t => (
                   <button key={t.id}
-                    onClick={() => { setAppRouteMode(t.id); setAppSceneId(''); setAppModelId(''); }}
+                    onClick={() => { setAppRouteMode(t.id); setAppSceneId(''); setAppModelId(''); setAppRouterModel(''); }}
                     className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border transition-colors ${
                       appRouteMode === t.id
                         ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
@@ -728,7 +787,23 @@ export default function Gateway() {
               {/* Scene route picker */}
               {appRouteMode === 'scene' && (
                 routes.length > 0 ? (
-                  <select value={appSceneId} onChange={e => setAppSceneId(e.target.value)}
+                  <select value={appSceneId}
+                    onChange={async e => {
+                      const id = e.target.value;
+                      setAppSceneId(id);
+                      if (id && appKey) {
+                        const r = routes.find(x => x.id === id);
+                        if (r) {
+                          try {
+                            await window.electronAPI.localConfig.bindKey({ id: appKey.id, model_key: r.model_key });
+                            loadSceneData();
+                          } catch {}
+                          // Reset creation area; InstanceList keeps the expanded key via newKeyId
+                          setAppKey(null); setAppNote('');
+                          setAppRouteMode(null); setAppSceneId(''); setAppModelId(''); setAppRouterModel('');
+                        }
+                      }
+                    }}
                     className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500">
                     <option value="">-- 选择场景路由 --</option>
                     {routes.map(r => (
@@ -744,42 +819,24 @@ export default function Gateway() {
 
               {/* Model picker */}
               {appRouteMode === 'model' && (
-                <ModelSelect availableModels={availableModels} value={appModelId} onChange={setAppModelId} />
+                <ModelSelect availableModels={availableModels} value={appModelId}
+                  onChange={async v => {
+                    if (!v || !appKey) return;
+                    try {
+                      await window.electronAPI.localConfig.bindKey({ id: appKey.id, model_key: v });
+                      loadSceneData();
+                    } catch {}
+                    // Reset creation area; InstanceList keeps the expanded key via newKeyId
+                    setAppKey(null); setAppNote('');
+                    setAppRouteMode(null); setAppSceneId(''); setAppModelId(''); setAppRouterModel('');
+                  }} />
               )}
-
-              <button
-                onClick={handleConfirmRoute}
-                disabled={
-                  !appRouteMode ||
-                  (appRouteMode === 'scene' && !appSceneId) ||
-                  (appRouteMode === 'model' && !appModelId)
-                }
-                className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-colors"
-              >
-                下一步
-              </button>
-            </div>
-          )}
-
-          {/* Step 3: Config panel (shown after route confirmed) */}
-          {appKey && appRouteConfirmed && (
-            <div className="space-y-3">
-              <KeyConfigPanel apiKey={appKey.key} localBase={localBase} model={appRouterModel} />
-              <button
-                onClick={() => {
-                  setAppKey(null); setAppNote('');
-                  setAppRouteMode(null); setAppSceneId(''); setAppModelId(''); setAppRouteConfirmed(false); setAppRouterModel('');
-                }}
-                className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-              >
-                + 创建另一个 Key
-              </button>
             </div>
           )}
         </div>
 
         {/* All keys list */}
-        <InstanceList keysScene={keysScene} onDelete={handleDeleteKey} localBase={localBase} />
+        <InstanceList keysScene={keysScene} onDelete={handleDeleteKey} localBase={localBase} newKeyId={newKeyId} />
       </div>
 
       {/* Route log */}
@@ -791,8 +848,8 @@ export default function Gateway() {
             <code className="font-mono text-green-600 dark:text-green-400">{localBase}</code> 后开始使用。
           </p>
         ) : (
-          <div className="space-y-1.5">
-            {logEntries.slice(0, 20).map((e, i) => {
+          <div className="max-h-80 overflow-y-auto space-y-1.5 pr-1">
+            {logEntries.map((e, i) => {
               const isRouter = e.requested_model?.startsWith('llm-router-');
               return (
                 <div key={`${e.ts}-${e.via}-${i}`}

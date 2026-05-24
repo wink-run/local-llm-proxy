@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getNetwork, getProfile, listKeys } from '../api/client';
 import { getServerUrl } from '../config';
@@ -13,12 +13,12 @@ const PROVIDER_META = {
 };
 
 const DEFAULT_PROVIDERS = [
-  { id: 'ollama',          type: 'free', enabled: true,  token: '', base_url: 'http://127.0.0.1:11434/v1' },
-  { id: 'groq',            type: 'free', enabled: false, token: '', base_url: 'https://api.groq.com/openai/v1' },
-  { id: 'github-models',   type: 'free', enabled: false, token: '', base_url: 'https://models.github.azure.com' },
-  { id: 'tokenbank-p2p',   type: 'p2p',  enabled: true,  token: '', base_url: '' },
-  { id: 'openai',          type: 'paid', enabled: false, token: '', base_url: 'https://api.openai.com/v1' },
-  { id: 'anthropic-paid',  type: 'paid', enabled: false, token: '', base_url: 'https://api.anthropic.com/v1' },
+  { id: 'ollama',          type: 'free', enabled: true,  token: '', base_url: 'http://127.0.0.1:11434/v1', models: [] },
+  { id: 'groq',            type: 'free', enabled: false, token: '', base_url: 'https://api.groq.com/openai/v1', models: [] },
+  { id: 'github-models',   type: 'free', enabled: false, token: '', base_url: 'https://models.github.azure.com', models: [] },
+  { id: 'tokenbank-p2p',   type: 'p2p',  enabled: true,  token: '', base_url: '', models: [] },
+  { id: 'openai',          type: 'paid', enabled: false, token: '', base_url: 'https://api.openai.com/v1', models: [] },
+  { id: 'anthropic-paid',  type: 'paid', enabled: false, token: '', base_url: 'https://api.anthropic.com/v1', models: [] },
 ];
 
 const TIER_CONFIG = {
@@ -297,16 +297,211 @@ function StatusBadge({ enabled, hasKey, keyless }) {
   );
 }
 
+// Normalize a model entry to {name, type} — handles both string and object formats
+function normModel(m) {
+  return typeof m === 'string' ? { name: m, type: 'chat' } : { name: m.name, type: m.type || 'chat' };
+}
+
+function ModelListEditor({ models = [], onChange, scrollable = false }) {
+  const [input,     setInput]     = useState('');
+  const [inputType, setInputType] = useState('chat');
+
+  const normalized = models.map(normModel);
+
+  function add() {
+    const n = input.trim();
+    if (!n || normalized.some(m => m.name === n)) { setInput(''); return; }
+    onChange([...normalized, { name: n, type: inputType }]);
+    setInput('');
+  }
+
+  function remove(name)     { onChange(normalized.filter(m => m.name !== name)); }
+  function toggleType(name) {
+    onChange(normalized.map(m => m.name === name ? { ...m, type: m.type === 'chat' ? 'image' : 'chat' } : m));
+  }
+
+  return (
+    <div className="space-y-2">
+      {/* existing model tags */}
+      {normalized.length > 0 && (
+        <div className={scrollable ? 'max-h-36 overflow-y-auto pr-1' : ''}>
+          <div className="flex flex-wrap gap-1.5">
+            {normalized.map(m => (
+              <span key={m.name} className="inline-flex items-center gap-0 text-xs bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 rounded-lg overflow-hidden font-mono">
+                <span className="px-2 py-0.5">{m.name}</span>
+                <button
+                  onClick={() => toggleType(m.name)}
+                  title="切换文本/图像"
+                  className={`px-1.5 py-0.5 text-[10px] font-sans border-l border-gray-300 dark:border-gray-700 transition-colors ${
+                    m.type === 'image'
+                      ? 'bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 hover:bg-purple-200 dark:hover:bg-purple-800/60'
+                      : 'bg-blue-50 dark:bg-blue-900/20 text-blue-500 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40'
+                  }`}>
+                  {m.type === 'image' ? '图' : '文'}
+                </button>
+                <button onClick={() => remove(m.name)} className="px-1.5 py-0.5 border-l border-gray-300 dark:border-gray-700 text-gray-400 hover:text-red-500 dark:hover:text-red-400 leading-none">×</button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {/* add input with type picker */}
+      <div className="flex gap-2">
+        <input
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && add()}
+          placeholder="输入模型名，回车添加"
+          className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
+        />
+        <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600 shrink-0 text-[10px] font-medium">
+          {[['chat', '文本'], ['image', '图像']].map(([t, label]) => (
+            <button key={t} type="button" onClick={() => setInputType(t)}
+              className={`px-2 py-1.5 transition-colors ${
+                inputType === t
+                  ? t === 'chat' ? 'bg-blue-600 text-white' : 'bg-purple-600 text-white'
+                  : 'bg-white dark:bg-gray-800 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
+              }`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={add}
+          disabled={!input.trim()}
+          className="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 text-xs text-gray-700 dark:text-gray-300 rounded-lg transition-colors whitespace-nowrap"
+        >
+          添加
+        </button>
+      </div>
+      {normalized.length === 0 && (
+        <p className="text-[11px] text-gray-400">未添加模型时，此供给源接受所有模型请求</p>
+      )}
+    </div>
+  );
+}
+
+function CustomProviderCard({ provider, onUpdate, onRemove, onTest }) {
+  const [showKey, setShowKey] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testMsg, setTestMsg] = useState('');
+  const modelCount = (provider.models || []).length;
+
+  const displayLabel = (() => {
+    try { const h = new URL(provider.base_url || '').hostname; return h || '自定义源'; } catch { return '自定义源'; }
+  })();
+
+  async function handleTest() {
+    if (!provider.base_url) { setTestMsg('请先填写 Base URL'); return; }
+    setTesting(true); setTestMsg('');
+    try {
+      const result = await onTest(provider.base_url, provider.token);
+      setTestMsg(result.ok ? '✓ 连接成功' : `✗ ${result.error || `HTTP ${result.status}`}`);
+    } catch (e) {
+      setTestMsg(`✗ ${e.message || '未知错误'}`);
+    } finally {
+      setTimeout(() => setTestMsg(''), 3000);
+      setTesting(false);
+    }
+  }
+
+  return (
+    <div className={`bg-white dark:bg-gray-900 border rounded-2xl overflow-hidden transition-opacity ${
+      provider.enabled ? 'border-gray-200 dark:border-gray-800' : 'border-gray-200 dark:border-gray-800 opacity-50'
+    }`}>
+      <div className="flex items-start gap-3 p-4">
+        <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-base shrink-0">🔗</div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className={`text-sm font-medium truncate ${provider.enabled ? 'text-gray-800 dark:text-gray-200' : 'text-gray-600 dark:text-gray-400'}`}>
+                {displayLabel}
+              </span>
+              {provider.enabled && provider.base_url && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 border border-green-300 dark:border-green-800/50 shrink-0">
+                  ● 已启用
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {provider.enabled && provider.base_url && (
+                <button onClick={handleTest} disabled={testing}
+                  className="text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors">
+                  {testing ? '…' : '测试'}
+                </button>
+              )}
+              <Toggle enabled={provider.enabled} onChange={() => onUpdate(provider.id, { enabled: !provider.enabled })} />
+              <button onClick={() => onRemove(provider.id)}
+                title="删除此供给源"
+                className="text-gray-400 hover:text-red-500 dark:hover:text-red-400 text-lg leading-none transition-colors">×</button>
+            </div>
+          </div>
+
+          {testMsg && (
+            <p className={`text-xs mt-1 ${testMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>{testMsg}</p>
+          )}
+
+          {/* Base URL + Token inputs */}
+          <div className="mt-3 space-y-2">
+            <input
+              value={provider.base_url || ''}
+              onChange={e => onUpdate(provider.id, { base_url: e.target.value })}
+              onBlur={e => {
+                const v = e.target.value.replace(/\/v1\/?$/, '').replace(/\/$/, '');
+                if (v !== e.target.value) onUpdate(provider.id, { base_url: v });
+              }}
+              placeholder="Base URL，如 http://host:3000（无需 /v1）"
+              className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
+            />
+            <div className="flex gap-2">
+              <input
+                value={provider.token || ''}
+                onChange={e => onUpdate(provider.id, { token: e.target.value })}
+                type={showKey ? 'text' : 'password'}
+                placeholder="API Key（可选）"
+                autoComplete="off"
+                className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
+              />
+              <button onClick={() => setShowKey(v => !v)}
+                className="shrink-0 px-2.5 text-xs rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+                {showKey ? '隐藏' : '显示'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Model list */}
+      <div className="border-t border-gray-100 dark:border-gray-800 px-4 py-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">模型列表</span>
+          {modelCount > 0
+            ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">{modelCount} 个</span>
+            : <span className="text-[10px] text-gray-400">未限制</span>
+          }
+        </div>
+        <ModelListEditor
+          models={provider.models || []}
+          onChange={models => onUpdate(provider.id, { models })}
+          scrollable
+        />
+      </div>
+    </div>
+  );
+}
+
 function ProviderCard({ provider, onUpdate, onTest }) {
-  const [showKey,   setShowKey]   = useState(false);
-  const [expanded,  setExpanded]  = useState(false);
-  const [testing,   setTesting]   = useState(false);
-  const [testMsg,   setTestMsg]   = useState('');
+  const [showKey,    setShowKey]    = useState(false);
+  const [expanded,   setExpanded]   = useState(false);
+  const [testing,    setTesting]    = useState(false);
+  const [testMsg,    setTestMsg]    = useState('');
+
 
   const meta    = PROVIDER_META[provider.id] || {};
   const isP2P   = provider.type === 'p2p';
   const hasKey  = !!provider.token;
   const configured = meta.keyless || hasKey;
+  const modelCount = (provider.models || []).length;
 
   async function handleTest() {
     if (!provider.base_url) { setTestMsg('请先填写 Base URL'); return; }
@@ -407,38 +602,86 @@ function ProviderCard({ provider, onUpdate, onTest }) {
           </button>
         )}
       </div>
+
+      {/* Model list section — always visible, scrollable when > 5 models */}
+      {!isP2P && (
+        <div className="border-t border-gray-100 dark:border-gray-800 px-4 py-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">模型列表</span>
+            {modelCount > 0
+              ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">{modelCount} 个</span>
+              : <span className="text-[10px] text-gray-400">未限制</span>
+            }
+          </div>
+          <ModelListEditor
+            models={provider.models || []}
+            onChange={models => onUpdate(provider.id, { models })}
+            scrollable
+          />
+        </div>
+      )}
     </div>
   );
 }
 
 export default function Providers() {
   const [providers, setProviders] = useState(DEFAULT_PROVIDERS);
-  const [saving,    setSaving]    = useState(false);
   const [savedMsg,  setSavedMsg]  = useState('');
+  // Track the last value written/loaded so we skip the initial load trigger
+  const lastSaved = useRef(null);
 
   useEffect(() => {
     window.electronAPI?.config?.read().then(cfg => {
+      let resolved;
       if (cfg?.providers?.length) {
-        setProviders(prev => prev.map(def => {
+        const defaultIds = new Set(DEFAULT_PROVIDERS.map(p => p.id));
+        const mapped = DEFAULT_PROVIDERS.map(def => {
           const saved = cfg.providers.find(p => p.id === def.id);
-          return saved ? { ...def, ...saved } : def;
+          return saved ? { ...def, ...saved, models: saved.models || def.models || [] } : def;
+        });
+        // Preserve any custom (non-default) providers stored in config; normalize base_url
+        const custom = cfg.providers.filter(p => !defaultIds.has(p.id)).map(p => ({
+          ...p,
+          base_url: (p.base_url || '').replace(/\/v1\/?$/, '').replace(/\/$/, ''),
         }));
+        resolved = [...mapped, ...custom];
+      } else {
+        resolved = DEFAULT_PROVIDERS;
       }
+      lastSaved.current = resolved;
+      setProviders(resolved);
     });
   }, []);
+
+  // Auto-save with 500 ms debounce; skip initial load
+  useEffect(() => {
+    if (lastSaved.current === null || providers === lastSaved.current) return;
+    const timer = setTimeout(async () => {
+      try {
+        const cfg = (await window.electronAPI?.config?.read()) || {};
+        const normalizedProviders = providers.map(p =>
+          PROVIDER_META[p.id] ? p : { ...p, base_url: (p.base_url || '').replace(/\/v1\/?$/, '').replace(/\/$/, '') }
+        );
+        await window.electronAPI?.config?.write({ ...cfg, providers: normalizedProviders });
+        lastSaved.current = providers;
+        setSavedMsg('已保存');
+        setTimeout(() => setSavedMsg(''), 1500);
+      } catch {}
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [providers]);
 
   const updateProvider = useCallback((id, patch) => {
     setProviders(prev => prev.map(p => p.id === id ? { ...p, ...patch } : p));
   }, []);
 
-  async function save() {
-    setSaving(true);
-    try {
-      const cfg = (await window.electronAPI?.config?.read()) || {};
-      await window.electronAPI?.config?.write({ ...cfg, providers });
-      setSavedMsg('已保存');
-      setTimeout(() => setSavedMsg(''), 2000);
-    } finally { setSaving(false); }
+  const removeProvider = useCallback((id) => {
+    setProviders(prev => prev.filter(p => p.id !== id));
+  }, []);
+
+  function addCustomProvider() {
+    const id = `custom-${Date.now()}`;
+    setProviders(prev => [...prev, { id, type: 'paid', enabled: true, token: '', base_url: '', models: [] }]);
   }
 
   async function testProvider(base_url, token) {
@@ -457,13 +700,7 @@ export default function Providers() {
           <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">供给源</h1>
           <p className="text-sm text-gray-500 mt-0.5">启用供给源后，网关可按场景路由请求</p>
         </div>
-        <div className="flex items-center gap-3">
-          {savedMsg && <span className="text-sm text-green-600 dark:text-green-400">{savedMsg}</span>}
-          <button onClick={save} disabled={saving}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors">
-            {saving ? '保存中…' : '保存配置'}
-          </button>
-        </div>
+        {savedMsg && <span className="text-sm text-green-600 dark:text-green-400">{savedMsg}</span>}
       </div>
 
       {/* Tier sections */}
@@ -478,12 +715,22 @@ export default function Providers() {
               <span className="text-xs text-gray-600">{cfg.hint}</span>
             </div>
             <div className={`grid ${cfg.cols} gap-3`}>
-              {items.map(p => (
-                tier === 'p2p'
-                  ? <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} />
-                  : <ProviderCard key={p.id} provider={p} onUpdate={updateProvider} onTest={testProvider} />
-              ))}
+              {items.map(p =>
+                tier === 'p2p' ? (
+                  <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} />
+                ) : PROVIDER_META[p.id] ? (
+                  <ProviderCard key={p.id} provider={p} onUpdate={updateProvider} onTest={testProvider} />
+                ) : (
+                  <CustomProviderCard key={p.id} provider={p} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} />
+                )
+              )}
             </div>
+            {tier === 'paid' && (
+              <button onClick={addCustomProvider}
+                className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 border border-dashed border-gray-300 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600 rounded-xl px-4 py-2.5 transition-colors w-full">
+                <span className="text-base leading-none">+</span> 添加 OpenAI 兼容源
+              </button>
+            )}
           </section>
         );
       })}

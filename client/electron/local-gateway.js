@@ -9,19 +9,16 @@ const https = require('https');
 const LOG_MAX = 100;
 const log = []; // circular, newest last
 
-let _strategy    = 'cost';   // 'cost' | 'quality'
 let _getConfig   = null;     // () => config object (set at start)
 let _server      = null;
 let _port        = 11430;
-// apiKey → { steps: [{model, ...}], scene_name }
-let _keySceneMap = {};
-// 'llm-router-{id}' → { steps: [{model, ...}], scene_name }
+// 'llm-router-{id}' → { steps: [{model, tier, ...}], scene_name }
 let _routerModelMap = {};
-// P2P / backend models: model name → true
+// P2P models with active workers (for UI display only, not used in routing)
 let _peerModels   = new Set();
-// Backend gateway config for P2P forwarding
-let _backendUrl   = null;   // e.g. 'http://81.70.249.144:8000'
-let _cloudToken   = null;   // user's cloud API key
+// Backend config: p2p providers forward here by default
+let _backendUrl   = null;
+let _cloudToken   = null;
 
 // Daily stats reset when date changes
 let _stats = newDayStats();
@@ -75,17 +72,32 @@ function openaiToAnthropic(oai, model) {
 
 // ── Provider helpers ──────────────────────────────────────────────────────────
 
-function orderedProviders() {
-  if (!_getConfig) {
-    console.warn('[gateway] _getConfig not set — no providers available');
-    return [];
-  }
+// All enabled providers, each with an effective models list.
+// P2P providers: base_url/token come from backend config; models come from live _peerModels.
+// Other providers: models from their configured models array (empty = serves any model).
+function enabledProviders() {
+  if (!_getConfig) return [];
   const cfg = _getConfig();
-  const providers = (cfg.providers || []).filter(p => p.enabled && p.base_url);
-  const typeOrder = _strategy === 'cost'
-    ? ['free', 'p2p', 'paid']
-    : ['paid', 'p2p', 'free'];
-  return typeOrder.flatMap(t => providers.filter(p => p.type === t));
+  return (cfg.providers || [])
+    .filter(p => {
+      if (!p.enabled) return false;
+      if (p.type === 'p2p') return !!_backendUrl;
+      return !!p.base_url;
+    })
+    .map(p => {
+      if (p.type === 'p2p') {
+        return { ...p, base_url: _backendUrl, token: _cloudToken || p.token, models: [..._peerModels] };
+      }
+      return p;
+    });
+}
+
+// Returns true if provider can serve the given model
+function providerHasModel(provider, model) {
+  const list = provider.models;
+  if (!Array.isArray(list) || list.length === 0) return true; // no list = serves any
+  // models may be strings or {name, type} objects
+  return list.some(m => (typeof m === 'string' ? m : m.name) === model);
 }
 
 // ── HTTP proxy ────────────────────────────────────────────────────────────────
@@ -105,7 +117,14 @@ function proxyRequest(provider, reqPath, body, res) {
       'Content-Length': Buffer.byteLength(bodyStr),
       'Accept':         'text/event-stream, application/json',
     };
-    if (provider.token) headers['Authorization'] = `Bearer ${provider.token}`;
+    if (provider.token) {
+      if (/anthropic/i.test(provider.base_url || '') || provider.api_format === 'anthropic') {
+        headers['x-api-key'] = provider.token;
+        headers['anthropic-version'] = '2023-06-01';
+      } else {
+        headers['Authorization'] = `Bearer ${provider.token}`;
+      }
+    }
 
     const opts = {
       hostname: u.hostname,
@@ -173,7 +192,12 @@ function proxyConvertSync(provider, oaiBody, model, res) {
       method: 'POST', headers, timeout: 120_000,
     }, (proxyRes) => {
       if (proxyRes.statusCode >= 400) {
-        proxyRes.resume();
+        const errChunks = [];
+        proxyRes.on('data', c => errChunks.push(c));
+        proxyRes.on('end', () => {
+          const body = Buffer.concat(errChunks).toString().slice(0, 200);
+          console.warn(`[gateway] proxyConvertSync ${proxyRes.statusCode} body:`, body);
+        });
         return reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode }));
       }
       const chunks = [];
@@ -289,144 +313,197 @@ function proxyConvertStream(provider, oaiBody, model, res) {
   });
 }
 
+// ── P2P: always stream from backend, buffer to sync response for non-streaming clients ──
+
+function proxyP2PSync(provider, oaiBody, model, res) {
+  // Sends stream:true to backend regardless of client request; assembles & returns Anthropic JSON
+  return new Promise((resolve, reject) => {
+    const streamBody = { ...oaiBody, stream: true };
+    const base    = (provider.base_url || '').replace(/\/$/, '');
+    const fullUrl = base + '/v1/chat/completions';
+    let u;
+    try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
+
+    const mod     = u.protocol === 'https:' ? https : http;
+    const bodyStr = JSON.stringify(streamBody);
+    const headers = {
+      'Content-Type':   'application/json',
+      'Content-Length': Buffer.byteLength(bodyStr),
+      'Accept':         'text/event-stream, application/json',
+    };
+    if (provider.token) headers['Authorization'] = `Bearer ${provider.token}`;
+
+    const t0 = Date.now();
+    const proxyReq = mod.request({
+      hostname: u.hostname,
+      port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + (u.search || ''),
+      method: 'POST', headers, timeout: 120_000,
+    }, (proxyRes) => {
+      if (proxyRes.statusCode >= 400) {
+        const errChunks = [];
+        proxyRes.on('data', c => errChunks.push(c));
+        proxyRes.on('end', () => {
+          const body = Buffer.concat(errChunks).toString().slice(0, 200);
+          console.warn(`[gateway] proxyP2PSync ${proxyRes.statusCode} body:`, body);
+        });
+        return reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode }));
+      }
+      let buf = '', fullText = '', inputTokens = 0, outputTokens = 0, stopReason = 'end_turn';
+      proxyRes.on('data', (chunk) => {
+        buf += chunk.toString();
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const ds = line.slice(6).trim();
+          if (ds === '[DONE]') continue;
+          try {
+            const c      = JSON.parse(ds);
+            const choice = (c.choices || [{}])[0];
+            const text   = (choice.delta || {}).content || '';
+            if (text) fullText += text;
+            const finish = choice.finish_reason;
+            if (finish) stopReason = finish === 'stop' ? 'end_turn' : finish;
+            if (c.usage) {
+              inputTokens  = c.usage.prompt_tokens     || inputTokens;
+              outputTokens = c.usage.completion_tokens || outputTokens;
+            }
+          } catch {}
+        }
+      });
+      proxyRes.on('end', () => {
+        try {
+          const resp = JSON.stringify({
+            id: 'msg_' + Math.random().toString(36).slice(2, 26),
+            type: 'message', role: 'assistant',
+            content: [{ type: 'text', text: fullText }],
+            model, stop_reason: stopReason, stop_sequence: null,
+            usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+          });
+          if (!res.headersSent) {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(resp);
+          }
+          resolve({ provider: provider.id, latency: Date.now() - t0 });
+        } catch (err) { reject(err); }
+      });
+      proxyRes.on('error', reject);
+    });
+    proxyReq.on('error', reject);
+    proxyReq.on('timeout', () => { proxyReq.destroy(); reject(new Error('timeout')); });
+    proxyReq.write(bodyStr);
+    proxyReq.end();
+  });
+}
+
 // ── Route ─────────────────────────────────────────────────────────────────────
 
-async function route(model, reqPath, body, res, apiKey) {
+// Call one provider with format conversion; throws on HTTP error.
+// provider is already resolved (base_url/token correct, models populated).
+async function callProvider(provider, isAnthropic, streaming, reqPath, body, attemptModel, res) {
+  const attemptBody = { ...body, model: attemptModel };
+
+  // Anthropic-compatible provider: proxy request directly without format conversion
+  const isAnthropicProvider = /anthropic/i.test(provider.base_url || '') || provider.api_format === 'anthropic';
+  if (isAnthropicProvider) {
+    const targetPath = isAnthropic ? '/v1/messages' : '/v1/chat/completions';
+    return await proxyRequest(provider, targetPath, attemptBody, res);
+  }
+
+  const oaiBody = isAnthropic ? anthropicToOpenai(attemptBody) : null;
+  if (isAnthropic) {
+    return streaming
+      ? await proxyConvertStream(provider, oaiBody, attemptModel, res)
+      // P2P backends often only support streaming; use proxyP2PSync (sends stream:true internally)
+      : (provider.type === 'p2p'
+          ? await proxyP2PSync(provider, oaiBody, attemptModel, res)
+          : await proxyConvertSync(provider, oaiBody, attemptModel, res));
+  }
+  return await proxyRequest(provider, reqPath, attemptBody, res);
+}
+
+async function route(model, reqPath, body, res) {
   ensureTodayStats();
   const t0          = Date.now();
   let lastErr       = null;
-
   const isAnthropic = reqPath === '/v1/messages';
   const streaming   = !!body.stream;
 
-  // ── P2P model: forward to backend gateway via /v1/chat/completions ───────
-  // Mirrors Debug page "全球网络" path: always use OAI format + Bearer token.
-  if (_peerModels.has(model) && _backendUrl && _cloudToken) {
-    const backendProvider = {
-      id: 'p2p-backend', label: '网络节点',
-      base_url: _backendUrl, token: _cloudToken,
-    };
-    try {
-      let result;
-      if (isAnthropic) {
-        // Convert Anthropic → OpenAI, POST to /v1/chat/completions, convert response back
-        const oaiBody = anthropicToOpenai({ ...body, model });
-        result = streaming
-          ? await proxyConvertStream(backendProvider, oaiBody, model, res)
-          : await proxyConvertSync(backendProvider, oaiBody, model, res);
-      } else {
-        // Already OpenAI format, forward as-is
-        result = await proxyRequest(backendProvider, '/v1/chat/completions', { ...body, model }, res);
+  function fail(scene_name, failedModels) {
+    pushLog({
+      ts: t0, requested_model: model, model, scene_name,
+      tried: failedModels?.length ? [...failedModels] : undefined,
+      via: null, latency_ms: Date.now() - t0, status: 'error', error: lastErr?.message,
+    });
+    _stats.errors++;
+    if (!res.headersSent) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'all_providers_failed', detail: lastErr?.message }));
+    }
+  }
+
+  // ── Scene route: llm-router-* ─────────────────────────────────────────────
+  if (model.startsWith('llm-router-')) {
+    const scene = _routerModelMap[model];
+    if (!scene?.steps?.length) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'scene_not_found', model }));
+      return;
+    }
+
+    const all          = enabledProviders();
+    const failedModels = [];
+
+    for (const step of scene.steps) {
+      const stepModel     = step.model;
+      // Match providers by model list, not by tier — tier is informational only
+      const stepProviders = all.filter(p => providerHasModel(p, stepModel));
+      let   stepSucceeded = false;
+
+      for (const provider of stepProviders) {
+        try {
+          const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, stepModel, res);
+          pushLog({
+            ts: t0, requested_model: model, model: stepModel,
+            scene_name: scene.scene_name,
+            tried: failedModels.length ? [...failedModels] : undefined,
+            tier: provider.type, via: provider.id, via_label: provider.label,
+            latency_ms: result.latency, status: 'ok',
+          });
+          recordStats(provider.id, stepModel);
+          stepSucceeded = true;
+          return;
+        } catch (err) {
+          lastErr = err;
+          if (res.headersSent) return;
+        }
       }
+      if (!stepSucceeded) failedModels.push(stepModel);
+    }
+
+    fail(scene.scene_name, failedModels);
+    return;
+  }
+
+  // ── Direct model request: try providers that list this model ─────────────
+  for (const provider of enabledProviders().filter(p => providerHasModel(p, model))) {
+    try {
+      const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, model, res);
       pushLog({
         ts: t0, requested_model: model, model,
-        tier: 'p2p',
-        via: 'p2p-backend', via_label: '网络节点',
+        tier: provider.type, via: provider.id, via_label: provider.label,
         latency_ms: result.latency, status: 'ok',
       });
-      recordStats('p2p-backend', model);
+      recordStats(provider.id, model);
       return;
     } catch (err) {
       lastErr = err;
       if (res.headersSent) return;
-      // fall through to local providers
     }
   }
 
-  const providers   = orderedProviders();
-
-  // Scene-route model chain: llm-router-* model name takes priority, then key binding
-  const routerScene = model.startsWith('llm-router-') ? _routerModelMap[model] : null;
-  const keyScene    = apiKey ? _keySceneMap[apiKey] : null;
-  const scene       = routerScene || keyScene;
-  const sceneModels = (scene?.steps || []).map(s => s.model).filter(Boolean);
-  const modelsToTry = sceneModels.length > 0 ? sceneModels : [model];
-
-  const failedModels = []; // models where all providers failed (degradation chain)
-
-  for (const attemptModel of modelsToTry) {
-    const attemptBody = { ...body, model: attemptModel };
-    const oaiBody     = isAnthropic ? anthropicToOpenai(attemptBody) : null;
-    let   modelFailed = true;
-
-    // ── If this step model is a P2P model, try backend first ──────────────
-    if (_peerModels.has(attemptModel) && _backendUrl && _cloudToken) {
-      const backendProvider = {
-        id: 'p2p-backend', label: '网络节点',
-        base_url: _backendUrl, token: _cloudToken,
-      };
-      try {
-        let result;
-        if (isAnthropic) {
-          result = streaming
-            ? await proxyConvertStream(backendProvider, oaiBody, attemptModel, res)
-            : await proxyConvertSync(backendProvider, oaiBody, attemptModel, res);
-        } else {
-          result = await proxyRequest(backendProvider, '/v1/chat/completions', attemptBody, res);
-        }
-        const entry = {
-          ts: t0, requested_model: model, model: attemptModel,
-          scene_name: scene?.scene_name,
-          tried: failedModels.length > 0 ? [...failedModels] : undefined,
-          tier: 'p2p',
-          via: 'p2p-backend', via_label: '网络节点',
-          latency_ms: result.latency, status: 'ok',
-        };
-        pushLog(entry);
-        recordStats('p2p-backend', attemptModel);
-        return;
-      } catch (err) {
-        lastErr = err;
-        if (res.headersSent) return;
-        // backend failed — fall through to local providers for this model
-      }
-    }
-
-    for (const provider of providers) {
-      try {
-        let result;
-        if (isAnthropic) {
-          result = streaming
-            ? await proxyConvertStream(provider, oaiBody, attemptModel, res)
-            : await proxyConvertSync(provider, oaiBody, attemptModel, res);
-        } else {
-          result = await proxyRequest(provider, reqPath, attemptBody, res);
-        }
-        // record success
-        const entry = {
-          ts: t0,
-          requested_model: model,            // original model from request
-          model: attemptModel,               // actual model used
-          scene_name: scene?.scene_name,     // scene name if routing via scene
-          tried: failedModels.length > 0 ? [...failedModels] : undefined,
-          tier: provider.type,               // 'free' | 'p2p' | 'paid'
-          via: provider.id, via_label: provider.label,
-          latency_ms: result.latency, status: 'ok',
-        };
-        pushLog(entry);
-        recordStats(provider.id, attemptModel);
-        modelFailed = false;
-        return;
-      } catch (err) {
-        lastErr = err;
-        if (res.headersSent) return; // streaming started, can't retry
-      }
-    }
-    // all providers failed for this model — record and try next in scene chain
-    if (modelFailed) failedModels.push(attemptModel);
-  }
-
-  // All providers failed
-  pushLog({
-    ts: t0, requested_model: model, model, scene_name: scene?.scene_name,
-    tried: failedModels.length > 0 ? [...failedModels] : undefined,
-    via: null, latency_ms: Date.now() - t0, status: 'error', error: lastErr?.message,
-  });
-  _stats.errors++;
-  if (!res.headersSent) {
-    res.writeHead(502, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'all_providers_failed', detail: lastErr?.message }));
-  }
+  fail(null, null);
 }
 
 function pushLog(entry) {
@@ -461,7 +538,7 @@ function handleRequest(req, res) {
   // Health
   if (method === 'GET' && url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, port: _port, strategy: _strategy }));
+    res.end(JSON.stringify({ ok: true, port: _port }));
     return;
   }
 
@@ -488,10 +565,6 @@ function handleRequest(req, res) {
     }
   });
 
-  // Extract API key (Anthropic x-api-key or OpenAI Bearer)
-  const apiKey = req.headers['x-api-key'] || req.headers['X-Api-Key'] ||
-    (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '') || null;
-
   const chunks = [];
   req.on('data', c => chunks.push(c));
   req.on('end', async () => {
@@ -499,7 +572,7 @@ function handleRequest(req, res) {
     try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch {}
     const model = body.model || '';
     try {
-      await route(model, url, body, res, apiKey);
+      await route(model, url, body, res);
     } catch (err) {
       if (!res.headersSent) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -533,12 +606,10 @@ function stop() {
   });
 }
 
-function setStrategy(s) {
-  if (s === 'cost' || s === 'quality') _strategy = s;
-}
+function setStrategy() { /* deprecated */ }
 
 function getStatus() {
-  return { running: !!_server, port: _port, strategy: _strategy };
+  return { running: !!_server, port: _port };
 }
 
 function getLog() {
@@ -550,9 +621,7 @@ function getDailyStats() {
   return { ..._stats };
 }
 
-function setKeySceneMap(map) {
-  _keySceneMap = map && typeof map === 'object' ? map : {};
-}
+function setKeySceneMap() { /* deprecated */ }
 
 function setRouterModelMap(map) {
   _routerModelMap = map && typeof map === 'object' ? map : {};

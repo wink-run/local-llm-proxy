@@ -255,7 +255,24 @@
       "Bash(curl -s -w '\\\\nHTTP:%{http_code}' -X POST http://127.0.0.1:11430/v1/messages -H 'Content-Type: application/json' -H 'x-api-key: sk-local-test' -d '{\"model\":\"llm-router-6adf05d180e3\",\"max_tokens\":20,\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' --max-time 25)",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(m['id']\\) for m in d.get\\('data',[]\\)]\")",
       "Bash(curl -s -w '\\\\nHTTP:%{http_code}' -X POST http://127.0.0.1:11430/v1/messages -H 'Content-Type: application/json' -H 'x-api-key: sk-local-test' -d '{\"model\":\"glm-5.1\",\"max_tokens\":10,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' --max-time 15)",
-      "Bash(curl -s -w '\\\\nHTTP:%{http_code}' -X POST http://127.0.0.1:11430/v1/messages -H 'Content-Type: application/json' -H 'x-api-key: sk-local-test' -d '{\"model\":\"glm-4.7\",\"max_tokens\":10,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' --max-time 15)"
+      "Bash(curl -s -w '\\\\nHTTP:%{http_code}' -X POST http://127.0.0.1:11430/v1/messages -H 'Content-Type: application/json' -H 'x-api-key: sk-local-test' -d '{\"model\":\"glm-4.7\",\"max_tokens\":10,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' --max-time 15)",
+      "Bash(pkill -f \"electron .\")",
+      "Bash(pkill -f \"vite\")",
+      "Bash(curl -s http://127.0.0.1:11430/v1/messages -H 'x-api-key: sk-local-2506c5a701c022442cc74adf178925d7' -H 'anthropic-version: 2023-06-01' -H 'content-type: application/json' -d '{\"model\":\"llm-router-142360604201\",\"max_tokens\":64,\"messages\":[{\"role\":\"user\",\"content\":\"Say hi in one word\"}]}')",
+      "Bash(pkill -9 -f \"Electron\")",
+      "Bash(pkill -9 -f \"electron\")",
+      "Bash(pkill -9 -f \"vite\")",
+      "Bash(pkill -9 -f \"concurrently\")",
+      "Bash(lsof -ti:11430)",
+      "Bash(lsof -ti:5173)",
+      "Bash(lsof -ti:5174)",
+      "Bash(echo \"PID $!\")",
+      "Bash(node --input-type=module)",
+      "Bash(node --check electron/local-gateway.js)",
+      "Bash(node --check electron/main.js)",
+      "Bash(node --check /Users/ully/githubprojects/local-llm-proxy/client/src/pages/Contribute.jsx)",
+      "Bash(pkill -f \"electron\")",
+      "Bash(pkill -f \"local-llm-proxy\")"
     ]
   }
 }

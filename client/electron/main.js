@@ -540,7 +540,7 @@ function registerIPC() {
     if (!base_url || typeof base_url !== 'string') return { ok: false, error: 'base_url required' };
     try {
       const result = await nodeRequest(
-        base_url.replace(/\/$/, '') + '/v1/models',
+        base_url.replace(/\/$/, '') + '/models',
         'GET',
         token ? { Authorization: `Bearer ${token}` } : {},
         null,
@@ -550,6 +550,12 @@ function registerIPC() {
       return { ok: false, error: err.message };
     }
   });
+
+  // Periodically refresh P2P model list so newly available models are detected
+  setInterval(() => {
+    const cc = readLocalConfig().cloud_config || {};
+    if (cc.url && cc.token) fetchPeerModels(cc.url, cc.token);
+  }, 60_000);
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────

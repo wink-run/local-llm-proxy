@@ -1,244 +1,144 @@
 // client/src/pages/Contribute.jsx
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { getStats, getSettlements } from '../api/client';
 import RateChart from '../components/RateChart';
-import { LLM_PROVIDER_PRESETS, matchPresetId } from '../data/llmProviderPresets';
-
 function multiplierToStars(m) {
   const n = m >= 1.3 ? 5 : m >= 1.1 ? 4 : m >= 0.9 ? 3 : m >= 0.7 ? 2 : 1;
   return '★'.repeat(n) + '☆'.repeat(5 - n);
 }
 
-function emptyGroup() {
-  return { base_url: '', token: '', showToken: false, models: [] };
-}
+const LOCAL_GW = 'http://127.0.0.1:11430/v1';
 
 function ContributionConfigCard() {
-  const [cfg,       setCfg]       = useState(null);
-  const [editing,   setEditing]   = useState(false);
-  const [groups,    setGroups]    = useState([emptyGroup()]);
-  const [nodeName,  setNodeName]  = useState('');
-  const [autoStart, setAutoStart] = useState(false);
-  const [saving,    setSaving]    = useState(false);
-  const [savedMsg,  setSavedMsg]  = useState('');
-  const [scanning,  setScanning]  = useState(false);
-  const [presetId,  setPresetId]  = useState('custom');
+  const [selectedNames,   setSelectedNames]   = useState(new Set()); // Set<string>
+  const [availableModels, setAvailableModels] = useState([]);        // {name, type}[]
+  const [nodeName,        setNodeName]        = useState('');
+  const [autoStart,       setAutoStart]       = useState(false);
+  const [saving,          setSaving]          = useState(false);
+  const [savedMsg,        setSavedMsg]        = useState('');
 
   useEffect(() => {
     if (!window.electronAPI) return;
-    window.electronAPI.config.read().then(async (saved) => {
-      const hasGroups = saved?.model_groups?.length > 0;
-      const hasLegacy = saved?.llm_base_url;
-      if (hasGroups || hasLegacy) { setCfg(saved); }
-      else {
-        try {
-          const results = await window.electronAPI.config.scan();
-          const best = results[0];
-          if (best?.base_url) {
-            const updated = { ...(saved || {}), llm_base_url: best.base_url, llm_token: best.token || '', models: best.models || [] };
-            await window.electronAPI.config.write(updated);
-            setCfg(updated); return;
-          }
-        } catch {}
-        setCfg(saved || {}); setEditing(true);
+    window.electronAPI.config.read().then(saved => {
+      const avail = [];
+      const seen  = new Set();
+      for (const p of (saved?.providers || [])) {
+        if (p.type === 'p2p') continue;
+        for (const m of (p.models || [])) {
+          const name = typeof m === 'string' ? m : m.name;
+          const type = typeof m === 'string' ? 'chat' : (m.type || 'chat');
+          if (!name || seen.has(name)) continue;
+          seen.add(name);
+          avail.push({ name, type });
+        }
       }
-    });
+      setAvailableModels(avail);
+
+      const prevNames = new Set(
+        (saved?.model_groups || [])
+          .flatMap(g => g.models || [])
+          .map(m => typeof m === 'string' ? m : m.name)
+          .filter(Boolean)
+      );
+      setSelectedNames(prevNames);
+      setNodeName(saved?.name || '');
+      setAutoStart(!!saved?.auto_start);
+    }).catch(() => {});
   }, []);
 
-  function openEdit() {
-    let parsed;
-    if (cfg?.model_groups?.length) {
-      parsed = cfg.model_groups.map(g => ({
-        base_url: g.base_url || '', token: g.token || '', showToken: false,
-        models: (g.models || []).map(m => typeof m === 'string' ? { name: m, type: 'chat' } : m),
-      }));
-    } else {
-      const models = (cfg?.models || []).map(m => typeof m === 'string' ? { name: m, type: 'chat' } : { name: m.name, type: m.type || 'chat' });
-      parsed = [{ base_url: cfg?.llm_base_url || '', token: cfg?.llm_token || '', showToken: false, models }];
-    }
-    if (parsed.length === 0) parsed = [emptyGroup()];
-    setGroups(parsed);
-    setNodeName(cfg?.name || '');
-    setAutoStart(!!cfg?.auto_start);
-    setPresetId(matchPresetId(parsed[0]?.base_url));
-    setEditing(true);
-  }
-
-  async function autoScan() {
-    if (!window.electronAPI) return;
-    setScanning(true);
-    try {
-      const results = await window.electronAPI.config.scan();
-      const best = results[0];
-      if (best?.base_url) {
-        const current = (await window.electronAPI.config.read()) || {};
-        const updated = { ...current, llm_base_url: best.base_url, llm_token: best.token || '', models: best.models || [] };
-        await window.electronAPI.config.write(updated); setCfg(updated);
-        setSavedMsg('已自动配置'); setTimeout(() => setSavedMsg(''), 2000);
-      } else { setSavedMsg('未找到配置'); setTimeout(() => setSavedMsg(''), 2000); }
-    } finally { setScanning(false); }
-  }
-
-  function applyPreset(pid) {
-    setPresetId(pid);
-    const preset = LLM_PROVIDER_PRESETS.find(p => p.id === pid);
-    if (!preset || !preset.baseUrl) return;
-    setGroups(prev => prev.map((g, i) => i === 0 ? {
-      ...g, base_url: preset.baseUrl,
-      models: preset.defaultModels.map(n => ({ name: n, type: 'chat' })),
-    } : g));
+  function toggleModel(name) {
+    setSelectedNames(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
   }
 
   async function save() {
     if (!window.electronAPI) return;
     setSaving(true);
     try {
-      const model_groups = groups.map(({ base_url, token, models }) => ({ base_url, token, models: models.filter(m => m.name.trim()) }));
-      const allModels = model_groups.flatMap(g => g.models);
-      const first = model_groups[0] || {};
-      const current = (await window.electronAPI.config.read()) || {};
-      const updated = { ...current, model_groups, llm_base_url: first.base_url || '', llm_token: first.token || '', models: allModels, name: nodeName, auto_start: autoStart };
-      await window.electronAPI.config.write(updated); setCfg(updated); setEditing(false);
+      const models       = availableModels.filter(m => selectedNames.has(m.name));
+      const model_groups = [{ base_url: LOCAL_GW, token: '', models }];
+      const current      = (await window.electronAPI.config.read()) || {};
+      const updated      = { ...current, model_groups, llm_base_url: LOCAL_GW, llm_token: '', models, name: nodeName, auto_start: autoStart };
+      await window.electronAPI.config.write(updated);
       setSavedMsg('已保存'); setTimeout(() => setSavedMsg(''), 2000);
     } finally { setSaving(false); }
-  }
-
-  function updateGroup(idx, patch) { setGroups(prev => prev.map((g, i) => i === idx ? { ...g, ...patch } : g)); }
-  function updateGroupModel(gIdx, mIdx, patch) {
-    setGroups(prev => prev.map((g, i) => i === gIdx ? { ...g, models: g.models.map((m, j) => j === mIdx ? { ...m, ...patch } : m) } : g));
-  }
-  function removeGroupModel(gIdx, mIdx) {
-    setGroups(prev => prev.map((g, i) => i === gIdx ? { ...g, models: g.models.filter((_, j) => j !== mIdx) } : g));
-  }
-
-  const viewGroups = cfg?.model_groups?.length ? cfg.model_groups : (cfg?.llm_base_url ? [{ base_url: cfg.llm_base_url, models: cfg?.models || [] }] : []);
-  const configured = viewGroups.some(g => g.base_url && g.models?.length > 0);
-  const canSave    = groups.some(g => g.base_url.trim());
-
-  if (!editing) {
-    return (
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${configured ? 'bg-green-400' : 'bg-yellow-400'}`} />
-            <span className="text-sm font-medium text-gray-800 dark:text-gray-200">贡献节点配置</span>
-            {savedMsg && <span className="text-xs text-green-600 dark:text-green-400">{savedMsg}</span>}
-          </div>
-          <div className="flex gap-2">
-            <button onClick={autoScan} disabled={scanning}
-              className="px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 disabled:opacity-50 transition-colors">
-              {scanning ? '扫描中…' : '自动配置'}
-            </button>
-            <button onClick={openEdit}
-              className="px-3 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors">
-              手动配置
-            </button>
-          </div>
-        </div>
-        {configured ? (
-          <div className="mt-3 space-y-2 text-xs text-gray-500">
-            {viewGroups.map((g, i) => {
-              const ms = (g.models || []).map(m => typeof m === 'string' ? m : `${m.name}(${m.type === 'image' ? '图像' : '对话'})`).join(', ');
-              return (
-                <div key={i} className="bg-gray-100/50 dark:bg-gray-800/50 rounded-xl px-3 py-2 space-y-1">
-                  <p className="font-mono truncate text-gray-700 dark:text-gray-300">{g.base_url}</p>
-                  {ms && <p className="text-gray-500">{ms}</p>}
-                </div>
-              );
-            })}
-            <div className="flex items-center gap-4 text-[10px] text-gray-600">
-              {cfg?.name && <span>节点名：<span className="text-gray-600 dark:text-gray-400">{cfg.name}</span></span>}
-              <span>自启动：<span className="text-gray-600 dark:text-gray-400">{cfg?.auto_start ? '开启' : '关闭'}</span></span>
-            </div>
-          </div>
-        ) : (
-          <p className="mt-3 text-xs text-yellow-400">未找到可用配置，请点击「手动配置」填写。</p>
-        )}
-      </div>
-    );
   }
 
   return (
     <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5 space-y-4">
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">贡献节点配置</span>
-        {configured && <button onClick={() => setEditing(false)} className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-700 dark:text-gray-300">取消</button>}
+        <span className="text-sm font-medium text-gray-800 dark:text-gray-200">贡献节点配置</span>
+        {savedMsg && <span className="text-xs text-green-600 dark:text-green-400">{savedMsg}</span>}
       </div>
 
-      {/* Preset selector */}
-      <div>
-        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">快速选择 Provider</label>
-        <select value={presetId} onChange={e => applyPreset(e.target.value)}
-          className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500">
-          {LLM_PROVIDER_PRESETS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-        </select>
+      {/* Fixed forwarding URL */}
+      <div className="flex items-center gap-2 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2">
+        <span className="text-[10px] text-gray-400 shrink-0">转发地址</span>
+        <code className="text-xs font-mono text-green-600 dark:text-green-400 truncate">{LOCAL_GW}</code>
       </div>
 
-      {groups.map((g, gIdx) => (
-        <div key={gIdx} className="border border-gray-300 dark:border-gray-700 rounded-xl p-3 space-y-2.5 bg-gray-100/40 dark:bg-gray-800/40">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">分组 {gIdx + 1}</span>
-            {groups.length > 1 && <button type="button" onClick={() => setGroups(prev => prev.filter((_, i) => i !== gIdx))} className="text-xs text-red-600 dark:text-red-400 hover:text-red-600">删除分组</button>}
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Base URL</label>
-            <input value={g.base_url} onChange={e => updateGroup(gIdx, { base_url: e.target.value })} placeholder="http://127.0.0.1:11434/v1"
-              className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">API Key（可选）</label>
-            <div className="flex gap-2">
-              <input value={g.token} onChange={e => updateGroup(gIdx, { token: e.target.value })} placeholder="无则留空"
-                type={g.showToken ? 'text' : 'password'} autoComplete="off"
-                className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
-              <button type="button" onClick={() => updateGroup(gIdx, { showToken: !g.showToken })}
-                className="shrink-0 px-3 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-50 hover:dark:bg-gray-700">
-                {g.showToken ? '隐藏' : '显示'}
-              </button>
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1.5">模型</label>
-            <div className="space-y-1.5 mb-2">
-              {g.models.map((m, mIdx) => (
-                <div key={mIdx} className="flex items-center gap-2">
-                  <input value={m.name} onChange={e => updateGroupModel(gIdx, mIdx, { name: e.target.value })} placeholder="模型 ID"
-                    className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
-                  <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-600 shrink-0">
-                    {['chat', 'image'].map(t => (
-                      <button key={t} type="button" onClick={() => updateGroupModel(gIdx, mIdx, { type: t })}
-                        className={`px-2.5 py-1.5 text-xs font-medium transition-colors ${m.type === t ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
-                        {t === 'chat' ? '对话' : '图像'}
-                      </button>
-                    ))}
-                  </div>
-                  <button type="button" onClick={() => removeGroupModel(gIdx, mIdx)} className="text-gray-600 dark:text-gray-400 hover:text-red-500 text-lg leading-none px-1">×</button>
-                </div>
-              ))}
-            </div>
-            <button type="button" onClick={() => updateGroup(gIdx, { models: [...g.models, { name: '', type: 'chat' }] })}
-              className="text-xs text-blue-600 dark:text-blue-400 hover:underline">+ 添加模型</button>
-          </div>
+      {/* Model selection */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">贡献模型</span>
+          {selectedNames.size > 0 && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">
+              {selectedNames.size} 个
+            </span>
+          )}
         </div>
-      ))}
 
-      <button type="button" onClick={() => setGroups(prev => [...prev, emptyGroup()])}
-        className="text-xs text-blue-600 dark:text-blue-400 hover:underline">+ 添加分组</button>
-
-      <div>
-        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">节点名称</label>
-        <input value={nodeName} onChange={e => setNodeName(e.target.value)} placeholder="留空使用主机名"
-          className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
+        {availableModels.length === 0 ? (
+          <p className="text-xs text-gray-400 dark:text-gray-600">请先在「供给源」中配置模型</p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {availableModels.map(m => {
+              const sel     = selectedNames.has(m.name);
+              const isImage = m.type === 'image';
+              return (
+                <button key={m.name} type="button" onClick={() => toggleModel(m.name)}
+                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-mono transition-colors ${
+                    sel
+                      ? isImage
+                        ? 'bg-purple-100 dark:bg-purple-900/40 border-purple-400 dark:border-purple-700 text-purple-700 dark:text-purple-300'
+                        : 'bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-700 text-blue-700 dark:text-blue-300'
+                      : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-gray-400 dark:hover:border-gray-500'
+                  }`}>
+                  {m.name}
+                  <span className={`text-[9px] px-1 py-0.5 rounded font-medium ${
+                    sel
+                      ? isImage ? 'bg-purple-200 dark:bg-purple-800 text-purple-700 dark:text-purple-300' : 'bg-blue-200 dark:bg-blue-800 text-blue-700 dark:text-blue-300'
+                      : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                  }`}>
+                    {isImage ? '图' : '文'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
+      {/* Node name */}
+      <div>
+        <label className="block text-xs text-gray-500 mb-1">节点名称</label>
+        <input value={nodeName} onChange={e => setNodeName(e.target.value)} placeholder="留空使用主机名"
+          className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500" />
+      </div>
+
+      {/* Auto-start toggle */}
       <label className="flex items-center gap-3 cursor-pointer select-none">
-        <div onClick={() => setAutoStart(v => !v)} className={`relative w-10 h-6 rounded-full transition-colors ${autoStart ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}>
+        <div onClick={() => setAutoStart(v => !v)}
+          className={`relative w-10 h-6 rounded-full transition-colors ${autoStart ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}>
           <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${autoStart ? 'translate-x-5' : 'translate-x-1'}`} />
         </div>
         <span className="text-sm text-gray-700 dark:text-gray-300">启动应用时自动运行贡献节点</span>
       </label>
 
-      <button onClick={save} disabled={saving || !canSave}
+      <button onClick={save} disabled={saving}
         className="px-5 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium transition-colors">
         {saving ? '保存中…' : '保存配置'}
       </button>
