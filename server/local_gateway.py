@@ -46,6 +46,7 @@ import keystore
 import local_db
 import prompt_cache
 import prompt_router
+import share_pool
 import subscription_providers
 import subscriptions as subscriptions_mod
 
@@ -74,6 +75,17 @@ def load_free_providers_catalog() -> list[dict]:
     """Layer 1 内置目录 + 用户覆盖（~/.local-llm-proxy/free_providers.user.yaml）。"""
     base = _load_yaml(DATA_DIR / "free_providers.yaml").get("providers", [])
     user_path = Path.home() / ".local-llm-proxy" / "free_providers.user.yaml"
+    user = _load_yaml(user_path).get("providers", []) if user_path.exists() else []
+    by_id = {p["id"]: p for p in base}
+    for p in user:
+        by_id[p["id"]] = {**by_id.get(p["id"], {}), **p}
+    return list(by_id.values())
+
+
+def load_shared_providers_catalog() -> list[dict]:
+    """Layer 3 P2P 共享池目录。"""
+    base = _load_yaml(DATA_DIR / "shared_providers.yaml").get("providers", [])
+    user_path = Path.home() / ".local-llm-proxy" / "shared_providers.user.yaml"
     user = _load_yaml(user_path).get("providers", []) if user_path.exists() else []
     by_id = {p["id"]: p for p in base}
     for p in user:
@@ -846,19 +858,89 @@ async def paid_catalog():
 
 
 @app.get("/__local__/share-pool")
-async def share_pool():
-    """Layer 3 用户分享池 —— 来自板块③ 贡献网络。
-
-    本地网关单独运行时无法获取真实分享池（需要 VPS 端 worker_pool）。
-    返回空列表 + 提示，等 P2 接入板块③ 时再填充。
-    """
+async def share_pool_status():
+    """Layer 3 分享池：catalog 模板 + 已连接的 VPS 状态。"""
+    catalog = load_shared_providers_catalog()
+    installed = await local_db.list_providers()
+    shared_installed = [p for p in installed if p.get("tier") == "shared"]
+    enriched = []
+    for p in shared_installed:
+        vps_root = (p.get("base_url") or "").rstrip("/")
+        if vps_root.endswith("/v1"):
+            vps_root = vps_root[:-3]
+        net = await share_pool.fetch_network(vps_root) if vps_root else {"ok": False}
+        models_list = await share_pool.fetch_models(vps_root) if vps_root else []
+        enriched.append({
+            "provider_id":   p["provider_id"],
+            "display_name":  p["display_name"],
+            "id":            p["id"],
+            "vps_url":       vps_root,
+            "online":        net.get("ok", False),
+            "summary":       net.get("summary", {}),
+            "workers":       net.get("workers", []),
+            "models":        models_list,
+        })
     return {
-        "providers": [],
-        "available": False,
-        "notice": "分享池需要连接 VPS 贡献网络（板块③）。"
-                  "请到「Agent」页登录账号、启动 worker，"
-                  "并到 Onboarding 页配置 VPS URL 才能看到。",
+        "catalog":   catalog,
+        "connected": enriched,
+        "available": len(enriched) > 0,
     }
+
+
+class ShareConnectPayload(BaseModel):
+    vps_url: str
+    api_key: str
+    display_name: str = "P2P 共享池（VPS）"
+
+
+@app.post("/__local__/share-pool/connect")
+async def share_pool_connect(payload: ShareConnectPayload):
+    """连接到一个 VPS：验证 key → 加为 tier=shared local_provider。"""
+    vps_root = payload.vps_url.rstrip("/")
+    if vps_root.endswith("/v1"):
+        vps_root = vps_root[:-3]
+    check = await share_pool.verify_credentials(vps_root, payload.api_key)
+    if not check.get("ok"):
+        raise HTTPException(400, f"无法连接 VPS：{check.get('error', 'unknown')}")
+    # 写 keystore（每个 vps_url 独立 key_ref，可同时挂多个 VPS）
+    key_ref = "shared-" + vps_root.replace("://", "-").replace("/", "-").replace(":", "-")
+    keystore.set_key(key_ref, payload.api_key)
+    models = await share_pool.fetch_models(vps_root)
+    row_id = await local_db.add_provider(
+        provider_id="shared-network",
+        display_name=payload.display_name,
+        tier="shared",
+        base_url=vps_root + "/v1",
+        auth_type="bearer",
+        key_ref=key_ref,
+        models=models,
+        protocol="openai",
+    )
+    return {
+        "id":          row_id,
+        "vps_url":     vps_root,
+        "model_count": check.get("model_count", len(models)),
+        "models":      models,
+    }
+
+
+@app.post("/__local__/share-pool/disconnect/{provider_row_id}")
+async def share_pool_disconnect(provider_row_id: int):
+    p = await local_db.get_provider(provider_row_id)
+    if not p:
+        raise HTTPException(404, "Provider not found")
+    if p.get("key_ref"):
+        keystore.delete_key(p["key_ref"])
+    await local_db.delete_provider(provider_row_id)
+    share_pool.clear_cache()
+    return {"ok": True}
+
+
+@app.post("/__local__/share-pool/refresh")
+async def share_pool_refresh():
+    """手动清缓存，下次 GET 会重新拉。"""
+    share_pool.clear_cache()
+    return {"ok": True}
 
 
 @app.get("/__local__/ccswitch/available")

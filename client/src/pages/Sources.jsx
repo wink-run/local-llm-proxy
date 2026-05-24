@@ -306,8 +306,155 @@ const SECTIONS = [
   { tier: 'bonus', title: '🎁 新用户福利', subtitle: '注册即送 / 限时免费配额；用完再换其它 free 源' },
   { tier: 'free',  title: '免费层',        subtitle: '不消耗额度，优先选择' },
   { tier: 'paid',  title: '订阅 / 付费层', subtitle: '自有 API key 余额（按 token 计费）' },
-  { tier: 'shared', title: '分享层',       subtitle: 'P2P 算力（板块③ 接通后启用）' },
+  { tier: 'shared', title: '🤝 P2P 共享池', subtitle: 'Token Bank 共享网络：可消费别人贡献的 / 也可贡献自己的' },
 ];
+
+// ── SharedPoolSection ─────────────────────────────────────────────────
+
+function SharedPoolSection() {
+  const [data, setData] = useState(null);
+  const [showConnect, setShowConnect] = useState(false);
+  const [vpsUrl, setVpsUrl] = useState('http://81.70.249.144:8000');
+  const [apiKey, setApiKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [refresh, setRefresh] = useState(0);
+
+  useEffect(() => {
+    (async () => {
+      const r = await api('/__local__/share-pool');
+      if (r.ok) setData(r.body);
+    })();
+  }, [refresh]);
+
+  const handleConnect = async () => {
+    if (!vpsUrl || !apiKey) return;
+    setBusy(true); setError(null);
+    const { ok, body } = await api('/__local__/share-pool/connect', {
+      method: 'POST',
+      body: JSON.stringify({ vps_url: vpsUrl, api_key: apiKey }),
+    });
+    setBusy(false);
+    if (ok) {
+      setShowConnect(false); setApiKey('');
+      setRefresh((k) => k + 1);
+    } else {
+      setError(body?.detail || JSON.stringify(body));
+    }
+  };
+
+  const handleDisconnect = async (id) => {
+    if (!confirm('断开 P2P 共享池连接？已存的 API key 会一并删除。')) return;
+    await api(`/__local__/share-pool/disconnect/${id}`, { method: 'POST' });
+    setRefresh((k) => k + 1);
+  };
+
+  const handleRefresh = async () => {
+    await api('/__local__/share-pool/refresh', { method: 'POST' });
+    setRefresh((k) => k + 1);
+  };
+
+  if (!data) return <p className="text-xs text-gray-400">加载中…</p>;
+
+  const connected = data.connected || [];
+
+  return (
+    <div className="space-y-3">
+      {/* 顶部说明 banner */}
+      <div className="border border-purple-200 dark:border-purple-900 bg-purple-50 dark:bg-purple-900/20 rounded-lg p-3 text-xs text-purple-900 dark:text-purple-200">
+        <p className="font-semibold">P2P 共享池 = 旧 DESIGN.md 的板块③ 接通到新架构</p>
+        <p className="mt-1 opacity-90">
+          消费者：填 VPS URL + sk-* 用户 key 即可路由到分享池<br />
+          贡献者：去 <a href="#" onClick={(e) => { e.preventDefault(); window.history.pushState({}, '', '/agent'); window.dispatchEvent(new Event('popstate')); }} className="underline text-purple-600 dark:text-purple-300">⚙ Agent 页</a> 配 worker_key 启动，把本地 Ollama 暴露给社区
+        </p>
+      </div>
+
+      {/* 已连接的 VPS 们 */}
+      {connected.map((conn) => (
+        <div key={conn.id} className="border border-gray-200 dark:border-gray-800 rounded-lg bg-white dark:bg-gray-900 p-4">
+          <div className="flex items-start gap-3">
+            <div className="text-2xl">🤝</div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-semibold text-sm">{conn.display_name}</h3>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded ${conn.online ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300' : 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300'}`}>
+                  {conn.online ? '✓ 在线' : '✗ 离线'}
+                </span>
+                <code className="text-[10px] text-gray-500 font-mono">{conn.vps_url}</code>
+              </div>
+              <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+                <div className="bg-gray-50 dark:bg-gray-950 rounded p-2">
+                  <p className="text-gray-500 text-[10px]">在线 Worker</p>
+                  <p className="text-lg font-semibold">{conn.summary?.online_workers || 0}</p>
+                </div>
+                <div className="bg-gray-50 dark:bg-gray-950 rounded p-2">
+                  <p className="text-gray-500 text-[10px]">活跃用户</p>
+                  <p className="text-lg font-semibold">{conn.summary?.active_users || 0}</p>
+                </div>
+                <div className="bg-gray-50 dark:bg-gray-950 rounded p-2">
+                  <p className="text-gray-500 text-[10px]">可用模型</p>
+                  <p className="text-lg font-semibold">{(conn.models || []).length}</p>
+                </div>
+              </div>
+              {/* 在线 worker 卡片 */}
+              {(conn.workers || []).length > 0 && (
+                <details className="mt-2">
+                  <summary className="text-xs text-gray-500 cursor-pointer select-none">展开 {conn.workers.length} 个在线节点</summary>
+                  <div className="mt-2 space-y-1">
+                    {conn.workers.slice(0, 10).map((w) => (
+                      <div key={w.worker_id} className="flex items-center justify-between text-xs px-2 py-1 rounded bg-gray-50 dark:bg-gray-950">
+                        <span>{'★'.repeat(w.stars || 1)} <span className="text-gray-700 dark:text-gray-300">{w.name}</span></span>
+                        <span className="text-gray-500 font-mono text-[10px]">{(w.models || []).join(', ')}</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <button onClick={handleRefresh} className="text-xs px-2 py-1 rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800">刷新</button>
+              <button onClick={() => handleDisconnect(conn.id)} className="text-xs px-2 py-1 rounded border border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30">断开</button>
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {/* 连接表单 / 入口 */}
+      {!showConnect ? (
+        <button onClick={() => setShowConnect(true)} className="w-full text-sm py-3 rounded border border-dashed border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-900/20">
+          + 连接到 {connected.length > 0 ? '另一个' : ''} P2P 共享池
+        </button>
+      ) : (
+        <div className="border border-purple-200 dark:border-purple-900 rounded-lg bg-white dark:bg-gray-900 p-4 space-y-3">
+          <h3 className="font-semibold text-sm">连接到 Token Bank VPS</h3>
+          <div>
+            <label className="text-xs text-gray-500">VPS URL</label>
+            <input value={vpsUrl} onChange={(e) => setVpsUrl(e.target.value)} placeholder="http://81.70.249.144:8000"
+                   className="w-full mt-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-3 py-2 text-sm font-mono" />
+            <p className="text-[10px] text-gray-400 mt-0.5">默认 demo VPS；可换自己部署的</p>
+          </div>
+          <div>
+            <label className="text-xs text-gray-500">用户 API Key（sk-...）</label>
+            <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..."
+                   className="w-full mt-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-3 py-2 text-sm font-mono" />
+            <p className="text-[10px] text-gray-400 mt-0.5">
+              没有？在 <a href={`${vpsUrl}/app`} target="_blank" rel="noreferrer" className="underline text-blue-600">{vpsUrl}/app</a> 注册并在「我的 API Keys」创建
+            </p>
+          </div>
+          {error && (
+            <div className="text-xs bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded px-3 py-2">✗ {error}</div>
+          )}
+          <div className="flex justify-end gap-2">
+            <button onClick={() => { setShowConnect(false); setError(null); }} className="text-xs px-3 py-1.5 rounded border border-gray-200 dark:border-gray-700">取消</button>
+            <button onClick={handleConnect} disabled={busy || !vpsUrl || !apiKey} className="text-xs px-3 py-1.5 rounded bg-blue-600 text-white disabled:opacity-40">
+              {busy ? '验证中…' : '验证并启用'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function Sources() {
   const [freeCatalog, setFreeCatalog] = useState([]);
@@ -345,7 +492,7 @@ export default function Sources() {
     bonus:  bonusEntries,
     free:   freeCatalog,
     paid:   paidCatalog.filter((p) => !p.requires_p1),
-    shared: [],
+    shared: [],  // 分享层走 SharedPoolSection 独立组件渲染
   };
 
   return (
@@ -357,8 +504,19 @@ export default function Sources() {
 
       {SECTIONS.map((sec) => {
         const items = sectionEntries[sec.tier];
-        if (sec.tier === 'shared') return null;  // 暂隐
         if (sec.tier === 'bonus' && items.length === 0) return null;  // 没福利就不显示
+        if (sec.tier === 'shared') {
+          return (
+            <section key={sec.tier} className="mb-6">
+              <div className="flex items-baseline gap-2 mb-3">
+                <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+                <h2 className="font-semibold text-sm">{sec.title}</h2>
+                <span className="text-xs text-gray-500">— {sec.subtitle}</span>
+              </div>
+              <SharedPoolSection />
+            </section>
+          );
+        }
         return (
           <section key={sec.tier} className="mb-6">
             <div className="flex items-baseline gap-2 mb-3">

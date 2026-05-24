@@ -1,0 +1,23 @@
+# 板块② Layer 3：P2P 共享池
+# 设计：DESIGN_v2.md §2.5
+# 用户接入流程：
+#   1) 在本应用配 VPS URL（含协议端口） + 自己的 sk-* user API key
+#   2) 网关把这个 VPS 当成 tier=shared provider 加进供给池
+#   3) 调用时和其它 provider 一样按场景/规则路由；VPS 内部再用 worker pool 转发
+#   4) 同时可（可选）启动 Agent 贡献自己的 Ollama → 进入分享池服务别人
+
+providers:
+  - id: shared-network
+    display: "P2P 共享池（VPS）"
+    tier: shared
+    base_url: "{VPS_URL}/v1"             # 模板：用户填 VPS URL
+    auth: { type: "bearer", env: "TOKENBANK_USER_KEY" }
+    protocol: openai                      # VPS 已是 OpenAI 兼容
+    signup_url: ""                        # 用户填 VPS URL 后通过 /app 注册
+    guide_md: "guides/shared/shared-network.md"
+    requires_vps_url: true                # 触发 UI 让用户填 VPS URL
+    models: []                            # 动态从 VPS /v1/models 拉
+    quota_hint: "按个人积分余额计费；积分可通过贡献 / 充值获取"
+    notes: |
+      消费者：填 VPS URL + sk-* 用户 key 即可路由到分享池
+      贡献者：去 Agent 页（旧 UI）配 worker_key，启动 → 把本地 Ollama 暴露
