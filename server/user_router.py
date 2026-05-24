@@ -229,6 +229,12 @@ async def spin_status(uid: int = Depends(get_current_user_id)):
     return await db.get_spin_status(uid)
 
 
+@router.get("/dashboard-stats")
+async def dashboard_stats(days: int = 30, uid: int = Depends(get_current_user_id)):
+    stats = await db.get_dashboard_stats(uid, days)
+    return {"stats": stats, "days": days}
+
+
 @router.get("/stats")
 async def user_stats(uid: int = Depends(get_current_user_id)):
     user_workers = [w for w in _pool.all_workers() if w.user_id == uid]

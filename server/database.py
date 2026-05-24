@@ -140,6 +140,18 @@ async def init_db() -> None:
             )
         """)
 
+        # scene_routes
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS scene_routes (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     INTEGER NOT NULL REFERENCES users(id),
+                scene_name  TEXT NOT NULL,
+                icon        TEXT DEFAULT '🔀',
+                steps       TEXT NOT NULL DEFAULT '[]',
+                created_at  TEXT DEFAULT (datetime('now'))
+            )
+        """)
+
         # 默认配置项
         for k, v in [
             ("referral_reward", "100"),
@@ -161,6 +173,7 @@ async def init_db() -> None:
     await _migrate_spin_logs()
     await _migrate_virtual_agents()
     await _migrate_image_support()
+    await _migrate_scene_routes()
 
 
 async def _migrate() -> None:
@@ -918,6 +931,144 @@ async def delete_virtual_agent(agent_id: int) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM virtual_agents WHERE id=?", (agent_id,))
         await db.commit()
+
+
+async def _migrate_scene_routes() -> None:
+    """Add scene_route_id + app_name to api_keys if missing."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("PRAGMA table_info(api_keys)") as cur:
+            cols = {r[1] for r in await cur.fetchall()}
+        if "scene_route_id" not in cols:
+            await db.execute(
+                "ALTER TABLE api_keys ADD COLUMN scene_route_id INTEGER REFERENCES scene_routes(id)"
+            )
+        if "app_name" not in cols:
+            await db.execute(
+                "ALTER TABLE api_keys ADD COLUMN app_name TEXT DEFAULT ''"
+            )
+        await db.commit()
+
+
+# ── Scene Routes ──────────────────────────────────────────────────────────────
+
+async def list_scene_routes(user_id: int) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM scene_routes WHERE user_id=? ORDER BY id", (user_id,)
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def create_scene_route(user_id: int, scene_name: str, icon: str, steps: list) -> dict:
+    import json as _json
+    steps_json = _json.dumps(steps, ensure_ascii=False)
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "INSERT INTO scene_routes(user_id, scene_name, icon, steps) VALUES(?,?,?,?)",
+            (user_id, scene_name, icon, steps_json),
+        )
+        row_id = cur.lastrowid
+        await db.commit()
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM scene_routes WHERE id=?", (row_id,)) as c:
+            row = await c.fetchone()
+    return dict(row)
+
+
+async def update_scene_route(route_id: int, user_id: int, scene_name: str, icon: str, steps: list) -> bool:
+    import json as _json
+    steps_json = _json.dumps(steps, ensure_ascii=False)
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE scene_routes SET scene_name=?, icon=?, steps=? WHERE id=? AND user_id=?",
+            (scene_name, icon, steps_json, route_id, user_id),
+        )
+        await db.commit()
+    return cur.rowcount > 0
+
+
+async def delete_scene_route(route_id: int, user_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE api_keys SET scene_route_id=NULL WHERE scene_route_id=? AND user_id=?",
+            (route_id, user_id),
+        )
+        cur = await db.execute(
+            "DELETE FROM scene_routes WHERE id=? AND user_id=?", (route_id, user_id)
+        )
+        await db.commit()
+    return cur.rowcount > 0
+
+
+async def get_scene_route_by_key(key_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT sr.* FROM scene_routes sr
+               JOIN api_keys ak ON ak.scene_route_id = sr.id
+               WHERE ak.id=?""",
+            (key_id,),
+        ) as cur:
+            row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def bind_key_to_scene_route(key_id: int, user_id: int, scene_route_id: Optional[int], app_name: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE api_keys SET scene_route_id=?, app_name=? WHERE id=? AND user_id=?",
+            (scene_route_id, app_name, key_id, user_id),
+        )
+        await db.commit()
+    return cur.rowcount > 0
+
+
+async def list_keys_with_scene(user_id: int) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT ak.id, ak.key, ak.note, ak.app_name, ak.is_active,
+                      ak.scene_route_id, sr.scene_name, sr.icon, sr.steps,
+                      ak.created_at
+               FROM api_keys ak
+               LEFT JOIN scene_routes sr ON sr.id = ak.scene_route_id
+               WHERE ak.user_id=?
+               ORDER BY ak.id""",
+            (user_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def get_dashboard_stats(user_id: int, days: int = 30) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT
+                 ak.id        AS key_id,
+                 ak.key       AS api_key,
+                 ak.app_name,
+                 ak.note,
+                 sr.scene_name,
+                 sr.icon,
+                 COALESCE(SUM(t.tokens), 0)       AS total_tokens,
+                 COALESCE(SUM(ABS(t.delta)), 0)   AS total_credits,
+                 COUNT(t.id)                       AS request_count
+               FROM api_keys ak
+               LEFT JOIN scene_routes sr ON sr.id = ak.scene_route_id
+               LEFT JOIN transactions t
+                 ON t.user_id = ak.user_id
+                 AND t.type = 'consume'
+                 AND t.created_at >= datetime('now', ?)
+               WHERE ak.user_id = ?
+               GROUP BY ak.id
+               ORDER BY total_tokens DESC""",
+            (f"-{days} days", user_id),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
 
 
 async def get_wall_users(limit: int = 50) -> list[dict]:

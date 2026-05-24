@@ -14,6 +14,7 @@ export default function Sidebar() {
     { to: '/gateway',   icon: '🔀', label: '网关' },
     { to: '/providers', icon: '⚡', label: '供给源' },
     { to: '/contribute',icon: '💪', label: '贡献' },
+    { to: '/dashboard', icon: '📊', label: '盘点' },
     { to: '/network',   icon: '🌐', label: t('nav.network') },
     { to: '/debug',     icon: '🐛', label: t('nav.debug') },
   ];

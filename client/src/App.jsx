@@ -9,6 +9,7 @@ import TokenDashboard from './pages/TokenDashboard';
 import Gateway    from './pages/Gateway';
 import Providers  from './pages/Providers';
 import Contribute from './pages/Contribute';
+import Dashboard  from './pages/Dashboard';
 import Network    from './pages/Network';
 import Config     from './pages/Config';
 import Debug      from './pages/Debug';
@@ -34,6 +35,7 @@ function Layout() {
           <Route path="/gateway"   element={user ? <Gateway />        : <Navigate to="/config" replace />} />
           <Route path="/providers" element={user ? <Providers />      : <Navigate to="/config" replace />} />
           <Route path="/contribute"element={user ? <Contribute />     : <Navigate to="/config" replace />} />
+          <Route path="/dashboard" element={user ? <Dashboard />      : <Navigate to="/config" replace />} />
           <Route path="/profile"   element={user ? <Profile />        : <Navigate to="/config" replace />} />
           <Route path="/network"   element={<Network />} />
           <Route path="/config"    element={<Config />} />
