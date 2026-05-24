@@ -57,7 +57,8 @@ log = logging.getLogger("local-gateway")
 
 # ── 路径 & 资源加载 ─────────────────────────────────────────────────────────
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+# __file__ = .../server/local/local_gateway.py → parents[2] = repo root
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(os.getenv("LLP_DATA_DIR", REPO_ROOT / "data"))
 GUIDES_DIR = DATA_DIR / "guides"
 

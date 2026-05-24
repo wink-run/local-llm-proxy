@@ -7,10 +7,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends tzdata \
 
 WORKDIR /app
 
+# 共享 requirements 在 server/ 根（build context = ./server）
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+# 只拷 VPS 端代码（不含 local/ 本地网关代码，镜像更小）
+COPY vps/ ./vps/
+
+WORKDIR /app/vps
 
 EXPOSE 8000
 

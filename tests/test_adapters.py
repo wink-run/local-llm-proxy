@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "server"))
+sys.path.insert(0, str(ROOT / "server" / "local"))
 
 import adapters  # noqa: E402
 from adapters import anthropic as ant_mod  # noqa: E402

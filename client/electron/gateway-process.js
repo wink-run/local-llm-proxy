@@ -27,11 +27,13 @@ function log(msg) {
 
 function resolveServerDir() {
   // dev: electron __dirname = .../local-llm-proxy/client/electron
-  // server lives at .../local-llm-proxy/server/
+  // 本地网关代码现在在 .../local-llm-proxy/server/local/
   const candidates = [
-    path.resolve(__dirname, '..', '..', 'server'),
-    path.resolve(__dirname, '..', 'server'),
+    path.resolve(__dirname, '..', '..', 'server', 'local'),
+    path.resolve(__dirname, '..', 'server', 'local'),
     process.env.LLP_SERVER_DIR,
+    // 兼容旧布局
+    path.resolve(__dirname, '..', '..', 'server'),
   ].filter(Boolean);
   for (const c of candidates) {
     if (fs.existsSync(path.join(c, 'local_gateway.py'))) return c;

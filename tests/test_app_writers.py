@@ -18,7 +18,7 @@ import pytest
 
 # 让 `import app_writers` 能找到 server/
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "server"))
+sys.path.insert(0, str(ROOT / "server" / "local"))
 
 import app_writers  # noqa: E402
 

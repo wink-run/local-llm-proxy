@@ -18,7 +18,8 @@ import yaml
 import local_db
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+# __file__ = .../server/local/dashboard.py → parents[2] = repo root
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(os.getenv("LLP_DATA_DIR", REPO_ROOT / "data"))
 
 # ── 价格表：启动加载一次 ─────────────────────────────────────────────

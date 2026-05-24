@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "server"))
+sys.path.insert(0, str(ROOT / "server" / "local"))
 
 import local_db  # noqa: E402
 import local_gateway  # noqa: E402

@@ -2,6 +2,7 @@ services:
   proxy:
     build:
       context: ./server
+      dockerfile: vps/Dockerfile
     ports:
       - "8000:8000"
     env_file: .env
