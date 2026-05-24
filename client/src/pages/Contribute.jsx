@@ -1,303 +1,267 @@
-/**
- * Contribute —— 板块③ 贡献面板（Phase C）
- *
- * 设计文档：DESIGN_v2.md §3
- *
- * 三类 source_kind：
- *   1. 本地算力（local）—— 主 UI 默认开放，Ollama / vLLM 等
- *   2. 私有网关（gateway）—— 主 UI 默认开放，公司内 OneAPI / 自建 Azure 等
- *   3. 富余订阅 key（subscription）—— 高级模式开关后才可见，三重 ack
- */
-import React, { useEffect, useState } from 'react';
-
-const LOCAL_GATEWAY_URL =
-  typeof window !== 'undefined' && window.localStorage?.getItem('llp.gatewayUrl')
-    ? window.localStorage.getItem('llp.gatewayUrl')
-    : 'http://127.0.0.1:11435';
-
-async function api(path, opts = {}) {
-  const res = await fetch(LOCAL_GATEWAY_URL + path, {
-    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
-    ...opts,
-  });
-  const text = await res.text();
-  let body;
-  try { body = text ? JSON.parse(text) : null; } catch { body = text; }
-  return { ok: res.ok, status: res.status, body };
+// client/src/pages/Contribute.jsx
+import React, { useEffect, useState, useRef } from 'react';
+import { getStats, getSettlements } from '../api/client';
+import RateChart from '../components/RateChart';
+function multiplierToStars(m) {
+  const n = m >= 1.3 ? 5 : m >= 1.1 ? 4 : m >= 0.9 ? 3 : m >= 0.7 ? 2 : 1;
+  return '★'.repeat(n) + '☆'.repeat(5 - n);
 }
 
-// ── AddSourceModal ─────────────────────────────────────────────────────
+const LOCAL_GW = 'http://127.0.0.1:11430/v1';
 
-function AddSourceModal({ defaultKind, advancedMode, onAdded, onClose }) {
-  const [kind, setKind] = useState(defaultKind);
-  const [display, setDisplay] = useState('');
-  const [baseUrl, setBaseUrl] = useState('');
-  const [models, setModels] = useState('');
-  const [quotaUnit, setQuotaUnit] = useState('');
-  const [quotaTotal, setQuotaTotal] = useState(0);
-  const [schedule, setSchedule] = useState('24/7');
-  const [notes, setNotes] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(null);
-
-  const submit = async () => {
-    setSaving(true); setError(null);
-    const { ok, body } = await api('/__local__/contribute/sources', {
-      method: 'POST',
-      body: JSON.stringify({
-        source_kind: kind, display_name: display, base_url: baseUrl,
-        models: models.split(',').map((s) => s.trim()).filter(Boolean),
-        quota_unit: quotaUnit, quota_total: parseFloat(quotaTotal) || 0,
-        schedule, notes,
-      }),
-    });
-    setSaving(false);
-    if (!ok) {
-      setError(body?.detail || JSON.stringify(body));
-      return;
-    }
-    onAdded?.();
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-white dark:bg-gray-900 rounded-lg p-6 max-w-lg w-full" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-semibold mb-4">新增贡献源</h2>
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs text-gray-500">类型</label>
-            <select value={kind} onChange={(e) => setKind(e.target.value)} className="w-full mt-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-3 py-2 text-sm">
-              <option value="local">本地算力（local）</option>
-              <option value="gateway">私有网关（gateway）</option>
-              {advancedMode && <option value="subscription">⚠ 富余订阅 key（subscription）</option>}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs text-gray-500">显示名</label>
-            <input value={display} onChange={(e) => setDisplay(e.target.value)} placeholder={kind === 'local' ? 'Ollama qwen3-32b' : kind === 'gateway' ? '公司 OneAPI' : 'My Claude Pro'} className="w-full mt-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-3 py-2 text-sm" />
-          </div>
-          {kind !== 'local' && (
-            <div>
-              <label className="text-xs text-gray-500">Base URL</label>
-              <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="http://intranet:8080/v1" className="w-full mt-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-3 py-2 text-sm" />
-            </div>
-          )}
-          <div>
-            <label className="text-xs text-gray-500">模型（逗号分隔）</label>
-            <input value={models} onChange={(e) => setModels(e.target.value)} placeholder="qwen3-32b, llama3-70b" className="w-full mt-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-3 py-2 text-sm" />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-xs text-gray-500">额度单位</label>
-              <select value={quotaUnit} onChange={(e) => setQuotaUnit(e.target.value)} className="w-full mt-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-3 py-2 text-sm">
-                <option value="">— 无</option>
-                <option value="usd">USD</option>
-                <option value="tokens">Tokens</option>
-                <option value="rpm">RPM</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-gray-500">额度总量</label>
-              <input type="number" value={quotaTotal} onChange={(e) => setQuotaTotal(e.target.value)} className="w-full mt-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-3 py-2 text-sm" />
-            </div>
-          </div>
-          <div>
-            <label className="text-xs text-gray-500">时间表 / 备注</label>
-            <input value={schedule} onChange={(e) => setSchedule(e.target.value)} placeholder="24/7  或  仅工作时间 09-18" className="w-full mt-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-3 py-2 text-sm" />
-          </div>
-        </div>
-        {error && <div className="mt-3 text-xs bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded px-3 py-2">✗ {error}</div>}
-        <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="text-sm px-3 py-1.5 rounded border border-gray-200 dark:border-gray-700">取消</button>
-          <button onClick={submit} disabled={saving || !display} className="text-sm px-3 py-1.5 rounded bg-blue-600 text-white disabled:opacity-50">{saving ? '保存中…' : '保存'}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── AckModal ───────────────────────────────────────────────────────────
-
-function AckModal({ onConfirm, onClose }) {
-  const [ackText, setAckText] = useState('');
-  const [acked, setAcked] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+function ContributionConfigCard() {
+  const [selectedNames,   setSelectedNames]   = useState(new Set()); // Set<string>
+  const [availableModels, setAvailableModels] = useState([]);        // {name, type}[]
+  const [nodeName,        setNodeName]        = useState('');
+  const [autoStart,       setAutoStart]       = useState(false);
+  const [saving,          setSaving]          = useState(false);
+  const [savedMsg,        setSavedMsg]        = useState('');
 
   useEffect(() => {
-    (async () => {
-      const { body } = await api('/__local__/contribute/advanced-mode/text');
-      setAckText(body?.text || '');
-    })();
+    if (!window.electronAPI) return;
+    window.electronAPI.config.read().then(saved => {
+      const avail = [];
+      const seen  = new Set();
+      for (const p of (saved?.providers || [])) {
+        if (p.type === 'p2p') continue;
+        for (const m of (p.models || [])) {
+          const name = typeof m === 'string' ? m : m.name;
+          const type = typeof m === 'string' ? 'chat' : (m.type || 'chat');
+          if (!name || seen.has(name)) continue;
+          seen.add(name);
+          avail.push({ name, type });
+        }
+      }
+      setAvailableModels(avail);
+
+      const prevNames = new Set(
+        (saved?.model_groups || [])
+          .flatMap(g => g.models || [])
+          .map(m => typeof m === 'string' ? m : m.name)
+          .filter(Boolean)
+      );
+      setSelectedNames(prevNames);
+      setNodeName(saved?.name || '');
+      setAutoStart(!!saved?.auto_start);
+    }).catch(() => {});
   }, []);
 
-  const submit = async () => {
-    if (!acked) return;
-    setSubmitting(true);
-    await api('/__local__/contribute/advanced-mode/enable', {
-      method: 'POST',
-      body: JSON.stringify({ ack: true, user_hint: navigator.userAgent.slice(0, 80) }),
+  function toggleModel(name) {
+    setSelectedNames(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
     });
-    setSubmitting(false);
-    onConfirm?.();
-  };
+  }
+
+  async function save() {
+    if (!window.electronAPI) return;
+    setSaving(true);
+    try {
+      const models       = availableModels.filter(m => selectedNames.has(m.name));
+      const model_groups = [{ base_url: LOCAL_GW, token: '', models }];
+      const current      = (await window.electronAPI.config.read()) || {};
+      const updated      = { ...current, model_groups, llm_base_url: LOCAL_GW, llm_token: '', models, name: nodeName, auto_start: autoStart };
+      await window.electronAPI.config.write(updated);
+      setSavedMsg('已保存'); setTimeout(() => setSavedMsg(''), 2000);
+    } finally { setSaving(false); }
+  }
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-white dark:bg-gray-900 rounded-lg p-6 max-w-2xl w-full" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-semibold mb-3 text-red-600 dark:text-red-400">⚠ 启用高级模式 / 高风险贡献源</h2>
-        <pre className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-900 text-yellow-900 dark:text-yellow-200 rounded p-4 text-xs whitespace-pre-wrap font-sans max-h-96 overflow-y-auto">{ackText}</pre>
-        <label className="mt-4 flex items-start gap-2 text-sm cursor-pointer">
-          <input type="checkbox" checked={acked} onChange={(e) => setAcked(e.target.checked)} className="mt-0.5" />
-          <span>我已阅读并理解以上 <strong>4 条具体风险</strong>，并自愿承担相应后果。</span>
-        </label>
-        <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="text-sm px-3 py-1.5 rounded border border-gray-200 dark:border-gray-700">取消</button>
-          <button onClick={submit} disabled={!acked || submitting} className="text-sm px-3 py-1.5 rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">
-            {submitting ? '处理中…' : '确认启用'}
-          </button>
-        </div>
+    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium text-gray-800 dark:text-gray-200">贡献节点配置</span>
+        {savedMsg && <span className="text-xs text-green-600 dark:text-green-400">{savedMsg}</span>}
       </div>
-    </div>
-  );
-}
 
-// ── 主页面 ─────────────────────────────────────────────────────────────
+      {/* Fixed forwarding URL */}
+      <div className="flex items-center gap-2 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2">
+        <span className="text-[10px] text-gray-400 shrink-0">转发地址</span>
+        <code className="text-xs font-mono text-green-600 dark:text-green-400 truncate">{LOCAL_GW}</code>
+      </div>
 
-export default function Contribute() {
-  const [advancedMode, setAdvancedMode] = useState(false);
-  const [sources, setSources] = useState([]);
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [addKind, setAddKind] = useState('local');
-  const [showAckModal, setShowAckModal] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
-
-  useEffect(() => {
-    (async () => {
-      const { ok, body } = await api('/__local__/contribute/sources');
-      if (ok) {
-        setSources(body.sources || []);
-        setAdvancedMode(body.advanced_mode);
-      }
-    })();
-  }, [refreshKey]);
-
-  const handleToggle = async (id, enabled) => {
-    await api(`/__local__/contribute/sources/${id}/toggle?enabled=${enabled}`, { method: 'POST' });
-    setRefreshKey((k) => k + 1);
-  };
-
-  const handleDelete = async (id) => {
-    if (!confirm('删除这个贡献源？')) return;
-    await api(`/__local__/contribute/sources/${id}`, { method: 'DELETE' });
-    setRefreshKey((k) => k + 1);
-  };
-
-  const handleDisableAdvanced = async () => {
-    if (!confirm('关闭高级模式后，已添加的 subscription 类来源会保留但隐藏在主 UI。继续？')) return;
-    await api('/__local__/contribute/advanced-mode/disable', { method: 'POST' });
-    setRefreshKey((k) => k + 1);
-  };
-
-  const groupedSources = {
-    local: sources.filter((s) => s.source_kind === 'local'),
-    gateway: sources.filter((s) => s.source_kind === 'gateway'),
-    subscription: sources.filter((s) => s.source_kind === 'subscription'),
-  };
-
-  const SECTIONS = [
-    { kind: 'local',    icon: '🖥️', label: '本地算力',      desc: 'Ollama / vLLM 等本机模型。最安全。' },
-    { kind: 'gateway',  icon: '🏢', label: '私有网关',      desc: '公司内 OneAPI / NewAPI / 自建 Azure。自行评估合规。' },
-    { kind: 'subscription', icon: '⚠', label: '富余订阅 key', desc: '订阅账号转 API。违反上游 ToS，可能封号 + 联合风控。', advanced: true },
-  ];
-
-  return (
-    <div className="p-6 max-w-5xl mx-auto">
-      <header className="mb-6">
-        <h1 className="text-xl font-semibold">贡献体系</h1>
-        <p className="text-xs text-gray-500 mt-1">
-          板块③：把本机富余的算力 / API 额度共享到 Token Bank 网络，换取积分。
-          高风险来源（订阅 key）藏在「高级模式」开关后。
-        </p>
-      </header>
-
-      {/* 高级模式开关 */}
-      <div className="mb-6 px-4 py-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex items-center justify-between">
-        <div>
-          <p className="text-sm font-medium">高级模式</p>
-          <p className="text-xs text-gray-500 mt-0.5">
-            {advancedMode ? '已启用：可添加订阅类来源，启用记录已落库。' : '关闭：仅可添加本地 / 网关类来源。'}
-          </p>
+      {/* Model selection */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">贡献模型</span>
+          {selectedNames.size > 0 && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">
+              {selectedNames.size} 个
+            </span>
+          )}
         </div>
-        {advancedMode ? (
-          <button onClick={handleDisableAdvanced} className="text-xs px-3 py-1.5 rounded border border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30">
-            关闭高级模式
-          </button>
+
+        {availableModels.length === 0 ? (
+          <p className="text-xs text-gray-400 dark:text-gray-600">请先在「供给源」中配置模型</p>
         ) : (
-          <button onClick={() => setShowAckModal(true)} className="text-xs px-3 py-1.5 rounded bg-red-600 text-white hover:bg-red-700">
-            启用高级模式
-          </button>
+          <div className="flex flex-wrap gap-1.5">
+            {availableModels.map(m => {
+              const sel     = selectedNames.has(m.name);
+              const isImage = m.type === 'image';
+              return (
+                <button key={m.name} type="button" onClick={() => toggleModel(m.name)}
+                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-mono transition-colors ${
+                    sel
+                      ? isImage
+                        ? 'bg-purple-100 dark:bg-purple-900/40 border-purple-400 dark:border-purple-700 text-purple-700 dark:text-purple-300'
+                        : 'bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-700 text-blue-700 dark:text-blue-300'
+                      : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-gray-400 dark:hover:border-gray-500'
+                  }`}>
+                  {m.name}
+                  <span className={`text-[9px] px-1 py-0.5 rounded font-medium ${
+                    sel
+                      ? isImage ? 'bg-purple-200 dark:bg-purple-800 text-purple-700 dark:text-purple-300' : 'bg-blue-200 dark:bg-blue-800 text-blue-700 dark:text-blue-300'
+                      : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                  }`}>
+                    {isImage ? '图' : '文'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         )}
       </div>
 
-      {/* 三类 source 分组 */}
-      {SECTIONS.filter((s) => !s.advanced || advancedMode).map((section) => (
-        <div key={section.kind} className="mb-6 border border-gray-200 dark:border-gray-800 rounded-lg bg-white dark:bg-gray-900 p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <h3 className="font-semibold text-sm">{section.icon} {section.label}</h3>
-              <p className="text-xs text-gray-500 mt-0.5">{section.desc}</p>
-            </div>
-            <button onClick={() => { setAddKind(section.kind); setShowAddModal(true); }} className="text-xs px-2 py-1 rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800">
-              + 添加
-            </button>
-          </div>
-          {groupedSources[section.kind].length === 0 ? (
-            <p className="text-xs text-gray-400 dark:text-gray-500 italic">暂未配置</p>
-          ) : (
-            <div className="space-y-2">
-              {groupedSources[section.kind].map((s) => (
-                <div key={s.id} className="flex items-center justify-between gap-3 px-3 py-2 rounded bg-gray-50 dark:bg-gray-950 border border-gray-100 dark:border-gray-800">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{s.display_name}</p>
-                    <p className="text-xs text-gray-500 truncate">
-                      {s.base_url || '— 本机模型'} · {s.models.join(', ') || '无模型列表'}
-                      {s.quota_unit && <span> · {s.quota_used}/{s.quota_total} {s.quota_unit}</span>}
-                      {s.schedule && <span> · {s.schedule}</span>}
-                    </p>
-                  </div>
-                  <div className="shrink-0 flex gap-1.5 items-center">
-                    <label className="flex items-center gap-1 text-xs cursor-pointer">
-                      <input type="checkbox" checked={s.enabled === 1} onChange={(e) => handleToggle(s.id, e.target.checked)} />
-                      启用
-                    </label>
-                    <button onClick={() => handleDelete(s.id)} className="text-xs px-2 py-1 rounded border border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30">删除</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      ))}
-
-      <div className="text-xs text-gray-400 dark:text-gray-500 mt-4">
-        说明：本页配置的来源由「Agent」（板块③ WebSocket Worker）实际使用。
-        启动 Agent 后，已启用的来源会被发布到 VPS 分享池，按 5 分钟周期结算积分。
+      {/* Node name */}
+      <div>
+        <label className="block text-xs text-gray-500 mb-1">节点名称</label>
+        <input value={nodeName} onChange={e => setNodeName(e.target.value)} placeholder="留空使用主机名"
+          className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500" />
       </div>
 
-      {showAddModal && (
-        <AddSourceModal
-          defaultKind={addKind}
-          advancedMode={advancedMode}
-          onAdded={() => { setShowAddModal(false); setRefreshKey((k) => k + 1); }}
-          onClose={() => setShowAddModal(false)}
-        />
+      {/* Auto-start toggle */}
+      <label className="flex items-center gap-3 cursor-pointer select-none">
+        <div onClick={() => setAutoStart(v => !v)}
+          className={`relative w-10 h-6 rounded-full transition-colors ${autoStart ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}>
+          <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${autoStart ? 'translate-x-5' : 'translate-x-1'}`} />
+        </div>
+        <span className="text-sm text-gray-700 dark:text-gray-300">启动应用时自动运行贡献节点</span>
+      </label>
+
+      <button onClick={save} disabled={saving}
+        className="px-5 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium transition-colors">
+        {saving ? '保存中…' : '保存配置'}
+      </button>
+    </div>
+  );
+}
+
+export default function Contribute() {
+  const [running,     setRunning]     = useState(false);
+  const [stats,       setStats]       = useState(null);
+  const [chartData,   setChartData]   = useState([]);
+  const [settlements, setSettlements] = useState([]);
+  const [logs,        setLogs]        = useState([]);
+  const logRef = useRef(null);
+
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    window.electronAPI.agent.getStatus().then(({ running: r }) => setRunning(r));
+    const disposeStatus = window.electronAPI.agent.onStatus(({ running: r, error }) => {
+      setRunning(r);
+      if (error) setLogs(prev => [...prev.slice(-99), `[error] ${error}`]);
+    });
+    const disposeLog = window.electronAPI.agent.onLog(line => setLogs(prev => [...prev.slice(-99), line.trimEnd()]));
+    return () => { disposeStatus?.(); disposeLog?.(); };
+  }, []);
+
+  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [logs]);
+
+  useEffect(() => {
+    function poll() {
+      getStats().then(r => {
+        setStats(r.data);
+        const t = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        setChartData(prev => [...prev.slice(-29), { time: t, value: r.data.contribute_req_per_min ?? 0 }]);
+      }).catch(() => {});
+    }
+    poll();
+    const id = setInterval(poll, 15000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    getSettlements().then(r => setSettlements((r.data.settlements || []).slice(0, 10))).catch(() => {});
+  }, []);
+
+  return (
+    <div className="p-6 space-y-5">
+      <div>
+        <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">贡献</h1>
+        <p className="text-sm text-gray-500 mt-0.5">将本地算力或 API Key 共享到 P2P 网络，赚取积分用于消费其他模型</p>
+      </div>
+
+      {/* Start/Stop */}
+      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl px-5 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className="relative flex h-3 w-3">
+            {running && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />}
+            <span className={`relative inline-flex rounded-full h-3 w-3 ${running ? 'bg-green-500' : 'bg-gray-600'}`} />
+          </span>
+          <span className="text-base font-medium text-gray-800 dark:text-gray-200">{running ? '贡献中' : '已停止'}</span>
+          {stats && running && (
+            <span className="text-xs text-gray-500">agent 运行中 · {stats.contribute_req_per_min ?? 0} req/min</span>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => window.electronAPI?.agent.start()} disabled={running}
+            className="px-4 py-2 bg-green-700 hover:bg-green-600 disabled:opacity-40 rounded-lg text-sm font-medium text-white transition-colors">启动</button>
+          <button onClick={() => window.electronAPI?.agent.stop()} disabled={!running}
+            className="px-4 py-2 bg-red-700 hover:bg-red-600 disabled:opacity-40 rounded-lg text-sm font-medium text-white transition-colors">停止</button>
+        </div>
+      </div>
+
+      <ContributionConfigCard />
+
+      {stats && (
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-3">
+            <p className="text-xs text-gray-500 mb-1">贡献速率</p>
+            <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{stats.contribute_req_per_min ?? 0}</p>
+            <p className="text-xs text-gray-600">req/min</p>
+          </div>
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-3">
+            <p className="text-xs text-gray-500 mb-1">活跃请求</p>
+            <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.active_requests ?? 0}</p>
+          </div>
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-3">
+            <p className="text-xs text-gray-500 mb-1">在线节点</p>
+            <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.active_workers ?? 0}</p>
+          </div>
+        </div>
       )}
-      {showAckModal && (
-        <AckModal
-          onConfirm={() => { setShowAckModal(false); setRefreshKey((k) => k + 1); }}
-          onClose={() => setShowAckModal(false)}
-        />
-      )}
+
+      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-4">
+        <p className="text-xs text-gray-500 mb-3">贡献请求速率 (req/min)</p>
+        <RateChart data={chartData} />
+      </div>
+
+      <section>
+        <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">最近结算</h2>
+        {settlements.length === 0 ? (
+          <p className="text-gray-500 text-sm">暂无结算记录</p>
+        ) : (
+          <div className="space-y-2">
+            {settlements.map(s => (
+              <div key={s.id ?? s.period_end}
+                className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl px-4 py-3 grid grid-cols-5 gap-2 text-sm items-center">
+                <span className="text-gray-500 text-xs">{s.period_end?.slice(0, 16)}</span>
+                <span className="text-gray-700 dark:text-gray-300">{(s.output_tokens ?? 0).toLocaleString()} tok</span>
+                <span className="text-yellow-500 text-xs">{multiplierToStars(s.multiplier ?? 1)}</span>
+                <span className="text-gray-700 dark:text-gray-300">{(s.multiplier ?? 1).toFixed(2)}×</span>
+                <span className="text-green-600 dark:text-green-400 font-medium">+{(s.credits_awarded ?? 0).toFixed(1)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">Agent 日志</h2>
+        <div ref={logRef} className="bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl p-3 h-36 overflow-y-auto font-mono text-xs text-gray-600 dark:text-gray-400 space-y-0.5">
+          {logs.length === 0 ? <span className="text-gray-600">（日志为空）</span> : logs.map((line, i) => <div key={i}>{line}</div>)}
+        </div>
+      </section>
     </div>
   );
 }

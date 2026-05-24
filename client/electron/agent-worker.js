@@ -17,6 +17,28 @@ let running = false;
 let _onLog = null;
 let _onStatus = null;
 
+// ── Stats ─────────────────────────────────────────────────────────────────────
+let activeRequests = 0;
+// Sliding token window: [{ts, tokens}] — used to compute tokens/min
+const tokenWindow = [];
+const TOKEN_WINDOW_MS = 60000;
+
+function recordTokens(n) {
+  const now = Date.now();
+  tokenWindow.push({ ts: now, n });
+  // trim old entries
+  const cutoff = now - TOKEN_WINDOW_MS;
+  while (tokenWindow.length && tokenWindow[0].ts < cutoff) tokenWindow.shift();
+}
+
+function getStats() {
+  const now = Date.now();
+  const cutoff = now - TOKEN_WINDOW_MS;
+  const recent = tokenWindow.filter(e => e.ts >= cutoff);
+  const tokensPerMin = recent.reduce((s, e) => s + e.n, 0);
+  return { running, activeRequests, tokensPerMin };
+}
+
 function log(msg) { _onLog?.(msg); }
 
 function loadConfig() {
@@ -215,6 +237,8 @@ function forwardRequest(reqId, payload, cfg) {
             } else if (buf.trim()) {
               send({ type: 'chunk', req_id: reqId, data: buf.trim() + '\n\n' });
             }
+            if (lastUsage?.completion_tokens) recordTokens(lastUsage.completion_tokens);
+            else if (lastUsage?.output_tokens) recordTokens(lastUsage.output_tokens);
             send({ type: 'done', req_id: reqId, usage: lastUsage });
             resolve();
           });
@@ -236,6 +260,8 @@ function forwardRequest(reqId, payload, cfg) {
                 usage = json.usage;
               }
             } catch {}
+            if (usage?.completion_tokens) recordTokens(usage.completion_tokens);
+            else if (usage?.output_tokens) recordTokens(usage.output_tokens);
             send({ type: 'chunk', req_id: reqId, data: rawBody });
             send({ type: 'done', req_id: reqId, usage });
             resolve();
@@ -358,22 +384,28 @@ function connect(cfg) {
     if (msg.type === 'request') {
       const { req_id, payload } = msg;
       log(`[agent] → req_id=${req_id} model=${payload.model} stream=${!!payload.stream}`);
+      activeRequests++;
       try {
         await forwardRequest(req_id, payload, resolveModelCfg(cfg, payload.model));
       } catch (e) {
         log(`[agent] error req_id=${req_id}: ${e.message}`);
         send({ type: 'error', req_id, error: e.message });
+      } finally {
+        activeRequests = Math.max(0, activeRequests - 1);
       }
     }
 
     if (msg.type === 'image_request') {
       const { req_id, payload } = msg;
       log(`[agent] image → req_id=${req_id} model=${payload.model}`);
+      activeRequests++;
       try {
         await forwardImageRequest(req_id, payload, resolveModelCfg(cfg, payload.model));
       } catch (e) {
         log(`[agent] image error req_id=${req_id}: ${e.message}`);
         send({ type: 'error', req_id, error: e.message });
+      } finally {
+        activeRequests = Math.max(0, activeRequests - 1);
       }
     }
   });
@@ -435,4 +467,4 @@ function stop() {
 
 function isRunning() { return running; }
 
-module.exports = { start, stop, isRunning };
+module.exports = { start, stop, isRunning, getStats };

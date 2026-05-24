@@ -20,6 +20,7 @@ from dispatch import handle_chat
 from dispatch_image import handle_image
 from settler import run_settler
 from user_router import router as user_router
+from scene_router import router as scene_router
 from worker_pool import pool, WorkerConnection
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -67,6 +68,7 @@ app.add_middleware(
 )
 app.include_router(admin_router, prefix="/admin")
 app.include_router(user_router, prefix="/user")
+app.include_router(scene_router, prefix="/user")
 
 
 # ── 静态文件 & 落地页 ─────────────────────────────────────────────────────────
@@ -432,7 +434,7 @@ async def list_models(_key: dict = Depends(auth_user)):
 async def chat_completions(request: Request, key_info: dict = Depends(auth_user)):
     body = await request.json()
     consumer_user_id: Optional[int] = key_info.get("user_id")
-    resp = await handle_chat(body, consumer_user_id=consumer_user_id)
+    resp = await handle_chat(body, consumer_user_id=consumer_user_id, key_id=key_info.get("id"))
 
     # 非流式：拿到完整 JSON 后按 usage 扣费（流式在 dispatch 内 SSE 结束时扣）
     if consumer_user_id and isinstance(resp, dict):
@@ -516,7 +518,7 @@ async def messages(request: Request, key_info: dict = Depends(_auth_anthropic)):
     streaming = body.get("stream", False)
 
     oai_body = _anthropic_to_openai(body)
-    resp = await handle_chat(oai_body, consumer_user_id=consumer_user_id)
+    resp = await handle_chat(oai_body, consumer_user_id=consumer_user_id, key_id=key_info.get("id"))
 
     if streaming:
         msg_id = "msg_" + uuid.uuid4().hex[:24]

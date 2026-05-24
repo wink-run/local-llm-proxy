@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh" class="dark">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>设置 — Token Bank</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<style>body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif; }</style>
+</head>
+<body class="bg-gray-950 text-gray-100 flex min-h-screen">
+<nav class="w-52 bg-gray-900 border-r border-gray-800 flex flex-col py-4 gap-1 shrink-0">
+  <div class="px-4 mb-4"><div class="text-sm font-bold text-gray-200">Token Bank</div><div class="text-xs text-gray-600 mt-0.5">本地 AI 网关</div></div>
+  <a href="nav-gateway.html" class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm hover:bg-gray-800/50 hover:text-gray-200 transition-colors"><span>🔀</span> 网关</a>
+  <a href="nav-providers.html" class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm hover:bg-gray-800/50 hover:text-gray-200 transition-colors"><span>⚡</span> 供给源</a>
+  <a href="nav-contribute.html" class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm hover:bg-gray-800/50 hover:text-gray-200 transition-colors"><span>💪</span> 贡献</a>
+  <a href="nav-dashboard.html" class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm hover:bg-gray-800/50 hover:text-gray-200 transition-colors"><span>📊</span> 盘点</a>
+  <button onclick="openDebug()" class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm hover:bg-gray-800/50 hover:text-gray-200 transition-colors text-left"><span>🐛</span> 调试请求</button>
+  <div class="flex-1"></div>
+  <a href="nav-settings.html" class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg bg-gray-800 text-white text-sm font-medium"><span>⚙️</span> 设置</a>
+  <div class="mx-2 p-3 rounded-lg border border-gray-800 flex items-center gap-3">
+    <div class="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xs font-bold">U</div>
+    <div class="flex-1 min-w-0"><div class="text-xs font-medium text-gray-200 truncate">user@example.com</div><div class="text-xs text-gray-500">2,340 积分</div></div>
+  </div>
+</nav>
+
+<main class="flex-1 overflow-y-auto p-6 space-y-5 max-w-2xl">
+  <div><h1 class="text-xl font-semibold">设置</h1><p class="text-sm text-gray-500 mt-0.5">网关运行参数与偏好配置</p></div>
+
+  <!-- Gateway -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+    <div class="px-5 py-4 border-b border-gray-800"><h2 class="text-sm font-semibold text-gray-200">网关</h2></div>
+    <div class="divide-y divide-gray-800/60">
+      <div class="flex items-center justify-between px-5 py-4">
+        <div><div class="text-sm text-gray-200">监听端口</div><div class="text-xs text-gray-500 mt-0.5">网关 HTTP 服务端口</div></div>
+        <div class="flex items-center gap-2">
+          <input id="portInput" type="number" value="11430" class="w-24 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200 text-right font-mono focus:outline-none focus:border-blue-500" />
+          <span class="text-xs text-gray-600">需重启生效</span>
+        </div>
+      </div>
+      <div class="flex items-center justify-between px-5 py-4">
+        <div><div class="text-sm text-gray-200">开机自启</div><div class="text-xs text-gray-500 mt-0.5">系统启动时自动运行网关</div></div>
+        <div onclick="toggleSw(this)" data-on="true" class="w-9 h-5 rounded-full bg-blue-600 cursor-pointer relative shrink-0 transition-colors"><span class="absolute top-0.5 right-0.5 w-4 h-4 bg-white rounded-full shadow transition-all"></span></div>
+      </div>
+      <div class="flex items-center justify-between px-5 py-4">
+        <div><div class="text-sm text-gray-200">请求超时</div><div class="text-xs text-gray-500 mt-0.5">单次请求最长等待时间</div></div>
+        <select class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500">
+          <option>30 秒</option><option selected>60 秒</option><option>120 秒</option><option>无限制</option>
+        </select>
+      </div>
+      <div class="flex items-center justify-between px-5 py-4">
+        <div><div class="text-sm text-gray-200">最大并发请求</div><div class="text-xs text-gray-500 mt-0.5">同时处理的最大请求数</div></div>
+        <select class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500">
+          <option>4</option><option selected>8</option><option>16</option><option>32</option>
+        </select>
+      </div>
+      <div class="flex items-center justify-between px-5 py-4">
+        <div><div class="text-sm text-gray-200">日志级别</div><div class="text-xs text-gray-500 mt-0.5">控制台日志详细程度</div></div>
+        <select class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500">
+          <option>Error</option><option selected>Warn</option><option>Info</option><option>Debug</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Routing -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+    <div class="px-5 py-4 border-b border-gray-800"><h2 class="text-sm font-semibold text-gray-200">路由策略</h2></div>
+    <div class="divide-y divide-gray-800/60">
+      <div class="flex items-center justify-between px-5 py-4">
+        <div><div class="text-sm text-gray-200">降级重试次数</div><div class="text-xs text-gray-500 mt-0.5">同一步骤内失败重试次数</div></div>
+        <select class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500">
+          <option>不重试</option><option selected>重试 1 次</option><option>重试 2 次</option><option>重试 3 次</option>
+        </select>
+      </div>
+      <div class="flex items-center justify-between px-5 py-4">
+        <div><div class="text-sm text-gray-200">健康检测间隔</div><div class="text-xs text-gray-500 mt-0.5">定期探测供给源可用性</div></div>
+        <select class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500">
+          <option>30 秒</option><option selected>1 分钟</option><option>5 分钟</option><option>关闭</option>
+        </select>
+      </div>
+      <div class="flex items-center justify-between px-5 py-4">
+        <div><div class="text-sm text-gray-200">保留路由日志</div><div class="text-xs text-gray-500 mt-0.5">每条请求的路由路径记录</div></div>
+        <div onclick="toggleSw(this)" data-on="true" class="w-9 h-5 rounded-full bg-blue-600 cursor-pointer relative shrink-0 transition-colors"><span class="absolute top-0.5 right-0.5 w-4 h-4 bg-white rounded-full shadow transition-all"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Account -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+    <div class="px-5 py-4 border-b border-gray-800"><h2 class="text-sm font-semibold text-gray-200">账号</h2></div>
+    <div class="divide-y divide-gray-800/60">
+      <div class="flex items-center justify-between px-5 py-4">
+        <div><div class="text-sm text-gray-200">邮箱</div><div class="text-xs text-gray-500 mt-0.5">user@example.com</div></div>
+        <button class="text-xs text-gray-500 hover:text-gray-300 bg-gray-800 border border-gray-700 px-3 py-1.5 rounded-lg">修改</button>
+      </div>
+      <div class="flex items-center justify-between px-5 py-4">
+        <div><div class="text-sm text-gray-200">数据同步</div><div class="text-xs text-gray-500 mt-0.5">场景配置、积分同步到云端</div></div>
+        <div onclick="toggleSw(this)" data-on="false" class="w-9 h-5 rounded-full bg-gray-700 cursor-pointer relative shrink-0 transition-colors"><span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-all"></span></div>
+      </div>
+      <div class="flex items-center justify-between px-5 py-4">
+        <div><div class="text-sm text-red-400">退出登录</div><div class="text-xs text-gray-500 mt-0.5">清除本地凭证</div></div>
+        <button onclick="confirmLogout()" class="text-xs text-red-400 hover:text-red-300 bg-red-900/20 border border-red-800/50 px-3 py-1.5 rounded-lg">退出</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save -->
+  <div class="flex items-center gap-3">
+    <button onclick="saveSettings(this)" class="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors">保存设置</button>
+    <button class="px-4 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-xl border border-gray-700 transition-colors">重置为默认</button>
+    <div id="savedMsg" class="hidden text-xs text-green-400">✓ 已保存</div>
+  </div>
+
+  <!-- Version info -->
+  <div class="text-[10px] text-gray-700 pb-4">Token Bank v0.3.0 · 本地网关 · <a href="nav-gateway.html" class="hover:text-gray-500">查看网关状态</a></div>
+</main>
+
+<!-- Debug Modal -->
+<div id="debugModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-6">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeDebug()"></div>
+  <div class="relative w-full max-w-2xl h-[560px] bg-gray-900 border border-gray-700 rounded-2xl flex flex-col overflow-hidden shadow-2xl">
+    <div class="flex items-center gap-2 px-3 py-2.5 border-b border-gray-800 shrink-0">
+      <div class="flex rounded-lg border border-gray-700 overflow-hidden text-xs"><button class="px-3 py-1.5 bg-gray-700 text-gray-200 font-medium">场景路由</button><button class="px-3 py-1.5 text-gray-500 hover:bg-gray-800">指定模型</button></div>
+      <select class="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-300 focus:outline-none"><option>🤖 Claude Code 链</option><option>✍️ 写文章链</option></select>
+      <label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer"><input type="checkbox" checked class="accent-blue-500"> Stream</label>
+      <div class="flex-1"></div>
+      <button onclick="clearChat()" class="text-[10px] text-gray-600 hover:text-gray-400 px-2">清空</button>
+      <button onclick="closeDebug()" class="text-gray-500 hover:text-gray-300 text-xl leading-none px-1">×</button>
+    </div>
+    <div id="chatMessages" class="flex-1 overflow-y-auto p-4 space-y-4">
+      <div class="flex items-start gap-3"><div class="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center text-[10px] font-bold text-gray-300 shrink-0 mt-0.5">AI</div><div class="bg-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 max-w-[85%]"><p class="text-sm text-gray-200">你好！有什么可以帮到你？</p><div class="flex items-center gap-3 mt-2 pt-2 border-t border-gray-700/50"><span class="text-[10px] text-gray-600">Groq / llama-3.3-70b</span><span class="text-[10px] text-green-600">312ms</span></div></div></div>
+    </div>
+    <div class="px-4 py-3 border-t border-gray-800 flex items-end gap-3 shrink-0">
+      <textarea id="chatInput" rows="1" placeholder="输入消息…" class="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-gray-200 focus:outline-none focus:border-blue-500 resize-none placeholder-gray-600 min-h-[40px] max-h-[120px]" onkeydown="handleChatKey(event)"></textarea>
+      <button onclick="sendMessage()" class="w-9 h-9 rounded-full bg-blue-600 hover:bg-blue-500 flex items-center justify-center shrink-0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
+    </div>
+  </div>
+</div>
+
+<script>
+function openDebug(){document.getElementById('debugModal').classList.remove('hidden');}
+function closeDebug(){document.getElementById('debugModal').classList.add('hidden');}
+function clearChat(){document.getElementById('chatMessages').innerHTML='';}
+function handleChatKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}}
+const r=['好的，我来帮你。','明白了！','收到，正在处理…'];let ri=0;
+function sendMessage(){const inp=document.getElementById('chatInput'),t=inp.value.trim();if(!t)return;const m=document.getElementById('chatMessages');m.innerHTML+=`<div class="flex justify-end"><div class="bg-blue-600 rounded-2xl rounded-tr-sm px-4 py-3 max-w-[85%]"><p class="text-sm text-white">${t.replace(/</g,'&lt;')}</p></div></div>`;inp.value='';m.scrollTop=m.scrollHeight;const el=document.createElement('div');el.className='flex items-start gap-3';el.innerHTML=`<div class="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center text-[10px] font-bold text-gray-300 shrink-0 mt-0.5">AI</div><div class="bg-gray-800 rounded-2xl rounded-tl-sm px-4 py-3"><span class="text-sm text-gray-500 animate-pulse">思考中…</span></div>`;m.appendChild(el);m.scrollTop=m.scrollHeight;setTimeout(()=>{const ms=200+Math.floor(Math.random()*400);el.innerHTML=`<div class="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center text-[10px] font-bold text-gray-300 shrink-0 mt-0.5">AI</div><div class="bg-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 max-w-[85%]"><p class="text-sm text-gray-200">${r[ri++%r.length]}</p><div class="flex items-center gap-3 mt-2 pt-2 border-t border-gray-700/50"><span class="text-[10px] text-gray-600">Groq/llama-3.3-70b</span><span class="text-[10px] text-green-600">${ms}ms</span></div></div>`;m.scrollTop=m.scrollHeight;},900);}
+
+function toggleSw(el){
+  const on=el.dataset.on==='true';el.dataset.on=(!on).toString();
+  el.className=`w-9 h-5 rounded-full cursor-pointer relative shrink-0 transition-colors ${!on?'bg-blue-600':'bg-gray-700'}`;
+  el.querySelector('span').className=`absolute top-0.5 ${!on?'right-0.5':'left-0.5'} w-4 h-4 bg-white rounded-full shadow transition-all`;
+}
+function saveSettings(btn){
+  const orig=btn.textContent; btn.textContent='保存中…'; btn.disabled=true;
+  setTimeout(()=>{
+    btn.textContent=orig; btn.disabled=false;
+    const msg=document.getElementById('savedMsg');
+    msg.classList.remove('hidden');
+    setTimeout(()=>msg.classList.add('hidden'),2000);
+  },600);
+}
+function confirmLogout(){if(confirm('确认退出登录？'))alert('已退出登录。');}
+</script>
+</body>
+</html>

@@ -16,21 +16,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener('agent:log', handler);
     },
   },
-  gateway: {
-    start: () => ipcRenderer.invoke('gateway:start'),
-    stop: () => ipcRenderer.invoke('gateway:stop'),
-    getStatus: () => ipcRenderer.invoke('gateway:status'),
-    onStatus: (cb) => {
-      const handler = (_e, data) => cb(data);
-      ipcRenderer.on('gateway:status', handler);
-      return () => ipcRenderer.removeListener('gateway:status', handler);
-    },
-    onLog: (cb) => {
-      const handler = (_e, line) => cb(line);
-      ipcRenderer.on('gateway:log', handler);
-      return () => ipcRenderer.removeListener('gateway:log', handler);
-    },
-  },
   config: {
     read:  () => ipcRenderer.invoke('config:read'),
     write: (cfg) => ipcRenderer.invoke('config:write', cfg),
@@ -58,5 +43,45 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.send('llm:stream', { reqId, url, method, headers, body });
       return cleanup;
     },
+  },
+  updater: {
+    onAvailable: (cb) => {
+      const h = (_e, d) => cb(d);
+      ipcRenderer.on('update:available', h);
+      return () => ipcRenderer.removeListener('update:available', h);
+    },
+    onProgress: (cb) => {
+      const h = (_e, d) => cb(d);
+      ipcRenderer.on('update:progress', h);
+      return () => ipcRenderer.removeListener('update:progress', h);
+    },
+    onDownloaded: (cb) => {
+      const h = (_e, d) => cb(d);
+      ipcRenderer.on('update:downloaded', h);
+      return () => ipcRenderer.removeListener('update:downloaded', h);
+    },
+    onError: (cb) => {
+      const h = () => cb();
+      ipcRenderer.on('update:error', h);
+      return () => ipcRenderer.removeListener('update:error', h);
+    },
+    install: () => ipcRenderer.invoke('update:install'),
+  },
+  gateway: {
+    status:          () => ipcRenderer.invoke('gateway:status'),
+    getLog:          () => ipcRenderer.invoke('gateway:getLog'),
+    getDailyStats:   () => ipcRenderer.invoke('gateway:getDailyStats'),
+    setStrategy:     (s) => ipcRenderer.invoke('gateway:setStrategy', s),
+    testProvider:    (p) => ipcRenderer.invoke('gateway:testProvider', p),
+  },
+  localConfig: {
+    get:               ()  => ipcRenderer.invoke('localConfig:get'),
+    createSceneRoute:  (d) => ipcRenderer.invoke('localConfig:createSceneRoute', d),
+    updateSceneRoute:  (d) => ipcRenderer.invoke('localConfig:updateSceneRoute', d),
+    deleteSceneRoute:  (id) => ipcRenderer.invoke('localConfig:deleteSceneRoute', id),
+    createKey:         (d) => ipcRenderer.invoke('localConfig:createKey', d),
+    deleteKey:         (id) => ipcRenderer.invoke('localConfig:deleteKey', id),
+    bindKey:           (d) => ipcRenderer.invoke('localConfig:bindKey', d),
+    setCloudConfig:    (d) => ipcRenderer.invoke('localConfig:setCloudConfig', d),
   },
 });

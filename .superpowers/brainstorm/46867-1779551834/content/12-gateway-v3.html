@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>网关 v3</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<style>body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif; }</style>
+</head>
+<body class="bg-gray-950 text-gray-100 flex min-h-screen">
+
+<nav class="w-52 bg-gray-900 border-r border-gray-800 flex flex-col py-4 gap-1 shrink-0">
+  <div class="px-4 mb-4"><div class="text-sm font-bold text-gray-200">Token Bank</div><div class="text-xs text-gray-600 mt-0.5">本地 AI 网关</div></div>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg bg-gray-800 text-white text-sm font-medium"><span>🔀</span> 网关</a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm"><span>⚡</span> 供给源</a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm"><span>💪</span> 贡献</a>
+  <div class="flex-1"></div>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm"><span>⚙️</span> 设置</a>
+  <div class="mx-2 p-3 rounded-lg border border-gray-800 flex items-center gap-3 cursor-pointer hover:bg-gray-800">
+    <div class="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xs font-bold">U</div>
+    <div class="flex-1 min-w-0"><div class="text-xs font-medium text-gray-200 truncate">user@example.com</div><div class="text-xs text-gray-500">2,340 积分 · 查看盘点 →</div></div>
+  </div>
+</nav>
+
+<main class="flex-1 overflow-y-auto p-6 space-y-5">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <span class="relative flex h-2.5 w-2.5"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span></span>
+      <h1 class="text-xl font-semibold">网关</h1>
+      <span class="text-xs bg-green-900/30 text-green-400 border border-green-800/50 px-2 py-0.5 rounded-full">运行中 · :11430</span>
+    </div>
+    <button class="flex items-center gap-2 text-sm px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-gray-300 transition-colors">
+      <span>🐛</span> 调试请求
+    </button>
+  </div>
+
+  <!-- Stats row -->
+  <div class="grid grid-cols-4 gap-3">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">今日请求</div><div class="text-2xl font-bold mt-1">284</div><div class="text-xs text-green-500 mt-0.5">↑ 12%</div></div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">免费命中率</div><div class="text-2xl font-bold text-green-400 mt-1">67%</div><div class="text-xs text-gray-600 mt-0.5">190 次免费</div></div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">错误率</div><div class="text-2xl font-bold text-amber-400 mt-1">1.4%</div><div class="text-xs text-gray-600 mt-0.5">4 次失败</div></div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">平均延迟</div><div class="text-2xl font-bold mt-1">320ms</div><div class="text-xs text-gray-600 mt-0.5">P95: 890ms</div></div>
+  </div>
+
+  <!-- ── MIDDLE: 接入端点 + API Key ── -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl p-5 space-y-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wide font-medium">接入配置</div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <!-- Endpoint -->
+      <div class="space-y-1.5">
+        <label class="text-xs text-gray-400">Base URL</label>
+        <div class="flex items-center gap-2">
+          <code class="flex-1 text-sm font-mono text-green-400 bg-gray-800 rounded-lg px-3 py-2 border border-gray-700">http://127.0.0.1:11430/v1</code>
+          <button class="text-xs bg-gray-800 text-gray-400 hover:text-gray-200 px-2.5 py-2 rounded-lg border border-gray-700 transition-colors">复制</button>
+        </div>
+        <p class="text-xs text-gray-600">任意 OpenAI 兼容工具填入此地址</p>
+      </div>
+
+      <!-- API Key -->
+      <div class="space-y-1.5">
+        <label class="text-xs text-gray-400">API Key（可选，用于鉴权）</label>
+        <div class="flex items-center gap-2">
+          <input type="password" value="tb-xxxxxxxxxxxxxxxxxxxx"
+            class="flex-1 text-sm font-mono text-gray-300 bg-gray-800 rounded-lg px-3 py-2 border border-gray-700 focus:outline-none focus:border-blue-500" />
+          <button class="text-xs bg-gray-800 text-gray-400 hover:text-gray-200 px-2.5 py-2 rounded-lg border border-gray-700">显示</button>
+          <button class="text-xs bg-gray-800 text-gray-400 hover:text-gray-200 px-2.5 py-2 rounded-lg border border-gray-700">重置</button>
+        </div>
+        <p class="text-xs text-gray-600">不填则网关对所有本机请求开放</p>
+      </div>
+    </div>
+
+    <!-- Quick config buttons -->
+    <div class="flex gap-2 pt-1">
+      <button class="text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1.5 rounded-lg border border-gray-700 flex items-center gap-1.5 transition-colors">
+        <span>🤖</span> 配置到 Claude Code
+      </button>
+      <button class="text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1.5 rounded-lg border border-gray-700 flex items-center gap-1.5 transition-colors">
+        <span>📋</span> 复制 curl 示例
+      </button>
+    </div>
+  </div>
+
+  <!-- ── ROUTING RULES ── -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl p-5 space-y-4">
+    <div class="flex items-center justify-between">
+      <div class="text-xs text-gray-500 uppercase tracking-wide font-medium">路由规则</div>
+      <button class="text-xs text-blue-400 hover:text-blue-300">保存更改</button>
+    </div>
+
+    <!-- Strategy selector -->
+    <div class="space-y-2">
+      <label class="text-xs text-gray-400">路由策略</label>
+      <div class="grid grid-cols-4 gap-2">
+        <label class="flex flex-col gap-1 bg-gray-800 border border-blue-600 rounded-xl p-3 cursor-pointer">
+          <div class="flex items-center gap-2"><input type="radio" name="strategy" checked class="accent-blue-500" /><span class="text-xs font-medium text-gray-200">省钱优先</span></div>
+          <span class="text-[10px] text-gray-500 pl-4">免费 → P2P → 付费</span>
+        </label>
+        <label class="flex flex-col gap-1 bg-gray-800 border border-gray-700 rounded-xl p-3 cursor-pointer hover:border-gray-600">
+          <div class="flex items-center gap-2"><input type="radio" name="strategy" class="accent-blue-500" /><span class="text-xs font-medium text-gray-300">质量优先</span></div>
+          <span class="text-[10px] text-gray-500 pl-4">付费 → P2P → 免费</span>
+        </label>
+        <label class="flex flex-col gap-1 bg-gray-800 border border-gray-700 rounded-xl p-3 cursor-pointer hover:border-gray-600">
+          <div class="flex items-center gap-2"><input type="radio" name="strategy" class="accent-blue-500" /><span class="text-xs font-medium text-gray-300">本地优先</span></div>
+          <span class="text-[10px] text-gray-500 pl-4">Ollama 优先</span>
+        </label>
+        <label class="flex flex-col gap-1 bg-gray-800 border border-gray-700 rounded-xl p-3 cursor-pointer hover:border-gray-600">
+          <div class="flex items-center gap-2"><input type="radio" name="strategy" class="accent-blue-500" /><span class="text-xs font-medium text-gray-300">仅免费层</span></div>
+          <span class="text-[10px] text-gray-500 pl-4">失败即报错</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Rule details -->
+    <div class="grid grid-cols-3 gap-4">
+      <div class="space-y-1.5">
+        <label class="text-xs text-gray-400">请求超时 (ms)</label>
+        <input value="30000" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500" />
+      </div>
+      <div class="space-y-1.5">
+        <label class="text-xs text-gray-400">最大重试次数</label>
+        <input value="2" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500" />
+      </div>
+      <div class="space-y-1.5">
+        <label class="text-xs text-gray-400">层间降级</label>
+        <div class="flex items-center gap-3 h-8">
+          <label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer"><input type="checkbox" checked class="accent-blue-500" /> 自动降级</label>
+          <label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer"><input type="checkbox" checked class="accent-blue-500" /> 记录追踪头</label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── BOTTOM: Model list ── -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-3 border-b border-gray-800">
+      <div>
+        <h2 class="text-sm font-semibold text-gray-200">当前可用模型</h2>
+        <p class="text-xs text-gray-500 mt-0.5">经网关 :11430 可调用的所有模型</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-xs text-gray-500">共 <span class="text-white font-medium">14</span> 个</span>
+        <button class="text-xs bg-gray-800 text-gray-400 hover:text-gray-200 px-2.5 py-1.5 rounded-lg border border-gray-700">刷新</button>
+      </div>
+    </div>
+
+    <!-- Free tier group -->
+    <div class="px-5 py-3 border-b border-gray-800/60">
+      <div class="flex items-center gap-2 mb-2.5">
+        <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+        <span class="text-xs font-medium text-green-400">免费层</span>
+        <span class="text-xs text-gray-600">· Ollama · Groq · GitHub Models</span>
+        <span class="ml-auto text-xs text-gray-600">9 个模型</span>
+      </div>
+      <div class="grid grid-cols-3 gap-2">
+        <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2"><span class="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0"></span><div><div class="text-xs text-gray-200">llama3.2:latest</div><div class="text-[10px] text-gray-500">Ollama</div></div></div>
+        <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2"><span class="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0"></span><div><div class="text-xs text-gray-200">llama-3.3-70b-versatile</div><div class="text-[10px] text-gray-500">Groq</div></div></div>
+        <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2"><span class="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0"></span><div><div class="text-xs text-gray-200">llama-3.1-8b-instant</div><div class="text-[10px] text-gray-500">Groq</div></div></div>
+        <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2"><span class="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0"></span><div><div class="text-xs text-gray-200">mixtral-8x7b-32768</div><div class="text-[10px] text-gray-500">Groq</div></div></div>
+        <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2"><span class="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0"></span><div><div class="text-xs text-gray-200">gpt-4o</div><div class="text-[10px] text-gray-500">GitHub Models</div></div></div>
+        <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2 opacity-50"><span class="w-1.5 h-1.5 rounded-full bg-gray-500 shrink-0"></span><div><div class="text-xs text-gray-400">qwen2.5:7b</div><div class="text-[10px] text-gray-600">Ollama · 未拉取</div></div></div>
+      </div>
+    </div>
+
+    <!-- P2P group -->
+    <div class="px-5 py-3 border-b border-gray-800/60">
+      <div class="flex items-center gap-2 mb-2.5">
+        <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+        <span class="text-xs font-medium text-blue-400">P2P 层</span>
+        <span class="text-xs text-gray-600">· 社区共享算力</span>
+        <span class="ml-auto text-xs text-gray-600">3 个模型</span>
+      </div>
+      <div class="grid grid-cols-3 gap-2">
+        <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2"><span class="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0"></span><div><div class="text-xs text-gray-200">gpt-4o-mini</div><div class="text-[10px] text-gray-500">P2P · 340积分</div></div></div>
+        <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2"><span class="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0"></span><div><div class="text-xs text-gray-200">claude-3-haiku</div><div class="text-[10px] text-gray-500">P2P · 340积分</div></div></div>
+        <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2"><span class="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0"></span><div><div class="text-xs text-gray-200">glm-4-flash</div><div class="text-[10px] text-gray-500">P2P · 340积分</div></div></div>
+      </div>
+    </div>
+
+    <!-- Paid group -->
+    <div class="px-5 py-3">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+        <span class="text-xs font-medium text-amber-400">付费层（兜底）</span>
+        <span class="ml-auto text-xs text-gray-600">未配置</span>
+      </div>
+      <div class="text-xs text-gray-600 bg-gray-800/40 rounded-lg px-3 py-2">
+        前往「供给源」配置 API Key 后模型将在此出现
+      </div>
+    </div>
+  </div>
+
+</main>
+</body>
+</html>

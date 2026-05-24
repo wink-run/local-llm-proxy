@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>网关 — 场景应用</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<style>body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif; }</style>
+</head>
+<body class="bg-gray-950 text-gray-100 flex min-h-screen">
+
+<nav class="w-52 bg-gray-900 border-r border-gray-800 flex flex-col py-4 gap-1 shrink-0">
+  <div class="px-4 mb-4"><div class="text-sm font-bold text-gray-200">Token Bank</div><div class="text-xs text-gray-600 mt-0.5">本地 AI 网关</div></div>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg bg-gray-800 text-white text-sm font-medium"><span>🔀</span> 网关</a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm"><span>⚡</span> 供给源</a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm"><span>💪</span> 贡献</a>
+  <div class="flex-1"></div>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm"><span>⚙️</span> 设置</a>
+  <div class="mx-2 p-3 rounded-lg border border-gray-800 flex items-center gap-3">
+    <div class="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xs font-bold">U</div>
+    <div class="flex-1 min-w-0"><div class="text-xs font-medium text-gray-200 truncate">user@example.com</div><div class="text-xs text-gray-500">2,340 积分</div></div>
+  </div>
+</nav>
+
+<main class="flex-1 overflow-y-auto p-6 space-y-4">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <span class="relative flex h-2.5 w-2.5"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span></span>
+      <h1 class="text-xl font-semibold">网关</h1>
+      <span class="text-xs bg-green-900/30 text-green-400 border border-green-800/50 px-2 py-0.5 rounded-full">运行中 · :11430</span>
+    </div>
+    <button class="flex items-center gap-2 text-sm px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-gray-300">
+      <span>🐛</span> 调试请求
+    </button>
+  </div>
+
+  <!-- Stats -->
+  <div class="grid grid-cols-4 gap-3">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">今日请求</div><div class="text-2xl font-bold mt-1">284</div></div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">免费命中率</div><div class="text-2xl font-bold text-green-400 mt-1">67%</div></div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">错误率</div><div class="text-2xl font-bold text-amber-400 mt-1">1.4%</div></div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">平均延迟</div><div class="text-2xl font-bold mt-1">320ms</div></div>
+  </div>
+
+  <!-- Endpoint -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wide font-medium mb-2">接入端点</div>
+    <div class="flex items-center gap-2">
+      <code class="flex-1 text-sm font-mono text-green-400 bg-gray-800 rounded-lg px-3 py-2 border border-gray-700">http://127.0.0.1:11430/v1</code>
+      <button class="text-xs bg-gray-800 text-gray-400 px-2.5 py-2 rounded-lg border border-gray-700 hover:bg-gray-700">复制</button>
+    </div>
+  </div>
+
+  <!-- ── 场景路由 ── -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+      <div>
+        <h2 class="text-sm font-semibold text-gray-200">场景路由</h2>
+        <p class="text-xs text-gray-500 mt-0.5">定义每个场景的降级链规则</p>
+      </div>
+      <button class="text-xs bg-gray-800 border border-gray-700 text-gray-400 px-3 py-1.5 rounded-lg hover:bg-gray-700">+ 新建场景</button>
+    </div>
+    <div class="divide-y divide-gray-800/60">
+      <div class="flex items-start gap-4 px-5 py-3.5">
+        <span class="text-lg mt-0.5">🤖</span>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-medium text-gray-200">Claude Code</div>
+          <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
+            <span class="text-[10px] bg-gray-800 border border-gray-700 text-gray-300 px-2 py-0.5 rounded-md font-mono">Groq / llama-3.3-70b</span>
+            <span class="text-gray-600 text-xs">→</span>
+            <span class="text-[10px] bg-gray-800 border border-gray-700 text-gray-300 px-2 py-0.5 rounded-md font-mono">Ollama / llama3.2</span>
+            <span class="text-gray-600 text-xs">→</span>
+            <span class="text-[10px] bg-gray-800 border border-gray-700 text-gray-300 px-2 py-0.5 rounded-md font-mono">OpenRouter / claude-3-haiku</span>
+          </div>
+        </div>
+        <span class="text-[10px] text-green-500 shrink-0 mt-1">活跃 · 24次</span>
+        <button class="text-[10px] text-gray-600 hover:text-gray-400 shrink-0 mt-1">编辑</button>
+      </div>
+      <div class="flex items-start gap-4 px-5 py-3.5">
+        <span class="text-lg mt-0.5">✍️</span>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-medium text-gray-200">写文章</div>
+          <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
+            <span class="text-[10px] bg-gray-800 border border-gray-700 text-gray-300 px-2 py-0.5 rounded-md font-mono">DeepSeek / deepseek-chat</span>
+            <span class="text-gray-600 text-xs">→</span>
+            <span class="text-[10px] bg-gray-800 border border-gray-700 text-gray-300 px-2 py-0.5 rounded-md font-mono">Groq / mixtral-8x7b</span>
+          </div>
+        </div>
+        <span class="text-[10px] text-gray-500 shrink-0 mt-1">8次</span>
+        <button class="text-[10px] text-gray-600 hover:text-gray-400 shrink-0 mt-1">编辑</button>
+      </div>
+      <div class="flex items-start gap-4 px-5 py-3.5">
+        <span class="text-lg mt-0.5">📊</span>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-medium text-gray-200">数据分析</div>
+          <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
+            <span class="text-[10px] bg-gray-800 border border-gray-700 text-gray-300 px-2 py-0.5 rounded-md font-mono">Ollama / qwen2.5-coder</span>
+            <span class="text-gray-600 text-xs">→</span>
+            <span class="text-[10px] bg-gray-800 border border-gray-700 text-gray-300 px-2 py-0.5 rounded-md font-mono">Groq / llama-3.1-70b</span>
+          </div>
+        </div>
+        <span class="text-[10px] text-gray-600 shrink-0 mt-1">0次</span>
+        <button class="text-[10px] text-gray-600 hover:text-gray-400 shrink-0 mt-1">编辑</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 场景应用 ── -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+    <div class="px-5 py-4 border-b border-gray-800">
+      <h2 class="text-sm font-semibold text-gray-200">场景应用</h2>
+      <p class="text-xs text-gray-500 mt-0.5">为场景生成 Key，自动写入工具或手动配置</p>
+    </div>
+
+    <div class="p-5 space-y-4">
+
+      <!-- Scene selector -->
+      <div class="space-y-2">
+        <label class="text-xs text-gray-500">选择场景</label>
+        <div class="grid grid-cols-3 gap-2" id="sceneGrid">
+          <button onclick="selectScene(this,'cc')" class="scene-btn flex items-center gap-2.5 bg-gray-800 border border-blue-600 rounded-xl px-3.5 py-2.5 text-left">
+            <span class="text-base">🤖</span>
+            <div>
+              <div class="text-xs font-medium text-gray-200">Claude Code</div>
+              <div class="text-[10px] text-gray-500 mt-0.5">Groq → Ollama → OR</div>
+            </div>
+          </button>
+          <button onclick="selectScene(this,'wr')" class="scene-btn flex items-center gap-2.5 bg-gray-800 border border-gray-700 rounded-xl px-3.5 py-2.5 text-left hover:border-gray-500">
+            <span class="text-base">✍️</span>
+            <div>
+              <div class="text-xs font-medium text-gray-300">写文章</div>
+              <div class="text-[10px] text-gray-500 mt-0.5">DeepSeek → Groq</div>
+            </div>
+          </button>
+          <button onclick="selectScene(this,'da')" class="scene-btn flex items-center gap-2.5 bg-gray-800 border border-gray-700 rounded-xl px-3.5 py-2.5 text-left hover:border-gray-500">
+            <span class="text-base">📊</span>
+            <div>
+              <div class="text-xs font-medium text-gray-300">数据分析</div>
+              <div class="text-[10px] text-gray-500 mt-0.5">Ollama → Groq</div>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Two paths side by side -->
+      <div class="grid grid-cols-2 gap-3">
+
+        <!-- Path A: auto write to tool -->
+        <div class="bg-gray-800/60 border border-gray-700/60 rounded-xl p-4 space-y-3">
+          <div class="flex items-center gap-2">
+            <span class="text-base">⚡</span>
+            <div>
+              <div class="text-sm font-medium text-gray-200">自动配置到工具</div>
+              <div class="text-[10px] text-gray-500 mt-0.5">生成 Key 并一键写入配置文件</div>
+            </div>
+          </div>
+
+          <!-- Tool picker -->
+          <div class="grid grid-cols-2 gap-1.5">
+            <label class="flex items-center gap-2 bg-gray-700 border border-blue-600 rounded-lg px-2.5 py-2 cursor-pointer">
+              <input type="radio" name="tool" checked class="accent-blue-500 shrink-0" />
+              <div>
+                <div class="text-xs font-medium text-gray-200">Claude Code</div>
+                <div class="text-[10px] text-blue-400">已检测到</div>
+              </div>
+            </label>
+            <label class="flex items-center gap-2 bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-2 cursor-pointer hover:border-gray-500">
+              <input type="radio" name="tool" class="accent-blue-500 shrink-0" />
+              <div>
+                <div class="text-xs font-medium text-gray-300">Cursor</div>
+                <div class="text-[10px] text-gray-500">未检测到</div>
+              </div>
+            </label>
+            <label class="flex items-center gap-2 bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-2 cursor-pointer hover:border-gray-500">
+              <input type="radio" name="tool" class="accent-blue-500 shrink-0" />
+              <div>
+                <div class="text-xs font-medium text-gray-300">Continue</div>
+                <div class="text-[10px] text-gray-500">未检测到</div>
+              </div>
+            </label>
+            <label class="flex items-center gap-2 bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-2 cursor-pointer hover:border-gray-500">
+              <input type="radio" name="tool" class="accent-blue-500 shrink-0" />
+              <div>
+                <div class="text-xs font-medium text-gray-300">其他</div>
+                <div class="text-[10px] text-gray-500">复制配置</div>
+              </div>
+            </label>
+          </div>
+
+          <button onclick="doAutoWrite()" class="w-full text-sm bg-blue-600 hover:bg-blue-500 text-white py-2 rounded-lg font-medium flex items-center justify-center gap-1.5 transition-colors">
+            <span>✓</span> 生成并写入配置
+          </button>
+          <!-- success state (hidden) -->
+          <div id="autoSuccess" class="hidden text-center py-1">
+            <div class="text-xs text-green-400 font-medium">✓ 已写入 ~/.claude/settings.json</div>
+            <code class="text-[10px] text-gray-500 font-mono">Key: tb-cc-a1b2c3d4...</code>
+          </div>
+        </div>
+
+        <!-- Path B: get key, configure manually -->
+        <div class="bg-gray-800/60 border border-gray-700/60 rounded-xl p-4 space-y-3">
+          <div class="flex items-center gap-2">
+            <span class="text-base">🔑</span>
+            <div>
+              <div class="text-sm font-medium text-gray-200">手动配置</div>
+              <div class="text-[10px] text-gray-500 mt-0.5">获取 Key 后自行填入工具</div>
+            </div>
+          </div>
+
+          <!-- key not yet generated -->
+          <div id="manualBefore" class="space-y-3">
+            <div class="bg-gray-700/60 rounded-lg p-3 space-y-1.5">
+              <div class="text-[10px] text-gray-500">将生成以下配置</div>
+              <div class="text-[10px] font-mono text-gray-400">BASE_URL: http://127.0.0.1:11430/v1</div>
+              <div class="text-[10px] font-mono text-gray-400">API_KEY:  <span class="text-gray-600">（生成后显示）</span></div>
+            </div>
+            <button onclick="doManualKey()" class="w-full text-sm bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-200 py-2 rounded-lg font-medium flex items-center justify-center gap-1.5 transition-colors">
+              <span>⚡</span> 生成 Key
+            </button>
+          </div>
+
+          <!-- key generated -->
+          <div id="manualAfter" class="hidden space-y-3">
+            <div class="bg-gray-900/80 rounded-lg p-3 space-y-2">
+              <div class="flex items-center justify-between">
+                <div class="text-[10px] text-green-400 font-medium">✓ Key 已生成</div>
+                <button class="text-[10px] text-gray-500 hover:text-gray-300">重新生成</button>
+              </div>
+              <div class="space-y-1">
+                <div class="text-[10px] font-mono text-gray-400">BASE_URL</div>
+                <div class="flex items-center gap-1.5">
+                  <code class="flex-1 text-[10px] font-mono text-amber-300 truncate">http://127.0.0.1:11430/v1</code>
+                  <button class="text-[10px] text-gray-600 hover:text-gray-400 shrink-0">复制</button>
+                </div>
+              </div>
+              <div class="space-y-1">
+                <div class="text-[10px] font-mono text-gray-400">API_KEY</div>
+                <div class="flex items-center gap-1.5">
+                  <code class="flex-1 text-[10px] font-mono text-amber-300 truncate">tb-cc-a1b2c3d4e5f6g7h8</code>
+                  <button class="text-[10px] text-gray-600 hover:text-gray-400 shrink-0">复制</button>
+                </div>
+              </div>
+            </div>
+            <button class="w-full text-xs bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-300 py-1.5 rounded-lg flex items-center justify-center gap-1.5">
+              复制完整配置片段
+            </button>
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+
+</main>
+
+<script>
+function selectScene(btn, id) {
+  document.querySelectorAll('.scene-btn').forEach(b => {
+    b.classList.remove('border-blue-600');
+    b.classList.add('border-gray-700');
+  });
+  btn.classList.remove('border-gray-700');
+  btn.classList.add('border-blue-600');
+}
+
+function doAutoWrite() {
+  document.getElementById('autoSuccess').classList.remove('hidden');
+}
+
+function doManualKey() {
+  document.getElementById('manualBefore').classList.add('hidden');
+  document.getElementById('manualAfter').classList.remove('hidden');
+}
+</script>
+</body>
+</html>

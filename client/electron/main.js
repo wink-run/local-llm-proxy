@@ -4,8 +4,9 @@ const fs = require('fs');
 const os = require('os');
 const http = require('http');
 const https = require('https');
+const { autoUpdater } = require('electron-updater');
 const agent = require('./agent-worker');
-const gateway = require('./gateway-process');
+const gateway = require('./local-gateway');
 
 const isDev = !app.isPackaged;
 const VITE_URL = 'http://localhost:5173';
@@ -63,32 +64,43 @@ function createWindow() {
 
 // ── Tray ──────────────────────────────────────────────────────────────────────
 
+let trayStatsTimer = null;
+
+function updateTrayTitle() {
+  if (!tray) return;
+  if (process.platform !== 'darwin') return;
+  const { running: r, activeRequests, tokensPerMin } = agent.getStats();
+  if (!r) { tray.setTitle(''); return; }
+  const parts = [];
+  if (activeRequests > 0) parts.push(`${activeRequests}req`);
+  if (tokensPerMin > 0) parts.push(`${tokensPerMin}tok/m`);
+  tray.setTitle(parts.length ? parts.join(' ') : '●');
+}
+
 function createTray() {
   tray = new Tray(getTrayIcon('stopped'));
   tray.setToolTip('LLM Proxy');
   updateTrayMenu();
   tray.on('double-click', () => { mainWindow?.show(); mainWindow?.focus(); });
+  if (process.platform === 'darwin') {
+    trayStatsTimer = setInterval(updateTrayTitle, 2000);
+  }
 }
 
 function updateTrayMenu() {
-  const agentRunning = agent.isRunning();
-  const gwRunning = gateway.isRunning();
+  const running = agent.isRunning();
   const menu = Menu.buildFromTemplate([
-    { label: gwRunning ? 'Gateway: 运行中 (127.0.0.1:11435)' : 'Gateway: 已停止', enabled: false },
-    { label: agentRunning ? 'Agent: 运行中' : 'Agent: 已停止', enabled: false },
+    { label: running ? 'Agent 运行中' : 'Agent 已停止', enabled: false },
     { type: 'separator' },
-    { label: '启动 Gateway', enabled: !gwRunning, click: () => { gateway.start(); updateTrayMenu(); } },
-    { label: '停止 Gateway', enabled: gwRunning, click: () => { gateway.stop(); updateTrayMenu(); } },
-    { type: 'separator' },
-    { label: '启动 Agent', enabled: !agentRunning, click: startAgent },
-    { label: '停止 Agent', enabled: agentRunning, click: stopAgent },
+    { label: '启动 Agent', enabled: !running, click: startAgent },
+    { label: '停止 Agent', enabled: running, click: stopAgent },
     { type: 'separator' },
     { label: '打开主窗口', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
     { type: 'separator' },
     { label: '退出', click: () => app.quit() },
   ]);
   tray.setContextMenu(menu);
-  tray.setImage(getTrayIcon((gwRunning || agentRunning) ? 'running' : 'stopped'));
+  tray.setImage(getTrayIcon(running ? 'running' : 'stopped'));
 }
 
 // ── Agent ─────────────────────────────────────────────────────────────────────
@@ -112,6 +124,39 @@ function startAgent() {
 function stopAgent() {
   agent.stop();
   updateTrayMenu();
+}
+
+// ── Auto updater ──────────────────────────────────────────────────────────────
+
+function setupAutoUpdater() {
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('update-available', (info) => {
+    mainWindow?.webContents.send('update:available', {
+      version: info.version,
+      releaseNotes: info.releaseNotes ?? null,
+    });
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    mainWindow?.webContents.send('update:progress', {
+      percent: Math.round(progress.percent),
+    });
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    mainWindow?.webContents.send('update:downloaded', { version: info.version });
+  });
+
+  autoUpdater.on('error', (err) => {
+    console.error('[updater] error:', err.message);
+    mainWindow?.webContents.send('update:error');
+  });
+
+  setTimeout(() => autoUpdater.checkForUpdates().catch((err) => {
+    console.error('[updater] checkForUpdates error:', err.message);
+  }), 5000);
 }
 
 // ── Agent config helpers ──────────────────────────────────────────────────────
@@ -250,14 +295,6 @@ function registerIPC() {
   ipcMain.handle('agent:start', () => { startAgent(); return { running: agent.isRunning() }; });
   ipcMain.handle('agent:stop',  () => { stopAgent();  return { running: false }; });
   ipcMain.handle('agent:status', () => ({ running: agent.isRunning() }));
-  ipcMain.handle('gateway:start', () => { gateway.start(); updateTrayMenu(); return { running: gateway.isRunning() }; });
-  ipcMain.handle('gateway:stop',  () => { gateway.stop();  updateTrayMenu(); return { running: false }; });
-  ipcMain.handle('gateway:status', async () => ({
-    running: gateway.isRunning(),
-    alive: await gateway.isAlive(),
-    port: gateway.GATEWAY_PORT,
-    host: gateway.GATEWAY_HOST,
-  }));
   ipcMain.handle('config:read',  () => readAgentConfig());
   ipcMain.handle('config:write', (_e, cfg) => { writeAgentConfig(cfg); return { ok: true }; });
   ipcMain.handle('config:scan',  () => scanLLMConfigs());
@@ -324,28 +361,214 @@ function registerIPC() {
     if (body) req.write(body);
     req.end();
   });
+
+  ipcMain.handle('update:install', () => {
+    autoUpdater.quitAndInstall();
+  });
+
+  ipcMain.handle('gateway:status',        () => gateway.getStatus());
+  ipcMain.handle('gateway:getLog',        () => gateway.getLog());
+  ipcMain.handle('gateway:getDailyStats', () => gateway.getDailyStats());
+  ipcMain.handle('gateway:setStrategy', (_e, strategy) => {
+    if (strategy !== 'cost' && strategy !== 'quality') return { ok: false, error: 'invalid_strategy' };
+    gateway.setStrategy(strategy);
+    return { ok: true };
+  });
+
+  // ── Local Config (scene routes + local keys, stored in userData) ─────────────
+
+  function localConfigPath() {
+    return path.join(app.getPath('userData'), 'local-config.json');
+  }
+
+  function readLocalConfig() {
+    try {
+      const p = localConfigPath();
+      if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'));
+    } catch {}
+    return { scene_routes: [], local_keys: [] };
+  }
+
+  function writeLocalConfig(cfg) {
+    fs.writeFileSync(localConfigPath(), JSON.stringify(cfg, null, 2), 'utf8');
+  }
+
+  function rndHex(bytes) {
+    return require('crypto').randomBytes(bytes).toString('hex');
+  }
+
+  function syncGatewayFromConfig(cfg) {
+    const routes = cfg.scene_routes || [];
+    const keys   = cfg.local_keys   || [];
+    // llm-router-* → scene steps
+    const routerMap = {};
+    for (const r of routes) {
+      if (r.model_key && r.steps?.length) {
+        routerMap[r.model_key] = { steps: r.steps, scene_name: r.scene_name };
+      }
+    }
+    gateway.setRouterModelMap(routerMap);
+    // api key string → scene steps (for keys bound to a scene)
+    const keyMap = {};
+    for (const k of keys) {
+      if (k.key && k.model_key) {
+        const route = routes.find(r => r.model_key === k.model_key);
+        if (route?.steps?.length) keyMap[k.key] = { steps: route.steps, scene_name: route.scene_name };
+      }
+    }
+    gateway.setKeySceneMap(keyMap);
+    // P2P backend config
+    const cc = cfg.cloud_config || {};
+    if (cc.url && cc.token) gateway.setBackendConfig({ url: cc.url, token: cc.token });
+  }
+
+  // Fetch currently active P2P model names from /v1/models (requires auth, reflects live workers)
+  async function fetchPeerModels(backendUrl, cloudToken) {
+    if (!backendUrl || !cloudToken) {
+      gateway.setPeerModels([]);
+      return;
+    }
+    const url = backendUrl.replace(/\/$/, '') + '/v1/models';
+    try {
+      const r = await nodeRequest(url, 'GET', { Authorization: `Bearer ${cloudToken}` }, null);
+      if (r.status === 200) {
+        const data = JSON.parse(r.body);
+        const names = (data.data || []).map(m => m.id).filter(Boolean);
+        gateway.setPeerModels(names);
+      } else {
+        console.warn('[main] fetchPeerModels: status', r.status);
+        gateway.setPeerModels([]);
+      }
+    } catch (err) {
+      console.warn('[main] fetchPeerModels failed:', err.message);
+    }
+  }
+
+  // Sync on startup
+  const _initCfg = readLocalConfig();
+  syncGatewayFromConfig(_initCfg);
+  fetchPeerModels(_initCfg.cloud_config?.url, _initCfg.cloud_config?.token);
+
+  ipcMain.handle('localConfig:get', () => readLocalConfig());
+
+  ipcMain.handle('localConfig:createSceneRoute', (_e, { scene_name, icon, steps }) => {
+    const cfg   = readLocalConfig();
+    const route = {
+      id: rndHex(8), scene_name, icon: icon || '🔀',
+      steps: steps || [],
+      model_key: 'llm-router-' + rndHex(6),
+      created_at: new Date().toISOString(),
+    };
+    cfg.scene_routes.push(route);
+    writeLocalConfig(cfg);
+    syncGatewayFromConfig(cfg);
+    return route;
+  });
+
+  ipcMain.handle('localConfig:updateSceneRoute', (_e, { id, scene_name, icon, steps }) => {
+    const cfg = readLocalConfig();
+    const idx = cfg.scene_routes.findIndex(r => r.id === id);
+    if (idx === -1) return null;
+    cfg.scene_routes[idx] = { ...cfg.scene_routes[idx], scene_name, icon, steps };
+    writeLocalConfig(cfg);
+    syncGatewayFromConfig(cfg);
+    return cfg.scene_routes[idx];
+  });
+
+  ipcMain.handle('localConfig:deleteSceneRoute', (_e, id) => {
+    const cfg = readLocalConfig();
+    cfg.scene_routes = cfg.scene_routes.filter(r => r.id !== id);
+    writeLocalConfig(cfg);
+    syncGatewayFromConfig(cfg);
+    return { ok: true };
+  });
+
+  ipcMain.handle('localConfig:createKey', (_e, { note }) => {
+    const cfg = readLocalConfig();
+    const key = {
+      id: rndHex(8),
+      key: 'sk-local-' + rndHex(16),
+      note: note || '',
+      model_key: null,
+      created_at: new Date().toISOString(),
+    };
+    cfg.local_keys.push(key);
+    writeLocalConfig(cfg);
+    return key;
+  });
+
+  ipcMain.handle('localConfig:deleteKey', (_e, id) => {
+    const cfg = readLocalConfig();
+    cfg.local_keys = cfg.local_keys.filter(k => k.id !== id);
+    writeLocalConfig(cfg);
+    syncGatewayFromConfig(cfg);
+    return { ok: true };
+  });
+
+  ipcMain.handle('localConfig:bindKey', (_e, { id, model_key }) => {
+    const cfg = readLocalConfig();
+    const key = cfg.local_keys.find(k => k.id === id);
+    if (!key) return null;
+    key.model_key = model_key || null;
+    writeLocalConfig(cfg);
+    syncGatewayFromConfig(cfg);
+    return key;
+  });
+
+  // Save cloud API config (url + user API key) for P2P forwarding
+  ipcMain.handle('localConfig:setCloudConfig', (_e, { url, token } = {}) => {
+    const cfg = readLocalConfig();
+    cfg.cloud_config = { url: url || null, token: token || null };
+    writeLocalConfig(cfg);
+    syncGatewayFromConfig(cfg);
+    // Refresh active P2P model list using authenticated /v1/models
+    fetchPeerModels(url, token);
+    return { ok: true };
+  });
+
+  ipcMain.handle('gateway:setKeySceneMap', (_e, map) => {
+    gateway.setKeySceneMap(map);
+    return { ok: true };
+  });
+
+  ipcMain.handle('gateway:setRouterModelMap', (_e, map) => {
+    gateway.setRouterModelMap(map);
+    return { ok: true };
+  });
+
+  ipcMain.handle('gateway:testProvider', async (_e, { base_url, token } = {}) => {
+    if (!base_url || typeof base_url !== 'string') return { ok: false, error: 'base_url required' };
+    try {
+      const result = await nodeRequest(
+        base_url.replace(/\/$/, '') + '/models',
+        'GET',
+        token ? { Authorization: `Bearer ${token}` } : {},
+        null,
+      );
+      return { ok: result.status >= 200 && result.status < 400, status: result.status };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // Periodically refresh P2P model list so newly available models are detected
+  setInterval(() => {
+    const cc = readLocalConfig().cloud_config || {};
+    if (cc.url && cc.token) fetchPeerModels(cc.url, cc.token);
+  }, 60_000);
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 
-app.whenReady().then(async () => {
+app.whenReady().then(() => {
   createWindow();
   createTray();
   registerIPC();
+  gateway.start(11430, readAgentConfig);
 
-  // Auto-start gateway if not already running externally
-  const alreadyAlive = await gateway.isAlive();
-  if (!alreadyAlive) {
-    gateway.attachListeners({
-      onLog: (line) => mainWindow?.webContents.send('gateway:log', line),
-      onStatus: (s) => { mainWindow?.webContents.send('gateway:status', s); updateTrayMenu(); },
-    });
-    gateway.start();
-  } else {
-    console.log('[main] Gateway already running externally; skipping autostart');
-  }
+  if (!isDev) setupAutoUpdater();
 
-  // Auto-start agent if configured (legacy VPS worker)
+  // Auto-start agent if configured
   const cfg = readAgentConfig();
   if (cfg?.auto_start && cfg?.worker_key) {
     startAgent();
@@ -361,7 +584,4 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => {
-  agent.stop();
-  gateway.stop();
-});
+app.on('before-quit', () => { agent.stop(); gateway.stop(); });

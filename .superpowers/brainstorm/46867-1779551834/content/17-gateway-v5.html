@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>网关 v5 — 场景路由 + 内联调试</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<style>body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif; }</style>
+</head>
+<body class="bg-gray-950 text-gray-100 flex min-h-screen">
+
+<nav class="w-52 bg-gray-900 border-r border-gray-800 flex flex-col py-4 gap-1 shrink-0">
+  <div class="px-4 mb-4"><div class="text-sm font-bold text-gray-200">Token Bank</div><div class="text-xs text-gray-600 mt-0.5">本地 AI 网关</div></div>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg bg-gray-800 text-white text-sm font-medium"><span>🔀</span> 网关</a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm"><span>⚡</span> 供给源</a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm"><span>💪</span> 贡献</a>
+  <div class="flex-1"></div>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm"><span>⚙️</span> 设置</a>
+  <div class="mx-2 p-3 rounded-lg border border-gray-800 flex items-center gap-3 cursor-pointer hover:bg-gray-800">
+    <div class="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xs font-bold">U</div>
+    <div class="flex-1 min-w-0"><div class="text-xs font-medium text-gray-200 truncate">user@example.com</div><div class="text-xs text-gray-500">2,340 积分 · 查看盘点 →</div></div>
+  </div>
+</nav>
+
+<main class="flex-1 overflow-y-auto p-6 space-y-5">
+
+  <!-- Header -->
+  <div class="flex items-center gap-3">
+    <span class="relative flex h-2.5 w-2.5"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span></span>
+    <h1 class="text-xl font-semibold">网关</h1>
+    <span class="text-xs bg-green-900/30 text-green-400 border border-green-800/50 px-2 py-0.5 rounded-full">运行中 · :11430</span>
+  </div>
+
+  <!-- Stats -->
+  <div class="grid grid-cols-4 gap-3">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">今日请求</div><div class="text-2xl font-bold mt-1">284</div><div class="text-xs text-green-500 mt-0.5">↑ 12%</div></div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">免费命中率</div><div class="text-2xl font-bold text-green-400 mt-1">67%</div></div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">错误率</div><div class="text-2xl font-bold text-amber-400 mt-1">1.4%</div></div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">平均延迟</div><div class="text-2xl font-bold mt-1">320ms</div></div>
+  </div>
+
+  <!-- Endpoint -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wide font-medium mb-3">接入端点</div>
+    <div class="flex items-center gap-2">
+      <code class="flex-1 text-sm font-mono text-green-400 bg-gray-800 rounded-lg px-3 py-2 border border-gray-700">http://127.0.0.1:11430/v1</code>
+      <button class="text-xs bg-gray-800 text-gray-400 px-2.5 py-2 rounded-lg border border-gray-700">复制</button>
+      <button class="text-xs bg-gray-800 text-gray-400 px-2.5 py-2 rounded-lg border border-gray-700">🤖 配置 Claude Code</button>
+    </div>
+    <p class="text-xs text-gray-600 mt-2">每个场景有独立 API Key，填入对应工具即可按场景路由</p>
+  </div>
+
+  <!-- ── 场景路由规则 ── -->
+  <div class="space-y-3">
+    <div class="flex items-center justify-between">
+      <div>
+        <h2 class="text-sm font-semibold text-gray-200">场景路由</h2>
+        <p class="text-xs text-gray-500 mt-0.5">每个场景绑定独立 API Key，网关按 Key 匹配路由链</p>
+      </div>
+      <button class="text-xs px-3 py-1.5 bg-gray-800 border border-gray-700 text-gray-400 hover:text-gray-200 rounded-lg">＋ 新增场景</button>
+    </div>
+
+    <!-- ── 场景 1: Claude Code（展开状态） ── -->
+    <div class="bg-gray-900 border border-blue-700/50 rounded-2xl overflow-hidden">
+      <!-- Scenario header -->
+      <div class="flex items-center gap-4 px-5 py-3.5 border-b border-gray-800">
+        <span class="text-lg">🤖</span>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-semibold text-gray-200">Claude Code</span>
+            <span class="text-[10px] bg-green-900/40 text-green-400 border border-green-800/40 px-1.5 py-0.5 rounded-full">● 活跃 · 今日 180 次</span>
+          </div>
+          <div class="flex items-center gap-2 mt-0.5">
+            <code class="text-[10px] text-gray-500 font-mono bg-gray-800 px-2 py-0.5 rounded">tb-cc-a3f9d2••••••••</code>
+            <button class="text-[10px] text-gray-600 hover:text-gray-400">复制</button>
+            <button class="text-[10px] text-gray-600 hover:text-gray-400">重置</button>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button class="text-xs text-gray-600 hover:text-red-400">删除</button>
+          <button class="text-xs text-gray-500">收起 ▲</button>
+        </div>
+      </div>
+
+      <!-- Chain builder -->
+      <div class="px-5 py-4 space-y-3">
+        <div class="text-xs text-gray-500 mb-1">降级链 — 失败时依次尝试下一步，同步骤内多个模型随机择一</div>
+
+        <!-- Step 1 -->
+        <div class="flex gap-3">
+          <div class="flex flex-col items-center shrink-0 w-5">
+            <div class="w-5 h-5 rounded-full bg-green-900/60 border border-green-700 text-green-400 text-[10px] flex items-center justify-center font-bold">1</div>
+            <div class="w-px flex-1 bg-gray-800 mt-1 min-h-[1.5rem]"></div>
+          </div>
+          <div class="flex-1 pb-3">
+            <div class="flex flex-wrap gap-1.5 items-center">
+              <div class="flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs">
+                <span class="w-1.5 h-1.5 rounded-full bg-green-400"></span>
+                <span class="text-gray-200">llama3.2:latest</span>
+                <span class="text-gray-600">Ollama</span>
+                <button class="text-gray-700 hover:text-red-400 ml-0.5 text-[10px]">×</button>
+              </div>
+              <div class="flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs">
+                <span class="w-1.5 h-1.5 rounded-full bg-green-400"></span>
+                <span class="text-gray-200">llama-3.1-8b-instant</span>
+                <span class="text-gray-600">Groq</span>
+                <button class="text-gray-700 hover:text-red-400 ml-0.5 text-[10px]">×</button>
+              </div>
+              <button class="text-[10px] text-gray-600 hover:text-blue-400 border border-dashed border-gray-700 hover:border-blue-600 rounded-lg px-2 py-1.5">＋ 模型</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="pl-5 text-[10px] text-gray-700 -mt-2 mb-0.5">失败 ↓</div>
+
+        <!-- Step 2 -->
+        <div class="flex gap-3">
+          <div class="flex flex-col items-center shrink-0 w-5">
+            <div class="w-5 h-5 rounded-full bg-blue-900/60 border border-blue-700 text-blue-400 text-[10px] flex items-center justify-center font-bold">2</div>
+            <div class="w-px flex-1 bg-gray-800 mt-1 min-h-[1.5rem]"></div>
+          </div>
+          <div class="flex-1 pb-3">
+            <div class="flex flex-wrap gap-1.5 items-center">
+              <div class="flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs">
+                <span class="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                <span class="text-gray-200">gpt-4o-mini</span>
+                <span class="text-gray-600">P2P</span>
+                <button class="text-gray-700 hover:text-red-400 ml-0.5 text-[10px]">×</button>
+              </div>
+              <button class="text-[10px] text-gray-600 hover:text-blue-400 border border-dashed border-gray-700 hover:border-blue-600 rounded-lg px-2 py-1.5">＋ 模型</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="pl-5 text-[10px] text-gray-700 -mt-2 mb-0.5">失败 ↓</div>
+
+        <!-- Step 3: c,d -->
+        <div class="flex gap-3">
+          <div class="shrink-0 w-5">
+            <div class="w-5 h-5 rounded-full bg-amber-900/60 border border-amber-700 text-amber-400 text-[10px] flex items-center justify-center font-bold">3</div>
+          </div>
+          <div class="flex-1">
+            <div class="flex flex-wrap gap-1.5 items-center">
+              <div class="flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs">
+                <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                <span class="text-gray-200">gpt-4o</span>
+                <span class="text-gray-600">OpenAI</span>
+                <button class="text-gray-700 hover:text-red-400 ml-0.5 text-[10px]">×</button>
+              </div>
+              <div class="flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs">
+                <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                <span class="text-gray-200">claude-3-5-sonnet</span>
+                <span class="text-gray-600">Anthropic</span>
+                <button class="text-gray-700 hover:text-red-400 ml-0.5 text-[10px]">×</button>
+              </div>
+              <button class="text-[10px] text-gray-600 hover:text-blue-400 border border-dashed border-gray-700 hover:border-blue-600 rounded-lg px-2 py-1.5">＋ 模型</button>
+            </div>
+          </div>
+        </div>
+
+        <button class="text-[10px] text-gray-600 hover:text-gray-400 border border-dashed border-gray-800 hover:border-gray-700 rounded-lg px-3 py-1.5 ml-7 mt-1">＋ 添加步骤</button>
+
+        <!-- Chain summary -->
+        <div class="bg-gray-800/50 rounded-xl px-3 py-2 flex items-center gap-1.5 flex-wrap text-[10px] ml-7">
+          <span class="text-gray-600">链：</span>
+          <span class="text-green-400 font-mono">llama3.2 | llama-3.1-8b</span>
+          <span class="text-gray-700">→</span>
+          <span class="text-blue-400 font-mono">gpt-4o-mini</span>
+          <span class="text-gray-700">→</span>
+          <span class="text-amber-400 font-mono">gpt-4o, claude-3-5-sonnet</span>
+        </div>
+
+        <!-- ── 内联调试（路由策略下方）── -->
+        <div class="mt-4 border-t border-gray-800 pt-4">
+          <div class="text-xs text-gray-500 font-medium mb-3 flex items-center gap-2">
+            <span>🐛</span> 调试此场景
+          </div>
+          <!-- Debug UI: toolbar + single message + response, compact -->
+          <div class="bg-white rounded-xl overflow-hidden border border-gray-200" style="min-height:0">
+            <!-- mini toolbar -->
+            <div class="flex items-center gap-2 px-3 py-2 border-b border-gray-200 bg-white flex-wrap">
+              <div class="flex rounded-md overflow-hidden border border-gray-200 text-xs shrink-0">
+                <span class="px-2.5 py-1 bg-blue-600 text-white font-medium">对话</span>
+                <span class="px-2.5 py-1 bg-white text-gray-500">图像</span>
+              </div>
+              <!-- Model from chain -->
+              <select class="bg-gray-100 border border-gray-200 rounded-md px-2 py-1 text-xs text-gray-700 focus:outline-none">
+                <option>llama3.2:latest (步骤1)</option>
+                <option>llama-3.1-8b-instant (步骤1)</option>
+                <option>gpt-4o-mini (步骤2)</option>
+                <option>gpt-4o (步骤3)</option>
+              </select>
+              <label class="flex items-center gap-1 text-xs text-gray-500 cursor-pointer"><input type="checkbox" checked class="accent-blue-600 w-3 h-3" /> 流式</label>
+              <button class="text-xs text-gray-400 hover:text-gray-600 ml-auto">清空</button>
+            </div>
+            <!-- Empty state -->
+            <div class="flex flex-col items-center justify-center py-8 text-gray-400 bg-gray-50">
+              <p class="text-2xl mb-1">🐛</p>
+              <p class="text-xs text-gray-400">按此场景路由链发送调试消息</p>
+            </div>
+            <!-- Input -->
+            <div class="border-t border-gray-200 px-3 py-2 bg-white flex gap-2 items-end">
+              <input placeholder="输入消息… (Cmd+Enter)" class="flex-1 bg-gray-100 border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
+              <button class="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center shrink-0"><span class="text-white text-xs">↑</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── 场景 2: 写文章（折叠） ── -->
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl">
+      <div class="flex items-center gap-4 px-5 py-3.5">
+        <span class="text-lg">✍️</span>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-semibold text-gray-200">写文章</span>
+            <span class="text-[10px] bg-gray-800 text-gray-500 border border-gray-700 px-1.5 py-0.5 rounded-full">今日 64 次</span>
+          </div>
+          <div class="flex items-center gap-2 mt-0.5">
+            <code class="text-[10px] text-gray-500 font-mono bg-gray-800 px-2 py-0.5 rounded">tb-wr-7b2e1c••••••••</code>
+            <span class="text-[10px] text-gray-700">链：claude-3-5-sonnet → gpt-4o</span>
+          </div>
+        </div>
+        <button class="text-xs text-gray-500 hover:text-gray-300">展开 ▼</button>
+      </div>
+    </div>
+
+    <!-- ── 场景 3: 默认（折叠） ── -->
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl">
+      <div class="flex items-center gap-4 px-5 py-3.5">
+        <span class="text-lg">⚙️</span>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-semibold text-gray-200">默认</span>
+            <span class="text-[10px] text-gray-600 border border-gray-700 px-1.5 py-0.5 rounded-full">无 Key 时使用</span>
+          </div>
+          <div class="flex items-center gap-2 mt-0.5">
+            <span class="text-[10px] text-gray-700">链：llama-3.1-8b → gpt-4o-mini → gpt-4o</span>
+          </div>
+        </div>
+        <button class="text-xs text-gray-500 hover:text-gray-300">展开 ▼</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Model list (bottom reference) -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-3 border-b border-gray-800">
+      <h2 class="text-sm font-semibold text-gray-200">可选模型</h2>
+      <span class="text-xs text-gray-600">供路由链选择</span>
+    </div>
+    <div class="px-5 py-3 grid grid-cols-4 gap-2">
+      <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2"><span class="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0"></span><div><div class="text-xs text-gray-200">llama3.2:latest</div><div class="text-[10px] text-gray-500">Ollama</div></div></div>
+      <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2"><span class="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0"></span><div><div class="text-xs text-gray-200">llama-3.1-8b-instant</div><div class="text-[10px] text-gray-500">Groq</div></div></div>
+      <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2"><span class="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0"></span><div><div class="text-xs text-gray-200">gpt-4o-mini</div><div class="text-[10px] text-gray-500">P2P</div></div></div>
+      <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2"><span class="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0"></span><div><div class="text-xs text-gray-200">gpt-4o</div><div class="text-[10px] text-gray-500">OpenAI</div></div></div>
+    </div>
+  </div>
+
+</main>
+</body>
+</html>

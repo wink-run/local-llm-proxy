@@ -1,0 +1,23 @@
+{"type":"server-started","port":53057,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:53057","screen_dir":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content","state_dir":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/state"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/01-dashboard.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/02-gateway.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/03-providers.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/04-gateway-v2.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/05-providers-v2.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/06-debug-v2.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/07-profile-token.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/08-gateway-debug-modal.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/09-gateway-debug-modal-v2.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/10-debug-modal-final.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/11-debug-modal-layout.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/12-gateway-v3.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/13-providers-v3.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/14-providers-v4.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/15-providers-inline.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/15-providers-v5.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/16-gateway-routing.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/17-gateway-scenes.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/17-gateway-v5.html"}
+{"type":"screen-added","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/index.html"}
+{"type":"screen-updated","file":"/Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content/index.html"}
+{"type":"server-stopped","reason":"owner process exited"}

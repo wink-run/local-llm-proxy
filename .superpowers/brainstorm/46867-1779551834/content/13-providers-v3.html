@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>供给源 v3 — 分类配置，后端下发列表</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<style>body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif; }</style>
+</head>
+<body class="bg-gray-950 text-gray-100 flex min-h-screen">
+
+<nav class="w-52 bg-gray-900 border-r border-gray-800 flex flex-col py-4 gap-1 shrink-0">
+  <div class="px-4 mb-4"><div class="text-sm font-bold text-gray-200">Token Bank</div><div class="text-xs text-gray-600 mt-0.5">本地 AI 网关</div></div>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm"><span>🔀</span> 网关</a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg bg-gray-800 text-white text-sm font-medium"><span>⚡</span> 供给源</a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm"><span>💪</span> 贡献</a>
+  <div class="flex-1"></div>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm"><span>⚙️</span> 设置</a>
+  <div class="mx-2 p-3 rounded-lg border border-gray-800 flex items-center gap-3 cursor-pointer hover:bg-gray-800">
+    <div class="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xs font-bold">U</div>
+    <div class="flex-1 min-w-0"><div class="text-xs font-medium text-gray-200 truncate">user@example.com</div><div class="text-xs text-gray-500">2,340 积分 · 查看盘点 →</div></div>
+  </div>
+</nav>
+
+<main class="flex-1 overflow-y-auto p-6 space-y-5">
+
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-xl font-semibold">供给源</h1>
+      <p class="text-sm text-gray-500 mt-0.5">按分类配置各层供给源，具体提供商列表由服务端下发</p>
+    </div>
+    <button class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg font-medium">保存</button>
+  </div>
+
+  <!-- ── 免费层 ── -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+    <!-- Category header -->
+    <div class="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+      <div class="flex items-center gap-3">
+        <span class="w-2.5 h-2.5 rounded-full bg-green-500"></span>
+        <div>
+          <div class="text-sm font-semibold text-gray-200">免费层</div>
+          <div class="text-xs text-gray-500 mt-0.5">优先使用，不消耗积分和付费额度</div>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-xs text-green-500">3 个供给源活跃</span>
+        <!-- Category-level toggle -->
+        <div class="relative w-9 h-5 rounded-full bg-blue-600 cursor-pointer">
+          <span class="absolute top-0.5 right-0.5 w-4 h-4 bg-white rounded-full shadow"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Category-level config -->
+    <div class="px-5 py-4 space-y-4">
+
+      <!-- Hint: list is server-provided -->
+      <div class="flex items-center gap-2 bg-gray-800/50 rounded-lg px-3 py-2.5">
+        <span class="text-gray-500 text-sm">ℹ</span>
+        <p class="text-xs text-gray-500">
+          具体提供商（Ollama、Groq、GitHub Models 等）由服务端下发，此处配置该层的 API Key 和行为。
+        </p>
+      </div>
+
+      <!-- Per-provider credentials — server tells us which keys are needed -->
+      <div class="space-y-3">
+        <div class="text-xs text-gray-500 font-medium">API Keys（按需填写）</div>
+
+        <!-- Groq key -->
+        <div class="flex items-center gap-3">
+          <div class="w-20 text-xs text-gray-400 shrink-0">Groq</div>
+          <input type="password" placeholder="gsk_... （不填则跳过此源）"
+            class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-300 font-mono focus:outline-none focus:border-blue-500 placeholder-gray-600" />
+          <button class="text-xs bg-gray-800 text-gray-500 hover:text-gray-300 px-2 py-1.5 rounded-lg border border-gray-700">显示</button>
+          <span class="text-xs text-green-500 w-16 text-right">✓ 已验证</span>
+        </div>
+
+        <!-- GitHub Models key -->
+        <div class="flex items-center gap-3">
+          <div class="w-20 text-xs text-gray-400 shrink-0">GitHub</div>
+          <input type="password" placeholder="ghp_... GitHub PAT"
+            class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-300 font-mono focus:outline-none focus:border-blue-500 placeholder-gray-600" />
+          <button class="text-xs bg-gray-800 text-gray-500 hover:text-gray-300 px-2 py-1.5 rounded-lg border border-gray-700">显示</button>
+          <span class="text-xs text-gray-600 w-16 text-right">未填写</span>
+        </div>
+
+        <!-- Ollama: no key needed -->
+        <div class="flex items-center gap-3">
+          <div class="w-20 text-xs text-gray-400 shrink-0">Ollama</div>
+          <div class="flex-1 bg-gray-800/40 border border-gray-800 rounded-lg px-3 py-1.5 text-xs text-gray-600">本地服务，无需 API Key</div>
+          <div class="w-6"></div>
+          <span class="text-xs text-green-500 w-16 text-right">✓ 检测到</span>
+        </div>
+      </div>
+
+      <!-- Layer behavior -->
+      <div class="flex items-center gap-6 pt-1">
+        <label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+          <input type="checkbox" checked class="accent-blue-500" /> 失败时降级到下层
+        </label>
+        <label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+          <input type="checkbox" checked class="accent-blue-500" /> 源间负载均衡
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── P2P 层 ── -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+      <div class="flex items-center gap-3">
+        <span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+        <div>
+          <div class="text-sm font-semibold text-gray-200">P2P 层</div>
+          <div class="text-xs text-gray-500 mt-0.5">消耗积分调用社区共享算力</div>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-xs text-blue-400 font-medium">340 积分余额</span>
+        <div class="relative w-9 h-5 rounded-full bg-blue-600 cursor-pointer">
+          <span class="absolute top-0.5 right-0.5 w-4 h-4 bg-white rounded-full shadow"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="px-5 py-4 space-y-3">
+      <div class="flex items-center gap-2 bg-gray-800/50 rounded-lg px-3 py-2.5">
+        <span class="text-gray-500 text-sm">ℹ</span>
+        <p class="text-xs text-gray-500">P2P 网络节点由平台统一调度，可用模型列表实时同步。</p>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div class="space-y-1.5">
+          <label class="text-xs text-gray-400">积分不足时</label>
+          <select class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none">
+            <option>自动降级到付费层</option>
+            <option>报错并终止</option>
+            <option>跳过此层继续</option>
+          </select>
+        </div>
+        <div class="space-y-1.5">
+          <label class="text-xs text-gray-400">最低积分阈值</label>
+          <input value="50" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none" placeholder="低于此值时触发上方规则" />
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 付费层 ── -->
+  <div class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+      <div class="flex items-center gap-3">
+        <span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+        <div>
+          <div class="text-sm font-semibold text-gray-200">付费层（兜底）</div>
+          <div class="text-xs text-gray-500 mt-0.5">直接计费，仅在上层全部失败时使用</div>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-xs text-gray-600">未启用</span>
+        <div class="relative w-9 h-5 rounded-full bg-gray-700 cursor-pointer">
+          <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="px-5 py-4 space-y-3">
+      <div class="flex items-center gap-2 bg-gray-800/50 rounded-lg px-3 py-2.5">
+        <span class="text-gray-500 text-sm">ℹ</span>
+        <p class="text-xs text-gray-500">支持的付费提供商（OpenAI、Anthropic 等）由服务端下发，填写对应 API Key 即可启用。</p>
+      </div>
+
+      <div class="space-y-3 opacity-60">
+        <div class="flex items-center gap-3">
+          <div class="w-24 text-xs text-gray-400 shrink-0">OpenAI</div>
+          <input type="password" placeholder="sk-..."
+            class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-400 font-mono focus:outline-none placeholder-gray-700" />
+          <button class="text-xs bg-gray-800 text-gray-600 px-2 py-1.5 rounded-lg border border-gray-700">显示</button>
+          <span class="text-xs text-gray-600 w-16 text-right">未填写</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <div class="w-24 text-xs text-gray-400 shrink-0">Anthropic</div>
+          <input type="password" placeholder="sk-ant-..."
+            class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-400 font-mono focus:outline-none placeholder-gray-700" />
+          <button class="text-xs bg-gray-800 text-gray-600 px-2 py-1.5 rounded-lg border border-gray-700">显示</button>
+          <span class="text-xs text-gray-600 w-16 text-right">未填写</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+</body>
+</html>

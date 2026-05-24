@@ -1,9 +1,47 @@
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-* { box-sizing: border-box; }
+@layer base {
+  html {
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
 
-body {
-  transition: background-color 0.15s ease, color 0.15s ease;
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    letter-spacing: -0.01em;
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
+
+  /* Tighter line height for compact UI */
+  * {
+    box-sizing: border-box;
+    line-height: 1.45;
+  }
+
+  /* Mono elements */
+  code, kbd, pre, .font-mono {
+    font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', ui-monospace, monospace;
+    font-size: 0.9em;
+    letter-spacing: 0;
+  }
+
+  /* Compact scrollbars */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.3); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.5); }
+
+  /* Input resets */
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 }

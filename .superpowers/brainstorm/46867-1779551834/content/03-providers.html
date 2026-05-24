@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>供给源 — Providers Mockup</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif; }
+  .health-bar { height: 4px; border-radius: 2px; }
+</style>
+</head>
+<body class="bg-gray-950 text-gray-100 flex min-h-screen">
+
+<!-- Sidebar -->
+<nav class="w-52 bg-gray-900 border-r border-gray-800 flex flex-col py-4 gap-1 shrink-0">
+  <div class="px-4 mb-4">
+    <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Token Bank</div>
+  </div>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm">
+    <span class="text-base">🏦</span> Token 盘点
+  </a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm">
+    <span class="text-base">🔀</span> 网关
+  </a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg bg-gray-800 text-white text-sm font-medium">
+    <span class="text-base">⚡</span> 供给源
+  </a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm">
+    <span class="text-base">💪</span> 贡献
+  </a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm">
+    <span class="text-base">🌐</span> 网络
+  </a>
+  <div class="flex-1"></div>
+  <div class="mx-2 p-3 rounded-lg border border-gray-800 flex items-center gap-3">
+    <div class="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xs font-bold">U</div>
+    <div class="flex-1 min-w-0">
+      <div class="text-xs font-medium text-gray-200 truncate">user@example.com</div>
+      <div class="text-xs text-gray-500">2,340 积分</div>
+    </div>
+  </div>
+</nav>
+
+<main class="flex-1 overflow-y-auto p-6 space-y-5">
+
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-xl font-semibold text-gray-100">供给源</h1>
+      <p class="text-sm text-gray-500 mt-0.5">网关按层级顺序路由：免费层 → P2P 层 → 付费层</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <button class="text-xs bg-gray-800 border border-gray-700 text-gray-400 hover:text-gray-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+        <span>+ 添加自定义供给源</span>
+      </button>
+      <button class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg font-medium">保存配置</button>
+    </div>
+  </div>
+
+  <!-- Routing order bar -->
+  <div class="flex items-center gap-2 text-xs bg-gray-900 border border-gray-800 rounded-xl p-3">
+    <span class="px-2.5 py-1 rounded-lg bg-green-900/40 text-green-400 border border-green-800/30 font-medium">免费层</span>
+    <span class="text-gray-600">→</span>
+    <span class="px-2.5 py-1 rounded-lg bg-blue-900/40 text-blue-400 border border-blue-800/30 font-medium">P2P 层</span>
+    <span class="text-gray-600">→</span>
+    <span class="px-2.5 py-1 rounded-lg bg-amber-900/40 text-amber-400 border border-amber-800/30 font-medium">付费层</span>
+    <span class="text-gray-500 ml-2">省钱优先路由策略</span>
+    <span class="ml-auto text-blue-400 cursor-pointer hover:text-blue-300">全部测试 →</span>
+  </div>
+
+  <!-- Section: 免费层 -->
+  <section class="space-y-2">
+    <div class="flex items-center gap-2 text-xs text-gray-500 uppercase tracking-wider font-semibold px-1">
+      <span class="w-2 h-2 rounded-full bg-green-500"></span> 免费层
+    </div>
+    
+    <!-- Ollama card -->
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+      <div class="p-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <!-- Drag handle -->
+            <span class="text-gray-700 cursor-grab text-sm">⠿</span>
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-green-400"></span>
+              <span class="text-sm font-medium text-gray-200">Ollama（本地）</span>
+              <span class="text-[10px] bg-gray-800 text-gray-500 px-1.5 py-0.5 rounded">自动检测</span>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <!-- Health badge -->
+            <div class="flex items-center gap-1.5 text-xs">
+              <span class="text-green-400 font-mono">386ms</span>
+              <span class="text-gray-600">·</span>
+              <span class="text-green-400">100% ↑</span>
+            </div>
+            <button class="text-xs px-2 py-1 rounded-lg bg-gray-800 text-gray-500 hover:text-gray-300">测试</button>
+            <!-- Toggle -->
+            <div class="relative w-9 h-5 rounded-full bg-blue-600 cursor-pointer">
+              <span class="absolute top-0.5 translate-x-4 w-4 h-4 bg-white rounded-full shadow"></span>
+            </div>
+          </div>
+        </div>
+        <!-- Health mini-bar -->
+        <div class="mt-3 flex gap-0.5">
+          <div class="health-bar bg-green-500 flex-1"></div>
+          <div class="health-bar bg-green-500 flex-1"></div>
+          <div class="health-bar bg-green-500 flex-1"></div>
+          <div class="health-bar bg-green-500 flex-1"></div>
+          <div class="health-bar bg-green-500 flex-1"></div>
+          <div class="health-bar bg-green-500 flex-1"></div>
+          <div class="health-bar bg-green-500 flex-1"></div>
+          <div class="health-bar bg-gray-700 flex-1"></div>
+          <div class="health-bar bg-green-500 flex-1"></div>
+          <div class="health-bar bg-green-500 flex-1"></div>
+        </div>
+        <p class="text-xs text-gray-600 mt-2">自动检测本地 Ollama，无需 API Key</p>
+      </div>
+    </div>
+
+    <!-- Groq card -->
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+      <div class="p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <span class="text-gray-700 cursor-grab text-sm">⠿</span>
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-green-400"></span>
+              <span class="text-sm font-medium text-gray-200">Groq</span>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="flex items-center gap-1.5 text-xs">
+              <span class="text-green-400 font-mono">210ms</span>
+              <span class="text-gray-600">·</span>
+              <span class="text-green-400">99% ↑</span>
+            </div>
+            <button class="text-xs px-2 py-1 rounded-lg bg-gray-800 text-gray-500 hover:text-gray-300">测试</button>
+            <div class="relative w-9 h-5 rounded-full bg-blue-600 cursor-pointer">
+              <span class="absolute top-0.5 translate-x-4 w-4 h-4 bg-white rounded-full shadow"></span>
+            </div>
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <input value="gsk_••••••••••••••••" type="password" class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500 font-mono" />
+          <button class="text-xs px-2.5 py-1.5 rounded-lg border border-gray-700 bg-gray-800 text-gray-500 hover:text-gray-300">显示</button>
+        </div>
+        <div class="flex gap-0.5">
+          <div class="health-bar bg-green-500 flex-1"></div>
+          <div class="health-bar bg-green-500 flex-1"></div>
+          <div class="health-bar bg-red-500 flex-1"></div>
+          <div class="health-bar bg-green-500 flex-1"></div>
+          <div class="health-bar bg-green-500 flex-1"></div>
+          <div class="health-bar bg-green-500 flex-1"></div>
+          <div class="health-bar bg-green-500 flex-1"></div>
+          <div class="health-bar bg-green-500 flex-1"></div>
+          <div class="health-bar bg-green-500 flex-1"></div>
+          <div class="health-bar bg-green-500 flex-1"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Custom provider (example) -->
+    <div class="bg-gray-900 border border-dashed border-gray-700 rounded-2xl overflow-hidden opacity-80">
+      <div class="p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <span class="text-gray-700 cursor-grab text-sm">⠿</span>
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-gray-500"></span>
+              <span class="text-sm font-medium text-gray-400">自定义 OpenAI 兼容</span>
+              <span class="text-[10px] bg-amber-900/30 text-amber-500 px-1.5 py-0.5 rounded">未测试</span>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <button class="text-xs px-2 py-1 rounded-lg bg-gray-800 text-gray-500 hover:text-gray-300">测试</button>
+            <button class="text-xs text-red-500 hover:text-red-400 px-2 py-1">删除</button>
+            <div class="relative w-9 h-5 rounded-full bg-gray-600 cursor-pointer">
+              <span class="absolute top-0.5 translate-x-0.5 w-4 h-4 bg-white rounded-full shadow"></span>
+            </div>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-xs text-gray-600 mb-1 block">Base URL</label>
+            <input placeholder="http://49.51.47.124:3000/v1" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-400 focus:outline-none focus:border-blue-500" />
+          </div>
+          <div>
+            <label class="text-xs text-gray-600 mb-1 block">API Key</label>
+            <input type="password" placeholder="sk-..." class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-400 focus:outline-none focus:border-blue-500" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section: P2P -->
+  <section class="space-y-2">
+    <div class="flex items-center gap-2 text-xs text-gray-500 uppercase tracking-wider font-semibold px-1">
+      <span class="w-2 h-2 rounded-full bg-blue-500"></span> P2P 层
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-blue-400"></span>
+          <span class="text-sm font-medium text-gray-200">P2P 分享网络</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="text-xs text-blue-400">340 积分余额</span>
+          <div class="relative w-9 h-5 rounded-full bg-blue-600 cursor-pointer">
+            <span class="absolute top-0.5 translate-x-4 w-4 h-4 bg-white rounded-full shadow"></span>
+          </div>
+        </div>
+      </div>
+      <p class="text-xs text-gray-500 mt-2">消耗积分使用社区共享算力，积分余额不足时自动跳过此层</p>
+    </div>
+  </section>
+
+  <!-- Section: 付费层 -->
+  <section class="space-y-2">
+    <div class="flex items-center gap-2 text-xs text-gray-500 uppercase tracking-wider font-semibold px-1">
+      <span class="w-2 h-2 rounded-full bg-amber-500"></span> 付费层（兜底）
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-3 opacity-60">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-gray-500"></span>
+          <span class="text-sm font-medium text-gray-400">OpenAI</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <button class="text-xs px-2 py-1 rounded-lg bg-gray-800 text-gray-600">测试</button>
+          <div class="relative w-9 h-5 rounded-full bg-gray-700 cursor-pointer">
+            <span class="absolute top-0.5 translate-x-0.5 w-4 h-4 bg-white rounded-full shadow"></span>
+          </div>
+        </div>
+      </div>
+      <input type="password" placeholder="填写后启用" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-600 focus:outline-none" />
+    </div>
+  </section>
+
+</main>
+</body>
+</html>

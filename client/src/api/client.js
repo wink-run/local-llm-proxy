@@ -84,3 +84,39 @@ export function getSpinStatus() {
 export function getRates() {
   return http.get('/api/rates');
 }
+
+// ── Scene Routes ──────────────────────────────────────────────────────────────
+
+export function getSceneRoutes() {
+  return http.get('/user/scene-routes');
+}
+
+export function createSceneRoute(body) {
+  return http.post('/user/scene-routes', body);
+}
+
+export function updateSceneRoute(id, body) {
+  return http.put(`/user/scene-routes/${id}`, body);
+}
+
+export function deleteSceneRoute(id) {
+  return http.delete(`/user/scene-routes/${id}`);
+}
+
+export function getKeysWithScene() {
+  return http.get('/user/keys-with-scene');
+}
+
+export function bindKeyToScene(keyId, body) {
+  return http.put(`/user/keys/${keyId}/bind-scene`, body);
+}
+
+// ── Dashboard Stats ───────────────────────────────────────────────────────────
+
+export function getDashboardStats(days = 30) {
+  return http.get(`/user/dashboard-stats?days=${days}`);
+}
+
+export function getModelStats(days = 30) {
+  return http.get(`/user/model-stats?days=${days}`);
+}

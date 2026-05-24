@@ -11,11 +11,13 @@ export default function Sidebar() {
   const location = useLocation();
 
   const NAV = [
-    { to: '/gateway',    icon: '🛰', label: t('nav.gateway') },
-    { to: '/sources',    icon: '🎁', label: t('nav.sources') },
-    { to: '/contribute', icon: '🤝', label: t('nav.contribute') },
+    { to: '/gateway',   icon: '🔀', label: '网关' },
+    { to: '/providers', icon: '⚡', label: '供给源' },
+    { to: '/contribute',icon: '💪', label: '贡献' },
+    { to: '/dashboard', icon: '📊', label: '盘点' },
+    { to: '/debug',     icon: '🐛', label: t('nav.debug') },
   ];
-  const profileActive = location.pathname === '/profile';
+  const profileActive = location.pathname === '/';
   return (
     <aside className="w-44 flex flex-col pb-5 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 shrink-0">
       {/* Logo — pt-9 clears macOS hiddenInset traffic lights (~28px) */}
@@ -23,7 +25,7 @@ export default function Sidebar() {
         <img src={logoSvg} alt="Token Bank" className="w-8 h-8 shrink-0" />
         <div className="min-w-0">
           <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">Token Bank</p>
-          <p className="text-xs text-gray-400 dark:text-gray-500 leading-tight">本地 AI 网关</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 leading-tight">token 共享网络</p>
         </div>
       </div>
 
@@ -55,11 +57,16 @@ export default function Sidebar() {
             : 'border-gray-100 dark:border-gray-800')
         }>
           <button
-            onClick={() => navigate('/profile')}
+            onClick={() => navigate('/')}
             className="flex-1 min-w-0 px-3 py-2.5 text-left"
           >
             <p className={`text-xs font-medium truncate ${profileActive ? 'text-blue-700 dark:text-blue-300' : 'text-gray-700 dark:text-gray-300'}`}>{user.nickname}</p>
             <p className="text-xs text-gray-400 dark:text-gray-500 truncate">{user.email}</p>
+            {user.credits_balance != null && (
+              <p className="text-xs text-gray-400 dark:text-gray-500 truncate mt-0.5">
+                💎 {Math.floor(user.credits_balance ?? 0).toLocaleString()} 积分
+              </p>
+            )}
           </button>
           <button
             onClick={() => navigate('/config')}

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh" class="dark">
+<head>
+<meta charset="UTF-8">
+<title>Token Bank UI Mockups v2</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+</head>
+<body class="bg-gray-950 text-gray-100 p-8">
+  <h1 class="text-2xl font-bold mb-1">Token Bank v2 UI 改造方案</h1>
+  <p class="text-gray-500 text-sm mb-2">新导航结构：网关 / 供给源 / 贡献 / 设置 · Token盘点移入个人页</p>
+  <p class="text-gray-600 text-xs mb-6">点击卡片在新标签查看</p>
+
+  <div class="mb-3 text-xs text-gray-600 uppercase tracking-wider font-semibold">v3/v4 — 最新版</div>
+  <div class="grid grid-cols-2 gap-4 mb-4">
+    <a href="/files/16-gateway-scenes.html" target="_blank" class="block bg-gray-900 border border-green-700 rounded-2xl p-5 hover:border-green-500 transition-colors">
+      <div class="text-2xl mb-2">🔀 ✅</div>
+      <h2 class="font-semibold text-green-300">网关 — 场景路由（最新）</h2>
+      <p class="text-xs text-gray-500 mt-1">左侧场景列表（Claude Code / 写文章 / 数据分析）· 每场景独立 API Key + 降级链 · 底部可用模型</p>
+    </a>
+    <a href="/files/15-providers-inline.html" target="_blank" class="block bg-gray-900 border border-green-700 rounded-2xl p-5 hover:border-green-500 transition-colors">
+      <div class="text-2xl mb-2">⚡ ✅</div>
+      <h2 class="font-semibold text-green-300">供给源 — 内联引导（最新）</h2>
+      <p class="text-xs text-gray-500 mt-1">服务端下发列表 · 点击「立即启用」卡片内直接展开分步引导 · 无模态框</p>
+    </a>
+  </div>
+
+  <div class="mb-3 text-xs text-gray-600 uppercase tracking-wider font-semibold">v2 — 上一版</div>
+  <div class="grid grid-cols-2 gap-4 mb-8">
+    <a href="/files/04-gateway-v2.html" target="_blank" class="block bg-gray-900 border border-gray-800 rounded-2xl p-5 hover:border-blue-600 transition-colors">
+      <div class="text-2xl mb-2">🔀</div>
+      <h2 class="font-semibold text-gray-200">网关 v2</h2>
+      <p class="text-xs text-gray-500 mt-1">当前可用模型列表（按层分组）· 4指标卡 · 调试按钮 · 路由日志</p>
+    </a>
+    <a href="/files/11-debug-modal-layout.html" target="_blank" class="block bg-gray-900 border border-green-600 rounded-2xl p-5 hover:border-green-500 transition-colors">
+      <div class="text-2xl mb-2">🐛 ✅</div>
+      <h2 class="font-semibold text-green-300">调试对话框 — 布局修正版</h2>
+      <p class="text-xs text-gray-500 mt-1">无单独标题行 · 工具栏即顶部（含 × 关闭）· 消息区填满 · 输入栏固定底部 — 完全匹配 Debug.jsx 布局</p>
+    </a>
+    <a href="/files/05-providers-v2.html" target="_blank" class="block bg-gray-900 border border-gray-800 rounded-2xl p-5 hover:border-blue-600 transition-colors">
+      <div class="text-2xl mb-2">⚡</div>
+      <h2 class="font-semibold text-gray-200">供给源 v2</h2>
+      <p class="text-xs text-gray-500 mt-1">Tab 切换：供给源列表 / 路由策略（4个预设+自定义规则）/ 网络状态 · 健康检测迷你图 · 自定义供给源</p>
+    </a>
+    <a href="/files/06-debug-v2.html" target="_blank" class="block bg-gray-900 border border-gray-800 rounded-2xl p-5 hover:border-blue-600 transition-colors">
+      <div class="text-2xl mb-2">🐛</div>
+      <h2 class="font-semibold text-gray-200">调试 v2</h2>
+      <p class="text-xs text-gray-500 mt-1">从网关模型列表选模型 · 每次请求可选路由策略 · 路由追踪步骤图 · 原始 JSON</p>
+    </a>
+    <a href="/files/07-profile-token.html" target="_blank" class="block bg-gray-900 border border-gray-800 rounded-2xl p-5 hover:border-blue-600 transition-colors">
+      <div class="text-2xl mb-2">👤</div>
+      <h2 class="font-semibold text-gray-200">个人页（含 Token 盘点）</h2>
+      <p class="text-xs text-gray-500 mt-1">节省金额环形图 Hero · 模型用量排行 · 积分/贡献板块 · 侧边栏用户卡点击进入</p>
+    </a>
+  </div>
+
+  <div class="border-t border-gray-800 pt-5 mb-3 text-xs text-gray-600 uppercase tracking-wider font-semibold">v1 — 初版（供参考）</div>
+  <div class="grid grid-cols-3 gap-3">
+    <a href="/files/01-dashboard.html" target="_blank" class="block bg-gray-900/50 border border-gray-800 rounded-xl p-4 hover:border-gray-700 transition-colors opacity-60">
+      <h2 class="text-sm font-semibold text-gray-400">Token 盘点 (旧)</h2>
+    </a>
+    <a href="/files/02-gateway.html" target="_blank" class="block bg-gray-900/50 border border-gray-800 rounded-xl p-4 hover:border-gray-700 transition-colors opacity-60">
+      <h2 class="text-sm font-semibold text-gray-400">网关 (旧)</h2>
+    </a>
+    <a href="/files/03-providers.html" target="_blank" class="block bg-gray-900/50 border border-gray-800 rounded-xl p-4 hover:border-gray-700 transition-colors opacity-60">
+      <h2 class="text-sm font-semibold text-gray-400">供给源 (旧)</h2>
+    </a>
+  </div>
+</body>
+</html>

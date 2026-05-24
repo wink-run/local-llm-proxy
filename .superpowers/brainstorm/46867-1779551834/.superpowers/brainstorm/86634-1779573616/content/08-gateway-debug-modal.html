@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>网关 — 调试对话框</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+<style>body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif; }</style>
+</head>
+<body class="bg-gray-950 text-gray-100 flex min-h-screen">
+
+<!-- Sidebar -->
+<nav class="w-52 bg-gray-900 border-r border-gray-800 flex flex-col py-4 gap-1 shrink-0">
+  <div class="px-4 mb-4">
+    <div class="text-sm font-bold text-gray-200">Token Bank</div>
+    <div class="text-xs text-gray-600 mt-0.5">本地 AI 网关</div>
+  </div>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg bg-gray-800 text-white text-sm font-medium">
+    <span class="text-base">🔀</span> 网关
+  </a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm">⚡ 供给源</a>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm">💪 贡献</a>
+  <div class="flex-1"></div>
+  <a class="flex items-center gap-3 px-4 py-2 mx-2 rounded-lg text-gray-400 text-sm">⚙️ 设置</a>
+  <div class="mx-2 p-3 rounded-lg border border-gray-800 flex items-center gap-3">
+    <div class="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-xs font-bold">U</div>
+    <div class="flex-1 min-w-0">
+      <div class="text-xs font-medium text-gray-200 truncate">user@example.com</div>
+      <div class="text-xs text-gray-500">2,340 积分 · 查看盘点 →</div>
+    </div>
+  </div>
+</nav>
+
+<!-- Main (blurred background — gateway page) -->
+<main class="flex-1 relative overflow-hidden">
+  <!-- Gateway content (dimmed) -->
+  <div class="p-6 space-y-5 opacity-30 pointer-events-none select-none">
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <span class="w-2.5 h-2.5 rounded-full bg-green-500"></span>
+        <h1 class="text-xl font-semibold">网关</h1>
+        <span class="text-xs bg-green-900/30 text-green-400 border border-green-800/50 px-2 py-0.5 rounded-full">运行中 · :11430</span>
+      </div>
+      <button class="flex items-center gap-2 text-sm px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-300">
+        🐛 调试请求
+      </button>
+    </div>
+    <div class="grid grid-cols-4 gap-3">
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">今日请求</div><div class="text-2xl font-bold mt-1">284</div></div>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">免费命中率</div><div class="text-2xl font-bold text-green-400 mt-1">67%</div></div>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">错误率</div><div class="text-2xl font-bold text-amber-400 mt-1">1.4%</div></div>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-3"><div class="text-xs text-gray-500">平均延迟</div><div class="text-2xl font-bold mt-1">320ms</div></div>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 h-48"></div>
+  </div>
+
+  <!-- Overlay backdrop -->
+  <div class="absolute inset-0 bg-gray-950/70 backdrop-blur-sm flex items-center justify-center p-6">
+
+    <!-- Dialog -->
+    <div class="w-full max-w-2xl bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl flex flex-col" style="max-height:85vh">
+
+      <!-- Dialog header -->
+      <div class="flex items-center justify-between px-5 py-4 border-b border-gray-800 shrink-0">
+        <div class="flex items-center gap-3">
+          <span class="text-base">🐛</span>
+          <span class="font-semibold text-gray-100">调试请求</span>
+          <span class="text-xs text-gray-500 bg-gray-800 px-2 py-0.5 rounded-lg">via 本地网关 :11430</span>
+        </div>
+        <button class="text-gray-500 hover:text-gray-300 text-xl leading-none">×</button>
+      </div>
+
+      <!-- Dialog body — scrollable -->
+      <div class="overflow-y-auto flex-1 p-5 space-y-4">
+
+        <!-- Row 1: model + strategy -->
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs text-gray-500 block mb-1.5">模型</label>
+            <select class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
+              <optgroup label="免费层 · Groq">
+                <option selected>llama-3.1-8b-instant</option>
+                <option>llama-3.3-70b-versatile</option>
+                <option>mixtral-8x7b-32768</option>
+              </optgroup>
+              <optgroup label="免费层 · Ollama">
+                <option>llama3.2:latest</option>
+              </optgroup>
+              <optgroup label="P2P 层">
+                <option>gpt-4o-mini</option>
+                <option>claude-3-haiku</option>
+              </optgroup>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1.5">路由策略</label>
+            <div class="grid grid-cols-2 gap-1.5">
+              <label class="flex items-center gap-2 bg-gray-800 border border-blue-600 rounded-lg px-2.5 py-1.5 cursor-pointer">
+                <input type="radio" name="strategy" checked class="accent-blue-500 shrink-0" />
+                <div>
+                  <div class="text-xs font-medium text-gray-200">省钱优先</div>
+                  <div class="text-[10px] text-gray-500">免费→P2P→付费</div>
+                </div>
+              </label>
+              <label class="flex items-center gap-2 bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 cursor-pointer hover:border-gray-600">
+                <input type="radio" name="strategy" class="accent-blue-500 shrink-0" />
+                <div>
+                  <div class="text-xs font-medium text-gray-300">质量优先</div>
+                  <div class="text-[10px] text-gray-500">付费→P2P→免费</div>
+                </div>
+              </label>
+              <label class="flex items-center gap-2 bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 cursor-pointer hover:border-gray-600">
+                <input type="radio" name="strategy" class="accent-blue-500 shrink-0" />
+                <div>
+                  <div class="text-xs font-medium text-gray-300">本地优先</div>
+                  <div class="text-[10px] text-gray-500">Ollama 优先</div>
+                </div>
+              </label>
+              <label class="flex items-center gap-2 bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 cursor-pointer hover:border-gray-600">
+                <input type="radio" name="strategy" class="accent-blue-500 shrink-0" />
+                <div>
+                  <div class="text-xs font-medium text-gray-300">仅免费层</div>
+                  <div class="text-[10px] text-gray-500">失败即报错</div>
+                </div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 2: message input -->
+        <div>
+          <label class="text-xs text-gray-500 block mb-1.5">消息</label>
+          <textarea rows="3" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-gray-200 resize-none focus:outline-none focus:border-blue-500">用一句话解释什么是大语言模型。</textarea>
+        </div>
+
+        <!-- Options -->
+        <div class="flex items-center gap-4 text-xs text-gray-500">
+          <label class="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked class="accent-blue-500" /> 流式响应
+          </label>
+          <label class="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked class="accent-blue-500" /> 显示路由追踪
+          </label>
+        </div>
+
+        <!-- Result area — shown after send -->
+        <div class="space-y-3">
+
+          <!-- Route trace -->
+          <div class="bg-gray-800/60 border border-gray-700/50 rounded-xl p-3.5 space-y-2.5">
+            <div class="text-xs font-medium text-gray-400">路由追踪</div>
+            <div class="space-y-2">
+              <div class="flex items-center gap-3">
+                <span class="w-5 h-5 rounded-full bg-gray-700 text-gray-500 text-[10px] flex items-center justify-center shrink-0">1</span>
+                <div class="flex-1 flex items-center gap-2">
+                  <span class="text-xs text-gray-300">Ollama 本地</span>
+                  <span class="text-[10px] bg-red-900/50 text-red-400 px-1.5 py-0.5 rounded">✗ 离线</span>
+                  <span class="text-[10px] text-gray-600">ECONNREFUSED</span>
+                </div>
+              </div>
+              <div class="flex items-center gap-3">
+                <span class="w-5 h-5 rounded-full bg-green-900 text-green-400 text-[10px] flex items-center justify-center shrink-0 font-bold">✓</span>
+                <div class="flex-1 flex items-center gap-2">
+                  <span class="text-xs text-gray-300">Groq</span>
+                  <span class="text-[10px] bg-green-900/50 text-green-400 px-1.5 py-0.5 rounded">✓ 成功</span>
+                  <span class="text-[10px] text-gray-500 font-mono">210ms · 免费层</span>
+                  <span class="ml-auto text-[10px] text-gray-600">12→47 tokens · 省 ¥0.003</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Response -->
+          <div class="bg-gray-800/60 border border-gray-700/50 rounded-xl p-3.5 space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-medium text-gray-400">响应</span>
+              <div class="flex items-center gap-2">
+                <span class="text-xs text-gray-600 font-mono">47 tokens</span>
+                <button class="text-[10px] bg-gray-700 text-gray-400 px-2 py-0.5 rounded">复制</button>
+              </div>
+            </div>
+            <div class="text-sm text-gray-200 leading-relaxed">
+              大语言模型（LLM）是一种经过大规模文本数据训练的 AI 模型，能够理解和生成人类语言，可用于对话、摘要、翻译等多种自然语言任务。
+            </div>
+            <details class="text-[10px]">
+              <summary class="text-gray-600 cursor-pointer hover:text-gray-400">查看原始 JSON</summary>
+              <pre class="mt-1.5 bg-gray-900 rounded-lg p-2.5 text-gray-500 overflow-x-auto"><code>{"id":"chatcmpl-abc","model":"llama-3.1-8b-instant","x-routed-via":"groq","x-route-layer":"free",...}</code></pre>
+            </details>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dialog footer -->
+      <div class="flex items-center justify-between px-5 py-3.5 border-t border-gray-800 shrink-0 bg-gray-900 rounded-b-2xl">
+        <span class="text-xs text-gray-600">总耗时 245ms</span>
+        <div class="flex items-center gap-2">
+          <button class="text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded-lg border border-gray-700 transition-colors">清空</button>
+          <button class="text-sm px-5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition-colors flex items-center gap-2">
+            <span class="text-xs">▶</span> 重新发送
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</main>
+
+</body>
+</html>
