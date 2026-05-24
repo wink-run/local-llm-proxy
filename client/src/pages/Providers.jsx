@@ -1,22 +1,62 @@
-// client/src/pages/Providers.jsx
 import React, { useEffect, useState, useCallback } from 'react';
 
+const PROVIDER_META = {
+  ollama:          { icon: '🦙', label: 'Ollama',        hint: '自动检测本地实例，无需配置',              keyless: true },
+  groq:            { icon: '⚡', label: 'Groq',           hint: '免费申请：console.groq.com',              keyless: false },
+  'github-models': { icon: '🐙', label: 'GitHub Models',  hint: '免费调用 GPT-4o、Llama，需 GitHub PAT',   keyless: false },
+  'tokenbank-p2p': { icon: '🌐', label: 'P2P 分享网络',  hint: '消耗积分使用社区共享算力',                 keyless: true  },
+  openai:          { icon: '🤖', label: 'OpenAI',         hint: '付费 API，支持 GPT-4o / o3 等全系模型',   keyless: false },
+  'anthropic-paid':{ icon: '🧬', label: 'Anthropic',      hint: '付费 API，Claude 3.5 / 3.7 等系列',       keyless: false },
+};
+
 const DEFAULT_PROVIDERS = [
-  { id: 'ollama',         label: 'Ollama（本地）',  base_url: 'http://127.0.0.1:11434/v1', token: '', enabled: true,  type: 'free', hint: '自动检测本地 Ollama，无需 API Key' },
-  { id: 'groq',           label: 'Groq',            base_url: 'https://api.groq.com/openai/v1',         token: '', enabled: false, type: 'free', hint: '免费申请：console.groq.com' },
-  { id: 'github-models',  label: 'GitHub Models',   base_url: 'https://models.github.azure.com',        token: '', enabled: false, type: 'free', hint: '使用 GitHub PAT（Fine-grained）' },
-  { id: 'tokenbank-p2p',  label: 'P2P 分享网络',    base_url: '',                                        token: '', enabled: true,  type: 'p2p',  hint: '消耗积分使用社区共享算力' },
-  { id: 'openai',         label: 'OpenAI',          base_url: 'https://api.openai.com/v1',              token: '', enabled: false, type: 'paid', hint: '付费 API Key，直接计费' },
-  { id: 'anthropic-paid', label: 'Anthropic',       base_url: 'https://api.anthropic.com/v1',           token: '', enabled: false, type: 'paid', hint: '付费 API Key，直接计费' },
+  { id: 'ollama',          type: 'free', enabled: true,  token: '', base_url: 'http://127.0.0.1:11434/v1' },
+  { id: 'groq',            type: 'free', enabled: false, token: '', base_url: 'https://api.groq.com/openai/v1' },
+  { id: 'github-models',   type: 'free', enabled: false, token: '', base_url: 'https://models.github.azure.com' },
+  { id: 'tokenbank-p2p',   type: 'p2p',  enabled: true,  token: '', base_url: '' },
+  { id: 'openai',          type: 'paid', enabled: false, token: '', base_url: 'https://api.openai.com/v1' },
+  { id: 'anthropic-paid',  type: 'paid', enabled: false, token: '', base_url: 'https://api.anthropic.com/v1' },
 ];
 
-const TYPE_LABELS = { free: '免费层', p2p: 'P2P 分享网络', paid: '付费层（兜底）' };
-const TYPE_ORDER  = ['free', 'p2p', 'paid'];
+const TIER_CONFIG = {
+  free: { dot: 'bg-green-500', label: '免费层',  hint: '不消耗额度，优先路由',      cols: 'grid-cols-2' },
+  p2p:  { dot: 'bg-blue-500',  label: 'P2P 层',  hint: '消耗少量积分，社区算力',    cols: 'grid-cols-1' },
+  paid: { dot: 'bg-amber-400', label: '付费层',  hint: '直接计费，作为最终兜底',    cols: 'grid-cols-2' },
+};
+
+function Toggle({ enabled, onChange }) {
+  return (
+    <div onClick={onChange}
+      className={`relative w-9 h-5 rounded-full cursor-pointer transition-colors shrink-0 ${enabled ? 'bg-blue-600' : 'bg-gray-600'}`}>
+      <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+    </div>
+  );
+}
+
+function StatusBadge({ enabled, hasKey, keyless }) {
+  if (!enabled) return null;
+  const connected = keyless || hasKey;
+  return (
+    <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${
+      connected
+        ? 'bg-green-900/50 text-green-400 border-green-800/50'
+        : 'bg-gray-800 text-gray-500 border-gray-700'
+    }`}>
+      {connected ? '● 已启用' : '● 需配置'}
+    </span>
+  );
+}
 
 function ProviderCard({ provider, onUpdate, onTest }) {
-  const [showToken, setShowToken] = useState(false);
+  const [showKey,   setShowKey]   = useState(false);
+  const [expanded,  setExpanded]  = useState(false);
   const [testing,   setTesting]   = useState(false);
   const [testMsg,   setTestMsg]   = useState('');
+
+  const meta    = PROVIDER_META[provider.id] || {};
+  const isP2P   = provider.type === 'p2p';
+  const hasKey  = !!provider.token;
+  const configured = meta.keyless || hasKey;
 
   async function handleTest() {
     if (!provider.base_url) { setTestMsg('请先填写 Base URL'); return; }
@@ -32,61 +72,91 @@ function ProviderCard({ provider, onUpdate, onTest }) {
     }
   }
 
-  const isOllama = provider.id === 'ollama';
-  const isP2P    = provider.type === 'p2p';
-
   return (
-    <div className={`bg-white dark:bg-gray-800 border rounded-2xl p-4 space-y-3 transition-opacity ${provider.enabled ? 'border-gray-100 dark:border-transparent' : 'border-gray-100 dark:border-gray-700 opacity-60'}`}>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${provider.enabled ? 'bg-green-400' : 'bg-gray-300 dark:bg-gray-600'}`} />
-          <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{provider.label}</span>
+    <div className={`bg-gray-900 border rounded-2xl overflow-hidden transition-opacity ${
+      provider.enabled ? 'border-gray-800' : 'border-gray-800 opacity-50'
+    }`}>
+      <div className="flex items-start gap-3 p-4">
+        {/* Icon */}
+        <div className="w-9 h-9 rounded-xl bg-gray-800 flex items-center justify-center text-base shrink-0">
+          {meta.icon}
         </div>
-        <div className="flex items-center gap-2">
-          {testMsg && <span className={`text-xs ${testMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{testMsg}</span>}
-          {!isP2P && (
-            <button onClick={handleTest} disabled={testing}
-              className="text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 transition-colors">
-              {testing ? '测试中…' : '测试'}
-            </button>
-          )}
-          <div onClick={() => onUpdate(provider.id, { enabled: !provider.enabled })}
-            className={`relative w-9 h-5 rounded-full cursor-pointer transition-colors ${provider.enabled ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}>
-            <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${provider.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
-          </div>
-        </div>
-      </div>
-
-      {provider.hint && <p className="text-xs text-gray-400 dark:text-gray-500">{provider.hint}</p>}
-
-      {!isOllama && !isP2P && (
-        <div className="space-y-2">
-          <div>
-            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">API Key</label>
-            <div className="flex gap-2">
-              <input
-                value={provider.token}
-                onChange={e => onUpdate(provider.id, { token: e.target.value })}
-                type={showToken ? 'text' : 'password'}
-                placeholder="填写后启用"
-                autoComplete="off"
-                className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
-              />
-              <button type="button" onClick={() => setShowToken(v => !v)}
-                className="shrink-0 px-2.5 text-xs rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                {showToken ? '隐藏' : '显示'}
-              </button>
+        {/* Body */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className={`text-sm font-medium ${provider.enabled ? 'text-gray-200' : 'text-gray-400'}`}>
+                {meta.label}
+              </span>
+              <StatusBadge enabled={provider.enabled} hasKey={hasKey} keyless={meta.keyless} />
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {!isP2P && provider.enabled && (
+                <button onClick={handleTest} disabled={testing}
+                  className="text-xs px-2.5 py-1 rounded-lg bg-gray-800 border border-gray-700 text-gray-400 hover:bg-gray-700 disabled:opacity-50 transition-colors">
+                  {testing ? '…' : '测试'}
+                </button>
+              )}
+              <Toggle enabled={provider.enabled} onChange={() => onUpdate(provider.id, { enabled: !provider.enabled })} />
             </div>
           </div>
-        </div>
-      )}
 
-      {isP2P && (
-        <p className="text-xs text-gray-500 dark:text-gray-400">
-          P2P 网络使用你的平台 API Key（在供给源页面右下角创建），消耗积分调用社区算力。
-          积分余额不足时自动跳过此层。
-        </p>
-      )}
+          {/* Hint / status text */}
+          {testMsg ? (
+            <p className={`text-xs mt-1 ${testMsg.startsWith('✓') ? 'text-green-400' : 'text-red-400'}`}>{testMsg}</p>
+          ) : (
+            <p className="text-xs text-gray-500 mt-1">{meta.hint}</p>
+          )}
+
+          {/* API key row (configured providers) */}
+          {!meta.keyless && !isP2P && configured && !expanded && (
+            <div className="flex items-center gap-2 mt-2">
+              <code className="text-xs text-gray-500 bg-gray-800 px-2 py-1 rounded font-mono">
+                {hasKey ? provider.token.slice(0, 4) + '•'.repeat(12) : '（未配置）'}
+              </code>
+              <button onClick={() => setExpanded(true)} className="text-xs text-gray-500 hover:text-gray-300">修改</button>
+            </div>
+          )}
+
+          {/* Inline setup / edit panel */}
+          {!meta.keyless && !isP2P && (!configured || expanded) && (
+            <div className="mt-3 space-y-2">
+              <div className="flex gap-2">
+                <input
+                  value={provider.token}
+                  onChange={e => onUpdate(provider.id, { token: e.target.value })}
+                  type={showKey ? 'text' : 'password'}
+                  placeholder="粘贴 API Key"
+                  autoComplete="off"
+                  className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-500"
+                />
+                <button onClick={() => setShowKey(v => !v)}
+                  className="shrink-0 px-2.5 text-xs rounded-lg border border-gray-700 bg-gray-800 text-gray-400 hover:bg-gray-700 transition-colors">
+                  {showKey ? '隐藏' : '显示'}
+                </button>
+              </div>
+              {expanded && (
+                <button onClick={() => setExpanded(false)} className="text-xs text-gray-600 hover:text-gray-400">取消</button>
+              )}
+            </div>
+          )}
+
+          {/* P2P info */}
+          {isP2P && (
+            <p className="text-xs text-gray-500 mt-1">
+              消耗积分调用社区共享算力，积分不足时自动跳过此层。
+            </p>
+          )}
+        </div>
+
+        {/* "立即启用" button for unconfigured key-requiring providers */}
+        {!meta.keyless && !isP2P && !configured && !expanded && (
+          <button onClick={() => { setExpanded(true); onUpdate(provider.id, { enabled: true }); }}
+            className="shrink-0 text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-blue-400 border border-gray-700 rounded-lg transition-colors">
+            立即启用 →
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -126,18 +196,19 @@ export default function Providers() {
     return window.electronAPI.gateway.testProvider({ base_url, token });
   }
 
-  const grouped = TYPE_ORDER.map(type => ({
-    type,
-    label: TYPE_LABELS[type],
-    items: providers.filter(p => p.type === type),
-  }));
+  const tiers = ['free', 'p2p', 'paid'];
 
   return (
-    <div className="p-8 space-y-8">
+    <div className="p-6 space-y-6">
+
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">供给源</h1>
+        <div>
+          <h1 className="text-xl font-semibold text-gray-100">供给源</h1>
+          <p className="text-sm text-gray-500 mt-0.5">启用供给源后，网关可按场景路由请求</p>
+        </div>
         <div className="flex items-center gap-3">
-          {savedMsg && <span className="text-sm text-green-600 dark:text-green-400">{savedMsg}</span>}
+          {savedMsg && <span className="text-sm text-green-400">{savedMsg}</span>}
           <button onClick={save} disabled={saving}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors">
             {saving ? '保存中…' : '保存配置'}
@@ -145,35 +216,25 @@ export default function Providers() {
         </div>
       </div>
 
-      <p className="text-sm text-gray-500 dark:text-gray-400 -mt-4">
-        网关按层级顺序路由请求：免费层 → P2P 层 → 付费层。每层内按配置顺序尝试，失败自动降级。
-      </p>
-
-      {/* Routing order visualization */}
-      <div className="flex items-center gap-2 text-xs">
-        {TYPE_ORDER.map((type, i) => (
-          <React.Fragment key={type}>
-            <span className={`px-3 py-1.5 rounded-lg font-medium ${
-              type === 'free' ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300' :
-              type === 'p2p'  ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300' :
-                                'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300'
-            }`}>{TYPE_LABELS[type]}</span>
-            {i < 2 && <span className="text-gray-400">→</span>}
-          </React.Fragment>
-        ))}
-        <span className="text-gray-400 ml-1">（省钱优先顺序）</span>
-      </div>
-
-      {grouped.map(({ type, label, items }) => (
-        <section key={type} className="space-y-3">
-          <h2 className="text-base font-semibold text-gray-700 dark:text-gray-300">{label}</h2>
-          <div className="space-y-3">
-            {items.map(p => (
-              <ProviderCard key={p.id} provider={p} onUpdate={updateProvider} onTest={testProvider} />
-            ))}
-          </div>
-        </section>
-      ))}
+      {/* Tier sections */}
+      {tiers.map(tier => {
+        const cfg   = TIER_CONFIG[tier];
+        const items = providers.filter(p => p.type === tier);
+        return (
+          <section key={tier} className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
+              <h2 className="text-sm font-semibold text-gray-200">{cfg.label}</h2>
+              <span className="text-xs text-gray-600">{cfg.hint}</span>
+            </div>
+            <div className={`grid ${cfg.cols} gap-3`}>
+              {items.map(p => (
+                <ProviderCard key={p.id} provider={p} onUpdate={updateProvider} onTest={testProvider} />
+              ))}
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }
