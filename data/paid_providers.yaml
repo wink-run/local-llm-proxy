@@ -22,10 +22,11 @@ providers:
     tier: paid
     base_url: "https://api.anthropic.com"
     auth: { type: "anthropic", env: "ANTHROPIC_API_KEY" }
+    protocol: anthropic         # 网关自动 OpenAI Chat ⇆ Anthropic Messages 互转
     signup_url: "https://console.anthropic.com/settings/keys"
     affiliate: false
     quota_hint: "Pay-as-you-go，需信用卡"
-    notes: "原生 Messages 协议；通过本地网关 /v1/messages 调用"
+    notes: "原生 Messages 协议；适配器自动转换，客户端用 OpenAI 兼容也能调"
     models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5"]
 
   - id: deepseek-official

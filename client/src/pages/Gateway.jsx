@@ -194,6 +194,7 @@ function DebugModal({ scenarios, defaultScenarioId, onClose, gatewayUrl }) {
                     <div className="text-gray-500">实际 provider</div><div>{dbg.routed_to}</div>
                     <div className="text-gray-500">实际 model</div><div>{dbg.actual_model}</div>
                     <div className="text-gray-500">tier</div><div>{dbg.tier}</div>
+                    <div className="text-gray-500">协议</div><div>{dbg.protocol || 'openai'}{dbg.protocol && dbg.protocol !== 'openai' ? ' (自动转换)' : ''}</div>
                     <div className="text-gray-500">延迟</div><div>{dbg.latency_ms}ms</div>
                   </div>
                   {dbg.attempts && dbg.attempts.length > 1 && (
@@ -258,10 +259,17 @@ function CandidateChip({ provider, model, providerMeta, onRemove }) {
   const tierColor = tier === 'free' ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300'
                   : tier === 'paid' ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
                   : 'bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300';
+  const protocol = providerMeta?.protocol || 'openai';
+  const protoTip = protocol === 'anthropic'     ? 'anthropic ⇆ openai'
+                 : protocol === 'gemini_native' ? 'gemini ⇆ openai'
+                 : null;
   return (
     <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 text-xs">
       <span className="font-mono">{model || '?'}</span>
       <span className={`text-[10px] px-1 py-0.5 rounded ${tierColor}`}>{providerMeta?.display_name || provider}</span>
+      {protoTip && (
+        <span className="text-[9px] text-gray-500 italic" title="网关会做协议互转">{protoTip}</span>
+      )}
       {onRemove && (
         <button onClick={onRemove} className="text-gray-400 hover:text-red-500 ml-0.5">×</button>
       )}

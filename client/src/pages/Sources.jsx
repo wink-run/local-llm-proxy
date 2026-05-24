@@ -51,6 +51,16 @@ function statusBadge(status) {
   return <span className={`text-[10px] px-1.5 py-0.5 rounded ${m.cls}`}>{m.label}</span>;
 }
 
+function protocolBadge(protocol) {
+  const map = {
+    openai:        { label: 'openai 兼容',    cls: 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300' },
+    anthropic:     { label: 'anthropic 原生', cls: 'bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300' },
+    gemini_native: { label: 'gemini 原生',    cls: 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300' },
+  };
+  const m = map[protocol || 'openai'] || map.openai;
+  return <span className={`text-[10px] px-1.5 py-0.5 rounded ${m.cls}`}>{m.label}</span>;
+}
+
 // ── Toggle ─────────────────────────────────────────────────────────────
 
 function Toggle({ on, disabled, onChange }) {
@@ -146,10 +156,16 @@ function ProviderCard({ entry, installed, onChanged }) {
       <div className="p-4 flex items-center gap-3">
         <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-xl shrink-0 ${icon.bg} ${icon.tone}`}>{icon.emoji}</div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <h3 className="font-semibold text-sm">{entry.display}</h3>
             {statusBadge(status)}
+            {protocolBadge(entry.protocol)}
           </div>
+          {(entry.protocol === 'anthropic' || entry.protocol === 'gemini_native') && (
+            <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
+              ℹ 客户端用 OpenAI Chat 调用时，网关自动转 {entry.protocol === 'anthropic' ? 'Anthropic Messages' : 'Gemini Native'} 格式
+            </p>
+          )}
           {installedRow && installedRow.key_present && !isPublic && !wizardOpen ? (
             <div className="flex items-center gap-1.5 mt-0.5 text-xs">
               <code className="font-mono text-gray-500">{installedRow.key_masked || '••••••'}</code>

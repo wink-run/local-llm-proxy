@@ -44,10 +44,11 @@ providers:
     quota_hint: "免费档每日 1M tokens · 推理速度全球最快"
 
   - id: gemini-ai-studio
-    display: "Google AI Studio"
+    display: "Google AI Studio (OpenAI 兼容端点)"
     tier: free
     base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
     auth: { type: "bearer", env: "GEMINI_API_KEY" }
+    protocol: openai             # 走 Google 的 OpenAI 兼容端点
     signup_url: "https://aistudio.google.com/apikey"
     guide_md: "guides/free/gemini.md"
     models:
@@ -55,6 +56,21 @@ providers:
       - "gemini-2.5-flash"
       - "gemini-2.5-flash-lite"
     quota_hint: "免费档 RPM 15 / TPM 1M / 1500 RPD · 2.5 Pro 含 2M 上下文"
+
+  - id: gemini-native
+    display: "Google Gemini（原生 generateContent）"
+    tier: free
+    base_url: "https://generativelanguage.googleapis.com"
+    auth: { type: "bearer", env: "GEMINI_API_KEY" }
+    protocol: gemini_native      # 网关自动 OpenAI Chat ⇆ Gemini 互转
+    signup_url: "https://aistudio.google.com/apikey"
+    guide_md: "guides/free/gemini.md"
+    models:
+      - "gemini-2.5-pro"
+      - "gemini-2.5-flash"
+      - "gemini-2.5-flash-lite"
+    quota_hint: "等同 AI Studio 但走原生端点；客户端可用 OpenAI 兼容调用"
+    notes: "适用于需要 systemInstruction / safetySettings 等 native 字段的场景"
 
   - id: openrouter-free
     display: "OpenRouter（免费模型）"

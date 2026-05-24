@@ -38,6 +38,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+import adapters
 import app_writers
 import ccswitch_import
 import dashboard as dashboard_mod
@@ -357,24 +358,38 @@ async def _forward_openai(request: Request, *, path_suffix: str):
     last_err: Optional[str] = None
 
     for p in candidates:
-        base_url = (p["base_url"] or "").rstrip("/")
-        url = base_url + path_suffix
-        headers = {"Content-Type": "application/json", **_auth_headers(p)}
         # scenario 候选可能强制改写 model（候选 = {provider, model} 二元组）
         send_body = body
         if p.get("_forced_model") and p["_forced_model"] != model:
             send_body = {**body, "model": p["_forced_model"]}
 
+        # 选 adapter：provider.protocol 决定（默认 openai 兼容透传）
+        protocol = p.get("protocol") or "openai"
+        adapter = adapters.get_adapter(protocol)
+        api_key = keystore.get_key(p.get("key_ref") or "") if p.get("key_ref") else None
+        adapter_result = adapter.build_request(
+            base_url=p.get("base_url") or "",
+            api_key=api_key,
+            openai_body=send_body,
+            request_headers=headers_lower,
+        )
+        url = adapter_result.url
+        headers = adapter_result.headers
+        upstream_body = adapter_result.body
+
         try:
             if streaming:
                 return StreamingResponse(
-                    _stream_upstream(url, headers, send_body, p),
+                    _stream_upstream_with_adapter(
+                        url, headers, upstream_body, p, adapter,
+                        model=(p.get("_forced_model") or model),
+                    ),
                     media_type="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
                 )
             else:
                 async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as cli:
-                    r = await cli.post(url, headers=headers, json=send_body)
+                    r = await cli.post(url, headers=headers, json=upstream_body)
                 if r.status_code >= 500:
                     last_err = f"{p['display_name']} → HTTP {r.status_code}: {r.text[:200]}"
                     log.warning("Upstream 5xx, trying next candidate: %s", last_err)
@@ -390,7 +405,16 @@ async def _forward_openai(request: Request, *, path_suffix: str):
                 await local_db.update_provider(
                     p["id"], last_used_at=time.strftime("%Y-%m-%dT%H:%M:%S"), last_error=""
                 )
-                resp_data = r.json() if "application/json" in r.headers.get("content-type", "") else None
+                raw_resp = r.json() if "application/json" in r.headers.get("content-type", "") else None
+                # adapter 转响应为 OpenAI 格式（passthrough adapter 就直接返回）
+                if raw_resp is not None and r.status_code < 400:
+                    try:
+                        resp_data = adapter.convert_response(raw_resp, model=(p.get("_forced_model") or model))
+                    except Exception as e:
+                        log.warning("adapter %s convert_response failed: %s", adapter.name, e)
+                        resp_data = raw_resp
+                else:
+                    resp_data = raw_resp
                 if cache_key and r.status_code < 300 and resp_data:
                     ttl_hdr = headers_lower.get("x-llp-cache-ttl")
                     try:
@@ -428,6 +452,7 @@ async def _forward_openai(request: Request, *, path_suffix: str):
                             "actual_model":  p.get("_forced_model") or model,
                             "step_label":    p.get("_step_label", ""),
                             "tier":          p.get("tier", "free"),
+                            "protocol":      p.get("protocol", "openai"),
                             "latency_ms":    latency,
                             "attempts":      debug_attempts,
                         },
@@ -455,6 +480,29 @@ async def _forward_openai(request: Request, *, path_suffix: str):
         scenario_id=(scenario["id"] if scenario else None),
     )
     raise HTTPException(502, f"All upstream providers failed. Last error: {last_err}")
+
+
+async def _stream_upstream_with_adapter(url: str, headers: dict, body: dict,
+                                          provider: dict, adapter, *, model: str):
+    """SSE 流：经 adapter 包一层转换为 OpenAI SSE。"""
+    async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as cli:
+        try:
+            async with cli.stream("POST", url, headers=headers, json=body) as r:
+                if r.status_code >= 400:
+                    text = (await r.aread()).decode("utf-8", errors="replace")
+                    yield f'data: {{"error": "Upstream {r.status_code}: {text[:200]}"}}\n\n'.encode("utf-8")
+                    await local_db.update_provider(provider["id"], last_error=f"HTTP {r.status_code}")
+                    return
+                async for out_chunk in adapter.convert_stream(r.aiter_bytes(), model=model):
+                    if out_chunk:
+                        yield out_chunk
+            await local_db.update_provider(
+                provider["id"], last_used_at=time.strftime("%Y-%m-%dT%H:%M:%S"), last_error="",
+            )
+        except httpx.HTTPError as e:
+            err = f"{type(e).__name__}: {e}"
+            yield f'data: {{"error": "{err}"}}\n\n'.encode("utf-8")
+            await local_db.update_provider(provider["id"], last_error=err)
 
 
 async def _stream_upstream(url: str, headers: dict, body: dict, provider: dict):
@@ -1520,8 +1568,9 @@ async def create_from_catalog(payload: CreateFromCatalog):
         auth_type=auth_type,
         key_ref=key_ref,
         models=payload.models if payload.models is not None else (entry.get("models") or []),
+        protocol=entry.get("protocol", "openai"),
     )
-    return {"id": row_id, "provider_id": payload.provider_id}
+    return {"id": row_id, "provider_id": payload.provider_id, "protocol": entry.get("protocol", "openai")}
 
 
 @app.delete("/__local__/providers/{row_id}")

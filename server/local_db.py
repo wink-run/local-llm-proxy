@@ -47,6 +47,7 @@ async def init_local_db() -> None:
                 tier         TEXT    NOT NULL,            -- free / paid / shared
                 base_url     TEXT    NOT NULL,
                 auth_type    TEXT    NOT NULL DEFAULT 'bearer',  -- bearer / none / custom
+                protocol     TEXT    NOT NULL DEFAULT 'openai',  -- openai / anthropic / gemini_native
                 key_ref      TEXT    DEFAULT '',          -- keystore 中的 key 名（不存明文）
                 models       TEXT    DEFAULT '[]',        -- JSON 数组
                 enabled      INTEGER DEFAULT 1,
@@ -59,6 +60,11 @@ async def init_local_db() -> None:
                 created_at   TEXT    DEFAULT (datetime('now'))
             )
         """)
+        # 迁移：旧库补 protocol 列
+        async with db.execute("PRAGMA table_info(local_providers)") as cur:
+            cols = {r[1] for r in await cur.fetchall()}
+        if "protocol" not in cols:
+            await db.execute("ALTER TABLE local_providers ADD COLUMN protocol TEXT NOT NULL DEFAULT 'openai'")
 
         # app_bindings：每个客户端工具当前绑定的网关入口
         await db.execute("""
@@ -128,17 +134,18 @@ async def add_provider(
     models: list[str] | None = None,
     price_in: float = 0.0,
     price_out: float = 0.0,
+    protocol: str = "openai",
 ) -> int:
     """新增一个 provider 实例，返回 rowid。"""
     async with aiosqlite.connect(LOCAL_DB_PATH) as db:
         cur = await db.execute(
             """INSERT INTO local_providers
                (provider_id, display_name, tier, base_url, auth_type, key_ref, models,
-                price_in, price_out)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                price_in, price_out, protocol)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 provider_id, display_name, tier, base_url, auth_type, key_ref,
-                json.dumps(models or []), price_in, price_out,
+                json.dumps(models or []), price_in, price_out, protocol,
             ),
         )
         await db.commit()
@@ -183,7 +190,7 @@ async def update_provider(row_id: int, **fields) -> None:
     """局部更新允许的字段。"""
     allowed = {
         "display_name", "base_url", "auth_type", "key_ref", "models",
-        "enabled", "priority", "price_in", "price_out",
+        "enabled", "priority", "price_in", "price_out", "protocol",
         "health_score", "last_used_at", "last_error",
     }
     safe = {k: v for k, v in fields.items() if k in allowed}
