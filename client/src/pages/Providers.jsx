@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { getNetwork, getProfile } from '../api/client';
 
 const PROVIDER_META = {
   ollama:          { icon: '🦙', label: 'Ollama',        hint: '自动检测本地实例，无需配置',              keyless: true },
@@ -29,6 +30,137 @@ function Toggle({ enabled, onChange }) {
     <div onClick={onChange}
       className={`relative w-9 h-5 rounded-full cursor-pointer transition-colors shrink-0 ${enabled ? 'bg-blue-600' : 'bg-gray-600'}`}>
       <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+    </div>
+  );
+}
+
+// ── P2P Network Card ──────────────────────────────────────────────────────────
+
+function P2PNetworkCard({ provider, onUpdate }) {
+  const [network,  setNetwork]  = useState(null);
+  const [balance,  setBalance]  = useState(null);
+  const [loading,  setLoading]  = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      try {
+        const [netRes, profRes] = await Promise.allSettled([getNetwork(), getProfile()]);
+        if (cancelled) return;
+        if (netRes.status === 'fulfilled') setNetwork(netRes.value.data);
+        if (profRes.status === 'fulfilled') setBalance(profRes.value.data?.credits_balance ?? null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    const id = setInterval(load, 15000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  // Aggregate per-model stats from worker list
+  const modelStats = React.useMemo(() => {
+    if (!network?.workers) return [];
+    const map = {};
+    for (const w of network.workers) {
+      for (const m of (w.models || [])) {
+        if (!map[m]) map[m] = { name: m, nodes: 0, totalLatency: 0, latencyCount: 0, activeReqs: 0 };
+        map[m].nodes++;
+        if (w.avg_latency_ms > 0) {
+          map[m].totalLatency += w.avg_latency_ms;
+          map[m].latencyCount++;
+        }
+        map[m].activeReqs += w.active_requests || 0;
+      }
+    }
+    return Object.values(map).sort((a, b) => b.nodes - a.nodes);
+  }, [network]);
+
+  const totalNodes = network?.summary?.online_workers ?? 0;
+
+  function ModelDot({ m }) {
+    if (m.nodes === 0) return <span className="w-2 h-2 rounded-full bg-gray-600 shrink-0" />;
+    if (m.activeReqs > m.nodes * 0.8) return <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />;
+    return <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />;
+  }
+
+  function ModelSub({ m }) {
+    if (m.nodes === 0) return <span className="text-gray-600">暂不可用</span>;
+    const avgS = m.latencyCount > 0 ? (m.totalLatency / m.latencyCount / 1000).toFixed(1) : null;
+    const busy = m.activeReqs > m.nodes * 0.8;
+    return (
+      <>
+        <span>{m.nodes} 节点</span>
+        {busy
+          ? <span className="text-amber-400"> · 繁忙</span>
+          : avgS ? <span> · avg {avgS}s</span> : null}
+      </>
+    );
+  }
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+      {/* Header */}
+      <div className="flex items-start gap-3 p-4">
+        <div className="w-9 h-9 rounded-xl bg-gray-800 flex items-center justify-center text-base shrink-0">🌐</div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-gray-200">P2P 分享网络</span>
+              {provider.enabled && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-900/50 text-green-400 border border-green-800/50">
+                  ● 运行中
+                </span>
+              )}
+            </div>
+            <Toggle enabled={provider.enabled} onChange={() => onUpdate('tokenbank-p2p', { enabled: !provider.enabled })} />
+          </div>
+          {!loading && (
+            <p className="text-xs text-gray-500 mt-1">
+              {balance !== null ? `余额 ${Math.round(balance)} 积分` : ''}
+              {balance !== null && totalNodes > 0 ? ' · ' : ''}
+              {totalNodes > 0 ? `网络节点 ${totalNodes}` : '获取节点中…'}
+            </p>
+          )}
+          {loading && <p className="text-xs text-gray-600 mt-1">加载中…</p>}
+        </div>
+      </div>
+
+      {/* Model grid */}
+      {provider.enabled && (
+        <div className="px-4 pb-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-500">
+              当前可用模型 <span className="text-gray-700">· 社区节点提供</span>
+            </span>
+            <button className="text-xs text-blue-500 hover:text-blue-400 flex items-center gap-1">
+              🌐 全球网络 →
+            </button>
+          </div>
+          {modelStats.length === 0 && !loading ? (
+            <p className="text-xs text-gray-600 py-2">暂无在线节点</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {(modelStats.length > 0 ? modelStats : Array(4).fill(null)).map((m, i) => (
+                m ? (
+                  <div key={m.name} className="bg-gray-800 border border-gray-700/50 rounded-xl px-3 py-2.5 flex items-center gap-2.5">
+                    <ModelDot m={m} />
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-gray-200 truncate">{m.name}</div>
+                      <div className="text-[10px] text-gray-500 mt-0.5">
+                        <ModelSub m={m} />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div key={i} className="bg-gray-800/50 border border-gray-700/30 rounded-xl px-3 py-2.5 h-14 animate-pulse" />
+                )
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -229,7 +361,9 @@ export default function Providers() {
             </div>
             <div className={`grid ${cfg.cols} gap-3`}>
               {items.map(p => (
-                <ProviderCard key={p.id} provider={p} onUpdate={updateProvider} onTest={testProvider} />
+                tier === 'p2p'
+                  ? <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} />
+                  : <ProviderCard key={p.id} provider={p} onUpdate={updateProvider} onTest={testProvider} />
               ))}
             </div>
           </section>
