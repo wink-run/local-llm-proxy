@@ -95,23 +95,23 @@ function P2PNetworkCard({ provider, onUpdate }) {
       <>
         <span>{m.nodes} 节点</span>
         {busy
-          ? <span className="text-amber-400"> · 繁忙</span>
+          ? <span className="text-amber-600 dark:text-amber-400"> · 繁忙</span>
           : avgS ? <span> · avg {avgS}s</span> : null}
       </>
     );
   }
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
       {/* Header */}
       <div className="flex items-start gap-3 p-4">
-        <div className="w-9 h-9 rounded-xl bg-gray-800 flex items-center justify-center text-base shrink-0">🌐</div>
+        <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-base shrink-0">🌐</div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-gray-200">P2P 分享网络</span>
+              <span className="text-sm font-medium text-gray-800 dark:text-gray-200">P2P 分享网络</span>
               {provider.enabled && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-900/50 text-green-400 border border-green-800/50">
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 border border-green-300 dark:border-green-800/50">
                   ● 运行中
                 </span>
               )}
@@ -137,7 +137,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
               当前可用模型 <span className="text-gray-700">· 社区节点提供</span>
             </span>
             <button onClick={() => navigate('/network')}
-              className="text-xs text-blue-500 hover:text-blue-400 flex items-center gap-1">
+              className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 flex items-center gap-1">
               🌐 全球网络 →
             </button>
           </div>
@@ -147,17 +147,17 @@ function P2PNetworkCard({ provider, onUpdate }) {
             <div className="grid grid-cols-2 gap-2">
               {(modelStats.length > 0 ? modelStats : Array(4).fill(null)).map((m, i) => (
                 m ? (
-                  <div key={m.name} className="bg-gray-800 border border-gray-700/50 rounded-xl px-3 py-2.5 flex items-center gap-2.5">
+                  <div key={m.name} className="bg-gray-100 dark:bg-gray-800 border border-gray-300/50 dark:border-gray-700/50 rounded-xl px-3 py-2.5 flex items-center gap-2.5">
                     <ModelDot m={m} />
                     <div className="min-w-0">
-                      <div className="text-sm font-medium text-gray-200 truncate">{m.name}</div>
+                      <div className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{m.name}</div>
                       <div className="text-[10px] text-gray-500 mt-0.5">
                         <ModelSub m={m} />
                       </div>
                     </div>
                   </div>
                 ) : (
-                  <div key={i} className="bg-gray-800/50 border border-gray-700/30 rounded-xl px-3 py-2.5 h-14 animate-pulse" />
+                  <div key={i} className="bg-gray-100/50 dark:bg-gray-800/50 border border-gray-300/30 dark:border-gray-700/30 rounded-xl px-3 py-2.5 h-14 animate-pulse" />
                 )
               ))}
             </div>
@@ -174,8 +174,8 @@ function StatusBadge({ enabled, hasKey, keyless }) {
   return (
     <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${
       connected
-        ? 'bg-green-900/50 text-green-400 border-green-800/50'
-        : 'bg-gray-800 text-gray-500 border-gray-700'
+        ? 'bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 border-green-300 dark:border-green-800/50'
+        : 'bg-gray-100 dark:bg-gray-800 text-gray-500 border-gray-300 dark:border-gray-700'
     }`}>
       {connected ? '● 已启用' : '● 需配置'}
     </span>
@@ -208,19 +208,19 @@ function ProviderCard({ provider, onUpdate, onTest }) {
   }
 
   return (
-    <div className={`bg-gray-900 border rounded-2xl overflow-hidden transition-opacity ${
-      provider.enabled ? 'border-gray-800' : 'border-gray-800 opacity-50'
+    <div className={`bg-white dark:bg-gray-900 border rounded-2xl overflow-hidden transition-opacity ${
+      provider.enabled ? 'border-gray-200 dark:border-gray-800' : 'border-gray-200 dark:border-gray-800 opacity-50'
     }`}>
       <div className="flex items-start gap-3 p-4">
         {/* Icon */}
-        <div className="w-9 h-9 rounded-xl bg-gray-800 flex items-center justify-center text-base shrink-0">
+        <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-base shrink-0">
           {meta.icon}
         </div>
         {/* Body */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
-              <span className={`text-sm font-medium ${provider.enabled ? 'text-gray-200' : 'text-gray-400'}`}>
+              <span className={`text-sm font-medium ${provider.enabled ? 'text-gray-800 dark:text-gray-200' : 'text-gray-600 dark:text-gray-400'}`}>
                 {meta.label}
               </span>
               <StatusBadge enabled={provider.enabled} hasKey={hasKey} keyless={meta.keyless} />
@@ -228,7 +228,7 @@ function ProviderCard({ provider, onUpdate, onTest }) {
             <div className="flex items-center gap-2 shrink-0">
               {!isP2P && provider.enabled && (
                 <button onClick={handleTest} disabled={testing}
-                  className="text-xs px-2.5 py-1 rounded-lg bg-gray-800 border border-gray-700 text-gray-400 hover:bg-gray-700 disabled:opacity-50 transition-colors">
+                  className="text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors">
                   {testing ? '…' : '测试'}
                 </button>
               )}
@@ -238,7 +238,7 @@ function ProviderCard({ provider, onUpdate, onTest }) {
 
           {/* Hint / status text */}
           {testMsg ? (
-            <p className={`text-xs mt-1 ${testMsg.startsWith('✓') ? 'text-green-400' : 'text-red-400'}`}>{testMsg}</p>
+            <p className={`text-xs mt-1 ${testMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>{testMsg}</p>
           ) : (
             <p className="text-xs text-gray-500 mt-1">{meta.hint}</p>
           )}
@@ -246,10 +246,10 @@ function ProviderCard({ provider, onUpdate, onTest }) {
           {/* API key row (configured providers) */}
           {!meta.keyless && !isP2P && configured && !expanded && (
             <div className="flex items-center gap-2 mt-2">
-              <code className="text-xs text-gray-500 bg-gray-800 px-2 py-1 rounded font-mono">
+              <code className="text-xs text-gray-500 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded font-mono">
                 {hasKey ? provider.token.slice(0, 4) + '•'.repeat(12) : '（未配置）'}
               </code>
-              <button onClick={() => setExpanded(true)} className="text-xs text-gray-500 hover:text-gray-300">修改</button>
+              <button onClick={() => setExpanded(true)} className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-300">修改</button>
             </div>
           )}
 
@@ -263,15 +263,15 @@ function ProviderCard({ provider, onUpdate, onTest }) {
                   type={showKey ? 'text' : 'password'}
                   placeholder="粘贴 API Key"
                   autoComplete="off"
-                  className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-500"
+                  className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
                 />
                 <button onClick={() => setShowKey(v => !v)}
-                  className="shrink-0 px-2.5 text-xs rounded-lg border border-gray-700 bg-gray-800 text-gray-400 hover:bg-gray-700 transition-colors">
+                  className="shrink-0 px-2.5 text-xs rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
                   {showKey ? '隐藏' : '显示'}
                 </button>
               </div>
               {expanded && (
-                <button onClick={() => setExpanded(false)} className="text-xs text-gray-600 hover:text-gray-400">取消</button>
+                <button onClick={() => setExpanded(false)} className="text-xs text-gray-600 hover:text-gray-600 dark:text-gray-400">取消</button>
               )}
             </div>
           )}
@@ -287,7 +287,7 @@ function ProviderCard({ provider, onUpdate, onTest }) {
         {/* "立即启用" button for unconfigured key-requiring providers */}
         {!meta.keyless && !isP2P && !configured && !expanded && (
           <button onClick={() => { setExpanded(true); onUpdate(provider.id, { enabled: true }); }}
-            className="shrink-0 text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-blue-400 border border-gray-700 rounded-lg transition-colors">
+            className="shrink-0 text-xs px-3 py-1.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-blue-600 dark:text-blue-400 border border-gray-300 dark:border-gray-700 rounded-lg transition-colors">
             立即启用 →
           </button>
         )}
@@ -339,11 +339,11 @@ export default function Providers() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-gray-100">供给源</h1>
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">供给源</h1>
           <p className="text-sm text-gray-500 mt-0.5">启用供给源后，网关可按场景路由请求</p>
         </div>
         <div className="flex items-center gap-3">
-          {savedMsg && <span className="text-sm text-green-400">{savedMsg}</span>}
+          {savedMsg && <span className="text-sm text-green-600 dark:text-green-400">{savedMsg}</span>}
           <button onClick={save} disabled={saving}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors">
             {saving ? '保存中…' : '保存配置'}
@@ -359,7 +359,7 @@ export default function Providers() {
           <section key={tier} className="space-y-3">
             <div className="flex items-center gap-2">
               <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
-              <h2 className="text-sm font-semibold text-gray-200">{cfg.label}</h2>
+              <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{cfg.label}</h2>
               <span className="text-xs text-gray-600">{cfg.hint}</span>
             </div>
             <div className={`grid ${cfg.cols} gap-3`}>

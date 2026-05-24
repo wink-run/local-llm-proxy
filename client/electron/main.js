@@ -375,6 +375,129 @@ function registerIPC() {
     return { ok: true };
   });
 
+  // ── Local Config (scene routes + local keys, stored in userData) ─────────────
+
+  function localConfigPath() {
+    return path.join(app.getPath('userData'), 'local-config.json');
+  }
+
+  function readLocalConfig() {
+    try {
+      const p = localConfigPath();
+      if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'));
+    } catch {}
+    return { scene_routes: [], local_keys: [] };
+  }
+
+  function writeLocalConfig(cfg) {
+    fs.writeFileSync(localConfigPath(), JSON.stringify(cfg, null, 2), 'utf8');
+  }
+
+  function rndHex(bytes) {
+    return require('crypto').randomBytes(bytes).toString('hex');
+  }
+
+  function syncGatewayFromConfig(cfg) {
+    const routes = cfg.scene_routes || [];
+    const keys   = cfg.local_keys   || [];
+    // llm-router-* → scene steps
+    const routerMap = {};
+    for (const r of routes) {
+      if (r.model_key && r.steps?.length) {
+        routerMap[r.model_key] = { steps: r.steps, scene_name: r.scene_name };
+      }
+    }
+    gateway.setRouterModelMap(routerMap);
+    // api key string → scene steps (for keys bound to a scene)
+    const keyMap = {};
+    for (const k of keys) {
+      if (k.key && k.model_key) {
+        const route = routes.find(r => r.model_key === k.model_key);
+        if (route?.steps?.length) keyMap[k.key] = { steps: route.steps, scene_name: route.scene_name };
+      }
+    }
+    gateway.setKeySceneMap(keyMap);
+  }
+
+  // Sync on startup
+  syncGatewayFromConfig(readLocalConfig());
+
+  ipcMain.handle('localConfig:get', () => readLocalConfig());
+
+  ipcMain.handle('localConfig:createSceneRoute', (_e, { scene_name, icon, steps }) => {
+    const cfg   = readLocalConfig();
+    const route = {
+      id: rndHex(8), scene_name, icon: icon || '🔀',
+      steps: steps || [],
+      model_key: 'llm-router-' + rndHex(6),
+      created_at: new Date().toISOString(),
+    };
+    cfg.scene_routes.push(route);
+    writeLocalConfig(cfg);
+    syncGatewayFromConfig(cfg);
+    return route;
+  });
+
+  ipcMain.handle('localConfig:updateSceneRoute', (_e, { id, scene_name, icon, steps }) => {
+    const cfg = readLocalConfig();
+    const idx = cfg.scene_routes.findIndex(r => r.id === id);
+    if (idx === -1) return null;
+    cfg.scene_routes[idx] = { ...cfg.scene_routes[idx], scene_name, icon, steps };
+    writeLocalConfig(cfg);
+    syncGatewayFromConfig(cfg);
+    return cfg.scene_routes[idx];
+  });
+
+  ipcMain.handle('localConfig:deleteSceneRoute', (_e, id) => {
+    const cfg = readLocalConfig();
+    cfg.scene_routes = cfg.scene_routes.filter(r => r.id !== id);
+    writeLocalConfig(cfg);
+    syncGatewayFromConfig(cfg);
+    return { ok: true };
+  });
+
+  ipcMain.handle('localConfig:createKey', (_e, { note }) => {
+    const cfg = readLocalConfig();
+    const key = {
+      id: rndHex(8),
+      key: 'sk-local-' + rndHex(16),
+      note: note || '',
+      model_key: null,
+      created_at: new Date().toISOString(),
+    };
+    cfg.local_keys.push(key);
+    writeLocalConfig(cfg);
+    return key;
+  });
+
+  ipcMain.handle('localConfig:deleteKey', (_e, id) => {
+    const cfg = readLocalConfig();
+    cfg.local_keys = cfg.local_keys.filter(k => k.id !== id);
+    writeLocalConfig(cfg);
+    syncGatewayFromConfig(cfg);
+    return { ok: true };
+  });
+
+  ipcMain.handle('localConfig:bindKey', (_e, { id, model_key }) => {
+    const cfg = readLocalConfig();
+    const key = cfg.local_keys.find(k => k.id === id);
+    if (!key) return null;
+    key.model_key = model_key || null;
+    writeLocalConfig(cfg);
+    syncGatewayFromConfig(cfg);
+    return key;
+  });
+
+  ipcMain.handle('gateway:setKeySceneMap', (_e, map) => {
+    gateway.setKeySceneMap(map);
+    return { ok: true };
+  });
+
+  ipcMain.handle('gateway:setRouterModelMap', (_e, map) => {
+    gateway.setRouterModelMap(map);
+    return { ok: true };
+  });
+
   ipcMain.handle('gateway:testProvider', async (_e, { base_url, token } = {}) => {
     if (!base_url || typeof base_url !== 'string') return { ok: false, error: 'base_url required' };
     try {

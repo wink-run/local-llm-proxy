@@ -230,7 +230,10 @@
       "Bash(lsof -i :8888 -sTCP:LISTEN)",
       "Bash(lsof -i :8080 -sTCP:LISTEN)",
       "Bash(nohup python3 -m http.server 8888 --directory /Users/ully/githubprojects/local-llm-proxy/.superpowers/brainstorm/46867-1779551834/content)",
-      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\" http://localhost:8888/nav-gateway.html)"
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\" http://localhost:8888/nav-gateway.html)",
+      "Bash(node --check /Users/ully/githubprojects/local-llm-proxy/client/electron/local-gateway.js)",
+      "Bash(xargs kill -9)",
+      "Bash(pkill -f \"electron.*local-llm-proxy\")"
     ]
   }
 }

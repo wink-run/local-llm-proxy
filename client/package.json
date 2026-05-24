@@ -10,6 +10,7 @@
     "gen-icons": "node scripts/gen-icons.js"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.2.8",
     "axios": "^1.7.2",
     "electron-store": "^9.0.0",
     "electron-updater": "^6.8.3",

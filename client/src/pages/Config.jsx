@@ -39,7 +39,7 @@ function ThemeSelector() {
           className={`flex-1 py-2 text-sm font-medium transition-colors ${
             theme === th.value
               ? 'bg-blue-600 text-white'
-              : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+              : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-200 dark:hover:bg-gray-700'
           }`}
         >
           {th.label}
@@ -65,7 +65,7 @@ function LangSelector() {
           className={`flex-1 py-2 text-sm font-medium transition-colors ${
             lang === l.value
               ? 'bg-blue-600 text-white'
-              : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+              : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-200 dark:hover:bg-gray-700'
           }`}
         >
           {t(l.labelKey)}
@@ -194,7 +194,7 @@ export default function Config() {
                 className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors">
                 {saving ? t('config.loggingIn') : t('config.login')}
               </button>
-              <p className="text-center text-sm text-gray-400 dark:text-gray-500">
+              <p className="text-center text-sm text-gray-600 dark:text-gray-500">
                 没有账户？
                 <button type="button" onClick={() => switchMode('register')}
                   className="text-blue-500 hover:underline ml-1">去注册</button>
@@ -211,7 +211,7 @@ export default function Config() {
                 className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors">
                 {saving ? '注册中…' : '注册'}
               </button>
-              <p className="text-center text-sm text-gray-400 dark:text-gray-500">
+              <p className="text-center text-sm text-gray-600 dark:text-gray-500">
                 已有账户？
                 <button type="button" onClick={() => switchMode('login')}
                   className="text-blue-500 hover:underline ml-1">去登录</button>
@@ -220,10 +220,10 @@ export default function Config() {
           )}
 
           {/* Disclaimer */}
-          <p className="text-xs text-gray-400 dark:text-gray-600 text-center leading-relaxed pt-2">
+          <p className="text-xs text-gray-600 dark:text-gray-600 text-center leading-relaxed pt-2">
             {t('config.footer.beforeLink')}
             <a href="https://github.com/wink-run/local-llm-proxy" target="_blank" rel="noreferrer"
-              className="underline hover:text-gray-600 dark:hover:text-gray-400 transition-colors">
+              className="underline hover:text-gray-600 dark:hover:text-gray-600 dark:text-gray-400 transition-colors">
               local-llm-proxy
             </a>
             {t('config.footer.afterLink')}
@@ -252,7 +252,7 @@ function Row({ label, hint, children }) {
   return (
     <div className="flex items-center justify-between px-5 py-4">
       <div>
-        <div className="text-sm text-gray-200">{label}</div>
+        <div className="text-sm text-gray-800 dark:text-gray-200">{label}</div>
         {hint && <div className="text-xs text-gray-500 mt-0.5">{hint}</div>}
       </div>
       <div className="shrink-0 ml-4">{children}</div>
@@ -264,7 +264,7 @@ function SelectRow({ label, hint, value, onChange, options }) {
   return (
     <Row label={label} hint={hint}>
       <select value={value} onChange={e => onChange(e.target.value)}
-        className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-blue-500">
+        className="bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 focus:outline-none focus:border-blue-500">
         {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
     </Row>
@@ -340,9 +340,9 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
   }
 
   const THEME_OPTIONS = [
-    { value: 'light', label: '浅色' },
+    { value: 'light',  label: '浅色' },
     { value: 'system', label: '跟随系统' },
-    { value: 'dark', label: '深色' },
+    { value: 'dark',   label: '深色' },
   ];
 
   return (
@@ -350,23 +350,23 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
 
       {/* Header */}
       <div>
-        <h1 className="text-xl font-semibold text-gray-100">设置</h1>
+        <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">设置</h1>
         <p className="text-sm text-gray-500 mt-0.5">网关运行参数与偏好配置</p>
       </div>
 
       {/* Gateway section */}
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-800">
-          <h2 className="text-sm font-semibold text-gray-200">网关</h2>
+      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+          <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">网关</h2>
         </div>
-        <div className="divide-y divide-gray-800/60">
+        <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
           <Row label="监听端口" hint="网关 HTTP 服务端口">
             <div className="flex items-center gap-2">
               <input
                 type="number"
                 value={gatewayPort}
                 onChange={e => setGatewayPort(e.target.value)}
-                className="w-24 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200 text-right font-mono focus:outline-none focus:border-blue-500"
+                className="w-24 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-800 dark:text-gray-200 text-right font-mono focus:outline-none focus:border-blue-500"
               />
               <span className="text-xs text-gray-600">需重启生效</span>
             </div>
@@ -390,11 +390,11 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Routing section */}
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-800">
-          <h2 className="text-sm font-semibold text-gray-200">路由策略</h2>
+      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+          <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">路由策略</h2>
         </div>
-        <div className="divide-y divide-gray-800/60">
+        <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
           <SelectRow label="降级重试次数" hint="同一步骤内失败重试次数"
             value={retryCount} onChange={setRetryCount}
             options={[{value:'0',label:'不重试'},{value:'1',label:'重试 1 次'},{value:'2',label:'重试 2 次'},{value:'3',label:'重试 3 次'}]}
@@ -410,26 +410,26 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Appearance section */}
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-800">
-          <h2 className="text-sm font-semibold text-gray-200">外观</h2>
+      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+          <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">外观</h2>
         </div>
-        <div className="divide-y divide-gray-800/60">
+        <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
           <Row label="主题" hint="界面颜色主题">
-            <div className="flex rounded-lg overflow-hidden border border-gray-700 text-xs">
+            <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-gray-700 text-xs">
               {THEME_OPTIONS.map(o => (
                 <button key={o.value} onClick={() => setTheme(o.value)}
-                  className={`px-3 py-1.5 font-medium transition-colors ${theme === o.value ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}>
+                  className={`px-3 py-1.5 font-medium transition-colors ${theme === o.value ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
                   {o.label}
                 </button>
               ))}
             </div>
           </Row>
           <Row label="语言" hint="界面显示语言">
-            <div className="flex rounded-lg overflow-hidden border border-gray-700 text-xs">
+            <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-gray-700 text-xs">
               {[{value:'zh',label:'中文'},{value:'en',label:'English'}].map(o => (
                 <button key={o.value} onClick={() => setLang(o.value)}
-                  className={`px-3 py-1.5 font-medium transition-colors ${lang === o.value ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}>
+                  className={`px-3 py-1.5 font-medium transition-colors ${lang === o.value ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
                   {o.label}
                 </button>
               ))}
@@ -439,9 +439,9 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Server URL */}
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-800">
-          <h2 className="text-sm font-semibold text-gray-200">服务器</h2>
+      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+          <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">服务器</h2>
         </div>
         <div className="px-5 py-4">
           <div className="text-xs text-gray-500 mb-2">Token Bank 服务地址</div>
@@ -455,29 +455,29 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
               localStorage.setItem('serverUrl', v);
             }}
             placeholder={DEFAULT_SERVER_URL}
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500 font-mono"
+            className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500 font-mono"
           />
         </div>
       </div>
 
       {/* Account section */}
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-800">
-          <h2 className="text-sm font-semibold text-gray-200">账号</h2>
+      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+          <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">账号</h2>
         </div>
-        <div className="divide-y divide-gray-800/60">
+        <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
           <Row label="邮箱" hint={user.email}>
-            <span className="text-xs text-gray-500 bg-gray-800 border border-gray-700 px-3 py-1.5 rounded-lg">
+            <span className="text-xs text-gray-500 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 px-3 py-1.5 rounded-lg">
               {user.nickname || '—'}
             </span>
           </Row>
           <div className="flex items-center justify-between px-5 py-4">
             <div>
-              <div className="text-sm text-red-400">退出登录</div>
+              <div className="text-sm text-red-600 dark:text-red-400">退出登录</div>
               <div className="text-xs text-gray-500 mt-0.5">清除本地凭证</div>
             </div>
             <button onClick={onLogout}
-              className="text-xs text-red-400 hover:text-red-300 bg-red-900/20 border border-red-800/50 px-3 py-1.5 rounded-lg transition-colors">
+              className="text-xs text-red-600 dark:text-red-400 hover:text-red-300 bg-red-100 dark:bg-red-900/20 border border-red-300 dark:border-red-800/50 px-3 py-1.5 rounded-lg transition-colors">
               退出
             </button>
           </div>
@@ -491,10 +491,10 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
           {saving ? '保存中…' : '保存设置'}
         </button>
         <button onClick={handleReset}
-          className="px-4 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-xl border border-gray-700 transition-colors">
+          className="px-4 py-2.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm rounded-xl border border-gray-300 dark:border-gray-700 transition-colors">
           重置为默认
         </button>
-        {savedMsg && <span className="text-xs text-green-400">✓ {savedMsg}</span>}
+        {savedMsg && <span className="text-xs text-green-600 dark:text-green-400">✓ {savedMsg}</span>}
       </div>
 
       {/* Version footer */}

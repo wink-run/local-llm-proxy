@@ -934,8 +934,10 @@ async def delete_virtual_agent(agent_id: int) -> None:
 
 
 async def _migrate_scene_routes() -> None:
-    """Add scene_route_id + app_name to api_keys if missing."""
+    """Add scene_route_id + app_name to api_keys, and model_key to scene_routes if missing."""
+    import uuid as _uuid
     async with aiosqlite.connect(DB_PATH) as db:
+        # api_keys columns
         async with db.execute("PRAGMA table_info(api_keys)") as cur:
             cols = {r[1] for r in await cur.fetchall()}
         if "scene_route_id" not in cols:
@@ -946,6 +948,21 @@ async def _migrate_scene_routes() -> None:
             await db.execute(
                 "ALTER TABLE api_keys ADD COLUMN app_name TEXT DEFAULT ''"
             )
+        # scene_routes.model_key
+        async with db.execute("PRAGMA table_info(scene_routes)") as cur:
+            sr_cols = {r[1] for r in await cur.fetchall()}
+        if "model_key" not in sr_cols:
+            await db.execute(
+                "ALTER TABLE scene_routes ADD COLUMN model_key TEXT"
+            )
+            # backfill existing routes
+            async with db.execute("SELECT id FROM scene_routes WHERE model_key IS NULL") as cur:
+                rows = await cur.fetchall()
+            for (rid,) in rows:
+                mkey = "llm-router-" + _uuid.uuid4().hex[:12]
+                await db.execute(
+                    "UPDATE scene_routes SET model_key=? WHERE id=?", (mkey, rid)
+                )
         await db.commit()
 
 
@@ -963,11 +980,13 @@ async def list_scene_routes(user_id: int) -> list[dict]:
 
 async def create_scene_route(user_id: int, scene_name: str, icon: str, steps: list) -> dict:
     import json as _json
+    import uuid as _uuid
     steps_json = _json.dumps(steps, ensure_ascii=False)
+    model_key  = "llm-router-" + _uuid.uuid4().hex[:12]
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
-            "INSERT INTO scene_routes(user_id, scene_name, icon, steps) VALUES(?,?,?,?)",
-            (user_id, scene_name, icon, steps_json),
+            "INSERT INTO scene_routes(user_id, scene_name, icon, steps, model_key) VALUES(?,?,?,?,?)",
+            (user_id, scene_name, icon, steps_json, model_key),
         )
         row_id = cur.lastrowid
         await db.commit()
@@ -1030,7 +1049,7 @@ async def list_keys_with_scene(user_id: int) -> list[dict]:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             """SELECT ak.id, ak.key, ak.note, ak.app_name, ak.is_active,
-                      ak.scene_route_id, sr.scene_name, sr.icon, sr.steps,
+                      ak.scene_route_id, sr.scene_name, sr.icon, sr.steps, sr.model_key,
                       ak.created_at
                FROM api_keys ak
                LEFT JOIN scene_routes sr ON sr.id = ak.scene_route_id
