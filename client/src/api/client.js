@@ -116,3 +116,7 @@ export function bindKeyToScene(keyId, body) {
 export function getDashboardStats(days = 30) {
   return http.get(`/user/dashboard-stats?days=${days}`);
 }
+
+export function getModelStats(days = 30) {
+  return http.get(`/user/model-stats?days=${days}`);
+}

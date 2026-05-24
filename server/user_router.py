@@ -235,6 +235,13 @@ async def dashboard_stats(days: int = 30, uid: int = Depends(get_current_user_id
     return {"stats": stats, "days": days}
 
 
+@router.get("/model-stats")
+async def model_stats(days: int = 30, uid: int = Depends(get_current_user_id)):
+    models = await db.get_model_stats(uid, days)
+    hourly = await db.get_hourly_stats(uid)
+    return {"models": models, "hourly": hourly}
+
+
 @router.get("/stats")
 async def user_stats(uid: int = Depends(get_current_user_id)):
     user_workers = [w for w in _pool.all_workers() if w.user_id == uid]

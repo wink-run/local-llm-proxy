@@ -1071,6 +1071,48 @@ async def get_dashboard_stats(user_id: int, days: int = 30) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def get_model_stats(user_id: int, days: int = 30) -> list[dict]:
+    """Top models by request count from transactions."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT model_name,
+                      COUNT(*) AS request_count,
+                      COALESCE(SUM(tokens), 0) AS total_tokens,
+                      COALESCE(SUM(ABS(delta)), 0) AS total_credits
+               FROM transactions
+               WHERE user_id=? AND type='consume'
+                 AND model_name != ''
+                 AND created_at >= datetime('now', ?)
+               GROUP BY model_name
+               ORDER BY request_count DESC
+               LIMIT 10""",
+            (user_id, f"-{days} days"),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def get_hourly_stats(user_id: int) -> list[int]:
+    """Request counts per hour for today (list of 24 ints)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT CAST(strftime('%H', created_at, 'localtime') AS INTEGER) AS hour,
+                      COUNT(*) AS cnt
+               FROM transactions
+               WHERE user_id=? AND type='consume'
+                 AND date(created_at, 'localtime') = date('now', 'localtime')
+               GROUP BY hour""",
+            (user_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+    hourly = [0] * 24
+    for r in rows:
+        hourly[r["hour"]] = r["cnt"]
+    return hourly
+
+
 async def get_wall_users(limit: int = 50) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
