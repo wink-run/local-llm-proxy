@@ -17,10 +17,11 @@ OpenRouter 是聚合 100+ 模型的中转平台，含一批 `:free` 后缀的免
 
 ## 推荐模型（必须带 `:free` 后缀）
 
-- `meta-llama/llama-3.3-70b-instruct:free`
-- `deepseek/deepseek-chat:free`
-- `qwen/qwen-2.5-72b-instruct:free`
-- `google/gemini-2.0-flash-exp:free`
+- `meta-llama/llama-4-70b-instruct:free` — Llama 4 主力
+- `deepseek/deepseek-r1:free` — 推理模型
+- `deepseek/deepseek-v3:free` — 通用对话
+- `qwen/qwen3-72b-instruct:free` — Qwen 3
+- `google/gemini-2.5-flash-exp:free` — Gemini 2.5 Flash 实验通道
 
 ## 注意
 

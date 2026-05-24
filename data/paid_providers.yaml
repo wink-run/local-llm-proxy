@@ -15,6 +15,7 @@ providers:
     affiliate: false
     quota_hint: "Pay-as-you-go，无最低充值"
     notes: "国内访问可能需要代理"
+    models: ["gpt-5.5", "gpt-5.5-pro", "gpt-5.5-mini", "gpt-5.5-instant"]
 
   - id: anthropic-official
     display: "Anthropic 官方 (Claude)"
@@ -25,6 +26,7 @@ providers:
     affiliate: false
     quota_hint: "Pay-as-you-go，需信用卡"
     notes: "原生 Messages 协议；通过本地网关 /v1/messages 调用"
+    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5"]
 
   - id: deepseek-official
     display: "DeepSeek 官方"
@@ -35,6 +37,7 @@ providers:
     affiliate: false
     quota_hint: "新用户送 ¥5"
     models: ["deepseek-chat", "deepseek-reasoner"]
+    notes: "deepseek-chat = V3.1 / deepseek-reasoner = R1"
 
   - id: zhipu-glm
     display: "智谱 AI (GLM)"
@@ -44,7 +47,7 @@ providers:
     signup_url: "https://open.bigmodel.cn/usercenter/apikeys"
     affiliate: false
     quota_hint: "新用户送 ¥1+赠 token 包"
-    models: ["glm-4-plus", "glm-4-air", "glm-4-flash"]
+    models: ["glm-5.1", "glm-5", "glm-4.7", "glm-4-flash"]
 
   - id: moonshot-kimi
     display: "Moonshot AI (Kimi)"
@@ -54,6 +57,17 @@ providers:
     signup_url: "https://platform.moonshot.cn/console/api-keys"
     affiliate: false
     quota_hint: "新用户 ¥15 试用额度"
+    models: ["kimi-k2", "kimi-k1.5", "moonshot-v1-128k"]
+
+  - id: xai-grok
+    display: "xAI (Grok)"
+    tier: paid
+    base_url: "https://api.x.ai/v1"
+    auth: { type: "bearer", env: "XAI_API_KEY" }
+    signup_url: "https://console.x.ai"
+    affiliate: false
+    quota_hint: "Pay-as-you-go"
+    models: ["grok-4", "grok-4-mini", "grok-3"]
 
   # ── 一线中转/聚合（cc-switch 同款，但我们自维护折扣） ────────────────────
   - id: openrouter-paid

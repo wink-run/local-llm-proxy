@@ -22,10 +22,12 @@ providers:
     signup_url: "https://console.groq.com/keys"
     guide_md: "guides/free/groq.md"
     models:
+      - "llama-4-70b-instruct"
+      - "llama-4-8b-instant"
       - "llama-3.3-70b-versatile"
-      - "llama-3.1-8b-instant"
-      - "mixtral-8x7b-32768"
-    quota_hint: "免费档 RPM 30 / TPM 6k"
+      - "qwen-3-32b"
+      - "kimi-k2"
+    quota_hint: "免费档 RPM 30 / TPM 6k · 主推 Llama 4 + Qwen 3"
 
   - id: cerebras
     display: "Cerebras Cloud"
@@ -35,9 +37,11 @@ providers:
     signup_url: "https://cloud.cerebras.ai/platform/"
     guide_md: "guides/free/cerebras.md"
     models:
-      - "llama3.1-8b"
+      - "llama-4-70b"
+      - "llama-4-8b"
+      - "qwen-3-32b"
       - "llama-3.3-70b"
-    quota_hint: "免费档每日 1M tokens"
+    quota_hint: "免费档每日 1M tokens · 推理速度全球最快"
 
   - id: gemini-ai-studio
     display: "Google AI Studio"
@@ -47,10 +51,10 @@ providers:
     signup_url: "https://aistudio.google.com/apikey"
     guide_md: "guides/free/gemini.md"
     models:
-      - "gemini-2.0-flash"
-      - "gemini-2.0-flash-lite"
-      - "gemini-1.5-pro"
-    quota_hint: "免费档 RPM 15 / TPM 1M / 1500 RPD"
+      - "gemini-2.5-pro"
+      - "gemini-2.5-flash"
+      - "gemini-2.5-flash-lite"
+    quota_hint: "免费档 RPM 15 / TPM 1M / 1500 RPD · 2.5 Pro 含 2M 上下文"
 
   - id: openrouter-free
     display: "OpenRouter（免费模型）"
@@ -60,9 +64,11 @@ providers:
     signup_url: "https://openrouter.ai/settings/keys"
     guide_md: "guides/free/openrouter.md"
     models:
-      - "meta-llama/llama-3.3-70b-instruct:free"
-      - "deepseek/deepseek-chat:free"
-      - "qwen/qwen-2.5-72b-instruct:free"
+      - "meta-llama/llama-4-70b-instruct:free"
+      - "deepseek/deepseek-r1:free"
+      - "deepseek/deepseek-v3:free"
+      - "qwen/qwen3-72b-instruct:free"
+      - "google/gemini-2.5-flash-exp:free"
     quota_hint: "免费 RPD 50 / 含 :free 后缀模型免费"
     notes: "调用时模型名必须含 :free 后缀，否则会按付费计费。"
 
@@ -74,11 +80,13 @@ providers:
     signup_url: "https://github.com/settings/tokens?type=beta"
     guide_md: "guides/free/github-models.md"
     models:
-      - "gpt-4o"
-      - "gpt-4o-mini"
-      - "Meta-Llama-3.1-405B-Instruct"
-      - "Phi-3.5-MoE-instruct"
-    quota_hint: "免费调用 GPT-4o / Llama 等，需 GitHub PAT"
+      - "gpt-5.5"
+      - "gpt-5.5-mini"
+      - "gpt-5.5-instant"
+      - "Meta-Llama-4-405B-Instruct"
+      - "Phi-4"
+      - "DeepSeek-R1"
+    quota_hint: "免费调用 GPT-5.5 / Llama 4 / DeepSeek-R1，需 GitHub PAT"
     setup_steps:
       - { id: "login", label: "登录 GitHub 账号", auto: true }
       - { id: "create_pat", label: "创建 Personal Access Token", action: "open_url", url: "https://github.com/settings/tokens?type=beta" }
@@ -92,7 +100,9 @@ providers:
     signup_url: "https://cloud.siliconflow.cn/i/drGuwc9k"
     guide_md: "guides/free/siliconflow.md"
     models:
-      - "Qwen/Qwen2.5-7B-Instruct"
-      - "deepseek-ai/DeepSeek-V2.5"
-      - "01-ai/Yi-1.5-9B-Chat-16K"
-    quota_hint: "国内免费供应商，支持 Qwen / DeepSeek，新人 ¥16 赠送"
+      - "Qwen/Qwen3-8B-Instruct"
+      - "Qwen/Qwen3-Coder-30B-Instruct"
+      - "deepseek-ai/DeepSeek-V3.1"
+      - "deepseek-ai/DeepSeek-R1"
+      - "01-ai/Yi-2-9B-Chat-32K"
+    quota_hint: "国内免费供应商，支持 Qwen 3 / DeepSeek V3.1 / R1，新人 ¥16 赠送"

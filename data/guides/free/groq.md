@@ -21,9 +21,11 @@ Groq 提供基于 LPU 的高速推理服务，免费档限速宽松，适合做�
 
 ## 推荐模型
 
-- `llama-3.3-70b-versatile` — 70B 通用模型，质量好
-- `llama-3.1-8b-instant` — 8B 快速模型，超低延迟
-- `mixtral-8x7b-32768` — 长上下文（32k）
+- `llama-4-70b-instruct` — Llama 4 70B 主力模型，质量与速度兼顾
+- `llama-4-8b-instant` — Llama 4 8B，超低延迟，适合代码补全
+- `qwen-3-32b` — Qwen 3 32B，中文场景表现强
+- `kimi-k2` — Moonshot K2 长上下文
+- `llama-3.3-70b-versatile` — 仍可用的上一代主力
 
 ## 注意
 

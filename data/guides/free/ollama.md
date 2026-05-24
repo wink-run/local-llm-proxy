@@ -9,18 +9,19 @@
 3. 拉取一个模型，例如：
    ```
    ollama pull qwen3:8b
-   ollama pull llama3.2:3b
+   ollama pull llama4:8b
+   ollama pull deepseek-r1:8b
    ```
 4. 回到本应用，**直接点测试连接** —— 不需要填 key
 
-## 推荐模型（按显存大小）
+## 推荐模型（按显存大小，2026 当前）
 
 | 显存 | 模型 |
 |---|---|
-| 8 GB | `llama3.2:3b`, `qwen3:8b`（小量化） |
-| 16 GB | `qwen3:8b`, `gemma2:9b` |
-| 24 GB | `qwen3:14b`, `llama3.3:8b` |
-| 48 GB+ | `qwen3:32b`, `llama3.3:70b-q4` |
+| 8 GB  | `qwen3:8b`（量化）, `llama4:8b`（量化）, `deepseek-r1:8b`-distill |
+| 16 GB | `qwen3:8b`, `llama4:8b`, `qwen3-coder:14b` |
+| 24 GB | `qwen3:14b`, `llama4:8b-fp16`, `deepseek-r1-distill:14b` |
+| 48 GB+ | `qwen3:32b`, `llama4:70b-q4`, `deepseek-v3:q4` |
 
 ## 注意
 

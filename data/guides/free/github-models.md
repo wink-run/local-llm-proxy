@@ -26,13 +26,15 @@ GitHub 在 2024 末推出的免费 LLM 网关，OpenAI 兼容协议，通过 Git
 
 ## 推荐模型
 
-- `gpt-4o` — 主力，质量最好
-- `gpt-4o-mini` — 快速兜底
-- `Meta-Llama-3.1-405B-Instruct` — 长上下文
-- `Phi-3.5-MoE-instruct` — 微软新模型
+- `gpt-5.5` — 主力，质量最好（限额较紧）
+- `gpt-5.5-mini` — 快速兜底，限额宽松
+- `gpt-5.5-instant` — 极速对话
+- `Meta-Llama-4-405B-Instruct` — Meta 旗舰，长上下文
+- `Phi-4` — 微软小型推理模型
+- `DeepSeek-R1` — 通过 Azure 提供的 R1
 
 ## 注意
 
 - 端点是 Azure Inference SDK URL：`https://models.inference.ai.azure.com`
 - Token 串绑账号，**不要在公开仓库提交**
-- 如果限速明显，换 `gpt-4o-mini`
+- 如果限速明显，换 `gpt-5.5-mini` 或 `Phi-4`

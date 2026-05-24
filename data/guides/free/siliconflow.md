@@ -18,10 +18,11 @@
 
 ## 推荐模型
 
-- `Qwen/Qwen2.5-7B-Instruct` — 免费
-- `Qwen/Qwen2.5-Coder-7B-Instruct` — 代码任务免费
-- `deepseek-ai/DeepSeek-V2.5` — 主力（计费）
-- `01-ai/Yi-1.5-9B-Chat-16K` — 长上下文
+- `Qwen/Qwen3-8B-Instruct` — Qwen 3 8B 免费
+- `Qwen/Qwen3-Coder-30B-Instruct` — Qwen 3 代码版（推荐做代码任务）
+- `deepseek-ai/DeepSeek-V3.1` — 主力对话（计费）
+- `deepseek-ai/DeepSeek-R1` — 推理模型，与 OpenAI o1 同级
+- `01-ai/Yi-2-9B-Chat-32K` — 长上下文
 
 ## 注意
 

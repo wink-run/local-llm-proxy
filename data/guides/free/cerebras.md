@@ -18,8 +18,10 @@ Cerebras 用专属 wafer-scale 芯片做推理，速度比 Groq 还快，适合�
 
 ## 推荐模型
 
-- `llama-3.3-70b` — 主力 70B 模型
-- `llama3.1-8b` — 轻量 8B
+- `llama-4-70b` — 主力 70B 模型（Llama 4 系列）
+- `llama-4-8b` — 轻量 8B，CS-3 上极快
+- `qwen-3-32b` — Qwen 3 32B
+- `llama-3.3-70b` — 仍可用的上一代
 
 ## 注意
 

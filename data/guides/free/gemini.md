@@ -13,15 +13,15 @@ Google 官方的 Gemini 免费 API，限额高、模型质量强。
 
 | 模型 | RPM | TPM | RPD |
 |---|---|---|---|
-| gemini-2.0-flash | 15 | 1M | 1,500 |
-| gemini-2.0-flash-lite | 30 | 1M | 1,500 |
-| gemini-1.5-pro | 2 | 32k | 50 |
+| gemini-2.5-flash | 15 | 1M | 1,500 |
+| gemini-2.5-flash-lite | 30 | 1M | 1,500 |
+| gemini-2.5-pro | 2 | 32k | 50 |
 
 ## 推荐模型
 
-- `gemini-2.0-flash` — 主力，平衡速度与质量
-- `gemini-2.0-flash-lite` — 更快更便宜
-- `gemini-1.5-pro` — 复杂任务（限额较紧）
+- `gemini-2.5-pro` — 旗舰，含 **2M token 上下文**，复杂任务首选（限额较紧）
+- `gemini-2.5-flash` — 日常主力，平衡速度与质量
+- `gemini-2.5-flash-lite` — 最便宜最快，适合简单分类 / 提取
 
 ## 注意
 
