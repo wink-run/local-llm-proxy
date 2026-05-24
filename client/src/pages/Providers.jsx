@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getNetwork, getProfile, listKeys } from '../api/client';
+import { getNetwork, getProfile, listKeys, createKey, deleteKey } from '../api/client';
 import { getServerUrl } from '../config';
 
 const PROVIDER_META = {
@@ -52,6 +52,9 @@ function P2PNetworkCard({ provider, onUpdate }) {
   const [keySaving,     setKeySaving]     = useState(false);
   const [keySaved,      setKeySaved]      = useState(false);
   const [keysLoading,   setKeysLoading]   = useState(false);
+  const [newNote,       setNewNote]       = useState('');
+  const [creating,      setCreating]      = useState(false);
+  const [deletingId,    setDeletingId]    = useState(null);
 
   // Load saved key from local-config, and backend keys when section opens
   useEffect(() => {
@@ -63,21 +66,56 @@ function P2PNetworkCard({ provider, onUpdate }) {
     }).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (!showKeyConfig) return;
+  function reloadKeys(preselectKey) {
     setKeysLoading(true);
     listKeys()
       .then(r => {
         const keys = (r.data?.keys || r.data || []).filter(k => k.is_active);
         setApiKeys(keys);
-        // Pre-select the already-saved key, or first in list
-        if (keys.length > 0 && !keys.some(k => k.key === selectedKey)) {
+        const target = preselectKey || selectedKey;
+        if (keys.length > 0 && !keys.some(k => k.key === target)) {
           setSelectedKey(keys[0].key);
+        } else if (preselectKey) {
+          setSelectedKey(preselectKey);
         }
       })
       .catch(() => {})
       .finally(() => setKeysLoading(false));
+  }
+
+  useEffect(() => {
+    if (!showKeyConfig) return;
+    reloadKeys();
   }, [showKeyConfig]);
+
+  async function handleCreate() {
+    setCreating(true);
+    try {
+      const r = await createKey(newNote.trim() || undefined);
+      const newKey = r.data?.key || r.data;
+      setNewNote('');
+      reloadKeys(newKey?.key || newKey);
+    } catch (e) {
+      alert('创建失败: ' + (e.message || '未知错误'));
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleDelete(keyId, keyStr) {
+    setDeletingId(keyId);
+    try {
+      await deleteKey(keyId);
+      const remaining = apiKeys.filter(k => k.id !== keyId);
+      setApiKeys(remaining);
+      if (selectedKey === keyStr) setSelectedKey(remaining[0]?.key || '');
+      if (savedKey === keyStr) setSavedKey('');
+    } catch (e) {
+      alert('删除失败: ' + (e.message || '未知错误'));
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   async function handleSaveKey() {
     if (!window.electronAPI?.localConfig || !selectedKey) return;
@@ -237,43 +275,66 @@ function P2PNetworkCard({ provider, onUpdate }) {
           </button>
 
           {showKeyConfig && (
-            <div className="px-4 pb-4 space-y-2">
-              <p className="text-[11px] text-gray-500">
-                选择一个 API Key 用于本地网关转发 P2P 请求时鉴权，与调试页「全球网络」使用同一批 Key。
-              </p>
+            <div className="px-4 pb-4 space-y-3">
+              <p className="text-[11px] text-gray-500">选择一个 API Key 用于本地网关转发 P2P 请求时鉴权。</p>
+
               {keysLoading ? (
                 <p className="text-xs text-gray-400">加载中…</p>
-              ) : apiKeys.length === 0 ? (
-                <p className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-lg px-3 py-2">
-                  账户下暂无可用 API Key，请先登录并在「密钥」页创建
-                </p>
               ) : (
-                <div className="flex gap-2">
-                  <select
-                    value={selectedKey}
-                    onChange={e => { setSelectedKey(e.target.value); setKeySaved(false); }}
-                    className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500"
-                  >
-                    {apiKeys.map(k => (
-                      <option key={k.id} value={k.key}>
-                        {k.note ? `${k.note}  ·  ` : ''}{k.key.slice(0, 12)}…
-                        {k.key === savedKey ? '  ✓ 当前使用' : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={handleSaveKey}
-                    disabled={keySaving || !selectedKey || selectedKey === savedKey}
-                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap"
-                  >
-                    {keySaving ? '保存…' : keySaved ? '✓ 已保存' : '保存'}
-                  </button>
+                <div className="space-y-2">
+                  {/* Key list */}
+                  {apiKeys.length === 0 ? (
+                    <p className="text-xs text-gray-400 dark:text-gray-500">暂无 Key，点击下方新建</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {apiKeys.map(k => (
+                        <div key={k.id} className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors cursor-pointer ${
+                          selectedKey === k.key
+                            ? 'border-blue-400 dark:border-blue-600 bg-blue-50 dark:bg-blue-900/20'
+                            : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 hover:border-gray-300 dark:hover:border-gray-600'
+                        }`} onClick={() => { setSelectedKey(k.key); setKeySaved(false); }}>
+                          <div className="flex-1 min-w-0">
+                            {k.note && <p className="text-xs text-gray-700 dark:text-gray-300 truncate">{k.note}</p>}
+                            <p className="text-[10px] font-mono text-gray-400 dark:text-gray-500">
+                              {k.key.slice(0, 14)}…
+                              {k.key === savedKey && <span className="ml-1.5 text-green-500">✓ 使用中</span>}
+                            </p>
+                          </div>
+                          <button
+                            onClick={e => { e.stopPropagation(); handleDelete(k.id, k.key); }}
+                            disabled={deletingId === k.id}
+                            className="text-gray-400 hover:text-red-500 dark:hover:text-red-400 text-sm leading-none disabled:opacity-40 shrink-0 transition-colors"
+                          >
+                            {deletingId === k.id ? '…' : '×'}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Save selected */}
+                  {selectedKey && selectedKey !== savedKey && (
+                    <button onClick={handleSaveKey} disabled={keySaving}
+                      className="w-full px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-colors">
+                      {keySaving ? '保存…' : keySaved ? '✓ 已保存' : `设为网关 Key`}
+                    </button>
+                  )}
+
+                  {/* Create new key */}
+                  <div className="flex gap-2 pt-1 border-t border-gray-100 dark:border-gray-800">
+                    <input
+                      value={newNote}
+                      onChange={e => setNewNote(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleCreate()}
+                      placeholder="备注（可选）"
+                      className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
+                    />
+                    <button onClick={handleCreate} disabled={creating}
+                      className="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 text-xs text-gray-700 dark:text-gray-300 rounded-lg transition-colors whitespace-nowrap">
+                      {creating ? '创建…' : '+ 新建 Key'}
+                    </button>
+                  </div>
                 </div>
-              )}
-              {savedKey && (
-                <p className="text-[10px] text-gray-400 font-mono">
-                  当前：{savedKey.slice(0, 12)}{'•'.repeat(10)}
-                </p>
               )}
             </div>
           )}

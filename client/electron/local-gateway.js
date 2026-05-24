@@ -458,7 +458,11 @@ async function route(model, reqPath, body, res) {
     for (const step of scene.steps) {
       const stepModel     = step.model;
       // Match providers by model list, not by tier — tier is informational only
-      const stepProviders = all.filter(p => providerHasModel(p, stepModel));
+      const stepCandidates = all.filter(p => providerHasModel(p, stepModel));
+      const stepProviders = [
+        ...stepCandidates.filter(p => Array.isArray(p.models) && p.models.length > 0),
+        ...stepCandidates.filter(p => !Array.isArray(p.models) || p.models.length === 0),
+      ];
       let   stepSucceeded = false;
 
       for (const provider of stepProviders) {
@@ -487,7 +491,13 @@ async function route(model, reqPath, body, res) {
   }
 
   // ── Direct model request: try providers that list this model ─────────────
-  for (const provider of enabledProviders().filter(p => providerHasModel(p, model))) {
+  // Explicit model-list providers first, catch-alls (empty list) last
+  const candidates = enabledProviders().filter(p => providerHasModel(p, model));
+  const sorted = [
+    ...candidates.filter(p => Array.isArray(p.models) && p.models.length > 0),
+    ...candidates.filter(p => !Array.isArray(p.models) || p.models.length === 0),
+  ];
+  for (const provider of sorted) {
     try {
       const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, model, res);
       pushLog({
