@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { getNetwork, getProfile } from '../api/client';
 
 const PROVIDER_META = {
@@ -37,6 +38,7 @@ function Toggle({ enabled, onChange }) {
 // ── P2P Network Card ──────────────────────────────────────────────────────────
 
 function P2PNetworkCard({ provider, onUpdate }) {
+  const navigate   = useNavigate();
   const [network,  setNetwork]  = useState(null);
   const [balance,  setBalance]  = useState(null);
   const [loading,  setLoading]  = useState(true);
@@ -134,7 +136,8 @@ function P2PNetworkCard({ provider, onUpdate }) {
             <span className="text-xs text-gray-500">
               当前可用模型 <span className="text-gray-700">· 社区节点提供</span>
             </span>
-            <button className="text-xs text-blue-500 hover:text-blue-400 flex items-center gap-1">
+            <button onClick={() => navigate('/network')}
+              className="text-xs text-blue-500 hover:text-blue-400 flex items-center gap-1">
               🌐 全球网络 →
             </button>
           </div>
