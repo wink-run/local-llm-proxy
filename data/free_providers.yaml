@@ -65,3 +65,34 @@ providers:
       - "qwen/qwen-2.5-72b-instruct:free"
     quota_hint: "免费 RPD 50 / 含 :free 后缀模型免费"
     notes: "调用时模型名必须含 :free 后缀，否则会按付费计费。"
+
+  - id: github-models
+    display: "GitHub Models"
+    tier: free
+    base_url: "https://models.inference.ai.azure.com"
+    auth: { type: "bearer", env: "GITHUB_PAT" }
+    signup_url: "https://github.com/settings/tokens?type=beta"
+    guide_md: "guides/free/github-models.md"
+    models:
+      - "gpt-4o"
+      - "gpt-4o-mini"
+      - "Meta-Llama-3.1-405B-Instruct"
+      - "Phi-3.5-MoE-instruct"
+    quota_hint: "免费调用 GPT-4o / Llama 等，需 GitHub PAT"
+    setup_steps:
+      - { id: "login", label: "登录 GitHub 账号", auto: true }
+      - { id: "create_pat", label: "创建 Personal Access Token", action: "open_url", url: "https://github.com/settings/tokens?type=beta" }
+      - { id: "test", label: "验证并启用", action: "test_and_enable" }
+
+  - id: siliconflow
+    display: "SiliconFlow"
+    tier: free
+    base_url: "https://api.siliconflow.cn/v1"
+    auth: { type: "bearer", env: "SILICONFLOW_API_KEY" }
+    signup_url: "https://cloud.siliconflow.cn/i/drGuwc9k"
+    guide_md: "guides/free/siliconflow.md"
+    models:
+      - "Qwen/Qwen2.5-7B-Instruct"
+      - "deepseek-ai/DeepSeek-V2.5"
+      - "01-ai/Yi-1.5-9B-Chat-16K"
+    quota_hint: "国内免费供应商，支持 Qwen / DeepSeek，新人 ¥16 赠送"

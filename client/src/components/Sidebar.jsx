@@ -11,13 +11,9 @@ export default function Sidebar() {
   const location = useLocation();
 
   const NAV = [
-    { to: '/dashboard',  icon: '🏠', label: t('nav.dashboard') },
-    { to: '/onboarding', icon: '🔌', label: t('nav.onboarding') },
-    { to: '/apps',       icon: '📝', label: t('nav.apps') },
+    { to: '/gateway',    icon: '🛰', label: t('nav.gateway') },
+    { to: '/sources',    icon: '🎁', label: t('nav.sources') },
     { to: '/contribute', icon: '🤝', label: t('nav.contribute') },
-    { to: '/agent',      icon: '⚙️', label: t('nav.agent') },
-    { to: '/network',    icon: '🌐', label: t('nav.network') },
-    { to: '/debug',      icon: '🐛', label: t('nav.debug') },
   ];
   const profileActive = location.pathname === '/profile';
   return (
@@ -27,7 +23,7 @@ export default function Sidebar() {
         <img src={logoSvg} alt="Token Bank" className="w-8 h-8 shrink-0" />
         <div className="min-w-0">
           <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">Token Bank</p>
-          <p className="text-xs text-gray-400 dark:text-gray-500 leading-tight">token 共享网络</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 leading-tight">本地 AI 网关</p>
         </div>
       </div>
 

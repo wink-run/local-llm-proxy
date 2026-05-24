@@ -14,6 +14,8 @@ import Apps from './pages/Apps';
 import Contribute from './pages/Contribute';
 import Dashboard from './pages/Dashboard';
 import Quickstart from './pages/Quickstart';
+import Gateway from './pages/Gateway';
+import Sources from './pages/Sources';
 
 function Layout() {
   const { user, loading } = useAuth();
@@ -31,18 +33,21 @@ function Layout() {
       <Sidebar />
       <main className="flex-1 overflow-y-auto">
         <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/" element={<Navigate to="/gateway" replace />} />
+          <Route path="/gateway" element={<Gateway />} />
+          <Route path="/sources" element={<Sources />} />
+          <Route path="/contribute" element={<Contribute />} />
+          {/* 老页面保留路由（手动 URL 仍可访问） */}
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/quickstart" element={<Quickstart />} />
+          <Route path="/onboarding" element={<Onboarding />} />
+          <Route path="/apps" element={<Apps />} />
           <Route path="/profile" element={user ? <Profile /> : <Navigate to="/config" replace />} />
           <Route path="/agent" element={user ? <Agent /> : <Navigate to="/config" replace />} />
           <Route path="/network" element={<Network />} />
-          <Route path="/onboarding" element={<Onboarding />} />
-          <Route path="/apps" element={<Apps />} />
-          <Route path="/contribute" element={<Contribute />} />
           <Route path="/config" element={<Config />} />
           <Route path="/debug" element={<Debug />} />
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<Navigate to="/gateway" replace />} />
         </Routes>
       </main>
     </div>

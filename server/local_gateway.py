@@ -134,6 +134,40 @@ app.add_middleware(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+async def _candidates_from_scenario(scenario: dict, model_hint: str | None = None) -> list[dict]:
+    """从 scenario.degradation_chain 展开成扁平 candidate 列表。
+
+    chain 形如：
+      [
+        {"label":"优先", "candidates":[{"provider_id":"ollama","model":"llama3.2"}, ...]},
+        {"label":"改选", "candidates":[{"provider_id":"groq","model":"llama-3.1-8b"}, ...]},
+      ]
+
+    展平后按 step 顺序、step 内顺序成 [provider1, provider2, ...]，
+    并把每个候选的 _forced_model 注入到 provider dict 上以便上游请求时改写。
+    """
+    providers = await local_db.list_providers(enabled_only=True)
+    by_id = {p["provider_id"]: p for p in providers}
+    chain = scenario.get("degradation_chain") or []
+    flat = []
+    seen = set()
+    for step in chain:
+        for cand in (step.get("candidates") or []):
+            pid = cand.get("provider_id")
+            mdl = cand.get("model") or model_hint
+            if not pid or pid not in by_id:
+                continue
+            key = (pid, mdl or "")
+            if key in seen:
+                continue
+            seen.add(key)
+            entry = dict(by_id[pid])  # copy
+            entry["_forced_model"] = mdl
+            entry["_step_label"] = step.get("label") or ""
+            flat.append(entry)
+    return flat
+
+
 async def _candidates_for_model(model: str, *, policy: dict | None = None) -> list[dict]:
     """返回该 model 的候选 provider 列表。
 
@@ -260,9 +294,19 @@ async def _forward_openai(request: Request, *, path_suffix: str):
     headers_lower = {k.lower(): v for k, v in request.headers.items()}
     app_source = headers_lower.get("x-source-app", "")
 
-    # M14：根据 app_source 查关联 policy
+    # v2.1 redesign：识别 Authorization: Bearer tb-* → scenario
+    scenario = None
+    auth_hdr = headers_lower.get("authorization", "")
+    if auth_hdr.lower().startswith("bearer "):
+        bearer = auth_hdr[7:].strip()
+        if bearer.startswith("tb-"):
+            scenario = await local_db.get_scenario_by_api_key(bearer)
+            if scenario and not app_source:
+                app_source = scenario["name"]  # 显示用
+
+    # M14：根据 app_source 查关联 policy（仅当无 scenario 时退回到 policy 路径）
     policy = None
-    if app_source:
+    if scenario is None and app_source:
         binding = await local_db.get_app_binding_with_policy(app_source)
         if binding and binding.get("policy"):
             policy = binding["policy"]
@@ -280,20 +324,25 @@ async def _forward_openai(request: Request, *, path_suffix: str):
                 input_tokens=0, output_tokens=0,
                 latency_ms=int((time.time() - started) * 1000),
                 cached=True,
+                scenario_id=(scenario["id"] if scenario else None),
             )
             return JSONResponse(content={**cache_hit_resp, "_llp_cached": True})
 
-    candidates = await _candidates_for_model(model, policy=policy)
+    if scenario is not None:
+        candidates = await _candidates_from_scenario(scenario, model_hint=model)
+    else:
+        candidates = await _candidates_for_model(model, policy=policy)
+
     if not candidates:
         await local_db.log_call(
             model=model, routed_to="none", tier="none",
             app_source=app_source, success=False,
-            error_msg="No provider matches model + policy",
+            error_msg="No provider matches model + policy/scenario",
             latency_ms=int((time.time() - started) * 1000),
         )
         raise HTTPException(
-            404, f"No provider available for model '{model}' under policy "
-                 f"{policy['name'] if policy else 'default'}."
+            404, f"No provider available for model '{model}' "
+                 f"({'scenario=' + scenario['name'] if scenario else ('policy=' + policy['name'] if policy else 'default')})."
         )
 
     streaming = bool(body.get("stream"))
@@ -303,17 +352,21 @@ async def _forward_openai(request: Request, *, path_suffix: str):
         base_url = (p["base_url"] or "").rstrip("/")
         url = base_url + path_suffix
         headers = {"Content-Type": "application/json", **_auth_headers(p)}
+        # scenario 候选可能强制改写 model（候选 = {provider, model} 二元组）
+        send_body = body
+        if p.get("_forced_model") and p["_forced_model"] != model:
+            send_body = {**body, "model": p["_forced_model"]}
 
         try:
             if streaming:
                 return StreamingResponse(
-                    _stream_upstream(url, headers, body, p),
+                    _stream_upstream(url, headers, send_body, p),
                     media_type="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
                 )
             else:
                 async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as cli:
-                    r = await cli.post(url, headers=headers, json=body)
+                    r = await cli.post(url, headers=headers, json=send_body)
                 if r.status_code >= 500:
                     last_err = f"{p['display_name']} → HTTP {r.status_code}: {r.text[:200]}"
                     log.warning("Upstream 5xx, trying next candidate: %s", last_err)
@@ -334,13 +387,15 @@ async def _forward_openai(request: Request, *, path_suffix: str):
                 # M11：调用日志
                 usage = (resp_data or {}).get("usage") or {} if isinstance(resp_data, dict) else {}
                 await local_db.log_call(
-                    model=model, routed_to=p["provider_id"],
+                    model=(p.get("_forced_model") or model),
+                    routed_to=p["provider_id"],
                     tier=p.get("tier", "free"), app_source=app_source,
                     input_tokens=int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
                     output_tokens=int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
                     latency_ms=int((time.time() - started) * 1000),
                     success=(r.status_code < 400),
                     error_msg="" if r.status_code < 400 else f"HTTP {r.status_code}",
+                    scenario_id=(scenario["id"] if scenario else None),
                 )
                 return JSONResponse(
                     content=resp_data if resp_data is not None else r.text,
@@ -356,6 +411,7 @@ async def _forward_openai(request: Request, *, path_suffix: str):
         model=model, routed_to="exhausted", tier="none",
         app_source=app_source, success=False, error_msg=last_err or "all failed",
         latency_ms=int((time.time() - started) * 1000),
+        scenario_id=(scenario["id"] if scenario else None),
     )
     raise HTTPException(502, f"All upstream providers failed. Last error: {last_err}")
 
@@ -987,6 +1043,112 @@ async def quickstart_detect():
         "existing": {"providers": provider_count, "bindings": binding_count},
         "recommendation": recommendation,
         "needs_quickstart": provider_count == 0 and binding_count == 0,
+    }
+
+
+# ── scenarios（v2.1 redesign）───────────────────────────────────────────
+
+
+@app.get("/__local__/scenarios")
+async def list_scenarios_endpoint():
+    scenarios = await local_db.list_scenarios()
+    # 给每个 scenario 附加今日统计
+    today = _today_iso()
+    for s in scenarios:
+        s["stats_today"] = await local_db.scenario_call_stats(s["id"], since_iso=today)
+    return {"scenarios": scenarios}
+
+
+class CreateScenarioPayload(BaseModel):
+    name: str
+    description: str = ""
+    degradation_chain: list[dict] = []  # [{label, candidates:[{provider_id, model}]}]
+
+
+@app.post("/__local__/scenarios")
+async def create_scenario_endpoint(payload: CreateScenarioPayload):
+    s = await local_db.create_scenario(
+        name=payload.name,
+        degradation_chain=payload.degradation_chain,
+        description=payload.description,
+    )
+    return s
+
+
+class UpdateScenarioPayload(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    degradation_chain: list[dict] | None = None
+
+
+@app.patch("/__local__/scenarios/{scenario_id}")
+async def update_scenario_endpoint(scenario_id: int, payload: UpdateScenarioPayload):
+    ok = await local_db.update_scenario(
+        scenario_id,
+        name=payload.name,
+        description=payload.description,
+        degradation_chain=payload.degradation_chain,
+    )
+    if not ok:
+        raise HTTPException(400, "No fields to update")
+    return await local_db.get_scenario(scenario_id)
+
+
+@app.post("/__local__/scenarios/{scenario_id}/rotate-key")
+async def rotate_scenario_key_endpoint(scenario_id: int):
+    new_key = await local_db.rotate_scenario_key(scenario_id)
+    if not new_key:
+        raise HTTPException(404, "Scenario not found")
+    return {"api_key": new_key}
+
+
+@app.delete("/__local__/scenarios/{scenario_id}")
+async def delete_scenario_endpoint(scenario_id: int):
+    await local_db.delete_scenario(scenario_id)
+    return {"ok": True}
+
+
+# ── Gateway KPIs（v2.1 redesign Gateway 页顶部 4 个数字） ──────────────
+
+
+@app.get("/__local__/gateway/kpis")
+async def gateway_kpis(window: str = "today"):
+    if window == "today":
+        since = _today_iso()
+    elif window == "month":
+        since = _month_iso()
+    else:
+        since = None
+
+    by_tier = await local_db.aggregate_by_tier(since_iso=since)
+    total_calls = sum(t["calls"] for t in by_tier.values())
+    free_calls = (by_tier.get("free") or {}).get("calls", 0)
+    cache_calls = (by_tier.get("cache") or {}).get("calls", 0)
+    free_hit_rate = round(((free_calls + cache_calls) / total_calls * 100), 1) if total_calls else 0.0
+
+    # 错误率 + 平均延迟：从 call_logs 直接算
+    import aiosqlite
+    err_rate = 0.0
+    avg_latency = 0
+    async with aiosqlite.connect(local_db.LOCAL_DB_PATH) as db:
+        sql = "SELECT COUNT(*) AS total, SUM(CASE WHEN success=0 THEN 1 ELSE 0 END) AS errs, AVG(latency_ms) AS lat FROM call_logs"
+        args: list = []
+        if since:
+            sql += " WHERE timestamp >= ?"
+            args.append(since)
+        db.row_factory = aiosqlite.Row
+        async with db.execute(sql, args) as cur:
+            r = await cur.fetchone()
+        if r and r["total"]:
+            err_rate = round((r["errs"] or 0) / r["total"] * 100, 2)
+            avg_latency = int(r["lat"] or 0)
+
+    return {
+        "window": window,
+        "total_calls": total_calls,
+        "free_hit_rate": free_hit_rate,
+        "error_rate": err_rate,
+        "avg_latency_ms": avg_latency,
     }
 
 

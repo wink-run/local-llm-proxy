@@ -113,6 +113,7 @@ async def init_local_db() -> None:
     await init_contribution_sources()
     await init_call_logs()
     await init_routing_policies()
+    await init_scenarios()
 
 
 # ── local_providers ─────────────────────────────────────────────────────────
@@ -381,15 +382,16 @@ async def log_call(
     input_tokens: int = 0, output_tokens: int = 0,
     latency_ms: int = 0, success: bool = True,
     error_msg: str = "", cached: bool = False,
+    scenario_id: int | None = None,
 ) -> None:
     async with aiosqlite.connect(LOCAL_DB_PATH) as db:
         await db.execute(
             """INSERT INTO call_logs
                (app_source, model, routed_to, tier, input_tokens, output_tokens,
-                latency_ms, success, error_msg, cached)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                latency_ms, success, error_msg, cached, scenario_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (app_source, model, routed_to, tier, input_tokens, output_tokens,
-             latency_ms, int(success), error_msg, int(cached)),
+             latency_ms, int(success), error_msg, int(cached), scenario_id),
         )
         await db.commit()
 
@@ -622,6 +624,184 @@ async def set_app_binding_policy(app_name: str, policy_id: int | None) -> None:
             (policy_id, app_name),
         )
         await db.commit()
+
+
+# ── scenarios（v2.1 redesign：场景 = 独立 API Key + 独立降级链） ──────────
+
+
+def _slugify(name: str) -> str:
+    """中文 / 非 ASCII 名称压缩成短 slug。"""
+    import re
+    s = re.sub(r"[^a-zA-Z0-9]+", "-", (name or "").lower()).strip("-")
+    return (s[:10] or "scn")
+
+
+def make_scenario_key(name: str) -> str:
+    """tb-{slug}-{16char hex} —— scenario 的 API Key 格式。"""
+    return f"tb-{_slugify(name)}-{secrets.token_hex(8)}"
+
+
+async def init_scenarios() -> None:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS scenarios (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                name              TEXT NOT NULL,
+                api_key           TEXT UNIQUE NOT NULL,
+                degradation_chain TEXT NOT NULL DEFAULT '[]',
+                description       TEXT DEFAULT '',
+                created_at        TEXT DEFAULT (datetime('now')),
+                updated_at        TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scenarios_api_key ON scenarios(api_key)"
+        )
+        # 给 call_logs 加 scenario_id 列（迁移）
+        async with db.execute("PRAGMA table_info(call_logs)") as cur:
+            cols = {r[1] for r in await cur.fetchall()}
+        if "scenario_id" not in cols:
+            await db.execute("ALTER TABLE call_logs ADD COLUMN scenario_id INTEGER")
+        await db.commit()
+
+
+async def create_scenario(name: str, degradation_chain: list[dict] | None = None,
+                            description: str = "") -> dict:
+    api_key = make_scenario_key(name)
+    chain_json = json.dumps(degradation_chain or [])
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        cur = await db.execute(
+            "INSERT INTO scenarios (name, api_key, degradation_chain, description) "
+            "VALUES (?, ?, ?, ?)",
+            (name, api_key, chain_json, description),
+        )
+        await db.commit()
+        sid = cur.lastrowid
+    return {"id": sid, "name": name, "api_key": api_key,
+            "degradation_chain": degradation_chain or [], "description": description}
+
+
+async def list_scenarios() -> list[dict]:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM scenarios ORDER BY id ASC"
+        ) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+    for r in rows:
+        try:
+            r["degradation_chain"] = json.loads(r["degradation_chain"] or "[]")
+        except json.JSONDecodeError:
+            r["degradation_chain"] = []
+    return rows
+
+
+async def get_scenario(scenario_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM scenarios WHERE id = ?", (scenario_id,)
+        ) as cur:
+            r = await cur.fetchone()
+            if not r:
+                return None
+            row = dict(r)
+    try:
+        row["degradation_chain"] = json.loads(row["degradation_chain"] or "[]")
+    except json.JSONDecodeError:
+        row["degradation_chain"] = []
+    return row
+
+
+async def get_scenario_by_api_key(api_key: str) -> Optional[dict]:
+    if not api_key or not api_key.startswith("tb-"):
+        return None
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM scenarios WHERE api_key = ?", (api_key,)
+        ) as cur:
+            r = await cur.fetchone()
+            if not r:
+                return None
+            row = dict(r)
+    try:
+        row["degradation_chain"] = json.loads(row["degradation_chain"] or "[]")
+    except json.JSONDecodeError:
+        row["degradation_chain"] = []
+    return row
+
+
+async def update_scenario(scenario_id: int, *, name: str | None = None,
+                            degradation_chain: list[dict] | None = None,
+                            description: str | None = None) -> bool:
+    updates = []
+    args = []
+    if name is not None:
+        updates.append("name = ?")
+        args.append(name)
+    if degradation_chain is not None:
+        updates.append("degradation_chain = ?")
+        args.append(json.dumps(degradation_chain))
+    if description is not None:
+        updates.append("description = ?")
+        args.append(description)
+    if not updates:
+        return False
+    updates.append("updated_at = datetime('now')")
+    args.append(scenario_id)
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        await db.execute(
+            f"UPDATE scenarios SET {', '.join(updates)} WHERE id = ?", args
+        )
+        await db.commit()
+    return True
+
+
+async def rotate_scenario_key(scenario_id: int) -> Optional[str]:
+    scenario = await get_scenario(scenario_id)
+    if not scenario:
+        return None
+    new_key = make_scenario_key(scenario["name"])
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        await db.execute(
+            "UPDATE scenarios SET api_key = ?, updated_at = datetime('now') WHERE id = ?",
+            (new_key, scenario_id),
+        )
+        await db.commit()
+    return new_key
+
+
+async def delete_scenario(scenario_id: int) -> None:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        await db.execute("DELETE FROM scenarios WHERE id = ?", (scenario_id,))
+        await db.commit()
+
+
+async def scenario_call_stats(scenario_id: int, since_iso: str | None = None) -> dict:
+    sql = (
+        "SELECT COUNT(*) AS calls, SUM(input_tokens + output_tokens) AS total_tokens, "
+        "AVG(latency_ms) AS avg_latency_ms, "
+        "SUM(CASE WHEN success=1 THEN 1 ELSE 0 END) AS success "
+        "FROM call_logs WHERE scenario_id = ?"
+    )
+    args: list = [scenario_id]
+    if since_iso:
+        sql += " AND timestamp >= ?"
+        args.append(since_iso)
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(sql, args) as cur:
+            r = await cur.fetchone()
+    if not r:
+        return {"calls": 0, "total_tokens": 0, "avg_latency_ms": 0, "success_rate": 1.0}
+    calls = r["calls"] or 0
+    return {
+        "calls": calls,
+        "total_tokens": r["total_tokens"] or 0,
+        "avg_latency_ms": round(r["avg_latency_ms"] or 0, 1),
+        "success_rate": round((r["success"] or 0) / calls, 3) if calls > 0 else 1.0,
+    }
 
 
 # ── app_bindings ────────────────────────────────────────────────────────────
