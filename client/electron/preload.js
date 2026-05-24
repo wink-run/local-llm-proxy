@@ -82,5 +82,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     createKey:         (d) => ipcRenderer.invoke('localConfig:createKey', d),
     deleteKey:         (id) => ipcRenderer.invoke('localConfig:deleteKey', id),
     bindKey:           (d) => ipcRenderer.invoke('localConfig:bindKey', d),
+    setCloudConfig:    (d) => ipcRenderer.invoke('localConfig:setCloudConfig', d),
   },
 });

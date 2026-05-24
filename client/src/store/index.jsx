@@ -1,9 +1,27 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { getProfile } from '../api/client';
+import { getProfile, listKeys } from '../api/client';
+import { getServerUrl } from '../config';
 
 const AuthContext = createContext(null);
 
 const POLL_INTERVAL = 30_000;
+
+// Push the user's first active cloud key + backend URL into the local gateway
+// so it can forward P2P model requests to the backend.
+async function syncCloudKey() {
+  if (!window.electronAPI?.localConfig?.setCloudConfig) return;
+  try {
+    const r = await listKeys();
+    const keys = r.data?.keys || r.data || [];
+    const active = (Array.isArray(keys) ? keys : []).find(k => k.is_active);
+    if (active) {
+      await window.electronAPI.localConfig.setCloudConfig({
+        url:   getServerUrl(),
+        token: active.key,
+      });
+    }
+  } catch {}
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -31,6 +49,7 @@ export function AuthProvider({ children }) {
       .then((r) => {
         setUser(r.data);
         startPolling();
+        syncCloudKey();
       })
       .catch(() => { localStorage.removeItem('token'); })
       .finally(() => setLoading(false));
@@ -41,12 +60,17 @@ export function AuthProvider({ children }) {
     localStorage.setItem('token', token);
     setUser(userData);
     startPolling();
+    syncCloudKey();
   }
 
   function logout() {
     localStorage.removeItem('token');
     setUser(null);
     stopPolling();
+    // Clear cloud config so gateway stops forwarding to backend
+    if (window.electronAPI?.localConfig?.setCloudConfig) {
+      window.electronAPI.localConfig.setCloudConfig({ url: null, token: null }).catch(() => {});
+    }
   }
 
   function refreshUser() {

@@ -14,9 +14,18 @@ function tierDot(tier) {
   return 'bg-green-400';
 }
 function normTier(t) {
-  if (t === 'p2p')  return 'p2p';
+  if (t === 'p2p' || t === 'open') return 'p2p';
   if (t === 'paid') return 'paid';
   return 'free';
+}
+
+// Short tier label for inline display, e.g. "glm-5.1(p2p)"
+const TIER_SHORT = { p2p: 'p2p', free: 'free', paid: 'paid' };
+
+// Resolve step tier: prefer availableModels lookup (most accurate), fallback to stored
+function resolveStepTier(stepModel, step, availableModels) {
+  const m = availableModels.find(x => x.id === stepModel);
+  return m ? m.tier : (step?.tier || 'free');
 }
 
 // ── CopyButton ────────────────────────────────────────────────────────────────
@@ -622,15 +631,19 @@ export default function Gateway() {
                     )}
                   </div>
                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                    {(route.steps || []).map((step, i) => (
-                      <React.Fragment key={i}>
-                        {i > 0 && <span className="text-gray-400 text-xs">→</span>}
-                        <span className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded border ${tierStyle(step.tier)}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${tierDot(step.tier)}`} />
-                          {step.label || step.model}
-                        </span>
-                      </React.Fragment>
-                    ))}
+                    {(route.steps || []).map((step, i) => {
+                      const t = resolveStepTier(step.model || step.label, step, availableModels);
+                      return (
+                        <React.Fragment key={i}>
+                          {i > 0 && <span className="text-gray-400 text-xs">→</span>}
+                          <span className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded border ${tierStyle(t)}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${tierDot(t)}`} />
+                            {step.label || step.model}
+                            <span className="opacity-50">({TIER_SHORT[t] || t})</span>
+                          </span>
+                        </React.Fragment>
+                      );
+                    })}
                     {!route.steps?.length && <span className="text-xs text-gray-400">暂无步骤</span>}
                   </div>
                 </div>
@@ -806,6 +819,13 @@ export default function Gateway() {
                     {(isRouter || e.tried?.length > 0) && <span className="text-gray-300 dark:text-gray-600">→</span>}
                     <span className="font-mono text-gray-700 dark:text-gray-300 truncate">
                       {e.model || '—'}
+                      {e.tier && (
+                        <span className={`ml-0.5 text-[9px] not-italic ${
+                          e.tier === 'p2p'  ? 'text-blue-500 dark:text-blue-400' :
+                          e.tier === 'paid' ? 'text-amber-500 dark:text-amber-400' :
+                                              'text-green-600 dark:text-green-500'
+                        }`}>({e.tier})</span>
+                      )}
                     </span>
                   </div>
 

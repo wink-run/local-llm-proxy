@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getNetwork, getProfile } from '../api/client';
+import { getNetwork, getProfile, listKeys } from '../api/client';
+import { getServerUrl } from '../config';
 
 const PROVIDER_META = {
   ollama:          { icon: '🦙', label: 'Ollama',        hint: '自动检测本地实例，无需配置',              keyless: true },
@@ -42,6 +43,59 @@ function P2PNetworkCard({ provider, onUpdate }) {
   const [network,  setNetwork]  = useState(null);
   const [balance,  setBalance]  = useState(null);
   const [loading,  setLoading]  = useState(true);
+
+  // P2P gateway API key config
+  const [showKeyConfig, setShowKeyConfig] = useState(false);
+  const [apiKeys,       setApiKeys]       = useState([]);   // [{id, key, note, is_active}]
+  const [selectedKey,   setSelectedKey]   = useState('');   // key string currently selected
+  const [savedKey,      setSavedKey]      = useState('');   // key string saved in local-config
+  const [keySaving,     setKeySaving]     = useState(false);
+  const [keySaved,      setKeySaved]      = useState(false);
+  const [keysLoading,   setKeysLoading]   = useState(false);
+
+  // Load saved key from local-config, and backend keys when section opens
+  useEffect(() => {
+    if (!window.electronAPI?.localConfig) return;
+    window.electronAPI.localConfig.get().then(cfg => {
+      const t = cfg.cloud_config?.token || '';
+      setSavedKey(t);
+      if (t) setSelectedKey(t);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!showKeyConfig) return;
+    setKeysLoading(true);
+    listKeys()
+      .then(r => {
+        const keys = (r.data?.keys || r.data || []).filter(k => k.is_active);
+        setApiKeys(keys);
+        // Pre-select the already-saved key, or first in list
+        if (keys.length > 0 && !keys.some(k => k.key === selectedKey)) {
+          setSelectedKey(keys[0].key);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setKeysLoading(false));
+  }, [showKeyConfig]);
+
+  async function handleSaveKey() {
+    if (!window.electronAPI?.localConfig || !selectedKey) return;
+    setKeySaving(true);
+    try {
+      await window.electronAPI.localConfig.setCloudConfig({
+        url:   getServerUrl(),
+        token: selectedKey,
+      });
+      setSavedKey(selectedKey);
+      setKeySaved(true);
+      setTimeout(() => setKeySaved(false), 2000);
+    } catch (e) {
+      alert('保存失败: ' + e.message);
+    } finally {
+      setKeySaving(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -160,6 +214,67 @@ function P2PNetworkCard({ provider, onUpdate }) {
                   <div key={i} className="bg-gray-100/50 dark:bg-gray-800/50 border border-gray-300/30 dark:border-gray-700/30 rounded-xl px-3 py-2.5 h-14 animate-pulse" />
                 )
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Gateway API Key config */}
+      {window.electronAPI?.localConfig && (
+        <div className="border-t border-gray-100 dark:border-gray-800">
+          <button
+            onClick={() => setShowKeyConfig(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-2.5 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors"
+          >
+            <span className="flex items-center gap-2">
+              <span>🔑 网关转发 API Key</span>
+              {savedKey
+                ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-800/40">已配置</span>
+                : <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/40">未配置</span>
+              }
+            </span>
+            <span className="text-gray-400">{showKeyConfig ? '▲' : '▼'}</span>
+          </button>
+
+          {showKeyConfig && (
+            <div className="px-4 pb-4 space-y-2">
+              <p className="text-[11px] text-gray-500">
+                选择一个 API Key 用于本地网关转发 P2P 请求时鉴权，与调试页「全球网络」使用同一批 Key。
+              </p>
+              {keysLoading ? (
+                <p className="text-xs text-gray-400">加载中…</p>
+              ) : apiKeys.length === 0 ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-lg px-3 py-2">
+                  账户下暂无可用 API Key，请先登录并在「密钥」页创建
+                </p>
+              ) : (
+                <div className="flex gap-2">
+                  <select
+                    value={selectedKey}
+                    onChange={e => { setSelectedKey(e.target.value); setKeySaved(false); }}
+                    className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500"
+                  >
+                    {apiKeys.map(k => (
+                      <option key={k.id} value={k.key}>
+                        {k.note ? `${k.note}  ·  ` : ''}{k.key.slice(0, 12)}…
+                        {k.key === savedKey ? '  ✓ 当前使用' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleSaveKey}
+                    disabled={keySaving || !selectedKey || selectedKey === savedKey}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap"
+                  >
+                    {keySaving ? '保存…' : keySaved ? '✓ 已保存' : '保存'}
+                  </button>
+                </div>
+              )}
+              {savedKey && (
+                <p className="text-[10px] text-gray-400 font-mono">
+                  当前：{savedKey.slice(0, 12)}{'•'.repeat(10)}
+                </p>
+              )}
             </div>
           )}
         </div>

@@ -17,6 +17,11 @@ let _port        = 11430;
 let _keySceneMap = {};
 // 'llm-router-{id}' → { steps: [{model, ...}], scene_name }
 let _routerModelMap = {};
+// P2P / backend models: model name → true
+let _peerModels   = new Set();
+// Backend gateway config for P2P forwarding
+let _backendUrl   = null;   // e.g. 'http://81.70.249.144:8000'
+let _cloudToken   = null;   // user's cloud API key
 
 // Daily stats reset when date changes
 let _stats = newDayStats();
@@ -288,12 +293,47 @@ function proxyConvertStream(provider, oaiBody, model, res) {
 
 async function route(model, reqPath, body, res, apiKey) {
   ensureTodayStats();
-  const providers   = orderedProviders();
   const t0          = Date.now();
   let lastErr       = null;
 
   const isAnthropic = reqPath === '/v1/messages';
   const streaming   = !!body.stream;
+
+  // ── P2P model: forward to backend gateway via /v1/chat/completions ───────
+  // Mirrors Debug page "全球网络" path: always use OAI format + Bearer token.
+  if (_peerModels.has(model) && _backendUrl && _cloudToken) {
+    const backendProvider = {
+      id: 'p2p-backend', label: '网络节点',
+      base_url: _backendUrl, token: _cloudToken,
+    };
+    try {
+      let result;
+      if (isAnthropic) {
+        // Convert Anthropic → OpenAI, POST to /v1/chat/completions, convert response back
+        const oaiBody = anthropicToOpenai({ ...body, model });
+        result = streaming
+          ? await proxyConvertStream(backendProvider, oaiBody, model, res)
+          : await proxyConvertSync(backendProvider, oaiBody, model, res);
+      } else {
+        // Already OpenAI format, forward as-is
+        result = await proxyRequest(backendProvider, '/v1/chat/completions', { ...body, model }, res);
+      }
+      pushLog({
+        ts: t0, requested_model: model, model,
+        tier: 'p2p',
+        via: 'p2p-backend', via_label: '网络节点',
+        latency_ms: result.latency, status: 'ok',
+      });
+      recordStats('p2p-backend', model);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (res.headersSent) return;
+      // fall through to local providers
+    }
+  }
+
+  const providers   = orderedProviders();
 
   // Scene-route model chain: llm-router-* model name takes priority, then key binding
   const routerScene = model.startsWith('llm-router-') ? _routerModelMap[model] : null;
@@ -308,6 +348,39 @@ async function route(model, reqPath, body, res, apiKey) {
     const attemptBody = { ...body, model: attemptModel };
     const oaiBody     = isAnthropic ? anthropicToOpenai(attemptBody) : null;
     let   modelFailed = true;
+
+    // ── If this step model is a P2P model, try backend first ──────────────
+    if (_peerModels.has(attemptModel) && _backendUrl && _cloudToken) {
+      const backendProvider = {
+        id: 'p2p-backend', label: '网络节点',
+        base_url: _backendUrl, token: _cloudToken,
+      };
+      try {
+        let result;
+        if (isAnthropic) {
+          result = streaming
+            ? await proxyConvertStream(backendProvider, oaiBody, attemptModel, res)
+            : await proxyConvertSync(backendProvider, oaiBody, attemptModel, res);
+        } else {
+          result = await proxyRequest(backendProvider, '/v1/chat/completions', attemptBody, res);
+        }
+        const entry = {
+          ts: t0, requested_model: model, model: attemptModel,
+          scene_name: scene?.scene_name,
+          tried: failedModels.length > 0 ? [...failedModels] : undefined,
+          tier: 'p2p',
+          via: 'p2p-backend', via_label: '网络节点',
+          latency_ms: result.latency, status: 'ok',
+        };
+        pushLog(entry);
+        recordStats('p2p-backend', attemptModel);
+        return;
+      } catch (err) {
+        lastErr = err;
+        if (res.headersSent) return;
+        // backend failed — fall through to local providers for this model
+      }
+    }
 
     for (const provider of providers) {
       try {
@@ -326,6 +399,7 @@ async function route(model, reqPath, body, res, apiKey) {
           model: attemptModel,               // actual model used
           scene_name: scene?.scene_name,     // scene name if routing via scene
           tried: failedModels.length > 0 ? [...failedModels] : undefined,
+          tier: provider.type,               // 'free' | 'p2p' | 'paid'
           via: provider.id, via_label: provider.label,
           latency_ms: result.latency, status: 'ok',
         };
@@ -484,4 +558,18 @@ function setRouterModelMap(map) {
   _routerModelMap = map && typeof map === 'object' ? map : {};
 }
 
-module.exports = { start, stop, setStrategy, getStatus, getLog, getDailyStats, setKeySceneMap, setRouterModelMap };
+function setPeerModels(list) {
+  _peerModels = Array.isArray(list) ? new Set(list) : new Set();
+  console.log(`[gateway] P2P models updated: ${_peerModels.size} models`);
+}
+
+function setBackendConfig({ url, token } = {}) {
+  _backendUrl  = url   || null;
+  _cloudToken  = token || null;
+  console.log(`[gateway] backend config: url=${_backendUrl} token=${_cloudToken ? '***' : 'none'}`);
+}
+
+module.exports = {
+  start, stop, setStrategy, getStatus, getLog, getDailyStats,
+  setKeySceneMap, setRouterModelMap, setPeerModels, setBackendConfig,
+};

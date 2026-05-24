@@ -233,7 +233,29 @@
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\" http://localhost:8888/nav-gateway.html)",
       "Bash(node --check /Users/ully/githubprojects/local-llm-proxy/client/electron/local-gateway.js)",
       "Bash(xargs kill -9)",
-      "Bash(pkill -f \"electron.*local-llm-proxy\")"
+      "Bash(pkill -f \"electron.*local-llm-proxy\")",
+      "Bash(curl -s http://81.70.249.144:8000/api/rates)",
+      "Bash(curl -s http://localhost:5173)",
+      "Bash(echo \"started PID $!\")",
+      "Bash(curl -s -X POST http://127.0.0.1:11430/v1/messages -H 'Content-Type: application/json' -H 'x-api-key: sk-local-test' -d '{\"model\":\"deepseek-v3\",\"max_tokens\":50,\"messages\":[{\"role\":\"user\",\"content\":\"Say hi in 5 words.\"}]}' --max-time 30)",
+      "Bash(curl -s http://127.0.0.1:11430/)",
+      "Bash(curl -sv -X POST http://127.0.0.1:11430/v1/messages -H 'Content-Type: application/json' -H 'x-api-key: sk-local-test' -d '{\"model\":\"deepseek-v3\",\"max_tokens\":20,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' --max-time 30)",
+      "Bash(curl -s -w '\\\\nHTTP_STATUS:%{http_code}' -X POST http://127.0.0.1:11430/v1/messages -H 'Content-Type: application/json' -H 'x-api-key: sk-local-test' -d '{\"model\":\"deepseek-v3\",\"max_tokens\":20,\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' --max-time 30)",
+      "Bash(python3 -c \"import json; c=json.load\\(open\\('/Users/ully/Library/Application Support/llm-proxy-client/local-config.json'\\)\\); print\\(c.get\\('cloud_config',{}\\).get\\('token',''\\)\\)\")",
+      "Bash(curl -s -w '\\\\nHTTP:%{http_code}' -X POST http://81.70.249.144:8000/v1/messages -H 'Content-Type: application/json' -H 'x-api-key: __TRACKED_VAR__' -d '{\"model\":\"deepseek-v3\",\"max_tokens\":20,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' --max-time 15)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(m['name']\\) for m in d['models']]\")",
+      "Bash(curl -s -o /dev/null -w '%{http_code}' -X POST http://81.70.249.144:8000/v1/messages -H 'Content-Type: application/json' -H 'x-api-key: __TRACKED_VAR__' -d '{\"model\":\"__TRACKED_VAR__\",\"max_tokens\":5,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' --max-time 10)",
+      "Bash(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:11430/v1/messages -H 'Content-Type: application/json' -H 'x-api-key: sk-local-test' -d '{\"model\":\"__TRACKED_VAR__\",\"max_tokens\":5,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' --max-time 15)",
+      "Bash(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:11430/v1/chat/completions -H 'Content-Type: application/json' -H 'Authorization: Bearer sk-local-test' -d '{\"model\":\"__TRACKED_VAR__\",\"max_tokens\":5,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' --max-time 15)",
+      "Bash(curl -s -w '\\\\nHTTP:%{http_code}' -X POST http://49.51.47.124:3000/v1/chat/completions -H 'Content-Type: application/json' -H 'Authorization: Bearer sk-F0eM1NRniM661RgdA2C8B83dD3824f628b4725F4663b195c' -d '{\"model\":\"glm-5.1\",\"max_tokens\":5,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' --max-time 8)",
+      "Bash(curl -s -w '\\\\nHTTP:%{http_code}' -X POST http://127.0.0.1:11430/v1/messages -H 'Content-Type: application/json' -H 'x-api-key: sk-local-test' -d '{\"model\":\"glm-5.1\",\"max_tokens\":20,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' --max-time 20)",
+      "Bash(curl -s -X POST http://127.0.0.1:11430/v1/messages -H 'Content-Type: application/json' -H 'x-api-key: sk-local-test' -d '{\"model\":\"deepseek-r1\",\"max_tokens\":30,\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"1+1=?\"}]}' --max-time 20)",
+      "Bash(curl -s -w '\\\\nHTTP:%{http_code}' -X POST http://127.0.0.1:11430/v1/messages -H 'Content-Type: application/json' -H 'x-api-key: sk-local-test' -d '{\"model\":\"llm-router-6adf05d180e3\",\"max_tokens\":20,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' --max-time 25)",
+      "Bash(curl -s -w '\\\\nHTTP:%{http_code}' -X POST http://127.0.0.1:11430/v1/messages -H 'Content-Type: application/json' -H 'x-api-key: sk-local-test' -d '{\"model\":\"llm-router-142360604201\",\"max_tokens\":20,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' --max-time 25)",
+      "Bash(curl -s -w '\\\\nHTTP:%{http_code}' -X POST http://127.0.0.1:11430/v1/messages -H 'Content-Type: application/json' -H 'x-api-key: sk-local-test' -d '{\"model\":\"llm-router-6adf05d180e3\",\"max_tokens\":20,\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' --max-time 25)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(m['id']\\) for m in d.get\\('data',[]\\)]\")",
+      "Bash(curl -s -w '\\\\nHTTP:%{http_code}' -X POST http://127.0.0.1:11430/v1/messages -H 'Content-Type: application/json' -H 'x-api-key: sk-local-test' -d '{\"model\":\"glm-5.1\",\"max_tokens\":10,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' --max-time 15)",
+      "Bash(curl -s -w '\\\\nHTTP:%{http_code}' -X POST http://127.0.0.1:11430/v1/messages -H 'Content-Type: application/json' -H 'x-api-key: sk-local-test' -d '{\"model\":\"glm-4.7\",\"max_tokens\":10,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' --max-time 15)"
     ]
   }
 }

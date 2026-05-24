@@ -417,10 +417,37 @@ function registerIPC() {
       }
     }
     gateway.setKeySceneMap(keyMap);
+    // P2P backend config
+    const cc = cfg.cloud_config || {};
+    if (cc.url && cc.token) gateway.setBackendConfig({ url: cc.url, token: cc.token });
+  }
+
+  // Fetch currently active P2P model names from /v1/models (requires auth, reflects live workers)
+  async function fetchPeerModels(backendUrl, cloudToken) {
+    if (!backendUrl || !cloudToken) {
+      gateway.setPeerModels([]);
+      return;
+    }
+    const url = backendUrl.replace(/\/$/, '') + '/v1/models';
+    try {
+      const r = await nodeRequest(url, 'GET', { Authorization: `Bearer ${cloudToken}` }, null);
+      if (r.status === 200) {
+        const data = JSON.parse(r.body);
+        const names = (data.data || []).map(m => m.id).filter(Boolean);
+        gateway.setPeerModels(names);
+      } else {
+        console.warn('[main] fetchPeerModels: status', r.status);
+        gateway.setPeerModels([]);
+      }
+    } catch (err) {
+      console.warn('[main] fetchPeerModels failed:', err.message);
+    }
   }
 
   // Sync on startup
-  syncGatewayFromConfig(readLocalConfig());
+  const _initCfg = readLocalConfig();
+  syncGatewayFromConfig(_initCfg);
+  fetchPeerModels(_initCfg.cloud_config?.url, _initCfg.cloud_config?.token);
 
   ipcMain.handle('localConfig:get', () => readLocalConfig());
 
@@ -486,6 +513,17 @@ function registerIPC() {
     writeLocalConfig(cfg);
     syncGatewayFromConfig(cfg);
     return key;
+  });
+
+  // Save cloud API config (url + user API key) for P2P forwarding
+  ipcMain.handle('localConfig:setCloudConfig', (_e, { url, token } = {}) => {
+    const cfg = readLocalConfig();
+    cfg.cloud_config = { url: url || null, token: token || null };
+    writeLocalConfig(cfg);
+    syncGatewayFromConfig(cfg);
+    // Refresh active P2P model list using authenticated /v1/models
+    fetchPeerModels(url, token);
+    return { ok: true };
   });
 
   ipcMain.handle('gateway:setKeySceneMap', (_e, map) => {
