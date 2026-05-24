@@ -1,93 +1,86 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { getServerUrl } from '../config';
 import {
-  listKeys, getRates,
+  listKeys, createKey, deleteKey, getRates,
   getSceneRoutes, createSceneRoute, updateSceneRoute, deleteSceneRoute,
   getKeysWithScene, bindKeyToScene,
 } from '../api/client';
 
-function StatCard({ label, value, sub }) {
-  return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4">
-      <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">{label}</p>
-      <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{value}</p>
-      {sub && <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{sub}</p>}
-    </div>
-  );
+// ── Chip helpers ──────────────────────────────────────────────────────────────
+
+function tierStyle(tier) {
+  if (tier === 'p2p')  return 'bg-blue-950/70 border-blue-800/30 text-blue-300';
+  if (tier === 'paid') return 'bg-amber-950/70 border-amber-800/30 text-amber-300';
+  return 'bg-green-950/70 border-green-800/30 text-green-300';
+}
+function tierDot(tier) {
+  if (tier === 'p2p')  return 'bg-blue-400';
+  if (tier === 'paid') return 'bg-amber-400';
+  return 'bg-green-400';
+}
+function normTier(t) {
+  if (t === 'p2p')  return 'p2p';
+  if (t === 'paid') return 'paid';
+  return 'free';
 }
 
-function CopyButton({ text, label = '复制' }) {
+// ── CopyButton ────────────────────────────────────────────────────────────────
+
+function CopyButton({ text, label = '复制', className = '' }) {
   const [copied, setCopied] = useState(false);
   function copy() {
-    navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
   }
   return (
     <button onClick={copy}
-      className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
+      className={`text-xs px-2.5 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-400 hover:bg-gray-700 transition-colors min-w-[48px] ${className}`}>
       {copied ? '已复制 ✓' : label}
     </button>
   );
 }
 
-function StrategyToggle({ strategy, onChange }) {
-  return (
-    <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
-      {['cost', 'quality'].map((s) => (
-        <button key={s} onClick={() => onChange(s)}
-          className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-            strategy === s
-              ? 'bg-blue-600 text-white'
-              : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
-          }`}>
-          {s === 'cost' ? '省钱优先' : '质量优先'}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-const VIA_LABELS = {
-  ollama: 'Ollama',
-  groq: 'Groq',
-  'github-models': 'GitHub Models',
-  'tokenbank-p2p': 'P2P 网络',
-  openai: 'OpenAI',
-  'anthropic-paid': 'Anthropic',
-};
-
-function tierStyle(tier) {
-  if (tier === 'p2p') return 'bg-blue-950/70 border-blue-800/30 text-blue-300';
-  if (tier === 'paid') return 'bg-amber-950/70 border-amber-800/30 text-amber-300';
-  return 'bg-green-950/70 border-green-800/30 text-green-300';
-}
-function tierDot(tier) {
-  if (tier === 'p2p') return 'bg-blue-400';
-  if (tier === 'paid') return 'bg-amber-400';
-  return 'bg-green-400';
-}
-function normTier(t) {
-  if (t === 'p2p') return 'p2p';
-  if (t === 'paid') return 'paid';
-  return 'free'; // 'open' or anything else → free
-}
+// ── Main Component ────────────────────────────────────────────────────────────
 
 export default function Gateway() {
   const [status, setStatus]     = useState(null);
   const [stats, setStats]       = useState(null);
   const [logEntries, setLog]    = useState([]);
-  const [ccStatus, setCcStatus] = useState(null);
-  const [ccMsg, setCcMsg]       = useState('');
-  const [ccBusy, setCcBusy]     = useState(false);
 
-  // Scene routing state
-  const [routes, setRoutes]       = useState([]);
+  // Scene routing
+  const [routes, setRoutes]               = useState([]);
   const [expandedRoute, setExpandedRoute] = useState(null);
-  const [newRoute, setNewRoute]   = useState(null);
-  const [keysScene, setKeysScene] = useState([]);
-  const [expandedKey, setExpandedKey] = useState(null);
+  const [newRoute, setNewRoute]           = useState(null);
   const [availableModels, setAvailableModels] = useState([]);
 
-  const localBase = status?.port ? `http://localhost:${status.port}/v1` : 'http://localhost:11430/v1';
+  // Keys / instances
+  const [keysScene, setKeysScene] = useState([]);
+
+  // 场景应用 tabs
+  const [tab, setTab] = useState('auto');
+
+  // Auto (写入工具) tab state
+  const [autoTool, setAutoTool]         = useState('claude-code');
+  const [autoRouteMode, setAutoRouteMode] = useState('scene');
+  const [autoSceneId, setAutoSceneId]   = useState('');
+  const [autoModelId, setAutoModelId]   = useState('');
+  const [autoGenerated, setAutoGenerated] = useState(null); // key object
+  const [autoGenBusy, setAutoGenBusy]   = useState(false);
+  const [autoWriteOk, setAutoWriteOk]   = useState(false);
+
+  // Manual tab state
+  const [manName, setManName]           = useState('');
+  const [manRouteMode, setManRouteMode] = useState('scene');
+  const [manSceneId, setManSceneId]     = useState('');
+  const [manModelId, setManModelId]     = useState('');
+  const [manBusy, setManBusy]           = useState(false);
+
+  const localBase = status?.port
+    ? `http://127.0.0.1:${status.port}/v1`
+    : 'http://127.0.0.1:11430/v1';
+
+  // ── Data loading ────────────────────────────────────────────────────────────
 
   const refresh = useCallback(async () => {
     if (!window.electronAPI?.gateway) return;
@@ -98,14 +91,20 @@ export default function Gateway() {
     ]);
     setStatus(s);
     setStats(st);
-    setLog(lg.slice(0, 20));
+    setLog(lg.slice(0, 50));
   }, []);
 
   const loadSceneData = useCallback(async () => {
     try {
       const [rRes, kRes] = await Promise.all([getSceneRoutes(), getKeysWithScene()]);
-      setRoutes(rRes.data?.routes || []);
+      const loadedRoutes = rRes.data?.routes || [];
+      setRoutes(loadedRoutes);
       setKeysScene(kRes.data?.keys || []);
+      // set default scene selection
+      if (loadedRoutes.length > 0) {
+        setAutoSceneId(prev => prev || String(loadedRoutes[0].id));
+        setManSceneId(prev => prev || String(loadedRoutes[0].id));
+      }
     } catch (e) {
       console.error('loadSceneData', e);
     }
@@ -119,6 +118,10 @@ export default function Gateway() {
         tier: normTier(m.tier),
       }));
       setAvailableModels(models);
+      if (models.length > 0) {
+        setAutoModelId(prev => prev || models[0].id);
+        setManModelId(prev => prev || models[0].id);
+      }
     } catch (e) {
       console.error('loadAvailableModels', e);
     }
@@ -128,28 +131,29 @@ export default function Gateway() {
     refresh();
     loadSceneData();
     loadAvailableModels();
-    window.electronAPI?.claude?.status().then(r => setCcStatus(r?.configured)).catch(() => {});
     const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
   }, [refresh, loadSceneData, loadAvailableModels]);
 
-  async function handleStrategy(s) {
-    await window.electronAPI?.gateway?.setStrategy(s);
-    setStatus(prev => prev ? { ...prev, strategy: s } : prev);
-  }
+  // ── Computed stats ──────────────────────────────────────────────────────────
 
-  async function handleClaudeConfigure() {
-    setCcBusy(true); setCcMsg('');
-    try {
-      const keysRes = await listKeys().catch(() => ({ data: { keys: [] } }));
-      const activeKey = (keysRes.data.keys || []).find(k => k.is_active);
-      if (!activeKey) { setCcMsg('请先在盘点页面创建并启用 API Key'); return; }
-      await window.electronAPI?.claude?.configure(localBase, activeKey.key, []);
-      setCcStatus(true);
-      setCcMsg('配置成功，重启 Claude Code 生效');
-      setTimeout(() => setCcMsg(''), 4000);
-    } finally { setCcBusy(false); }
-  }
+  const totalCalls = stats?.calls ?? 0;
+  const totalErrors = stats?.errors ?? 0;
+  const providerEntries = Object.entries(stats?.by_provider ?? {})
+    .sort((a, b) => b[1].calls - a[1].calls);
+  const freeCalls = providerEntries
+    .filter(([id]) => !['tokenbank-p2p', 'openai', 'anthropic-paid'].includes(id))
+    .reduce((s, [, v]) => s + v.calls, 0);
+  const freeRatio = totalCalls > 0 ? Math.round((freeCalls / totalCalls) * 100) : 0;
+  const errorRatio = (totalCalls + totalErrors) > 0
+    ? ((totalErrors / (totalCalls + totalErrors)) * 100).toFixed(1)
+    : '0.0';
+  const okLogs = logEntries.filter(e => e.status === 'ok');
+  const avgLatency = okLogs.length > 0
+    ? Math.round(okLogs.reduce((s, e) => s + e.latency_ms, 0) / okLogs.length)
+    : 0;
+
+  // ── Scene route actions ────────────────────────────────────────────────────
 
   const saveRoute = async (route) => {
     try {
@@ -176,28 +180,98 @@ export default function Gateway() {
     }
   };
 
-  const saveKeyBinding = async (keyId, sceneRouteId, appName) => {
-    try {
-      await bindKeyToScene(keyId, { scene_route_id: sceneRouteId || null, app_name: appName });
-      setExpandedKey(null);
-      await loadSceneData();
-    } catch (e) {
-      alert('绑定失败: ' + (e.response?.data?.detail || e.message));
-    }
+  // ── Auto (写入工具) actions ─────────────────────────────────────────────────
+
+  const TOOL_LABELS = {
+    'claude-code': 'Claude Code',
+    cursor:        'Cursor',
+    continue:      'Continue',
+    other:         '其他',
+  };
+  const TOOL_ICONS = {
+    'claude-code': '🤖',
+    cursor:        '🔮',
+    continue:      '🪟',
+    other:         '📋',
+  };
+  const TOOL_HINTS = {
+    'claude-code': '已检测到',
+    cursor:        '手动配置',
+    continue:      '手动配置',
+    other:         '复制即可',
   };
 
-  // ── Sub-components ────────────────────────────────────────────────────────
+  async function handleAutoGenKey() {
+    setAutoGenBusy(true);
+    setAutoWriteOk(false);
+    try {
+      const note = TOOL_LABELS[autoTool] || '场景应用';
+      const keyRes = await createKey(note);
+      const newKey = keyRes.data;
+      if (autoRouteMode === 'scene' && autoSceneId) {
+        await bindKeyToScene(newKey.id, { scene_route_id: Number(autoSceneId), app_name: note });
+      }
+      setAutoGenerated(newKey);
+      await loadSceneData();
+    } catch (e) {
+      alert('生成失败: ' + (e.response?.data?.detail || e.message));
+    } finally {
+      setAutoGenBusy(false);
+    }
+  }
+
+  async function handleAutoWrite() {
+    if (!autoGenerated) return;
+    try {
+      await window.electronAPI?.claude?.configure(localBase, autoGenerated.key, []);
+      setAutoWriteOk(true);
+    } catch (e) {
+      alert('写入失败: ' + e.message);
+    }
+  }
+
+  // ── Manual tab actions ─────────────────────────────────────────────────────
+
+  async function handleManCreate() {
+    if (!manName.trim()) { alert('请填写场景名称'); return; }
+    setManBusy(true);
+    try {
+      const keyRes = await createKey(manName.trim());
+      const newKey = keyRes.data;
+      if (manRouteMode === 'scene' && manSceneId) {
+        await bindKeyToScene(newKey.id, { scene_route_id: Number(manSceneId), app_name: manName.trim() });
+      }
+      setManName('');
+      await loadSceneData();
+    } catch (e) {
+      alert('创建失败: ' + (e.response?.data?.detail || e.message));
+    } finally {
+      setManBusy(false);
+    }
+  }
+
+  async function handleDeleteKey(keyId) {
+    if (!confirm('删除此场景应用 Key？操作不可恢复。')) return;
+    try {
+      await deleteKey(keyId);
+      await loadSceneData();
+    } catch (e) {
+      alert('删除失败');
+    }
+  }
+
+  // ── SceneRouteEditor sub-component ─────────────────────────────────────────
 
   function SceneRouteEditor({ route, onSave, onCancel }) {
-    const [name, setName] = useState(route.scene_name || '');
-    const [icon, setIcon] = useState(route.icon || '🔀');
+    const [name, setName]   = useState(route.scene_name || '');
+    const [icon, setIcon]   = useState(route.icon || '🔀');
     const [steps, setSteps] = useState(route.steps || []);
 
     const addStep = () => setSteps(prev => [...prev, { label: '', model: '', tier: 'free' }]);
     const removeStep = (i) => setSteps(prev => prev.filter((_, idx) => idx !== i));
     const updateStep = (i, modelId) => {
       const m = availableModels.find(x => x.id === modelId);
-      const tier = m ? m.tier : normTier('open');
+      const tier = m ? m.tier : 'free';
       setSteps(prev => prev.map((s, idx) => idx === i ? { label: modelId, model: modelId, tier } : s));
     };
 
@@ -206,30 +280,30 @@ export default function Gateway() {
     const paidModels = availableModels.filter(m => m.tier === 'paid');
 
     return (
-      <div className="border-t border-gray-200 dark:border-gray-800/60 bg-gray-50 dark:bg-gray-800/20 px-5 py-4 space-y-3">
+      <div className="border-t border-gray-800/60 bg-gray-800/20 px-5 py-4 space-y-3">
         <div className="flex gap-2">
           <input
             value={icon} onChange={e => setIcon(e.target.value)}
-            className="w-10 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none"
+            className="w-10 bg-gray-700 border border-gray-600 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none"
             maxLength={2}
           />
           <input
             value={name} onChange={e => setName(e.target.value)}
             placeholder="场景名称，如：Claude Code"
-            className="flex-1 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500"
+            className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
           />
         </div>
-        <div className="text-xs text-gray-500 dark:text-gray-500 font-medium">
-          降级链 <span className="text-gray-400 dark:text-gray-700">· 失败时按顺序尝试下一步</span>
+        <div className="text-xs text-gray-500 font-medium">
+          降级链编辑 <span className="text-gray-700">· 失败时按顺序尝试下一步</span>
         </div>
         <div className="space-y-2">
           {steps.map((step, i) => (
             <div key={i} className="flex items-center gap-2 group">
-              <span className="text-[10px] text-gray-400 dark:text-gray-600 w-4 text-right shrink-0">{i + 1}</span>
+              <span className="text-[10px] text-gray-600 w-4 text-right shrink-0">{i + 1}</span>
               <select
                 value={step.model}
                 onChange={e => updateStep(i, e.target.value)}
-                className="flex-1 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500"
+                className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
               >
                 <option value="">-- 选择模型 --</option>
                 {freeModels.length > 0 && (
@@ -250,163 +324,249 @@ export default function Gateway() {
               </select>
               <button
                 onClick={() => removeStep(i)}
-                className="text-[10px] text-gray-300 dark:text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                className="text-[10px] text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
               >✕</button>
             </div>
           ))}
           {steps.length === 0 && (
-            <p className="text-xs text-gray-400 dark:text-gray-600">还没有步骤，点击「添加步骤」</p>
+            <p className="text-xs text-gray-600">还没有步骤，点击「添加步骤」</p>
           )}
         </div>
-        <button onClick={addStep} className="text-xs text-blue-500 hover:text-blue-400">+ 添加步骤</button>
+        <button onClick={addStep} className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1">
+          + 添加步骤
+        </button>
         <div className="flex gap-2 pt-1">
-          <button onClick={onCancel} className="text-xs bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600">取消</button>
-          <button onClick={() => onSave({ ...route, scene_name: name, icon, steps })} className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg font-medium">保存</button>
+          <button onClick={onCancel}
+            className="text-xs bg-gray-700 border border-gray-600 text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-600">
+            取消
+          </button>
+          <button onClick={() => onSave({ ...route, scene_name: name, icon, steps })}
+            className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg font-medium">
+            保存
+          </button>
         </div>
       </div>
     );
   }
 
-  function KeyBindEditor({ apiKey, onSave, onCancel }) {
-    const [selectedRoute, setSelectedRoute] = useState(apiKey.scene_route_id || '');
-    const [appName, setAppName] = useState(apiKey.app_name || apiKey.note || '');
+  // ── Model select helper ─────────────────────────────────────────────────────
 
+  function ModelSelect({ value, onChange }) {
+    const freeModels = availableModels.filter(m => m.tier === 'free');
+    const p2pModels  = availableModels.filter(m => m.tier === 'p2p');
+    const paidModels = availableModels.filter(m => m.tier === 'paid');
     return (
-      <div className="border-t border-gray-200 dark:border-gray-800/60 bg-gray-50 dark:bg-gray-800/20 px-5 py-4 space-y-3">
-        <div className="space-y-1.5">
-          <label className="text-xs text-gray-500">应用名称</label>
-          <input
-            value={appName} onChange={e => setAppName(e.target.value)}
-            placeholder="如：Claude Code 主机"
-            className="w-full bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500"
-          />
+      <select value={value} onChange={e => onChange(e.target.value)}
+        className="w-full bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-2 text-xs text-gray-200 focus:outline-none focus:border-blue-500">
+        {freeModels.length > 0 && (
+          <optgroup label="🟢 免费层">
+            {freeModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+          </optgroup>
+        )}
+        {p2pModels.length > 0 && (
+          <optgroup label="🔵 P2P 层">
+            {p2pModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+          </optgroup>
+        )}
+        {paidModels.length > 0 && (
+          <optgroup label="🟡 付费层">
+            {paidModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+          </optgroup>
+        )}
+      </select>
+    );
+  }
+
+  // ── Instance list (shared between tabs) ────────────────────────────────────
+
+  function InstanceList() {
+    return (
+      <div>
+        <div className="px-5 py-3 flex items-center justify-between border-b border-gray-800/60">
+          <span className="text-xs text-gray-500 font-medium">
+            已创建的场景应用 <span className="text-gray-700 ml-1">· 供 Dashboard 分析使用</span>
+          </span>
+          <span className="text-[10px] text-gray-600">{keysScene.length} 个</span>
         </div>
-        <div className="space-y-1.5">
-          <label className="text-xs text-gray-500">绑定场景路由</label>
-          <select
-            value={selectedRoute}
-            onChange={e => setSelectedRoute(e.target.value ? Number(e.target.value) : '')}
-            className="w-full bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500"
-          >
-            <option value="">不绑定（按请求模型名路由）</option>
-            {routes.map(r => (
-              <option key={r.id} value={r.id}>{r.icon} {r.scene_name}</option>
-            ))}
-          </select>
-        </div>
-        <div className="flex gap-2 pt-1">
-          <button onClick={onCancel} className="text-xs bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600">取消</button>
-          <button
-            onClick={() => onSave(apiKey.id, selectedRoute || null, appName)}
-            className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg font-medium"
-          >保存</button>
+        <div className="divide-y divide-gray-800/40">
+          {keysScene.map(k => (
+            <div key={k.id} className="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-800/20">
+              <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${k.is_active ? 'bg-green-500' : 'bg-gray-600'}`} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-gray-200">{k.app_name || k.note || '未命名'}</span>
+                  {k.scene_name ? (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-400 border border-blue-800/40">场景路由</span>
+                  ) : (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700">指定模型</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 mt-1">
+                  <code className="text-[10px] font-mono text-gray-500">{k.key?.slice(0, 16)}…</code>
+                  {k.scene_name && (
+                    <span className="text-[10px] text-gray-600">{k.icon} {k.scene_name}</span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <CopyButton text={k.key} label="复制 Key"
+                  className="text-[10px] bg-transparent border-none text-gray-600 hover:text-gray-400 px-0 min-w-0" />
+                <button onClick={() => handleDeleteKey(k.id)}
+                  className="text-[10px] text-gray-600 hover:text-red-400 transition-colors">删除</button>
+              </div>
+            </div>
+          ))}
+          {keysScene.length === 0 && (
+            <div className="px-5 py-6 text-xs text-gray-600 text-center">
+              还没有场景应用，使用上方向导创建第一个
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
-  // ── Computed stats ────────────────────────────────────────────────────────
+  // ── Route mode radio helper ─────────────────────────────────────────────────
 
-  const totalCalls  = stats?.calls ?? 0;
-  const providerEntries = Object.entries(stats?.by_provider ?? {})
-    .sort((a, b) => b[1].calls - a[1].calls);
-  const freeCalls   = providerEntries
-    .filter(([id]) => !['tokenbank-p2p', 'openai', 'anthropic-paid'].includes(id))
-    .reduce((s, [, v]) => s + v.calls, 0);
-  const freeRatio   = totalCalls > 0 ? Math.round((freeCalls / totalCalls) * 100) : 0;
+  function RouteRadios({ mode, setMode, sceneId, setSceneId, modelId, setModelId, compact = false }) {
+    return (
+      <div className="grid grid-cols-2 gap-3">
+        <label
+          onClick={() => setMode('scene')}
+          className={`flex items-start gap-3 bg-gray-800 border rounded-xl p-4 cursor-pointer transition-colors ${mode === 'scene' ? 'border-blue-600' : 'border-gray-700 hover:border-gray-600'}`}
+        >
+          <input type="radio" name={`route_${compact}`} checked={mode === 'scene'} onChange={() => setMode('scene')}
+            className="mt-0.5 accent-blue-500 shrink-0" />
+          <div className="flex-1">
+            <div className={`text-sm font-semibold ${mode === 'scene' ? 'text-gray-200' : 'text-gray-300'}`}>使用场景路由</div>
+            <div className="text-xs text-gray-500 mt-0.5">按场景降级链转发请求</div>
+            <div className={`mt-3 ${mode !== 'scene' ? 'opacity-40 pointer-events-none' : ''}`}>
+              <select value={sceneId} onChange={e => setSceneId(e.target.value)}
+                className="w-full bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-2 text-xs text-gray-200 focus:outline-none focus:border-blue-500">
+                {routes.length === 0 && <option value="">（暂无场景路由）</option>}
+                {routes.map(r => (
+                  <option key={r.id} value={String(r.id)}>
+                    {r.icon} {r.scene_name} · {(r.steps || []).map(s => s.model?.split('/').pop() || s.model).join(' → ')}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </label>
+        <label
+          onClick={() => setMode('model')}
+          className={`flex items-start gap-3 bg-gray-800 border rounded-xl p-4 cursor-pointer transition-colors ${mode === 'model' ? 'border-blue-600' : 'border-gray-700 hover:border-gray-600'}`}
+        >
+          <input type="radio" name={`route_${compact}`} checked={mode === 'model'} onChange={() => setMode('model')}
+            className="mt-0.5 accent-blue-500 shrink-0" />
+          <div className="flex-1">
+            <div className={`text-sm font-semibold ${mode === 'model' ? 'text-gray-200' : 'text-gray-300'}`}>指定模型</div>
+            <div className="text-xs text-gray-500 mt-0.5">固定一个模型，不走降级链</div>
+            <div className={`mt-3 ${mode !== 'model' ? 'opacity-40 pointer-events-none' : ''}`}>
+              <ModelSelect value={modelId} onChange={setModelId} />
+            </div>
+          </div>
+        </label>
+      </div>
+    );
+  }
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-8 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">本地网关</h1>
+    <div className="p-6 space-y-4">
+
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <span className="relative flex h-2.5 w-2.5">
+          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${status?.running ? 'bg-green-400' : 'bg-gray-500'}`} />
+          <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${status?.running ? 'bg-green-500' : 'bg-gray-500'}`} />
+        </span>
+        <h1 className="text-xl font-semibold text-gray-100">网关</h1>
         {status && (
-          <div className="flex items-center gap-3">
-            <span className={`flex items-center gap-1.5 text-sm ${status.running ? 'text-green-600 dark:text-green-400' : 'text-gray-400'}`}>
-              <span className={`w-2 h-2 rounded-full ${status.running ? 'bg-green-400 animate-pulse' : 'bg-gray-400'}`} />
-              {status.running ? `运行中 :${status.port}` : '已停止'}
-            </span>
-            <StrategyToggle strategy={status.strategy} onChange={handleStrategy} />
-          </div>
+          <span className={`text-xs px-2 py-0.5 rounded-full border ${
+            status.running
+              ? 'bg-green-900/30 text-green-400 border-green-800/50'
+              : 'bg-gray-800 text-gray-500 border-gray-700'
+          }`}>
+            {status.running ? `运行中 · :${status.port}` : '已停止'}
+          </span>
         )}
       </div>
 
-      {/* Stats row */}
-      <div className="grid grid-cols-3 gap-4">
-        <StatCard label="今日调用" value={totalCalls} sub="次请求" />
-        <StatCard label="免费路由占比" value={`${freeRatio}%`} sub={`${freeCalls} 次走免费层`} />
-        <StatCard label="供给来源" value={providerEntries.length} sub="活跃 Provider" />
+      {/* Stats – 4 cards */}
+      <div className="grid grid-cols-4 gap-3">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-3">
+          <div className="text-xs text-gray-500">今日请求</div>
+          <div className="text-2xl font-bold text-gray-100 mt-1">{totalCalls}</div>
+        </div>
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-3">
+          <div className="text-xs text-gray-500">免费命中率</div>
+          <div className="text-2xl font-bold text-green-400 mt-1">{freeRatio}%</div>
+        </div>
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-3">
+          <div className="text-xs text-gray-500">错误率</div>
+          <div className="text-2xl font-bold text-amber-400 mt-1">{errorRatio}%</div>
+        </div>
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-3">
+          <div className="text-xs text-gray-500">平均延迟</div>
+          <div className="text-2xl font-bold text-gray-100 mt-1">
+            {avgLatency > 0 ? `${avgLatency}ms` : '—'}
+          </div>
+        </div>
       </div>
 
-      {/* Endpoint card */}
-      <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-4">
-        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">接入配置</h2>
-        <div className="flex items-center justify-between gap-3 bg-gray-50 dark:bg-gray-900 rounded-xl px-4 py-3">
-          <div className="min-w-0">
-            <p className="text-xs text-gray-400 dark:text-gray-500 mb-0.5">本地网关地址</p>
-            <p className="font-mono text-sm text-gray-800 dark:text-gray-200">{localBase}</p>
-          </div>
-          <CopyButton text={localBase} />
-        </div>
-        <div className="flex items-center justify-between gap-3 bg-gray-50 dark:bg-gray-900 rounded-xl px-4 py-2.5">
-          <div className="flex items-center gap-2 min-w-0">
-            {ccStatus !== null && (
-              <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${ccStatus ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300' : 'bg-gray-200 dark:bg-gray-700 text-gray-500'}`}>
-                {ccStatus ? 'Claude Code 已配置' : 'Claude Code 未配置'}
-              </span>
-            )}
-            {ccMsg && <span className={`text-xs truncate ${ccMsg.includes('成功') ? 'text-green-600 dark:text-green-400' : 'text-yellow-600'}`}>{ccMsg}</span>}
-          </div>
-          {window.electronAPI?.claude && (
-            <button onClick={handleClaudeConfigure} disabled={ccBusy}
-              className="shrink-0 px-3 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium transition-colors">
-              {ccBusy ? '配置中…' : '一键配置'}
-            </button>
-          )}
+      {/* Endpoint */}
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
+        <div className="text-xs text-gray-500 uppercase tracking-wide font-medium mb-2">接入端点</div>
+        <div className="flex items-center gap-2">
+          <code className="flex-1 text-sm font-mono text-green-400 bg-gray-800 rounded-lg px-3 py-2 border border-gray-700">
+            {localBase}
+          </code>
+          <CopyButton text={localBase} label="复制" />
         </div>
       </div>
 
       {/* 场景路由 */}
-      <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-700/50">
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
           <div>
-            <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">场景路由</h2>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">定义每个场景的降级链规则</p>
+            <h2 className="text-sm font-semibold text-gray-200">场景路由</h2>
+            <p className="text-xs text-gray-500 mt-0.5">定义每个场景的降级链规则</p>
           </div>
           <button
             onClick={() => { setExpandedRoute(null); setNewRoute({ scene_name: '', icon: '🔀', steps: [] }); }}
-            className="text-xs bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            className="text-xs bg-gray-800 border border-gray-700 text-gray-400 px-3 py-1.5 rounded-lg hover:bg-gray-700 transition-colors"
           >+ 新建场景</button>
         </div>
-        <div className="divide-y divide-gray-100 dark:divide-gray-700/40">
+        <div className="divide-y divide-gray-800/60">
           {routes.map(route => (
-            <div key={route.id}>
+            <div key={route.id} className="scene-row">
               <div
-                className="flex items-start gap-4 px-5 py-3.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/20"
+                className="flex items-start gap-4 px-5 py-3.5 cursor-pointer hover:bg-gray-800/20"
                 onClick={() => setExpandedRoute(expandedRoute === route.id ? null : route.id)}
               >
                 <span className="text-lg mt-0.5">{route.icon}</span>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-gray-800 dark:text-gray-200">{route.scene_name}</div>
+                  <div className="text-sm font-medium text-gray-200">{route.scene_name}</div>
                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                     {(route.steps || []).map((step, i) => (
                       <React.Fragment key={i}>
-                        {i > 0 && <span className="text-gray-300 dark:text-gray-600 text-xs">→</span>}
+                        {i > 0 && <span className="text-gray-600 text-xs">→</span>}
                         <span className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded border ${tierStyle(step.tier)}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${tierDot(step.tier)}`} />
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${tierDot(step.tier)}`} />
                           {step.label || step.model}
                         </span>
                       </React.Fragment>
                     ))}
-                    {!route.steps?.length && <span className="text-xs text-gray-400 dark:text-gray-600">暂无步骤</span>}
+                    {!route.steps?.length && <span className="text-xs text-gray-600">暂无步骤</span>}
                   </div>
                 </div>
                 <button
                   onClick={e => { e.stopPropagation(); removeRoute(route.id); }}
-                  className="text-xs text-gray-300 dark:text-gray-700 hover:text-red-400 transition-colors mt-1 shrink-0"
+                  className="text-[10px] text-gray-600 hover:text-red-400 transition-colors mt-1 shrink-0"
                 >删除</button>
-                <span className="text-gray-400 dark:text-gray-600 text-xs mt-1 shrink-0">
+                <span className="text-gray-600 text-xs mt-1 shrink-0 transition-transform duration-200">
                   {expandedRoute === route.id ? '▲' : '▼'}
                 </span>
               </div>
@@ -427,7 +587,7 @@ export default function Gateway() {
             />
           )}
           {routes.length === 0 && !newRoute && (
-            <div className="px-5 py-8 text-xs text-gray-400 dark:text-gray-600 text-center">
+            <div className="px-5 py-8 text-xs text-gray-600 text-center">
               还没有场景路由，点击「新建场景」开始
             </div>
           )}
@@ -435,71 +595,259 @@ export default function Gateway() {
       </div>
 
       {/* 场景应用 */}
-      <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100 dark:border-gray-700/50">
-          <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">场景应用</h2>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">将 API Key 与场景路由绑定，接入 AI 工具</p>
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+        {/* Tab bar */}
+        <div className="px-5 pt-4 pb-0 border-b border-gray-800">
+          <div className="mb-3">
+            <h2 className="text-sm font-semibold text-gray-200">场景应用</h2>
+            <p className="text-xs text-gray-500 mt-0.5">创建接入凭证，关联到路由规则</p>
+          </div>
+          <div className="flex">
+            <button
+              onClick={() => setTab('auto')}
+              className={`px-4 py-2 text-xs font-medium border-b-2 -mb-px transition-colors ${
+                tab === 'auto' ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-500 hover:text-gray-300'
+              }`}
+            >写入工具</button>
+            <button
+              onClick={() => setTab('manual')}
+              className={`px-4 py-2 text-xs font-medium border-b-2 -mb-px transition-colors ${
+                tab === 'manual' ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-500 hover:text-gray-300'
+              }`}
+            >手工设置</button>
+          </div>
         </div>
-        <div className="divide-y divide-gray-100 dark:divide-gray-700/40">
-          {keysScene.map(key => (
-            <div key={key.id}>
-              <div
-                className="flex items-center gap-4 px-5 py-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/20"
-                onClick={() => setExpandedKey(expandedKey === key.id ? null : key.id)}
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs font-medium text-gray-800 dark:text-gray-200">
-                    {key.app_name || key.note || '未命名'}
+
+        {/* 写入工具 tab */}
+        {tab === 'auto' && (
+          <div className="p-5 space-y-5">
+
+            {/* Step 1: Select tool */}
+            <div className="space-y-2">
+              <div className="text-xs text-gray-400 flex items-center gap-1.5">
+                <span className="w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center font-bold shrink-0">1</span>
+                选择工具
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                {Object.keys(TOOL_LABELS).map(t => (
+                  <button
+                    key={t}
+                    onClick={() => { setAutoTool(t); setAutoGenerated(null); setAutoWriteOk(false); }}
+                    className={`flex flex-col items-center gap-2 bg-gray-800 border rounded-xl p-4 cursor-pointer transition-colors ${
+                      autoTool === t ? 'border-blue-600' : 'border-gray-700 hover:border-gray-500'
+                    }`}
+                  >
+                    <span className="text-2xl">{TOOL_ICONS[t]}</span>
+                    <span className="text-xs font-semibold text-gray-200">{TOOL_LABELS[t]}</span>
+                    <span className={`text-[10px] ${autoTool === t ? 'text-blue-400' : 'text-gray-600'}`}>{TOOL_HINTS[t]}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Step 2: Bind route */}
+            <div className="space-y-2">
+              <div className="text-xs text-gray-400 flex items-center gap-1.5">
+                <span className="w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center font-bold shrink-0">2</span>
+                绑定路由
+              </div>
+              <RouteRadios
+                mode={autoRouteMode} setMode={setAutoRouteMode}
+                sceneId={autoSceneId} setSceneId={setAutoSceneId}
+                modelId={autoModelId} setModelId={setAutoModelId}
+                compact={false}
+              />
+            </div>
+
+            {/* Step 3: Generate key */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-xs text-gray-400 flex items-center gap-1.5">
+                  <span className="w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center font-bold shrink-0">3</span>
+                  生成 Key 并配置
+                </div>
+                {autoGenerated && (
+                  <span className="text-[10px] text-green-400">✓ Key 已生成</span>
+                )}
+              </div>
+
+              {!autoGenerated ? (
+                <button
+                  onClick={handleAutoGenKey}
+                  disabled={autoGenBusy}
+                  className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors"
+                >
+                  {autoGenBusy ? '生成中…' : <><span>⚡</span> 生成 Key</>}
+                </button>
+              ) : (
+                <div className="space-y-3">
+                  <div className="bg-gray-800/60 border border-gray-700/40 rounded-xl p-4 space-y-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] text-green-400 font-medium">✓ Key 已生成</span>
+                      <button
+                        onClick={() => { setAutoGenerated(null); setAutoWriteOk(false); }}
+                        className="text-[10px] text-gray-600 hover:text-gray-400"
+                      >重新生成</button>
+                    </div>
+                    <pre className="text-xs font-mono text-gray-300 leading-relaxed overflow-x-auto">{
+`{\n  "env": {\n    "ANTHROPIC_BASE_URL": "${localBase}",\n    "ANTHROPIC_API_KEY":  "${autoGenerated.key}"\n  }\n}`
+                    }</pre>
                   </div>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <code className="text-[10px] text-gray-400 dark:text-gray-600 font-mono">{key.key?.slice(0, 10)}…</code>
-                    {key.scene_name ? (
-                      <span className="text-[10px] text-blue-500">{key.icon} {key.scene_name}</span>
-                    ) : (
-                      <span className="text-[10px] text-gray-400 dark:text-gray-600">未绑定路由</span>
+                  <div className="grid grid-cols-2 gap-3">
+                    {autoTool === 'claude-code' && window.electronAPI?.claude && (
+                      <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-3.5 space-y-2.5">
+                        <div className="text-xs font-medium text-gray-300">⚡ 自动写入</div>
+                        <div className="text-[10px] text-gray-500">写入 ~/.claude/settings.json</div>
+                        <button
+                          onClick={handleAutoWrite}
+                          disabled={autoWriteOk}
+                          className="w-full py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-green-700 text-white text-xs font-semibold rounded-lg transition-colors"
+                        >{autoWriteOk ? '✓ 已写入配置文件' : '写入 Claude Code 配置'}</button>
+                      </div>
                     )}
+                    <div className="bg-gray-800/50 border border-gray-700/50 rounded-xl p-3.5 space-y-2.5">
+                      <div className="text-xs font-medium text-gray-300">🔑 手动配置</div>
+                      <div className="text-[10px] text-gray-500">复制后自行填入工具设置</div>
+                      <div className="flex gap-1.5">
+                        <CopyButton text={autoGenerated.key} label="复制 Key"
+                          className="flex-1 text-[10px] py-1.5" />
+                        <CopyButton
+                          text={`ANTHROPIC_BASE_URL=${localBase}\nANTHROPIC_API_KEY=${autoGenerated.key}`}
+                          label="复制全部"
+                          className="flex-1 text-[10px] py-1.5"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
-                <span className="text-gray-300 dark:text-gray-600 text-xs">
-                  {expandedKey === key.id ? '▲' : '▼'}
-                </span>
-              </div>
-              {expandedKey === key.id && (
-                <KeyBindEditor
-                  apiKey={key}
-                  onSave={saveKeyBinding}
-                  onCancel={() => setExpandedKey(null)}
-                />
               )}
             </div>
-          ))}
-          {keysScene.length === 0 && (
-            <div className="px-5 py-8 text-xs text-gray-400 dark:text-gray-600 text-center">
-              先在「盘点」页创建 API Key，再回来绑定场景路由
+
+            {/* Instance list */}
+            <InstanceList />
+          </div>
+        )}
+
+        {/* 手工设置 tab */}
+        {tab === 'manual' && (
+          <div>
+            <div className="p-5 space-y-4 border-b border-gray-800">
+              <div className="grid grid-cols-2 gap-4">
+                {/* Left: form */}
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-gray-400">场景名称</label>
+                    <input
+                      value={manName} onChange={e => setManName(e.target.value)}
+                      placeholder="如：工作用 Claude Code"
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-600"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-gray-400">路由方式</label>
+                    <div className="space-y-2">
+                      {/* Scene route option */}
+                      <label
+                        onClick={() => setManRouteMode('scene')}
+                        className={`flex items-center gap-2.5 bg-gray-800 border rounded-lg px-3 py-2.5 cursor-pointer transition-colors ${manRouteMode === 'scene' ? 'border-blue-600' : 'border-gray-700 hover:border-gray-600'}`}
+                      >
+                        <input type="radio" name="man_route" checked={manRouteMode === 'scene'} onChange={() => setManRouteMode('scene')}
+                          className="accent-blue-500 shrink-0" />
+                        <div className="flex-1">
+                          <div className="text-xs font-medium text-gray-200">使用场景路由</div>
+                          <div className={`mt-1.5 ${manRouteMode !== 'scene' ? 'opacity-40 pointer-events-none' : ''}`}>
+                            <select value={manSceneId} onChange={e => setManSceneId(e.target.value)}
+                              className="w-full bg-gray-700 border border-gray-600 rounded-md px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500">
+                              {routes.length === 0 && <option value="">（暂无场景路由）</option>}
+                              {routes.map(r => (
+                                <option key={r.id} value={String(r.id)}>{r.icon} {r.scene_name}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      </label>
+                      {/* Model option */}
+                      <label
+                        onClick={() => setManRouteMode('model')}
+                        className={`flex items-center gap-2.5 bg-gray-800 border rounded-lg px-3 py-2.5 cursor-pointer transition-colors ${manRouteMode === 'model' ? 'border-blue-600' : 'border-gray-700 hover:border-gray-600'}`}
+                      >
+                        <input type="radio" name="man_route" checked={manRouteMode === 'model'} onChange={() => setManRouteMode('model')}
+                          className="accent-blue-500 shrink-0" />
+                        <div className="flex-1">
+                          <div className="text-xs font-medium text-gray-300">指定模型</div>
+                          <div className={`mt-1.5 ${manRouteMode !== 'model' ? 'opacity-40 pointer-events-none' : ''}`}>
+                            <ModelSelect value={manModelId} onChange={setManModelId} />
+                          </div>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+                {/* Right: preview + create button */}
+                <div className="flex flex-col gap-3">
+                  <div className="flex-1 bg-gray-800/50 border border-gray-700/40 rounded-xl p-3.5 space-y-2">
+                    <div className="text-[10px] text-gray-500 uppercase tracking-wide font-medium">创建后将生成</div>
+                    <div className="space-y-1.5 text-[10px] font-mono">
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-600 w-20 shrink-0">名称</span>
+                        <span className="text-gray-400 truncate">{manName || '（未填写）'}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-600 w-20 shrink-0">BASE_URL</span>
+                        <span className="text-amber-300/70">{localBase}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-600 w-20 shrink-0">API_KEY</span>
+                        <span className="text-gray-600">（创建后生成）</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-600 w-20 shrink-0">路由</span>
+                        <span className="text-gray-400">
+                          {manRouteMode === 'scene'
+                            ? (routes.find(r => String(r.id) === manSceneId)?.scene_name || '场景路由')
+                            : (manModelId || '指定模型')}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleManCreate}
+                    disabled={manBusy || !manName.trim()}
+                    className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-colors"
+                  >
+                    {manBusy ? '创建中…' : <><span>+</span> 创建场景应用</>}
+                  </button>
+                </div>
+              </div>
             </div>
-          )}
-        </div>
+            {/* Instance list */}
+            <InstanceList />
+          </div>
+        )}
       </div>
 
       {/* Route log */}
-      <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5">
-        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-3">路由明细</h2>
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
+        <h2 className="text-sm font-semibold text-gray-200 mb-3">路由明细</h2>
         {logEntries.length === 0 ? (
-          <p className="text-sm text-gray-400 dark:text-gray-500">暂无请求记录。将 AI 工具的 base_url 指向 {localBase} 后开始使用。</p>
+          <p className="text-sm text-gray-500">
+            暂无请求记录。将 AI 工具的 base_url 指向 <code className="font-mono text-green-400">{localBase}</code> 后开始使用。
+          </p>
         ) : (
           <div className="space-y-1.5">
-            {logEntries.map((e, i) => (
-              <div key={`${e.ts}-${e.via}-${i}`} className="flex items-center gap-3 text-xs px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-900">
+            {logEntries.slice(0, 20).map((e, i) => (
+              <div key={`${e.ts}-${e.via}-${i}`}
+                className="flex items-center gap-3 text-xs px-3 py-2 rounded-lg bg-gray-800/60">
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${e.status === 'ok' ? 'bg-green-400' : 'bg-red-400'}`} />
-                <span className="font-mono text-gray-500 dark:text-gray-500 shrink-0 w-12">
+                <span className="font-mono text-gray-500 shrink-0 w-12">
                   {new Date(e.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
                 </span>
-                <span className="flex-1 min-w-0 text-gray-700 dark:text-gray-300 truncate">{e.model || '—'}</span>
-                <span className="text-gray-400 dark:text-gray-500 shrink-0">→</span>
-                <span className={`shrink-0 font-medium ${e.status === 'ok' ? 'text-blue-600 dark:text-blue-400' : 'text-red-500'}`}>
-                  {e.status === 'ok' ? (VIA_LABELS[e.via] || e.via || '—') : '失败'}
+                <span className="flex-1 min-w-0 text-gray-300 truncate">{e.model || '—'}</span>
+                <span className="text-gray-600 shrink-0">→</span>
+                <span className={`shrink-0 font-medium ${e.status === 'ok' ? 'text-blue-400' : 'text-red-500'}`}>
+                  {e.status === 'ok' ? (e.via_label || e.via || '—') : '失败'}
                 </span>
-                <span className="text-gray-400 dark:text-gray-500 shrink-0">{e.latency_ms}ms</span>
+                <span className="text-gray-600 shrink-0">{e.latency_ms}ms</span>
               </div>
             ))}
           </div>
