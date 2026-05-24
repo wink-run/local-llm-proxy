@@ -32,6 +32,212 @@ async function api(path, opts = {}) {
 
 function copy(s) { try { navigator.clipboard?.writeText(s || ''); } catch {} }
 
+// ── TemplateModal ──────────────────────────────────────────────────────
+
+function TemplateModal({ onClose, onCreated }) {
+  const [templates, setTemplates] = useState([]);
+  const [busyId, setBusyId] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      const r = await api('/__local__/scenarios/templates');
+      if (r.ok) setTemplates(r.body.templates || []);
+    })();
+  }, []);
+
+  const useTemplate = async (tpl) => {
+    setBusyId(tpl.id);
+    const { ok, body } = await api('/__local__/scenarios/from-template', {
+      method: 'POST',
+      body: JSON.stringify({ template_id: tpl.id }),
+    });
+    setBusyId(null);
+    if (ok) onCreated?.(body);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white dark:bg-gray-900 rounded-lg max-w-3xl w-full max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-gray-100 dark:border-gray-800 sticky top-0 bg-white dark:bg-gray-900">
+          <h2 className="text-lg font-semibold">从模板新建场景</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">✕</button>
+        </div>
+        <div className="p-4 space-y-2.5">
+          {templates.map((t) => {
+            const missing = t.missing_providers || [];
+            return (
+              <div key={t.id} className="border border-gray-200 dark:border-gray-800 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <div className="text-3xl">{t.icon}</div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-sm">{t.name}</h3>
+                    <p className="text-xs text-gray-500 mt-1">{t.description}</p>
+                    {/* chain preview */}
+                    <div className="mt-2 space-y-1">
+                      {t.chain.map((step, i) => (
+                        <div key={i} className="flex items-center gap-2 text-xs">
+                          <span className="text-gray-400 font-mono w-4">{i + 1}</span>
+                          <span className="text-gray-500 w-10">{step.label}</span>
+                          <div className="flex flex-wrap gap-1">
+                            {step.candidates.map((c, j) => (
+                              <span key={j} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-700">
+                                <span className="font-mono">{c.model}</span>
+                                <span className={`text-[9px] px-1 rounded ${missing.includes(c.provider_id) ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300' : 'bg-gray-100 dark:bg-gray-800 text-gray-500'}`}>{c.provider_id}</span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {missing.length > 0 && (
+                      <p className="mt-2 text-[11px] text-orange-600 dark:text-orange-400">
+                        ⚠ 缺 provider：{missing.join(', ')} —— 创建后去 🎁 供给源 添加，否则该候选会被跳过
+                      </p>
+                    )}
+                  </div>
+                  <button onClick={() => useTemplate(t)} disabled={busyId === t.id}
+                          className="shrink-0 text-xs px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40">
+                    {busyId === t.id ? '创建中…' : '使用此模板'}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── DebugModal ─────────────────────────────────────────────────────────
+
+function DebugModal({ scenarios, defaultScenarioId, onClose, gatewayUrl }) {
+  const [scenarioId, setScenarioId] = useState(defaultScenarioId || (scenarios[0]?.id));
+  const [prompt, setPrompt] = useState('用一句话介绍你自己');
+  const [model, setModel] = useState('');
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState(null);
+  const [rawError, setRawError] = useState(null);
+
+  const send = async () => {
+    const s = scenarios.find((x) => x.id === scenarioId);
+    if (!s) return;
+    setSending(true); setResult(null); setRawError(null);
+    try {
+      const res = await fetch(`${gatewayUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${s.api_key}`,
+          'X-LLP-Debug': '1',
+        },
+        body: JSON.stringify({
+          model: model || 'auto',
+          messages: [{ role: 'user', content: prompt }],
+        }),
+      });
+      const text = await res.text();
+      try { setResult(JSON.parse(text)); }
+      catch { setRawError(`HTTP ${res.status}: ${text.slice(0, 500)}`); }
+    } catch (e) {
+      setRawError(e.message);
+    }
+    setSending(false);
+  };
+
+  const dbg = result?._llp_debug;
+  const choice = result?.choices?.[0]?.message?.content;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white dark:bg-gray-900 rounded-lg max-w-3xl w-full max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-gray-100 dark:border-gray-800 sticky top-0 bg-white dark:bg-gray-900 z-10">
+          <h2 className="text-lg font-semibold">🔍 调试请求</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">✕</button>
+        </div>
+        <div className="p-4 space-y-3">
+          {scenarios.length === 0 ? (
+            <p className="text-sm text-gray-500">还没有场景。先在右侧「+ 新建场景」或「+ 从模板新建」。</p>
+          ) : (
+            <>
+              <div>
+                <label className="text-xs text-gray-500">场景</label>
+                <select value={scenarioId} onChange={(e) => setScenarioId(parseInt(e.target.value))}
+                        className="w-full mt-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-3 py-2 text-sm">
+                  {scenarios.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">模型（可选，留空让降级链决定）</label>
+                <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="例如 llama3.2 / gpt-4o"
+                       className="w-full mt-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-3 py-2 text-sm font-mono" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">Prompt</label>
+                <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={3}
+                          className="w-full mt-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-3 py-2 text-sm resize-y" />
+              </div>
+              <button onClick={send} disabled={sending || !prompt}
+                      className="w-full text-sm py-2 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40">
+                {sending ? '发送中…' : '发送'}
+              </button>
+
+              {/* 调试元数据 */}
+              {dbg && (
+                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-900 rounded p-3">
+                  <p className="text-xs font-semibold text-blue-800 dark:text-blue-200 mb-1.5">路由结果</p>
+                  <div className="grid grid-cols-2 gap-y-0.5 gap-x-3 text-xs font-mono">
+                    <div className="text-gray-500">场景</div><div>{dbg.scenario_name}</div>
+                    <div className="text-gray-500">命中步骤</div><div>{dbg.step_label || '—'}</div>
+                    <div className="text-gray-500">实际 provider</div><div>{dbg.routed_to}</div>
+                    <div className="text-gray-500">实际 model</div><div>{dbg.actual_model}</div>
+                    <div className="text-gray-500">tier</div><div>{dbg.tier}</div>
+                    <div className="text-gray-500">延迟</div><div>{dbg.latency_ms}ms</div>
+                  </div>
+                  {dbg.attempts && dbg.attempts.length > 1 && (
+                    <div className="mt-2 pt-2 border-t border-blue-200 dark:border-blue-900">
+                      <p className="text-[11px] text-blue-700 dark:text-blue-300 mb-1">尝试链路（{dbg.attempts.length} 步）：</p>
+                      <ol className="text-[11px] space-y-0.5 font-mono">
+                        {dbg.attempts.map((a, i) => (
+                          <li key={i} className={a.outcome === 'success' ? 'text-green-700 dark:text-green-300' : 'text-orange-700 dark:text-orange-300'}>
+                            {i + 1}. {a.step} · {a.provider_id} / {a.model} → {a.outcome}
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 响应内容 */}
+              {choice && (
+                <div className="bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded p-3">
+                  <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">模型回复</p>
+                  <pre className="text-xs whitespace-pre-wrap font-sans text-gray-800 dark:text-gray-200 max-h-64 overflow-y-auto">{choice}</pre>
+                  {result.usage && (
+                    <p className="mt-2 text-[10px] text-gray-500">tokens · in {result.usage.prompt_tokens || 0} / out {result.usage.completion_tokens || 0}</p>
+                  )}
+                </div>
+              )}
+
+              {/* 错误 */}
+              {result && !choice && !dbg && (
+                <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-900 rounded p-3 text-xs">
+                  <p className="font-semibold text-red-700 dark:text-red-300 mb-1">无可读响应</p>
+                  <pre className="whitespace-pre-wrap text-red-700 dark:text-red-300 max-h-48 overflow-y-auto">{JSON.stringify(result, null, 2)}</pre>
+                </div>
+              )}
+              {rawError && (
+                <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-300 rounded p-3 text-xs">{rawError}</div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── KPI 卡 ─────────────────────────────────────────────────────────────
 
 function Kpi({ label, value, color = 'text-gray-900 dark:text-gray-100' }) {
@@ -207,6 +413,8 @@ export default function Gateway() {
   const [creating, setCreating] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [appsBindable, setAppsBindable] = useState([]);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -280,7 +488,8 @@ export default function Gateway() {
             运行中 :{(health.gateway_url || '').split(':').pop() || '11435'}
           </span>
         </div>
-        <button className="text-xs px-3 py-1.5 rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800">
+        <button onClick={() => setShowDebug(true)}
+                className="text-xs px-3 py-1.5 rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800">
           🔍 调试请求
         </button>
       </header>
@@ -314,6 +523,10 @@ export default function Gateway() {
             <p className="text-xs text-gray-500 mt-0.5">每个场景拥有独立的 API Key 和降级链，按需配置</p>
           </div>
           <div className="flex items-center gap-2">
+            <button onClick={() => setShowTemplates(true)}
+                    className="text-xs px-3 py-1 rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800">
+              📋 从模板新建
+            </button>
             <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="新场景名称" className="text-xs bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1" onKeyDown={(e) => e.key === 'Enter' && createScenario()} />
             <button onClick={createScenario} disabled={creating || !newName.trim()} className="text-xs px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40">+ 新建场景</button>
           </div>
@@ -344,6 +557,30 @@ export default function Gateway() {
           </div>
         </div>
       </div>
+
+      {showTemplates && (
+        <TemplateModal
+          onClose={() => setShowTemplates(false)}
+          onCreated={(newScenario) => {
+            setShowTemplates(false);
+            setSelectedId(newScenario.id);
+            setRefreshKey((k) => k + 1);
+            if (newScenario.missing_providers?.length) {
+              setTimeout(() => alert(
+                `场景已创建，但以下 provider 还没在「供给源」启用：\n  · ${newScenario.missing_providers.join('\n  · ')}\n\n这些候选会被自动跳过，去 🎁 供给源 启用后会自动恢复。`
+              ), 200);
+            }
+          }}
+        />
+      )}
+      {showDebug && (
+        <DebugModal
+          scenarios={scenarios}
+          defaultScenarioId={selectedId}
+          gatewayUrl={LOCAL_GATEWAY_URL}
+          onClose={() => setShowDebug(false)}
+        />
+      )}
     </div>
   );
 }

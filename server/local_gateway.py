@@ -293,6 +293,8 @@ async def _forward_openai(request: Request, *, path_suffix: str):
 
     headers_lower = {k.lower(): v for k, v in request.headers.items()}
     app_source = headers_lower.get("x-source-app", "")
+    debug_mode = headers_lower.get("x-llp-debug", "").lower() in ("1", "on", "true")
+    debug_attempts: list[dict] = []  # 记录每次候选尝试，给 _llp_debug 用
 
     # v2.1 redesign：识别 Authorization: Bearer tb-* → scenario
     scenario = None
@@ -371,6 +373,12 @@ async def _forward_openai(request: Request, *, path_suffix: str):
                     last_err = f"{p['display_name']} → HTTP {r.status_code}: {r.text[:200]}"
                     log.warning("Upstream 5xx, trying next candidate: %s", last_err)
                     await local_db.update_provider(p["id"], last_error=last_err)
+                    if debug_mode:
+                        debug_attempts.append({
+                            "provider_id": p["provider_id"], "model": p.get("_forced_model") or model,
+                            "step": p.get("_step_label", ""), "status": r.status_code,
+                            "outcome": "5xx, fallback",
+                        })
                     continue
                 # 4xx 视为客户端问题，直接返回不重试
                 await local_db.update_provider(
@@ -386,17 +394,38 @@ async def _forward_openai(request: Request, *, path_suffix: str):
                     await prompt_cache.put(cache_key, model, resp_data, ttl_seconds=ttl)
                 # M11：调用日志
                 usage = (resp_data or {}).get("usage") or {} if isinstance(resp_data, dict) else {}
+                latency = int((time.time() - started) * 1000)
                 await local_db.log_call(
                     model=(p.get("_forced_model") or model),
                     routed_to=p["provider_id"],
                     tier=p.get("tier", "free"), app_source=app_source,
                     input_tokens=int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
                     output_tokens=int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
-                    latency_ms=int((time.time() - started) * 1000),
+                    latency_ms=latency,
                     success=(r.status_code < 400),
                     error_msg="" if r.status_code < 400 else f"HTTP {r.status_code}",
                     scenario_id=(scenario["id"] if scenario else None),
                 )
+                # 调试模式：在 JSON 响应里附 _llp_debug 元数据
+                if debug_mode and isinstance(resp_data, dict):
+                    debug_attempts.append({
+                        "provider_id": p["provider_id"], "model": p.get("_forced_model") or model,
+                        "step": p.get("_step_label", ""), "status": r.status_code,
+                        "outcome": "success" if r.status_code < 400 else f"HTTP {r.status_code}",
+                    })
+                    resp_data = {
+                        **resp_data,
+                        "_llp_debug": {
+                            "scenario_name": scenario["name"] if scenario else None,
+                            "scenario_id":   scenario["id"]   if scenario else None,
+                            "routed_to":     p["provider_id"],
+                            "actual_model":  p.get("_forced_model") or model,
+                            "step_label":    p.get("_step_label", ""),
+                            "tier":          p.get("tier", "free"),
+                            "latency_ms":    latency,
+                            "attempts":      debug_attempts,
+                        },
+                    }
                 return JSONResponse(
                     content=resp_data if resp_data is not None else r.text,
                     status_code=r.status_code,
@@ -405,6 +434,12 @@ async def _forward_openai(request: Request, *, path_suffix: str):
             last_err = f"{p['display_name']} → {type(e).__name__}: {e}"
             log.warning("Upstream error, trying next candidate: %s", last_err)
             await local_db.update_provider(p["id"], last_error=last_err)
+            if debug_mode:
+                debug_attempts.append({
+                    "provider_id": p["provider_id"], "model": p.get("_forced_model") or model,
+                    "step": p.get("_step_label", ""), "status": 0,
+                    "outcome": f"{type(e).__name__}: {e}",
+                })
             continue
 
     await local_db.log_call(
@@ -1047,6 +1082,112 @@ async def quickstart_detect():
 
 
 # ── scenarios（v2.1 redesign）───────────────────────────────────────────
+
+SCENARIO_TEMPLATES = [
+    {
+        "id": "claude-code-daily",
+        "name": "Claude Code 日常",
+        "icon": "🦙",
+        "description": "本机优先 → Groq 兜底 → GitHub Models 终极兜底，零成本日常",
+        "chain": [
+            {"label": "优先", "candidates": [{"provider_id": "ollama", "model": "llama3.2"}]},
+            {"label": "改选", "candidates": [{"provider_id": "groq", "model": "llama-3.3-70b-versatile"}]},
+            {"label": "兜底", "candidates": [{"provider_id": "github-models", "model": "gpt-4o-mini"}]},
+        ],
+    },
+    {
+        "id": "writing",
+        "name": "写作创作",
+        "icon": "✨",
+        "description": "Gemini Flash 主力 → 国产 GLM 兜底，写文章 / 翻译 / 总结都合适",
+        "chain": [
+            {"label": "优先", "candidates": [{"provider_id": "gemini-ai-studio", "model": "gemini-2.0-flash"}]},
+            {"label": "改选", "candidates": [{"provider_id": "groq", "model": "llama-3.3-70b-versatile"}]},
+        ],
+    },
+    {
+        "id": "code-review",
+        "name": "代码 Review",
+        "icon": "🔬",
+        "description": "重质量：SiliconFlow DeepSeek-V2.5 优先，GitHub Models GPT-4o 兜底",
+        "chain": [
+            {"label": "优先", "candidates": [{"provider_id": "siliconflow", "model": "deepseek-ai/DeepSeek-V2.5"}]},
+            {"label": "改选", "candidates": [{"provider_id": "github-models", "model": "gpt-4o"}]},
+        ],
+    },
+    {
+        "id": "long-context",
+        "name": "长文本分析",
+        "icon": "📊",
+        "description": "Gemini 1.5 Pro（1M 上下文）→ Llama 405B 兜底",
+        "chain": [
+            {"label": "优先", "candidates": [{"provider_id": "gemini-ai-studio", "model": "gemini-1.5-pro"}]},
+            {"label": "兜底", "candidates": [{"provider_id": "github-models", "model": "Meta-Llama-3.1-405B-Instruct"}]},
+        ],
+    },
+    {
+        "id": "batch-cheap",
+        "name": "批量便宜跑",
+        "icon": "💸",
+        "description": "全部走免费 Ollama + Cerebras + Groq，无成本批量任务",
+        "chain": [
+            {"label": "优先", "candidates": [
+                {"provider_id": "ollama", "model": "llama3.2"},
+                {"provider_id": "cerebras", "model": "llama3.1-8b"},
+                {"provider_id": "groq", "model": "llama-3.1-8b-instant"},
+            ]},
+        ],
+    },
+    {
+        "id": "production-stable",
+        "name": "生产稳定",
+        "icon": "🔒",
+        "description": "仅自有付费 key（OpenAI / Anthropic / DeepSeek），避免不稳定来源",
+        "chain": [
+            {"label": "优先", "candidates": [
+                {"provider_id": "anthropic-official", "model": "claude-3-5-sonnet-20241022"},
+                {"provider_id": "openai-official", "model": "gpt-4o"},
+                {"provider_id": "deepseek-official", "model": "deepseek-chat"},
+            ]},
+        ],
+    },
+]
+
+
+@app.get("/__local__/scenarios/templates")
+async def list_scenario_templates():
+    """6 个内置模板 + 每个模板缺哪些 provider 的提示。"""
+    installed_ids = {p["provider_id"] for p in await local_db.list_providers(enabled_only=True)}
+    out = []
+    for tpl in SCENARIO_TEMPLATES:
+        required = set()
+        for step in tpl["chain"]:
+            for cand in step["candidates"]:
+                required.add(cand["provider_id"])
+        missing = sorted(required - installed_ids)
+        out.append({**tpl, "required_providers": sorted(required), "missing_providers": missing})
+    return {"templates": out}
+
+
+class CreateFromTemplatePayload(BaseModel):
+    template_id: str
+    name: Optional[str] = None  # 不传则用模板默认名
+
+
+@app.post("/__local__/scenarios/from-template")
+async def create_scenario_from_template(payload: CreateFromTemplatePayload):
+    tpl = next((t for t in SCENARIO_TEMPLATES if t["id"] == payload.template_id), None)
+    if not tpl:
+        raise HTTPException(404, f"Unknown template '{payload.template_id}'")
+    s = await local_db.create_scenario(
+        name=payload.name or tpl["name"],
+        degradation_chain=tpl["chain"],
+        description=tpl["description"],
+    )
+    return {**s, "template_id": tpl["id"], "missing_providers": [
+        p for p in {c["provider_id"] for step in tpl["chain"] for c in step["candidates"]}
+        if p not in {pr["provider_id"] for pr in await local_db.list_providers(enabled_only=True)}
+    ]}
 
 
 @app.get("/__local__/scenarios")
