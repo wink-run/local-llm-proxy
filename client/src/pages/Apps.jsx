@@ -29,14 +29,26 @@ async function gatewayFetch(path, opts = {}) {
 
 // ── 子组件：单个 App 卡片 ──────────────────────────────────────────────
 
-function AppCard({ schema, models, gatewayUrl, gatewayKeyMasked, onChanged }) {
+function AppCard({ schema, models, policies, gatewayUrl, gatewayKeyMasked, onChanged }) {
   const [selectedModel, setSelectedModel] = useState(models[0] || '');
+  const [selectedPolicy, setSelectedPolicy] = useState(schema.binding?.routing_policy_id || '');
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [writeLoading, setWriteLoading] = useState(false);
   const [result, setResult] = useState(null);
 
   useEffect(() => { if (!selectedModel && models[0]) setSelectedModel(models[0]); }, [models]);
+  useEffect(() => { setSelectedPolicy(schema.binding?.routing_policy_id || ''); }, [schema.binding?.routing_policy_id]);
+
+  const persistPolicy = async (pid) => {
+    setSelectedPolicy(pid);
+    if (!schema.bound) return;  // 未写入前先不存策略
+    await gatewayFetch(`/__local__/apps/${schema.app_name}/policy`, {
+      method: 'POST',
+      body: JSON.stringify({ policy_id: pid ? parseInt(pid, 10) : null }),
+    });
+    onChanged?.();
+  };
 
   const doPreview = async () => {
     setPreviewLoading(true);
@@ -113,9 +125,9 @@ function AppCard({ schema, models, gatewayUrl, gatewayKeyMasked, onChanged }) {
         </div>
       </div>
 
-      {/* 模型选择 + 操作 */}
+      {/* 模型选择 + 策略 + 操作 */}
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <label className="text-xs text-gray-500">默认模型：</label>
+        <label className="text-xs text-gray-500">模型：</label>
         <select
           value={selectedModel}
           onChange={(e) => setSelectedModel(e.target.value)}
@@ -123,6 +135,15 @@ function AppCard({ schema, models, gatewayUrl, gatewayKeyMasked, onChanged }) {
         >
           <option value="">（不指定）</option>
           {models.map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
+        <label className="text-xs text-gray-500 ml-2">策略：</label>
+        <select
+          value={selectedPolicy}
+          onChange={(e) => persistPolicy(e.target.value)}
+          className="bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 text-xs"
+        >
+          <option value="">（默认）</option>
+          {(policies || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <div className="flex-1" />
         <button
@@ -210,6 +231,7 @@ export default function Apps() {
   const [health, setHealth] = useState(null);
   const [apps, setApps] = useState([]);
   const [providerModels, setProviderModels] = useState([]);
+  const [policies, setPolicies] = useState([]);
   const [gatewayKey, setGatewayKey] = useState(null);
   const [showKey, setShowKey] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -219,14 +241,18 @@ export default function Apps() {
       const h = await gatewayFetch('/__local__/health');
       if (!h.ok) { setHealth(false); return; }
       setHealth(h.body);
-      const a = await gatewayFetch('/__local__/apps');
+      const [a, p, pol] = await Promise.all([
+        gatewayFetch('/__local__/apps'),
+        gatewayFetch('/__local__/providers'),
+        gatewayFetch('/__local__/policies'),
+      ]);
       if (a.ok) setApps(a.body.apps || []);
-      const p = await gatewayFetch('/__local__/providers');
       if (p.ok) {
         const allModels = new Set();
         (p.body.providers || []).forEach((pr) => (pr.models || []).forEach((m) => allModels.add(m)));
         setProviderModels(Array.from(allModels));
       }
+      if (pol.ok) setPolicies(pol.body.policies || []);
     })();
   }, [refreshKey]);
 
@@ -318,6 +344,7 @@ export default function Apps() {
             key={schema.app_name}
             schema={schema}
             models={providerModels}
+            policies={policies}
             gatewayUrl={health?.gateway_url}
             gatewayKeyMasked={health?.gateway_key_masked}
             onChanged={() => setRefreshKey((k) => k + 1)}

@@ -134,14 +134,18 @@ app.add_middleware(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-async def _candidates_for_model(model: str) -> list[dict]:
-    """返回该 model 的候选 provider 列表，按当前策略排序。
+async def _candidates_for_model(model: str, *, policy: dict | None = None) -> list[dict]:
+    """返回该 model 的候选 provider 列表。
 
     匹配规则：
       - provider.models 列表里精确含 model，或
       - provider.models 为空（Ollama 这类「任意模型」provider 总是候选）
+
+    排序规则：
+      - 若提供 policy（M13 routing_policies）：先按 allowed_tiers 过滤 →
+        按 tier_order 分组排序 → 组内按 cost / health 二次排序
+      - 否则退回到全局 strategy 设置（cost / quality / custom）
     """
-    strategy = await local_db.get_setting("strategy", "cost")
     providers = await local_db.list_providers(enabled_only=True)
 
     candidates = []
@@ -150,6 +154,23 @@ async def _candidates_for_model(model: str) -> list[dict]:
         if not models or model in models:
             candidates.append(p)
 
+    # M13：app 关联的 routing_policy 优先
+    if policy is not None:
+        allowed = set(policy.get("allowed_tiers") or [])
+        if allowed:
+            candidates = [p for p in candidates if (p.get("tier") or "free") in allowed]
+        order = policy.get("tier_order") or []
+        order_index = {t: i for i, t in enumerate(order)}
+        candidates.sort(
+            key=lambda p: (
+                order_index.get(p.get("tier") or "free", 999),
+                (p.get("price_in") or 0.0) + (p.get("price_out") or 0.0),
+                -(p.get("health_score") or 1.0),
+            )
+        )
+        return candidates
+
+    strategy = await local_db.get_setting("strategy", "cost")
     if strategy == "cost":
         candidates.sort(
             key=lambda p: (
@@ -221,7 +242,12 @@ async def embeddings(request: Request):
 
 
 async def _forward_openai(request: Request, *, path_suffix: str):
-    """OpenAI 兼容请求转发：按候选链尝试，遇 5xx/超时换下一个；流式直通。"""
+    """OpenAI 兼容请求转发：按候选链尝试，遇 5xx/超时换下一个；流式直通。
+
+    M11/M14：识别 X-Source-App 头；M11 写 call_logs；M14 用对应 app_binding
+    的 policy 决定候选链；调用结束时落日志。
+    """
+    started = time.time()
     try:
         body = await request.json()
     except Exception:
@@ -231,22 +257,43 @@ async def _forward_openai(request: Request, *, path_suffix: str):
     if not model:
         raise HTTPException(400, "Missing 'model' field")
 
-    # prompt-cache 查找（仅 chat/completions 且满足 cacheable 条件）
-    cache_hit_resp = None
-    cache_key = None
     headers_lower = {k.lower(): v for k, v in request.headers.items()}
+    app_source = headers_lower.get("x-source-app", "")
+
+    # M14：根据 app_source 查关联 policy
+    policy = None
+    if app_source:
+        binding = await local_db.get_app_binding_with_policy(app_source)
+        if binding and binding.get("policy"):
+            policy = binding["policy"]
+
+    # prompt-cache 查找
+    cache_key = None
     if path_suffix == "/chat/completions" and prompt_cache.is_cacheable_request(body, headers_lower):
         cache_key = prompt_cache.compute_cache_key(body)
         cache_hit_resp = await prompt_cache.get(cache_key)
         if cache_hit_resp is not None:
             log.info("prompt-cache HIT key=%s model=%s", cache_key[:12], model)
+            await local_db.log_call(
+                model=model, routed_to="prompt-cache",
+                tier="cache", app_source=app_source,
+                input_tokens=0, output_tokens=0,
+                latency_ms=int((time.time() - started) * 1000),
+                cached=True,
+            )
             return JSONResponse(content={**cache_hit_resp, "_llp_cached": True})
 
-    candidates = await _candidates_for_model(model)
+    candidates = await _candidates_for_model(model, policy=policy)
     if not candidates:
+        await local_db.log_call(
+            model=model, routed_to="none", tier="none",
+            app_source=app_source, success=False,
+            error_msg="No provider matches model + policy",
+            latency_ms=int((time.time() - started) * 1000),
+        )
         raise HTTPException(
-            404, f"No provider available for model '{model}'. "
-                  "Add one via /__local__/providers."
+            404, f"No provider available for model '{model}' under policy "
+                 f"{policy['name'] if policy else 'default'}."
         )
 
     streaming = bool(body.get("stream"))
@@ -276,7 +323,6 @@ async def _forward_openai(request: Request, *, path_suffix: str):
                 await local_db.update_provider(
                     p["id"], last_used_at=time.strftime("%Y-%m-%dT%H:%M:%S"), last_error=""
                 )
-                # 成功响应且可缓存：写入 prompt-cache
                 resp_data = r.json() if "application/json" in r.headers.get("content-type", "") else None
                 if cache_key and r.status_code < 300 and resp_data:
                     ttl_hdr = headers_lower.get("x-llp-cache-ttl")
@@ -285,6 +331,17 @@ async def _forward_openai(request: Request, *, path_suffix: str):
                     except ValueError:
                         ttl = prompt_cache.DEFAULT_TTL_SECONDS
                     await prompt_cache.put(cache_key, model, resp_data, ttl_seconds=ttl)
+                # M11：调用日志
+                usage = (resp_data or {}).get("usage") or {} if isinstance(resp_data, dict) else {}
+                await local_db.log_call(
+                    model=model, routed_to=p["provider_id"],
+                    tier=p.get("tier", "free"), app_source=app_source,
+                    input_tokens=int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
+                    output_tokens=int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
+                    latency_ms=int((time.time() - started) * 1000),
+                    success=(r.status_code < 400),
+                    error_msg="" if r.status_code < 400 else f"HTTP {r.status_code}",
+                )
                 return JSONResponse(
                     content=resp_data if resp_data is not None else r.text,
                     status_code=r.status_code,
@@ -295,6 +352,11 @@ async def _forward_openai(request: Request, *, path_suffix: str):
             await local_db.update_provider(p["id"], last_error=last_err)
             continue
 
+    await local_db.log_call(
+        model=model, routed_to="exhausted", tier="none",
+        app_source=app_source, success=False, error_msg=last_err or "all failed",
+        latency_ms=int((time.time() - started) * 1000),
+    )
     raise HTTPException(502, f"All upstream providers failed. Last error: {last_err}")
 
 
@@ -738,6 +800,273 @@ async def list_subscription_platforms():
             "订阅层正在开发中（P1 / M10）。当前仅展示支持的平台清单与 schema；"
             "实际的 cookie 持久化 + 浏览器自动化 + ToS-risky 调用通路尚未启用。"
         ),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# M11 Dashboard / M13 Policies / M15 QuickStart
+# ═══════════════════════════════════════════════════════════════════════════
+
+from datetime import datetime, timedelta
+
+
+def _today_iso() -> str:
+    return datetime.utcnow().strftime("%Y-%m-%d 00:00:00")
+
+
+def _month_iso() -> str:
+    return datetime.utcnow().strftime("%Y-%m-01 00:00:00")
+
+
+@app.get("/__local__/dashboard/summary")
+async def dashboard_summary(window: str = "today"):
+    """聚合 Dashboard 主页用的所有数据。window = today / month / all."""
+    if window == "today":
+        since = _today_iso()
+    elif window == "month":
+        since = _month_iso()
+    else:
+        since = None
+
+    providers = await local_db.list_providers()
+    tier_capacity = {"free": {"providers": 0, "models": set()},
+                     "paid": {"providers": 0, "models": set()},
+                     "shared": {"providers": 0, "models": set()}}
+    for p in providers:
+        if not p.get("enabled"):
+            continue
+        t = p.get("tier") or "free"
+        if t not in tier_capacity:
+            t = "free"
+        tier_capacity[t]["providers"] += 1
+        for m in (p.get("models") or []):
+            tier_capacity[t]["models"].add(m)
+    for v in tier_capacity.values():
+        v["model_count"] = len(v["models"])
+        del v["models"]
+
+    by_tier = await local_db.aggregate_by_tier(since_iso=since)
+    by_app = await local_db.aggregate_by_app(since_iso=since)
+    bindings = await local_db.list_app_bindings()
+    # 给每个 binding 关联 policy.name
+    bindings_full = []
+    for b in bindings:
+        full = await local_db.get_app_binding_with_policy(b["app_name"])
+        bindings_full.append({
+            **b,
+            "policy_name": (full or {}).get("policy", {}).get("name") if full else None,
+        })
+
+    return {
+        "window": window,
+        "since": since,
+        "tier_capacity": tier_capacity,
+        "tier_usage": by_tier,
+        "by_app": by_app,
+        "bindings": bindings_full,
+        "provider_count": len([p for p in providers if p.get("enabled")]),
+    }
+
+
+@app.get("/__local__/dashboard/recent")
+async def dashboard_recent(limit: int = 10):
+    return {"calls": await local_db.recent_calls(limit)}
+
+
+# ── M13 policies ──────────────────────────────────────────────────────────
+
+
+@app.get("/__local__/policies")
+async def list_policies():
+    return {"policies": await local_db.list_routing_policies()}
+
+
+class UpsertPolicyPayload(BaseModel):
+    name: str
+    tier_order: list[str]
+    allowed_tiers: list[str]
+    max_cost_per_1m: float = 0
+    fallback_enabled: bool = True
+    model_preference: str = ""
+
+
+@app.post("/__local__/policies")
+async def upsert_policy(payload: UpsertPolicyPayload):
+    pid = await local_db.upsert_routing_policy(
+        name=payload.name,
+        tier_order=payload.tier_order,
+        allowed_tiers=payload.allowed_tiers,
+        max_cost_per_1m=payload.max_cost_per_1m,
+        fallback_enabled=payload.fallback_enabled,
+        model_preference=payload.model_preference,
+    )
+    return {"id": pid, "ok": True}
+
+
+@app.delete("/__local__/policies/{policy_id}")
+async def delete_policy(policy_id: int):
+    ok = await local_db.delete_routing_policy(policy_id)
+    if not ok:
+        raise HTTPException(400, "Cannot delete builtin policy or policy not found.")
+    return {"ok": True}
+
+
+class SetAppPolicyPayload(BaseModel):
+    policy_id: int | None = None  # None = 取消关联
+
+
+@app.post("/__local__/apps/{app_name}/policy")
+async def set_app_policy(app_name: str, payload: SetAppPolicyPayload):
+    if app_name not in app_writers.SCHEMAS:
+        raise HTTPException(404, f"Unknown app: {app_name}")
+    await local_db.set_app_binding_policy(app_name, payload.policy_id)
+    return {"ok": True, "app_name": app_name, "policy_id": payload.policy_id}
+
+
+# ── M15 QuickStart ────────────────────────────────────────────────────────
+
+
+@app.get("/__local__/quickstart/detect")
+async def quickstart_detect():
+    """探测本机可以零摩擦接入的资源。"""
+    home = Path.home()
+
+    # Ollama 检测：尝试 GET 127.0.0.1:11434
+    ollama_alive = False
+    ollama_models: list[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=2) as cli:
+            r = await cli.get("http://127.0.0.1:11434/api/tags")
+            if r.status_code == 200:
+                ollama_alive = True
+                data = r.json()
+                ollama_models = [m.get("name", "") for m in (data.get("models") or [])][:10]
+    except httpx.HTTPError:
+        pass
+
+    # 各 app 配置文件存在性
+    app_status = []
+    for name, schema in app_writers.SCHEMAS.items():
+        app_status.append({
+            "app_name": name,
+            "display": schema.display,
+            "config_exists": schema.path.exists(),
+            "path": str(schema.path),
+        })
+
+    # 已有 provider / binding 数量
+    provider_count = len(await local_db.list_providers(enabled_only=True))
+    binding_count = len(await local_db.list_app_bindings())
+
+    # 推荐组合
+    recommendation = []
+    if ollama_alive:
+        recommendation.append({
+            "kind": "free_provider",
+            "provider_id": "ollama",
+            "reason": f"本机检测到 Ollama 在线 ({len(ollama_models)} 个模型)，零成本零摩擦",
+        })
+    else:
+        recommendation.append({
+            "kind": "free_provider",
+            "provider_id": "groq",
+            "reason": "Ollama 未运行；推荐 Groq（注册 1 分钟，速度最快）",
+        })
+    for entry in app_status:
+        if entry["config_exists"] and entry["app_name"] == "claude_code":
+            recommendation.append({
+                "kind": "app_binding",
+                "app_name": "claude_code",
+                "reason": "检测到 ~/.claude/settings.local.json，可直接写入",
+            })
+            break
+
+    return {
+        "ollama": {"alive": ollama_alive, "models": ollama_models},
+        "apps": app_status,
+        "existing": {"providers": provider_count, "bindings": binding_count},
+        "recommendation": recommendation,
+        "needs_quickstart": provider_count == 0 and binding_count == 0,
+    }
+
+
+class QuickstartRunPayload(BaseModel):
+    free_provider_id: str        # 例如 'ollama' / 'groq'
+    api_key: str = ""
+    app_names: list[str] = []    # 要一键写入的工具列表
+    policy_name: str = "cost-first"
+    preferred_model: str | None = None
+
+
+@app.post("/__local__/quickstart/run")
+async def quickstart_run(payload: QuickstartRunPayload):
+    """事务性 quickstart：加 provider + 一次性写入多个 app binding。
+
+    失败时尽量回滚（删掉本次添加的 provider；已写入的 app 配置回滚需要用户去 backup 找）。
+    """
+    catalog = {p["id"]: p for p in load_free_providers_catalog()}
+    entry = catalog.get(payload.free_provider_id)
+    if not entry:
+        raise HTTPException(404, f"Unknown free provider '{payload.free_provider_id}'")
+
+    auth_type = (entry.get("auth") or {}).get("type", "bearer")
+    key_ref = ""
+    if auth_type != "none":
+        if not payload.api_key:
+            raise HTTPException(400, "api_key is required for this provider")
+        key_ref = payload.free_provider_id
+        keystore.set_key(key_ref, payload.api_key)
+
+    provider_row_id = await local_db.add_provider(
+        provider_id=payload.free_provider_id,
+        display_name=entry.get("display") or payload.free_provider_id,
+        tier=entry.get("tier", "free"),
+        base_url=entry.get("base_url", ""),
+        auth_type=auth_type,
+        key_ref=key_ref,
+        models=entry.get("models") or [],
+    )
+
+    # 选 policy id
+    policy = await local_db.get_routing_policy_by_name(payload.policy_name)
+    policy_id = policy["id"] if policy else None
+
+    # 自动选模型（用户没指定时）
+    chosen_model = payload.preferred_model or (entry.get("models") or [None])[0]
+
+    written = []
+    errors = []
+    gw_key = await local_db.get_or_create_gateway_key()
+    gw_url = f"http://127.0.0.1:{os.getenv('LLP_PORT', '11435')}/v1"
+
+    for app_name in payload.app_names:
+        if app_name not in app_writers.SCHEMAS:
+            errors.append({"app_name": app_name, "error": "Unknown app"})
+            continue
+        result = app_writers.write(app_name, {
+            "base_url": gw_url, "api_key": gw_key,
+            "preferred_model": chosen_model,
+        })
+        if result.ok:
+            await local_db.upsert_app_binding(
+                app_name=result.app_name, base_url=gw_url,
+                api_key_masked=keystore.mask(gw_key), last_error="",
+            )
+            if policy_id:
+                await local_db.set_app_binding_policy(result.app_name, policy_id)
+            written.append({"app_name": app_name, "path": result.path,
+                             "backup_path": result.backup_path})
+        else:
+            errors.append({"app_name": app_name, "error": result.error})
+
+    return {
+        "ok": len(errors) == 0,
+        "provider_id": payload.free_provider_id,
+        "provider_row_id": provider_row_id,
+        "policy_id": policy_id,
+        "model": chosen_model,
+        "written": written,
+        "errors": errors,
     }
 
 

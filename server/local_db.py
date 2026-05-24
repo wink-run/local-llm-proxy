@@ -111,6 +111,8 @@ async def init_local_db() -> None:
 
         await db.commit()
     await init_contribution_sources()
+    await init_call_logs()
+    await init_routing_policies()
 
 
 # ── local_providers ─────────────────────────────────────────────────────────
@@ -337,6 +339,288 @@ async def toggle_contribution_source(row_id: int, enabled: bool) -> None:
 async def delete_contribution_source(row_id: int) -> None:
     async with aiosqlite.connect(LOCAL_DB_PATH) as db:
         await db.execute("DELETE FROM contribution_sources WHERE id = ?", (row_id,))
+        await db.commit()
+
+
+# ── call_logs（调用流水 / Dashboard 数据源） ───────────────────────────────
+
+
+async def init_call_logs() -> None:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS call_logs (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp     TEXT NOT NULL DEFAULT (datetime('now')),
+                app_source    TEXT DEFAULT '',     -- X-Source-App 或空
+                model         TEXT NOT NULL,
+                routed_to     TEXT NOT NULL,       -- provider_id
+                tier          TEXT NOT NULL,       -- free / paid / shared
+                input_tokens  INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0,
+                latency_ms    INTEGER DEFAULT 0,
+                success       INTEGER DEFAULT 1,
+                error_msg     TEXT DEFAULT '',
+                cached        INTEGER DEFAULT 0    -- 1 = prompt-cache 命中
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_call_logs_ts ON call_logs(timestamp DESC)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_call_logs_app ON call_logs(app_source, timestamp DESC)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_call_logs_tier ON call_logs(tier, timestamp DESC)"
+        )
+        await db.commit()
+
+
+async def log_call(
+    *, model: str, routed_to: str, tier: str,
+    app_source: str = "",
+    input_tokens: int = 0, output_tokens: int = 0,
+    latency_ms: int = 0, success: bool = True,
+    error_msg: str = "", cached: bool = False,
+) -> None:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO call_logs
+               (app_source, model, routed_to, tier, input_tokens, output_tokens,
+                latency_ms, success, error_msg, cached)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (app_source, model, routed_to, tier, input_tokens, output_tokens,
+             latency_ms, int(success), error_msg, int(cached)),
+        )
+        await db.commit()
+
+
+async def aggregate_by_tier(since_iso: str | None = None) -> dict:
+    """按 tier 汇总：{tier: {calls, input, output, total, cache_hits}}。"""
+    sql = (
+        "SELECT tier, COUNT(*) AS calls, "
+        "SUM(input_tokens) AS input, SUM(output_tokens) AS output, "
+        "SUM(input_tokens + output_tokens) AS total, "
+        "SUM(CASE WHEN cached=1 THEN 1 ELSE 0 END) AS cache_hits "
+        "FROM call_logs"
+    )
+    args: list = []
+    if since_iso:
+        sql += " WHERE timestamp >= ?"
+        args.append(since_iso)
+    sql += " GROUP BY tier"
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(sql, args) as cur:
+            return {
+                r["tier"]: {
+                    "calls": r["calls"] or 0,
+                    "input_tokens": r["input"] or 0,
+                    "output_tokens": r["output"] or 0,
+                    "total_tokens": r["total"] or 0,
+                    "cache_hits": r["cache_hits"] or 0,
+                }
+                for r in await cur.fetchall()
+            }
+
+
+async def aggregate_by_app(since_iso: str | None = None) -> list[dict]:
+    """按 app_source 汇总（app_source 为空的归入 'unknown'）。"""
+    sql = (
+        "SELECT COALESCE(NULLIF(app_source, ''), 'unknown') AS app, "
+        "COUNT(*) AS calls, SUM(input_tokens + output_tokens) AS total, "
+        "AVG(latency_ms) AS avg_latency "
+        "FROM call_logs"
+    )
+    args: list = []
+    if since_iso:
+        sql += " WHERE timestamp >= ?"
+        args.append(since_iso)
+    sql += " GROUP BY app ORDER BY calls DESC"
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(sql, args) as cur:
+            return [
+                {
+                    "app": r["app"],
+                    "calls": r["calls"] or 0,
+                    "total_tokens": r["total"] or 0,
+                    "avg_latency_ms": round(r["avg_latency"] or 0, 1),
+                }
+                for r in await cur.fetchall()
+            ]
+
+
+async def recent_calls(limit: int = 10) -> list[dict]:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM call_logs ORDER BY id DESC LIMIT ?", (limit,)
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+# ── routing_policies（M13） ───────────────────────────────────────────────
+
+
+BUILTIN_POLICIES = [
+    {"name": "cost-first",   "tier_order": ["free","shared","paid"], "allowed_tiers": ["free","shared","paid"], "fallback_enabled": 1},
+    {"name": "quality-first","tier_order": ["paid","free","shared"], "allowed_tiers": ["free","shared","paid"], "fallback_enabled": 1},
+    {"name": "free-only",    "tier_order": ["free"],                 "allowed_tiers": ["free"],                 "fallback_enabled": 0},
+    {"name": "paid-only",    "tier_order": ["paid"],                 "allowed_tiers": ["paid"],                 "fallback_enabled": 0},
+    {"name": "under-budget", "tier_order": ["free","shared","paid"], "allowed_tiers": ["free","shared","paid"], "fallback_enabled": 1, "max_cost_per_1m": 0.5},
+]
+
+
+async def init_routing_policies() -> None:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS routing_policies (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                name             TEXT UNIQUE NOT NULL,
+                tier_order       TEXT NOT NULL,          -- JSON 数组
+                allowed_tiers    TEXT NOT NULL,          -- JSON 数组
+                model_preference TEXT DEFAULT '',
+                max_cost_per_1m  REAL DEFAULT 0,
+                fallback_enabled INTEGER DEFAULT 1,
+                is_builtin       INTEGER DEFAULT 0,
+                created_at       TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        # 幂等灌内置策略
+        for p in BUILTIN_POLICIES:
+            await db.execute(
+                """INSERT OR IGNORE INTO routing_policies
+                   (name, tier_order, allowed_tiers, max_cost_per_1m, fallback_enabled, is_builtin)
+                   VALUES (?, ?, ?, ?, ?, 1)""",
+                (
+                    p["name"],
+                    json.dumps(p["tier_order"]),
+                    json.dumps(p["allowed_tiers"]),
+                    p.get("max_cost_per_1m", 0),
+                    p.get("fallback_enabled", 1),
+                ),
+            )
+        await db.commit()
+    # app_bindings 加 routing_policy_id 列（迁移）
+    await _migrate_app_bindings_policy()
+
+
+async def _migrate_app_bindings_policy() -> None:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        async with db.execute("PRAGMA table_info(app_bindings)") as cur:
+            cols = {r[1] for r in await cur.fetchall()}
+        if "routing_policy_id" not in cols:
+            await db.execute(
+                "ALTER TABLE app_bindings ADD COLUMN routing_policy_id INTEGER REFERENCES routing_policies(id)"
+            )
+        await db.commit()
+
+
+async def list_routing_policies() -> list[dict]:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM routing_policies ORDER BY is_builtin DESC, id ASC"
+        ) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+    for r in rows:
+        try:
+            r["tier_order"] = json.loads(r["tier_order"] or "[]")
+            r["allowed_tiers"] = json.loads(r["allowed_tiers"] or "[]")
+        except json.JSONDecodeError:
+            pass
+    return rows
+
+
+async def get_routing_policy(policy_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM routing_policies WHERE id = ?", (policy_id,)
+        ) as cur:
+            r = await cur.fetchone()
+            if not r:
+                return None
+            row = dict(r)
+    try:
+        row["tier_order"] = json.loads(row["tier_order"] or "[]")
+        row["allowed_tiers"] = json.loads(row["allowed_tiers"] or "[]")
+    except json.JSONDecodeError:
+        pass
+    return row
+
+
+async def get_routing_policy_by_name(name: str) -> Optional[dict]:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id FROM routing_policies WHERE name = ?", (name,)
+        ) as cur:
+            r = await cur.fetchone()
+    return await get_routing_policy(r["id"]) if r else None
+
+
+async def upsert_routing_policy(name: str, tier_order: list[str], allowed_tiers: list[str],
+                                  max_cost_per_1m: float = 0, fallback_enabled: bool = True,
+                                  model_preference: str = "") -> int:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO routing_policies
+               (name, tier_order, allowed_tiers, max_cost_per_1m, fallback_enabled, model_preference, is_builtin)
+               VALUES (?, ?, ?, ?, ?, ?, 0)
+               ON CONFLICT(name) DO UPDATE SET
+                 tier_order=excluded.tier_order,
+                 allowed_tiers=excluded.allowed_tiers,
+                 max_cost_per_1m=excluded.max_cost_per_1m,
+                 fallback_enabled=excluded.fallback_enabled,
+                 model_preference=excluded.model_preference""",
+            (
+                name, json.dumps(tier_order), json.dumps(allowed_tiers),
+                max_cost_per_1m, int(fallback_enabled), model_preference,
+            ),
+        )
+        async with db.execute("SELECT id FROM routing_policies WHERE name=?", (name,)) as cur:
+            row = await cur.fetchone()
+        await db.commit()
+    return row[0] if row else 0
+
+
+async def delete_routing_policy(policy_id: int) -> bool:
+    """非内置策略才能删；返回是否删除成功。"""
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        async with db.execute(
+            "SELECT is_builtin FROM routing_policies WHERE id = ?", (policy_id,)
+        ) as cur:
+            r = await cur.fetchone()
+        if not r or r[0]:
+            return False
+        await db.execute("DELETE FROM routing_policies WHERE id = ?", (policy_id,))
+        await db.commit()
+    return True
+
+
+async def get_app_binding_with_policy(app_name: str) -> Optional[dict]:
+    """读取 app_binding 并附加关联 policy。"""
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM app_bindings WHERE app_name = ?", (app_name,)
+        ) as cur:
+            r = await cur.fetchone()
+            if not r:
+                return None
+            row = dict(r)
+    if row.get("routing_policy_id"):
+        row["policy"] = await get_routing_policy(row["routing_policy_id"])
+    return row
+
+
+async def set_app_binding_policy(app_name: str, policy_id: int | None) -> None:
+    async with aiosqlite.connect(LOCAL_DB_PATH) as db:
+        await db.execute(
+            "UPDATE app_bindings SET routing_policy_id = ? WHERE app_name = ?",
+            (policy_id, app_name),
+        )
         await db.commit()
 
 

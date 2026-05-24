@@ -11,6 +11,7 @@ export default function Sidebar() {
   const location = useLocation();
 
   const NAV = [
+    { to: '/dashboard',  icon: '🏠', label: t('nav.dashboard') },
     { to: '/onboarding', icon: '🔌', label: t('nav.onboarding') },
     { to: '/apps',       icon: '📝', label: t('nav.apps') },
     { to: '/contribute', icon: '🤝', label: t('nav.contribute') },
@@ -18,7 +19,7 @@ export default function Sidebar() {
     { to: '/network',    icon: '🌐', label: t('nav.network') },
     { to: '/debug',      icon: '🐛', label: t('nav.debug') },
   ];
-  const profileActive = location.pathname === '/';
+  const profileActive = location.pathname === '/profile';
   return (
     <aside className="w-44 flex flex-col pb-5 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 shrink-0">
       {/* Logo — pt-9 clears macOS hiddenInset traffic lights (~28px) */}
@@ -58,7 +59,7 @@ export default function Sidebar() {
             : 'border-gray-100 dark:border-gray-800')
         }>
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate('/profile')}
             className="flex-1 min-w-0 px-3 py-2.5 text-left"
           >
             <p className={`text-xs font-medium truncate ${profileActive ? 'text-blue-700 dark:text-blue-300' : 'text-gray-700 dark:text-gray-300'}`}>{user.nickname}</p>
