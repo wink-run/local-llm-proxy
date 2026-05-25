@@ -20,8 +20,6 @@ const PROVIDER_META = {
   'anthropic-paid':{ icon: '🧬', label: 'Anthropic',      hint: '付费 API，Claude 3.5 / 3.7 等系列',       keyless: false },
   deepseek:        { icon: '🐋', label: 'DeepSeek',       hint: '官方付费：platform.deepseek.com',         keyless: false },
   xai:             { icon: '✖️', label: 'xAI Grok',       hint: '付费 API：console.x.ai',                  keyless: false },
-  perplexity:      { icon: '🔮', label: 'Perplexity',     hint: '付费 API：perplexity.ai/settings/api',    keyless: false },
-  deepinfra:       { icon: '🏗', label: 'DeepInfra',      hint: '低价开源模型：deepinfra.com',             keyless: false },
   fireworks:       { icon: '🎆', label: 'Fireworks',      hint: '低价高速：fireworks.ai',                  keyless: false },
 };
 
@@ -42,8 +40,6 @@ const DEFAULT_PROVIDERS = [
   { id: 'anthropic-paid',  type: 'paid', enabled: false, token: '', base_url: 'https://api.anthropic.com/v1', models: [] },
   { id: 'deepseek',        type: 'paid', enabled: false, token: '', base_url: 'https://api.deepseek.com/v1', models: [] },
   { id: 'xai',             type: 'paid', enabled: false, token: '', base_url: 'https://api.x.ai/v1', models: [] },
-  { id: 'perplexity',      type: 'paid', enabled: false, token: '', base_url: 'https://api.perplexity.ai', models: [] },
-  { id: 'deepinfra',       type: 'paid', enabled: false, token: '', base_url: 'https://api.deepinfra.com/v1/openai', models: [] },
   { id: 'fireworks',       type: 'paid', enabled: false, token: '', base_url: 'https://api.fireworks.ai/inference/v1', models: [] },
 ];
 

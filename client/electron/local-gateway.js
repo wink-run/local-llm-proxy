@@ -72,6 +72,13 @@ function openaiToAnthropic(oai, model) {
 
 // ── Provider helpers ──────────────────────────────────────────────────────────
 
+// 归一 base_url：去掉尾部斜杠 + 尾部 /v1。
+// 网关转发时统一用 base + '/v1/chat/completions'（或 '/v1/messages'），
+// 所以无论用户填的 base 带不带 /v1 都能拼对（避免 /v1/v1 双段）。
+function normBase(url) {
+  return (url || '').replace(/\/+$/, '').replace(/\/v1$/, '');
+}
+
 // All enabled providers, each with an effective models list.
 // P2P providers: base_url/token come from backend config; models come from live _peerModels.
 // Other providers: models from their configured models array (empty = serves any model).
@@ -104,7 +111,7 @@ function providerHasModel(provider, model) {
 
 function proxyRequest(provider, reqPath, body, res) {
   return new Promise((resolve, reject) => {
-    const base     = (provider.base_url || '').replace(/\/$/, '');
+    const base     = normBase(provider.base_url);
     const fullUrl  = base + reqPath;
     let u;
     try { u = new URL(fullUrl); }
@@ -171,7 +178,7 @@ function proxyRequest(provider, reqPath, body, res) {
 
 function proxyConvertSync(provider, oaiBody, model, res) {
   return new Promise((resolve, reject) => {
-    const base    = (provider.base_url || '').replace(/\/$/, '');
+    const base    = normBase(provider.base_url);
     const fullUrl = base + '/v1/chat/completions';
     let u;
     try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
@@ -224,7 +231,7 @@ function proxyConvertSync(provider, oaiBody, model, res) {
 
 function proxyConvertStream(provider, oaiBody, model, res) {
   return new Promise((resolve, reject) => {
-    const base    = (provider.base_url || '').replace(/\/$/, '');
+    const base    = normBase(provider.base_url);
     const fullUrl = base + '/v1/chat/completions';
     let u;
     try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
@@ -319,7 +326,7 @@ function proxyP2PSync(provider, oaiBody, model, res) {
   // Sends stream:true to backend regardless of client request; assembles & returns Anthropic JSON
   return new Promise((resolve, reject) => {
     const streamBody = { ...oaiBody, stream: true };
-    const base    = (provider.base_url || '').replace(/\/$/, '');
+    const base    = normBase(provider.base_url);
     const fullUrl = base + '/v1/chat/completions';
     let u;
     try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
