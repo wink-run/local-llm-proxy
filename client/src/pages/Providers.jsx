@@ -7,18 +7,44 @@ const PROVIDER_META = {
   ollama:          { icon: '🦙', label: 'Ollama',        hint: '自动检测本地实例，无需配置',              keyless: true },
   groq:            { icon: '⚡', label: 'Groq',           hint: '免费申请：console.groq.com',              keyless: false },
   'github-models': { icon: '🐙', label: 'GitHub Models',  hint: '免费调用 GPT-4o、Llama，需 GitHub PAT',   keyless: false },
+  // ── 整合自 gpt4free needs_auth（合法注册拿 key 的源） ──
+  cerebras:        { icon: '🌀', label: 'Cerebras',       hint: '免费档每日 1M tokens：cloud.cerebras.ai', keyless: false },
+  nvidia:          { icon: '🟢', label: 'NVIDIA NIM',     hint: '新用户免费额度：build.nvidia.com',        keyless: false },
+  mistral:         { icon: '🌪', label: 'Mistral',        hint: '免费档：console.mistral.ai',              keyless: false },
+  openrouter:      { icon: '🛣', label: 'OpenRouter',     hint: '含 :free 免费模型：openrouter.ai',        keyless: false },
+  together:        { icon: '🔗', label: 'Together AI',    hint: '新用户赠额：api.together.ai',             keyless: false },
+  siliconflow:     { icon: '🧪', label: 'SiliconFlow',    hint: '国内免费源，新人 ¥16：siliconflow.cn',    keyless: false },
+  cohere:          { icon: '🐬', label: 'Cohere',         hint: 'Trial Key 免费：dashboard.cohere.com',    keyless: false },
   'tokenbank-p2p': { icon: '🌐', label: 'P2P 分享网络',  hint: '消耗积分使用社区共享算力',                 keyless: true  },
   openai:          { icon: '🤖', label: 'OpenAI',         hint: '付费 API，支持 GPT-4o / o3 等全系模型',   keyless: false },
   'anthropic-paid':{ icon: '🧬', label: 'Anthropic',      hint: '付费 API，Claude 3.5 / 3.7 等系列',       keyless: false },
+  deepseek:        { icon: '🐋', label: 'DeepSeek',       hint: '官方付费：platform.deepseek.com',         keyless: false },
+  xai:             { icon: '✖️', label: 'xAI Grok',       hint: '付费 API：console.x.ai',                  keyless: false },
+  perplexity:      { icon: '🔮', label: 'Perplexity',     hint: '付费 API：perplexity.ai/settings/api',    keyless: false },
+  deepinfra:       { icon: '🏗', label: 'DeepInfra',      hint: '低价开源模型：deepinfra.com',             keyless: false },
+  fireworks:       { icon: '🎆', label: 'Fireworks',      hint: '低价高速：fireworks.ai',                  keyless: false },
 };
 
 const DEFAULT_PROVIDERS = [
   { id: 'ollama',          type: 'free', enabled: true,  token: '', base_url: 'http://127.0.0.1:11434/v1', models: [] },
   { id: 'groq',            type: 'free', enabled: false, token: '', base_url: 'https://api.groq.com/openai/v1', models: [] },
-  { id: 'github-models',   type: 'free', enabled: false, token: '', base_url: 'https://models.github.azure.com', models: [] },
+  { id: 'github-models',   type: 'free', enabled: false, token: '', base_url: 'https://models.inference.ai.azure.com', models: [] },
+  // ── 整合自 gpt4free needs_auth（合法 key 源，OpenAI 兼容） ──
+  { id: 'cerebras',        type: 'free', enabled: false, token: '', base_url: 'https://api.cerebras.ai/v1', models: [] },
+  { id: 'nvidia',          type: 'free', enabled: false, token: '', base_url: 'https://integrate.api.nvidia.com/v1', models: [] },
+  { id: 'mistral',         type: 'free', enabled: false, token: '', base_url: 'https://api.mistral.ai/v1', models: [] },
+  { id: 'openrouter',      type: 'free', enabled: false, token: '', base_url: 'https://openrouter.ai/api/v1', models: [] },
+  { id: 'together',        type: 'free', enabled: false, token: '', base_url: 'https://api.together.xyz/v1', models: [] },
+  { id: 'siliconflow',     type: 'free', enabled: false, token: '', base_url: 'https://api.siliconflow.cn/v1', models: [] },
+  { id: 'cohere',          type: 'free', enabled: false, token: '', base_url: 'https://api.cohere.ai/compatibility/v1', models: [] },
   { id: 'tokenbank-p2p',   type: 'p2p',  enabled: true,  token: '', base_url: '', models: [] },
   { id: 'openai',          type: 'paid', enabled: false, token: '', base_url: 'https://api.openai.com/v1', models: [] },
   { id: 'anthropic-paid',  type: 'paid', enabled: false, token: '', base_url: 'https://api.anthropic.com/v1', models: [] },
+  { id: 'deepseek',        type: 'paid', enabled: false, token: '', base_url: 'https://api.deepseek.com/v1', models: [] },
+  { id: 'xai',             type: 'paid', enabled: false, token: '', base_url: 'https://api.x.ai/v1', models: [] },
+  { id: 'perplexity',      type: 'paid', enabled: false, token: '', base_url: 'https://api.perplexity.ai', models: [] },
+  { id: 'deepinfra',       type: 'paid', enabled: false, token: '', base_url: 'https://api.deepinfra.com/v1/openai', models: [] },
+  { id: 'fireworks',       type: 'paid', enabled: false, token: '', base_url: 'https://api.fireworks.ai/inference/v1', models: [] },
 ];
 
 const TIER_CONFIG = {
