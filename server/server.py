@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 import database as db
 from admin_router import router as admin_router
+from catalog import PROVIDER_CATALOG, TIERS
 from dispatch import handle_chat
 from dispatch_image import handle_image
 from settler import run_settler
@@ -86,6 +87,12 @@ async def user_app():
 @app.get("/wall")
 async def wall_page():
     return FileResponse("static/wall.html")
+
+
+@app.get("/api/catalog")
+async def public_catalog():
+    """公开接口：供给源目录（客户端启动时拉取，离线则用内置兜底）"""
+    return {"tiers": TIERS, "providers": PROVIDER_CATALOG}
 
 
 @app.get("/api/rates")

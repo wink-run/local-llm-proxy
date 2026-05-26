@@ -85,6 +85,10 @@ export function getRates() {
   return http.get('/api/rates');
 }
 
+export function getProviderCatalog() {
+  return http.get('/api/catalog');
+}
+
 // ── Scene Routes ──────────────────────────────────────────────────────────────
 
 export function getSceneRoutes() {

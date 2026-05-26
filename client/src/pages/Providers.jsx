@@ -1,9 +1,11 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getNetwork, getProfile, listKeys, createKey, deleteKey } from '../api/client';
+import { getNetwork, getProfile, listKeys, createKey, deleteKey, getProviderCatalog } from '../api/client';
 import { getServerUrl } from '../config';
 
-const PROVIDER_META = {
+// 内置兜底目录：当后端 /api/catalog 不可达（离线 / VPS 宕机）时使用。
+// 正常情况下目录由后端下发，改源请改 server/catalog.py。
+const FALLBACK_PROVIDER_META = {
   ollama:          { icon: '🦙', label: 'Ollama',        hint: '自动检测本地实例，无需配置',              keyless: true },
   groq:            { icon: '⚡', label: 'Groq',           hint: '免费申请：console.groq.com',              keyless: false },
   'github-models': { icon: '🐙', label: 'GitHub Models',  hint: '免费调用 GPT-4o、Llama，需 GitHub PAT',   keyless: false },
@@ -23,7 +25,7 @@ const PROVIDER_META = {
   fireworks:       { icon: '🎆', label: 'Fireworks',      hint: '低价高速：fireworks.ai',                  keyless: false },
 };
 
-const DEFAULT_PROVIDERS = [
+const FALLBACK_PROVIDERS = [
   { id: 'ollama',          type: 'free', enabled: true,  token: '', base_url: 'http://127.0.0.1:11434/v1', models: [] },
   { id: 'groq',            type: 'free', enabled: false, token: '', base_url: 'https://api.groq.com/openai/v1', models: [] },
   { id: 'github-models',   type: 'free', enabled: false, token: '', base_url: 'https://models.inference.ai.azure.com', models: [] },
@@ -48,6 +50,25 @@ const TIER_CONFIG = {
   p2p:  { dot: 'bg-blue-500',  label: 'P2P 层',  hint: '消耗少量积分，社区算力',    cols: 'grid-cols-1' },
   paid: { dot: 'bg-amber-400', label: '付费层',  hint: '直接计费，作为最终兜底',    cols: 'grid-cols-2' },
 };
+
+// 把后端下发的 catalog 拆成展示 meta 映射 + 默认 provider 列表（与本地配置合并的种子）
+function catalogToState(catalog) {
+  const meta = {};
+  const defaults = [];
+  for (const p of catalog?.providers || []) {
+    if (!p?.id) continue;
+    meta[p.id] = { icon: p.icon, label: p.label, hint: p.hint, keyless: !!p.keyless };
+    defaults.push({
+      id: p.id,
+      type: p.type,
+      enabled: !!p.enabled_default,
+      token: '',
+      base_url: p.base_url || '',
+      models: [],
+    });
+  }
+  return { meta, defaults };
+}
 
 function Toggle({ enabled, onChange }) {
   return (
@@ -573,14 +594,13 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest }) {
   );
 }
 
-function ProviderCard({ provider, onUpdate, onTest }) {
+function ProviderCard({ provider, meta, onUpdate, onTest }) {
   const [showKey,    setShowKey]    = useState(false);
   const [expanded,   setExpanded]   = useState(false);
   const [testing,    setTesting]    = useState(false);
   const [testMsg,    setTestMsg]    = useState('');
 
-
-  const meta    = PROVIDER_META[provider.id] || {};
+  meta = meta || {};
   const isP2P   = provider.type === 'p2p';
   const hasKey  = !!provider.token;
   const configured = meta.keyless || hasKey;
@@ -708,32 +728,48 @@ function ProviderCard({ provider, onUpdate, onTest }) {
 }
 
 export default function Providers() {
-  const [providers, setProviders] = useState(DEFAULT_PROVIDERS);
+  const [providers, setProviders] = useState(FALLBACK_PROVIDERS);
+  const [meta,      setMeta]      = useState(FALLBACK_PROVIDER_META);
   const [savedMsg,  setSavedMsg]  = useState('');
   // Track the last value written/loaded so we skip the initial load trigger
   const lastSaved = useRef(null);
 
   useEffect(() => {
-    window.electronAPI?.config?.read().then(cfg => {
+    (async () => {
+      // 1) 源目录由后端下发，拉不到则回退内置兜底
+      let defaults = FALLBACK_PROVIDERS;
+      let metaMap  = FALLBACK_PROVIDER_META;
+      try {
+        const { data } = await getProviderCatalog();
+        if (data?.providers?.length) {
+          const s = catalogToState(data);
+          defaults = s.defaults;
+          metaMap  = s.meta;
+        }
+      } catch { /* 离线 / VPS 不可达：用兜底目录 */ }
+      setMeta(metaMap);
+
+      // 2) 与本地 config.json 保存的开关/token/base_url 合并
+      const cfg = await window.electronAPI?.config?.read();
       let resolved;
       if (cfg?.providers?.length) {
-        const defaultIds = new Set(DEFAULT_PROVIDERS.map(p => p.id));
-        const mapped = DEFAULT_PROVIDERS.map(def => {
+        const defaultIds = new Set(defaults.map(p => p.id));
+        const mapped = defaults.map(def => {
           const saved = cfg.providers.find(p => p.id === def.id);
           return saved ? { ...def, ...saved, models: saved.models || def.models || [] } : def;
         });
-        // Preserve any custom (non-default) providers stored in config; normalize base_url
+        // Preserve any custom (non-catalog) providers stored in config; normalize base_url
         const custom = cfg.providers.filter(p => !defaultIds.has(p.id)).map(p => ({
           ...p,
           base_url: (p.base_url || '').replace(/\/v1\/?$/, '').replace(/\/$/, ''),
         }));
         resolved = [...mapped, ...custom];
       } else {
-        resolved = DEFAULT_PROVIDERS;
+        resolved = defaults;
       }
       lastSaved.current = resolved;
       setProviders(resolved);
-    });
+    })();
   }, []);
 
   // Auto-save with 500 ms debounce; skip initial load
@@ -743,7 +779,7 @@ export default function Providers() {
       try {
         const cfg = (await window.electronAPI?.config?.read()) || {};
         const normalizedProviders = providers.map(p =>
-          PROVIDER_META[p.id] ? p : { ...p, base_url: (p.base_url || '').replace(/\/v1\/?$/, '').replace(/\/$/, '') }
+          meta[p.id] ? p : { ...p, base_url: (p.base_url || '').replace(/\/v1\/?$/, '').replace(/\/$/, '') }
         );
         await window.electronAPI?.config?.write({ ...cfg, providers: normalizedProviders });
         lastSaved.current = providers;
@@ -801,8 +837,8 @@ export default function Providers() {
               {items.map(p =>
                 tier === 'p2p' ? (
                   <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} />
-                ) : PROVIDER_META[p.id] ? (
-                  <ProviderCard key={p.id} provider={p} onUpdate={updateProvider} onTest={testProvider} />
+                ) : meta[p.id] ? (
+                  <ProviderCard key={p.id} provider={p} meta={meta[p.id]} onUpdate={updateProvider} onTest={testProvider} />
                 ) : (
                   <CustomProviderCard key={p.id} provider={p} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} />
                 )
