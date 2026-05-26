@@ -172,6 +172,24 @@ function writeAgentConfig(cfg) {
   fs.writeFileSync(AGENT_CONFIG_PATH, JSON.stringify(cfg, null, 2), 'utf-8');
 }
 
+// ── Local Config helpers (stored in userData) ────────────────────────────────
+
+function localConfigPath() {
+  return path.join(app.getPath('userData'), 'local-config.json');
+}
+
+function readLocalConfig() {
+  try {
+    const p = localConfigPath();
+    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch {}
+  return { scene_routes: [], local_keys: [] };
+}
+
+function writeLocalConfig(cfg) {
+  fs.writeFileSync(localConfigPath(), JSON.stringify(cfg, null, 2), 'utf8');
+}
+
 // ── LLM config scanner ────────────────────────────────────────────────────────
 
 const BASE_URL_KEYS = [
@@ -379,22 +397,6 @@ function registerIPC() {
 
   // ── Local Config (scene routes + local keys, stored in userData) ─────────────
 
-  function localConfigPath() {
-    return path.join(app.getPath('userData'), 'local-config.json');
-  }
-
-  function readLocalConfig() {
-    try {
-      const p = localConfigPath();
-      if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'));
-    } catch {}
-    return { scene_routes: [], local_keys: [] };
-  }
-
-  function writeLocalConfig(cfg) {
-    fs.writeFileSync(localConfigPath(), JSON.stringify(cfg, null, 2), 'utf8');
-  }
-
   function rndHex(bytes) {
     return require('crypto').randomBytes(bytes).toString('hex');
   }
@@ -572,12 +574,7 @@ app.whenReady().then(() => {
 
   // Initialize device reporter
   (async () => {
-    const lc = (() => {
-      try {
-        const p = require('path').join(app.getPath('userData'), 'local-config.json');
-        return JSON.parse(require('fs').readFileSync(p, 'utf8'));
-      } catch { return {}; }
-    })();
+    const lc = readLocalConfig();
     await reporter.init({
       type      : 'desktop',
       name      : os.hostname(),
@@ -594,7 +591,7 @@ app.whenReady().then(() => {
         providers_active : Object.keys(s.by_provider || {}).length,
       };
     });
-  })().catch(() => {});
+  })().catch((e) => console.warn('[reporter] init failed:', e.message));
 
   // Auto-start agent if configured
   const cfg = readAgentConfig();
