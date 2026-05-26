@@ -31,7 +31,8 @@ async function _doRegister() {
     const name     = cfg?.name    || (isElectron() ? 'Desktop' : 'CLI');
 
     const res   = await registerDevice({ device_id: storedId, type, name, platform, version, gateway_port: 11430 });
-    const newId = res.data?.device_id;
+    // Backend returns the devices table row: primary key column is "id", not "device_id"
+    const newId = res.data?.id || res.data?.device_id;
     if (!newId) return;
     _deviceId = newId;
     // Persist immediately to localStorage so next refresh reuses the same row
