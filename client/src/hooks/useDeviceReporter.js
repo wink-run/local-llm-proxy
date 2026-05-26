@@ -8,6 +8,7 @@ import { registerDevice, heartbeatDevice } from '../api/client';
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const RECONNECT_INTERVAL_MS = 30 * 1000;      // retry interval while offline
 const MAX_FAILURES_BEFORE_RECONNECT = 2;       // failures before trying re-register
+const DEVICE_ID_KEY = 'llm_gateway_device_id'; // localStorage key — survives page refresh
 
 // Module-level singleton — prevents concurrent registrations.
 // Keyed by user id so a real user-switch still re-registers.
@@ -20,18 +21,23 @@ let _reregistering       = false; // guard against concurrent re-register attemp
 
 async function _doRegister() {
   try {
-    const cfg        = await getConfig().read().catch(() => ({}));
-    const existingId = cfg?.device_id || null;
-    const type       = isElectron() ? 'desktop' : 'cli';
-    const platform   = navigator.platform || navigator.userAgent || '';
-    const version    = cfg?.version || '1.0.0';
-    const name       = cfg?.name    || (isElectron() ? 'Desktop' : 'CLI');
+    // localStorage is synchronous and survives page refreshes — primary source for device_id.
+    // getConfig().read() is async and may not have device_id yet on first load.
+    const storedId = localStorage.getItem(DEVICE_ID_KEY) || '';
+    const type     = isElectron() ? 'desktop' : 'cli';
+    const platform = navigator.platform || navigator.userAgent || '';
+    const cfg      = await getConfig().read().catch(() => ({}));
+    const version  = cfg?.version || '1.0.0';
+    const name     = cfg?.name    || (isElectron() ? 'Desktop' : 'CLI');
 
-    const res   = await registerDevice({ device_id: existingId || '', type, name, platform, version, gateway_port: 11430 });
+    const res   = await registerDevice({ device_id: storedId, type, name, platform, version, gateway_port: 11430 });
     const newId = res.data?.device_id;
     if (!newId) return;
     _deviceId = newId;
-    if (newId !== existingId) {
+    // Persist immediately to localStorage so next refresh reuses the same row
+    localStorage.setItem(DEVICE_ID_KEY, newId);
+    // Also write to config file as best-effort backup
+    if (newId !== cfg?.device_id) {
       getConfig().write({ ...(cfg || {}), device_id: newId }).catch(() => {});
     }
   } catch {
