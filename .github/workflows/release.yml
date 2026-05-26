@@ -111,19 +111,28 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Download each artifact into its own subdirectory to avoid merge conflicts
       - uses: actions/download-artifact@v4
         with:
-          path: artifacts
-          merge-multiple: true
+          name: mac-artifacts
+          path: artifacts/mac
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-artifacts
+          path: artifacts/win
+
+      - name: List downloaded files
+        run: find artifacts -type f | sort
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/*.dmg
-            artifacts/*.exe
-            artifacts/latest.yml
-            artifacts/latest-mac.yml
+            artifacts/mac/*.dmg
+            artifacts/mac/*.yml
+            artifacts/win/*.exe
+            artifacts/win/*.yml
           body: |
             ## 下载
 
