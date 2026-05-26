@@ -131,3 +131,11 @@ export function getUserDevices() {
 export function deleteDevice(deviceId) {
   return http.delete(`/device/${deviceId}`);
 }
+
+export function registerDevice(info) {
+  return http.post('/device/register', info);
+}
+
+export function heartbeatDevice(deviceId, stats) {
+  return http.post('/device/heartbeat', { device_id: deviceId, online: true, stats });
+}
