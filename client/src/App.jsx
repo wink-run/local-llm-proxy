@@ -14,9 +14,11 @@ import Network    from './pages/Network';
 import Config     from './pages/Config';
 import Debug      from './pages/Debug';
 import UpdateNotification from './components/UpdateNotification';
+import { useDeviceReporter } from './hooks/useDeviceReporter';
 
 function Layout() {
   const { user, loading } = useAuth();
+  useDeviceReporter(user);
 
   if (loading) {
     return (

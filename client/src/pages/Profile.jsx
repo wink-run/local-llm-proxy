@@ -527,7 +527,18 @@ function DevicesSection() {
   const load = () => {
     setLoading(true);
     getUserDevices()
-      .then(r => setDevices(r.data.devices || []))
+      .then(r => {
+        const raw = r.data?.devices || [];
+        const normalised = raw.map(d => ({ ...d, device_id: d.device_id || d.id || null }));
+        const seen = new Set();
+        const clean = normalised.filter(d => {
+          if (!d.device_id) return false;
+          if (seen.has(d.device_id)) return false;
+          seen.add(d.device_id);
+          return true;
+        });
+        setDevices(clean);
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
@@ -563,8 +574,8 @@ function DevicesSection() {
         <p className="text-sm text-gray-400 dark:text-gray-500">暂无设备记录</p>
       ) : (
         <div className="space-y-2">
-          {devices.map(d => (
-            <div key={d.device_id}
+          {devices.map((d, i) => (
+            <div key={`${d.device_id ?? d.id ?? ''}-${i}`}
               className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
