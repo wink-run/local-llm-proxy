@@ -312,28 +312,6 @@ export default function TokenDashboard() {
         </section>
       )}
 
-      {/* Recent route log */}
-      {logEntries.length > 0 && (
-        <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-2">
-          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">最近调用</h2>
-          <div className="space-y-1.5">
-            {logEntries.map((e, i) => {
-              const meta = PROVIDER_COLORS[e.via] || {};
-              return (
-                <div key={`${e.ts}-${e.via}-${i}`} className="flex items-center gap-2 text-xs px-2 py-1.5 rounded-lg bg-gray-50 dark:bg-gray-900">
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${e.status === 'ok' ? 'bg-green-400' : 'bg-red-400'}`} />
-                  <span className="text-gray-500 shrink-0">{new Date(e.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
-                  <span className="flex-1 text-gray-700 dark:text-gray-300 truncate font-mono">{e.model || '—'}</span>
-                  <span className="text-gray-400">→</span>
-                  <span className="text-blue-600 dark:text-blue-400 shrink-0">{meta.label || e.via || '—'}</span>
-                  <span className="text-gray-400 shrink-0">{e.latency_ms}ms</span>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
       {/* Credits (collapsible) */}
       <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl overflow-hidden">
         <button onClick={() => setCreditsOpen(v => !v)}
@@ -400,6 +378,28 @@ export default function TokenDashboard() {
 
       {/* Devices */}
       <DevicesSection />
+
+      {/* Recent route log */}
+      {logEntries.length > 0 && (
+        <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-2">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">最近调用</h2>
+          <div className="space-y-1.5">
+            {logEntries.map((e, i) => {
+              const meta = PROVIDER_COLORS[e.via] || {};
+              return (
+                <div key={`${e.ts}-${e.via}-${i}`} className="flex items-center gap-2 text-xs px-2 py-1.5 rounded-lg bg-gray-50 dark:bg-gray-900">
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${e.status === 'ok' ? 'bg-green-400' : 'bg-red-400'}`} />
+                  <span className="text-gray-500 shrink-0">{new Date(e.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
+                  <span className="flex-1 text-gray-700 dark:text-gray-300 truncate font-mono">{e.model || '—'}</span>
+                  <span className="text-gray-400">→</span>
+                  <span className="text-blue-600 dark:text-blue-400 shrink-0">{meta.label || e.via || '—'}</span>
+                  <span className="text-gray-400 shrink-0">{e.latency_ms}ms</span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
     </div>
   );
