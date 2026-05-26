@@ -5,15 +5,28 @@ export function isElectron() {
   return typeof window !== 'undefined' && !!window.electronAPI;
 }
 
-const ADMIN_BASE = 'http://localhost:11431';
+// Allow override via Vite env var for non-default ports/hosts
+const ADMIN_BASE = import.meta.env?.VITE_ADMIN_BASE || 'http://localhost:11431';
 
 // Low-level fetch helper for admin API
 async function adminFetch(path, options = {}) {
-  const res = await fetch(ADMIN_BASE + path, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    ...options,
-  });
-  if (!res.ok) throw new Error(`Admin API ${options.method || 'GET'} ${path} → ${res.status}`);
+  const method = options.method || 'GET';
+  const hasBody = !!options.body;
+  const headers = {
+    ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+    ...options.headers,
+  };
+  let res;
+  try {
+    res = await fetch(ADMIN_BASE + path, { ...options, method, headers });
+  } catch (err) {
+    throw new Error(`Admin API ${method} ${path}: network error — ${err.message}`);
+  }
+  if (!res.ok) {
+    let detail = '';
+    try { const j = await res.json(); detail = j?.error || JSON.stringify(j); } catch {}
+    throw new Error(`Admin API ${method} ${path} → ${res.status}${detail ? `: ${detail}` : ''}`);
+  }
   return res.json();
 }
 
@@ -74,7 +87,8 @@ const httpAdapter = {
 
 // ── Exports ───────────────────────────────────────────────────────────────────
 
-// Returns the right adapter at call time (safe even if called before React mounts)
-export function getGateway()     { return isElectron() ? electronAdapter.gateway     : httpAdapter.gateway;     }
-export function getLocalConfig() { return isElectron() ? electronAdapter.localConfig : httpAdapter.localConfig; }
-export function getConfig()      { return isElectron() ? electronAdapter.config      : httpAdapter.config;      }
+// Returns the right adapter at call time (safe even if called before React mounts).
+// Falls back to httpAdapter if the specific sub-namespace is missing from the preload.
+export function getGateway()     { return (isElectron() && window.electronAPI.gateway)     ? electronAdapter.gateway     : httpAdapter.gateway;     }
+export function getLocalConfig() { return (isElectron() && window.electronAPI.localConfig) ? electronAdapter.localConfig : httpAdapter.localConfig; }
+export function getConfig()      { return (isElectron() && window.electronAPI.config)      ? electronAdapter.config      : httpAdapter.config;      }
