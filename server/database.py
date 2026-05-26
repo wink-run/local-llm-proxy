@@ -152,6 +152,35 @@ async def init_db() -> None:
             )
         """)
 
+        # devices
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS devices (
+                id           TEXT PRIMARY KEY,
+                user_id      INTEGER REFERENCES users(id),
+                type         TEXT NOT NULL DEFAULT 'desktop',
+                name         TEXT NOT NULL DEFAULT '',
+                platform     TEXT DEFAULT '',
+                version      TEXT DEFAULT '',
+                gateway_port INTEGER DEFAULT 11430,
+                online       INTEGER DEFAULT 0,
+                last_seen    TEXT,
+                created_at   TEXT DEFAULT (datetime('now'))
+            )
+        """)
+
+        # device_stats_snapshots
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS device_stats_snapshots (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                device_id TEXT REFERENCES devices(id) ON DELETE CASCADE,
+                user_id   INTEGER,
+                ts        TEXT DEFAULT (datetime('now')),
+                calls     INTEGER DEFAULT 0,
+                errors    INTEGER DEFAULT 0,
+                providers INTEGER DEFAULT 0
+            )
+        """)
+
         # 默认配置项
         for k, v in [
             ("referral_reward", "100"),
@@ -174,6 +203,7 @@ async def init_db() -> None:
     await _migrate_virtual_agents()
     await _migrate_image_support()
     await _migrate_scene_routes()
+    await _migrate_devices()
 
 
 async def _migrate() -> None:
@@ -1130,6 +1160,126 @@ async def get_hourly_stats(user_id: int) -> list[int]:
     for r in rows:
         hourly[r["hour"]] = r["cnt"]
     return hourly
+
+
+async def _migrate_devices() -> None:
+    """Add devices and device_stats_snapshots tables for databases created before this feature."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS devices (
+                id           TEXT PRIMARY KEY,
+                user_id      INTEGER REFERENCES users(id),
+                type         TEXT NOT NULL DEFAULT 'desktop',
+                name         TEXT NOT NULL DEFAULT '',
+                platform     TEXT DEFAULT '',
+                version      TEXT DEFAULT '',
+                gateway_port INTEGER DEFAULT 11430,
+                online       INTEGER DEFAULT 0,
+                last_seen    TEXT,
+                created_at   TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS device_stats_snapshots (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                device_id TEXT REFERENCES devices(id) ON DELETE CASCADE,
+                user_id   INTEGER,
+                ts        TEXT DEFAULT (datetime('now')),
+                calls     INTEGER DEFAULT 0,
+                errors    INTEGER DEFAULT 0,
+                providers INTEGER DEFAULT 0
+            )
+        """)
+        await db.commit()
+
+
+# ── devices ───────────────────────────────────────────────────────────────────
+
+async def upsert_device(device_id: str, user_id: int, type_: str, name: str,
+                        platform: str, version: str, gateway_port: int) -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO devices (id, user_id, type, name, platform, version, gateway_port, online, last_seen)
+               VALUES (?,?,?,?,?,?,?,1,datetime('now'))
+               ON CONFLICT(id) DO UPDATE SET
+                 user_id=excluded.user_id,
+                 type=excluded.type,
+                 name=excluded.name,
+                 platform=excluded.platform,
+                 version=excluded.version,
+                 gateway_port=excluded.gateway_port,
+                 online=1,
+                 last_seen=datetime('now')""",
+            (device_id, user_id, type_, name, platform, version, gateway_port),
+        )
+        await db.commit()
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM devices WHERE id=?", (device_id,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else {}
+
+
+async def record_device_heartbeat(device_id: str, user_id: int, online: bool,
+                                   calls: int, errors: int, providers: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE devices SET online=?, last_seen=datetime('now') WHERE id=?",
+            (1 if online else 0, device_id),
+        )
+        await db.execute(
+            """INSERT INTO device_stats_snapshots (device_id, user_id, calls, errors, providers)
+               VALUES (?,?,?,?,?)""",
+            (device_id, user_id, calls, errors, providers),
+        )
+        await db.commit()
+
+
+async def get_user_devices(user_id: int) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM devices WHERE user_id=? ORDER BY created_at DESC", (user_id,)
+        ) as cur:
+            devices = [dict(r) for r in await cur.fetchall()]
+        for dev in devices:
+            async with db.execute(
+                """SELECT SUM(calls) AS calls, SUM(errors) AS errors, SUM(providers) AS providers
+                   FROM device_stats_snapshots
+                   WHERE device_id=? AND ts >= datetime('now', '-24 hours')""",
+                (dev["id"],),
+            ) as cur:
+                snap = await cur.fetchone()
+            dev["today_calls"] = snap["calls"] if snap and snap["calls"] is not None else 0
+            dev["today_errors"] = snap["errors"] if snap and snap["errors"] is not None else 0
+            dev["today_providers"] = snap["providers"] if snap and snap["providers"] is not None else 0
+    return devices
+
+
+async def get_device_owner(device_id: str) -> Optional[int]:
+    """Return the user_id that owns device_id, or None if not found."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT user_id FROM devices WHERE id=?", (device_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else None
+
+
+async def delete_device(device_id: str, user_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM devices WHERE id=? AND user_id=?", (device_id, user_id)
+        )
+        await db.commit()
+
+
+async def sweep_offline_devices() -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE devices SET online=0 WHERE online=1 AND last_seen < datetime('now', '-2 minutes')"
+        )
+        await db.commit()
+        return cur.rowcount
 
 
 async def get_wall_users(limit: int = 50) -> list[dict]:

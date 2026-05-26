@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 import database as db
 from admin_router import router as admin_router
+from device_router import router as device_router
 from dispatch import handle_chat
 from dispatch_image import handle_image
 from settler import run_settler
@@ -69,6 +70,7 @@ app.add_middleware(
 app.include_router(admin_router, prefix="/admin")
 app.include_router(user_router, prefix="/user")
 app.include_router(scene_router, prefix="/user")
+app.include_router(device_router, tags=["device"])
 
 
 # ── 静态文件 & 落地页 ─────────────────────────────────────────────────────────
