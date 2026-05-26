@@ -1,13 +1,12 @@
 // client/src/pages/Contribute.jsx
 import React, { useEffect, useState, useRef } from 'react';
 import { getStats, getSettlements } from '../api/client';
+import { getConfig, getGateway } from '../api/adapter';
 import RateChart from '../components/RateChart';
 function multiplierToStars(m) {
   const n = m >= 1.3 ? 5 : m >= 1.1 ? 4 : m >= 0.9 ? 3 : m >= 0.7 ? 2 : 1;
   return '★'.repeat(n) + '☆'.repeat(5 - n);
 }
-
-const LOCAL_GW = 'http://127.0.0.1:11430/v1';
 
 function ContributionConfigCard() {
   const [selectedNames,   setSelectedNames]   = useState(new Set()); // Set<string>
@@ -16,10 +15,19 @@ function ContributionConfigCard() {
   const [autoStart,       setAutoStart]       = useState(false);
   const [saving,          setSaving]          = useState(false);
   const [savedMsg,        setSavedMsg]        = useState('');
+  const [localGw,         setLocalGw]         = useState('http://127.0.0.1:11430/v1');
 
   useEffect(() => {
-    if (!window.electronAPI) return;
-    window.electronAPI.config.read().then(saved => {
+    Promise.all([
+      getConfig().read().catch(() => null),
+      getGateway().status().catch(() => null),
+    ]).then(([saved, gwStatus]) => {
+      // Dynamic gateway URL from actual running port
+      const port = gwStatus?.port || 11430;
+      const gw   = `http://127.0.0.1:${port}/v1`;
+      setLocalGw(gw);
+
+      if (!saved) return;
       const avail = [];
       const seen  = new Set();
       for (const p of (saved?.providers || [])) {
@@ -43,7 +51,7 @@ function ContributionConfigCard() {
       setSelectedNames(prevNames);
       setNodeName(saved?.name || '');
       setAutoStart(!!saved?.auto_start);
-    }).catch(() => {});
+    });
   }, []);
 
   function toggleModel(name) {
@@ -55,14 +63,13 @@ function ContributionConfigCard() {
   }
 
   async function save() {
-    if (!window.electronAPI) return;
     setSaving(true);
     try {
       const models       = availableModels.filter(m => selectedNames.has(m.name));
-      const model_groups = [{ base_url: LOCAL_GW, token: '', models }];
-      const current      = (await window.electronAPI.config.read()) || {};
-      const updated      = { ...current, model_groups, llm_base_url: LOCAL_GW, llm_token: '', models, name: nodeName, auto_start: autoStart };
-      await window.electronAPI.config.write(updated);
+      const model_groups = [{ base_url: localGw, token: '', models }];
+      const current      = (await getConfig().read().catch(() => null)) || {};
+      const updated      = { ...current, model_groups, llm_base_url: localGw, llm_token: '', models, name: nodeName, auto_start: autoStart };
+      await getConfig().write(updated);
       setSavedMsg('已保存'); setTimeout(() => setSavedMsg(''), 2000);
     } finally { setSaving(false); }
   }
@@ -77,7 +84,7 @@ function ContributionConfigCard() {
       {/* Fixed forwarding URL */}
       <div className="flex items-center gap-2 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2">
         <span className="text-[10px] text-gray-400 shrink-0">转发地址</span>
-        <code className="text-xs font-mono text-green-600 dark:text-green-400 truncate">{LOCAL_GW}</code>
+        <code className="text-xs font-mono text-green-600 dark:text-green-400 truncate">{localGw}</code>
       </div>
 
       {/* Model selection */}
