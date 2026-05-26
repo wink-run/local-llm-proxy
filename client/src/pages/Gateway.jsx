@@ -318,7 +318,7 @@ function KeyConfigPanel({ apiKey, localBase, model }) {
 
 // ── InstanceList ──────────────────────────────────────────────────────────────
 
-function InstanceList({ keysScene, onDelete, localBase, newKeyId }) {
+function InstanceList({ keysScene, onDelete, localBase, newKeyId, routeHealth }) {
   const [expandedId, setExpandedId] = useState(newKeyId ?? null);
 
   // Auto-expand whenever a brand-new key is passed in
@@ -373,13 +373,35 @@ function InstanceList({ keysScene, onDelete, localBase, newKeyId }) {
       <div className="max-h-96 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-800/60">
         {sorted.map(k => {
           const ts = testState[k.id];
+          const rh = k.model_key ? (routeHealth?.[k.model_key] ?? null) : null;
+          const rhFt = rh?.first_token_ms ?? null;
+          const rhFtLabel = rhFt != null ? `首token ${(rhFt / 1000).toFixed(1)}s` : null;
+          // test result overrides health dot (temporary, 6s)
+          const dotColor = ts && !ts.busy
+            ? ts.ok ? 'bg-green-500' : 'bg-red-500'
+            : rh
+              ? rh.status === 'error' ? 'bg-red-500'
+                : rh.status === 'ok'
+                  ? (rhFt != null && rhFt > 3000 ? 'bg-amber-400' : 'bg-green-500')
+                  : 'bg-gray-400'
+              : k.is_active ? 'bg-green-500' : 'bg-gray-400';
+          const dotTitle = ts && !ts.busy
+            ? ts.ok
+              ? `测试通过${ts.latency ? ` · ${ts.latency}ms` : ''}`
+              : `测试失败 · ${ts.error || '连接错误'}`
+            : rh
+              ? rh.status === 'error' ? '路由最近请求失败'
+                : rh.status === 'ok'
+                  ? [rh.degraded ? `已降级至 ${rh.activeStep}` : `命中 ${rh.activeStep}`, rhFtLabel].filter(Boolean).join(' · ')
+                  : '路由暂无请求记录'
+              : k.is_active ? '应用已启用' : '应用未启用';
           return (
             <div key={k.id}>
               <div
                 className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/20 transition-colors cursor-pointer"
                 onClick={() => setExpandedId(expandedId === k.id ? null : k.id)}
               >
-                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${k.is_active ? 'bg-green-500' : 'bg-gray-400'}`} />
+                <div title={dotTitle} className={`w-1.5 h-1.5 rounded-full shrink-0 cursor-help ${dotColor}`} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{k.app_name || k.note || '未命名'}</span>
@@ -445,9 +467,10 @@ const TOOLS = [
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function Gateway() {
-  const [status, setStatus]   = useState(null);
-  const [stats, setStats]     = useState(null);
-  const [logEntries, setLog]  = useState([]);
+  const [status, setStatus]     = useState(null);
+  const [stats, setStats]       = useState(null);
+  const [logEntries, setLog]    = useState([]);
+  const [restarting, setRestarting] = useState(false);
 
   // Scene routing
   const [routes, setRoutes]               = useState([]);
@@ -551,6 +574,30 @@ export default function Gateway() {
   const avgLatency   = okLogs.length > 0
     ? Math.round(okLogs.reduce((s, e) => s + e.latency_ms, 0) / okLogs.length) : 0;
 
+  // ── Route / model health: derived from recent log entries ─────────────────
+  // Covers both scene-route keys (llm-router-xxx) and direct model keys
+  const routeHealth = React.useMemo(() => {
+    // Collect all known model_keys: from routes + from keysScene
+    const allKeys = new Set([
+      ...routes.map(r => r.model_key).filter(Boolean),
+      ...keysScene.map(k => k.model_key).filter(Boolean),
+    ]);
+    const map = {};
+    for (const key of allKeys) {
+      const entries = logEntries.filter(e => e.requested_model === key);
+      if (!entries.length) { map[key] = { status: null, activeStep: null, triedSteps: [], degraded: false }; continue; }
+      const last = entries[0]; // newest first
+      map[key] = {
+        status: last.status,
+        activeStep: last.status === 'ok' ? last.model : null,
+        triedSteps: Array.isArray(last.tried) ? last.tried : [],
+        degraded: last.status === 'ok' && Array.isArray(last.tried) && last.tried.length > 0,
+        first_token_ms: last.first_token_ms ?? null,
+      };
+    }
+    return map;
+  }, [logEntries, routes, keysScene]);
+
   // ── Scene route actions ────────────────────────────────────────────────────
 
   const saveRoute = async (route) => {
@@ -628,6 +675,25 @@ export default function Gateway() {
             {status.running ? `运行中 · :${status.port}` : '已停止'}
           </span>
         )}
+        <button
+          onClick={async () => {
+            if (restarting || !window.electronAPI?.gateway) return;
+            setRestarting(true);
+            await window.electronAPI.gateway.restart();
+            await new Promise(r => setTimeout(r, 600));
+            await refresh();
+            setRestarting(false);
+          }}
+          disabled={restarting}
+          title="重启网关"
+          className="ml-auto flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"
+            className={`w-3.5 h-3.5 ${restarting ? 'animate-spin' : ''}`}>
+            <path fillRule="evenodd" d="M13.836 2.477a.75.75 0 0 1 .75.75v3.182a.75.75 0 0 1-.75.75h-3.182a.75.75 0 0 1 0-1.5h1.37l-.84-.841a4.5 4.5 0 0 0-7.08 1.01.75.75 0 1 1-1.3-.75 6 6 0 0 1 9.44-1.344l.842.841V3.227a.75.75 0 0 1 .75-.75Zm-.911 7.5A.75.75 0 0 1 13.199 11a6 6 0 0 1-9.44 1.344l-.84-.841v1.371a.75.75 0 0 1-1.5 0V9.691a.75.75 0 0 1 .75-.75H5.35a.75.75 0 0 1 0 1.5H3.98l.841.841a4.5 4.5 0 0 0 7.08-1.01.75.75 0 0 1 1.025-.295Z" clipRule="evenodd" />
+          </svg>
+          {restarting ? '重启中…' : '重启'}
+        </button>
       </div>
 
       {/* Stats */}
@@ -669,7 +735,21 @@ export default function Gateway() {
           >+ 新建路由</button>
         </div>
         <div className="divide-y divide-gray-100 dark:divide-gray-800/60">
-          {routes.map(route => (
+          {routes.map(route => {
+            const health = routeHealth[route.model_key] ?? { status: null, activeStep: null, degraded: false };
+            const ftMs = health.first_token_ms;
+            const healthDot =
+              health.status === 'error' ? 'bg-red-500' :
+              health.status === 'ok'
+                ? (ftMs != null && ftMs > 3000 ? 'bg-amber-400' : 'bg-green-500')
+                : 'bg-gray-300 dark:bg-gray-600';
+            const ftLabel = ftMs != null ? `首token ${(ftMs / 1000).toFixed(1)}s` : null;
+            const healthTitle =
+              health.status === 'error' ? '最近请求失败' :
+              health.status === 'ok'
+                ? [health.degraded ? '已降级' : '运行正常', ftLabel].filter(Boolean).join(' · ')
+                : '暂无请求记录';
+            return (
             <div key={route.id}>
               <div
                 className="flex items-start gap-4 px-5 py-3.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors"
@@ -678,7 +758,14 @@ export default function Gateway() {
                 <span className="text-lg mt-0.5">{route.icon}</span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
+                    {/* Health dot */}
+                    <span title={healthTitle} className={`w-2 h-2 rounded-full shrink-0 ${healthDot}`} />
                     <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{route.scene_name}</span>
+                    {health.degraded && (
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 text-amber-600 dark:text-amber-400 shrink-0">
+                        降级中
+                      </span>
+                    )}
                     {route.model_key && (
                       <>
                         <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800/40 text-purple-600 dark:text-purple-400 shrink-0">
@@ -692,11 +779,20 @@ export default function Gateway() {
                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                     {(route.steps || []).map((step, i) => {
                       const t = resolveStepTier(step.model || step.label, step, availableModels);
+                      const stepName = step.model || step.label;
+                      const isActive = health.activeStep === stepName;
+                      const isFailed = health.triedSteps?.includes(stepName);
                       return (
                         <React.Fragment key={i}>
                           {i > 0 && <span className="text-gray-400 text-xs">→</span>}
-                          <span className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded border ${tierStyle(t)}`}>
-                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${tierDot(t)}`} />
+                          <span className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded border transition-all ${
+                            isActive
+                              ? 'bg-green-100 dark:bg-green-900/40 border-green-400 dark:border-green-600 text-green-800 dark:text-green-200'
+                              : tierStyle(t)
+                          }`}>
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                              isActive ? 'bg-green-500' : isFailed ? 'bg-red-500' : tierDot(t)
+                            }`} />
                             {step.label || step.model}
                             <span className="opacity-50">({TIER_SHORT[t] || t})</span>
                           </span>
@@ -714,7 +810,8 @@ export default function Gateway() {
                 <SceneRouteEditor route={route} availableModels={availableModels} onSave={saveRoute} onCancel={() => setExpandedRoute(null)} />
               )}
             </div>
-          ))}
+            );
+          })}
           {newRoute && (
             <SceneRouteEditor route={newRoute} availableModels={availableModels} onSave={saveRoute} onCancel={() => setNewRoute(null)} />
           )}
@@ -836,7 +933,7 @@ export default function Gateway() {
         </div>
 
         {/* All keys list */}
-        <InstanceList keysScene={keysScene} onDelete={handleDeleteKey} localBase={localBase} newKeyId={newKeyId} />
+        <InstanceList keysScene={keysScene} onDelete={handleDeleteKey} localBase={localBase} newKeyId={newKeyId} routeHealth={routeHealth} />
       </div>
 
       {/* Route log */}

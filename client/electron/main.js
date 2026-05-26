@@ -369,6 +369,7 @@ function registerIPC() {
   ipcMain.handle('gateway:status',        () => gateway.getStatus());
   ipcMain.handle('gateway:getLog',        () => gateway.getLog());
   ipcMain.handle('gateway:getDailyStats', () => gateway.getDailyStats());
+  ipcMain.handle('gateway:restart',       () => gateway.restart());
   ipcMain.handle('gateway:setStrategy', (_e, strategy) => {
     if (strategy !== 'cost' && strategy !== 'quality') return { ok: false, error: 'invalid_strategy' };
     gateway.setStrategy(strategy);

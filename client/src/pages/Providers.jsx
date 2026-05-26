@@ -197,20 +197,18 @@ function P2PNetworkCard({ provider, onUpdate }) {
 
   function ModelDot({ m }) {
     if (m.nodes === 0) return <span className="w-2 h-2 rounded-full bg-gray-600 shrink-0" />;
-    if (m.activeReqs > m.nodes * 0.8) return <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />;
     return <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />;
   }
 
   function ModelSub({ m }) {
     if (m.nodes === 0) return <span className="text-gray-600">暂不可用</span>;
     const avgS = m.latencyCount > 0 ? (m.totalLatency / m.latencyCount / 1000).toFixed(1) : null;
-    const busy = m.activeReqs > m.nodes * 0.8;
     return (
       <>
         <span>{m.nodes} 节点</span>
-        {busy
-          ? <span className="text-amber-600 dark:text-amber-400"> · 繁忙</span>
-          : avgS ? <span> · avg {avgS}s</span> : null}
+        {avgS
+          ? <span className="text-gray-500"> · avg {avgS}s</span>
+          : <span className="text-green-600 dark:text-green-400"> · 空闲</span>}
       </>
     );
   }
@@ -772,7 +770,27 @@ export default function Providers() {
     return window.electronAPI.gateway.testProvider({ base_url, token });
   }
 
+  const [expandedTiers, setExpandedTiers] = useState(new Set());
+
+  function toggleTier(tier) {
+    setExpandedTiers(prev => {
+      const next = new Set(prev);
+      next.has(tier) ? next.delete(tier) : next.add(tier);
+      return next;
+    });
+  }
+
+  // A provider counts as "configured" if it has been actively set up
+  function isConfigured(p) {
+    const meta = PROVIDER_META[p.id];
+    if (!meta) return !!(p.base_url); // custom: has URL
+    if (meta.keyless) return p.enabled;
+    return p.enabled || !!p.token;
+  }
+
   const tiers = ['free', 'p2p', 'paid'];
+  const COLS = 2;        // grid-cols-2 for free/paid
+  const VISIBLE_ROWS = 2; // show 2 rows = 4 cards before folding
 
   return (
     <div className="p-6 space-y-6">
@@ -788,8 +806,21 @@ export default function Providers() {
 
       {/* Tier sections */}
       {tiers.map(tier => {
-        const cfg   = TIER_CONFIG[tier];
-        const items = providers.filter(p => p.type === tier);
+        const cfg        = TIER_CONFIG[tier];
+        const allItems   = providers.filter(p => p.type === tier);
+        const foldable   = tier === 'free' || tier === 'paid';
+        const isExpanded = expandedTiers.has(tier);
+
+        // Sort: configured first, then by original order
+        const sorted = foldable
+          ? [...allItems].sort((a, b) => (isConfigured(b) ? 1 : 0) - (isConfigured(a) ? 1 : 0))
+          : allItems;
+
+        const limit      = COLS * VISIBLE_ROWS; // 4
+        const canFold    = foldable && sorted.length > limit;
+        const visible    = canFold && !isExpanded ? sorted.slice(0, limit) : sorted;
+        const hiddenCnt  = sorted.length - limit;
+
         return (
           <section key={tier} className="space-y-3">
             <div className="flex items-center gap-2">
@@ -798,7 +829,7 @@ export default function Providers() {
               <span className="text-xs text-gray-600">{cfg.hint}</span>
             </div>
             <div className={`grid ${cfg.cols} gap-3`}>
-              {items.map(p =>
+              {visible.map(p =>
                 tier === 'p2p' ? (
                   <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} />
                 ) : PROVIDER_META[p.id] ? (
@@ -808,6 +839,15 @@ export default function Providers() {
                 )
               )}
             </div>
+            {/* Fold / expand toggle */}
+            {canFold && (
+              <button onClick={() => toggleTier(tier)}
+                className="w-full flex items-center justify-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 py-1 transition-colors">
+                {isExpanded
+                  ? <><span>收起</span><span className="text-[10px]">▲</span></>
+                  : <><span>展开另 {hiddenCnt} 个供给源</span><span className="text-[10px]">▼</span></>}
+              </button>
+            )}
             {tier === 'paid' && (
               <button onClick={addCustomProvider}
                 className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 border border-dashed border-gray-300 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600 rounded-xl px-4 py-2.5 transition-colors w-full">
