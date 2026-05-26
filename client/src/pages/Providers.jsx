@@ -1,30 +1,32 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getNetwork, getProfile, listKeys, createKey, deleteKey } from '../api/client';
+import { getNetwork, getProfile, listKeys, createKey, deleteKey, getProviderCatalog } from '../api/client';
 import { getServerUrl } from '../config';
 import { getGateway, getLocalConfig, getConfig } from '../api/adapter';
 
-const PROVIDER_META = {
-  ollama:          { icon: '🦙', label: 'Ollama',        hint: '自动检测本地实例，无需配置',              keyless: true },
-  groq:            { icon: '⚡', label: 'Groq',           hint: '免费申请：console.groq.com',              keyless: false },
-  'github-models': { icon: '🐙', label: 'GitHub Models',  hint: '免费调用 GPT-4o、Llama，需 GitHub PAT',   keyless: false },
+// 内置兜底目录：当后端 /api/catalog 不可达（离线 / VPS 宕机）时使用。
+// 正常情况下目录由后端下发，改源请改 server/catalog.py。
+const FALLBACK_PROVIDER_META = {
+  ollama:          { icon: '🦙', label: 'Ollama',        hint: '自动检测本地实例，无需配置',              keyless: true,  key_prefix: [],                      signup_url: 'https://ollama.com/download' },
+  groq:            { icon: '⚡', label: 'Groq',           hint: '免费申请：console.groq.com',              keyless: false, key_prefix: ['gsk_'],                signup_url: 'https://console.groq.com/keys' },
+  'github-models': { icon: '🐙', label: 'GitHub Models',  hint: '免费调用 GPT-4o、Llama，需 GitHub PAT',   keyless: false, key_prefix: ['ghp_', 'github_pat_'], signup_url: 'https://github.com/settings/tokens' },
   // ── 整合自 gpt4free needs_auth（合法注册拿 key 的源） ──
-  cerebras:        { icon: '🌀', label: 'Cerebras',       hint: '免费档每日 1M tokens：cloud.cerebras.ai', keyless: false },
-  nvidia:          { icon: '🟢', label: 'NVIDIA NIM',     hint: '新用户免费额度：build.nvidia.com',        keyless: false },
-  mistral:         { icon: '🌪', label: 'Mistral',        hint: '免费档：console.mistral.ai',              keyless: false },
-  openrouter:      { icon: '🛣', label: 'OpenRouter',     hint: '含 :free 免费模型：openrouter.ai',        keyless: false },
-  together:        { icon: '🔗', label: 'Together AI',    hint: '新用户赠额：api.together.ai',             keyless: false },
-  siliconflow:     { icon: '🧪', label: 'SiliconFlow',    hint: '国内免费源，新人 ¥16：siliconflow.cn',    keyless: false },
-  cohere:          { icon: '🐬', label: 'Cohere',         hint: 'Trial Key 免费：dashboard.cohere.com',    keyless: false },
-  'tokenbank-p2p': { icon: '🌐', label: 'P2P 分享网络',  hint: '消耗积分使用社区共享算力',                 keyless: true  },
-  openai:          { icon: '🤖', label: 'OpenAI',         hint: '付费 API，支持 GPT-4o / o3 等全系模型',   keyless: false },
-  'anthropic-paid':{ icon: '🧬', label: 'Anthropic',      hint: '付费 API，Claude 3.5 / 3.7 等系列',       keyless: false },
-  deepseek:        { icon: '🐋', label: 'DeepSeek',       hint: '官方付费：platform.deepseek.com',         keyless: false },
-  xai:             { icon: '✖️', label: 'xAI Grok',       hint: '付费 API：console.x.ai',                  keyless: false },
-  fireworks:       { icon: '🎆', label: 'Fireworks',      hint: '低价高速：fireworks.ai',                  keyless: false },
+  cerebras:        { icon: '🌀', label: 'Cerebras',       hint: '免费档每日 1M tokens：cloud.cerebras.ai', keyless: false, key_prefix: ['csk-'],                signup_url: 'https://cloud.cerebras.ai' },
+  nvidia:          { icon: '🟢', label: 'NVIDIA NIM',     hint: '新用户免费额度：build.nvidia.com',        keyless: false, key_prefix: ['nvapi-'],              signup_url: 'https://build.nvidia.com' },
+  mistral:         { icon: '🌪', label: 'Mistral',        hint: '免费档：console.mistral.ai',              keyless: false, key_prefix: [],                      signup_url: 'https://console.mistral.ai/api-keys/' },
+  openrouter:      { icon: '🛣', label: 'OpenRouter',     hint: '含 :free 免费模型：openrouter.ai',        keyless: false, key_prefix: ['sk-or-'],              signup_url: 'https://openrouter.ai/keys' },
+  together:        { icon: '🔗', label: 'Together AI',    hint: '新用户赠额：api.together.ai',             keyless: false, key_prefix: ['tgp_v1_'],             signup_url: 'https://api.together.ai/settings/api-keys' },
+  siliconflow:     { icon: '🧪', label: 'SiliconFlow',    hint: '国内免费源，新人 ¥16：siliconflow.cn',    keyless: false, key_prefix: ['sk-'],                 signup_url: 'https://cloud.siliconflow.cn/account/ak' },
+  cohere:          { icon: '🐬', label: 'Cohere',         hint: 'Trial Key 免费：dashboard.cohere.com',    keyless: false, key_prefix: [],                      signup_url: 'https://dashboard.cohere.com/api-keys' },
+  'tokenbank-p2p': { icon: '🌐', label: 'P2P 分享网络',  hint: '消耗积分使用社区共享算力',                 keyless: true,  key_prefix: [],                      signup_url: '' },
+  openai:          { icon: '🤖', label: 'OpenAI',         hint: '付费 API，支持 GPT-4o / o3 等全系模型',   keyless: false, key_prefix: ['sk-proj-', 'sk-'],     signup_url: 'https://platform.openai.com/api-keys' },
+  'anthropic-paid':{ icon: '🧬', label: 'Anthropic',      hint: '付费 API，Claude 3.5 / 3.7 等系列',       keyless: false, key_prefix: ['sk-ant-'],             signup_url: 'https://console.anthropic.com/settings/keys' },
+  deepseek:        { icon: '🐋', label: 'DeepSeek',       hint: '官方付费：platform.deepseek.com',         keyless: false, key_prefix: ['sk-'],                 signup_url: 'https://platform.deepseek.com/api_keys' },
+  xai:             { icon: '✖️', label: 'xAI Grok',       hint: '付费 API：console.x.ai',                  keyless: false, key_prefix: ['xai-'],                signup_url: 'https://console.x.ai' },
+  fireworks:       { icon: '🎆', label: 'Fireworks',      hint: '低价高速：fireworks.ai',                  keyless: false, key_prefix: ['fw_'],                 signup_url: 'https://fireworks.ai/account/api-keys' },
 };
 
-const DEFAULT_PROVIDERS = [
+const FALLBACK_PROVIDERS = [
   { id: 'ollama',          type: 'free', enabled: true,  token: '', base_url: 'http://127.0.0.1:11434/v1', models: [] },
   { id: 'groq',            type: 'free', enabled: false, token: '', base_url: 'https://api.groq.com/openai/v1', models: [] },
   { id: 'github-models',   type: 'free', enabled: false, token: '', base_url: 'https://models.inference.ai.azure.com', models: [] },
@@ -49,6 +51,52 @@ const TIER_CONFIG = {
   p2p:  { dot: 'bg-blue-500',  label: 'P2P 层',  hint: '消耗少量积分，社区算力',    cols: 'grid-cols-1' },
   paid: { dot: 'bg-amber-400', label: '付费层',  hint: '直接计费，作为最终兜底',    cols: 'grid-cols-2' },
 };
+
+// 把后端下发的 catalog 拆成展示 meta 映射 + 默认 provider 列表（与本地配置合并的种子）
+function catalogToState(catalog) {
+  const meta = {};
+  const defaults = [];
+  for (const p of catalog?.providers || []) {
+    if (!p?.id) continue;
+    meta[p.id] = {
+      icon: p.icon, label: p.label, hint: p.hint, keyless: !!p.keyless,
+      key_prefix: Array.isArray(p.key_prefix) ? p.key_prefix : [],
+      signup_url: p.signup_url || '',
+    };
+    defaults.push({
+      id: p.id,
+      type: p.type,
+      enabled: !!p.enabled_default,
+      token: '',
+      base_url: p.base_url || '',
+      models: [],
+    });
+  }
+  return { meta, defaults };
+}
+
+// 从粘贴文本里抽出候选 key：兼容多行、Bearer xxx、KEY=value、引号/逗号包裹
+function extractKeys(text) {
+  return (text || '')
+    .replace(/Bearer\s+/gi, ' ')
+    .split(/[\s,'"]+/)
+    .map(t => (t.includes('=') ? t.slice(t.lastIndexOf('=') + 1) : t).trim())
+    .filter(t => t.length >= 16 && /^[A-Za-z0-9_.\-]+$/.test(t));
+}
+
+// 按 key 前缀做最长匹配，返回候选 provider（base_url 取自当前 providers）。
+// 命中长度相同的多个 = 歧义（如 sk- 命中 openai/deepseek/siliconflow），需试探消歧。
+function detectCandidates(key, providers, meta) {
+  const hits = [];
+  for (const p of providers) {
+    for (const prefix of (meta[p.id]?.key_prefix || [])) {
+      if (prefix && key.startsWith(prefix)) hits.push({ id: p.id, base_url: p.base_url, len: prefix.length });
+    }
+  }
+  if (!hits.length) return [];
+  const maxLen = Math.max(...hits.map(h => h.len));
+  return hits.filter(h => h.len === maxLen);
+}
 
 function Toggle({ enabled, onChange }) {
   return (
@@ -569,14 +617,13 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest }) {
   );
 }
 
-function ProviderCard({ provider, onUpdate, onTest }) {
+function ProviderCard({ provider, meta, onUpdate, onTest }) {
   const [showKey,    setShowKey]    = useState(false);
   const [expanded,   setExpanded]   = useState(false);
   const [testing,    setTesting]    = useState(false);
   const [testMsg,    setTestMsg]    = useState('');
 
-
-  const meta    = PROVIDER_META[provider.id] || {};
+  meta = meta || {};
   const isP2P   = provider.type === 'p2p';
   const hasKey  = !!provider.token;
   const configured = meta.keyless || hasKey;
@@ -659,9 +706,15 @@ function ProviderCard({ provider, onUpdate, onTest }) {
                   {showKey ? '隐藏' : '显示'}
                 </button>
               </div>
-              {expanded && (
-                <button onClick={() => setExpanded(false)} className="text-xs text-gray-600 hover:text-gray-600 dark:text-gray-400">取消</button>
-              )}
+              <div className="flex items-center gap-3">
+                {meta.signup_url && (
+                  <a href={meta.signup_url} target="_blank" rel="noreferrer"
+                    className="text-xs text-blue-600 dark:text-blue-400 hover:underline">去领 key ↗</a>
+                )}
+                {expanded && (
+                  <button onClick={() => setExpanded(false)} className="text-xs text-gray-600 hover:text-gray-600 dark:text-gray-400">取消</button>
+                )}
+              </div>
             </div>
           )}
 
@@ -703,33 +756,184 @@ function ProviderCard({ provider, onUpdate, onTest }) {
   );
 }
 
+// ── 智能粘贴：粘任意 key（可多行）→ 自动识别源 / 验证 / 点亮 ──────────────────
+function SmartPasteBox({ providers, meta, onConfigure, onTest }) {
+  const [text,    setText]    = useState('');
+  const [busy,    setBusy]    = useState(false);
+  const [results, setResults] = useState([]);
+
+  async function safeTest(base_url, token) {
+    try { return (await onTest(base_url, token)) || { ok: false }; }
+    catch { return { ok: false }; }
+  }
+
+  // 单 key 处理：hintId 来自导入（命名变量直接映射 provider，跳过试探）；否则走前缀检测/试探
+  async function resolveAndApply(key, hintId, source) {
+    const masked = `${key.slice(0, 6)}…${key.slice(-4)}`;
+    let cands;
+    if (hintId && providers.some(p => p.id === hintId)) {
+      const p = providers.find(p => p.id === hintId);
+      cands = [{ id: p.id, base_url: p.base_url, len: 99 }];
+    } else {
+      cands = detectCandidates(key, providers, meta);
+    }
+    if (!cands.length) return { key: masked, source, status: 'unknown', detail: '无法识别，请粘到对应源卡片' };
+
+    let chosen = null, ok = false;
+    if (cands.length === 1) {
+      chosen = cands[0];
+      ok = (await safeTest(chosen.base_url, key)).ok;
+    } else {
+      // 歧义前缀（sk-）：并发试探各候选 base_url，首个通过的即为该源
+      const tested = await Promise.all(cands.map(async c => ({ c, ok: (await safeTest(c.base_url, key)).ok })));
+      const hit = tested.find(t => t.ok);
+      if (hit) { chosen = hit.c; ok = true; }
+      else {
+        const names = cands.map(c => meta[c.id]?.label || c.id).join(' / ');
+        return { key: masked, source, status: 'invalid', detail: `疑似 ${names}，但验证均失败（key 无效或网关未启动）` };
+      }
+    }
+    onConfigure(chosen.id, { token: key, enabled: ok });
+    return { key: masked, source, status: ok ? 'ok' : 'fail', detail: meta[chosen.id]?.label || chosen.id };
+  }
+
+  async function handleDetect() {
+    const keys = [...new Set(extractKeys(text))];
+    if (!keys.length) {
+      setResults([{ status: 'unknown', detail: '没识别到 key，请粘贴一个或多个 API key' }]);
+      return;
+    }
+    setBusy(true);
+    setResults([]);
+    const out = [];
+    for (const key of keys) out.push(await resolveAndApply(key, null, null));
+    setResults(out);
+    setBusy(false);
+    if (out.some(o => o.status === 'ok')) setText('');
+  }
+
+  async function handleImport() {
+    setBusy(true);
+    setResults([]);
+    let found = [];
+    try { found = (await getConfig().importKeys()) || []; } catch {}
+    if (!found.length) {
+      setResults([{ status: 'unknown', detail: '没在本机环境变量 / cc-switch / Claude 配置里找到可导入的 key（导入仅桌面端支持）' }]);
+      setBusy(false);
+      return;
+    }
+    const out = [];
+    for (const item of found) out.push(await resolveAndApply(item.key, item.providerId, item.source));
+    setResults(out);
+    setBusy(false);
+  }
+
+  const STYLE = {
+    ok:      { dot: 'text-green-600 dark:text-green-400',  tip: '已识别并启用' },
+    fail:    { dot: 'text-amber-600 dark:text-amber-400',  tip: '已填入，未通过验证' },
+    invalid: { dot: 'text-amber-600 dark:text-amber-400',  tip: '' },
+    unknown: { dot: 'text-gray-500',                       tip: '' },
+  };
+
+  return (
+    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <span className="text-base">🪄</span>
+        <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">智能粘贴 / 一键导入</h2>
+        <span className="text-xs text-gray-500">粘 key 或从本机已有配置导入，自动识别来源并启用</span>
+      </div>
+      <textarea
+        value={text}
+        onChange={e => setText(e.target.value)}
+        placeholder="例如：gsk_... 或 sk-... 或一整段含多个 key 的文本"
+        rows={3}
+        className="w-full text-xs font-mono bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2 outline-none focus:border-blue-400 dark:focus:border-blue-600 resize-y text-gray-800 dark:text-gray-200"
+      />
+      <div className="flex items-center gap-3 flex-wrap">
+        <button
+          onClick={handleDetect}
+          disabled={busy || !text.trim()}
+          className="px-4 py-1.5 text-xs font-medium rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors">
+          {busy ? '处理中…' : '识别并配置'}
+        </button>
+        <button
+          onClick={handleImport}
+          disabled={busy}
+          className="px-4 py-1.5 text-xs font-medium rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+          从本机导入
+        </button>
+        <span className="text-[11px] text-gray-400">扫描环境变量 / cc-switch / Claude 配置，仅本机、不上传</span>
+        {results.length > 0 && (
+          <button onClick={() => setResults([])} className="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">清空结果</button>
+        )}
+      </div>
+      {results.length > 0 && (
+        <ul className="space-y-1 pt-1">
+          {results.map((r, i) => {
+            const s = STYLE[r.status] || STYLE.unknown;
+            const icon = r.status === 'ok' ? '✓' : (r.status === 'unknown' ? '?' : '!');
+            return (
+              <li key={i} className={`text-xs flex items-start gap-2 ${s.dot}`}>
+                <span className="font-bold shrink-0">{icon}</span>
+                <span>
+                  {r.source && <span className="text-gray-400">[{r.source}] </span>}
+                  {r.key && <span className="font-mono text-gray-500">{r.key}</span>}
+                  {r.key && ' → '}
+                  <span className="font-medium">{r.detail}</span>
+                  {s.tip && <span className="text-gray-500">（{s.tip}）</span>}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function Providers() {
-  const [providers, setProviders] = useState(DEFAULT_PROVIDERS);
+  const [providers, setProviders] = useState(FALLBACK_PROVIDERS);
+  const [meta,      setMeta]      = useState(FALLBACK_PROVIDER_META);
   const [savedMsg,  setSavedMsg]  = useState('');
   // Track the last value written/loaded so we skip the initial load trigger
   const lastSaved = useRef(null);
 
   useEffect(() => {
-    getConfig().read().then(cfg => {
+    (async () => {
+      // 1) 源目录由后端下发，拉不到则回退内置兜底
+      let defaults = FALLBACK_PROVIDERS;
+      let metaMap  = FALLBACK_PROVIDER_META;
+      try {
+        const { data } = await getProviderCatalog();
+        if (data?.providers?.length) {
+          const s = catalogToState(data);
+          defaults = s.defaults;
+          metaMap  = s.meta;
+        }
+      } catch { /* 离线 / VPS 不可达：用兜底目录 */ }
+      setMeta(metaMap);
+
+      // 2) 与本地配置保存的开关/token/base_url 合并（adapter 兼容 Electron/HTTP）
+      const cfg = await getConfig().read();
       let resolved;
       if (cfg?.providers?.length) {
-        const defaultIds = new Set(DEFAULT_PROVIDERS.map(p => p.id));
-        const mapped = DEFAULT_PROVIDERS.map(def => {
+        const defaultIds = new Set(defaults.map(p => p.id));
+        const mapped = defaults.map(def => {
           const saved = cfg.providers.find(p => p.id === def.id);
           return saved ? { ...def, ...saved, models: saved.models || def.models || [] } : def;
         });
-        // Preserve any custom (non-default) providers stored in config; normalize base_url
+        // Preserve any custom (non-catalog) providers stored in config; normalize base_url
         const custom = cfg.providers.filter(p => !defaultIds.has(p.id)).map(p => ({
           ...p,
           base_url: (p.base_url || '').replace(/\/v1\/?$/, '').replace(/\/$/, ''),
         }));
         resolved = [...mapped, ...custom];
       } else {
-        resolved = DEFAULT_PROVIDERS;
+        resolved = defaults;
       }
       lastSaved.current = resolved;
       setProviders(resolved);
-    });
+    })();
   }, []);
 
   // Auto-save with 500 ms debounce; skip initial load
@@ -739,7 +943,7 @@ export default function Providers() {
       try {
         const cfg = (await getConfig().read()) || {};
         const normalizedProviders = providers.map(p =>
-          PROVIDER_META[p.id] ? p : { ...p, base_url: (p.base_url || '').replace(/\/v1\/?$/, '').replace(/\/$/, '') }
+          meta[p.id] ? p : { ...p, base_url: (p.base_url || '').replace(/\/v1\/?$/, '').replace(/\/$/, '') }
         );
         await getConfig().write({ ...cfg, providers: normalizedProviders });
         lastSaved.current = providers;
@@ -779,9 +983,9 @@ export default function Providers() {
 
   // A provider counts as "configured" if it has been actively set up
   function isConfigured(p) {
-    const meta = PROVIDER_META[p.id];
-    if (!meta) return !!(p.base_url); // custom: has URL
-    if (meta.keyless) return p.enabled;
+    const m = meta[p.id];
+    if (!m) return !!(p.base_url); // custom: has URL
+    if (m.keyless) return p.enabled;
     return p.enabled || !!p.token;
   }
 
@@ -800,6 +1004,9 @@ export default function Providers() {
         </div>
         {savedMsg && <span className="text-sm text-green-600 dark:text-green-400">{savedMsg}</span>}
       </div>
+
+      {/* 智能粘贴 */}
+      <SmartPasteBox providers={providers} meta={meta} onConfigure={updateProvider} onTest={testProvider} />
 
       {/* Tier sections */}
       {tiers.map(tier => {
@@ -829,8 +1036,8 @@ export default function Providers() {
               {visible.map(p =>
                 tier === 'p2p' ? (
                   <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} />
-                ) : PROVIDER_META[p.id] ? (
-                  <ProviderCard key={p.id} provider={p} onUpdate={updateProvider} onTest={testProvider} />
+                ) : meta[p.id] ? (
+                  <ProviderCard key={p.id} provider={p} meta={meta[p.id]} onUpdate={updateProvider} onTest={testProvider} />
                 ) : (
                   <CustomProviderCard key={p.id} provider={p} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} />
                 )

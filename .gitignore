@@ -44,3 +44,9 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Claude Code 本地设置（含权限历史/可能含密钥，勿提交）
+.claude/settings.local.json
+
+# 头脑风暴产物（mockup HTML，勿提交）
+.superpowers/

@@ -230,6 +230,94 @@ function parseDotenv(content) {
   return map;
 }
 
+// ── Provider key import（从本机环境/工具导入已有 key）────────────────────────
+// 命名环境变量 / 配置键 → 供给源 id（强提示，免试探）。只收来源明确的，
+// 故意不收 GITHUB_TOKEN、通用 API_KEY 等易误导入的泛化名。
+const ENV_PROVIDER_MAP = {
+  OPENAI_API_KEY: 'openai',
+  ANTHROPIC_API_KEY: 'anthropic-paid',
+  ANTHROPIC_AUTH_TOKEN: 'anthropic-paid',
+  GROQ_API_KEY: 'groq',
+  DEEPSEEK_API_KEY: 'deepseek',
+  OPENROUTER_API_KEY: 'openrouter',
+  MISTRAL_API_KEY: 'mistral',
+  TOGETHER_API_KEY: 'together',
+  TOGETHER_AI_API_KEY: 'together',
+  XAI_API_KEY: 'xai',
+  GROK_API_KEY: 'xai',
+  FIREWORKS_API_KEY: 'fireworks',
+  CEREBRAS_API_KEY: 'cerebras',
+  NVIDIA_API_KEY: 'nvidia',
+  NVIDIA_NIM_API_KEY: 'nvidia',
+  COHERE_API_KEY: 'cohere',
+  SILICONFLOW_API_KEY: 'siliconflow',
+};
+
+// cc-switch 等结构未知的 JSON，靠值的形态判断是否是 key
+const KEY_PREFIX_RE = /^(sk-|gsk_|csk-|nvapi-|xai-|fw_|tgp_v1_|ghp_|github_pat_)/;
+function looksLikeKey(name, value) {
+  if (typeof value !== 'string') return false;
+  const v = value.trim();
+  if (v.length < 20 || /\s/.test(v)) return false;
+  if (KEY_PREFIX_RE.test(v)) return true;
+  return /api[_-]?key|token|auth/i.test(name) && /^[A-Za-z0-9_.\-]+$/.test(v);
+}
+
+function collectKeysDeep(obj, source, push, depth = 0) {
+  if (!obj || typeof obj !== 'object' || depth > 8) return;
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v === 'string') { if (looksLikeKey(k, v)) push(v, null, source); }
+    else if (v && typeof v === 'object') collectKeysDeep(v, source, push, depth + 1);
+  }
+}
+
+// 返回 [{ key, providerId|null, source }]，仅本机扫描、绝不写日志/上传
+function scanProviderKeys() {
+  const out = [];
+  const seen = new Set();
+  const push = (key, providerId, source) => {
+    if (typeof key !== 'string') return;
+    const k = key.trim();
+    if (k.length < 8) return;
+    const dedupe = `${k}|${providerId || ''}`;
+    if (seen.has(dedupe)) return;
+    seen.add(dedupe);
+    out.push({ key: k, providerId: providerId || null, source });
+  };
+
+  // 1) 环境变量（命名即来源）
+  for (const [envName, pid] of Object.entries(ENV_PROVIDER_MAP)) {
+    if (process.env[envName]) push(process.env[envName], pid, `env:${envName}`);
+  }
+
+  // 2) 已知配置文件里的命名 key（复用 SCAN_FILES 的解析）
+  const home = os.homedir();
+  for (const { rel, fmt } of SCAN_FILES) {
+    const fp = path.join(home, rel);
+    if (!fs.existsSync(fp)) continue;
+    try {
+      const content = fs.readFileSync(fp, 'utf-8');
+      let envMap = {};
+      if (fmt === 'json-env')       envMap = JSON.parse(content).env || {};
+      else if (fmt === 'json-flat') envMap = JSON.parse(content);
+      else                          envMap = parseDotenv(content);
+      for (const [name, pid] of Object.entries(ENV_PROVIDER_MAP)) {
+        if (envMap[name]) push(envMap[name], pid, `file:${rel}`);
+      }
+    } catch {}
+  }
+
+  // 3) cc-switch（结构按版本变化，深度遍历兜底）
+  try {
+    const ccPath = path.join(home, '.cc-switch', 'config.json');
+    if (fs.existsSync(ccPath)) {
+      collectKeysDeep(JSON.parse(fs.readFileSync(ccPath, 'utf-8')), 'file:.cc-switch/config.json', push);
+    }
+  } catch {}
+
+  return out;
+}
+
 function scanLLMConfigs() {
   const home = os.homedir();
   const results = [];
@@ -318,6 +406,7 @@ function registerIPC() {
   ipcMain.handle('config:read',  () => readAgentConfig());
   ipcMain.handle('config:write', (_e, cfg) => { writeAgentConfig(cfg); return { ok: true }; });
   ipcMain.handle('config:scan',  () => scanLLMConfigs());
+  ipcMain.handle('config:importKeys', () => scanProviderKeys());
 
   // Write Claude Code config into ~/.claude/settings.local.json
   ipcMain.handle('claude:configure', async (_e, { baseUrl, apiKey, models = [] }) => {

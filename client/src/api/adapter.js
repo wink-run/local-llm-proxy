@@ -54,6 +54,7 @@ const electronAdapter = {
     read:  ()    => window.electronAPI.config.read(),
     write: (cfg) => window.electronAPI.config.write(cfg),
     scan:  ()    => window.electronAPI.config.scan(),
+    importKeys: () => window.electronAPI.config.importKeys(),
   },
 };
 
@@ -82,6 +83,7 @@ const httpAdapter = {
     read:  ()    => adminFetch('/api/config'),
     write: (cfg) => adminFetch('/api/config', { method: 'POST', body: JSON.stringify(cfg) }),
     scan:  ()    => Promise.resolve([]), // no HTTP equivalent — server-side scan not available remotely
+    importKeys: () => Promise.resolve([]), // 本机扫描仅桌面端，HTTP 模式无等价
   },
 };
 
