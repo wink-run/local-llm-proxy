@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getNetwork, getProfile, listKeys, createKey, deleteKey } from '../api/client';
 import { getServerUrl } from '../config';
+import { getGateway, getLocalConfig, getConfig } from '../api/adapter';
 
 const PROVIDER_META = {
   ollama:          { icon: '🦙', label: 'Ollama',        hint: '自动检测本地实例，无需配置',              keyless: true },
@@ -80,8 +81,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
 
   // Load saved key from local-config, and backend keys when section opens
   useEffect(() => {
-    if (!window.electronAPI?.localConfig) return;
-    window.electronAPI.localConfig.get().then(cfg => {
+    getLocalConfig().get().then(cfg => {
       const t = cfg.cloud_config?.token || '';
       setSavedKey(t);
       if (t) setSelectedKey(t);
@@ -140,10 +140,10 @@ function P2PNetworkCard({ provider, onUpdate }) {
   }
 
   async function handleSaveKey() {
-    if (!window.electronAPI?.localConfig || !selectedKey) return;
+    if (!selectedKey) return;
     setKeySaving(true);
     try {
-      await window.electronAPI.localConfig.setCloudConfig({
+      await getLocalConfig().setCloudConfig({
         url:   getServerUrl(),
         token: selectedKey,
       });
@@ -278,8 +278,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
       )}
 
       {/* Gateway API Key config */}
-      {window.electronAPI?.localConfig && (
-        <div className="border-t border-gray-100 dark:border-gray-800">
+      <div className="border-t border-gray-100 dark:border-gray-800">
           <button
             onClick={() => setShowKeyConfig(v => !v)}
             className="w-full flex items-center justify-between px-4 py-2.5 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors"
@@ -359,7 +358,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
             </div>
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -712,7 +711,7 @@ export default function Providers() {
   const lastSaved = useRef(null);
 
   useEffect(() => {
-    window.electronAPI?.config?.read().then(cfg => {
+    getConfig().read().then(cfg => {
       let resolved;
       if (cfg?.providers?.length) {
         const defaultIds = new Set(DEFAULT_PROVIDERS.map(p => p.id));
@@ -739,11 +738,11 @@ export default function Providers() {
     if (lastSaved.current === null || providers === lastSaved.current) return;
     const timer = setTimeout(async () => {
       try {
-        const cfg = (await window.electronAPI?.config?.read()) || {};
+        const cfg = (await getConfig().read()) || {};
         const normalizedProviders = providers.map(p =>
           PROVIDER_META[p.id] ? p : { ...p, base_url: (p.base_url || '').replace(/\/v1\/?$/, '').replace(/\/$/, '') }
         );
-        await window.electronAPI?.config?.write({ ...cfg, providers: normalizedProviders });
+        await getConfig().write({ ...cfg, providers: normalizedProviders });
         lastSaved.current = providers;
         setSavedMsg('已保存');
         setTimeout(() => setSavedMsg(''), 1500);
@@ -766,8 +765,7 @@ export default function Providers() {
   }
 
   async function testProvider(base_url, token) {
-    if (!window.electronAPI?.gateway) return { ok: false, error: 'gateway not ready' };
-    return window.electronAPI.gateway.testProvider({ base_url, token });
+    return getGateway().testProvider({ base_url, token });
   }
 
   const [expandedTiers, setExpandedTiers] = useState(new Set());

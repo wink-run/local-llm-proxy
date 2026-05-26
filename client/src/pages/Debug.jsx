@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { getConfig, getLocalConfig } from '../api/adapter';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -220,8 +221,8 @@ export default function Debug() {
   // Load config
   useEffect(() => {
     Promise.all([
-      window.electronAPI?.config?.read().catch(() => null),
-      window.electronAPI?.localConfig?.get().catch(() => null),
+      getConfig().read().catch(() => null),
+      getLocalConfig().get().catch(() => null),
     ]).then(([c, lc]) => {
       setCfg(c);
       setProvOpts(providerOptions(c, lc));

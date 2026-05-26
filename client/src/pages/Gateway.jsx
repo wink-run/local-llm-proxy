@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { getRates } from '../api/client';
+import { getGateway, getLocalConfig, getConfig } from '../api/adapter';
 
 // ── Tier helpers ──────────────────────────────────────────────────────────────
 
@@ -498,11 +499,10 @@ export default function Gateway() {
   // ── Data loading ────────────────────────────────────────────────────────────
 
   const refresh = useCallback(async () => {
-    if (!window.electronAPI?.gateway) return;
     const [s, st, lg] = await Promise.all([
-      window.electronAPI.gateway.status(),
-      window.electronAPI.gateway.getDailyStats(),
-      window.electronAPI.gateway.getLog(),
+      getGateway().status(),
+      getGateway().getDailyStats(),
+      getGateway().getLog(),
     ]);
     setStatus(s);
     setStats(st);
@@ -510,9 +510,8 @@ export default function Gateway() {
   }, []);
 
   const loadSceneData = useCallback(async () => {
-    if (!window.electronAPI?.localConfig) return;
     try {
-      const cfg = await window.electronAPI.localConfig.get();
+      const cfg = await getLocalConfig().get();
       const localRoutes = cfg.scene_routes || [];
       setRoutes(localRoutes);
       // Enrich local keys with scene info
@@ -533,7 +532,7 @@ export default function Gateway() {
 
     // Free / paid models from configured provider model lists
     try {
-      const cfg = await window.electronAPI?.config?.read();
+      const cfg = await getConfig().read();
       for (const p of (cfg?.providers || [])) {
         if (!p.enabled || p.type === 'p2p') continue;
         for (const m of (p.models || [])) add(typeof m === 'string' ? m : m.name, p.type);
@@ -601,14 +600,13 @@ export default function Gateway() {
   // ── Scene route actions ────────────────────────────────────────────────────
 
   const saveRoute = async (route) => {
-    if (!window.electronAPI?.localConfig) return;
     try {
       if (route.id) {
-        await window.electronAPI.localConfig.updateSceneRoute({
+        await getLocalConfig().updateSceneRoute({
           id: route.id, scene_name: route.scene_name, icon: route.icon, steps: route.steps,
         });
       } else {
-        await window.electronAPI.localConfig.createSceneRoute({
+        await getLocalConfig().createSceneRoute({
           scene_name: route.scene_name, icon: route.icon, steps: route.steps,
         });
       }
@@ -622,14 +620,14 @@ export default function Gateway() {
 
   const removeRoute = async (id) => {
     if (!confirm('删除此场景路由？')) return;
-    try { await window.electronAPI.localConfig.deleteSceneRoute(id); await loadSceneData(); }
+    try { await getLocalConfig().deleteSceneRoute(id); await loadSceneData(); }
     catch (e) { alert('删除失败'); }
   };
 
   // ── App key actions ────────────────────────────────────────────────────────
 
   async function handleCreateAppKey() {
-    if (!appNote.trim() || !window.electronAPI?.localConfig) return;
+    if (!appNote.trim()) return;
     setAppBusy(true);
     setAppKey(null);
     setAppRouteMode(null);
@@ -637,7 +635,7 @@ export default function Gateway() {
     setAppModelId('');
     setAppRouterModel('');
     try {
-      const key = await window.electronAPI.localConfig.createKey({ note: appNote.trim() });
+      const key = await getLocalConfig().createKey({ note: appNote.trim() });
       setAppKey(key);
       setNewKeyId(key.id);
       await loadSceneData();
@@ -650,7 +648,7 @@ export default function Gateway() {
 
   async function handleDeleteKey(keyId) {
     if (!confirm('删除此 Key？操作不可恢复。')) return;
-    try { await window.electronAPI.localConfig.deleteKey(keyId); await loadSceneData(); }
+    try { await getLocalConfig().deleteKey(keyId); await loadSceneData(); }
     catch (e) { alert('删除失败'); }
   }
 
@@ -677,9 +675,9 @@ export default function Gateway() {
         )}
         <button
           onClick={async () => {
-            if (restarting || !window.electronAPI?.gateway) return;
+            if (restarting) return;
             setRestarting(true);
-            await window.electronAPI.gateway.restart();
+            await getGateway().restart();
             await new Promise(r => setTimeout(r, 600));
             await refresh();
             setRestarting(false);
@@ -892,7 +890,7 @@ export default function Gateway() {
                         const r = routes.find(x => x.id === id);
                         if (r) {
                           try {
-                            await window.electronAPI.localConfig.bindKey({ id: appKey.id, model_key: r.model_key });
+                            await getLocalConfig().bindKey({ id: appKey.id, model_key: r.model_key });
                             loadSceneData();
                           } catch {}
                           // Reset creation area; InstanceList keeps the expanded key via newKeyId
@@ -920,7 +918,7 @@ export default function Gateway() {
                   onChange={async v => {
                     if (!v || !appKey) return;
                     try {
-                      await window.electronAPI.localConfig.bindKey({ id: appKey.id, model_key: v });
+                      await getLocalConfig().bindKey({ id: appKey.id, model_key: v });
                       loadSceneData();
                     } catch {}
                     // Reset creation area; InstanceList keeps the expanded key via newKeyId
