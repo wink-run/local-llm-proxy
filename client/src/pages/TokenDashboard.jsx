@@ -1,7 +1,8 @@
 // client/src/pages/TokenDashboard.jsx
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../store/index';
-import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus } from '../api/client';
+import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getUserDevices, deleteDevice } from '../api/client';
+import { getGateway } from '../api/adapter';
 
 const PROVIDER_COLORS = {
   ollama:         { bg: 'bg-green-500',  label: 'Ollama（本地）',   type: 'free' },
@@ -116,6 +117,86 @@ function SpinCard({ onSuccess }) {
   );
 }
 
+// ── Devices section ───────────────────────────────────────────────────────────
+
+const DEVICE_ICON = { desktop: '💻', cli: '🖥' };
+
+function DevicesSection() {
+  const [devices, setDevices] = useState(null);
+
+  useEffect(() => {
+    getUserDevices()
+      .then(r => {
+        const raw = r.data?.devices || [];
+        // normalise: ensure every entry has device_id (backend may return id instead)
+        const normalised = raw.map(d => ({ ...d, device_id: d.device_id || d.id || null }));
+        // deduplicate by device_id, drop entries with no identifier at all
+        const seen = new Set();
+        const clean = normalised.filter(d => {
+          if (!d.device_id) return false;
+          if (seen.has(d.device_id)) return false;
+          seen.add(d.device_id);
+          return true;
+        });
+        setDevices(clean);
+      })
+      .catch(() => setDevices([]));
+  }, []);
+
+  async function handleRemove(deviceId) {
+    try {
+      await deleteDevice(deviceId);
+      setDevices(prev => prev.filter(d => d.device_id !== deviceId));
+    } catch {}
+  }
+
+  if (devices === null) return null; // loading — don't flash empty
+  if (devices.length === 0) return null;
+
+  return (
+    <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+      <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">我的设备</h2>
+      <div className="space-y-2">
+        {devices.map((d, i) => (
+          <div key={`${d.device_id ?? d.id ?? ''}-${i}`}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-gray-900">
+            <span className="text-base select-none shrink-0">{DEVICE_ICON[d.type] || '🖥'}</span>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.online ? 'bg-green-500' : 'bg-gray-400'}`} />
+                <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{d.name}</span>
+                {d.version && <span className="text-xs text-gray-400 shrink-0">v{d.version}</span>}
+              </div>
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className="text-xs text-gray-400 truncate">{d.platform}</span>
+                {(d.today_calls > 0 || d.today_errors > 0) && (
+                  <span className="text-xs text-gray-400 shrink-0">
+                    今日 {d.today_calls} 次
+                    {d.today_errors > 0 && <span className="text-red-400 ml-1">{d.today_errors} 错</span>}
+                  </span>
+                )}
+              </div>
+            </div>
+            <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full ${
+              d.online
+                ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+            }`}>
+              {d.online ? '在线' : '离线'}
+            </span>
+            {!d.online && (
+              <button onClick={() => handleRemove(d.device_id)}
+                className="shrink-0 text-xs text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors px-1">
+                ✕
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function TokenDashboard() {
@@ -133,14 +214,14 @@ export default function TokenDashboard() {
   const [creditsOpen,setCreditsOpen]=useState(false);
 
   const loadData = useCallback(async () => {
-    if (!window.electronAPI?.gateway) return;
     try {
+      const gw = getGateway();
       const [s, lg] = await Promise.all([
-        window.electronAPI.gateway.getDailyStats(),
-        window.electronAPI.gateway.getLog(),
+        gw.getDailyStats(),
+        gw.getLog(),
       ]);
       setStats(s);
-      setLog(lg.slice(0, 5));
+      setLog((lg || []).slice(0, 5));
     } catch {}
   }, []);
 
@@ -258,6 +339,9 @@ export default function TokenDashboard() {
         <CheckinCard onSuccess={refreshUser} />
         <SpinCard    onSuccess={refreshUser} />
       </div>
+
+      {/* Devices */}
+      <DevicesSection />
 
       {/* Credits (collapsible) */}
       <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl overflow-hidden">
