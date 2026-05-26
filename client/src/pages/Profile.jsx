@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../store/index';
-import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getRates } from '../api/client';
+import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getRates, getUserDevices, deleteDevice } from '../api/client';
 import { getServerUrl } from '../config';
 
 const TX_LABEL = {
@@ -517,6 +517,103 @@ function SpinCard({ onSuccess }) {
   );
 }
 
+const DEVICE_ICON = { desktop: '💻', cli: '🖥' };
+
+function DevicesSection() {
+  const [devices, setDevices] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [removing, setRemoving] = useState(null);
+
+  const load = () => {
+    setLoading(true);
+    getUserDevices()
+      .then(r => setDevices(r.data.devices || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, []);
+
+  async function handleRemove(deviceId) {
+    if (!confirm('移除此设备？')) return;
+    setRemoving(deviceId);
+    try {
+      await deleteDevice(deviceId);
+      setDevices(ds => ds.filter(d => d.device_id !== deviceId));
+    } catch {
+      alert('移除失败');
+    } finally {
+      setRemoving(null);
+    }
+  }
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">我的设备</h2>
+        <button onClick={load} disabled={loading}
+          className="text-xs text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50">
+          {loading ? '加载中…' : '刷新'}
+        </button>
+      </div>
+
+      {loading && devices.length === 0 ? (
+        <p className="text-sm text-gray-400 dark:text-gray-500">加载中…</p>
+      ) : devices.length === 0 ? (
+        <p className="text-sm text-gray-400 dark:text-gray-500">暂无设备记录</p>
+      ) : (
+        <div className="space-y-2">
+          {devices.map(d => (
+            <div key={d.device_id}
+              className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="text-xl shrink-0">{DEVICE_ICON[d.type] || '🖥'}</span>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{d.name || d.device_id}</span>
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.online ? 'bg-green-500' : 'bg-gray-400'}`}
+                        title={d.online ? '在线' : '离线'}/>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${d.online ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-gray-700 text-gray-500'}`}>
+                        {d.online ? '在线' : '离线'}
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {d.type === 'desktop' ? '桌面版' : '命令行版'}
+                      {d.version ? ` · v${d.version}` : ''}
+                      {d.platform ? ` · ${d.platform}` : ''}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 shrink-0">
+                  <div className="text-right">
+                    <div className="text-sm font-semibold text-gray-800 dark:text-gray-200">{d.today_calls ?? 0}</div>
+                    <div className="text-[10px] text-gray-500">今日请求</div>
+                  </div>
+                  {d.today_errors > 0 && (
+                    <div className="text-right">
+                      <div className="text-sm font-semibold text-red-500">{d.today_errors}</div>
+                      <div className="text-[10px] text-gray-500">错误</div>
+                    </div>
+                  )}
+                  {!d.online && (
+                    <button
+                      onClick={() => handleRemove(d.device_id)}
+                      disabled={removing === d.device_id}
+                      className="text-xs text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors disabled:opacity-50">
+                      {removing === d.device_id ? '移除中…' : '移除'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function Profile() {
   const { user, refreshUser } = useAuth();
   const [txs, setTxs] = useState([]);
@@ -567,6 +664,8 @@ export default function Profile() {
       <PurchaseSection />
 
       <ReferralSection referralCode={user.referral_code} />
+
+      <DevicesSection />
 
       <section>
         <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-3">积分流水</h2>
