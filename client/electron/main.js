@@ -7,6 +7,7 @@ const https = require('https');
 const { autoUpdater } = require('electron-updater');
 const agent = require('./agent-worker');
 const gateway = require('./local-gateway');
+const reporter = require('../shared/device-reporter');
 
 const isDev = !app.isPackaged;
 const VITE_URL = 'http://localhost:5173';
@@ -569,6 +570,32 @@ app.whenReady().then(() => {
 
   if (!isDev) setupAutoUpdater();
 
+  // Initialize device reporter
+  (async () => {
+    const lc = (() => {
+      try {
+        const p = require('path').join(app.getPath('userData'), 'local-config.json');
+        return JSON.parse(require('fs').readFileSync(p, 'utf8'));
+      } catch { return {}; }
+    })();
+    await reporter.init({
+      type      : 'desktop',
+      name      : os.hostname(),
+      platform  : `${process.platform}/${os.release()}`,
+      version   : app.getVersion(),
+      serverUrl : lc.cloud_config?.url  || null,
+      token     : lc.cloud_config?.token || null,
+    });
+    reporter.start(() => {
+      const s = gateway.getDailyStats();
+      return {
+        calls            : s.calls  || 0,
+        errors           : s.errors || 0,
+        providers_active : Object.keys(s.by_provider || {}).length,
+      };
+    });
+  })().catch(() => {});
+
   // Auto-start agent if configured
   const cfg = readAgentConfig();
   if (cfg?.auto_start && cfg?.worker_key) {
@@ -585,4 +612,4 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => { agent.stop(); gateway.stop(); });
+app.on('before-quit', () => { agent.stop(); gateway.stop(); reporter.stop(); });
