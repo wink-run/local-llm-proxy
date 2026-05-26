@@ -152,26 +152,13 @@ function testProvider(base_url, token) {
 
 // ── Auth middleware ───────────────────────────────────────────────────────────
 
-function isAuthRequired(urlPath) {
-  // Skip auth for static assets and root
-  if (urlPath === '/' || urlPath.startsWith('/assets/')) return false;
+function checkAuth(_req, _res) {
+  // The admin API is a local management interface — access control is left to
+  // the operator (firewall / bind address).  Using cloud_config.token as an
+  // admin password was a design mistake: it is a P2P connection credential,
+  // not a local secret, and creates a circular dependency when trying to set
+  // it for the first time via the UI.
   return true;
-}
-
-function checkAuth(req, res) {
-  const lc = readLocalConfig() || {};
-  const configToken = lc.cloud_config?.token || '';
-  if (!configToken) return true; // no token configured — allow all
-
-  const urlPath = req.url.split('?')[0];
-  if (!isAuthRequired(urlPath)) return true;
-
-  const authHeader = req.headers['authorization'] || '';
-  const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-  if (provided === configToken) return true;
-
-  json(res, 401, { error: 'Unauthorized' });
-  return false;
 }
 
 // ── Request router ────────────────────────────────────────────────────────────
@@ -371,12 +358,6 @@ async function handleRequest(req, res) {
  */
 function start(port, gatewayInstance) {
   _gateway = gatewayInstance;
-
-  const lc = readLocalConfig() || {};
-  const configToken = lc.cloud_config?.token || '';
-  if (!configToken) {
-    console.warn('[admin-api] WARNING: No cloud token configured — admin API is unauthenticated. Set cloud_config.token to secure it.');
-  }
 
   _server = http.createServer((req, res) => {
     handleRequest(req, res).catch((err) => {
