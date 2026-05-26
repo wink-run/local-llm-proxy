@@ -983,9 +983,9 @@ export default function Providers() {
 
   // A provider counts as "configured" if it has been actively set up
   function isConfigured(p) {
-    const meta = PROVIDER_META[p.id];
-    if (!meta) return !!(p.base_url); // custom: has URL
-    if (meta.keyless) return p.enabled;
+    const m = meta[p.id];
+    if (!m) return !!(p.base_url); // custom: has URL
+    if (m.keyless) return p.enabled;
     return p.enabled || !!p.token;
   }
 
