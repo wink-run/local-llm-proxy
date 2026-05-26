@@ -834,7 +834,7 @@ export default function Gateway() {
             <input
               value={appNote}
               onChange={e => setAppNote(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleCreateAppKey()}
+              onKeyDown={e => e.key === 'Enter' && e.preventDefault()}
               placeholder="Key 备注，如：工作用 Claude Code"
               className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-400 dark:placeholder-gray-500"
             />
