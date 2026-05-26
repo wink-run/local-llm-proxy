@@ -6,51 +6,106 @@ on:
       - 'v*'
   workflow_dispatch:
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/wink-run/local-llm-proxy/gateway
+
 jobs:
+
+  # ── macOS .dmg ───────────────────────────────────────────────────────────────
   build-mac:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: client/package-lock.json
+
       - name: Install dependencies
         run: npm ci
         working-directory: client
-      - name: Build
+
+      - name: Build (Vite + electron-builder)
         run: npm run build -- --publish never
         working-directory: client
-      - name: Upload macOS dmg
-        uses: actions/upload-artifact@v4
-        with:
-          name: mac-dmg
-          path: client/dist-app/*.dmg
 
+      # Upload .dmg + latest-mac.yml (needed by electron-updater)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-artifacts
+          path: |
+            client/dist-app/*.dmg
+            client/dist-app/latest-mac.yml
+
+  # ── Windows .exe ─────────────────────────────────────────────────────────────
   build-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: client/package-lock.json
+
       - name: Install dependencies
         run: npm ci
         working-directory: client
-      - name: Build
+
+      - name: Build (Vite + electron-builder)
         run: npm run build -- --publish never
         working-directory: client
-      - name: Upload Windows installer
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-installer
-          path: client/dist-app/*.exe
 
+      # Upload .exe + latest.yml (needed by electron-updater on Windows)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: |
+            client/dist-app/*.exe
+            client/dist-app/latest.yml
+
+  # ── Docker image (ghcr.io) ───────────────────────────────────────────────────
+  build-docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./client
+          file: ./client/Dockerfile.cli
+          push: ${{ startsWith(github.ref, 'refs/tags/') }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── GitHub Release ────────────────────────────────────────────────────────────
   release:
-    needs: [build-mac, build-windows]
+    needs: [build-mac, build-windows, build-docker]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
@@ -59,9 +114,49 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/mac-dmg/*.dmg
-            artifacts/windows-installer/*.exe
+            artifacts/*.dmg
+            artifacts/*.exe
+            artifacts/latest.yml
+            artifacts/latest-mac.yml
+          body: |
+            ## 下载
+
+            | 平台 | 文件 | 说明 |
+            |---|---|---|
+            | macOS | `.dmg` | 双击安装，支持自动更新 |
+            | Windows | `.exe` | NSIS 安装包，支持自动更新 |
+            | Docker | 见下方 | 命令行/服务器无界面部署 |
+
+            ## Docker 快速启动
+
+            ```bash
+            # 拉取镜像
+            docker pull ${{ env.IMAGE }}:${{ github.ref_name }}
+
+            # 准备配置
+            mkdir -p gateway-data
+            cat > gateway-data/local-config.json << 'EOF'
+            {
+              "cloud_config": { "url": "http://YOUR_BACKEND:8000", "token": "YOUR_P2P_KEY" },
+              "scene_routes": [],
+              "local_keys": []
+            }
+            EOF
+
+            # 启动
+            docker run -d \
+              --name llm-gateway \
+              -p 11430:11430 \
+              -p 11431:11431 \
+              -v ./gateway-data:/data/.llm-agent \
+              ${{ env.IMAGE }}:${{ github.ref_name }}
+            ```
+
+            Web UI: `http://localhost:11431`
+            LLM 入口: `OPENAI_BASE_URL=http://localhost:11430/v1`

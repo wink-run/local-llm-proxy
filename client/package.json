@@ -46,7 +46,7 @@
     ],
     "publish": {
       "provider": "github",
-      "owner": "REPLACE_WITH_YOUR_GITHUB_USERNAME",
+      "owner": "wink-run",
       "repo": "local-llm-proxy"
     },
     "mac": {
