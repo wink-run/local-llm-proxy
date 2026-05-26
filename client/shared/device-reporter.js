@@ -136,14 +136,16 @@ async function init(options) {
     device_id : existing.device_id || null,
   };
 
-  // Register if we don't have a device_id yet
-  if (!_config.device_id) {
-    _config.device_id = await _register();
-    // Persist device_id back into agent config
-    const cfg = readAgentConfig() || {};
-    cfg.device_id = _config.device_id;
-    try { writeAgentConfig(cfg); } catch (_) {}
-  }
+  // Always call register on startup: confirms the device_id with the server,
+  // re-registers if it was previously a local-only fallback ID, and creates
+  // a new ID if we have none. The server reuses the existing ID if it already
+  // belongs to this user.
+  const registeredId = await _register();
+  _config.device_id = registeredId;
+  // Persist device_id back into agent config (may differ if server assigned a new one)
+  const cfg = readAgentConfig() || {};
+  cfg.device_id = registeredId;
+  try { writeAgentConfig(cfg); } catch (_) {}
 }
 
 /**
