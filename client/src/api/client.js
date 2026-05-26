@@ -124,3 +124,14 @@ export function getDashboardStats(days = 30) {
 export function getModelStats(days = 30) {
   return http.get(`/user/model-stats?days=${days}`);
 }
+
+
+// ── Device management ─────────────────────────────────────────────────────────
+
+export function getUserDevices() {
+  return http.get('/user/devices');
+}
+
+export function deleteDevice(deviceId) {
+  return http.delete(`/device/${deviceId}`);
+}

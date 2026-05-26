@@ -74,6 +74,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getDailyStats:   () => ipcRenderer.invoke('gateway:getDailyStats'),
     setStrategy:     (s) => ipcRenderer.invoke('gateway:setStrategy', s),
     testProvider:    (p) => ipcRenderer.invoke('gateway:testProvider', p),
+    restart:         () => ipcRenderer.invoke('gateway:restart'),
   },
   localConfig: {
     get:               ()  => ipcRenderer.invoke('localConfig:get'),

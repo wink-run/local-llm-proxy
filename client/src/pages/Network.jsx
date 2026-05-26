@@ -155,8 +155,8 @@ export default function Network() {
               {modelStats.length === 0 ? (
                 <div className="px-5 py-6 text-xs text-gray-600">暂无在线模型</div>
               ) : modelStats.map(m => {
-                const isBusy = m.nodes > 0 && m.activeReqs > m.nodes * 0.8;
-                const dot    = m.nodes === 0 ? 'gray' : isBusy ? 'amber' : 'green';
+                const isBusy = false;
+                const dot    = m.nodes === 0 ? 'gray' : 'green';
                 const avgS   = m.latencyCount > 0
                   ? (m.totalLatency / m.latencyCount / 1000).toFixed(1)
                   : null;
@@ -175,15 +175,15 @@ export default function Network() {
                           <span className="text-[9px] text-gray-600 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded">{size}</span>
                         )}
                       </div>
-                      {isBusy && m.nodes > 0 && (
-                        <div className="text-[10px] text-amber-600 mt-0.5">繁忙 · 等待中</div>
+                      {m.nodes > 0 && !avgS && (
+                        <div className="text-[10px] text-green-600 mt-0.5">空闲</div>
                       )}
                     </div>
                     <div className="text-right shrink-0">
                       {m.nodes > 0 ? (
                         <>
                           <div className="text-xs font-medium text-gray-700 dark:text-gray-300">{m.nodes} 节点</div>
-                          <div className={`text-[10px] mt-0.5 ${isBusy ? 'text-amber-700' : 'text-gray-600'}`}>
+                          <div className="text-[10px] mt-0.5 text-gray-600">
                             {avgS ? `avg ${avgS}s` : '—'}
                           </div>
                         </>

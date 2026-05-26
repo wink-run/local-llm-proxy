@@ -143,6 +143,8 @@ function proxyRequest(provider, reqPath, body, res) {
     };
 
     const t0 = Date.now();
+    let firstTokenMs = null;
+    let ftBuf = '';
 
     const proxyReq = mod.request(opts, (proxyRes) => {
       if (proxyRes.statusCode >= 400) {
@@ -159,11 +161,23 @@ function proxyRequest(provider, reqPath, body, res) {
         'X-Accel-Buffering':     'no',
         'Access-Control-Allow-Origin': '*',
       });
+      // Track first real content token (first non-empty `data:` SSE line)
+      proxyRes.on('data', (chunk) => {
+        if (firstTokenMs !== null) return;
+        ftBuf += chunk.toString();
+        const lines = ftBuf.split('\n');
+        ftBuf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const ds = line.slice(6).trim();
+          if (ds && ds !== '[DONE]') { firstTokenMs = Date.now() - t0; break; }
+        }
+      });
       proxyRes.pipe(res);
-      proxyRes.on('end',   () => resolve({ provider: provider.id, latency: Date.now() - t0 }));
+      proxyRes.on('end',   () => resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0 }));
       proxyRes.on('error', (err) => {
         res.destroy(err);
-        resolve({ provider: provider.id, latency: Date.now() - t0 });
+        resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0 });
       });
     });
 
@@ -215,7 +229,8 @@ function proxyConvertSync(provider, oaiBody, model, res) {
           const resp    = JSON.stringify(openaiToAnthropic(oaiResp, model));
           res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
           res.end(resp);
-          resolve({ provider: provider.id, latency: Date.now() - t0 });
+          const latency = Date.now() - t0;
+          resolve({ provider: provider.id, latency, first_token_ms: latency });
         } catch (err) { reject(err); }
       });
       proxyRes.on('error', reject);
@@ -273,7 +288,7 @@ function proxyConvertStream(provider, oaiBody, model, res) {
       })}\n\n`);
       res.write('event: ping\ndata: {"type":"ping"}\n\n');
 
-      let buf = '', outputTokens = 0, stopReason = 'end_turn';
+      let buf = '', outputTokens = 0, stopReason = 'end_turn', firstTokenMs = null;
 
       proxyRes.on('data', (chunk) => {
         buf += chunk.toString();
@@ -289,6 +304,7 @@ function proxyConvertStream(provider, oaiBody, model, res) {
             const text   = (choice.delta || {}).content || '';
             const finish = choice.finish_reason;
             if (text) {
+              if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
               outputTokens++;
               res.write(`event: content_block_delta\ndata: ${JSON.stringify({
                 type: 'content_block_delta', index: 0,
@@ -308,10 +324,10 @@ function proxyConvertStream(provider, oaiBody, model, res) {
         })}\n\n`);
         res.write('event: message_stop\ndata: {"type":"message_stop"}\n\n');
         res.end();
-        resolve({ provider: provider.id, latency: Date.now() - t0 });
+        resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0 });
       });
 
-      proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0 }); });
+      proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0 }); });
     });
     proxyReq.on('error', reject);
     proxyReq.on('timeout', () => { proxyReq.destroy(); reject(new Error('timeout')); });
@@ -356,8 +372,9 @@ function proxyP2PSync(provider, oaiBody, model, res) {
         });
         return reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode }));
       }
-      let buf = '', fullText = '', inputTokens = 0, outputTokens = 0, stopReason = 'end_turn';
+      let buf = '', fullText = '', inputTokens = 0, outputTokens = 0, stopReason = 'end_turn', firstTokenMs = null;
       proxyRes.on('data', (chunk) => {
+        if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
         buf += chunk.toString();
         const lines = buf.split('\n');
         buf = lines.pop();
@@ -392,7 +409,7 @@ function proxyP2PSync(provider, oaiBody, model, res) {
             res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
             res.end(resp);
           }
-          resolve({ provider: provider.id, latency: Date.now() - t0 });
+          resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0 });
         } catch (err) { reject(err); }
       });
       proxyRes.on('error', reject);
@@ -480,7 +497,7 @@ async function route(model, reqPath, body, res) {
             scene_name: scene.scene_name,
             tried: failedModels.length ? [...failedModels] : undefined,
             tier: provider.type, via: provider.id, via_label: provider.label,
-            latency_ms: result.latency, status: 'ok',
+            latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok',
           });
           recordStats(provider.id, stepModel);
           stepSucceeded = true;
@@ -510,7 +527,7 @@ async function route(model, reqPath, body, res) {
       pushLog({
         ts: t0, requested_model: model, model,
         tier: provider.type, via: provider.id, via_label: provider.label,
-        latency_ms: result.latency, status: 'ok',
+        latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok',
       });
       recordStats(provider.id, model);
       return;
@@ -623,6 +640,25 @@ function stop() {
   });
 }
 
+function restart() {
+  return new Promise((resolve) => {
+    const port = _port;
+    const getConfig = _getConfig;
+    if (_server) {
+      const s = _server;
+      _server = null;
+      s.close(() => {
+        console.log('[gateway] restarting...');
+        start(port, getConfig);
+        resolve({ ok: true });
+      });
+    } else {
+      start(port, getConfig);
+      resolve({ ok: true });
+    }
+  });
+}
+
 function setStrategy() { /* deprecated */ }
 
 function getStatus() {
@@ -656,6 +692,6 @@ function setBackendConfig({ url, token } = {}) {
 }
 
 module.exports = {
-  start, stop, setStrategy, getStatus, getLog, getDailyStats,
+  start, stop, restart, setStrategy, getStatus, getLog, getDailyStats,
   setKeySceneMap, setRouterModelMap, setPeerModels, setBackendConfig,
 };

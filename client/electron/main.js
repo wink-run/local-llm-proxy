@@ -7,6 +7,7 @@ const https = require('https');
 const { autoUpdater } = require('electron-updater');
 const agent = require('./agent-worker');
 const gateway = require('./local-gateway');
+const reporter = require('../shared/device-reporter');
 
 const isDev = !app.isPackaged;
 const VITE_URL = 'http://localhost:5173';
@@ -169,6 +170,24 @@ function readAgentConfig() {
 function writeAgentConfig(cfg) {
   fs.mkdirSync(path.dirname(AGENT_CONFIG_PATH), { recursive: true });
   fs.writeFileSync(AGENT_CONFIG_PATH, JSON.stringify(cfg, null, 2), 'utf-8');
+}
+
+// ── Local Config helpers (stored in userData) ────────────────────────────────
+
+function localConfigPath() {
+  return path.join(app.getPath('userData'), 'local-config.json');
+}
+
+function readLocalConfig() {
+  try {
+    const p = localConfigPath();
+    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch {}
+  return { scene_routes: [], local_keys: [] };
+}
+
+function writeLocalConfig(cfg) {
+  fs.writeFileSync(localConfigPath(), JSON.stringify(cfg, null, 2), 'utf8');
 }
 
 // ── LLM config scanner ────────────────────────────────────────────────────────
@@ -458,6 +477,7 @@ function registerIPC() {
   ipcMain.handle('gateway:status',        () => gateway.getStatus());
   ipcMain.handle('gateway:getLog',        () => gateway.getLog());
   ipcMain.handle('gateway:getDailyStats', () => gateway.getDailyStats());
+  ipcMain.handle('gateway:restart',       () => gateway.restart());
   ipcMain.handle('gateway:setStrategy', (_e, strategy) => {
     if (strategy !== 'cost' && strategy !== 'quality') return { ok: false, error: 'invalid_strategy' };
     gateway.setStrategy(strategy);
@@ -465,22 +485,6 @@ function registerIPC() {
   });
 
   // ── Local Config (scene routes + local keys, stored in userData) ─────────────
-
-  function localConfigPath() {
-    return path.join(app.getPath('userData'), 'local-config.json');
-  }
-
-  function readLocalConfig() {
-    try {
-      const p = localConfigPath();
-      if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'));
-    } catch {}
-    return { scene_routes: [], local_keys: [] };
-  }
-
-  function writeLocalConfig(cfg) {
-    fs.writeFileSync(localConfigPath(), JSON.stringify(cfg, null, 2), 'utf8');
-  }
 
   function rndHex(bytes) {
     return require('crypto').randomBytes(bytes).toString('hex');
@@ -657,6 +661,27 @@ app.whenReady().then(() => {
 
   if (!isDev) setupAutoUpdater();
 
+  // Initialize device reporter
+  (async () => {
+    const lc = readLocalConfig();
+    await reporter.init({
+      type      : 'desktop',
+      name      : os.hostname(),
+      platform  : `${process.platform}/${os.release()}`,
+      version   : app.getVersion(),
+      serverUrl : lc.cloud_config?.url  || null,
+      token     : lc.cloud_config?.token || null,
+    });
+    reporter.start(() => {
+      const s = gateway.getDailyStats();
+      return {
+        calls            : s.calls  || 0,
+        errors           : s.errors || 0,
+        providers_active : Object.keys(s.by_provider || {}).length,
+      };
+    });
+  })().catch((e) => console.warn('[reporter] init failed:', e.message));
+
   // Auto-start agent if configured
   const cfg = readAgentConfig();
   if (cfg?.auto_start && cfg?.worker_key) {
@@ -673,4 +698,4 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => { agent.stop(); gateway.stop(); });
+app.on('before-quit', () => { agent.stop(); gateway.stop(); reporter.stop(); });

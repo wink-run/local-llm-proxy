@@ -118,11 +118,24 @@ async def settle_once() -> None:
             )
 
 
+_SWEEP_INTERVAL = 60  # 秒
+
+
 async def run_settler() -> None:
     """在 lifespan 中作为后台 Task 启动"""
+    _ticks = 0
     while True:
-        await asyncio.sleep(INTERVAL)
+        await asyncio.sleep(_SWEEP_INTERVAL)
+        _ticks += 1
         try:
-            await settle_once()
+            offline = await db.sweep_offline_devices()
+            if offline:
+                logger.info(f"[sweep] marked {offline} device(s) offline")
         except Exception as e:
-            logger.error(f"[settle] error: {e}")
+            logger.error(f"[sweep] error: {e}")
+        if _ticks >= INTERVAL // _SWEEP_INTERVAL:
+            _ticks = 0
+            try:
+                await settle_once()
+            except Exception as e:
+                logger.error(f"[settle] error: {e}")

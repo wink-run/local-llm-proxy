@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { getConfig, getLocalConfig } from '../api/adapter';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -220,8 +221,8 @@ export default function Debug() {
   // Load config
   useEffect(() => {
     Promise.all([
-      window.electronAPI?.config?.read().catch(() => null),
-      window.electronAPI?.localConfig?.get().catch(() => null),
+      getConfig().read().catch(() => null),
+      getLocalConfig().get().catch(() => null),
     ]).then(([c, lc]) => {
       setCfg(c);
       setProvOpts(providerOptions(c, lc));
@@ -395,7 +396,7 @@ export default function Debug() {
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-800/40 shrink-0">Anthropic</span>
             )}
             <input value={token} onChange={e => setToken(e.target.value)}
-              type={showToken ? 'text' : 'password'} placeholder="Token（可选）" autoComplete="off"
+              type={showToken ? 'text' : 'password'} placeholder="API Key（可选）" autoComplete="off"
               className="w-36 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 text-xs font-mono text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
             <button onClick={() => setShowToken(v => !v)}
               className="text-[10px] px-2 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors shrink-0">

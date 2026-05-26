@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getDashboardStats, getModelStats, listKeys, createKey, deleteKey } from '../api/client';
+import { getDashboardStats, getModelStats, listKeys, deleteKey } from '../api/client';
 
 const RANGES = ['今日', '7 天', '30 天'];
 const RANGE_DAYS = { '今日': 1, '7 天': 7, '30 天': 30 };
@@ -108,9 +108,8 @@ export default function Dashboard() {
   const [modelStats, setModelStats] = useState([]);
   const [hourly, setHourly]       = useState(Array(24).fill(0));
   const [gatewayStats, setGatewayStats] = useState(null);
+  const [gwStatus, setGwStatus]   = useState(null);
   const [loading, setLoading]     = useState(true);
-  const [newKeyNote, setNewKeyNote] = useState('');
-  const [creating, setCreating]   = useState(false);
 
   const days = RANGE_DAYS[range];
 
@@ -135,24 +134,14 @@ export default function Dashboard() {
     load();
     if (window.electronAPI?.gateway) {
       window.electronAPI.gateway.getDailyStats().then(setGatewayStats).catch(() => {});
+      window.electronAPI.gateway.status().then(setGwStatus).catch(() => {});
+    } else {
+      fetch('/api/gateway/status').then(r => r.json()).then(setGwStatus).catch(() => {});
+      fetch('/api/gateway/stats').then(r => r.json()).then(setGatewayStats).catch(() => {});
     }
   }, [load]);
 
-  const handleCreateKey = async () => {
-    if (!newKeyNote.trim()) return;
-    setCreating(true);
-    try {
-      await createKey(newKeyNote.trim());
-      setNewKeyNote('');
-      await load();
-    } catch (e) {
-      alert('创建失败: ' + (e.response?.data?.detail || e.message));
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const handleDeleteKey = async (keyId) => {
+const handleDeleteKey = async (keyId) => {
     if (!confirm('删除此 API Key？')) return;
     try {
       await deleteKey(keyId);
@@ -179,7 +168,14 @@ export default function Dashboard() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">盘点</h1>
-          <p className="text-sm text-gray-500 mt-0.5">基于场景应用的用量与费用分析</p>
+          <div className="flex items-center gap-2 mt-1">
+            <p className="text-sm text-gray-500">基于场景应用的用量与费用分析</p>
+            <span className="flex items-center gap-1 text-xs text-gray-500 border border-gray-200 dark:border-gray-700 rounded-full px-2 py-0.5">
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${gwStatus?.running !== false ? 'bg-green-500' : 'bg-gray-400'}`}/>
+              {window.electronAPI ? '💻 桌面版' : '🖥 命令行版'}
+              {gwStatus?.port ? ` · :${gwStatus.port}` : ''}
+            </span>
+          </div>
         </div>
         <div className="flex gap-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-1">
           {RANGES.map(r => (
@@ -316,38 +312,6 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Create new key */}
-        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5 flex flex-col">
-          <div className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">新建 API Key</div>
-          <p className="text-xs text-gray-500 mb-4">创建后在「网关」→「场景应用」中绑定路由</p>
-          <div className="flex gap-2 mb-3">
-            <input
-              value={newKeyNote}
-              onChange={e => setNewKeyNote(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleCreateKey()}
-              placeholder="备注，如 Claude Code 主机"
-              className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-400 dark:placeholder-gray-600"
-            />
-            <button
-              onClick={handleCreateKey}
-              disabled={creating || !newKeyNote.trim()}
-              className="text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-            >{creating ? '…' : '创建'}</button>
-          </div>
-
-          {/* existing keys list */}
-          <div className="flex-1 overflow-y-auto space-y-1.5">
-            {keyStats.map(s => (
-              <div key={s.key_id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-gray-100/50 dark:bg-gray-800/50">
-                <code className="text-[10px] font-mono text-gray-600 dark:text-gray-400 flex-1 truncate">{s.api_key?.slice(0, 18)}…</code>
-                <span className="text-[10px] text-gray-500 truncate max-w-[80px]">{s.app_name || s.note || '—'}</span>
-              </div>
-            ))}
-            {keyStats.length === 0 && (
-              <p className="text-xs text-gray-600 text-center py-4">还没有 API Key</p>
-            )}
-          </div>
-        </div>
       </div>
 
     </div>

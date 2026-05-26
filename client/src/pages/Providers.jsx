@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getNetwork, getProfile, listKeys, createKey, deleteKey, getProviderCatalog } from '../api/client';
 import { getServerUrl } from '../config';
+import { getGateway, getLocalConfig, getConfig } from '../api/adapter';
 
 // 内置兜底目录：当后端 /api/catalog 不可达（离线 / VPS 宕机）时使用。
 // 正常情况下目录由后端下发，改源请改 server/catalog.py。
@@ -128,8 +129,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
 
   // Load saved key from local-config, and backend keys when section opens
   useEffect(() => {
-    if (!window.electronAPI?.localConfig) return;
-    window.electronAPI.localConfig.get().then(cfg => {
+    getLocalConfig().get().then(cfg => {
       const t = cfg.cloud_config?.token || '';
       setSavedKey(t);
       if (t) setSelectedKey(t);
@@ -188,10 +188,10 @@ function P2PNetworkCard({ provider, onUpdate }) {
   }
 
   async function handleSaveKey() {
-    if (!window.electronAPI?.localConfig || !selectedKey) return;
+    if (!selectedKey) return;
     setKeySaving(true);
     try {
-      await window.electronAPI.localConfig.setCloudConfig({
+      await getLocalConfig().setCloudConfig({
         url:   getServerUrl(),
         token: selectedKey,
       });
@@ -245,20 +245,18 @@ function P2PNetworkCard({ provider, onUpdate }) {
 
   function ModelDot({ m }) {
     if (m.nodes === 0) return <span className="w-2 h-2 rounded-full bg-gray-600 shrink-0" />;
-    if (m.activeReqs > m.nodes * 0.8) return <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />;
     return <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />;
   }
 
   function ModelSub({ m }) {
     if (m.nodes === 0) return <span className="text-gray-600">暂不可用</span>;
     const avgS = m.latencyCount > 0 ? (m.totalLatency / m.latencyCount / 1000).toFixed(1) : null;
-    const busy = m.activeReqs > m.nodes * 0.8;
     return (
       <>
         <span>{m.nodes} 节点</span>
-        {busy
-          ? <span className="text-amber-600 dark:text-amber-400"> · 繁忙</span>
-          : avgS ? <span> · avg {avgS}s</span> : null}
+        {avgS
+          ? <span className="text-gray-500"> · avg {avgS}s</span>
+          : <span className="text-green-600 dark:text-green-400"> · 空闲</span>}
       </>
     );
   }
@@ -328,8 +326,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
       )}
 
       {/* Gateway API Key config */}
-      {window.electronAPI?.localConfig && (
-        <div className="border-t border-gray-100 dark:border-gray-800">
+      <div className="border-t border-gray-100 dark:border-gray-800">
           <button
             onClick={() => setShowKeyConfig(v => !v)}
             className="w-full flex items-center justify-between px-4 py-2.5 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors"
@@ -409,8 +406,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
             </div>
           )}
         </div>
-      )}
-    </div>
+      </div>
   );
 }
 
@@ -817,16 +813,12 @@ function SmartPasteBox({ providers, meta, onConfigure, onTest }) {
   }
 
   async function handleImport() {
-    if (!window.electronAPI?.config?.importKeys) {
-      setResults([{ status: 'unknown', detail: '导入需在桌面应用内使用' }]);
-      return;
-    }
     setBusy(true);
     setResults([]);
     let found = [];
-    try { found = (await window.electronAPI.config.importKeys()) || []; } catch {}
+    try { found = (await getConfig().importKeys()) || []; } catch {}
     if (!found.length) {
-      setResults([{ status: 'unknown', detail: '没在本机环境变量 / cc-switch / Claude 配置里找到可导入的 key' }]);
+      setResults([{ status: 'unknown', detail: '没在本机环境变量 / cc-switch / Claude 配置里找到可导入的 key（导入仅桌面端支持）' }]);
       setBusy(false);
       return;
     }
@@ -921,8 +913,8 @@ export default function Providers() {
       } catch { /* 离线 / VPS 不可达：用兜底目录 */ }
       setMeta(metaMap);
 
-      // 2) 与本地 config.json 保存的开关/token/base_url 合并
-      const cfg = await window.electronAPI?.config?.read();
+      // 2) 与本地配置保存的开关/token/base_url 合并（adapter 兼容 Electron/HTTP）
+      const cfg = await getConfig().read();
       let resolved;
       if (cfg?.providers?.length) {
         const defaultIds = new Set(defaults.map(p => p.id));
@@ -949,11 +941,11 @@ export default function Providers() {
     if (lastSaved.current === null || providers === lastSaved.current) return;
     const timer = setTimeout(async () => {
       try {
-        const cfg = (await window.electronAPI?.config?.read()) || {};
+        const cfg = (await getConfig().read()) || {};
         const normalizedProviders = providers.map(p =>
           meta[p.id] ? p : { ...p, base_url: (p.base_url || '').replace(/\/v1\/?$/, '').replace(/\/$/, '') }
         );
-        await window.electronAPI?.config?.write({ ...cfg, providers: normalizedProviders });
+        await getConfig().write({ ...cfg, providers: normalizedProviders });
         lastSaved.current = providers;
         setSavedMsg('已保存');
         setTimeout(() => setSavedMsg(''), 1500);
@@ -976,11 +968,30 @@ export default function Providers() {
   }
 
   async function testProvider(base_url, token) {
-    if (!window.electronAPI?.gateway) return { ok: false, error: 'gateway not ready' };
-    return window.electronAPI.gateway.testProvider({ base_url, token });
+    return getGateway().testProvider({ base_url, token });
+  }
+
+  const [expandedTiers, setExpandedTiers] = useState(new Set());
+
+  function toggleTier(tier) {
+    setExpandedTiers(prev => {
+      const next = new Set(prev);
+      next.has(tier) ? next.delete(tier) : next.add(tier);
+      return next;
+    });
+  }
+
+  // A provider counts as "configured" if it has been actively set up
+  function isConfigured(p) {
+    const meta = PROVIDER_META[p.id];
+    if (!meta) return !!(p.base_url); // custom: has URL
+    if (meta.keyless) return p.enabled;
+    return p.enabled || !!p.token;
   }
 
   const tiers = ['free', 'p2p', 'paid'];
+  const COLS = 2;        // grid-cols-2 for free/paid
+  const VISIBLE_ROWS = 2; // show 2 rows = 4 cards before folding
 
   return (
     <div className="p-6 space-y-6">
@@ -999,8 +1010,21 @@ export default function Providers() {
 
       {/* Tier sections */}
       {tiers.map(tier => {
-        const cfg   = TIER_CONFIG[tier];
-        const items = providers.filter(p => p.type === tier);
+        const cfg        = TIER_CONFIG[tier];
+        const allItems   = providers.filter(p => p.type === tier);
+        const foldable   = tier === 'free' || tier === 'paid';
+        const isExpanded = expandedTiers.has(tier);
+
+        // Sort: configured first, then by original order
+        const sorted = foldable
+          ? [...allItems].sort((a, b) => (isConfigured(b) ? 1 : 0) - (isConfigured(a) ? 1 : 0))
+          : allItems;
+
+        const limit      = COLS * VISIBLE_ROWS; // 4
+        const canFold    = foldable && sorted.length > limit;
+        const visible    = canFold && !isExpanded ? sorted.slice(0, limit) : sorted;
+        const hiddenCnt  = sorted.length - limit;
+
         return (
           <section key={tier} className="space-y-3">
             <div className="flex items-center gap-2">
@@ -1009,7 +1033,7 @@ export default function Providers() {
               <span className="text-xs text-gray-600">{cfg.hint}</span>
             </div>
             <div className={`grid ${cfg.cols} gap-3`}>
-              {items.map(p =>
+              {visible.map(p =>
                 tier === 'p2p' ? (
                   <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} />
                 ) : meta[p.id] ? (
@@ -1019,6 +1043,15 @@ export default function Providers() {
                 )
               )}
             </div>
+            {/* Fold / expand toggle */}
+            {canFold && (
+              <button onClick={() => toggleTier(tier)}
+                className="w-full flex items-center justify-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 py-1 transition-colors">
+                {isExpanded
+                  ? <><span>收起</span><span className="text-[10px]">▲</span></>
+                  : <><span>展开另 {hiddenCnt} 个供给源</span><span className="text-[10px]">▼</span></>}
+              </button>
+            )}
             {tier === 'paid' && (
               <button onClick={addCustomProvider}
                 className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 border border-dashed border-gray-300 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600 rounded-xl px-4 py-2.5 transition-colors w-full">
