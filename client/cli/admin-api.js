@@ -43,7 +43,13 @@ function setCors(res) {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let buf = '';
-    req.on('data', (c) => (buf += c));
+    req.on('data', (chunk) => {
+      buf += chunk;
+      if (buf.length > 1_000_000) {
+        req.destroy();
+        reject(new Error('request body too large'));
+      }
+    });
     req.on('end', () => {
       if (!buf) { resolve({}); return; }
       try { resolve(JSON.parse(buf)); }
@@ -53,10 +59,23 @@ function readBody(req) {
   });
 }
 
+async function parseBody(req, res) {
+  try {
+    return await readBody(req);
+  } catch (_) {
+    json(res, 400, { error: 'invalid JSON or body too large' });
+    return null;
+  }
+}
+
 // Serve a static file from DIST_DIR; returns false if file not found.
 function serveStatic(res, relPath) {
   const filePath = path.join(DIST_DIR, relPath);
-  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) return false;
+
+  // Prevent path traversal outside dist dir
+  if (!filePath.startsWith(DIST_DIR + path.sep) && filePath !== DIST_DIR) {
+    return false;
+  }
 
   const ext = path.extname(filePath).toLowerCase();
   const mimeMap = {
@@ -74,7 +93,12 @@ function serveStatic(res, relPath) {
   };
   const ct = mimeMap[ext] || 'application/octet-stream';
 
-  const data = fs.readFileSync(filePath);
+  let data;
+  try {
+    data = fs.readFileSync(filePath);
+  } catch {
+    return false; // file not found or unreadable
+  }
   res.writeHead(200, { 'Content-Type': ct, 'Content-Length': data.length });
   res.end(data);
   return true;
@@ -83,6 +107,7 @@ function serveStatic(res, relPath) {
 // ── syncGateway ───────────────────────────────────────────────────────────────
 
 function syncGateway(lc) {
+  if (!_gateway) return;
   const routerMap = {};
   for (const r of (lc.scene_routes || [])) {
     if (r.model_key && r.steps?.length)
@@ -138,7 +163,8 @@ function checkAuth(req, res) {
   const configToken = lc.cloud_config?.token || '';
   if (!configToken) return true; // no token configured — allow all
 
-  if (!isAuthRequired(req.url)) return true;
+  const urlPath = req.url.split('?')[0];
+  if (!isAuthRequired(urlPath)) return true;
 
   const authHeader = req.headers['authorization'] || '';
   const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
@@ -153,15 +179,15 @@ function checkAuth(req, res) {
 async function handleRequest(req, res) {
   setCors(res);
 
-  // OPTIONS preflight
+  // Auth check (runs for all methods including OPTIONS)
+  if (!checkAuth(req, res)) return;
+
+  // OPTIONS preflight — after auth so unauthenticated clients don't probe the API
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
     return;
   }
-
-  // Auth check
-  if (!checkAuth(req, res)) return;
 
   const url    = req.url.split('?')[0];
   const method = req.method.toUpperCase();
@@ -186,9 +212,8 @@ async function handleRequest(req, res) {
   }
 
   if (method === 'POST' && url === '/api/gateway/test-provider') {
-    let body;
-    try { body = await readBody(req); }
-    catch (_) { return json(res, 400, { error: 'invalid JSON' }); }
+    const body = await parseBody(req, res);
+    if (body === null) return;
     const result = await testProvider(body.base_url || '', body.token || '');
     return json(res, 200, result);
   }
@@ -200,9 +225,8 @@ async function handleRequest(req, res) {
   }
 
   if (method === 'POST' && url === '/api/config') {
-    let body;
-    try { body = await readBody(req); }
-    catch (_) { return json(res, 400, { error: 'invalid JSON' }); }
+    const body = await parseBody(req, res);
+    if (body === null) return;
     writeAgentConfig(body);
     return json(res, 200, { ok: true });
   }
@@ -214,9 +238,8 @@ async function handleRequest(req, res) {
   }
 
   if (method === 'POST' && url === '/api/local-config/cloud-config') {
-    let body;
-    try { body = await readBody(req); }
-    catch (_) { return json(res, 400, { error: 'invalid JSON' }); }
+    const body = await parseBody(req, res);
+    if (body === null) return;
     const lc = readLocalConfig() || { scene_routes: [], local_keys: [] };
     lc.cloud_config = { url: body.url || '', token: body.token || '' };
     writeLocalConfig(lc);
@@ -227,9 +250,8 @@ async function handleRequest(req, res) {
   // ── Scene routes ────────────────────────────────────────────────────────────
 
   if (method === 'POST' && url === '/api/local-config/routes') {
-    let body;
-    try { body = await readBody(req); }
-    catch (_) { return json(res, 400, { error: 'invalid JSON' }); }
+    const body = await parseBody(req, res);
+    if (body === null) return;
     const lc = readLocalConfig() || { scene_routes: [], local_keys: [] };
     if (!lc.scene_routes) lc.scene_routes = [];
     const route = {
@@ -251,9 +273,8 @@ async function handleRequest(req, res) {
     const id = routeUpdateMatch[1];
 
     if (method === 'PUT') {
-      let body;
-      try { body = await readBody(req); }
-      catch (_) { return json(res, 400, { error: 'invalid JSON' }); }
+      const body = await parseBody(req, res);
+      if (body === null) return;
       const lc = readLocalConfig() || { scene_routes: [], local_keys: [] };
       const idx = (lc.scene_routes || []).findIndex((r) => r.id === id);
       if (idx === -1) return json(res, 404, { error: 'not found' });
@@ -279,9 +300,8 @@ async function handleRequest(req, res) {
   // ── Local keys ──────────────────────────────────────────────────────────────
 
   if (method === 'POST' && url === '/api/local-config/keys') {
-    let body;
-    try { body = await readBody(req); }
-    catch (_) { return json(res, 400, { error: 'invalid JSON' }); }
+    const body = await parseBody(req, res);
+    if (body === null) return;
     const lc = readLocalConfig() || { scene_routes: [], local_keys: [] };
     if (!lc.local_keys) lc.local_keys = [];
     const key = {
@@ -293,6 +313,7 @@ async function handleRequest(req, res) {
     };
     lc.local_keys.push(key);
     writeLocalConfig(lc);
+    syncGateway(lc);
     return json(res, 200, key);
   }
 
@@ -310,9 +331,8 @@ async function handleRequest(req, res) {
     }
 
     if (method === 'POST' && bind) {
-      let body;
-      try { body = await readBody(req); }
-      catch (_) { return json(res, 400, { error: 'invalid JSON' }); }
+      const body = await parseBody(req, res);
+      if (body === null) return;
       const lc = readLocalConfig() || { scene_routes: [], local_keys: [] };
       const key = (lc.local_keys || []).find((k) => k.id === id);
       if (!key) return json(res, 404, { error: 'not found' });
@@ -351,6 +371,12 @@ async function handleRequest(req, res) {
  */
 function start(port, gatewayInstance) {
   _gateway = gatewayInstance;
+
+  const lc = readLocalConfig() || {};
+  const configToken = lc.cloud_config?.token || '';
+  if (!configToken) {
+    console.warn('[admin-api] WARNING: No cloud token configured — admin API is unauthenticated. Set cloud_config.token to secure it.');
+  }
 
   _server = http.createServer((req, res) => {
     handleRequest(req, res).catch((err) => {
