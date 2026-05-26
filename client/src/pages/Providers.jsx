@@ -359,7 +359,6 @@ function P2PNetworkCard({ provider, onUpdate }) {
           )}
         </div>
       </div>
-    </div>
   );
 }
 
