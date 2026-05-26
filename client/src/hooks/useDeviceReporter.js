@@ -33,8 +33,10 @@ async function _doRegister() {
     const platform = navigator.platform || navigator.userAgent || '';
     const cfg      = await getConfig().read().catch(() => ({}));
     const version  = cfg?.version || '1.0.0';
-    // CLI name includes port so multiple instances on the same machine are distinguishable
-    const name     = cfg?.name || (isElectron() ? 'Desktop' : `CLI:${port}`);
+    // CLI instances always append port so multiple instances on the same machine are distinguishable.
+    // Electron is a single instance so just use the configured name (or fallback "Desktop").
+    const baseName = cfg?.name || (isElectron() ? 'Desktop' : 'CLI');
+    const name     = isElectron() ? baseName : `${baseName}:${port}`;
 
     const res   = await registerDevice({ device_id: storedId, type, name, platform, version, gateway_port: port });
     // Backend returns the devices table row: primary key column is "id", not "device_id"
