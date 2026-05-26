@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     read:  () => ipcRenderer.invoke('config:read'),
     write: (cfg) => ipcRenderer.invoke('config:write', cfg),
     scan:  () => ipcRenderer.invoke('config:scan'),
+    importKeys: () => ipcRenderer.invoke('config:importKeys'),
   },
   claude: {
     configure: (baseUrl, apiKey, models) => ipcRenderer.invoke('claude:configure', { baseUrl, apiKey, models }),
