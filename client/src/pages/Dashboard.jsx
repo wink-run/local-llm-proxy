@@ -108,6 +108,7 @@ export default function Dashboard() {
   const [modelStats, setModelStats] = useState([]);
   const [hourly, setHourly]       = useState(Array(24).fill(0));
   const [gatewayStats, setGatewayStats] = useState(null);
+  const [gwStatus, setGwStatus]   = useState(null);
   const [loading, setLoading]     = useState(true);
 
   const days = RANGE_DAYS[range];
@@ -133,6 +134,10 @@ export default function Dashboard() {
     load();
     if (window.electronAPI?.gateway) {
       window.electronAPI.gateway.getDailyStats().then(setGatewayStats).catch(() => {});
+      window.electronAPI.gateway.status().then(setGwStatus).catch(() => {});
+    } else {
+      fetch('/api/gateway/status').then(r => r.json()).then(setGwStatus).catch(() => {});
+      fetch('/api/gateway/stats').then(r => r.json()).then(setGatewayStats).catch(() => {});
     }
   }, [load]);
 
@@ -163,7 +168,14 @@ const handleDeleteKey = async (keyId) => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">盘点</h1>
-          <p className="text-sm text-gray-500 mt-0.5">基于场景应用的用量与费用分析</p>
+          <div className="flex items-center gap-2 mt-1">
+            <p className="text-sm text-gray-500">基于场景应用的用量与费用分析</p>
+            <span className="flex items-center gap-1 text-xs text-gray-500 border border-gray-200 dark:border-gray-700 rounded-full px-2 py-0.5">
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${gwStatus?.running !== false ? 'bg-green-500' : 'bg-gray-400'}`}/>
+              {window.electronAPI ? '💻 桌面版' : '🖥 命令行版'}
+              {gwStatus?.port ? ` · :${gwStatus.port}` : ''}
+            </span>
+          </div>
         </div>
         <div className="flex gap-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-1">
           {RANGES.map(r => (
