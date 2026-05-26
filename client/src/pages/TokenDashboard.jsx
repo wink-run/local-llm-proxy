@@ -334,15 +334,6 @@ export default function TokenDashboard() {
         </section>
       )}
 
-      {/* Daily rewards */}
-      <div className="grid grid-cols-2 gap-4">
-        <CheckinCard onSuccess={refreshUser} />
-        <SpinCard    onSuccess={refreshUser} />
-      </div>
-
-      {/* Devices */}
-      <DevicesSection />
-
       {/* Credits (collapsible) */}
       <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl overflow-hidden">
         <button onClick={() => setCreditsOpen(v => !v)}
@@ -400,6 +391,15 @@ export default function TokenDashboard() {
           </div>
         )}
       </section>
+
+      {/* Daily rewards */}
+      <div className="grid grid-cols-2 gap-4">
+        <CheckinCard onSuccess={refreshUser} />
+        <SpinCard    onSuccess={refreshUser} />
+      </div>
+
+      {/* Devices */}
+      <DevicesSection />
 
     </div>
   );
