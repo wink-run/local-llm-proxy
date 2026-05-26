@@ -282,36 +282,6 @@ export default function TokenDashboard() {
         </p>
       </div>
 
-      {/* Provider breakdown */}
-      {providerEntries.length > 0 && (
-        <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
-          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">供给来源分布</h2>
-          <div className="space-y-2.5">
-            {providerEntries.map(([id, { calls }]) => (
-              <ProviderBar key={id} id={id} calls={calls} totalCalls={totalCalls} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Model breakdown */}
-      {modelEntries.length > 0 && (
-        <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
-          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">模型使用分布</h2>
-          <div className="space-y-2.5">
-            {modelEntries.slice(0, 6).map(([name, { calls }]) => (
-              <div key={name} className="flex items-center gap-3 text-sm">
-                <div className="w-36 shrink-0 text-xs text-gray-600 dark:text-gray-400 truncate font-mono">{name}</div>
-                <div className="flex-1 bg-gray-100 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
-                  <div className="h-2 rounded-full bg-blue-400" style={{ width: `${totalCalls > 0 ? (calls / totalCalls) * 100 : 0}%` }} />
-                </div>
-                <span className="w-10 shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">{calls} 次</span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
       {/* Credits (collapsible) */}
       <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl overflow-hidden">
         <button onClick={() => setCreditsOpen(v => !v)}
@@ -378,6 +348,36 @@ export default function TokenDashboard() {
 
       {/* Devices */}
       <DevicesSection />
+
+      {/* Provider breakdown */}
+      {providerEntries.length > 0 && (
+        <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">供给来源分布</h2>
+          <div className="space-y-2.5">
+            {providerEntries.map(([id, { calls }]) => (
+              <ProviderBar key={id} id={id} calls={calls} totalCalls={totalCalls} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Model breakdown */}
+      {modelEntries.length > 0 && (
+        <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">模型使用分布</h2>
+          <div className="space-y-2.5">
+            {modelEntries.slice(0, 6).map(([name, { calls }]) => (
+              <div key={name} className="flex items-center gap-3 text-sm">
+                <div className="w-36 shrink-0 text-xs text-gray-600 dark:text-gray-400 truncate font-mono">{name}</div>
+                <div className="flex-1 bg-gray-100 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
+                  <div className="h-2 rounded-full bg-blue-400" style={{ width: `${totalCalls > 0 ? (calls / totalCalls) * 100 : 0}%` }} />
+                </div>
+                <span className="w-10 shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">{calls} 次</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Recent route log */}
       {logEntries.length > 0 && (
