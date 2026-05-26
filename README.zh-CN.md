@@ -1,74 +1,155 @@
-# Token Bank — 本地 LLM 网关
+# Token Bank
 
-**P2P 积分网络 · OpenAI 兼容 · 三端部署** — 把本地大模型和闲置 API 额度变成可跨模型、跨时段通用的积分。
+> **本地 LLM 网关 · Token 管家**
+>
+> 用的明白 · 用的节省 · 闲置的还可以赚钱
 
-[English](./README.md) · [架构文档](./DESIGN.md) · [下载最新版](https://github.com/wink-run/local-llm-proxy/releases/latest)
+[English](./README.md) · [下载最新版](https://github.com/wink-run/local-llm-proxy/releases/latest) · [架构文档](./DESIGN.md)
 
 ---
 
-## 是什么
+## 为什么需要 Token Bank
 
-**Token Bank** 在你的本机（或服务器）运行一个轻量 HTTP 网关，对外暴露 **OpenAI 兼容的 `/v1` 接口**，对内智能路由到：
+你可能遇到过这些问题：
 
-| 来源 | 说明 |
+- 同时订阅了好几家 LLM，不知道每天到底用了多少、用在哪了
+- Groq 免费额度、GitHub Models 每月都没用完，但 OpenAI 账单还是跑高了
+- 本地跑着 Ollama，AI 工具却还在傻傻地调付费 API
+- 月底 API 套餐剩余额度清零，白白浪费
+
+**Token Bank 是一个运行在你本地的 LLM 网关，** 统一接管所有 AI 工具的请求，帮你把 Token 用得明白、用得节省——多出来的闲置额度，还能贡献给 P2P 网络赚取积分。
+
+---
+
+## 三件事
+
+### 一、用的明白
+
+Token Bank 记录每一次调用：走了哪条路由、用了哪个模型、花了多少 Token、延迟多少毫秒。
+
+- **今日看板**：总调用次数、免费命中率、供给来源分布、模型使用分布
+- **调用日志**：每条请求的路由结果、状态、耗时一目了然
+- **多设备视图**：名下所有设备（桌面 + 命令行 + 服务器）各自的今日用量
+- **积分流水**：每笔贡献和消费都有记录，余额实时可查
+
+---
+
+### 二、用的节省
+
+Token Bank 在本机运行一个 **智能路由链**，请求按优先级依次尝试：
+
+```
+本地模型 (Ollama)
+    ↓ 没有合适模型
+免费层 (Groq / GitHub Models / ...)
+    ↓ 超限或不可用
+P2P 网络 (用积分消费)
+    ↓ 积分不足
+付费 API (OpenAI / Anthropic / ...)
+```
+
+**你的 AI 工具只需要对着一个本地地址发请求，** 路由对它们完全透明。
+
+#### 场景路由
+
+不同的使用场景可以绑定不同的供给链。比如：
+
+| 场景 | 路由策略 |
 |---|---|
-| **本地模型** | Ollama、LM Studio 等本机推理服务 |
-| **免费层** | Groq、GitHub Models 等有限免费 API |
-| **P2P 网络** | 其他用户贡献的算力，用积分消费 |
-| **付费 API** | OpenAI、Anthropic 等，积分用完的兜底 |
+| 日常对话 | 先走 Groq 免费层，不够再走 P2P |
+| 代码补全 | 直接走本地 Ollama，零延迟零成本 |
+| 长文档分析 | 走付费 API，保证质量 |
 
-网关自动按优先级和积分余量切换供给来源，调用方只需一个本地端点，无需关心背后用了哪条链路。
+#### 免费层自动接入
 
----
-
-## 三种部署方式
-
-### 🖥 桌面版（推荐）
-
-从 [Releases](https://github.com/wink-run/local-llm-proxy/releases/latest) 下载对应平台安装包：
-
-- **macOS** — `.dmg`，双击安装，系统托盘常驻，支持自动更新
-- **Windows** — `.exe`，NSIS 安装包，支持自动更新
-
-安装后打开应用，完成账号配置即可使用。
+一键扫描你的环境变量和工具配置，把已有的 LLM Key（Groq、GitHub Models、Anthropic 等）自动导入。多个 Key 自动轮询，充分利用每家的免费额度。
 
 ---
 
-### 💻 命令行版（Linux / 服务器）
+### 三、闲置的还可以赚钱
+
+把你用不完的算力或 API 额度贡献给 P2P 网络，赚取积分，再去消费你没有的模型。
+
+**可以贡献什么：**
+
+- 本地 Ollama / 推理服务（贡献算力）
+- 用不完的上游 API 路径（贡献额度）
+- 内网才能访问的私有模型（通过 Agent 出站 WebSocket 接入，无需开放端口）
+
+**赚取规则（每 5 分钟结算）：**
+
+```
+积分 = (输出 Token 数 / 1000) × 模型贡献率 × 质量系数
+```
+
+质量系数由在线时长、响应延迟、成功率决定，范围 0.5 ~ 1.5。稳定在线、响应快的节点赚得更多。
+
+**其他积分来源：**
+- 每日签到
+- 每日转盘
+- 邀请好友
+
+**消费规则：**
+
+```
+花费 = (输入 + 输出 Token 数 / 1000) × 模型消费率
+```
+
+设计上贡献率 > 消费率，长期贡献者收益为正。
+
+---
+
+## 快速开始
+
+### 桌面版（Mac / Windows，推荐）
+
+从 [Releases](https://github.com/wink-run/local-llm-proxy/releases/latest) 下载安装包：
+
+- **macOS** `.dmg` — 双击安装，托盘常驻，支持后台自动更新
+- **Windows** `.exe` — NSIS 安装包，支持后台自动更新
+
+安装后打开 → 进入「配置」页 → 填写账号服务地址和 P2P Key → 完成。
+
+**接入 AI 工具：**
+
+在 Claude Code、Cursor、Open WebUI 等工具中，把 API Base URL 改为：
+
+```
+http://localhost:11430/v1
+```
+
+API Key 在「网关」页创建本地 Key，或使用你已有的上游 Key。
+
+---
+
+### 命令行版（Linux / 服务器）
 
 ```bash
-# 克隆仓库
 git clone https://github.com/wink-run/local-llm-proxy.git
 cd local-llm-proxy/client
-
-# 安装依赖（仅首次）
 npm install
-
-# 启动网关
 node cli/gateway.js start
 ```
 
-启动后：
-- **网关** `:11430` — 接收 LLM 请求（`OPENAI_BASE_URL=http://localhost:11430/v1`）
-- **Web UI** `:11431` — 浏览器打开 `http://localhost:11431` 进行配置和查看统计
-
-常用命令：
+浏览器打开 `http://localhost:11431` 进行配置，使用方式与桌面版完全一致。
 
 ```bash
-node cli/gateway.js status    # 查看运行状态
-node cli/gateway.js restart   # 热重启
-node cli/gateway.js keys      # 查看本地 API Key
+# 后台运行
+nohup node cli/gateway.js start > gateway.log 2>&1 &
+
+# 或用 pm2
+pm2 start cli/gateway.js -- start
 ```
 
 ---
 
-### 🐳 Docker 版（容器化部署）
+### Docker 版（容器化）
 
 ```bash
 git clone https://github.com/wink-run/local-llm-proxy.git
 cd local-llm-proxy
 
-# 准备配置
+# 准备配置文件
 mkdir -p gateway-data
 cat > gateway-data/local-config.json << 'EOF'
 {
@@ -81,28 +162,38 @@ cat > gateway-data/local-config.json << 'EOF'
 }
 EOF
 
-# 启动（仅网关）
 docker compose up gateway -d
-
-# 或同时启动后端服务
-docker compose up -d
 ```
 
 | 端口 | 用途 |
 |---|---|
-| `11430` | OpenAI 兼容网关（`OPENAI_BASE_URL`） |
-| `11431` | Web UI 与管理 API |
-
-配置文件持久化在 `./gateway-data/`，重启不丢数据。
+| `11430` | LLM 请求入口（`OPENAI_BASE_URL=http://host:11430/v1`） |
+| `11431` | Web 管理界面 |
 
 ---
 
-## 接入任意 OpenAI 客户端
+## 界面预览
+
+| 页面 | 功能 |
+|---|---|
+| **今日看板** | Token 用量、供给来源占比、模型分布、最近调用日志、设备统计 |
+| **网关** | 供给链管理、场景路由配置、网关状态、日志 |
+| **供给商** | 添加和管理本地模型及 API Key，一键扫描导入 |
+| **P2P 网络** | 查看全球节点分布、在线贡献者、模型供给情况 |
+| **贡献** | 查看贡献节点状态、历史结算记录、质量系数趋势 |
+| **个人** | 积分余额、流水记录、设备管理、申领积分 |
+
+---
+
+## 接入任意 OpenAI 兼容客户端
 
 ```bash
-# 环境变量
-export OPENAI_BASE_URL=http://localhost:11430/v1
-export OPENAI_API_KEY=your-local-key   # 在 Web UI 里创建
+# Claude Code
+export ANTHROPIC_BASE_URL=http://localhost:11430
+
+# Cursor / Copilot 等
+OPENAI_BASE_URL=http://localhost:11430/v1
+OPENAI_API_KEY=your-local-key
 
 # curl 测试
 curl http://localhost:11430/v1/chat/completions \
@@ -111,108 +202,54 @@ curl http://localhost:11430/v1/chat/completions \
   -d '{"model":"gpt-4o","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
 
-支持所有兼容 OpenAI SDK 的客户端：Claude Code、Continue、Cursor、Open WebUI、LangChain……
-
 ---
 
-## 主要功能
+## 搭建私有 P2P 后端（可选）
 
-### 智能路由
-- 按供给来源优先级自动切换（本地 → 免费层 → P2P → 付费）
-- 场景路由：为不同 model key 绑定不同的供给策略
-- 网关日志：记录每次调用的路由结果、延迟和状态
-
-### P2P 积分网络
-- 贡献本地算力赚取积分，积分用于消费其他模型
-- 每日签到、转盘等额外积分来源
-- 积分流水可查，余额实时展示
-
-### 多设备管理
-- 账号下所有设备（桌面版 + 命令行版）统一视图
-- 每台设备独立展示今日调用数、错误率、活跃供应商数
-- 设备在线状态实时心跳，断连自动重连
-
-### 本地密钥管理
-- 本地 API Key 存储在本机，不上传云端
-- 支持将 Key 绑定到指定场景路由
-- 一键扫描环境变量中已有的 LLM 配置并导入
-
----
-
-## 架构概览
-
-```
-调用方 (Claude Code / Cursor / ...)
-        │
-        ▼ OpenAI API  :11430
-┌─────────────────────────────┐
-│      本地网关 (Gateway)      │
-│  场景路由  ·  负载均衡        │
-│  日志记录  ·  统计            │
-└────────┬──────────┬──────────┘
-         │          │
-    本地模型      云端后端 :8000
-  (Ollama 等)   ┌──────────────┐
-                │  Token Bank  │
-                │  积分 · 路由  │
-                │  P2P 调度    │
-                └──────────────┘
-                    │
-               P2P Worker 网络
-          (其他用户贡献的算力节点)
-```
-
----
-
-## 服务端部署（可选）
-
-如果你想搭建自己的私有 P2P 网络：
+如果你想自建服务节点而不是使用公共网络：
 
 ```bash
 cp .env.example .env
-# 设置 ADMIN_KEY 等变量
+# 编辑 .env，设置 ADMIN_KEY
 docker compose up proxy -d
 ```
 
 | 变量 | 说明 |
 |---|---|
 | `ADMIN_KEY` | 管理后台密钥 |
-| `REQUEST_TIMEOUT` | 单次转发超时（秒），默认 `120` |
+| `REQUEST_TIMEOUT` | 单次转发超时秒数（默认 120） |
 
-管理后台：`http://YOUR_VPS:8000/admin/ui`  
-用户门户：`http://YOUR_VPS:8000/app`  
-OpenAI API：`http://YOUR_VPS:8000/v1`
+- 管理后台：`http://YOUR_VPS:8000/admin/ui`
+- 用户门户：`http://YOUR_VPS:8000/app`
+- Worker 接入：`ws://YOUR_VPS:8000/ws/worker`
 
----
-
-## 贡献本地算力（Worker）
+### 贡献 Worker 节点
 
 ```bash
-cd agent
-pip install -r requirements.txt
+cd agent && pip install -r requirements.txt
 
 python agent.py register \
-  --server "ws://YOUR_VPS:8000/ws/worker" \
-  --worker-key "在用户中心复制的 wk-..." \
-  --models "llama3,qwen2" \
-  --llm-url "http://localhost:11434" \
-  --name "我的主机"
+  --server   "ws://YOUR_VPS:8000/ws/worker" \
+  --worker-key "wk-... 在用户中心复制" \
+  --models   "llama3,qwen2" \
+  --llm-url  "http://localhost:11434" \
+  --name     "我的主机"
 
 python agent.py start
 ```
 
-**上游 API Key 不上云**：`--llm-token` 仅存本机 `~/.llm-agent/config.json`，注册时只发送 worker_key 和模型列表。
+**上游 API Key 不上云**：仅存本机 `~/.llm-agent/config.json`，注册时只传 worker_key 和模型名。
 
 ---
 
 ## 许可证
 
 Apache License 2.0 — 详见 [`LICENSE`](./LICENSE) 与 [`NOTICE`](./NOTICE)。  
-再分发或制作衍生作品须保留 NOTICE，并注明项目来源：  
+再分发或衍生作品须保留 NOTICE，并注明来源：  
 **Token Bank · https://github.com/wink-run/local-llm-proxy**
 
 ---
 
 ## 免责声明
 
-本项目仅供学习与研究使用。使用者须自行遵守所在地法律法规及上游服务条款，因部署、共享算力或转发请求所产生的任何后果均由使用者自行承担。
+本项目仅供学习与研究使用。使用者须自行遵守所在地法律法规及上游服务条款。因部署、共享算力或转发请求产生的任何后果，均由使用者自行承担。
