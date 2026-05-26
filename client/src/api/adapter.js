@@ -5,8 +5,11 @@ export function isElectron() {
   return typeof window !== 'undefined' && !!window.electronAPI;
 }
 
-// Allow override via Vite env var for non-default ports/hosts
-const ADMIN_BASE = import.meta.env?.VITE_ADMIN_BASE || 'http://localhost:11431';
+// In CLI/browser mode the frontend is served by the same admin-api server,
+// so use relative URLs (empty base) — requests go to whatever host:port the
+// page was loaded from, which works correctly for both localhost and remote VMs.
+// Override with VITE_ADMIN_BASE env var at build time for custom setups.
+const ADMIN_BASE = import.meta.env?.VITE_ADMIN_BASE ?? '';
 
 // Low-level fetch helper for admin API
 async function adminFetch(path, options = {}) {
