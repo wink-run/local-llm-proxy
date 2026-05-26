@@ -517,7 +517,27 @@ function SpinCard({ onSuccess }) {
   );
 }
 
-const DEVICE_ICON = { desktop: '💻', cli: '🖥' };
+const DEVICE_ICON    = { desktop: '💻', cli: '🖥' };
+const DEVICE_LABEL   = { desktop: '桌面版', cli: '命令行版' };
+
+function DeviceStatBar({ calls, errors }) {
+  const total    = Math.max(calls, 1);
+  const okPct    = Math.max(0, ((calls - errors) / total) * 100);
+  const errPct   = Math.min(100, (errors / total) * 100);
+  const errorRate = calls > 0 ? ((errors / calls) * 100).toFixed(1) : '0';
+  return (
+    <div className="space-y-1">
+      <div className="flex h-1.5 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-700 w-full">
+        <div className="bg-blue-400 h-full transition-all" style={{ width: `${okPct}%` }} />
+        {errors > 0 && <div className="bg-red-400 h-full transition-all" style={{ width: `${errPct}%` }} />}
+      </div>
+      <div className="flex items-center gap-2 text-[10px] text-gray-400">
+        <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block"/>成功 {calls - errors}</span>
+        {errors > 0 && <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-red-400 inline-block"/>错误 {errors}（{errorRate}%）</span>}
+      </div>
+    </div>
+  );
+}
 
 function DevicesSection() {
   const [devices, setDevices] = useState([]);
@@ -531,13 +551,12 @@ function DevicesSection() {
         const raw = r.data?.devices || [];
         const normalised = raw.map(d => ({ ...d, device_id: d.device_id || d.id || null }));
         const seen = new Set();
-        const clean = normalised.filter(d => {
+        setDevices(normalised.filter(d => {
           if (!d.device_id) return false;
           if (seen.has(d.device_id)) return false;
           seen.add(d.device_id);
           return true;
-        });
-        setDevices(clean);
+        }));
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -553,15 +572,16 @@ function DevicesSection() {
       setDevices(ds => ds.filter(d => d.device_id !== deviceId));
     } catch {
       alert('移除失败');
-    } finally {
-      setRemoving(null);
-    }
+    } finally { setRemoving(null); }
   }
+
+  // totals across all devices for the relative bar scale
+  const maxCalls = Math.max(...devices.map(d => d.today_calls || 0), 1);
 
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">我的设备</h2>
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">设备统计</h2>
         <button onClick={load} disabled={loading}
           className="text-xs text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50">
           {loading ? '加载中…' : '刷新'}
@@ -573,52 +593,81 @@ function DevicesSection() {
       ) : devices.length === 0 ? (
         <p className="text-sm text-gray-400 dark:text-gray-500">暂无设备记录</p>
       ) : (
-        <div className="space-y-2">
-          {devices.map((d, i) => (
-            <div key={`${d.device_id ?? d.id ?? ''}-${i}`}
-              className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <span className="text-xl shrink-0">{DEVICE_ICON[d.type] || '🖥'}</span>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{d.name || d.device_id}</span>
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.online ? 'bg-green-500' : 'bg-gray-400'}`}
-                        title={d.online ? '在线' : '离线'}/>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${d.online ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-gray-700 text-gray-500'}`}>
-                        {d.online ? '在线' : '离线'}
-                      </span>
-                    </div>
-                    <div className="text-xs text-gray-500 mt-0.5">
-                      {d.type === 'desktop' ? '桌面版' : '命令行版'}
-                      {d.version ? ` · v${d.version}` : ''}
-                      {d.platform ? ` · ${d.platform}` : ''}
+        <div className="space-y-3">
+          {devices.map((d, i) => {
+            const calls  = d.today_calls  ?? 0;
+            const errors = d.today_errors ?? 0;
+            const providers = d.providers_active ?? d.today_providers ?? 0;
+            const sharePct  = Math.round((calls / maxCalls) * 100);
+            const lastSeen  = d.last_seen || d.last_heartbeat || null;
+
+            return (
+              <div key={`${d.device_id ?? ''}-${i}`}
+                className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4 space-y-3">
+
+                {/* Header row */}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="text-lg shrink-0 select-none">{DEVICE_ICON[d.type] || '🖥'}</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-sm font-semibold text-gray-800 dark:text-gray-100 truncate">{d.name || d.device_id}</span>
+                        <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${
+                          d.online
+                            ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400'
+                            : 'bg-gray-100 dark:bg-gray-700 text-gray-500'}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${d.online ? 'bg-green-500' : 'bg-gray-400'}`}/>
+                          {d.online ? '在线' : '离线'}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-gray-400 mt-0.5 truncate">
+                        {DEVICE_LABEL[d.type] || d.type}
+                        {d.version   ? ` · v${d.version}`   : ''}
+                        {d.platform  ? ` · ${d.platform}`   : ''}
+                        {lastSeen    ? ` · ${new Date(lastSeen).toLocaleString('zh-CN', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })}` : ''}
+                      </div>
                     </div>
                   </div>
-                </div>
-                <div className="flex items-center gap-4 shrink-0">
-                  <div className="text-right">
-                    <div className="text-sm font-semibold text-gray-800 dark:text-gray-200">{d.today_calls ?? 0}</div>
-                    <div className="text-[10px] text-gray-500">今日请求</div>
-                  </div>
-                  {d.today_errors > 0 && (
-                    <div className="text-right">
-                      <div className="text-sm font-semibold text-red-500">{d.today_errors}</div>
-                      <div className="text-[10px] text-gray-500">错误</div>
-                    </div>
-                  )}
                   {!d.online && (
-                    <button
-                      onClick={() => handleRemove(d.device_id)}
-                      disabled={removing === d.device_id}
-                      className="text-xs text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors disabled:opacity-50">
+                    <button onClick={() => handleRemove(d.device_id)} disabled={removing === d.device_id}
+                      className="text-[11px] text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors disabled:opacity-50 shrink-0 mt-0.5">
                       {removing === d.device_id ? '移除中…' : '移除'}
                     </button>
                   )}
                 </div>
+
+                {/* Stats row */}
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div className="bg-gray-50 dark:bg-gray-900 rounded-lg py-2">
+                    <div className="text-base font-bold text-gray-800 dark:text-gray-100">{calls}</div>
+                    <div className="text-[10px] text-gray-400 mt-0.5">今日调用</div>
+                  </div>
+                  <div className="bg-gray-50 dark:bg-gray-900 rounded-lg py-2">
+                    <div className={`text-base font-bold ${errors > 0 ? 'text-red-500' : 'text-gray-800 dark:text-gray-100'}`}>{errors}</div>
+                    <div className="text-[10px] text-gray-400 mt-0.5">错误次数</div>
+                  </div>
+                  <div className="bg-gray-50 dark:bg-gray-900 rounded-lg py-2">
+                    <div className="text-base font-bold text-gray-800 dark:text-gray-100">{providers || '—'}</div>
+                    <div className="text-[10px] text-gray-400 mt-0.5">活跃供应商</div>
+                  </div>
+                </div>
+
+                {/* Call share bar across devices */}
+                {calls > 0 && (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[10px] text-gray-400">
+                      <span>今日占比</span>
+                      <span>{sharePct}%</span>
+                    </div>
+                    <div className="h-1.5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-400 rounded-full transition-all" style={{ width: `${sharePct}%` }} />
+                    </div>
+                    <DeviceStatBar calls={calls} errors={errors} />
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>
