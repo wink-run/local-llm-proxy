@@ -242,6 +242,8 @@ export default function TokenDashboard() {
     loadData();
     getTransactions().then(r => setTxs(r.data.transactions || [])).catch(() => {});
     getPurchaseOrders().then(r => { setOrders(r.data.orders || []); if (r.data.contact_info) setAdminInfo(String(r.data.contact_info)); }).catch(() => {});
+    const id = setInterval(loadData, 10_000);
+    return () => clearInterval(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadData]);
 
@@ -266,7 +268,7 @@ export default function TokenDashboard() {
   const heroFree    = rangeStats.free;
   const heroNonFree = heroTotal - heroFree;
 
-  const providerEntries = (localData?.providers ?? [])
+  const providerEntries = [...(localData?.providers ?? [])]
     .sort((a, b) => b.calls - a.calls)
     .map(p => [p.id, { calls: p.calls, tier: p.tier }]);
   const localTotalCalls = localData?.total_calls ?? 0;
@@ -413,7 +415,7 @@ export default function TokenDashboard() {
           <span className="text-xs text-gray-400">{range}</span>
         </div>
         {providerEntries.length === 0 ? (
-          <p className="text-xs text-gray-400 dark:text-gray-500">本次会话暂无调用记录</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500">暂无数据</p>
         ) : (
           <div className="space-y-2.5">
             {providerEntries.map(([id, { calls }]) => (
