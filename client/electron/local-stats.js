@@ -4,6 +4,7 @@
 'use strict';
 
 let db = null;
+let _insertStmt = null;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS requests (
@@ -27,24 +28,34 @@ function init(dbDir) {
   const path     = require('path');
   const Database = require('better-sqlite3');
   if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
-  db = new Database(path.join(dbDir, 'local-stats.db'));
-  db.pragma('journal_mode = WAL');  // safer concurrent reads
-  db.exec(SCHEMA);
+  try {
+    db = new Database(path.join(dbDir, 'local-stats.db'));
+    db.pragma('journal_mode = WAL');  // safer concurrent reads
+    db.exec(SCHEMA);
+    _insertStmt = db.prepare(
+      'INSERT INTO requests (ts, api_key, model, provider_id, tier, tokens) VALUES (?,?,?,?,?,?)'
+    );
+  } catch (e) {
+    console.error('[local-stats] failed to open DB:', e.message);
+    db = null;
+  }
 }
 
 /** Insert one request row. Silently ignored if init() hasn't been called. */
 function record({ api_key, model, provider_id, tier, tokens } = {}) {
-  if (!db) return;
-  db.prepare(
-    'INSERT INTO requests (ts, api_key, model, provider_id, tier, tokens) VALUES (?,?,?,?,?,?)'
-  ).run(
-    Math.floor(Date.now() / 1000),
-    api_key     || null,
-    model       || null,
-    provider_id || null,
-    tier        || null,
-    tokens      || 0,
-  );
+  if (!db || !_insertStmt) return;
+  try {
+    _insertStmt.run(
+      Math.floor(Date.now() / 1000),
+      api_key     || null,
+      model       || null,
+      provider_id || null,
+      tier        || null,
+      tokens      || 0,
+    );
+  } catch (e) {
+    console.error('[local-stats] record failed:', e.message);
+  }
 }
 
 /** Returns aggregated dashboard data for the last `days` calendar days. */
@@ -117,7 +128,7 @@ function _empty() {
 }
 
 function close() {
-  if (db) { db.close(); db = null; }
+  if (db) { db.close(); db = null; _insertStmt = null; }
 }
 
 module.exports = { init, record, queryDashboard, close };
