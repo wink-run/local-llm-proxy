@@ -654,7 +654,7 @@ function handleRequest(req, res) {
   // Local stats query — used by CLI/browser frontend
   if (method === 'GET' && url.startsWith('/api/local-stats')) {
     const qs   = new URL('http://x' + url).searchParams;
-    const days = Math.max(1, Math.min(365, parseInt(qs.get('days') || '1', 10)));
+    const days = Math.max(1, Math.min(365, parseInt(qs.get('days'), 10) || 1));
     const data = _localStats ? _localStats.queryDashboard(days) : {
       total_calls: 0, total_tokens: 0,
       tiers: { free: 0, p2p: 0, paid: 0 },
