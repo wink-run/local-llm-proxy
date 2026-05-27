@@ -59,9 +59,9 @@ async function _sendHeartbeat() {
   try {
     const s = await getGateway().getDailyStats().catch(() => ({}));
     await heartbeatDevice(_deviceId, {
-      calls            : s?.calls  || 0,
-      errors           : s?.errors || 0,
-      providers_active : Object.keys(s?.by_provider || {}).length,
+      calls            : s?.total_calls  || 0,
+      errors           : 0,  // not tracked in local stats
+      providers_active : (s?.providers || []).length,
     });
     // Successful heartbeat — reset failure counter
     _consecutiveFailures = 0;

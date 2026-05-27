@@ -703,8 +703,8 @@ export default function Profile() {
     : String(totalTokensConsumed);
 
   // Today's gateway stats (covers all calls including non-scene-route)
-  const gwCalls  = gatewayStats?.calls  ?? 0;
-  const gwTokens = gatewayStats?.tokens ?? 0;
+  const gwCalls  = gatewayStats?.total_calls  ?? 0;
+  const gwTokens = gatewayStats?.total_tokens ?? 0;
   const fmtGwTokens = gwTokens >= 1000 ? `${(gwTokens / 1000).toFixed(1)}K` : String(gwTokens);
 
   if (!user) return null;

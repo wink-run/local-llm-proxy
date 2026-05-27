@@ -37,7 +37,9 @@ function init(dbDir) {
     );
   } catch (e) {
     console.error('[local-stats] failed to open DB:', e.message);
+    try { db?.close(); } catch {}
     db = null;
+    _insertStmt = null;
   }
 }
 
