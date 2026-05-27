@@ -24,6 +24,9 @@ jobs:
           cache: npm
           cache-dependency-path: client/package-lock.json
 
+      - name: Install Python setuptools (node-gyp needs distutils, removed in Python 3.12+)
+        run: pip3 install setuptools
+
       - name: Install dependencies
         run: npm ci
         working-directory: client
@@ -51,6 +54,9 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: client/package-lock.json
+
+      - name: Install Python setuptools (node-gyp needs distutils, removed in Python 3.12+)
+        run: pip install setuptools
 
       - name: Install dependencies
         run: npm ci
