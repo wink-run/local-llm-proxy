@@ -688,10 +688,10 @@ export default function Profile() {
       .catch(() => { setTxError(true); })
       .finally(() => setLoadingTxs(false));
     // Fetch today's gateway stats for accurate today totals
-    if (window.electronAPI?.gateway) {
-      window.electronAPI.gateway.getDailyStats().then(setGatewayStats).catch(() => {});
+    if (window.electronAPI?.localStats) {
+      window.electronAPI.localStats.query(1).then(setGatewayStats).catch(() => {});
     } else {
-      fetch('/api/gateway/stats').then(r => r.json()).then(setGatewayStats).catch(() => {});
+      fetch('/api/local-stats?days=1').then(r => r.json()).then(setGatewayStats).catch(() => {});
     }
   }, []);
 

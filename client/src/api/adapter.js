@@ -38,7 +38,7 @@ async function adminFetch(path, options = {}) {
 const electronAdapter = {
   gateway: {
     status:        ()  => window.electronAPI.gateway.status(),
-    getDailyStats: ()  => window.electronAPI.gateway.getDailyStats(),
+    getDailyStats: (days) => window.electronAPI.localStats.query(days || 1),
     getLog:        ()  => window.electronAPI.gateway.getLog(),
     restart:       ()  => window.electronAPI.gateway.restart(),
     testProvider:  (p) => window.electronAPI.gateway.testProvider(p),
@@ -66,7 +66,7 @@ const electronAdapter = {
 const httpAdapter = {
   gateway: {
     status:        ()  => adminFetch('/api/gateway/status'),
-    getDailyStats: ()  => adminFetch('/api/gateway/stats'),
+    getDailyStats: (days) => adminFetch('/api/local-stats?days=' + (days || 1)),
     // admin-api returns { log: [...] }, but callers expect the array directly
     getLog:        ()  => adminFetch('/api/gateway/log').then(r => r.log || []),
     restart:       ()  => adminFetch('/api/gateway/restart', { method: 'POST' }),

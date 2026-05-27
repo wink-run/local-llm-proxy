@@ -479,7 +479,10 @@ function registerIPC() {
   ipcMain.handle('gateway:status',        () => gateway.getStatus());
   ipcMain.handle('gateway:getLog',        () => gateway.getLog());
   ipcMain.handle('gateway:restart',       () => gateway.restart());
-  ipcMain.handle('localStats:query', (_e, days) => localStats.queryDashboard(days || 1));
+  ipcMain.handle('localStats:query', (_e, days) => {
+    const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
+    return localStats.queryDashboard(d);
+  });
   ipcMain.handle('gateway:setStrategy', (_e, strategy) => {
     if (strategy !== 'cost' && strategy !== 'quality') return { ok: false, error: 'invalid_strategy' };
     gateway.setStrategy(strategy);
