@@ -679,6 +679,7 @@ export default function Profile() {
   const [txs, setTxs] = useState([]);
   const [loadingTxs, setLoadingTxs] = useState(true);
   const [txError, setTxError] = useState(false);
+  const [gatewayStats, setGatewayStats] = useState(null);
 
   useEffect(() => {
     refreshUser();
@@ -686,7 +687,25 @@ export default function Profile() {
       .then((r) => setTxs(r.data.transactions || []))
       .catch(() => { setTxError(true); })
       .finally(() => setLoadingTxs(false));
+    // Fetch today's gateway stats for accurate today totals
+    if (window.electronAPI?.gateway) {
+      window.electronAPI.gateway.getDailyStats().then(setGatewayStats).catch(() => {});
+    } else {
+      fetch('/api/gateway/stats').then(r => r.json()).then(setGatewayStats).catch(() => {});
+    }
   }, []);
+
+  const totalTokensConsumed = txs
+    .filter(t => t.type === 'consume')
+    .reduce((a, t) => a + (t.tokens || 0), 0);
+  const fmtTokensConsumed = totalTokensConsumed >= 1000
+    ? `${(totalTokensConsumed / 1000).toFixed(1)}K`
+    : String(totalTokensConsumed);
+
+  // Today's gateway stats (covers all calls including non-scene-route)
+  const gwCalls  = gatewayStats?.calls  ?? 0;
+  const gwTokens = gatewayStats?.tokens ?? 0;
+  const fmtGwTokens = gwTokens >= 1000 ? `${(gwTokens / 1000).toFixed(1)}K` : String(gwTokens);
 
   if (!user) return null;
 
@@ -709,10 +728,30 @@ export default function Profile() {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <StatCard label="累计贡献积分" value={Math.floor(user.credits_earned ?? 0).toLocaleString()} />
         <StatCard label="累计消耗积分" value={Math.floor(user.credits_spent ?? 0).toLocaleString()} />
+        <StatCard label="累计消耗 Token" value={fmtTokensConsumed} />
       </div>
+
+      {gwCalls > 0 && (
+        <div className="grid grid-cols-2 gap-4">
+          <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4 flex items-center gap-3">
+            <span className="w-2 h-2 rounded-full bg-green-500 shrink-0"/>
+            <div>
+              <p className="text-xs text-gray-400 dark:text-gray-500">今日网关调用</p>
+              <p className="text-xl font-bold text-gray-900 dark:text-gray-100">{gwCalls} 次</p>
+            </div>
+          </div>
+          <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4 flex items-center gap-3">
+            <span className="w-2 h-2 rounded-full bg-purple-500 shrink-0"/>
+            <div>
+              <p className="text-xs text-gray-400 dark:text-gray-500">今日网关 Token</p>
+              <p className="text-xl font-bold text-gray-900 dark:text-gray-100">{fmtGwTokens}</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-4 items-start">
         <CheckinCard onSuccess={refreshUser} />
@@ -751,6 +790,11 @@ export default function Profile() {
                   <p className={`text-sm font-medium ${(tx.delta ?? 0) >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
                     {(tx.delta ?? 0) >= 0 ? '+' : ''}{(tx.delta ?? 0).toFixed(1)}
                   </p>
+                  {tx.type === 'consume' && tx.tokens > 0 && (
+                    <p className="text-xs text-purple-500 dark:text-purple-400">
+                      {tx.tokens >= 1000 ? `${(tx.tokens / 1000).toFixed(1)}K` : tx.tokens} tok
+                    </p>
+                  )}
                   <p className="text-xs text-gray-400 dark:text-gray-500">余额 {(tx.balance ?? 0).toFixed(1)}</p>
                 </div>
               </div>

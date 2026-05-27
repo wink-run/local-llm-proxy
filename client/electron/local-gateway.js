@@ -3,6 +3,9 @@
 
 const http  = require('http');
 const https = require('https');
+const fs    = require('fs');
+const os    = require('os');
+const path  = require('path');
 
 // ── In-memory state ───────────────────────────────────────────────────────────
 
@@ -20,16 +23,33 @@ let _peerModels   = new Set();
 let _backendUrl   = null;
 let _cloudToken   = null;
 
-// Daily stats reset when date changes
+// Daily stats — persisted to disk so restarts within the same day don't lose data
+const _STATS_FILE = path.join(os.homedir(), '.tokenbank-gateway-stats.json');
+
+function _saveStats() {
+  try { fs.writeFileSync(_STATS_FILE, JSON.stringify(_stats), 'utf-8'); } catch {}
+}
+
+function _loadStats() {
+  try {
+    const data = JSON.parse(fs.readFileSync(_STATS_FILE, 'utf-8'));
+    if (data && data.date === today()) _stats = data;
+  } catch {}
+}
+
 let _stats = newDayStats();
+_loadStats(); // restore today's stats if available
 
 function newDayStats() {
   return {
     date: today(),
     calls: 0,
+    tokens: 0,
     errors: 0,
-    by_provider: {},  // id → { calls }
-    by_model:    {},  // name → { calls }
+    hourly:      Array(24).fill(0),  // call count per hour-of-day
+    by_provider: {},  // id → { calls, tokens, tier }
+    by_model:    {},  // name → { calls, tokens }
+    by_key:      {},  // api_key → { calls, tokens }
   };
 }
 
@@ -38,7 +58,7 @@ function today() {
 }
 
 function ensureTodayStats() {
-  if (_stats.date !== today()) _stats = newDayStats();
+  if (_stats.date !== today()) { _stats = newDayStats(); _saveStats(); }
 }
 
 // ── Format conversion (Anthropic ↔ OpenAI) ───────────────────────────────────
@@ -144,7 +164,7 @@ function proxyRequest(provider, reqPath, body, res) {
 
     const t0 = Date.now();
     let firstTokenMs = null;
-    let ftBuf = '';
+    const isStream = !!body.stream;
 
     const proxyReq = mod.request(opts, (proxyRes) => {
       if (proxyRes.statusCode >= 400) {
@@ -161,24 +181,50 @@ function proxyRequest(provider, reqPath, body, res) {
         'X-Accel-Buffering':     'no',
         'Access-Control-Allow-Origin': '*',
       });
-      // Track first real content token (first non-empty `data:` SSE line)
-      proxyRes.on('data', (chunk) => {
-        if (firstTokenMs !== null) return;
-        ftBuf += chunk.toString();
-        const lines = ftBuf.split('\n');
-        ftBuf = lines.pop();
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const ds = line.slice(6).trim();
-          if (ds && ds !== '[DONE]') { firstTokenMs = Date.now() - t0; break; }
-        }
-      });
-      proxyRes.pipe(res);
-      proxyRes.on('end',   () => resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0 }));
-      proxyRes.on('error', (err) => {
-        res.destroy(err);
-        resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0 });
-      });
+
+      if (isStream) {
+        // Streaming: pipe to client while sniffing SSE events for usage
+        let usageIn = 0, usageOut = 0;
+        let sseBuf = '';
+        proxyRes.on('data', (chunk) => {
+          res.write(chunk);
+          sseBuf += chunk.toString();
+          const lines = sseBuf.split('\n');
+          sseBuf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const ds = line.slice(6).trim();
+            if (!ds || ds === '[DONE]') continue;
+            if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
+            try {
+              const obj = JSON.parse(ds);
+              if (obj.usage) {
+                usageIn  = obj.usage.prompt_tokens     || obj.usage.input_tokens     || usageIn;
+                usageOut = obj.usage.completion_tokens || obj.usage.output_tokens    || usageOut;
+              }
+            } catch {}
+          }
+        });
+        proxyRes.on('end',   () => { res.end(); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut }); });
+        proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut }); });
+      } else {
+        // Non-streaming: buffer, forward, then parse usage from JSON
+        const chunks = [];
+        proxyRes.on('data', c => chunks.push(c));
+        proxyRes.on('end', () => {
+          const buf = Buffer.concat(chunks);
+          res.end(buf);
+          let usageIn = 0, usageOut = 0;
+          try {
+            const obj = JSON.parse(buf.toString());
+            const u   = obj.usage || {};
+            usageIn  = u.prompt_tokens     || u.input_tokens     || 0;
+            usageOut = u.completion_tokens || u.output_tokens    || 0;
+          } catch {}
+          resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut });
+        });
+        proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: Date.now() - t0, input_tokens: 0, output_tokens: 0 }); });
+      }
     });
 
     proxyReq.on('error',   reject);
@@ -230,7 +276,10 @@ function proxyConvertSync(provider, oaiBody, model, res) {
           res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
           res.end(resp);
           const latency = Date.now() - t0;
-          resolve({ provider: provider.id, latency, first_token_ms: latency });
+          const usage   = oaiResp?.usage || {};
+          resolve({ provider: provider.id, latency, first_token_ms: latency,
+            input_tokens:  usage.prompt_tokens     || usage.input_tokens     || 0,
+            output_tokens: usage.completion_tokens || usage.output_tokens    || 0 });
         } catch (err) { reject(err); }
       });
       proxyRes.on('error', reject);
@@ -289,6 +338,7 @@ function proxyConvertStream(provider, oaiBody, model, res) {
       res.write('event: ping\ndata: {"type":"ping"}\n\n');
 
       let buf = '', outputTokens = 0, stopReason = 'end_turn', firstTokenMs = null;
+      let usageIn = 0, usageOut = 0; // from actual usage field in SSE, if present
 
       proxyRes.on('data', (chunk) => {
         buf += chunk.toString();
@@ -312,22 +362,29 @@ function proxyConvertStream(provider, oaiBody, model, res) {
               })}\n\n`);
             }
             if (finish) stopReason = finish === 'stop' ? 'end_turn' : finish;
+            // Capture actual usage if provider includes it (e.g. final chunk with usage)
+            if (c.usage) {
+              usageIn  = c.usage.prompt_tokens     || c.usage.input_tokens     || usageIn;
+              usageOut = c.usage.completion_tokens || c.usage.output_tokens    || usageOut;
+            }
           } catch {}
         }
       });
 
       proxyRes.on('end', () => {
+        // Prefer actual usage from provider; fall back to manual output token count
+        const finalOut = usageOut || outputTokens;
         res.write(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`);
         res.write(`event: message_delta\ndata: ${JSON.stringify({
           type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null },
-          usage: { output_tokens: outputTokens },
+          usage: { output_tokens: finalOut },
         })}\n\n`);
         res.write('event: message_stop\ndata: {"type":"message_stop"}\n\n');
         res.end();
-        resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0 });
+        resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: finalOut });
       });
 
-      proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0 }); });
+      proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut || outputTokens }); });
     });
     proxyReq.on('error', reject);
     proxyReq.on('timeout', () => { proxyReq.destroy(); reject(new Error('timeout')); });
@@ -409,7 +466,7 @@ function proxyP2PSync(provider, oaiBody, model, res) {
             res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
             res.end(resp);
           }
-          resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0 });
+          resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: inputTokens, output_tokens: outputTokens });
         } catch (err) { reject(err); }
       });
       proxyRes.on('error', reject);
@@ -447,7 +504,7 @@ async function callProvider(provider, isAnthropic, streaming, reqPath, body, att
   return await proxyRequest(provider, reqPath, attemptBody, res);
 }
 
-async function route(model, reqPath, body, res) {
+async function route(model, reqPath, body, res, callerKey) {
   ensureTodayStats();
   const t0          = Date.now();
   let lastErr       = null;
@@ -499,7 +556,10 @@ async function route(model, reqPath, body, res) {
             tier: provider.type, via: provider.id, via_label: provider.label,
             latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok',
           });
-          recordStats(provider.id, stepModel);
+          const stepTok  = (result.input_tokens || 0) + (result.output_tokens || 0);
+          const stepTier = _providerTier(provider);
+          recordStats(provider.id, stepModel, stepTok, stepTier, callerKey);
+          reportUsage(provider.id, stepModel, stepTok);
           stepSucceeded = true;
           return;
         } catch (err) {
@@ -529,7 +589,10 @@ async function route(model, reqPath, body, res) {
         tier: provider.type, via: provider.id, via_label: provider.label,
         latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok',
       });
-      recordStats(provider.id, model);
+      const directTok  = (result.input_tokens || 0) + (result.output_tokens || 0);
+      const directTier = _providerTier(provider);
+      recordStats(provider.id, model, directTok, directTier, callerKey);
+      reportUsage(provider.id, model, directTok);
       return;
     } catch (err) {
       lastErr = err;
@@ -545,17 +608,80 @@ function pushLog(entry) {
   if (log.length > LOG_MAX) log.shift();
 }
 
-function recordStats(providerId, model) {
+function recordStats(providerId, model, tokens, tier, apiKey) {
   _stats.calls++;
-  const ps = _stats.by_provider[providerId] || { calls: 0 };
+  if (tokens) _stats.tokens = (_stats.tokens || 0) + tokens;
+  // Hourly tracking
+  _stats.hourly[new Date().getHours()]++;
+
+  const ps = _stats.by_provider[providerId] || { calls: 0, tokens: 0 };
   ps.calls++;
+  if (tokens) ps.tokens = (ps.tokens || 0) + tokens;
+  if (tier)   ps.tier   = tier;
   _stats.by_provider[providerId] = ps;
 
   if (model) {
-    const ms = _stats.by_model[model] || { calls: 0 };
+    const ms = _stats.by_model[model] || { calls: 0, tokens: 0 };
     ms.calls++;
+    if (tokens) ms.tokens = (ms.tokens || 0) + tokens;
     _stats.by_model[model] = ms;
   }
+
+  // Track per-API-key so scene usage table stays complete even without backend transactions
+  if (apiKey) {
+    const ks = _stats.by_key[apiKey] || { calls: 0, tokens: 0 };
+    ks.calls++;
+    if (tokens) ks.tokens = (ks.tokens || 0) + tokens;
+    _stats.by_key[apiKey] = ks;
+  }
+
+  _saveStats();
+}
+
+// Determine routing tier from provider object or id string.
+// Priority: explicit config tier > known P2P id > has token + non-local URL = paid > free
+const _LOCAL_URL = /localhost|127\.0\.0\.1|::1|192\.168\.|^10\.|^172\.(1[6-9]|2\d|3[01])\./;
+
+function _providerTier(provider) {
+  if (!provider) return 'free';
+  const id   = typeof provider === 'string' ? provider : (provider.id || '');
+  const obj  = typeof provider === 'object' ? provider : null;
+  // Explicit tier in provider config
+  if (obj?.tier) return obj.tier;
+  // P2P
+  if (id === 'tokenbank-p2p' || obj?.type === 'p2p') return 'p2p';
+  // Known paid IDs (fallback for old persisted stats that only store id)
+  const KNOWN_PAID = new Set(['openai','anthropic-paid','anthropic','openrouter','deepseek','xai','fireworks']);
+  if (KNOWN_PAID.has(id)) return 'paid';
+  // Has API token + non-local base URL → paid
+  if (obj?.token && obj?.base_url && !_LOCAL_URL.test(obj.base_url)) return 'paid';
+  return 'free';
+}
+
+// Fire-and-forget: report a completed non-P2P call to the backend so it appears
+// in dashboard stats. P2P calls are already recorded server-side.
+function reportUsage(providerId, model, totalTokens) {
+  if (!_backendUrl || !_cloudToken) return;
+  const tier = _providerTier(providerId);
+  if (tier === 'p2p') return; // already recorded by backend
+  const body = JSON.stringify({ model, tokens: totalTokens, tier, provider_id: providerId });
+  try {
+    const u   = new URL(_backendUrl + '/api/gateway/record-usage');
+    const mod = u.protocol === 'https:' ? require('https') : http;
+    const req = mod.request({
+      hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname, method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'Authorization': `Bearer ${_cloudToken}`,
+      },
+      timeout: 10_000,
+    }, res => { res.resume(); }); // drain response
+    req.on('error', () => {}); // ignore errors — best-effort
+    req.write(body);
+    req.end();
+  } catch {}
 }
 
 // ── HTTP Server ───────────────────────────────────────────────────────────────
@@ -599,6 +725,10 @@ function handleRequest(req, res) {
     }
   });
 
+  // Extract caller's API key (used to attribute stats to the right scene/key)
+  const authRaw = req.headers['authorization'] || req.headers['x-api-key'] || '';
+  const callerKey = authRaw.startsWith('Bearer ') ? authRaw.slice(7).trim() : authRaw.trim();
+
   const chunks = [];
   req.on('data', c => chunks.push(c));
   req.on('end', async () => {
@@ -606,7 +736,7 @@ function handleRequest(req, res) {
     try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch {}
     const model = body.model || '';
     try {
-      await route(model, url, body, res);
+      await route(model, url, body, res, callerKey);
     } catch (err) {
       if (!res.headersSent) {
         res.writeHead(500, { 'Content-Type': 'application/json' });

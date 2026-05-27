@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -18,6 +19,7 @@ import database as db
 from admin_router import router as admin_router
 from catalog import PROVIDER_CATALOG, TIERS
 from device_router import router as device_router
+from auth import get_current_user_id
 from dispatch import handle_chat
 from dispatch_image import handle_image
 from settler import run_settler
@@ -411,6 +413,33 @@ async def worker_ws(ws: WebSocket):
                 worker.worker_id,
                 worker.name,
             )
+
+
+# ── 网关使用上报 ──────────────────────────────────────────────────────────────
+
+class GatewayUsageReport(BaseModel):
+    model: str = ""
+    tokens: int = 0
+    tier: str = "free"        # free | paid
+    provider_id: str = ""
+
+
+@app.post("/api/gateway/record-usage")
+async def gateway_record_usage(
+    req: GatewayUsageReport,
+    uid: int = Depends(get_current_user_id),
+):
+    """Gateway reports free/paid-direct calls so they appear in dashboard stats."""
+    if req.tokens < 0:
+        raise HTTPException(400, "tokens must be >= 0")
+    await db.record_gateway_usage(
+        user_id=uid,
+        model_name=req.model,
+        tokens=req.tokens,
+        tier=req.tier,
+        provider_id=req.provider_id,
+    )
+    return {"ok": True}
 
 
 # ── 用户 LLM 接口 ─────────────────────────────────────────────────────────────

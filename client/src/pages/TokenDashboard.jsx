@@ -1,7 +1,7 @@
 // client/src/pages/TokenDashboard.jsx
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../store/index';
-import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getUserDevices, deleteDevice } from '../api/client';
+import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getUserDevices, deleteDevice, getDashboardStats, getModelStats } from '../api/client';
 import { getGateway } from '../api/adapter';
 
 const PROVIDER_COLORS = {
@@ -15,6 +15,9 @@ const PROVIDER_COLORS = {
 
 const TX_LABEL = { contribute: '贡献', consume: '消耗', referral: '推荐', purchase: '充值', adjust: '调整', spin: '转盘' };
 const ORDER_STATUS = { pending: '待审核', approved: '已通过', rejected: '已拒绝' };
+
+const RANGES    = ['今日', '7 天', '30 天'];
+const RANGE_DAYS = { '今日': 1, '7 天': 7, '30 天': 30 };
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -212,6 +215,9 @@ export default function TokenDashboard() {
   const [orderMsg, setOrderMsg] = useState('');
   const [orderMsgOk,setOrderMsgOk]=useState(false);
   const [creditsOpen,setCreditsOpen]=useState(false);
+  const [range,       setRange]      = useState('今日');
+  const [rangeStats,  setRangeStats] = useState({ calls: 0, tokens: 0, free: 0, p2p: 0, paid: 0 });
+  const [rangeModels, setRangeModels]= useState([]);
 
   const loadData = useCallback(async () => {
     try {
@@ -235,14 +241,44 @@ export default function TokenDashboard() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadData]);
 
+  useEffect(() => {
+    const days = RANGE_DAYS[range];
+    Promise.all([
+      getDashboardStats(days).catch(() => null),
+      getModelStats(days).catch(() => null),
+    ]).then(([dashRes, modelRes]) => {
+      const keys = dashRes?.data?.stats || [];
+      setRangeStats({
+        calls:  keys.reduce((a, s) => a + (s.request_count || 0), 0),
+        tokens: keys.reduce((a, s) => a + (s.total_tokens  || 0), 0),
+        free:   keys.reduce((a, s) => a + (s.free_count    || 0), 0),
+        p2p:    keys.reduce((a, s) => a + (s.p2p_count     || 0), 0),
+        paid:   keys.reduce((a, s) => a + (s.paid_count    || 0), 0),
+      });
+      setRangeModels(modelRes?.data?.models || []);
+    });
+  }, [range]);
+
   if (!user) return null;
 
-  const totalCalls = stats?.calls ?? 0;
+  const gwCalls = stats?.calls ?? 0;
   const providerEntries = Object.entries(stats?.by_provider ?? {}).sort((a, b) => b[1].calls - a[1].calls);
   const modelEntries    = Object.entries(stats?.by_model    ?? {}).sort((a, b) => b[1].calls - a[1].calls);
-  const freeCalls = providerEntries
+  const gwFreeCalls = providerEntries
     .filter(([id]) => !['tokenbank-p2p', 'openai', 'anthropic-paid'].includes(id))
     .reduce((s, [, v]) => s + v.calls, 0);
+
+  // For "今日" hero card: use the larger of gateway vs backend as total
+  // and pick tier breakdown from whichever source is more complete
+  const isToday         = range === '今日';
+  const gwHasMore       = isToday && gwCalls > rangeStats.calls;
+  const heroTotal       = gwHasMore ? gwCalls : rangeStats.calls;
+  const hasBkTiers      = rangeStats.free > 0 || rangeStats.p2p > 0 || rangeStats.paid > 0;
+  const heroFree        = gwHasMore ? gwFreeCalls : (hasBkTiers ? rangeStats.free : gwFreeCalls);
+  const heroNonFree     = heroTotal - heroFree;
+
+  const fmtRangeCalls  = heroTotal >= 1000 ? `${(heroTotal / 1000).toFixed(1)}K` : String(heroTotal);
+  const fmtRangeTokens = rangeStats.tokens >= 1000 ? `${(rangeStats.tokens / 1000).toFixed(1)}K` : String(rangeStats.tokens);
 
   async function handleOrder(e) {
     e.preventDefault();
@@ -272,14 +308,39 @@ export default function TokenDashboard() {
         </div>
       </div>
 
-      {/* Today usage */}
-      <div className="bg-gradient-to-br from-blue-700 to-blue-900 rounded-2xl p-6 space-y-2">
-        <p className="text-sm text-blue-300">今日 Token 使用</p>
-        <p className="text-4xl font-bold text-white">{totalCalls} <span className="text-xl font-normal text-blue-300">次调用</span></p>
-        <p className="text-sm text-blue-300">
-          {freeCalls} 次走免费层（{totalCalls > 0 ? Math.round(freeCalls / totalCalls * 100) : 0}%）·
-          {totalCalls - freeCalls} 次走积分/付费层
-        </p>
+      {/* Usage card with range selector */}
+      <div className="bg-gradient-to-br from-blue-700 to-blue-900 rounded-2xl p-6">
+        {/* Header row */}
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-sm text-blue-300">{range} 总览</p>
+          <div className="flex gap-1 bg-blue-800/50 rounded-lg p-0.5">
+            {RANGES.map(r => (
+              <button key={r} onClick={() => setRange(r)}
+                className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+                  range === r ? 'bg-white/20 text-white font-medium' : 'text-blue-300 hover:text-white'
+                }`}>{r}</button>
+            ))}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          {/* Left: calls */}
+          <div>
+            <p className="text-xs text-blue-300 mb-1">调用次数</p>
+            <p className="text-4xl font-bold text-white">{fmtRangeCalls}</p>
+            {isToday && heroTotal > 0 && (
+              <p className="text-xs text-blue-300 mt-2">
+                {heroFree} 免费（{Math.round(heroFree / heroTotal * 100)}%）·{' '}
+                {heroNonFree} 积分/付费
+              </p>
+            )}
+          </div>
+          {/* Right: tokens */}
+          <div className="border-l border-blue-500/40 pl-4">
+            <p className="text-xs text-blue-300 mb-1">Token 消耗</p>
+            <p className="text-4xl font-bold text-white">{fmtRangeTokens}</p>
+            <p className="text-xs text-blue-300 mt-2">各设备 {range} 合计</p>
+          </div>
+        </div>
       </div>
 
       {/* Credits (collapsible) */}
@@ -349,40 +410,59 @@ export default function TokenDashboard() {
       {/* Devices */}
       <DevicesSection />
 
-      {/* Provider breakdown */}
-      {providerEntries.length > 0 && (
-        <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+      {/* Provider breakdown — real-time gateway data */}
+      <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+        <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">供给来源分布</h2>
+          <span className="text-xs text-gray-400">实时</span>
+        </div>
+        {providerEntries.length === 0 ? (
+          <p className="text-xs text-gray-400 dark:text-gray-500">本次会话暂无调用记录</p>
+        ) : (
           <div className="space-y-2.5">
             {providerEntries.map(([id, { calls }]) => (
-              <ProviderBar key={id} id={id} calls={calls} totalCalls={totalCalls} />
+              <ProviderBar key={id} id={id} calls={calls} totalCalls={gwCalls} />
             ))}
           </div>
-        </section>
-      )}
+        )}
+      </section>
 
-      {/* Model breakdown */}
-      {modelEntries.length > 0 && (
-        <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+      {/* Model breakdown — historical backend data */}
+      <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+        <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">模型使用分布</h2>
+          <span className="text-xs text-gray-400">{range}</span>
+        </div>
+        {rangeModels.length === 0 ? (
+          <p className="text-xs text-gray-400 dark:text-gray-500">暂无数据</p>
+        ) : (
           <div className="space-y-2.5">
-            {modelEntries.slice(0, 6).map(([name, { calls }]) => (
-              <div key={name} className="flex items-center gap-3 text-sm">
-                <div className="w-36 shrink-0 text-xs text-gray-600 dark:text-gray-400 truncate font-mono">{name}</div>
-                <div className="flex-1 bg-gray-100 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
-                  <div className="h-2 rounded-full bg-blue-400" style={{ width: `${totalCalls > 0 ? (calls / totalCalls) * 100 : 0}%` }} />
+            {rangeModels.slice(0, 6).map(m => {
+              const maxCalls = rangeModels[0]?.request_count || 1;
+              return (
+                <div key={m.model_name} className="flex items-center gap-3 text-sm">
+                  <div className="w-36 shrink-0 text-xs text-gray-600 dark:text-gray-400 truncate font-mono" title={m.model_name}>{m.model_name}</div>
+                  <div className="flex-1 bg-gray-100 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
+                    <div className="h-2 rounded-full bg-blue-400 transition-all duration-500"
+                      style={{ width: `${Math.round(m.request_count / maxCalls * 100)}%` }} />
+                  </div>
+                  <span className="w-10 shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">{m.request_count} 次</span>
                 </div>
-                <span className="w-10 shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">{calls} 次</span>
-              </div>
-            ))}
+              );
+            })}
           </div>
-        </section>
-      )}
+        )}
+      </section>
 
-      {/* Recent route log */}
-      {logEntries.length > 0 && (
-        <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-2">
-          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">最近调用</h2>
+      {/* Recent route log — real-time */}
+      <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-2">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">路由明细</h2>
+          <span className="text-xs text-gray-400">实时</span>
+        </div>
+        {logEntries.length === 0 ? (
+          <p className="text-xs text-gray-400 dark:text-gray-500">本次会话暂无调用记录</p>
+        ) : (
           <div className="space-y-1.5">
             {logEntries.map((e, i) => {
               const meta = PROVIDER_COLORS[e.via] || {};
@@ -398,8 +478,8 @@ export default function TokenDashboard() {
               );
             })}
           </div>
-        </section>
-      )}
+        )}
+      </section>
 
     </div>
   );
