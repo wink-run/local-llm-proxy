@@ -132,6 +132,7 @@ export default function Dashboard() {
         data = await window.electronAPI.localStats.query(days);
       } else {
         const r = await fetch(`/api/local-stats?days=${days}`);
+        if (!r.ok) throw new Error(`local-stats ${r.status}`);
         data = await r.json();
       }
       setLocalData(data);
@@ -168,16 +169,14 @@ export default function Dashboard() {
     }
   };
 
-  const isToday = range === '今日';
-
   // ── Derived from local SQLite ──────────────────────────────────────────────
   const totalCalls  = localData?.total_calls  ?? 0;
   const totalTokens = localData?.total_tokens ?? 0;
   const fmtTokens   = totalTokens >= 1000 ? `${(totalTokens / 1000).toFixed(1)}K` : String(totalTokens);
 
-  const freeCalls  = localData?.tiers.free  ?? 0;
-  const p2pCalls   = localData?.tiers.p2p   ?? 0;
-  const paidCalls  = localData?.tiers.paid  ?? 0;
+  const freeCalls  = localData?.tiers?.free  ?? 0;
+  const p2pCalls   = localData?.tiers?.p2p   ?? 0;
+  const paidCalls  = localData?.tiers?.paid  ?? 0;
   const freeRatio  = totalCalls > 0 ? Math.round(freeCalls / totalCalls * 100) : 0;
 
   const trendData  = localData?.hourly ?? Array(24).fill(0);
