@@ -3,9 +3,6 @@
 
 const http  = require('http');
 const https = require('https');
-const fs    = require('fs');
-const os    = require('os');
-const path  = require('path');
 
 // ── In-memory state ───────────────────────────────────────────────────────────
 
@@ -23,43 +20,10 @@ let _peerModels   = new Set();
 let _backendUrl   = null;
 let _cloudToken   = null;
 
-// Daily stats — persisted to disk so restarts within the same day don't lose data
-const _STATS_FILE = path.join(os.homedir(), '.tokenbank-gateway-stats.json');
-
-function _saveStats() {
-  try { fs.writeFileSync(_STATS_FILE, JSON.stringify(_stats), 'utf-8'); } catch {}
-}
-
-function _loadStats() {
-  try {
-    const data = JSON.parse(fs.readFileSync(_STATS_FILE, 'utf-8'));
-    if (data && data.date === today()) _stats = data;
-  } catch {}
-}
-
-let _stats = newDayStats();
-_loadStats(); // restore today's stats if available
-
-function newDayStats() {
-  return {
-    date: today(),
-    calls: 0,
-    tokens: 0,
-    errors: 0,
-    hourly:      Array(24).fill(0),  // call count per hour-of-day
-    by_provider: {},  // id → { calls, tokens, tier }
-    by_model:    {},  // name → { calls, tokens }
-    by_key:      {},  // api_key → { calls, tokens }
-  };
-}
-
-function today() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function ensureTodayStats() {
-  if (_stats.date !== today()) { _stats = newDayStats(); _saveStats(); }
-}
+// Stats recorder callback — set by main process via setStatsRecorder()
+let _statsRecorder = null;
+// Local stats module — set by main process via setLocalStats(), used for HTTP queries
+let _localStats    = null;
 
 // ── Format conversion (Anthropic ↔ OpenAI) ───────────────────────────────────
 
@@ -505,7 +469,6 @@ async function callProvider(provider, isAnthropic, streaming, reqPath, body, att
 }
 
 async function route(model, reqPath, body, res, callerKey) {
-  ensureTodayStats();
   const t0          = Date.now();
   let lastErr       = null;
   const isAnthropic = reqPath === '/v1/messages';
@@ -517,7 +480,6 @@ async function route(model, reqPath, body, res, callerKey) {
       tried: failedModels?.length ? [...failedModels] : undefined,
       via: null, latency_ms: Date.now() - t0, status: 'error', error: lastErr?.message,
     });
-    _stats.errors++;
     if (!res.headersSent) {
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'all_providers_failed', detail: lastErr?.message }));
@@ -609,33 +571,13 @@ function pushLog(entry) {
 }
 
 function recordStats(providerId, model, tokens, tier, apiKey) {
-  _stats.calls++;
-  if (tokens) _stats.tokens = (_stats.tokens || 0) + tokens;
-  // Hourly tracking
-  _stats.hourly[new Date().getHours()]++;
-
-  const ps = _stats.by_provider[providerId] || { calls: 0, tokens: 0 };
-  ps.calls++;
-  if (tokens) ps.tokens = (ps.tokens || 0) + tokens;
-  if (tier)   ps.tier   = tier;
-  _stats.by_provider[providerId] = ps;
-
-  if (model) {
-    const ms = _stats.by_model[model] || { calls: 0, tokens: 0 };
-    ms.calls++;
-    if (tokens) ms.tokens = (ms.tokens || 0) + tokens;
-    _stats.by_model[model] = ms;
-  }
-
-  // Track per-API-key so scene usage table stays complete even without backend transactions
-  if (apiKey) {
-    const ks = _stats.by_key[apiKey] || { calls: 0, tokens: 0 };
-    ks.calls++;
-    if (tokens) ks.tokens = (ks.tokens || 0) + tokens;
-    _stats.by_key[apiKey] = ks;
-  }
-
-  _saveStats();
+  _statsRecorder?.({
+    api_key:     apiKey     || null,
+    model:       model      || null,
+    provider_id: providerId || null,
+    tier:        tier       || null,
+    tokens:      tokens     || 0,
+  });
 }
 
 // Determine routing tier from provider object or id string.
@@ -706,6 +648,28 @@ function handleRequest(req, res) {
   if (method === 'GET' && (url === '/v1/models' || url === '/models')) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ object: 'list', data: [] }));
+    return;
+  }
+
+  // Local stats query — used by CLI/browser frontend
+  if (method === 'GET' && url.startsWith('/api/local-stats')) {
+    const qs   = new URL('http://x' + url).searchParams;
+    const days = Math.max(1, Math.min(365, parseInt(qs.get('days') || '1', 10)));
+    const data = _localStats ? _localStats.queryDashboard(days) : {
+      total_calls: 0, total_tokens: 0,
+      tiers: { free: 0, p2p: 0, paid: 0 },
+      hourly: Array(24).fill(0),
+      models: [], keys: [], providers: [],
+    };
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(data));
+    return;
+  }
+
+  // Gateway status for CLI frontend
+  if (method === 'GET' && url === '/api/gateway/status') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(getStatus()));
     return;
   }
 
@@ -799,11 +763,6 @@ function getLog() {
   return [...log].reverse(); // newest first
 }
 
-function getDailyStats() {
-  ensureTodayStats();
-  return { ..._stats };
-}
-
 function setKeySceneMap() { /* deprecated */ }
 
 function setRouterModelMap(map) {
@@ -821,7 +780,16 @@ function setBackendConfig({ url, token } = {}) {
   console.log(`[gateway] backend config: url=${_backendUrl} token=${_cloudToken ? '***' : 'none'}`);
 }
 
+function setStatsRecorder(fn) {
+  _statsRecorder = typeof fn === 'function' ? fn : null;
+}
+
+function setLocalStats(mod) {
+  _localStats = mod && typeof mod.queryDashboard === 'function' ? mod : null;
+}
+
 module.exports = {
-  start, stop, restart, setStrategy, getStatus, getLog, getDailyStats,
+  start, stop, restart, setStrategy, getStatus, getLog,
   setKeySceneMap, setRouterModelMap, setPeerModels, setBackendConfig,
+  setStatsRecorder, setLocalStats,
 };
