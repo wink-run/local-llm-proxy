@@ -7,11 +7,13 @@
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "prebuild": "node scripts/gen-icons.js",
     "build": "vite build && electron-builder",
-    "gen-icons": "node scripts/gen-icons.js"
+    "gen-icons": "node scripts/gen-icons.js",
+    "rebuild": "electron-rebuild -f -w better-sqlite3"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
     "axios": "^1.7.2",
+    "better-sqlite3": "^12.10.0",
     "electron-store": "^9.0.0",
     "electron-updater": "^6.8.3",
     "react": "^18.3.1",
@@ -27,6 +29,7 @@
     "concurrently": "^8.2.2",
     "electron": "^33.4.11",
     "electron-builder": "^25.0.5",
+    "electron-rebuild": "^3.2.9",
     "png2icons": "^2.0.1",
     "pngjs": "^7.0.0",
     "postcss": "^8.4.41",
@@ -44,6 +47,8 @@
       "dist/**/*",
       "electron/**/*"
     ],
+    "asarUnpack": ["node_modules/better-sqlite3/**/*"],
+    "npmRebuild": true,
     "publish": {
       "provider": "github",
       "owner": "wink-run",
