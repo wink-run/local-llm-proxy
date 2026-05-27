@@ -1,8 +1,7 @@
 // client/src/pages/TokenDashboard.jsx
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../store/index';
 import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getUserDevices, deleteDevice } from '../api/client';
-import { getGateway } from '../api/adapter';
 
 /** Query local stats via Electron IPC or HTTP gateway */
 async function fetchLocalStats(days) {
@@ -214,7 +213,6 @@ function DevicesSection() {
 
 export default function TokenDashboard() {
   const { user, refreshUser } = useAuth();
-  const [logEntries, setLog]    = useState([]);
   const [txs,      setTxs]      = useState([]);
   const [orders,   setOrders]   = useState([]);
   const [adminInfo,setAdminInfo]= useState('');
@@ -229,23 +227,12 @@ export default function TokenDashboard() {
   const [rangeModels, setRangeModels]= useState([]);
   const [localData,   setLocalData]  = useState(null);
 
-  const loadData = useCallback(async () => {
-    try {
-      const gw = getGateway();
-      const lg = await gw.getLog();
-      setLog((lg || []).slice(0, 5));
-    } catch {}
-  }, []);
-
   useEffect(() => {
     refreshUser();
-    loadData();
     getTransactions().then(r => setTxs(r.data.transactions || [])).catch(() => {});
     getPurchaseOrders().then(r => { setOrders(r.data.orders || []); if (r.data.contact_info) setAdminInfo(String(r.data.contact_info)); }).catch(() => {});
-    const id = setInterval(loadData, 10_000);
-    return () => clearInterval(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadData]);
+  }, []);
 
   useEffect(() => {
     const days = RANGE_DAYS[range];
@@ -452,32 +439,6 @@ export default function TokenDashboard() {
         )}
       </section>
 
-      {/* Recent route log — real-time */}
-      <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-2">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">路由明细</h2>
-          <span className="text-xs text-gray-400">实时</span>
-        </div>
-        {logEntries.length === 0 ? (
-          <p className="text-xs text-gray-400 dark:text-gray-500">本次会话暂无调用记录</p>
-        ) : (
-          <div className="space-y-1.5">
-            {logEntries.map((e, i) => {
-              const meta = PROVIDER_COLORS[e.via] || {};
-              return (
-                <div key={`${e.ts}-${e.via}-${i}`} className="flex items-center gap-2 text-xs px-2 py-1.5 rounded-lg bg-gray-50 dark:bg-gray-900">
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${e.status === 'ok' ? 'bg-green-400' : 'bg-red-400'}`} />
-                  <span className="text-gray-500 shrink-0">{new Date(e.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
-                  <span className="flex-1 text-gray-700 dark:text-gray-300 truncate font-mono">{e.model || '—'}</span>
-                  <span className="text-gray-400">→</span>
-                  <span className="text-blue-600 dark:text-blue-400 shrink-0">{meta.label || e.via || '—'}</span>
-                  <span className="text-gray-400 shrink-0">{e.latency_ms}ms</span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
 
     </div>
   );
