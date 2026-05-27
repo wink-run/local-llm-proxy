@@ -7,6 +7,7 @@ const https = require('https');
 const { autoUpdater } = require('electron-updater');
 const agent = require('./agent-worker');
 const gateway = require('./local-gateway');
+const localStats = require('./local-stats');
 // device-reporter is used by the CLI only; desktop registration is handled
 // by useDeviceReporter in the renderer (which has access to the JWT).
 
@@ -477,8 +478,8 @@ function registerIPC() {
 
   ipcMain.handle('gateway:status',        () => gateway.getStatus());
   ipcMain.handle('gateway:getLog',        () => gateway.getLog());
-  ipcMain.handle('gateway:getDailyStats', () => gateway.getDailyStats());
   ipcMain.handle('gateway:restart',       () => gateway.restart());
+  ipcMain.handle('localStats:query', (_e, days) => localStats.queryDashboard(days || 1));
   ipcMain.handle('gateway:setStrategy', (_e, strategy) => {
     if (strategy !== 'cost' && strategy !== 'quality') return { ok: false, error: 'invalid_strategy' };
     gateway.setStrategy(strategy);
@@ -658,6 +659,10 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   registerIPC();
+  // Init local SQLite stats DB in Electron userData directory
+  localStats.init(app.getPath('userData'));
+  gateway.setStatsRecorder(localStats.record);
+  gateway.setLocalStats(localStats);
   gateway.start(11430, readAgentConfig);
 
   if (!isDev) setupAutoUpdater();
@@ -678,4 +683,4 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => { agent.stop(); gateway.stop(); });
+app.on('before-quit', () => { agent.stop(); gateway.stop(); localStats.close(); });
