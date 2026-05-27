@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getDashboardStats, getModelStats, listKeys, deleteKey } from '../api/client';
 
 const RANGES = ['今日', '7 天', '30 天'];
 const RANGE_DAYS = { '今日': 1, '7 天': 7, '30 天': 30 };
@@ -77,18 +76,32 @@ function TierDonut({ byProvider = {} }) {
 }
 
 function TrendBars({ data = [] }) {
+  const [tip, setTip] = useState(null); // { i, x }
   const max = Math.max(...data, 1);
+  const H = 96; // px — matches h-24
   return (
     <div className="space-y-1">
-      <div className="flex items-end gap-1 h-24">
+      <div className="relative flex items-end gap-1 h-24">
         {data.map((v, i) => {
-          const h = Math.max(Math.round((v / max) * 100), v > 0 ? 4 : 2);
+          const px = Math.max(Math.round((v / max) * H), v > 0 ? 4 : 2);
           const now = new Date().getHours();
           return (
-            <div key={i} className="flex-1 flex flex-col items-center justify-end group cursor-default" title={`${i}:00 — ${v} 次`}>
+            <div
+              key={i}
+              className="flex-1 cursor-default relative"
+              onMouseEnter={e => setTip({ i, rect: e.currentTarget.getBoundingClientRect() })}
+              onMouseLeave={() => setTip(null)}
+            >
+              {tip?.i === i && (
+                <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 z-10
+                  bg-gray-800 dark:bg-gray-700 text-white text-[10px] rounded px-1.5 py-0.5
+                  whitespace-nowrap pointer-events-none shadow">
+                  {i}:00 · {v} 次
+                </div>
+              )}
               <div
-                className={`w-full rounded-sm transition-all duration-300 ${i === now ? 'bg-blue-500' : 'bg-gray-200 dark:bg-gray-700 group-hover:bg-gray-500'}`}
-                style={{ height: `${h}%` }}
+                className={`w-full rounded-sm transition-all duration-300 ${i === now ? 'bg-blue-500' : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-400 dark:hover:bg-gray-500'}`}
+                style={{ height: `${px}px` }}
               />
             </div>
           );
@@ -105,128 +118,95 @@ function TrendBars({ data = [] }) {
 
 export default function Dashboard() {
   const [range, setRange]         = useState('今日');
-  const [keyStats, setKeyStats]   = useState([]);
-  const [modelStats, setModelStats] = useState([]);
-  const [hourly, setHourly]       = useState(Array(24).fill(0));
-  const [gatewayStats, setGatewayStats] = useState(null);
+  const [localKeys, setLocalKeys] = useState([]);
+  const [localData, setLocalData] = useState(null);   // queryDashboard result
   const [gwStatus, setGwStatus]   = useState(null);
   const [loading, setLoading]     = useState(true);
 
-  const days = RANGE_DAYS[range];
-
-  const fetchGateway = useCallback(() => {
-    if (window.electronAPI?.gateway) {
-      window.electronAPI.gateway.getDailyStats().then(setGatewayStats).catch(() => {});
-      window.electronAPI.gateway.status().then(setGwStatus).catch(() => {});
-    } else {
-      fetch('/api/gateway/status').then(r => r.json()).then(setGwStatus).catch(() => {});
-      fetch('/api/gateway/stats').then(r => r.json()).then(setGatewayStats).catch(() => {});
-    }
-  }, []);
-
   const load = useCallback(async () => {
     setLoading(true);
-    fetchGateway(); // refresh gateway stats (hourly trend, tier counts) on every load
     try {
-      const [dashRes, modelRes] = await Promise.all([
-        getDashboardStats(days),
-        getModelStats(days),
-      ]);
-      setKeyStats(dashRes.data?.stats || []);
-      setModelStats(modelRes.data?.models || []);
-      setHourly(modelRes.data?.hourly || Array(24).fill(0));
+      const days = RANGE_DAYS[range];
+      let data;
+      if (window.electronAPI?.localStats) {
+        data = await window.electronAPI.localStats.query(days);
+      } else {
+        const r = await fetch(`/api/local-stats?days=${days}`);
+        data = await r.json();
+      }
+      setLocalData(data);
+
+      // Key notes come from localConfig (Electron) or we skip enrichment (CLI)
+      if (window.electronAPI?.localConfig) {
+        const cfg = await window.electronAPI.localConfig.get();
+        setLocalKeys(cfg.local_keys || []);
+      }
+
+      // Gateway running status (port display)
+      const fetchStatus = window.electronAPI?.gateway
+        ? () => window.electronAPI.gateway.status().then(setGwStatus).catch(() => {})
+        : () => fetch('/api/gateway/status').then(r => r.json()).then(setGwStatus).catch(() => {});
+      fetchStatus();
     } catch (e) {
       console.error('dashboard load', e);
     } finally {
       setLoading(false);
     }
-  }, [days, fetchGateway]);
+  }, [range]);
 
-  useEffect(() => {
-    load();
-    // Poll gateway stats every 15s so trend chart and tier counts stay current
-    const id = setInterval(fetchGateway, 15_000);
-    return () => clearInterval(id);
-  }, [load, fetchGateway]);
+  useEffect(() => { load(); }, [load]);
 
-const handleDeleteKey = async (keyId) => {
+  const handleDeleteKey = async (localKeyId) => {
     if (!confirm('删除此 API Key？')) return;
     try {
-      await deleteKey(keyId);
+      if (window.electronAPI?.localConfig) {
+        await window.electronAPI.localConfig.deleteKey(localKeyId);
+      }
       await load();
-    } catch (e) {
+    } catch {
       alert('删除失败');
     }
   };
 
-  const isToday    = range === '今日';
-  const gCalls     = gatewayStats?.calls ?? 0;
-  const byProvider = gatewayStats?.by_provider ?? {};
-  // Hourly trend: prefer gateway (covers all calls) over backend (incomplete without reportUsage)
-  const gwHourly   = gatewayStats?.hourly;
-  const trendData  = gwHourly?.length === 24 ? gwHourly : hourly;
-  // Gateway tier breakdown — use stored tier when available, fall back to id-based inference
-  const gwFree = Object.entries(byProvider).filter(([id, v]) => (v.tier || tierFromProvider(id)) === 'free').reduce((s, [, v]) => s + (v.calls || 0), 0);
-  const gwP2P  = Object.entries(byProvider).filter(([id, v]) => (v.tier || tierFromProvider(id)) === 'p2p' ).reduce((s, [, v]) => s + (v.calls || 0), 0);
-  const gwPaid = Object.entries(byProvider).filter(([id, v]) => (v.tier || tierFromProvider(id)) === 'paid').reduce((s, [, v]) => s + (v.calls || 0), 0);
+  const isToday = range === '今日';
 
-  // For "今日": merge gateway per-key stats so scene table shows all calls, not just P2P
-  const gwByKey = gatewayStats?.by_key ?? {};
-  const mergedKeyStats = isToday && Object.keys(gwByKey).length > 0
-    ? keyStats.map(s => {
-        const gk = gwByKey[s.api_key] || {};
-        return {
-          ...s,
-          request_count: Math.max(s.request_count || 0, gk.calls || 0),
-          total_tokens:  Math.max(s.total_tokens  || 0, gk.tokens || 0),
-        };
-      })
-    : keyStats;
+  // ── Derived from local SQLite ──────────────────────────────────────────────
+  const totalCalls  = localData?.total_calls  ?? 0;
+  const totalTokens = localData?.total_tokens ?? 0;
+  const fmtTokens   = totalTokens >= 1000 ? `${(totalTokens / 1000).toFixed(1)}K` : String(totalTokens);
 
-  const totalReqs    = mergedKeyStats.reduce((a, s) => a + (s.request_count || 0), 0);
-  const totalCredits = mergedKeyStats.reduce((a, s) => a + (s.total_credits || 0), 0);
-  const totalTokens  = mergedKeyStats.reduce((a, s) => a + (s.total_tokens  || 0), 0);
-  const fmtTokens    = totalTokens >= 1000 ? `${(totalTokens / 1000).toFixed(1)}K` : String(totalTokens);
-  // Tier counts from backend (persistent, multi-session)
-  const bkFree  = keyStats.reduce((a, s) => a + (s.free_count  || 0), 0);
-  const bkP2P   = keyStats.reduce((a, s) => a + (s.p2p_count   || 0), 0);
-  const bkPaid  = keyStats.reduce((a, s) => a + (s.paid_count  || 0), 0);
-  // Gateway is more authoritative ONLY when it has counted MORE calls than backend
-  // (means non-scene-route calls exist in this session).
-  // When backend has ≥ gateway calls (e.g. after restart, gateway counter reset),
-  // use backend data so the percentages aren't distorted by a partial session.
-  const gatewayHasMore = isToday && gCalls > totalReqs;
-  const displayTotal   = gatewayHasMore ? gCalls : totalReqs;
-  const untracked      = gatewayHasMore ? gCalls - totalReqs : 0;
-  // Tier breakdown: only trust gateway counts when gateway is the larger source
-  const hasBkTiers = bkFree > 0 || bkP2P > 0 || bkPaid > 0;
-  const freeCalls  = gatewayHasMore ? gwFree : (hasBkTiers ? bkFree  : gwFree);
-  const p2pDisplay = gatewayHasMore ? gwP2P  : (hasBkTiers ? bkP2P   : gwP2P);
-  const paidDisplay= gatewayHasMore ? gwPaid : (hasBkTiers ? bkPaid  : gwPaid);
-  const freeRatio  = displayTotal > 0 ? Math.round(freeCalls / displayTotal * 100) : 0;
-  // For "今日": merge gateway by_model (covers all calls incl. non-scene-route) with backend
-  const gwModelMap = gatewayStats?.by_model ?? {};
-  const mergedModelStats = isToday && Object.keys(gwModelMap).length > 0
-    ? (() => {
-        const map = {};
-        for (const m of modelStats) map[m.model_name] = { ...m };
-        for (const [name, v] of Object.entries(gwModelMap)) {
-          if (!map[name]) map[name] = { model_name: name, request_count: 0, total_tokens: 0, total_credits: 0 };
-          // Gateway call count is authoritative for today (includes non-scene-route)
-          map[name].request_count = Math.max(map[name].request_count, v.calls || 0);
-          // Gateway tokens supplement backend when backend hasn't recorded the call yet
-          if ((v.tokens || 0) > (map[name].total_tokens || 0)) map[name].total_tokens = v.tokens;
-        }
-        return Object.values(map).sort((a, b) => b.request_count - a.request_count);
-      })()
-    : modelStats;
+  const freeCalls  = localData?.tiers.free  ?? 0;
+  const p2pCalls   = localData?.tiers.p2p   ?? 0;
+  const paidCalls  = localData?.tiers.paid  ?? 0;
+  const freeRatio  = totalCalls > 0 ? Math.round(freeCalls / totalCalls * 100) : 0;
 
-  const maxModel        = mergedModelStats[0]?.request_count || 1;
-  // Token ranking: only models that actually have token data (exclude gateway-only models with 0 tokens)
-  const modelByTokens   = [...mergedModelStats]
-    .filter(m => (m.total_tokens || 0) > 0)
-    .sort((a, b) => (b.total_tokens || 0) - (a.total_tokens || 0));
-  const maxModelTokens  = modelByTokens[0]?.total_tokens || 1;
+  const trendData  = localData?.hourly ?? Array(24).fill(0);
+
+  // byProvider for donut chart: { [provider_id]: { calls, tier } }
+  const byProvider = Object.fromEntries(
+    (localData?.providers ?? []).map(p => [p.id, { calls: p.calls, tier: p.tier }])
+  );
+
+  // Scene table: enrich local key stats with notes from localConfig
+  const keyNoteMap = new Map(localKeys.map(k => [k.key, k]));
+  const enrichedKeys = (localData?.keys ?? []).map(k => {
+    const lk = keyNoteMap.get(k.api_key);
+    return {
+      _local_key_id: lk?.id   || null,
+      api_key:       k.api_key,
+      app_name:      lk?.note || null,
+      scene_name:    null,
+      request_count: k.calls,
+      total_tokens:  k.tokens,
+      total_credits: 0,
+    };
+  });
+
+  // Model rankings
+  const modelStats     = localData?.models ?? [];
+  const maxModel       = modelStats[0]?.calls || 1;
+  const modelByTokens  = [...modelStats].filter(m => m.tokens > 0).sort((a, b) => b.tokens - a.tokens);
+  const maxModelTokens = modelByTokens[0]?.tokens || 1;
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-5 bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 min-h-screen">
@@ -258,25 +238,23 @@ const handleDeleteKey = async (keyId) => {
       <div className="grid grid-cols-4 gap-3">
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
           <div className="text-xs text-gray-500">总请求数</div>
-          <div className="text-2xl font-bold mt-1">{displayTotal}</div>
-          <div className="text-[10px] text-gray-600 mt-0.5">
-            {range} 全部请求{untracked > 0 ? ` · 含 ${untracked} 非场景路由` : ''}
-          </div>
+          <div className="text-2xl font-bold mt-1">{totalCalls}</div>
+          <div className="text-[10px] text-gray-600 mt-0.5">{range} 本设备全部请求</div>
         </div>
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
           <div className="text-xs text-gray-500">免费命中率</div>
           <div className="text-2xl font-bold text-green-600 dark:text-green-400 mt-1">{freeRatio}%</div>
-          <div className="text-[10px] text-gray-600 mt-0.5">{freeCalls} 免费 · {p2pDisplay} P2P · {paidDisplay} 付费</div>
-        </div>
-        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
-          <div className="text-xs text-gray-500">消耗积分</div>
-          <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1">{totalCredits.toFixed(1)}</div>
-          <div className="text-[10px] text-gray-600 mt-0.5">{range} 合计</div>
+          <div className="text-[10px] text-gray-600 mt-0.5">{freeCalls} 免费 · {p2pCalls} P2P · {paidCalls} 付费</div>
         </div>
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
           <div className="text-xs text-gray-500">Token 消耗</div>
           <div className="text-2xl font-bold text-purple-600 dark:text-purple-400 mt-1">{fmtTokens}</div>
           <div className="text-[10px] text-gray-600 mt-0.5">{range} 合计</div>
+        </div>
+        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+          <div className="text-xs text-gray-500">付费调用</div>
+          <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">{paidCalls + p2pCalls}</div>
+          <div className="text-[10px] text-gray-600 mt-0.5">{paidCalls} 付费层 · {p2pCalls} P2P 层</div>
         </div>
       </div>
 
@@ -303,26 +281,21 @@ const handleDeleteKey = async (keyId) => {
         </div>
         {loading ? (
           <div className="px-5 py-8 text-xs text-gray-600 text-center">加载中…</div>
-        ) : mergedKeyStats.length === 0 ? (
+        ) : enrichedKeys.length === 0 ? (
           <div className="px-5 py-8 text-xs text-gray-600 text-center">
             暂无消费记录。先在下方创建 API Key，再去「网关」绑定场景路由。
           </div>
         ) : (
           <div className="divide-y divide-gray-200/50 dark:divide-gray-800/50">
-            {mergedKeyStats.map(s => (
-              <div key={s.key_id} className="px-5 py-4 hover:bg-gray-100/20 dark:bg-gray-800/20">
+            {enrichedKeys.map(s => (
+              <div key={s.api_key} className="px-5 py-4 hover:bg-gray-100/20 dark:bg-gray-800/20">
                 <div className="flex items-center gap-4">
                   <div className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0 mt-0.5"/>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                        {s.app_name || s.note || '未命名'}
+                        {s.app_name || '未命名'}
                       </span>
-                      {s.scene_name && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-300 dark:border-blue-800/40">
-                          {s.icon} {s.scene_name}
-                        </span>
-                      )}
                       <code className="text-[10px] font-mono text-gray-600">{s.api_key?.slice(0, 12)}…</code>
                     </div>
                   </div>
@@ -337,14 +310,12 @@ const handleDeleteKey = async (keyId) => {
                       </div>
                       <div className="text-[10px] text-gray-600">tokens</div>
                     </div>
-                    <div>
-                      <div className="text-sm font-semibold text-blue-600 dark:text-blue-400">-{s.total_credits.toFixed(1)}</div>
-                      <div className="text-[10px] text-gray-600">积分</div>
-                    </div>
-                    <button
-                      onClick={() => handleDeleteKey(s.key_id)}
-                      className="text-[10px] text-gray-700 hover:text-red-600 dark:text-red-400 transition-colors"
-                    >删除</button>
+                    {s._local_key_id && (
+                      <button
+                        onClick={() => handleDeleteKey(s._local_key_id)}
+                        className="text-[10px] text-gray-700 hover:text-red-600 dark:text-red-400 transition-colors"
+                      >删除</button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -358,23 +329,21 @@ const handleDeleteKey = async (keyId) => {
         {/* Call count ranking */}
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5">
           <div className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-4">模型调用排行</div>
-          {mergedModelStats.length === 0 ? (
+          {modelStats.length === 0 ? (
             <p className="text-xs text-gray-600">暂无数据</p>
           ) : (
             <div className="space-y-3">
-              {mergedModelStats.map(m => (
-                <div key={m.model_name}>
+              {modelStats.map(m => (
+                <div key={m.model}>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-mono text-gray-700 dark:text-gray-300 truncate max-w-[160px]" title={m.model_name}>
-                      {m.model_name}
+                    <span className="text-xs font-mono text-gray-700 dark:text-gray-300 truncate max-w-[160px]" title={m.model}>
+                      {m.model}
                     </span>
-                    <span className="text-xs text-gray-600 dark:text-gray-400 shrink-0 ml-2">{m.request_count} 次</span>
+                    <span className="text-xs text-gray-600 dark:text-gray-400 shrink-0 ml-2">{m.calls} 次</span>
                   </div>
                   <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-500 bg-green-500"
-                      style={{ width: `${Math.round(m.request_count / maxModel * 100)}%` }}
-                    />
+                    <div className="h-full rounded-full transition-all duration-500 bg-green-500"
+                      style={{ width: `${Math.round(m.calls / maxModel * 100)}%` }} />
                   </div>
                 </div>
               ))}
@@ -390,21 +359,19 @@ const handleDeleteKey = async (keyId) => {
           ) : (
             <div className="space-y-3">
               {modelByTokens.map(m => {
-                const tok = m.total_tokens || 0;
+                const tok = m.tokens || 0;
                 const fmt = tok >= 1000 ? `${(tok / 1000).toFixed(1)}K` : String(tok);
                 return (
-                  <div key={m.model_name}>
+                  <div key={m.model}>
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-mono text-gray-700 dark:text-gray-300 truncate max-w-[160px]" title={m.model_name}>
-                        {m.model_name}
+                      <span className="text-xs font-mono text-gray-700 dark:text-gray-300 truncate max-w-[160px]" title={m.model}>
+                        {m.model}
                       </span>
                       <span className="text-xs text-purple-600 dark:text-purple-400 shrink-0 ml-2">{fmt} tok</span>
                     </div>
                     <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all duration-500 bg-purple-500"
-                        style={{ width: `${Math.round(tok / maxModelTokens * 100)}%` }}
-                      />
+                      <div className="h-full rounded-full transition-all duration-500 bg-purple-500"
+                        style={{ width: `${Math.round(tok / maxModelTokens * 100)}%` }} />
                     </div>
                   </div>
                 );
