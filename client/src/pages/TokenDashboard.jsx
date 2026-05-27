@@ -1,8 +1,18 @@
 // client/src/pages/TokenDashboard.jsx
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../store/index';
-import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getUserDevices, deleteDevice, getDashboardStats, getModelStats } from '../api/client';
+import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getUserDevices, deleteDevice } from '../api/client';
 import { getGateway } from '../api/adapter';
+
+/** Query local stats via Electron IPC or HTTP gateway */
+async function fetchLocalStats(days) {
+  if (window.electronAPI?.localStats) {
+    return window.electronAPI.localStats.query(days);
+  }
+  const r = await fetch(`/api/local-stats?days=${days}`);
+  if (!r.ok) throw new Error(`local-stats ${r.status}`);
+  return r.json();
+}
 
 const PROVIDER_COLORS = {
   ollama:         { bg: 'bg-green-500',  label: 'Ollama（本地）',   type: 'free' },
@@ -204,7 +214,6 @@ function DevicesSection() {
 
 export default function TokenDashboard() {
   const { user, refreshUser } = useAuth();
-  const [stats,    setStats]    = useState(null);
   const [logEntries, setLog]    = useState([]);
   const [txs,      setTxs]      = useState([]);
   const [orders,   setOrders]   = useState([]);
@@ -218,15 +227,12 @@ export default function TokenDashboard() {
   const [range,       setRange]      = useState('今日');
   const [rangeStats,  setRangeStats] = useState({ calls: 0, tokens: 0, free: 0, p2p: 0, paid: 0 });
   const [rangeModels, setRangeModels]= useState([]);
+  const [localData,   setLocalData]  = useState(null);
 
   const loadData = useCallback(async () => {
     try {
       const gw = getGateway();
-      const [s, lg] = await Promise.all([
-        gw.getDailyStats(),
-        gw.getLog(),
-      ]);
-      setStats(s);
+      const lg = await gw.getLog();
       setLog((lg || []).slice(0, 5));
     } catch {}
   }, []);
@@ -236,46 +242,36 @@ export default function TokenDashboard() {
     loadData();
     getTransactions().then(r => setTxs(r.data.transactions || [])).catch(() => {});
     getPurchaseOrders().then(r => { setOrders(r.data.orders || []); if (r.data.contact_info) setAdminInfo(String(r.data.contact_info)); }).catch(() => {});
-    const id = setInterval(loadData, 10_000);
-    return () => clearInterval(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadData]);
 
   useEffect(() => {
     const days = RANGE_DAYS[range];
-    Promise.all([
-      getDashboardStats(days).catch(() => null),
-      getModelStats(days).catch(() => null),
-    ]).then(([dashRes, modelRes]) => {
-      const keys = dashRes?.data?.stats || [];
+    fetchLocalStats(days).then(data => {
+      setLocalData(data);
       setRangeStats({
-        calls:  keys.reduce((a, s) => a + (s.request_count || 0), 0),
-        tokens: keys.reduce((a, s) => a + (s.total_tokens  || 0), 0),
-        free:   keys.reduce((a, s) => a + (s.free_count    || 0), 0),
-        p2p:    keys.reduce((a, s) => a + (s.p2p_count     || 0), 0),
-        paid:   keys.reduce((a, s) => a + (s.paid_count    || 0), 0),
+        calls:  data.total_calls  || 0,
+        tokens: data.total_tokens || 0,
+        free:   data.tiers?.free  || 0,
+        p2p:    data.tiers?.p2p   || 0,
+        paid:   data.tiers?.paid  || 0,
       });
-      setRangeModels(modelRes?.data?.models || []);
-    });
+      setRangeModels(data.models || []);
+    }).catch(() => {});
   }, [range]);
 
   if (!user) return null;
 
-  const gwCalls = stats?.calls ?? 0;
-  const providerEntries = Object.entries(stats?.by_provider ?? {}).sort((a, b) => b[1].calls - a[1].calls);
-  const modelEntries    = Object.entries(stats?.by_model    ?? {}).sort((a, b) => b[1].calls - a[1].calls);
-  const gwFreeCalls = providerEntries
-    .filter(([id]) => !['tokenbank-p2p', 'openai', 'anthropic-paid'].includes(id))
-    .reduce((s, [, v]) => s + v.calls, 0);
+  const heroTotal   = rangeStats.calls;
+  const heroFree    = rangeStats.free;
+  const heroNonFree = heroTotal - heroFree;
 
-  // For "今日" hero card: use the larger of gateway vs backend as total
-  // and pick tier breakdown from whichever source is more complete
-  const isToday         = range === '今日';
-  const gwHasMore       = isToday && gwCalls > rangeStats.calls;
-  const heroTotal       = gwHasMore ? gwCalls : rangeStats.calls;
-  const hasBkTiers      = rangeStats.free > 0 || rangeStats.p2p > 0 || rangeStats.paid > 0;
-  const heroFree        = gwHasMore ? gwFreeCalls : (hasBkTiers ? rangeStats.free : gwFreeCalls);
-  const heroNonFree     = heroTotal - heroFree;
+  const providerEntries = (localData?.providers ?? [])
+    .sort((a, b) => b.calls - a.calls)
+    .map(p => [p.id, { calls: p.calls, tier: p.tier }]);
+  const localTotalCalls = localData?.total_calls ?? 0;
+
+  const isToday = range === '今日';
 
   const fmtRangeCalls  = heroTotal >= 1000 ? `${(heroTotal / 1000).toFixed(1)}K` : String(heroTotal);
   const fmtRangeTokens = rangeStats.tokens >= 1000 ? `${(rangeStats.tokens / 1000).toFixed(1)}K` : String(rangeStats.tokens);
@@ -410,18 +406,18 @@ export default function TokenDashboard() {
       {/* Devices */}
       <DevicesSection />
 
-      {/* Provider breakdown — real-time gateway data */}
+      {/* Provider breakdown — local stats */}
       <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">供给来源分布</h2>
-          <span className="text-xs text-gray-400">实时</span>
+          <span className="text-xs text-gray-400">{range}</span>
         </div>
         {providerEntries.length === 0 ? (
           <p className="text-xs text-gray-400 dark:text-gray-500">本次会话暂无调用记录</p>
         ) : (
           <div className="space-y-2.5">
             {providerEntries.map(([id, { calls }]) => (
-              <ProviderBar key={id} id={id} calls={calls} totalCalls={gwCalls} />
+              <ProviderBar key={id} id={id} calls={calls} totalCalls={localTotalCalls} />
             ))}
           </div>
         )}
@@ -438,15 +434,15 @@ export default function TokenDashboard() {
         ) : (
           <div className="space-y-2.5">
             {rangeModels.slice(0, 6).map(m => {
-              const maxCalls = rangeModels[0]?.request_count || 1;
+              const maxCalls = rangeModels[0]?.calls || 1;
               return (
-                <div key={m.model_name} className="flex items-center gap-3 text-sm">
-                  <div className="w-36 shrink-0 text-xs text-gray-600 dark:text-gray-400 truncate font-mono" title={m.model_name}>{m.model_name}</div>
+                <div key={m.model} className="flex items-center gap-3 text-sm">
+                  <div className="w-36 shrink-0 text-xs text-gray-600 dark:text-gray-400 truncate font-mono" title={m.model}>{m.model}</div>
                   <div className="flex-1 bg-gray-100 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
                     <div className="h-2 rounded-full bg-blue-400 transition-all duration-500"
-                      style={{ width: `${Math.round(m.request_count / maxCalls * 100)}%` }} />
+                      style={{ width: `${Math.round(m.calls / maxCalls * 100)}%` }} />
                   </div>
-                  <span className="w-10 shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">{m.request_count} 次</span>
+                  <span className="w-10 shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">{m.calls} 次</span>
                 </div>
               );
             })}
