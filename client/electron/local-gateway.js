@@ -54,6 +54,33 @@ function openaiToAnthropic(oai, model) {
   };
 }
 
+// Convert OpenAI request body → Anthropic request body
+function oaiRequestToAnthropic(oai) {
+  const msgs = (oai.messages || []).filter(m => m.role !== 'system');
+  const sys  = (oai.messages || []).find(m => m.role === 'system');
+  const anth = { model: oai.model, max_tokens: oai.max_tokens || 4096, messages: msgs };
+  if (sys) anth.system = typeof sys.content === 'string' ? sys.content : (sys.content?.[0]?.text || '');
+  if (oai.temperature != null) anth.temperature = oai.temperature;
+  if (oai.top_p       != null) anth.top_p       = oai.top_p;
+  if (oai.stop) anth.stop_sequences = Array.isArray(oai.stop) ? oai.stop : [oai.stop];
+  if (oai.stream) anth.stream = true;
+  return anth;
+}
+
+// Convert Anthropic response body → OpenAI response body
+function anthropicRespToOai(anth) {
+  const text   = (anth.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+  const finish = anth.stop_reason === 'end_turn' ? 'stop' : (anth.stop_reason || 'stop');
+  const inTok  = anth.usage?.input_tokens  || 0;
+  const outTok = anth.usage?.output_tokens || 0;
+  return {
+    id: anth.id || ('chatcmpl-' + Math.random().toString(36).slice(2)),
+    object: 'chat.completion', created: Math.floor(Date.now() / 1000), model: anth.model || '',
+    choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: finish, logprobs: null }],
+    usage: { prompt_tokens: inTok, completion_tokens: outTok, total_tokens: inTok + outTok },
+  };
+}
+
 // ── Provider helpers ──────────────────────────────────────────────────────────
 
 // 归一 base_url：去掉尾部斜杠 + 尾部 /v1。
@@ -357,6 +384,138 @@ function proxyConvertStream(provider, oaiBody, model, res) {
   });
 }
 
+// ── OpenAI client → Anthropic provider: format bridge ───────────────────────
+
+function proxyAnthropicSync(provider, oaiBody, model, res) {
+  return new Promise((resolve, reject) => {
+    const anthBody  = oaiRequestToAnthropic({ ...oaiBody, stream: false });
+    const base      = normBase(provider.base_url);
+    const fullUrl   = base + '/v1/messages';
+    let u;
+    try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
+
+    const mod     = u.protocol === 'https:' ? https : http;
+    const bodyStr = JSON.stringify(anthBody);
+    const headers = {
+      'Content-Type':      'application/json',
+      'Content-Length':    Buffer.byteLength(bodyStr),
+      'anthropic-version': '2023-06-01',
+    };
+    if (provider.token) headers['x-api-key'] = provider.token;
+
+    const t0       = Date.now();
+    const proxyReq = mod.request({
+      hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + (u.search || ''), method: 'POST', headers, timeout: 120_000,
+    }, (proxyRes) => {
+      if (proxyRes.statusCode >= 400) {
+        const errChunks = [];
+        proxyRes.on('data', c => errChunks.push(c));
+        proxyRes.on('end', () => console.warn(`[gateway] proxyAnthropicSync ${proxyRes.statusCode}:`, Buffer.concat(errChunks).toString().slice(0, 200)));
+        return reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode }));
+      }
+      const chunks = [];
+      proxyRes.on('data', c => chunks.push(c));
+      proxyRes.on('end', () => {
+        try {
+          const anthResp = JSON.parse(Buffer.concat(chunks).toString());
+          const oaiResp  = anthropicRespToOai(anthResp);
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify(oaiResp));
+          const latency = Date.now() - t0;
+          resolve({ provider: provider.id, latency, first_token_ms: latency,
+            input_tokens:  anthResp.usage?.input_tokens  || 0,
+            output_tokens: anthResp.usage?.output_tokens || 0 });
+        } catch (err) { reject(err); }
+      });
+      proxyRes.on('error', reject);
+    });
+    proxyReq.on('error', reject);
+    proxyReq.on('timeout', () => { proxyReq.destroy(); reject(new Error('timeout')); });
+    proxyReq.write(bodyStr);
+    proxyReq.end();
+  });
+}
+
+function proxyAnthropicStream(provider, oaiBody, model, res) {
+  return new Promise((resolve, reject) => {
+    const anthBody  = oaiRequestToAnthropic({ ...oaiBody, stream: true });
+    const base      = normBase(provider.base_url);
+    const fullUrl   = base + '/v1/messages';
+    let u;
+    try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
+
+    const mod     = u.protocol === 'https:' ? https : http;
+    const bodyStr = JSON.stringify(anthBody);
+    const headers = {
+      'Content-Type':      'application/json',
+      'Content-Length':    Buffer.byteLength(bodyStr),
+      'anthropic-version': '2023-06-01',
+      'Accept':            'text/event-stream',
+    };
+    if (provider.token) headers['x-api-key'] = provider.token;
+
+    const t0       = Date.now();
+    const proxyReq = mod.request({
+      hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + (u.search || ''), method: 'POST', headers, timeout: 120_000,
+    }, (proxyRes) => {
+      if (proxyRes.statusCode >= 400) {
+        proxyRes.resume();
+        return reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode }));
+      }
+      if (res.headersSent) { proxyRes.resume(); return reject(new Error('headers_already_sent')); }
+
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no', 'Access-Control-Allow-Origin': '*',
+      });
+
+      const chatId  = 'chatcmpl-' + Math.random().toString(36).slice(2, 26);
+      const created = Math.floor(Date.now() / 1000);
+      // Send role delta
+      res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] })}\n\n`);
+
+      let buf = '', usageIn = 0, usageOut = 0, firstTokenMs = null;
+
+      proxyRes.on('data', (chunk) => {
+        buf += chunk.toString();
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const ds = line.slice(6).trim();
+          if (!ds || ds === '[DONE]') continue;
+          try {
+            const evt = JSON.parse(ds);
+            if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta' && evt.delta.text) {
+              if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
+              res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { content: evt.delta.text }, finish_reason: null }] })}\n\n`);
+            } else if (evt.type === 'message_start') {
+              usageIn = evt.message?.usage?.input_tokens || 0;
+            } else if (evt.type === 'message_delta') {
+              usageOut = evt.usage?.output_tokens || 0;
+            }
+          } catch {}
+        }
+      });
+
+      proxyRes.on('end', () => {
+        res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+        resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut });
+      });
+
+      proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut }); });
+    });
+    proxyReq.on('error', reject);
+    proxyReq.on('timeout', () => { proxyReq.destroy(); reject(new Error('timeout')); });
+    proxyReq.write(bodyStr);
+    proxyReq.end();
+  });
+}
+
 // ── P2P: always stream from backend, buffer to sync response for non-streaming clients ──
 
 function proxyP2PSync(provider, oaiBody, model, res) {
@@ -449,11 +608,18 @@ function proxyP2PSync(provider, oaiBody, model, res) {
 async function callProvider(provider, isAnthropic, streaming, reqPath, body, attemptModel, res) {
   const attemptBody = { ...body, model: attemptModel };
 
-  // Anthropic-compatible provider: proxy request directly without format conversion
+  // Anthropic-compatible provider
   const isAnthropicProvider = /anthropic/i.test(provider.base_url || '') || provider.api_format === 'anthropic';
   if (isAnthropicProvider) {
-    const targetPath = isAnthropic ? '/v1/messages' : '/v1/chat/completions';
-    return await proxyRequest(provider, targetPath, attemptBody, res);
+    if (isAnthropic) {
+      // Anthropic client → Anthropic provider: direct proxy to /v1/messages
+      return await proxyRequest(provider, '/v1/messages', attemptBody, res);
+    } else {
+      // OpenAI client → Anthropic provider: convert request/response format
+      return streaming
+        ? await proxyAnthropicStream(provider, attemptBody, attemptModel, res)
+        : await proxyAnthropicSync(provider, attemptBody, attemptModel, res);
+    }
   }
 
   const oaiBody = isAnthropic ? anthropicToOpenai(attemptBody) : null;
