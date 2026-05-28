@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell, clipboard, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -30,6 +30,19 @@ function getTrayIcon(state) {
 
 // ── Window ────────────────────────────────────────────────────────────────────
 
+// 用系统默认浏览器打开外链；失败（如 Linux 缺 xdg-open）则复制链接 + 提示手动访问
+function openExternalSafe(url) {
+  Promise.resolve(shell.openExternal(url)).catch(() => {
+    try { clipboard.writeText(url); } catch {}
+    dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      message: '无法打开系统浏览器',
+      detail: `链接已复制到剪贴板，请手动在浏览器中访问：\n${url}`,
+      buttons: ['好的'],
+    });
+  });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 960,
@@ -43,6 +56,19 @@ function createWindow() {
     },
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     show: false,
+  });
+
+  // 外链（target="_blank" / window.open）走系统默认浏览器，不在 app 内开内置窗口
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) openExternalSafe(url);
+    return { action: 'deny' };
+  });
+  // 防止 app 内直接导航到外部地址（保持单页应用本身可正常路由）
+  mainWindow.webContents.on('will-navigate', (e, url) => {
+    if (/^https?:\/\//i.test(url) && url !== VITE_URL && !url.startsWith(VITE_URL)) {
+      e.preventDefault();
+      openExternalSafe(url);
+    }
   });
 
   if (isDev) {
