@@ -1,8 +1,17 @@
 // client/src/pages/TokenDashboard.jsx
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../store/index';
 import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getUserDevices, deleteDevice } from '../api/client';
-import { getGateway } from '../api/adapter';
+
+/** Query local stats via Electron IPC or HTTP gateway */
+async function fetchLocalStats(days) {
+  if (window.electronAPI?.localStats) {
+    return window.electronAPI.localStats.query(days);
+  }
+  const r = await fetch(`/api/local-stats?days=${days}`);
+  if (!r.ok) throw new Error(`local-stats ${r.status}`);
+  return r.json();
+}
 
 const PROVIDER_COLORS = {
   ollama:         { bg: 'bg-green-500',  label: 'Ollama（本地）',   type: 'free' },
@@ -15,6 +24,9 @@ const PROVIDER_COLORS = {
 
 const TX_LABEL = { contribute: '贡献', consume: '消耗', referral: '推荐', purchase: '充值', adjust: '调整', spin: '转盘' };
 const ORDER_STATUS = { pending: '待审核', approved: '已通过', rejected: '已拒绝' };
+
+const RANGES    = ['今日', '7 天', '30 天'];
+const RANGE_DAYS = { '今日': 1, '7 天': 7, '30 天': 30 };
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -201,8 +213,6 @@ function DevicesSection() {
 
 export default function TokenDashboard() {
   const { user, refreshUser } = useAuth();
-  const [stats,    setStats]    = useState(null);
-  const [logEntries, setLog]    = useState([]);
   const [txs,      setTxs]      = useState([]);
   const [orders,   setOrders]   = useState([]);
   const [adminInfo,setAdminInfo]= useState('');
@@ -212,37 +222,48 @@ export default function TokenDashboard() {
   const [orderMsg, setOrderMsg] = useState('');
   const [orderMsgOk,setOrderMsgOk]=useState(false);
   const [creditsOpen,setCreditsOpen]=useState(false);
-
-  const loadData = useCallback(async () => {
-    try {
-      const gw = getGateway();
-      const [s, lg] = await Promise.all([
-        gw.getDailyStats(),
-        gw.getLog(),
-      ]);
-      setStats(s);
-      setLog((lg || []).slice(0, 5));
-    } catch {}
-  }, []);
+  const [range,       setRange]      = useState('今日');
+  const [rangeStats,  setRangeStats] = useState({ calls: 0, tokens: 0, free: 0, p2p: 0, paid: 0 });
+  const [rangeModels, setRangeModels]= useState([]);
+  const [localData,   setLocalData]  = useState(null);
 
   useEffect(() => {
     refreshUser();
-    loadData();
     getTransactions().then(r => setTxs(r.data.transactions || [])).catch(() => {});
     getPurchaseOrders().then(r => { setOrders(r.data.orders || []); if (r.data.contact_info) setAdminInfo(String(r.data.contact_info)); }).catch(() => {});
-    const id = setInterval(loadData, 10_000);
-    return () => clearInterval(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadData]);
+  }, []);
+
+  useEffect(() => {
+    const days = RANGE_DAYS[range];
+    fetchLocalStats(days).then(data => {
+      setLocalData(data);
+      setRangeStats({
+        calls:  data.total_calls  || 0,
+        tokens: data.total_tokens || 0,
+        free:   data.tiers?.free  || 0,
+        p2p:    data.tiers?.p2p   || 0,
+        paid:   data.tiers?.paid  || 0,
+      });
+      setRangeModels(data.models || []);
+    }).catch(() => {});
+  }, [range]);
 
   if (!user) return null;
 
-  const totalCalls = stats?.calls ?? 0;
-  const providerEntries = Object.entries(stats?.by_provider ?? {}).sort((a, b) => b[1].calls - a[1].calls);
-  const modelEntries    = Object.entries(stats?.by_model    ?? {}).sort((a, b) => b[1].calls - a[1].calls);
-  const freeCalls = providerEntries
-    .filter(([id]) => !['tokenbank-p2p', 'openai', 'anthropic-paid'].includes(id))
-    .reduce((s, [, v]) => s + v.calls, 0);
+  const heroTotal   = rangeStats.calls;
+  const heroFree    = rangeStats.free;
+  const heroNonFree = heroTotal - heroFree;
+
+  const providerEntries = [...(localData?.providers ?? [])]
+    .sort((a, b) => b.calls - a.calls)
+    .map(p => [p.id, { calls: p.calls, tier: p.tier }]);
+  const localTotalCalls = localData?.total_calls ?? 0;
+
+  const isToday = range === '今日';
+
+  const fmtRangeCalls  = heroTotal >= 1000 ? `${(heroTotal / 1000).toFixed(1)}K` : String(heroTotal);
+  const fmtRangeTokens = rangeStats.tokens >= 1000 ? `${(rangeStats.tokens / 1000).toFixed(1)}K` : String(rangeStats.tokens);
 
   async function handleOrder(e) {
     e.preventDefault();
@@ -272,76 +293,40 @@ export default function TokenDashboard() {
         </div>
       </div>
 
-      {/* Today usage */}
-      <div className="bg-gradient-to-br from-blue-700 to-blue-900 rounded-2xl p-6 space-y-2">
-        <p className="text-sm text-blue-300">今日 Token 使用</p>
-        <p className="text-4xl font-bold text-white">{totalCalls} <span className="text-xl font-normal text-blue-300">次调用</span></p>
-        <p className="text-sm text-blue-300">
-          {freeCalls} 次走免费层（{totalCalls > 0 ? Math.round(freeCalls / totalCalls * 100) : 0}%）·
-          {totalCalls - freeCalls} 次走积分/付费层
-        </p>
-      </div>
-
-      {/* Provider breakdown */}
-      {providerEntries.length > 0 && (
-        <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
-          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">供给来源分布</h2>
-          <div className="space-y-2.5">
-            {providerEntries.map(([id, { calls }]) => (
-              <ProviderBar key={id} id={id} calls={calls} totalCalls={totalCalls} />
+      {/* Usage card with range selector */}
+      <div className="bg-gradient-to-br from-blue-700 to-blue-900 rounded-2xl p-6">
+        {/* Header row */}
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-sm text-blue-300">{range} 总览</p>
+          <div className="flex gap-1 bg-blue-800/50 rounded-lg p-0.5">
+            {RANGES.map(r => (
+              <button key={r} onClick={() => setRange(r)}
+                className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+                  range === r ? 'bg-white/20 text-white font-medium' : 'text-blue-300 hover:text-white'
+                }`}>{r}</button>
             ))}
           </div>
-        </section>
-      )}
-
-      {/* Model breakdown */}
-      {modelEntries.length > 0 && (
-        <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
-          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">模型使用分布</h2>
-          <div className="space-y-2.5">
-            {modelEntries.slice(0, 6).map(([name, { calls }]) => (
-              <div key={name} className="flex items-center gap-3 text-sm">
-                <div className="w-36 shrink-0 text-xs text-gray-600 dark:text-gray-400 truncate font-mono">{name}</div>
-                <div className="flex-1 bg-gray-100 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
-                  <div className="h-2 rounded-full bg-blue-400" style={{ width: `${totalCalls > 0 ? (calls / totalCalls) * 100 : 0}%` }} />
-                </div>
-                <span className="w-10 shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">{calls} 次</span>
-              </div>
-            ))}
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          {/* Left: calls */}
+          <div>
+            <p className="text-xs text-blue-300 mb-1">调用次数</p>
+            <p className="text-4xl font-bold text-white">{fmtRangeCalls}</p>
+            {isToday && heroTotal > 0 && (
+              <p className="text-xs text-blue-300 mt-2">
+                {heroFree} 免费（{Math.round(heroFree / heroTotal * 100)}%）·{' '}
+                {heroNonFree} 积分/付费
+              </p>
+            )}
           </div>
-        </section>
-      )}
-
-      {/* Recent route log */}
-      {logEntries.length > 0 && (
-        <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-2">
-          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">最近调用</h2>
-          <div className="space-y-1.5">
-            {logEntries.map((e, i) => {
-              const meta = PROVIDER_COLORS[e.via] || {};
-              return (
-                <div key={`${e.ts}-${e.via}-${i}`} className="flex items-center gap-2 text-xs px-2 py-1.5 rounded-lg bg-gray-50 dark:bg-gray-900">
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${e.status === 'ok' ? 'bg-green-400' : 'bg-red-400'}`} />
-                  <span className="text-gray-500 shrink-0">{new Date(e.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
-                  <span className="flex-1 text-gray-700 dark:text-gray-300 truncate font-mono">{e.model || '—'}</span>
-                  <span className="text-gray-400">→</span>
-                  <span className="text-blue-600 dark:text-blue-400 shrink-0">{meta.label || e.via || '—'}</span>
-                  <span className="text-gray-400 shrink-0">{e.latency_ms}ms</span>
-                </div>
-              );
-            })}
+          {/* Right: tokens */}
+          <div className="border-l border-blue-500/40 pl-4">
+            <p className="text-xs text-blue-300 mb-1">Token 消耗</p>
+            <p className="text-4xl font-bold text-white">{fmtRangeTokens}</p>
+            <p className="text-xs text-blue-300 mt-2">各设备 {range} 合计</p>
           </div>
-        </section>
-      )}
-
-      {/* Daily rewards */}
-      <div className="grid grid-cols-2 gap-4">
-        <CheckinCard onSuccess={refreshUser} />
-        <SpinCard    onSuccess={refreshUser} />
+        </div>
       </div>
-
-      {/* Devices */}
-      <DevicesSection />
 
       {/* Credits (collapsible) */}
       <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl overflow-hidden">
@@ -400,6 +385,60 @@ export default function TokenDashboard() {
           </div>
         )}
       </section>
+
+      {/* Daily rewards */}
+      <div className="grid grid-cols-2 gap-4">
+        <CheckinCard onSuccess={refreshUser} />
+        <SpinCard    onSuccess={refreshUser} />
+      </div>
+
+      {/* Devices */}
+      <DevicesSection />
+
+      {/* Provider breakdown — local stats */}
+      <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">供给来源分布</h2>
+          <span className="text-xs text-gray-400">{range}</span>
+        </div>
+        {providerEntries.length === 0 ? (
+          <p className="text-xs text-gray-400 dark:text-gray-500">暂无数据</p>
+        ) : (
+          <div className="space-y-2.5">
+            {providerEntries.map(([id, { calls }]) => (
+              <ProviderBar key={id} id={id} calls={calls} totalCalls={localTotalCalls} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Model breakdown — historical backend data */}
+      <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">模型使用分布</h2>
+          <span className="text-xs text-gray-400">{range}</span>
+        </div>
+        {rangeModels.length === 0 ? (
+          <p className="text-xs text-gray-400 dark:text-gray-500">暂无数据</p>
+        ) : (
+          <div className="space-y-2.5">
+            {rangeModels.slice(0, 6).map(m => {
+              const maxCalls = rangeModels[0]?.calls || 1;
+              return (
+                <div key={m.model} className="flex items-center gap-3 text-sm">
+                  <div className="w-36 shrink-0 text-xs text-gray-600 dark:text-gray-400 truncate font-mono" title={m.model}>{m.model}</div>
+                  <div className="flex-1 bg-gray-100 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
+                    <div className="h-2 rounded-full bg-blue-400 transition-all duration-500"
+                      style={{ width: `${Math.round(m.calls / maxCalls * 100)}%` }} />
+                  </div>
+                  <span className="w-10 shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">{m.calls} 次</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
 
     </div>
   );

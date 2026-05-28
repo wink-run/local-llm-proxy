@@ -20,26 +20,10 @@ let _peerModels   = new Set();
 let _backendUrl   = null;
 let _cloudToken   = null;
 
-// Daily stats reset when date changes
-let _stats = newDayStats();
-
-function newDayStats() {
-  return {
-    date: today(),
-    calls: 0,
-    errors: 0,
-    by_provider: {},  // id → { calls }
-    by_model:    {},  // name → { calls }
-  };
-}
-
-function today() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function ensureTodayStats() {
-  if (_stats.date !== today()) _stats = newDayStats();
-}
+// Stats recorder callback — set by main process via setStatsRecorder()
+let _statsRecorder = null;
+// Local stats module — set by main process via setLocalStats(), used for HTTP queries
+let _localStats    = null;
 
 // ── Format conversion (Anthropic ↔ OpenAI) ───────────────────────────────────
 
@@ -67,6 +51,33 @@ function openaiToAnthropic(oai, model) {
     stop_reason: (finish === 'stop' || finish == null) ? 'end_turn' : finish,
     stop_sequence: null,
     usage: { input_tokens: usage.prompt_tokens || 0, output_tokens: usage.completion_tokens || 0 },
+  };
+}
+
+// Convert OpenAI request body → Anthropic request body
+function oaiRequestToAnthropic(oai) {
+  const msgs = (oai.messages || []).filter(m => m.role !== 'system');
+  const sys  = (oai.messages || []).find(m => m.role === 'system');
+  const anth = { model: oai.model, max_tokens: oai.max_tokens || 4096, messages: msgs };
+  if (sys) anth.system = typeof sys.content === 'string' ? sys.content : (sys.content?.[0]?.text || '');
+  if (oai.temperature != null) anth.temperature = oai.temperature;
+  if (oai.top_p       != null) anth.top_p       = oai.top_p;
+  if (oai.stop) anth.stop_sequences = Array.isArray(oai.stop) ? oai.stop : [oai.stop];
+  if (oai.stream) anth.stream = true;
+  return anth;
+}
+
+// Convert Anthropic response body → OpenAI response body
+function anthropicRespToOai(anth) {
+  const text   = (anth.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+  const finish = anth.stop_reason === 'end_turn' ? 'stop' : (anth.stop_reason || 'stop');
+  const inTok  = anth.usage?.input_tokens  || 0;
+  const outTok = anth.usage?.output_tokens || 0;
+  return {
+    id: anth.id || ('chatcmpl-' + Math.random().toString(36).slice(2)),
+    object: 'chat.completion', created: Math.floor(Date.now() / 1000), model: anth.model || '',
+    choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: finish, logprobs: null }],
+    usage: { prompt_tokens: inTok, completion_tokens: outTok, total_tokens: inTok + outTok },
   };
 }
 
@@ -144,7 +155,7 @@ function proxyRequest(provider, reqPath, body, res) {
 
     const t0 = Date.now();
     let firstTokenMs = null;
-    let ftBuf = '';
+    const isStream = !!body.stream;
 
     const proxyReq = mod.request(opts, (proxyRes) => {
       if (proxyRes.statusCode >= 400) {
@@ -161,24 +172,50 @@ function proxyRequest(provider, reqPath, body, res) {
         'X-Accel-Buffering':     'no',
         'Access-Control-Allow-Origin': '*',
       });
-      // Track first real content token (first non-empty `data:` SSE line)
-      proxyRes.on('data', (chunk) => {
-        if (firstTokenMs !== null) return;
-        ftBuf += chunk.toString();
-        const lines = ftBuf.split('\n');
-        ftBuf = lines.pop();
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const ds = line.slice(6).trim();
-          if (ds && ds !== '[DONE]') { firstTokenMs = Date.now() - t0; break; }
-        }
-      });
-      proxyRes.pipe(res);
-      proxyRes.on('end',   () => resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0 }));
-      proxyRes.on('error', (err) => {
-        res.destroy(err);
-        resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0 });
-      });
+
+      if (isStream) {
+        // Streaming: pipe to client while sniffing SSE events for usage
+        let usageIn = 0, usageOut = 0;
+        let sseBuf = '';
+        proxyRes.on('data', (chunk) => {
+          res.write(chunk);
+          sseBuf += chunk.toString();
+          const lines = sseBuf.split('\n');
+          sseBuf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const ds = line.slice(6).trim();
+            if (!ds || ds === '[DONE]') continue;
+            if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
+            try {
+              const obj = JSON.parse(ds);
+              if (obj.usage) {
+                usageIn  = obj.usage.prompt_tokens     || obj.usage.input_tokens     || usageIn;
+                usageOut = obj.usage.completion_tokens || obj.usage.output_tokens    || usageOut;
+              }
+            } catch {}
+          }
+        });
+        proxyRes.on('end',   () => { res.end(); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut }); });
+        proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut }); });
+      } else {
+        // Non-streaming: buffer, forward, then parse usage from JSON
+        const chunks = [];
+        proxyRes.on('data', c => chunks.push(c));
+        proxyRes.on('end', () => {
+          const buf = Buffer.concat(chunks);
+          res.end(buf);
+          let usageIn = 0, usageOut = 0;
+          try {
+            const obj = JSON.parse(buf.toString());
+            const u   = obj.usage || {};
+            usageIn  = u.prompt_tokens     || u.input_tokens     || 0;
+            usageOut = u.completion_tokens || u.output_tokens    || 0;
+          } catch {}
+          resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut });
+        });
+        proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: Date.now() - t0, input_tokens: 0, output_tokens: 0 }); });
+      }
     });
 
     proxyReq.on('error',   reject);
@@ -230,7 +267,10 @@ function proxyConvertSync(provider, oaiBody, model, res) {
           res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
           res.end(resp);
           const latency = Date.now() - t0;
-          resolve({ provider: provider.id, latency, first_token_ms: latency });
+          const usage   = oaiResp?.usage || {};
+          resolve({ provider: provider.id, latency, first_token_ms: latency,
+            input_tokens:  usage.prompt_tokens     || usage.input_tokens     || 0,
+            output_tokens: usage.completion_tokens || usage.output_tokens    || 0 });
         } catch (err) { reject(err); }
       });
       proxyRes.on('error', reject);
@@ -289,6 +329,7 @@ function proxyConvertStream(provider, oaiBody, model, res) {
       res.write('event: ping\ndata: {"type":"ping"}\n\n');
 
       let buf = '', outputTokens = 0, stopReason = 'end_turn', firstTokenMs = null;
+      let usageIn = 0, usageOut = 0; // from actual usage field in SSE, if present
 
       proxyRes.on('data', (chunk) => {
         buf += chunk.toString();
@@ -312,22 +353,161 @@ function proxyConvertStream(provider, oaiBody, model, res) {
               })}\n\n`);
             }
             if (finish) stopReason = finish === 'stop' ? 'end_turn' : finish;
+            // Capture actual usage if provider includes it (e.g. final chunk with usage)
+            if (c.usage) {
+              usageIn  = c.usage.prompt_tokens     || c.usage.input_tokens     || usageIn;
+              usageOut = c.usage.completion_tokens || c.usage.output_tokens    || usageOut;
+            }
           } catch {}
         }
       });
 
       proxyRes.on('end', () => {
+        // Prefer actual usage from provider; fall back to manual output token count
+        const finalOut = usageOut || outputTokens;
         res.write(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`);
         res.write(`event: message_delta\ndata: ${JSON.stringify({
           type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null },
-          usage: { output_tokens: outputTokens },
+          usage: { output_tokens: finalOut },
         })}\n\n`);
         res.write('event: message_stop\ndata: {"type":"message_stop"}\n\n');
         res.end();
-        resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0 });
+        resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: finalOut });
       });
 
-      proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0 }); });
+      proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut || outputTokens }); });
+    });
+    proxyReq.on('error', reject);
+    proxyReq.on('timeout', () => { proxyReq.destroy(); reject(new Error('timeout')); });
+    proxyReq.write(bodyStr);
+    proxyReq.end();
+  });
+}
+
+// ── OpenAI client → Anthropic provider: format bridge ───────────────────────
+
+function proxyAnthropicSync(provider, oaiBody, model, res) {
+  return new Promise((resolve, reject) => {
+    const anthBody  = oaiRequestToAnthropic({ ...oaiBody, stream: false });
+    const base      = normBase(provider.base_url);
+    const fullUrl   = base + '/v1/messages';
+    let u;
+    try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
+
+    const mod     = u.protocol === 'https:' ? https : http;
+    const bodyStr = JSON.stringify(anthBody);
+    const headers = {
+      'Content-Type':      'application/json',
+      'Content-Length':    Buffer.byteLength(bodyStr),
+      'anthropic-version': '2023-06-01',
+    };
+    if (provider.token) headers['x-api-key'] = provider.token;
+
+    const t0       = Date.now();
+    const proxyReq = mod.request({
+      hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + (u.search || ''), method: 'POST', headers, timeout: 120_000,
+    }, (proxyRes) => {
+      if (proxyRes.statusCode >= 400) {
+        const errChunks = [];
+        proxyRes.on('data', c => errChunks.push(c));
+        proxyRes.on('end', () => console.warn(`[gateway] proxyAnthropicSync ${proxyRes.statusCode}:`, Buffer.concat(errChunks).toString().slice(0, 200)));
+        return reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode }));
+      }
+      const chunks = [];
+      proxyRes.on('data', c => chunks.push(c));
+      proxyRes.on('end', () => {
+        try {
+          const anthResp = JSON.parse(Buffer.concat(chunks).toString());
+          const oaiResp  = anthropicRespToOai(anthResp);
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify(oaiResp));
+          const latency = Date.now() - t0;
+          resolve({ provider: provider.id, latency, first_token_ms: latency,
+            input_tokens:  anthResp.usage?.input_tokens  || 0,
+            output_tokens: anthResp.usage?.output_tokens || 0 });
+        } catch (err) { reject(err); }
+      });
+      proxyRes.on('error', reject);
+    });
+    proxyReq.on('error', reject);
+    proxyReq.on('timeout', () => { proxyReq.destroy(); reject(new Error('timeout')); });
+    proxyReq.write(bodyStr);
+    proxyReq.end();
+  });
+}
+
+function proxyAnthropicStream(provider, oaiBody, model, res) {
+  return new Promise((resolve, reject) => {
+    const anthBody  = oaiRequestToAnthropic({ ...oaiBody, stream: true });
+    const base      = normBase(provider.base_url);
+    const fullUrl   = base + '/v1/messages';
+    let u;
+    try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
+
+    const mod     = u.protocol === 'https:' ? https : http;
+    const bodyStr = JSON.stringify(anthBody);
+    const headers = {
+      'Content-Type':      'application/json',
+      'Content-Length':    Buffer.byteLength(bodyStr),
+      'anthropic-version': '2023-06-01',
+      'Accept':            'text/event-stream',
+    };
+    if (provider.token) headers['x-api-key'] = provider.token;
+
+    const t0       = Date.now();
+    const proxyReq = mod.request({
+      hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + (u.search || ''), method: 'POST', headers, timeout: 120_000,
+    }, (proxyRes) => {
+      if (proxyRes.statusCode >= 400) {
+        proxyRes.resume();
+        return reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode }));
+      }
+      if (res.headersSent) { proxyRes.resume(); return reject(new Error('headers_already_sent')); }
+
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no', 'Access-Control-Allow-Origin': '*',
+      });
+
+      const chatId  = 'chatcmpl-' + Math.random().toString(36).slice(2, 26);
+      const created = Math.floor(Date.now() / 1000);
+      // Send role delta
+      res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] })}\n\n`);
+
+      let buf = '', usageIn = 0, usageOut = 0, firstTokenMs = null;
+
+      proxyRes.on('data', (chunk) => {
+        buf += chunk.toString();
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const ds = line.slice(6).trim();
+          if (!ds || ds === '[DONE]') continue;
+          try {
+            const evt = JSON.parse(ds);
+            if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta' && evt.delta.text) {
+              if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
+              res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { content: evt.delta.text }, finish_reason: null }] })}\n\n`);
+            } else if (evt.type === 'message_start') {
+              usageIn = evt.message?.usage?.input_tokens || 0;
+            } else if (evt.type === 'message_delta') {
+              usageOut = evt.usage?.output_tokens || 0;
+            }
+          } catch {}
+        }
+      });
+
+      proxyRes.on('end', () => {
+        res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+        resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut });
+      });
+
+      proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut }); });
     });
     proxyReq.on('error', reject);
     proxyReq.on('timeout', () => { proxyReq.destroy(); reject(new Error('timeout')); });
@@ -409,7 +589,7 @@ function proxyP2PSync(provider, oaiBody, model, res) {
             res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
             res.end(resp);
           }
-          resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0 });
+          resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: inputTokens, output_tokens: outputTokens });
         } catch (err) { reject(err); }
       });
       proxyRes.on('error', reject);
@@ -428,11 +608,18 @@ function proxyP2PSync(provider, oaiBody, model, res) {
 async function callProvider(provider, isAnthropic, streaming, reqPath, body, attemptModel, res) {
   const attemptBody = { ...body, model: attemptModel };
 
-  // Anthropic-compatible provider: proxy request directly without format conversion
+  // Anthropic-compatible provider
   const isAnthropicProvider = /anthropic/i.test(provider.base_url || '') || provider.api_format === 'anthropic';
   if (isAnthropicProvider) {
-    const targetPath = isAnthropic ? '/v1/messages' : '/v1/chat/completions';
-    return await proxyRequest(provider, targetPath, attemptBody, res);
+    if (isAnthropic) {
+      // Anthropic client → Anthropic provider: direct proxy to /v1/messages
+      return await proxyRequest(provider, '/v1/messages', attemptBody, res);
+    } else {
+      // OpenAI client → Anthropic provider: convert request/response format
+      return streaming
+        ? await proxyAnthropicStream(provider, attemptBody, attemptModel, res)
+        : await proxyAnthropicSync(provider, attemptBody, attemptModel, res);
+    }
   }
 
   const oaiBody = isAnthropic ? anthropicToOpenai(attemptBody) : null;
@@ -447,8 +634,7 @@ async function callProvider(provider, isAnthropic, streaming, reqPath, body, att
   return await proxyRequest(provider, reqPath, attemptBody, res);
 }
 
-async function route(model, reqPath, body, res) {
-  ensureTodayStats();
+async function route(model, reqPath, body, res, callerKey) {
   const t0          = Date.now();
   let lastErr       = null;
   const isAnthropic = reqPath === '/v1/messages';
@@ -460,7 +646,6 @@ async function route(model, reqPath, body, res) {
       tried: failedModels?.length ? [...failedModels] : undefined,
       via: null, latency_ms: Date.now() - t0, status: 'error', error: lastErr?.message,
     });
-    _stats.errors++;
     if (!res.headersSent) {
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'all_providers_failed', detail: lastErr?.message }));
@@ -499,7 +684,10 @@ async function route(model, reqPath, body, res) {
             tier: provider.type, via: provider.id, via_label: provider.label,
             latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok',
           });
-          recordStats(provider.id, stepModel);
+          const stepTok  = (result.input_tokens || 0) + (result.output_tokens || 0);
+          const stepTier = _providerTier(provider);
+          recordStats(provider.id, stepModel, stepTok, stepTier, callerKey);
+          reportUsage(provider.id, stepModel, stepTok);
           stepSucceeded = true;
           return;
         } catch (err) {
@@ -529,7 +717,10 @@ async function route(model, reqPath, body, res) {
         tier: provider.type, via: provider.id, via_label: provider.label,
         latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok',
       });
-      recordStats(provider.id, model);
+      const directTok  = (result.input_tokens || 0) + (result.output_tokens || 0);
+      const directTier = _providerTier(provider);
+      recordStats(provider.id, model, directTok, directTier, callerKey);
+      reportUsage(provider.id, model, directTok);
       return;
     } catch (err) {
       lastErr = err;
@@ -545,17 +736,60 @@ function pushLog(entry) {
   if (log.length > LOG_MAX) log.shift();
 }
 
-function recordStats(providerId, model) {
-  _stats.calls++;
-  const ps = _stats.by_provider[providerId] || { calls: 0 };
-  ps.calls++;
-  _stats.by_provider[providerId] = ps;
+function recordStats(providerId, model, tokens, tier, apiKey) {
+  _statsRecorder?.({
+    api_key:     apiKey     || null,
+    model:       model      || null,
+    provider_id: providerId || null,
+    tier:        tier       || null,
+    tokens:      tokens     || 0,
+  });
+}
 
-  if (model) {
-    const ms = _stats.by_model[model] || { calls: 0 };
-    ms.calls++;
-    _stats.by_model[model] = ms;
-  }
+// Determine routing tier from provider object or id string.
+// Priority: explicit config tier > known P2P id > has token + non-local URL = paid > free
+const _LOCAL_URL = /localhost|127\.0\.0\.1|::1|192\.168\.|^10\.|^172\.(1[6-9]|2\d|3[01])\./;
+
+function _providerTier(provider) {
+  if (!provider) return 'free';
+  const id   = typeof provider === 'string' ? provider : (provider.id || '');
+  const obj  = typeof provider === 'object' ? provider : null;
+  // Explicit tier in provider config
+  if (obj?.tier) return obj.tier;
+  // P2P
+  if (id === 'tokenbank-p2p' || obj?.type === 'p2p') return 'p2p';
+  // Known paid IDs (fallback for old persisted stats that only store id)
+  const KNOWN_PAID = new Set(['openai','anthropic-paid','anthropic','openrouter','deepseek','xai','fireworks']);
+  if (KNOWN_PAID.has(id)) return 'paid';
+  // Has API token + non-local base URL → paid
+  if (obj?.token && obj?.base_url && !_LOCAL_URL.test(obj.base_url)) return 'paid';
+  return 'free';
+}
+
+// Fire-and-forget: report a completed non-P2P call to the backend so it appears
+// in dashboard stats. P2P calls are already recorded server-side.
+function reportUsage(providerId, model, totalTokens) {
+  if (!_backendUrl || !_cloudToken) return;
+  const tier = _providerTier(providerId);
+  if (tier === 'p2p') return; // already recorded by backend
+  const body = JSON.stringify({ model, tokens: totalTokens, tier, provider_id: providerId });
+  try {
+    const u   = new URL(_backendUrl + '/api/gateway/record-usage');
+    const mod = u.protocol === 'https:' ? require('https') : http;
+    const req = mod.request({
+      hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname, method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'Authorization': `Bearer ${_cloudToken}`,
+      },
+      timeout: 10_000,
+    }, res => { res.resume(); }); // drain response
+    req.on('error', () => {}); // ignore errors — best-effort
+    req.write(body);
+    req.end();
+  } catch {}
 }
 
 // ── HTTP Server ───────────────────────────────────────────────────────────────
@@ -583,6 +817,28 @@ function handleRequest(req, res) {
     return;
   }
 
+  // Local stats query — used by CLI/browser frontend
+  if (method === 'GET' && url.startsWith('/api/local-stats')) {
+    const qs   = new URL('http://x' + url).searchParams;
+    const days = Math.max(1, Math.min(365, parseInt(qs.get('days'), 10) || 1));
+    const data = _localStats ? _localStats.queryDashboard(days) : {
+      total_calls: 0, total_tokens: 0,
+      tiers: { free: 0, p2p: 0, paid: 0 },
+      hourly: Array(24).fill(0),
+      models: [], keys: [], providers: [],
+    };
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(data));
+    return;
+  }
+
+  // Gateway status for CLI frontend
+  if (method === 'GET' && url === '/api/gateway/status') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(getStatus()));
+    return;
+  }
+
   // Chat completions (OpenAI + Anthropic)
   const isChatPath   = url === '/v1/chat/completions' || url === '/v1/messages';
   if (!isChatPath || method !== 'POST') {
@@ -599,6 +855,10 @@ function handleRequest(req, res) {
     }
   });
 
+  // Extract caller's API key (used to attribute stats to the right scene/key)
+  const authRaw = req.headers['authorization'] || req.headers['x-api-key'] || '';
+  const callerKey = authRaw.startsWith('Bearer ') ? authRaw.slice(7).trim() : authRaw.trim();
+
   const chunks = [];
   req.on('data', c => chunks.push(c));
   req.on('end', async () => {
@@ -606,7 +866,7 @@ function handleRequest(req, res) {
     try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch {}
     const model = body.model || '';
     try {
-      await route(model, url, body, res);
+      await route(model, url, body, res, callerKey);
     } catch (err) {
       if (!res.headersSent) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -669,11 +929,6 @@ function getLog() {
   return [...log].reverse(); // newest first
 }
 
-function getDailyStats() {
-  ensureTodayStats();
-  return { ..._stats };
-}
-
 function setKeySceneMap() { /* deprecated */ }
 
 function setRouterModelMap(map) {
@@ -691,7 +946,16 @@ function setBackendConfig({ url, token } = {}) {
   console.log(`[gateway] backend config: url=${_backendUrl} token=${_cloudToken ? '***' : 'none'}`);
 }
 
+function setStatsRecorder(fn) {
+  _statsRecorder = typeof fn === 'function' ? fn : null;
+}
+
+function setLocalStats(mod) {
+  _localStats = mod && typeof mod.queryDashboard === 'function' ? mod : null;
+}
+
 module.exports = {
-  start, stop, restart, setStrategy, getStatus, getLog, getDailyStats,
+  start, stop, restart, setStrategy, getStatus, getLog,
   setKeySceneMap, setRouterModelMap, setPeerModels, setBackendConfig,
+  setStatsRecorder, setLocalStats,
 };

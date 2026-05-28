@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { login, register, getProfile } from '../api/client';
 import { useAuth } from '../store/index';
 import { useTheme } from '../store/theme';
+import { getConfig, getGateway } from '../api/adapter';
 import logo from '../assets/logo.svg';
 import { useLang } from '../store/lang';
 import { DEFAULT_SERVER_URL } from '../config';
@@ -293,7 +294,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
 
   // Load saved config on mount
   useEffect(() => {
-    window.electronAPI?.config?.read().then(cfg => {
+    getConfig().read().then(cfg => {
       if (!cfg) return;
       if (cfg.gateway_port)      setGatewayPort(cfg.gateway_port);
       if (cfg.auto_launch != null) setAutoLaunch(!!cfg.auto_launch);
@@ -303,9 +304,9 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       if (cfg.retry_count != null) setRetryCount(String(cfg.retry_count));
       if (cfg.health_interval)   setHealthInterval(String(cfg.health_interval));
       if (cfg.keep_route_logs != null) setKeepRouteLogs(!!cfg.keep_route_logs);
-    });
+    }).catch(() => {});
     // Read live gateway port from status
-    window.electronAPI?.gateway?.status().then(s => {
+    getGateway().status().then(s => {
       if (s?.port) setGatewayPort(s.port);
     }).catch(() => {});
   }, []);
@@ -314,8 +315,8 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
     setSaving(true);
     try {
       localStorage.setItem('serverUrl', serverUrl);
-      const current = (await window.electronAPI?.config?.read()) || {};
-      await window.electronAPI?.config?.write({
+      const current = (await getConfig().read().catch(() => null)) || {};
+      await getConfig().write({
         ...current,
         gateway_port:    Number(gatewayPort),
         auto_launch:     autoLaunch,

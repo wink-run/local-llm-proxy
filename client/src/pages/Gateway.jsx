@@ -560,9 +560,11 @@ export default function Gateway() {
 
   // ── Computed stats ──────────────────────────────────────────────────────────
 
-  const totalCalls   = stats?.calls ?? 0;
-  const totalErrors  = stats?.errors ?? 0;
-  const providerEntries = Object.entries(stats?.by_provider ?? {}).sort((a, b) => b[1].calls - a[1].calls);
+  const totalCalls   = stats?.total_calls ?? 0;
+  const totalErrors  = 0;  // not tracked in local stats
+  const providerEntries = [...(stats?.providers ?? [])]
+    .sort((a, b) => b.calls - a.calls)
+    .map(p => [p.id, { calls: p.calls, tier: p.tier }]);
   const freeCalls    = providerEntries
     .filter(([id]) => !['tokenbank-p2p', 'openai', 'anthropic-paid'].includes(id))
     .reduce((s, [, v]) => s + v.calls, 0);

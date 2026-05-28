@@ -77,6 +77,12 @@ async def init_db() -> None:
                 created_at   TEXT DEFAULT (datetime('now'))
             )
         """)
+        # safe migration: add tier column if missing (idempotent)
+        try:
+            await db.execute("ALTER TABLE transactions ADD COLUMN tier TEXT NOT NULL DEFAULT ''")
+            await db.commit()
+        except Exception:
+            pass  # column already exists
 
         # settlement_logs
         await db.execute("""
@@ -490,7 +496,7 @@ async def award_credits(user_id: int, delta: float, type_: str,
         return new_balance
 
 
-async def deduct_credits(user_id: int, delta: float, model_name: str = "", tokens: int = 0) -> tuple[bool, float]:
+async def deduct_credits(user_id: int, delta: float, model_name: str = "", tokens: int = 0, tier: str = "p2p") -> tuple[bool, float]:
     """消费积分，余额不足返回 (False, balance)，成功返回 (True, new_balance)"""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT credits_balance FROM users WHERE id=?", (user_id,)) as cur:
@@ -503,11 +509,26 @@ async def deduct_credits(user_id: int, delta: float, model_name: str = "", token
             (new_balance, delta, user_id),
         )
         await db.execute(
-            "INSERT INTO transactions(user_id,type,model_name,tokens,delta,balance) VALUES(?,?,?,?,?,?)",
-            (user_id, "consume", model_name, tokens, -delta, new_balance),
+            "INSERT INTO transactions(user_id,type,model_name,tokens,delta,balance,tier) VALUES(?,?,?,?,?,?,?)",
+            (user_id, "consume", model_name, tokens, -delta, new_balance, tier),
         )
         await db.commit()
         return True, new_balance
+
+
+async def record_gateway_usage(user_id: int, model_name: str, tokens: int, tier: str, provider_id: str = "") -> None:
+    """Record a zero-cost gateway call (free/paid-direct tier) so it appears in stats."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT credits_balance FROM users WHERE id=?", (user_id,)) as cur:
+            row = await cur.fetchone()
+            if not row:
+                return
+            balance = row[0]
+        await db.execute(
+            "INSERT INTO transactions(user_id,type,model_name,tokens,delta,balance,tier) VALUES(?,?,?,?,?,?,?)",
+            (user_id, "consume", model_name, tokens, 0.0, balance, tier),
+        )
+        await db.commit()
 
 
 async def consume_credits_for_usage(
@@ -1104,7 +1125,10 @@ async def get_dashboard_stats(user_id: int, days: int = 30) -> list[dict]:
                  sr.icon,
                  COALESCE(SUM(t.tokens), 0)       AS total_tokens,
                  COALESCE(SUM(ABS(t.delta)), 0)   AS total_credits,
-                 COUNT(t.id)                       AS request_count
+                 COUNT(t.id)                       AS request_count,
+                 COALESCE(SUM(CASE WHEN t.tier='free' THEN 1 ELSE 0 END), 0) AS free_count,
+                 COALESCE(SUM(CASE WHEN t.tier='p2p'  THEN 1 ELSE 0 END), 0) AS p2p_count,
+                 COALESCE(SUM(CASE WHEN t.tier='paid' THEN 1 ELSE 0 END), 0) AS paid_count
                FROM api_keys ak
                LEFT JOIN scene_routes sr ON sr.id = ak.scene_route_id
                LEFT JOIN transactions t

@@ -1,176 +1,252 @@
-# Local LLM Proxy
+# Token Bank
 
-**P2P · OpenAI-compatible · Outbound WebSocket** — turn idle token/compute into **universal credits** you can spend across models and time.
+> **Local LLM Gateway · Token Manager**
+>
+> Know what you're spending · Spend less · Earn from what's idle
 
-[中文文档](./README.zh-CN.md)
-
-<!--
- · [Source](https://github.com/wink-run/local-llm-proxy)
-
-```bash
-git clone git@github.com:wink-run/local-llm-proxy.git
-```
--->
-
-## What it does
-
-**Local LLM Proxy** bridges locally-hosted or LAN-restricted LLMs to the public internet — without opening any inbound ports. Contributors share voluntary quota (Ollama, intranet gateways, or upstream API paths); consumers call a single OpenAI-compatible endpoint using credits — **rates and settlement rules are published** on the landing page and in the admin UI.
-
-Each participating machine runs a lightweight `llm-agent` that **dials out** over WebSocket to a VPS. The VPS exposes a unified **OpenAI-compatible HTTP API**. External clients use a **Bearer user API key**; workers authenticate with the account **Worker key** (`wk-…`, shown in the User Portal — stored per user in the database). **Upstream LLM credentials are never persisted by the proxy.** Clients send requests to the VPS; the VPS routes them to the right worker; the worker forwards them to its local LLM and streams the response back.
-
-**Principles** (same as the landing page)
-
-- **All for one, one for all** — peer surplus sharing; credits work across models and time.
-- **Neutral & transparent** — breaks the traditional relay black box; multi-party dynamics with published rules; code is open source.
-- **Affordable for buyers** — calling via credits often beats buying upstream API alone for the same model tier.
-
-**Two ways credits add value**
-
-- **Model arbitrage** — contribute quota from models you have, earn credits, spend on models you don’t (e.g. domestic → overseas, open → premium). Workers are scored by latency, uptime, and success rate; higher quality earns a **quality multiplier** on contributed credits.
-- **Time arbitrage** — bank today’s surplus (month-end API leftovers, idle desktops) as credits for later (e.g. after your machine is off, or next month).
-
-**Key benefits**
-
-- Models on private LANs become reachable from anywhere; **no inbound firewall rules** — workers initiate all connections.
-- **Multi-node pool** — different models and workers aggregate behind one `/v1` API.
-- **P2P-style economy** — voluntary workers earn credits; API callers spend credits.
-
-**Credit economy** (summary; live rates on `/` and `/admin/ui`)
-
-- **Earn (settles every 5 minutes):**  
-  `credits = (output_tokens / 1000) × model_contribute_rate × quality_multiplier`  
-  Quality ≈ `0.4×uptime + 0.4×latency + 0.2×stability`, clamped to **0.5–1.5×**.
-- **Spend (per API call):**  
-  `cost = ((prompt + completion tokens) / 1000) × model_consume_rate`  
-  By design, **contribute rate > consume rate** so long-term contributors are rewarded.
-
-**Privacy & control**
-
-- **Upstream API keys never leave your machine.** `--llm-token` stays in local agent config (`~/.llm-agent/config.json`) and is only used for the agent→LLM hop. Registration sends **worker_key**, node name, and model list — not your upstream key.
-- **User API keys** for calling the VPS are issued from the admin/user portal and stored server-side — they are **separate** from upstream keys.
-- **Stop contributing any time.** Kill the agent (`Ctrl+C`) or go offline — no server-side “unbind” step.
-
-Full protocol and architecture details: [DESIGN.md](./DESIGN.md)
+[中文文档](./README.zh-CN.md) · [Download Latest](https://github.com/wink-run/local-llm-proxy/releases/latest) · [Architecture](./DESIGN.md)
 
 ---
 
-## Deployment
+## Why Token Bank
 
-### 1 · VPS — Docker Compose
+You've probably run into these problems:
 
-Copy and edit the environment file, then start:
+- Subscribed to multiple LLM providers with no clear view of where tokens actually go
+- Groq free tier and GitHub Models quota go unused every month, yet the OpenAI bill keeps climbing
+- Ollama is running locally, but AI tools still call the paid API by default
+- Month-end API plan credits expire and reset to zero — wasted
+
+**Token Bank is a local LLM gateway** that sits between your AI tools and every LLM provider. It helps you understand your token usage, cut costs automatically, and turn idle quota into credits.
+
+---
+
+## Three things it does
+
+### 1 — Know what you're spending
+
+Token Bank logs every request: which route it took, which model answered, how many tokens it used, and how long it took.
+
+- **Daily dashboard**: total calls, free tier hit rate, provider breakdown, model distribution
+- **Call log**: route result, status, and latency for every request
+- **Multi-device view**: today's usage per device (desktop + CLI + server)
+- **Credit history**: every earn and spend is recorded; balance is always up to date
+
+---
+
+### 2 — Spend less
+
+Token Bank runs a **smart routing chain** locally. Each request works down the chain until one source succeeds:
+
+```
+Local models (Ollama)
+    ↓ no matching model
+Free tier (Groq / GitHub Models / ...)
+    ↓ rate-limited or unavailable
+P2P network (pay with credits)
+    ↓ insufficient credits
+Paid API (OpenAI / Anthropic / ...)
+```
+
+**Your AI tools point at one local address.** Routing is completely transparent to them.
+
+#### Scene routes
+
+Different use cases can be mapped to different supply chains:
+
+| Scene | Strategy |
+|---|---|
+| Daily chat | Groq free tier first, P2P network as fallback |
+| Code completion | Local Ollama — zero latency, zero cost |
+| Long document analysis | Paid API — quality guaranteed |
+
+#### Auto-import existing keys
+
+One-click scan of your environment variables and tool configs. Existing LLM keys (Groq, GitHub Models, Anthropic, etc.) are imported automatically. Multiple keys are round-robined to fully use each provider's free quota.
+
+---
+
+### 3 — Earn from what's idle
+
+Contribute your unused compute or API quota to the P2P network. Earn credits. Spend those credits on models you don't have access to.
+
+**What you can contribute:**
+
+- Local Ollama / inference server (contribute compute)
+- Unused upstream API paths (contribute quota)
+- Private models behind a corporate LAN (the agent dials out over WebSocket — no inbound port required)
+
+**How credits are earned (settled every ~5 minutes):**
+
+```
+credits = (output_tokens / 1000) × model_contribute_rate × quality_multiplier
+```
+
+The quality multiplier (0.5–1.5×) is calculated from uptime, response latency, and success rate. Nodes that are consistently online and fast earn more.
+
+**Other credit sources:**
+- Daily check-in
+- Daily spin wheel
+- Referrals
+
+**How credits are spent:**
+
+```
+cost = ((prompt + completion tokens) / 1000) × model_consume_rate
+```
+
+By design, contribute rate > consume rate — long-term contributors come out ahead.
+
+---
+
+## Quick start
+
+### Desktop app (Mac / Windows — recommended)
+
+Download the installer from [Releases](https://github.com/wink-run/local-llm-proxy/releases/latest):
+
+- **macOS** `.dmg` — double-click to install, lives in the menu bar, auto-updates
+- **Windows** `.exe` — NSIS installer, auto-updates
+
+After installing: open the app → go to **Config** → enter your backend URL and P2P key → done.
+
+**Point your AI tools at the local gateway:**
+
+```
+OPENAI_BASE_URL=http://localhost:11430/v1
+```
+
+Create a local API key in the **Gateway** tab, or use an existing upstream key.
+
+---
+
+### CLI mode (Linux / servers)
+
+```bash
+git clone https://github.com/wink-run/local-llm-proxy.git
+cd local-llm-proxy/client
+npm install
+node cli/gateway.js start
+```
+
+Open `http://localhost:11431` in a browser to configure. Works identically to the desktop app.
+
+```bash
+# Background (nohup)
+nohup node cli/gateway.js start > gateway.log 2>&1 &
+
+# Or with pm2
+pm2 start cli/gateway.js -- start
+```
+
+---
+
+### Docker (containerised)
+
+```bash
+git clone https://github.com/wink-run/local-llm-proxy.git
+cd local-llm-proxy
+
+mkdir -p gateway-data
+cat > gateway-data/local-config.json << 'EOF'
+{
+  "cloud_config": {
+    "url": "http://YOUR_BACKEND:8000",
+    "token": "YOUR_P2P_KEY"
+  },
+  "scene_routes": [],
+  "local_keys": []
+}
+EOF
+
+docker compose up gateway -d
+```
+
+| Port | Purpose |
+|---|---|
+| `11430` | LLM requests (`OPENAI_BASE_URL=http://host:11430/v1`) |
+| `11431` | Web management UI |
+
+---
+
+## What's in the UI
+
+| Page | What you can do |
+|---|---|
+| **Dashboard** | Token usage, provider breakdown, model distribution, recent calls, per-device stats |
+| **Gateway** | Supply chain config, scene routes, gateway status and logs |
+| **Providers** | Add and manage local models and API keys, auto-scan and import |
+| **Network** | Global node map, online contributors, available models |
+| **Contribute** | Node status, settlement history, quality multiplier trend |
+| **Profile** | Credit balance, transaction history, device management, credit requests |
+
+---
+
+## Connecting any OpenAI-compatible client
+
+```bash
+# Claude Code
+export ANTHROPIC_BASE_URL=http://localhost:11430
+
+# Cursor / any OpenAI-compatible tool
+OPENAI_BASE_URL=http://localhost:11430/v1
+OPENAI_API_KEY=your-local-key
+
+# Quick curl test
+curl http://localhost:11430/v1/chat/completions \
+  -H "Authorization: Bearer your-local-key" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}],"stream":true}'
+```
+
+---
+
+## Self-hosted P2P backend (optional)
+
+To run your own private network instead of using the public one:
 
 ```bash
 cp .env.example .env
-# set ADMIN_KEY, and optionally REQUEST_TIMEOUT
-docker compose up -d --build
+# Edit .env — set ADMIN_KEY
+docker compose up proxy -d
 ```
-
-Default external port: **8000** (see `docker-compose.yml`).  
-SQLite database lives in the `db_data` Docker volume.
 
 | Variable | Description |
 |---|---|
-| `ADMIN_KEY` | Password for the admin dashboard and admin API |
+| `ADMIN_KEY` | Admin dashboard password |
 | `REQUEST_TIMEOUT` | Per-request forwarding timeout in seconds (default `120`) |
 
-For production, put the VPS behind an Nginx reverse proxy with HTTPS and point workers at `wss://your-domain/ws/worker`.
+- Admin dashboard: `http://YOUR_VPS:8000/admin/ui`
+- User portal: `http://YOUR_VPS:8000/app`
+- Worker WebSocket: `ws://YOUR_VPS:8000/ws/worker`
 
-### 2 · Local agent (LAN machine)
-
-**Option A — run from source**
+### Contributing a worker node
 
 ```bash
-cd agent
-pip install -r requirements.txt
+cd agent && pip install -r requirements.txt
 
 python agent.py register \
-  --server "ws://YOUR_VPS:8000/ws/worker" \
-  --worker-key "wk-...from-user-portal" \
-  --models "model-a,model-b" \
-  --llm-url "http://localhost:11434" \
-  --name   "my-machine"
+  --server     "ws://YOUR_VPS:8000/ws/worker" \
+  --worker-key "wk-... from the user portal" \
+  --models     "llama3,qwen2" \
+  --llm-url    "http://localhost:11434" \
+  --name       "my-machine"
 
 python agent.py start
 ```
 
-Copy **`--worker-key`** from the User Portal (`/app`); it is the sole credential for worker WebSocket registration.  
-Add `--llm-token` if your local LLM requires a bearer token.  
-Config is saved to `~/.llm-agent/config.json`; subsequent runs just need `python agent.py start`.
-
-**Option B — single-file binary** (build on the target OS):
-
-```bash
-cd agent
-chmod +x build.sh && ./build.sh
-# use ./dist/llm-agent instead of python agent.py
-```
-
-Pre-built binaries (if available) are listed under **Download Agent** on the `/` landing page (`static/downloads/`; build via `agent/build.sh`).
-
-The agent forwards to the local LLM's **`POST /v1/chat/completions`** endpoint.
-
----
-
-## Usage
-
-After deploying, open `http://YOUR_VPS:8000` in a browser to see the landing page (model rates, credit examples, and agent downloads).
-
-### Live operations dashboard
-
-Open `http://YOUR_VPS:8000/wall` for the **live operations wall** (aggregated runtime view).
-
-### Admin dashboard
-
-1. Go to `http://YOUR_VPS:8000/admin/ui`
-2. Log in with `ADMIN_KEY`
-3. Create API keys for users, configure models and credit rates
-
-### User portal
-
-Go to `http://YOUR_VPS:8000/app` to register, view your balance, manage API keys, and submit credit top-up requests.
-
-### OpenAI-compatible API
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/v1/models` | GET | List online models |
-| `/v1/chat/completions` | POST | Chat completions (streaming supported) |
-
-All endpoints require `Authorization: Bearer <USER_API_KEY>`.
-
-**Example**
-
-```bash
-curl -sS "http://YOUR_VPS:8000/v1/chat/completions" \
-  -H "Authorization: Bearer USER_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"your-model","messages":[{"role":"user","content":"Hello"}],"stream":true}'
-```
-
-Any OpenAI-compatible client that supports a custom `base_url` works — set it to `http://YOUR_VPS:8000/v1`.
-
----
-
-## Local development (no Docker)
-
-```bash
-cd server
-pip install -r requirements.txt
-uvicorn server:app --host 0.0.0.0 --port 8000
-```
-
-Provide `.env` variables or export them manually before starting.
+**Upstream API keys never leave your machine.** Only the worker key and model list are sent during registration.
 
 ---
 
 ## License
 
-This project is licensed under the **Apache License 2.0** — see [`LICENSE`](./LICENSE).  
-Attribution requirements for redistributors and downstream users are stated in [`NOTICE`](./NOTICE) (must retain NOTICE and visibly credit **Local LLM Proxy** with a link to the source repository).
+Apache License 2.0 — see [`LICENSE`](./LICENSE) and [`NOTICE`](./NOTICE).  
+Redistribution and derivative works must retain the NOTICE and credit the source:  
+**Token Bank · https://github.com/wink-run/local-llm-proxy**
 
 ---
 
 ## Disclaimer
 
-This project is for **educational and research purposes only**. Users are responsible for complying with applicable laws, regulations, and upstream service terms. The authors assume no liability for any consequences arising from deployment, token sharing, or request forwarding.
+This project is for educational and research purposes only. Users are responsible for complying with applicable laws, regulations, and upstream service terms. The authors assume no liability for any consequences arising from deployment, compute sharing, or request forwarding.

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getConfig, getLocalConfig } from '../api/adapter';
+import { getConfig, getLocalConfig, getGateway } from '../api/adapter';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -153,6 +153,7 @@ async function doGenerateImage({ baseUrl, token, model, prompt, ratio, resolutio
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const LOCAL_GW = { id: '__local_gw__', label: '本地网关', base_url: 'http://127.0.0.1:11430', token: '', models: [] };
+// base_url is overwritten at runtime with the actual running port from gateway status
 const CUSTOM   = { id: '__custom__',   label: '自定义…',  base_url: '',                        token: '', models: [] };
 
 const TIER_LABEL = { free: '免费层', p2p: 'P2P', paid: '付费层' };
@@ -160,7 +161,7 @@ const TIER_ORDER = ['free', 'p2p', 'paid'];
 
 function normModel(m) { return typeof m === 'string' ? { name: m, type: 'chat' } : { name: m.name, type: m.type || 'chat' }; }
 
-function providerOptions(cfg, localCfg) {
+function providerOptions(cfg, localCfg, localGw = LOCAL_GW) {
   // Build local gateway model list: collect all enabled provider models tagged with tier
   const gwModels = [];
   const seen = new Set();
@@ -177,7 +178,7 @@ function providerOptions(cfg, localCfg) {
     }
   }
 
-  const opts = [{ ...LOCAL_GW, models: gwModels }];
+  const opts = [{ ...localGw, models: gwModels }];
   for (const p of (cfg?.providers || [])) {
     if (!p.enabled || p.type === 'p2p' || !p.base_url) continue;
     const label = (() => { try { return new URL(p.base_url).hostname; } catch { return p.id; } })();
@@ -218,14 +219,17 @@ export default function Debug() {
   const messagesEndRef = useRef(null);
   const textareaRef    = useRef(null);
 
-  // Load config
+  // Load config + gateway status (to get actual running port)
   useEffect(() => {
     Promise.all([
       getConfig().read().catch(() => null),
       getLocalConfig().get().catch(() => null),
-    ]).then(([c, lc]) => {
+      getGateway().status().catch(() => null),
+    ]).then(([c, lc, gwStatus]) => {
       setCfg(c);
-      setProvOpts(providerOptions(c, lc));
+      const gwPort = gwStatus?.port || 11430;
+      const localGw = { ...LOCAL_GW, base_url: `http://127.0.0.1:${gwPort}` };
+      setProvOpts(providerOptions(c, lc, localGw));
     });
   }, []);
 

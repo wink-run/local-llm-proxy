@@ -1,0 +1,39 @@
+# ── Stage 1: build Vite frontend ─────────────────────────────────────────────
+FROM node:20-alpine AS builder
+WORKDIR /build
+
+# Install deps (skip electron binary download — not needed for vite build)
+COPY package*.json ./
+RUN npm ci --ignore-scripts
+
+# Copy only the frontend source needed for vite build
+COPY index.html vite.config.js tailwind.config.js postcss.config.js ./
+COPY src ./src
+
+RUN npx vite build
+
+# ── Stage 2: runtime — zero npm packages (pure Node.js built-ins) ─────────────
+FROM node:20-alpine
+WORKDIR /app
+
+# CLI entry + shared helpers
+COPY cli    ./cli
+COPY shared ./shared
+
+# Gateway core (only local-gateway.js is needed; no Electron imports)
+RUN mkdir -p ./electron
+COPY electron/local-gateway.js ./electron/local-gateway.js
+
+# Pre-built Web UI (served by admin-api on :11431)
+COPY --from=builder /build/dist ./dist
+
+# Gateway :11430  |  Admin UI / API :11431
+EXPOSE 11430 11431
+
+# Config lives in /data — mount a volume or bind-mount your config directory here
+ENV HOME=/data
+# Override the default ~/.llm-agent path used by config-loader.js
+ENV LLM_AGENT_CONFIG_DIR=/data/.llm-agent
+
+ENTRYPOINT ["node", "cli/gateway.js"]
+CMD ["start"]

@@ -1,4 +1,6 @@
 services:
+
+  # ── Backend API server ───────────────────────────────────────────────────────
   proxy:
     build:
       context: ./server
@@ -15,6 +17,39 @@ services:
       options:
         max-size: "20m"
         max-file: "5"
+
+  # ── CLI Gateway (headless, no Electron) ──────────────────────────────────────
+  gateway:
+    build:
+      context: ./client
+      dockerfile: Dockerfile.cli
+    ports:
+      - "11430:11430"   # OpenAI-compatible gateway (OPENAI_BASE_URL)
+      - "11431:11431"   # Admin API + Web UI
+    volumes:
+      - ./gateway-data:/data/.llm-agent   # config.json + local-config.json live here
+    environment:
+      - HOME=/data
+      - NODE_ENV=production
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - |
+          require('http').get('http://localhost:11431/api/gateway/status', r => {
+            process.exit(r.statusCode === 200 ? 0 : 1);
+          }).on('error', () => process.exit(1));
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   db_data:

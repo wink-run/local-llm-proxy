@@ -1,0 +1,8 @@
+{
+  "scene_routes": [],
+  "local_keys": [],
+  "cloud_config": {
+    "url": "http://YOUR_BACKEND_HOST:8000",
+    "token": "YOUR_P2P_API_KEY"
+  }
+}

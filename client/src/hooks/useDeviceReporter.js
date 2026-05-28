@@ -20,18 +20,33 @@ let _reregistering       = false; // guard against concurrent re-register attemp
 
 async function _doRegister() {
   try {
-    const cfg        = await getConfig().read().catch(() => ({}));
-    const existingId = cfg?.device_id || null;
-    const type       = isElectron() ? 'desktop' : 'cli';
-    const platform   = navigator.platform || navigator.userAgent || '';
-    const version    = cfg?.version || '1.0.0';
-    const name       = cfg?.name    || (isElectron() ? 'Desktop' : 'CLI');
+    // Fetch actual gateway port — each CLI instance runs on a different port,
+    // so use port-scoped localStorage key and name to distinguish them.
+    const gwStatus = await getGateway().status().catch(() => null);
+    const port     = gwStatus?.port || 11430;
 
-    const res   = await registerDevice({ device_id: existingId || '', type, name, platform, version, gateway_port: 11430 });
-    const newId = res.data?.device_id;
+    // Per-port key: instances on different ports each get their own device_id
+    const storageKey = `llm_gateway_device_id_${port}`;
+    const storedId   = localStorage.getItem(storageKey) || '';
+
+    const type     = isElectron() ? 'desktop' : 'cli';
+    const platform = navigator.platform || navigator.userAgent || '';
+    const cfg      = await getConfig().read().catch(() => ({}));
+    const version  = cfg?.version || '1.0.0';
+    // CLI instances always append port so multiple instances on the same machine are distinguishable.
+    // Electron is a single instance so just use the configured name (or fallback "Desktop").
+    const baseName = cfg?.name || (isElectron() ? 'Desktop' : 'CLI');
+    const name     = isElectron() ? baseName : `${baseName}:${port}`;
+
+    const res   = await registerDevice({ device_id: storedId, type, name, platform, version, gateway_port: port });
+    // Backend returns the devices table row: primary key column is "id", not "device_id"
+    const newId = res.data?.id || res.data?.device_id;
     if (!newId) return;
     _deviceId = newId;
-    if (newId !== existingId) {
+    // Persist immediately to localStorage so next refresh reuses the same row
+    localStorage.setItem(storageKey, newId);
+    // Also write to config file as best-effort backup
+    if (newId !== cfg?.device_id) {
       getConfig().write({ ...(cfg || {}), device_id: newId }).catch(() => {});
     }
   } catch {
@@ -44,9 +59,9 @@ async function _sendHeartbeat() {
   try {
     const s = await getGateway().getDailyStats().catch(() => ({}));
     await heartbeatDevice(_deviceId, {
-      calls            : s?.calls  || 0,
-      errors           : s?.errors || 0,
-      providers_active : Object.keys(s?.by_provider || {}).length,
+      calls            : s?.total_calls  || 0,
+      errors           : 0,  // not tracked in local stats
+      providers_active : (s?.providers || []).length,
     });
     // Successful heartbeat — reset failure counter
     _consecutiveFailures = 0;
