@@ -3,6 +3,7 @@
 
 const http  = require('http');
 const https = require('https');
+const codexTransform = require('./codex-transform');
 
 // ── In-memory state ───────────────────────────────────────────────────────────
 
@@ -646,11 +647,118 @@ function proxyP2PSync(provider, oaiBody, model, res) {
   });
 }
 
+// ── Codex Responses ⇄ Chat Completions ───────────────────────────────────────
+// Codex 客户端走 Responses 协议（/v1/responses），但第三方上游只会 Chat Completions。
+// 这里把 Responses 请求转成 Chat 请求转发上游，再把上游 Chat 响应（流式/非流式）转回 Responses。
+function proxyResponsesViaChat(provider, responsesBody, model, res) {
+  return new Promise((resolve, reject) => {
+    const streaming = !!responsesBody.stream;
+    // Responses → Chat 请求体（含 stream 时自动注入 include_usage）
+    const chatBody = codexTransform.responsesToChat({ ...responsesBody, model });
+
+    const base    = normBase(provider.base_url);
+    const fullUrl = base + '/v1/chat/completions';
+    let u;
+    try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
+
+    const mod     = u.protocol === 'https:' ? https : http;
+    const bodyStr = JSON.stringify(chatBody);
+    const headers = {
+      'Content-Type':   'application/json',
+      'Content-Length': Buffer.byteLength(bodyStr),
+      'Accept':         'text/event-stream, application/json',
+    };
+    if (provider.token) headers['Authorization'] = `Bearer ${provider.token}`;
+
+    const t0 = Date.now();
+    let firstTokenMs = null;
+    const proxyReq = mod.request({
+      hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + (u.search || ''), method: 'POST', headers, timeout: 120_000,
+    }, (proxyRes) => {
+      if (proxyRes.statusCode >= 400) {
+        proxyRes.resume();
+        return reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode }));
+      }
+      if (res.headersSent) { proxyRes.resume(); return reject(new Error('headers_already_sent')); }
+      const status = proxyRes.statusCode;
+
+      if (streaming) {
+        // 流式：上游 Chat SSE → 状态机 → Responses SSE，边转边写给客户端
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache',
+          'X-Accel-Buffering': 'no', 'Access-Control-Allow-Origin': '*',
+        });
+        const sm = new codexTransform.ChatToResponsesStream();
+        let buf = '';
+        const usageOf = () => { const u2 = sm.getUsage() || {}; return {
+          provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0,
+          input_tokens: u2.input_tokens || 0, output_tokens: u2.output_tokens || 0,
+          cache_read_tokens: u2.cache_read_input_tokens || u2.input_tokens_details?.cached_tokens || 0,
+          message_id: sm.getResponseId(), status_code: status }; };
+
+        proxyRes.on('data', (chunk) => {
+          buf += chunk.toString();
+          // 按 SSE 空行切块
+          let idx;
+          while ((idx = buf.indexOf('\n\n')) >= 0) {
+            const block = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            const dataLines = [];
+            for (const line of block.split('\n')) {
+              if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
+            }
+            if (!dataLines.length) continue;
+            const data = dataLines.join('\n');
+            if (data.trim() === '[DONE]') { res.write(sm.finalize()); continue; }
+            let obj; try { obj = JSON.parse(data); } catch { continue; }
+            if (obj.error) { res.write(sm.failedEvent(obj.error.message || 'upstream error', obj.error.type)); continue; }
+            if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
+            res.write(sm.handleChunk(obj));
+          }
+        });
+        proxyRes.on('end',   () => { if (!sm.completed) res.write(sm.finalize()); res.end(); resolve(usageOf()); });
+        proxyRes.on('error', (err) => { if (!sm.completed) res.write(sm.failedEvent(`Stream error: ${err.message}`, 'stream_error')); res.destroy(err); resolve(usageOf()); });
+      } else {
+        // 非流式：缓冲完整 Chat JSON → 转 Responses JSON
+        const chunks = [];
+        proxyRes.on('data', c => chunks.push(c));
+        proxyRes.on('end', () => {
+          const raw = Buffer.concat(chunks).toString();
+          let respObj, usageIn = 0, usageOut = 0, cacheRead = 0, msgId = null;
+          try {
+            const chatResp = JSON.parse(raw);
+            respObj = codexTransform.chatToResponses(chatResp);
+            const u2 = respObj.usage || {};
+            usageIn = u2.input_tokens || 0; usageOut = u2.output_tokens || 0;
+            cacheRead = u2.cache_read_input_tokens || u2.input_tokens_details?.cached_tokens || 0;
+            msgId = respObj.id || null;
+          } catch (err) { return reject(err); }
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify(respObj));
+          resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: Date.now() - t0,
+            input_tokens: usageIn, output_tokens: usageOut, cache_read_tokens: cacheRead,
+            message_id: msgId, status_code: status });
+        });
+        proxyRes.on('error', reject);
+      }
+    });
+    proxyReq.on('error', reject);
+    proxyReq.on('timeout', () => { proxyReq.destroy(); reject(new Error('timeout')); });
+    proxyReq.write(bodyStr);
+    proxyReq.end();
+  });
+}
+
 // ── Route ─────────────────────────────────────────────────────────────────────
 
 // Call one provider with format conversion; throws on HTTP error.
 // provider is already resolved (base_url/token correct, models populated).
 async function callProvider(provider, isAnthropic, streaming, reqPath, body, attemptModel, res) {
+  // Codex Responses 请求：统一走 Responses⇄Chat 转换（上游按 Chat Completions 处理）
+  if (reqPath === '/v1/responses' || reqPath === '/responses') {
+    return await proxyResponsesViaChat(provider, { ...body, model: attemptModel }, attemptModel, res);
+  }
   const attemptBody = { ...body, model: attemptModel };
 
   // Anthropic-compatible provider
@@ -683,6 +791,7 @@ async function route(model, reqPath, body, res, callerKey) {
   const t0          = Date.now();
   let lastErr       = null;
   const isAnthropic = reqPath === '/v1/messages';
+  const isResponses = reqPath === '/v1/responses' || reqPath === '/responses';
   const streaming   = !!body.stream;
 
   function fail(scene_name, failedModels) {
@@ -693,8 +802,13 @@ async function route(model, reqPath, body, res, callerKey) {
     });
     recordError(model, callerKey, lastErr); // 失败也落账，保证不丢账
     if (!res.headersSent) {
+      // Codex Responses 客户端只识别 Responses 风格错误体；其余路径维持原 Chat 风格。
+      const detail = lastErr?.message || 'all_providers_failed';
+      const payload = isResponses
+        ? codexTransform.chatErrorToResponseError({ error: { message: detail, type: 'all_providers_failed' } })
+        : { error: 'all_providers_failed', detail };
       res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'all_providers_failed', detail: lastErr?.message }));
+      res.end(JSON.stringify(payload));
     }
   }
 
@@ -918,8 +1032,9 @@ function handleRequest(req, res) {
     return;
   }
 
-  // Chat completions (OpenAI + Anthropic)
-  const isChatPath   = url === '/v1/chat/completions' || url === '/v1/messages';
+  // Chat completions (OpenAI + Anthropic) + Codex Responses
+  const isChatPath   = url === '/v1/chat/completions' || url === '/v1/messages'
+                    || url === '/v1/responses' || url === '/responses';
   if (!isChatPath || method !== 'POST') {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'not_found' }));
