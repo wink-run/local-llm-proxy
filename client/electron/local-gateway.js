@@ -90,6 +90,13 @@ function normBase(url) {
   return (url || '').replace(/\/+$/, '').replace(/\/v1$/, '');
 }
 
+// OAI 流式默认不返回 usage，需在请求体加 stream_options.include_usage=true 才会在末帧返回。
+// 上游不识别此选项时会被忽略（不报错），所以默认注入是安全的。
+function withUsageOption(body) {
+  if (!body?.stream || body.stream_options) return body;
+  return { ...body, stream_options: { include_usage: true } };
+}
+
 // All enabled providers, each with an effective models list.
 // P2P providers: base_url/token come from backend config; models come from live _peerModels.
 // Other providers: models from their configured models array (empty = serves any model).
@@ -129,7 +136,9 @@ function proxyRequest(provider, reqPath, body, res) {
     catch { return reject(new Error('invalid_url')); }
 
     const mod      = u.protocol === 'https:' ? https : http;
-    const bodyStr  = JSON.stringify(body);
+    // 只对 OAI 路径注入 stream_options（Anthropic /v1/messages 不识别）
+    const sendBody = /\/chat\/completions$/.test(reqPath) ? withUsageOption(body) : body;
+    const bodyStr  = JSON.stringify(sendBody);
     const headers  = {
       'Content-Type':   'application/json',
       'Content-Length': Buffer.byteLength(bodyStr),
@@ -173,9 +182,11 @@ function proxyRequest(provider, reqPath, body, res) {
         'Access-Control-Allow-Origin': '*',
       });
 
+      const status = proxyRes.statusCode;
       if (isStream) {
-        // Streaming: pipe to client while sniffing SSE events for usage
-        let usageIn = 0, usageOut = 0;
+        // Streaming: pipe to client while sniffing SSE events for usage + upstream message id.
+        // Cache tokens may appear too (Anthropic message_start / message_delta).
+        let usageIn = 0, usageOut = 0, cacheCreate = 0, cacheRead = 0, msgId = null;
         let sseBuf = '';
         proxyRes.on('data', (chunk) => {
           res.write(chunk);
@@ -189,6 +200,16 @@ function proxyRequest(provider, reqPath, body, res) {
             if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
             try {
               const obj = JSON.parse(ds);
+              // 上游响应 id：OpenAI chunk 顶层 id；Anthropic message_start 在 message.id
+              if (!msgId) msgId = obj.id || obj.message?.id || null;
+              // Anthropic 缓存 token 分布在 message_start / message_delta
+              const au = obj.message?.usage || (obj.type === 'message_delta' ? obj.usage : null);
+              if (au) {
+                if (au.input_tokens                != null) usageIn     = au.input_tokens;
+                if (au.output_tokens               != null) usageOut    = au.output_tokens;
+                if (au.cache_creation_input_tokens != null) cacheCreate = au.cache_creation_input_tokens;
+                if (au.cache_read_input_tokens     != null) cacheRead   = au.cache_read_input_tokens;
+              }
               if (obj.usage) {
                 usageIn  = obj.usage.prompt_tokens     || obj.usage.input_tokens     || usageIn;
                 usageOut = obj.usage.completion_tokens || obj.usage.output_tokens    || usageOut;
@@ -196,25 +217,33 @@ function proxyRequest(provider, reqPath, body, res) {
             } catch {}
           }
         });
-        proxyRes.on('end',   () => { res.end(); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut }); });
-        proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut }); });
+        const done = () => ({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0,
+          input_tokens: usageIn, output_tokens: usageOut, cache_create_tokens: cacheCreate, cache_read_tokens: cacheRead,
+          message_id: msgId, status_code: status });
+        proxyRes.on('end',   () => { res.end();        resolve(done()); });
+        proxyRes.on('error', (err) => { res.destroy(err); resolve(done()); });
       } else {
-        // Non-streaming: buffer, forward, then parse usage from JSON
+        // Non-streaming: buffer, forward, then parse usage + id from JSON
         const chunks = [];
         proxyRes.on('data', c => chunks.push(c));
         proxyRes.on('end', () => {
           const buf = Buffer.concat(chunks);
           res.end(buf);
-          let usageIn = 0, usageOut = 0;
+          let usageIn = 0, usageOut = 0, cacheCreate = 0, cacheRead = 0, msgId = null;
           try {
             const obj = JSON.parse(buf.toString());
+            msgId = obj.id || null; // OpenAI chatcmpl_xxx / Anthropic msg_xxx 都在顶层 id
             const u   = obj.usage || {};
-            usageIn  = u.prompt_tokens     || u.input_tokens     || 0;
-            usageOut = u.completion_tokens || u.output_tokens    || 0;
+            usageIn  = u.prompt_tokens     || u.input_tokens                || 0;
+            usageOut = u.completion_tokens || u.output_tokens               || 0;
+            cacheCreate = u.cache_creation_input_tokens || 0;
+            cacheRead   = u.cache_read_input_tokens     || 0;
           } catch {}
-          resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut });
+          resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: Date.now() - t0,
+            input_tokens: usageIn, output_tokens: usageOut, cache_create_tokens: cacheCreate, cache_read_tokens: cacheRead,
+            message_id: msgId, status_code: status });
         });
-        proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: Date.now() - t0, input_tokens: 0, output_tokens: 0 }); });
+        proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: Date.now() - t0, input_tokens: 0, output_tokens: 0, status_code: status }); });
       }
     });
 
@@ -270,7 +299,8 @@ function proxyConvertSync(provider, oaiBody, model, res) {
           const usage   = oaiResp?.usage || {};
           resolve({ provider: provider.id, latency, first_token_ms: latency,
             input_tokens:  usage.prompt_tokens     || usage.input_tokens     || 0,
-            output_tokens: usage.completion_tokens || usage.output_tokens    || 0 });
+            output_tokens: usage.completion_tokens || usage.output_tokens    || 0,
+            message_id: oaiResp?.id || null, status_code: proxyRes.statusCode });
         } catch (err) { reject(err); }
       });
       proxyRes.on('error', reject);
@@ -292,7 +322,7 @@ function proxyConvertStream(provider, oaiBody, model, res) {
     try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
 
     const mod     = u.protocol === 'https:' ? https : http;
-    const bodyStr = JSON.stringify(oaiBody);
+    const bodyStr = JSON.stringify(withUsageOption(oaiBody));
     const headers = {
       'Content-Type':   'application/json',
       'Content-Length': Buffer.byteLength(bodyStr),
@@ -330,6 +360,8 @@ function proxyConvertStream(provider, oaiBody, model, res) {
 
       let buf = '', outputTokens = 0, stopReason = 'end_turn', firstTokenMs = null;
       let usageIn = 0, usageOut = 0; // from actual usage field in SSE, if present
+      // dedup 用客户端实际收到的 id：本路径把上游 OpenAI 流重新包成 Anthropic SSE，
+      // 客户端（如 Claude Code）写进 transcript 的是上面这个合成的 msgId，所以 dedup 键用它。
 
       proxyRes.on('data', (chunk) => {
         buf += chunk.toString();
@@ -372,10 +404,10 @@ function proxyConvertStream(provider, oaiBody, model, res) {
         })}\n\n`);
         res.write('event: message_stop\ndata: {"type":"message_stop"}\n\n');
         res.end();
-        resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: finalOut });
+        resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: finalOut, message_id: msgId, status_code: proxyRes.statusCode });
       });
 
-      proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut || outputTokens }); });
+      proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut || outputTokens, message_id: msgId, status_code: proxyRes.statusCode }); });
     });
     proxyReq.on('error', reject);
     proxyReq.on('timeout', () => { proxyReq.destroy(); reject(new Error('timeout')); });
@@ -424,8 +456,11 @@ function proxyAnthropicSync(provider, oaiBody, model, res) {
           res.end(JSON.stringify(oaiResp));
           const latency = Date.now() - t0;
           resolve({ provider: provider.id, latency, first_token_ms: latency,
-            input_tokens:  anthResp.usage?.input_tokens  || 0,
-            output_tokens: anthResp.usage?.output_tokens || 0 });
+            input_tokens:        anthResp.usage?.input_tokens                || 0,
+            output_tokens:       anthResp.usage?.output_tokens               || 0,
+            cache_create_tokens: anthResp.usage?.cache_creation_input_tokens || 0,
+            cache_read_tokens:   anthResp.usage?.cache_read_input_tokens     || 0,
+            message_id: anthResp.id || null, status_code: proxyRes.statusCode });
         } catch (err) { reject(err); }
       });
       proxyRes.on('error', reject);
@@ -476,7 +511,7 @@ function proxyAnthropicStream(provider, oaiBody, model, res) {
       // Send role delta
       res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] })}\n\n`);
 
-      let buf = '', usageIn = 0, usageOut = 0, firstTokenMs = null;
+      let buf = '', usageIn = 0, usageOut = 0, cacheCreate = 0, cacheRead = 0, firstTokenMs = null, msgId = null;
 
       proxyRes.on('data', (chunk) => {
         buf += chunk.toString();
@@ -492,9 +527,14 @@ function proxyAnthropicStream(provider, oaiBody, model, res) {
               if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
               res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { content: evt.delta.text }, finish_reason: null }] })}\n\n`);
             } else if (evt.type === 'message_start') {
-              usageIn = evt.message?.usage?.input_tokens || 0;
+              msgId       = evt.message?.id                                 || msgId;
+              usageIn     = evt.message?.usage?.input_tokens                || 0;
+              cacheCreate = evt.message?.usage?.cache_creation_input_tokens || 0;
+              cacheRead   = evt.message?.usage?.cache_read_input_tokens     || 0;
             } else if (evt.type === 'message_delta') {
-              usageOut = evt.usage?.output_tokens || 0;
+              if (evt.usage?.output_tokens               != null) usageOut    = evt.usage.output_tokens;
+              if (evt.usage?.cache_creation_input_tokens != null) cacheCreate = evt.usage.cache_creation_input_tokens;
+              if (evt.usage?.cache_read_input_tokens     != null) cacheRead   = evt.usage.cache_read_input_tokens;
             }
           } catch {}
         }
@@ -504,10 +544,14 @@ function proxyAnthropicStream(provider, oaiBody, model, res) {
         res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
         res.write('data: [DONE]\n\n');
         res.end();
-        resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut });
+        resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0,
+          input_tokens: usageIn, output_tokens: usageOut, cache_create_tokens: cacheCreate, cache_read_tokens: cacheRead,
+          message_id: msgId, status_code: proxyRes.statusCode });
       });
 
-      proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut }); });
+      proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0,
+          input_tokens: usageIn, output_tokens: usageOut, cache_create_tokens: cacheCreate, cache_read_tokens: cacheRead,
+          message_id: msgId, status_code: proxyRes.statusCode }); });
     });
     proxyReq.on('error', reject);
     proxyReq.on('timeout', () => { proxyReq.destroy(); reject(new Error('timeout')); });
@@ -521,7 +565,7 @@ function proxyAnthropicStream(provider, oaiBody, model, res) {
 function proxyP2PSync(provider, oaiBody, model, res) {
   // Sends stream:true to backend regardless of client request; assembles & returns Anthropic JSON
   return new Promise((resolve, reject) => {
-    const streamBody = { ...oaiBody, stream: true };
+    const streamBody = withUsageOption({ ...oaiBody, stream: true });
     const base    = normBase(provider.base_url);
     const fullUrl = base + '/v1/chat/completions';
     let u;
@@ -552,7 +596,7 @@ function proxyP2PSync(provider, oaiBody, model, res) {
         });
         return reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode }));
       }
-      let buf = '', fullText = '', inputTokens = 0, outputTokens = 0, stopReason = 'end_turn', firstTokenMs = null;
+      let buf = '', fullText = '', inputTokens = 0, outputTokens = 0, stopReason = 'end_turn', firstTokenMs = null, msgId = null;
       proxyRes.on('data', (chunk) => {
         if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
         buf += chunk.toString();
@@ -564,6 +608,7 @@ function proxyP2PSync(provider, oaiBody, model, res) {
           if (ds === '[DONE]') continue;
           try {
             const c      = JSON.parse(ds);
+            if (!msgId) msgId = c.id || null;
             const choice = (c.choices || [{}])[0];
             const text   = (choice.delta || {}).content || '';
             if (text) fullText += text;
@@ -589,7 +634,7 @@ function proxyP2PSync(provider, oaiBody, model, res) {
             res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
             res.end(resp);
           }
-          resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: inputTokens, output_tokens: outputTokens });
+          resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: inputTokens, output_tokens: outputTokens, message_id: msgId, status_code: proxyRes.statusCode });
         } catch (err) { reject(err); }
       });
       proxyRes.on('error', reject);
@@ -646,6 +691,7 @@ async function route(model, reqPath, body, res, callerKey) {
       tried: failedModels?.length ? [...failedModels] : undefined,
       via: null, latency_ms: Date.now() - t0, status: 'error', error: lastErr?.message,
     });
+    recordError(model, callerKey, lastErr); // 失败也落账，保证不丢账
     if (!res.headersSent) {
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'all_providers_failed', detail: lastErr?.message }));
@@ -686,7 +732,7 @@ async function route(model, reqPath, body, res, callerKey) {
           });
           const stepTok  = (result.input_tokens || 0) + (result.output_tokens || 0);
           const stepTier = _providerTier(provider);
-          recordStats(provider.id, stepModel, stepTok, stepTier, callerKey);
+          recordStats(provider.id, stepModel, result, stepTier, callerKey, streaming);
           reportUsage(provider.id, stepModel, stepTok);
           stepSucceeded = true;
           return;
@@ -719,7 +765,7 @@ async function route(model, reqPath, body, res, callerKey) {
       });
       const directTok  = (result.input_tokens || 0) + (result.output_tokens || 0);
       const directTier = _providerTier(provider);
-      recordStats(provider.id, model, directTok, directTier, callerKey);
+      recordStats(provider.id, model, result, directTier, callerKey, streaming);
       reportUsage(provider.id, model, directTok);
       return;
     } catch (err) {
@@ -736,13 +782,46 @@ function pushLog(entry) {
   if (log.length > LOG_MAX) log.shift();
 }
 
-function recordStats(providerId, model, tokens, tier, apiKey) {
+// 把单次请求的真实用量（含输入/输出/缓存命中/缓存写入）推给 recorder（local-stats）。
+// 兼容旧字段：tokens = input + output。
+// request_id = 上游响应 id（msg_/chatcmpl_），用于与会话文件导入跨来源去重；
+// data_source='proxy' 标记这是网关实时拦截记录；并补全延迟/首字/状态码/是否流式。
+function recordStats(providerId, model, usage, tier, apiKey, streaming) {
+  const inTok   = usage?.input_tokens        || 0;
+  const outTok  = usage?.output_tokens       || 0;
+  const cCreate = usage?.cache_create_tokens || 0;
+  const cRead   = usage?.cache_read_tokens   || 0;
   _statsRecorder?.({
     api_key:     apiKey     || null,
     model:       model      || null,
     provider_id: providerId || null,
     tier:        tier       || null,
-    tokens:      tokens     || 0,
+    tokens:               inTok + outTok,
+    input_tokens:         inTok,
+    output_tokens:        outTok,
+    cache_create_tokens:  cCreate,
+    cache_read_tokens:    cRead,
+    request_id:           usage?.message_id || null,
+    data_source:          'proxy',
+    status_code:          (usage?.status_code != null) ? usage.status_code : 200,
+    is_streaming:         !!streaming,
+    latency_ms:           (usage?.latency        != null) ? usage.latency        : null,
+    first_token_ms:       (usage?.first_token_ms != null) ? usage.first_token_ms : null,
+  });
+}
+
+// 失败也落账：所有 provider 都失败时记一条 0-token 的错误行（不丢账）。
+// request_id 留空 → 不参与去重、每次失败都独立记录。
+function recordError(model, apiKey, err) {
+  _statsRecorder?.({
+    api_key:     apiKey || null,
+    model:       model  || null,
+    provider_id: null,
+    tier:        null,
+    tokens: 0, input_tokens: 0, output_tokens: 0,
+    data_source: 'proxy',
+    status_code: err?.status || 502,
+    error:       err?.message || 'all_providers_failed',
   });
 }
 

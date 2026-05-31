@@ -8,6 +8,7 @@ const { autoUpdater } = require('electron-updater');
 const agent = require('./agent-worker');
 const gateway = require('./local-gateway');
 const localStats = require('./local-stats');
+const sessionImport = require('./session-import');
 // device-reporter is used by the CLI only; desktop registration is handled
 // by useDeviceReporter in the renderer (which has access to the JWT).
 
@@ -509,6 +510,8 @@ function registerIPC() {
     const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
     return localStats.queryDashboard(d);
   });
+  // 手动触发会话文件补录（扫 ~/.claude、~/.codex、~/.gemini），返回各来源计数
+  ipcMain.handle('sessionImport:run', () => sessionImport.run(localStats));
   ipcMain.handle('gateway:setStrategy', (_e, strategy) => {
     if (strategy !== 'cost' && strategy !== 'quality') return { ok: false, error: 'invalid_strategy' };
     gateway.setStrategy(strategy);
@@ -693,6 +696,12 @@ app.whenReady().then(() => {
   gateway.setStatsRecorder(localStats.record);
   gateway.setLocalStats(localStats);
   gateway.start(11430, readAgentConfig);
+
+  // 补录「不走网关、直连官方」的会话用量：启动跑一次 + 每 60s 增量扫一次。
+  // 与网关实时记录靠 request_id 跨来源去重，不会重复计。
+  const runSessionImport = () => { try { sessionImport.run(localStats); } catch (e) { console.error('[session-import]', e.message); } };
+  runSessionImport();
+  setInterval(runSessionImport, 60_000);
 
   if (!isDev) setupAutoUpdater();
 

@@ -5,21 +5,74 @@
 
 let db = null;
 let _insertStmt = null;
+let _getImportStateStmt = null;
+let _setImportStateStmt = null;
 
+// 注：tokens 保留为 input+output 之和，让既有 queryDashboard 的 SUM(tokens) 仍然成立；
+// input/output 分列让仪表盘以后能展示精细成本；cache_* 反映 Anthropic prompt-cache 命中/写入。
+//
+// request_id：跨来源去重键。代理拦截用上游响应 id（Anthropic msg_xxx / OpenAI chatcmpl_xxx），
+//   JSONL 导入用会话文件里的 message.id（Claude）或合成键（Codex/Gemini）。同一次调用若既走了
+//   网关又落进会话文件，两边 request_id 相同 → 部分唯一索引 + INSERT OR IGNORE 保证只记一次。
+// data_source：'proxy' = 网关实时拦截；'session-claude' / 'session-codex' / 'session-gemini' = 扫本地会话文件补录。
+// status_code/error：非 2xx、异常、断流也落账，保证“不丢账”。
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS requests (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts          INTEGER NOT NULL,
-    api_key     TEXT,
-    model       TEXT,
-    provider_id TEXT,
-    tier        TEXT,
-    tokens      INTEGER DEFAULT 0
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts                  INTEGER NOT NULL,
+    api_key             TEXT,
+    model               TEXT,
+    provider_id         TEXT,
+    tier                TEXT,
+    tokens              INTEGER DEFAULT 0,
+    input_tokens        INTEGER DEFAULT 0,
+    output_tokens       INTEGER DEFAULT 0,
+    cache_create_tokens INTEGER DEFAULT 0,
+    cache_read_tokens   INTEGER DEFAULT 0,
+    request_id          TEXT,
+    data_source         TEXT,
+    session_id          TEXT,
+    status_code         INTEGER,
+    error               TEXT,
+    is_streaming        INTEGER DEFAULT 0,
+    latency_ms          INTEGER,
+    first_token_ms      INTEGER
   );
   CREATE INDEX IF NOT EXISTS idx_ts      ON requests(ts);
   CREATE INDEX IF NOT EXISTS idx_api_key ON requests(api_key, ts);
   CREATE INDEX IF NOT EXISTS idx_model   ON requests(model, ts);
+
+  -- 会话文件增量扫描状态：记录每个文件上次导入时的 mtime/size，未变更则跳过。
+  CREATE TABLE IF NOT EXISTS import_state (
+    path   TEXT PRIMARY KEY,
+    mtime  INTEGER,
+    size   INTEGER
+  );
 `;
+
+// 必须在列迁移之后执行：旧库执行 SCHEMA 时 request_id 列还不存在，
+// 此时建索引会报错。放到 MIGRATIONS 之后，列已补齐再建部分唯一索引。
+// 部分唯一索引：request_id 为 NULL 的行（拿不到上游 id 时）互不冲突，照常插入。
+const POST_MIGRATION = `
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_request_id ON requests(request_id) WHERE request_id IS NOT NULL;
+`;
+
+// 已存在 DB 的列迁移（旧库缺这些列）。SQLite 不支持 ADD COLUMN IF NOT EXISTS，
+// 已存在时抛 "duplicate column name"，吞掉即可。
+const MIGRATIONS = [
+  'ALTER TABLE requests ADD COLUMN input_tokens        INTEGER DEFAULT 0',
+  'ALTER TABLE requests ADD COLUMN output_tokens       INTEGER DEFAULT 0',
+  'ALTER TABLE requests ADD COLUMN cache_create_tokens INTEGER DEFAULT 0',
+  'ALTER TABLE requests ADD COLUMN cache_read_tokens   INTEGER DEFAULT 0',
+  'ALTER TABLE requests ADD COLUMN request_id          TEXT',
+  'ALTER TABLE requests ADD COLUMN data_source         TEXT',
+  'ALTER TABLE requests ADD COLUMN session_id          TEXT',
+  'ALTER TABLE requests ADD COLUMN status_code         INTEGER',
+  'ALTER TABLE requests ADD COLUMN error               TEXT',
+  'ALTER TABLE requests ADD COLUMN is_streaming        INTEGER DEFAULT 0',
+  'ALTER TABLE requests ADD COLUMN latency_ms          INTEGER',
+  'ALTER TABLE requests ADD COLUMN first_token_ms      INTEGER',
+];
 
 /** @param {string} dbDir  Directory that will hold local-stats.db */
 function init(dbDir) {
@@ -32,8 +85,23 @@ function init(dbDir) {
     db = new Database(path.join(dbDir, 'local-stats.db'));
     db.pragma('journal_mode = WAL');  // safer concurrent reads
     db.exec(SCHEMA);
+    for (const sql of MIGRATIONS) {
+      try { db.exec(sql); } catch (e) {
+        if (!/duplicate column name/i.test(e.message)) throw e;
+      }
+    }
+    db.exec(POST_MIGRATION); // 列补齐后再建 request_id 唯一索引
+    // INSERT OR IGNORE：命中 request_id 唯一索引时静默跳过（跨来源去重），不报错、不重复计。
     _insertStmt = db.prepare(
-      'INSERT INTO requests (ts, api_key, model, provider_id, tier, tokens) VALUES (?,?,?,?,?,?)'
+      'INSERT OR IGNORE INTO requests ' +
+      '(ts, api_key, model, provider_id, tier, tokens, input_tokens, output_tokens, cache_create_tokens, cache_read_tokens, ' +
+      ' request_id, data_source, session_id, status_code, error, is_streaming, latency_ms, first_token_ms) ' +
+      'VALUES (?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?)'
+    );
+    _getImportStateStmt = db.prepare('SELECT mtime, size FROM import_state WHERE path = ?');
+    _setImportStateStmt = db.prepare(
+      'INSERT INTO import_state (path, mtime, size) VALUES (?,?,?) ' +
+      'ON CONFLICT(path) DO UPDATE SET mtime = excluded.mtime, size = excluded.size'
     );
   } catch (e) {
     console.error('[local-stats] failed to open DB:', e.message);
@@ -43,21 +111,65 @@ function init(dbDir) {
   }
 }
 
-/** Insert one request row. Silently ignored if init() hasn't been called. */
-function record({ api_key, model, provider_id, tier, tokens } = {}) {
-  if (!db || !_insertStmt) return;
+/**
+ * Insert one request row. Silently ignored if init() hasn't been called.
+ * Returns true if a new row was inserted, false if it was deduped (request_id
+ * already present) or on error — lets the session importer count imported vs skipped.
+ *
+ * New optional fields:
+ *   ts            unix seconds; defaults to now (session importer passes the message time)
+ *   request_id    cross-source dedup key (upstream msg_/chatcmpl_ id, or synthesized)
+ *   data_source   'proxy' | 'session-claude' | 'session-codex' | 'session-gemini'
+ *   session_id, status_code, error, is_streaming, latency_ms, first_token_ms
+ */
+function record({ api_key, model, provider_id, tier, tokens,
+                  input_tokens, output_tokens, cache_create_tokens, cache_read_tokens,
+                  ts, request_id, data_source, session_id, status_code, error,
+                  is_streaming, latency_ms, first_token_ms } = {}) {
+  if (!db || !_insertStmt) return false;
   try {
-    _insertStmt.run(
-      Math.floor(Date.now() / 1000),
+    const inTok   = input_tokens        || 0;
+    const outTok  = output_tokens       || 0;
+    const total   = (tokens != null) ? tokens : (inTok + outTok);
+    const info = _insertStmt.run(
+      (ts != null) ? ts : Math.floor(Date.now() / 1000),
       api_key     || null,
       model       || null,
       provider_id || null,
       tier        || null,
-      tokens      || 0,
+      total       || 0,
+      inTok,
+      outTok,
+      cache_create_tokens || 0,
+      cache_read_tokens   || 0,
+      request_id  || null,
+      data_source || null,
+      session_id  || null,
+      (status_code != null) ? status_code : null,
+      error       || null,
+      is_streaming ? 1 : 0,
+      (latency_ms     != null) ? latency_ms     : null,
+      (first_token_ms != null) ? first_token_ms : null,
     );
+    return info.changes > 0; // 0 = deduped by request_id unique index
   } catch (e) {
     console.error('[local-stats] record failed:', e.message);
+    return false;
   }
+}
+
+/** Read incremental-scan state for a session file. Returns {mtime, size} or null. */
+function getImportState(filePath) {
+  if (!db || !_getImportStateStmt) return null;
+  try { return _getImportStateStmt.get(filePath) || null; }
+  catch { return null; }
+}
+
+/** Persist incremental-scan state for a session file after importing it. */
+function setImportState(filePath, mtime, size) {
+  if (!db || !_setImportStateStmt) return;
+  try { _setImportStateStmt.run(filePath, mtime, size); }
+  catch (e) { console.error('[local-stats] setImportState failed:', e.message); }
 }
 
 /** Returns aggregated dashboard data for the last `days` calendar days. */
@@ -130,7 +242,13 @@ function _empty() {
 }
 
 function close() {
-  if (db) { db.close(); db = null; _insertStmt = null; }
+  if (db) {
+    db.close();
+    db = null;
+    _insertStmt = null;
+    _getImportStateStmt = null;
+    _setImportStateStmt = null;
+  }
 }
 
-module.exports = { init, record, queryDashboard, close };
+module.exports = { init, record, queryDashboard, getImportState, setImportState, close };
