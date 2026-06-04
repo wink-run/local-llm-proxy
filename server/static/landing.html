@@ -3,978 +3,1142 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Local LLM Proxy — P2P · OpenAI-compatible</title>
+  <title>Token Bank — 个人 AI 用量中枢</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=Syne:wght@600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #060708;
-      --bg-elev: #0d0f12;
-      --bg-card: #12151b;
-      --border: #242a36;
-      --text: #d1d5dc;
-      --muted: #8b93a5;
-      --accent: #2dd4bf;
-      --accent-dim: rgba(45, 212, 191, 0.12);
-      --warm: #fbbf24;
-      --glow: rgba(45, 212, 191, 0.35);
+      --bg:        #080909;
+      --bg-raised: #0e1010;
+      --bg-card:   #111414;
+      --border:    #1e2424;
+      --border-hi: #2a3535;
+      --text:      #c8d0cf;
+      --muted:     #6a7877;
+      --faint:     #3a4443;
+      --accent:    #00d4aa;
+      --accent2:   #00b896;
+      --warn:      #f5a623;
+      --red:       #e05555;
+      --glow:      rgba(0,212,170,.18);
+      --glow-sm:   rgba(0,212,170,.10);
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html { scroll-behavior: smooth; }
+    html { scroll-behavior: smooth; font-size: 16px; }
     body {
-      font-family: "DM Sans", system-ui, sans-serif;
+      font-family: "Geist", system-ui, sans-serif;
       background: var(--bg);
       color: var(--text);
-      font-size: 16px;
-      line-height: 1.6;
+      line-height: 1.65;
       overflow-x: hidden;
     }
 
-    .page-bg {
-      position: fixed; inset: 0; pointer-events: none; z-index: -1;
-      background:
-        radial-gradient(ellipse 120% 80% at 50% -20%, rgba(45,212,191,.08), transparent 50%),
-        radial-gradient(ellipse 60% 40% at 100% 100%, rgba(251,191,36,.04), transparent),
-        linear-gradient(180deg, #060708 0%, #0a0c10 100%);
-    }
-    .page-bg::before {
-      content: ""; position: absolute; inset: 0;
-      background-image:
-        linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
-      background-size: 48px 48px;
-      mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black, transparent);
+    /* ── Noise grain overlay ── */
+    body::before {
+      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      opacity: .028;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+      background-size: 200px 200px;
     }
 
-    .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+    /* ── Ambient glow ── */
+    .ambient {
+      position: fixed; pointer-events: none; z-index: 0; border-radius: 50%;
+      filter: blur(120px); opacity: .35;
+    }
+    .ambient-1 { width: 600px; height: 400px; top: -100px; left: 50%; transform: translateX(-50%); background: radial-gradient(ellipse, rgba(0,212,170,.12), transparent 70%); }
+    .ambient-2 { width: 400px; height: 400px; bottom: 20%; right: -100px; background: radial-gradient(ellipse, rgba(245,166,35,.07), transparent 70%); }
+
+    .wrap { max-width: 1080px; margin: 0 auto; padding: 0 28px; position: relative; z-index: 1; }
 
     /* ── Nav ── */
     header {
-      position: sticky; top: 0; z-index: 50;
+      position: sticky; top: 0; z-index: 100;
       border-bottom: 1px solid var(--border);
-      background: rgba(6,7,8,.88);
-      backdrop-filter: blur(12px);
+      background: rgba(8,9,9,.9);
+      backdrop-filter: blur(16px) saturate(1.4);
     }
     .nav-inner {
-      display: flex; align-items: center;
-      height: 60px;
-      max-width: 1200px; margin: 0 auto; padding: 0 24px;
-      gap: 0;
+      display: flex; align-items: center; height: 56px;
+      max-width: 1080px; margin: 0 auto; padding: 0 28px; gap: 0;
     }
     .logo {
-      font-family: "Syne", sans-serif; font-weight: 800;
-      font-size: 1rem; letter-spacing: -.02em;
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: 1.1rem; letter-spacing: .01em;
       color: #fff; text-decoration: none; flex-shrink: 0;
-      margin-right: 32px;
+      margin-right: 36px; display: flex; align-items: center; gap: 9px;
     }
-    .logo span { color: var(--accent); }
-
-    .nav-links {
-      display: flex; align-items: center;
-      gap: 4px; flex: 1;
+    .logo-mark {
+      width: 22px; height: 22px; border-radius: 6px;
+      background: linear-gradient(135deg, var(--accent), #008f72);
+      display: inline-flex; align-items: center; justify-content: center;
+      font-family: "DM Mono", monospace; font-size: .62rem; color: #000; font-weight: 500;
+      letter-spacing: -.02em; flex-shrink: 0;
     }
+    .nav-links { display: flex; align-items: center; gap: 2px; flex: 1; }
     .nav-links a {
       color: var(--muted); text-decoration: none;
-      font-size: 0.875rem; padding: 6px 10px; border-radius: 6px;
-      transition: color .15s, background .15s; white-space: nowrap;
+      font-size: .82rem; padding: 5px 10px; border-radius: 5px;
+      transition: color .14s, background .14s; white-space: nowrap; font-weight: 400;
     }
-    .nav-links a:hover { color: var(--text); background: rgba(255,255,255,.05); }
+    .nav-links a:hover { color: var(--text); background: rgba(255,255,255,.04); }
+    @media (max-width: 740px) { .nav-links .tl { display: none; } }
+    .nav-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-left: auto; }
+    .btn-sm {
+      display: inline-flex; align-items: center; padding: 6px 14px;
+      border-radius: 6px; font-size: .8rem; font-weight: 500;
+      text-decoration: none; border: 1px solid var(--border);
+      color: var(--muted); background: transparent;
+      transition: border-color .14s, color .14s;
+    }
+    .btn-sm:hover { border-color: var(--border-hi); color: var(--text); }
+    .btn-sm.accent {
+      background: var(--accent); color: #001a14; border-color: transparent;
+      font-weight: 600; box-shadow: 0 0 20px var(--glow-sm);
+    }
+    .btn-sm.accent:hover { background: #00c49c; box-shadow: 0 0 28px var(--glow); }
+    button.btn-lang {
+      background: none; border: 1px solid var(--border); color: var(--muted);
+      padding: 5px 10px; border-radius: 5px; font-size: .75rem; cursor: pointer;
+      font-family: inherit; transition: color .14s, border-color .14s;
+    }
+    button.btn-lang:hover { color: var(--accent); border-color: var(--accent); }
 
-    /* hide text links on narrow screens */
-    @media (max-width: 780px) {
-      .nav-links .text-link { display: none; }
+    /* ── Hero ── */
+    .hero { padding: 88px 0 96px; }
+    .hero-eyebrow {
+      font-family: "DM Mono", monospace; font-size: .72rem; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--accent);
+      margin-bottom: 28px; opacity: 0;
+      animation: rise .6s .05s ease forwards;
     }
-
-    .nav-right {
-      display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-left: auto;
+    .hero-h1 {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: clamp(2.4rem, 5.5vw, 4rem);
+      line-height: 1.08; letter-spacing: -.02em;
+      color: #fff; max-width: 14ch;
+      opacity: 0; animation: rise .65s .12s ease forwards;
     }
-
-    .btn {
-      display: inline-flex; align-items: center; justify-content: center;
-      padding: 8px 16px; border-radius: 8px; font-size: 0.875rem; font-weight: 600;
-      text-decoration: none; border: none; cursor: pointer; white-space: nowrap;
-      transition: transform .15s, box-shadow .2s, background .15s, border-color .15s;
+    .hero-h1 em {
+      font-style: italic; color: var(--accent);
     }
-    .btn:active { transform: scale(.98); }
-    .btn-primary {
-      background: linear-gradient(135deg,#14b8a6,#0d9488);
-      color: #042f2e; box-shadow: 0 0 20px var(--glow);
+    .hero-sub {
+      margin-top: 22px; font-size: 1.05rem; color: var(--muted);
+      max-width: 50ch; font-weight: 300; line-height: 1.7;
+      opacity: 0; animation: rise .65s .2s ease forwards;
     }
-    .btn-primary:hover { filter: brightness(1.06); box-shadow: 0 0 28px var(--glow); }
-    .btn-ghost {
+    .hero-sub strong { color: var(--text); font-weight: 500; }
+    .hero-cta {
+      margin-top: 36px; display: flex; flex-wrap: wrap; gap: 10px;
+      opacity: 0; animation: rise .65s .28s ease forwards;
+    }
+    .btn-cta {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 11px 22px; border-radius: 8px; font-size: .9rem; font-weight: 600;
+      text-decoration: none; border: none; cursor: pointer;
+      transition: transform .15s, box-shadow .2s, filter .15s;
+    }
+    .btn-cta:active { transform: scale(.98); }
+    .btn-cta.primary {
+      background: var(--accent); color: #001a14;
+      box-shadow: 0 0 28px var(--glow);
+    }
+    .btn-cta.primary:hover { filter: brightness(1.06); box-shadow: 0 0 36px rgba(0,212,170,.28); }
+    .btn-cta.ghost {
       background: transparent; color: var(--text);
       border: 1px solid var(--border);
     }
-    .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
-    .btn-lang {
-      padding: 6px 10px; font-size: 0.8rem; font-weight: 600;
-      background: transparent; color: var(--muted);
-      border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
-      transition: color .15s, border-color .15s;
-    }
-    .btn-lang:hover { color: var(--accent); border-color: var(--accent); }
+    .btn-cta.ghost:hover { border-color: var(--border-hi); background: rgba(255,255,255,.03); }
 
-    /* ── Hero ── */
-    .hero { padding: 72px 0 88px; }
-    .hero-badge {
-      display: inline-block; font-family: "JetBrains Mono", monospace;
-      font-size: 0.75rem; letter-spacing: .12em; text-transform: uppercase;
-      color: var(--accent); border: 1px solid var(--accent-dim);
-      background: var(--accent-dim); padding: 6px 12px; border-radius: 6px;
-      margin-bottom: 24px; animation: fadeUp .7s ease both;
-    }
-    .hero h1 {
-      font-family: "Syne", sans-serif; font-weight: 800;
-      font-size: clamp(2rem, 5vw, 3.2rem); line-height: 1.1;
-      letter-spacing: -.03em; color: #fff; max-width: 20ch;
-      animation: fadeUp .7s .08s ease both;
-    }
-    .hero h1 em { font-style: normal; color: var(--warm);
-      text-decoration: underline; text-decoration-color: rgba(251,191,36,.5);
-      text-underline-offset: 6px;
-    }
-    .hero-lead {
-      margin-top: 24px; font-size: 1.1rem; color: var(--muted); max-width: 52ch;
-      animation: fadeUp .7s .16s ease both;
-    }
-    /* 首页理念：互惠、透明、实惠（与 hero 动效节奏一致） */
-    .hero-principles {
-      margin-top: 28px; max-width: 58ch;
-      display: flex; flex-direction: column; gap: 10px;
-      list-style: none; padding: 0;
-      animation: fadeUp .7s .2s ease both;
-    }
-    .hero-principles li {
-      position: relative; padding-left: 18px;
-      font-size: .95rem; color: var(--muted); line-height: 1.55;
-    }
-    .hero-principles li::before {
-      content: ""; position: absolute; left: 0; top: .55em;
-      width: 6px; height: 6px; border-radius: 50%;
-      background: var(--accent); box-shadow: 0 0 10px var(--glow);
-    }
-    .hero-principles strong { color: var(--text); font-weight: 600; }
-
-    .hero-cta {
-      margin-top: 36px; display: flex; flex-wrap: wrap; gap: 12px;
-      animation: fadeUp .7s .24s ease both;
-    }
-    @keyframes fadeUp {
-      from { opacity: 0; transform: translateY(18px); }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(14px); }
       to   { opacity: 1; transform: translateY(0); }
     }
 
-    /* ── Sections ── */
-    section { padding: 72px 0; }
-    section:nth-child(even) { background: rgba(13,15,18,.5); }
-    .section-head { margin-bottom: 48px; }
-    .section-head h2 {
-      font-family: "Syne", sans-serif; font-size: clamp(1.7rem,3vw,2.2rem);
-      font-weight: 700; color: #fff; letter-spacing: -.02em;
+    /* ── Flow diagram (hero visual) ── */
+    .hero-flow {
+      margin-top: 64px;
+      opacity: 0; animation: rise .7s .38s ease forwards;
     }
-    .section-head p { margin-top: 12px; color: var(--muted); max-width: 56ch; }
+    .flow-wrap {
+      background: var(--bg-raised); border: 1px solid var(--border);
+      border-radius: 16px; padding: 28px 32px; overflow-x: auto;
+    }
+    .flow-row {
+      display: flex; align-items: center; gap: 0;
+      min-width: 560px;
+    }
+    .flow-node {
+      flex-shrink: 0; background: var(--bg-card);
+      border: 1px solid var(--border); border-radius: 10px;
+      padding: 10px 16px; text-align: center; min-width: 90px;
+    }
+    .flow-node .fn-label {
+      font-family: "DM Mono", monospace; font-size: .66rem;
+      color: var(--muted); letter-spacing: .06em; margin-bottom: 4px;
+    }
+    .flow-node .fn-name {
+      font-size: .82rem; color: var(--text); font-weight: 500; white-space: nowrap;
+    }
+    .flow-node.hi { border-color: rgba(0,212,170,.35); background: rgba(0,212,170,.04); }
+    .flow-node.hi .fn-name { color: var(--accent); }
+    .flow-arrow {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      padding: 0 4px; position: relative;
+    }
+    .flow-arrow::before {
+      content: ""; display: block; height: 1px; width: 100%;
+      background: linear-gradient(90deg, var(--border), var(--border-hi), var(--border));
+    }
+    .flow-arrow::after {
+      content: "▶"; position: absolute; right: 2px;
+      font-size: .55rem; color: var(--faint);
+    }
+    .flow-arrow .fa-label {
+      position: absolute; top: -16px; left: 50%; transform: translateX(-50%);
+      font-family: "DM Mono", monospace; font-size: .6rem; color: var(--faint);
+      white-space: nowrap;
+    }
+    .flow-group {
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .flow-group .flow-node { min-width: 112px; }
+    .flow-vline {
+      width: 1px; background: var(--border); align-self: stretch; margin: 0 -1px;
+    }
 
-    .grid-3 { display: grid; gap: 20px; grid-template-columns: 1fr; }
-    @media (min-width: 720px) { .grid-3 { grid-template-columns: repeat(3, 1fr); } }
-    .grid-2 { display: grid; gap: 20px; grid-template-columns: 1fr; margin-bottom: 20px; }
-    @media (min-width: 720px) { .grid-2 { grid-template-columns: 1fr 1fr; } }
-    .card-main { border-color: rgba(45,212,191,.2); background: linear-gradient(135deg, rgba(45,212,191,.04), var(--bg-card)); }
-    .card-main .card-icon { font-size: .75rem; letter-spacing: .08em; }
-    .value-examples { margin-top: 16px; display: flex; flex-direction: column; gap: 7px; }
-    .value-example { font-size: .82rem; color: var(--muted); padding: 6px 10px; background: rgba(0,0,0,.25); border-radius: 6px; border-left: 2px solid var(--accent); }
-    .value-example em { font-style: normal; color: var(--text); }
+    .flow-badge {
+      font-family: "DM Mono", monospace; font-size: .62rem;
+      padding: 2px 7px; border-radius: 4px; display: inline-block; margin-top: 3px;
+    }
+    .badge-free { background: rgba(0,212,170,.12); color: var(--accent); }
+    .badge-p2p  { background: rgba(245,166,35,.12); color: var(--warn); }
+    .badge-paid { background: rgba(224,85,85,.12);  color: var(--red); }
+    .badge-fmt  { background: rgba(150,150,255,.12); color: #a0a0ff; }
 
+    /* ── Section ── */
+    .section { padding: 80px 0; }
+    .section + .section { border-top: 1px solid var(--border); }
+    .sec-label {
+      font-family: "DM Mono", monospace; font-size: .68rem; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--accent); margin-bottom: 14px;
+    }
+    .sec-h2 {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: clamp(1.65rem, 3vw, 2.3rem);
+      font-weight: 400; color: #fff; letter-spacing: -.02em; line-height: 1.15;
+    }
+    .sec-h2 em { font-style: italic; color: var(--accent); }
+    .sec-sub { margin-top: 14px; color: var(--muted); max-width: 54ch; font-weight: 300; font-size: .98rem; }
+    .sec-sub strong { color: var(--text); font-weight: 500; }
+
+    /* ── Grid ── */
+    .grid-3 { display: grid; gap: 16px; grid-template-columns: repeat(3,1fr); }
+    .grid-2 { display: grid; gap: 16px; grid-template-columns: repeat(2,1fr); }
+    @media (max-width: 720px) { .grid-3, .grid-2 { grid-template-columns: 1fr; } }
+
+    /* ── Card ── */
     .card {
       background: var(--bg-card); border: 1px solid var(--border);
-      border-radius: 14px; padding: 28px;
+      border-radius: 12px; padding: 24px;
       transition: border-color .2s, box-shadow .25s;
     }
-    .card:hover { border-color: rgba(45,212,191,.35); box-shadow: 0 12px 40px rgba(0,0,0,.35); }
-    .card-icon { font-family: "JetBrains Mono", monospace; font-size: .7rem; color: var(--accent); margin-bottom: 14px; }
-    .card h3 { font-size: 1.05rem; font-weight: 700; color: #fff; margin-bottom: 10px; }
-    .card p { color: var(--muted); font-size: .95rem; }
+    .card:hover { border-color: var(--border-hi); box-shadow: 0 8px 32px rgba(0,0,0,.3); }
+    .card.accent-card { border-color: rgba(0,212,170,.2); background: linear-gradient(135deg, rgba(0,212,170,.03), var(--bg-card)); }
+    .card-num {
+      font-family: "DM Mono", monospace; font-size: .68rem; color: var(--faint);
+      letter-spacing: .08em; margin-bottom: 14px;
+    }
+    .card-icon { font-size: 1.5rem; margin-bottom: 12px; line-height: 1; }
+    .card h3 { font-size: .98rem; font-weight: 600; color: #fff; margin-bottom: 8px; }
+    .card p  { font-size: .88rem; color: var(--muted); line-height: 1.65; }
 
-    .diagram {
-      background: var(--bg-elev); border: 1px solid var(--border);
-      border-radius: 14px; padding: 28px; overflow-x: auto;
-    }
-    .diagram pre {
-      font-family: "JetBrains Mono", monospace; font-size: .72rem;
-      line-height: 1.45; color: var(--muted); white-space: pre;
-    }
-    .diagram pre .hl-c { color: var(--accent); }
-    .diagram pre .hl-w { color: var(--warm); }
-
-    .privacy-row { display: grid; gap: 20px; grid-template-columns: 1fr; }
-    @media (min-width: 768px) { .privacy-row { grid-template-columns: 1fr 1fr; } }
-    .privacy-box {
-      border-left: 3px solid var(--accent); padding: 20px 24px;
-      background: var(--bg-card); border-radius: 0 12px 12px 0;
-    }
-    .privacy-box h3 { color: #fff; font-size: 1.05rem; margin-bottom: 8px; }
-    .privacy-box p { color: var(--muted); font-size: .95rem; }
-
-    .code-block {
-      background: #0a0b0e; border: 1px solid var(--border);
-      border-radius: 12px; padding: 20px 22px; overflow-x: auto; margin-top: 16px;
-    }
-    .code-block pre {
-      font-family: "JetBrains Mono", monospace; font-size: .8rem;
-      line-height: 1.55; color: #a5b4c8;
-    }
-    .code-block .c { color: var(--accent); }
-    .code-block .s { color: #94a3b8; }
-    .quick-grid { display: grid; gap: 32px; grid-template-columns: 1fr; }
-    @media (min-width: 900px) { .quick-grid { grid-template-columns: 1fr 1fr; } }
-    .quick-item h3 {
-      font-size: .85rem; font-weight: 600; color: var(--warm);
-      margin-bottom: 8px; font-family: "JetBrains Mono", monospace;
-    }
-
-    /* ── Economy ── */
-    .economy-grid { display: grid; gap: 20px; grid-template-columns: 1fr; }
-    @media (min-width: 760px) { .economy-grid { grid-template-columns: 1fr 1fr; } }
-    .econ-card {
-      background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 28px;
-    }
-    .econ-card h3 { font-size: 1.05rem; font-weight: 700; color: #fff; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
-    .econ-card h3 .icon { font-size: 1.3rem; }
-    .formula-box {
-      background: #0a0b0e; border: 1px solid var(--border); border-radius: 10px;
-      padding: 14px 18px; font-family: "JetBrains Mono", monospace; font-size: .8rem;
-      line-height: 1.8; color: #a5b4c8; margin-bottom: 14px;
-    }
-    .formula-box .hi-g { color: var(--accent); }
-    .formula-box .hi-y { color: var(--warm); }
-    .formula-box .hi-p { color: #a78bfa; }
-    .formula-note { font-size: .875rem; color: var(--muted); line-height: 1.6; }
-    .formula-note strong { color: var(--text); }
-    .mult-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 14px; }
-    .mult-item { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; text-align: center; }
-    .mult-item .label { font-size: .7rem; color: var(--muted); margin-bottom: 4px; }
-    .mult-item .val { font-size: .85rem; font-weight: 700; color: var(--accent); font-family: "JetBrains Mono", monospace; }
-    .rates-table { width: 100%; border-collapse: collapse; font-size: .875rem; margin-top: 14px; }
-    .rates-table th { text-align: left; color: var(--muted); font-weight: 500; font-size: .75rem; padding: 6px 10px; border-bottom: 1px solid var(--border); }
-    .rates-table td { padding: 8px 10px; border-bottom: 1px solid rgba(36,42,54,.5); color: var(--text); }
-    .rates-table tr:last-child td { border-bottom: none; }
-    .tier-badge { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: .7rem; font-family: "JetBrains Mono", monospace; }
-    .tier-open    { background: rgba(34,197,94,.15); color: #4ade80; border: 1px solid rgba(34,197,94,.25); }
-    .tier-premium { background: rgba(99,102,241,.15); color: #a5b4fc; border: 1px solid rgba(99,102,241,.25); }
-    .rates-empty { color: var(--muted); font-size: .875rem; text-align: center; padding: 20px; }
-
-    .download-panel { background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 24px 28px; min-height: 72px; }
-    .download-panel.loading { color: var(--muted); }
-    .download-row {
-      display: flex; flex-wrap: wrap; align-items: center;
-      justify-content: space-between; gap: 14px;
-      padding: 14px 0; border-bottom: 1px solid var(--border);
-    }
-    .download-row:last-child { border-bottom: none; padding-bottom: 0; }
-    .download-row:first-child { padding-top: 0; }
-    .download-meta { margin-top: 6px; font-size: .85rem; color: var(--muted); font-family: "JetBrains Mono", monospace; }
-
-    /* App download cards */
-    .app-dl-grid { display: grid; gap: 20px; grid-template-columns: 1fr; }
-    @media (min-width: 600px) { .app-dl-grid { grid-template-columns: 1fr 1fr; } }
-    .app-dl-card {
-      position: relative;
+    /* ── iOS stats analogy ── */
+    .ios-mockup {
       background: var(--bg-card); border: 1px solid var(--border);
-      border-radius: 16px; padding: 28px 28px 24px;
-      display: flex; flex-direction: column; gap: 8px;
-      transition: border-color .2s, box-shadow .25s;
+      border-radius: 14px; padding: 0; overflow: hidden;
     }
-    .app-dl-card:hover { border-color: rgba(45,212,191,.4); box-shadow: 0 12px 40px rgba(0,0,0,.35); }
-    .app-dl-card.highlight { border-color: rgba(45,212,191,.5); background: linear-gradient(135deg,rgba(45,212,191,.05),var(--bg-card)); }
-    .app-dl-card .platform-badge {
-      position: absolute; top: 16px; right: 16px;
-      font-size: .65rem; font-weight: 700; letter-spacing: .06em;
-      padding: 3px 8px; border-radius: 4px;
-      background: rgba(45,212,191,.15); color: var(--accent); border: 1px solid rgba(45,212,191,.25);
+    .ios-header {
+      padding: 16px 20px 14px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
     }
-    .app-dl-card .os-icon { font-size: 2.4rem; line-height: 1; }
-    .app-dl-card h3 { font-size: 1.1rem; font-weight: 700; color: #fff; margin: 4px 0 0; }
-    .app-dl-card .dl-meta { font-size: .8rem; color: var(--muted); font-family: "JetBrains Mono", monospace; }
-    .app-dl-card .btn-dl {
-      margin-top: 12px; width: 100%;
-      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-      padding: 11px 20px; border-radius: 10px; font-size: .9rem; font-weight: 600;
-      text-decoration: none; transition: filter .15s, box-shadow .2s;
+    .ios-header .title { font-size: .82rem; font-weight: 600; color: var(--text); }
+    .ios-header .period {
+      font-family: "DM Mono", monospace; font-size: .68rem; color: var(--muted);
     }
-    .app-dl-card .btn-dl.available {
-      background: linear-gradient(135deg,#14b8a6,#0d9488);
-      color: #042f2e; box-shadow: 0 0 18px var(--glow);
+    .ios-bar {
+      margin: 16px 20px; height: 8px; border-radius: 4px;
+      background: var(--bg-raised); overflow: hidden; display: flex;
     }
-    .app-dl-card .btn-dl.available:hover { filter: brightness(1.08); }
-    .app-dl-card .btn-dl.unavailable {
-      background: var(--bg-elev); color: var(--muted);
+    .ios-bar-seg { height: 100%; transition: width .4s ease; }
+    .ios-bar-seg.s1 { background: var(--accent); }
+    .ios-bar-seg.s2 { background: var(--warn); }
+    .ios-bar-seg.s3 { background: #6c8fff; }
+    .ios-bar-seg.s4 { background: var(--red); }
+    .ios-bar-seg.s5 { background: #a77bff; }
+    .ios-row {
+      display: flex; align-items: center; padding: 10px 20px;
+      border-bottom: 1px solid rgba(30,36,36,.7); gap: 12px;
+    }
+    .ios-row:last-child { border-bottom: none; }
+    .ios-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+    .ios-app { flex: 1; }
+    .ios-app .name { font-size: .83rem; color: var(--text); font-weight: 500; }
+    .ios-app .sub  { font-size: .72rem; color: var(--muted); font-family: "DM Mono", monospace; margin-top: 1px; }
+    .ios-pct { font-family: "DM Mono", monospace; font-size: .8rem; color: var(--muted); }
+
+    /* ── Provider tiers ── */
+    .tier-row {
+      display: flex; align-items: flex-start; gap: 20px; padding: 20px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .tier-row:last-child { border-bottom: none; }
+    .tier-num {
+      font-family: "DM Mono", monospace; font-size: .75rem;
+      color: var(--faint); flex-shrink: 0; padding-top: 2px; width: 20px;
+    }
+    .tier-body { flex: 1; }
+    .tier-name { font-size: .95rem; font-weight: 600; color: #fff; display: flex; align-items: center; gap: 10px; }
+    .tier-desc { margin-top: 6px; font-size: .86rem; color: var(--muted); }
+    .tier-badge-row { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+    .tbadge {
+      font-family: "DM Mono", monospace; font-size: .65rem; padding: 2px 8px;
+      border-radius: 4px; border: 1px solid; white-space: nowrap;
+    }
+    .tbadge-g { color: var(--accent); border-color: rgba(0,212,170,.25); background: rgba(0,212,170,.07); }
+    .tbadge-y { color: var(--warn);  border-color: rgba(245,166,35,.25); background: rgba(245,166,35,.07); }
+    .tbadge-r { color: var(--red);   border-color: rgba(224,85,85,.25);  background: rgba(224,85,85,.07); }
+
+    /* ── Optimization strategies ── */
+    .opt-grid { display: grid; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    .opt-row {
+      background: var(--bg-card); padding: 18px 22px;
+      display: flex; align-items: flex-start; gap: 16px;
+    }
+    .opt-row:hover { background: var(--bg-raised); }
+    .opt-icon { font-size: 1.1rem; flex-shrink: 0; margin-top: 1px; }
+    .opt-body h4 { font-size: .9rem; font-weight: 600; color: #fff; margin-bottom: 4px; }
+    .opt-body p  { font-size: .83rem; color: var(--muted); }
+
+    /* ── Stat pill ── */
+    .stat-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 36px; }
+    .stat-pill {
+      background: var(--bg-raised); border: 1px solid var(--border);
+      border-radius: 8px; padding: 14px 20px; min-width: 130px;
+    }
+    .stat-pill .sp-val {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: 1.8rem; color: #fff; line-height: 1; letter-spacing: -.02em;
+    }
+    .stat-pill .sp-val em { font-style: normal; color: var(--accent); font-size: 1.2rem; }
+    .stat-pill .sp-label { font-size: .75rem; color: var(--muted); margin-top: 5px; }
+
+    /* ── Format chips ── */
+    .fmt-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 32px; }
+    .fmt-chip {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px 18px; display: flex; align-items: center; gap: 10px;
+      transition: border-color .2s;
+    }
+    .fmt-chip:hover { border-color: var(--border-hi); }
+    .fmt-chip .fc-dot { width: 7px; height: 7px; border-radius: 50%; }
+    .fmt-chip .fc-name { font-size: .85rem; color: var(--text); font-weight: 500; }
+    .fmt-chip .fc-path {
+      font-family: "DM Mono", monospace; font-size: .68rem; color: var(--muted);
+    }
+
+    /* ── Credit economy compact ── */
+    .credit-split { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+    @media (max-width: 600px) { .credit-split { grid-template-columns: 1fr; } }
+    .credit-box {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 22px;
+    }
+    .credit-box .cb-label {
+      font-family: "DM Mono", monospace; font-size: .68rem; color: var(--muted);
+      letter-spacing: .08em; margin-bottom: 12px;
+    }
+    .credit-formula {
+      font-family: "DM Mono", monospace; font-size: .8rem;
+      line-height: 1.9; color: #8fa5a0;
+    }
+    .credit-formula .hl-g { color: var(--accent); }
+    .credit-formula .hl-y { color: var(--warn); }
+    .credit-formula .hl-p { color: #a78bfa; }
+
+    /* ── Multi-device illustration ── */
+    .device-row {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 32px;
+    }
+    .device-chip {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 16px; display: flex; align-items: center; gap: 8px;
+    }
+    .device-chip .dc-icon { font-size: 1rem; }
+    .device-chip .dc-label { font-size: .8rem; color: var(--text); font-weight: 500; }
+    .device-chip .dc-sub { font-size: .68rem; color: var(--muted); font-family: "DM Mono", monospace; }
+    .device-arrow {
+      color: var(--faint); font-size: .75rem;
+      font-family: "DM Mono", monospace;
+    }
+    .device-hub {
+      background: linear-gradient(135deg, rgba(0,212,170,.08), var(--bg-card));
+      border: 1px solid rgba(0,212,170,.3); border-radius: 10px;
+      padding: 12px 20px; text-align: center;
+    }
+    .device-hub .dh-label {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: 1rem; color: var(--accent);
+    }
+    .device-hub .dh-sub {
+      font-family: "DM Mono", monospace; font-size: .66rem; color: var(--muted); margin-top: 3px;
+    }
+
+    /* ── Download ── */
+    .dl-cards { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
+    @media (max-width: 560px) { .dl-cards { grid-template-columns: 1fr; } }
+    .dl-card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 22px; position: relative;
+      transition: border-color .2s, box-shadow .2s;
+    }
+    .dl-card:hover { border-color: var(--border-hi); box-shadow: 0 8px 32px rgba(0,0,0,.3); }
+    .dl-card.current { border-color: rgba(0,212,170,.3); }
+    .dl-os { font-size: 2rem; line-height: 1; margin-bottom: 10px; }
+    .dl-name { font-size: .98rem; font-weight: 600; color: #fff; margin-bottom: 4px; }
+    .dl-meta { font-family: "DM Mono", monospace; font-size: .68rem; color: var(--muted); margin-bottom: 14px; }
+    .dl-btn {
+      display: block; width: 100%; text-align: center;
+      padding: 9px 0; border-radius: 7px; font-size: .85rem; font-weight: 600;
+      text-decoration: none; transition: filter .15s;
+    }
+    .dl-btn.available {
+      background: var(--accent); color: #001a14;
+      box-shadow: 0 0 16px var(--glow-sm);
+    }
+    .dl-btn.available:hover { filter: brightness(1.07); }
+    .dl-btn.unavailable {
+      background: var(--bg-raised); color: var(--faint);
       border: 1px solid var(--border); cursor: default;
     }
-    .cli-details summary {
-      cursor: pointer; color: var(--muted); font-size: .875rem;
-      padding: 10px 0; user-select: none;
-      list-style: none; display: flex; align-items: center; gap: 6px;
-    }
-    .cli-details summary::-webkit-details-marker { display: none; }
-    .cli-details summary::before { content: "▶"; font-size: .65rem; transition: transform .2s; }
-    .cli-details[open] summary::before { transform: rotate(90deg); }
 
+    /* ── Quickstart ── */
+    .qs-grid { display: grid; gap: 24px; grid-template-columns: 1fr 1fr; }
+    @media (max-width: 720px) { .qs-grid { grid-template-columns: 1fr; } }
+    .qs-label { font-size: .78rem; font-weight: 600; color: var(--warn); font-family: "DM Mono", monospace; margin-bottom: 8px; }
+    .code-block {
+      background: #060808; border: 1px solid var(--border);
+      border-radius: 9px; padding: 16px 18px; overflow-x: auto; margin-top: 10px;
+    }
+    .code-block pre {
+      font-family: "DM Mono", monospace; font-size: .76rem;
+      line-height: 1.65; color: #8fa5a0;
+    }
+    .code-block .c  { color: var(--accent); }
+    .code-block .s  { color: #6e8a85; }
+    .code-block .cm { color: #3d5550; }
+
+    /* ── Footer ── */
     footer {
-      padding: 48px 24px 64px; text-align: center;
-      color: var(--muted); font-size: .875rem; border-top: 1px solid var(--border);
+      border-top: 1px solid var(--border); padding: 40px 28px 56px;
+      text-align: center; color: var(--muted); font-size: .82rem;
     }
     footer a { color: var(--accent); text-decoration: none; }
     footer a:hover { text-decoration: underline; }
-    .footer-links { display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; margin-top: 8px; }
+    .footer-links { display: flex; justify-content: center; gap: 24px; flex-wrap: wrap; margin-top: 10px; }
+
+    /* ── Disclaimer strip ── */
+    .disclaimer {
+      padding: 28px 0 0; font-size: .8rem; color: var(--faint); line-height: 1.6; max-width: 68ch;
+    }
+
+    /* ── Scroll reveal ── */
+    .reveal { opacity: 0; transform: translateY(20px); transition: opacity .55s ease, transform .55s ease; }
+    .reveal.visible { opacity: 1; transform: none; }
   </style>
 </head>
 <body>
-  <div class="page-bg" aria-hidden="true"></div>
+  <div class="ambient ambient-1"></div>
+  <div class="ambient ambient-2"></div>
 
   <header>
     <nav class="nav-inner">
-      <a class="logo" href="#">Local <span>LLM</span> Proxy</a>
-
+      <a class="logo" href="#">
+        <span class="logo-mark">TB</span>
+        Token Bank
+      </a>
       <div class="nav-links">
-        <a class="text-link" href="#value"  data-i18n="nav.value">核心价值</a>
-        <a class="text-link" href="#arch"   data-i18n="nav.arch">架构</a>
-        <a class="text-link" href="#privacy" data-i18n="nav.privacy">隐私</a>
-        <a class="text-link" href="#download-agent" data-i18n="nav.download">下载 Agent</a>
-        <a class="text-link" href="#quickstart" data-i18n="nav.quickstart">快速开始</a>
+        <a class="tl" href="#gateway">网关</a>
+        <a class="tl" href="#stats">用量统计</a>
+        <a class="tl" href="#providers">Provider</a>
+        <a class="tl" href="#download">下载</a>
       </div>
-
       <div class="nav-right">
-        <button class="btn-lang" id="lang-toggle" onclick="toggleLang()">EN</button>
-        <a href="/app"  class="btn btn-ghost" data-i18n="nav.user">用户中心</a>
-        <a href="/wall" class="btn btn-ghost" data-i18n="nav.wall">运营大屏</a>
-        <!-- <a href="https://github.com/wink-run/local-llm-proxy" class="btn btn-ghost" target="_blank" rel="noopener noreferrer">GitHub</a> -->
+        <button class="btn-lang" onclick="toggleLang()">EN</button>
+        <a href="/app"  class="btn-sm" data-i18n="nav.portal">用户中心</a>
+        <a href="/wall" class="btn-sm accent" data-i18n="nav.wall">运营大屏</a>
       </div>
     </nav>
   </header>
 
   <main>
-    <!-- Hero -->
+
+    <!-- ── Hero ── -->
     <section class="hero wrap">
-      <p class="hero-badge">Outbound · WebSocket · OpenAI-compatible</p>
-      <h1 data-i18n-html="hero.h1">把闲置的 Token 额度<br>变成<em>跨模型、跨时段</em>的通用积分</h1>
-      <p class="hero-lead" data-i18n-html="hero.lead">
-        有用不完的 Claude 订阅？Ollama 开着没人调用？把这些<strong style="color:var(--text)">闲置算力贡献出去</strong>，换成积分——可以调用你没有的高级模型、境外模型，或存着留到晚上电脑关机后继续用。
+      <p class="hero-eyebrow" data-i18n="hero.eyebrow">Personal AI Hub · Local Gateway · Multi-device</p>
+      <h1 class="hero-h1" data-i18n-html="hero.h1">你的<em>个人 AI 中枢</em><br>统一接入，智能路由</h1>
+      <p class="hero-sub" data-i18n-html="hero.sub">
+        本地网关透明代理所有 AI 请求，<strong>智能路由到最优 Provider</strong>，并跨应用、跨设备归集所有 AI 用量——就像 iOS 电量统计，<strong>所有 AI 应用自然纳入</strong>。
       </p>
-      <ul class="hero-principles" aria-label="社区理念">
-        <li data-i18n-html="hero.p1"><strong>人人为我，我为人人</strong>：闲置算力互助入网，积分跨模型、跨地域、跨时段通用。</li>
-        <li data-i18n-html="hero.p2"><strong>中立透明</strong>：打破传统中转站黑箱问题；多方博弈，透明规则，代码开源。</li>
-        <li data-i18n-html="hero.p3"><strong>低价实惠</strong>：消费者用积分调用 API，同等模型下往往比单独购买上游 Token 更省。</li>
-      </ul>
       <div class="hero-cta">
-        <a href="#quickstart" class="btn btn-primary" data-i18n="cta.start">快速开始</a>
-        <a href="/app"  class="btn btn-ghost" data-i18n="nav.user">用户中心</a>
-        <a href="/wall" class="btn btn-ghost" data-i18n="nav.wall">运营大屏</a>
-        <a href="#download-agent" class="btn btn-ghost" data-i18n="nav.download">下载 Agent</a>
+        <a href="#download"    class="btn-cta primary" data-i18n="cta.download">下载客户端</a>
+        <a href="#gateway"     class="btn-cta ghost"   data-i18n="cta.howworks">了解原理</a>
+        <a href="/app"         class="btn-cta ghost"   data-i18n="nav.portal">用户中心</a>
+      </div>
+
+      <!-- Flow diagram -->
+      <div class="hero-flow">
+        <div class="flow-wrap">
+          <div style="font-family:'DM Mono',monospace;font-size:.65rem;color:var(--muted);margin-bottom:16px;letter-spacing:.08em;">REQUEST FLOW</div>
+          <div class="flow-row">
+            <!-- Sources -->
+            <div class="flow-group">
+              <div class="flow-node">
+                <div class="fn-label">APP</div>
+                <div class="fn-name">Cursor</div>
+              </div>
+              <div class="flow-node">
+                <div class="fn-label">APP</div>
+                <div class="fn-name">Claude Desktop</div>
+              </div>
+              <div class="flow-node">
+                <div class="fn-label">APP</div>
+                <div class="fn-name">任意 AI 应用</div>
+              </div>
+            </div>
+
+            <div class="flow-arrow">
+              <span class="fa-label">OpenAI / Anthropic / ...</span>
+            </div>
+
+            <!-- Gateway -->
+            <div class="flow-node hi" style="min-width:130px;padding:16px 18px;">
+              <div class="fn-label">LOCAL GATEWAY</div>
+              <div class="fn-name" style="font-size:.9rem;">Token Bank</div>
+              <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px;justify-content:center;">
+                <span class="flow-badge badge-fmt">格式桥接</span>
+                <span class="flow-badge badge-fmt">Token 优化</span>
+              </div>
+            </div>
+
+            <div class="flow-arrow">
+              <span class="fa-label">智能路由</span>
+            </div>
+
+            <!-- Providers -->
+            <div class="flow-group">
+              <div class="flow-node">
+                <div class="fn-label">PROVIDER</div>
+                <div class="fn-name">免费 <span class="flow-badge badge-free">free</span></div>
+              </div>
+              <div class="flow-node">
+                <div class="fn-label">PROVIDER</div>
+                <div class="fn-name">P2P 共享 <span class="flow-badge badge-p2p">p2p</span></div>
+              </div>
+              <div class="flow-node">
+                <div class="fn-label">PROVIDER</div>
+                <div class="fn-name">付费 <span class="flow-badge badge-paid">paid</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
-    <!-- Value -->
-    <section id="value">
+    <!-- ── Gateway & Format ── -->
+    <section class="section" id="gateway">
       <div class="wrap">
-        <div class="section-head">
-          <h2 data-i18n="nav.value">贡献算力的两大价值</h2>
-          <p data-i18n-html="value.sub">积分是跨越<strong style="color:#fff">模型差异</strong>和<strong style="color:#fff">时间差异</strong>的通用凭证——互助共享、规则透明；贡献者盘活闲置，消费者用更实惠的积分买到更多 Token 调用。</p>
+        <div class="reveal">
+          <div class="sec-label">LOCAL GATEWAY</div>
+          <h2 class="sec-h2" data-i18n-html="gw.h2">多格式接入，<em>无感代理</em></h2>
+          <p class="sec-sub" data-i18n-html="gw.sub">本地网关同时兼容主流 AI 接口格式，AI 应用无需任何改造，只需把 Base URL 指向 <strong>127.0.0.1:11430</strong>，请求自动流入并被路由到最优 Provider。</p>
         </div>
 
-        <!-- 两大核心价值 -->
-        <div class="grid-2">
-          <article class="card card-main">
-            <div class="card-icon">⇄ &nbsp;算力错配 · MODEL ARBITRAGE</div>
-            <h3 data-i18n="value.v1.title">跨模型/地域兑换：把 A 模型换成 B 模型</h3>
-            <p data-i18n="value.v1.body">贡献你有的模型额度，赚到积分，消费你没有的模型。国内模型换境外模型，开源模型换高级模型，高质量贡献享质量系数加成。</p>
-            <div class="value-examples">
-              <div class="value-example" data-i18n-html="value.v1.ex1">国内 open 模型 → 积分 → <em>境外 premium 模型</em></div>
-              <div class="value-example" data-i18n-html="value.v1.ex2">贡献 1K premium token → 积分 → <em>消费 4K+ open token</em></div>
-              <div class="value-example" data-i18n-html="value.v1.ex3">闲置订阅额度 → 积分 → <em>团队共享任意模型</em></div>
+        <div class="fmt-grid reveal" style="margin-top:32px;">
+          <div class="fmt-chip">
+            <div class="fc-dot" style="background:#00d4aa;"></div>
+            <div>
+              <div class="fc-name">OpenAI 格式</div>
+              <div class="fc-path">/v1/chat/completions</div>
             </div>
-          </article>
-          <article class="card card-main">
-            <div class="card-icon">◷ &nbsp;时间错配 · TIME ARBITRAGE</div>
-            <h3 data-i18n="value.v2.title">跨时段储值：把现在存到未来</h3>
-            <p data-i18n="value.v2.body">把现在过剩的 token 额度贡献出去变成积分，留到以后再用。不管是 API 套餐月底剩余，还是电脑开着没人用，都能转化为以后可随时调用的算力储备。</p>
-            <div class="value-examples">
-              <div class="value-example" data-i18n-html="value.v2.ex1">白天电脑开着 → 贡献积分 → <em>晚上关机后继续调用</em></div>
-              <div class="value-example" data-i18n-html="value.v2.ex2">API 套餐月底剩余 → 转换积分 → <em>下月按需取用</em></div>
-              <div class="value-example" data-i18n-html="value.v2.ex3">出差 / 度假挂机 → 持续积累 → <em>回来即有储备</em></div>
+          </div>
+          <div class="fmt-chip">
+            <div class="fc-dot" style="background:#a0a0ff;"></div>
+            <div>
+              <div class="fc-name">Anthropic 格式</div>
+              <div class="fc-path">/v1/messages</div>
             </div>
-          </article>
+          </div>
+          <div class="fmt-chip">
+            <div class="fc-dot" style="background:#f5a623;"></div>
+            <div>
+              <div class="fc-name">本地模型 · Ollama</div>
+              <div class="fc-path">localhost:11434</div>
+            </div>
+          </div>
+          <div class="fmt-chip" style="border-style:dashed;">
+            <div class="fc-dot" style="background:var(--faint);"></div>
+            <div>
+              <div class="fc-name" style="color:var(--muted);">更多格式</div>
+              <div class="fc-path">持续接入中…</div>
+            </div>
+          </div>
         </div>
 
-        <!-- 技术特性 -->
-        <div class="grid-3">
+        <div class="grid-3 reveal" style="margin-top:24px;">
           <article class="card">
-            <div class="card-icon">01 / SHARE</div>
-            <h3 data-i18n="value.c1.title">贡献你自愿提供的额度</h3>
-            <p data-i18n="value.c1.body">本机 Ollama、内网推理网关、或你买的上游 API token，通过 Agent 主动连出 VPS，按你设定的模型列表接受调度。</p>
+            <div class="card-num">01 / PROXY</div>
+            <h3 data-i18n="gw.c1.title">密钥不离本机</h3>
+            <p data-i18n="gw.c1.body">上游 API Key 仅保存在本机，不经过任何云端服务器。网关直连上游，全程本地处理。</p>
           </article>
           <article class="card">
-            <div class="card-icon">02 / MESH</div>
-            <h3 data-i18n="value.c2.title">多节点按质调度</h3>
-            <p data-i18n="value.c2.body">每台 Worker 自主上线声明模型；VPS 按首 Token 延迟、在线时长、成功率计算质量系数，优先调用高质量节点，加成贡献积分。</p>
+            <div class="card-num">02 / ROUTE</div>
+            <h3 data-i18n="gw.c2.title">智能 Provider 路由</h3>
+            <p data-i18n="gw.c2.body">按模型、成本策略自动选择最优 Provider。免费额度用尽时，平滑切换 P2P 或付费 Provider。</p>
           </article>
           <article class="card">
-            <div class="card-icon">03 / SAFE</div>
-            <h3 data-i18n="value.c3.title">密钥不出本机，随时下线</h3>
-            <p data-i18n="value.c3.body">上游 API Key 仅存本机，服务端不收集。Agent 不运行，立即退出资源池，无需解绑。</p>
+            <div class="card-num">03 / ADMIN</div>
+            <h3 data-i18n="gw.c3.title">可视化管理</h3>
+            <p data-i18n="gw.c3.body">图形界面配置 Provider、查看路由日志、实时调试模型接口，告别手动 curl。</p>
           </article>
         </div>
       </div>
     </section>
 
-    <!-- Arch -->
-    <section id="arch">
+    <!-- ── Token Optimization ── -->
+    <section class="section" id="optimize">
       <div class="wrap">
-        <div class="section-head">
-          <h2 data-i18n="nav.arch">架构一瞥</h2>
-          <p data-i18n-html="arch.sub">外部客户端使用 Bearer 用户 Key 访问 VPS；Worker 使用用户中心的 Worker Key（wk-…）注册并与账户绑定；<strong style="color:#fff">上游 LLM 的 API Key 从不经过代理持久化。</strong></p>
+        <div class="reveal">
+          <div class="sec-label">TOKEN OPTIMIZATION</div>
+          <h2 class="sec-h2" data-i18n-html="opt.h2">路由里内置<em>降本策略</em></h2>
+          <p class="sec-sub" data-i18n="opt.sub">网关不只是转发，它在路由层内置 Token 优化策略，主动减少不必要的开销。</p>
         </div>
-        <div class="diagram">
-<pre>
-  <span class="hl-c">External Client</span>  ──HTTP  Bearer USER_API_KEY──▶  ┌─────────────────────────────┐
-                                                   │  VPS · FastAPI :8000        │
-                                                   │  /v1/*  /admin/*  /ws/worker│
-                                                   └─────────────┬───────────────┘
-                                                                 │ WebSocket (outbound)
-                        ┌────────────────────────────────────────┼────────────────┐
-                        │                                        │                │
-                  ┌─────▼──────┐                          ┌─────▼──────┐        ...
-                  │  llm-agent  │                          │  llm-agent  │
-                  │  + Local LLM│                          │  + Local LLM│
-                  │  <span class="hl-w">key stays local</span>│                          │             │
-                  └────────────┘                          └────────────┘
-</pre>
-        </div>
-      </div>
-    </section>
 
-    <!-- Privacy -->
-    <section id="privacy">
-      <div class="wrap">
-        <div class="section-head">
-          <h2 data-i18n="nav.privacy">隐私与控制权</h2>
-          <p data-i18n="privacy.sub">设计目标：共享 token 调用路径的同时，不把上游密钥交给代理托管。</p>
-        </div>
-        <div class="privacy-row">
-          <div class="privacy-box">
-            <h3 data-i18n="privacy.p1.title">上游 API Key 不上云</h3>
-            <p data-i18n-html="privacy.p1.body"><code style="color:var(--accent);font-size:.9em;">--llm-token</code> 仅保存在本机 Agent 配置，用于直连你的上游；向代理注册时只上传 Worker 鉴权、节点名与模型列表，协议不包含上游密钥。</p>
+        <div class="opt-grid reveal" style="margin-top:32px;">
+          <div class="opt-row">
+            <div class="opt-icon">⚖️</div>
+            <div class="opt-body">
+              <h4 data-i18n="opt.s1.title">任务分级路由</h4>
+              <p data-i18n="opt.s1.body">按场景规则自动把简单请求分流到低成本模型，复杂任务路由至高性能模型，效果与成本双优。</p>
+            </div>
           </div>
-          <div class="privacy-box">
-            <h3 data-i18n="privacy.p2.title">随时停止共享</h3>
-            <p data-i18n="privacy.p2.body">停止 Agent（如 Ctrl+C）或断网即不再承接请求，无需在服务端「解绑」。用户侧调用 VPS 所需的 Key 由管理后台签发（存于服务端数据库），与上游密钥是两回事。</p>
+          <div class="opt-row">
+            <div class="opt-icon">🔄</div>
+            <div class="opt-body">
+              <h4 data-i18n="opt.s2.title">Provider 优先级</h4>
+              <p data-i18n="opt.s2.body">配置免费 → P2P → 付费的优先梯队，有更低成本的 Provider 可用时自动优先，付费调用降至最少。</p>
+            </div>
+          </div>
+          <div class="opt-row">
+            <div class="opt-icon">🗝️</div>
+            <div class="opt-body">
+              <h4 data-i18n="opt.s3.title">多 Key 轮询</h4>
+              <p data-i18n="opt.s3.body">同一 Provider 绑定多个 API Key，自动轮询使用，均摊速率限制，避免单 Key 触发限流。</p>
+            </div>
+          </div>
+          <div class="opt-row">
+            <div class="opt-icon">📊</div>
+            <div class="opt-body">
+              <h4 data-i18n="opt.s4.title">用量感知调度</h4>
+              <p data-i18n="opt.s4.body">实时感知各 Provider 当日用量，接近限额时自动切换，保持服务连续性。</p>
+            </div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- Economy -->
-    <section id="economy">
+    <!-- ── Usage Stats ── -->
+    <section class="section" id="stats">
       <div class="wrap">
-        <div class="section-head">
-          <h2 data-i18n="econ.title">积分体系</h2>
-          <p data-i18n-html="econ.sub">贡献算力赚取积分，消耗 API 花费积分；<strong style="color:#fff">汇率与规则公开</strong>，按模型换算、质量越高倍率越高——让消费者明明白白<strong style="color:var(--accent)">用更低成本调用 Token</strong>。</p>
-        </div>
-        <div class="economy-grid">
+        <div class="reveal" style="display:grid;gap:48px;grid-template-columns:1fr 1fr;align-items:start;">
 
-          <!-- Earn -->
-          <div class="econ-card">
-            <h3><span class="icon">⬆</span> <span data-i18n="econ.earn.title">贡献赚积分</span></h3>
-            <div class="formula-box">
-<span class="hi-g">积分</span> = (<span class="hi-y">output_tokens</span> / 1000)
-     × <span class="hi-p">模型贡献率</span>
-     × <span class="hi-g">质量系数</span>
-            </div>
-            <p class="formula-note" data-i18n-html="econ.earn.note">
-              运行 Agent 后每处理一条请求，系统记录你产生的 <strong>输出 Token 数</strong>。
-              每 5 分钟结算一次，按模型的「贡献率（积分/千 Token）」乘以当期质量系数累积积分。
+          <div>
+            <div class="sec-label">USAGE ANALYTICS</div>
+            <h2 class="sec-h2" data-i18n-html="stats.h2">所有 AI 消耗<br><em>一屏看清</em></h2>
+            <p class="sec-sub" data-i18n-html="stats.sub">
+              类比 <strong>iOS 电量统计</strong>——所有 AI 应用自然纳入，无需逐一配置。走网关的、直连官方的、Claude Code 的、Codex 的，全部汇聚到同一个 Dashboard。
             </p>
-            <div class="mult-grid">
-              <div class="mult-item"><div class="label" data-i18n="econ.mult.online">在线时长占比</div><div class="val">0.5–1.3×</div></div>
-              <div class="mult-item"><div class="label" data-i18n="econ.mult.latency">首 Token 延迟</div><div class="val">0.6–1.5×</div></div>
-              <div class="mult-item"><div class="label" data-i18n="econ.mult.stability">请求成功率</div><div class="val">0.5–1.2×</div></div>
+
+            <div class="device-row">
+              <div class="device-chip">
+                <div class="dc-icon">💻</div>
+                <div>
+                  <div class="dc-label">MacBook</div>
+                  <div class="dc-sub">设备 1</div>
+                </div>
+              </div>
+              <div class="device-arrow">→</div>
+              <div class="device-chip">
+                <div class="dc-icon">🖥</div>
+                <div>
+                  <div class="dc-label">台式机</div>
+                  <div class="dc-sub">设备 2</div>
+                </div>
+              </div>
+              <div class="device-arrow">→</div>
+              <div class="device-hub">
+                <div class="dh-label">Token Bank</div>
+                <div class="dh-sub">统一归集</div>
+              </div>
             </div>
-            <p style="margin-top:10px;font-size:.8rem;color:var(--muted);" data-i18n-html="econ.mult.formula">
-              质量系数 = 0.4×在线因子 + 0.4×首 Token 延迟因子 + 0.2×稳定性因子，范围 <strong style="color:var(--accent);">0.5 ~ 1.5</strong>
-            </p>
+
+            <div class="stat-row">
+              <div class="stat-pill">
+                <div class="sp-val">3<em>+</em></div>
+                <div class="sp-label" data-i18n="stats.sp1">数据来源自动接入</div>
+              </div>
+              <div class="stat-pill">
+                <div class="sp-val">∞<em> </em></div>
+                <div class="sp-label" data-i18n="stats.sp2">AI 应用均可覆盖</div>
+              </div>
+              <div class="stat-pill">
+                <div class="sp-val">1<em>屏</em></div>
+                <div class="sp-label" data-i18n="stats.sp3">多设备统一看板</div>
+              </div>
+            </div>
           </div>
 
-          <!-- Spend -->
-          <div class="econ-card">
-            <h3><span class="icon">⬇</span> <span data-i18n="econ.spend.title">调用花积分</span></h3>
-            <div class="formula-box">
-<span class="hi-y">花费</span> = (<span class="hi-y">prompt + completion tokens</span> / 1000)
-     × <span class="hi-p">模型消费率</span>
+          <!-- iOS mockup -->
+          <div class="ios-mockup">
+            <div class="ios-header">
+              <span class="title" data-i18n="stats.mock.title">AI 用量 · 本月</span>
+              <span class="period">2026-06</span>
             </div>
-            <p class="formula-note" data-i18n-html="econ.spend.note">
-              每次 API 调用完成后，按 <strong>输入 + 输出 Token 总量</strong> 乘以该模型的「消费率（积分/千 Token）」扣除积分。
-              贡献率 > 消费率，激励贡献者长期在线。
-            </p>
-            <p style="margin-top:16px;font-size:.85rem;font-weight:600;color:var(--text);" data-i18n="econ.rates.title">当前模型汇率</p>
-            <table class="rates-table" id="rates-table">
-              <thead>
-                <tr>
-                  <th data-i18n="econ.rates.model">模型</th>
-                  <th data-i18n="econ.rates.tier">类型</th>
-                  <th data-i18n-html="econ.rates.earn">贡献率<br><small style="font-weight:400">(积分/千Token)</small></th>
-                  <th data-i18n-html="econ.rates.spend">消费率<br><small style="font-weight:400">(积分/千Token)</small></th>
-                </tr>
-              </thead>
-              <tbody id="rates-tbody">
-                <tr><td colspan="4" class="rates-empty" data-i18n="econ.rates.loading">加载中…</td></tr>
-              </tbody>
-            </table>
-            <div id="exchange-matrix" style="margin-top:18px"></div>
+            <div class="ios-bar">
+              <div class="ios-bar-seg s1" style="width:34%"></div>
+              <div class="ios-bar-seg s2" style="width:22%"></div>
+              <div class="ios-bar-seg s3" style="width:18%"></div>
+              <div class="ios-bar-seg s4" style="width:14%"></div>
+              <div class="ios-bar-seg s5" style="width:12%"></div>
+            </div>
+            <div class="ios-row">
+              <div class="ios-dot" style="background:#00d4aa;border-radius:2px;"></div>
+              <div class="ios-app">
+                <div class="name">Claude Code</div>
+                <div class="sub">session-import · claude-cli</div>
+              </div>
+              <div class="ios-pct">34%</div>
+            </div>
+            <div class="ios-row">
+              <div class="ios-dot" style="background:#f5a623;border-radius:2px;"></div>
+              <div class="ios-app">
+                <div class="name">Cursor</div>
+                <div class="sub">via gateway · gpt-4o</div>
+              </div>
+              <div class="ios-pct">22%</div>
+            </div>
+            <div class="ios-row">
+              <div class="ios-dot" style="background:#6c8fff;border-radius:2px;"></div>
+              <div class="ios-app">
+                <div class="name">Claude Desktop</div>
+                <div class="sub">via gateway · claude-3-5</div>
+              </div>
+              <div class="ios-pct">18%</div>
+            </div>
+            <div class="ios-row">
+              <div class="ios-dot" style="background:#e05555;border-radius:2px;"></div>
+              <div class="ios-app">
+                <div class="name">Cherry Studio</div>
+                <div class="sub">via gateway · deepseek-v3</div>
+              </div>
+              <div class="ios-pct">14%</div>
+            </div>
+            <div class="ios-row">
+              <div class="ios-dot" style="background:#a77bff;border-radius:2px;"></div>
+              <div class="ios-app">
+                <div class="name">Codex CLI</div>
+                <div class="sub">session-import · codex-cli</div>
+              </div>
+              <div class="ios-pct">12%</div>
+            </div>
           </div>
 
         </div>
+      </div>
+    </section>
 
-        <!-- Example -->
-        <div style="margin-top:24px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:28px;">
-          <p style="font-size:.875rem;font-weight:600;color:var(--text);margin-bottom:16px;" data-i18n="econ.example.title">📌 举例</p>
-          <div style="display:grid;gap:12px;grid-template-columns:1fr;font-size:.875rem;color:var(--muted);line-height:1.8;" id="econ-examples">
-            <p data-i18n-html="econ.example.earn">贡献方：若某模型贡献率为 <strong style="color:var(--accent)">8 积分/千 Token</strong>，5 分钟内产出 10,000 输出 Token，质量系数 1.2，则本期获得 <strong style="color:var(--accent)">10 × 8 × 1.2 = 96 积分</strong>。</p>
-            <p data-i18n-html="econ.example.spend">消费方：若消费率为 <strong style="color:var(--warm)">5 积分/千 Token</strong>，一次调用共 2,000 Token（输入+输出），花费 <strong style="color:var(--warm)">2 × 5 = 10 积分</strong>。</p>
-            <p data-i18n-html="econ.example.ratio">即：贡献 1,000 输出 Token ≈ 赚取 8+ 积分；消耗 1,000 总 Token ≈ 花费 5 积分。<strong style="color:var(--text)">多贡献多获益</strong>，剩余积分可购买高级模型调用。</p>
+    <!-- ── Provider Tiers ── -->
+    <section class="section" id="providers">
+      <div class="wrap">
+        <div class="reveal">
+          <div class="sec-label">PROVIDER TIERS</div>
+          <h2 class="sec-h2" data-i18n-html="prov.h2">三层 Provider，<em>自动择优</em></h2>
+          <p class="sec-sub" data-i18n="prov.sub">路由按成本优先级自动选择，能用免费的绝不走付费，P2P 共享也能进一步降低成本。</p>
+        </div>
+
+        <div class="card reveal" style="margin-top:32px;padding:8px 8px;">
+          <div class="tier-row" style="padding:20px 16px;">
+            <div class="tier-num">01</div>
+            <div class="tier-body">
+              <div class="tier-name">免费 Provider <span class="tbadge tbadge-g">free</span></div>
+              <div class="tier-desc" data-i18n="prov.t1.desc">公益节点、开源推理服务、厂商免费额度。成本最低，优先路由。</div>
+              <div class="tier-badge-row">
+                <span class="tbadge tbadge-g">Ollama 本地</span>
+                <span class="tbadge tbadge-g">公益 API</span>
+                <span class="tbadge tbadge-g">厂商免费层</span>
+              </div>
+            </div>
+          </div>
+          <div class="tier-row" style="padding:20px 16px;">
+            <div class="tier-num">02</div>
+            <div class="tier-body">
+              <div class="tier-name">P2P 共享 Provider <span class="tbadge tbadge-y">p2p</span></div>
+              <div class="tier-desc" data-i18n="prov.t2.desc">社区成员贡献闲置算力，消费者用积分兑换调用额度，往往比官方更实惠。</div>
+              <div class="tier-badge-row">
+                <span class="tbadge tbadge-y">积分体系</span>
+                <span class="tbadge tbadge-y">闲置算力共享</span>
+                <span class="tbadge tbadge-y">多节点负载均衡</span>
+              </div>
+            </div>
+          </div>
+          <div class="tier-row" style="padding:20px 16px;">
+            <div class="tier-num">03</div>
+            <div class="tier-body">
+              <div class="tier-name">付费 Provider <span class="tbadge tbadge-r">paid</span></div>
+              <div class="tier-desc" data-i18n="prov.t3.desc">OpenAI、Anthropic、国内厂商等官方 API，免费和 P2P 资源耗尽时兜底。</div>
+              <div class="tier-badge-row">
+                <span class="tbadge tbadge-r">OpenAI</span>
+                <span class="tbadge tbadge-r">Anthropic</span>
+                <span class="tbadge tbadge-r">国内大模型</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Credit economy compact -->
+        <div style="margin-top:24px;" class="reveal">
+          <div style="font-size:.82rem;font-weight:600;color:var(--text);margin-bottom:12px;" data-i18n="credit.title">P2P 积分体系</div>
+          <div class="credit-split">
+            <div class="credit-box">
+              <div class="cb-label">EARN · 贡献赚积分</div>
+              <div class="credit-formula">
+<span class="hl-g">积分</span> = (output_tokens / 1K)
+     × <span class="hl-p">模型贡献率</span>
+     × <span class="hl-g">质量系数</span>
+              </div>
+            </div>
+            <div class="credit-box">
+              <div class="cb-label">SPEND · 调用花积分</div>
+              <div class="credit-formula">
+<span class="hl-y">花费</span> = (total_tokens / 1K)
+     × <span class="hl-p">模型消费率</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- Download -->
-    <section id="download-agent">
+    <!-- ── Download ── -->
+    <section class="section" id="download">
       <div class="wrap">
-        <div class="section-head">
-          <h2 data-i18n="nav.download">下载 Token Bank 客户端</h2>
-          <p data-i18n="download.sub">图形界面桌面客户端，一键启动 Agent、管理积分账户、调试模型接口。支持 macOS 和 Windows。</p>
+        <div class="reveal">
+          <div class="sec-label">DOWNLOAD</div>
+          <h2 class="sec-h2" data-i18n="dl.h2">下载 Token Bank</h2>
+          <p class="sec-sub" data-i18n="dl.sub">图形界面桌面客户端，一键启动本地网关，管理 Provider 与积分账户。支持 macOS 和 Windows。</p>
         </div>
 
-        <!-- Platform cards -->
-        <div class="app-dl-grid" id="app-dl-grid">
-          <!-- macOS card -->
-          <div class="app-dl-card" id="card-mac">
-            <span class="platform-badge">macOS</span>
-            <div class="os-icon"></div>
-            <h3>Token Bank for Mac</h3>
+        <div class="dl-cards reveal" style="margin-top:32px;">
+          <div class="dl-card" id="card-mac">
+            <div class="dl-os"></div>
+            <div class="dl-name">Token Bank for Mac</div>
             <div class="dl-meta" id="meta-mac">Apple Silicon &amp; Intel · .dmg</div>
-            <a class="btn-dl unavailable" id="btn-mac" href="#" data-i18n="download.loading">加载中…</a>
+            <a class="dl-btn unavailable" id="btn-mac" href="#" data-i18n="dl.loading">加载中…</a>
           </div>
-          <!-- Windows card -->
-          <div class="app-dl-card" id="card-win">
-            <span class="platform-badge">Windows</span>
-            <div class="os-icon">🪟</div>
-            <h3>Token Bank for Windows</h3>
-            <div class="dl-meta" id="meta-win">x86_64 · .exe 安装包</div>
-            <a class="btn-dl unavailable" id="btn-win" href="#" data-i18n="download.loading">加载中…</a>
+          <div class="dl-card" id="card-win">
+            <div class="dl-os">🪟</div>
+            <div class="dl-name">Token Bank for Windows</div>
+            <div class="dl-meta" id="meta-win">x86_64 · .exe</div>
+            <a class="dl-btn unavailable" id="btn-win" href="#" data-i18n="dl.loading">加载中…</a>
           </div>
         </div>
 
-        <!-- CLI agent (collapsible) -->
-        <details class="cli-details" style="margin-top:32px;">
-          <summary data-i18n="download.cli">llm-agent 命令行版</summary>
-          <div id="agent-download-list" class="download-panel loading" style="margin-top:12px;">
-            <p style="margin:0;" data-i18n="download.loading">正在加载可用构建…</p>
+        <details style="margin-top:24px;">
+          <summary style="cursor:pointer;color:var(--muted);font-size:.85rem;user-select:none;padding:6px 0;list-style:none;display:flex;align-items:center;gap:6px;" data-i18n="dl.cli">
+            ▶ Docker / CLI 部署
+          </summary>
+          <div id="agent-download-list" style="margin-top:10px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:16px;">
+            <p style="color:var(--muted);font-size:.85rem;" data-i18n="dl.loading">正在加载…</p>
           </div>
         </details>
       </div>
     </section>
 
-    <!-- Quickstart -->
-    <section id="quickstart">
+    <!-- ── Quickstart ── -->
+    <section class="section" id="quickstart">
       <div class="wrap">
-        <div class="section-head">
-          <h2 data-i18n="nav.quickstart">快速开始</h2>
-          <p data-i18n-html="qs.sub">以下为常用命令摘要；完整变量说明与本地开发见仓库内 <code style="color:var(--accent);">README.md</code>。</p>
+        <div class="reveal">
+          <div class="sec-label">QUICKSTART</div>
+          <h2 class="sec-h2" data-i18n="qs.h2">快速接入</h2>
+          <p class="sec-sub" data-i18n-html="qs.sub">客户端安装后自动启动本地网关，把 AI 应用的 <strong>Base URL</strong> 改为以下地址即可。</p>
         </div>
-        <div class="quick-grid">
-          <div class="quick-item">
-            <h3 data-i18n="qs.vps.title">VPS · Docker</h3>
-            <p style="color:var(--muted);font-size:.95rem;" data-i18n-html="qs.vps.desc">复制 <code style="color:#fff;">.env.example</code> 为 <code style="color:#fff;">.env</code>，填写 <code style="color:#fff;">ADMIN_KEY</code> 等：</p>
+
+        <div class="qs-grid reveal" style="margin-top:32px;">
+          <div>
+            <div class="qs-label" data-i18n="qs.openai.label">OpenAI 兼容应用</div>
+            <p style="font-size:.85rem;color:var(--muted);" data-i18n="qs.openai.desc">Cursor、Copilot、Cherry Studio、Open WebUI 等：</p>
             <div class="code-block">
-<pre><span class="c">cp</span> .env.example .env
-<span class="c">docker compose up -d --build</span>
-<span class="s"># default port 8000</span></pre>
+<pre><span class="c">OPENAI_BASE_URL</span>=<span class="s">http://127.0.0.1:11430/v1</span>
+<span class="c">OPENAI_API_KEY</span>=<span class="s">你的 Token Bank Key</span></pre>
             </div>
           </div>
-          <div class="quick-item">
-            <h3 data-i18n="qs.agent.title">LAN · Agent</h3>
-            <p style="color:var(--muted);font-size:.95rem;" data-i18n="qs.agent.desc">优先使用上方「下载 llm-agent」；或用源码运行。在用户中心复制 Worker Key（wk-…），注册一次后 start 保持在线：</p>
+          <div>
+            <div class="qs-label" data-i18n="qs.anthropic.label">Anthropic 格式应用</div>
+            <p style="font-size:.85rem;color:var(--muted);" data-i18n="qs.anthropic.desc">Claude Desktop、Claude Code 等：</p>
             <div class="code-block">
-<pre><span class="c">cd</span> agent && pip install -r requirements.txt
-<span class="c">python</span> agent.py register \
-  --server <span class="s">"ws://YOUR_VPS:8000/ws/worker"</span> \
-  --worker-key <span class="s">"wk-...from-user-portal"</span> \
-  --models <span class="s">"model-a,model-b"</span> \
-  --llm-url <span class="s">"http://localhost:11434"</span>
-<span class="c">python</span> agent.py start</pre>
+<pre><span class="c">ANTHROPIC_BASE_URL</span>=<span class="s">http://127.0.0.1:11430</span>
+<span class="s"># API Key 填写 Token Bank Key</span></pre>
+            </div>
+          </div>
+          <div>
+            <div class="qs-label" data-i18n="qs.docker.label">Docker 部署（服务器 / 无界面）</div>
+            <p style="font-size:.85rem;color:var(--muted);" data-i18n="qs.docker.desc">挂载配置目录，启动网关服务：</p>
+            <div class="code-block">
+<pre><span class="c">docker run</span> -d \
+  -p <span class="s">11430:11430</span> -p <span class="s">11431:11431</span> \
+  -v ./data:<span class="s">/data/.llm-agent</span> \
+  ghcr.io/wink-run/local-llm-proxy/gateway:<span class="s">latest</span></pre>
+            </div>
+          </div>
+          <div>
+            <div class="qs-label" data-i18n="qs.vps.label">VPS · FastAPI 后端</div>
+            <p style="font-size:.85rem;color:var(--muted);" data-i18n="qs.vps.desc">搭建 P2P 节点，开放 Worker 接入：</p>
+            <div class="code-block">
+<pre><span class="cm">cp</span> .env.example .env
+<span class="cm"># 填写 ADMIN_KEY 等配置</span>
+<span class="c">docker compose up -d --build</span></pre>
             </div>
           </div>
         </div>
-        <p style="margin-top:32px;color:var(--muted);font-size:.95rem;" data-i18n-html="qs.note">
-          调用接口：<code style="color:#fff;">GET /v1/models</code>、<code style="color:#fff;">POST /v1/chat/completions</code>，请求头 <code style="color:#fff;">Authorization: Bearer &lt;用户中心创建的 Key&gt;</code>。
+      </div>
+    </section>
+
+    <!-- ── Disclaimer ── -->
+    <section class="section" style="padding:48px 0 32px;">
+      <div class="wrap">
+        <p class="disclaimer" data-i18n-html="disclaimer">
+          本项目仅供学习与研究使用。部署、共享 token 或转发请求须自行遵守法律法规及上游服务条款；由此产生的任何后果由使用者自行承担。
         </p>
       </div>
     </section>
 
-    <!-- Disclaimer -->
-    <section id="disclaimer">
-      <div class="wrap" style="padding-bottom:48px;">
-        <h2 class="section-head" style="margin-bottom:16px;font-size:1.05rem;color:var(--muted);font-weight:600;" data-i18n="disclaimer.title">免责声明</h2>
-        <p style="color:var(--muted);font-size:.9rem;line-height:1.65;max-width:72ch;" data-i18n-html="disclaimer.body">
-          本项目仅供<strong style="color:var(--text);font-weight:600;">学习与研究</strong>使用。部署、自愿共享 token 或转发请求须自行遵守法律法规及上游服务条款；由此产生的任何后果（含数据安全、费用、合规与纠纷）均由使用者<strong style="color:var(--text);font-weight:600;">自行承担</strong>。
-        </p>
-      </div>
-    </section>
   </main>
 
   <footer>
-    <p>Local LLM Proxy · OpenAI-compatible proxy</p>
+    <p>Token Bank · Personal AI Hub</p>
     <div class="footer-links">
-      <a href="/app"      data-i18n="nav.user">用户中心</a>
+      <a href="/app"      data-i18n="nav.portal">用户中心</a>
       <a href="/wall"     data-i18n="nav.wall">运营大屏</a>
       <a href="/admin/ui" data-i18n="footer.admin">管理后台</a>
-      <!-- <a href="https://github.com/wink-run/local-llm-proxy" target="_blank" rel="noopener noreferrer">GitHub</a> -->
     </div>
-    <p style="margin-top:16px;font-size:.75rem;color:#6b7280;max-width:520px;margin-left:auto;margin-right:auto;line-height:1.5;" data-i18n="disclaimer.short">
-      仅供学习与研究；使用后果自负。
-    </p>
+    <p style="margin-top:14px;font-size:.72rem;color:var(--faint);" data-i18n="disclaimer.short">仅供学习与研究；使用后果自负。</p>
   </footer>
 
   <script>
   /* ── i18n ── */
   var LANGS = {
     zh: {
-      "econ.title": "积分体系",
-      "econ.sub":   "贡献算力赚取积分，消耗 API 花费积分；<strong style=\"color:#fff\">汇率与规则公开</strong>，按模型换算、质量越高倍率越高——让消费者明明白白<strong style=\"color:var(--accent)\">用更低成本调用 Token</strong>。",
-      "econ.earn.title": "贡献赚积分",
-      "econ.earn.note":  "运行 Agent 后每处理一条请求，系统记录你产生的 <strong>输出 Token 数</strong>。每 5 分钟结算一次，按模型的「贡献率（积分/千 Token）」乘以当期质量系数累积积分。",
-      "econ.mult.online": "在线时长占比",
-      "econ.mult.latency": "首 Token 延迟",
-      "econ.mult.stability": "请求成功率",
-      "econ.mult.formula": "质量系数 = 0.4×在线因子 + 0.4×首 Token 延迟因子 + 0.2×稳定性因子，范围 <strong style=\"color:var(--accent);\">0.5 ~ 1.5</strong>",
-      "econ.spend.title": "调用花积分",
-      "econ.spend.note":  "每次 API 调用完成后，按 <strong>输入 + 输出 Token 总量</strong> 乘以该模型的「消费率（积分/千 Token）」扣除积分。贡献率 > 消费率，激励贡献者长期在线。",
-      "econ.rates.title": "当前模型汇率",
-      "econ.rates.model": "模型", "econ.rates.tier": "类型",
-      "econ.rates.earn": "贡献率<br><small style='font-weight:400'>(积分/千Token)</small>",
-      "econ.rates.spend": "消费率<br><small style='font-weight:400'>(积分/千Token)</small>",
-
-      "econ.rates.loading": "加载中…", "econ.rates.empty": "暂无已启用模型",
-      "econ.exchange.title": "跨类型折算矩阵",
-      "econ.exchange.sub": "贡献 1K token（行）→ 可消费的 token 数量（列，千 token）",
-      "econ.exchange.from": "贡献层 ↓ / 消费层 →",
-      "econ.example.title": "📌 举例",
-      "econ.example.earn":  "贡献方：若某模型贡献率为 <strong style=\"color:var(--accent)\">8 积分/千 Token</strong>，5 分钟内产出 10,000 输出 Token，质量系数 1.2，则本期获得 <strong style=\"color:var(--accent)\">10 × 8 × 1.2 = 96 积分</strong>。",
-      "econ.example.spend": "消费方：若消费率为 <strong style=\"color:var(--warm)\">5 积分/千 Token</strong>，一次调用共 2,000 Token（输入+输出），花费 <strong style=\"color:var(--warm)\">2 × 5 = 10 积分</strong>。",
-      "econ.example.ratio": "即：贡献 1,000 输出 Token ≈ 赚取 8+ 积分；消耗 1,000 总 Token ≈ 花费 5 积分。<strong style=\"color:var(--text)\">多贡献多获益</strong>，剩余积分可购买高级模型调用。",
-      "nav.value":    "两大价值",
-      "nav.arch":     "架构",
-      "nav.privacy":  "隐私",
-      "nav.download": "下载客户端",
-      "nav.quickstart": "快速开始",
-      "nav.user":     "用户中心",
-      "nav.wall":     "运营大屏",
-      "footer.admin": "管理后台",
-      "cta.start":    "快速开始",
-      "hero.h1":      "让闲置 Token <br><em>跨模型、跨地域、跨时段</em>自由流通",
-      "hero.lead":    "有用不完的 Token？Ollama 开着没人调用？把这些<strong style=\"color:var(--text)\">闲置算力贡献出去</strong>，换成积分——可以调用你没有的高级模型、境外模型，或存着留到晚上电脑关机后继续用。",
-      "hero.p1":      "<strong>人人为我，我为人人</strong>：闲置算力互助入网，积分跨模型、跨时段通用。",
-      "hero.p2":      "<strong>中立透明</strong>：打破传统中转站黑箱问题；多方博弈，透明规则，代码开源。",
-      "hero.p3":      "<strong>低价实惠</strong>：消费者用积分调用 API，同等模型下往往比单独购买上游 Token 更省。",
-      "value.sub":    "积分是跨越<strong style=\"color:#fff\">模型差异</strong>和<strong style=\"color:#fff\">时间差异</strong>的通用凭证——互助共享、规则透明；贡献者盘活闲置，消费者用更实惠的积分买到更多 Token 调用。",
-      "value.v1.title": "跨模型兑换：把 A 模型换成 B 模型",
-      "value.v1.body":  "贡献你有的模型额度，赚到积分，消费你没有的模型。国内模型换境外模型，开源模型换高级模型，高质量贡献享质量系数加成。",
-      "value.v1.ex1":   "国内 open 模型 → 积分 → <em>境外 premium 模型</em>",
-      "value.v1.ex2":   "贡献 1K premium token → 积分 → <em>消费 4K+ open token</em>",
-      "value.v1.ex3":   "闲置订阅额度 → 积分 → <em>团队共享任意模型</em>",
-      "value.v2.title": "跨时段储值：把现在存到未来",
-      "value.v2.body":  "把现在过剩的 token 额度贡献出去变成积分，留到以后再用。不管是 API 套餐月底剩余，还是电脑开着没人用，都能转化为以后可随时调用的算力储备。",
-      "value.v2.ex1":   "白天电脑开着 → 贡献积分 → <em>晚上关机后继续调用</em>",
-      "value.v2.ex2":   "API 套餐月底剩余 → 转换积分 → <em>下月按需取用</em>",
-      "value.v2.ex3":   "出差 / 度假挂机 → 持续积累 → <em>回来即有储备</em>",
-      "value.c1.title": "贡献你自愿提供的额度",
-      "value.c1.body":  "本机 Ollama、内网推理网关、或你买的上游 API token，通过 Agent 主动连出 VPS，按你设定的模型列表接受调度。",
-      "value.c2.title": "多节点按质调度",
-      "value.c2.body":  "每台 Worker 自主上线声明模型；VPS 按首 Token 延迟、在线时长、成功率计算质量系数，优先调用高质量节点，加成贡献积分。",
-      "value.c3.title": "密钥不出本机，随时下线",
-      "value.c3.body":  "上游 API Key 仅存本机，服务端不收集。Agent 不运行，立即退出资源池，无需解绑。",
-      "arch.sub":     "外部客户端使用 Bearer 用户 Key 访问 VPS；Worker 使用用户中心的 Worker Key（wk-…）注册并与账户绑定；<strong style=\"color:#fff\">上游 LLM 的 API Key 从不经过代理持久化。</strong>",
-      "privacy.sub":  "设计目标：共享 token 调用路径的同时，不把上游密钥交给代理托管。",
-      "privacy.p1.title": "上游 API Key 不上云",
-      "privacy.p1.body":  "<code style=\"color:var(--accent);font-size:.9em;\">--llm-token</code> 仅保存在本机 Agent 配置，用于直连你的上游；向代理注册时只上传 Worker 鉴权、节点名与模型列表，协议不包含上游密钥。",
-      "privacy.p2.title": "随时停止共享",
-      "privacy.p2.body":  "停止 Agent（如 Ctrl+C）或断网即不再承接请求，无需在服务端「解绑」。用户侧调用 VPS 所需的 Key 由管理后台签发（存于服务端数据库），与上游密钥是两回事。",
-      "download.sub":     "图形界面桌面客户端，一键启动 Agent、管理积分账户、调试模型接口。支持 macOS 和 Windows。",
-      "download.loading": "正在加载…",
-      "download.btn":     "立即下载",
-      "download.soon":    "即将发布",
-      "download.cli":     "llm-agent 命令行版",
-      "download.empty":   "当前没有预编译文件。将产物放到 <code style=\"color:#fff;font-size:.9em;\">server/static/downloads/</code> 后刷新。",
-      "download.err":     "加载失败，请稍后重试。",
-      "qs.sub":      "以下为常用命令摘要；完整变量说明与本地开发见仓库内 <code style=\"color:var(--accent);\">README.md</code>。",
-      "qs.vps.title":  "VPS · Docker",
-      "qs.vps.desc":   "复制 <code style=\"color:#fff;\">.env.example</code> 为 <code style=\"color:#fff;\">.env</code>，填写 <code style=\"color:#fff;\">ADMIN_KEY</code> 等：",
-      "qs.agent.title": "内网 · Agent",
-      "qs.agent.desc":  "优先使用上方「下载 llm-agent」；或用源码运行。在用户中心复制 Worker Key（wk-…），注册一次后 start 保持在线：",
-      "qs.note":       "调用接口：<code style=\"color:#fff;\">GET /v1/models</code>、<code style=\"color:#fff;\">POST /v1/chat/completions</code>，请求头 <code style=\"color:#fff;\">Authorization: Bearer &lt;用户中心创建的 Key&gt;</code>。",
-      "disclaimer.title": "免责声明",
-      "disclaimer.body":  "本项目仅供<strong style=\"color:var(--text);font-weight:600;\">学习与研究</strong>使用。部署、自愿共享 token 或转发请求须自行遵守法律法规及上游服务条款；由此产生的任何后果（含数据安全、费用、合规与纠纷）均由使用者<strong style=\"color:var(--text);font-weight:600;\">自行承担</strong>。",
+      "nav.portal": "用户中心", "nav.wall": "运营大屏", "footer.admin": "管理后台",
+      "hero.eyebrow": "个人 AI 中枢 · 本地网关 · 多设备归集",
+      "hero.h1": "你的<em>个人 AI 中枢</em><br>统一接入，智能路由",
+      "hero.sub": "本地网关透明代理所有 AI 请求，<strong>智能路由到最优 Provider</strong>，并跨应用、跨设备归集所有 AI 用量——就像 iOS 电量统计，<strong>所有 AI 应用自然纳入</strong>。",
+      "cta.download": "下载客户端", "cta.howworks": "了解原理",
+      "gw.h2": "多格式接入，<em>无感代理</em>",
+      "gw.sub": "本地网关同时兼容主流 AI 接口格式，AI 应用无需任何改造，只需把 Base URL 指向 <strong>127.0.0.1:11430</strong>，请求自动流入并被路由到最优 Provider。",
+      "gw.c1.title": "密钥不离本机",
+      "gw.c1.body": "上游 API Key 仅保存在本机，不经过任何云端服务器。网关直连上游，全程本地处理。",
+      "gw.c2.title": "智能 Provider 路由",
+      "gw.c2.body": "按模型、成本策略自动选择最优 Provider。免费额度用尽时，平滑切换 P2P 或付费 Provider。",
+      "gw.c3.title": "可视化管理",
+      "gw.c3.body": "图形界面配置 Provider、查看路由日志、实时调试模型接口，告别手动 curl。",
+      "opt.h2": "路由里内置<em>降本策略</em>",
+      "opt.sub": "网关不只是转发，它在路由层内置 Token 优化策略，主动减少不必要的开销。",
+      "opt.s1.title": "任务分级路由", "opt.s1.body": "按场景规则自动把简单请求分流到低成本模型，复杂任务路由至高性能模型，效果与成本双优。",
+      "opt.s2.title": "Provider 优先级", "opt.s2.body": "配置免费 → P2P → 付费的优先梯队，有更低成本的 Provider 可用时自动优先，付费调用降至最少。",
+      "opt.s3.title": "多 Key 轮询", "opt.s3.body": "同一 Provider 绑定多个 API Key，自动轮询使用，均摊速率限制，避免单 Key 触发限流。",
+      "opt.s4.title": "用量感知调度", "opt.s4.body": "实时感知各 Provider 当日用量，接近限额时自动切换，保持服务连续性。",
+      "stats.h2": "所有 AI 消耗<br><em>一屏看清</em>",
+      "stats.sub": "类比 <strong>iOS 电量统计</strong>——所有 AI 应用自然纳入，无需逐一配置。走网关的、直连官方的、Claude Code 的、Codex 的，全部汇聚到同一个 Dashboard。",
+      "stats.sp1": "数据来源自动接入", "stats.sp2": "AI 应用均可覆盖", "stats.sp3": "多设备统一看板",
+      "stats.mock.title": "AI 用量 · 本月",
+      "prov.h2": "三层 Provider，<em>自动择优</em>",
+      "prov.sub": "路由按成本优先级自动选择，能用免费的绝不走付费，P2P 共享也能进一步降低成本。",
+      "prov.t1.desc": "公益节点、开源推理服务、厂商免费额度。成本最低，优先路由。",
+      "prov.t2.desc": "社区成员贡献闲置算力，消费者用积分兑换调用额度，往往比官方更实惠。",
+      "prov.t3.desc": "OpenAI、Anthropic、国内厂商等官方 API，免费和 P2P 资源耗尽时兜底。",
+      "credit.title": "P2P 积分体系",
+      "dl.h2": "下载 Token Bank",
+      "dl.sub": "图形界面桌面客户端，一键启动本地网关，管理 Provider 与积分账户。支持 macOS 和 Windows。",
+      "dl.loading": "加载中…", "dl.btn": "立即下载", "dl.soon": "即将发布",
+      "dl.cli": "▶ Docker / CLI 部署",
+      "qs.h2": "快速接入",
+      "qs.sub": "客户端安装后自动启动本地网关，把 AI 应用的 <strong>Base URL</strong> 改为以下地址即可。",
+      "qs.openai.label": "OpenAI 兼容应用",
+      "qs.openai.desc": "Cursor、Copilot、Cherry Studio、Open WebUI 等：",
+      "qs.anthropic.label": "Anthropic 格式应用",
+      "qs.anthropic.desc": "Claude Desktop、Claude Code 等：",
+      "qs.docker.label": "Docker 部署（服务器 / 无界面）",
+      "qs.docker.desc": "挂载配置目录，启动网关服务：",
+      "qs.vps.label": "VPS · FastAPI 后端",
+      "qs.vps.desc": "搭建 P2P 节点，开放 Worker 接入：",
+      "disclaimer": "本项目仅供学习与研究使用。部署、共享 token 或转发请求须自行遵守法律法规及上游服务条款；由此产生的任何后果由使用者自行承担。",
       "disclaimer.short": "仅供学习与研究；使用后果自负。",
     },
     en: {
-      "econ.title": "Credit Economy",
-      "econ.sub":   "Earn credits by contributing compute; spend credits by calling the API. <strong style=\"color:#fff\">Rates and rules are published</strong> — per-model exchange and higher quality earns a higher multiplier — so consumers can <strong style=\"color:var(--accent)\">call tokens at lower effective cost</strong>.",
-      "econ.earn.title": "Earn Credits by Contributing",
-      "econ.earn.note":  "Every request your Agent handles, the system records your <strong>output token count</strong>. Every 5 minutes, credits are settled: output tokens ÷ 1000 × model contribute rate × quality multiplier.",
-      "econ.mult.online": "Uptime ratio",
-      "econ.mult.latency": "Time to first token",
-      "econ.mult.stability": "Success rate",
-      "econ.mult.formula": "Quality = 0.4×uptime + 0.4×TTFT + 0.2×stability, range <strong style=\"color:var(--accent);\">0.5 ~ 1.5</strong>",
-      "econ.spend.title": "Spend Credits by Calling API",
-      "econ.spend.note":  "After each API call, <strong>total tokens (prompt + completion)</strong> ÷ 1000 × model consume rate is deducted. Contribute rate > consume rate by design — rewards long-term contributors.",
-      "econ.rates.title": "Current Model Rates",
-      "econ.rates.model": "Model", "econ.rates.tier": "Tier",
-      "econ.rates.earn": "Earn Rate<br><small style='font-weight:400'>(credits/K tokens)</small>",
-      "econ.rates.spend": "Spend Rate<br><small style='font-weight:400'>(credits/K tokens)</small>",
-
-      "econ.rates.loading": "Loading…", "econ.rates.empty": "No enabled models yet",
-      "econ.exchange.title": "Cross-Tier Exchange Matrix",
-      "econ.exchange.sub": "Contribute 1K tokens (row) → consumable tokens in each tier (col, K tokens)",
-      "econ.exchange.from": "Contribute ↓ / Consume →",
-      "econ.example.title": "📌 Example",
-      "econ.example.earn":  "Contributor: model earn rate = <strong style=\"color:var(--accent)\">8 credits/K tokens</strong>, 10,000 output tokens in 5 min, quality 1.2× → earns <strong style=\"color:var(--accent)\">10 × 8 × 1.2 = 96 credits</strong>.",
-      "econ.example.spend": "Consumer: model spend rate = <strong style=\"color:var(--warm)\">5 credits/K tokens</strong>, one call uses 2,000 total tokens → costs <strong style=\"color:var(--warm)\">2 × 5 = 10 credits</strong>.",
-      "econ.example.ratio": "In short: contributing 1,000 output tokens ≈ +8 credits; consuming 1,000 total tokens ≈ −5 credits. <strong style=\"color:var(--text)\">Contribute more, earn more.</strong>",
-      "nav.value":    "Two Core Values",
-      "nav.arch":     "Architecture",
-      "nav.privacy":  "Privacy",
-      "nav.download": "Download",
-      "nav.quickstart": "Quickstart",
-      "nav.user":     "User Portal",
-      "nav.wall":     "Live Dashboard",
-      "footer.admin": "Admin",
-      "cta.start":    "Get Started",
-      "hero.h1":      "Turn idle Token quota<br>into <em>cross-model, cross-time</em> universal credits",
-      "hero.lead":    "Got unused Claude subscription? Ollama running with no callers? <strong style=\"color:var(--text)\">Contribute that idle compute</strong> and earn credits — spend them on premium or overseas models you don't have access to, or save them for when your machine is off tonight.",
-      "hero.p1":      "<strong>All for one, one for all</strong>: peer surplus sharing — universal credits across models and time.",
-      "hero.p2":      "<strong>Neutral &amp; transparent</strong> — break the traditional relay black box; multi-party dynamics with published rules; <strong>open source</strong>.",
-      "hero.p3":      "<strong>Affordable for buyers</strong>: calling via credits often yields cheaper per-token usage than buying upstream API alone.",
-      "value.sub":    "Credits bridge <strong style=\"color:#fff\">model gaps</strong> and <strong style=\"color:#fff\">time gaps</strong> — mutual aid with transparent rules: contributors monetize idle quota; consumers get more token calls per dollar.",
-      "value.v1.title": "Model Arbitrage: swap model A for model B",
-      "value.v1.body":  "Contribute quota from models you have, earn credits, spend them on models you don't. Domestic-to-overseas, open-to-premium — high-quality contributions earn a quality multiplier bonus.",
-      "value.v1.ex1":   "Domestic open model → credits → <em>overseas premium model</em>",
-      "value.v1.ex2":   "Contribute 1K premium tokens → credits → <em>consume 4K+ open tokens</em>",
-      "value.v1.ex3":   "Idle subscription quota → credits → <em>team-shared any model</em>",
-      "value.v2.title": "Time Arbitrage: bank today's surplus for the future",
-      "value.v2.body":  "Contribute your current surplus token quota and convert it to credits you can use later. Whether it's leftover API plan capacity at month-end or a machine running idle — all turns into on-demand compute reserves.",
-      "value.v2.ex1":   "PC on during the day → earn credits → <em>keep calling after it's off at night</em>",
-      "value.v2.ex2":   "Unused API quota at month-end → convert → <em>draw down next month as needed</em>",
-      "value.v2.ex3":   "Machine left on while traveling → accumulate → <em>reserves ready when you're back</em>",
-      "value.c1.title": "Contribute your voluntary quota",
-      "value.c1.body":  "Local Ollama, intranet inference gateway, or your purchased upstream API token — Agent dials out to the VPS and joins the pool under your declared model list.",
-      "value.c2.title": "Multi-node quality-weighted dispatch",
-      "value.c2.body":  "Each Worker registers its model list independently; the VPS scores quality by time-to-first-token, uptime, and success rate — routing to the best node and crediting contributors accordingly.",
-      "value.c3.title": "Keys stay local, disconnect anytime",
-      "value.c3.body":  "Upstream API keys are stored only on your machine — never sent to the server. Stop the Agent and you immediately exit the pool; no server-side unbinding needed.",
-      "arch.sub":     "External clients authenticate with a Bearer user key; Workers authenticate with the account Worker Key (wk-…) from the User Portal; <strong style=\"color:#fff\">the upstream LLM API key is never stored by the proxy.</strong>",
-      "privacy.sub":  "Design goal: share the token call path without handing upstream keys to the proxy.",
-      "privacy.p1.title": "Upstream API Key Stays Local",
-      "privacy.p1.body":  "<code style=\"color:var(--accent);font-size:.9em;\">--llm-token</code> is stored only in the local Agent config for direct upstream access. Registration sends only the worker auth token, node name and model list — not your upstream key.",
-      "privacy.p2.title": "Stop Sharing Anytime",
-      "privacy.p2.body":  "Kill the Agent (Ctrl+C) or disconnect from the network to instantly stop accepting requests — no server-side unbinding needed. The user API key for accessing the VPS is separate from your upstream key.",
-      "download.sub":     "Graphical desktop client — start the Agent, manage credits, and debug model APIs. Available for macOS and Windows.",
-      "download.loading": "Loading…",
-      "download.btn":     "Download",
-      "download.soon":    "Coming soon",
-      "download.cli":     "llm-agent CLI",
-      "download.empty":   "No binaries yet. Place builds in <code style=\"color:#fff;font-size:.9em;\">server/static/downloads/</code> and refresh.",
-      "download.err":     "Failed to load. Please try again later.",
-      "qs.sub":      "Common command reference; see <code style=\"color:var(--accent);\">README.md</code> for full variable docs and local dev instructions.",
-      "qs.vps.title":  "VPS · Docker",
-      "qs.vps.desc":   "Copy <code style=\"color:#fff;\">.env.example</code> to <code style=\"color:#fff;\">.env</code>, set <code style=\"color:#fff;\">ADMIN_KEY</code>, then:",
-      "qs.agent.title": "LAN · Agent",
-      "qs.agent.desc":  "Download the pre-built binary above, or run from source. Copy Worker Key (wk-…) from User Portal; register once, then start to stay online:",
-      "qs.note":       "API usage: <code style=\"color:#fff;\">GET /v1/models</code>, <code style=\"color:#fff;\">POST /v1/chat/completions</code> with header <code style=\"color:#fff;\">Authorization: Bearer &lt;key from User Portal&gt;</code>.",
-      "disclaimer.title": "Disclaimer",
-      "disclaimer.body":  "This project is for <strong style=\"color:var(--text);font-weight:600;\">educational and research purposes only</strong>. Deploying, sharing tokens, or forwarding requests must comply with applicable laws and upstream service terms. All consequences (data security, costs, compliance, disputes) are solely the user's responsibility.",
+      "nav.portal": "User Portal", "nav.wall": "Live Dashboard", "footer.admin": "Admin",
+      "hero.eyebrow": "Personal AI Hub · Local Gateway · Multi-device",
+      "hero.h1": "Your <em>Personal AI Hub</em><br>Unified Access, Smart Routing",
+      "hero.sub": "The local gateway transparently proxies all AI requests, <strong>routes to the best Provider</strong>, and aggregates usage across apps and devices — like iOS battery stats, <strong>every AI app is naturally included</strong>.",
+      "cta.download": "Download", "cta.howworks": "How it works",
+      "gw.h2": "Multi-format access,<br><em>zero-config proxy</em>",
+      "gw.sub": "The local gateway supports all major AI API formats. No app changes needed — just point your <strong>Base URL</strong> to <strong>127.0.0.1:11430</strong> and requests are automatically routed to the best Provider.",
+      "gw.c1.title": "Keys stay local",
+      "gw.c1.body": "Upstream API keys are stored only on your machine, never sent to any cloud server. The gateway connects directly to upstream providers.",
+      "gw.c2.title": "Smart Provider routing",
+      "gw.c2.body": "Automatically selects the best Provider by model and cost policy. Falls back gracefully from free to P2P to paid as quota runs out.",
+      "gw.c3.title": "Visual management",
+      "gw.c3.body": "GUI to configure Providers, inspect routing logs, and debug model APIs in real time — no more manual curl.",
+      "opt.h2": "Built-in <em>cost optimization</em>",
+      "opt.sub": "The gateway isn't just a forwarder — it has cost optimization strategies baked into the routing layer.",
+      "opt.s1.title": "Task-grade routing", "opt.s1.body": "Auto-routes simple requests to low-cost models and complex tasks to high-performance ones based on scene rules.",
+      "opt.s2.title": "Provider priority", "opt.s2.body": "Configure free → P2P → paid fallback. Always prefers cheaper Providers when available, minimizing paid API calls.",
+      "opt.s3.title": "Multi-key rotation", "opt.s3.body": "Bind multiple API keys to one Provider and auto-rotate, spreading rate limits to avoid single-key throttling.",
+      "opt.s4.title": "Usage-aware dispatch", "opt.s4.body": "Monitors daily quota in real time and auto-switches Providers as limits approach, keeping service continuous.",
+      "stats.h2": "All AI spend,<br><em>one screen</em>",
+      "stats.sub": "Like <strong>iOS battery stats</strong> — every AI app is automatically included with zero configuration. Gateway requests, direct API calls, Claude Code, Codex — all aggregated in one Dashboard.",
+      "stats.sp1": "Sources auto-detected", "stats.sp2": "Any AI app covered", "stats.sp3": "Multi-device unified",
+      "stats.mock.title": "AI Usage · This Month",
+      "prov.h2": "Three Provider tiers,<br><em>auto-selected</em>",
+      "prov.sub": "Routes by cost priority — free first, never paid when free is available. P2P sharing further reduces costs.",
+      "prov.t1.desc": "Public nodes, open inference, and vendor free tiers. Lowest cost, highest priority.",
+      "prov.t2.desc": "Community members contribute idle quota; consumers spend credits — often cheaper than official APIs.",
+      "prov.t3.desc": "OpenAI, Anthropic, and domestic vendors. Used as fallback when free and P2P capacity runs out.",
+      "credit.title": "P2P Credit Economy",
+      "dl.h2": "Download Token Bank",
+      "dl.sub": "Desktop GUI client — start your local gateway, manage Providers and credits. Available for macOS and Windows.",
+      "dl.loading": "Loading…", "dl.btn": "Download", "dl.soon": "Coming soon",
+      "dl.cli": "▶ Docker / CLI deployment",
+      "qs.h2": "Quick setup",
+      "qs.sub": "After installing, the gateway starts automatically. Just update the <strong>Base URL</strong> in your AI app.",
+      "qs.openai.label": "OpenAI-compatible apps",
+      "qs.openai.desc": "Cursor, Copilot, Cherry Studio, Open WebUI, etc.:",
+      "qs.anthropic.label": "Anthropic-format apps",
+      "qs.anthropic.desc": "Claude Desktop, Claude Code, etc.:",
+      "qs.docker.label": "Docker (server / headless)",
+      "qs.docker.desc": "Mount config dir and start the gateway service:",
+      "qs.vps.label": "VPS · FastAPI backend",
+      "qs.vps.desc": "Host a P2P node and accept Worker connections:",
+      "disclaimer": "This project is for educational and research purposes only. Deploying, sharing tokens, or forwarding requests must comply with applicable laws and upstream service terms. All consequences are the user's sole responsibility.",
       "disclaimer.short": "For educational and research use only. Use at your own risk.",
     }
   }
 
-  var currentLang = localStorage.getItem('lang') || 'zh'
+  var lang = localStorage.getItem('lang') || 'zh'
 
-  function applyLang(lang) {
-    var dict = LANGS[lang]
-    // text nodes
+  function applyLang(l) {
+    var d = LANGS[l]
     document.querySelectorAll('[data-i18n]').forEach(function(el) {
-      var key = el.getAttribute('data-i18n')
-      if (dict[key] !== undefined) el.textContent = dict[key]
+      var k = el.getAttribute('data-i18n'); if (d[k] !== undefined) el.textContent = d[k]
     })
-    // html nodes
     document.querySelectorAll('[data-i18n-html]').forEach(function(el) {
-      var key = el.getAttribute('data-i18n-html')
-      if (dict[key] !== undefined) el.innerHTML = dict[key]
+      var k = el.getAttribute('data-i18n-html'); if (d[k] !== undefined) el.innerHTML = d[k]
     })
-    document.getElementById('lang-toggle').textContent = lang === 'zh' ? 'EN' : '中'
-    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en'
+    document.querySelector('.btn-lang').textContent = l === 'zh' ? 'EN' : '中'
+    document.documentElement.lang = l === 'zh' ? 'zh-CN' : 'en'
+  }
+  function toggleLang() {
+    lang = lang === 'zh' ? 'en' : 'zh'
+    localStorage.setItem('lang', lang)
+    applyLang(lang)
   }
 
-  function toggleLang() {
-    currentLang = currentLang === 'zh' ? 'en' : 'zh'
-    localStorage.setItem('lang', currentLang)
-    applyLang(currentLang)
-  }
+  /* ── Scroll reveal ── */
+  var observer = new IntersectionObserver(function(entries) {
+    entries.forEach(function(e) { if (e.isIntersecting) { e.target.classList.add('visible'); observer.unobserve(e.target); } })
+  }, { threshold: 0.08 })
+  document.querySelectorAll('.reveal').forEach(function(el) { observer.observe(el) })
 
   /* ── Downloads ── */
-  var CLI_LABELS = {
-    "llm-agent-linux-amd64":       "Linux · x86_64",
-    "llm-agent-linux-arm64":       "Linux · ARM64",
-    "llm-agent-darwin-arm64":      "macOS · Apple Silicon",
-    "llm-agent-darwin-amd64":      "macOS · Intel",
-    "llm-agent-windows-amd64.exe": "Windows · x86_64",
-  }
-  function fmtBytes(n) {
-    if (typeof n !== 'number' || n < 0) return '—'
-    if (n < 1024) return n + ' B'
-    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB'
-    return (n / 1048576).toFixed(1) + ' MB'
-  }
-
-  // Detect current OS for card highlighting
   var ua = navigator.userAgent || ''
   var isMac = /Macintosh|Mac OS X/.test(ua)
   var isWin = /Windows/.test(ua)
+
+  function fmtBytes(n) {
+    if (typeof n !== 'number' || n < 0) return ''
+    if (n < 1048576) return (n / 1024).toFixed(0) + ' KB'
+    return (n / 1048576).toFixed(1) + ' MB'
+  }
 
   function loadDownloads() {
     fetch('/api/agent-downloads')
       .then(function(r) { return r.json() })
       .then(function(data) {
         var items = data.items || []
-        var appItems = items.filter(function(it) { return /\.(dmg|exe)$/i.test(it.filename) })
-        var cliItems = items.filter(function(it) { return !/\.(dmg|exe)$/i.test(it.filename) })
-        var L = LANGS[currentLang]
+        var L = LANGS[lang]
+        var dmg = items.find(function(it) { return /\.dmg$/i.test(it.filename) })
+        var exe = items.find(function(it) { return /\.exe$/i.test(it.filename) })
 
-        // ── Desktop app cards ──
-        var dmg = appItems.find(function(it) { return /\.dmg$/i.test(it.filename) })
-        var exe = appItems.find(function(it) { return /\.exe$/i.test(it.filename) })
-
-        function setupCard(cardId, btnId, metaId, item, extraMeta) {
+        function setupCard(cardId, btnId, metaId, item, meta) {
           var btn = document.getElementById(btnId)
-          var meta = document.getElementById(metaId)
+          var el  = document.getElementById(metaId)
           var card = document.getElementById(cardId)
           if (!btn) return
           if (item) {
-            btn.href = item.url
-            btn.textContent = L['download.btn'] || '立即下载'
-            btn.classList.remove('unavailable')
-            btn.classList.add('available')
-            if (meta) meta.textContent = extraMeta + ' · ' + fmtBytes(item.bytes)
+            btn.href = item.url; btn.textContent = L['dl.btn'] || '立即下载'
+            btn.className = 'dl-btn available'
+            if (el) el.textContent = meta + (item.bytes ? ' · ' + fmtBytes(item.bytes) : '')
           } else {
-            btn.textContent = L['download.soon'] || '即将发布'
-            btn.removeAttribute('href')
+            btn.textContent = L['dl.soon'] || '即将发布'; btn.removeAttribute('href')
           }
-          // Highlight card matching current OS
           if (card && ((cardId === 'card-mac' && isMac) || (cardId === 'card-win' && isWin))) {
-            card.classList.add('highlight')
+            card.classList.add('current')
           }
         }
+        setupCard('card-mac','btn-mac','meta-mac', dmg, 'Apple Silicon & Intel · .dmg')
+        setupCard('card-win','btn-win','meta-win', exe, 'x86_64 · .exe')
 
-        setupCard('card-mac', 'btn-mac', 'meta-mac', dmg, 'Apple Silicon & Intel · .dmg')
-        setupCard('card-win', 'btn-win', 'meta-win', exe, 'x86_64 · .exe 安装包')
-
-        // ── CLI agent list ──
+        var cliItems = items.filter(function(it) { return !/\.(dmg|exe)$/i.test(it.filename) })
         var el = document.getElementById('agent-download-list')
         if (!el) return
-        el.classList.remove('loading')
         if (!cliItems.length) {
-          el.innerHTML = '<p style="margin:0;color:var(--muted);line-height:1.65;">' + L['download.empty'] + '</p>'
+          el.innerHTML = '<p style="color:var(--muted);font-size:.85rem;">暂无预编译文件</p>'
           return
         }
-        var html = ''
-        cliItems.forEach(function(it) {
+        var CLI_LABELS = {
+          "llm-agent-linux-amd64":"Linux · x86_64","llm-agent-linux-arm64":"Linux · ARM64",
+          "llm-agent-darwin-arm64":"macOS · Apple Silicon","llm-agent-darwin-amd64":"macOS · Intel",
+          "llm-agent-windows-amd64.exe":"Windows · x86_64"
+        }
+        el.innerHTML = cliItems.map(function(it) {
           var label = CLI_LABELS[it.filename] || it.filename
-          html += '<div class="download-row">'
-          html += '<div><strong style="color:#fff;font-weight:600;">' + label + '</strong>'
-          html += '<div class="download-meta">' + it.filename + ' · ' + fmtBytes(it.bytes) + '</div></div>'
-          html += '<a class="btn btn-primary" href="' + it.url + '">Download</a>'
-          html += '</div>'
-        })
-        el.innerHTML = html
+          return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">'
+            + '<div><div style="font-size:.85rem;color:var(--text);font-weight:500;">' + label + '</div>'
+            + '<div style="font-family:\'DM Mono\',monospace;font-size:.68rem;color:var(--muted);margin-top:2px;">' + it.filename + (it.bytes ? ' · ' + fmtBytes(it.bytes) : '') + '</div></div>'
+            + '<a href="' + it.url + '" style="background:var(--accent);color:#001a14;padding:6px 16px;border-radius:6px;font-size:.8rem;font-weight:600;text-decoration:none;">↓</a>'
+            + '</div>'
+        }).join('')
       })
       .catch(function() {
-        var el = document.getElementById('agent-download-list')
-        if (el) { el.classList.remove('loading'); el.innerHTML = '<p style="margin:0;color:#f87171;">' + LANGS[currentLang]['download.err'] + '</p>' }
         ;['btn-mac','btn-win'].forEach(function(id) {
-          var btn = document.getElementById(id)
-          if (btn) btn.textContent = LANGS[currentLang]['download.err'] || '加载失败'
+          var b = document.getElementById(id); if (b) b.textContent = '—'
         })
-      })
-  }
-
-  function loadRates() {
-    var tbody = document.getElementById('rates-tbody')
-    if (!tbody) return
-    fetch('/api/rates')
-      .then(function(r) { return r.json() })
-      .then(function(data) {
-        var models = data.models || []
-        if (!models.length) {
-          tbody.innerHTML = '<tr><td colspan="4" class="rates-empty">' + LANGS[currentLang]['econ.rates.empty'] + '</td></tr>'
-        } else {
-          tbody.innerHTML = models.map(function(m) {
-            var tierCls = m.tier === 'premium' ? 'tier-premium' : 'tier-open'
-            var name = m.display_name || m.name
-            return '<tr><td style="font-family:\'JetBrains Mono\',monospace;font-size:.8rem">' + name + '</td>'
-              + '<td><span class="tier-badge ' + tierCls + '">' + m.tier + '</span></td>'
-              + '<td style="color:#2dd4bf;font-weight:700">' + m.contribute_rate + '</td>'
-              + '<td style="color:#fbbf24;font-weight:700">' + m.consume_rate + '</td></tr>'
-          }).join('')
-        }
-
-        // Cross-tier exchange matrix
-        var exchange = data.exchange || {}
-        var tiers = Object.keys(exchange)
-        var matrixEl = document.getElementById('exchange-matrix')
-        if (matrixEl && tiers.length > 1) {
-          var L = LANGS[currentLang]
-          var tierColor = function(t) { return t === 'premium' ? '#a5b4fc' : '#4ade80' }
-          var headerCols = tiers.map(function(t) {
-            return '<th style="color:' + tierColor(t) + ';padding:6px 14px;text-align:center;white-space:nowrap">' + t + '</th>'
-          }).join('')
-          var bodyRows = tiers.map(function(from) {
-            var cells = tiers.map(function(to) {
-              var val = (exchange[from] || {})[to]
-              var color = from === to ? '#e2e8f0' : (val > 1 ? '#4ade80' : '#f87171')
-              return '<td style="text-align:center;padding:6px 14px;color:' + color + ';font-weight:700">' + (val !== undefined ? val + 'K' : '—') + '</td>'
-            }).join('')
-            return '<tr><td style="color:' + tierColor(from) + ';padding:6px 14px;white-space:nowrap;font-weight:600">' + from + '</td>' + cells + '</tr>'
-          }).join('')
-          matrixEl.innerHTML = '<p style="font-size:.82rem;font-weight:600;color:var(--muted);margin-bottom:8px">'
-            + L['econ.exchange.title'] + '</p>'
-            + '<p style="font-size:.75rem;color:var(--muted);margin-bottom:10px">' + L['econ.exchange.sub'] + '</p>'
-            + '<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:.82rem;min-width:280px">'
-            + '<thead><tr><th style="padding:6px 14px;color:var(--muted);text-align:left;white-space:nowrap">' + L['econ.exchange.from'] + '</th>' + headerCols + '</thead>'
-            + '<tbody>' + bodyRows + '</tbody></table></div>'
-        } else if (matrixEl) {
-          matrixEl.innerHTML = ''
-        }
-      })
-      .catch(function() {
-        tbody.innerHTML = '<tr><td colspan="4" class="rates-empty">—</td></tr>'
       })
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() { applyLang(currentLang); loadDownloads(); loadRates() })
-  } else {
-    applyLang(currentLang)
-    loadDownloads()
-    loadRates()
-  }
+    document.addEventListener('DOMContentLoaded', function() { applyLang(lang); loadDownloads() })
+  } else { applyLang(lang); loadDownloads() }
   </script>
 </body>
 </html>
