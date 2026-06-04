@@ -1,6 +1,364 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { getRates } from '../api/client';
 import { getGateway, getLocalConfig, getConfig } from '../api/adapter';
+import { listAgents, applyAgent, revertAgent } from '../api/agents';
+
+// ── PolicyManager：策略组管理 UI ──────────────────────────────────────────────
+const STRATEGY_OPTIONS = [
+  { value: 'fallback',    label: '故障转移', desc: '按序尝试，主挂了用备' },
+  { value: 'round-robin', label: '轮询',     desc: '依次循环使用' },
+  { value: 'weighted',    label: '加权随机', desc: '按权重随机选择' },
+  { value: 'latency',     label: '延迟优先', desc: '选历史延迟最低的' },
+  { value: 'direct',      label: '直连',     desc: '只用第一个，不降级' },
+];
+
+function PolicyManager() {
+  const [policies, setPolicies] = useState([]);
+  const [providers, setProviders] = useState([]);
+  const [editing, setEditing] = useState(null);   // null | policy object | 'new'
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  // 编辑表单状态
+  const [formName, setFormName] = useState('');
+  const [formStrategy, setFormStrategy] = useState('fallback');
+  const [formProviders, setFormProviders] = useState([]);  // [{id, weight}]
+
+  const load = useCallback(async () => {
+    if (!window.electronAPI?.policies) return;
+    const [pl, cfg] = await Promise.all([
+      window.electronAPI.policies.list(),
+      window.electronAPI.config?.read?.(),
+    ]);
+    setPolicies(Array.isArray(pl) ? pl : []);
+    setProviders((cfg?.providers || []).filter(p => p.enabled && p.base_url));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  function openNew() {
+    setFormName(''); setFormStrategy('fallback'); setFormProviders([]);
+    setEditing('new'); setMsg('');
+  }
+  function openEdit(p) {
+    setFormName(p.name); setFormStrategy(p.strategy || 'fallback');
+    setFormProviders((p.providers || []).map(x => typeof x === 'string' ? { id: x, weight: 1 } : x));
+    setEditing(p); setMsg('');
+  }
+  function cancelEdit() { setEditing(null); setMsg(''); }
+
+  async function save() {
+    if (!formName.trim()) return setMsg('策略名不能为空');
+    setBusy(true);
+    try {
+      const d = { name: formName.trim(), strategy: formStrategy, providers: formProviders };
+      if (editing === 'new') await window.electronAPI.policies.create(d);
+      else await window.electronAPI.policies.update({ id: editing.id, ...d });
+      await load(); setEditing(null); setMsg('');
+    } catch (e) { setMsg('✗ ' + e.message); }
+    setBusy(false);
+  }
+
+  async function del(id) {
+    if (!window.confirm('删除策略组？')) return;
+    await window.electronAPI.policies.delete(id);
+    await load();
+  }
+
+  function addProvider(provId) {
+    if (!provId || formProviders.find(p => p.id === provId)) return;
+    setFormProviders(prev => [...prev, { id: provId, weight: 1 }]);
+  }
+  function removeProvider(id) { setFormProviders(prev => prev.filter(p => p.id !== id)); }
+  function setWeight(id, w) { setFormProviders(prev => prev.map(p => p.id === id ? { ...p, weight: Math.max(1, +w || 1) } : p)); }
+  function moveUp(idx) { if (idx === 0) return; const a = [...formProviders]; [a[idx-1], a[idx]] = [a[idx], a[idx-1]]; setFormProviders(a); }
+
+  return (
+    <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 mb-4">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-base">⚖️</span>
+        <h2 className="font-semibold text-gray-800 dark:text-gray-100 text-sm">路由策略组</h2>
+        <span className="text-xs text-gray-400 dark:text-gray-500">配置 provider 调度策略，透明接入与场景路由均可使用</span>
+        <button onClick={openNew}
+          className="ml-auto text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors">
+          + 新建策略组
+        </button>
+      </div>
+
+      {/* 策略组列表 */}
+      <div className="flex flex-col gap-1.5 mb-2">
+        {policies.length === 0 && <div className="text-xs text-gray-400 py-1">暂无策略组</div>}
+        {policies.map(p => (
+          <div key={p.id} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40 text-sm">
+            <span className="font-medium text-gray-800 dark:text-gray-100 truncate flex-1">{p.name}</span>
+            <span className="text-xs text-gray-400 dark:text-gray-500 shrink-0">
+              {STRATEGY_OPTIONS.find(s => s.value === p.strategy)?.label || p.strategy}
+            </span>
+            <span className="text-xs text-gray-400 shrink-0">{(p.providers||[]).length} 个 provider</span>
+            <button onClick={() => openEdit(p)}
+              className="text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 shrink-0">
+              编辑
+            </button>
+            <button onClick={() => del(p.id)}
+              className="text-xs text-red-400 hover:text-red-600 shrink-0">删</button>
+          </div>
+        ))}
+      </div>
+
+      {/* 编辑面板 */}
+      {editing && (
+        <div className="mt-3 p-3 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30">
+          <div className="text-xs font-medium text-gray-700 dark:text-gray-200 mb-2">
+            {editing === 'new' ? '新建策略组' : `编辑：${editing.name}`}
+          </div>
+          <div className="flex flex-col gap-2">
+            {/* 名称 */}
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500 w-14 shrink-0">策略名</label>
+              <input value={formName} onChange={e => setFormName(e.target.value)}
+                placeholder="如：code-policy"
+                className="flex-1 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 outline-none focus:border-blue-400 text-gray-800 dark:text-gray-200" />
+            </div>
+            {/* Strategy */}
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500 w-14 shrink-0">执行方式</label>
+              <select value={formStrategy} onChange={e => setFormStrategy(e.target.value)}
+                className="flex-1 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200">
+                {STRATEGY_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label} — {o.desc}</option>
+                ))}
+              </select>
+            </div>
+            {/* Provider 列表 */}
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <label className="text-xs text-gray-500 w-14 shrink-0">Provider</label>
+                <select defaultValue="" onChange={e => { addProvider(e.target.value); e.target.value = ''; }}
+                  className="flex-1 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200">
+                  <option value="">+ 添加 provider…</option>
+                  {providers.filter(p => !formProviders.find(fp => fp.id === p.id)).map(p => (
+                    <option key={p.id} value={p.id}>{p.label || p.id}</option>
+                  ))}
+                </select>
+              </div>
+              {formProviders.map((fp, idx) => (
+                <div key={fp.id} className="flex items-center gap-1.5 ml-16 mb-1">
+                  <span className="text-xs text-gray-600 dark:text-gray-300 flex-1 truncate">{fp.id}</span>
+                  {formStrategy === 'weighted' && (
+                    <label className="text-xs text-gray-400">weight
+                      <input type="number" min="1" value={fp.weight} onChange={e => setWeight(fp.id, e.target.value)}
+                        className="ml-1 w-12 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-1 py-0.5 text-center" />
+                    </label>
+                  )}
+                  <button onClick={() => moveUp(idx)} disabled={idx===0}
+                    className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-30">↑</button>
+                  <button onClick={() => removeProvider(fp.id)}
+                    className="text-xs text-red-400 hover:text-red-600">✕</button>
+                </div>
+              ))}
+              {formProviders.length === 0 && (
+                <div className="ml-16 text-xs text-gray-400">暂无 provider（保存后策略将 fallthrough 到默认逻辑）</div>
+              )}
+            </div>
+            {/* 操作 */}
+            {msg && <div className={`text-xs ml-16 ${msg.startsWith('✗') ? 'text-red-500' : 'text-green-600'}`}>{msg}</div>}
+            <div className="flex gap-2 ml-16">
+              <button onClick={save} disabled={busy}
+                className="text-xs px-3 py-1 rounded bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50">
+                {busy ? '保存中…' : '保存'}
+              </button>
+              <button onClick={cancelEdit}
+                className="text-xs px-3 py-1 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300">
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+        💡 策略组由 yaml 路由规则自动匹配（如「有 tool calls → code-policy」），也可在场景路由中直接指定。
+      </p>
+    </div>
+  );
+}
+
+// ── ImportConfigButton：导入工具清单配置（本地文件 or URL）───────────────────
+function ImportConfigButton({ onImported }) {
+  const [busy, setBusy] = useState(false);
+  const [msg,  setMsg]  = useState('');
+  const [showUrl, setShowUrl] = useState(false);
+  const [url, setUrl] = useState('');
+
+  async function handleFile() {
+    if (!window.electronAPI?.toolsConfig) return;
+    setBusy(true); setMsg('');
+    const r = await window.electronAPI.toolsConfig.importFile();
+    if (r.canceled) { setBusy(false); return; }
+    setMsg(r.ok ? '✓ 配置已导入' : '✗ ' + r.error);
+    if (r.ok && onImported) onImported();
+    setBusy(false);
+  }
+
+  async function handleUrl() {
+    if (!url.trim() || !window.electronAPI?.toolsConfig) return;
+    setBusy(true); setMsg('');
+    const r = await window.electronAPI.toolsConfig.importUrl(url.trim());
+    setMsg(r.ok ? '✓ 配置已从 URL 导入' : '✗ ' + r.error);
+    if (r.ok && onImported) { onImported(); setShowUrl(false); setUrl(''); }
+    setBusy(false);
+  }
+
+  return (
+    <div className="relative">
+      <div className="flex items-center gap-1">
+        <button disabled={busy} onClick={handleFile}
+          className="text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors">
+          {busy ? '导入中…' : '📥 导入配置'}
+        </button>
+        <button onClick={() => setShowUrl(v => !v)}
+          className="text-xs px-1.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+          🔗
+        </button>
+      </div>
+      {msg && <div className={`text-xs mt-1 ${msg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{msg}</div>}
+      {showUrl && (
+        <div className="absolute right-0 top-8 z-10 flex items-center gap-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 shadow-lg">
+          <input value={url} onChange={e => setUrl(e.target.value)}
+            placeholder="https://example.com/tools.yaml"
+            className="text-xs bg-transparent border-none outline-none text-gray-700 dark:text-gray-200 w-56" />
+          <button onClick={handleUrl} disabled={busy || !url.trim()}
+            className="text-xs px-2 py-0.5 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50">
+            导入
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── AgentLinker：CLI Agent 透明接入区块 ──────────────────────────────────────
+const STRATEGY_LABEL = { 'base_url-env': '环境变量', 'config-file': '配置文件', 'mitm-env': 'MITM+证书' };
+
+function AgentLinker() {
+  const [agents, setAgents]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy]       = useState({});   // id → true
+  const [notice, setNotice]   = useState({});   // id → 提示文字
+
+  const refresh = useCallback(async () => {
+    try { setAgents(await listAgents()); } catch {}
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  async function handleApply(id) {
+    setBusy(b => ({ ...b, [id]: true }));
+    setNotice(n => ({ ...n, [id]: '' }));
+    try {
+      const r = await applyAgent(id);
+      if (r.ok) {
+        let msg = r.needsRestartShell ? '✓ 已接入，重开终端后生效' : '✓ 已接入';
+        if (r.enabledProvider) msg += `，已开启供给源 [${r.enabledProvider}]，请去供给源页填写 Key`;
+        setNotice(n => ({ ...n, [id]: msg }));
+        await refresh();
+      } else {
+        setNotice(n => ({ ...n, [id]: '✗ ' + (r.error || '失败') }));
+      }
+    } catch (e) { setNotice(n => ({ ...n, [id]: '✗ ' + e.message })); }
+    setBusy(b => ({ ...b, [id]: false }));
+  }
+
+  async function handleRevert(id) {
+    setBusy(b => ({ ...b, [id]: true }));
+    setNotice(n => ({ ...n, [id]: '' }));
+    try {
+      const r = await revertAgent(id);
+      if (r.ok) { setNotice(n => ({ ...n, [id]: '✓ 已还原' })); await refresh(); }
+      else       { setNotice(n => ({ ...n, [id]: '✗ ' + (r.error || '失败') })); }
+    } catch (e) { setNotice(n => ({ ...n, [id]: '✗ ' + e.message })); }
+    setBusy(b => ({ ...b, [id]: false }));
+  }
+
+  return (
+    <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 mb-4">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-base">🔌</span>
+        <h2 className="font-semibold text-gray-800 dark:text-gray-100 text-sm">CLI Agent 透明接入</h2>
+        <span className="text-xs text-gray-400 dark:text-gray-500">自动把本机 CLI 工具流量导入网关，无需手动配置</span>
+        <div className="ml-auto flex items-center gap-2">
+          <button onClick={refresh} className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">↻ 刷新</button>
+          <ImportConfigButton onImported={refresh} />
+        </div>
+      </div>
+      {loading ? (
+        <div className="text-xs text-gray-400 py-2">检测中…</div>
+      ) : agents.length === 0 ? (
+        <div className="text-xs text-gray-400 py-2">未检测到已知 CLI Agent（配置文件加载中）</div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {agents.map(a => (
+            <div key={a.id}
+              className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-sm transition-colors
+                ${!a.installed ? 'opacity-40 border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/30' :
+                  a.linked ? 'border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/30' :
+                             'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40'}`}
+            >
+              {/* 状态点 */}
+              <span className={`w-2 h-2 rounded-full shrink-0 ${
+                !a.installed ? 'bg-gray-300 dark:bg-gray-600' :
+                a.linked     ? 'bg-green-400' : 'bg-gray-400 dark:bg-gray-500'}`} />
+
+              {/* 名称 + 策略 */}
+              <div className="flex-1 min-w-0">
+                <span className="font-medium text-gray-800 dark:text-gray-100">{a.name}</span>
+                <span className="ml-2 text-xs text-gray-400">
+                  {a.installed ? (STRATEGY_LABEL[a.strategy] || a.strategy) : '未安装'}
+                </span>
+              </div>
+
+              {/* 接入状态标签 */}
+              {a.installed && (
+                <span className={`text-xs px-2 py-0.5 rounded-full shrink-0
+                  ${a.linked ? 'bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300'
+                              : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}>
+                  {a.linked ? '接入中' : '未接入'}
+                </span>
+              )}
+
+              {/* 提示文字 */}
+              {notice[a.id] && (
+                <span className={`text-xs shrink-0 max-w-[200px] truncate ${notice[a.id].startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}
+                  title={notice[a.id]}>
+                  {notice[a.id]}
+                </span>
+              )}
+
+              {/* 操作按钮 */}
+              {a.installed && !a.linked && (
+                <button
+                  disabled={busy[a.id]}
+                  onClick={() => handleApply(a.id)}
+                  className="shrink-0 text-xs px-3 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 transition-colors">
+                  {busy[a.id] ? '接入中…' : '一键接入'}
+                </button>
+              )}
+              {a.installed && a.linked && (
+                <button
+                  disabled={busy[a.id]}
+                  onClick={() => handleRevert(a.id)}
+                  className="shrink-0 text-xs px-3 py-1 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 disabled:opacity-50 transition-colors">
+                  {busy[a.id] ? '还原中…' : '还原'}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
+        💡 接入后需<b>重开终端</b>才能对新启动的工具生效；关闭 Token Bank 时自动还原。
+      </p>
+    </div>
+  );
+}
 
 // ── Tier helpers ──────────────────────────────────────────────────────────────
 
@@ -722,12 +1080,18 @@ export default function Gateway() {
         </div>
       </div>
 
-      {/* 场景路由 */}
+      {/* 🔌 CLI Agent 透明接入 */}
+      <AgentLinker />
+
+      {/* ⚖️ 路由策略组 */}
+      <PolicyManager />
+
+      {/* 🔀 场景路由 */}
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800">
           <div>
             <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">场景路由</h2>
-            <p className="text-xs text-gray-500 mt-0.5">定义每个场景的模型降级链</p>
+            <p className="text-xs text-gray-500 mt-0.5">定义每个场景的模型降级链，通过 llm-router-xxx 触发</p>
           </div>
           <button
             onClick={() => { setExpandedRoute(null); setNewRoute({ scene_name: '', icon: '🔀', steps: [] }); }}
@@ -821,11 +1185,11 @@ export default function Gateway() {
         </div>
       </div>
 
-      {/* 场景应用 */}
+      {/* 🎯 API Key 管理 */}
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
-          <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">场景应用</h2>
-          <p className="text-xs text-gray-500 mt-0.5">创建 API Key，接入本地网关</p>
+          <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">API Key 管理</h2>
+          <p className="text-xs text-gray-500 mt-0.5">创建本地 Key，绑定场景路由或指定模型</p>
         </div>
 
         {/* Step 1: Create key */}

@@ -4,6 +4,7 @@
 const http  = require('http');
 const https = require('https');
 const codexTransform = require('./codex-transform');
+const reqRouter = require('./request-router');
 
 // ── In-memory state ───────────────────────────────────────────────────────────
 
@@ -25,6 +26,8 @@ let _cloudToken   = null;
 let _statsRecorder = null;
 // Local stats module — set by main process via setLocalStats(), used for HTTP queries
 let _localStats    = null;
+// local-config 读取器（由 main 注入，供策略组调度查 policies[]）
+let _getLocalConfig = null;
 
 // ── Format conversion (Anthropic ↔ OpenAI) ───────────────────────────────────
 
@@ -862,16 +865,47 @@ async function route(model, reqPath, body, res, callerKey) {
     return;
   }
 
-  // ── Direct model request: try providers that list this model ─────────────
-  // Explicit model-list providers first, catch-alls (empty list) last
-  const candidates = enabledProviders().filter(p => providerHasModel(p, model));
-  const sorted = [
-    ...candidates.filter(p => Array.isArray(p.models) && p.models.length > 0),
-    ...candidates.filter(p => !Array.isArray(p.models) || p.models.length === 0),
-  ];
+  // ── Direct model request ──────────────────────────────────────────────────
+  const allEnabled = enabledProviders();
+
+  // ★ 三层特征提取 + 策略组调度：按 policy 决定 provider 优先顺序
+  let sorted;
+  try {
+    const { providerIds, fallthrough, features, policyRef } =
+      reqRouter.resolveProviderOrder(body, callerKey, reqPath, _getLocalConfig);
+
+    if (!fallthrough && providerIds.length > 0) {
+      // 策略组有明确 provider 列表：按策略顺序排，不在策略组里的 enabled providers 追加兜底
+      const inPolicy = providerIds
+        .map(id => allEnabled.find(p => p.id === id))
+        .filter(Boolean);
+      const others   = allEnabled.filter(p => !providerIds.includes(p.id) && providerHasModel(p, model));
+      sorted = [...inPolicy, ...others];
+      pushLog({ ts: t0, requested_model: model, model, policy: policyRef,
+                features: { task_type: features.task_type, has_tools: features.has_tools,
+                            context_length: features.context_length }, status: 'routing' });
+    } else {
+      // fallthrough：策略组为空或未匹配，用原有 model 匹配逻辑
+      const candidates = allEnabled.filter(p => providerHasModel(p, model));
+      sorted = [
+        ...candidates.filter(p => Array.isArray(p.models) && p.models.length > 0),
+        ...candidates.filter(p => !Array.isArray(p.models) || p.models.length === 0),
+      ];
+    }
+  } catch {
+    // 策略路由出错不影响正常请求，回退到原逻辑
+    const candidates = allEnabled.filter(p => providerHasModel(p, model));
+    sorted = [
+      ...candidates.filter(p => Array.isArray(p.models) && p.models.length > 0),
+      ...candidates.filter(p => !Array.isArray(p.models) || p.models.length === 0),
+    ];
+  }
+
   for (const provider of sorted) {
     try {
       const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, model, res);
+      // 记录延迟（供 latency 策略下次参考）
+      if (result.latency) reqRouter.recordLatency(provider.id, result.latency);
       pushLog({
         ts: t0, requested_model: model, model,
         tier: provider.type, via: provider.id, via_label: provider.label,
@@ -1148,8 +1182,13 @@ function setLocalStats(mod) {
   _localStats = mod && typeof mod.queryDashboard === 'function' ? mod : null;
 }
 
+// 注入 local-config 读取器（供策略组调度查 policies[]）
+function setLocalConfigReader(fn) {
+  _getLocalConfig = typeof fn === 'function' ? fn : null;
+}
+
 module.exports = {
   start, stop, restart, setStrategy, getStatus, getLog,
   setKeySceneMap, setRouterModelMap, setPeerModels, setBackendConfig,
-  setStatsRecorder, setLocalStats,
+  setStatsRecorder, setLocalStats, setLocalConfigReader,
 };

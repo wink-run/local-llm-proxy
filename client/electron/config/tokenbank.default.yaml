@@ -1,0 +1,170 @@
+# tokenbank.yaml —— 端到端唯一真相源（方案 Y）
+# 一份配置同时管：客户端接入 + 上游 provider + 路由 + 证书来源。
+# 内置默认；可从云端拉取覆盖（remote）。
+# 铁律：真 key / 真证书永不进此文件，只放“去哪取”的引用（_ref）。
+
+version: 1
+
+gateway:
+  host: 127.0.0.1
+  reverse_port: 11430        # 反向代理端口（base_url 指这里）；{REVERSE}=host:reverse_port
+  mitm_port: 8888            # MITM proxy 端口（HTTPS_PROXY 指这里）；{MITM}=host:mitm_port
+
+# 证书来源（仅策略3 mitm-env 用）：用户配了用用户的，没配自动生成
+mitm:
+  ca_ref:
+    - file://{TOKENBANK_CA|}  # 用户显式指定 CA 路径（为空跳过）
+    - auto                    # 回退：自动生成 name-constrained CA（约束=mitm-domains 并集）
+
+# ════════ 客户端接入 ════════
+tools:
+  - id: claude-code
+    name: Claude Code
+    protocol: anthropic
+    detect:
+      command: claude
+      version-arg: --version
+      config-dirs: ['$CLAUDE_CONFIG_DIR', '~/.claude']
+    strategy: base_url-env
+    inject:
+      env:
+        ANTHROPIC_BASE_URL: http://{REVERSE}
+
+  - id: gemini-cli
+    name: Gemini CLI
+    protocol: gemini
+    detect:
+      command: gemini
+      version-arg: --version
+      config-dirs: ['~/.gemini']
+    strategy: base_url-env
+    inject:
+      env:
+        GEMINI_BASE_URL: http://{REVERSE}
+
+  - id: codex
+    name: Codex (CLI)
+    protocol: responses
+    detect:
+      command: codex
+      version-arg: --version
+    strategy: config-file
+    config-file: '{CODEX_HOME|~/.codex}/config.toml'
+    patch:
+      model_provider: tokenbank
+      model_providers.tokenbank.base_url: http://{REVERSE}/v1
+      model_providers.tokenbank.wire_api: responses
+    revert: state-precise
+
+# protocol → 网关端点映射（不写死在代码里）
+# default_provider_id：接入该协议的 agent 时，自动在 local-config 里 enable 对应 provider。
+# 不配则不操作 provider（严格配置驱动，用户自行去 Providers 页手动开）。
+protocols:
+  anthropic:
+    reverse_path: /v1/messages
+    default_provider_id: anthropic-paid
+  responses:
+    reverse_path: /v1/responses
+    default_provider_id: openai
+  openai:
+    reverse_path: /v1/chat/completions
+    default_provider_id: openai
+  gemini:
+    reverse_path: /v1beta
+    # default_provider_id 未配：gemini 暂无对应内置 provider，用户自行配
+
+# ════════ 上游 provider（key 只放引用）════════
+providers:
+  - id: tokenbank-cloud
+    protocol: openai
+    base_url: https://api.tokenbank.example/v1
+    api_key_ref:
+      - tokenbank://session
+    tier: paid
+
+# ════════ 路由规则 + 特征提取（策略组在 UI 里配置，存 local-config）════════
+#
+# 数据分层：
+#   yaml（本文件）  → routing.rules（哪类请求用哪个策略名）
+#                  → feature_extraction（三层特征怎么提取）
+#   local-config   → policies[]（策略组：哪些 provider、什么 strategy）← UI 管理
+#
+# 【第一层】请求元数据（零开销）：
+#   protocol, agent_id, model, model_family, stream, path
+#
+# 【第二层】请求结构（读 body，极低开销）：
+#   has_tools, has_system, message_count, context_length, last_message_type
+#
+# 【第三层】内容语义（关键词 pattern 推断，低开销）：
+#   task_type(code/chat/analysis/creative), has_code, language
+#
+# match 语法：
+#   精确值:  model: "gpt-4o"
+#   数组:    model_family: [claude-opus, gpt-4]   # 任一匹配
+#   范围:    context_length: { gt: 50000 }         # gt/lt/gte/lte
+#   布尔:    has_tools: true
+#   兜底:    {}                                     # 匹配所有
+
+routing:
+  # ── 路由规则（按优先级从上到下，第一个命中生效）──────────────
+  # policy 值 = local-config.policies[].id（UI 里配的策略组名）
+  rules:
+    # 第二层：有 tool_calls → 代码/Agent 场景
+    - match: { has_tools: true }
+      policy: code-policy
+
+    # 第三层：内容含代码特征
+    - match: { task_type: code }
+      policy: code-policy
+
+    # 第一层：Codex 全部走代码策略
+    - match: { agent_id: codex }
+      policy: code-policy
+
+    # 第一层：长上下文
+    - match: { context_length: { gt: 80000 } }
+      policy: long-context-policy
+
+    # 第二层：短流式对话（无工具）→ 低成本
+    - match: { stream: true, context_length: { lt: 8000 }, has_tools: false }
+      policy: chat-policy
+
+    # 兜底
+    - match: {}
+      policy: default-policy
+
+  # ── 特征提取配置（控制三层特征的计算开关）────────────────────
+  feature_extraction:
+    # 第一层（元数据）：始终开启，无开销
+    metadata: true
+
+    # 第二层（结构分析）：读 body，极低开销
+    structure: true
+    context_length_mode: chars     # chars（字符数/4近似token） | tokens（精确）
+
+    # 第三层（内容语义）：关键词匹配，低开销
+    semantic: true
+    semantic_scope: last_user_message   # 只看最后一条 user 消息，不扫全量历史
+    code_keywords:
+      - "```"
+      - "function "
+      - "def "
+      - "class "
+      - "import "
+      - "const "
+      - "var "
+      - "print("
+      - "console.log"
+      - "error:"
+      - "exception"
+      - "stack trace"
+      - "debug"
+      - "fix the"
+      - "write a"
+      - "implement"
+
+# 远程更新（第一期预留，用内置即可）
+remote:
+  url: ''
+  interval: 86400
+  signature: required

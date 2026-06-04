@@ -9,6 +9,8 @@ const agent = require('./agent-worker');
 const gateway = require('./local-gateway');
 const localStats = require('./local-stats');
 const sessionImport = require('./session-import');
+const detectTools = require('./detect-tools');
+const agentLinker = require('./agent-linker');
 // device-reporter is used by the CLI only; desktop registration is handled
 // by useDeviceReporter in the renderer (which has access to the JWT).
 
@@ -207,12 +209,28 @@ function localConfigPath() {
   return path.join(app.getPath('userData'), 'local-config.json');
 }
 
+// 默认策略组（首次使用 / 配置里没有时的初始值）
+const DEFAULT_POLICIES = [
+  { id: 'default-policy',       name: '默认',     strategy: 'fallback',    providers: [], created_at: '' },
+  { id: 'code-policy',          name: '代码助手',  strategy: 'fallback',    providers: [], created_at: '' },
+  { id: 'chat-policy',          name: '普通对话',  strategy: 'round-robin', providers: [], created_at: '' },
+  { id: 'long-context-policy',  name: '长上下文',  strategy: 'fallback',    providers: [], created_at: '' },
+];
+
 function readLocalConfig() {
   try {
     const p = localConfigPath();
-    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'));
+    if (fs.existsSync(p)) {
+      const cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
+      // 补齐 policies 字段（老配置没有时用默认值）
+      if (!cfg.policies) cfg.policies = DEFAULT_POLICIES.map(p => ({ ...p, created_at: new Date().toISOString() }));
+      return cfg;
+    }
   } catch {}
-  return { scene_routes: [], local_keys: [] };
+  return {
+    scene_routes: [], local_keys: [],
+    policies: DEFAULT_POLICIES.map(p => ({ ...p, created_at: new Date().toISOString() })),
+  };
 }
 
 function writeLocalConfig(cfg) {
@@ -512,6 +530,89 @@ function registerIPC() {
   });
   // 手动触发会话文件补录（扫 ~/.claude、~/.codex、~/.gemini），返回各来源计数
   ipcMain.handle('sessionImport:run', () => sessionImport.run(localStats));
+  // 探测本机 AI 工具/本地服务，返回是否已接入网关的清单
+  ipcMain.handle('detectTools:scan', async () => {
+    const r = await detectTools.scan();
+    return { ...r, scannedAt: Math.floor(Date.now() / 1000) };
+  });
+  // ── CLI 透明接入（配置驱动）：list/apply/revert ──
+  // 注入 local-config 读写（让 agent-linker 能 enable provider，避免循环 require）
+  agentLinker.setLocalConfigIO(readLocalConfig, writeLocalConfig);
+  ipcMain.handle('agents:list',    () => agentLinker.list());
+  ipcMain.handle('agents:apply',   (_e, id) => agentLinker.applyById(id));
+  ipcMain.handle('agents:revert',  (_e, id) => agentLinker.revertById(id));
+  ipcMain.handle('agents:applyAll',  () => agentLinker.applyAll());
+  ipcMain.handle('agents:revertAll', () => agentLinker.revertAll());
+
+  // ── tokenbank.yaml 配置导入/导出/重载 ──
+  const configLoader = require('./config-loader');
+  const TB_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.yaml');
+
+  ipcMain.handle('toolsConfig:load', () => {
+    // 返回当前生效的配置（原始 yaml 文本）
+    try {
+      if (fs.existsSync(TB_YAML)) return { ok: true, source: 'user', text: fs.readFileSync(TB_YAML, 'utf8') };
+      const def = path.join(__dirname, 'electron', 'config', 'tokenbank.default.yaml');
+      return { ok: true, source: 'default', text: fs.existsSync(def) ? fs.readFileSync(def, 'utf8') : '' };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('toolsConfig:importFile', async () => {
+    // 弹文件选择对话框，用户选 yaml 文件后写入 ~/.tokenbank/tokenbank.yaml 并 reload
+    const { dialog } = require('electron');
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '导入工具清单配置', filters: [{ name: 'YAML', extensions: ['yaml', 'yml'] }],
+      properties: ['openFile'],
+    });
+    if (result.canceled || !result.filePaths.length) return { ok: false, canceled: true };
+    try {
+      const text = fs.readFileSync(result.filePaths[0], 'utf8');
+      // 基本格式校验
+      const yaml = require('js-yaml');
+      const parsed = yaml.load(text);
+      if (!parsed || typeof parsed !== 'object') return { ok: false, error: '无效的 yaml 格式' };
+      // 写入用户配置目录
+      const tbDir = path.join(os.homedir(), '.tokenbank');
+      if (!fs.existsSync(tbDir)) fs.mkdirSync(tbDir, { recursive: true });
+      fs.writeFileSync(TB_YAML, text, 'utf8');
+      // 重载 config-loader（下次 get() 时生效）
+      configLoader.load();
+      return { ok: true, source: result.filePaths[0] };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('toolsConfig:importUrl', async (_e, url) => {
+    // 从 URL 下载 yaml（为服务器下发预留，第一期简单 fetch）
+    const https = require('https'); const http = require('http');
+    return new Promise(resolve => {
+      const mod = url.startsWith('https') ? https : http;
+      mod.get(url, { timeout: 10000 }, res => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          try {
+            const yaml = require('js-yaml');
+            const parsed = yaml.load(data);
+            if (!parsed || typeof parsed !== 'object') return resolve({ ok: false, error: '无效的 yaml 格式' });
+            const tbDir = path.join(os.homedir(), '.tokenbank');
+            if (!fs.existsSync(tbDir)) fs.mkdirSync(tbDir, { recursive: true });
+            fs.writeFileSync(TB_YAML, data, 'utf8');
+            configLoader.load();
+            resolve({ ok: true, source: url });
+          } catch (e) { resolve({ ok: false, error: e.message }); }
+        });
+      }).on('error', e => resolve({ ok: false, error: e.message }));
+    });
+  });
+
+  ipcMain.handle('toolsConfig:reset', () => {
+    // 还原为内置默认（删除用户覆盖的 yaml）
+    try {
+      if (fs.existsSync(TB_YAML)) fs.unlinkSync(TB_YAML);
+      configLoader.load();
+      return { ok: true };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
   ipcMain.handle('gateway:setStrategy', (_e, strategy) => {
     if (strategy !== 'cost' && strategy !== 'quality') return { ok: false, error: 'invalid_strategy' };
     gateway.setStrategy(strategy);
@@ -642,6 +743,60 @@ function registerIPC() {
     return key;
   });
 
+  // ── 策略组 CRUD（policies[]，UI 管理，存 local-config）─────────────────────
+  // 数据结构：{ id, name, strategy, providers: [{id, weight?}], created_at }
+  // strategy 枚举：fallback | round-robin | weighted | latency | direct
+
+  function getPolicies() { return readLocalConfig().policies || []; }
+  function savePolicies(policies) {
+    const cfg = readLocalConfig();
+    cfg.policies = policies;
+    writeLocalConfig(cfg);
+  }
+
+  ipcMain.handle('policies:list', () => getPolicies());
+
+  ipcMain.handle('policies:create', (_e, { name, strategy, providers }) => {
+    const policies = getPolicies();
+    const policy = {
+      id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),   // name → kebab-case id
+      name: name || 'untitled',
+      strategy: strategy || 'fallback',
+      providers: (providers || []).map(p =>
+        typeof p === 'string' ? { id: p, weight: 1 } : p
+      ),
+      created_at: new Date().toISOString(),
+    };
+    // id 冲突时加后缀
+    const existing = policies.find(p => p.id === policy.id);
+    if (existing) policy.id = policy.id + '-' + rndHex(3);
+    policies.push(policy);
+    savePolicies(policies);
+    return policy;
+  });
+
+  ipcMain.handle('policies:update', (_e, { id, name, strategy, providers }) => {
+    const policies = getPolicies();
+    const idx = policies.findIndex(p => p.id === id);
+    if (idx === -1) return { ok: false, error: 'not-found' };
+    policies[idx] = {
+      ...policies[idx],
+      ...(name      !== undefined && { name }),
+      ...(strategy  !== undefined && { strategy }),
+      ...(providers !== undefined && {
+        providers: providers.map(p => typeof p === 'string' ? { id: p, weight: 1 } : p)
+      }),
+    };
+    savePolicies(policies);
+    return policies[idx];
+  });
+
+  ipcMain.handle('policies:delete', (_e, id) => {
+    const policies = getPolicies().filter(p => p.id !== id);
+    savePolicies(policies);
+    return { ok: true };
+  });
+
   // Save cloud API config (url + user API key) for P2P forwarding
   ipcMain.handle('localConfig:setCloudConfig', (_e, { url, token } = {}) => {
     const cfg = readLocalConfig();
@@ -695,6 +850,7 @@ app.whenReady().then(() => {
   localStats.init(app.getPath('userData'));
   gateway.setStatsRecorder(localStats.record);
   gateway.setLocalStats(localStats);
+  gateway.setLocalConfigReader(readLocalConfig);   // 供策略组调度查 policies[]
   gateway.start(11430, readAgentConfig);
 
   // 补录「不走网关、直连官方」的会话用量：启动跑一次 + 每 60s 增量扫一次。
@@ -721,4 +877,8 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => { agent.stop(); gateway.stop(); localStats.close(); });
+app.on('before-quit', () => {
+  agent.stop(); gateway.stop(); localStats.close();
+  // 退出即还原所有接入：删 shim / 还原 PATH / 还原配置文件 / 停 MITM，绝不残留
+  try { agentLinker.revertEverythingOnExit(); } catch (e) { console.error('[agent-linker] revert on exit failed:', e.message); }
+});

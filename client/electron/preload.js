@@ -78,6 +78,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
   localStats: {
     query: (days) => ipcRenderer.invoke('localStats:query', days),
   },
+  sessionImport: {
+    run: () => ipcRenderer.invoke('sessionImport:run'),
+  },
+  detectTools: {
+    scan: () => ipcRenderer.invoke('detectTools:scan'),
+  },
+  agents: {
+    list:      () => ipcRenderer.invoke('agents:list'),
+    apply:     (id) => ipcRenderer.invoke('agents:apply', id),
+    revert:    (id) => ipcRenderer.invoke('agents:revert', id),
+    applyAll:  () => ipcRenderer.invoke('agents:applyAll'),
+    revertAll: () => ipcRenderer.invoke('agents:revertAll'),
+  },
+  toolsConfig: {
+    load:        () => ipcRenderer.invoke('toolsConfig:load'),
+    importFile:  () => ipcRenderer.invoke('toolsConfig:importFile'),
+    importUrl:   (url) => ipcRenderer.invoke('toolsConfig:importUrl', url),
+    reset:       () => ipcRenderer.invoke('toolsConfig:reset'),
+  },
+  policies: {
+    list:   ()                        => ipcRenderer.invoke('policies:list'),
+    create: (d)                       => ipcRenderer.invoke('policies:create', d),
+    update: (d)                       => ipcRenderer.invoke('policies:update', d),
+    delete: (id)                      => ipcRenderer.invoke('policies:delete', id),
+  },
   localConfig: {
     get:               ()  => ipcRenderer.invoke('localConfig:get'),
     createSceneRoute:  (d) => ipcRenderer.invoke('localConfig:createSceneRoute', d),

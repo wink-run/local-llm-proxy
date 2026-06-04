@@ -1,0 +1,189 @@
+// client/electron/agent-linker.js
+// 接入编排器：把 config-loader / shim-installer / injector / ca-manager / mitm-proxy 串起来。
+// 对每个工具按 strategy 分派 apply / status / revert。全部数据来自 yaml（config-loader）。
+'use strict';
+
+const fs   = require('fs');
+const path = require('path');
+const os   = require('os');
+const { execFileSync } = require('child_process');
+
+const configLoader = require('./config-loader');
+const shim   = require('./shim-installer');
+const inj    = require('./injector');
+const ca     = require('./ca-manager');
+const mitm   = require('./mitm-proxy');
+
+const TB_DIR = path.join(os.homedir(), '.tokenbank');
+const APPLIED_DIR = path.join(TB_DIR, 'applied');
+
+// local-config 读写由 main.js 注入（避免循环依赖）
+let _readLocalConfig  = null;
+let _writeLocalConfig = null;
+function setLocalConfigIO(read, write) { _readLocalConfig = read; _writeLocalConfig = write; }
+
+// ── 按 yaml protocols.default_provider_id enable 对应 provider（选项A：yaml没配就不做）──
+function enableDefaultProvider(protocol) {
+  const providerId = configLoader.defaultProviderForProtocol(protocol);
+  if (!providerId || !_readLocalConfig || !_writeLocalConfig) return { done: false };
+  try {
+    const cfg = _readLocalConfig();
+    const providers = cfg.providers || [];
+    const idx = providers.findIndex(p => p.id === providerId);
+    if (idx >= 0) {
+      if (providers[idx].enabled) return { done: false, note: 'already-enabled' };
+      providers[idx] = { ...providers[idx], enabled: true };
+    } else {
+      // provider 不在 local-config 里（用户删掉了），跳过
+      return { done: false, note: 'provider-not-found' };
+    }
+    _writeLocalConfig({ ...cfg, providers });
+    return { done: true, providerId };
+  } catch (e) {
+    return { done: false, error: e.message };
+  }
+}
+
+function gwHostPort() { return configLoader.gatewayCtx().reverse; }
+
+// 工具是否已装（命令可执行）
+function isInstalled(tool) {
+  const cmd = tool.detect && tool.detect.command;
+  if (!cmd) return false;
+  return !!shim.resolveRealCommand(cmd);
+}
+
+// ── status：当前是否已接入网关（按 strategy）──
+function status(tool) {
+  const gw = gwHostPort();
+  switch (tool.strategy) {
+    case 'base_url-env':
+      // env 类靠 shim 注入：shim 存在即视为已接入（shim 内含指向网关的 env）
+      return shim.shimExists(tool.detect.command);
+    case 'config-file':
+      return inj.statusConfigFile(tool['config-file'], gw);
+    case 'mitm-env':
+      return shim.shimExists(tool.detect.command);
+    default:
+      return false;
+  }
+}
+
+// ── apply：接入（幂等）──
+function apply(tool) {
+  if (!isInstalled(tool)) return { ok: false, error: 'not-installed' };
+  try {
+    switch (tool.strategy) {
+      case 'base_url-env': {
+        const real = shim.resolveRealCommand(tool.detect.command);
+        if (!real) return { ok: false, error: 'real-command-not-found' };
+        shim.writeShim(tool.detect.command, real, (tool.inject && tool.inject.env) || {});
+        shim.enablePath();
+        const ep = enableDefaultProvider(tool.protocol);
+        return { ok: true, strategy: tool.strategy, needsRestartShell: true,
+                 enabledProvider: ep.done ? ep.providerId : null,
+                 needsToken: ep.done };   // 提示前端 provider 已开但可能没 token
+      }
+      case 'config-file': {
+        inj.applyConfigFile(tool.id, tool['config-file'], tool.patch || {});
+        const ep = enableDefaultProvider(tool.protocol);
+        return { ok: true, strategy: tool.strategy,
+                 enabledProvider: ep.done ? ep.providerId : null,
+                 needsToken: ep.done };
+      }
+      case 'mitm-env': {
+        const caInfo = ca.ensureCA();
+        mitm.start();
+        configLoader.setCaPath(caInfo.crt);
+        const fresh = configLoader.tools().find(t => t.id === tool.id) || tool;
+        const real = shim.resolveRealCommand(fresh.detect.command);
+        if (!real) return { ok: false, error: 'real-command-not-found' };
+        shim.writeShim(fresh.detect.command, real, (fresh.inject && fresh.inject.env) || {});
+        shim.enablePath();
+        const ep = enableDefaultProvider(tool.protocol);
+        return { ok: true, strategy: tool.strategy, needsRestartShell: true,
+                 enabledProvider: ep.done ? ep.providerId : null,
+                 needsToken: ep.done };
+      }
+      default:
+        return { ok: false, error: 'unknown-strategy:' + tool.strategy };
+    }
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+// ── revert：还原（幂等）──
+function revert(tool) {
+  try {
+    switch (tool.strategy) {
+      case 'base_url-env':
+        shim.removeShim(tool.detect.command);
+        maybeDisablePath();
+        return { ok: true };
+      case 'config-file':
+        return inj.revertConfigFile(tool.id);
+      case 'mitm-env':
+        shim.removeShim(tool.detect.command);
+        maybeDisablePath();
+        // 若没有其它 mitm 工具在用，停 MITM（这里简单处理：交给上层 stopIfIdle）
+        return { ok: true };
+      default:
+        return { ok: false, error: 'unknown-strategy' };
+    }
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+// 仅当 bin 目录下已无任何 shim 时，才摘除 PATH（避免误删其它工具的接入）
+function maybeDisablePath() {
+  try {
+    const binDir = shim.paths.BIN_DIR;
+    const left = fs.existsSync(binDir) ? fs.readdirSync(binDir) : [];
+    if (left.length === 0) shim.disablePath();
+  } catch {}
+}
+
+// ── list：所有工具 + 状态（前端用）──
+function list() {
+  const tools = configLoader.tools();
+  return tools.map(t => ({
+    id: t.id, name: t.name, protocol: t.protocol, strategy: t.strategy,
+    installed: isInstalled(t),
+    linked: status(t),
+  }));
+}
+
+// ── applyAll / revertAll ──
+function applyAll() {
+  const out = [];
+  for (const t of configLoader.tools()) {
+    if (!isInstalled(t)) { out.push({ id: t.id, skipped: 'not-installed' }); continue; }
+    out.push({ id: t.id, ...apply(t) });
+  }
+  return out;
+}
+
+function revertAll() {
+  const out = [];
+  for (const t of configLoader.tools()) out.push({ id: t.id, ...revert(t) });
+  // 全部还原后，若无 mitm 工具在用则停 MITM + 清 CA
+  try { mitm.stop(); ca.cleanup(); } catch {}
+  return out;
+}
+
+// 退出钩子用：把一切恢复原状
+function revertEverythingOnExit() {
+  try { revertAll(); } catch {}
+}
+
+// 按 id 操作（前端按钮）
+function applyById(id)  { const t = configLoader.tools().find(x => x.id === id); return t ? apply(t)  : { ok:false, error:'no-such-tool' }; }
+function revertById(id) { const t = configLoader.tools().find(x => x.id === id); return t ? revert(t) : { ok:false, error:'no-such-tool' }; }
+
+module.exports = {
+  list, apply, revert, status, applyAll, revertAll,
+  applyById, revertById, revertEverythingOnExit,
+  setLocalConfigIO,
+};
