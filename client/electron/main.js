@@ -217,6 +217,17 @@ const DEFAULT_POLICIES = [
   { id: 'long-context-policy',  name: '长上下文',  strategy: 'fallback',    providers: [], created_at: '' },
 ];
 
+// 从默认 yaml 文件加载某段数据（首次初始化用）
+function loadDefaultYamlSection(filename, section) {
+  try {
+    const yamlLib = require('js-yaml');
+    const filePath = path.join(__dirname, 'config', filename);
+    if (!fs.existsSync(filePath)) return null;
+    const doc = yamlLib.load(fs.readFileSync(filePath, 'utf8')) || {};
+    return doc[section] || null;
+  } catch { return null; }
+}
+
 function readLocalConfig() {
   try {
     const p = localConfigPath();
@@ -233,7 +244,6 @@ function readLocalConfig() {
           link_method: 'api-key',
           api_key: k.key,
           route_id: k.model_key || null,
-          // 扩展字段
           description: '',
           allowed_models: [],
           max_rpm: null,
@@ -243,12 +253,26 @@ function readLocalConfig() {
           created_at: k.created_at || new Date().toISOString(),
         }));
       }
+      // 首次启动但 scene_routes 为空：从默认 routes 文件加载
+      if (!cfg.initialized_routes && (!cfg.scene_routes || cfg.scene_routes.length === 0)) {
+        const defaultRoutes = loadDefaultYamlSection('tokenbank.routes.default.yaml', 'scene_routes');
+        if (defaultRoutes && defaultRoutes.length > 0) {
+          cfg.scene_routes = defaultRoutes.map(r => ({
+            ...r, created_at: r.created_at || new Date().toISOString(),
+          }));
+          cfg.initialized_routes = true;
+        }
+      }
       return cfg;
     }
   } catch {}
+  // 全新安装：从两个默认文件初始化
+  const defaultRoutes = loadDefaultYamlSection('tokenbank.routes.default.yaml', 'scene_routes') || [];
   return {
-    scene_routes: [], local_keys: [], apps: [],
+    scene_routes: defaultRoutes.map(r => ({ ...r, created_at: new Date().toISOString() })),
+    local_keys: [], apps: [],
     policies: DEFAULT_POLICIES.map(p => ({ ...p, created_at: new Date().toISOString() })),
+    initialized_routes: defaultRoutes.length > 0,
   };
 }
 
@@ -563,69 +587,97 @@ function registerIPC() {
   ipcMain.handle('agents:applyAll',  () => agentLinker.applyAll());
   ipcMain.handle('agents:revertAll', () => agentLinker.revertAll());
 
-  // ── tokenbank.yaml 配置导入/导出/重载 ──
+  // ── 配置导入（统一格式，tools 段 + scene_routes 段，各自写入对应存储）────────
+  // 格式：{ version, tools, protocols, mitm, routing, scene_routes, ... }
+  // tools/protocols/mitm/routing 段 → ~/.tokenbank/tokenbank.yaml（config-loader）
+  // scene_routes 段               → local-config.scene_routes
   const configLoader = require('./config-loader');
   const TB_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.yaml');
+  const TOOLS_SECTIONS = new Set(['version','tools','protocols','mitm','routing','routing_policies_default','providers','gateway','remote']);
+  const ROUTES_SECTIONS = new Set(['scene_routes']);
+
+  function applyConfigDoc(parsed, source) {
+    if (!parsed || typeof parsed !== 'object') return { ok: false, error: '无效的 yaml 格式' };
+    const yamlLib = require('js-yaml');
+    const applied = { tools: false, routes: false };
+
+    // 有 tools 相关段 → 写 tokenbank.yaml + reload config-loader
+    const hasToolsSection = Object.keys(parsed).some(k => TOOLS_SECTIONS.has(k) && k !== 'version');
+    if (hasToolsSection) {
+      const tbDir = path.join(os.homedir(), '.tokenbank');
+      if (!fs.existsSync(tbDir)) fs.mkdirSync(tbDir, { recursive: true });
+      // 只保留 tools 相关的段写入 yaml（剥离 scene_routes 等路由段）
+      const toolsDoc = {};
+      for (const k of Object.keys(parsed)) {
+        if (TOOLS_SECTIONS.has(k) || k === 'version') toolsDoc[k] = parsed[k];
+      }
+      fs.writeFileSync(TB_YAML, yamlLib.dump(toolsDoc, { lineWidth: 120 }), 'utf8');
+      configLoader.load();
+      applied.tools = true;
+    }
+
+    // 有 scene_routes 段 → 写入 local-config，标记已导入（不再用默认文件）
+    if (Array.isArray(parsed.scene_routes) && parsed.scene_routes.length > 0) {
+      const cfg = readLocalConfig();
+      cfg.scene_routes = parsed.scene_routes.map(r => ({
+        ...r, created_at: r.created_at || new Date().toISOString(),
+      }));
+      cfg.initialized_routes = true;   // 标记：已有用户导入数据，不再用默认文件
+      writeLocalConfig(cfg);
+      syncGatewayFromConfig(cfg);
+      applied.routes = true;
+    }
+
+    if (!applied.tools && !applied.routes) {
+      return { ok: false, error: '文件中未找到可识别的配置段（tools / scene_routes）' };
+    }
+    return { ok: true, source, applied };
+  }
+
+  function fetchYaml(url) {
+    const https = require('https'); const http = require('http');
+    return new Promise((resolve, reject) => {
+      const mod = url.startsWith('https') ? https : http;
+      mod.get(url, { timeout: 10000 }, res => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => resolve(data));
+        res.on('error', reject);
+      }).on('error', reject);
+    });
+  }
 
   ipcMain.handle('toolsConfig:load', () => {
-    // 返回当前生效的配置（原始 yaml 文本）
     try {
       if (fs.existsSync(TB_YAML)) return { ok: true, source: 'user', text: fs.readFileSync(TB_YAML, 'utf8') };
-      const def = path.join(__dirname, 'electron', 'config', 'tokenbank.default.yaml');
+      const def = path.join(__dirname, 'config', 'tokenbank.tools.default.yaml');
       return { ok: true, source: 'default', text: fs.existsSync(def) ? fs.readFileSync(def, 'utf8') : '' };
     } catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('toolsConfig:importFile', async () => {
-    // 弹文件选择对话框，用户选 yaml 文件后写入 ~/.tokenbank/tokenbank.yaml 并 reload
     const { dialog } = require('electron');
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: '导入工具清单配置', filters: [{ name: 'YAML', extensions: ['yaml', 'yml'] }],
+      title: '导入配置文件（工具 / 路由）', filters: [{ name: 'YAML', extensions: ['yaml', 'yml'] }],
       properties: ['openFile'],
     });
     if (result.canceled || !result.filePaths.length) return { ok: false, canceled: true };
     try {
       const text = fs.readFileSync(result.filePaths[0], 'utf8');
-      // 基本格式校验
-      const yaml = require('js-yaml');
-      const parsed = yaml.load(text);
-      if (!parsed || typeof parsed !== 'object') return { ok: false, error: '无效的 yaml 格式' };
-      // 写入用户配置目录
-      const tbDir = path.join(os.homedir(), '.tokenbank');
-      if (!fs.existsSync(tbDir)) fs.mkdirSync(tbDir, { recursive: true });
-      fs.writeFileSync(TB_YAML, text, 'utf8');
-      // 重载 config-loader（下次 get() 时生效）
-      configLoader.load();
-      return { ok: true, source: result.filePaths[0] };
+      const parsed = require('js-yaml').load(text);
+      return applyConfigDoc(parsed, result.filePaths[0]);
     } catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('toolsConfig:importUrl', async (_e, url) => {
-    // 从 URL 下载 yaml（为服务器下发预留，第一期简单 fetch）
-    const https = require('https'); const http = require('http');
-    return new Promise(resolve => {
-      const mod = url.startsWith('https') ? https : http;
-      mod.get(url, { timeout: 10000 }, res => {
-        let data = '';
-        res.on('data', c => data += c);
-        res.on('end', () => {
-          try {
-            const yaml = require('js-yaml');
-            const parsed = yaml.load(data);
-            if (!parsed || typeof parsed !== 'object') return resolve({ ok: false, error: '无效的 yaml 格式' });
-            const tbDir = path.join(os.homedir(), '.tokenbank');
-            if (!fs.existsSync(tbDir)) fs.mkdirSync(tbDir, { recursive: true });
-            fs.writeFileSync(TB_YAML, data, 'utf8');
-            configLoader.load();
-            resolve({ ok: true, source: url });
-          } catch (e) { resolve({ ok: false, error: e.message }); }
-        });
-      }).on('error', e => resolve({ ok: false, error: e.message }));
-    });
+    try {
+      const text = await fetchYaml(url);
+      const parsed = require('js-yaml').load(text);
+      return applyConfigDoc(parsed, url);
+    } catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('toolsConfig:reset', () => {
-    // 还原为内置默认（删除用户覆盖的 yaml）
     try {
       if (fs.existsSync(TB_YAML)) fs.unlinkSync(TB_YAML);
       configLoader.load();

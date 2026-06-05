@@ -1,0 +1,56 @@
+# tokenbank.routes.default.yaml
+# 场景路由默认配置 — 程序内置，首次初始化时加载到 local-config.scene_routes。
+# 用户通过「导入配置」（本地文件或服务器下发）覆盖后，此文件不再使用。
+# 格式与 tokenbank.tools.default.yaml 相同（统一 schema），各取所需的段。
+
+version: 1
+
+# ── 默认场景路由 ──────────────────────────────────────────────────────────────
+# 每条路由对应一个降级链：按 steps 顺序依次尝试，失败自动降到下一个。
+# 客户端使用 model_key（如 llm-router-xxxxxx）触发对应路由。
+# steps[].model 应填写已在供给源中启用的模型名称。
+
+scene_routes:
+  - id: route-code
+    scene_name: 代码助手
+    icon: 💻
+    model_key: llm-router-code
+    steps:
+      - model: claude-opus-4-8
+        tier: paid
+      - model: gpt-4o
+        tier: paid
+      - model: deepseek-v3
+        tier: paid
+
+  - id: route-chat
+    scene_name: 日常对话
+    icon: 💬
+    model_key: llm-router-chat
+    steps:
+      - model: deepseek-v3
+        tier: paid
+      - model: gpt-4o-mini
+        tier: paid
+
+  - id: route-long
+    scene_name: 长上下文
+    icon: 📄
+    model_key: llm-router-long
+    steps:
+      - model: claude-opus-4-8
+        tier: paid
+      - model: gpt-4o
+        tier: paid
+
+  - id: route-fast
+    scene_name: 快速响应
+    icon: ⚡
+    model_key: llm-router-fast
+    steps:
+      - model: claude-haiku-4-5
+        tier: paid
+      - model: gpt-4o-mini
+        tier: paid
+      - model: deepseek-v3
+        tier: free
