@@ -115,11 +115,12 @@
     }
     .hero-h1 {
       font-family: "Instrument Serif", Georgia, serif;
-      font-size: clamp(2.4rem, 5.5vw, 4rem);
-      line-height: 1.08; letter-spacing: -.02em;
-      color: #fff; max-width: 14ch;
+      font-size: clamp(2.2rem, 4.5vw, 3.6rem);
+      line-height: 1.1; letter-spacing: -.02em;
+      color: #fff; white-space: nowrap;
       opacity: 0; animation: rise .65s .12s ease forwards;
     }
+    @media (max-width: 560px) { .hero-h1 { white-space: normal; font-size: 2rem; } }
     .hero-h1 em {
       font-style: italic; color: var(--accent);
     }
@@ -487,7 +488,7 @@
     <!-- ── Hero ── -->
     <section class="hero wrap">
       <p class="hero-eyebrow" data-i18n="hero.eyebrow">Personal AI Hub · Local Gateway · Multi-device</p>
-      <h1 class="hero-h1" data-i18n-html="hero.h1">你的<em>个人 AI 中枢</em><br>统一接入，智能路由</h1>
+      <h1 class="hero-h1" data-i18n-html="hero.h1">你的<em>个人 AI 中枢</em>，统一接入智能路由</h1>
       <p class="hero-sub" data-i18n-html="hero.sub">
         本地网关透明代理所有 AI 请求，<strong>智能路由到最优 Provider</strong>，并跨应用、跨设备归集所有 AI 用量——就像 iOS 电量统计，<strong>所有 AI 应用自然纳入</strong>。
       </p>
@@ -951,7 +952,7 @@
     zh: {
       "nav.portal": "用户中心", "nav.wall": "运营大屏", "footer.admin": "管理后台",
       "hero.eyebrow": "个人 AI 中枢 · 本地网关 · 多设备归集",
-      "hero.h1": "你的<em>个人 AI 中枢</em><br>统一接入，智能路由",
+      "hero.h1": "你的<em>个人 AI 中枢</em>，统一接入智能路由",
       "hero.sub": "本地网关透明代理所有 AI 请求，<strong>智能路由到最优 Provider</strong>，并跨应用、跨设备归集所有 AI 用量——就像 iOS 电量统计，<strong>所有 AI 应用自然纳入</strong>。",
       "cta.download": "下载客户端", "cta.howworks": "了解原理",
       "gw.h2": "多格式接入，<em>无感代理</em>",
@@ -998,7 +999,7 @@
     en: {
       "nav.portal": "User Portal", "nav.wall": "Live Dashboard", "footer.admin": "Admin",
       "hero.eyebrow": "Personal AI Hub · Local Gateway · Multi-device",
-      "hero.h1": "Your <em>Personal AI Hub</em><br>Unified Access, Smart Routing",
+      "hero.h1": "Your <em>Personal AI Hub</em> — Unified Access, Smart Routing",
       "hero.sub": "The local gateway transparently proxies all AI requests, <strong>routes to the best Provider</strong>, and aggregates usage across apps and devices — like iOS battery stats, <strong>every AI app is naturally included</strong>.",
       "cta.download": "Download", "cta.howworks": "How it works",
       "gw.h2": "Multi-format access,<br><em>zero-config proxy</em>",
@@ -1070,6 +1071,7 @@
   document.querySelectorAll('.reveal').forEach(function(el) { observer.observe(el) })
 
   /* ── Downloads ── */
+  var RELEASES_URL = 'https://github.com/wink-run/local-llm-proxy/releases'
   var ua = navigator.userAgent || ''
   var isMac = /Macintosh|Mac OS X/.test(ua)
   var isWin = /Windows/.test(ua)
@@ -1081,6 +1083,14 @@
   }
 
   function loadDownloads() {
+    // Set GitHub releases as default first, then override with direct links if available
+    ;['mac','win'].forEach(function(p) {
+      var btn = document.getElementById('btn-' + p)
+      if (btn) { btn.href = RELEASES_URL; btn.textContent = LANGS[lang]['dl.btn'] || '立即下载'; btn.className = 'dl-btn available'; btn.target = '_blank'; btn.rel = 'noopener' }
+    })
+    var el = document.getElementById('agent-download-list')
+    if (el) el.innerHTML = '<p style="color:var(--muted);font-size:.85rem;">前往 <a href="' + RELEASES_URL + '" target="_blank" rel="noopener" style="color:var(--accent)">GitHub Releases</a> 查看所有版本</p>'
+
     fetch('/api/agent-downloads')
       .then(function(r) { return r.json() })
       .then(function(data) {
@@ -1091,15 +1101,13 @@
 
         function setupCard(cardId, btnId, metaId, item, meta) {
           var btn = document.getElementById(btnId)
-          var el  = document.getElementById(metaId)
+          var metaEl = document.getElementById(metaId)
           var card = document.getElementById(cardId)
           if (!btn) return
           if (item) {
             btn.href = item.url; btn.textContent = L['dl.btn'] || '立即下载'
-            btn.className = 'dl-btn available'
-            if (el) el.textContent = meta + (item.bytes ? ' · ' + fmtBytes(item.bytes) : '')
-          } else {
-            btn.textContent = L['dl.soon'] || '即将发布'; btn.removeAttribute('href')
+            btn.className = 'dl-btn available'; btn.target = '_blank'; btn.rel = 'noopener'
+            if (metaEl) metaEl.textContent = meta + (item.bytes ? ' · ' + fmtBytes(item.bytes) : '')
           }
           if (card && ((cardId === 'card-mac' && isMac) || (cardId === 'card-win' && isWin))) {
             card.classList.add('current')
@@ -1109,31 +1117,23 @@
         setupCard('card-win','btn-win','meta-win', exe, 'x86_64 · .exe')
 
         var cliItems = items.filter(function(it) { return !/\.(dmg|exe)$/i.test(it.filename) })
-        var el = document.getElementById('agent-download-list')
-        if (!el) return
-        if (!cliItems.length) {
-          el.innerHTML = '<p style="color:var(--muted);font-size:.85rem;">暂无预编译文件</p>'
-          return
-        }
+        var cliEl = document.getElementById('agent-download-list')
+        if (!cliEl || !cliItems.length) return
         var CLI_LABELS = {
           "llm-agent-linux-amd64":"Linux · x86_64","llm-agent-linux-arm64":"Linux · ARM64",
           "llm-agent-darwin-arm64":"macOS · Apple Silicon","llm-agent-darwin-amd64":"macOS · Intel",
           "llm-agent-windows-amd64.exe":"Windows · x86_64"
         }
-        el.innerHTML = cliItems.map(function(it) {
+        cliEl.innerHTML = cliItems.map(function(it) {
           var label = CLI_LABELS[it.filename] || it.filename
           return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">'
             + '<div><div style="font-size:.85rem;color:var(--text);font-weight:500;">' + label + '</div>'
             + '<div style="font-family:\'DM Mono\',monospace;font-size:.68rem;color:var(--muted);margin-top:2px;">' + it.filename + (it.bytes ? ' · ' + fmtBytes(it.bytes) : '') + '</div></div>'
-            + '<a href="' + it.url + '" style="background:var(--accent);color:#001a14;padding:6px 16px;border-radius:6px;font-size:.8rem;font-weight:600;text-decoration:none;">↓</a>'
+            + '<a href="' + it.url + '" target="_blank" rel="noopener" style="background:var(--accent);color:#001a14;padding:6px 16px;border-radius:6px;font-size:.8rem;font-weight:600;text-decoration:none;">↓</a>'
             + '</div>'
         }).join('')
       })
-      .catch(function() {
-        ;['btn-mac','btn-win'].forEach(function(id) {
-          var b = document.getElementById(id); if (b) b.textContent = '—'
-        })
-      })
+      .catch(function() { /* GitHub releases fallback already set above */ })
   }
 
   if (document.readyState === 'loading') {
