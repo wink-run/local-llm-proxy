@@ -522,11 +522,11 @@ select.form-input{cursor:pointer}
     <div v-show="activeTab === 'distrib'" class="tab-content">
       <!-- 状态概览 -->
       <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap">
-        <div v-for="type in ['tools','routes']" :key="type"
+        <div v-for="type in ['apps','scenes']" :key="type"
           style="background:#1a1d27;border:1px solid #2d3148;border-radius:10px;padding:14px 20px;min-width:200px;display:flex;align-items:center;gap:12px">
-          <span style="font-size:22px">{{ type==='tools' ? '🔧' : '🔀' }}</span>
+          <span style="font-size:22px">{{ type==='apps' ? '🔧' : '🔀' }}</span>
           <div>
-            <div style="font-size:13px;font-weight:600;color:#e2e8f0">{{ type==='tools' ? (lang==='zh'?'工具清单':'Tools Config') : (lang==='zh'?'场景路由':'Routes Config') }}</div>
+            <div style="font-size:13px;font-weight:600;color:#e2e8f0">{{ type==='apps' ? (lang==='zh'?'应用配置':'Apps Config') : (lang==='zh'?'场景路由':'Routes Config') }}</div>
             <div style="font-size:12px;margin-top:2px" :style="distribInfo[type].uploaded ? 'color:#4ade80' : 'color:#64748b'">
               {{ distribInfo[type].uploaded
                 ? (lang==='zh' ? `已上传 · ${distribInfo[type].bytes} 字节` : `Uploaded · ${distribInfo[type].bytes} bytes`)
@@ -537,7 +537,7 @@ select.form-input{cursor:pointer}
         <div style="background:#1a1d27;border:1px solid #2d3148;border-radius:10px;padding:14px 20px;flex:1;min-width:260px">
           <div style="font-size:12px;color:#64748b;margin-bottom:6px">{{ lang==='zh' ? '客户端下载地址' : 'Client Download URL' }}</div>
           <div style="font-family:monospace;font-size:11px;color:#94a3b8;line-height:1.8">
-            GET /api/config/tools<br>GET /api/config/routes
+            GET /api/config/apps<br>GET /api/config/scenes
           </div>
           <div style="font-size:11px;color:#4a5568;margin-top:6px">{{ lang==='zh' ? '需要用户 JWT 认证' : 'Requires user JWT' }}</div>
         </div>
@@ -545,13 +545,13 @@ select.form-input{cursor:pointer}
 
       <!-- 两列编辑区 -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-        <div v-for="type in ['tools','routes']" :key="type"
+        <div v-for="type in ['apps','scenes']" :key="type"
           style="background:#1a1d27;border:1px solid #2d3148;border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:10px">
           <div style="display:flex;align-items:center;gap:8px">
-            <span style="font-size:15px">{{ type==='tools' ? '🔧' : '🔀' }}</span>
+            <span style="font-size:15px">{{ type==='apps' ? '🔧' : '🔀' }}</span>
             <span style="font-size:13px;font-weight:600;color:#e2e8f0">
-              {{ type==='tools'
-                ? (lang==='zh' ? '工具清单配置 (tokenbank.tools.yaml)' : 'Tools Config (tokenbank.tools.yaml)')
+              {{ type==='apps'
+                ? (lang==='zh' ? '应用配置 (tokenbank.tools.yaml)' : 'Apps Config (tokenbank.tools.yaml)')
                 : (lang==='zh' ? '场景路由配置 (tokenbank.routes.yaml)' : 'Routes Config (tokenbank.routes.yaml)') }}
             </span>
             <div style="margin-left:auto;display:flex;gap:6px">
@@ -565,10 +565,10 @@ select.form-input{cursor:pointer}
             </div>
           </div>
           <textarea
-            v-model="type==='tools' ? distribTools : distribRoutes"
+            v-model="type==='apps' ? distribApps : distribScenes"
             spellcheck="false"
             style="flex:1;min-height:400px;padding:10px 12px;background:#0f1117;border:1px solid #2d3148;border-radius:6px;color:#e2e8f0;font-family:'SFMono-Regular',Consolas,monospace;font-size:12px;line-height:1.6;resize:vertical;outline:none"
-            :placeholder="type==='tools'
+            :placeholder="type==='apps'
               ? 'version: 1\n\ntools:\n  - id: claude-code\n    ...'
               : 'version: 1\n\nscene_routes:\n  - id: route-code\n    scene_name: 代码助手\n    ...'">
           </textarea>
@@ -587,7 +587,7 @@ select.form-input{cursor:pointer}
 
       <div style="margin-top:12px;font-size:12px;color:#4a5568;line-height:1.6">
         {{ lang==='zh'
-          ? '管理员在此上传 YAML 配置后，已登录的客户端点击「导入配置 → 🔗 服务器」即可下载并应用。两个文件格式相同（统一 schema），工具清单含 tools/protocols/routing 段，路由配置含 scene_routes 段。'
+          ? '管理员在此上传 YAML 配置后，已登录的客户端点击「导入配置 → 🔗 服务器」即可下载并应用。两个文件格式相同（统一 schema），应用配置含 tools/protocols/routing 段，路由配置含 scene_routes 段。'
           : 'After uploading YAML here, logged-in clients can pull it via Import Config → 🔗 Server. Both files share the same schema: tools config has tools/protocols/routing sections; routes config has scene_routes section.' }}
       </div>
     </div>
@@ -968,16 +968,24 @@ createApp({
     }
 
     /* ── Config Distribution ── */
-    const distribInfo   = ref({ tools:{uploaded:false,bytes:0}, routes:{uploaded:false,bytes:0} })
-    const distribTools  = ref(''), distribRoutes  = ref('')
-    const distribMsg    = ref({ tools:'', routes:'' })
-    const distribSaving = ref({ tools:false, routes:false })
+    // type 枚举：'apps'（应用配置）| 'scenes'（场景路由配置）
+    const distribInfo   = ref({ apps:{uploaded:false,bytes:0}, scenes:{uploaded:false,bytes:0} })
+    const distribApps   = ref(''), distribScenes = ref('')
+    const distribMsg    = ref({ apps:'', scenes:'' })
+    const distribSaving = ref({ apps:false, scenes:false })
 
     async function fetchDistribInfo() {
-      try { const d = await (await api('/api/config/info')).json(); distribInfo.value = d } catch {}
+      try {
+        const d = await (await api('/api/config/info')).json()
+        // 服务端返回的 key 是 tools/routes（兼容旧版），映射到新名称
+        distribInfo.value = {
+          apps:   { uploaded: d.apps?.uploaded   ?? d.tools?.uploaded  ?? false, bytes: d.apps?.bytes   ?? d.tools?.bytes  ?? 0 },
+          scenes: { uploaded: d.scenes?.uploaded ?? d.routes?.uploaded ?? false, bytes: d.scenes?.bytes ?? d.routes?.bytes ?? 0 },
+        }
+      } catch {}
     }
     async function uploadDistrib(type) {
-      const content = type === 'tools' ? distribTools.value : distribRoutes.value
+      const content = type === 'apps' ? distribApps.value : distribScenes.value
       if (!content.trim()) return
       distribSaving.value[type] = true; distribMsg.value[type] = ''
       try {
@@ -991,12 +999,13 @@ createApp({
       finally { distribSaving.value[type] = false }
     }
     async function deleteDistrib(type) {
-      if (!confirm(lang.value==='zh' ? `确认删除 ${type} 配置？客户端将无法下载。` : `Delete ${type} config?`)) return
+      const label = lang.value==='zh' ? (type==='apps'?'应用配置':'场景路由配置') : (type==='apps'?'apps config':'scenes config')
+      if (!confirm(lang.value==='zh' ? `确认删除${label}？客户端将无法下载。` : `Delete ${label}?`)) return
       try {
         await api(`/api/config/${type}`, { method:'DELETE' })
         distribMsg.value[type] = lang.value==='zh' ? '已删除' : 'Deleted'
-        if (type === 'tools') distribTools.value = ''
-        else distribRoutes.value = ''
+        if (type === 'apps') distribApps.value = ''
+        else distribScenes.value = ''
         await fetchDistribInfo()
       } catch (e) { distribMsg.value[type] = e.message }
     }
@@ -1005,8 +1014,8 @@ createApp({
         const r = await api(`/api/config/${type}`)
         if (!r.ok) { distribMsg.value[type] = `HTTP ${r.status}`; return }
         const text = await r.text()
-        if (type === 'tools') distribTools.value = text
-        else distribRoutes.value = text
+        if (type === 'apps') distribApps.value = text
+        else distribScenes.value = text
         distribMsg.value[type] = lang.value==='zh' ? '已加载当前服务端配置' : 'Loaded from server'
       } catch (e) { distribMsg.value[type] = e.message }
     }
@@ -1034,7 +1043,7 @@ createApp({
       switchDebugMode, clearChat, sendMsg, sendImage, copyImg, saveImg,
       virtualAgents, vaModalOpen, vaEditId, vaForm, vaMsg, fetchVirtualAgents, openVaModal, closeVaModal, saveVirtualAgent, deleteVirtualAgent,
       vaAddModel, vaRemoveModel, vaSetModelType, vaModelName, vaModelType,
-      distribInfo, distribTools, distribRoutes, distribMsg, distribSaving,
+      distribInfo, distribApps, distribScenes, distribMsg, distribSaving,
       fetchDistribInfo, uploadDistrib, deleteDistrib, previewDistrib,
       fmtTime,
     }

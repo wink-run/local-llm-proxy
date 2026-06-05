@@ -180,10 +180,10 @@ function PolicyManager() {
   );
 }
 
-// ── ImportConfigButton：导入工具清单配置（本地文件 or URL）───────────────────
-// endpoint: 服务器端内置的配置文件路径，如 '/api/config/tools' 或 '/api/config/routes'
+// ── ImportConfigButton：导入配置（本地文件 or URL）─────────────────────────────
+// endpoint: 服务器端内置的配置文件路径，如 '/api/config/apps' 或 '/api/config/scenes'
 // URL 框只让用户填服务器根地址，文件路径由 endpoint 内置拼接
-function ImportConfigButton({ onImported, endpoint = '/api/config/tools' }) {
+function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
   const [busy, setBusy] = useState(false);
   const [msg,  setMsg]  = useState('');
   const [showUrl, setShowUrl] = useState(false);
@@ -1696,7 +1696,7 @@ export default function Gateway() {
             <p className="text-xs text-gray-500 mt-0.5">定义每个场景的模型降级链，通过 llm-router-xxx 触发</p>
           </div>
           <div className="flex items-center gap-2">
-            <ImportConfigButton onImported={refresh} endpoint="/api/config/routes" />
+            <ImportConfigButton onImported={refresh} endpoint="/api/config/scenes" />
             <button
               onClick={() => { setExpandedRoute(null); setNewRoute({ scene_name: '', icon: '🔀', steps: [] }); }}
               className="text-xs bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
