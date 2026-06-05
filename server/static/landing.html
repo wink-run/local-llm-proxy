@@ -397,8 +397,9 @@
     }
 
     /* ── Download ── */
-    .dl-cards { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
-    @media (max-width: 560px) { .dl-cards { grid-template-columns: 1fr; } }
+    .dl-cards { display: grid; gap: 14px; grid-template-columns: 1fr 1fr 1fr; }
+    @media (max-width: 720px) { .dl-cards { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 480px) { .dl-cards { grid-template-columns: 1fr; } }
     .dl-card {
       background: var(--bg-card); border: 1px solid var(--border);
       border-radius: 12px; padding: 22px; position: relative;
@@ -854,20 +855,41 @@
           <div class="dl-card" id="card-mac">
             <div class="dl-os"></div>
             <div class="dl-name">Token Bank for Mac</div>
-            <div class="dl-meta" id="meta-mac">Apple Silicon &amp; Intel · .dmg</div>
+            <div class="dl-meta" id="meta-mac">Apple Silicon &amp; Intel · .dmg · 自动更新</div>
             <a class="dl-btn unavailable" id="btn-mac" href="#" data-i18n="dl.loading">加载中…</a>
           </div>
           <div class="dl-card" id="card-win">
             <div class="dl-os">🪟</div>
             <div class="dl-name">Token Bank for Windows</div>
-            <div class="dl-meta" id="meta-win">x86_64 · .exe</div>
+            <div class="dl-meta" id="meta-win">x86_64 · .exe · 自动更新</div>
             <a class="dl-btn unavailable" id="btn-win" href="#" data-i18n="dl.loading">加载中…</a>
+          </div>
+          <div class="dl-card" id="card-docker">
+            <div class="dl-os">🐳</div>
+            <div class="dl-name">Token Bank for Docker</div>
+            <div class="dl-meta">命令行 / 服务器无界面部署</div>
+            <a class="dl-btn available" id="btn-docker"
+               href="https://github.com/wink-run/local-llm-proxy/pkgs/container/local-llm-proxy%2Fgateway"
+               target="_blank" rel="noopener" data-i18n="dl.docker.btn">查看镜像</a>
           </div>
         </div>
 
-        <details style="margin-top:24px;">
-          <summary style="cursor:pointer;color:var(--muted);font-size:.85rem;user-select:none;padding:6px 0;list-style:none;display:flex;align-items:center;gap:6px;" data-i18n="dl.cli">
-            ▶ Docker / CLI 部署
+        <!-- Docker quickstart -->
+        <div style="margin-top:16px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:16px 20px;" class="reveal">
+          <div style="font-family:'DM Mono',monospace;font-size:.65rem;color:var(--muted);letter-spacing:.08em;margin-bottom:10px;">DOCKER QUICKSTART</div>
+          <div class="code-block" style="margin-top:0;">
+<pre><span class="c">docker run</span> -d \
+  -p <span class="s">11430:11430</span> -p <span class="s">11431:11431</span> \
+  -v ./data:<span class="s">/data/.llm-agent</span> \
+  ghcr.io/wink-run/local-llm-proxy/gateway:<span class="s">latest</span>
+<span class="cm"># LLM 入口: http://localhost:11430/v1</span>
+<span class="cm"># Web UI:  http://localhost:11431</span></pre>
+          </div>
+        </div>
+
+        <details style="margin-top:16px;">
+          <summary style="cursor:pointer;color:var(--muted);font-size:.85rem;user-select:none;padding:6px 0;list-style:none;display:flex;align-items:center;gap:6px;">
+            ▶ CLI 二进制文件
           </summary>
           <div id="agent-download-list" style="margin-top:10px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:16px;">
             <p style="color:var(--muted);font-size:.85rem;" data-i18n="dl.loading">正在加载…</p>
@@ -982,7 +1004,7 @@
       "dl.h2": "下载 Token Bank",
       "dl.sub": "图形界面桌面客户端，一键启动本地网关，管理 Provider 与积分账户。支持 macOS 和 Windows。",
       "dl.loading": "加载中…", "dl.btn": "立即下载", "dl.soon": "即将发布",
-      "dl.cli": "▶ Docker / CLI 部署",
+      "dl.docker.btn": "查看镜像",
       "qs.h2": "快速接入",
       "qs.sub": "客户端安装后自动启动本地网关，把 AI 应用的 <strong>Base URL</strong> 改为以下地址即可。",
       "qs.openai.label": "OpenAI 兼容应用",
@@ -1029,7 +1051,7 @@
       "dl.h2": "Download Token Bank",
       "dl.sub": "Desktop GUI client — start your local gateway, manage Providers and credits. Available for macOS and Windows.",
       "dl.loading": "Loading…", "dl.btn": "Download", "dl.soon": "Coming soon",
-      "dl.cli": "▶ Docker / CLI deployment",
+      "dl.docker.btn": "View image",
       "qs.h2": "Quick setup",
       "qs.sub": "After installing, the gateway starts automatically. Just update the <strong>Base URL</strong> in your AI app.",
       "qs.openai.label": "OpenAI-compatible apps",
