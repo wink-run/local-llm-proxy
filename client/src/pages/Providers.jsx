@@ -75,29 +75,6 @@ function catalogToState(catalog) {
   return { meta, defaults };
 }
 
-// 从粘贴文本里抽出候选 key：兼容多行、Bearer xxx、KEY=value、引号/逗号包裹
-function extractKeys(text) {
-  return (text || '')
-    .replace(/Bearer\s+/gi, ' ')
-    .split(/[\s,'"]+/)
-    .map(t => (t.includes('=') ? t.slice(t.lastIndexOf('=') + 1) : t).trim())
-    .filter(t => t.length >= 16 && /^[A-Za-z0-9_.\-]+$/.test(t));
-}
-
-// 按 key 前缀做最长匹配，返回候选 provider（base_url 取自当前 providers）。
-// 命中长度相同的多个 = 歧义（如 sk- 命中 openai/deepseek/siliconflow），需试探消歧。
-function detectCandidates(key, providers, meta) {
-  const hits = [];
-  for (const p of providers) {
-    for (const prefix of (meta[p.id]?.key_prefix || [])) {
-      if (prefix && key.startsWith(prefix)) hits.push({ id: p.id, base_url: p.base_url, len: prefix.length });
-    }
-  }
-  if (!hits.length) return [];
-  const maxLen = Math.max(...hits.map(h => h.len));
-  return hits.filter(h => h.len === maxLen);
-}
-
 function Toggle({ enabled, onChange }) {
   return (
     <div onClick={onChange}
@@ -756,140 +733,6 @@ function ProviderCard({ provider, meta, onUpdate, onTest }) {
   );
 }
 
-// ── 智能粘贴：粘任意 key（可多行）→ 自动识别源 / 验证 / 点亮 ──────────────────
-function SmartPasteBox({ providers, meta, onConfigure, onTest }) {
-  const [text,    setText]    = useState('');
-  const [busy,    setBusy]    = useState(false);
-  const [results, setResults] = useState([]);
-
-  async function safeTest(base_url, token) {
-    try { return (await onTest(base_url, token)) || { ok: false }; }
-    catch { return { ok: false }; }
-  }
-
-  // 单 key 处理：hintId 来自导入（命名变量直接映射 provider，跳过试探）；否则走前缀检测/试探
-  async function resolveAndApply(key, hintId, source) {
-    const masked = `${key.slice(0, 6)}…${key.slice(-4)}`;
-    let cands;
-    if (hintId && providers.some(p => p.id === hintId)) {
-      const p = providers.find(p => p.id === hintId);
-      cands = [{ id: p.id, base_url: p.base_url, len: 99 }];
-    } else {
-      cands = detectCandidates(key, providers, meta);
-    }
-    if (!cands.length) return { key: masked, source, status: 'unknown', detail: '无法识别，请粘到对应源卡片' };
-
-    let chosen = null, ok = false;
-    if (cands.length === 1) {
-      chosen = cands[0];
-      ok = (await safeTest(chosen.base_url, key)).ok;
-    } else {
-      // 歧义前缀（sk-）：并发试探各候选 base_url，首个通过的即为该源
-      const tested = await Promise.all(cands.map(async c => ({ c, ok: (await safeTest(c.base_url, key)).ok })));
-      const hit = tested.find(t => t.ok);
-      if (hit) { chosen = hit.c; ok = true; }
-      else {
-        const names = cands.map(c => meta[c.id]?.label || c.id).join(' / ');
-        return { key: masked, source, status: 'invalid', detail: `疑似 ${names}，但验证均失败（key 无效或网关未启动）` };
-      }
-    }
-    onConfigure(chosen.id, { token: key, enabled: ok });
-    return { key: masked, source, status: ok ? 'ok' : 'fail', detail: meta[chosen.id]?.label || chosen.id };
-  }
-
-  async function handleDetect() {
-    const keys = [...new Set(extractKeys(text))];
-    if (!keys.length) {
-      setResults([{ status: 'unknown', detail: '没识别到 key，请粘贴一个或多个 API key' }]);
-      return;
-    }
-    setBusy(true);
-    setResults([]);
-    const out = [];
-    for (const key of keys) out.push(await resolveAndApply(key, null, null));
-    setResults(out);
-    setBusy(false);
-    if (out.some(o => o.status === 'ok')) setText('');
-  }
-
-  async function handleImport() {
-    setBusy(true);
-    setResults([]);
-    let found = [];
-    try { found = (await getConfig().importKeys()) || []; } catch {}
-    if (!found.length) {
-      setResults([{ status: 'unknown', detail: '没在本机环境变量 / cc-switch / Claude 配置里找到可导入的 key（导入仅桌面端支持）' }]);
-      setBusy(false);
-      return;
-    }
-    const out = [];
-    for (const item of found) out.push(await resolveAndApply(item.key, item.providerId, item.source));
-    setResults(out);
-    setBusy(false);
-  }
-
-  const STYLE = {
-    ok:      { dot: 'text-green-600 dark:text-green-400',  tip: '已识别并启用' },
-    fail:    { dot: 'text-amber-600 dark:text-amber-400',  tip: '已填入，未通过验证' },
-    invalid: { dot: 'text-amber-600 dark:text-amber-400',  tip: '' },
-    unknown: { dot: 'text-gray-500',                       tip: '' },
-  };
-
-  return (
-    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-4 space-y-3">
-      <div className="flex items-center gap-2">
-        <span className="text-base">🪄</span>
-        <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">智能粘贴 / 一键导入</h2>
-        <span className="text-xs text-gray-500">粘 key 或从本机已有配置导入，自动识别来源并启用</span>
-      </div>
-      <textarea
-        value={text}
-        onChange={e => setText(e.target.value)}
-        placeholder="例如：gsk_... 或 sk-... 或一整段含多个 key 的文本"
-        rows={3}
-        className="w-full text-xs font-mono bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2 outline-none focus:border-blue-400 dark:focus:border-blue-600 resize-y text-gray-800 dark:text-gray-200"
-      />
-      <div className="flex items-center gap-3 flex-wrap">
-        <button
-          onClick={handleDetect}
-          disabled={busy || !text.trim()}
-          className="px-4 py-1.5 text-xs font-medium rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors">
-          {busy ? '处理中…' : '识别并配置'}
-        </button>
-        <button
-          onClick={handleImport}
-          disabled={busy}
-          className="px-4 py-1.5 text-xs font-medium rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-          从本机导入
-        </button>
-        <span className="text-[11px] text-gray-400">扫描环境变量 / cc-switch / Claude 配置，仅本机、不上传</span>
-        {results.length > 0 && (
-          <button onClick={() => setResults([])} className="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">清空结果</button>
-        )}
-      </div>
-      {results.length > 0 && (
-        <ul className="space-y-1 pt-1">
-          {results.map((r, i) => {
-            const s = STYLE[r.status] || STYLE.unknown;
-            const icon = r.status === 'ok' ? '✓' : (r.status === 'unknown' ? '?' : '!');
-            return (
-              <li key={i} className={`text-xs flex items-start gap-2 ${s.dot}`}>
-                <span className="font-bold shrink-0">{icon}</span>
-                <span>
-                  {r.source && <span className="text-gray-400">[{r.source}] </span>}
-                  {r.key && <span className="font-mono text-gray-500">{r.key}</span>}
-                  {r.key && ' → '}
-                  <span className="font-medium">{r.detail}</span>
-                  {s.tip && <span className="text-gray-500">（{s.tip}）</span>}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
-  );
-}
 
 export default function Providers() {
   const [providers, setProviders] = useState(FALLBACK_PROVIDERS);
@@ -1004,9 +847,6 @@ export default function Providers() {
         </div>
         {savedMsg && <span className="text-sm text-green-600 dark:text-green-400">{savedMsg}</span>}
       </div>
-
-      {/* 智能粘贴 */}
-      <SmartPasteBox providers={providers} meta={meta} onConfigure={updateProvider} onTest={testProvider} />
 
       {/* Tier sections */}
       {tiers.map(tier => {
