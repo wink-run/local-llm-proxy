@@ -25,6 +25,7 @@ from dispatch_image import handle_image
 from settler import run_settler
 from user_router import router as user_router
 from scene_router import router as scene_router
+from config_router import router as config_router
 from worker_pool import pool, WorkerConnection
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -73,6 +74,8 @@ app.add_middleware(
 app.include_router(admin_router, prefix="/admin")
 app.include_router(user_router, prefix="/user")
 app.include_router(scene_router, prefix="/user")
+app.include_router(config_router, prefix="/api")   # GET /api/config/tools|routes (user JWT)
+                                                    # PUT/DELETE /api/config/tools|routes (admin)
 app.include_router(device_router, tags=["device"])
 
 
