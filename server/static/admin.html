@@ -518,6 +518,80 @@ select.form-input{cursor:pointer}
       </div>
     </div>
 
+    <!-- Config Distribution -->
+    <div v-show="activeTab === 'distrib'" class="tab-content">
+      <!-- 状态概览 -->
+      <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+        <div v-for="type in ['tools','routes']" :key="type"
+          style="background:#1a1d27;border:1px solid #2d3148;border-radius:10px;padding:14px 20px;min-width:200px;display:flex;align-items:center;gap:12px">
+          <span style="font-size:22px">{{ type==='tools' ? '🔧' : '🔀' }}</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:#e2e8f0">{{ type==='tools' ? (lang==='zh'?'工具清单':'Tools Config') : (lang==='zh'?'场景路由':'Routes Config') }}</div>
+            <div style="font-size:12px;margin-top:2px" :style="distribInfo[type].uploaded ? 'color:#4ade80' : 'color:#64748b'">
+              {{ distribInfo[type].uploaded
+                ? (lang==='zh' ? `已上传 · ${distribInfo[type].bytes} 字节` : `Uploaded · ${distribInfo[type].bytes} bytes`)
+                : (lang==='zh' ? '未上传' : 'Not uploaded') }}
+            </div>
+          </div>
+        </div>
+        <div style="background:#1a1d27;border:1px solid #2d3148;border-radius:10px;padding:14px 20px;flex:1;min-width:260px">
+          <div style="font-size:12px;color:#64748b;margin-bottom:6px">{{ lang==='zh' ? '客户端下载地址' : 'Client Download URL' }}</div>
+          <div style="font-family:monospace;font-size:11px;color:#94a3b8;line-height:1.8">
+            GET /api/config/tools<br>GET /api/config/routes
+          </div>
+          <div style="font-size:11px;color:#4a5568;margin-top:6px">{{ lang==='zh' ? '需要用户 JWT 认证' : 'Requires user JWT' }}</div>
+        </div>
+      </div>
+
+      <!-- 两列编辑区 -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div v-for="type in ['tools','routes']" :key="type"
+          style="background:#1a1d27;border:1px solid #2d3148;border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:15px">{{ type==='tools' ? '🔧' : '🔀' }}</span>
+            <span style="font-size:13px;font-weight:600;color:#e2e8f0">
+              {{ type==='tools'
+                ? (lang==='zh' ? '工具清单配置 (tokenbank.tools.yaml)' : 'Tools Config (tokenbank.tools.yaml)')
+                : (lang==='zh' ? '场景路由配置 (tokenbank.routes.yaml)' : 'Routes Config (tokenbank.routes.yaml)') }}
+            </span>
+            <div style="margin-left:auto;display:flex;gap:6px">
+              <button class="btn-xs" @click="previewDistrib(type)"
+                :title="lang==='zh'?'从服务端加载当前内容':'Load current content from server'">
+                {{ lang==='zh' ? '加载' : 'Load' }}
+              </button>
+              <button v-if="distribInfo[type].uploaded" class="btn-xs btn-danger" @click="deleteDistrib(type)">
+                {{ lang==='zh' ? '删除' : 'Delete' }}
+              </button>
+            </div>
+          </div>
+          <textarea
+            v-model="type==='tools' ? distribTools : distribRoutes"
+            spellcheck="false"
+            style="flex:1;min-height:400px;padding:10px 12px;background:#0f1117;border:1px solid #2d3148;border-radius:6px;color:#e2e8f0;font-family:'SFMono-Regular',Consolas,monospace;font-size:12px;line-height:1.6;resize:vertical;outline:none"
+            :placeholder="type==='tools'
+              ? 'version: 1\n\ntools:\n  - id: claude-code\n    ...'
+              : 'version: 1\n\nscene_routes:\n  - id: route-code\n    scene_name: 代码助手\n    ...'">
+          </textarea>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button class="btn btn-indigo" style="flex:1" :disabled="distribSaving[type]" @click="uploadDistrib(type)">
+              {{ distribSaving[type] ? (lang==='zh'?'上传中…':'Uploading…') : (lang==='zh'?'上传并发布':'Upload & Publish') }}
+            </button>
+            <span v-if="distribMsg[type]"
+              :style="distribMsg[type].startsWith('✓')||distribMsg[type].includes('已')||distribMsg[type].includes('Uploaded')||distribMsg[type].includes('Loaded')
+                ? 'color:#4ade80;font-size:12px' : 'color:#f87171;font-size:12px'">
+              {{ distribMsg[type] }}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:12px;font-size:12px;color:#4a5568;line-height:1.6">
+        {{ lang==='zh'
+          ? '管理员在此上传 YAML 配置后，已登录的客户端点击「导入配置 → 🔗 服务器」即可下载并应用。两个文件格式相同（统一 schema），工具清单含 tools/protocols/routing 段，路由配置含 scene_routes 段。'
+          : 'After uploading YAML here, logged-in clients can pull it via Import Config → 🔗 Server. Both files share the same schema: tools config has tools/protocols/routing sections; routes config has scene_routes section.' }}
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -533,7 +607,7 @@ const LANGS = {
     notePlaceholder: '备注（可选）', newKey: '新建 Key', note: '备注', status: '状态',
     createdAt: '创建时间', actions: '操作', noKeys: '暂无 API Key',
     copy: '复制', enabled: '启用', disabled: '禁用', enable: '启用', disable: '禁用', delete: '删除',
-    tabs: { workers:'在线 PC', keys:'API Keys', models:'模型配置', users:'用户管理', orders:'购买审批', config:'系统配置', debug:'调试', virtual:'虚拟 Agent' },
+    tabs: { workers:'在线 PC', keys:'API Keys', models:'模型配置', users:'用户管理', orders:'购买审批', config:'系统配置', debug:'调试', virtual:'虚拟 Agent', distrib:'配置下发' },
     addEditModel: '新增 / 编辑模型', modelName: '模型名称', displayName: '显示名称', tier: '类型',
     contributeRate: '贡献率（积分/千token）', consumeRate: '消费率（积分/千token）',
     yes: '是', no: '否', save: '保存', saving: '保存中', edit: '编辑',
@@ -576,7 +650,7 @@ const LANGS = {
     notePlaceholder: 'Note (optional)', newKey: 'New Key', note: 'Note', status: 'Status',
     createdAt: 'Created', actions: 'Actions', noKeys: 'No API keys yet',
     copy: 'Copy', enabled: 'Active', disabled: 'Disabled', enable: 'Enable', disable: 'Disable', delete: 'Delete',
-    tabs: { workers:'Workers', keys:'API Keys', models:'Models', users:'Users', orders:'Orders', config:'Config', debug:'Debug', virtual:'Virtual Agents' },
+    tabs: { workers:'Workers', keys:'API Keys', models:'Models', users:'Users', orders:'Orders', config:'Config', debug:'Debug', virtual:'Virtual Agents', distrib:'Config Distrib' },
     addEditModel: 'Add / Edit Model', modelName: 'Model Name', displayName: 'Display Name', tier: 'Tier',
     contributeRate: 'Contribute Rate (credits/K tokens)', consumeRate: 'Consume Rate (credits/K tokens)',
     yes: 'Yes', no: 'No', save: 'Save', saving: 'Saving…', edit: 'Edit',
@@ -634,6 +708,7 @@ createApp({
         { key:'config',  label: tl.config },
         { key:'debug',   label: tl.debug },
         { key:'virtual', label: tl.virtual },
+        { key:'distrib', label: tl.distrib },
       ]
     })
 
@@ -662,6 +737,7 @@ createApp({
       if (k === 'orders') fetchOrders()
       if (k === 'config') fetchConfig()
       if (k === 'virtual') fetchVirtualAgents()
+      if (k === 'distrib') fetchDistribInfo()
     }
     async function api(path, opts = {}) {
       const r = await fetch(path, { ...opts, headers: { 'Content-Type':'application/json', Authorization:`Bearer ${getKey()}`, ...(opts.headers||{}) } })
@@ -891,6 +967,50 @@ createApp({
       try { await api(`/admin/virtual-agents/${agent.id}`, {method:'DELETE'}); await fetchVirtualAgents() } catch {}
     }
 
+    /* ── Config Distribution ── */
+    const distribInfo   = ref({ tools:{uploaded:false,bytes:0}, routes:{uploaded:false,bytes:0} })
+    const distribTools  = ref(''), distribRoutes  = ref('')
+    const distribMsg    = ref({ tools:'', routes:'' })
+    const distribSaving = ref({ tools:false, routes:false })
+
+    async function fetchDistribInfo() {
+      try { const d = await (await api('/api/config/info')).json(); distribInfo.value = d } catch {}
+    }
+    async function uploadDistrib(type) {
+      const content = type === 'tools' ? distribTools.value : distribRoutes.value
+      if (!content.trim()) return
+      distribSaving.value[type] = true; distribMsg.value[type] = ''
+      try {
+        const r = await api(`/api/config/${type}`, { method:'PUT', body: JSON.stringify({ content }) })
+        const d = await r.json()
+        distribMsg.value[type] = d.ok
+          ? (lang.value==='zh' ? `✓ 已上传（${d.bytes} 字节）` : `✓ Uploaded (${d.bytes} bytes)`)
+          : (d.detail || 'Error')
+        if (d.ok) await fetchDistribInfo()
+      } catch (e) { distribMsg.value[type] = e.message }
+      finally { distribSaving.value[type] = false }
+    }
+    async function deleteDistrib(type) {
+      if (!confirm(lang.value==='zh' ? `确认删除 ${type} 配置？客户端将无法下载。` : `Delete ${type} config?`)) return
+      try {
+        await api(`/api/config/${type}`, { method:'DELETE' })
+        distribMsg.value[type] = lang.value==='zh' ? '已删除' : 'Deleted'
+        if (type === 'tools') distribTools.value = ''
+        else distribRoutes.value = ''
+        await fetchDistribInfo()
+      } catch (e) { distribMsg.value[type] = e.message }
+    }
+    async function previewDistrib(type) {
+      try {
+        const r = await api(`/api/config/${type}`)
+        if (!r.ok) { distribMsg.value[type] = `HTTP ${r.status}`; return }
+        const text = await r.text()
+        if (type === 'tools') distribTools.value = text
+        else distribRoutes.value = text
+        distribMsg.value[type] = lang.value==='zh' ? '已加载当前服务端配置' : 'Loaded from server'
+      } catch (e) { distribMsg.value[type] = e.message }
+    }
+
     /* ── Utils ── */
     function fmtTime(iso) { if (!iso) return '—'; return new Date(iso).toLocaleString(lang.value==='zh'?'zh-CN':'en-US',{hour12:false}) }
 
@@ -914,6 +1034,8 @@ createApp({
       switchDebugMode, clearChat, sendMsg, sendImage, copyImg, saveImg,
       virtualAgents, vaModalOpen, vaEditId, vaForm, vaMsg, fetchVirtualAgents, openVaModal, closeVaModal, saveVirtualAgent, deleteVirtualAgent,
       vaAddModel, vaRemoveModel, vaSetModelType, vaModelName, vaModelType,
+      distribInfo, distribTools, distribRoutes, distribMsg, distribSaving,
+      fetchDistribInfo, uploadDistrib, deleteDistrib, previewDistrib,
       fmtTime,
     }
   }
