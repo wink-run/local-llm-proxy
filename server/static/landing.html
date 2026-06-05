@@ -502,21 +502,21 @@
       <!-- Flow diagram -->
       <div class="hero-flow">
         <div class="flow-wrap">
-          <div style="font-family:'DM Mono',monospace;font-size:.65rem;color:var(--muted);margin-bottom:16px;letter-spacing:.08em;">REQUEST FLOW</div>
+          <div style="font-family:'DM Mono',monospace;font-size:.65rem;color:var(--muted);margin-bottom:16px;letter-spacing:.08em;" data-i18n="flow.label">请求链路</div>
           <div class="flow-row">
             <!-- Sources -->
             <div class="flow-group">
               <div class="flow-node">
-                <div class="fn-label">APP</div>
+                <div class="fn-label" data-i18n="flow.app">应用</div>
                 <div class="fn-name">Cursor</div>
               </div>
               <div class="flow-node">
-                <div class="fn-label">APP</div>
+                <div class="fn-label" data-i18n="flow.app">应用</div>
                 <div class="fn-name">Claude Desktop</div>
               </div>
               <div class="flow-node">
-                <div class="fn-label">APP</div>
-                <div class="fn-name">任意 AI 应用</div>
+                <div class="fn-label" data-i18n="flow.app">应用</div>
+                <div class="fn-name" data-i18n="flow.anyapp">任意 AI 应用</div>
               </div>
             </div>
 
@@ -526,7 +526,7 @@
 
             <!-- Gateway -->
             <div class="flow-node hi" style="min-width:130px;padding:16px 18px;">
-              <div class="fn-label">LOCAL GATEWAY</div>
+              <div class="fn-label" data-i18n="flow.gateway">本地网关</div>
               <div class="fn-name" style="font-size:.9rem;">Token Bank</div>
               <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px;justify-content:center;">
                 <span class="flow-badge badge-fmt">格式桥接</span>
@@ -541,16 +541,16 @@
             <!-- Providers -->
             <div class="flow-group">
               <div class="flow-node">
-                <div class="fn-label">PROVIDER</div>
-                <div class="fn-name">免费 <span class="flow-badge badge-free">free</span></div>
+                <div class="fn-label" data-i18n="flow.provider">服务商</div>
+                <div class="fn-name" data-i18n-html="flow.free">免费 <span class="flow-badge badge-free">free</span></div>
               </div>
               <div class="flow-node">
-                <div class="fn-label">PROVIDER</div>
-                <div class="fn-name">P2P 共享 <span class="flow-badge badge-p2p">p2p</span></div>
+                <div class="fn-label" data-i18n="flow.provider">服务商</div>
+                <div class="fn-name" data-i18n-html="flow.p2p">P2P 共享 <span class="flow-badge badge-p2p">p2p</span></div>
               </div>
               <div class="flow-node">
-                <div class="fn-label">PROVIDER</div>
-                <div class="fn-name">付费 <span class="flow-badge badge-paid">paid</span></div>
+                <div class="fn-label" data-i18n="flow.provider">服务商</div>
+                <div class="fn-name" data-i18n-html="flow.paid">付费 <span class="flow-badge badge-paid">paid</span></div>
               </div>
             </div>
           </div>
@@ -562,7 +562,7 @@
     <section class="section" id="gateway">
       <div class="wrap">
         <div class="reveal">
-          <div class="sec-label">LOCAL GATEWAY</div>
+          <div class="sec-label" data-i18n="sec.gateway">本地网关</div>
           <h2 class="sec-h2" data-i18n-html="gw.h2">多格式接入，<em>无感代理</em></h2>
           <p class="sec-sub" data-i18n-html="gw.sub">本地网关同时兼容主流 AI 接口格式，AI 应用无需任何改造，只需把 Base URL 指向 <strong>127.0.0.1:11430</strong>，请求自动流入并被路由到最优 Provider。</p>
         </div>
@@ -600,17 +600,17 @@
 
         <div class="grid-3 reveal" style="margin-top:24px;">
           <article class="card">
-            <div class="card-num">01 / PROXY</div>
+            <div class="card-num" data-i18n="gw.num1">01 / 代理</div>
             <h3 data-i18n="gw.c1.title">密钥不离本机</h3>
             <p data-i18n="gw.c1.body">上游 API Key 仅保存在本机，不经过任何云端服务器。网关直连上游，全程本地处理。</p>
           </article>
           <article class="card">
-            <div class="card-num">02 / ROUTE</div>
+            <div class="card-num" data-i18n="gw.num2">02 / 路由</div>
             <h3 data-i18n="gw.c2.title">智能 Provider 路由</h3>
             <p data-i18n="gw.c2.body">按模型、成本策略自动选择最优 Provider。免费额度用尽时，平滑切换 P2P 或付费 Provider。</p>
           </article>
           <article class="card">
-            <div class="card-num">03 / ADMIN</div>
+            <div class="card-num" data-i18n="gw.num3">03 / 管理</div>
             <h3 data-i18n="gw.c3.title">可视化管理</h3>
             <p data-i18n="gw.c3.body">图形界面配置 Provider、查看路由日志、实时调试模型接口，告别手动 curl。</p>
           </article>
@@ -622,7 +622,7 @@
     <section class="section" id="optimize">
       <div class="wrap">
         <div class="reveal">
-          <div class="sec-label">TOKEN OPTIMIZATION</div>
+          <div class="sec-label" data-i18n="sec.optimize">Token 优化</div>
           <h2 class="sec-h2" data-i18n-html="opt.h2">路由里内置<em>降本策略</em></h2>
           <p class="sec-sub" data-i18n="opt.sub">网关不只是转发，它在路由层内置 Token 优化策略，主动减少不必要的开销。</p>
         </div>
@@ -666,7 +666,7 @@
         <div class="reveal" style="display:grid;gap:48px;grid-template-columns:1fr 1fr;align-items:start;">
 
           <div>
-            <div class="sec-label">USAGE ANALYTICS</div>
+            <div class="sec-label" data-i18n="sec.stats">用量统计</div>
             <h2 class="sec-h2" data-i18n-html="stats.h2">所有 AI 消耗<br><em>一屏看清</em></h2>
             <p class="sec-sub" data-i18n-html="stats.sub">
               类比 <strong>iOS 电量统计</strong>——所有 AI 应用自然纳入，无需逐一配置。走网关的、直连官方的、Claude Code 的、Codex 的，全部汇聚到同一个 Dashboard。
@@ -774,7 +774,7 @@
     <section class="section" id="providers">
       <div class="wrap">
         <div class="reveal">
-          <div class="sec-label">PROVIDER TIERS</div>
+          <div class="sec-label" data-i18n="sec.providers">Provider 层级</div>
           <h2 class="sec-h2" data-i18n-html="prov.h2">三层 Provider，<em>自动择优</em></h2>
           <p class="sec-sub" data-i18n="prov.sub">路由按成本优先级自动选择，能用免费的绝不走付费，P2P 共享也能进一步降低成本。</p>
         </div>
@@ -825,7 +825,7 @@
     <section class="section" id="p2p" style="background:linear-gradient(180deg,rgba(245,166,35,.03) 0%,transparent 100%);">
       <div class="wrap">
         <div class="reveal">
-          <div class="sec-label" style="color:var(--warn);">P2P SHARING · 本项目特色</div>
+          <div class="sec-label" style="color:var(--warn);" data-i18n="sec.p2p">P2P 共享 · 本项目特色</div>
           <h2 class="sec-h2" data-i18n-html="p2p.h2">闲置算力变积分，<em style="color:var(--warn)">跨模型自由流通</em></h2>
           <p class="sec-sub" data-i18n="p2p.sub">P2P 共享网络是本项目独有的特色——社区成员互相贡献闲置额度，积分在模型之间、时段之间自由兑换，让你的 AI 算力不再浪费，也让高级模型唾手可得。</p>
         </div>
@@ -864,7 +864,7 @@
         <!-- Earn / Spend formula -->
         <div class="reveal" style="margin-top:24px;display:grid;gap:16px;grid-template-columns:1fr 1fr;">
           <div style="background:var(--bg-card);border:1px solid rgba(245,166,35,.2);border-radius:12px;padding:22px;">
-            <div style="font-family:'DM Mono',monospace;font-size:.66rem;color:var(--warn);letter-spacing:.1em;margin-bottom:14px;">EARN · 贡献赚积分</div>
+            <div style="font-family:'DM Mono',monospace;font-size:.66rem;color:var(--warn);letter-spacing:.1em;margin-bottom:14px;" data-i18n="p2p.earn.label">贡献赚积分</div>
             <div class="credit-formula">
 <span class="hl-g">积分</span> = (output_tokens / 1K)
      × <span class="hl-p">模型贡献率</span>
@@ -886,7 +886,7 @@
             </div>
           </div>
           <div style="background:var(--bg-card);border:1px solid rgba(245,166,35,.2);border-radius:12px;padding:22px;">
-            <div style="font-family:'DM Mono',monospace;font-size:.66rem;color:var(--warn);letter-spacing:.1em;margin-bottom:14px;">SPEND · 调用花积分</div>
+            <div style="font-family:'DM Mono',monospace;font-size:.66rem;color:var(--warn);letter-spacing:.1em;margin-bottom:14px;" data-i18n="p2p.spend.label">调用花积分</div>
             <div class="credit-formula">
 <span class="hl-y">花费</span> = (total_tokens / 1K)
      × <span class="hl-p">模型消费率</span>
@@ -909,7 +909,7 @@
     <section class="section" id="download">
       <div class="wrap">
         <div class="reveal">
-          <div class="sec-label">DOWNLOAD</div>
+          <div class="sec-label" data-i18n="sec.download">下载</div>
           <h2 class="sec-h2" data-i18n="dl.h2">下载 Token Bank</h2>
           <p class="sec-sub" data-i18n="dl.sub">图形界面桌面客户端，一键启动本地网关，管理 Provider 与积分账户。支持 macOS 和 Windows。</p>
         </div>
@@ -939,7 +939,7 @@
 
         <!-- Docker quickstart -->
         <div style="margin-top:16px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:16px 20px;" class="reveal">
-          <div style="font-family:'DM Mono',monospace;font-size:.65rem;color:var(--muted);letter-spacing:.08em;margin-bottom:10px;">DOCKER QUICKSTART</div>
+          <div style="font-family:'DM Mono',monospace;font-size:.65rem;color:var(--muted);letter-spacing:.08em;margin-bottom:10px;" data-i18n="dl.docker.qs">Docker 快速启动</div>
           <div class="code-block" style="margin-top:0;">
 <pre><span class="c">docker run</span> -d \
   -p <span class="s">11430:11430</span> -p <span class="s">11431:11431</span> \
@@ -965,7 +965,7 @@
     <section class="section" id="quickstart">
       <div class="wrap">
         <div class="reveal">
-          <div class="sec-label">QUICKSTART</div>
+          <div class="sec-label" data-i18n="sec.quickstart">快速接入</div>
           <h2 class="sec-h2" data-i18n="qs.h2">快速接入</h2>
           <p class="sec-sub" data-i18n-html="qs.sub">客户端安装后自动启动本地网关，把 AI 应用的 <strong>Base URL</strong> 改为以下地址即可。</p>
         </div>
@@ -1036,6 +1036,17 @@
   var LANGS = {
     zh: {
       "nav.portal": "用户中心", "nav.wall": "运营大屏", "footer.admin": "管理后台",
+      "flow.label": "请求链路", "flow.app": "应用", "flow.anyapp": "任意 AI 应用",
+      "flow.gateway": "本地网关", "flow.provider": "服务商",
+      "flow.free": "免费 <span class='flow-badge badge-free'>free</span>",
+      "flow.p2p":  "P2P 共享 <span class='flow-badge badge-p2p'>p2p</span>",
+      "flow.paid": "付费 <span class='flow-badge badge-paid'>paid</span>",
+      "sec.gateway": "本地网关", "sec.optimize": "Token 优化", "sec.stats": "用量统计",
+      "sec.providers": "Provider 层级", "sec.p2p": "P2P 共享 · 本项目特色",
+      "sec.download": "下载", "sec.quickstart": "快速接入",
+      "gw.num1": "01 / 代理", "gw.num2": "02 / 路由", "gw.num3": "03 / 管理",
+      "p2p.earn.label": "贡献赚积分", "p2p.spend.label": "调用花积分",
+      "dl.docker.qs": "Docker 快速启动",
       "hero.eyebrow": "个人 AI 中枢 · 本地网关 · 多设备归集",
       "hero.h1": "你的<em>个人 AI 中枢</em>，统一接入智能路由",
       "hero.sub": "本地网关透明代理所有 AI 请求，<strong>智能路由到最优 Provider</strong>，并跨应用、跨设备归集所有 AI 用量——就像 iOS 电量统计，<strong>所有 AI 应用自然纳入</strong>。",
@@ -1097,6 +1108,17 @@
     },
     en: {
       "nav.portal": "User Portal", "nav.wall": "Live Dashboard", "footer.admin": "Admin",
+      "flow.label": "REQUEST FLOW", "flow.app": "APP", "flow.anyapp": "Any AI App",
+      "flow.gateway": "LOCAL GATEWAY", "flow.provider": "PROVIDER",
+      "flow.free": "Free <span class='flow-badge badge-free'>free</span>",
+      "flow.p2p":  "P2P Shared <span class='flow-badge badge-p2p'>p2p</span>",
+      "flow.paid": "Paid <span class='flow-badge badge-paid'>paid</span>",
+      "sec.gateway": "LOCAL GATEWAY", "sec.optimize": "TOKEN OPTIMIZATION", "sec.stats": "USAGE ANALYTICS",
+      "sec.providers": "PROVIDER TIERS", "sec.p2p": "P2P SHARING · KEY FEATURE",
+      "sec.download": "DOWNLOAD", "sec.quickstart": "QUICKSTART",
+      "gw.num1": "01 / PROXY", "gw.num2": "02 / ROUTE", "gw.num3": "03 / ADMIN",
+      "p2p.earn.label": "EARN · Contribute for Credits", "p2p.spend.label": "SPEND · Pay with Credits",
+      "dl.docker.qs": "DOCKER QUICKSTART",
       "hero.eyebrow": "Personal AI Hub · Local Gateway · Multi-device",
       "hero.h1": "Your <em>Personal AI Hub</em> — Unified Access, Smart Routing",
       "hero.sub": "The local gateway transparently proxies all AI requests, <strong>routes to the best Provider</strong>, and aggregates usage across apps and devices — like iOS battery stats, <strong>every AI app is naturally included</strong>.",
