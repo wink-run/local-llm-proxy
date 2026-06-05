@@ -818,27 +818,90 @@
           </div>
         </div>
 
-        <!-- Credit economy compact -->
-        <div style="margin-top:24px;" class="reveal">
-          <div style="font-size:.82rem;font-weight:600;color:var(--text);margin-bottom:12px;" data-i18n="credit.title">P2P 积分体系</div>
-          <div class="credit-split">
-            <div class="credit-box">
-              <div class="cb-label">EARN · 贡献赚积分</div>
-              <div class="credit-formula">
+      </div>
+    </section>
+
+    <!-- ── P2P Spotlight ── -->
+    <section class="section" id="p2p" style="background:linear-gradient(180deg,rgba(245,166,35,.03) 0%,transparent 100%);">
+      <div class="wrap">
+        <div class="reveal">
+          <div class="sec-label" style="color:var(--warn);">P2P SHARING · 本项目特色</div>
+          <h2 class="sec-h2" data-i18n-html="p2p.h2">闲置算力变积分，<em style="color:var(--warn)">跨模型自由流通</em></h2>
+          <p class="sec-sub" data-i18n="p2p.sub">P2P 共享网络是本项目独有的特色——社区成员互相贡献闲置额度，积分在模型之间、时段之间自由兑换，让你的 AI 算力不再浪费，也让高级模型唾手可得。</p>
+        </div>
+
+        <!-- Three value props -->
+        <div class="grid-3 reveal" style="margin-top:36px;">
+          <article class="card" style="border-color:rgba(245,166,35,.2);background:linear-gradient(135deg,rgba(245,166,35,.04),var(--bg-card));">
+            <div class="card-icon">⇄</div>
+            <h3 data-i18n="p2p.v1.title">跨模型兑换</h3>
+            <p data-i18n="p2p.v1.body">贡献你有的模型额度，赚积分，消费你没有的模型。国内模型换境外高级模型，开源额度换 Claude / GPT-4o。</p>
+            <div style="margin-top:14px;display:flex;flex-direction:column;gap:6px;">
+              <div style="font-size:.78rem;color:var(--muted);padding:5px 10px;background:rgba(0,0,0,.25);border-radius:5px;border-left:2px solid var(--warn);" data-i18n-html="p2p.v1.ex1">贡献 DeepSeek → 积分 → <span style="color:var(--text)">Claude Sonnet</span></div>
+              <div style="font-size:.78rem;color:var(--muted);padding:5px 10px;background:rgba(0,0,0,.25);border-radius:5px;border-left:2px solid var(--warn);" data-i18n-html="p2p.v1.ex2">Ollama 本地模型 → 积分 → <span style="color:var(--text)">GPT-4o</span></div>
+            </div>
+          </article>
+          <article class="card" style="border-color:rgba(245,166,35,.2);background:linear-gradient(135deg,rgba(245,166,35,.04),var(--bg-card));">
+            <div class="card-icon">◷</div>
+            <h3 data-i18n="p2p.v2.title">跨时段储值</h3>
+            <p data-i18n="p2p.v2.body">现在闲置的额度变成积分存起来，以后随时取用。电脑开着没人用、API 套餐月底剩余，都能转化成未来的算力储备。</p>
+            <div style="margin-top:14px;display:flex;flex-direction:column;gap:6px;">
+              <div style="font-size:.78rem;color:var(--muted);padding:5px 10px;background:rgba(0,0,0,.25);border-radius:5px;border-left:2px solid var(--warn);" data-i18n-html="p2p.v2.ex1">白天挂机贡献 → <span style="color:var(--text)">晚上关机后继续调用</span></div>
+              <div style="font-size:.78rem;color:var(--muted);padding:5px 10px;background:rgba(0,0,0,.25);border-radius:5px;border-left:2px solid var(--warn);" data-i18n-html="p2p.v2.ex2">月底剩余额度 → <span style="color:var(--text)">下月按需取用</span></div>
+            </div>
+          </article>
+          <article class="card" style="border-color:rgba(245,166,35,.2);background:linear-gradient(135deg,rgba(245,166,35,.04),var(--bg-card));">
+            <div class="card-icon">🤝</div>
+            <h3 data-i18n="p2p.v3.title">透明互助网络</h3>
+            <p data-i18n="p2p.v3.body">规则公开、代码开源、多方博弈。贡献率 &gt; 消费率，激励持续在线；质量越高倍率越高，节点越稳赚越多。</p>
+            <div style="margin-top:14px;display:flex;flex-direction:column;gap:6px;">
+              <div style="font-size:.78rem;color:var(--muted);padding:5px 10px;background:rgba(0,0,0,.25);border-radius:5px;border-left:2px solid var(--warn);" data-i18n="p2p.v3.ex1">密钥不离本机，上游 Key 不上云</div>
+              <div style="font-size:.78rem;color:var(--muted);padding:5px 10px;background:rgba(0,0,0,.25);border-radius:5px;border-left:2px solid var(--warn);" data-i18n="p2p.v3.ex2">Ctrl+C 即下线，无需解绑</div>
+            </div>
+          </article>
+        </div>
+
+        <!-- Earn / Spend formula -->
+        <div class="reveal" style="margin-top:24px;display:grid;gap:16px;grid-template-columns:1fr 1fr;">
+          <div style="background:var(--bg-card);border:1px solid rgba(245,166,35,.2);border-radius:12px;padding:22px;">
+            <div style="font-family:'DM Mono',monospace;font-size:.66rem;color:var(--warn);letter-spacing:.1em;margin-bottom:14px;">EARN · 贡献赚积分</div>
+            <div class="credit-formula">
 <span class="hl-g">积分</span> = (output_tokens / 1K)
      × <span class="hl-p">模型贡献率</span>
-     × <span class="hl-g">质量系数</span>
-              </div>
+     × <span style="color:var(--warn)">质量系数 (0.5–1.5×)</span>
             </div>
-            <div class="credit-box">
-              <div class="cb-label">SPEND · 调用花积分</div>
-              <div class="credit-formula">
-<span class="hl-y">花费</span> = (total_tokens / 1K)
-     × <span class="hl-p">模型消费率</span>
+            <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">
+              <div style="flex:1;background:var(--bg-raised);border:1px solid var(--border);border-radius:7px;padding:8px 12px;text-align:center;min-width:80px;">
+                <div style="font-size:.68rem;color:var(--muted);margin-bottom:3px;" data-i18n="p2p.q1">在线时长</div>
+                <div style="font-family:'DM Mono',monospace;font-size:.8rem;color:var(--warn);">0.5–1.3×</div>
+              </div>
+              <div style="flex:1;background:var(--bg-raised);border:1px solid var(--border);border-radius:7px;padding:8px 12px;text-align:center;min-width:80px;">
+                <div style="font-size:.68rem;color:var(--muted);margin-bottom:3px;" data-i18n="p2p.q2">首 Token 延迟</div>
+                <div style="font-family:'DM Mono',monospace;font-size:.8rem;color:var(--warn);">0.6–1.5×</div>
+              </div>
+              <div style="flex:1;background:var(--bg-raised);border:1px solid var(--border);border-radius:7px;padding:8px 12px;text-align:center;min-width:80px;">
+                <div style="font-size:.68rem;color:var(--muted);margin-bottom:3px;" data-i18n="p2p.q3">请求成功率</div>
+                <div style="font-family:'DM Mono',monospace;font-size:.8rem;color:var(--warn);">0.5–1.2×</div>
               </div>
             </div>
           </div>
+          <div style="background:var(--bg-card);border:1px solid rgba(245,166,35,.2);border-radius:12px;padding:22px;">
+            <div style="font-family:'DM Mono',monospace;font-size:.66rem;color:var(--warn);letter-spacing:.1em;margin-bottom:14px;">SPEND · 调用花积分</div>
+            <div class="credit-formula">
+<span class="hl-y">花费</span> = (total_tokens / 1K)
+     × <span class="hl-p">模型消费率</span>
+            </div>
+            <div style="margin-top:14px;padding:12px 14px;background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;">
+              <div style="font-size:.78rem;color:var(--muted);line-height:1.7;" data-i18n-html="p2p.spend.note">
+                贡献率 &gt; 消费率——<span style="color:var(--text)">多贡献多获益</span>，剩余积分可随时消费高级模型调用。汇率公开，规则透明。
+              </div>
+            </div>
+            <div style="margin-top:12px;">
+              <a href="/app" style="display:inline-block;padding:8px 18px;background:rgba(245,166,35,.12);border:1px solid rgba(245,166,35,.3);border-radius:7px;font-size:.82rem;font-weight:600;color:var(--warn);text-decoration:none;" data-i18n="p2p.cta">查看当前积分汇率 →</a>
+            </div>
+          </div>
         </div>
+
       </div>
     </section>
 
@@ -1001,6 +1064,20 @@
       "prov.t2.desc": "社区成员贡献闲置算力，消费者用积分兑换调用额度，往往比官方更实惠。",
       "prov.t3.desc": "OpenAI、Anthropic、国内厂商等官方 API，免费和 P2P 资源耗尽时兜底。",
       "credit.title": "P2P 积分体系",
+      "p2p.h2": "闲置算力变积分，<em style='color:var(--warn)'>跨模型自由流通</em>",
+      "p2p.sub": "P2P 共享网络是本项目独有的特色——社区成员互相贡献闲置额度，积分在模型之间、时段之间自由兑换，让你的 AI 算力不再浪费，也让高级模型唾手可得。",
+      "p2p.v1.title": "跨模型兑换", "p2p.v1.body": "贡献你有的模型额度，赚积分，消费你没有的模型。国内模型换境外高级模型，开源额度换 Claude / GPT-4o。",
+      "p2p.v1.ex1": "贡献 DeepSeek → 积分 → <span style='color:var(--text)'>Claude Sonnet</span>",
+      "p2p.v1.ex2": "Ollama 本地模型 → 积分 → <span style='color:var(--text)'>GPT-4o</span>",
+      "p2p.v2.title": "跨时段储值", "p2p.v2.body": "现在闲置的额度变成积分存起来，以后随时取用。电脑开着没人用、API 套餐月底剩余，都能转化成未来的算力储备。",
+      "p2p.v2.ex1": "白天挂机贡献 → <span style='color:var(--text)'>晚上关机后继续调用</span>",
+      "p2p.v2.ex2": "月底剩余额度 → <span style='color:var(--text)'>下月按需取用</span>",
+      "p2p.v3.title": "透明互助网络", "p2p.v3.body": "规则公开、代码开源、多方博弈。贡献率 > 消费率，激励持续在线；质量越高倍率越高，节点越稳赚越多。",
+      "p2p.v3.ex1": "密钥不离本机，上游 Key 不上云",
+      "p2p.v3.ex2": "Ctrl+C 即下线，无需解绑",
+      "p2p.q1": "在线时长", "p2p.q2": "首 Token 延迟", "p2p.q3": "请求成功率",
+      "p2p.spend.note": "贡献率 &gt; 消费率——<span style='color:var(--text)'>多贡献多获益</span>，剩余积分可随时消费高级模型调用。汇率公开，规则透明。",
+      "p2p.cta": "查看当前积分汇率 →",
       "dl.h2": "下载 Token Bank",
       "dl.sub": "图形界面桌面客户端，一键启动本地网关，管理 Provider 与积分账户。支持 macOS 和 Windows。",
       "dl.loading": "加载中…", "dl.btn": "立即下载", "dl.soon": "即将发布",
@@ -1048,6 +1125,20 @@
       "prov.t2.desc": "Community members contribute idle quota; consumers spend credits — often cheaper than official APIs.",
       "prov.t3.desc": "OpenAI, Anthropic, and domestic vendors. Used as fallback when free and P2P capacity runs out.",
       "credit.title": "P2P Credit Economy",
+      "p2p.h2": "Idle compute becomes credits, <em style='color:var(--warn)'>freely exchangeable across models</em>",
+      "p2p.sub": "The P2P sharing network is a unique feature of this project — community members contribute idle quota; credits flow freely across models and time, so your AI compute is never wasted.",
+      "p2p.v1.title": "Cross-model exchange", "p2p.v1.body": "Contribute quota from models you have, earn credits, spend on models you don't. Swap domestic open models for overseas premium ones.",
+      "p2p.v1.ex1": "Contribute DeepSeek → credits → <span style='color:var(--text)'>Claude Sonnet</span>",
+      "p2p.v1.ex2": "Local Ollama → credits → <span style='color:var(--text)'>GPT-4o</span>",
+      "p2p.v2.title": "Time banking", "p2p.v2.body": "Convert today's surplus quota into credits you can use later. Whether leftover API capacity or an idle machine — all becomes on-demand compute reserves.",
+      "p2p.v2.ex1": "Idle during the day → <span style='color:var(--text)'>keep calling after it's off at night</span>",
+      "p2p.v2.ex2": "Unused quota at month-end → <span style='color:var(--text)'>draw down next month</span>",
+      "p2p.v3.title": "Transparent mutual aid", "p2p.v3.body": "Published rules, open source, multi-party dynamics. Earn rate > spend rate by design. Higher quality nodes earn more.",
+      "p2p.v3.ex1": "Keys stay local — upstream key never leaves your machine",
+      "p2p.v3.ex2": "Ctrl+C to disconnect — no server-side unbinding needed",
+      "p2p.q1": "Uptime", "p2p.q2": "Time to first token", "p2p.q3": "Success rate",
+      "p2p.spend.note": "Earn rate &gt; spend rate — <span style='color:var(--text)'>contribute more, earn more</span>. Leftover credits can be spent on premium model calls anytime. Rates are public and transparent.",
+      "p2p.cta": "View current credit rates →",
       "dl.h2": "Download Token Bank",
       "dl.sub": "Desktop GUI client — start your local gateway, manage Providers and credits. Available for macOS and Windows.",
       "dl.loading": "Loading…", "dl.btn": "Download", "dl.soon": "Coming soon",
