@@ -103,6 +103,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     update: (d)                       => ipcRenderer.invoke('policies:update', d),
     delete: (id)                      => ipcRenderer.invoke('policies:delete', id),
   },
+  apps: {
+    list:          ()       => ipcRenderer.invoke('apps:list'),
+    stats:         (list)   => ipcRenderer.invoke('apps:stats', list),
+    create:        (d)      => ipcRenderer.invoke('apps:create', d),
+    update:        (d)      => ipcRenderer.invoke('apps:update', d),
+    delete:        (id)     => ipcRenderer.invoke('apps:delete', id),
+    regenKey:      (id)     => ipcRenderer.invoke('apps:regenKey', id),
+    ensureShimApp: (d)      => ipcRenderer.invoke('apps:ensureShimApp', d),
+  },
   localConfig: {
     get:               ()  => ipcRenderer.invoke('localConfig:get'),
     createSceneRoute:  (d) => ipcRenderer.invoke('localConfig:createSceneRoute', d),

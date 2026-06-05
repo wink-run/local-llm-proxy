@@ -251,4 +251,28 @@ function close() {
   }
 }
 
-module.exports = { init, record, queryDashboard, getImportState, setImportState, close };
+/** 按 api_key 查单个应用的统计（api-key 类 app）。*/
+function queryByApiKey(apiKey) {
+  if (!db || !apiKey) return { calls: 0, tokens: 0, lastTs: null };
+  try {
+    const r = db.prepare(
+      'SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens) AS tokens, MAX(ts) AS lastTs ' +
+      'FROM requests WHERE api_key = ?'
+    ).get(apiKey);
+    return { calls: r.calls || 0, tokens: r.tokens || 0, lastTs: r.lastTs || null };
+  } catch { return { calls: 0, tokens: 0, lastTs: null }; }
+}
+
+/** 按 data_source 查单个工具的统计（shim 类 app 用 session-claude / session-codex 等）。*/
+function queryByDataSource(dataSource) {
+  if (!db || !dataSource) return { calls: 0, tokens: 0, lastTs: null };
+  try {
+    const r = db.prepare(
+      'SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens) AS tokens, MAX(ts) AS lastTs ' +
+      'FROM requests WHERE data_source = ?'
+    ).get(dataSource);
+    return { calls: r.calls || 0, tokens: r.tokens || 0, lastTs: r.lastTs || null };
+  } catch { return { calls: 0, tokens: 0, lastTs: null }; }
+}
+
+module.exports = { init, record, queryDashboard, queryByApiKey, queryByDataSource, getImportState, setImportState, close };

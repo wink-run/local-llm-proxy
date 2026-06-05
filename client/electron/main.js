@@ -224,11 +224,30 @@ function readLocalConfig() {
       const cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
       // 补齐 policies 字段（老配置没有时用默认值）
       if (!cfg.policies) cfg.policies = DEFAULT_POLICIES.map(p => ({ ...p, created_at: new Date().toISOString() }));
+      // 迁移 local_keys → apps（向后兼容）
+      if (!cfg.apps) {
+        cfg.apps = (cfg.local_keys || []).map(k => ({
+          id: 'app-' + k.id,
+          name: k.note || '未命名应用',
+          icon: '🔑',
+          link_method: 'api-key',
+          api_key: k.key,
+          route_id: k.model_key || null,
+          // 扩展字段
+          description: '',
+          allowed_models: [],
+          max_rpm: null,
+          max_concurrent: null,
+          allow_stream: true,
+          request_format: 'auto',
+          created_at: k.created_at || new Date().toISOString(),
+        }));
+      }
       return cfg;
     }
   } catch {}
   return {
-    scene_routes: [], local_keys: [],
+    scene_routes: [], local_keys: [], apps: [],
     policies: DEFAULT_POLICIES.map(p => ({ ...p, created_at: new Date().toISOString() })),
   };
 }
@@ -627,8 +646,8 @@ function registerIPC() {
 
   function syncGatewayFromConfig(cfg) {
     const routes = cfg.scene_routes || [];
-    const keys   = cfg.local_keys   || [];
-    // llm-router-* → scene steps
+    const apps   = cfg.apps         || [];
+    // llm-router-* → scene steps（从 scene_routes 生成）
     const routerMap = {};
     for (const r of routes) {
       if (r.model_key && r.steps?.length) {
@@ -636,10 +655,24 @@ function registerIPC() {
       }
     }
     gateway.setRouterModelMap(routerMap);
-    // api key string → scene steps (for keys bound to a scene)
+    // api key → route（从 apps 生成，替代旧的 local_keys）
     const keyMap = {};
-    for (const k of keys) {
-      if (k.key && k.model_key) {
+    for (const app of apps) {
+      if (app.link_method === 'api-key' && app.api_key && app.route_id) {
+        const route = routes.find(r => r.model_key === app.route_id || r.id === app.route_id);
+        if (route?.steps?.length) {
+          keyMap[app.api_key] = {
+            steps: route.steps, scene_name: route.scene_name,
+            app_id: app.id, app_name: app.name,
+            allowed_models: app.allowed_models || [],
+            allow_stream: app.allow_stream !== false,
+          };
+        }
+      }
+    }
+    // 兼容旧 local_keys（迁移期间两者都支持）
+    for (const k of (cfg.local_keys || [])) {
+      if (k.key && k.model_key && !keyMap[k.key]) {
         const route = routes.find(r => r.model_key === k.model_key);
         if (route?.steps?.length) keyMap[k.key] = { steps: route.steps, scene_name: route.scene_name };
       }
@@ -795,6 +828,155 @@ function registerIPC() {
     const policies = getPolicies().filter(p => p.id !== id);
     savePolicies(policies);
     return { ok: true };
+  });
+
+  // ── 应用管理 CRUD（apps[]，统一管理托管和API Key应用）────────────────────────
+  // 应用结构：{ id, name, icon, link_method(shim|api-key), api_key, route_id,
+  //             description, allowed_models[], max_rpm, max_concurrent,
+  //             allow_stream, request_format(auto|openai|anthropic), created_at }
+
+  function getApps() {
+    const cfg = readLocalConfig();
+    return cfg.apps || [];
+  }
+  function saveApps(apps) {
+    const cfg = readLocalConfig();
+    cfg.apps = apps;
+    writeLocalConfig(cfg);
+    syncGatewayFromConfig(cfg);
+  }
+
+  ipcMain.handle('apps:list', () => {
+    const savedApps = getApps();
+    const agentTools = require('./agent-linker').list();
+    const configLoader = require('./config-loader');
+
+    // 把 yaml tools 里有、但 apps[] 里还没有 shim 记录的 agent，动态补入
+    // （不写库，只是 list 时合并展示）
+    const shimIds = new Set(savedApps.filter(a => a.link_method === 'shim').map(a => a.agent_id));
+    const TOOL_ICONS = { 'claude-code': '🤖', 'codex': '💻', 'gemini-cli': '🔮' };
+    const TOOL_NAMES = { 'claude-code': 'Claude Code', 'codex': 'Codex CLI', 'gemini-cli': 'Gemini CLI' };
+    const virtualShimApps = agentTools
+      .filter(t => !shimIds.has(t.id))
+      .map(t => ({
+        id: 'app-shim-' + t.id,
+        name: TOOL_NAMES[t.id] || t.name || t.id,
+        icon: TOOL_ICONS[t.id] || '🤖',
+        link_method: 'shim',
+        agent_id: t.id,
+        api_key: null,
+        route_id: null,
+        description: '',
+        installed: t.installed,
+        linked: t.linked,
+        _virtual: true,   // 未持久化，仅展示
+      }));
+
+    // 合并：持久化的 app + 虚拟的 shim app
+    const allApps = [...savedApps, ...virtualShimApps];
+
+    // 注入实时托管状态
+    return allApps.map(app => {
+      if (app.link_method === 'shim') {
+        const tool = agentTools.find(t => t.id === app.agent_id);
+        return { ...app, linked: tool ? tool.linked : false, installed: tool ? tool.installed : false };
+      }
+      return { ...app, linked: true };
+    });
+  });
+
+  ipcMain.handle('apps:create', (_e, data) => {
+    const apps = getApps();
+    const app = {
+      id: 'app-' + rndHex(8),
+      name: data.name || '未命名应用',
+      icon: data.icon || '🔧',
+      link_method: data.link_method || 'api-key',
+      agent_id: data.agent_id || null,           // shim 类专用，对应 tool id
+      api_key: data.link_method === 'api-key'
+        ? ('sk-local-' + rndHex(16)) : null,
+      route_id: data.route_id || null,
+      description: data.description || '',
+      allowed_models: data.allowed_models || [],
+      max_rpm: data.max_rpm || null,
+      max_concurrent: data.max_concurrent || null,
+      allow_stream: data.allow_stream !== false,
+      request_format: data.request_format || 'auto',
+      created_at: new Date().toISOString(),
+    };
+    apps.push(app);
+    saveApps(apps);
+    return app;
+  });
+
+  ipcMain.handle('apps:update', (_e, { id, ...patch }) => {
+    const apps = getApps();
+    const idx = apps.findIndex(a => a.id === id);
+    if (idx === -1) return { ok: false, error: 'not-found' };
+    // 不允许外部覆盖 api_key（通过 apps:regenKey 单独操作）
+    const { api_key: _drop, ...safePatch } = patch;
+    apps[idx] = { ...apps[idx], ...safePatch };
+    saveApps(apps);
+    return apps[idx];
+  });
+
+  ipcMain.handle('apps:delete', (_e, id) => {
+    const apps = getApps().filter(a => a.id !== id);
+    saveApps(apps);
+    return { ok: true };
+  });
+
+  ipcMain.handle('apps:regenKey', (_e, id) => {
+    const apps = getApps();
+    const idx = apps.findIndex(a => a.id === id);
+    if (idx === -1 || apps[idx].link_method !== 'api-key') return { ok: false };
+    apps[idx].api_key = 'sk-local-' + rndHex(16);
+    saveApps(apps);
+    return { ok: true, api_key: apps[idx].api_key };
+  });
+
+  // 注册来自 toolsConfig 的 shim 托管 app（透明托管时自动创建或更新 app 记录）
+  // shim agent_id → data_source 对应关系
+  const AGENT_DATA_SOURCE = {
+    'claude-code': 'session-claude',
+    'codex':       'session-codex',
+    'gemini-cli':  'session-gemini',
+  };
+
+  // 批量查所有应用的统计（调一次，合并进 apps:list 或单独查询）
+  ipcMain.handle('apps:stats', (_e, appList) => {
+    const stats = {};
+    for (const app of (appList || [])) {
+      let s;
+      if (app.link_method === 'api-key' && app.api_key) {
+        s = localStats.queryByApiKey(app.api_key);
+      } else if (app.link_method === 'shim' && app.agent_id) {
+        const ds = AGENT_DATA_SOURCE[app.agent_id];
+        s = ds ? localStats.queryByDataSource(ds) : { calls: 0, tokens: 0, lastTs: null };
+      } else {
+        s = { calls: 0, tokens: 0, lastTs: null };
+      }
+      stats[app.id] = s;
+    }
+    return stats;
+  });
+
+  ipcMain.handle('apps:ensureShimApp', (_e, { agent_id, name, icon }) => {
+    const apps = getApps();
+    const existing = apps.find(a => a.agent_id === agent_id && a.link_method === 'shim');
+    if (existing) return existing;
+    const app = {
+      id: 'app-shim-' + agent_id,
+      name, icon: icon || '🤖',
+      link_method: 'shim', agent_id,
+      api_key: null, route_id: null,
+      description: '', allowed_models: [], max_rpm: null,
+      max_concurrent: null, allow_stream: true, request_format: 'auto',
+      created_at: new Date().toISOString(),
+    };
+    apps.push(app);
+    saveApps(apps);
+    return app;
   });
 
   // Save cloud API config (url + user API key) for P2P forwarding
