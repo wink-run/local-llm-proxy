@@ -815,9 +815,10 @@ async function route(model, reqPath, body, res, callerKey) {
     }
   }
 
-  // ── Scene route: llm-router-* ─────────────────────────────────────────────
-  if (model.startsWith('llm-router-')) {
-    const scene = _routerModelMap[model];
+  // ── Scene route：model=llm-router-* 触发，或 callerKey 绑定了路由（api-key 应用 route_id）──
+  const boundScene = (callerKey && _keyScene[callerKey]) || null;
+  if (boundScene?.steps?.length || model.startsWith('llm-router-')) {
+    const scene = boundScene?.steps?.length ? boundScene : _routerModelMap[model];
     if (!scene?.steps?.length) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'scene_not_found', model }));
@@ -1190,7 +1191,9 @@ function getLog() {
   return [...log].reverse(); // newest first
 }
 
-function setKeySceneMap() { /* deprecated */ }
+// api-key 应用的 route_id → 路由覆盖：callerKey → { steps, scene_name }
+let _keyScene = {};
+function setKeySceneMap(map) { _keyScene = map && typeof map === 'object' ? map : {}; }
 
 // ── 应用请求控制（api-key 按 key 匹配，shim 按协议路径匹配）─────────────────────
 // 每项：{ app_id, app_name, match:{key|path}, allow_stream, allowed_models[],

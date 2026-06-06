@@ -838,6 +838,7 @@ function registerIPC() {
     try { for (const t of require('./config-loader').tools()) toolProto[t.id] = t.protocol; } catch {}
 
     const appControls = [];
+    const keyScene = {};   // api-key → 绑定的路由（route_id → scene steps 或 单模型）
     for (const app of apps) {
       const ctrl = {
         app_id: app.id, app_name: app.name,
@@ -849,12 +850,21 @@ function registerIPC() {
       };
       if (app.link_method === 'api-key' && app.api_key) {
         appControls.push({ ...ctrl, match: { key: app.api_key } });
+        // route_id 绑定 → 网关按该 key 覆盖路由（命中场景路由用其降级链，否则视为单模型）
+        if (app.route_id) {
+          const route = routes.find(r => r.model_key === app.route_id || r.id === app.route_id);
+          keyScene[app.api_key] = {
+            steps: route?.steps?.length ? route.steps : [{ model: app.route_id }],
+            scene_name: route?.scene_name || app.route_id,
+          };
+        }
       } else if (app.link_method === 'shim' && app.agent_id) {
         const path = PROTOCOL_PATH[toolProto[app.agent_id]];
         if (path) appControls.push({ ...ctrl, match: { path } });
       }
     }
     gateway.setAppControls(appControls);
+    gateway.setKeySceneMap(keyScene);
 
     // P2P backend config
     const cc = cfg.cloud_config || {};
