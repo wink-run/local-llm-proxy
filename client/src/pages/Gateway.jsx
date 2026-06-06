@@ -397,8 +397,6 @@ function AppManager({ externalRoutes }) {
   const [localBase, setLocalBase] = useState('');
   // 当 Gateway 的 routes 更新时同步进来（场景路由新建后立即可选）
   useEffect(() => { if (externalRoutes?.length) setRoutes(externalRoutes); }, [externalRoutes]);
-  const [busy,     setBusy]     = useState({});
-  const [notice,   setNotice]   = useState({});
   const [settings,     setSettings]     = useState(null); // Tab1 modal
   const [expandedEdit, setExpandedEdit] = useState(null); // Tab2 inline edit id
   const [editForm,     setEditForm]     = useState({});   // Tab2 inline form state
@@ -428,39 +426,6 @@ function AppManager({ externalRoutes }) {
   useEffect(() => { load(); }, [load]);
 
   // Tab 1 actions
-  async function handleApplyAll() {
-    if (!window.electronAPI?.agents) return;
-    setBusy(b => ({ ...b, _all: true }));
-    setNotice(n => ({ ...n, _all: '' }));
-    const results = await window.electronAPI.agents.applyAll().catch(() => []);
-    const ok = results.filter(r => r.ok).length;
-    setNotice(n => ({ ...n, _all: `✓ 已托管 ${ok} 个工具` }));
-    // ensure shim apps exist in apps list
-    for (const r of results) {
-      if (r.ok && window.electronAPI.apps) {
-        await window.electronAPI.apps.ensureShimApp({ agent_id: r.id, name: r.name || r.id, icon: '🤖' }).catch(() => {});
-      }
-    }
-    setBusy(b => ({ ...b, _all: false }));
-    await load();
-  }
-
-  async function handleRevertAll() {
-    if (!window.electronAPI?.agents) return;
-    setBusy(b => ({ ...b, _all: true }));
-    await window.electronAPI.agents.revertAll().catch(() => {});
-    setNotice(n => ({ ...n, _all: '✓ 已取消全部托管' }));
-    setBusy(b => ({ ...b, _all: false }));
-    await load();
-  }
-
-  async function handleRevert(agentId) {
-    setBusy(b => ({ ...b, [agentId]: true }));
-    await window.electronAPI.agents?.revert(agentId).catch(() => {});
-    setBusy(b => ({ ...b, [agentId]: false }));
-    await load();
-  }
-
   async function handleUpdateApp(data) {
     await window.electronAPI.apps?.update(data).catch(() => {});
     await load();
@@ -552,16 +517,8 @@ function AppManager({ externalRoutes }) {
           <div className="p-4">
             {/* 操作栏 */}
             <div className="flex items-center gap-2 mb-3 flex-wrap">
-              <button disabled={busy._all} onClick={handleApplyAll}
-                className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 transition-colors">
-                {busy._all ? '托管中…' : '⚡ 一键托管'}
-              </button>
-              <button disabled={busy._all} onClick={handleRevertAll}
-                className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50 transition-colors">
-                取消全部托管
-              </button>
-              <ImportConfigButton onImported={load} />
-              {notice._all && <span className="text-xs text-green-600 dark:text-green-400">{notice._all}</span>}
+              <span className="text-xs text-gray-400 dark:text-gray-500">已安装的 CLI 工具自动托管</span>
+              <div className="ml-auto"><ImportConfigButton onImported={load} /></div>
             </div>
 
             {/* 应用列表 */}
@@ -596,18 +553,21 @@ function AppManager({ externalRoutes }) {
                     : 'bg-gray-50/50 dark:bg-gray-800/20';
                   return (
                     <div key={app.id} className={`flex items-center gap-3 px-3 py-2.5 transition-colors ${rowBg} ${isOnline ? '' : 'opacity-60'}`}>
-                      {/* 状态点 + 图标 + 名称 + 接入方式 */}
-                      <span className={`w-2 h-2 rounded-full shrink-0 ${statusDot}`} />
+                      {/* 图标 + 名称 */}
                       <span className={`text-base shrink-0 ${isOnline ? '' : 'grayscale'}`}>{app.icon}</span>
-                      <div className="min-w-0 w-32 shrink-0">
-                        <div className={`text-xs font-medium truncate ${isOnline ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'}`}>{app.name}</div>
-                        <div className="text-[10px] truncate flex items-center gap-1">
-                          <span className={isOnline ? (app.link_method === 'api-key' ? 'text-blue-500' : 'text-green-600 dark:text-green-400') : 'text-gray-400'}>
-                            {isOnline ? '在线' : '离线'}
-                          </span>
-                          <span className="text-gray-300 dark:text-gray-600">·</span>
-                          <span className="text-gray-400">{LINK_METHOD_LABEL[app.link_method] || app.link_method}</span>
-                        </div>
+                      <div className={`text-xs font-medium truncate w-28 shrink-0 ${isOnline ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'}`}>{app.name}</div>
+
+                      {/* 状态列（在线/离线） */}
+                      <div className="w-14 shrink-0 flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${statusDot}`} />
+                        <span className={`text-[11px] font-medium ${isOnline ? (app.link_method === 'api-key' ? 'text-blue-500' : 'text-green-600 dark:text-green-400') : 'text-gray-400'}`}>
+                          {isOnline ? '在线' : '离线'}
+                        </span>
+                      </div>
+
+                      {/* 接入方式列 */}
+                      <div className="w-16 shrink-0 text-[11px] text-gray-400 truncate">
+                        {LINK_METHOD_LABEL[app.link_method] || app.link_method}
                       </div>
 
                       {/* 统计：请求数 / token / 最后使用 */}
@@ -648,32 +608,8 @@ function AppManager({ externalRoutes }) {
                         ))}
                       </select>
 
-                      {/* 操作按钮：shim 类显示托管/取消托管，api-key 类显示设置 */}
-                      {app.link_method === 'shim' ? (
-                        app.installed ? (
-                          <button
-                            disabled={busy[app.agent_id]}
-                            onClick={async () => {
-                              setBusy(b => ({ ...b, [app.agent_id]: true }));
-                              if (app.linked) {
-                                await window.electronAPI.agents?.revert(app.agent_id).catch(() => {});
-                              } else {
-                                const r = await window.electronAPI.agents?.apply(app.agent_id).catch(() => null);
-                                if (r?.enabledProvider) {/* provider 已自动 enable */}
-                              }
-                              setBusy(b => ({ ...b, [app.agent_id]: false }));
-                              await load();
-                            }}
-                            className={`text-[10px] px-2.5 py-1 rounded-lg disabled:opacity-50 transition-colors shrink-0 font-medium
-                              ${app.linked
-                                ? 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400'
-                                : 'bg-blue-500 hover:bg-blue-600 text-white'}`}>
-                            {busy[app.agent_id] ? '…' : app.linked ? '取消托管' : '托管'}
-                          </button>
-                        ) : (
-                          <span className="text-[10px] text-gray-400 dark:text-gray-500 px-2 shrink-0">未安装</span>
-                        )
-                      ) : (
+                      {/* 操作按钮：api-key 类显示设置；shim 类自动托管无需按钮 */}
+                      {app.link_method === 'api-key' && (
                         <button onClick={() => setSettings(app)}
                           className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
                           设置
