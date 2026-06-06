@@ -61,6 +61,7 @@ function status(tool) {
 
 // ── apply：接入（幂等）──
 function apply(tool) {
+  if (tool.unsupported) return { ok: false, error: 'unsupported', reason: tool.note || '该应用无法托管' };
   if (!isInstalled(tool)) return { ok: false, error: 'not-installed' };
   try {
     switch (tool.strategy) {
@@ -153,6 +154,7 @@ function list() {
     id: t.id, name: t.name, protocol: t.protocol, strategy: t.strategy,
     type: t.type || 'cli',          // cli | gui
     needs_ca: !!t.needs_ca,         // 是否需先装根证书
+    unsupported: !!t.unsupported,   // 实测无法托管（如证书锁定）
     note: t.note || null,
     installed: isInstalled(t),
     linked: status(t),

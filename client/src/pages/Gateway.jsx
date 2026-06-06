@@ -758,7 +758,9 @@ function AppManager({ externalRoutes, availableModels = [] }) {
 
                       {/* GUI 桌面应用：手动托管/取消托管（需先装证书）*/}
                       {app.type === 'gui' && (
-                        app.linked ? (
+                        app.unsupported ? (
+                          <span className="text-[10px] text-red-400 dark:text-red-500 px-1 shrink-0" title={app.note || '证书锁定，无法托管'}>✗ 证书锁定</span>
+                        ) : app.linked ? (
                           <button onClick={() => handleGuiHost(app, false)} disabled={busyId === app.agent_id}
                             className="text-[10px] px-2 py-1 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 disabled:opacity-50 shrink-0 font-medium">
                             {busyId === app.agent_id ? '…' : '取消托管'}

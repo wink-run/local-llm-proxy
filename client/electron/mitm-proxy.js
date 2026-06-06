@@ -69,20 +69,26 @@ function handleConnect(req, clientSocket, head) {
   if (!configLoader.shouldMitm(host)) {
     return blindTunnel(host, port, clientSocket, head);
   }
+  console.log('[mitm] CONNECT(拦截)', host);
 
   let leaf;
   try { leaf = caManager.signLeaf(host); }
-  catch (e) { _onError && _onError(host, e); return blindTunnel(host, port, clientSocket, head); }
+  catch (e) { console.error('[mitm] signLeaf 失败', host, e.message); _onError && _onError(host, e); return blindTunnel(host, port, clientSocket, head); }
 
   clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-  const tlsClient = new tls.TLSSocket(clientSocket, { isServer: true, cert: leaf.cert, key: leaf.key });
-  tlsClient.on('error', (e) => { _onError && _onError(host, e); });
+  // 仅协商 HTTP/1.1（避免 Chromium 用 h2 而我们只会 h1 导致连不上）
+  const tlsClient = new tls.TLSSocket(clientSocket, {
+    isServer: true, cert: leaf.cert, key: leaf.key, ALPNProtocols: ['http/1.1'],
+  });
+  tlsClient.on('error', (e) => { console.error('[mitm] 客户端 TLS 错误', host, e.code || e.message); _onError && _onError(host, e); });
+  tlsClient.on('secure', () => console.log('[mitm] 客户端 TLS 握手成功', host, 'alpn=' + (tlsClient.alpnProtocol || 'none')));
 
   let reqFirstLine = null;
   tlsClient.once('data', (buf) => {
     reqFirstLine = buf.toString('latin1').split('\r\n')[0];  // 看到 PATH
-    // 连真上游，转发解密后的明文请求
-    const up = tls.connect({ host, port, servername: host }, () => up.write(buf));
+    console.log('[mitm] 请求', host, reqFirstLine);
+    // 连真上游，转发解密后的明文请求（强制 h1）
+    const up = tls.connect({ host, port, servername: host, ALPNProtocols: ['http/1.1'] }, () => up.write(buf));
     const respChunks = [];
     up.on('data', (d) => { respChunks.push(d); tlsClient.write(d); });
     up.on('end', () => {
@@ -92,7 +98,7 @@ function handleConnect(req, clientSocket, head) {
         _onUsage({ host, path: (reqFirstLine || '').split(' ')[1] || '', usage, data_source: 'mitm' });
       }
     });
-    up.on('error', () => tlsClient.destroy());
+    up.on('error', (e) => { console.error('[mitm] 上游错误', host, e.code || e.message); tlsClient.destroy(); });
     // 客户端后续数据也转发（流式请求体）
     tlsClient.on('data', (d) => { try { up.write(d); } catch {} });
   });

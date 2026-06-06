@@ -984,6 +984,7 @@ function registerIPC() {
         description: '',
         type: t.type || 'cli',
         needs_ca: !!t.needs_ca,
+        unsupported: !!t.unsupported,
         note: t.note || null,
         installed: t.installed,
         linked: t.linked,
@@ -1019,6 +1020,7 @@ function registerIPC() {
             installed: tool ? tool.installed : false,
             type: tool ? tool.type : (app.type || 'cli'),
             needs_ca: tool ? tool.needs_ca : !!app.needs_ca,
+            unsupported: tool ? tool.unsupported : !!app.unsupported,
             note: tool ? tool.note : (app.note || null),
             ca_installed: caInstalled,            // 系统是否已装根证书
             auto_config: autoConfigOf(app.agent_id),
