@@ -565,7 +565,7 @@ select.form-input{cursor:pointer}
             </div>
           </div>
           <textarea
-            v-model="type==='apps' ? distribApps : distribScenes"
+            v-model="distribText[type]"
             spellcheck="false"
             style="flex:1;min-height:400px;padding:10px 12px;background:#0f1117;border:1px solid #2d3148;border-radius:6px;color:#e2e8f0;font-family:'SFMono-Regular',Consolas,monospace;font-size:12px;line-height:1.6;resize:vertical;outline:none"
             :placeholder="type==='apps'
@@ -970,7 +970,7 @@ createApp({
     /* ── Config Distribution ── */
     // type 枚举：'apps'（应用配置）| 'scenes'（场景路由配置）
     const distribInfo   = ref({ apps:{uploaded:false,bytes:0}, scenes:{uploaded:false,bytes:0} })
-    const distribApps   = ref(''), distribScenes = ref('')
+    const distribText   = ref({ apps:'', scenes:'' })   // v-model 用可赋值的成员表达式 distribText[type]
     const distribMsg    = ref({ apps:'', scenes:'' })
     const distribSaving = ref({ apps:false, scenes:false })
 
@@ -985,7 +985,7 @@ createApp({
       } catch {}
     }
     async function uploadDistrib(type) {
-      const content = type === 'apps' ? distribApps.value : distribScenes.value
+      const content = distribText.value[type]
       if (!content.trim()) return
       distribSaving.value[type] = true; distribMsg.value[type] = ''
       try {
@@ -1004,8 +1004,7 @@ createApp({
       try {
         await api(`/api/config/${type}`, { method:'DELETE' })
         distribMsg.value[type] = lang.value==='zh' ? '已删除' : 'Deleted'
-        if (type === 'apps') distribApps.value = ''
-        else distribScenes.value = ''
+        distribText.value[type] = ''
         await fetchDistribInfo()
       } catch (e) { distribMsg.value[type] = e.message }
     }
@@ -1014,8 +1013,7 @@ createApp({
         const r = await api(`/api/config/${type}`)
         if (!r.ok) { distribMsg.value[type] = `HTTP ${r.status}`; return }
         const text = await r.text()
-        if (type === 'apps') distribApps.value = text
-        else distribScenes.value = text
+        distribText.value[type] = text
         distribMsg.value[type] = lang.value==='zh' ? '已加载当前服务端配置' : 'Loaded from server'
       } catch (e) { distribMsg.value[type] = e.message }
     }
@@ -1043,7 +1041,7 @@ createApp({
       switchDebugMode, clearChat, sendMsg, sendImage, copyImg, saveImg,
       virtualAgents, vaModalOpen, vaEditId, vaForm, vaMsg, fetchVirtualAgents, openVaModal, closeVaModal, saveVirtualAgent, deleteVirtualAgent,
       vaAddModel, vaRemoveModel, vaSetModelType, vaModelName, vaModelType,
-      distribInfo, distribApps, distribScenes, distribMsg, distribSaving,
+      distribInfo, distribText, distribMsg, distribSaving,
       fetchDistribInfo, uploadDistrib, deleteDistrib, previewDistrib,
       fmtTime,
     }
