@@ -257,11 +257,14 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
 
 // ── AppManager：应用列表（Tab1: 所有应用 & 托管 | Tab2: API Key 管理）────────
 const LINK_METHOD_LABEL = { shim: '透明托管', 'api-key': 'API Key' };
-// 自动配置里识别的应用（与 tokenbank.tools.default.yaml 的 tools 对应）+ 其他
+// 已识别的应用：选中后创建 api-key 应用，并预填要写入的环境变量（{BASE}=网关地址，{KEY}=应用 key）
 const RECOGNIZED_APPS = [
-  { id: 'claude-code', name: 'Claude Code', icon: '🤖', request_format: 'anthropic' },
-  { id: 'codex',       name: 'Codex',       icon: '💻', request_format: 'auto' },
-  { id: 'gemini-cli',  name: 'Gemini CLI',  icon: '🔮', request_format: 'openai' },
+  { id: 'claude-code', name: 'Claude Code', icon: '🤖', request_format: 'anthropic',
+    env: { ANTHROPIC_BASE_URL: '{BASE}', ANTHROPIC_AUTH_TOKEN: '{KEY}' } },
+  { id: 'codex',       name: 'Codex',       icon: '💻', request_format: 'openai',
+    env: { OPENAI_BASE_URL: '{BASE}/v1', OPENAI_API_KEY: '{KEY}' } },
+  { id: 'gemini-cli',  name: 'Gemini CLI',  icon: '🔮', request_format: 'openai',
+    env: { GOOGLE_GEMINI_BASE_URL: '{BASE}', GEMINI_API_KEY: '{KEY}' } },
 ];
 const FORMAT_OPTIONS = [
   { value: 'auto',      label: '自动检测' },
@@ -275,7 +278,7 @@ const STRATEGY_LABEL = {
 };
 
 // 单个应用的设置面板（路由规则绑定 + 详细配置）
-function AppSettingsPanel({ app, routes, availableModels = [], onUpdate, onDelete, onRegenKey, onClose }) {
+function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', onUpdate, onDelete, onRegenKey, onClose }) {
   const [name,        setName]        = useState(app.name || '');
   const [icon,        setIcon]        = useState(app.icon || '🔧');
   const [desc,        setDesc]        = useState(app.description || '');
@@ -288,6 +291,27 @@ function AppSettingsPanel({ app, routes, availableModels = [], onUpdate, onDelet
   const [busy,        setBusy]        = useState(false);
   const [copied,      setCopied]      = useState(false);
 
+  // 网关 origin（去掉 /v1），用于解析环境变量模板里的 {BASE}
+  const gwOrigin = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/v1\/?$/, '');
+  const resolveEnv = (tpl) => String(tpl)
+    .replace(/\{BASE\}/g, gwOrigin)
+    .replace(/\{KEY\}/g, app.api_key || '');
+  // 环境变量编辑文本（VAR=value，每行一条）
+  const [envText, setEnvText] = useState(() =>
+    app.env ? Object.entries(app.env).map(([k, v]) => `${k}=${resolveEnv(v)}`).join('\n') : '');
+  const [writeMsg, setWriteMsg] = useState('');
+
+  function parseEnvText(text) {
+    const out = {};
+    for (const line of text.split('\n')) {
+      const s = line.trim();
+      if (!s || s.startsWith('#')) continue;
+      const i = s.indexOf('=');
+      if (i > 0) out[s.slice(0, i).trim()] = s.slice(i + 1).trim();
+    }
+    return out;
+  }
+
   async function save() {
     setBusy(true);
     await onUpdate({
@@ -297,9 +321,17 @@ function AppSettingsPanel({ app, routes, availableModels = [], onUpdate, onDelet
       max_rpm: maxRpm ? +maxRpm : null,
       max_concurrent: maxConc ? +maxConc : null,
       allowed_models: models.split(',').map(s => s.trim()).filter(Boolean),
+      ...(app.env ? { env: parseEnvText(envText) } : {}),
     });
     setBusy(false);
     onClose();
+  }
+
+  async function writeEnv() {
+    setWriteMsg('');
+    const r = await window.electronAPI?.apps?.writeEnv(parseEnvText(envText)).catch(e => ({ ok: false, error: e.message }));
+    if (r?.ok) setWriteMsg(`✓ 已写入 ${r.count} 个环境变量，重开终端后生效`);
+    else setWriteMsg('✗ ' + (r?.error || '写入失败'));
   }
 
   const ICONS = ['🤖','✏️','🔧','💻','🎯','🌐','📱','🔑','⚡','🛠️','🎨','📊'];
@@ -349,44 +381,23 @@ function AppSettingsPanel({ app, routes, availableModels = [], onUpdate, onDelet
               </div>
             </div>
           )}
-          {/* 自动配置详情（仅 shim 类：展示环境变量 + 自动写入文件，只读）*/}
-          {app.link_method === 'shim' && app.auto_config && (
+          {/* 环境变量（api-key 类且有 env 模板：可编辑 + 一键写入系统）*/}
+          {app.link_method === 'api-key' && app.env && (
             <div>
-              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">自动配置（透明托管）</div>
-              <div className="space-y-2">
-                <div className="text-[11px] text-gray-500 dark:text-gray-400">
-                  接入方式：<span className="text-gray-700 dark:text-gray-300">{STRATEGY_LABEL[app.auto_config.strategy] || app.auto_config.strategy || '—'}</span>
-                </div>
-                {/* 注入的环境变量 */}
-                {app.auto_config.env && Object.keys(app.auto_config.env).length > 0 && (
-                  <div>
-                    <div className="text-[10px] text-gray-400 mb-1">注入的环境变量</div>
-                    <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2 space-y-1">
-                      {Object.entries(app.auto_config.env).map(([k, v]) => (
-                        <div key={k} className="font-mono text-[11px] text-gray-600 dark:text-gray-300 break-all">
-                          <span className="text-blue-600 dark:text-blue-400">{k}</span>=<span>{String(v)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {/* 自动写入的配置文件 */}
-                {app.auto_config.config_file && (
-                  <div>
-                    <div className="text-[10px] text-gray-400 mb-1">自动写入文件</div>
-                    <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2 space-y-1">
-                      <div className="font-mono text-[11px] text-gray-700 dark:text-gray-300 break-all">{app.auto_config.config_file}</div>
-                      {app.auto_config.patch && Object.entries(app.auto_config.patch).map(([k, v]) => (
-                        <div key={k} className="font-mono text-[10px] text-gray-500 break-all">
-                          {k} = {typeof v === 'object' ? JSON.stringify(v) : String(v)}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <div className="text-[10px] text-gray-400">
-                  💡 该应用由系统自动托管，上述配置在启动时注入、退出时还原。绑定的目标模型/路由可在列表行的下拉中调整。
-                </div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-medium text-gray-500 dark:text-gray-400">环境变量（写入后该工具指向网关）</div>
+                <button onClick={writeEnv}
+                  className="text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white shrink-0">
+                  写入配置
+                </button>
+              </div>
+              <textarea value={envText} onChange={e => setEnvText(e.target.value)} rows={Math.max(2, envText.split('\n').length)}
+                spellCheck={false}
+                className="w-full font-mono text-[11px] bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 outline-none focus:border-blue-400 text-gray-700 dark:text-gray-200 resize-y"
+                placeholder="VAR=value（每行一条）" />
+              {writeMsg && <div className={`text-[11px] mt-1 ${writeMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{writeMsg}</div>}
+              <div className="text-[10px] text-gray-400 mt-1">
+                💡 「写入配置」会把上述变量写入系统（Windows: 用户环境变量；macOS/Linux: shell 配置），重开终端后该工具即指向本网关。
               </div>
             </div>
           )}
@@ -531,15 +542,15 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     }
   }
 
-  // 添加流程：选择已识别的应用 → 打开该自动配置应用的设置（仅展示环境变量/自动写入）
-  function addPreset(preset) {
+  // 添加流程：选择已识别的应用 → 创建 api-key 应用并预填环境变量模板，打开设置
+  async function addPreset(preset) {
+    const created = await window.electronAPI.apps?.create({
+      name: preset.name, icon: preset.icon, link_method: 'api-key',
+      request_format: preset.request_format, env: preset.env, preset_id: preset.id,
+    }).catch(() => null);
     setAddOpen(false);
-    const target = apps.find(a => a.link_method === 'shim' && a.agent_id === preset.id);
-    if (target) {
-      setSettings(target);
-    } else {
-      window.alert(`未检测到 ${preset.name}。安装后会自动托管并出现在列表中。`);
-    }
+    await load();
+    if (created?.id) setSettings(created);
   }
 
   // 添加流程：其他（未被识别的应用）→ 创建空白 api-key 应用并打开完整配置
@@ -555,7 +566,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   return (
     <>
       {settings && (
-        <AppSettingsPanel app={settings} routes={routes} availableModels={availableModels}
+        <AppSettingsPanel app={settings} routes={routes} availableModels={availableModels} localBase={localBase}
           onUpdate={handleUpdateApp} onDelete={handleDeleteApp} onRegenKey={handleRegenKey}
           onClose={() => setSettings(null)} />
       )}

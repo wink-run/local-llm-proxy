@@ -1024,6 +1024,8 @@ function registerIPC() {
       max_concurrent: data.max_concurrent || null,
       allow_stream: data.allow_stream !== false,
       request_format: data.request_format || 'auto',
+      env: data.env || null,                     // 需写入工具的环境变量模板（{BASE}/{KEY} 占位）
+      preset_id: data.preset_id || null,         // 来自哪个已识别应用预设
       created_at: new Date().toISOString(),
     };
     apps.push(app);
@@ -1055,6 +1057,36 @@ function registerIPC() {
     apps[idx].api_key = 'sk-local-' + rndHex(16);
     saveApps(apps);
     return { ok: true, api_key: apps[idx].api_key };
+  });
+
+  // 写入环境变量到系统（让目标工具下次启动时指向网关）。
+  // Windows: setx 持久化用户环境变量；macOS/Linux: 写入 shell rc 的托管块。
+  ipcMain.handle('apps:writeEnv', async (_e, env) => {
+    if (!env || typeof env !== 'object') return { ok: false, error: 'no-env' };
+    const entries = Object.entries(env).filter(([k]) => k && k.trim());
+    if (!entries.length) return { ok: false, error: 'empty' };
+    try {
+      if (process.platform === 'win32') {
+        const { execFileSync } = require('child_process');
+        for (const [k, v] of entries) {
+          execFileSync('setx', [k, String(v)], { stdio: ['ignore', 'ignore', 'ignore'] });
+        }
+      } else {
+        const home = os.homedir();
+        const candidates = ['.zshrc', '.bashrc', '.bash_profile', '.profile'].map(f => path.join(home, f));
+        const targets = candidates.filter(f => fs.existsSync(f));
+        if (!targets.length) targets.push(path.join(home, '.profile'));
+        const block = '\n# >>> tokenbank env >>>\n'
+          + entries.map(([k, v]) => `export ${k}=${JSON.stringify(String(v))}`).join('\n')
+          + '\n# <<< tokenbank env <<<\n';
+        for (const f of targets) {
+          let txt = fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '';
+          txt = txt.replace(/\n?# >>> tokenbank env >>>[\s\S]*?# <<< tokenbank env <<<\n?/g, '');
+          fs.writeFileSync(f, txt + block, 'utf8');
+        }
+      }
+      return { ok: true, count: entries.length };
+    } catch (e) { return { ok: false, error: e.message }; }
   });
 
   // 注册来自 toolsConfig 的 shim 托管 app（透明托管时自动创建或更新 app 记录）
