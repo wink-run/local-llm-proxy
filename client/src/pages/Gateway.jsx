@@ -257,6 +257,12 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
 
 // ── AppManager：应用列表（Tab1: 所有应用 & 托管 | Tab2: API Key 管理）────────
 const LINK_METHOD_LABEL = { shim: '透明托管', 'api-key': 'API Key' };
+// 自动配置里识别的应用（与 tokenbank.tools.default.yaml 的 tools 对应）+ 其他
+const RECOGNIZED_APPS = [
+  { id: 'claude-code', name: 'Claude Code', icon: '🤖', request_format: 'anthropic' },
+  { id: 'codex',       name: 'Codex',       icon: '💻', request_format: 'auto' },
+  { id: 'gemini-cli',  name: 'Gemini CLI',  icon: '🔮', request_format: 'openai' },
+];
 const FORMAT_OPTIONS = [
   { value: 'auto',      label: '自动检测' },
   { value: 'openai',    label: 'OpenAI 格式' },
@@ -264,7 +270,7 @@ const FORMAT_OPTIONS = [
 ];
 
 // 单个应用的设置面板（路由规则绑定 + 详细配置）
-function AppSettingsPanel({ app, routes, onUpdate, onClose }) {
+function AppSettingsPanel({ app, routes, availableModels = [], onUpdate, onDelete, onRegenKey, onClose }) {
   const [name,        setName]        = useState(app.name || '');
   const [icon,        setIcon]        = useState(app.icon || '🔧');
   const [desc,        setDesc]        = useState(app.description || '');
@@ -275,6 +281,7 @@ function AppSettingsPanel({ app, routes, onUpdate, onClose }) {
   const [maxConc,     setMaxConc]     = useState(app.max_concurrent || '');
   const [models,      setModels]      = useState((app.allowed_models || []).join(', '));
   const [busy,        setBusy]        = useState(false);
+  const [copied,      setCopied]      = useState(false);
 
   async function save() {
     setBusy(true);
@@ -320,13 +327,40 @@ function AppSettingsPanel({ app, routes, onUpdate, onClose }) {
             <textarea value={desc} onChange={e => setDesc(e.target.value)} placeholder="描述（可选）" rows={2}
               className="w-full text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none resize-none text-gray-600 dark:text-gray-400" />
           </div>
-          {/* 路由规则 */}
+          {/* API Key 行（仅 api-key 类）*/}
+          {app.link_method === 'api-key' && app.api_key && (
+            <div>
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">API Key</div>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-[11px] font-mono bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-gray-600 dark:text-gray-400 truncate">{app.api_key}</code>
+                <button onClick={() => { navigator.clipboard.writeText(app.api_key); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+                  className="text-xs px-2 py-1.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 shrink-0">
+                  {copied ? '已复制✓' : '复制'}
+                </button>
+                {onRegenKey && (
+                  <button onClick={() => onRegenKey(app.id)}
+                    className="text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 shrink-0">重置</button>
+                )}
+              </div>
+            </div>
+          )}
+          {/* 路由规则：同时显示模型和场景路由 */}
           <div>
-            <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">路由规则</div>
+            <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">路由规则（模型或场景路由）</div>
             <select value={routeId} onChange={e => setRouteId(e.target.value)}
               className="w-full text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none text-gray-800 dark:text-gray-200">
               <option value="">不绑定（走默认策略）</option>
-              {routes.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
+              {routes.length > 0 && (
+                <optgroup label="场景路由">
+                  {routes.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
+                </optgroup>
+              )}
+              {['free','p2p','paid'].map(tier => {
+                const tm = availableModels.filter(m => m.tier === tier);
+                if (!tm.length) return null;
+                const label = tier === 'free' ? '🟢 免费模型' : tier === 'p2p' ? '🔵 P2P 模型' : '🟣 付费模型';
+                return <optgroup key={tier} label={label}>{tm.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>;
+              })}
             </select>
           </div>
           {/* 请求控制（仅 api-key 类 app） */}
@@ -376,6 +410,12 @@ function AppSettingsPanel({ app, routes, onUpdate, onClose }) {
           )}
         </div>
         <div className="flex gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800">
+          {onDelete && app.link_method === 'api-key' && (
+            <button onClick={() => onDelete(app.id)}
+              className="px-4 py-2 text-sm rounded-xl border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
+              删除
+            </button>
+          )}
           <button onClick={save} disabled={busy}
             className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
             {busy ? '保存中…' : '保存'}
@@ -391,20 +431,14 @@ function AppSettingsPanel({ app, routes, onUpdate, onClose }) {
 }
 
 function AppManager({ externalRoutes, availableModels = [] }) {
-  const [tab,      setTab]      = useState(0);   // 0=应用列表 1=API Key管理
   const [apps,     setApps]     = useState([]);
   const [routes,   setRoutes]   = useState([]);
   const [localBase, setLocalBase] = useState('');
   // 当 Gateway 的 routes 更新时同步进来（场景路由新建后立即可选）
   useEffect(() => { if (externalRoutes?.length) setRoutes(externalRoutes); }, [externalRoutes]);
-  const [settings,     setSettings]     = useState(null); // Tab1 modal
-  const [expandedEdit, setExpandedEdit] = useState(null); // Tab2 inline edit id
-  const [editForm,     setEditForm]     = useState({});   // Tab2 inline form state
-  const [appStats,     setAppStats]     = useState({});   // id → {calls,tokens,lastTs}
-  const [adding,       setAdding]       = useState(false);
-  const [newName,      setNewName]      = useState('');
-  const [newIcon,      setNewIcon]      = useState('🔧');
-  const [copied,       setCopied]       = useState({});
+  const [settings, setSettings] = useState(null);   // 设置弹窗对应的 app
+  const [appStats, setAppStats] = useState({});     // id → {calls,tokens,lastTs}
+  const [addOpen,  setAddOpen]  = useState(false);  // 添加流程：应用类型选择
 
   const load = useCallback(async () => {
     if (!window.electronAPI) return;
@@ -425,101 +459,90 @@ function AppManager({ externalRoutes, availableModels = [] }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // Tab 1 actions
   async function handleUpdateApp(data) {
-    await window.electronAPI.apps?.update(data).catch(() => {});
+    const updated = await window.electronAPI.apps?.update(data).catch(() => null);
     await load();
+    // 若设置弹窗仍开着，刷新其数据
+    if (updated && settings?.id === updated.id) setSettings(updated);
   }
 
   async function handleDeleteApp(id) {
     if (!window.confirm('删除该应用？')) return;
     await window.electronAPI.apps?.delete(id).catch(() => {});
-    await load();
-  }
-
-  // Tab 2: create API Key app
-  async function handleAddApp() {
-    if (!newName.trim()) return;
-    await window.electronAPI.apps?.create({ name: newName.trim(), icon: newIcon, link_method: 'api-key' }).catch(() => {});
-    setNewName(''); setNewIcon('🔧'); setAdding(false);
+    if (settings?.id === id) setSettings(null);
     await load();
   }
 
   async function handleRegenKey(id) {
     const r = await window.electronAPI.apps?.regenKey(id).catch(() => null);
-    if (r?.ok) await load();
+    if (r?.ok) {
+      await load();
+      // 用最新 key 刷新设置弹窗
+      const fresh = (await window.electronAPI.apps?.list().catch(() => []) || []).find(a => a.id === id);
+      if (fresh && settings?.id === id) setSettings(fresh);
+    }
   }
 
-  function openInlineEdit(app) {
-    if (expandedEdit === app.id) { setExpandedEdit(null); return; }
-    setExpandedEdit(app.id);
-    setEditForm({
-      name:        app.name || '',
-      icon:        app.icon || '🔧',
-      description: app.description || '',
-      request_format: app.request_format || 'auto',
-      allow_stream:   app.allow_stream !== false,
-      max_rpm:        app.max_rpm || '',
-      max_concurrent: app.max_concurrent || '',
-      allowed_models: (app.allowed_models || []).join(', '),
-    });
-  }
-
-  async function saveInlineEdit(app) {
-    await window.electronAPI.apps?.update({
-      id: app.id,
-      name:           editForm.name,
-      icon:           editForm.icon,
-      description:    editForm.description,
-      request_format: editForm.request_format,
-      allow_stream:   editForm.allow_stream,
-      max_rpm:        editForm.max_rpm ? +editForm.max_rpm : null,
-      max_concurrent: editForm.max_concurrent ? +editForm.max_concurrent : null,
-      allowed_models: editForm.allowed_models.split(',').map(s => s.trim()).filter(Boolean),
-    }).catch(() => {});
-    setExpandedEdit(null);
+  // 添加流程：选择已识别的应用 → 用预设快速创建 api-key 应用并打开设置
+  async function addPreset(preset) {
+    const created = await window.electronAPI.apps?.create({
+      name: preset.name, icon: preset.icon, link_method: 'api-key',
+      request_format: preset.request_format,
+    }).catch(() => null);
+    setAddOpen(false);
     await load();
+    if (created?.id) setSettings(created);   // 直接进入设置，可继续配置路由等
   }
 
-  function copyKey(key, id) {
-    navigator.clipboard.writeText(key).then(() => {
-      setCopied(c => ({ ...c, [id]: true }));
-      setTimeout(() => setCopied(c => ({ ...c, [id]: false })), 1500);
-    });
+  // 添加流程：其他（未被识别的应用）→ 创建空白 api-key 应用并打开完整配置
+  async function addCustom() {
+    const created = await window.electronAPI.apps?.create({
+      name: '新应用', icon: '🔧', link_method: 'api-key',
+    }).catch(() => null);
+    setAddOpen(false);
+    await load();
+    if (created?.id) setSettings(created);
   }
-
-  const shimApps  = apps.filter(a => a.link_method === 'shim');
-  const keyApps   = apps.filter(a => a.link_method === 'api-key');
-  const routeName = (id) => {
-    if (!id) return '—';
-    const r = routes.find(r => r.model_key === id || r.id === id);
-    return r ? (r.icon + ' ' + r.scene_name) : id;
-  };
 
   return (
     <>
-      {settings && <AppSettingsPanel app={settings} routes={routes} onUpdate={handleUpdateApp} onClose={() => setSettings(null)} />}
-      <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 mb-4 overflow-hidden">
-        {/* Tab 标题 */}
-        <div className="flex border-b border-gray-200 dark:border-gray-800">
-          {['📱 应用列表', '🔑 API Key 管理'].map((t, i) => (
-            <button key={i} onClick={() => setTab(i)}
-              className={`px-5 py-3 text-sm font-medium transition-colors ${tab === i
-                ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-500'
-                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}>
-              {t}
-            </button>
-          ))}
-        </div>
-
-        {/* ── Tab 1: 应用列表 & 托管 ── */}
-        {tab === 0 && (
-          <div className="p-4">
+      {settings && (
+        <AppSettingsPanel app={settings} routes={routes} availableModels={availableModels}
+          onUpdate={handleUpdateApp} onDelete={handleDeleteApp} onRegenKey={handleRegenKey}
+          onClose={() => setSettings(null)} />
+      )}
+      <div className="p-4">
             {/* 操作栏 */}
             <div className="flex items-center gap-2 mb-3 flex-wrap">
+              <button onClick={() => setAddOpen(v => !v)}
+                className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors">
+                + 添加应用
+              </button>
               <span className="text-xs text-gray-400 dark:text-gray-500">已安装的 CLI 工具自动托管</span>
               <div className="ml-auto"><ImportConfigButton onImported={load} /></div>
             </div>
+
+            {/* 添加流程：先选已识别的应用，或「其他」自定义 */}
+            {addOpen && (
+              <div className="mb-3 p-3 rounded-xl border border-blue-200 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-950/15">
+                <div className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-2">选择要添加的应用</div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {RECOGNIZED_APPS.map(p => (
+                    <button key={p.id} onClick={() => addPreset(p)}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 hover:border-blue-400 dark:hover:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
+                      <span className="text-base">{p.icon}</span>
+                      <span className="text-xs text-gray-700 dark:text-gray-200 truncate">{p.name}</span>
+                    </button>
+                  ))}
+                  <button onClick={addCustom}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 hover:border-blue-400 dark:hover:border-blue-600 transition-colors">
+                    <span className="text-base">➕</span>
+                    <span className="text-xs text-gray-600 dark:text-gray-300">其他（自定义）</span>
+                  </button>
+                </div>
+                <div className="text-[10px] text-gray-400 mt-2">选择已识别的应用快速添加；选「其他」可手动配置未被识别的应用。</div>
+              </div>
+            )}
 
             {/* 应用列表 */}
             {apps.length === 0 ? (
@@ -638,161 +661,6 @@ function AppManager({ externalRoutes, availableModels = [] }) {
               💡 已安装的 CLI 工具会自动托管（无需手动操作）；托管后需重开终端生效，关闭 Token Bank 时自动还原。
             </p>
           </div>
-        )}
-
-        {/* ── Tab 2: API Key 管理 ── */}
-        {tab === 1 && (
-          <div className="p-4">
-            {/* 添加应用 */}
-            {adding ? (
-              <div className="flex gap-2 mb-3 items-center">
-                <span className="text-lg">{newIcon}</span>
-                <input value={newName} onChange={e => setNewName(e.target.value)}
-                  placeholder="应用名称，如：Cursor" autoFocus
-                  onKeyDown={e => e.key === 'Enter' && handleAddApp()}
-                  className="flex-1 text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-gray-800 dark:text-gray-200" />
-                <button onClick={handleAddApp} disabled={!newName.trim()}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50">创建</button>
-                <button onClick={() => setAdding(false)}
-                  className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500">取消</button>
-              </div>
-            ) : (
-              <button onClick={() => setAdding(true)}
-                className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white mb-3 transition-colors">
-                + 添加应用
-              </button>
-            )}
-
-            {/* API Key 应用列表 */}
-            {keyApps.length === 0 ? (
-              <div className="py-6 text-center text-xs text-gray-400">暂无 API Key 应用，点击「添加应用」创建</div>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {keyApps.map(app => {
-                  const isOpen = expandedEdit === app.id;
-                  const ef = editForm;
-                  const ICONS_SM = ['🤖','✏️','🔧','💻','🎯','🌐','📱','🔑','⚡','🛠️'];
-                  return (
-                    <div key={app.id} className={`border rounded-xl bg-gray-50 dark:bg-gray-800/40 overflow-hidden transition-all
-                      ${isOpen ? 'border-blue-300 dark:border-blue-700' : 'border-gray-200 dark:border-gray-700'}`}>
-                      {/* 头部：始终显示 */}
-                      <div className="flex items-center gap-2 p-3">
-                        <span>{app.icon}</span>
-                        <span className="font-medium text-sm text-gray-800 dark:text-gray-100 flex-1">{app.name}</span>
-                        {/* 配置摘要（折叠时显示）*/}
-                        {!isOpen && (
-                          <span className="text-[10px] text-gray-400 hidden sm:block">
-                            {FORMAT_OPTIONS.find(o => o.value === (app.request_format||'auto'))?.label}
-                            {app.allow_stream !== false ? ' · 流式' : ''}
-                            {app.max_rpm ? ` · RPM:${app.max_rpm}` : ''}
-                          </span>
-                        )}
-                        <button onClick={() => openInlineEdit(app)}
-                          className={`text-xs px-2 py-0.5 rounded border transition-colors shrink-0
-                            ${isOpen ? 'border-blue-400 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30'
-                                     : 'border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
-                          {isOpen ? '收起' : '编辑'}
-                        </button>
-                        <button onClick={() => handleDeleteApp(app.id)}
-                          className="text-xs text-red-400 hover:text-red-600 px-1 shrink-0">删</button>
-                      </div>
-
-                      {/* API Key 行：始终显示 */}
-                      <div className="flex items-center gap-2 px-3 pb-2">
-                        <code className="flex-1 text-[11px] font-mono bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 text-gray-600 dark:text-gray-400 truncate">
-                          {app.api_key}
-                        </code>
-                        <button onClick={() => copyKey(app.api_key, app.id)}
-                          className="text-xs px-2 py-1 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 shrink-0">
-                          {copied[app.id] ? '已复制✓' : '复制'}
-                        </button>
-                        <button onClick={() => handleRegenKey(app.id)}
-                          className="text-xs px-2 py-1 rounded border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 shrink-0">
-                          重置
-                        </button>
-                      </div>
-
-                      {/* 内联编辑区（展开时显示）*/}
-                      {isOpen && (
-                        <div className="border-t border-blue-100 dark:border-blue-800/40 bg-white dark:bg-gray-900 px-3 py-3 space-y-3">
-                          {/* 基础信息 */}
-                          <div className="flex gap-2 items-center">
-                            <input value={ef.name} onChange={e => setEditForm(f => ({...f, name: e.target.value}))}
-                              placeholder="应用名称"
-                              className="flex-1 text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-gray-800 dark:text-gray-200" />
-                            <div className="flex gap-1">
-                              {ICONS_SM.map(ic => (
-                                <button key={ic} onClick={() => setEditForm(f => ({...f, icon: ic}))}
-                                  className={`text-base p-0.5 rounded ${ef.icon === ic ? 'bg-blue-100 dark:bg-blue-900/50 ring-1 ring-blue-400' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}>
-                                  {ic}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                          <textarea value={ef.description} onChange={e => setEditForm(f => ({...f, description: e.target.value}))}
-                            placeholder="描述（可选）" rows={2}
-                            className="w-full text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none resize-none text-gray-600 dark:text-gray-400" />
-                          {/* 请求控制 */}
-                          <div className="grid grid-cols-2 gap-2">
-                            <div className="flex items-center gap-2">
-                              <label className="text-xs text-gray-500 shrink-0 w-14">格式</label>
-                              <select value={ef.request_format} onChange={e => setEditForm(f => ({...f, request_format: e.target.value}))}
-                                className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200">
-                                {FORMAT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                              </select>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <label className="text-xs text-gray-500 shrink-0 w-14">流式</label>
-                              <button onClick={() => setEditForm(f => ({...f, allow_stream: !f.allow_stream}))}
-                                className={`relative w-9 h-5 rounded-full transition-colors ${ef.allow_stream ? 'bg-blue-600' : 'bg-gray-400'}`}>
-                                <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${ef.allow_stream ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                              </button>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <label className="text-xs text-gray-500 shrink-0 w-14">RPM</label>
-                              <input type="number" value={ef.max_rpm} onChange={e => setEditForm(f => ({...f, max_rpm: e.target.value}))}
-                                placeholder="不限"
-                                className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <label className="text-xs text-gray-500 shrink-0 w-14">并发</label>
-                              <input type="number" value={ef.max_concurrent} onChange={e => setEditForm(f => ({...f, max_concurrent: e.target.value}))}
-                                placeholder="不限"
-                                className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <label className="text-xs text-gray-500 shrink-0 w-14">允许模型</label>
-                            <input value={ef.allowed_models} onChange={e => setEditForm(f => ({...f, allowed_models: e.target.value}))}
-                              placeholder="空=不限，逗号分隔"
-                              className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
-                          </div>
-                          {/* 接入配置 */}
-                          {app.api_key && (
-                            <KeyConfigPanel apiKey={app.api_key} localBase={localBase || 'http://127.0.0.1:11430/v1'}
-                              model={app.route_id || undefined} />
-                          )}
-                          {/* 保存/取消 */}
-                          <div className="flex gap-2 pt-1">
-                            <button onClick={() => saveInlineEdit(app)}
-                              className="flex-1 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-700 text-white">
-                              保存
-                            </button>
-                            <button onClick={() => setExpandedEdit(null)}
-                              className="px-4 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400">
-                              取消
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
     </>
   );
 }
@@ -1390,6 +1258,7 @@ export default function Gateway() {
   const [stats, setStats]       = useState(null);
   const [logEntries, setLog]    = useState([]);
   const [restarting, setRestarting] = useState(false);
+  const [mainTab, setMainTab]   = useState(0);   // 0=应用列表 1=场景路由
 
   // Scene routing
   const [routes, setRoutes]               = useState([]);
@@ -1640,11 +1509,27 @@ export default function Gateway() {
         </div>
       </div>
 
-      {/* 📱 应用列表 & 托管 */}
-      <AppManager externalRoutes={routes} availableModels={availableModels} />
-
-      {/* 🔀 场景路由 */}
+      {/* 应用列表 / 场景路由 Tab */}
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
+        <div className="flex border-b border-gray-200 dark:border-gray-800">
+          {['📱 应用列表', '🔀 场景路由'].map((t, i) => (
+            <button key={i} onClick={() => setMainTab(i)}
+              className={`px-5 py-3 text-sm font-medium transition-colors ${mainTab === i
+                ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-500'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}>
+              {t}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab0: 应用列表 & 托管 */}
+        {mainTab === 0 && (
+          <AppManager externalRoutes={routes} availableModels={availableModels} />
+        )}
+
+        {/* Tab1: 场景路由 */}
+        {mainTab === 1 && (
+        <div>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800">
           <div>
             <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">场景路由</h2>
@@ -1743,9 +1628,9 @@ export default function Gateway() {
             <div className="px-5 py-8 text-xs text-gray-400 text-center">还没有场景路由，点击「新建路由」开始</div>
           )}
         </div>
+        </div>
+        )}
       </div>
-
-
 
       {/* Route log */}
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5">
