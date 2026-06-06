@@ -270,7 +270,7 @@ const STRATEGY_LABEL = {
 };
 
 // 单个应用的设置面板（路由规则绑定 + 详细配置）
-function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', onUpdate, onDelete, onRegenKey, onClose, onCancel }) {
+function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', onUpdate, onDelete, onRegenKey, onCancelManage, onClose, onCancel }) {
   const dismiss = onCancel || onClose;   // ✕/取消/点遮罩 → 取消（新应用未保存会被丢弃）
   const [name,        setName]        = useState(app.name || '');
   const [icon,        setIcon]        = useState(app.icon || '🔧');
@@ -501,7 +501,13 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
           )}
         </div>
         <div className="flex gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800">
-          {onDelete && app.link_method === 'api-key' && (
+          {/* config-file 托管：取消 API Key 管理（还原配置文件）；其它 api-key：删除 */}
+          {app.config_file && onCancelManage ? (
+            <button onClick={() => onCancelManage(app)}
+              className="px-4 py-2 text-sm rounded-xl border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
+              取消 API Key 管理
+            </button>
+          ) : onDelete && app.link_method === 'api-key' && (
             <button onClick={() => onDelete(app.id)}
               className="px-4 py-2 text-sm rounded-xl border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
               删除
@@ -610,6 +616,33 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     if (created?.id) setSettings({ ...created, _isNew: true });
   }
 
+  const [busyId, setBusyId] = useState(null);
+  // 透明托管开关：托管/取消托管（保留 auto_host_disabled，重启后记住）
+  async function handleShimToggle(app, host) {
+    setBusyId(app.agent_id);
+    const fn = host ? window.electronAPI.agents?.apply : window.electronAPI.agents?.revert;
+    await fn?.(app.agent_id).catch(() => {});
+    setBusyId(null);
+    await load();
+  }
+  // 桌面应用「添加」：用其 config-file 预设创建 api-key 应用并打开设置（去写配置文件）
+  async function addDesktop(d) {
+    const created = await window.electronAPI.apps?.create({
+      name: d.name, icon: d.icon, link_method: 'api-key',
+      request_format: d.request_format, preset_id: d.preset_id,
+      inject: 'config-file', config_file: d.config_file, patch: d.patch, env: d.env || null,
+    }).catch(() => null);
+    if (created?.id) setSettings({ ...created, _isNew: true });
+  }
+  // 取消 API Key 管理：还原配置文件 + 移除该应用
+  async function handleCancelManage(app) {
+    if (!window.confirm('取消 API Key 管理？将还原该应用的配置文件，并移除此条目。')) return;
+    await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {});
+    await window.electronAPI.apps?.delete(app.id).catch(() => {});
+    if (settings?.id === app.id) setSettings(null);
+    await load();
+  }
+
   // 保存设置（已在面板内 onUpdate 持久化）→ 仅关闭并刷新
   function closeSettings() { setSettings(null); load(); }
   // 取消/关闭：若是未保存的新应用则删除
@@ -627,6 +660,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
       {settings && (
         <AppSettingsPanel app={settings} routes={routes} availableModels={availableModels} localBase={localBase}
           onUpdate={handleUpdateApp} onDelete={handleDeleteApp} onRegenKey={handleRegenKey}
+          onCancelManage={handleCancelManage}
           onClose={closeSettings} onCancel={cancelSettings} />
       )}
       <div className="p-4">
@@ -727,7 +761,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         </div>
                       </div>
 
-                      {/* 路由下拉：同时显示模型（按层级分组）和场景路由 */}
+                      {/* 路由下拉：同时显示模型（按层级分组）和场景路由（未添加的桌面应用不显示）*/}
+                      {!app._virtual_desktop && (
                       <select
                         value={app.route_id || ''}
                         onChange={async e => {
@@ -762,17 +797,52 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           );
                         })}
                       </select>
+                      )}
 
-                      {/* 操作按钮：所有应用都有「设置」；api-key 类额外有「删除」 */}
-                      <button onClick={() => setSettings(app)}
-                        className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
-                        设置
-                      </button>
-                      {app.link_method === 'api-key' && (
-                        <button onClick={() => handleDeleteApp(app.id)}
-                          className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 shrink-0">
-                          删除
+                      {/* 操作按钮：按托管方式区分 */}
+                      {app.link_method === 'shim' ? (
+                        /* 透明托管：托管 / 取消托管 开关 */
+                        app.linked ? (
+                          <button onClick={() => handleShimToggle(app, false)} disabled={busyId === app.agent_id}
+                            className="text-[10px] px-2 py-1 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 disabled:opacity-50 shrink-0 font-medium">
+                            {busyId === app.agent_id ? '…' : '取消托管'}
+                          </button>
+                        ) : (
+                          <button onClick={() => handleShimToggle(app, true)} disabled={busyId === app.agent_id}
+                            className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 shrink-0 font-medium">
+                            {busyId === app.agent_id ? '…' : '托管'}
+                          </button>
+                        )
+                      ) : app._virtual_desktop ? (
+                        /* 桌面应用未添加 API Key 管理：添加 */
+                        <button onClick={() => addDesktop(app)}
+                          className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white shrink-0 font-medium">
+                          {app.configured ? '编辑' : '添加'}
                         </button>
+                      ) : app.host_method === 'config-file' ? (
+                        /* config-file 托管的 api-key 应用：编辑 + 取消 API Key 管理 */
+                        <>
+                          <button onClick={() => setSettings(app)}
+                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
+                            编辑
+                          </button>
+                          <button onClick={() => handleCancelManage(app)}
+                            className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 shrink-0">
+                            取消 API Key 管理
+                          </button>
+                        </>
+                      ) : (
+                        /* 普通 api-key 应用：设置 + 删除 */
+                        <>
+                          <button onClick={() => setSettings(app)}
+                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
+                            设置
+                          </button>
+                          <button onClick={() => handleDeleteApp(app.id)}
+                            className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 shrink-0">
+                            删除
+                          </button>
+                        </>
                       )}
                     </div>
                   );

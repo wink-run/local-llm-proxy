@@ -302,6 +302,48 @@ function autoHostInstalledApps() {
   return newlyHosted;
 }
 
+// ── 桌面应用（只能 config-file / API Key 托管，无法透明托管）─────────────────────
+// Appx 包检测 + 对应配置文件注入信息；{BASE}/{KEY} 由前端按应用解析
+const DESKTOP_APPS = [
+  { id: 'claude-desktop', name: 'Claude Desktop', icon: '🖥️', appx: 'Claude',
+    request_format: 'anthropic',
+    config_file: '~/.claude/settings.json',
+    patch: { 'env.ANTHROPIC_BASE_URL': '{BASE}', 'env.ANTHROPIC_AUTH_TOKEN': '{KEY}' },
+    marker: 'ANTHROPIC_BASE_URL' },
+  { id: 'codex-desktop', name: 'Codex Desktop', icon: '🖥️', appx: 'OpenAI.Codex',
+    request_format: 'openai',
+    config_file: '{CODEX_HOME|~/.codex}/config.toml',
+    patch: { model_provider: 'tokenbank', 'model_providers.tokenbank.base_url': '{BASE}/v1',
+             'model_providers.tokenbank.wire_api': 'responses', 'model_providers.tokenbank.env_key': 'TOKENBANK_API_KEY' },
+    env: { TOKENBANK_API_KEY: '{KEY}' },
+    marker: 'tokenbank' },
+];
+
+let _appxCache = { ts: 0, map: {} };
+function appxInstalled(name) {
+  if (process.platform !== 'win32' || !name) return false;
+  const now = Date.now();
+  if (now - _appxCache.ts > 30000) _appxCache = { ts: now, map: {} };  // 30s 缓存，避免频繁 PS 调用
+  if (name in _appxCache.map) return _appxCache.map[name];
+  try {
+    const out = require('child_process').execFileSync('powershell', ['-NoProfile', '-Command',
+      `if (Get-AppxPackage -Name '*${name}*') { 'yes' } else { 'no' }`],
+      { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    return (_appxCache.map[name] = out === 'yes');
+  } catch { return (_appxCache.map[name] = false); }
+}
+
+// 解析配置文件路径（{占位}+~）
+function resolveCfgPath(p) {
+  try { const cl = require('./config-loader'); return cl.expandHome(cl.resolvePlaceholders(String(p || ''), {})); }
+  catch { return String(p || ''); }
+}
+// 配置文件里是否已含我们的路由配置（marker）
+function configHasMarker(file, marker) {
+  try { return fs.existsSync(file) && fs.readFileSync(file, 'utf8').includes(marker); }
+  catch { return false; }
+}
+
 // ── LLM config scanner ────────────────────────────────────────────────────────
 
 const BASE_URL_KEYS = [
@@ -999,7 +1041,7 @@ function registerIPC() {
     };
 
     // 注入实时托管状态 + 自动配置详情
-    return allApps
+    const rows = allApps
       .map(app => {
         if (app.link_method === 'shim') {
           const tool = agentTools.find(t => t.id === app.agent_id);
@@ -1012,10 +1054,31 @@ function registerIPC() {
             auto_config: autoConfigOf(app.agent_id),
           };
         }
-        return { ...app, linked: true, installed: true };
+        // config-file 类 api-key 应用（桌面版托管）标记 host_method
+        return { ...app, linked: true, installed: true,
+                 host_method: app.config_file ? 'config-file' : 'api-key' };
       })
-      // 机器上没有的 shim 应用不展示（yaml 里有但本机没装的隐藏）；api-key 应用始终展示
+      // 机器上没有的 shim 应用不展示；api-key 应用始终展示
       .filter(app => app.link_method !== 'shim' || app.installed);
+
+    // 追加：检测到、但还没"添加"过的桌面应用（虚拟行，显示「添加」）
+    const linkedDesktop = new Set(savedApps.filter(a => a.preset_id).map(a => a.preset_id));
+    for (const d of DESKTOP_APPS) {
+      if (!appxInstalled(d.appx)) continue;
+      if (linkedDesktop.has(d.id)) continue;   // 已添加过 → 已在 savedApps 里显示
+      const file = resolveCfgPath(d.config_file);
+      rows.push({
+        id: 'app-desktop-' + d.id,
+        name: d.name, icon: d.icon,
+        link_method: 'api-key', host_method: 'config-file',
+        type: 'gui', desktop: true, _virtual_desktop: true,
+        preset_id: d.id, request_format: d.request_format,
+        config_file: file, patch: d.patch, env: d.env || null,
+        configured: configHasMarker(file, d.marker),   // 配置文件是否已含我们的路由
+        installed: true, linked: false, api_key: null, route_id: null,
+      });
+    }
+    return rows;
   });
 
   ipcMain.handle('apps:create', (_e, data) => {
@@ -1169,6 +1232,25 @@ function registerIPC() {
       }
       return { ok: true, file, envCount };
     } catch (e) { return { ok: false, error: (e.stderr ? e.stderr.toString() : e.message).slice(0, 300) }; }
+  });
+
+  // 取消 API Key 管理：还原配置文件（去掉指向网关的注入）
+  ipcMain.handle('apps:revertConfigFile', (_e, { app_id, config_file } = {}) => {
+    try {
+      const cl = require('./config-loader');
+      let file = cl.expandHome(cl.resolvePlaceholders(String(config_file || ''), {}));
+      if (!file) return { ok: false, error: 'no-config-file' };
+      const bak = file + '.tokenbank-bak';
+      if (fs.existsSync(bak)) {
+        fs.copyFileSync(bak, file); fs.unlinkSync(bak);
+        return { ok: true, restored: 'backup' };
+      }
+      // 无备份：TOML 走 injector 的 state-precise 还原
+      if (/\.toml$/i.test(file) && app_id) {
+        try { require('./injector').revertConfigFile(app_id); return { ok: true, restored: 'state' }; } catch {}
+      }
+      return { ok: true, restored: 'none' };  // 没有备份/状态可还原，至少不报错
+    } catch (e) { return { ok: false, error: e.message }; }
   });
 
   // 注册来自 toolsConfig 的 shim 托管 app（透明托管时自动创建或更新 app 记录）

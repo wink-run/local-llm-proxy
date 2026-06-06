@@ -114,6 +114,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     writeEnv:      (env)    => ipcRenderer.invoke('apps:writeEnv', env),
     presets:       ()       => ipcRenderer.invoke('apps:presets'),
     writeConfigFile: (d)    => ipcRenderer.invoke('apps:writeConfigFile', d),
+    revertConfigFile: (d)   => ipcRenderer.invoke('apps:revertConfigFile', d),
   },
   localConfig: {
     get:               ()  => ipcRenderer.invoke('localConfig:get'),
