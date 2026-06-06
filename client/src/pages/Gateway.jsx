@@ -704,12 +704,18 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         })}
                       </select>
 
-                      {/* 操作按钮：api-key 类显示设置；shim 类自动托管无需按钮 */}
+                      {/* 操作按钮：api-key 类显示设置 + 删除；shim 类自动托管无需按钮 */}
                       {app.link_method === 'api-key' && (
-                        <button onClick={() => setSettings(app)}
-                          className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
-                          设置
-                        </button>
+                        <>
+                          <button onClick={() => setSettings(app)}
+                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
+                            设置
+                          </button>
+                          <button onClick={() => handleDeleteApp(app.id)}
+                            className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 shrink-0">
+                            删除
+                          </button>
+                        </>
                       )}
                     </div>
                   );
