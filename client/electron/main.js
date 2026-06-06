@@ -749,31 +749,36 @@ function registerIPC() {
     }
     gateway.setRouterModelMap(routerMap);
     // api key → route（从 apps 生成，替代旧的 local_keys）
-    const keyMap = {};
+    // ── 请求控制：api-key 按 key 匹配，shim 按协议路径匹配 ──────────────────────
+    const PROTOCOL_PATH = {
+      anthropic: '/v1/messages',
+      responses: '/v1/responses',
+      openai:    '/v1/chat/completions',
+      gemini:    '/v1beta',
+    };
+    // agent_id → protocol（来自 tools 配置）
+    const toolProto = {};
+    try { for (const t of require('./config-loader').tools()) toolProto[t.id] = t.protocol; } catch {}
+
+    const appControls = [];
     for (const app of apps) {
-      if (app.link_method === 'api-key' && app.api_key && app.route_id) {
-        const route = routes.find(r => r.model_key === app.route_id || r.id === app.route_id);
-        // route_id 命中场景路由 → 用其降级链；否则视为直接绑定的模型名 → 单步路由
-        const steps = route?.steps?.length
-          ? route.steps
-          : [{ model: app.route_id }];
-        keyMap[app.api_key] = {
-          steps,
-          scene_name: route?.scene_name || app.route_id,
-          app_id: app.id, app_name: app.name,
-          allowed_models: app.allowed_models || [],
-          allow_stream: app.allow_stream !== false,
-        };
+      const ctrl = {
+        app_id: app.id, app_name: app.name,
+        allow_stream:   app.allow_stream !== false,
+        request_format: app.request_format || 'auto',
+        max_rpm:        app.max_rpm || null,
+        max_concurrent: app.max_concurrent || null,
+        allowed_models: app.allowed_models || [],
+      };
+      if (app.link_method === 'api-key' && app.api_key) {
+        appControls.push({ ...ctrl, match: { key: app.api_key } });
+      } else if (app.link_method === 'shim' && app.agent_id) {
+        const path = PROTOCOL_PATH[toolProto[app.agent_id]];
+        if (path) appControls.push({ ...ctrl, match: { path } });
       }
     }
-    // 兼容旧 local_keys（迁移期间两者都支持）
-    for (const k of (cfg.local_keys || [])) {
-      if (k.key && k.model_key && !keyMap[k.key]) {
-        const route = routes.find(r => r.model_key === k.model_key);
-        if (route?.steps?.length) keyMap[k.key] = { steps: route.steps, scene_name: route.scene_name };
-      }
-    }
-    gateway.setKeySceneMap(keyMap);
+    gateway.setAppControls(appControls);
+
     // P2P backend config
     const cc = cfg.cloud_config || {};
     if (cc.url && cc.token) gateway.setBackendConfig({ url: cc.url, token: cc.token });

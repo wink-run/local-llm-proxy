@@ -1093,9 +1093,42 @@ function handleRequest(req, res) {
     let body = {};
     try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch {}
     const model = body.model || '';
+
+    // ── 请求控制（按 app 配置强制执行）──────────────────────────────────────
+    const ctrl = resolveAppControl(callerKey, url);
+    let release = () => {};
+    if (ctrl) {
+      // 1) 允许模型白名单
+      if (Array.isArray(ctrl.allowed_models) && ctrl.allowed_models.length
+          && model && !ctrl.allowed_models.includes(model)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'model_not_allowed', detail: `模型 ${model} 不在「${ctrl.app_name}」的允许列表内`, allowed: ctrl.allowed_models }));
+        return;
+      }
+      // 2) 是否允许流式
+      if (ctrl.allow_stream === false && body.stream) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'stream_not_allowed', detail: `「${ctrl.app_name}」已禁用流式输出` }));
+        return;
+      }
+      // 3) 限流（RPM / 并发）
+      const rl = rateLimitAcquire(ctrl);
+      if (!rl.ok) {
+        res.writeHead(429, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'rate_limited', detail: rl.reason === 'rpm'
+          ? `「${ctrl.app_name}」超过每分钟请求上限 (${ctrl.max_rpm})`
+          : `「${ctrl.app_name}」超过并发上限 (${ctrl.max_concurrent})` }));
+        return;
+      }
+      release = rl.release;
+      res.on('finish', release);
+      res.on('close', release);
+    }
+
     try {
       await route(model, url, body, res, callerKey);
     } catch (err) {
+      release();
       if (!res.headersSent) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
@@ -1159,6 +1192,46 @@ function getLog() {
 
 function setKeySceneMap() { /* deprecated */ }
 
+// ── 应用请求控制（api-key 按 key 匹配，shim 按协议路径匹配）─────────────────────
+// 每项：{ app_id, app_name, match:{key|path}, allow_stream, allowed_models[],
+//         max_rpm, max_concurrent, request_format }
+let _appControls = [];
+const _rlState   = new Map();   // app_id → { ts: number[], active: number }
+
+function setAppControls(list) {
+  _appControls = Array.isArray(list) ? list : [];
+}
+
+function resolveAppControl(callerKey, reqPath) {
+  if (callerKey) {
+    const byKey = _appControls.find(c => c.match && c.match.key && c.match.key === callerKey);
+    if (byKey) return byKey;
+  }
+  return _appControls.find(c => c.match && c.match.path && reqPath.startsWith(c.match.path)) || null;
+}
+
+// 限流检查：返回 { ok } 或 { ok:false, reason }；ok 时返回 release() 释放并发计数
+function rateLimitAcquire(ctrl) {
+  if (!ctrl.max_rpm && !ctrl.max_concurrent) return { ok: true, release: () => {} };
+  const st = _rlState.get(ctrl.app_id) || { ts: [], active: 0 };
+  const now = Date.now();
+  if (ctrl.max_rpm) {
+    st.ts = st.ts.filter(t => now - t < 60000);
+    if (st.ts.length >= ctrl.max_rpm) { _rlState.set(ctrl.app_id, st); return { ok: false, reason: 'rpm' }; }
+  }
+  if (ctrl.max_concurrent && st.active >= ctrl.max_concurrent) {
+    _rlState.set(ctrl.app_id, st); return { ok: false, reason: 'concurrent' };
+  }
+  st.ts.push(now); st.active += 1;
+  _rlState.set(ctrl.app_id, st);
+  let released = false;
+  return { ok: true, release: () => {
+    if (released) return; released = true;
+    const s = _rlState.get(ctrl.app_id);
+    if (s) s.active = Math.max(0, s.active - 1);
+  } };
+}
+
 function setRouterModelMap(map) {
   _routerModelMap = map && typeof map === 'object' ? map : {};
 }
@@ -1190,5 +1263,5 @@ function setLocalConfigReader(fn) {
 module.exports = {
   start, stop, restart, setStrategy, getStatus, getLog,
   setKeySceneMap, setRouterModelMap, setPeerModels, setBackendConfig,
-  setStatsRecorder, setLocalStats, setLocalConfigReader,
+  setStatsRecorder, setLocalStats, setLocalConfigReader, setAppControls,
 };
