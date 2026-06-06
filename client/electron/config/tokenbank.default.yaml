@@ -66,9 +66,3 @@ protocols:
     reverse_path: /v1/chat/completions
   gemini:
     reverse_path: /v1beta
-
-# 远程更新（第一期预留，用内置即可）
-remote:
-  url: ''
-  interval: 86400
-  signature: required

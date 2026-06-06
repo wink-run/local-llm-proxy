@@ -634,7 +634,7 @@ function registerIPC() {
   // scene_routes 段               → local-config.scene_routes
   const configLoader = require('./config-loader');
   const TB_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.yaml');
-  const TOOLS_SECTIONS = new Set(['version','tools','protocols','mitm','gateway','remote']);
+  const TOOLS_SECTIONS = new Set(['version','tools','protocols','mitm','gateway']);
   const ROUTES_SECTIONS = new Set(['scene_routes']);
 
   function applyConfigDoc(parsed, source) {

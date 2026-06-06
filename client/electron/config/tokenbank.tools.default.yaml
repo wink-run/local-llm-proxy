@@ -65,8 +65,3 @@ protocols:
     reverse_path: /v1/chat/completions
   gemini:
     reverse_path: /v1beta
-
-remote:
-  url: ''
-  interval: 86400
-  signature: required
