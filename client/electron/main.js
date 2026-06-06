@@ -610,15 +610,6 @@ function registerIPC() {
     writeLocalConfig(cfg);
   }
 
-  // ── 根证书（GUI 应用 MITM 托管前置）：状态 / 安装 / 卸载 ──
-  const caManager = require('./ca-manager');
-  ipcMain.handle('ca:status',    () => {
-    try { return { installed: caManager.isInstalledInSystem() }; }
-    catch (e) { return { installed: false, error: e.message }; }
-  });
-  ipcMain.handle('ca:install',   () => { try { return caManager.installToSystem(); } catch (e) { return { ok: false, error: e.message }; } });
-  ipcMain.handle('ca:uninstall', () => { try { return caManager.uninstallFromSystem(); } catch (e) { return { ok: false, error: e.message }; } });
-
   ipcMain.handle('agents:list',    () => agentLinker.list());
   // 手动托管：清除禁用标记后接入
   ipcMain.handle('agents:apply',   (_e, id) => { setAutoHostDisabled(id, false); return agentLinker.applyById(id); });
@@ -967,10 +958,8 @@ function registerIPC() {
 
     // 把 yaml tools 里有、但 apps[] 里还没有 shim 记录的 agent，动态补入
     const shimIds = new Set(savedApps.filter(a => a.link_method === 'shim').map(a => a.agent_id));
-    const TOOL_ICONS = { 'claude-code': '🤖', 'codex': '💻', 'gemini-cli': '🔮',
-                         'claude-desktop': '🖥️', 'codex-desktop': '🖥️' };
+    const TOOL_ICONS = { 'claude-code': '🤖', 'codex': '💻', 'gemini-cli': '🔮' };
     const TOOL_NAMES = { 'claude-code': 'Claude Code', 'codex': 'Codex CLI', 'gemini-cli': 'Gemini CLI' };
-    const caInstalled = (() => { try { return require('./ca-manager').isInstalledInSystem(); } catch { return false; } })();
     const virtualShimApps = agentTools
       .filter(t => !shimIds.has(t.id))
       .map(t => ({
@@ -1019,10 +1008,7 @@ function registerIPC() {
             linked: tool ? tool.linked : false,
             installed: tool ? tool.installed : false,
             type: tool ? tool.type : (app.type || 'cli'),
-            needs_ca: tool ? tool.needs_ca : !!app.needs_ca,
-            unsupported: tool ? tool.unsupported : !!app.unsupported,
             note: tool ? tool.note : (app.note || null),
-            ca_installed: caInstalled,            // 系统是否已装根证书
             auto_config: autoConfigOf(app.agent_id),
           };
         }
@@ -1174,8 +1160,6 @@ function registerIPC() {
     'claude-code': 'session-claude',
     'codex':       'session-codex',
     'gemini-cli':  'session-gemini',
-    'claude-desktop': 'mitm-claude',   // GUI MITM 记账（Claude 锁证书，实际无数据）
-    'codex-desktop':  'session-codex', // 模型走内置内核绕代理；用量从 ~/.codex/sessions 会话文件统计
   };
 
   // 批量查所有应用的统计（调一次，合并进 apps:list 或单独查询）
@@ -1260,17 +1244,6 @@ function registerIPC() {
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 
 app.whenReady().then(() => {
-  // 启动安全：清理上次异常退出/强杀残留的系统代理（GUI 托管不跨重启，MITM 未起时
-  // 残留代理会让渲染进程连不上 → 白屏）。在建窗口前执行。
-  try {
-    const sp = require('./system-proxy');
-    let mitmHP = '127.0.0.1:8888';
-    try { mitmHP = require('./config-loader').gatewayCtx().mitm; } catch {}
-    if (sp.isEnabledTo(mitmHP)) { sp.restore(); console.log('[startup] 已清理残留系统代理'); }
-    const hg = path.join(os.homedir(), '.tokenbank', 'hosted-gui.json');
-    if (fs.existsSync(hg)) fs.unlinkSync(hg);
-  } catch (e) { console.error('[startup] proxy cleanup failed:', e.message); }
-
   createWindow();
   createTray();
   registerIPC();
@@ -1280,29 +1253,6 @@ app.whenReady().then(() => {
   gateway.setLocalStats(localStats);
   gateway.setLocalConfigReader(readLocalConfig);   // 供策略组调度查 policies[]
   gateway.start(11430, readAgentConfig);
-
-  // MITM（GUI 桌面应用）用量记账：host → data_source，写 local-stats
-  try {
-    const mitmProxy = require('./mitm-proxy');
-    const MITM_HOST_DS = [
-      { hosts: ['anthropic.com', 'claude.ai'], data_source: 'mitm-claude' },
-      { hosts: ['chatgpt.com', 'openai.com'],  data_source: 'mitm-codex'  },
-    ];
-    mitmProxy.setUsageRecorder((info) => {
-      try {
-        const host = info.host || '';
-        const m = MITM_HOST_DS.find(x => x.hosts.some(d => host === d || host.endsWith('.' + d)));
-        if (!m || !info.usage) return;
-        localStats.record({
-          input_tokens:  info.usage.input_tokens || 0,
-          output_tokens: info.usage.output_tokens || 0,
-          request_id:    info.usage.message_id || null,
-          data_source:   m.data_source,
-          ts: Math.floor(Date.now() / 1000),
-        });
-      } catch (e) { console.error('[mitm-usage]', e.message); }
-    });
-  } catch (e) { console.error('[mitm] usage recorder wiring failed:', e.message); }
 
   // 默认启用一键托管：启动时自动接入本机已安装、用户未取消的 CLI 工具。
   try {

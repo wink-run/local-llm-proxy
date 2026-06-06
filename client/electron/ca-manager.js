@@ -129,59 +129,7 @@ function cleanup() {
   try { fs.rmSync(CA_DIR, { recursive: true, force: true }); } catch {}
 }
 
-// ── 系统信任库（GUI 应用 MITM 需要）───────────────────────────────────────────
-// Windows: 装进当前用户的「受信任的根证书颁发机构」(Cert:\CurrentUser\Root)，
-// 无需管理员；Chromium/Electron 走此库验证。证书指纹存 meta 便于检测/卸载。
-function _caThumbprint() {
-  // 用 PowerShell 读 CA 证书指纹（与系统库里的 Thumbprint 一致）
-  const ps = `$c=New-Object System.Security.Cryptography.X509Certificates.X509Certificate2('${CA_CRT.replace(/\\/g, '\\\\')}'); $c.Thumbprint`;
-  try {
-    return execFileSync('powershell', ['-NoProfile', '-Command', ps], { stdio: ['ignore', 'pipe', 'ignore'] })
-      .toString().trim();
-  } catch { return null; }
-}
-
-function isInstalledInSystem() {
-  if (process.platform !== 'win32') return false;
-  if (!fs.existsSync(CA_CRT)) return false;
-  const tp = _caThumbprint();
-  if (!tp) return false;
-  try {
-    const out = execFileSync('powershell', ['-NoProfile', '-Command',
-      `if (Test-Path 'Cert:\\CurrentUser\\Root\\${tp}') { 'yes' } else { 'no' }`],
-      { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
-    return out === 'yes';
-  } catch { return false; }
-}
-
-function installToSystem() {
-  if (process.platform !== 'win32') return { ok: false, error: 'unsupported-platform' };
-  const ca = ensureCA();   // 确保 CA 已生成（约束 = mitmDomains 并集）
-  try {
-    // Import-Certificate 到当前用户 Root 库（首次可能弹一次 Windows 安全确认）
-    execFileSync('powershell', ['-NoProfile', '-Command',
-      `Import-Certificate -FilePath '${ca.crt.replace(/'/g, "''")}' -CertStoreLocation Cert:\\CurrentUser\\Root | Out-Null`],
-      { stdio: ['ignore', 'ignore', 'pipe'] });
-    return { ok: true, thumbprint: _caThumbprint() };
-  } catch (e) {
-    return { ok: false, error: (e.stderr ? e.stderr.toString() : e.message).slice(0, 300) };
-  }
-}
-
-function uninstallFromSystem() {
-  if (process.platform !== 'win32') return { ok: false, error: 'unsupported-platform' };
-  const tp = _caThumbprint();
-  if (!tp) return { ok: true };  // 没证书可删
-  try {
-    execFileSync('powershell', ['-NoProfile', '-Command',
-      `Remove-Item -Path 'Cert:\\CurrentUser\\Root\\${tp}' -Force -ErrorAction SilentlyContinue`],
-      { stdio: ['ignore', 'ignore', 'ignore'] });
-    return { ok: true };
-  } catch (e) { return { ok: false, error: e.message }; }
-}
-
 module.exports = {
   ensureCA, signLeaf, cleanup,
-  installToSystem, isInstalledInSystem, uninstallFromSystem,
   paths: { CA_DIR, CA_CRT, CA_KEY },
 };

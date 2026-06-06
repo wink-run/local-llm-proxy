@@ -91,11 +91,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     applyAll:  () => ipcRenderer.invoke('agents:applyAll'),
     revertAll: () => ipcRenderer.invoke('agents:revertAll'),
   },
-  ca: {
-    status:    () => ipcRenderer.invoke('ca:status'),
-    install:   () => ipcRenderer.invoke('ca:install'),
-    uninstall: () => ipcRenderer.invoke('ca:uninstall'),
-  },
   toolsConfig: {
     load:        () => ipcRenderer.invoke('toolsConfig:load'),
     importFile:  () => ipcRenderer.invoke('toolsConfig:importFile'),

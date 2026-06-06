@@ -56,31 +56,6 @@ tools:
       model_providers.tokenbank.wire_api: responses
     revert: state-precise
 
-  # ── 桌面 GUI 应用（Electron/Chromium）：走系统代理 + 系统信任库 ──
-  # needs_ca=true：必须先把根 CA 装进系统信任库才能托管（MITM）
-  - id: claude-desktop
-    name: Claude Desktop
-    protocol: anthropic
-    type: gui
-    needs_ca: true
-    unsupported: true          # 实测：对 a-api.anthropic.com 做了证书锁定，无法 MITM
-    detect:
-      appx: Claude
-    strategy: mitm-system
-    mitm-domains: [api.anthropic.com, a-api.anthropic.com, claude.ai]
-    note: 证书锁定，无法托管（应用拒绝自定义根证书）
-
-  - id: codex-desktop
-    name: Codex Desktop
-    protocol: responses
-    type: gui
-    needs_ca: true
-    unsupported: true          # 实测：网页流量可拦，但模型调用走内置 Rust 内核绕过代理
-    detect:
-      appx: OpenAI.Codex
-    strategy: mitm-system
-    mitm-domains: [chatgpt.com, ab.chatgpt.com, ws.chatgpt.com, chat.openai.com, api.openai.com]
-    note: 模型调用走内置内核（绕过代理），无法 MITM 托管；用量已从会话文件自动统计
 
 # ── API Key 应用添加方式（「添加应用」的预设）──
 # inject: env = 写环境变量；config-file = 改工具配置文件。{BASE}=网关地址 {KEY}=应用 key
