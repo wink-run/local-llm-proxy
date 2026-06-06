@@ -1,0 +1,127 @@
+# tokenbank.tools.default.yaml
+# 工具清单默认配置 — 程序内置，首次初始化时加载到 config-loader。
+# 用户通过「导入配置」（本地文件或服务器下发）覆盖后，此文件不再使用。
+# 格式与 tokenbank.routes.default.yaml 相同（统一 schema），各取所需的段。
+
+version: 1
+
+gateway:
+  host: 127.0.0.1
+  reverse_port: 11430        # 反向代理端口；占位符 {REVERSE}=host:reverse_port
+  mitm_port: 8888            # MITM proxy 端口；占位符 {MITM}=host:mitm_port
+
+mitm:
+  ca_ref:
+    - file://{TOKENBANK_CA|}  # 用户显式指定 CA 路径（为空跳过）
+    - auto                    # 回退：自动生成 name-constrained CA
+
+# ── 支持的 CLI 工具（接入方式 + 检测方式）──────────────────────────────────────
+tools:
+  - id: claude-code
+    name: Claude Code
+    protocol: anthropic
+    detect:
+      command: claude
+      version-arg: --version
+      config-dirs: ['$CLAUDE_CONFIG_DIR', '~/.claude']
+    strategy: base_url-env
+    inject:
+      env:
+        ANTHROPIC_BASE_URL: http://{REVERSE}
+
+  - id: codex
+    name: Codex (CLI)
+    protocol: responses
+    detect:
+      command: codex
+      version-arg: --version
+    strategy: config-file
+    config-file: '{CODEX_HOME|~/.codex}/config.toml'
+    patch:
+      model_provider: tokenbank
+      model_providers.tokenbank.base_url: http://{REVERSE}/v1
+      model_providers.tokenbank.wire_api: responses
+    revert: state-precise
+
+  - id: gemini-cli
+    name: Gemini CLI
+    protocol: gemini
+    detect:
+      command: gemini
+      version-arg: --version
+      config-dirs: ['~/.gemini']
+    strategy: base_url-env
+    inject:
+      env:
+        GEMINI_BASE_URL: http://{REVERSE}
+
+# ── 协议 → 网关端点映射 + 接入后自动 enable 的 provider ──────────────────────
+protocols:
+  anthropic:
+    reverse_path: /v1/messages
+    default_provider_id: anthropic-paid
+  responses:
+    reverse_path: /v1/responses
+    default_provider_id: openai
+  openai:
+    reverse_path: /v1/chat/completions
+    default_provider_id: openai
+  gemini:
+    reverse_path: /v1beta
+
+# ── 路由规则（三层特征匹配，策略组在 UI 里配）────────────────────────────────
+routing:
+  rules:
+    - match: { has_tools: true }
+      policy: code-policy
+    - match: { task_type: code }
+      policy: code-policy
+    - match: { agent_id: codex }
+      policy: code-policy
+    - match: { context_length: { gt: 80000 } }
+      policy: long-context-policy
+    - match: { stream: true, context_length: { lt: 8000 }, has_tools: false }
+      policy: chat-policy
+    - match: {}
+      policy: default-policy
+
+  feature_extraction:
+    metadata: true
+    structure: true
+    context_length_mode: chars
+    semantic: true
+    semantic_scope: last_user_message
+    code_keywords:
+      - "```"
+      - "function "
+      - "def "
+      - "class "
+      - "import "
+      - "const "
+      - "var "
+      - "console.log"
+      - "error:"
+      - "debug"
+      - "fix the"
+      - "write a"
+      - "implement"
+
+# ── 上游 provider 默认配置 ────────────────────────────────────────────────────
+providers:
+  - id: tokenbank-cloud
+    protocol: openai
+    base_url: https://api.tokenbank.example/v1
+    api_key_ref:
+      - tokenbank://session
+    tier: paid
+
+routing_policies_default:
+  - { id: default-policy,      name: 默认,     strategy: fallback,    providers: [] }
+  - { id: code-policy,         name: 代码助手,  strategy: fallback,    providers: [] }
+  - { id: chat-policy,         name: 普通对话,  strategy: round-robin, providers: [] }
+  - { id: long-context-policy, name: 长上下文,  strategy: fallback,    providers: [] }
+
+remote:
+  url: ''
+  interval: 86400
+  signature: required

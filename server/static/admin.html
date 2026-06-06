@@ -555,9 +555,9 @@ select.form-input{cursor:pointer}
                 : (lang==='zh' ? '场景路由配置 (tokenbank.routes.yaml)' : 'Routes Config (tokenbank.routes.yaml)') }}
             </span>
             <div style="margin-left:auto;display:flex;gap:6px">
-              <button class="btn-xs" @click="previewDistrib(type)"
-                :title="lang==='zh'?'从服务端加载当前内容':'Load current content from server'">
-                {{ lang==='zh' ? '加载' : 'Load' }}
+              <button class="btn-xs" @click="loadLocalFile(type)"
+                :title="lang==='zh'?'从本地文件加载到编辑器':'Load from a local file'">
+                {{ lang==='zh' ? '📁 本地文件' : '📁 Local file' }}
               </button>
               <button v-if="distribInfo[type].uploaded" class="btn-xs btn-danger" @click="deleteDistrib(type)">
                 {{ lang==='zh' ? '删除' : 'Delete' }}
@@ -983,6 +983,31 @@ createApp({
           scenes: { uploaded: d.scenes?.uploaded ?? d.routes?.uploaded ?? false, bytes: d.scenes?.bytes ?? d.routes?.bytes ?? 0 },
         }
       } catch {}
+      // 预填编辑器：编辑器为空时，已上传则用服务器内容，否则用内置默认值（与客户端一致）
+      for (const type of ['apps', 'scenes']) {
+        if (distribText.value[type]) continue   // 已有内容（编辑中/已加载）不覆盖
+        let content = ''
+        try { content = (await (await api(`/api/config/${type}/source`)).json()).content || '' } catch {}
+        if (!content) {
+          try { content = await (await fetch(`/static/defaults/${type}.default.yaml`)).text() } catch {}
+        }
+        distribText.value[type] = content
+      }
+    }
+    // 从管理员本地文件加载配置到编辑器
+    function loadLocalFile(type) {
+      const input = document.createElement('input')
+      input.type = 'file'; input.accept = '.yaml,.yml,.txt'
+      input.onchange = e => {
+        const f = e.target.files && e.target.files[0]; if (!f) return
+        const reader = new FileReader()
+        reader.onload = () => {
+          distribText.value[type] = String(reader.result || '')
+          distribMsg.value[type] = lang.value==='zh' ? `已加载本地文件：${f.name}` : `Loaded: ${f.name}`
+        }
+        reader.readAsText(f)
+      }
+      input.click()
     }
     async function uploadDistrib(type) {
       const content = distribText.value[type]
@@ -1008,16 +1033,6 @@ createApp({
         await fetchDistribInfo()
       } catch (e) { distribMsg.value[type] = e.message }
     }
-    async function previewDistrib(type) {
-      try {
-        const r = await api(`/api/config/${type}/source`)
-        if (!r.ok) { distribMsg.value[type] = `HTTP ${r.status}`; return }
-        const d = await r.json()
-        distribText.value[type] = d.content || ''
-        distribMsg.value[type] = lang.value==='zh' ? '已加载当前服务端配置' : 'Loaded from server'
-      } catch (e) { distribMsg.value[type] = e.message }
-    }
-
     /* ── Utils ── */
     function fmtTime(iso) { if (!iso) return '—'; return new Date(iso).toLocaleString(lang.value==='zh'?'zh-CN':'en-US',{hour12:false}) }
 
@@ -1042,7 +1057,7 @@ createApp({
       virtualAgents, vaModalOpen, vaEditId, vaForm, vaMsg, fetchVirtualAgents, openVaModal, closeVaModal, saveVirtualAgent, deleteVirtualAgent,
       vaAddModel, vaRemoveModel, vaSetModelType, vaModelName, vaModelType,
       distribInfo, distribText, distribMsg, distribSaving,
-      fetchDistribInfo, uploadDistrib, deleteDistrib, previewDistrib,
+      fetchDistribInfo, uploadDistrib, deleteDistrib, loadLocalFile,
       fmtTime,
     }
   }
