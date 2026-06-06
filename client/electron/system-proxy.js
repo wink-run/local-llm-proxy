@@ -10,7 +10,8 @@ const { execFileSync } = require('child_process');
 
 const TB_DIR  = path.join(os.homedir(), '.tokenbank');
 const BACKUP  = path.join(TB_DIR, 'system-proxy.backup.json');
-const REG_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
+// PSDrive 形式，单反斜杠（PowerShell 单引号字符串里按字面解析）
+const REG_KEY = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
 
 function ps(cmd) {
   return execFileSync('powershell', ['-NoProfile', '-Command', cmd], {
@@ -20,8 +21,7 @@ function ps(cmd) {
 
 function readCurrent() {
   const out = ps(
-    `$k='${REG_KEY.replace(/\\/g, '\\\\')}';` +
-    `$p=Get-ItemProperty -Path "Registry::$k";` +
+    `$p=Get-ItemProperty -Path '${REG_KEY}';` +
     `[pscustomobject]@{ enable=[int]($p.ProxyEnable); server=[string]($p.ProxyServer); override=[string]($p.ProxyOverride) } | ConvertTo-Json -Compress`
   );
   try { return JSON.parse(out.trim()); } catch { return { enable: 0, server: '', override: '' }; }
@@ -35,15 +35,13 @@ function enable(hostPort) {
     if (!fs.existsSync(BACKUP)) {
       fs.writeFileSync(BACKUP, JSON.stringify(readCurrent()), 'utf8');
     }
-    const k = REG_KEY.replace(/\\/g, '\\\\');
     ps(
-      `$k="Registry::${k}";` +
-      `Set-ItemProperty -Path $k -Name ProxyServer  -Value '${hostPort}';` +
-      `Set-ItemProperty -Path $k -Name ProxyEnable  -Value 1;` +
-      `Set-ItemProperty -Path $k -Name ProxyOverride -Value '<-loopback>';`
+      `Set-ItemProperty -Path '${REG_KEY}' -Name ProxyServer   -Value '${hostPort}';` +
+      `Set-ItemProperty -Path '${REG_KEY}' -Name ProxyEnable   -Value 1;` +
+      `Set-ItemProperty -Path '${REG_KEY}' -Name ProxyOverride -Value '<-loopback>';`
     );
     return { ok: true };
-  } catch (e) { return { ok: false, error: e.message }; }
+  } catch (e) { return { ok: false, error: (e.stderr ? e.stderr.toString() : e.message).slice(0, 300) }; }
 }
 
 // 还原系统代理为备份值（若有），并删备份
@@ -54,18 +52,16 @@ function restore() {
     if (fs.existsSync(BACKUP)) {
       try { bak = JSON.parse(fs.readFileSync(BACKUP, 'utf8')); } catch {}
     }
-    const k = REG_KEY.replace(/\\/g, '\\\\');
     ps(
-      `$k="Registry::${k}";` +
-      `Set-ItemProperty -Path $k -Name ProxyEnable -Value ${bak.enable ? 1 : 0};` +
-      `Set-ItemProperty -Path $k -Name ProxyServer -Value '${(bak.server || '').replace(/'/g, "''")}';` +
+      `Set-ItemProperty -Path '${REG_KEY}' -Name ProxyEnable -Value ${bak.enable ? 1 : 0};` +
+      `Set-ItemProperty -Path '${REG_KEY}' -Name ProxyServer -Value '${(bak.server || '').replace(/'/g, "''")}';` +
       (bak.override
-        ? `Set-ItemProperty -Path $k -Name ProxyOverride -Value '${bak.override.replace(/'/g, "''")}';`
-        : `Remove-ItemProperty -Path $k -Name ProxyOverride -ErrorAction SilentlyContinue;`)
+        ? `Set-ItemProperty -Path '${REG_KEY}' -Name ProxyOverride -Value '${bak.override.replace(/'/g, "''")}';`
+        : `Remove-ItemProperty -Path '${REG_KEY}' -Name ProxyOverride -ErrorAction SilentlyContinue;`)
     );
     if (fs.existsSync(BACKUP)) fs.unlinkSync(BACKUP);
     return { ok: true };
-  } catch (e) { return { ok: false, error: e.message }; }
+  } catch (e) { return { ok: false, error: (e.stderr ? e.stderr.toString() : e.message).slice(0, 300) }; }
 }
 
 // 当前系统代理是否指向我们（host:port）
