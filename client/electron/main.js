@@ -645,7 +645,7 @@ function registerIPC() {
   // scene_routes 段               → local-config.scene_routes
   const configLoader = require('./config-loader');
   const TB_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.yaml');
-  const TOOLS_SECTIONS = new Set(['version','tools','mitm','gateway']);
+  const TOOLS_SECTIONS = new Set(['version','tools','mitm','gateway','app_presets']);
   const ROUTES_SECTIONS = new Set(['scene_routes']);
 
   function applyConfigDoc(parsed, source) {
@@ -1050,7 +1050,10 @@ function registerIPC() {
       allow_stream: data.allow_stream !== false,
       request_format: data.request_format || 'auto',
       env: data.env || null,                     // 需写入工具的环境变量模板（{BASE}/{KEY} 占位）
-      preset_id: data.preset_id || null,         // 来自哪个已识别应用预设
+      preset_id: data.preset_id || null,         // 来自哪个预设
+      inject: data.inject || (data.env ? 'env' : null),  // env | config-file
+      config_file: data.config_file || null,     // config-file 注入：目标配置文件
+      patch: data.patch || null,                 // config-file 注入：写入的字段（{BASE}/{KEY} 占位）
       created_at: new Date().toISOString(),
     };
     apps.push(app);
@@ -1112,6 +1115,57 @@ function registerIPC() {
       }
       return { ok: true, count: entries.length };
     } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // 「添加应用」预设（来自 yaml app_presets；下发新配置后自动出现新预设）
+  ipcMain.handle('apps:presets', () => {
+    try {
+      const list = require('./config-loader').appPresets();
+      if (Array.isArray(list) && list.length) return list;
+    } catch {}
+    // 兜底：旧配置无 app_presets 段时的内置默认
+    return [
+      { id: 'claude-code', name: 'Claude Code', icon: '🤖', request_format: 'anthropic', inject: 'env',
+        env: { ANTHROPIC_BASE_URL: '{BASE}', ANTHROPIC_AUTH_TOKEN: '{KEY}' } },
+      { id: 'codex', name: 'Codex CLI', icon: '💻', request_format: 'openai', inject: 'env',
+        env: { OPENAI_BASE_URL: '{BASE}/v1', OPENAI_API_KEY: '{KEY}' } },
+      { id: 'gemini-cli', name: 'Gemini CLI', icon: '🔮', request_format: 'openai', inject: 'env',
+        env: { GOOGLE_GEMINI_BASE_URL: '{BASE}', GEMINI_API_KEY: '{KEY}' } },
+    ];
+  });
+
+  // 写入工具配置文件（config-file 注入：如 Codex Desktop API 模式改 ~/.codex/config.toml）。
+  // 前端已把 {BASE}/{KEY} 解析进 patch/env；这里解析路径占位符 + 展开 ~ 后写入。
+  ipcMain.handle('apps:writeConfigFile', async (_e, { app_id, config_file, patch, env } = {}) => {
+    try {
+      const cl = require('./config-loader');
+      let file = cl.resolvePlaceholders(String(config_file || ''), {});
+      file = cl.expandHome(file);
+      if (!file) return { ok: false, error: 'no-config-file' };
+      const inj = require('./injector');
+      inj.applyConfigFile(app_id || ('app-' + rndHex(4)), file, patch || {});
+      // 附带的环境变量（如存放 key 的 env_key）一并写入系统
+      let envCount = 0;
+      const entries = Object.entries(env || {}).filter(([k]) => k && k.trim());
+      if (entries.length) {
+        if (process.platform === 'win32') {
+          const { execFileSync } = require('child_process');
+          for (const [k, v] of entries) execFileSync('setx', [k, String(v)], { stdio: ['ignore', 'ignore', 'ignore'] });
+        } else {
+          const home = os.homedir();
+          const targets = ['.zshrc', '.bashrc', '.bash_profile', '.profile'].map(f => path.join(home, f)).filter(f => fs.existsSync(f));
+          if (!targets.length) targets.push(path.join(home, '.profile'));
+          const block = '\n# >>> tokenbank env >>>\n' + entries.map(([k, v]) => `export ${k}=${JSON.stringify(String(v))}`).join('\n') + '\n# <<< tokenbank env <<<\n';
+          for (const f of targets) {
+            let txt = fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '';
+            txt = txt.replace(/\n?# >>> tokenbank env >>>[\s\S]*?# <<< tokenbank env <<<\n?/g, '');
+            fs.writeFileSync(f, txt + block, 'utf8');
+          }
+        }
+        envCount = entries.length;
+      }
+      return { ok: true, file, envCount };
+    } catch (e) { return { ok: false, error: (e.stderr ? e.stderr.toString() : e.message).slice(0, 300) }; }
   });
 
   // 注册来自 toolsConfig 的 shim 托管 app（透明托管时自动创建或更新 app 记录）

@@ -117,6 +117,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     regenKey:      (id)     => ipcRenderer.invoke('apps:regenKey', id),
     ensureShimApp: (d)      => ipcRenderer.invoke('apps:ensureShimApp', d),
     writeEnv:      (env)    => ipcRenderer.invoke('apps:writeEnv', env),
+    presets:       ()       => ipcRenderer.invoke('apps:presets'),
+    writeConfigFile: (d)    => ipcRenderer.invoke('apps:writeConfigFile', d),
   },
   localConfig: {
     get:               ()  => ipcRenderer.invoke('localConfig:get'),

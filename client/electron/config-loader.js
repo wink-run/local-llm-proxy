@@ -116,6 +116,8 @@ function resolveDeep(obj, ctx) {
 }
 
 function routing()   { return get().routing || {}; }
+// 「添加应用」预设：占位符已解析（{CODEX_HOME|..} 等），但保留 {BASE}/{KEY}（前端按应用解析）
+function appPresets() { const ctx = gatewayCtx(); return (get().app_presets || []).map(p => resolveDeep(p, ctx)); }
 function caRef()     { return (get().mitm || {}).ca_ref || ['auto']; }
 
 // ── _ref 解析链（ca_ref / api_key_ref 共用）───────────────────────────────────
@@ -146,7 +148,7 @@ function resolveRef(refs, ctx = {}) {
 
 module.exports = {
   load, get, setCaPath, getCaPath,
-  gatewayCtx, mitmDomains, shouldMitm, tools,
+  gatewayCtx, mitmDomains, shouldMitm, tools, appPresets,
   routing, caRef,
   resolveRef, resolvePlaceholders, expandHome,
 };

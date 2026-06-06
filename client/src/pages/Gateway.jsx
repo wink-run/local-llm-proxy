@@ -257,15 +257,7 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
 
 // ── AppManager：应用列表（Tab1: 所有应用 & 托管 | Tab2: API Key 管理）────────
 const LINK_METHOD_LABEL = { shim: '透明托管', 'api-key': 'API Key' };
-// 已识别的应用：选中后创建 api-key 应用，并预填要写入的环境变量（{BASE}=网关地址，{KEY}=应用 key）
-const RECOGNIZED_APPS = [
-  { id: 'claude-code', name: 'Claude Code', icon: '🤖', request_format: 'anthropic',
-    env: { ANTHROPIC_BASE_URL: '{BASE}', ANTHROPIC_AUTH_TOKEN: '{KEY}' } },
-  { id: 'codex',       name: 'Codex',       icon: '💻', request_format: 'openai',
-    env: { OPENAI_BASE_URL: '{BASE}/v1', OPENAI_API_KEY: '{KEY}' } },
-  { id: 'gemini-cli',  name: 'Gemini CLI',  icon: '🔮', request_format: 'openai',
-    env: { GOOGLE_GEMINI_BASE_URL: '{BASE}', GEMINI_API_KEY: '{KEY}' } },
-];
+// 「添加应用」预设现在来自 yaml app_presets（config-loader），通过 apps.presets() 加载
 const FORMAT_OPTIONS = [
   { value: 'auto',      label: '自动检测' },
   { value: 'openai',    label: 'OpenAI 格式' },
@@ -322,7 +314,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
       max_rpm: maxRpm ? +maxRpm : null,
       max_concurrent: maxConc ? +maxConc : null,
       allowed_models: models.split(',').map(s => s.trim()).filter(Boolean),
-      ...(app.env ? { env: parseEnvText(envText) } : {}),
+      ...(app.env && !app.config_file ? { env: parseEnvText(envText) } : {}),
     });
     setBusy(false);
     onClose();
@@ -332,6 +324,20 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     setWriteMsg('');
     const r = await window.electronAPI?.apps?.writeEnv(parseEnvText(envText)).catch(e => ({ ok: false, error: e.message }));
     if (r?.ok) setWriteMsg(`✓ 已写入 ${r.count} 个环境变量，重开终端后生效`);
+    else setWriteMsg('✗ ' + (r?.error || '写入失败'));
+  }
+
+  // config-file 注入：解析 {BASE}/{KEY} 后改目标工具配置文件（如 Codex Desktop ~/.codex/config.toml）
+  async function writeConfigFile() {
+    setWriteMsg('');
+    const patch = {};
+    for (const [k, v] of Object.entries(app.patch || {})) patch[k] = resolveEnv(v);
+    const env = {};
+    for (const [k, v] of Object.entries(app.env || {})) env[k] = resolveEnv(v);
+    const r = await window.electronAPI?.apps?.writeConfigFile({
+      app_id: app.id, config_file: app.config_file, patch, env,
+    }).catch(e => ({ ok: false, error: e.message }));
+    if (r?.ok) setWriteMsg(`✓ 已写入 ${r.file}${r.envCount ? `（含 ${r.envCount} 个环境变量）` : ''}，重启该应用后生效`);
     else setWriteMsg('✗ ' + (r?.error || '写入失败'));
   }
 
@@ -382,8 +388,8 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
               </div>
             </div>
           )}
-          {/* 环境变量（api-key 类且有 env 模板：可编辑 + 一键写入系统）*/}
-          {app.link_method === 'api-key' && app.env && (
+          {/* 环境变量注入（api-key 类、有 env 且非 config-file：写系统环境变量）*/}
+          {app.link_method === 'api-key' && app.env && !app.config_file && (
             <div>
               <div className="flex items-center justify-between mb-2">
                 <div className="text-xs font-medium text-gray-500 dark:text-gray-400">环境变量（写入后该工具指向网关）</div>
@@ -399,6 +405,31 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
               {writeMsg && <div className={`text-[11px] mt-1 ${writeMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{writeMsg}</div>}
               <div className="text-[10px] text-gray-400 mt-1">
                 💡 「写入配置」会把上述变量写入系统（Windows: 用户环境变量；macOS/Linux: shell 配置），重开终端后该工具即指向本网关。
+              </div>
+            </div>
+          )}
+          {/* 配置文件注入（config-file：改目标工具配置文件指向网关，如 Codex Desktop API 模式）*/}
+          {app.link_method === 'api-key' && app.config_file && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-medium text-gray-500 dark:text-gray-400">配置文件注入（指向网关）</div>
+                <button onClick={writeConfigFile}
+                  className="text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white shrink-0">
+                  写入配置
+                </button>
+              </div>
+              <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2 space-y-1">
+                <div className="font-mono text-[11px] text-gray-700 dark:text-gray-300 break-all">{app.config_file}</div>
+                {Object.entries(app.patch || {}).map(([k, v]) => (
+                  <div key={k} className="font-mono text-[10px] text-gray-500 break-all">{k} = {resolveEnv(v)}</div>
+                ))}
+                {Object.keys(app.env || {}).length > 0 && (
+                  <div className="font-mono text-[10px] text-gray-400 pt-1">+ 环境变量：{Object.keys(app.env).join(', ')}</div>
+                )}
+              </div>
+              {writeMsg && <div className={`text-[11px] mt-1 ${writeMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{writeMsg}</div>}
+              <div className="text-[10px] text-gray-400 mt-1">
+                💡 「写入配置」会改写上述配置文件并指向本网关（API 模式）；需用 API Key 登录该应用，重启后生效。
               </div>
             </div>
           )}
@@ -513,11 +544,14 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     setRoutes(localCfg?.scene_routes || []);
     if (gw?.port) setLocalBase(`http://localhost:${gw.port}/v1`);
     setCaInstalled(!!caSt?.installed);
+    // 添加应用预设（来自 yaml app_presets，下发新配置后自动出现）
+    window.electronAPI.apps?.presets?.().then(p => setPresets(Array.isArray(p) ? p : [])).catch(() => {});
     // 异步拉统计（不阻塞主列表渲染）
     if (list.length && window.electronAPI.apps?.stats) {
       window.electronAPI.apps.stats(list).then(s => setAppStats(s || {})).catch(() => {});
     }
   }, []);
+  const [presets, setPresets] = useState([]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -584,12 +618,16 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     }
   }
 
-  // 添加流程：选择已识别的应用 → 创建 api-key 应用并预填环境变量模板，打开设置
+  // 添加流程：选择预设 → 创建 api-key 应用并带上注入方式（env / config-file），打开设置
   // 标记 _isNew：用户关闭/取消时若未保存则删除（避免「点关闭也保存了」）
   async function addPreset(preset) {
     const created = await window.electronAPI.apps?.create({
       name: preset.name, icon: preset.icon, link_method: 'api-key',
-      request_format: preset.request_format, env: preset.env, preset_id: preset.id,
+      request_format: preset.request_format, preset_id: preset.id,
+      inject: preset.inject || (preset.env ? 'env' : null),
+      env: preset.env || null,
+      config_file: preset.config_file || null,
+      patch: preset.patch || null,
     }).catch(() => null);
     setAddOpen(false);
     if (created?.id) setSettings({ ...created, _isNew: true });
@@ -654,7 +692,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
               <div className="mb-3 p-3 rounded-xl border border-blue-200 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-950/15">
                 <div className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-2">选择要添加的应用</div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {RECOGNIZED_APPS.map(p => (
+                  {presets.map(p => (
                     <button key={p.id} onClick={() => addPreset(p)}
                       className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 hover:border-blue-400 dark:hover:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
                       <span className="text-base">{p.icon}</span>
