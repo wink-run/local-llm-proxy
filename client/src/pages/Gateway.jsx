@@ -268,6 +268,11 @@ const FORMAT_OPTIONS = [
   { value: 'openai',    label: 'OpenAI 格式' },
   { value: 'anthropic', label: 'Anthropic 格式' },
 ];
+const STRATEGY_LABEL = {
+  'base_url-env': '环境变量注入 base_url',
+  'config-file':  '自动写入配置文件',
+  'mitm-env':     '代理 + 证书注入',
+};
 
 // 单个应用的设置面板（路由规则绑定 + 详细配置）
 function AppSettingsPanel({ app, routes, availableModels = [], onUpdate, onDelete, onRegenKey, onClose }) {
@@ -344,25 +349,68 @@ function AppSettingsPanel({ app, routes, availableModels = [], onUpdate, onDelet
               </div>
             </div>
           )}
-          {/* 路由规则：同时显示模型和场景路由 */}
-          <div>
-            <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">路由规则（模型或场景路由）</div>
-            <select value={routeId} onChange={e => setRouteId(e.target.value)}
-              className="w-full text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none text-gray-800 dark:text-gray-200">
-              <option value="">不绑定（走默认策略）</option>
-              {routes.length > 0 && (
-                <optgroup label="场景路由">
-                  {routes.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
-                </optgroup>
-              )}
-              {['free','p2p','paid'].map(tier => {
-                const tm = availableModels.filter(m => m.tier === tier);
-                if (!tm.length) return null;
-                const label = tier === 'free' ? '🟢 免费模型' : tier === 'p2p' ? '🔵 P2P 模型' : '🟣 付费模型';
-                return <optgroup key={tier} label={label}>{tm.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>;
-              })}
-            </select>
-          </div>
+          {/* 自动配置详情（仅 shim 类：展示环境变量 + 自动写入文件，只读）*/}
+          {app.link_method === 'shim' && app.auto_config && (
+            <div>
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">自动配置（透明托管）</div>
+              <div className="space-y-2">
+                <div className="text-[11px] text-gray-500 dark:text-gray-400">
+                  接入方式：<span className="text-gray-700 dark:text-gray-300">{STRATEGY_LABEL[app.auto_config.strategy] || app.auto_config.strategy || '—'}</span>
+                </div>
+                {/* 注入的环境变量 */}
+                {app.auto_config.env && Object.keys(app.auto_config.env).length > 0 && (
+                  <div>
+                    <div className="text-[10px] text-gray-400 mb-1">注入的环境变量</div>
+                    <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2 space-y-1">
+                      {Object.entries(app.auto_config.env).map(([k, v]) => (
+                        <div key={k} className="font-mono text-[11px] text-gray-600 dark:text-gray-300 break-all">
+                          <span className="text-blue-600 dark:text-blue-400">{k}</span>=<span>{String(v)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* 自动写入的配置文件 */}
+                {app.auto_config.config_file && (
+                  <div>
+                    <div className="text-[10px] text-gray-400 mb-1">自动写入文件</div>
+                    <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2 space-y-1">
+                      <div className="font-mono text-[11px] text-gray-700 dark:text-gray-300 break-all">{app.auto_config.config_file}</div>
+                      {app.auto_config.patch && Object.entries(app.auto_config.patch).map(([k, v]) => (
+                        <div key={k} className="font-mono text-[10px] text-gray-500 break-all">
+                          {k} = {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="text-[10px] text-gray-400">
+                  💡 该应用由系统自动托管，上述配置在启动时注入、退出时还原。绑定的目标模型/路由可在列表行的下拉中调整。
+                </div>
+              </div>
+            </div>
+          )}
+          {/* 路由规则（仅 api-key 类：同时显示模型和场景路由）*/}
+          {app.link_method === 'api-key' && (
+            <div>
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">路由规则（模型或场景路由）</div>
+              <select value={routeId} onChange={e => setRouteId(e.target.value)}
+                className="w-full text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none text-gray-800 dark:text-gray-200">
+                <option value="">不绑定（走默认策略）</option>
+                {routes.length > 0 && (
+                  <optgroup label="场景路由">
+                    {routes.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
+                  </optgroup>
+                )}
+                {['free','p2p','paid'].map(tier => {
+                  const tm = availableModels.filter(m => m.tier === tier);
+                  if (!tm.length) return null;
+                  const label = tier === 'free' ? '🟢 免费模型' : tier === 'p2p' ? '🔵 P2P 模型' : '🟣 付费模型';
+                  return <optgroup key={tier} label={label}>{tm.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>;
+                })}
+              </select>
+            </div>
+          )}
           {/* 请求控制（仅 api-key 类 app） */}
           {app.link_method === 'api-key' && (
             <div>
@@ -483,15 +531,15 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     }
   }
 
-  // 添加流程：选择已识别的应用 → 用预设快速创建 api-key 应用并打开设置
-  async function addPreset(preset) {
-    const created = await window.electronAPI.apps?.create({
-      name: preset.name, icon: preset.icon, link_method: 'api-key',
-      request_format: preset.request_format,
-    }).catch(() => null);
+  // 添加流程：选择已识别的应用 → 打开该自动配置应用的设置（仅展示环境变量/自动写入）
+  function addPreset(preset) {
     setAddOpen(false);
-    await load();
-    if (created?.id) setSettings(created);   // 直接进入设置，可继续配置路由等
+    const target = apps.find(a => a.link_method === 'shim' && a.agent_id === preset.id);
+    if (target) {
+      setSettings(target);
+    } else {
+      window.alert(`未检测到 ${preset.name}。安装后会自动托管并出现在列表中。`);
+    }
   }
 
   // 添加流程：其他（未被识别的应用）→ 创建空白 api-key 应用并打开完整配置

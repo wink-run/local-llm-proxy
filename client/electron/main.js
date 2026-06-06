@@ -974,12 +974,32 @@ function registerIPC() {
     // 合并：持久化的 app + 虚拟的 shim app
     const allApps = [...savedApps, ...virtualShimApps];
 
-    // 注入实时托管状态
+    // shim 工具的自动配置详情（环境变量 / 自动写入文件），占位符已解析
+    let toolDetails = [];
+    try { toolDetails = require('./config-loader').tools(); } catch {}
+    const autoConfigOf = (agentId) => {
+      const t = toolDetails.find(x => x.id === agentId);
+      if (!t) return null;
+      return {
+        strategy:    t.strategy || null,
+        protocol:    t.protocol || null,
+        env:         (t.inject && t.inject.env) || {},          // 注入的环境变量
+        config_file: t['config-file'] || null,                  // 自动写入的配置文件
+        patch:       t.patch || {},                             // 写入文件的字段
+      };
+    };
+
+    // 注入实时托管状态 + 自动配置详情
     return allApps
       .map(app => {
         if (app.link_method === 'shim') {
           const tool = agentTools.find(t => t.id === app.agent_id);
-          return { ...app, linked: tool ? tool.linked : false, installed: tool ? tool.installed : false };
+          return {
+            ...app,
+            linked: tool ? tool.linked : false,
+            installed: tool ? tool.installed : false,
+            auto_config: autoConfigOf(app.agent_id),
+          };
         }
         return { ...app, linked: true, installed: true };
       })
