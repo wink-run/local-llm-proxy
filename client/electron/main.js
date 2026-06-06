@@ -1206,6 +1206,17 @@ function registerIPC() {
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 
 app.whenReady().then(() => {
+  // 启动安全：清理上次异常退出/强杀残留的系统代理（GUI 托管不跨重启，MITM 未起时
+  // 残留代理会让渲染进程连不上 → 白屏）。在建窗口前执行。
+  try {
+    const sp = require('./system-proxy');
+    let mitmHP = '127.0.0.1:8888';
+    try { mitmHP = require('./config-loader').gatewayCtx().mitm; } catch {}
+    if (sp.isEnabledTo(mitmHP)) { sp.restore(); console.log('[startup] 已清理残留系统代理'); }
+    const hg = path.join(os.homedir(), '.tokenbank', 'hosted-gui.json');
+    if (fs.existsSync(hg)) fs.unlinkSync(hg);
+  } catch (e) { console.error('[startup] proxy cleanup failed:', e.message); }
+
   createWindow();
   createTray();
   registerIPC();
