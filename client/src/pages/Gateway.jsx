@@ -423,8 +423,8 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
               </select>
             </div>
           )}
-          {/* 请求控制（仅 api-key 类 app） */}
-          {app.link_method === 'api-key' && (
+          {/* 请求控制（api-key 和 shim 类都可配） */}
+          {(app.link_method === 'api-key' || app.link_method === 'shim') && (
             <div>
               <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">请求控制</div>
               <div className="space-y-2">
@@ -520,9 +520,18 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   useEffect(() => { load(); }, [load]);
 
   async function handleUpdateApp(data) {
-    const updated = await window.electronAPI.apps?.update(data).catch(() => null);
+    let id = data.id;
+    // 虚拟 shim 应用（仅展示、未落库）：先落库拿到真实 id 再更新
+    const app = apps.find(a => a.id === data.id);
+    if (app?._virtual && app.link_method === 'shim') {
+      const created = await window.electronAPI.apps?.ensureShimApp({
+        agent_id: app.agent_id, name: app.name, icon: app.icon,
+      }).catch(() => null);
+      if (created?.id) id = created.id;
+    }
+    const updated = await window.electronAPI.apps?.update({ ...data, id }).catch(() => null);
     await load();
-    // 若设置弹窗仍开着，刷新其数据
+    // 若设置弹窗仍开着且 id 未变，刷新其数据
     if (updated && settings?.id === updated.id) setSettings(updated);
   }
 
@@ -716,18 +725,16 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         })}
                       </select>
 
-                      {/* 操作按钮：api-key 类显示设置 + 删除；shim 类自动托管无需按钮 */}
+                      {/* 操作按钮：所有应用都有「设置」；api-key 类额外有「删除」 */}
+                      <button onClick={() => setSettings(app)}
+                        className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
+                        设置
+                      </button>
                       {app.link_method === 'api-key' && (
-                        <>
-                          <button onClick={() => setSettings(app)}
-                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
-                            设置
-                          </button>
-                          <button onClick={() => handleDeleteApp(app.id)}
-                            className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 shrink-0">
-                            删除
-                          </button>
-                        </>
+                        <button onClick={() => handleDeleteApp(app.id)}
+                          className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 shrink-0">
+                          删除
+                        </button>
                       )}
                     </div>
                   );
