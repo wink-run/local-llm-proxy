@@ -69,42 +69,7 @@ protocols:
   gemini:
     reverse_path: /v1beta
 
-# ── 路由规则（三层特征匹配，策略组在 UI 里配）────────────────────────────────
-routing:
-  rules:
-    - match: { has_tools: true }
-      policy: code-policy
-    - match: { task_type: code }
-      policy: code-policy
-    - match: { agent_id: codex }
-      policy: code-policy
-    - match: { context_length: { gt: 80000 } }
-      policy: long-context-policy
-    - match: { stream: true, context_length: { lt: 8000 }, has_tools: false }
-      policy: chat-policy
-    - match: {}
-      policy: default-policy
-
-  feature_extraction:
-    metadata: true
-    structure: true
-    context_length_mode: chars
-    semantic: true
-    semantic_scope: last_user_message
-    code_keywords:
-      - "```"
-      - "function "
-      - "def "
-      - "class "
-      - "import "
-      - "const "
-      - "var "
-      - "console.log"
-      - "error:"
-      - "debug"
-      - "fix the"
-      - "write a"
-      - "implement"
+# 路由规则已移除：现在所有路由都在「场景路由」(scene_routes) 中配置。
 
 # ── 上游 provider 默认配置 ────────────────────────────────────────────────────
 providers:
