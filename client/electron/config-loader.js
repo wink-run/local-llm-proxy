@@ -115,7 +115,6 @@ function resolveDeep(obj, ctx) {
   return obj;
 }
 
-function protocols() { return get().protocols || {}; }
 function routing()   { return get().routing || {}; }
 function caRef()     { return (get().mitm || {}).ca_ref || ['auto']; }
 
@@ -148,6 +147,6 @@ function resolveRef(refs, ctx = {}) {
 module.exports = {
   load, get, setCaPath, getCaPath,
   gatewayCtx, mitmDomains, shouldMitm, tools,
-  protocols, routing, caRef,
+  routing, caRef,
   resolveRef, resolvePlaceholders, expandHome,
 };

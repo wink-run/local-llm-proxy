@@ -54,14 +54,3 @@ tools:
     inject:
       env:
         GEMINI_BASE_URL: http://{REVERSE}
-
-# ── 协议 → 网关端点映射 ──────────────────────────────────────────────────────
-protocols:
-  anthropic:
-    reverse_path: /v1/messages
-  responses:
-    reverse_path: /v1/responses
-  openai:
-    reverse_path: /v1/chat/completions
-  gemini:
-    reverse_path: /v1beta

@@ -55,14 +55,3 @@ tools:
       model_providers.tokenbank.base_url: http://{REVERSE}/v1
       model_providers.tokenbank.wire_api: responses
     revert: state-precise
-
-# protocol → 网关端点映射（不写死在代码里）
-protocols:
-  anthropic:
-    reverse_path: /v1/messages
-  responses:
-    reverse_path: /v1/responses
-  openai:
-    reverse_path: /v1/chat/completions
-  gemini:
-    reverse_path: /v1beta
