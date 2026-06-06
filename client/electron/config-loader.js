@@ -116,13 +116,6 @@ function resolveDeep(obj, ctx) {
 }
 
 function protocols() { return get().protocols || {}; }
-
-// 按 protocol 查 default_provider_id（yaml 没配则返回 null，严格配置驱动）
-function defaultProviderForProtocol(protocol) {
-  const p = (get().protocols || {})[protocol];
-  return (p && p.default_provider_id) || null;
-}
-function providers() { return get().providers || []; }
 function routing()   { return get().routing || {}; }
 function caRef()     { return (get().mitm || {}).ca_ref || ['auto']; }
 
@@ -155,7 +148,6 @@ function resolveRef(refs, ctx = {}) {
 module.exports = {
   load, get, setCaPath, getCaPath,
   gatewayCtx, mitmDomains, shouldMitm, tools,
-  protocols, providers, routing, caRef,
-  defaultProviderForProtocol,
+  protocols, routing, caRef,
   resolveRef, resolvePlaceholders, expandHome,
 };

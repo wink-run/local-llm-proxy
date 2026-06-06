@@ -17,33 +17,6 @@ const mitm   = require('./mitm-proxy');
 const TB_DIR = path.join(os.homedir(), '.tokenbank');
 const APPLIED_DIR = path.join(TB_DIR, 'applied');
 
-// local-config 读写由 main.js 注入（避免循环依赖）
-let _readLocalConfig  = null;
-let _writeLocalConfig = null;
-function setLocalConfigIO(read, write) { _readLocalConfig = read; _writeLocalConfig = write; }
-
-// ── 按 yaml protocols.default_provider_id enable 对应 provider（选项A：yaml没配就不做）──
-function enableDefaultProvider(protocol) {
-  const providerId = configLoader.defaultProviderForProtocol(protocol);
-  if (!providerId || !_readLocalConfig || !_writeLocalConfig) return { done: false };
-  try {
-    const cfg = _readLocalConfig();
-    const providers = cfg.providers || [];
-    const idx = providers.findIndex(p => p.id === providerId);
-    if (idx >= 0) {
-      if (providers[idx].enabled) return { done: false, note: 'already-enabled' };
-      providers[idx] = { ...providers[idx], enabled: true };
-    } else {
-      // provider 不在 local-config 里（用户删掉了），跳过
-      return { done: false, note: 'provider-not-found' };
-    }
-    _writeLocalConfig({ ...cfg, providers });
-    return { done: true, providerId };
-  } catch (e) {
-    return { done: false, error: e.message };
-  }
-}
-
 function gwHostPort() { return configLoader.gatewayCtx().reverse; }
 
 // 工具是否已装（命令可执行）
@@ -79,17 +52,11 @@ function apply(tool) {
         if (!real) return { ok: false, error: 'real-command-not-found' };
         shim.writeShim(tool.detect.command, real, (tool.inject && tool.inject.env) || {});
         shim.enablePath();
-        const ep = enableDefaultProvider(tool.protocol);
-        return { ok: true, strategy: tool.strategy, needsRestartShell: true,
-                 enabledProvider: ep.done ? ep.providerId : null,
-                 needsToken: ep.done };   // 提示前端 provider 已开但可能没 token
+        return { ok: true, strategy: tool.strategy, needsRestartShell: true };
       }
       case 'config-file': {
         inj.applyConfigFile(tool.id, tool['config-file'], tool.patch || {});
-        const ep = enableDefaultProvider(tool.protocol);
-        return { ok: true, strategy: tool.strategy,
-                 enabledProvider: ep.done ? ep.providerId : null,
-                 needsToken: ep.done };
+        return { ok: true, strategy: tool.strategy };
       }
       case 'mitm-env': {
         const caInfo = ca.ensureCA();
@@ -100,10 +67,7 @@ function apply(tool) {
         if (!real) return { ok: false, error: 'real-command-not-found' };
         shim.writeShim(fresh.detect.command, real, (fresh.inject && fresh.inject.env) || {});
         shim.enablePath();
-        const ep = enableDefaultProvider(tool.protocol);
-        return { ok: true, strategy: tool.strategy, needsRestartShell: true,
-                 enabledProvider: ep.done ? ep.providerId : null,
-                 needsToken: ep.done };
+        return { ok: true, strategy: tool.strategy, needsRestartShell: true };
       }
       default:
         return { ok: false, error: 'unknown-strategy:' + tool.strategy };
@@ -185,5 +149,4 @@ function revertById(id) { const t = configLoader.tools().find(x => x.id === id);
 module.exports = {
   list, apply, revert, status, applyAll, revertAll,
   applyById, revertById, revertEverythingOnExit,
-  setLocalConfigIO,
 };

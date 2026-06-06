@@ -292,7 +292,7 @@ function autoHostInstalledApps() {
   for (const t of agentLinker.list()) {
     if (t.installed && !t.linked && !disabled.has(t.id)) {
       try {
-        const r = agentLinker.applyById(t.id);   // apply 内部会 enableDefaultProvider
+        const r = agentLinker.applyById(t.id);
         if (r && r.ok !== false) newlyHosted.push(t.id);
       } catch (e) { console.error('[auto-host]', t.id, e.message); }
     }
@@ -599,8 +599,6 @@ function registerIPC() {
     return { ...r, scannedAt: Math.floor(Date.now() / 1000) };
   });
   // ── CLI 透明接入（配置驱动）：list/apply/revert ──
-  // 注入 local-config 读写（让 agent-linker 能 enable provider，避免循环 require）
-  agentLinker.setLocalConfigIO(readLocalConfig, writeLocalConfig);
   // 记录/解除用户对某 agent 的「取消自动托管」标记
   function setAutoHostDisabled(agentId, disabled) {
     const cfg = readLocalConfig();
@@ -636,7 +634,7 @@ function registerIPC() {
   // scene_routes 段               → local-config.scene_routes
   const configLoader = require('./config-loader');
   const TB_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.yaml');
-  const TOOLS_SECTIONS = new Set(['version','tools','protocols','mitm','routing','routing_policies_default','providers','gateway','remote']);
+  const TOOLS_SECTIONS = new Set(['version','tools','protocols','mitm','gateway','remote']);
   const ROUTES_SECTIONS = new Set(['scene_routes']);
 
   function applyConfigDoc(parsed, source) {

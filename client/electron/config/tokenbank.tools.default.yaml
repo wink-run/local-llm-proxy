@@ -55,36 +55,19 @@ tools:
       env:
         GEMINI_BASE_URL: http://{REVERSE}
 
-# ── 协议 → 网关端点映射 + 接入后自动 enable 的 provider ──────────────────────
+# ── 协议 → 网关端点映射 ──────────────────────────────────────────────────────
 protocols:
   anthropic:
     reverse_path: /v1/messages
-    default_provider_id: anthropic-paid
   responses:
     reverse_path: /v1/responses
-    default_provider_id: openai
   openai:
     reverse_path: /v1/chat/completions
-    default_provider_id: openai
   gemini:
     reverse_path: /v1beta
 
-# 路由规则已移除：现在所有路由都在「场景路由」(scene_routes) 中配置。
-
-# ── 上游 provider 默认配置 ────────────────────────────────────────────────────
-providers:
-  - id: tokenbank-cloud
-    protocol: openai
-    base_url: https://api.tokenbank.example/v1
-    api_key_ref:
-      - tokenbank://session
-    tier: paid
-
-routing_policies_default:
-  - { id: default-policy,      name: 默认,     strategy: fallback,    providers: [] }
-  - { id: code-policy,         name: 代码助手,  strategy: fallback,    providers: [] }
-  - { id: chat-policy,         name: 普通对话,  strategy: round-robin, providers: [] }
-  - { id: long-context-policy, name: 长上下文,  strategy: fallback,    providers: [] }
+# 路由规则、上游 provider、策略组均已移除：
+# 路由统一在「场景路由」(scene_routes) 配置，provider 在供给源/场景路由里管理。
 
 remote:
   url: ''

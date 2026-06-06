@@ -57,32 +57,18 @@ tools:
     revert: state-precise
 
 # protocol → 网关端点映射（不写死在代码里）
-# default_provider_id：接入该协议的 agent 时，自动在 local-config 里 enable 对应 provider。
-# 不配则不操作 provider（严格配置驱动，用户自行去 Providers 页手动开）。
 protocols:
   anthropic:
     reverse_path: /v1/messages
-    default_provider_id: anthropic-paid
   responses:
     reverse_path: /v1/responses
-    default_provider_id: openai
   openai:
     reverse_path: /v1/chat/completions
-    default_provider_id: openai
   gemini:
     reverse_path: /v1beta
-    # default_provider_id 未配：gemini 暂无对应内置 provider，用户自行配
 
-# ════════ 上游 provider（key 只放引用）════════
-providers:
-  - id: tokenbank-cloud
-    protocol: openai
-    base_url: https://api.tokenbank.example/v1
-    api_key_ref:
-      - tokenbank://session
-    tier: paid
-
-# 路由规则已移除：现在所有路由都在「场景路由」(scene_routes) 中配置。
+# 路由规则、上游 provider、策略组均已移除：
+# 路由统一在「场景路由」(scene_routes) 配置，provider 在供给源/场景路由里管理。
 
 # 远程更新（第一期预留，用内置即可）
 remote:
