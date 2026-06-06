@@ -66,9 +66,6 @@ protocols:
   gemini:
     reverse_path: /v1beta
 
-# 路由规则、上游 provider、策略组均已移除：
-# 路由统一在「场景路由」(scene_routes) 配置，provider 在供给源/场景路由里管理。
-
 remote:
   url: ''
   interval: 86400
