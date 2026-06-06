@@ -290,6 +290,8 @@ function autoHostInstalledApps() {
   const disabled = new Set(cfg.auto_host_disabled || []);
   const newlyHosted = [];
   for (const t of agentLinker.list()) {
+    // GUI 应用(需装证书 / 改系统代理)不自动托管，必须用户显式操作
+    if (t.needs_ca || t.strategy === 'mitm-system') continue;
     if (t.installed && !t.linked && !disabled.has(t.id)) {
       try {
         const r = agentLinker.applyById(t.id);
@@ -607,6 +609,15 @@ function registerIPC() {
     cfg.auto_host_disabled = [...set];
     writeLocalConfig(cfg);
   }
+
+  // ── 根证书（GUI 应用 MITM 托管前置）：状态 / 安装 / 卸载 ──
+  const caManager = require('./ca-manager');
+  ipcMain.handle('ca:status',    () => {
+    try { return { installed: caManager.isInstalledInSystem() }; }
+    catch (e) { return { installed: false, error: e.message }; }
+  });
+  ipcMain.handle('ca:install',   () => { try { return caManager.installToSystem(); } catch (e) { return { ok: false, error: e.message }; } });
+  ipcMain.handle('ca:uninstall', () => { try { return caManager.uninstallFromSystem(); } catch (e) { return { ok: false, error: e.message }; } });
 
   ipcMain.handle('agents:list',    () => agentLinker.list());
   // 手动托管：清除禁用标记后接入
@@ -956,8 +967,10 @@ function registerIPC() {
 
     // 把 yaml tools 里有、但 apps[] 里还没有 shim 记录的 agent，动态补入
     const shimIds = new Set(savedApps.filter(a => a.link_method === 'shim').map(a => a.agent_id));
-    const TOOL_ICONS = { 'claude-code': '🤖', 'codex': '💻', 'gemini-cli': '🔮' };
+    const TOOL_ICONS = { 'claude-code': '🤖', 'codex': '💻', 'gemini-cli': '🔮',
+                         'claude-desktop': '🖥️', 'codex-desktop': '🖥️' };
     const TOOL_NAMES = { 'claude-code': 'Claude Code', 'codex': 'Codex CLI', 'gemini-cli': 'Gemini CLI' };
+    const caInstalled = (() => { try { return require('./ca-manager').isInstalledInSystem(); } catch { return false; } })();
     const virtualShimApps = agentTools
       .filter(t => !shimIds.has(t.id))
       .map(t => ({
@@ -969,6 +982,9 @@ function registerIPC() {
         api_key: null,
         route_id: null,
         description: '',
+        type: t.type || 'cli',
+        needs_ca: !!t.needs_ca,
+        note: t.note || null,
         installed: t.installed,
         linked: t.linked,
         _virtual: true,   // 未持久化，仅展示
@@ -1001,6 +1017,10 @@ function registerIPC() {
             ...app,
             linked: tool ? tool.linked : false,
             installed: tool ? tool.installed : false,
+            type: tool ? tool.type : (app.type || 'cli'),
+            needs_ca: tool ? tool.needs_ca : !!app.needs_ca,
+            note: tool ? tool.note : (app.note || null),
+            ca_installed: caInstalled,            // 系统是否已装根证书
             auto_config: autoConfigOf(app.agent_id),
           };
         }

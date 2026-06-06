@@ -55,3 +55,26 @@ tools:
       model_providers.tokenbank.base_url: http://{REVERSE}/v1
       model_providers.tokenbank.wire_api: responses
     revert: state-precise
+
+  # ── 桌面 GUI 应用（Electron/Chromium）：走系统代理 + 系统信任库 ──
+  # needs_ca=true：必须先把根 CA 装进系统信任库才能托管（MITM）
+  - id: claude-desktop
+    name: Claude Desktop
+    protocol: anthropic
+    type: gui
+    needs_ca: true
+    detect:
+      appx: Claude
+    strategy: mitm-system
+    mitm-domains: [api.anthropic.com, a-api.anthropic.com, claude.ai]
+
+  - id: codex-desktop
+    name: Codex Desktop
+    protocol: responses
+    type: gui
+    needs_ca: true
+    detect:
+      appx: OpenAI.Codex
+    strategy: mitm-system
+    mitm-domains: [chatgpt.com, ab.chatgpt.com, ws.chatgpt.com, chat.openai.com, api.openai.com]
+    note: 需实测证书（桌面端可能存在证书锁定）

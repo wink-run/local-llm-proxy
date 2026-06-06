@@ -79,12 +79,12 @@ function gatewayCtx() {
   };
 }
 
-// 所有 strategy=mitm-env 工具的 mitm-domains 并集（= CA 约束域名）
+// 所有需 MITM 的工具（mitm-env / mitm-system）的 mitm-domains 并集（= CA 约束域名）
 function mitmDomains() {
   const tools = get().tools || [];
   const set = new Set();
   for (const t of tools) {
-    if (t.strategy === 'mitm-env' && Array.isArray(t['mitm-domains'])) {
+    if ((t.strategy === 'mitm-env' || t.strategy === 'mitm-system') && Array.isArray(t['mitm-domains'])) {
       for (const d of t['mitm-domains']) set.add(d);
     }
   }

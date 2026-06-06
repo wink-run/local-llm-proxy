@@ -13,14 +13,28 @@ const shim   = require('./shim-installer');
 const inj    = require('./injector');
 const ca     = require('./ca-manager');
 const mitm   = require('./mitm-proxy');
+const sysProxy = require('./system-proxy');
 
 const TB_DIR = path.join(os.homedir(), '.tokenbank');
 const APPLIED_DIR = path.join(TB_DIR, 'applied');
 
 function gwHostPort() { return configLoader.gatewayCtx().reverse; }
+function mitmHostPort() { return configLoader.gatewayCtx().mitm; }
 
-// 工具是否已装（命令可执行）
+// Appx 包是否已安装（GUI 桌面应用检测）
+function appxInstalled(name) {
+  if (process.platform !== 'win32' || !name) return false;
+  try {
+    const out = execFileSync('powershell', ['-NoProfile', '-Command',
+      `if (Get-AppxPackage -Name '*${name}*') { 'yes' } else { 'no' }`],
+      { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    return out === 'yes';
+  } catch { return false; }
+}
+
+// 工具是否已装：CLI 看命令；GUI(detect.appx) 看 Appx 包
 function isInstalled(tool) {
+  if (tool.detect && tool.detect.appx) return appxInstalled(tool.detect.appx);
   const cmd = tool.detect && tool.detect.command;
   if (!cmd) return false;
   return !!shim.resolveRealCommand(cmd);
@@ -37,6 +51,9 @@ function status(tool) {
       return inj.statusConfigFile(tool['config-file'], gw);
     case 'mitm-env':
       return shim.shimExists(tool.detect.command);
+    case 'mitm-system':
+      // GUI 应用：系统代理指向 MITM 即视为已托管
+      return sysProxy.isEnabledTo(mitmHostPort());
     default:
       return false;
   }
@@ -69,6 +86,18 @@ function apply(tool) {
         shim.enablePath();
         return { ok: true, strategy: tool.strategy, needsRestartShell: true };
       }
+      case 'mitm-system': {
+        // GUI 应用：必须先把根 CA 装进系统信任库
+        if (!ca.isInstalledInSystem()) {
+          return { ok: false, error: 'ca-not-installed', needsCa: true };
+        }
+        const caInfo = ca.ensureCA();
+        configLoader.setCaPath(caInfo.crt);
+        mitm.start();
+        const r = sysProxy.enable(mitmHostPort());
+        if (!r.ok) return { ok: false, error: 'system-proxy-failed:' + r.error };
+        return { ok: true, strategy: tool.strategy, needsAppRestart: true };
+      }
       default:
         return { ok: false, error: 'unknown-strategy:' + tool.strategy };
     }
@@ -92,6 +121,14 @@ function revert(tool) {
         maybeDisablePath();
         // 若没有其它 mitm 工具在用，停 MITM（这里简单处理：交给上层 stopIfIdle）
         return { ok: true };
+      case 'mitm-system': {
+        // 还原系统代理；若已无其它 GUI 应用在托管则停 MITM
+        sysProxy.restore();
+        const stillHosting = configLoader.tools().some(t =>
+          t.strategy === 'mitm-system' && t.id !== tool.id && status(t));
+        if (!stillHosting) { try { mitm.stop(); } catch {} }
+        return { ok: true };
+      }
       default:
         return { ok: false, error: 'unknown-strategy' };
     }
@@ -114,6 +151,9 @@ function list() {
   const tools = configLoader.tools();
   return tools.map(t => ({
     id: t.id, name: t.name, protocol: t.protocol, strategy: t.strategy,
+    type: t.type || 'cli',          // cli | gui
+    needs_ca: !!t.needs_ca,         // 是否需先装根证书
+    note: t.note || null,
     installed: isInstalled(t),
     linked: status(t),
   }));

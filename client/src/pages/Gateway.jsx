@@ -502,15 +502,17 @@ function AppManager({ externalRoutes, availableModels = [] }) {
 
   const load = useCallback(async () => {
     if (!window.electronAPI) return;
-    const [appList, localCfg, gw] = await Promise.all([
+    const [appList, localCfg, gw, caSt] = await Promise.all([
       window.electronAPI.apps?.list().catch(() => []),
       getLocalConfig().get().catch(() => ({})),
       window.electronAPI.gateway?.status?.().catch(() => null),
+      window.electronAPI.ca?.status?.().catch(() => ({ installed: false })),
     ]);
     const list = Array.isArray(appList) ? appList : [];
     setApps(list);
     setRoutes(localCfg?.scene_routes || []);
     if (gw?.port) setLocalBase(`http://localhost:${gw.port}/v1`);
+    setCaInstalled(!!caSt?.installed);
     // 异步拉统计（不阻塞主列表渲染）
     if (list.length && window.electronAPI.apps?.stats) {
       window.electronAPI.apps.stats(list).then(s => setAppStats(s || {})).catch(() => {});
@@ -518,6 +520,28 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const [caInstalled, setCaInstalled] = useState(false);
+  const [caBusy, setCaBusy] = useState(false);
+  async function handleInstallCa() {
+    setCaBusy(true);
+    const r = await window.electronAPI.ca?.install().catch(e => ({ ok: false, error: e.message }));
+    setCaBusy(false);
+    if (r?.ok) { await load(); }
+    else window.alert('安装证书失败：' + (r?.error || '未知错误'));
+  }
+  // GUI 应用手动托管/取消托管（需先装证书）
+  async function handleGuiHost(app, host) {
+    if (host && !caInstalled) { window.alert('请先点击「安装证书」'); return; }
+    setBusyId(app.agent_id);
+    const fn = host ? window.electronAPI.agents?.apply : window.electronAPI.agents?.revert;
+    const r = await fn?.(app.agent_id).catch(e => ({ ok: false, error: e.message }));
+    setBusyId(null);
+    if (r && r.ok === false && r.needsCa) window.alert('请先点击「安装证书」');
+    else if (r && r.ok === false) window.alert('操作失败：' + (r.error || ''));
+    await load();
+  }
+  const [busyId, setBusyId] = useState(null);
 
   async function handleUpdateApp(data) {
     let id = data.id;
@@ -598,7 +622,14 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                 className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors">
                 + 添加应用
               </button>
-              <span className="text-xs text-gray-400 dark:text-gray-500">已安装的 CLI 工具自动托管</span>
+              {/* 安装证书（桌面 GUI 应用 MITM 托管前置）*/}
+              <button onClick={handleInstallCa} disabled={caBusy}
+                className={`text-xs px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-50 ${caInstalled
+                  ? 'border-green-300 dark:border-green-800 text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/20'
+                  : 'border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100'}`}>
+                {caBusy ? '安装中…' : caInstalled ? '🔒 证书已安装' : '🔐 安装证书'}
+              </button>
+              <span className="text-xs text-gray-400 dark:text-gray-500">CLI 自动托管；桌面应用需先装证书</span>
               <div className="ml-auto"><ImportConfigButton onImported={load} /></div>
             </div>
 
@@ -725,6 +756,22 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         })}
                       </select>
 
+                      {/* GUI 桌面应用：手动托管/取消托管（需先装证书）*/}
+                      {app.type === 'gui' && (
+                        app.linked ? (
+                          <button onClick={() => handleGuiHost(app, false)} disabled={busyId === app.agent_id}
+                            className="text-[10px] px-2 py-1 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 disabled:opacity-50 shrink-0 font-medium">
+                            {busyId === app.agent_id ? '…' : '取消托管'}
+                          </button>
+                        ) : caInstalled ? (
+                          <button onClick={() => handleGuiHost(app, true)} disabled={busyId === app.agent_id}
+                            className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 shrink-0 font-medium">
+                            {busyId === app.agent_id ? '…' : '托管'}
+                          </button>
+                        ) : (
+                          <span className="text-[10px] text-amber-600 dark:text-amber-400 px-1 shrink-0" title="需先安装根证书">需装证书</span>
+                        )
+                      )}
                       {/* 操作按钮：所有应用都有「设置」；api-key 类额外有「删除」 */}
                       <button onClick={() => setSettings(app)}
                         className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
