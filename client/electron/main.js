@@ -1120,8 +1120,8 @@ function registerIPC() {
     'claude-code': 'session-claude',
     'codex':       'session-codex',
     'gemini-cli':  'session-gemini',
-    'claude-desktop': 'mitm-claude',   // GUI 走 MITM 记账
-    'codex-desktop':  'mitm-codex',
+    'claude-desktop': 'mitm-claude',   // GUI MITM 记账（Claude 锁证书，实际无数据）
+    'codex-desktop':  'session-codex', // 模型走内置内核绕代理；用量从 ~/.codex/sessions 会话文件统计
   };
 
   // 批量查所有应用的统计（调一次，合并进 apps:list 或单独查询）

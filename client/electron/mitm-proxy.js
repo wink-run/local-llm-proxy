@@ -85,7 +85,7 @@ function getProxyServer() {
       let total = 0;
       ures.on('data', (d) => {
         cres.write(d);
-        if (_onUsage && total < 4 * 1024 * 1024) { collect.push(d); total += d.length; } // 限 4MB 防爆内存
+        if (_onUsage && total < 8 * 1024 * 1024) { collect.push(d); total += d.length; } // 限 8MB 防爆内存
       });
       ures.on('end', () => {
         try { cres.end(); } catch {}
@@ -93,8 +93,9 @@ function getProxyServer() {
           try {
             const raw = decompress(Buffer.concat(collect), ures.headers['content-encoding']);
             const usage = extractUsage(raw);
+            console.log(`[mitm] ${creq.method} ${host}${creq.url.slice(0,60)} → ${ures.statusCode} ${ures.headers['content-type']||''} ${total}B usage=${usage ? JSON.stringify(usage) : 'none'}`);
             if (usage) _onUsage({ host, path: creq.url, method: creq.method, usage, data_source: 'mitm' });
-          } catch {}
+          } catch (e) { console.log('[mitm] usage解析异常', host, e.message); }
         }
       });
       ures.on('error', () => { try { cres.destroy(); } catch {} });
