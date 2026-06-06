@@ -56,6 +56,18 @@ async def config_info():
     }
 
 
+# 管理员读取已上传的源内容（用于后台编辑器「加载」按钮，鉴权用 admin key，
+# 区别于客户端下载用的 /config/apps|scenes 需用户 JWT）
+@router.get("/config/apps/source", dependencies=[Depends(auth_admin)])
+async def get_apps_source():
+    return {"content": await db.get_config("config.apps", "")}
+
+
+@router.get("/config/scenes/source", dependencies=[Depends(auth_admin)])
+async def get_scenes_source():
+    return {"content": await db.get_config("config.scenes", "")}
+
+
 @router.delete("/config/apps", dependencies=[Depends(auth_admin)])
 async def delete_tools_config():
     await db.set_config("config.apps", "")

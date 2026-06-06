@@ -1010,10 +1010,10 @@ createApp({
     }
     async function previewDistrib(type) {
       try {
-        const r = await api(`/api/config/${type}`)
+        const r = await api(`/api/config/${type}/source`)
         if (!r.ok) { distribMsg.value[type] = `HTTP ${r.status}`; return }
-        const text = await r.text()
-        distribText.value[type] = text
+        const d = await r.json()
+        distribText.value[type] = d.content || ''
         distribMsg.value[type] = lang.value==='zh' ? '已加载当前服务端配置' : 'Loaded from server'
       } catch (e) { distribMsg.value[type] = e.message }
     }
