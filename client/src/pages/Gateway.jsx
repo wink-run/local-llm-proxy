@@ -278,7 +278,8 @@ const STRATEGY_LABEL = {
 };
 
 // 单个应用的设置面板（路由规则绑定 + 详细配置）
-function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', onUpdate, onDelete, onRegenKey, onClose }) {
+function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', onUpdate, onDelete, onRegenKey, onClose, onCancel }) {
+  const dismiss = onCancel || onClose;   // ✕/取消/点遮罩 → 取消（新应用未保存会被丢弃）
   const [name,        setName]        = useState(app.name || '');
   const [icon,        setIcon]        = useState(app.icon || '🔧');
   const [desc,        setDesc]        = useState(app.description || '');
@@ -337,13 +338,13 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   const ICONS = ['🤖','✏️','🔧','💻','🎯','🌐','📱','🔑','⚡','🛠️','🎨','📊'];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={dismiss}>
       <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-2xl mx-4 max-h-[92vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-200 dark:border-gray-800">
           <span className="text-xl">{icon}</span>
           <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">应用设置</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg">✕</button>
+          <button onClick={dismiss} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg">✕</button>
         </div>
         <div className="p-5 space-y-4">
           {/* 基础信息 */}
@@ -479,7 +480,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
             className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
             {busy ? '保存中…' : '保存'}
           </button>
-          <button onClick={onClose}
+          <button onClick={dismiss}
             className="px-4 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400">
             取消
           </button>
@@ -543,14 +544,14 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   }
 
   // 添加流程：选择已识别的应用 → 创建 api-key 应用并预填环境变量模板，打开设置
+  // 标记 _isNew：用户关闭/取消时若未保存则删除（避免「点关闭也保存了」）
   async function addPreset(preset) {
     const created = await window.electronAPI.apps?.create({
       name: preset.name, icon: preset.icon, link_method: 'api-key',
       request_format: preset.request_format, env: preset.env, preset_id: preset.id,
     }).catch(() => null);
     setAddOpen(false);
-    await load();
-    if (created?.id) setSettings(created);
+    if (created?.id) setSettings({ ...created, _isNew: true });
   }
 
   // 添加流程：其他（未被识别的应用）→ 创建空白 api-key 应用并打开完整配置
@@ -559,8 +560,19 @@ function AppManager({ externalRoutes, availableModels = [] }) {
       name: '新应用', icon: '🔧', link_method: 'api-key',
     }).catch(() => null);
     setAddOpen(false);
-    await load();
-    if (created?.id) setSettings(created);
+    if (created?.id) setSettings({ ...created, _isNew: true });
+  }
+
+  // 保存设置（已在面板内 onUpdate 持久化）→ 仅关闭并刷新
+  function closeSettings() { setSettings(null); load(); }
+  // 取消/关闭：若是未保存的新应用则删除
+  function cancelSettings() {
+    const s = settings;
+    setSettings(null);
+    if (s?._isNew && s.id) {
+      window.electronAPI.apps?.delete(s.id).catch(() => {});
+    }
+    load();
   }
 
   return (
@@ -568,7 +580,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
       {settings && (
         <AppSettingsPanel app={settings} routes={routes} availableModels={availableModels} localBase={localBase}
           onUpdate={handleUpdateApp} onDelete={handleDeleteApp} onRegenKey={handleRegenKey}
-          onClose={() => setSettings(null)} />
+          onClose={closeSettings} onCancel={cancelSettings} />
       )}
       <div className="p-4">
             {/* 操作栏 */}
