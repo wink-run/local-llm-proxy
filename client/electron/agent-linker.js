@@ -21,6 +21,18 @@ const APPLIED_DIR = path.join(TB_DIR, 'applied');
 function gwHostPort() { return configLoader.gatewayCtx().reverse; }
 function mitmHostPort() { return configLoader.gatewayCtx().mitm; }
 
+// ── GUI(mitm-system) 应用的托管集合（按 agent 精确记录，避免共享系统代理时全部变绿）──
+const HOSTED_GUI = path.join(TB_DIR, 'hosted-gui.json');
+function hostedGuiRead() {
+  try { return new Set(JSON.parse(fs.readFileSync(HOSTED_GUI, 'utf8'))); } catch { return new Set(); }
+}
+function hostedGuiWrite(set) {
+  try { if (!fs.existsSync(TB_DIR)) fs.mkdirSync(TB_DIR, { recursive: true }); fs.writeFileSync(HOSTED_GUI, JSON.stringify([...set]), 'utf8'); } catch {}
+}
+function hostedGuiAdd(id)    { const s = hostedGuiRead(); s.add(id); hostedGuiWrite(s); }
+function hostedGuiRemove(id) { const s = hostedGuiRead(); s.delete(id); hostedGuiWrite(s); return s; }
+function hostedGuiHas(id)    { return hostedGuiRead().has(id); }
+
 // Appx 包是否已安装（GUI 桌面应用检测）
 function appxInstalled(name) {
   if (process.platform !== 'win32' || !name) return false;
@@ -52,8 +64,8 @@ function status(tool) {
     case 'mitm-env':
       return shim.shimExists(tool.detect.command);
     case 'mitm-system':
-      // GUI 应用：系统代理指向 MITM 即视为已托管
-      return sysProxy.isEnabledTo(mitmHostPort());
+      // GUI 应用：该 agent 在托管集合内 且 系统代理指向 MITM 才算已托管（精确到单个应用）
+      return hostedGuiHas(tool.id) && sysProxy.isEnabledTo(mitmHostPort());
     default:
       return false;
   }
@@ -97,6 +109,7 @@ function apply(tool) {
         mitm.start();
         const r = sysProxy.enable(mitmHostPort());
         if (!r.ok) return { ok: false, error: 'system-proxy-failed:' + r.error };
+        hostedGuiAdd(tool.id);
         return { ok: true, strategy: tool.strategy, needsAppRestart: true };
       }
       default:
@@ -123,11 +136,12 @@ function revert(tool) {
         // 若没有其它 mitm 工具在用，停 MITM（这里简单处理：交给上层 stopIfIdle）
         return { ok: true };
       case 'mitm-system': {
-        // 还原系统代理；若已无其它 GUI 应用在托管则停 MITM
-        sysProxy.restore();
-        const stillHosting = configLoader.tools().some(t =>
-          t.strategy === 'mitm-system' && t.id !== tool.id && status(t));
-        if (!stillHosting) { try { mitm.stop(); } catch {} }
+        // 从托管集合移除该 agent；仅当再无其它 GUI 应用托管时，才还原系统代理 + 停 MITM
+        const remain = hostedGuiRemove(tool.id);
+        if (remain.size === 0) {
+          sysProxy.restore();
+          try { mitm.stop(); } catch {}
+        }
         return { ok: true };
       }
       default:

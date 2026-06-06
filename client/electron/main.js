@@ -1120,6 +1120,8 @@ function registerIPC() {
     'claude-code': 'session-claude',
     'codex':       'session-codex',
     'gemini-cli':  'session-gemini',
+    'claude-desktop': 'mitm-claude',   // GUI 走 MITM 记账
+    'codex-desktop':  'mitm-codex',
   };
 
   // 批量查所有应用的统计（调一次，合并进 apps:list 或单独查询）
@@ -1213,6 +1215,29 @@ app.whenReady().then(() => {
   gateway.setLocalStats(localStats);
   gateway.setLocalConfigReader(readLocalConfig);   // 供策略组调度查 policies[]
   gateway.start(11430, readAgentConfig);
+
+  // MITM（GUI 桌面应用）用量记账：host → data_source，写 local-stats
+  try {
+    const mitmProxy = require('./mitm-proxy');
+    const MITM_HOST_DS = [
+      { hosts: ['anthropic.com', 'claude.ai'], data_source: 'mitm-claude' },
+      { hosts: ['chatgpt.com', 'openai.com'],  data_source: 'mitm-codex'  },
+    ];
+    mitmProxy.setUsageRecorder((info) => {
+      try {
+        const host = info.host || '';
+        const m = MITM_HOST_DS.find(x => x.hosts.some(d => host === d || host.endsWith('.' + d)));
+        if (!m || !info.usage) return;
+        localStats.record({
+          input_tokens:  info.usage.input_tokens || 0,
+          output_tokens: info.usage.output_tokens || 0,
+          request_id:    info.usage.message_id || null,
+          data_source:   m.data_source,
+          ts: Math.floor(Date.now() / 1000),
+        });
+      } catch (e) { console.error('[mitm-usage]', e.message); }
+    });
+  } catch (e) { console.error('[mitm] usage recorder wiring failed:', e.message); }
 
   // 默认启用一键托管：启动时自动接入本机已安装、用户未取消的 CLI 工具。
   try {

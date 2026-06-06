@@ -530,6 +530,14 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     if (r?.ok) { await load(); }
     else window.alert('安装证书失败：' + (r?.error || '未知错误'));
   }
+  async function handleUninstallCa() {
+    if (!window.confirm('删除根证书？删除后桌面应用将无法 MITM 托管（已托管的会失效，请先取消托管）。')) return;
+    setCaBusy(true);
+    const r = await window.electronAPI.ca?.uninstall().catch(e => ({ ok: false, error: e.message }));
+    setCaBusy(false);
+    if (r?.ok) { await load(); }
+    else window.alert('删除证书失败：' + (r?.error || '未知错误'));
+  }
   // GUI 应用手动托管/取消托管（需先装证书）
   async function handleGuiHost(app, host) {
     if (host && !caInstalled) { window.alert('请先点击「安装证书」'); return; }
@@ -623,12 +631,20 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                 + 添加应用
               </button>
               {/* 安装证书（桌面 GUI 应用 MITM 托管前置）*/}
-              <button onClick={handleInstallCa} disabled={caBusy}
-                className={`text-xs px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-50 ${caInstalled
-                  ? 'border-green-300 dark:border-green-800 text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/20'
-                  : 'border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100'}`}>
-                {caBusy ? '安装中…' : caInstalled ? '🔒 证书已安装' : '🔐 安装证书'}
-              </button>
+              {caInstalled ? (
+                <>
+                  <span className="text-xs px-3 py-1.5 rounded-lg border border-green-300 dark:border-green-800 text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/20">🔒 证书已安装</span>
+                  <button onClick={handleUninstallCa} disabled={caBusy}
+                    className="text-xs px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50">
+                    {caBusy ? '处理中…' : '删除证书'}
+                  </button>
+                </>
+              ) : (
+                <button onClick={handleInstallCa} disabled={caBusy}
+                  className="text-xs px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 disabled:opacity-50">
+                  {caBusy ? '安装中…' : '🔐 安装证书'}
+                </button>
+              )}
               <span className="text-xs text-gray-400 dark:text-gray-500">CLI 自动托管；桌面应用需先装证书</span>
               <div className="ml-auto"><ImportConfigButton onImported={load} /></div>
             </div>
