@@ -464,7 +464,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
             <div>
               <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">接入配置</div>
               <KeyConfigPanel apiKey={app.api_key} localBase="http://127.0.0.1:11430/v1"
-                model={routeId || undefined} />
+                model={routeId || undefined} hideAuto />
             </div>
           )}
         </div>
@@ -1059,10 +1059,11 @@ const CONFIG_TABS = [
   { id: 'auto',     label: '⚡ 自动配置' },
 ];
 
-function KeyConfigPanel({ apiKey, localBase, model }) {
+function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
   const [tab,     setTab]     = useState('curl');
   const [tool,    setTool]    = useState('claude-code');
   const [writeOk, setWriteOk] = useState(false);
+  const tabs = hideAuto ? CONFIG_TABS.filter(t => t.id !== 'auto') : CONFIG_TABS;
 
   const isRouter = model?.startsWith('llm-router-');
   const envText  = [
@@ -1087,7 +1088,7 @@ function KeyConfigPanel({ apiKey, localBase, model }) {
     <div className="border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
       {/* Tab bar */}
       <div className="flex items-center bg-gray-50 dark:bg-gray-800/60 border-b border-gray-200 dark:border-gray-700">
-        {CONFIG_TABS.map(t => (
+        {tabs.map(t => (
           <button key={t.id} onClick={() => { setTab(t.id); setWriteOk(false); }}
             className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
               tab === t.id
