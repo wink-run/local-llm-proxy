@@ -459,8 +459,8 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
               </div>
             </div>
           )}
-          {/* 接入配置（仅 api-key 类：展示 Key + 代码示例）*/}
-          {app.link_method === 'api-key' && app.api_key && (
+          {/* 接入配置（仅自定义 api-key 类：展示 Key + 代码示例；已识别应用用环境变量写入，不显示）*/}
+          {app.link_method === 'api-key' && app.api_key && !app.env && (
             <div>
               <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">接入配置</div>
               <KeyConfigPanel apiKey={app.api_key} localBase="http://127.0.0.1:11430/v1"
