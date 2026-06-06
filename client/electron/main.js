@@ -1111,8 +1111,9 @@ function registerIPC() {
     } catch {}
     // 兜底：旧配置无 app_presets 段时的内置默认
     return [
-      { id: 'claude-code', name: 'Claude Code', icon: '🤖', request_format: 'anthropic', inject: 'env',
-        env: { ANTHROPIC_BASE_URL: '{BASE}', ANTHROPIC_AUTH_TOKEN: '{KEY}' } },
+      { id: 'claude-code', name: 'Claude Code（含桌面版）', icon: '🤖', request_format: 'anthropic',
+        inject: 'config-file', config_file: '~/.claude/settings.json',
+        patch: { 'env.ANTHROPIC_BASE_URL': '{BASE}', 'env.ANTHROPIC_AUTH_TOKEN': '{KEY}' } },
       { id: 'codex', name: 'Codex CLI', icon: '💻', request_format: 'openai', inject: 'env',
         env: { OPENAI_BASE_URL: '{BASE}/v1', OPENAI_API_KEY: '{KEY}' } },
       { id: 'gemini-cli', name: 'Gemini CLI', icon: '🔮', request_format: 'openai', inject: 'env',
@@ -1128,8 +1129,24 @@ function registerIPC() {
       let file = cl.resolvePlaceholders(String(config_file || ''), {});
       file = cl.expandHome(file);
       if (!file) return { ok: false, error: 'no-config-file' };
-      const inj = require('./injector');
-      inj.applyConfigFile(app_id || ('app-' + rndHex(4)), file, patch || {});
+      if (/\.json$/i.test(file)) {
+        // JSON 配置（如 Claude Code/Desktop 的 ~/.claude/settings.json）：合并 patch（支持 a.b 点路径），保留其它字段
+        let obj = {};
+        try { if (fs.existsSync(file)) obj = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch {}
+        if (fs.existsSync(file) && !fs.existsSync(file + '.tokenbank-bak')) {
+          try { fs.copyFileSync(file, file + '.tokenbank-bak'); } catch {}
+        }
+        for (const [k, v] of Object.entries(patch || {})) {
+          const parts = k.split('.'); let cur = obj;
+          for (let i = 0; i < parts.length - 1; i++) { if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] == null) cur[parts[i]] = {}; cur = cur[parts[i]]; }
+          cur[parts[parts.length - 1]] = v;
+        }
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, JSON.stringify(obj, null, 2), 'utf8');
+      } else {
+        const inj = require('./injector');
+        inj.applyConfigFile(app_id || ('app-' + rndHex(4)), file, patch || {});
+      }
       // 附带的环境变量（如存放 key 的 env_key）一并写入系统
       let envCount = 0;
       const entries = Object.entries(env || {}).filter(([k]) => k && k.trim());
