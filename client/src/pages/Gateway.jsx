@@ -390,7 +390,7 @@ function AppSettingsPanel({ app, routes, onUpdate, onClose }) {
   );
 }
 
-function AppManager({ externalRoutes }) {
+function AppManager({ externalRoutes, availableModels = [] }) {
   const [tab,      setTab]      = useState(0);   // 0=应用列表 1=API Key管理
   const [apps,     setApps]     = useState([]);
   const [routes,   setRoutes]   = useState([]);
@@ -586,7 +586,7 @@ function AppManager({ externalRoutes }) {
                         </div>
                       </div>
 
-                      {/* 路由规则下拉 */}
+                      {/* 路由下拉：同时显示模型（按层级分组）和场景路由 */}
                       <select
                         value={app.route_id || ''}
                         onChange={async e => {
@@ -601,11 +601,25 @@ function AppManager({ externalRoutes }) {
                           }
                           await load();
                         }}
-                        className="flex-1 min-w-0 text-[10px] bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 outline-none text-gray-600 dark:text-gray-400 max-w-[140px]">
-                        <option value="">不绑定路由</option>
-                        {routes.map(r => (
-                          <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>
-                        ))}
+                        className="flex-1 min-w-0 text-[10px] bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 outline-none text-gray-600 dark:text-gray-400 max-w-[160px]">
+                        <option value="">不绑定</option>
+                        {routes.length > 0 && (
+                          <optgroup label="场景路由">
+                            {routes.map(r => (
+                              <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {['free','p2p','paid'].map(tier => {
+                          const tierModels = availableModels.filter(m => m.tier === tier);
+                          if (!tierModels.length) return null;
+                          const label = tier === 'free' ? '🟢 免费模型' : tier === 'p2p' ? '🔵 P2P 模型' : '🟣 付费模型';
+                          return (
+                            <optgroup key={tier} label={label}>
+                              {tierModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+                            </optgroup>
+                          );
+                        })}
                       </select>
 
                       {/* 操作按钮：api-key 类显示设置；shim 类自动托管无需按钮 */}
@@ -1627,7 +1641,7 @@ export default function Gateway() {
       </div>
 
       {/* 📱 应用列表 & 托管 */}
-      <AppManager externalRoutes={routes} />
+      <AppManager externalRoutes={routes} availableModels={availableModels} />
 
       {/* 🔀 场景路由 */}
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">

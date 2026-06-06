@@ -755,14 +755,17 @@ function registerIPC() {
     for (const app of apps) {
       if (app.link_method === 'api-key' && app.api_key && app.route_id) {
         const route = routes.find(r => r.model_key === app.route_id || r.id === app.route_id);
-        if (route?.steps?.length) {
-          keyMap[app.api_key] = {
-            steps: route.steps, scene_name: route.scene_name,
-            app_id: app.id, app_name: app.name,
-            allowed_models: app.allowed_models || [],
-            allow_stream: app.allow_stream !== false,
-          };
-        }
+        // route_id 命中场景路由 → 用其降级链；否则视为直接绑定的模型名 → 单步路由
+        const steps = route?.steps?.length
+          ? route.steps
+          : [{ model: app.route_id }];
+        keyMap[app.api_key] = {
+          steps,
+          scene_name: route?.scene_name || app.route_id,
+          app_id: app.id, app_name: app.name,
+          allowed_models: app.allowed_models || [],
+          allow_stream: app.allow_stream !== false,
+        };
       }
     }
     // 兼容旧 local_keys（迁移期间两者都支持）
