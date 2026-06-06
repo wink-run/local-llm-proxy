@@ -344,6 +344,38 @@ function configHasMarker(file, marker) {
   catch { return false; }
 }
 
+// 安全地往 TOML 注入 patch：仅插入/替换我们的顶层键和表，保留其余原文（不 round-trip 整个文件）
+function safePatchToml(file, patch) {
+  let text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+  if (text && !fs.existsSync(file + '.tokenbank-bak')) { try { fs.copyFileSync(file, file + '.tokenbank-bak'); } catch {} }
+  const tops = {}, tables = {};
+  for (const [k, v] of Object.entries(patch)) {
+    const last = k.lastIndexOf('.');
+    if (last < 0) { tops[k] = v; continue; }
+    const tbl = k.slice(0, last), key = k.slice(last + 1);
+    (tables[tbl] = tables[tbl] || {})[key] = v;
+  }
+  const fmt = (v) => (v === true || v === false || v === 'true' || v === 'false' || /^-?\d+(\.\d+)?$/.test(String(v)))
+    ? String(v)
+    : `"${String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // 顶层标量键：替换已有行，否则插到第一个表头之前
+  for (const [k, v] of Object.entries(tops)) {
+    const line = `${k} = ${fmt(v)}`;
+    const re = new RegExp(`^\\s*${esc(k)}\\s*=.*$`, 'm');
+    if (re.test(text)) text = text.replace(re, line);
+    else { const i = text.search(/^\s*\[/m); text = i >= 0 ? text.slice(0, i) + line + '\n' : (text ? text.replace(/\n*$/, '\n') + line + '\n' : line + '\n'); }
+  }
+  // 表：删掉已有的同名表块后追加全新的（避免重复表头报错）
+  for (const [tbl, kv] of Object.entries(tables)) {
+    text = text.replace(new RegExp(`(^|\\n)\\[${esc(tbl)}\\][^\\[]*`), '\n');
+    const blk = `\n[${tbl}]\n` + Object.entries(kv).map(([k, v]) => `${k} = ${fmt(v)}`).join('\n') + '\n';
+    text = text.replace(/\n*$/, '\n') + blk;
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text, 'utf8');
+}
+
 // ── LLM config scanner ────────────────────────────────────────────────────────
 
 const BASE_URL_KEYS = [
@@ -1207,8 +1239,9 @@ function registerIPC() {
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, JSON.stringify(obj, null, 2), 'utf8');
       } else {
-        const inj = require('./injector');
-        inj.applyConfigFile(app_id || ('app-' + rndHex(4)), file, patch || {});
+        // TOML：只追加/替换我们的项，绝不重写整个文件（Codex 等复杂 config 含 Windows
+        // 反斜杠路径，整体 round-trip 会把字面量字符串变成非法转义而损坏）
+        safePatchToml(file, patch || {});
       }
       // 附带的环境变量（如存放 key 的 env_key）一并写入系统
       let envCount = 0;
