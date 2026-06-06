@@ -814,11 +814,19 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           </button>
                         )
                       ) : app._virtual_desktop ? (
-                        /* 桌面应用未添加 API Key 管理：添加 */
-                        <button onClick={() => addDesktop(app)}
-                          className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white shrink-0 font-medium">
-                          {app.configured ? '编辑' : '添加'}
-                        </button>
+                        /* 桌面应用：未配置→添加；已配置(配置文件含我们的路由)→编辑 + 取消 API Key 管理 */
+                        <>
+                          <button onClick={() => addDesktop(app)}
+                            className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white shrink-0 font-medium">
+                            {app.configured ? '编辑' : '添加'}
+                          </button>
+                          {app.configured && (
+                            <button onClick={() => handleCancelManage(app)}
+                              className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 shrink-0">
+                              取消 API Key 管理
+                            </button>
+                          )}
+                        </>
                       ) : app.host_method === 'config-file' ? (
                         /* config-file 托管的 api-key 应用：编辑 + 取消 API Key 管理 */
                         <>
