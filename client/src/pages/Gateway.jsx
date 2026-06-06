@@ -567,7 +567,7 @@ function AppManager({ externalRoutes }) {
             {/* 应用列表 */}
             {apps.length === 0 ? (
               <div className="py-6 text-center text-xs text-gray-400">
-                暂无应用。点击「一键托管」自动添加本机 CLI 工具，或在 API Key 管理 Tab 手动添加。
+                未检测到已安装的 CLI 工具。安装 Claude Code / Codex / Gemini CLI 后会自动托管并显示在这里，或在 API Key 管理 Tab 手动添加应用。
               </div>
             ) : (
               <div className="flex flex-col divide-y divide-gray-100 dark:divide-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
@@ -584,24 +584,29 @@ function AppManager({ externalRoutes }) {
                     if (diff < 7*86400) return `${Math.floor(diff/86400)}天前`;
                     return new Date(ts*1000).toLocaleDateString('zh-CN',{month:'short',day:'numeric'});
                   };
-                  const statusDot = app.link_method === 'api-key' ? 'bg-blue-400'
-                    : app.linked ? 'bg-green-400' : 'bg-gray-300 dark:bg-gray-600';
-                  const rowBg = app.link_method === 'shim' && !app.installed
-                    ? 'opacity-40 bg-gray-50 dark:bg-gray-800/20'
-                    : app.link_method === 'shim' && app.linked
-                    ? 'bg-green-50/60 dark:bg-green-950/10'
-                    : 'bg-white dark:bg-gray-900';
+                  // 在线 = 已托管(shim linked) 或 api-key 应用；离线 = 已安装但用户取消托管
+                  const isOnline = app.link_method === 'api-key' || app.linked;
+                  const statusDot = isOnline
+                    ? (app.link_method === 'api-key' ? 'bg-blue-400' : 'bg-green-400 shadow-[0_0_6px] shadow-green-400/60')
+                    : 'bg-gray-300 dark:bg-gray-600';
+                  const rowBg = isOnline
+                    ? (app.link_method === 'api-key'
+                        ? 'bg-blue-50/40 dark:bg-blue-950/10'
+                        : 'bg-green-50/60 dark:bg-green-950/15')
+                    : 'bg-gray-50/50 dark:bg-gray-800/20';
                   return (
-                    <div key={app.id} className={`flex items-center gap-3 px-3 py-2.5 ${rowBg}`}>
+                    <div key={app.id} className={`flex items-center gap-3 px-3 py-2.5 transition-colors ${rowBg} ${isOnline ? '' : 'opacity-60'}`}>
                       {/* 状态点 + 图标 + 名称 + 接入方式 */}
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDot}`} />
-                      <span className="text-base shrink-0">{app.icon}</span>
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${statusDot}`} />
+                      <span className={`text-base shrink-0 ${isOnline ? '' : 'grayscale'}`}>{app.icon}</span>
                       <div className="min-w-0 w-32 shrink-0">
-                        <div className="text-xs font-medium text-gray-800 dark:text-gray-100 truncate">{app.name}</div>
-                        <div className="text-[10px] text-gray-400 truncate">
-                          {LINK_METHOD_LABEL[app.link_method] || app.link_method}
-                          {app.link_method === 'shim' && !app.installed && ' · 未安装'}
-                          {app.link_method === 'shim' && app.installed && !app.linked && ' · 未托管'}
+                        <div className={`text-xs font-medium truncate ${isOnline ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'}`}>{app.name}</div>
+                        <div className="text-[10px] truncate flex items-center gap-1">
+                          <span className={isOnline ? (app.link_method === 'api-key' ? 'text-blue-500' : 'text-green-600 dark:text-green-400') : 'text-gray-400'}>
+                            {isOnline ? '在线' : '离线'}
+                          </span>
+                          <span className="text-gray-300 dark:text-gray-600">·</span>
+                          <span className="text-gray-400">{LINK_METHOD_LABEL[app.link_method] || app.link_method}</span>
                         </div>
                       </div>
 
@@ -680,7 +685,7 @@ function AppManager({ externalRoutes }) {
               </div>
             )}
             <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
-              💡 透明托管后需重开终端生效；关闭 Token Bank 时自动还原。
+              💡 已安装的 CLI 工具会自动托管（无需手动操作）；托管后需重开终端生效，关闭 Token Bank 时自动还原。
             </p>
           </div>
         )}

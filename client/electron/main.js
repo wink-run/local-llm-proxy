@@ -263,6 +263,8 @@ function readLocalConfig() {
           cfg.initialized_routes = true;
         }
       }
+      // 用户显式取消托管的 agent_id 列表（自动托管会跳过这些）
+      if (!Array.isArray(cfg.auto_host_disabled)) cfg.auto_host_disabled = [];
       return cfg;
     }
   } catch {}
@@ -273,11 +275,29 @@ function readLocalConfig() {
     local_keys: [], apps: [],
     policies: DEFAULT_POLICIES.map(p => ({ ...p, created_at: new Date().toISOString() })),
     initialized_routes: defaultRoutes.length > 0,
+    auto_host_disabled: [],
   };
 }
 
 function writeLocalConfig(cfg) {
   fs.writeFileSync(localConfigPath(), JSON.stringify(cfg, null, 2), 'utf8');
+}
+
+// 自动托管：对机器上已安装、尚未托管、且用户未显式取消的 shim 工具自动接入。
+// 返回本次新托管的 agent_id 数组。默认启用，无需用户手动操作。
+function autoHostInstalledApps() {
+  const cfg = readLocalConfig();
+  const disabled = new Set(cfg.auto_host_disabled || []);
+  const newlyHosted = [];
+  for (const t of agentLinker.list()) {
+    if (t.installed && !t.linked && !disabled.has(t.id)) {
+      try {
+        const r = agentLinker.applyById(t.id);   // apply 内部会 enableDefaultProvider
+        if (r && r.ok !== false) newlyHosted.push(t.id);
+      } catch (e) { console.error('[auto-host]', t.id, e.message); }
+    }
+  }
+  return newlyHosted;
 }
 
 // ── LLM config scanner ────────────────────────────────────────────────────────
@@ -581,11 +601,34 @@ function registerIPC() {
   // ── CLI 透明接入（配置驱动）：list/apply/revert ──
   // 注入 local-config 读写（让 agent-linker 能 enable provider，避免循环 require）
   agentLinker.setLocalConfigIO(readLocalConfig, writeLocalConfig);
+  // 记录/解除用户对某 agent 的「取消自动托管」标记
+  function setAutoHostDisabled(agentId, disabled) {
+    const cfg = readLocalConfig();
+    const set = new Set(cfg.auto_host_disabled || []);
+    if (disabled) set.add(agentId); else set.delete(agentId);
+    cfg.auto_host_disabled = [...set];
+    writeLocalConfig(cfg);
+  }
+
   ipcMain.handle('agents:list',    () => agentLinker.list());
-  ipcMain.handle('agents:apply',   (_e, id) => agentLinker.applyById(id));
-  ipcMain.handle('agents:revert',  (_e, id) => agentLinker.revertById(id));
-  ipcMain.handle('agents:applyAll',  () => agentLinker.applyAll());
-  ipcMain.handle('agents:revertAll', () => agentLinker.revertAll());
+  // 手动托管：清除禁用标记后接入
+  ipcMain.handle('agents:apply',   (_e, id) => { setAutoHostDisabled(id, false); return agentLinker.applyById(id); });
+  // 手动取消托管：打上禁用标记，自动托管不再重新接入
+  ipcMain.handle('agents:revert',  (_e, id) => { setAutoHostDisabled(id, true); return agentLinker.revertById(id); });
+  ipcMain.handle('agents:applyAll',  () => {
+    // 一键托管：清空所有禁用标记后全部接入
+    const cfg = readLocalConfig();
+    cfg.auto_host_disabled = [];
+    writeLocalConfig(cfg);
+    return agentLinker.applyAll();
+  });
+  ipcMain.handle('agents:revertAll', () => {
+    // 全部取消托管：把所有工具加入禁用标记
+    const cfg = readLocalConfig();
+    cfg.auto_host_disabled = agentLinker.list().map(t => t.id);
+    writeLocalConfig(cfg);
+    return agentLinker.revertAll();
+  });
 
   // ── 配置导入（统一格式，tools 段 + scene_routes 段，各自写入对应存储）────────
   // 格式：{ version, tools, protocols, mitm, routing, scene_routes, ... }
@@ -899,12 +942,13 @@ function registerIPC() {
   }
 
   ipcMain.handle('apps:list', () => {
+    // 每次拉列表时先自动托管新出现的应用（机器上有了就直接托管）
+    autoHostInstalledApps();
+
     const savedApps = getApps();
-    const agentTools = require('./agent-linker').list();
-    const configLoader = require('./config-loader');
+    const agentTools = agentLinker.list();
 
     // 把 yaml tools 里有、但 apps[] 里还没有 shim 记录的 agent，动态补入
-    // （不写库，只是 list 时合并展示）
     const shimIds = new Set(savedApps.filter(a => a.link_method === 'shim').map(a => a.agent_id));
     const TOOL_ICONS = { 'claude-code': '🤖', 'codex': '💻', 'gemini-cli': '🔮' };
     const TOOL_NAMES = { 'claude-code': 'Claude Code', 'codex': 'Codex CLI', 'gemini-cli': 'Gemini CLI' };
@@ -928,13 +972,16 @@ function registerIPC() {
     const allApps = [...savedApps, ...virtualShimApps];
 
     // 注入实时托管状态
-    return allApps.map(app => {
-      if (app.link_method === 'shim') {
-        const tool = agentTools.find(t => t.id === app.agent_id);
-        return { ...app, linked: tool ? tool.linked : false, installed: tool ? tool.installed : false };
-      }
-      return { ...app, linked: true };
-    });
+    return allApps
+      .map(app => {
+        if (app.link_method === 'shim') {
+          const tool = agentTools.find(t => t.id === app.agent_id);
+          return { ...app, linked: tool ? tool.linked : false, installed: tool ? tool.installed : false };
+        }
+        return { ...app, linked: true, installed: true };
+      })
+      // 机器上没有的 shim 应用不展示（yaml 里有但本机没装的隐藏）；api-key 应用始终展示
+      .filter(app => app.link_method !== 'shim' || app.installed);
   });
 
   ipcMain.handle('apps:create', (_e, data) => {
@@ -1086,6 +1133,12 @@ app.whenReady().then(() => {
   gateway.setLocalStats(localStats);
   gateway.setLocalConfigReader(readLocalConfig);   // 供策略组调度查 policies[]
   gateway.start(11430, readAgentConfig);
+
+  // 默认启用一键托管：启动时自动接入本机已安装、用户未取消的 CLI 工具。
+  try {
+    const hosted = autoHostInstalledApps();
+    if (hosted && hosted.length) console.log('[auto-host] hosted on startup:', hosted.join(', '));
+  } catch (e) { console.error('[auto-host] startup failed:', e.message); }
 
   // 补录「不走网关、直连官方」的会话用量：启动跑一次 + 每 60s 增量扫一次。
   // 与网关实时记录靠 request_id 跨来源去重，不会重复计。
