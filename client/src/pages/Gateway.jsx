@@ -264,7 +264,7 @@ const STRATEGY_LABEL = {
 };
 
 // 单个应用的设置面板（路由规则绑定 + 详细配置）
-function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', onUpdate, onDelete, onRegenKey, onCancelManage, onClose, onCancel }) {
+function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', inline = false, onUpdate, onDelete, onRegenKey, onCancelManage, onClose, onCancel }) {
   const dismiss = onCancel || onClose;   // ✕/取消/点遮罩 → 取消（新应用未保存会被丢弃）
   const [name,        setName]        = useState(app.name || '');
   const [icon,        setIcon]        = useState(app.icon || '🔧');
@@ -336,13 +336,14 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
 
   const ICONS = ['🤖','✏️','🔧','💻','🎯','🌐','📱','🔑','⚡','🛠️','🎨','📊'];
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={dismiss}>
-      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-2xl mx-4 max-h-[92vh] overflow-y-auto"
+  const card = (
+      <div className={inline
+          ? "bg-white dark:bg-gray-900 rounded-2xl shadow border border-blue-200 dark:border-blue-800/50 mb-3"
+          : "bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-2xl mx-4 max-h-[92vh] overflow-y-auto"}
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-200 dark:border-gray-800">
           <span className="text-xl">{icon}</span>
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">应用设置</h3>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">{inline ? '添加应用' : '应用设置'}</h3>
           <button onClick={dismiss} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg">✕</button>
         </div>
         <div className="p-5 space-y-4">
@@ -513,6 +514,11 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
           </button>
         </div>
       </div>
+  );
+  if (inline) return card;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={dismiss}>
+      {card}
     </div>
   );
 }
@@ -640,7 +646,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
 
   return (
     <>
-      {settings && (
+      {/* 编辑已有应用 → 弹窗；添加新应用 → 内联显示在操作栏下方 */}
+      {settings && !settings._isNew && (
         <AppSettingsPanel app={settings} routes={routes} availableModels={availableModels} localBase={localBase}
           onUpdate={handleUpdateApp} onDelete={handleDeleteApp} onRegenKey={handleRegenKey}
           onCancelManage={handleCancelManage}
@@ -656,6 +663,13 @@ function AppManager({ externalRoutes, availableModels = [] }) {
               <span className="text-xs text-gray-400 dark:text-gray-500">已识别的应用在下方列表中托管；此处添加未被识别的应用</span>
               <div className="ml-auto"><ImportConfigButton onImported={load} /></div>
             </div>
+
+            {/* 添加新应用：内联配置面板 */}
+            {settings && settings._isNew && (
+              <AppSettingsPanel app={settings} routes={routes} availableModels={availableModels} localBase={localBase} inline
+                onUpdate={handleUpdateApp} onDelete={handleDeleteApp} onRegenKey={handleRegenKey}
+                onCancelManage={handleCancelManage}
+                onClose={closeSettings} onCancel={cancelSettings} />
             )}
 
             {/* 应用列表 */}
