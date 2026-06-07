@@ -1009,9 +1009,9 @@ function tierDot(tier) {
   return 'bg-green-400';
 }
 function normTier(t) {
-  if (t === 'p2p' || t === 'open') return 'p2p';
-  if (t === 'paid') return 'paid';
-  return 'free';
+  if (t === 'p2p' || t === 'open' || t === 'free') return 'p2p';
+  if (t === 'paid' || t === 'premium') return 'paid';
+  return 'p2p';
 }
 
 // Short tier label for inline display, e.g. "glm-5.1(p2p)"
@@ -1535,20 +1535,15 @@ export default function Gateway() {
       }
     } catch {}
 
-    // 模型来源（只列「能提供的」）：
-    //   付费(paid)  —— 后端用真实 API Key 直供，始终可用 → 全部列出
-    //   免费/P2P    —— 由 peer worker 提供 → 仅当前在线（/v1/models）才列出
+    // 能提供的模型 = 后端所有「启用」的模型（/api/rates）：付费(premium)用真实 key 直供、
+    // P2P(open) 由 peer worker 提供，后端都能路由。补 /v1/models 在线信息只用于标 online。
     try {
       let rates = [];
       try { rates = (await getRates()).data?.models || []; } catch {}
       const online = new Set();
       try { for (const m of ((await getOnlineModels()).data?.data || [])) online.add(m.id); } catch {}
-      for (const m of rates) {
-        const tier = normTier(m.tier);
-        if (tier === 'paid') add(m.name, 'paid');            // 付费始终可用
-        else if (online.has(m.name)) add(m.name, tier);      // 免费/P2P 需在线
-      }
-      // 在线但 rates 里没有的，按 p2p 兜底列出
+      for (const m of rates) add(m.name, normTier(m.tier));
+      // 在线但 rates 里没有的（worker 临时上报）按 p2p 兜底
       for (const id of online) add(id, 'p2p');
     } catch (e) {
       console.error('loadAvailableModels', e);
