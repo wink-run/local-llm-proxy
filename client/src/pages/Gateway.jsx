@@ -323,12 +323,19 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
     setShowUrl(v => !v);
   }
 
+  // 同步成功提示：带上新增应用数量
+  function importedMsg(r, prefix) {
+    const n = Array.isArray(r.addedApps) ? r.addedApps.length : 0;
+    if (n > 0) return `${prefix}，新增 ${n} 个应用：${r.addedApps.join('、')}`;
+    return `${prefix}（无新增应用）`;
+  }
+
   async function handleFile() {
     if (!window.electronAPI?.toolsConfig) return;
     setBusy(true); setMsg('');
     const r = await window.electronAPI.toolsConfig.importFile();
     if (r.canceled) { setBusy(false); return; }
-    setMsg(r.ok ? '✓ 已导入' : '✗ ' + r.error);
+    setMsg(r.ok ? '✓ ' + importedMsg(r, '已导入') : '✗ ' + r.error);
     if (r.ok && onImported) onImported();
     setBusy(false);
   }
@@ -341,7 +348,7 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
     // 服务器配置端点需用户 JWT 鉴权，带上本地登录 token
     const token = localStorage.getItem('token');
     const r = await window.electronAPI.toolsConfig.importUrl(fullUrl, token);
-    setMsg(r.ok ? '✓ 已从服务器导入' : '✗ ' + r.error);
+    setMsg(r.ok ? '✓ ' + importedMsg(r, '已从服务器导入') : '✗ ' + r.error);
     if (r.ok && onImported) { onImported(); setShowUrl(false); }
     setBusy(false);
   }

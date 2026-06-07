@@ -347,8 +347,11 @@ function autoHostInstalledApps() {
   const disabled = new Set(cfg.auto_host_disabled || []);
   const newlyHosted = [];
   for (const t of agentLinker.list()) {
-    // GUI 应用(需装证书 / 改系统代理)不自动托管，必须用户显式操作
-    if (t.needs_ca || t.strategy === 'mitm-system') continue;
+    // 自动托管只做透明 shim(base_url-env)，绝不修改工具自己的配置文件。
+    // 需要改配置文件的工具(config-file / mitm-system / 需装证书)不自动托管，
+    // 改由 api_key_apps 走「手动添加」流程显式写配置。
+    if (t.strategy !== 'base_url-env') continue;
+    if (t.needs_ca) continue;
     if (t.installed && !t.linked && !disabled.has(t.id)) {
       try {
         const r = agentLinker.applyById(t.id);
@@ -391,6 +394,18 @@ function appxInstalled(name) {
       { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
     return (_appxCache.map[name] = out === 'yes');
   } catch { return (_appxCache.map[name] = false); }
+}
+
+// 命令是否可执行（api_key_apps 里 CLI 工具用 command 检测，替代 appx）
+function commandInstalled(cmd) {
+  if (!cmd) return false;
+  try { return !!require('./shim-installer').resolveRealCommand(cmd); }
+  catch { return false; }
+}
+
+// api_key 应用是否检测到（appx 桌面包 或 command CLI 命令，任一命中即可）
+function apiKeyAppDetected(d) {
+  return (d.appx && appxInstalled(d.appx)) || (d.command && commandInstalled(d.command));
 }
 
 // 解析配置文件路径（{占位}+~）
@@ -777,12 +792,19 @@ function registerIPC() {
     if (!parsed || typeof parsed !== 'object') return { ok: false, error: '无效的 yaml 格式' };
     const yamlLib = require('js-yaml');
     const applied = { tools: false, routes: false };
+    const addedApps = [];   // 本次同步「新增」的工具/应用（id 之前没有、现在有）
 
     // 有 tools 相关段 → 写 tokenbank.yaml + reload config-loader
     const hasToolsSection = Object.keys(parsed).some(k => TOOLS_SECTIONS.has(k) && k !== 'version');
     if (hasToolsSection) {
       const tbDir = path.join(os.homedir(), '.tokenbank');
       if (!fs.existsSync(tbDir)) fs.mkdirSync(tbDir, { recursive: true });
+      // 应用前：记录现有工具 + api-key 应用的 id 集合（用于算新增）
+      const beforeIds = new Set();
+      try {
+        for (const t of configLoader.tools()) beforeIds.add('tool:' + t.id);
+        for (const a of (configLoader.apiKeyApps() || [])) beforeIds.add('app:' + a.id);
+      } catch {}
       // 只保留 tools 相关的段写入 yaml（剥离 scene_routes 等路由段）
       const toolsDoc = {};
       for (const k of Object.keys(parsed)) {
@@ -791,6 +813,12 @@ function registerIPC() {
       fs.writeFileSync(TB_YAML, yamlLib.dump(toolsDoc, { lineWidth: 120 }), 'utf8');
       configLoader.load();
       applied.tools = true;
+
+      // 应用后：算出新增的工具/应用（id 在 before 集合里没有的）
+      try {
+        for (const t of configLoader.tools()) if (!beforeIds.has('tool:' + t.id)) addedApps.push(t.name || t.id);
+        for (const a of (configLoader.apiKeyApps() || [])) if (!beforeIds.has('app:' + a.id)) addedApps.push(a.name || a.id);
+      } catch {}
 
       // 下发新配置后主动重新扫描机器：
       // 1) 新定义的透明托管(shim)工具若已安装且未托管 → 自动托管
@@ -810,14 +838,16 @@ function registerIPC() {
     if (hasScenes || hasVModels) {
       const cfg = readLocalConfig();
       if (hasScenes) {
-        // 场景路由：合并——下发的路由更新/新增（按 id 或 model_key 匹配），
-        // 用户自己配的路由（不在下发集合里）保留，不被覆盖。
+        // 场景路由：用户可编辑 → 本地优先。本地已有的路由（按 id 或 model_key 匹配）一律保留、
+        // 不被下发覆盖；只追加 server 上本地还没有的新路由。
         const now = new Date().toISOString();
-        const incoming = parsed.scene_routes.map(r => ({ ...r, created_at: r.created_at || now }));
-        const incomingKeys = new Set();
-        for (const r of incoming) { if (r.id) incomingKeys.add(r.id); if (r.model_key) incomingKeys.add(r.model_key); }
-        const kept = (cfg.scene_routes || []).filter(r => !incomingKeys.has(r.id) && !incomingKeys.has(r.model_key));
-        cfg.scene_routes = [...incoming, ...kept];
+        const local = cfg.scene_routes || [];
+        const localKeys = new Set();
+        for (const r of local) { if (r.id) localKeys.add(r.id); if (r.model_key) localKeys.add(r.model_key); }
+        const newFromServer = parsed.scene_routes
+          .filter(r => !localKeys.has(r.id) && !localKeys.has(r.model_key))
+          .map(r => ({ ...r, created_at: r.created_at || now }));
+        cfg.scene_routes = [...local, ...newFromServer];
         cfg.initialized_routes = true;
       }
       if (hasVModels) {
@@ -836,7 +866,7 @@ function registerIPC() {
     if (!applied.tools && !applied.routes) {
       return { ok: false, error: '文件中未找到可识别的配置段（tools / scene_routes / virtual_models）' };
     }
-    return { ok: true, source, applied };
+    return { ok: true, source, applied, addedApps };
   }
 
   function fetchYaml(url, token) {
@@ -1265,7 +1295,7 @@ function registerIPC() {
     const managedFiles = new Set(savedApps.filter(a => a.config_file).map(a => norm(a.config_file)));
     const linkedApiKey = new Set(savedApps.filter(a => a.preset_id).map(a => a.preset_id));
     for (const d of getApiKeyApps()) {
-      if (!appxInstalled(d.appx)) continue;
+      if (!apiKeyAppDetected(d)) continue;
       const file = resolveCfgPath(d.config_file);
       // 已添加过（preset_id 命中）或该配置文件已被某应用托管 → 不再重复展示
       if (linkedApiKey.has(d.id) || managedFiles.has(norm(file))) continue;
