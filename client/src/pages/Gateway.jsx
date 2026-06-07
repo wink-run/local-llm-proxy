@@ -257,7 +257,6 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
 
 // ── AppManager：应用列表（Tab1: 所有应用 & 托管 | Tab2: API Key 管理）────────
 const LINK_METHOD_LABEL = { shim: '透明托管', 'api-key': 'API Key' };
-// 「添加应用」预设现在来自 yaml app_presets（config-loader），通过 apps.presets() 加载
 const STRATEGY_LABEL = {
   'base_url-env': '环境变量注入 base_url',
   'config-file':  '自动写入配置文件',
@@ -526,7 +525,6 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   useEffect(() => { if (externalRoutes?.length) setRoutes(externalRoutes); }, [externalRoutes]);
   const [settings, setSettings] = useState(null);   // 设置弹窗对应的 app
   const [appStats, setAppStats] = useState({});     // id → {calls,tokens,lastTs}
-  const [addOpen,  setAddOpen]  = useState(false);  // 添加流程：应用类型选择
 
   const load = useCallback(async () => {
     if (!window.electronAPI) return;
@@ -539,14 +537,11 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     setApps(list);
     setRoutes(localCfg?.scene_routes || []);
     if (gw?.port) setLocalBase(`http://localhost:${gw.port}/v1`);
-    // 添加应用预设（来自 yaml app_presets，下发新配置后自动出现）
-    window.electronAPI.apps?.presets?.().then(p => setPresets(Array.isArray(p) ? p : [])).catch(() => {});
     // 异步拉统计（不阻塞主列表渲染）
     if (list.length && window.electronAPI.apps?.stats) {
       window.electronAPI.apps.stats(list).then(s => setAppStats(s || {})).catch(() => {});
     }
   }, []);
-  const [presets, setPresets] = useState([]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -592,29 +587,14 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     return pick?.id || '';
   }
 
-  // 添加流程：选择预设 → 创建 api-key 应用并带上注入方式（env / config-file），打开设置
+  // 添加流程：未被识别的应用 → 创建空白 api-key 应用并打开完整配置
+  // （已识别的 CLI/桌面应用都在列表里直接托管，不再走预设面板）
   // 标记 _isNew：用户关闭/取消时若未保存则删除（避免「点关闭也保存了」）
-  async function addPreset(preset) {
-    const created = await window.electronAPI.apps?.create({
-      name: preset.name, icon: preset.icon, link_method: 'api-key',
-      preset_id: preset.id,
-      route_id: defaultRouteId() || null,
-      inject: preset.inject || (preset.env ? 'env' : null),
-      env: preset.env || null,
-      config_file: preset.config_file || null,
-      patch: preset.patch || null,
-    }).catch(() => null);
-    setAddOpen(false);
-    if (created?.id) setSettings({ ...created, _isNew: true });
-  }
-
-  // 添加流程：其他（未被识别的应用）→ 创建空白 api-key 应用并打开完整配置
   async function addCustom() {
     const created = await window.electronAPI.apps?.create({
       name: '新应用', icon: '🔧', link_method: 'api-key',
       route_id: defaultRouteId() || null,
     }).catch(() => null);
-    setAddOpen(false);
     if (created?.id) setSettings({ ...created, _isNew: true });
   }
 
@@ -669,34 +649,13 @@ function AppManager({ externalRoutes, availableModels = [] }) {
       <div className="p-4">
             {/* 操作栏 */}
             <div className="flex items-center gap-2 mb-3 flex-wrap">
-              <button onClick={() => setAddOpen(v => !v)}
+              <button onClick={addCustom}
                 className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors">
                 + 添加应用
               </button>
-              <span className="text-xs text-gray-400 dark:text-gray-500">已安装的 CLI 工具自动托管</span>
+              <span className="text-xs text-gray-400 dark:text-gray-500">已识别的应用在下方列表中托管；此处添加未被识别的应用</span>
               <div className="ml-auto"><ImportConfigButton onImported={load} /></div>
             </div>
-
-            {/* 添加流程：先选已识别的应用，或「其他」自定义 */}
-            {addOpen && (
-              <div className="mb-3 p-3 rounded-xl border border-blue-200 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-950/15">
-                <div className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-2">选择要添加的应用</div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {presets.map(p => (
-                    <button key={p.id} onClick={() => addPreset(p)}
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 hover:border-blue-400 dark:hover:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
-                      <span className="text-base">{p.icon}</span>
-                      <span className="text-xs text-gray-700 dark:text-gray-200 truncate">{p.name}</span>
-                    </button>
-                  ))}
-                  <button onClick={addCustom}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 hover:border-blue-400 dark:hover:border-blue-600 transition-colors">
-                    <span className="text-base">➕</span>
-                    <span className="text-xs text-gray-600 dark:text-gray-300">其他（自定义）</span>
-                  </button>
-                </div>
-                <div className="text-[10px] text-gray-400 mt-2">选择已识别的应用快速添加；选「其他」可手动配置未被识别的应用。</div>
-              </div>
             )}
 
             {/* 应用列表 */}

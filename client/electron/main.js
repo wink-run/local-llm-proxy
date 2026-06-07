@@ -1210,22 +1210,14 @@ function registerIPC() {
     } catch (e) { return { ok: false, error: e.message }; }
   });
 
-  // 「添加应用」预设（来自 yaml app_presets；下发新配置后自动出现新预设）
+  // 「添加应用」预设（来自 yaml app_presets，可选）。已识别的 CLI/桌面应用都在
+  // 应用列表里直接托管，不再用预设面板；无配置时返回空。
   ipcMain.handle('apps:presets', () => {
     try {
       const list = require('./config-loader').appPresets();
-      if (Array.isArray(list) && list.length) return list;
+      if (Array.isArray(list)) return list;
     } catch {}
-    // 兜底：旧配置无 app_presets 段时的内置默认
-    return [
-      { id: 'claude-code', name: 'Claude Code（含桌面版）', icon: '🤖',
-        inject: 'config-file', config_file: '~/.claude/settings.json',
-        patch: { 'env.ANTHROPIC_BASE_URL': '{BASE}', 'env.ANTHROPIC_AUTH_TOKEN': '{KEY}' } },
-      { id: 'codex', name: 'Codex CLI', icon: '💻', inject: 'env',
-        env: { OPENAI_BASE_URL: '{BASE}/v1', OPENAI_API_KEY: '{KEY}' } },
-      { id: 'gemini-cli', name: 'Gemini CLI', icon: '🔮', inject: 'env',
-        env: { GOOGLE_GEMINI_BASE_URL: '{BASE}', GEMINI_API_KEY: '{KEY}' } },
-    ];
+    return [];
   });
 
   // 写入工具配置文件（config-file 注入：如 Codex Desktop API 模式改 ~/.codex/config.toml）。
