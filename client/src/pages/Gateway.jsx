@@ -256,7 +256,9 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
 }
 
 // ── AppManager：应用列表（Tab1: 所有应用 & 托管 | Tab2: API Key 管理）────────
-const LINK_METHOD_LABEL = { shim: '透明托管', 'api-key': 'API Key' };
+const LINK_METHOD_LABEL = { shim: '透明托管', 'api-key': 'API Key', manual: '手工添加' };
+// 按 API Key 路由的应用：自动写配置的 api-key，和用户自配的 manual（手工添加）
+const isKeyApp = (m) => m === 'api-key' || m === 'manual';
 const STRATEGY_LABEL = {
   'base_url-env': '环境变量注入 base_url',
   'config-file':  '自动写入配置文件',
@@ -264,7 +266,7 @@ const STRATEGY_LABEL = {
 };
 
 // 单个应用的设置面板（路由规则绑定 + 详细配置）
-function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', inline = false, onUpdate, onDelete, onRegenKey, onCancelManage, onClose, onCancel }) {
+function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', onUpdate, onDelete, onRegenKey, onCancelManage, onClose, onCancel }) {
   const dismiss = onCancel || onClose;   // ✕/取消/点遮罩 → 取消（新应用未保存会被丢弃）
   const [name,        setName]        = useState(app.name || '');
   const [icon,        setIcon]        = useState(app.icon || '🔧');
@@ -336,14 +338,13 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', i
 
   const ICONS = ['🤖','✏️','🔧','💻','🎯','🌐','📱','🔑','⚡','🛠️','🎨','📊'];
 
-  const card = (
-      <div className={inline
-          ? "bg-white dark:bg-gray-900 rounded-2xl shadow border border-blue-200 dark:border-blue-800/50 mb-3"
-          : "bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-2xl mx-4 max-h-[92vh] overflow-y-auto"}
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={dismiss}>
+      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-2xl mx-4 max-h-[92vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-200 dark:border-gray-800">
           <span className="text-xl">{icon}</span>
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">{inline ? '添加应用' : '应用设置'}</h3>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">应用设置</h3>
           <button onClick={dismiss} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg">✕</button>
         </div>
         <div className="p-5 space-y-4">
@@ -365,8 +366,8 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', i
             <textarea value={desc} onChange={e => setDesc(e.target.value)} placeholder="描述（可选）" rows={2}
               className="w-full text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none resize-none text-gray-600 dark:text-gray-400" />
           </div>
-          {/* API Key 行（仅 api-key 类）*/}
-          {app.link_method === 'api-key' && app.api_key && (
+          {/* API Key 行（api-key / 手工添加 类）*/}
+          {isKeyApp(app.link_method) && app.api_key && (
             <div>
               <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">API Key</div>
               <div className="flex items-center gap-2">
@@ -427,8 +428,8 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', i
               </div>
             </div>
           )}
-          {/* 路由规则（仅 api-key 类：同时显示模型和场景路由）*/}
-          {app.link_method === 'api-key' && (
+          {/* 路由规则（api-key / 手工添加 类：同时显示模型和场景路由）*/}
+          {isKeyApp(app.link_method) && (
             <div>
               <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">路由规则（模型或场景路由）</div>
               <select value={routeId} onChange={e => setRouteId(e.target.value)}
@@ -452,8 +453,8 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', i
               </select>
             </div>
           )}
-          {/* 请求控制（api-key 和 shim 类都可配） */}
-          {(app.link_method === 'api-key' || app.link_method === 'shim') && (
+          {/* 请求控制（api-key / 手工添加 / shim 类都可配） */}
+          {(isKeyApp(app.link_method) || app.link_method === 'shim') && (
             <div>
               <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">请求控制</div>
               <div className="space-y-2">
@@ -482,8 +483,8 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', i
               </div>
             </div>
           )}
-          {/* 接入配置（展示 Key + 代码示例）：仅纯自定义 api-key 应用显示；预设/config-file/env 托管不显示 */}
-          {app.link_method === 'api-key' && app.api_key && !app.env && !app.config_file && (
+          {/* 接入配置（展示 Key + 代码示例）：手工添加 / 纯自定义应用显示；预设/config-file/env 托管不显示 */}
+          {isKeyApp(app.link_method) && app.api_key && !app.env && !app.config_file && (
             <div>
               <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">接入配置</div>
               <KeyConfigPanel apiKey={app.api_key} localBase="http://127.0.0.1:11430/v1"
@@ -498,7 +499,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', i
               className="px-4 py-2 text-sm rounded-xl border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
               取消 API Key 管理
             </button>
-          ) : !inline && onDelete && app.link_method === 'api-key' && (
+          ) : onDelete && isKeyApp(app.link_method) && (
             <button onClick={() => onDelete(app.id)}
               className="px-4 py-2 text-sm rounded-xl border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
               删除
@@ -514,11 +515,150 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', i
           </button>
         </div>
       </div>
+    </div>
   );
-  if (inline) return card;
+}
+
+// 手工添加面板（内联）：未被识别的应用 —— 仅给 Key + base_url，用户自行配置指向网关。
+// 与 AppSettingsPanel（弹窗，用于编辑/桌面应用托管）是两套独立组件。
+function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKey, onSave, onCancel }) {
+  const [name,        setName]        = useState(app.name || '');
+  const [icon,        setIcon]        = useState(app.icon || '🔧');
+  const [desc,        setDesc]        = useState(app.description || '');
+  const [routeId,     setRouteId]     = useState(app.route_id || '');
+  const [allowStream, setAllowStream] = useState(app.allow_stream !== false);
+  const [maxRpm,      setMaxRpm]      = useState(app.max_rpm || '');
+  const [maxConc,     setMaxConc]     = useState(app.max_concurrent || '');
+  const [models,      setModels]      = useState((app.allowed_models || []).join(', '));
+  const [busy,        setBusy]        = useState(false);
+  const [copied,      setCopied]      = useState(false);
+  const ICONS = ['🤖','✏️','🔧','💻','🎯','🌐','📱','🔑','⚡','🛠️','🎨','📊'];
+
+  async function save() {
+    setBusy(true);
+    await onUpdate({
+      id: app.id, name, icon, description: desc,
+      route_id: routeId || null,
+      allow_stream: allowStream,
+      max_rpm: maxRpm ? +maxRpm : null,
+      max_concurrent: maxConc ? +maxConc : null,
+      allowed_models: models.split(',').map(s => s.trim()).filter(Boolean),
+    });
+    setBusy(false);
+    onSave();
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={dismiss}>
-      {card}
+    <div className="mb-3 bg-white dark:bg-gray-900 rounded-2xl border border-blue-200 dark:border-blue-800/50 shadow-sm">
+      <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-200 dark:border-gray-800">
+        <span className="text-xl">{icon}</span>
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">手工添加应用</h3>
+        <button onClick={onCancel} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg">✕</button>
+      </div>
+      <div className="p-5 space-y-4">
+        {/* 基础信息 */}
+        <div>
+          <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">基础信息</div>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="应用名称"
+            className="w-full text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-gray-800 dark:text-gray-200 mb-2" />
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {ICONS.map(e => (
+              <button key={e} onClick={() => setIcon(e)}
+                className={`text-lg p-1 rounded ${icon === e ? 'bg-blue-100 dark:bg-blue-900/40 ring-1 ring-blue-400' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}>
+                {e}
+              </button>
+            ))}
+          </div>
+          <textarea value={desc} onChange={e => setDesc(e.target.value)} placeholder="描述（可选）" rows={2}
+            className="w-full text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none resize-none text-gray-600 dark:text-gray-400" />
+        </div>
+        {/* API Key */}
+        {app.api_key && (
+          <div>
+            <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">API Key</div>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 text-[11px] font-mono bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-gray-600 dark:text-gray-400 truncate">{app.api_key}</code>
+              <button onClick={() => { navigator.clipboard.writeText(app.api_key); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+                className="text-xs px-2 py-1.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 shrink-0">
+                {copied ? '已复制✓' : '复制'}
+              </button>
+              {onRegenKey && (
+                <button onClick={() => onRegenKey(app.id)}
+                  className="text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 shrink-0">重置</button>
+              )}
+            </div>
+          </div>
+        )}
+        {/* 路由规则 */}
+        <div>
+          <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">路由规则（模型或场景路由）</div>
+          <select value={routeId} onChange={e => setRouteId(e.target.value)}
+            className="w-full text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none text-gray-800 dark:text-gray-200">
+            <option value="">不绑定（走默认策略）</option>
+            {(() => {
+              const avail = new Set(availableModels.map(m => m.id));
+              const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
+              return usable.length > 0 && (
+                <optgroup label="场景路由">
+                  {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
+                </optgroup>
+              );
+            })()}
+            {['free','p2p','paid'].map(tier => {
+              const tm = availableModels.filter(m => m.tier === tier);
+              if (!tm.length) return null;
+              const label = tier === 'free' ? '🟢 免费模型' : tier === 'p2p' ? '🔵 P2P 模型' : '🟣 付费模型';
+              return <optgroup key={tier} label={label}>{tm.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>;
+            })}
+          </select>
+        </div>
+        {/* 请求控制 */}
+        <div>
+          <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">请求控制</div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500 w-20 shrink-0">允许流式</label>
+              <button onClick={() => setAllowStream(!allowStream)}
+                className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${allowStream ? 'bg-blue-600' : 'bg-gray-400'}`}>
+                <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${allowStream ? 'translate-x-4' : 'translate-x-0.5'}`} />
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500 w-20 shrink-0">RPM 限制</label>
+              <input type="number" value={maxRpm} onChange={e => setMaxRpm(e.target.value)} placeholder="不限"
+                className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500 w-20 shrink-0">并发限制</label>
+              <input type="number" value={maxConc} onChange={e => setMaxConc(e.target.value)} placeholder="不限"
+                className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500 w-20 shrink-0">允许模型</label>
+              <input value={models} onChange={e => setModels(e.target.value)} placeholder="空=不限，逗号分隔"
+                className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
+            </div>
+          </div>
+        </div>
+        {/* 接入配置：Key + base_url + 示例（用户自行把应用指向网关）*/}
+        {app.api_key && (
+          <div>
+            <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">接入配置（把你的应用指向以下地址）</div>
+            <KeyConfigPanel apiKey={app.api_key} localBase="http://127.0.0.1:11430/v1"
+              model={routeId || undefined} hideAuto />
+          </div>
+        )}
+      </div>
+      <div className="flex gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800">
+        <button onClick={save} disabled={busy}
+          className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+          {busy ? '保存中…' : '保存'}
+        </button>
+        <button onClick={onCancel}
+          className="px-4 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400">
+          取消
+        </button>
+      </div>
     </div>
   );
 }
@@ -529,7 +669,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   const [localBase, setLocalBase] = useState('');
   // 当 Gateway 的 routes 更新时同步进来（场景路由新建后立即可选）
   useEffect(() => { if (externalRoutes?.length) setRoutes(externalRoutes); }, [externalRoutes]);
-  const [settings, setSettings] = useState(null);   // 设置弹窗对应的 app
+  const [settings, setSettings] = useState(null);     // 设置弹窗对应的 app（编辑/桌面应用托管）
+  const [manualDraft, setManualDraft] = useState(null); // 手工添加的内联面板对应的 app
   const [appStats, setAppStats] = useState({});     // id → {calls,tokens,lastTs}
 
   const load = useCallback(async () => {
@@ -578,9 +719,10 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     const r = await window.electronAPI.apps?.regenKey(id).catch(() => null);
     if (r?.ok) {
       await load();
-      // 用最新 key 刷新设置弹窗
+      // 用最新 key 刷新设置弹窗 / 手工添加面板
       const fresh = (await window.electronAPI.apps?.list().catch(() => []) || []).find(a => a.id === id);
       if (fresh && settings?.id === id) setSettings(fresh);
+      if (fresh && manualDraft?.id === id) setManualDraft({ ...fresh, _isNew: true });
     }
   }
 
@@ -593,15 +735,23 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     return pick?.id || '';
   }
 
-  // 添加流程：未被识别的应用 → 创建空白 api-key 应用并打开完整配置
-  // （已识别的 CLI/桌面应用都在列表里直接托管，不再走预设面板）
-  // 标记 _isNew：用户关闭/取消时若未保存则删除（避免「点关闭也保存了」）
+  // 手工添加：未被识别的应用 → 创建 manual 应用，内联展开 ManualAddPanel
+  // （已识别的 CLI/桌面应用都在列表里直接托管，不走此入口）
   async function addCustom() {
     const created = await window.electronAPI.apps?.create({
-      name: '新应用', icon: '🔧', link_method: 'api-key',
+      name: '新应用', icon: '🔧', link_method: 'manual',
       route_id: defaultRouteId() || null,
     }).catch(() => null);
-    if (created?.id) setSettings({ ...created, _isNew: true });
+    if (created?.id) setManualDraft({ ...created, _isNew: true });
+  }
+  // 手工添加面板：保存（已在面板内持久化）→ 关闭并刷新
+  function closeManualDraft() { setManualDraft(null); load(); }
+  // 手工添加面板：取消 → 删除这条未保存的应用再刷新
+  async function cancelManualDraft() {
+    const d = manualDraft;
+    setManualDraft(null);
+    if (d?.id) await window.electronAPI.apps?.delete(d.id).catch(() => {});
+    await load();
   }
 
   const [busyId, setBusyId] = useState(null);
@@ -646,8 +796,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
 
   return (
     <>
-      {/* 编辑已有应用 → 弹窗；添加新应用 → 内联显示在操作栏下方 */}
-      {settings && !settings._isNew && (
+      {/* 编辑已有应用 / 桌面应用托管 → 弹窗（AppSettingsPanel）*/}
+      {settings && (
         <AppSettingsPanel app={settings} routes={routes} availableModels={availableModels} localBase={localBase}
           onUpdate={handleUpdateApp} onDelete={handleDeleteApp} onRegenKey={handleRegenKey}
           onCancelManage={handleCancelManage}
@@ -660,16 +810,15 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                 className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors">
                 + 添加应用
               </button>
-              <span className="text-xs text-gray-400 dark:text-gray-500">已识别的应用在下方列表中托管；此处添加未被识别的应用</span>
+              <span className="text-xs text-gray-400 dark:text-gray-500">已识别的应用在下方列表中托管；此处手工添加未被识别的应用</span>
               <div className="ml-auto"><ImportConfigButton onImported={load} /></div>
             </div>
 
-            {/* 添加新应用：内联配置面板 */}
-            {settings && settings._isNew && (
-              <AppSettingsPanel app={settings} routes={routes} availableModels={availableModels} localBase={localBase} inline
-                onUpdate={handleUpdateApp} onDelete={handleDeleteApp} onRegenKey={handleRegenKey}
-                onCancelManage={handleCancelManage}
-                onClose={closeSettings} onCancel={cancelSettings} />
+            {/* 手工添加 → 内联面板（ManualAddPanel，独立组件）*/}
+            {manualDraft && (
+              <ManualAddPanel app={manualDraft} routes={routes} availableModels={availableModels}
+                onUpdate={handleUpdateApp} onRegenKey={handleRegenKey}
+                onSave={closeManualDraft} onCancel={cancelManualDraft} />
             )}
 
             {/* 应用列表 */}
@@ -692,13 +841,14 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                     if (diff < 7*86400) return `${Math.floor(diff/86400)}天前`;
                     return new Date(ts*1000).toLocaleDateString('zh-CN',{month:'short',day:'numeric'});
                   };
-                  // 在线 = 已托管(shim linked) 或 api-key 应用；离线 = 已安装但用户取消托管
-                  const isOnline = app.link_method === 'api-key' || app.linked;
+                  // 在线 = 已托管(shim linked) 或 按 key 路由的应用(api-key/manual)；离线 = 已安装但取消托管
+                  const keyApp = isKeyApp(app.link_method);
+                  const isOnline = keyApp || app.linked;
                   const statusDot = isOnline
-                    ? (app.link_method === 'api-key' ? 'bg-blue-400' : 'bg-green-400 shadow-[0_0_6px] shadow-green-400/60')
+                    ? (keyApp ? 'bg-blue-400' : 'bg-green-400 shadow-[0_0_6px] shadow-green-400/60')
                     : 'bg-gray-300 dark:bg-gray-600';
                   const rowBg = isOnline
-                    ? (app.link_method === 'api-key'
+                    ? (keyApp
                         ? 'bg-blue-50/40 dark:bg-blue-950/10'
                         : 'bg-green-50/60 dark:bg-green-950/15')
                     : 'bg-gray-50/50 dark:bg-gray-800/20';
@@ -711,7 +861,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       {/* 状态列（在线/离线） */}
                       <div className="w-14 shrink-0 flex items-center gap-1.5">
                         <span className={`w-2 h-2 rounded-full shrink-0 ${statusDot}`} />
-                        <span className={`text-[11px] font-medium ${isOnline ? (app.link_method === 'api-key' ? 'text-blue-500' : 'text-green-600 dark:text-green-400') : 'text-gray-400'}`}>
+                        <span className={`text-[11px] font-medium ${isOnline ? (keyApp ? 'text-blue-500' : 'text-green-600 dark:text-green-400') : 'text-gray-400'}`}>
                           {isOnline ? '在线' : '离线'}
                         </span>
                       </div>
@@ -737,8 +887,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         </div>
                       </div>
 
-                      {/* 路由下拉：仅 api-key 应用可绑路由（透明托管的 shim 由网关按协议/策略路由，不读 route_id）*/}
-                      {app.link_method === 'api-key' && !app._virtual_desktop && (
+                      {/* 路由下拉：api-key / 手工添加 应用可绑路由（透明托管的 shim 由网关按协议/策略路由，不读 route_id）*/}
+                      {keyApp && !app._virtual_desktop && (
                       <select
                         value={app.route_id || ''}
                         onChange={async e => {

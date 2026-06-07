@@ -844,7 +844,7 @@ function registerIPC() {
         max_concurrent: app.max_concurrent || null,
         allowed_models: app.allowed_models || [],
       };
-      if (app.link_method === 'api-key' && app.api_key) {
+      if ((app.link_method === 'api-key' || app.link_method === 'manual') && app.api_key) {
         appControls.push({ ...ctrl, match: { key: app.api_key } });
         // route_id 绑定 → 网关按该 key 覆盖路由（命中场景路由用其降级链，否则视为单模型）
         if (app.route_id) {
@@ -1015,7 +1015,7 @@ function registerIPC() {
   });
 
   // ── 应用管理 CRUD（apps[]，统一管理托管和API Key应用）────────────────────────
-  // 应用结构：{ id, name, icon, link_method(shim|api-key), api_key, route_id,
+  // 应用结构：{ id, name, icon, link_method(shim|api-key|manual), api_key, route_id,
   //             description, allowed_models[], max_rpm, max_concurrent,
   //             allow_stream, created_at }
 
@@ -1134,7 +1134,7 @@ function registerIPC() {
       icon: data.icon || '🔧',
       link_method: data.link_method || 'api-key',
       agent_id: data.agent_id || null,           // shim 类专用，对应 tool id
-      api_key: data.link_method === 'api-key'
+      api_key: (data.link_method === 'api-key' || data.link_method === 'manual')
         ? ('sk-local-' + rndHex(16)) : null,
       route_id: data.route_id || null,
       description: data.description || '',
@@ -1174,7 +1174,7 @@ function registerIPC() {
   ipcMain.handle('apps:regenKey', (_e, id) => {
     const apps = getApps();
     const idx = apps.findIndex(a => a.id === id);
-    if (idx === -1 || apps[idx].link_method !== 'api-key') return { ok: false };
+    if (idx === -1 || !(apps[idx].link_method === 'api-key' || apps[idx].link_method === 'manual')) return { ok: false };
     apps[idx].api_key = 'sk-local-' + rndHex(16);
     saveApps(apps);
     return { ok: true, api_key: apps[idx].api_key };
@@ -1303,7 +1303,7 @@ function registerIPC() {
     const stats = {};
     for (const app of (appList || [])) {
       let s;
-      if (app.link_method === 'api-key' && app.api_key) {
+      if ((app.link_method === 'api-key' || app.link_method === 'manual') && app.api_key) {
         s = localStats.queryByApiKey(app.api_key);
       } else if (app.link_method === 'shim' && app.agent_id) {
         const ds = AGENT_DATA_SOURCE[app.agent_id];
