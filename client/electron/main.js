@@ -1101,11 +1101,17 @@ function registerIPC() {
       .filter(app => app.link_method !== 'shim' || app.installed);
 
     // 追加：检测到、但还没"添加"过的桌面应用（虚拟行，显示「添加」）
+    // 去重以「目标配置文件」为准：配置文件才是应用的真实身份（同一文件不可能托管两次）。
+    // 避免两套注册表（DESKTOP_APPS vs yaml app_presets）id 不一致时重复，
+    // 例如 Claude Code（含桌面版）与 Claude Desktop 都写 ~/.claude/settings.json。
+    const norm = (p) => { try { return path.resolve(resolveCfgPath(p)).toLowerCase(); } catch { return String(p || '').toLowerCase(); } };
+    const managedFiles = new Set(savedApps.filter(a => a.config_file).map(a => norm(a.config_file)));
     const linkedDesktop = new Set(savedApps.filter(a => a.preset_id).map(a => a.preset_id));
     for (const d of DESKTOP_APPS) {
       if (!appxInstalled(d.appx)) continue;
-      if (linkedDesktop.has(d.id)) continue;   // 已添加过 → 已在 savedApps 里显示
       const file = resolveCfgPath(d.config_file);
+      // 已添加过（preset_id 命中）或该配置文件已被某 api-key 应用托管 → 不再重复展示
+      if (linkedDesktop.has(d.id) || managedFiles.has(norm(file))) continue;
       rows.push({
         id: 'app-desktop-' + d.id,
         name: d.name, icon: d.icon,
