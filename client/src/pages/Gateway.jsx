@@ -1535,18 +1535,23 @@ export default function Gateway() {
       }
     } catch {}
 
-    // 只列「当前在线」可提供的 P2P 模型（/v1/models = 在线 worker 实际能跑的）
-    // 层级信息从 rates 取（取不到则标 p2p）
+    // 模型来源（只列「能提供的」）：
+    //   付费(paid)  —— 后端用真实 API Key 直供，始终可用 → 全部列出
+    //   免费/P2P    —— 由 peer worker 提供 → 仅当前在线（/v1/models）才列出
     try {
-      const rateTier = {};
-      try {
-        const r = await getRates();
-        for (const m of (r.data?.models || [])) rateTier[m.name] = normTier(m.tier);
-      } catch {}
-      const res = await getOnlineModels();
-      for (const m of (res.data?.data || [])) add(m.id, rateTier[m.id] || 'p2p');
+      let rates = [];
+      try { rates = (await getRates()).data?.models || []; } catch {}
+      const online = new Set();
+      try { for (const m of ((await getOnlineModels()).data?.data || [])) online.add(m.id); } catch {}
+      for (const m of rates) {
+        const tier = normTier(m.tier);
+        if (tier === 'paid') add(m.name, 'paid');            // 付费始终可用
+        else if (online.has(m.name)) add(m.name, tier);      // 免费/P2P 需在线
+      }
+      // 在线但 rates 里没有的，按 p2p 兜底列出
+      for (const id of online) add(id, 'p2p');
     } catch (e) {
-      console.error('loadAvailableModels online', e);
+      console.error('loadAvailableModels', e);
     }
 
     setAvailableModels(models);
