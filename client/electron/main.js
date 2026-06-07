@@ -835,6 +835,7 @@ function registerIPC() {
     // 路由配置（scene_routes / virtual_models 同属此文件）→ 写入 local-config
     const hasScenes  = Array.isArray(parsed.scene_routes) && parsed.scene_routes.length > 0;
     const hasVModels = Array.isArray(parsed.virtual_models) && parsed.virtual_models.length > 0;
+    const addedRoutes = [];   // 本次同步「新增」的场景路由（本地没有、server 有）
     if (hasScenes || hasVModels) {
       const cfg = readLocalConfig();
       if (hasScenes) {
@@ -847,6 +848,7 @@ function registerIPC() {
         const newFromServer = parsed.scene_routes
           .filter(r => !localKeys.has(r.id) && !localKeys.has(r.model_key))
           .map(r => ({ ...r, created_at: r.created_at || now }));
+        for (const r of newFromServer) addedRoutes.push(r.scene_name || r.model_key || r.id);
         cfg.scene_routes = [...local, ...newFromServer];
         cfg.initialized_routes = true;
       }
@@ -866,7 +868,7 @@ function registerIPC() {
     if (!applied.tools && !applied.routes) {
       return { ok: false, error: '文件中未找到可识别的配置段（tools / scene_routes / virtual_models）' };
     }
-    return { ok: true, source, applied, addedApps };
+    return { ok: true, source, applied, addedApps, addedRoutes };
   }
 
   function fetchYaml(url, token) {

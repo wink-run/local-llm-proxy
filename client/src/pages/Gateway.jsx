@@ -323,11 +323,15 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
     setShowUrl(v => !v);
   }
 
-  // 同步成功提示：带上新增应用数量
+  // 同步成功提示：带上新增的应用 / 路由数量
   function importedMsg(r, prefix) {
-    const n = Array.isArray(r.addedApps) ? r.addedApps.length : 0;
-    if (n > 0) return `${prefix}，新增 ${n} 个应用：${r.addedApps.join('、')}`;
-    return `${prefix}（无新增应用）`;
+    const apps = Array.isArray(r.addedApps) ? r.addedApps : [];
+    const routes = Array.isArray(r.addedRoutes) ? r.addedRoutes : [];
+    const parts = [];
+    if (apps.length)   parts.push(`新增 ${apps.length} 个应用：${apps.join('、')}`);
+    if (routes.length) parts.push(`新增 ${routes.length} 条路由：${routes.join('、')}`);
+    if (parts.length)  return `${prefix}，${parts.join('；')}`;
+    return `${prefix}（无新增）`;
   }
 
   async function handleFile() {
