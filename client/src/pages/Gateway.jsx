@@ -634,14 +634,14 @@ function AppManager({ externalRoutes, availableModels = [] }) {
 
   // 保存设置（已在面板内 onUpdate 持久化）→ 仅关闭并刷新
   function closeSettings() { setSettings(null); load(); }
-  // 取消/关闭：若是未保存的新应用则删除
-  function cancelSettings() {
+  // 取消/关闭：若是未保存的新应用则删除（必须等删除完成再刷新，否则列表读到删除前的旧状态）
+  async function cancelSettings() {
     const s = settings;
     setSettings(null);
     if (s?._isNew && s.id) {
-      window.electronAPI.apps?.delete(s.id).catch(() => {});
+      await window.electronAPI.apps?.delete(s.id).catch(() => {});
     }
-    load();
+    await load();
   }
 
   return (
