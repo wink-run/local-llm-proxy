@@ -28,6 +28,7 @@ tools:
     inject:
       env:
         ANTHROPIC_BASE_URL: http://{REVERSE}
+        ANTHROPIC_AUTH_TOKEN: "{KEY}"
 
   - id: codex
     name: Codex (CLI)
@@ -54,6 +55,7 @@ tools:
     inject:
       env:
         GEMINI_BASE_URL: http://{REVERSE}
+        GEMINI_API_KEY: "{KEY}"
 
 
 # ── API Key 应用（检测到已安装则在列表显示「添加」，写其配置文件指向网关）──

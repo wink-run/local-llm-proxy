@@ -19,6 +19,25 @@ const APPLIED_DIR = path.join(TB_DIR, 'applied');
 
 function gwHostPort() { return configLoader.gatewayCtx().reverse; }
 
+// 由 main.js 注入：toolId → 该 shim 应用的 api_key（用于解析 inject.env 里的 {KEY}）
+let _keyResolver = null;
+function setKeyResolver(fn) { _keyResolver = typeof fn === 'function' ? fn : null; }
+
+// 解析 inject.env 里的 {KEY} 占位为该工具的 api_key。
+// 没有 key 时，丢弃仍含 {KEY} 的鉴权变量（不注入空 token），只保留 base_url 等。
+function resolveEnvKeys(toolId, envMap) {
+  const key = _keyResolver ? (_keyResolver(toolId) || '') : '';
+  const out = {};
+  for (const [k, v] of Object.entries(envMap || {})) {
+    const s = String(v);
+    if (s.includes('{KEY}')) {
+      if (!key) continue;                 // 无 key → 跳过该鉴权变量
+      out[k] = s.replace(/\{KEY\}/g, key);
+    } else out[k] = s;
+  }
+  return out;
+}
+
 // 工具是否已装（命令可执行）
 function isInstalled(tool) {
   const cmd = tool.detect && tool.detect.command;
@@ -51,7 +70,8 @@ function apply(tool) {
       case 'base_url-env': {
         const real = shim.resolveRealCommand(tool.detect.command);
         if (!real) return { ok: false, error: 'real-command-not-found' };
-        shim.writeShim(tool.detect.command, real, (tool.inject && tool.inject.env) || {});
+        const env = resolveEnvKeys(tool.id, (tool.inject && tool.inject.env) || {});
+        shim.writeShim(tool.detect.command, real, env);
         shim.enablePath();
         return { ok: true, strategy: tool.strategy, needsRestartShell: true };
       }
@@ -66,7 +86,7 @@ function apply(tool) {
         const fresh = configLoader.tools().find(t => t.id === tool.id) || tool;
         const real = shim.resolveRealCommand(fresh.detect.command);
         if (!real) return { ok: false, error: 'real-command-not-found' };
-        shim.writeShim(fresh.detect.command, real, (fresh.inject && fresh.inject.env) || {});
+        shim.writeShim(fresh.detect.command, real, resolveEnvKeys(fresh.id, (fresh.inject && fresh.inject.env) || {}));
         shim.enablePath();
         return { ok: true, strategy: tool.strategy, needsRestartShell: true };
       }
@@ -152,5 +172,5 @@ function revertById(id) { const t = configLoader.tools().find(x => x.id === id);
 
 module.exports = {
   list, apply, revert, status, applyAll, revertAll,
-  applyById, revertById, revertEverythingOnExit,
+  applyById, revertById, revertEverythingOnExit, setKeyResolver,
 };

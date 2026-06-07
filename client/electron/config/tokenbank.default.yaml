@@ -29,6 +29,7 @@ tools:
     inject:
       env:
         ANTHROPIC_BASE_URL: http://{REVERSE}
+        ANTHROPIC_AUTH_TOKEN: "{KEY}"
 
   - id: gemini-cli
     name: Gemini CLI
@@ -41,6 +42,7 @@ tools:
     inject:
       env:
         GEMINI_BASE_URL: http://{REVERSE}
+        GEMINI_API_KEY: "{KEY}"
 
   - id: codex
     name: Codex (CLI)

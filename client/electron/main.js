@@ -849,6 +849,14 @@ function registerIPC() {
       } else if (app.link_method === 'shim' && app.agent_id) {
         const path = PROTOCOL_PATH[toolProto[app.agent_id]];
         if (path) appControls.push({ ...ctrl, match: { path } });
+        // shim 也按 key 绑定路由（shim 注入了 api_key 作鉴权）→ keyScene 改写模型
+        if (app.api_key && app.route_id) {
+          const route = routes.find(r => r.model_key === app.route_id || r.id === app.route_id);
+          keyScene[app.api_key] = {
+            steps: route?.steps?.length ? route.steps : [{ model: app.route_id }],
+            scene_name: route?.scene_name || app.route_id,
+          };
+        }
       }
     }
     gateway.setAppControls(appControls);
@@ -1322,7 +1330,8 @@ function registerIPC() {
       id: 'app-shim-' + agent_id,
       name, icon: icon || '🤖',
       link_method: 'shim', agent_id,
-      api_key: null, route_id: null,
+      // shim 也发一个 key（注入到 shim 的鉴权 env），网关按 key 走 keyScene 改写模型
+      api_key: 'sk-local-' + rndHex(16), route_id: null,
       description: '', allowed_models: [], max_rpm: null,
       max_concurrent: null, allow_stream: true,
       created_at: new Date().toISOString(),
@@ -1386,6 +1395,12 @@ app.whenReady().then(() => {
   gateway.setStatsRecorder(localStats.record);
   gateway.setLocalStats(localStats);
   gateway.setLocalConfigReader(readLocalConfig);   // 供策略组调度查 policies[]
+  // shim 写脚本时按 toolId 取该 shim 应用的 api_key（解析 inject.env 的 {KEY}）
+  agentLinker.setKeyResolver((toolId) => {
+    const apps = readLocalConfig().apps || [];
+    const a = apps.find(x => x.link_method === 'shim' && x.agent_id === toolId);
+    return a ? a.api_key : null;
+  });
   gateway.start(11430, readAgentConfig);
 
   // 默认启用一键托管：启动时自动接入本机已安装、用户未取消的 CLI 工具。

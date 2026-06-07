@@ -938,19 +938,23 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         </div>
                       </div>
 
-                      {/* 路由下拉：api-key / 手工添加 应用可绑路由（透明托管的 shim 由网关按协议/策略路由，不读 route_id）*/}
-                      {keyApp && !app._virtual_apikey && (
+                      {/* 路由下拉：api-key / 手工添加 / 透明托管(shim) 应用都可绑路由 */}
+                      {(keyApp || app.link_method === 'shim') && !app._virtual_apikey && (
                       <select
                         value={app.route_id || ''}
                         onChange={async e => {
                           const val = e.target.value || null;
-                          if (app._virtual) {
+                          let appId = app.id;
+                          if (app._virtual && app.link_method === 'shim') {
                             const created = await window.electronAPI.apps?.ensureShimApp({
                               agent_id: app.agent_id, name: app.name, icon: app.icon,
                             }).catch(() => null);
-                            if (created) await window.electronAPI.apps?.update({ id: created.id, route_id: val }).catch(() => {});
-                          } else {
-                            await window.electronAPI.apps?.update({ id: app.id, route_id: val }).catch(() => {});
+                            if (created) appId = created.id;
+                          }
+                          await window.electronAPI.apps?.update({ id: appId, route_id: val }).catch(() => {});
+                          // shim：重写 shim 脚本以注入/更新 key（透明托管按 key 走 keyScene 路由）
+                          if (app.link_method === 'shim' && app.agent_id) {
+                            await window.electronAPI.agents?.apply(app.agent_id).catch(() => {});
                           }
                           await load();
                         }}
