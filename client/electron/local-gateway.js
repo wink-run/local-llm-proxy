@@ -702,17 +702,14 @@ function proxyResponsesViaChat(provider, responsesBody, model, res) {
 
         proxyRes.on('data', (chunk) => {
           buf += chunk.toString();
-          // 按 SSE 空行切块
+          // 按行解析（兼容事件间为单个 \n 或标准 \n\n 的上游；每个 data: 行即一个 chat chunk）
           let idx;
-          while ((idx = buf.indexOf('\n\n')) >= 0) {
-            const block = buf.slice(0, idx);
-            buf = buf.slice(idx + 2);
-            const dataLines = [];
-            for (const line of block.split('\n')) {
-              if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
-            }
-            if (!dataLines.length) continue;
-            const data = dataLines.join('\n');
+          while ((idx = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, idx).replace(/\r$/, '');
+            buf = buf.slice(idx + 1);
+            if (!line.startsWith('data:')) continue;
+            const data = line.slice(5).replace(/^ /, '');
+            if (!data) continue;
             if (data.trim() === '[DONE]') { res.write(sm.finalize()); continue; }
             let obj; try { obj = JSON.parse(data); } catch { continue; }
             if (obj.error) { res.write(sm.failedEvent(obj.error.message || 'upstream error', obj.error.type)); continue; }
@@ -814,7 +811,7 @@ async function route(model, reqPath, body, res, callerKey) {
       res.end(JSON.stringify(payload));
     }
   }
-
+
   // ── Scene route：model=llm-router-* 触发，或 callerKey 绑定了路由（api-key 应用 route_id）──
   const boundScene = (callerKey && _keyScene[callerKey]) || null;
   if (boundScene?.steps?.length || model.startsWith('llm-router-')) {
@@ -827,7 +824,7 @@ async function route(model, reqPath, body, res, callerKey) {
 
     const all          = enabledProviders();
     const failedModels = [];
-
+
     for (const step of scene.steps) {
       const stepModel     = step.model;
       // Match providers by model list, not by tier — tier is informational only
@@ -835,12 +832,12 @@ async function route(model, reqPath, body, res, callerKey) {
       const stepProviders = [
         ...stepCandidates.filter(p => Array.isArray(p.models) && p.models.length > 0),
         ...stepCandidates.filter(p => !Array.isArray(p.models) || p.models.length === 0),
-      ];
+      ];
       let   stepSucceeded = false;
 
       for (const provider of stepProviders) {
         try {
-          const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, stepModel, res);
+          const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, stepModel, res);
           pushLog({
             ts: t0, requested_model: model, model: stepModel,
             scene_name: scene.scene_name,
@@ -855,7 +852,7 @@ async function route(model, reqPath, body, res, callerKey) {
           stepSucceeded = true;
           return;
         } catch (err) {
-          lastErr = err;
+          lastErr = err;
           if (res.headersSent) return;
         }
       }
