@@ -1054,6 +1054,7 @@ function registerIPC() {
         description: '',
         type: t.type || 'cli',
         needs_ca: !!t.needs_ca,
+        route_bindable: t.route_bindable !== false,
         unsupported: !!t.unsupported,
         note: t.note || null,
         installed: t.installed,
@@ -1090,18 +1091,20 @@ function registerIPC() {
             installed: tool ? tool.installed : false,
             type: tool ? tool.type : (app.type || 'cli'),
             note: tool ? tool.note : (app.note || null),
+            route_bindable: tool ? tool.route_bindable : (app.route_bindable !== false),
             auto_config: autoConfigOf(app.agent_id),
           };
         }
         // config-file 类 api-key 应用：标记 host_method + 配置文件是否已写入（marker 命中）
         // 无 marker 定义（如旧版遗留应用）则回退用 api_key（写入的配置文件里一定含它）
         let configured = false;
+        const def = getApiKeyApps().find(d => d.id === app.preset_id);
         if (app.config_file) {
-          const def = getApiKeyApps().find(d => d.id === app.preset_id);
           const marker = (def && def.marker) || app.api_key;
           if (marker) configured = configHasMarker(resolveCfgPath(app.config_file), marker);
         }
         return { ...app, linked: true, installed: true, configured,
+                 route_bindable: def ? def.route_bindable !== false : (app.route_bindable !== false),
                  host_method: app.config_file ? 'config-file' : 'api-key' };
       })
       // 机器上没有的 shim 应用不展示；api-key 应用始终展示
@@ -1124,6 +1127,7 @@ function registerIPC() {
         link_method: 'api-key', host_method: 'config-file',
         _virtual_apikey: true,
         preset_id: d.id,
+        route_bindable: d.route_bindable !== false,
         config_file: file, patch: d.patch, env: d.env || null,
         configured: configHasMarker(file, d.marker),   // 配置文件是否已含我们的路由
         installed: true, linked: false, api_key: null, route_id: null,

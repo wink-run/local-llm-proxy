@@ -423,7 +423,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     </div>
   );
 
-  const routeSection = isKeyApp(app.link_method) && (
+  const routeSection = isKeyApp(app.link_method) && app.route_bindable !== false && (
     <div>
       <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">路由规则（模型或场景路由）</div>
       <select value={routeId} onChange={e => setRouteId(e.target.value)}
@@ -938,8 +938,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         </div>
                       </div>
 
-                      {/* 路由下拉：api-key / 手工添加 / 透明托管(shim) 应用都可绑路由 */}
-                      {(keyApp || app.link_method === 'shim') && !app._virtual_apikey && (
+                      {/* 路由下拉：api-key / 手工添加 / 透明托管(shim) 应用可绑路由；route_bindable=false(如 Claude)不显示 */}
+                      {(keyApp || app.link_method === 'shim') && !app._virtual_apikey && app.route_bindable !== false && (
                       <select
                         value={app.route_id || ''}
                         onChange={async e => {

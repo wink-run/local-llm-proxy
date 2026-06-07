@@ -19,6 +19,7 @@ mitm:
 tools:
   - id: claude-code
     name: Claude Code
+    route_bindable: false   # 模型受授权校验，改模型会被客户端拒绝
     protocol: anthropic
     detect:
       command: claude
@@ -63,6 +64,7 @@ tools:
 api_key_apps:
   - id: claude-desktop
     name: Claude Desktop
+    route_bindable: false
     icon: "🖥️"
     appx: Claude                       # Windows AppX 包名（检测是否已安装）
     config_file: "~/.claude/settings.json"

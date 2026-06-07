@@ -68,7 +68,8 @@ function apply(tool) {
       case 'base_url-env': {
         const real = shim.resolveRealCommand(tool.detect.command);
         if (!real) return { ok: false, error: 'real-command-not-found' };
-        const env = resolveEnvKeys(tool.id, (tool.inject && tool.inject.env) || {});
+        // route_bindable=false（如 Claude，客户端校验模型）→ 不注入，shim 纯透传走官方
+        const env = tool.route_bindable === false ? {} : resolveEnvKeys(tool.id, (tool.inject && tool.inject.env) || {});
         shim.writeShim(tool.detect.command, real, env);
         shim.enablePath();
         return { ok: true, strategy: tool.strategy, needsRestartShell: true };
@@ -134,6 +135,7 @@ function list() {
     id: t.id, name: t.name, protocol: t.protocol, strategy: t.strategy,
     type: t.type || 'cli',          // cli | gui
     needs_ca: !!t.needs_ca,         // 是否需先装根证书
+    route_bindable: t.route_bindable !== false,  // 是否支持改模型/绑路由（claude 客户端校验模型，false）
     unsupported: !!t.unsupported,   // 实测无法托管（如证书锁定）
     note: t.note || null,
     installed: isInstalled(t),
