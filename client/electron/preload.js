@@ -101,7 +101,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   toolsConfig: {
     load:        () => ipcRenderer.invoke('toolsConfig:load'),
     importFile:  () => ipcRenderer.invoke('toolsConfig:importFile'),
-    importUrl:   (url) => ipcRenderer.invoke('toolsConfig:importUrl', url),
+    importUrl:   (url, token) => ipcRenderer.invoke('toolsConfig:importUrl', { url, token }),
     reset:       () => ipcRenderer.invoke('toolsConfig:reset'),
   },
   policies: {

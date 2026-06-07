@@ -810,10 +810,14 @@ function registerIPC() {
     if (hasScenes || hasVModels) {
       const cfg = readLocalConfig();
       if (hasScenes) {
-        // 场景路由：管理员下发覆盖（权威）
-        cfg.scene_routes = parsed.scene_routes.map(r => ({
-          ...r, created_at: r.created_at || new Date().toISOString(),
-        }));
+        // 场景路由：合并——下发的路由更新/新增（按 id 或 model_key 匹配），
+        // 用户自己配的路由（不在下发集合里）保留，不被覆盖。
+        const now = new Date().toISOString();
+        const incoming = parsed.scene_routes.map(r => ({ ...r, created_at: r.created_at || now }));
+        const incomingKeys = new Set();
+        for (const r of incoming) { if (r.id) incomingKeys.add(r.id); if (r.model_key) incomingKeys.add(r.model_key); }
+        const kept = (cfg.scene_routes || []).filter(r => !incomingKeys.has(r.id) && !incomingKeys.has(r.model_key));
+        cfg.scene_routes = [...incoming, ...kept];
         cfg.initialized_routes = true;
       }
       if (hasVModels) {
@@ -835,14 +839,22 @@ function registerIPC() {
     return { ok: true, source, applied };
   }
 
-  function fetchYaml(url) {
+  function fetchYaml(url, token) {
     const https = require('https'); const http = require('http');
     return new Promise((resolve, reject) => {
       const mod = url.startsWith('https') ? https : http;
-      mod.get(url, { timeout: 10000 }, res => {
+      // 服务器配置端点需用户 JWT 鉴权；带上 token（renderer 的 localStorage.token）
+      const opts = { timeout: 10000, headers: token ? { Authorization: `Bearer ${token}` } : {} };
+      mod.get(url, opts, res => {
         let data = '';
         res.on('data', c => data += c);
-        res.on('end', () => resolve(data));
+        res.on('end', () => {
+          if (res.statusCode && res.statusCode >= 400) {
+            reject(new Error(`服务器返回 HTTP ${res.statusCode}（请确认已登录且服务器已上传配置）`));
+          } else {
+            resolve(data);
+          }
+        });
         res.on('error', reject);
       }).on('error', reject);
     });
@@ -870,9 +882,12 @@ function registerIPC() {
     } catch (e) { return { ok: false, error: e.message }; }
   });
 
-  ipcMain.handle('toolsConfig:importUrl', async (_e, url) => {
+  ipcMain.handle('toolsConfig:importUrl', async (_e, arg) => {
+    // 兼容旧签名（字符串 url）与新签名（{ url, token }）
+    const url   = typeof arg === 'string' ? arg : arg?.url;
+    const token = typeof arg === 'string' ? null : arg?.token;
     try {
-      const text = await fetchYaml(url);
+      const text = await fetchYaml(url, token);
       const parsed = require('js-yaml').load(text);
       return applyConfigDoc(parsed, url);
     } catch (e) { return { ok: false, error: e.message }; }

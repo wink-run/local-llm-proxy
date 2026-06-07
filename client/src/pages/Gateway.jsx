@@ -338,7 +338,9 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
     if (!base || !window.electronAPI?.toolsConfig) return;
     const fullUrl = base + endpoint;
     setBusy(true); setMsg('');
-    const r = await window.electronAPI.toolsConfig.importUrl(fullUrl);
+    // 服务器配置端点需用户 JWT 鉴权，带上本地登录 token
+    const token = localStorage.getItem('token');
+    const r = await window.electronAPI.toolsConfig.importUrl(fullUrl, token);
     setMsg(r.ok ? '✓ 已从服务器导入' : '✗ ' + r.error);
     if (r.ok && onImported) { onImported(); setShowUrl(false); }
     setBusy(false);
@@ -400,6 +402,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   const [claudeDevMode, setClaudeDevMode] = useState(null); // Claude Desktop 开发者模式状态
   // config-file 类 API Key 应用：两 Tab（0=配置文件写入和 API Key｜1=路由规则和请求控制）
   const isCfg = app.link_method === 'api-key' && !!app.config_file;
+  const isShim = app.link_method === 'shim';   // 透明托管：只编辑路由规则 + 请求控制
   const isClaudeDesktop = app.preset_id === 'claude-desktop';
   // Claude Desktop 且开发者模式未就绪 → 需引导用户先启用
   const needDevMode = isClaudeDesktop && claudeDevMode && !claudeDevMode.dev_mode_ready;
@@ -605,7 +608,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     </div>
   );
 
-  const routeSection = isKeyApp(app.link_method) && app.route_bindable !== false && (
+  const routeSection = (isKeyApp(app.link_method) || app.link_method === 'shim') && app.route_bindable !== false && (
     <div>
       <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">路由规则（模型或场景路由）</div>
       <select value={routeId} onChange={e => setRouteId(e.target.value)}
@@ -740,6 +743,16 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
               ) : (
                 <>{btnSave}{btnCancel}</>
               )}
+            </div>
+          </>
+        ) : isShim ? (
+          /* 透明托管：只编辑路由规则 + 请求控制（与 API Key 应用第二个 Tab 一致）*/
+          <>
+            <div className="p-5 space-y-4">
+              {routeSection}{controlSection}
+            </div>
+            <div className="flex gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800">
+              {btnSave}{btnCancel}
             </div>
           </>
         ) : (
@@ -972,6 +985,10 @@ function AppManager({ externalRoutes, availableModels = [] }) {
       if (created?.id) id = created.id;
     }
     const updated = await window.electronAPI.apps?.update({ ...data, id }).catch(() => null);
+    // shim 应用：路由/key 改动后需重写 shim 脚本才生效
+    if (app?.link_method === 'shim' && app.agent_id) {
+      await window.electronAPI.agents?.apply(app.agent_id).catch(() => {});
+    }
     await load();
     // 若设置弹窗仍开着且 id 未变，刷新其数据
     if (updated && settings?.id === updated.id) setSettings(updated);
@@ -1216,18 +1233,24 @@ function AppManager({ externalRoutes, availableModels = [] }) {
 
                       {/* 操作按钮：按托管方式区分 */}
                       {app.link_method === 'shim' ? (
-                        /* 透明托管：托管 / 取消托管 开关 */
-                        app.linked ? (
-                          <button onClick={() => handleShimToggle(app, false)} disabled={busyId === app.agent_id}
-                            className="text-[10px] px-2 py-1 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 disabled:opacity-50 shrink-0 font-medium">
-                            {busyId === app.agent_id ? '…' : '取消托管'}
+                        /* 透明托管：编辑（路由规则 + 请求控制）+ 托管/取消托管 开关 */
+                        <>
+                          <button onClick={() => setSettings(app)}
+                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
+                            编辑
                           </button>
-                        ) : (
-                          <button onClick={() => handleShimToggle(app, true)} disabled={busyId === app.agent_id}
-                            className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 shrink-0 font-medium">
-                            {busyId === app.agent_id ? '…' : '托管'}
-                          </button>
-                        )
+                          {app.linked ? (
+                            <button onClick={() => handleShimToggle(app, false)} disabled={busyId === app.agent_id}
+                              className="text-[10px] px-2 py-1 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 disabled:opacity-50 shrink-0 font-medium">
+                              {busyId === app.agent_id ? '…' : '取消托管'}
+                            </button>
+                          ) : (
+                            <button onClick={() => handleShimToggle(app, true)} disabled={busyId === app.agent_id}
+                              className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 shrink-0 font-medium">
+                              {busyId === app.agent_id ? '…' : '托管'}
+                            </button>
+                          )}
+                        </>
                       ) : app._virtual_apikey ? (
                         /* API Key 应用：未配置→添加；已配置(配置文件含我们的路由)→编辑 + 取消 API Key 管理 */
                         <>
@@ -2173,7 +2196,7 @@ export default function Gateway() {
             <div className="text-sm font-medium text-gray-700 dark:text-gray-200">导入配置</div>
             <p className="text-xs text-gray-500 mt-0.5">从本地文件或服务器下发导入「路由配置 + 虚拟模型映射」，导入后自动应用并刷新</p>
           </div>
-          <ImportConfigButton onImported={refresh} endpoint="/api/config/scenes" />
+          <ImportConfigButton onImported={() => { refresh(); loadSceneData(); loadAvailableModels(); }} endpoint="/api/config/scenes" />
         </div>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800">
           <div>
@@ -2253,18 +2276,22 @@ export default function Gateway() {
                     {!route.steps?.length && <span className="text-xs text-gray-400">暂无步骤</span>}
                   </div>
                 </div>
+                <button onClick={e => { e.stopPropagation(); setExpandedRoute(expandedRoute === route.id ? null : route.id); }}
+                  className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors mt-0.5 shrink-0">
+                  {expandedRoute === route.id ? '收起' : '编辑'}
+                </button>
                 <button onClick={e => { e.stopPropagation(); removeRoute(route.id); }}
                   className="text-[10px] text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors mt-1 shrink-0">删除</button>
                 <span className="text-gray-400 text-xs mt-1 shrink-0">{expandedRoute === route.id ? '▲' : '▼'}</span>
               </div>
               {expandedRoute === route.id && (
-                <SceneRouteEditor route={route} availableModels={availableModels} onSave={saveRoute} onCancel={() => setExpandedRoute(null)} />
+                <SceneRouteEditor key={'editor-' + route.id} route={route} availableModels={availableModels} onSave={saveRoute} onCancel={() => setExpandedRoute(null)} />
               )}
             </div>
             );
           })}
           {newRoute && (
-            <SceneRouteEditor route={newRoute} availableModels={availableModels} onSave={saveRoute} onCancel={() => setNewRoute(null)} />
+            <SceneRouteEditor key="new-route-editor" route={newRoute} availableModels={availableModels} onSave={saveRoute} onCancel={() => setNewRoute(null)} />
           )}
           {routes.length === 0 && !newRoute && (
             <div className="px-5 py-8 text-xs text-gray-400 text-center">还没有场景路由，点击「新建路由」开始</div>
