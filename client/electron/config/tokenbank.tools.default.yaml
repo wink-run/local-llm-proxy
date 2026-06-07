@@ -60,6 +60,55 @@ tools:
         GEMINI_BASE_URL: http://{REVERSE}
         GEMINI_API_KEY: "{KEY}"
 
+  # ── OpenCode（sst/opencode）：写 ~/.config/opencode/opencode.json 的 provider 段 ──
+  - id: opencode
+    name: OpenCode
+    protocol: openai
+    detect:
+      command: opencode
+      version-arg: --version
+      config-dirs: ['~/.config/opencode']
+    strategy: config-file
+    config-file: '~/.config/opencode/opencode.json'
+    patch:
+      provider.tokenbank.npm: "@ai-sdk/openai-compatible"
+      provider.tokenbank.name: Tokenbank
+      provider.tokenbank.options.baseURL: http://{REVERSE}/v1
+      provider.tokenbank.options.apiKey: "{KEY}"
+    revert: state-precise
+
+  # ── OpenClaw：写 ~/.openclaw/openclaw.json 的 models.providers 段 ──
+  - id: openclaw
+    name: OpenClaw
+    protocol: openai
+    detect:
+      command: openclaw
+      version-arg: --version
+      config-dirs: ['~/.openclaw']
+    strategy: config-file
+    config-file: '~/.openclaw/openclaw.json'
+    patch:
+      models.providers.tokenbank.baseUrl: http://{REVERSE}/v1
+      models.providers.tokenbank.apiKey: "{KEY}"
+      models.providers.tokenbank.api: openai-completions
+    revert: state-precise
+
+  # ── Hermes Agent（NousResearch）：写 ~/.hermes/config.yaml 的 model 段 ──
+  - id: hermes
+    name: Hermes Agent
+    protocol: openai
+    detect:
+      command: hermes
+      version-arg: --version
+      config-dirs: ['~/.hermes']
+    strategy: config-file
+    config-file: '~/.hermes/config.yaml'
+    patch:
+      model.provider: custom
+      model.base_url: http://{REVERSE}/v1
+      model.api_key: "{KEY}"
+    revert: state-precise
+
 
 # ── API Key 应用（检测到已安装则在列表显示「添加」，写其配置文件指向网关）──
 # {BASE}=网关地址 {KEY}=应用 key（运行时按应用填入；真 key 不进此文件）

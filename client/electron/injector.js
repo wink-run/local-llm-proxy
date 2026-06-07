@@ -37,6 +37,62 @@ function stripTomlVal(v) {
   if (/^".*"$/.test(v) || /^'.*'$/.test(v)) return v.slice(1, -1);
   return v;
 }
+
+// ── 格式判定 + JSON/YAML 的点路径深取/深设/深删 ──────────────────────────────
+// config-file 工具可能是 TOML(codex) / JSON(opencode,openclaw) / YAML(hermes)。
+function fmtOf(file) {
+  if (/\.json$/i.test(file)) return 'json';
+  if (/\.ya?ml$/i.test(file)) return 'yaml';
+  return 'toml';
+}
+const SENTINEL = Symbol('missing');
+function deepGet(obj, dotKey) {
+  const parts = dotKey.split('.'); let cur = obj;
+  for (const p of parts) {
+    if (cur && typeof cur === 'object' && p in cur) cur = cur[p];
+    else return SENTINEL;
+  }
+  return cur;
+}
+function deepSet(obj, dotKey, val) {
+  const parts = dotKey.split('.'); let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] == null) cur[parts[i]] = {};
+    cur = cur[parts[i]];
+  }
+  cur[parts[parts.length - 1]] = val;
+}
+function deepDelete(obj, dotKey) {
+  const parts = dotKey.split('.');
+  // 记录路径上每层容器，删完叶子后自底向上清理变空的父对象（只删我们注入时新建的空壳）
+  const chain = [obj];
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] == null) return;
+    cur = cur[parts[i]];
+    chain.push(cur);
+  }
+  delete cur[parts[parts.length - 1]];
+  // 自底向上：父对象若已空则删除
+  for (let i = chain.length - 1; i > 0; i--) {
+    const node = chain[i];
+    if (node && typeof node === 'object' && !Array.isArray(node) && Object.keys(node).length === 0) {
+      delete chain[i - 1][parts[i - 1]];
+    } else break;
+  }
+}
+function parseObj(text, fmt) {
+  if (!text) return {};
+  try {
+    if (fmt === 'json') return JSON.parse(text) || {};
+    if (fmt === 'yaml') return require('js-yaml').load(text) || {};
+  } catch {}
+  return {};
+}
+function serializeObj(obj, fmt) {
+  if (fmt === 'json') return JSON.stringify(obj, null, 2);
+  return require('js-yaml').dump(obj, { lineWidth: 120 });
+}
 function tomlVal(v) {
   // 字符串加引号；布尔/数字原样
   if (v === 'true' || v === 'false' || /^-?\d+(\.\d+)?$/.test(String(v))) return String(v);
@@ -69,7 +125,7 @@ function buildToml(flat) {
 
 // ── config-file 策略 ─────────────────────────────────────────────────────────
 
-// apply：patch 是扁平点路径表（占位符已解析）
+// apply：patch 是扁平点路径表（占位符已解析）。按文件格式（TOML/JSON/YAML）分派。
 function applyConfigFile(toolId, configFile, patch) {
   ensureStateDir();
   const dir = path.dirname(configFile);
@@ -80,17 +136,29 @@ function applyConfigFile(toolId, configFile, patch) {
   const backup = configFile + '.tokenbank-bak';
   if (existedFile && !fs.existsSync(backup)) fs.copyFileSync(configFile, backup);
 
-  const flat = parseToml(originalText);
+  const fmt = fmtOf(configFile);
   const applied = {};
-  for (const key of Object.keys(patch)) {
-    applied[key] = (key in flat) ? { existed: true, oldValue: flat[key] } : { existed: false };
-    flat[key] = patch[key];
+  if (fmt === 'toml') {
+    const flat = parseToml(originalText);
+    for (const key of Object.keys(patch)) {
+      applied[key] = (key in flat) ? { existed: true, oldValue: flat[key] } : { existed: false };
+      flat[key] = patch[key];
+    }
+    fs.writeFileSync(configFile, buildToml(flat));
+  } else {
+    // JSON / YAML：解析成对象，按点路径深取旧值（用于精确还原）后深设
+    const obj = parseObj(originalText, fmt);
+    for (const key of Object.keys(patch)) {
+      const old = deepGet(obj, key);
+      applied[key] = (old !== SENTINEL) ? { existed: true, oldValue: old } : { existed: false };
+      deepSet(obj, key, patch[key]);
+    }
+    fs.writeFileSync(configFile, serializeObj(obj, fmt));
   }
-  fs.writeFileSync(configFile, buildToml(flat));
 
   fs.writeFileSync(statePath(toolId), JSON.stringify({
     tool: toolId, configFile, backup: existedFile ? backup : null,
-    fileExisted: existedFile, applied,
+    fileExisted: existedFile, format: fmt, applied,
   }, null, 2));
   return { ok: true };
 }
@@ -108,14 +176,25 @@ function revertConfigFile(toolId) {
       // 文件原本不存在 → 整个删掉（我们创建的）
       if (fs.existsSync(st.configFile)) fs.unlinkSync(st.configFile);
     } else {
-      const flat = parseToml(fs.readFileSync(st.configFile, 'utf8'));
-      for (const key of Object.keys(st.applied)) {
-        const rec = st.applied[key];
-        if (rec.existed) flat[key] = rec.oldValue;   // 还原旧值
-        else delete flat[key];                        // 删除我们加的
+      const fmt = st.format || fmtOf(st.configFile);
+      const text = fs.readFileSync(st.configFile, 'utf8');
+      if (fmt === 'toml') {
+        const flat = parseToml(text);
+        for (const key of Object.keys(st.applied)) {
+          const rec = st.applied[key];
+          if (rec.existed) flat[key] = rec.oldValue;   // 还原旧值
+          else delete flat[key];                        // 删除我们加的
+        }
+        fs.writeFileSync(st.configFile, buildToml(flat));
+      } else {
+        const obj = parseObj(text, fmt);
+        for (const key of Object.keys(st.applied)) {
+          const rec = st.applied[key];
+          if (rec.existed) deepSet(obj, key, rec.oldValue);  // 还原旧值
+          else deepDelete(obj, key);                          // 删除我们加的
+        }
+        fs.writeFileSync(st.configFile, serializeObj(obj, fmt));
       }
-      // 清理空 table（我们加的 model_providers.tokenbank 段若已空）
-      fs.writeFileSync(st.configFile, buildToml(flat));
     }
     if (st.backup && fs.existsSync(st.backup)) fs.unlinkSync(st.backup);
     fs.unlinkSync(sp);
@@ -133,11 +212,17 @@ function revertConfigFile(toolId) {
   }
 }
 
-// status：config-file 当前 base_url 是否指向网关
+// status：config-file 当前是否指向网关（文件内任意字符串值含网关 host:port 即视为已接入）
 function statusConfigFile(configFile, gatewayHostPort) {
   if (!fs.existsSync(configFile)) return false;
-  const flat = parseToml(fs.readFileSync(configFile, 'utf8'));
-  return Object.values(flat).some(v => typeof v === 'string' && v.includes(gatewayHostPort));
+  const text = fs.readFileSync(configFile, 'utf8');
+  const fmt = fmtOf(configFile);
+  if (fmt === 'toml') {
+    const flat = parseToml(text);
+    return Object.values(flat).some(v => typeof v === 'string' && v.includes(gatewayHostPort));
+  }
+  // JSON/YAML：直接在原文里找网关地址（够判断是否已注入）
+  return text.includes(gatewayHostPort);
 }
 
 module.exports = {

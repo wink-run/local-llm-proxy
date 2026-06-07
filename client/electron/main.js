@@ -1401,6 +1401,22 @@ function registerIPC() {
         }
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, JSON.stringify(obj, null, 2), 'utf8');
+      } else if (/\.ya?ml$/i.test(file)) {
+        // YAML 配置（如 Hermes 的 ~/.hermes/config.yaml）：合并 patch（支持 a.b 点路径），保留其它字段
+        const yamlLib = require('js-yaml');
+        let obj = {};
+        try { if (fs.existsSync(file)) obj = yamlLib.load(fs.readFileSync(file, 'utf8')) || {}; } catch {}
+        if (typeof obj !== 'object' || obj == null) obj = {};
+        if (fs.existsSync(file) && !fs.existsSync(file + '.tokenbank-bak')) {
+          try { fs.copyFileSync(file, file + '.tokenbank-bak'); } catch {}
+        }
+        for (const [k, v] of Object.entries(patch || {})) {
+          const parts = k.split('.'); let cur = obj;
+          for (let i = 0; i < parts.length - 1; i++) { if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] == null) cur[parts[i]] = {}; cur = cur[parts[i]]; }
+          cur[parts[parts.length - 1]] = v;
+        }
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, yamlLib.dump(obj, { lineWidth: 120 }), 'utf8');
       } else {
         // TOML：只追加/替换我们的项，绝不重写整个文件（Codex 等复杂 config 含 Windows
         // 反斜杠路径，整体 round-trip 会把字面量字符串变成非法转义而损坏）
