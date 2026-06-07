@@ -498,7 +498,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', i
               className="px-4 py-2 text-sm rounded-xl border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
               取消 API Key 管理
             </button>
-          ) : onDelete && app.link_method === 'api-key' && (
+          ) : !inline && onDelete && app.link_method === 'api-key' && (
             <button onClick={() => onDelete(app.id)}
               className="px-4 py-2 text-sm rounded-xl border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
               删除
