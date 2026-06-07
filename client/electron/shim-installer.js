@@ -48,29 +48,57 @@ function resolveRealCommand(command) {
 
 // 生成一个工具的 shim。envMap = {KEY: value}（要注入的环境变量）。
 // realPath = 真实可执行文件绝对路径（已探测、写死）。
+// 从注入的 env 值里取网关 origin（http://host:port），用于探活
+function probeOrigin(envMap) {
+  for (const v of Object.values(envMap || {})) {
+    const m = String(v).match(/^(https?:\/\/[^/]+)/);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+// shim 注入网关 env，但先探活：网关 /health 通才注入（否则直接调真程序走官方）。
+// 这样网关没启动时 shim 不会把工具指向死端口 —— 透明托管对“网关未运行”自动回落。
 function writeShim(command, realPath, envMap) {
   ensureBinDir();
   const exports = Object.entries(envMap || {});
+  const origin  = probeOrigin(envMap);
   let shimPath;
   if (IS_WIN) {
     shimPath = path.join(BIN_DIR, command + '.cmd');
-    const lines = [
-      '@echo off',
-      'REM ' + MARK_BEGIN,
-      ...exports.map(([k, v]) => `set ${k}=${v}`),
-      `"${realPath}" %*`,
-      'REM ' + MARK_END,
-    ];
+    let lines;
+    if (origin && exports.length) {
+      lines = [
+        '@echo off',
+        'REM ' + MARK_BEGIN,
+        // 探活：curl 通(exit 0)才注入网关 env；不通则跳过 → 走官方
+        `curl.exe -s -o NUL -m 1 "${origin}/health" >NUL 2>NUL`,
+        'if %errorlevel%==0 (',
+        ...exports.map(([k, v]) => `  set "${k}=${v}"`),
+        ')',
+        `"${realPath}" %*`,
+        'REM ' + MARK_END,
+      ];
+    } else {
+      lines = ['@echo off', 'REM ' + MARK_BEGIN, `"${realPath}" %*`, 'REM ' + MARK_END];
+    }
     fs.writeFileSync(shimPath, lines.join('\r\n'));
   } else {
     shimPath = path.join(BIN_DIR, command);
-    const lines = [
-      '#!/bin/sh',
-      MARK_BEGIN,
-      ...exports.map(([k, v]) => `export ${k}="${v}"`),
-      `exec "${realPath}" "$@"`,
-      MARK_END,
-    ];
+    let lines;
+    if (origin && exports.length) {
+      lines = [
+        '#!/bin/sh',
+        MARK_BEGIN,
+        `if curl -s -o /dev/null -m 1 "${origin}/health" 2>/dev/null; then`,
+        ...exports.map(([k, v]) => `  export ${k}="${v}"`),
+        'fi',
+        `exec "${realPath}" "$@"`,
+        MARK_END,
+      ];
+    } else {
+      lines = ['#!/bin/sh', MARK_BEGIN, `exec "${realPath}" "$@"`, MARK_END];
+    }
     fs.writeFileSync(shimPath, lines.join('\n'));
     fs.chmodSync(shimPath, 0o755);
   }
