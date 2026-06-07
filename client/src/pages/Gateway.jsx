@@ -529,14 +529,16 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
             <div className="flex gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800">
               {tab === 0 ? (
                 <>
-                  <button onClick={writeConfigFile}
-                    className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white">
-                    写入配置
-                  </button>
-                  {written && onCancelManage && (
+                  {/* 已写入 → 取消 API Key 管理；未写入 → 写入配置（与列表按钮逻辑一致）*/}
+                  {written && onCancelManage ? (
                     <button onClick={() => onCancelManage(app)}
-                      className="px-4 py-2 text-sm rounded-xl border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
+                      className="flex-1 py-2 text-sm rounded-xl border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
                       取消 API Key 管理
+                    </button>
+                  ) : (
+                    <button onClick={writeConfigFile}
+                      className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white">
+                      写入配置
                     </button>
                   )}
                   {btnCancel}
