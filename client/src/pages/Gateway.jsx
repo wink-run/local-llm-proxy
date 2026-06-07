@@ -765,8 +765,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         </div>
                       </div>
 
-                      {/* 路由下拉：同时显示模型（按层级分组）和场景路由（未添加的桌面应用不显示）*/}
-                      {!app._virtual_desktop && (
+                      {/* 路由下拉：仅 api-key 应用可绑路由（透明托管的 shim 由网关按协议/策略路由，不读 route_id）*/}
+                      {app.link_method === 'api-key' && !app._virtual_desktop && (
                       <select
                         value={app.route_id || ''}
                         onChange={async e => {
