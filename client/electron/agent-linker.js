@@ -24,17 +24,15 @@ let _keyResolver = null;
 function setKeyResolver(fn) { _keyResolver = typeof fn === 'function' ? fn : null; }
 
 // 解析 inject.env 里的 {KEY} 占位为该工具的 api_key。
-// 没有 key 时，丢弃仍含 {KEY} 的鉴权变量（不注入空 token），只保留 base_url 等。
+// 关键：若 env 需要 key（含 {KEY}）但当前没有 key（用户未绑路由）→ 整组不注入，
+// shim 纯透传走官方。否则只注入 base_url 而不带 key，会把工具导向网关却无法路由 → 反而搞挂。
 function resolveEnvKeys(toolId, envMap) {
+  const entries = Object.entries(envMap || {});
+  const needsKey = entries.some(([, v]) => String(v).includes('{KEY}'));
   const key = _keyResolver ? (_keyResolver(toolId) || '') : '';
+  if (needsKey && !key) return {};        // 未绑路由 → 不托管，纯透传
   const out = {};
-  for (const [k, v] of Object.entries(envMap || {})) {
-    const s = String(v);
-    if (s.includes('{KEY}')) {
-      if (!key) continue;                 // 无 key → 跳过该鉴权变量
-      out[k] = s.replace(/\{KEY\}/g, key);
-    } else out[k] = s;
-  }
+  for (const [k, v] of entries) out[k] = String(v).replace(/\{KEY\}/g, key);
   return out;
 }
 
