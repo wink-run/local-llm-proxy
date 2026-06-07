@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { getRates } from '../api/client';
+import { getRates, getOnlineModels } from '../api/client';
 import { getGateway, getLocalConfig, getConfig } from '../api/adapter';
 import { listAgents, applyAgent, revertAgent } from '../api/agents';
 
@@ -440,11 +440,15 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
               <select value={routeId} onChange={e => setRouteId(e.target.value)}
                 className="w-full text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none text-gray-800 dark:text-gray-200">
                 <option value="">不绑定（走默认策略）</option>
-                {routes.length > 0 && (
-                  <optgroup label="场景路由">
-                    {routes.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
-                  </optgroup>
-                )}
+                {(() => {
+                  const avail = new Set(availableModels.map(m => m.id));
+                  const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
+                  return usable.length > 0 && (
+                    <optgroup label="场景路由">
+                      {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
+                    </optgroup>
+                  );
+                })()}
                 {['free','p2p','paid'].map(tier => {
                   const tm = availableModels.filter(m => m.tier === tier);
                   if (!tm.length) return null;
@@ -779,13 +783,17 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         }}
                         className="flex-1 min-w-0 text-[10px] bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 outline-none text-gray-600 dark:text-gray-400 max-w-[160px]">
                         <option value="">不绑定</option>
-                        {routes.length > 0 && (
-                          <optgroup label="场景路由">
-                            {routes.map(r => (
-                              <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>
-                            ))}
-                          </optgroup>
-                        )}
+                        {(() => {
+                          const avail = new Set(availableModels.map(m => m.id));
+                          const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
+                          return usable.length > 0 && (
+                            <optgroup label="场景路由">
+                              {usable.map(r => (
+                                <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>
+                              ))}
+                            </optgroup>
+                          );
+                        })()}
                         {['free','p2p','paid'].map(tier => {
                           const tierModels = availableModels.filter(m => m.tier === tier);
                           if (!tierModels.length) return null;
@@ -1516,9 +1524,9 @@ export default function Gateway() {
   const loadAvailableModels = useCallback(async () => {
     const models = [];
     const seen   = new Set();
-    const add    = (id, tier) => { if (!seen.has(id)) { seen.add(id); models.push({ id, tier }); } };
+    const add    = (id, tier) => { if (id && !seen.has(id)) { seen.add(id); models.push({ id, tier }); } };
 
-    // Free / paid models from configured provider model lists
+    // 本地已启用 provider 的模型（本地直连，始终可用）
     try {
       const cfg = await getConfig().read();
       for (const p of (cfg?.providers || [])) {
@@ -1527,12 +1535,18 @@ export default function Gateway() {
       }
     } catch {}
 
-    // P2P models from backend rates (includes all registered models)
+    // 只列「当前在线」可提供的 P2P 模型（/v1/models = 在线 worker 实际能跑的）
+    // 层级信息从 rates 取（取不到则标 p2p）
     try {
-      const res = await getRates();
-      for (const m of (res.data?.models || [])) add(m.name, normTier(m.tier));
+      const rateTier = {};
+      try {
+        const r = await getRates();
+        for (const m of (r.data?.models || [])) rateTier[m.name] = normTier(m.tier);
+      } catch {}
+      const res = await getOnlineModels();
+      for (const m of (res.data || [])) add(m.id, rateTier[m.id] || 'p2p');
     } catch (e) {
-      console.error('loadAvailableModels p2p', e);
+      console.error('loadAvailableModels online', e);
     }
 
     setAvailableModels(models);

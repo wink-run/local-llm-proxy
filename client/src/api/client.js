@@ -85,6 +85,11 @@ export function getRates() {
   return http.get('/api/rates');
 }
 
+// 当前在线 worker 实际能提供的模型（OpenAI 风格 /v1/models）
+export function getOnlineModels() {
+  return http.get('/v1/models');
+}
+
 export function getProviderCatalog() {
   return http.get('/api/catalog');
 }
