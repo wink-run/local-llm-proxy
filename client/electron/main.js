@@ -249,7 +249,6 @@ function readLocalConfig() {
           max_rpm: null,
           max_concurrent: null,
           allow_stream: true,
-          request_format: 'auto',
           created_at: k.created_at || new Date().toISOString(),
         }));
       }
@@ -306,12 +305,10 @@ function autoHostInstalledApps() {
 // Appx 包检测 + 对应配置文件注入信息；{BASE}/{KEY} 由前端按应用解析
 const DESKTOP_APPS = [
   { id: 'claude-desktop', name: 'Claude Desktop', icon: '🖥️', appx: 'Claude',
-    request_format: 'anthropic',
     config_file: '~/.claude/settings.json',
     patch: { 'env.ANTHROPIC_BASE_URL': '{BASE}', 'env.ANTHROPIC_AUTH_TOKEN': '{KEY}' },
     marker: 'ANTHROPIC_BASE_URL' },
   { id: 'codex-desktop', name: 'Codex Desktop', icon: '🖥️', appx: 'OpenAI.Codex',
-    request_format: 'openai',
     config_file: '{CODEX_HOME|~/.codex}/config.toml',
     patch: { model_provider: 'tokenbank', 'model_providers.tokenbank.name': 'Tokenbank',
              'model_providers.tokenbank.base_url': '{BASE}/v1',
@@ -843,7 +840,6 @@ function registerIPC() {
       const ctrl = {
         app_id: app.id, app_name: app.name,
         allow_stream:   app.allow_stream !== false,
-        request_format: app.request_format || 'auto',
         max_rpm:        app.max_rpm || null,
         max_concurrent: app.max_concurrent || null,
         allowed_models: app.allowed_models || [],
@@ -1021,7 +1017,7 @@ function registerIPC() {
   // ── 应用管理 CRUD（apps[]，统一管理托管和API Key应用）────────────────────────
   // 应用结构：{ id, name, icon, link_method(shim|api-key), api_key, route_id,
   //             description, allowed_models[], max_rpm, max_concurrent,
-  //             allow_stream, request_format(auto|openai|anthropic), created_at }
+  //             allow_stream, created_at }
 
   function getApps() {
     const cfg = readLocalConfig();
@@ -1115,7 +1111,7 @@ function registerIPC() {
         name: d.name, icon: d.icon,
         link_method: 'api-key', host_method: 'config-file',
         type: 'gui', desktop: true, _virtual_desktop: true,
-        preset_id: d.id, request_format: d.request_format,
+        preset_id: d.id,
         config_file: file, patch: d.patch, env: d.env || null,
         configured: configHasMarker(file, d.marker),   // 配置文件是否已含我们的路由
         installed: true, linked: false, api_key: null, route_id: null,
@@ -1140,7 +1136,6 @@ function registerIPC() {
       max_rpm: data.max_rpm || null,
       max_concurrent: data.max_concurrent || null,
       allow_stream: data.allow_stream !== false,
-      request_format: data.request_format || 'auto',
       env: data.env || null,                     // 需写入工具的环境变量模板（{BASE}/{KEY} 占位）
       preset_id: data.preset_id || null,         // 来自哪个预设
       inject: data.inject || (data.env ? 'env' : null),  // env | config-file
@@ -1217,12 +1212,12 @@ function registerIPC() {
     } catch {}
     // 兜底：旧配置无 app_presets 段时的内置默认
     return [
-      { id: 'claude-code', name: 'Claude Code（含桌面版）', icon: '🤖', request_format: 'anthropic',
+      { id: 'claude-code', name: 'Claude Code（含桌面版）', icon: '🤖',
         inject: 'config-file', config_file: '~/.claude/settings.json',
         patch: { 'env.ANTHROPIC_BASE_URL': '{BASE}', 'env.ANTHROPIC_AUTH_TOKEN': '{KEY}' } },
-      { id: 'codex', name: 'Codex CLI', icon: '💻', request_format: 'openai', inject: 'env',
+      { id: 'codex', name: 'Codex CLI', icon: '💻', inject: 'env',
         env: { OPENAI_BASE_URL: '{BASE}/v1', OPENAI_API_KEY: '{KEY}' } },
-      { id: 'gemini-cli', name: 'Gemini CLI', icon: '🔮', request_format: 'openai', inject: 'env',
+      { id: 'gemini-cli', name: 'Gemini CLI', icon: '🔮', inject: 'env',
         env: { GOOGLE_GEMINI_BASE_URL: '{BASE}', GEMINI_API_KEY: '{KEY}' } },
     ];
   });
@@ -1333,7 +1328,7 @@ function registerIPC() {
       link_method: 'shim', agent_id,
       api_key: null, route_id: null,
       description: '', allowed_models: [], max_rpm: null,
-      max_concurrent: null, allow_stream: true, request_format: 'auto',
+      max_concurrent: null, allow_stream: true,
       created_at: new Date().toISOString(),
     };
     apps.push(app);

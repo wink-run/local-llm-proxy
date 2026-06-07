@@ -62,7 +62,6 @@ app_presets:
   - id: claude-code
     name: Claude Code（含桌面版）
     icon: "🤖"
-    request_format: anthropic
     inject: config-file        # 写 ~/.claude/settings.json，CLI 与 Claude Desktop 内置 Claude Code 都读
     config_file: "~/.claude/settings.json"
     patch:
@@ -71,7 +70,6 @@ app_presets:
   - id: codex
     name: Codex CLI
     icon: "💻"
-    request_format: openai
     inject: env
     env:
       OPENAI_BASE_URL: "{BASE}/v1"
@@ -79,7 +77,6 @@ app_presets:
   - id: gemini-cli
     name: Gemini CLI
     icon: "🔮"
-    request_format: openai
     inject: env
     env:
       GOOGLE_GEMINI_BASE_URL: "{BASE}"
@@ -87,7 +84,6 @@ app_presets:
   - id: codex-desktop-api
     name: Codex Desktop (API)
     icon: "🖥️"
-    request_format: openai
     inject: config-file
     config_file: "{CODEX_HOME|~/.codex}/config.toml"
     patch:

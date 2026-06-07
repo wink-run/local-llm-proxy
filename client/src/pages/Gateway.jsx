@@ -258,11 +258,6 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
 // ── AppManager：应用列表（Tab1: 所有应用 & 托管 | Tab2: API Key 管理）────────
 const LINK_METHOD_LABEL = { shim: '透明托管', 'api-key': 'API Key' };
 // 「添加应用」预设现在来自 yaml app_presets（config-loader），通过 apps.presets() 加载
-const FORMAT_OPTIONS = [
-  { value: 'auto',      label: '自动检测' },
-  { value: 'openai',    label: 'OpenAI 格式' },
-  { value: 'anthropic', label: 'Anthropic 格式' },
-];
 const STRATEGY_LABEL = {
   'base_url-env': '环境变量注入 base_url',
   'config-file':  '自动写入配置文件',
@@ -277,7 +272,6 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   const [desc,        setDesc]        = useState(app.description || '');
   const [routeId,     setRouteId]     = useState(app.route_id || '');
   const [allowStream, setAllowStream] = useState(app.allow_stream !== false);
-  const [format,      setFormat]      = useState(app.request_format || 'auto');
   const [maxRpm,      setMaxRpm]      = useState(app.max_rpm || '');
   const [maxConc,     setMaxConc]     = useState(app.max_concurrent || '');
   const [models,      setModels]      = useState((app.allowed_models || []).join(', '));
@@ -310,7 +304,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     await onUpdate({
       id: app.id, name, icon, description: desc,
       route_id: routeId || null,
-      allow_stream: allowStream, request_format: format,
+      allow_stream: allowStream,
       max_rpm: maxRpm ? +maxRpm : null,
       max_concurrent: maxConc ? +maxConc : null,
       allowed_models: models.split(',').map(s => s.trim()).filter(Boolean),
@@ -464,13 +458,6 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
               <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">请求控制</div>
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <label className="text-xs text-gray-500 w-20 shrink-0">请求格式</label>
-                  <select value={format} onChange={e => setFormat(e.target.value)}
-                    className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200">
-                    {FORMAT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                </div>
-                <div className="flex items-center gap-2">
                   <label className="text-xs text-gray-500 w-20 shrink-0">允许流式</label>
                   <button onClick={() => setAllowStream(!allowStream)}
                     className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${allowStream ? 'bg-blue-600' : 'bg-gray-400'}`}>
@@ -601,7 +588,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   async function addPreset(preset) {
     const created = await window.electronAPI.apps?.create({
       name: preset.name, icon: preset.icon, link_method: 'api-key',
-      request_format: preset.request_format, preset_id: preset.id,
+      preset_id: preset.id,
       inject: preset.inject || (preset.env ? 'env' : null),
       env: preset.env || null,
       config_file: preset.config_file || null,
@@ -633,7 +620,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   async function addDesktop(d) {
     const created = await window.electronAPI.apps?.create({
       name: d.name, icon: d.icon, link_method: 'api-key',
-      request_format: d.request_format, preset_id: d.preset_id,
+      preset_id: d.preset_id,
       inject: 'config-file', config_file: d.config_file, patch: d.patch, env: d.env || null,
     }).catch(() => null);
     if (created?.id) setSettings({ ...created, _isNew: true });

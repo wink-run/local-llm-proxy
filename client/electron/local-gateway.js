@@ -811,7 +811,7 @@ async function route(model, reqPath, body, res, callerKey) {
       res.end(JSON.stringify(payload));
     }
   }
-
+
   // ── Scene route：model=llm-router-* 触发，或 callerKey 绑定了路由（api-key 应用 route_id）──
   const boundScene = (callerKey && _keyScene[callerKey]) || null;
   if (boundScene?.steps?.length || model.startsWith('llm-router-')) {
@@ -824,7 +824,7 @@ async function route(model, reqPath, body, res, callerKey) {
 
     const all          = enabledProviders();
     const failedModels = [];
-
+
     for (const step of scene.steps) {
       const stepModel     = step.model;
       // Match providers by model list, not by tier — tier is informational only
@@ -832,12 +832,12 @@ async function route(model, reqPath, body, res, callerKey) {
       const stepProviders = [
         ...stepCandidates.filter(p => Array.isArray(p.models) && p.models.length > 0),
         ...stepCandidates.filter(p => !Array.isArray(p.models) || p.models.length === 0),
-      ];
+      ];
       let   stepSucceeded = false;
 
       for (const provider of stepProviders) {
         try {
-          const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, stepModel, res);
+          const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, stepModel, res);
           pushLog({
             ts: t0, requested_model: model, model: stepModel,
             scene_name: scene.scene_name,
@@ -852,7 +852,7 @@ async function route(model, reqPath, body, res, callerKey) {
           stepSucceeded = true;
           return;
         } catch (err) {
-          lastErr = err;
+          lastErr = err;
           if (res.headersSent) return;
         }
       }
@@ -1194,7 +1194,7 @@ function setKeySceneMap(map) { _keyScene = map && typeof map === 'object' ? map 
 
 // ── 应用请求控制（api-key 按 key 匹配，shim 按协议路径匹配）─────────────────────
 // 每项：{ app_id, app_name, match:{key|path}, allow_stream, allowed_models[],
-//         max_rpm, max_concurrent, request_format }
+//         max_rpm, max_concurrent }
 let _appControls = [];
 const _rlState   = new Map();   // app_id → { ts: number[], active: number }
 
