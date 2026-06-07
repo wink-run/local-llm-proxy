@@ -1544,7 +1544,7 @@ export default function Gateway() {
         for (const m of (r.data?.models || [])) rateTier[m.name] = normTier(m.tier);
       } catch {}
       const res = await getOnlineModels();
-      for (const m of (res.data || [])) add(m.id, rateTier[m.id] || 'p2p');
+      for (const m of (res.data?.data || [])) add(m.id, rateTier[m.id] || 'p2p');
     } catch (e) {
       console.error('loadAvailableModels online', e);
     }
