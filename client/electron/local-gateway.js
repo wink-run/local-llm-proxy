@@ -3,6 +3,9 @@
 
 const http  = require('http');
 const https = require('https');
+const fs    = require('fs');
+const os    = require('os');
+const path  = require('path');
 const codexTransform = require('./codex-transform');
 const reqRouter = require('./request-router');
 
@@ -10,6 +13,15 @@ const reqRouter = require('./request-router');
 
 const LOG_MAX = 100;
 const log = []; // circular, newest last
+
+// 调试日志：把完整请求/响应写到文件，便于排查 Claude Desktop 等客户端实际发了什么
+const DEBUG_LOG_FILE = path.join(os.homedir(), 'tokenbank-gateway-debug.log');
+function debugLog(label, data) {
+  try {
+    const line = `\n[${new Date().toISOString()}] ${label}\n${typeof data === 'string' ? data : JSON.stringify(data, null, 2)}\n`;
+    fs.appendFileSync(DEBUG_LOG_FILE, line);
+  } catch {}
+}
 
 let _getConfig   = null;     // () => config object (set at start)
 let _server      = null;
@@ -755,11 +767,28 @@ function proxyResponsesViaChat(provider, responsesBody, model, res) {
 // Call one provider with format conversion; throws on HTTP error.
 // provider is already resolved (base_url/token correct, models populated).
 async function callProvider(provider, isAnthropic, streaming, reqPath, body, attemptModel, res) {
+  // 虚拟模型改写：虚拟模型名 → 真实模型名
+  const resolvedModel = resolveVirtualModel(attemptModel) || attemptModel;
+  if (resolvedModel !== attemptModel) {
+    console.log(`[gw] virtual: ${attemptModel} → ${resolvedModel}`);
+  }
+  debugLog(`callProvider 选中 provider`, {
+    provider_id: provider.id,
+    provider_type: provider.type,
+    base_url: provider.base_url,
+    api_format: provider.api_format,
+    isAnthropic,
+    streaming,
+    reqPath,
+    attemptModel,
+    resolvedModel,
+  });
+
   // Codex Responses 请求：统一走 Responses⇄Chat 转换（上游按 Chat Completions 处理）
   if (reqPath === '/v1/responses' || reqPath === '/responses') {
-    return await proxyResponsesViaChat(provider, { ...body, model: attemptModel }, attemptModel, res);
+    return await proxyResponsesViaChat(provider, { ...body, model: resolvedModel }, resolvedModel, res);
   }
-  const attemptBody = { ...body, model: attemptModel };
+  const attemptBody = { ...body, model: resolvedModel };
 
   // Anthropic-compatible provider
   const isAnthropicProvider = /anthropic/i.test(provider.base_url || '') || provider.api_format === 'anthropic';
@@ -794,9 +823,27 @@ async function route(model, reqPath, body, res, callerKey) {
   const isResponses = reqPath === '/v1/responses' || reqPath === '/responses';
   const streaming   = !!body.stream;
 
+  // 虚拟模型改写：必须在任何 provider 选择前把虚拟名换成真实名，
+  // 否则 providerHasModel(p, '虚拟名') 永远匹配不到，候选 provider 为 0 → 502。
+  // 保留原始请求名 origModel，用于路由明细区分「虚拟映射」vs「直连模型」。
+  const origModel = model;
+  const realModel = resolveVirtualModel(model) || model;
+  const virtualFrom = (realModel !== origModel) ? origModel : null;  // 非 null = 经虚拟映射
+  if (virtualFrom) {
+    debugLog(`虚拟模型改写（route 入口）`, { from: origModel, to: realModel });
+    model = realModel;
+  }
+
   function fail(scene_name, failedModels) {
+    debugLog(`<<< 路由失败 fail()`, {
+      requested_model: origModel,
+      scene_name,
+      failedModels,
+      lastErr: lastErr?.message,
+      lastErr_stack: lastErr?.stack,
+    });
     pushLog({
-      ts: t0, requested_model: model, model, scene_name,
+      ts: t0, requested_model: origModel, model, scene_name, virtual_from: virtualFrom,
       tried: failedModels?.length ? [...failedModels] : undefined,
       via: null, latency_ms: Date.now() - t0, status: 'error', error: lastErr?.message,
     });
@@ -814,6 +861,13 @@ async function route(model, reqPath, body, res, callerKey) {
 
   // ── Scene route：model=llm-router-* 触发，或 callerKey 绑定了路由（api-key 应用 route_id）──
   const boundScene = (callerKey && _keyScene[callerKey]) || null;
+  debugLog(`route() 路由判定`, {
+    requested_model: model,
+    callerKey: callerKey?.slice(0, 20),
+    has_boundScene: !!boundScene,
+    boundScene_steps: boundScene?.steps,
+    is_llm_router: model.startsWith('llm-router-'),
+  });
   if (boundScene?.steps?.length || model.startsWith('llm-router-')) {
     const scene = boundScene?.steps?.length ? boundScene : _routerModelMap[model];
     if (!scene?.steps?.length) {
@@ -826,7 +880,9 @@ async function route(model, reqPath, body, res, callerKey) {
     const failedModels = [];
 
     for (const step of scene.steps) {
-      const stepModel     = step.model;
+      // 场景步骤模型同样支持虚拟改写（步骤可能配置为虚拟模型名）
+      const stepModel     = resolveVirtualModel(step.model) || step.model;
+      const stepVirtualFrom = (stepModel !== step.model) ? step.model : virtualFrom;
       // Match providers by model list, not by tier — tier is informational only
       const stepCandidates = all.filter(p => providerHasModel(p, stepModel));
       const stepProviders = [
@@ -839,8 +895,8 @@ async function route(model, reqPath, body, res, callerKey) {
         try {
           const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, stepModel, res);
           pushLog({
-            ts: t0, requested_model: model, model: stepModel,
-            scene_name: scene.scene_name,
+            ts: t0, requested_model: origModel, model: stepModel,
+            scene_name: scene.scene_name, virtual_from: stepVirtualFrom,
             tried: failedModels.length ? [...failedModels] : undefined,
             tier: provider.type, via: provider.id, via_label: provider.label,
             latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok',
@@ -899,13 +955,19 @@ async function route(model, reqPath, body, res, callerKey) {
     ];
   }
 
+  debugLog(`直接模型路由候选 providers`, {
+    requested_model: model,
+    candidate_count: sorted.length,
+    candidates: sorted.map(p => ({ id: p.id, type: p.type, models: p.models })),
+  });
+
   for (const provider of sorted) {
     try {
       const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, model, res);
       // 记录延迟（供 latency 策略下次参考）
       if (result.latency) reqRouter.recordLatency(provider.id, result.latency);
       pushLog({
-        ts: t0, requested_model: model, model,
+        ts: t0, requested_model: origModel, model, virtual_from: virtualFrom,
         tier: provider.type, via: provider.id, via_label: provider.label,
         latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok',
       });
@@ -1027,18 +1089,28 @@ function handleRequest(req, res) {
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
   const { method, url } = req;
+  // 归一化路径：去查询串、折叠多斜杠、去尾斜杠。
+  // 容忍客户端用尾斜杠 baseURL（如 http://host:11430/）拼出的 //v1/models、带 ?查询、/v1/models/ 等变体。
+  const cleanPath = (url.split('?')[0] || '/').replace(/\/{2,}/g, '/').replace(/(.)\/+$/, '$1');
+  console.log('[gw-req]', method, url, 'auth=' + (req.headers['authorization'] ? req.headers['authorization'].slice(0,25) : (req.headers['x-api-key'] ? 'x-api-key:'+String(req.headers['x-api-key']).slice(0,18) : 'none')));
 
   // Health
-  if (method === 'GET' && url === '/health') {
+  if (method === 'GET' && cleanPath === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, port: _port }));
     return;
   }
 
-  // Models list — return stub
-  if (method === 'GET' && (url === '/v1/models' || url === '/models')) {
+  // Models list — return virtual models
+  if (method === 'GET' && (cleanPath === '/v1/models' || cleanPath === '/models')) {
+    const data = _virtualModels.map(m => ({
+      id: m.id,
+      object: 'model',
+      owned_by: 'tokenbank',
+      display_name: m.display_name || m.id,
+    }));
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ object: 'list', data: [] }));
+    res.end(JSON.stringify({ object: 'list', data }));
     return;
   }
 
@@ -1058,15 +1130,15 @@ function handleRequest(req, res) {
   }
 
   // Gateway status for CLI frontend
-  if (method === 'GET' && url === '/api/gateway/status') {
+  if (method === 'GET' && cleanPath === '/api/gateway/status') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(getStatus()));
     return;
   }
 
   // Chat completions (OpenAI + Anthropic) + Codex Responses
-  const isChatPath   = url === '/v1/chat/completions' || url === '/v1/messages'
-                    || url === '/v1/responses' || url === '/responses';
+  const isChatPath   = cleanPath === '/v1/chat/completions' || cleanPath === '/v1/messages'
+                    || cleanPath === '/v1/responses' || cleanPath === '/responses';
   if (!isChatPath || method !== 'POST') {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'not_found' }));
@@ -1088,28 +1160,48 @@ function handleRequest(req, res) {
   const chunks = [];
   req.on('data', c => chunks.push(c));
   req.on('end', async () => {
+    const rawBody = Buffer.concat(chunks).toString();
     let body = {};
-    try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch {}
+    try { body = JSON.parse(rawBody); } catch {}
     const model = body.model || '';
 
+    // 调试：记录入站请求关键信息（不 dump 完整 body，避免日志膨胀）
+    debugLog(`>>> 入站请求 ${method} ${url}`, {
+      model,
+      auth: callerKey.slice(0, 20),
+      stream: !!body.stream,
+      user_agent: req.headers['user-agent'],
+    });
+
     // ── 请求控制（按 app 配置强制执行）──────────────────────────────────────
-    const ctrl = resolveAppControl(callerKey, url);
+    const ctrl = resolveAppControl(callerKey, cleanPath);
+    debugLog(`匹配的 app control`, ctrl ? { app_name: ctrl.app_name, restrict_to_virtual: ctrl.restrict_to_virtual, has_match_key: !!ctrl.match?.key } : 'null（未匹配任何应用，按默认策略路由）');
     let release = () => {};
     if (ctrl) {
-      // 1) 允许模型白名单
+      // 1) 虚拟模型约束：如果应用限制虚拟模型，模型必须在虚拟列表中
+      if (ctrl.restrict_to_virtual === true && model) {
+        const isVirtual = _virtualModels.some(m => m.id === model);
+        if (!isVirtual) {
+          const virtualIds = _virtualModels.map(m => m.id).join(', ');
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'model_not_allowed', detail: `「${ctrl.app_name}」仅支持虚拟模型，请使用：${virtualIds}` }));
+          return;
+        }
+      }
+      // 2) 允许模型白名单
       if (Array.isArray(ctrl.allowed_models) && ctrl.allowed_models.length
           && model && !ctrl.allowed_models.includes(model)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'model_not_allowed', detail: `模型 ${model} 不在「${ctrl.app_name}」的允许列表内`, allowed: ctrl.allowed_models }));
         return;
       }
-      // 2) 是否允许流式
+      // 3) 是否允许流式
       if (ctrl.allow_stream === false && body.stream) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'stream_not_allowed', detail: `「${ctrl.app_name}」已禁用流式输出` }));
         return;
       }
-      // 3) 限流（RPM / 并发）
+      // 4) 限流（RPM / 并发）
       const rl = rateLimitAcquire(ctrl);
       if (!rl.ok) {
         res.writeHead(429, { 'Content-Type': 'application/json' });
@@ -1124,7 +1216,7 @@ function handleRequest(req, res) {
     }
 
     try {
-      await route(model, url, body, res, callerKey);
+      await route(model, cleanPath, body, res, callerKey);
     } catch (err) {
       release();
       if (!res.headersSent) {
@@ -1192,9 +1284,19 @@ function getLog() {
 let _keyScene = {};
 function setKeySceneMap(map) { _keyScene = map && typeof map === 'object' ? map : {}; }
 
+// 虚拟模型映射表（对外 Anthropic 名 → 对内真实模型名）
+let _virtualModels = [];
+function setVirtualModels(list) { _virtualModels = Array.isArray(list) ? list : []; }
+
+// 虚拟模型 ID → 真实模型 ID（网关改写用）
+function resolveVirtualModel(modelId) {
+  const vm = _virtualModels.find(m => m.id === modelId);
+  return vm ? vm.real_model : null;
+}
+
 // ── 应用请求控制（api-key 按 key 匹配，shim 按协议路径匹配）─────────────────────
 // 每项：{ app_id, app_name, match:{key|path}, allow_stream, allowed_models[],
-//         max_rpm, max_concurrent }
+//         max_rpm, max_concurrent, restrict_to_virtual }
 let _appControls = [];
 const _rlState   = new Map();   // app_id → { ts: number[], active: number }
 
@@ -1264,4 +1366,5 @@ module.exports = {
   start, stop, restart, setStrategy, getStatus, getLog,
   setKeySceneMap, setRouterModelMap, setPeerModels, setBackendConfig,
   setStatsRecorder, setLocalStats, setLocalConfigReader, setAppControls,
+  setVirtualModels,
 };

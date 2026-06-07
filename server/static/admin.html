@@ -555,6 +555,10 @@ select.form-input{cursor:pointer}
                 : (lang==='zh' ? '场景路由配置 (tokenbank.routes.yaml)' : 'Routes Config (tokenbank.routes.yaml)') }}
             </span>
             <div style="margin-left:auto;display:flex;gap:6px">
+              <button class="btn-xs" @click="reloadDistribSource(type)"
+                :title="lang==='zh'?'从服务器拉取当前已发布的配置到编辑器':'Reload published config from server'">
+                {{ lang==='zh' ? '🔄 从服务器加载' : '🔄 Reload' }}
+              </button>
               <button class="btn-xs" @click="loadLocalFile(type)"
                 :title="lang==='zh'?'从本地文件加载到编辑器':'Load from a local file'">
                 {{ lang==='zh' ? '📁 本地文件' : '📁 Local file' }}
@@ -994,6 +998,17 @@ createApp({
         distribText.value[type] = content
       }
     }
+    // 强制从服务器重新加载已发布的配置到编辑器（覆盖编辑器当前内容）
+    async function reloadDistribSource(type) {
+      let content = ''
+      try { content = (await (await api(`/api/config/${type}/source`)).json()).content || '' } catch {}
+      if (!content) {
+        try { content = await (await fetch(`/static/defaults/${type}.default.yaml`)).text() } catch {}
+      }
+      distribText.value[type] = content
+      await fetchDistribInfo()
+      distribMsg.value[type] = lang.value==='zh' ? '✓ 已从服务器加载最新' : '✓ Loaded latest from server'
+    }
     // 从管理员本地文件加载配置到编辑器
     function loadLocalFile(type) {
       const input = document.createElement('input')
@@ -1057,7 +1072,7 @@ createApp({
       virtualAgents, vaModalOpen, vaEditId, vaForm, vaMsg, fetchVirtualAgents, openVaModal, closeVaModal, saveVirtualAgent, deleteVirtualAgent,
       vaAddModel, vaRemoveModel, vaSetModelType, vaModelName, vaModelType,
       distribInfo, distribText, distribMsg, distribSaving,
-      fetchDistribInfo, uploadDistrib, deleteDistrib, loadLocalFile,
+      fetchDistribInfo, uploadDistrib, deleteDistrib, loadLocalFile, reloadDistribSource,
       fmtTime,
     }
   }

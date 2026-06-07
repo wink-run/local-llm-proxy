@@ -19,7 +19,8 @@ mitm:
 tools:
   - id: claude-code
     name: Claude Code
-    route_bindable: false   # 模型受授权校验，改模型会被客户端拒绝
+    route_bindable: true                    # 支持选择路由
+    restrict_to_virtual: true               # 但仅限虚拟模型和包含虚拟模型的场景
     protocol: anthropic
     detect:
       command: claude
@@ -34,6 +35,7 @@ tools:
   - id: codex
     name: Codex (CLI)
     protocol: responses
+    restrict_to_virtual: true               # 仅限虚拟模型和包含虚拟模型的场景
     detect:
       command: codex
       version-arg: --version
@@ -62,12 +64,31 @@ tools:
 # ── API Key 应用（检测到已安装则在列表显示「添加」，写其配置文件指向网关）──
 # {BASE}=网关地址 {KEY}=应用 key（运行时按应用填入；真 key 不进此文件）
 api_key_apps:
+  - id: claude-desktop
+    name: Claude Desktop
+    icon: "🖥️"
+    appx: Claude
+    config_file: "{CLAUDE_3P_CONFIG}"
+    marker: tokenbank
+    enable_3p: true                         # 是否启用 Claude Desktop 3p 接入（false 则不显示该应用）
+    route_bindable: true
+    restrict_to_virtual: true               # 仅限虚拟模型
+    # 全部写进 JSON 配置文件（Claude Desktop 从 JSON 读 key，不读环境变量）
+    patch:
+      inferenceProvider: gateway
+      inferenceGatewayBaseUrl: "{BASE}"
+      inferenceGatewayApiKey: "{KEY}"
+      inferenceGatewayAuthScheme: bearer
+      modelDiscoveryEnabled: false
+      _configManagedBy: tokenbank
+
   - id: codex-desktop
     name: Codex Desktop
     icon: "🖥️"
     appx: OpenAI.Codex
     config_file: "{CODEX_HOME|~/.codex}/config.toml"
     marker: tokenbank
+    route_bindable: true                    # Codex 支持模型改写
     patch:
       model_provider: tokenbank
       model_providers.tokenbank.name: Tokenbank

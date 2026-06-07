@@ -120,7 +120,20 @@ function routing()   { return get().routing || {}; }
 function appPresets() { const ctx = gatewayCtx(); return (get().app_presets || []).map(p => resolveDeep(p, ctx)); }
 // API Key 应用（检测 appx → 写其配置文件指向网关）：同样保留 {BASE}/{KEY}，前端按应用解析
 function apiKeyApps() { const ctx = gatewayCtx(); return (get().api_key_apps || []).map(p => resolveDeep(p, ctx)); }
+// 虚拟模型列表（对外 Anthropic 模型名，对内改写到真实模型）
+function virtualModels() { const ctx = gatewayCtx(); return (get().virtual_models || []).map(m => resolveDeep(m, ctx)); }
 function caRef()     { return (get().mitm || {}).ca_ref || ['auto']; }
+
+// 虚拟模型 ID → 真实模型 ID 映射（网关请求改写用）
+function resolveVirtualModel(virtualId) {
+  const vm = virtualModels().find(m => m.id === virtualId);
+  return vm ? vm.real_model : null;
+}
+
+// 检查模型 ID 是否是虚拟模型
+function isVirtualModel(modelId) {
+  return virtualModels().some(m => m.id === modelId);
+}
 
 // ── _ref 解析链（ca_ref / api_key_ref 共用）───────────────────────────────────
 // refs: 字符串数组，按序取第一个可用。返回 { kind, value } 或 null。
@@ -152,5 +165,6 @@ module.exports = {
   load, get, setCaPath, getCaPath,
   gatewayCtx, mitmDomains, shouldMitm, tools, appPresets, apiKeyApps,
   routing, caRef,
+  virtualModels, resolveVirtualModel, isVirtualModel,
   resolveRef, resolvePlaceholders, expandHome,
 };

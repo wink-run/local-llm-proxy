@@ -2,6 +2,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { getRates, getOnlineModels } from '../api/client';
 import { getGateway, getLocalConfig, getConfig } from '../api/adapter';
 import { listAgents, applyAgent, revertAgent } from '../api/agents';
+import claudeDevModeImg1 from '../assets/claude-devmode-1.webp';
+import claudeDevModeImg2 from '../assets/claude-devmode-2.webp';
 
 // ── PolicyManager：策略组管理 UI ──────────────────────────────────────────────
 const STRATEGY_OPTIONS = [
@@ -183,6 +185,122 @@ function PolicyManager() {
 // ── ImportConfigButton：导入配置（本地文件 or URL）─────────────────────────────
 // endpoint: 服务器端内置的配置文件路径，如 '/api/config/apps' 或 '/api/config/scenes'
 // URL 框只让用户填服务器根地址，文件路径由 endpoint 内置拼接
+// ── VirtualModelManager：虚拟模型映射管理 UI ──────────────────────────────────
+// 虚拟模型（对外 Anthropic 兼容名）→ 真实模型（对内 P2P）。持久化到 local-config，初始值来自 yaml。
+function VirtualModelManager({ availableModels = [], onChanged }) {
+  const [vms, setVms]       = useState([]);
+  const [editing, setEditing] = useState(null);  // null | vm | 'new'
+  const [busy, setBusy]     = useState(false);
+  const [msg, setMsg]       = useState('');
+  const [fId, setFId]               = useState('');
+  const [fDisplay, setFDisplay]     = useState('');
+  const [fReal, setFReal]           = useState('');
+
+  const load = useCallback(async () => {
+    if (!window.electronAPI?.virtualModels) return;
+    const list = await window.electronAPI.virtualModels.list().catch(() => []);
+    setVms(Array.isArray(list) ? list : []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  function openNew() { setFId(''); setFDisplay(''); setFReal(''); setEditing('new'); setMsg(''); }
+  function openEdit(vm) { setFId(vm.id); setFDisplay(vm.display_name || ''); setFReal(vm.real_model || ''); setEditing(vm); setMsg(''); }
+  function cancelEdit() { setEditing(null); setMsg(''); }
+
+  async function save() {
+    if (!fId.trim())   return setMsg('虚拟模型 ID 不能为空');
+    if (!fReal.trim()) return setMsg('真实模型不能为空');
+    setBusy(true);
+    try {
+      const d = { id: fId.trim(), display_name: fDisplay.trim() || fId.trim(), real_model: fReal.trim() };
+      const r = editing === 'new'
+        ? await window.electronAPI.virtualModels.create(d)
+        : await window.electronAPI.virtualModels.update(d);
+      if (!r?.ok) { setMsg('✗ ' + (r?.error || '保存失败')); setBusy(false); return; }
+      await load(); setEditing(null); setMsg('');
+      onChanged?.();
+    } catch (e) { setMsg('✗ ' + e.message); }
+    setBusy(false);
+  }
+
+  async function del(id) {
+    if (!window.confirm(`删除虚拟模型 ${id}？`)) return;
+    await window.electronAPI.virtualModels.delete(id).catch(() => {});
+    await load();
+    onChanged?.();
+  }
+
+  const realCandidates = availableModels.map(m => m.id);
+
+  return (
+    <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 mb-4">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-base">🎭</span>
+        <h2 className="font-semibold text-gray-800 dark:text-gray-100 text-sm">虚拟模型映射</h2>
+        <span className="text-xs text-gray-400 dark:text-gray-500">对外 Anthropic 兼容名 → 对内真实模型；Claude Desktop / Claude Code 必须用虚拟模型</span>
+        <button onClick={openNew}
+          className="ml-auto text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors">
+          + 新建虚拟模型
+        </button>
+      </div>
+
+      <div className="flex flex-col gap-1.5 mb-2">
+        {vms.length === 0 && <div className="text-xs text-gray-400 py-1">暂无虚拟模型</div>}
+        {vms.map(vm => (
+          <div key={vm.id} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40 text-sm">
+            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/40 text-blue-600 dark:text-blue-400 shrink-0">{vm.id}</span>
+            <span className="text-gray-400 text-xs shrink-0">→</span>
+            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/40 text-green-600 dark:text-green-400 shrink-0">{vm.real_model}</span>
+            <span className="text-xs text-gray-500 truncate flex-1">{vm.display_name}</span>
+            <button onClick={() => openEdit(vm)}
+              className="text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 shrink-0">编辑</button>
+            <button onClick={() => del(vm.id)}
+              className="text-xs px-2 py-0.5 rounded text-gray-400 hover:text-red-500 shrink-0">删除</button>
+          </div>
+        ))}
+      </div>
+
+      {editing && (
+        <div className="mt-2 p-3 rounded-lg border border-blue-200 dark:border-blue-800/50 bg-blue-50/40 dark:bg-blue-950/10">
+          <div className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
+            {editing === 'new' ? '新建虚拟模型' : `编辑：${editing.id}`}
+          </div>
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500 w-20 shrink-0">虚拟模型 ID</label>
+              <input value={fId} onChange={e => setFId(e.target.value)} disabled={editing !== 'new'}
+                placeholder="如：claude-opus-4-8"
+                className="flex-1 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 outline-none focus:border-blue-400 text-gray-800 dark:text-gray-200 disabled:opacity-50" />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500 w-20 shrink-0">显示名</label>
+              <input value={fDisplay} onChange={e => setFDisplay(e.target.value)}
+                placeholder="如：Claude Opus 4.8"
+                className="flex-1 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 outline-none focus:border-blue-400 text-gray-800 dark:text-gray-200" />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500 w-20 shrink-0">真实模型</label>
+              <input value={fReal} onChange={e => setFReal(e.target.value)} list="vm-real-models"
+                placeholder="如：glm-4.7"
+                className="flex-1 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 outline-none focus:border-blue-400 text-gray-800 dark:text-gray-200" />
+              <datalist id="vm-real-models">
+                {realCandidates.map(id => <option key={id} value={id} />)}
+              </datalist>
+            </div>
+          </div>
+          {msg && <div className="text-xs mt-2 text-red-500">{msg}</div>}
+          <div className="flex gap-2 mt-3">
+            <button onClick={save} disabled={busy}
+              className="text-xs px-3 py-1 rounded bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50">保存</button>
+            <button onClick={cancelEdit}
+              className="text-xs px-3 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300">取消</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
   const [busy, setBusy] = useState(false);
   const [msg,  setMsg]  = useState('');
@@ -278,16 +396,43 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   const [models,      setModels]      = useState((app.allowed_models || []).join(', '));
   const [busy,        setBusy]        = useState(false);
   const [copied,      setCopied]      = useState(false);
+  const [virtualModels, setVirtualModels] = useState([]);  // 虚拟模型列表
+  const [claudeDevMode, setClaudeDevMode] = useState(null); // Claude Desktop 开发者模式状态
   // config-file 类 API Key 应用：两 Tab（0=配置文件写入和 API Key｜1=路由规则和请求控制）
   const isCfg = app.link_method === 'api-key' && !!app.config_file;
+  const isClaudeDesktop = app.preset_id === 'claude-desktop';
+  // Claude Desktop 且开发者模式未就绪 → 需引导用户先启用
+  const needDevMode = isClaudeDesktop && claudeDevMode && !claudeDevMode.dev_mode_ready;
   const [tab,         setTab]         = useState(0);
   const [written,     setWritten]     = useState(!!app.configured);  // 配置文件是否已写入（决定显示「取消 API Key 管理」）
 
+  // 加载虚拟模型列表
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = await window.electronAPI?.gateway?.getVirtualModels?.() || [];
+        setVirtualModels(Array.isArray(list) ? list : []);
+      } catch {}
+    })();
+  }, []);
+
+  // Claude Desktop：检测开发者模式是否就绪
+  useEffect(() => {
+    if (!isClaudeDesktop) return;
+    (async () => {
+      try {
+        const st = await window.electronAPI?.apps?.claudeDevModeStatus?.();
+        setClaudeDevMode(st || null);
+      } catch {}
+    })();
+  }, [isClaudeDesktop]);
+
   // 网关 origin（去掉 /v1），用于解析环境变量模板里的 {BASE}
   const gwOrigin = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/v1\/?$/, '');
-  const resolveEnv = (tpl) => String(tpl)
-    .replace(/\{BASE\}/g, gwOrigin)
-    .replace(/\{KEY\}/g, app.api_key || '');
+  // 只对字符串做占位符替换；布尔/数字（如 modelDiscoveryEnabled: false）原样保留类型
+  const resolveEnv = (tpl) => typeof tpl === 'string'
+    ? tpl.replace(/\{BASE\}/g, gwOrigin).replace(/\{KEY\}/g, app.api_key || '')
+    : tpl;
   // 环境变量编辑文本（VAR=value，每行一条）
   const [envText, setEnvText] = useState(() =>
     app.env ? Object.entries(app.env).map(([k, v]) => `${k}=${resolveEnv(v)}`).join('\n') : '');
@@ -404,6 +549,43 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   );
 
   // 配置文件注入（信息展示；写入按钮在底部）
+  // Claude Desktop 开发者模式引导（configLibrary 为空时显示）
+  const devModeGuide = needDevMode && (
+    <div className="rounded-lg border border-amber-300 dark:border-amber-700/50 bg-amber-50/60 dark:bg-amber-950/20 p-3">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-base">⚠️</span>
+        <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">需要先在 Claude Desktop 启用开发者模式</span>
+      </div>
+      <div className="text-xs text-gray-600 dark:text-gray-300 space-y-1 mb-3">
+        <p>检测到 Claude Desktop 已安装，但还没启用第三方网关（开发者模式）。请按以下步骤操作：</p>
+        <p>1️⃣ 打开 Claude Desktop → 顶部菜单 <b>Help → Troubleshooting → Enable Developer Mode</b></p>
+        <p>2️⃣ 重启 Claude Desktop，首屏会出现 <b>Configure third-party inference</b>，选择 <b>Gateway</b></p>
+        <p>3️⃣ 完成后回到本页点「刷新」，即可自动写入网关配置</p>
+      </div>
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <div>
+          <div className="text-[10px] text-gray-400 mb-1">步骤 1：启用开发者模式</div>
+          <img src={claudeDevModeImg1} alt="Enable Developer Mode" className="rounded border border-gray-200 dark:border-gray-700 w-full" />
+        </div>
+        <div>
+          <div className="text-[10px] text-gray-400 mb-1">步骤 2：选择 Gateway</div>
+          <img src={claudeDevModeImg2} alt="Configure Gateway" className="rounded border border-gray-200 dark:border-gray-700 w-full" />
+        </div>
+      </div>
+      <button
+        onClick={async () => {
+          const st = await window.electronAPI?.apps?.claudeDevModeStatus?.();
+          setClaudeDevMode(st || null);
+          if (st?.dev_mode_ready) setWriteMsg('✓ 已检测到开发者模式，可以写入配置了');
+          else setWriteMsg('✗ 仍未检测到，请确认已启用开发者模式并重启 Claude Desktop');
+        }}
+        className="text-xs px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white transition-colors">
+        🔄 我已启用，刷新检测
+      </button>
+      {writeMsg && <div className={`text-[11px] mt-2 ${writeMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{writeMsg}</div>}
+    </div>
+  );
+
   const configFileSection = app.config_file && (
     <div>
       <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">配置文件注入（指向网关）</div>
@@ -431,14 +613,23 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
         <option value="">不绑定（走默认策略）</option>
         {(() => {
           const avail = new Set(availableModels.map(m => m.id));
-          const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
+          const virtualIds = new Set(virtualModels.map(m => m.id));
+          const sceneHasVirtual = r => (r.steps || []).some(s => virtualIds.has(s.model || s.label));
+          const usable = app.restrict_to_virtual
+            ? routes.filter(sceneHasVirtual)
+            : routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
           return usable.length > 0 && (
             <optgroup label="场景路由">
               {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
             </optgroup>
           );
         })()}
-        {['free','p2p','paid'].map(tier => {
+        {virtualModels.length > 0 && (
+          <optgroup label="虚拟模型（Anthropic 兼容名）">
+            {virtualModels.map(m => <option key={m.id} value={m.id}>{m.id} → {m.real_model}</option>)}
+          </optgroup>
+        )}
+        {!app.restrict_to_virtual && ['free','p2p','paid'].map(tier => {
           const tm = availableModels.filter(m => m.tier === tier);
           if (!tm.length) return null;
           const label = tier === 'free' ? '🟢 免费模型' : tier === 'p2p' ? '🔵 P2P 模型' : '🟣 付费模型';
@@ -523,7 +714,9 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
               ))}
             </div>
             <div className="p-5 space-y-4">
-              {tab === 0 ? <>{configFileSection}{apiKeyRow}</> : <>{routeSection}{controlSection}</>}
+              {tab === 0
+                ? (needDevMode ? devModeGuide : <>{configFileSection}{apiKeyRow}</>)
+                : <>{routeSection}{controlSection}</>}
             </div>
             {/* 底部按钮：Tab1=写入配置/取消API Key管理/取消；Tab2=保存/取消 */}
             <div className="flex gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800">
@@ -536,8 +729,9 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
                       取消 API Key 管理
                     </button>
                   ) : (
-                    <button onClick={writeConfigFile}
-                      className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white">
+                    <button onClick={writeConfigFile} disabled={needDevMode}
+                      title={needDevMode ? '请先在 Claude Desktop 启用开发者模式' : ''}
+                      className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-40 disabled:cursor-not-allowed">
                       写入配置
                     </button>
                   )}
@@ -582,7 +776,18 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
   const [models,      setModels]      = useState((app.allowed_models || []).join(', '));
   const [busy,        setBusy]        = useState(false);
   const [copied,      setCopied]      = useState(false);
+  const [virtualModels, setVirtualModels] = useState([]);  // 虚拟模型列表
   const ICONS = ['🤖','✏️','🔧','💻','🎯','🌐','📱','🔑','⚡','🛠️','🎨','📊'];
+
+  // 加载虚拟模型列表
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = await window.electronAPI?.gateway?.getVirtualModels?.() || [];
+        setVirtualModels(Array.isArray(list) ? list : []);
+      } catch {}
+    })();
+  }, []);
 
   async function save() {
     setBusy(true);
@@ -654,6 +859,11 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
                 </optgroup>
               );
             })()}
+            {virtualModels.length > 0 && (
+              <optgroup label="虚拟模型（Anthropic 兼容名）">
+                {virtualModels.map(m => <option key={m.id} value={m.id}>{m.id} → {m.real_model}</option>)}
+              </optgroup>
+            )}
             {['free','p2p','paid'].map(tier => {
               const tm = availableModels.filter(m => m.tier === tier);
               if (!tm.length) return null;
@@ -722,17 +932,20 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   const [settings, setSettings] = useState(null);     // 设置弹窗对应的 app（编辑/桌面应用托管）
   const [manualDraft, setManualDraft] = useState(null); // 手工添加的内联面板对应的 app
   const [appStats, setAppStats] = useState({});     // id → {calls,tokens,lastTs}
+  const [virtualModels, setVirtualModels] = useState([]);  // 虚拟模型列表
 
   const load = useCallback(async () => {
     if (!window.electronAPI) return;
-    const [appList, localCfg, gw] = await Promise.all([
+    const [appList, localCfg, gw, vModels] = await Promise.all([
       window.electronAPI.apps?.list().catch(() => []),
       getLocalConfig().get().catch(() => ({})),
       window.electronAPI.gateway?.status?.().catch(() => null),
+      window.electronAPI.gateway?.getVirtualModels?.().catch(() => []),
     ]);
     const list = Array.isArray(appList) ? appList : [];
     setApps(list);
     setRoutes(localCfg?.scene_routes || []);
+    setVirtualModels(Array.isArray(vModels) ? vModels : []);
     if (gw?.port) setLocalBase(`http://localhost:${gw.port}/v1`);
     // 异步拉统计（不阻塞主列表渲染）
     if (list.length && window.electronAPI.apps?.stats) {
@@ -741,6 +954,12 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // 配置下发/变更后，主进程通知 → 重新加载应用列表（新托管/新可配置 api-key 行立即显示）
+  useEffect(() => {
+    const off = window.electronAPI?.apps?.onChanged?.(() => load());
+    return () => { if (typeof off === 'function') off(); };
+  }, [load]);
 
   async function handleUpdateApp(data) {
     let id = data.id;
@@ -964,25 +1183,34 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         <option value="">不绑定</option>
                         {(() => {
                           const avail = new Set(availableModels.map(m => m.id));
-                          const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
-                          return usable.length > 0 && (
-                            <optgroup label="场景路由">
-                              {usable.map(r => (
-                                <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>
-                              ))}
-                            </optgroup>
+                          const virtualIds = new Set(virtualModels.map(m => m.id));
+                          // 含虚拟模型的场景：步骤里有任一虚拟模型
+                          const sceneHasVirtual = r => (r.steps || []).some(s => virtualIds.has(s.model || s.label));
+                          // restrict_to_virtual 应用：场景只显示含虚拟模型的；否则显示步骤可用的
+                          const usable = app.restrict_to_virtual
+                            ? routes.filter(sceneHasVirtual)
+                            : routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
+                          return (
+                            <>
+                              {usable.length > 0 && (
+                                <optgroup label="场景路由">
+                                  {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
+                                </optgroup>
+                              )}
+                              {virtualModels.length > 0 && (
+                                <optgroup label="虚拟模型（Anthropic 兼容名）">
+                                  {virtualModels.map(m => <option key={m.id} value={m.id}>{m.id} → {m.real_model}</option>)}
+                                </optgroup>
+                              )}
+                              {!app.restrict_to_virtual && ['free','p2p','paid'].map(tier => {
+                                const tm = availableModels.filter(m => m.tier === tier);
+                                if (!tm.length) return null;
+                                const label = tier === 'free' ? '🟢 免费模型' : tier === 'p2p' ? '🔵 P2P 模型' : '🟣 付费模型';
+                                return <optgroup key={tier} label={label}>{tm.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>;
+                              })}
+                            </>
                           );
                         })()}
-                        {['free','p2p','paid'].map(tier => {
-                          const tierModels = availableModels.filter(m => m.tier === tier);
-                          if (!tierModels.length) return null;
-                          const label = tier === 'free' ? '🟢 免费模型' : tier === 'p2p' ? '🔵 P2P 模型' : '🟣 付费模型';
-                          return (
-                            <optgroup key={tier} label={label}>
-                              {tierModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
-                            </optgroup>
-                          );
-                        })}
                       </select>
                       )}
 
@@ -1939,18 +2167,23 @@ export default function Gateway() {
         {/* Tab1: 场景路由 */}
         {mainTab === 1 && (
         <div>
+        {/* 导入功能：放最上面 */}
+        <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-200 dark:border-gray-800">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-gray-700 dark:text-gray-200">导入配置</div>
+            <p className="text-xs text-gray-500 mt-0.5">从本地文件或服务器下发导入「路由配置 + 虚拟模型映射」，导入后自动应用并刷新</p>
+          </div>
+          <ImportConfigButton onImported={refresh} endpoint="/api/config/scenes" />
+        </div>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800">
           <div>
-            <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">场景路由</h2>
+            <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">路由配置</h2>
             <p className="text-xs text-gray-500 mt-0.5">定义每个场景的模型降级链，通过 llm-router-xxx 触发</p>
           </div>
-          <div className="flex items-center gap-2">
-            <ImportConfigButton onImported={refresh} endpoint="/api/config/scenes" />
-            <button
-              onClick={() => { setExpandedRoute(null); setNewRoute({ scene_name: '', icon: '🔀', steps: [] }); }}
-              className="text-xs bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-            >+ 新建路由</button>
-          </div>
+          <button
+            onClick={() => { setExpandedRoute(null); setNewRoute({ scene_name: '', icon: '🔀', steps: [] }); }}
+            className="text-xs bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+          >+ 新建路由</button>
         </div>
         <div className="divide-y divide-gray-100 dark:divide-gray-800/60">
           {routes.map(route => {
@@ -2041,7 +2274,13 @@ export default function Gateway() {
         )}
       </div>
 
-      {/* Route log */}
+      {/* 第二个框：虚拟模型映射 — 仅在「场景路由」Tab 显示 */}
+      {mainTab === 1 && (
+        <VirtualModelManager availableModels={availableModels} onChanged={loadAvailableModels} />
+      )}
+
+      {/* 路由明细（第三个框）— 仅在「场景路由」Tab 显示，应用列表 Tab 不显示 */}
+      {mainTab === 1 && (
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5">
         <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">路由明细</h2>
         {logEntries.length === 0 ? (
@@ -2067,6 +2306,15 @@ export default function Gateway() {
                     {isRouter && (
                       <span className="font-mono text-purple-500 dark:text-purple-400 shrink-0">{e.requested_model}</span>
                     )}
+                    {/* 虚拟映射标记：虚拟名 → (改写) */}
+                    {e.virtual_from && (
+                      <>
+                        <span title="经虚拟模型映射" className="font-mono text-[10px] px-1 py-0.5 rounded bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/40 text-indigo-600 dark:text-indigo-400 shrink-0">
+                          🎭 {e.virtual_from}
+                        </span>
+                        <span className="text-gray-300 dark:text-gray-600">→</span>
+                      </>
+                    )}
                     {/* Failed models in degradation chain */}
                     {e.tried?.map((m, j) => (
                       <React.Fragment key={j}>
@@ -2085,6 +2333,9 @@ export default function Gateway() {
                                               'text-green-600 dark:text-green-500'
                         }`}>({e.tier})</span>
                       )}
+                      {!e.virtual_from && !isRouter && (
+                        <span title="直连模型（未经虚拟映射）" className="ml-1 text-[9px] text-gray-400">直连</span>
+                      )}
                     </span>
                   </div>
 
@@ -2099,6 +2350,7 @@ export default function Gateway() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

@@ -135,7 +135,8 @@ function list() {
     id: t.id, name: t.name, protocol: t.protocol, strategy: t.strategy,
     type: t.type || 'cli',          // cli | gui
     needs_ca: !!t.needs_ca,         // 是否需先装根证书
-    route_bindable: t.route_bindable !== false,  // 是否支持改模型/绑路由（claude 客户端校验模型，false）
+    route_bindable: t.route_bindable !== false,  // 是否支持改模型/绑路由
+    restrict_to_virtual: t.restrict_to_virtual === true,  // 仅限虚拟模型（Claude Code/Desktop）
     unsupported: !!t.unsupported,   // 实测无法托管（如证书锁定）
     note: t.note || null,
     installed: isInstalled(t),
