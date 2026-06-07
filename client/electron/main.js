@@ -1040,7 +1040,7 @@ function registerIPC() {
     // 把 yaml tools 里有、但 apps[] 里还没有 shim 记录的 agent，动态补入
     const shimIds = new Set(savedApps.filter(a => a.link_method === 'shim').map(a => a.agent_id));
     const TOOL_ICONS = { 'claude-code': '🤖', 'codex': '💻', 'gemini-cli': '🔮' };
-    const TOOL_NAMES = { 'claude-code': 'Claude Code', 'codex': 'Codex CLI', 'gemini-cli': 'Gemini CLI' };
+    const TOOL_NAMES = { 'claude-code': 'Claude Code CLI', 'codex': 'Codex CLI', 'gemini-cli': 'Gemini CLI' };
     const virtualShimApps = agentTools
       .filter(t => !shimIds.has(t.id))
       .map(t => ({
