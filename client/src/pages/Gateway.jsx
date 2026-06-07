@@ -815,13 +815,15 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   }
   // API Key 应用「添加」：用其 config-file 预设创建 api-key 应用并打开设置（去写配置文件）
   async function addApiKeyApp(d) {
+    const bindable = d.route_bindable !== false;
     const created = await window.electronAPI.apps?.create({
       name: d.name, icon: d.icon, link_method: 'api-key',
       preset_id: d.preset_id,
-      route_id: defaultRouteId() || null,
+      route_id: bindable ? (defaultRouteId() || null) : null,   // 不可绑路由(如 Claude)不设默认模型
       inject: 'config-file', config_file: d.config_file, patch: d.patch, env: d.env || null,
     }).catch(() => null);
-    if (created?.id) setSettings({ ...created, _isNew: true });
+    // 把 route_bindable 带进弹窗（created 来自 create 不含该派生字段）→ 面板正确隐藏路由段
+    if (created?.id) setSettings({ ...created, _isNew: true, route_bindable: d.route_bindable });
   }
   // 取消 API Key 管理：还原配置文件 + 移除该应用
   async function handleCancelManage(app) {
