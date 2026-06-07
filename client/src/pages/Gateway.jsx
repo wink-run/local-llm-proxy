@@ -266,7 +266,7 @@ const STRATEGY_LABEL = {
 };
 
 // 单个应用的设置面板（路由规则绑定 + 详细配置）
-function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', onUpdate, onDelete, onRegenKey, onCancelManage, onClose, onCancel }) {
+function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', onUpdate, onDelete, onRegenKey, onCancelManage, onWritten, onClose, onCancel }) {
   const dismiss = onCancel || onClose;   // ✕/取消/点遮罩 → 取消（新应用未保存会被丢弃）
   const [name,        setName]        = useState(app.name || '');
   const [icon,        setIcon]        = useState(app.icon || '🔧');
@@ -278,6 +278,10 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   const [models,      setModels]      = useState((app.allowed_models || []).join(', '));
   const [busy,        setBusy]        = useState(false);
   const [copied,      setCopied]      = useState(false);
+  // config-file 类 API Key 应用：两 Tab（0=配置文件写入和 API Key｜1=路由规则和请求控制）
+  const isCfg = app.link_method === 'api-key' && !!app.config_file;
+  const [tab,         setTab]         = useState(0);
+  const [written,     setWritten]     = useState(!!app.configured);  // 配置文件是否已写入（决定显示「取消 API Key 管理」）
 
   // 网关 origin（去掉 /v1），用于解析环境变量模板里的 {BASE}
   const gwOrigin = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/v1\/?$/, '');
@@ -332,188 +336,232 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     const r = await window.electronAPI?.apps?.writeConfigFile({
       app_id: app.id, config_file: app.config_file, patch, env,
     }).catch(e => ({ ok: false, error: e.message }));
-    if (r?.ok) setWriteMsg(`✓ 已写入 ${r.file}${r.envCount ? `（含 ${r.envCount} 个环境变量）` : ''}，重启该应用后生效`);
-    else setWriteMsg('✗ ' + (r?.error || '写入失败'));
+    if (r?.ok) {
+      setWriteMsg(`✓ 已写入 ${r.file}${r.envCount ? `（含 ${r.envCount} 个环境变量）` : ''}，重启该应用后生效`);
+      setWritten(true);     // 已写入 → 显示「取消 API Key 管理」
+      onWritten?.();        // 通知父级：该应用已落地（清除 _isNew，取消时不再删除）
+    } else setWriteMsg('✗ ' + (r?.error || '写入失败'));
   }
 
   const ICONS = ['🤖','✏️','🔧','💻','🎯','🌐','📱','🔑','⚡','🛠️','🎨','📊'];
 
+  // ── 各区块（按布局组合：config-file 应用走两 Tab，其余走单页）──
+  const baseInfoSection = (
+    <div>
+      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">基础信息</div>
+      <div className="flex gap-2 mb-2">
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="应用名称"
+          className="flex-1 text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-gray-800 dark:text-gray-200" />
+      </div>
+      <div className="flex flex-wrap gap-1.5 mb-2">
+        {ICONS.map(e => (
+          <button key={e} onClick={() => setIcon(e)}
+            className={`text-lg p-1 rounded ${icon === e ? 'bg-blue-100 dark:bg-blue-900/40 ring-1 ring-blue-400' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}>
+            {e}
+          </button>
+        ))}
+      </div>
+      <textarea value={desc} onChange={e => setDesc(e.target.value)} placeholder="描述（可选）" rows={2}
+        className="w-full text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none resize-none text-gray-600 dark:text-gray-400" />
+    </div>
+  );
+
+  const apiKeyRow = isKeyApp(app.link_method) && app.api_key && (
+    <div>
+      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">API Key</div>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 text-[11px] font-mono bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-gray-600 dark:text-gray-400 truncate">{app.api_key}</code>
+        <button onClick={() => { navigator.clipboard.writeText(app.api_key); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+          className="text-xs px-2 py-1.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 shrink-0">
+          {copied ? '已复制✓' : '复制'}
+        </button>
+        {onRegenKey && (
+          <button onClick={() => onRegenKey(app.id)}
+            className="text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 shrink-0">重置</button>
+        )}
+      </div>
+    </div>
+  );
+
+  const envSection = app.link_method === 'api-key' && app.env && !app.config_file && (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-xs font-medium text-gray-500 dark:text-gray-400">环境变量（写入后该工具指向网关）</div>
+        <button onClick={writeEnv}
+          className="text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white shrink-0">
+          写入配置
+        </button>
+      </div>
+      <textarea value={envText} onChange={e => setEnvText(e.target.value)} rows={Math.max(2, envText.split('\n').length)}
+        spellCheck={false}
+        className="w-full font-mono text-[11px] bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 outline-none focus:border-blue-400 text-gray-700 dark:text-gray-200 resize-y"
+        placeholder="VAR=value（每行一条）" />
+      {writeMsg && <div className={`text-[11px] mt-1 ${writeMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{writeMsg}</div>}
+      <div className="text-[10px] text-gray-400 mt-1">
+        💡 「写入配置」会把上述变量写入系统（Windows: 用户环境变量；macOS/Linux: shell 配置），重开终端后该工具即指向本网关。
+      </div>
+    </div>
+  );
+
+  // 配置文件注入（信息展示；写入按钮在底部）
+  const configFileSection = app.config_file && (
+    <div>
+      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">配置文件注入（指向网关）</div>
+      <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2 space-y-1">
+        <div className="font-mono text-[11px] text-gray-700 dark:text-gray-300 break-all">{app.config_file}</div>
+        {Object.entries(app.patch || {}).map(([k, v]) => (
+          <div key={k} className="font-mono text-[10px] text-gray-500 break-all">{k} = {resolveEnv(v)}</div>
+        ))}
+        {Object.keys(app.env || {}).length > 0 && (
+          <div className="font-mono text-[10px] text-gray-400 pt-1">+ 环境变量：{Object.keys(app.env).join(', ')}</div>
+        )}
+      </div>
+      {writeMsg && <div className={`text-[11px] mt-1 ${writeMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{writeMsg}</div>}
+      <div className="text-[10px] text-gray-400 mt-1">
+        💡 「写入配置」会改写上述配置文件并指向本网关（API 模式）；需用 API Key 登录该应用，重启后生效。
+      </div>
+    </div>
+  );
+
+  const routeSection = isKeyApp(app.link_method) && (
+    <div>
+      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">路由规则（模型或场景路由）</div>
+      <select value={routeId} onChange={e => setRouteId(e.target.value)}
+        className="w-full text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none text-gray-800 dark:text-gray-200">
+        <option value="">不绑定（走默认策略）</option>
+        {(() => {
+          const avail = new Set(availableModels.map(m => m.id));
+          const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
+          return usable.length > 0 && (
+            <optgroup label="场景路由">
+              {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
+            </optgroup>
+          );
+        })()}
+        {['free','p2p','paid'].map(tier => {
+          const tm = availableModels.filter(m => m.tier === tier);
+          if (!tm.length) return null;
+          const label = tier === 'free' ? '🟢 免费模型' : tier === 'p2p' ? '🔵 P2P 模型' : '🟣 付费模型';
+          return <optgroup key={tier} label={label}>{tm.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>;
+        })}
+      </select>
+    </div>
+  );
+
+  const controlSection = (isKeyApp(app.link_method) || app.link_method === 'shim') && (
+    <div>
+      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">请求控制</div>
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-500 w-20 shrink-0">允许流式</label>
+          <button onClick={() => setAllowStream(!allowStream)}
+            className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${allowStream ? 'bg-blue-600' : 'bg-gray-400'}`}>
+            <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${allowStream ? 'translate-x-4' : 'translate-x-0.5'}`} />
+          </button>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-500 w-20 shrink-0">RPM 限制</label>
+          <input type="number" value={maxRpm} onChange={e => setMaxRpm(e.target.value)} placeholder="不限"
+            className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-500 w-20 shrink-0">并发限制</label>
+          <input type="number" value={maxConc} onChange={e => setMaxConc(e.target.value)} placeholder="不限"
+            className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-500 w-20 shrink-0">允许模型</label>
+          <input value={models} onChange={e => setModels(e.target.value)} placeholder="空=不限，逗号分隔"
+            className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
+        </div>
+      </div>
+    </div>
+  );
+
+  const accessSection = isKeyApp(app.link_method) && app.api_key && !app.env && !app.config_file && (
+    <div>
+      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">接入配置</div>
+      <KeyConfigPanel apiKey={app.api_key} localBase="http://127.0.0.1:11430/v1"
+        model={routeId || undefined} hideAuto />
+    </div>
+  );
+
+  const btnSave = (
+    <button onClick={save} disabled={busy}
+      className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+      {busy ? '保存中…' : '保存'}
+    </button>
+  );
+  const btnCancel = (
+    <button onClick={dismiss}
+      className="px-4 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400">
+      取消
+    </button>
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={dismiss}>
-      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-2xl mx-4 max-h-[92vh] overflow-y-auto"
+      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-2xl mx-4 max-h-[92vh] overflow-y-auto flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-200 dark:border-gray-800">
           <span className="text-xl">{icon}</span>
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">应用设置</h3>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">{app.name || '应用设置'}</h3>
           <button onClick={dismiss} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg">✕</button>
         </div>
-        <div className="p-5 space-y-4">
-          {/* 基础信息 */}
-          <div>
-            <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">基础信息</div>
-            <div className="flex gap-2 mb-2">
-              <input value={name} onChange={e => setName(e.target.value)} placeholder="应用名称"
-                className="flex-1 text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-gray-800 dark:text-gray-200" />
-            </div>
-            <div className="flex flex-wrap gap-1.5 mb-2">
-              {ICONS.map(e => (
-                <button key={e} onClick={() => setIcon(e)}
-                  className={`text-lg p-1 rounded ${icon === e ? 'bg-blue-100 dark:bg-blue-900/40 ring-1 ring-blue-400' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}>
-                  {e}
+
+        {isCfg ? (
+          <>
+            {/* Tab 导航 */}
+            <div className="flex border-b border-gray-200 dark:border-gray-800 px-2">
+              {['配置文件写入和 API Key', '路由规则和请求控制'].map((t, i) => (
+                <button key={i} onClick={() => setTab(i)}
+                  className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors ${tab === i
+                    ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                    : 'border-transparent text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'}`}>
+                  {t}
                 </button>
               ))}
             </div>
-            <textarea value={desc} onChange={e => setDesc(e.target.value)} placeholder="描述（可选）" rows={2}
-              className="w-full text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none resize-none text-gray-600 dark:text-gray-400" />
-          </div>
-          {/* API Key 行（api-key / 手工添加 类）*/}
-          {isKeyApp(app.link_method) && app.api_key && (
-            <div>
-              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">API Key</div>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 text-[11px] font-mono bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-gray-600 dark:text-gray-400 truncate">{app.api_key}</code>
-                <button onClick={() => { navigator.clipboard.writeText(app.api_key); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-                  className="text-xs px-2 py-1.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 shrink-0">
-                  {copied ? '已复制✓' : '复制'}
-                </button>
-                {onRegenKey && (
-                  <button onClick={() => onRegenKey(app.id)}
-                    className="text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 shrink-0">重置</button>
-                )}
-              </div>
+            <div className="p-5 space-y-4">
+              {tab === 0 ? <>{configFileSection}{apiKeyRow}</> : <>{routeSection}{controlSection}</>}
             </div>
-          )}
-          {/* 环境变量注入（api-key 类、有 env 且非 config-file：写系统环境变量）*/}
-          {app.link_method === 'api-key' && app.env && !app.config_file && (
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-xs font-medium text-gray-500 dark:text-gray-400">环境变量（写入后该工具指向网关）</div>
-                <button onClick={writeEnv}
-                  className="text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white shrink-0">
-                  写入配置
-                </button>
-              </div>
-              <textarea value={envText} onChange={e => setEnvText(e.target.value)} rows={Math.max(2, envText.split('\n').length)}
-                spellCheck={false}
-                className="w-full font-mono text-[11px] bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 outline-none focus:border-blue-400 text-gray-700 dark:text-gray-200 resize-y"
-                placeholder="VAR=value（每行一条）" />
-              {writeMsg && <div className={`text-[11px] mt-1 ${writeMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{writeMsg}</div>}
-              <div className="text-[10px] text-gray-400 mt-1">
-                💡 「写入配置」会把上述变量写入系统（Windows: 用户环境变量；macOS/Linux: shell 配置），重开终端后该工具即指向本网关。
-              </div>
-            </div>
-          )}
-          {/* 配置文件注入（config-file：改目标工具配置文件指向网关，如 Codex Desktop API 模式）*/}
-          {app.link_method === 'api-key' && app.config_file && (
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-xs font-medium text-gray-500 dark:text-gray-400">配置文件注入（指向网关）</div>
-                <button onClick={writeConfigFile}
-                  className="text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white shrink-0">
-                  写入配置
-                </button>
-              </div>
-              <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2 space-y-1">
-                <div className="font-mono text-[11px] text-gray-700 dark:text-gray-300 break-all">{app.config_file}</div>
-                {Object.entries(app.patch || {}).map(([k, v]) => (
-                  <div key={k} className="font-mono text-[10px] text-gray-500 break-all">{k} = {resolveEnv(v)}</div>
-                ))}
-                {Object.keys(app.env || {}).length > 0 && (
-                  <div className="font-mono text-[10px] text-gray-400 pt-1">+ 环境变量：{Object.keys(app.env).join(', ')}</div>
-                )}
-              </div>
-              {writeMsg && <div className={`text-[11px] mt-1 ${writeMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{writeMsg}</div>}
-              <div className="text-[10px] text-gray-400 mt-1">
-                💡 「写入配置」会改写上述配置文件并指向本网关（API 模式）；需用 API Key 登录该应用，重启后生效。
-              </div>
-            </div>
-          )}
-          {/* 路由规则（api-key / 手工添加 类：同时显示模型和场景路由）*/}
-          {isKeyApp(app.link_method) && (
-            <div>
-              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">路由规则（模型或场景路由）</div>
-              <select value={routeId} onChange={e => setRouteId(e.target.value)}
-                className="w-full text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none text-gray-800 dark:text-gray-200">
-                <option value="">不绑定（走默认策略）</option>
-                {(() => {
-                  const avail = new Set(availableModels.map(m => m.id));
-                  const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
-                  return usable.length > 0 && (
-                    <optgroup label="场景路由">
-                      {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
-                    </optgroup>
-                  );
-                })()}
-                {['free','p2p','paid'].map(tier => {
-                  const tm = availableModels.filter(m => m.tier === tier);
-                  if (!tm.length) return null;
-                  const label = tier === 'free' ? '🟢 免费模型' : tier === 'p2p' ? '🔵 P2P 模型' : '🟣 付费模型';
-                  return <optgroup key={tier} label={label}>{tm.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>;
-                })}
-              </select>
-            </div>
-          )}
-          {/* 请求控制（api-key / 手工添加 / shim 类都可配） */}
-          {(isKeyApp(app.link_method) || app.link_method === 'shim') && (
-            <div>
-              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">请求控制</div>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-gray-500 w-20 shrink-0">允许流式</label>
-                  <button onClick={() => setAllowStream(!allowStream)}
-                    className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${allowStream ? 'bg-blue-600' : 'bg-gray-400'}`}>
-                    <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${allowStream ? 'translate-x-4' : 'translate-x-0.5'}`} />
+            {/* 底部按钮：Tab1=写入配置/取消API Key管理/取消；Tab2=保存/取消 */}
+            <div className="flex gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800">
+              {tab === 0 ? (
+                <>
+                  <button onClick={writeConfigFile}
+                    className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white">
+                    写入配置
                   </button>
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-gray-500 w-20 shrink-0">RPM 限制</label>
-                  <input type="number" value={maxRpm} onChange={e => setMaxRpm(e.target.value)} placeholder="不限"
-                    className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-gray-500 w-20 shrink-0">并发限制</label>
-                  <input type="number" value={maxConc} onChange={e => setMaxConc(e.target.value)} placeholder="不限"
-                    className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-gray-500 w-20 shrink-0">允许模型</label>
-                  <input value={models} onChange={e => setModels(e.target.value)} placeholder="空=不限，逗号分隔"
-                    className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
-                </div>
-              </div>
+                  {written && onCancelManage && (
+                    <button onClick={() => onCancelManage(app)}
+                      className="px-4 py-2 text-sm rounded-xl border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
+                      取消 API Key 管理
+                    </button>
+                  )}
+                  {btnCancel}
+                </>
+              ) : (
+                <>{btnSave}{btnCancel}</>
+              )}
             </div>
-          )}
-          {/* 接入配置（展示 Key + 代码示例）：手工添加 / 纯自定义应用显示；预设/config-file/env 托管不显示 */}
-          {isKeyApp(app.link_method) && app.api_key && !app.env && !app.config_file && (
-            <div>
-              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">接入配置</div>
-              <KeyConfigPanel apiKey={app.api_key} localBase="http://127.0.0.1:11430/v1"
-                model={routeId || undefined} hideAuto />
+          </>
+        ) : (
+          <>
+            <div className="p-5 space-y-4">
+              {baseInfoSection}{apiKeyRow}{envSection}{routeSection}{controlSection}{accessSection}
             </div>
-          )}
-        </div>
-        <div className="flex gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800">
-          {/* config-file 托管：取消 API Key 管理（还原配置文件）；其它 api-key：删除 */}
-          {app.config_file && onCancelManage ? (
-            <button onClick={() => onCancelManage(app)}
-              className="px-4 py-2 text-sm rounded-xl border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
-              取消 API Key 管理
-            </button>
-          ) : onDelete && isKeyApp(app.link_method) && (
-            <button onClick={() => onDelete(app.id)}
-              className="px-4 py-2 text-sm rounded-xl border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
-              删除
-            </button>
-          )}
-          <button onClick={save} disabled={busy}
-            className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
-            {busy ? '保存中…' : '保存'}
-          </button>
-          <button onClick={dismiss}
-            className="px-4 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400">
-            取消
-          </button>
-        </div>
+            <div className="flex gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800">
+              {onDelete && isKeyApp(app.link_method) && (
+                <button onClick={() => onDelete(app.id)}
+                  className="px-4 py-2 text-sm rounded-xl border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
+                  删除
+                </button>
+              )}
+              {btnSave}{btnCancel}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -801,6 +849,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
         <AppSettingsPanel app={settings} routes={routes} availableModels={availableModels} localBase={localBase}
           onUpdate={handleUpdateApp} onDelete={handleDeleteApp} onRegenKey={handleRegenKey}
           onCancelManage={handleCancelManage}
+          onWritten={() => setSettings(s => s ? { ...s, _isNew: false, configured: true } : s)}
           onClose={closeSettings} onCancel={cancelSettings} />
       )}
       <div className="p-4">

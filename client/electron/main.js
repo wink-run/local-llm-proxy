@@ -1085,8 +1085,13 @@ function registerIPC() {
             auto_config: autoConfigOf(app.agent_id),
           };
         }
-        // config-file 类 api-key 应用（桌面版托管）标记 host_method
-        return { ...app, linked: true, installed: true,
+        // config-file 类 api-key 应用：标记 host_method + 配置文件是否已写入（marker 命中）
+        let configured = false;
+        if (app.config_file) {
+          const def = getApiKeyApps().find(d => d.id === app.preset_id);
+          if (def?.marker) configured = configHasMarker(resolveCfgPath(app.config_file), def.marker);
+        }
+        return { ...app, linked: true, installed: true, configured,
                  host_method: app.config_file ? 'config-file' : 'api-key' };
       })
       // 机器上没有的 shim 应用不展示；api-key 应用始终展示
