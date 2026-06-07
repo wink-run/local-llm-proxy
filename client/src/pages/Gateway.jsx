@@ -1535,15 +1535,20 @@ export default function Gateway() {
       }
     } catch {}
 
-    // 能提供的模型 = 后端所有「启用」的模型（/api/rates）：付费(premium)用真实 key 直供、
-    // P2P(open) 由 peer worker 提供，后端都能路由。补 /v1/models 在线信息只用于标 online。
+    // 只列「现在能提供的」：
+    //   付费(premium/paid) —— 后端用真实 key 直供，始终可用
+    //   P2P(open/free)     —— 由 peer worker 提供，仅当前在线（/v1/models）才列
     try {
       let rates = [];
       try { rates = (await getRates()).data?.models || []; } catch {}
       const online = new Set();
       try { for (const m of ((await getOnlineModels()).data?.data || [])) online.add(m.id); } catch {}
-      for (const m of rates) add(m.name, normTier(m.tier));
-      // 在线但 rates 里没有的（worker 临时上报）按 p2p 兜底
+      for (const m of rates) {
+        const tier = normTier(m.tier);
+        if (tier === 'paid') add(m.name, 'paid');         // 付费始终可用
+        else if (online.has(m.name)) add(m.name, tier);   // P2P 需在线
+      }
+      // 在线但 rates 里没有的，按 p2p 兜底列出
       for (const id of online) add(id, 'p2p');
     } catch (e) {
       console.error('loadAvailableModels', e);
