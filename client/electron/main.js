@@ -301,21 +301,13 @@ function autoHostInstalledApps() {
   return newlyHosted;
 }
 
-// ── 桌面应用（只能 config-file / API Key 托管，无法透明托管）─────────────────────
-// Appx 包检测 + 对应配置文件注入信息；{BASE}/{KEY} 由前端按应用解析
-const DESKTOP_APPS = [
-  { id: 'claude-desktop', name: 'Claude Desktop', icon: '🖥️', appx: 'Claude',
-    config_file: '~/.claude/settings.json',
-    patch: { 'env.ANTHROPIC_BASE_URL': '{BASE}', 'env.ANTHROPIC_AUTH_TOKEN': '{KEY}' },
-    marker: 'ANTHROPIC_BASE_URL' },
-  { id: 'codex-desktop', name: 'Codex Desktop', icon: '🖥️', appx: 'OpenAI.Codex',
-    config_file: '{CODEX_HOME|~/.codex}/config.toml',
-    patch: { model_provider: 'tokenbank', 'model_providers.tokenbank.name': 'Tokenbank',
-             'model_providers.tokenbank.base_url': '{BASE}/v1',
-             'model_providers.tokenbank.wire_api': 'responses', 'model_providers.tokenbank.env_key': 'TOKENBANK_API_KEY' },
-    env: { TOKENBANK_API_KEY: '{KEY}' },
-    marker: 'tokenbank' },
-];
+// ── API Key 应用（只能 config-file / API Key 托管，无法透明托管）──────────────────
+// 定义来自 yaml 的 api_key_apps 段（config-loader）；{BASE}/{KEY} 由前端按应用解析。
+// Appx 包检测 + 对应配置文件注入信息。未配置该段则返回 []（无 API Key 应用检测）。
+function getApiKeyApps() {
+  try { return require('./config-loader').apiKeyApps() || []; }
+  catch { return []; }
+}
 
 let _appxCache = { ts: 0, map: {} };
 function appxInstalled(name) {
@@ -1100,23 +1092,22 @@ function registerIPC() {
       // 机器上没有的 shim 应用不展示；api-key 应用始终展示
       .filter(app => app.link_method !== 'shim' || app.installed);
 
-    // 追加：检测到、但还没"添加"过的桌面应用（虚拟行，显示「添加」）
+    // 追加：检测到、但还没"添加"过的 API Key 应用（虚拟行，显示「添加」）
     // 去重以「目标配置文件」为准：配置文件才是应用的真实身份（同一文件不可能托管两次）。
-    // 避免两套注册表（DESKTOP_APPS vs yaml app_presets）id 不一致时重复，
     // 例如 Claude Code（含桌面版）与 Claude Desktop 都写 ~/.claude/settings.json。
     const norm = (p) => { try { return path.resolve(resolveCfgPath(p)).toLowerCase(); } catch { return String(p || '').toLowerCase(); } };
     const managedFiles = new Set(savedApps.filter(a => a.config_file).map(a => norm(a.config_file)));
-    const linkedDesktop = new Set(savedApps.filter(a => a.preset_id).map(a => a.preset_id));
-    for (const d of DESKTOP_APPS) {
+    const linkedApiKey = new Set(savedApps.filter(a => a.preset_id).map(a => a.preset_id));
+    for (const d of getApiKeyApps()) {
       if (!appxInstalled(d.appx)) continue;
       const file = resolveCfgPath(d.config_file);
-      // 已添加过（preset_id 命中）或该配置文件已被某 api-key 应用托管 → 不再重复展示
-      if (linkedDesktop.has(d.id) || managedFiles.has(norm(file))) continue;
+      // 已添加过（preset_id 命中）或该配置文件已被某应用托管 → 不再重复展示
+      if (linkedApiKey.has(d.id) || managedFiles.has(norm(file))) continue;
       rows.push({
-        id: 'app-desktop-' + d.id,
+        id: 'app-apikey-' + d.id,
         name: d.name, icon: d.icon,
         link_method: 'api-key', host_method: 'config-file',
-        type: 'gui', desktop: true, _virtual_desktop: true,
+        _virtual_apikey: true,
         preset_id: d.id,
         config_file: file, patch: d.patch, env: d.env || null,
         configured: configHasMarker(file, d.marker),   // 配置文件是否已含我们的路由

@@ -763,8 +763,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     setBusyId(null);
     await load();
   }
-  // 桌面应用「添加」：用其 config-file 预设创建 api-key 应用并打开设置（去写配置文件）
-  async function addDesktop(d) {
+  // API Key 应用「添加」：用其 config-file 预设创建 api-key 应用并打开设置（去写配置文件）
+  async function addApiKeyApp(d) {
     const created = await window.electronAPI.apps?.create({
       name: d.name, icon: d.icon, link_method: 'api-key',
       preset_id: d.preset_id,
@@ -888,7 +888,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       </div>
 
                       {/* 路由下拉：api-key / 手工添加 应用可绑路由（透明托管的 shim 由网关按协议/策略路由，不读 route_id）*/}
-                      {keyApp && !app._virtual_desktop && (
+                      {keyApp && !app._virtual_apikey && (
                       <select
                         value={app.route_id || ''}
                         onChange={async e => {
@@ -943,10 +943,10 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                             {busyId === app.agent_id ? '…' : '托管'}
                           </button>
                         )
-                      ) : app._virtual_desktop ? (
-                        /* 桌面应用：未配置→添加；已配置(配置文件含我们的路由)→编辑 + 取消 API Key 管理 */
+                      ) : app._virtual_apikey ? (
+                        /* API Key 应用：未配置→添加；已配置(配置文件含我们的路由)→编辑 + 取消 API Key 管理 */
                         <>
-                          <button onClick={() => addDesktop(app)}
+                          <button onClick={() => addApiKeyApp(app)}
                             className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white shrink-0 font-medium">
                             {app.configured ? '编辑' : '添加'}
                           </button>
