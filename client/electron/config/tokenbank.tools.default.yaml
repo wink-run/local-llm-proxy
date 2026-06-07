@@ -62,16 +62,6 @@ tools:
 # ── API Key 应用（检测到已安装则在列表显示「添加」，写其配置文件指向网关）──
 # {BASE}=网关地址 {KEY}=应用 key（运行时按应用填入；真 key 不进此文件）
 api_key_apps:
-  - id: claude-desktop
-    name: Claude Desktop
-    route_bindable: false
-    icon: "🖥️"
-    appx: Claude                       # Windows AppX 包名（检测是否已安装）
-    config_file: "~/.claude/settings.json"
-    marker: ANTHROPIC_BASE_URL         # 配置文件含此标记 = 已托管
-    patch:
-      env.ANTHROPIC_BASE_URL: "{BASE}"
-      env.ANTHROPIC_AUTH_TOKEN: "{KEY}"
   - id: codex-desktop
     name: Codex Desktop
     icon: "🖥️"
