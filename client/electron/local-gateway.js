@@ -1184,7 +1184,7 @@ function restart() {
 function setStrategy() { /* deprecated */ }
 
 function getStatus() {
-  return { running: !!_server, port: _port };
+  return { running: !!_server, port: _port, peerModels: [..._peerModels] };
 }
 
 function getLog() {

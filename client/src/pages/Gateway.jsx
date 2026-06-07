@@ -1541,8 +1541,16 @@ export default function Gateway() {
     try {
       let rates = [];
       try { rates = (await getRates()).data?.models || []; } catch {}
+      // 在线 P2P 集：优先用网关的 peerModels（cloud token 拉取，可靠），
+      // 回退到 /v1/models（用户 token，可能 401）
       const online = new Set();
-      try { for (const m of ((await getOnlineModels()).data?.data || [])) online.add(m.id); } catch {}
+      try {
+        const gw = await getGateway().status();
+        for (const id of (gw?.peerModels || [])) online.add(id);
+      } catch {}
+      if (online.size === 0) {
+        try { for (const m of ((await getOnlineModels()).data?.data || [])) online.add(m.id); } catch {}
+      }
       for (const m of rates) {
         const tier = normTier(m.tier);
         if (tier === 'paid') add(m.name, 'paid');         // 付费始终可用
