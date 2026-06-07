@@ -583,12 +583,22 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     }
   }
 
+  // 默认路由：新应用自动绑当前可用模型的第一个（P2P 在线 > 付费 > 免费）。
+  // 否则「不绑定」会把客户端原始模型名（claude-*/gpt-*）直连，P2P 后端没有这些名字必 502。
+  function defaultRouteId() {
+    const order = { p2p: 0, paid: 1, free: 2 };
+    const pick = [...availableModels].sort(
+      (a, b) => (order[a.tier] ?? 9) - (order[b.tier] ?? 9))[0];
+    return pick?.id || '';
+  }
+
   // 添加流程：选择预设 → 创建 api-key 应用并带上注入方式（env / config-file），打开设置
   // 标记 _isNew：用户关闭/取消时若未保存则删除（避免「点关闭也保存了」）
   async function addPreset(preset) {
     const created = await window.electronAPI.apps?.create({
       name: preset.name, icon: preset.icon, link_method: 'api-key',
       preset_id: preset.id,
+      route_id: defaultRouteId() || null,
       inject: preset.inject || (preset.env ? 'env' : null),
       env: preset.env || null,
       config_file: preset.config_file || null,
@@ -602,6 +612,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   async function addCustom() {
     const created = await window.electronAPI.apps?.create({
       name: '新应用', icon: '🔧', link_method: 'api-key',
+      route_id: defaultRouteId() || null,
     }).catch(() => null);
     setAddOpen(false);
     if (created?.id) setSettings({ ...created, _isNew: true });
@@ -621,6 +632,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     const created = await window.electronAPI.apps?.create({
       name: d.name, icon: d.icon, link_method: 'api-key',
       preset_id: d.preset_id,
+      route_id: defaultRouteId() || null,
       inject: 'config-file', config_file: d.config_file, patch: d.patch, env: d.env || null,
     }).catch(() => null);
     if (created?.id) setSettings({ ...created, _isNew: true });
