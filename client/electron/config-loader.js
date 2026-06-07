@@ -10,6 +10,8 @@ const os   = require('os');
 const yaml = require('js-yaml');
 
 const DEFAULT_YAML = path.join(__dirname, 'config', 'tokenbank.default.yaml');
+// 用户导入/服务器下发的配置覆盖文件（main.js 的 applyConfigDoc 写这里）。存在则优先于内置默认。
+const USER_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.yaml');
 
 let _config = null;        // 解析后的原始 yaml 对象
 let _caPath = null;        // 运行时由 ca-manager 注入的实际 CA 路径（解析 {CA_PATH}）
@@ -47,14 +49,21 @@ function resolvePlaceholders(str, ctx = {}) {
 // ── 加载 ─────────────────────────────────────────────────────────────────────
 
 function load() {
+  // 优先用户覆盖文件（~/.tokenbank/tokenbank.yaml）—— 导入配置/服务器下发后写在这里；
+  // 不存在则回退内置默认 tokenbank.default.yaml。
+  let file = DEFAULT_YAML;
+  try { if (fs.existsSync(USER_YAML)) file = USER_YAML; } catch {}
   try {
-    const text = fs.readFileSync(DEFAULT_YAML, 'utf8');
+    const text = fs.readFileSync(file, 'utf8');
     _config = yaml.load(text) || {};
   } catch (e) {
-    console.error('[config-loader] 加载内置 yaml 失败:', e.message);
-    _config = {};
+    console.error('[config-loader] 加载 yaml 失败:', e.message, '(', file, ')');
+    // 用户覆盖文件损坏时回退内置默认
+    if (file !== DEFAULT_YAML) {
+      try { _config = yaml.load(fs.readFileSync(DEFAULT_YAML, 'utf8')) || {}; }
+      catch { _config = {}; }
+    } else { _config = {}; }
   }
-  // 预留：若 remote.url 非空，这里拉取并合并覆盖（第一期不实现，仅占位）
   return _config;
 }
 
