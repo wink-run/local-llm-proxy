@@ -1086,10 +1086,12 @@ function registerIPC() {
           };
         }
         // config-file 类 api-key 应用：标记 host_method + 配置文件是否已写入（marker 命中）
+        // 无 marker 定义（如旧版遗留应用）则回退用 api_key（写入的配置文件里一定含它）
         let configured = false;
         if (app.config_file) {
           const def = getApiKeyApps().find(d => d.id === app.preset_id);
-          if (def?.marker) configured = configHasMarker(resolveCfgPath(app.config_file), def.marker);
+          const marker = (def && def.marker) || app.api_key;
+          if (marker) configured = configHasMarker(resolveCfgPath(app.config_file), marker);
         }
         return { ...app, linked: true, installed: true, configured,
                  host_method: app.config_file ? 'config-file' : 'api-key' };

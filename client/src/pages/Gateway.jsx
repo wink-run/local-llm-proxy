@@ -1009,16 +1009,18 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           )}
                         </>
                       ) : app.host_method === 'config-file' ? (
-                        /* config-file 托管的 api-key 应用：编辑 + 取消 API Key 管理 */
+                        /* config-file 托管的 api-key 应用：编辑 + 取消 API Key 管理（仅已写入配置时，与面板一致）*/
                         <>
                           <button onClick={() => setSettings(app)}
                             className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
                             编辑
                           </button>
-                          <button onClick={() => handleCancelManage(app)}
-                            className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 shrink-0">
-                            取消 API Key 管理
-                          </button>
+                          {app.configured && (
+                            <button onClick={() => handleCancelManage(app)}
+                              className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 shrink-0">
+                              取消 API Key 管理
+                            </button>
+                          )}
                         </>
                       ) : (
                         /* 普通 api-key 应用：设置 + 删除 */
