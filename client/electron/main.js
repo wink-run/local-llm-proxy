@@ -337,28 +337,6 @@ function writeLocalConfig(cfg) {
   fs.writeFileSync(localConfigPath(), JSON.stringify(cfg, null, 2), 'utf8');
 }
 
-// 自动托管：对机器上已安装、尚未托管、且用户未显式取消的 shim 工具自动接入。
-// 返回本次新托管的 agent_id 数组。默认启用，无需用户手动操作。
-function autoHostInstalledApps() {
-  const cfg = readLocalConfig();
-  const disabled = new Set(cfg.auto_host_disabled || []);
-  const newlyHosted = [];
-  for (const t of agentLinker.list()) {
-    // 自动托管只做透明 shim(base_url-env)，绝不修改工具自己的配置文件。
-    // 需要改配置文件的工具(config-file / mitm-system / 需装证书)不自动托管，
-    // 改由 api_key_apps 走「手动添加」流程显式写配置。
-    if (t.strategy !== 'base_url-env') continue;
-    if (t.needs_ca) continue;
-    if (t.installed && !t.linked && !disabled.has(t.id)) {
-      try {
-        const r = agentLinker.applyById(t.id);
-        if (r && r.ok !== false) newlyHosted.push(t.id);
-      } catch (e) { console.error('[auto-host]', t.id, e.message); }
-    }
-  }
-  return newlyHosted;
-}
-
 // ── API Key 应用（只能 config-file / API Key 托管，无法透明托管）──────────────────
 // 定义来自 yaml 的 api_key_apps 段（config-loader）；{BASE}/{KEY} 由前端按应用解析。
 // Appx 包检测 + 对应配置文件注入信息。未配置该段则返回 []（无 API Key 应用检测）。
@@ -428,82 +406,40 @@ function resolveCfgPath(p) {
   try { const cl = require('./config-loader'); return cl.expandHome(cl.resolvePlaceholders(String(p || ''), {})); }
   catch { return String(p || ''); }
 }
-// 配置文件里是否已含我们的路由配置（marker）
-function configHasMarker(file, marker) {
-  try { return fs.existsSync(file) && fs.readFileSync(file, 'utf8').includes(marker); }
-  catch { return false; }
-}
-
-// 解析 patch 模板占位符：{BASE}=http://网关  {REVERSE}=host:port  {KEY}=应用 api_key
-function resolveTpl(v, apiKey) {
-  let reverse = '127.0.0.1:11430';
-  try { reverse = require('./config-loader').gatewayCtx().reverse || reverse; } catch {}
-  return String(v)
-    .replace(/\{BASE\}/g, 'http://' + reverse)
-    .replace(/\{REVERSE\}/g, reverse)
-    .replace(/\{KEY\}/g, apiKey || '');
-}
-
-// 配置文件里「我们要写的项」是否都已是我们的值（= 已配好，指向网关）。
-// 只比较不含 {KEY} 的项（base_url 等，与 key 无关），这样虚拟行（还没 api_key）也能判断。
-function configMatchesOurs(file, patch) {
-  try {
-    if (!file || !fs.existsSync(file) || !patch) return false;
-    const keys = Object.keys(patch).filter(k => !String(patch[k]).includes('{KEY}'));
-    if (!keys.length) return false;
-    const cur = require('./injector').readConfigValues(file, keys);
-    return keys.every(k => cur[k] !== undefined && String(cur[k]) === String(resolveTpl(patch[k], null)));
-  } catch { return false; }
-}
-
-// 写入前冲突检测：返回与「我们要写的值」不同的已有项 [{key, current, wanted}]。
-// patch 是已解析占位符的目标值（前端传入）。current 存在且 ≠ wanted 才算冲突。
-function detectConfigConflicts(file, patch) {
-  const conflicts = [];
-  try {
-    if (!file || !fs.existsSync(file) || !patch) return conflicts;
-    const keys = Object.keys(patch);
-    const cur = require('./injector').readConfigValues(file, keys);
-    for (const k of keys) {
-      if (cur[k] !== undefined && String(cur[k]) !== String(patch[k])) {
-        conflicts.push({ key: k, current: cur[k], wanted: patch[k] });
-      }
+// dot-path patch（a.b.c）→ 嵌套对象（用于整份写出 JSON / YAML 配置）
+function patchToObject(patch) {
+  const obj = {};
+  for (const [k, v] of Object.entries(patch || {})) {
+    const parts = String(k).split('.'); let cur = obj;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] == null) cur[parts[i]] = {};
+      cur = cur[parts[i]];
     }
-  } catch {}
-  return conflicts;
+    cur[parts[parts.length - 1]] = v;
+  }
+  return obj;
 }
 
-// 安全地往 TOML 注入 patch：仅插入/替换我们的顶层键和表，保留其余原文（不 round-trip 整个文件）
-function safePatchToml(file, patch) {
-  let text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
-  if (text && !fs.existsSync(file + '.tokenbank-bak')) { try { fs.copyFileSync(file, file + '.tokenbank-bak'); } catch {} }
-  const tops = {}, tables = {};
-  for (const [k, v] of Object.entries(patch)) {
-    const last = k.lastIndexOf('.');
-    if (last < 0) { tops[k] = v; continue; }
-    const tbl = k.slice(0, last), key = k.slice(last + 1);
-    (tables[tbl] = tables[tbl] || {})[key] = v;
+// dot-path patch → 完整 TOML 文本（顶层标量 + [表] 分组）。整份写出我们的配置。
+function patchToToml(patch) {
+  const tomlVal = (v) => (v === true || v === false || v === 'true' || v === 'false' || /^-?\d+(\.\d+)?$/.test(String(v)))
+    ? String(v) : `"${String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  const top = []; const tables = new Map();
+  for (const [k, v] of Object.entries(patch || {})) {
+    const i = String(k).lastIndexOf('.');
+    if (i < 0) { top.push([k, v]); continue; }
+    const tbl = k.slice(0, i), key = k.slice(i + 1);
+    if (!tables.has(tbl)) tables.set(tbl, []);
+    tables.get(tbl).push([key, v]);
   }
-  const fmt = (v) => (v === true || v === false || v === 'true' || v === 'false' || /^-?\d+(\.\d+)?$/.test(String(v)))
-    ? String(v)
-    : `"${String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  // 顶层标量键：替换已有行，否则插到第一个表头之前
-  for (const [k, v] of Object.entries(tops)) {
-    const line = `${k} = ${fmt(v)}`;
-    const re = new RegExp(`^\\s*${esc(k)}\\s*=.*$`, 'm');
-    if (re.test(text)) text = text.replace(re, line);
-    else { const i = text.search(/^\s*\[/m); text = i >= 0 ? text.slice(0, i) + line + '\n' : (text ? text.replace(/\n*$/, '\n') + line + '\n' : line + '\n'); }
+  let out = top.map(([k, v]) => `${k} = ${tomlVal(v)}`).join('\n');
+  if (out) out += '\n';
+  for (const [tbl, kvs] of tables) {
+    out += `\n[${tbl}]\n` + kvs.map(([k, v]) => `${k} = ${tomlVal(v)}`).join('\n') + '\n';
   }
-  // 表：删掉已有的同名表块后追加全新的（避免重复表头报错）
-  for (const [tbl, kv] of Object.entries(tables)) {
-    text = text.replace(new RegExp(`(^|\\n)\\[${esc(tbl)}\\][^\\[]*`), '\n');
-    const blk = `\n[${tbl}]\n` + Object.entries(kv).map(([k, v]) => `${k} = ${fmt(v)}`).join('\n') + '\n';
-    text = text.replace(/\n*$/, '\n') + blk;
-  }
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, text, 'utf8');
+  return out;
 }
+
 
 // ── LLM config scanner ────────────────────────────────────────────────────────
 
@@ -874,15 +810,9 @@ function registerIPC() {
         for (const a of (configLoader.apiKeyApps() || [])) if (!beforeIds.has('app:' + a.id)) addedApps.push(a.name || a.id);
       } catch {}
 
-      // 下发新配置后主动重新扫描机器：
-      // 1) 新定义的透明托管(shim)工具若已安装且未托管 → 自动托管
-      // 2) 新定义的 api-key 应用若已安装 → apps:list 会自动列为可配置的虚拟行（前端刷新即见）
-      try {
-        const hosted = autoHostInstalledApps();
-        if (hosted && hosted.length) console.log('[config-apply] auto-hosted:', hosted.join(', '));
-      } catch (e) { console.error('[config-apply] auto-host failed:', e.message); }
-
-      // 通知渲染进程刷新应用列表（让新的 api-key 可配置行 / 托管状态立即显示）
+      // 下发新配置后：新定义的工具/应用若已安装 → apps:list 会列出，
+      // 由用户在列表里手动托管（不再自动托管）。
+      // 通知渲染进程刷新应用列表（让新的可配置行 / 托管状态立即显示）
       try { mainWindow?.webContents?.send('apps:changed'); } catch {}
     }
 
@@ -1216,10 +1146,45 @@ function registerIPC() {
     writeLocalConfig(cfg);
     syncGatewayFromConfig(cfg);
   }
+  // 应用「纳管」状态完全跟随用户操作（持久化在条目里，不靠扫描/匹配配置文件内容）
+  function setAppHosted(appId, hosted) {
+    if (!appId) return;
+    const apps = getApps();
+    const idx = apps.findIndex(a => a.id === appId);
+    if (idx === -1) return;
+    apps[idx] = { ...apps[idx], hosted: !!hosted };
+    saveApps(apps);
+  }
 
   ipcMain.handle('apps:list', () => {
-    // 每次拉列表时先自动托管新出现的应用（机器上有了就直接托管）
-    autoHostInstalledApps();
+    // 检测到的 api-key 应用 → 自动建立「离线」持久条目（生成 key、不写配置文件），
+    // 使其与透明托管(shim)一致：始终是真实条目、有完整的下拉/编辑/测试控件，
+    // 「纳管」只是再写一次配置文件。去重以「目标配置文件」为准（同一文件不重复建）。
+    try {
+      const cur = getApps();
+      const norm = (p) => { try { return path.resolve(resolveCfgPath(p)).toLowerCase(); } catch { return String(p || '').toLowerCase(); } };
+      const savedPresets  = new Set(cur.filter(a => a.preset_id).map(a => a.preset_id));
+      const managedFiles  = new Set(cur.filter(a => a.config_file).map(a => norm(a.config_file)));
+      let mutated = false;
+      for (const d of getApiKeyApps()) {
+        if (savedPresets.has(d.id)) continue;
+        if (!apiKeyAppDetected(d)) continue;
+        const nf = norm(resolveCfgPath(d.config_file));
+        if (managedFiles.has(nf)) continue;
+        cur.push({
+          id: 'app-apikey-' + d.id,
+          name: d.name, icon: d.icon, link_method: 'api-key', agent_id: null,
+          api_key: 'sk-local-' + rndHex(16), route_id: null,
+          description: '', allowed_models: [], max_rpm: null, max_concurrent: null, allow_stream: true,
+          env: d.env || null, preset_id: d.id, inject: 'config-file',
+          config_file: d.config_file || null, patch: d.patch || null,
+          hosted: false,   // 状态跟随操作：建条目=离线，点「纳管」才写配置
+          created_at: new Date().toISOString(),
+        });
+        savedPresets.add(d.id); managedFiles.add(nf); mutated = true;
+      }
+      if (mutated) { saveApps(cur); try { syncGatewayFromConfig(readLocalConfig()); } catch {} }
+    } catch (e) { console.error('[apps:list] materialize api-key failed:', e.message); }
 
     // 被管理员禁用（enable_3p:false）的 api_key 应用预设 id —— 这些应用整条隐藏
     const disabledPresets = new Set(
@@ -1286,23 +1251,15 @@ function registerIPC() {
             auto_config: autoConfigOf(app.agent_id),
           };
         }
-        // config-file 类 api-key 应用：标记 host_method + 配置文件是否已写入（marker 命中）
-        // 无 marker 定义（如旧版遗留应用）则回退用 api_key（写入的配置文件里一定含它）
+        // config-file 类 api-key 应用：标记 host_method + 是否已纳管（状态跟随用户操作，
+        // 持久化在 app.hosted，不再扫描/匹配配置文件内容）。
         const def = getApiKeyApps().find(d => d.id === app.preset_id);
         // 从最新 yaml 预设刷新 patch/env/config_file（让 yaml 改动对已添加应用也生效；
         // config_file 对 Claude Desktop 是动态的，必须用预设解析后的最新路径=激活配置）
         const freshConfigFile = def?.config_file || app.config_file;
         const freshPatch       = def?.patch || app.patch;
         const freshEnv         = def?.env  ?? app.env;
-        let configured = false;
-        if (freshConfigFile) {
-          const cfgPath = resolveCfgPath(freshConfigFile);
-          // 优先「值匹配」：配置文件里的 base_url 等已是我们的网关 → 视为已配好（自动识别）
-          // 回退 marker 字符串命中（兼容我们写过 _configManagedBy 等标记）
-          const marker = (def && def.marker) || app.api_key;
-          configured = configMatchesOurs(cfgPath, freshPatch) || (!!marker && configHasMarker(cfgPath, marker));
-        }
-        return { ...app, linked: true, installed: true, configured,
+        return { ...app, linked: true, installed: true, configured: app.hosted === true,
                  config_file: freshConfigFile, patch: freshPatch, env: freshEnv,
                  route_bindable: def ? def.route_bindable !== false : (app.route_bindable !== false),
                  host_method: freshConfigFile ? 'config-file' : 'api-key' };
@@ -1329,8 +1286,7 @@ function registerIPC() {
         preset_id: d.id,
         route_bindable: d.route_bindable !== false,
         config_file: file, patch: d.patch, env: d.env || null,
-        // 已配好（值已是我们的网关 → 自动识别为「已添加」）或命中 marker
-        configured: configMatchesOurs(file, d.patch) || configHasMarker(file, d.marker),
+        configured: false,   // 状态跟随操作：未纳管（虚拟行）即离线
         installed: true, linked: false, api_key: null, route_id: null,
       });
     }
@@ -1433,51 +1389,23 @@ function registerIPC() {
 
   // 写入工具配置文件（config-file 注入：如 Codex Desktop API 模式改 ~/.codex/config.toml）。
   // 前端已把 {BASE}/{KEY} 解析进 patch/env；这里解析路径占位符 + 展开 ~ 后写入。
-  ipcMain.handle('apps:writeConfigFile', async (_e, { app_id, config_file, patch, env, force } = {}) => {
+  ipcMain.handle('apps:writeConfigFile', async (_e, { app_id, config_file, patch, env } = {}) => {
     try {
       const cl = require('./config-loader');
       let file = cl.resolvePlaceholders(String(config_file || ''), {});
       file = cl.expandHome(file);
       if (!file) return { ok: false, error: 'no-config-file' };
-      // 冲突检测：目标配置项已有值且与我们要写的不同 → 返回冲突，由前端确认是否覆盖（force=true 时跳过）
-      if (!force) {
-        const conflicts = detectConfigConflicts(file, patch || {});
-        if (conflicts.length) return { ok: false, conflicts, file };
-      }
+      // 纳管 = 备份原配置文件（整份，仅首次），再写入我们的配置（整份替换）。
+      // 不合并、不检测冲突、不预扫描内容——状态完全跟随用户操作。
+      const bak = file + '.tokenbank-bak';
+      if (fs.existsSync(file) && !fs.existsSync(bak)) { try { fs.copyFileSync(file, bak); } catch {} }
+      fs.mkdirSync(path.dirname(file), { recursive: true });
       if (/\.json$/i.test(file)) {
-        // JSON 配置（如 Claude Code/Desktop 的 ~/.claude/settings.json）：合并 patch（支持 a.b 点路径），保留其它字段
-        let obj = {};
-        try { if (fs.existsSync(file)) obj = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch {}
-        if (fs.existsSync(file) && !fs.existsSync(file + '.tokenbank-bak')) {
-          try { fs.copyFileSync(file, file + '.tokenbank-bak'); } catch {}
-        }
-        for (const [k, v] of Object.entries(patch || {})) {
-          const parts = k.split('.'); let cur = obj;
-          for (let i = 0; i < parts.length - 1; i++) { if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] == null) cur[parts[i]] = {}; cur = cur[parts[i]]; }
-          cur[parts[parts.length - 1]] = v;
-        }
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, JSON.stringify(obj, null, 2), 'utf8');
+        fs.writeFileSync(file, JSON.stringify(patchToObject(patch || {}), null, 2), 'utf8');
       } else if (/\.ya?ml$/i.test(file)) {
-        // YAML 配置（如 Hermes 的 ~/.hermes/config.yaml）：合并 patch（支持 a.b 点路径），保留其它字段
-        const yamlLib = require('js-yaml');
-        let obj = {};
-        try { if (fs.existsSync(file)) obj = yamlLib.load(fs.readFileSync(file, 'utf8')) || {}; } catch {}
-        if (typeof obj !== 'object' || obj == null) obj = {};
-        if (fs.existsSync(file) && !fs.existsSync(file + '.tokenbank-bak')) {
-          try { fs.copyFileSync(file, file + '.tokenbank-bak'); } catch {}
-        }
-        for (const [k, v] of Object.entries(patch || {})) {
-          const parts = k.split('.'); let cur = obj;
-          for (let i = 0; i < parts.length - 1; i++) { if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] == null) cur[parts[i]] = {}; cur = cur[parts[i]]; }
-          cur[parts[parts.length - 1]] = v;
-        }
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, yamlLib.dump(obj, { lineWidth: 120 }), 'utf8');
+        fs.writeFileSync(file, require('js-yaml').dump(patchToObject(patch || {}), { lineWidth: 120 }), 'utf8');
       } else {
-        // TOML：只追加/替换我们的项，绝不重写整个文件（Codex 等复杂 config 含 Windows
-        // 反斜杠路径，整体 round-trip 会把字面量字符串变成非法转义而损坏）
-        safePatchToml(file, patch || {});
+        fs.writeFileSync(file, patchToToml(patch || {}), 'utf8');
       }
       // 附带的环境变量（如存放 key 的 env_key）一并写入系统
       let envCount = 0;
@@ -1499,26 +1427,27 @@ function registerIPC() {
         }
         envCount = entries.length;
       }
+      // 状态跟随操作：标记该应用已纳管
+      setAppHosted(app_id, true);
       return { ok: true, file, envCount };
     } catch (e) { return { ok: false, error: (e.stderr ? e.stderr.toString() : e.message).slice(0, 300) }; }
   });
 
-  // 取消 API Key 管理：还原配置文件（去掉指向网关的注入）
+  // 取消纳管：用备份整份还原原配置文件（保留备份与应用条目，不删除）。状态跟随操作。
   ipcMain.handle('apps:revertConfigFile', (_e, { app_id, config_file } = {}) => {
     try {
       const cl = require('./config-loader');
       let file = cl.expandHome(cl.resolvePlaceholders(String(config_file || ''), {}));
-      if (!file) return { ok: false, error: 'no-config-file' };
-      const bak = file + '.tokenbank-bak';
-      if (fs.existsSync(bak)) {
-        fs.copyFileSync(bak, file); fs.unlinkSync(bak);
-        return { ok: true, restored: 'backup' };
+      if (file) {
+        const bak = file + '.tokenbank-bak';
+        if (fs.existsSync(bak)) {
+          try { fs.copyFileSync(bak, file); } catch {}          // 整份还原；备份保留（不删）
+        } else {
+          try { if (fs.existsSync(file)) fs.unlinkSync(file); } catch {}  // 原本无文件 → 删掉我们建的
+        }
       }
-      // 无备份：TOML 走 injector 的 state-precise 还原
-      if (/\.toml$/i.test(file) && app_id) {
-        try { require('./injector').revertConfigFile(app_id); return { ok: true, restored: 'state' }; } catch {}
-      }
-      return { ok: true, restored: 'none' };  // 没有备份/状态可还原，至少不报错
+      setAppHosted(app_id, false);
+      return { ok: true };
     } catch (e) { return { ok: false, error: e.message }; }
   });
 
@@ -1535,8 +1464,9 @@ function registerIPC() {
     const stats = {};
     for (const app of (appList || [])) {
       let s;
-      if ((app.link_method === 'api-key' || app.link_method === 'manual') && app.api_key) {
-        s = localStats.queryByApiKey(app.api_key);
+      if (app.link_method === 'api-key' || app.link_method === 'manual') {
+        // 按稳定 app_id 记账（取消/重新纳管、key 变化都不清零）；旧数据按 api_key 兜底
+        s = localStats.queryByApp(app.id, app.api_key);
       } else if (app.link_method === 'shim' && app.agent_id) {
         const ds = AGENT_DATA_SOURCE[app.agent_id];
         s = ds ? localStats.queryByDataSource(ds) : { calls: 0, tokens: 0, lastTs: null };
@@ -1641,11 +1571,7 @@ app.whenReady().then(() => {
   // 注入 Claude 客户端模型名（内部透明逻辑，来自 yaml config-loader）
   try { gateway.setClaudeModels(require('./config-loader').claudeModels()); } catch {}
 
-  // 默认启用一键托管：启动时自动接入本机已安装、用户未取消的 CLI 工具。
-  try {
-    const hosted = autoHostInstalledApps();
-    if (hosted && hosted.length) console.log('[auto-host] hosted on startup:', hosted.join(', '));
-  } catch (e) { console.error('[auto-host] startup failed:', e.message); }
+  // 不再启动自动托管：已安装的 CLI 工具在应用列表里显示，由用户手动托管。
 
   // 补录「不走网关、直连官方」的会话用量：启动跑一次 + 每 60s 增量扫一次。
   // 与网关实时记录靠 request_id 跨来源去重，不会重复计。

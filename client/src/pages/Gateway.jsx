@@ -255,7 +255,7 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
 }
 
 // ── AppManager：应用列表（Tab1: 所有应用 & 托管 | Tab2: API Key 管理）────────
-const LINK_METHOD_LABEL = { shim: '透明托管', 'api-key': 'API Key', manual: '手工添加' };
+const LINK_METHOD_LABEL = { shim: '纳管', 'api-key': '纳管', manual: '手工' };
 // 按 API Key 路由的应用：自动写配置的 api-key，和用户自配的 manual（手工添加）
 const isKeyApp = (m) => m === 'api-key' || m === 'manual';
 
@@ -928,8 +928,35 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     }
     setTimeout(() => setTestState(s => ({ ...s, [app.id]: null })), 8000);
   }
-  // API Key 应用「添加」：用其 config-file 预设创建 api-key 应用并打开设置（去写配置文件）
+  // 写入某 api-key 应用的配置文件指向网关（解析 {BASE}/{KEY}，处理冲突/失败）。
+  // 返回 true=成功。onAbort：冲突取消/写入失败时的回滚回调（新建时删条目；重新纳管不删）。
+  async function writeApiKeyConfig(app, { onAbort } = {}) {
+    const gwOrigin = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/v1\/?$/, '');
+    const resolveTpl = (tpl) => typeof tpl === 'string'
+      ? tpl.replace(/\{BASE\}/g, gwOrigin).replace(/\{KEY\}/g, app.api_key || '')
+      : tpl;
+    const run = async (force) => {
+      const patch = {}; for (const [k, v] of Object.entries(app.patch || {})) patch[k] = resolveTpl(v);
+      const env   = {}; for (const [k, v] of Object.entries(app.env   || {})) env[k]   = resolveTpl(v);
+      const r = await window.electronAPI?.apps?.writeConfigFile({
+        app_id: app.id, config_file: app.config_file, patch, env, force,
+      }).catch(e => ({ ok: false, error: e.message }));
+      // 冲突：目标配置项已有不同的值 → 确认后强制覆盖；取消则回滚
+      if (r && !r.ok && Array.isArray(r.conflicts) && r.conflicts.length) {
+        const lines = r.conflicts.map(c => `· ${c.key}\n    当前: ${c.current}\n    将改为: ${c.wanted}`).join('\n');
+        if (window.confirm(`配置文件已有不同的配置，是否覆盖？\n\n${lines}\n\n确定覆盖请点「确定」。`)) return run(true);
+        await onAbort?.();
+        return false;
+      }
+      if (!r?.ok) { await onAbort?.(); window.alert('纳管失败：' + (r?.error || '写入配置失败')); return false; }
+      return true;
+    };
+    return run(false);
+  }
+
+  // API Key 应用（虚拟行）「纳管」：创建 api-key 应用 + 一键写配置（与透明托管一致，不弹面板）。
   async function addApiKeyApp(d) {
+    setBusyId(d.id);
     const bindable = d.route_bindable !== false;
     const created = await window.electronAPI.apps?.create({
       name: d.name, icon: d.icon, link_method: 'api-key',
@@ -937,14 +964,28 @@ function AppManager({ externalRoutes, availableModels = [] }) {
       route_id: bindable ? (defaultRouteId() || null) : null,   // 不可绑路由(如 Claude)不设默认模型
       inject: 'config-file', config_file: d.config_file, patch: d.patch, env: d.env || null,
     }).catch(() => null);
-    // 把 route_bindable 带进弹窗（created 来自 create 不含该派生字段）→ 面板正确隐藏路由段
-    if (created?.id) setSettings({ ...created, _isNew: true, route_bindable: d.route_bindable });
+    if (!created?.id) { setBusyId(null); return; }
+    // 失败/冲突取消 → 回滚刚创建的条目，回到「未纳管」虚拟行
+    await writeApiKeyConfig(created, { onAbort: () => window.electronAPI.apps?.delete(created.id).catch(() => {}) });
+    setBusyId(null);
+    await load();
   }
-  // 取消 API Key 管理：还原配置文件 + 移除该应用
+
+  // 已保存但已取消纳管的 api-key 应用「重新纳管」：用现有条目(同 api_key)重写配置 →
+  // 请求数 / token 统计延续，不清零。失败不删条目，保留离线状态。
+  async function rehostApiKeyApp(app) {
+    setBusyId(app.id);
+    await writeApiKeyConfig(app);
+    setBusyId(null);
+    await load();
+  }
+
+  // 取消纳管：仅还原配置文件，保留应用条目与统计（与透明托管「取消」一致，可随时重新纳管）。
   async function handleCancelManage(app) {
-    if (!window.confirm('取消 API Key 管理？将还原该应用的配置文件，并移除此条目。')) return;
+    if (!window.confirm('取消纳管？将还原该应用的配置文件（保留应用条目与统计，可随时重新纳管）。')) return;
+    setBusyId(app.id);
     await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {});
-    await window.electronAPI.apps?.delete(app.id).catch(() => {});
+    setBusyId(null);
     if (settings?.id === app.id) setSettings(null);
     await load();
   }
@@ -976,7 +1017,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
             <div className="flex items-center gap-2 mb-3 flex-wrap">
               <button onClick={addCustom}
                 className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors">
-                + 添加应用
+                + 手工添加
               </button>
               <span className="text-xs text-gray-400 dark:text-gray-500">已识别的应用在下方列表中托管；此处手工添加未被识别的应用</span>
               <div className="ml-auto"><ImportConfigButton onImported={load} /></div>
@@ -992,7 +1033,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
             {/* 应用列表 */}
             {apps.length === 0 ? (
               <div className="py-6 text-center text-xs text-gray-400">
-                未检测到已安装的 CLI 工具。安装 Claude Code / Codex / Gemini CLI 后会自动托管并显示在这里，或在 API Key 管理 Tab 手动添加应用。
+                未检测到已安装的 CLI 工具。安装 Claude Code / Codex / Gemini CLI 后会显示在这里，点「托管」即可接入，或在 API Key 管理 Tab 手动添加应用。
               </div>
             ) : (
               <div className="flex flex-col divide-y divide-gray-100 dark:divide-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
@@ -1023,27 +1064,34 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                     if (diff < 7*86400) return `${Math.floor(diff/86400)}天前`;
                     return new Date(ts*1000).toLocaleDateString('zh-CN',{month:'short',day:'numeric'});
                   };
-                  // 在线 = 已托管(shim linked) 或 按 key 路由的应用(api-key/manual)；离线 = 已安装但取消托管
+                  // 在线 = 已托管(shim linked) / config-file 应用已写入配置 / 纯 key 应用始终在线；
+                  // 离线 = 已安装但取消纳管（条目与统计保留，按钮变灰不消失）
                   const keyApp = isKeyApp(app.link_method);
-                  const isOnline = keyApp || app.linked;
+                  const isCfgApp = keyApp && app.host_method === 'config-file';
+                  const isManual = app.link_method === 'manual';   // 手工添加 → 蓝色；纳管(shim/api-key) → 绿色
+                  const isOnline = app.link_method === 'shim' ? app.linked
+                    : isCfgApp ? !!app.configured
+                    : keyApp;
                   const statusDot = isOnline
-                    ? (keyApp ? 'bg-blue-400' : 'bg-green-400 shadow-[0_0_6px] shadow-green-400/60')
+                    ? (isManual ? 'bg-blue-400' : 'bg-green-400 shadow-[0_0_6px] shadow-green-400/60')
                     : 'bg-gray-300 dark:bg-gray-600';
                   const rowBg = isOnline
-                    ? (keyApp
+                    ? (isManual
                         ? 'bg-blue-50/40 dark:bg-blue-950/10'
                         : 'bg-green-50/60 dark:bg-green-950/15')
                     : 'bg-gray-50/50 dark:bg-gray-800/20';
                   return (
-                    <div key={app.id} className={`flex items-center gap-3 px-3 py-2.5 transition-colors ${rowBg} ${isOnline ? '' : 'opacity-60'}`}>
+                    // 离线不整行压暗（否则操作按钮看着像禁用）；离线感由灰底/灰点/「离线」标签/
+                    // 图标灰度/灰名体现，操作按钮保持全亮可点（含「测试」）。
+                    <div key={app.id} className={`flex items-center gap-3 px-3 py-2.5 transition-colors ${rowBg}`}>
                       {/* 图标 + 名称 */}
-                      <span className={`text-base shrink-0 ${isOnline ? '' : 'grayscale'}`}>{app.icon}</span>
+                      <span className={`text-base shrink-0 ${isOnline ? '' : 'grayscale opacity-60'}`}>{app.icon}</span>
                       <div className={`text-xs font-medium truncate w-28 shrink-0 ${isOnline ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'}`}>{app.name}</div>
 
                       {/* 状态列（在线/离线） */}
                       <div className="w-14 shrink-0 flex items-center gap-1.5">
                         <span className={`w-2 h-2 rounded-full shrink-0 ${statusDot}`} />
-                        <span className={`text-[11px] font-medium ${isOnline ? (keyApp ? 'text-blue-500' : 'text-green-600 dark:text-green-400') : 'text-gray-400'}`}>
+                        <span className={`text-[11px] font-medium ${isOnline ? (isManual ? 'text-blue-500' : 'text-green-600 dark:text-green-400') : 'text-gray-400'}`}>
                           {isOnline ? '在线' : '离线'}
                         </span>
                       </div>
@@ -1064,6 +1112,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       {(keyApp || app.link_method === 'shim') && !app._virtual_apikey && app.route_bindable !== false && (
                       <select
                         value={app.route_id || ''}
+                        disabled={!isOnline}
                         onChange={async e => {
                           const val = e.target.value || null;
                           let appId = app.id;
@@ -1080,7 +1129,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           }
                           await load();
                         }}
-                        className="flex-1 min-w-0 text-[10px] bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 outline-none text-gray-600 dark:text-gray-400 max-w-[160px]">
+                        className="flex-1 min-w-0 text-[10px] bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 outline-none text-gray-600 dark:text-gray-400 max-w-[160px] disabled:opacity-40 disabled:cursor-not-allowed">
                         <option value="">不绑定</option>
                         {(() => {
                           const avail = new Set(availableModels.map(m => m.id));
@@ -1115,10 +1164,10 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                                 {ts.ok ? `✓ ${ts.latency}ms` : `✗ ${ts.error}`}
                               </span>
                             )}
-                            <button onClick={() => runAppTest(app)} disabled={ts?.busy}
+                            <button onClick={() => runAppTest(app)} disabled={ts?.busy || !isOnline}
                               className={`text-[10px] px-2 py-1 rounded-lg border transition-colors shrink-0 ${ts?.busy
                                 ? 'border-gray-300 dark:border-gray-600 text-gray-400 opacity-60 cursor-wait'
-                                : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-500'}`}>
+                                : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-500'} disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-gray-200 disabled:hover:text-gray-500`}>
                               {ts?.busy ? '测试中…' : '测试'}
                             </button>
                           </>
@@ -1127,49 +1176,47 @@ function AppManager({ externalRoutes, availableModels = [] }) {
 
                       {/* 操作按钮：按托管方式区分 */}
                       {app.link_method === 'shim' ? (
-                        /* 透明托管：编辑（路由规则 + 请求控制）+ 托管/取消托管 开关 */
+                        /* 透明托管：编辑（路由规则 + 请求控制）+ 纳管/取消 开关；离线禁用编辑 */
                         <>
-                          <button onClick={() => setSettings(app)}
-                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
+                          <button onClick={() => setSettings(app)} disabled={!isOnline}
+                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent shrink-0">
                             编辑
                           </button>
                           {app.linked ? (
                             <button onClick={() => handleShimToggle(app, false)} disabled={busyId === app.agent_id}
-                              className="text-[10px] px-2 py-1 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 disabled:opacity-50 shrink-0 font-medium">
-                              {busyId === app.agent_id ? '…' : '取消托管'}
+                              className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 disabled:opacity-50 shrink-0">
+                              {busyId === app.agent_id ? '…' : '取消'}
                             </button>
                           ) : (
                             <button onClick={() => handleShimToggle(app, true)} disabled={busyId === app.agent_id}
                               className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 shrink-0 font-medium">
-                              {busyId === app.agent_id ? '…' : '托管'}
+                              {busyId === app.agent_id ? '…' : '纳管'}
                             </button>
                           )}
                         </>
                       ) : app._virtual_apikey ? (
-                        /* API Key 应用：未配置→添加；已配置(配置文件含我们的路由)→编辑 + 取消 API Key 管理 */
-                        <>
-                          <button onClick={() => addApiKeyApp(app)}
-                            className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white shrink-0 font-medium">
-                            {app.configured ? '编辑' : '添加'}
-                          </button>
-                          {app.configured && (
-                            <button onClick={() => handleCancelManage(app)}
-                              className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 shrink-0">
-                              取消 API Key 管理
-                            </button>
-                          )}
-                        </>
+                        /* API Key 应用（未纳管虚拟行）：一键纳管（写配置文件指向网关），与透明托管一致 */
+                        <button onClick={() => addApiKeyApp(app)} disabled={busyId === app.id}
+                          className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 shrink-0 font-medium">
+                          {busyId === app.id ? '…' : '纳管'}
+                        </button>
                       ) : app.host_method === 'config-file' ? (
-                        /* config-file 托管的 api-key 应用：编辑 + 取消 API Key 管理（仅已写入配置时，与面板一致）*/
+                        /* config-file api-key 应用：编辑常驻；已纳管→取消，未纳管→纳管（与透明托管一致：
+                           取消后条目与统计保留、按钮变灰不消失，可一键重新纳管）*/
                         <>
-                          <button onClick={() => setSettings(app)}
-                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
+                          <button onClick={() => setSettings(app)} disabled={!isOnline}
+                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent shrink-0">
                             编辑
                           </button>
-                          {app.configured && (
-                            <button onClick={() => handleCancelManage(app)}
-                              className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 shrink-0">
-                              取消 API Key 管理
+                          {app.configured ? (
+                            <button onClick={() => handleCancelManage(app)} disabled={busyId === app.id}
+                              className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 disabled:opacity-50 shrink-0">
+                              {busyId === app.id ? '…' : '取消'}
+                            </button>
+                          ) : (
+                            <button onClick={() => rehostApiKeyApp(app)} disabled={busyId === app.id}
+                              className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 shrink-0 font-medium">
+                              {busyId === app.id ? '…' : '纳管'}
                             </button>
                           )}
                         </>
@@ -1192,7 +1239,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
               </div>
             )}
             <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
-              💡 已安装的 CLI 工具会自动托管（无需手动操作）；托管后需重开终端生效，关闭 Token Bank 时自动还原。
+              💡 已安装的 CLI 工具在列表中点「托管」即可接入；托管后需重开终端生效，关闭 Token Bank 时自动还原。
             </p>
           </div>
     </>

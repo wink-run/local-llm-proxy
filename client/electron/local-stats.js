@@ -21,6 +21,7 @@ const SCHEMA = `
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     ts                  INTEGER NOT NULL,
     api_key             TEXT,
+    app_id              TEXT,
     model               TEXT,
     provider_id         TEXT,
     tier                TEXT,
@@ -55,6 +56,7 @@ const SCHEMA = `
 // 部分唯一索引：request_id 为 NULL 的行（拿不到上游 id 时）互不冲突，照常插入。
 const POST_MIGRATION = `
   CREATE UNIQUE INDEX IF NOT EXISTS idx_request_id ON requests(request_id) WHERE request_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_app_id ON requests(app_id, ts);
 `;
 
 // 已存在 DB 的列迁移（旧库缺这些列）。SQLite 不支持 ADD COLUMN IF NOT EXISTS，
@@ -72,6 +74,7 @@ const MIGRATIONS = [
   'ALTER TABLE requests ADD COLUMN is_streaming        INTEGER DEFAULT 0',
   'ALTER TABLE requests ADD COLUMN latency_ms          INTEGER',
   'ALTER TABLE requests ADD COLUMN first_token_ms      INTEGER',
+  'ALTER TABLE requests ADD COLUMN app_id              TEXT',
 ];
 
 /** @param {string} dbDir  Directory that will hold local-stats.db */
@@ -94,9 +97,9 @@ function init(dbDir) {
     // INSERT OR IGNORE：命中 request_id 唯一索引时静默跳过（跨来源去重），不报错、不重复计。
     _insertStmt = db.prepare(
       'INSERT OR IGNORE INTO requests ' +
-      '(ts, api_key, model, provider_id, tier, tokens, input_tokens, output_tokens, cache_create_tokens, cache_read_tokens, ' +
+      '(ts, api_key, app_id, model, provider_id, tier, tokens, input_tokens, output_tokens, cache_create_tokens, cache_read_tokens, ' +
       ' request_id, data_source, session_id, status_code, error, is_streaming, latency_ms, first_token_ms) ' +
-      'VALUES (?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?)'
+      'VALUES (?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?)'
     );
     _getImportStateStmt = db.prepare('SELECT mtime, size FROM import_state WHERE path = ?');
     _setImportStateStmt = db.prepare(
@@ -122,7 +125,7 @@ function init(dbDir) {
  *   data_source   'proxy' | 'session-claude' | 'session-codex' | 'session-gemini'
  *   session_id, status_code, error, is_streaming, latency_ms, first_token_ms
  */
-function record({ api_key, model, provider_id, tier, tokens,
+function record({ api_key, app_id, model, provider_id, tier, tokens,
                   input_tokens, output_tokens, cache_create_tokens, cache_read_tokens,
                   ts, request_id, data_source, session_id, status_code, error,
                   is_streaming, latency_ms, first_token_ms } = {}) {
@@ -134,6 +137,7 @@ function record({ api_key, model, provider_id, tier, tokens,
     const info = _insertStmt.run(
       (ts != null) ? ts : Math.floor(Date.now() / 1000),
       api_key     || null,
+      app_id      || null,
       model       || null,
       provider_id || null,
       tier        || null,
@@ -263,6 +267,22 @@ function queryByApiKey(apiKey) {
   } catch { return { calls: 0, tokens: 0, lastTs: null }; }
 }
 
+/**
+ * 按稳定的 app_id 查单个应用的统计（api-key 类 app）。
+ * 统计跟着应用走，不受 api_key 变化 / 取消重新纳管影响（与 shim 用 data_source 同理）。
+ * 兼容旧数据：旧行没有 app_id（NULL），用 api_key 兜底匹配（且避免与新行重复计）。
+ */
+function queryByApp(appId, apiKey) {
+  if (!db || (!appId && !apiKey)) return { calls: 0, tokens: 0, lastTs: null };
+  try {
+    const r = db.prepare(
+      'SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens) AS tokens, MAX(ts) AS lastTs ' +
+      'FROM requests WHERE app_id = ? OR (app_id IS NULL AND api_key = ?)'
+    ).get(appId || null, apiKey || null);
+    return { calls: r.calls || 0, tokens: r.tokens || 0, lastTs: r.lastTs || null };
+  } catch { return { calls: 0, tokens: 0, lastTs: null }; }
+}
+
 /** 按 data_source 查单个工具的统计（shim 类 app 用 session-claude / session-codex 等）。*/
 function queryByDataSource(dataSource) {
   if (!db || !dataSource) return { calls: 0, tokens: 0, lastTs: null };
@@ -275,4 +295,4 @@ function queryByDataSource(dataSource) {
   } catch { return { calls: 0, tokens: 0, lastTs: null }; }
 }
 
-module.exports = { init, record, queryDashboard, queryByApiKey, queryByDataSource, getImportState, setImportState, close };
+module.exports = { init, record, queryDashboard, queryByApiKey, queryByApp, queryByDataSource, getImportState, setImportState, close };

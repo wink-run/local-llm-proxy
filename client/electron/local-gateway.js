@@ -991,6 +991,7 @@ function recordStats(providerId, model, usage, tier, apiKey, streaming) {
   const cRead   = usage?.cache_read_tokens   || 0;
   _statsRecorder?.({
     api_key:     apiKey     || null,
+    app_id:      appIdForKey(apiKey),
     model:       model      || null,
     provider_id: providerId || null,
     tier:        tier       || null,
@@ -1013,6 +1014,7 @@ function recordStats(providerId, model, usage, tier, apiKey, streaming) {
 function recordError(model, apiKey, err) {
   _statsRecorder?.({
     api_key:     apiKey || null,
+    app_id:      appIdForKey(apiKey),
     model:       model  || null,
     provider_id: null,
     tier:        null,
@@ -1296,6 +1298,14 @@ function resolveAppControl(callerKey, reqPath) {
     if (byKey) return byKey;
   }
   return _appControls.find(c => c.match && c.match.path && reqPath.startsWith(c.match.path)) || null;
+}
+
+// 按 caller key 反查应用 id（api-key 应用按 key 匹配）→ 统计按稳定的 app_id 记账，
+// 不受 api_key 变化/取消重新纳管影响（与 shim 用 data_source 同理）。
+function appIdForKey(callerKey) {
+  if (!callerKey) return null;
+  const c = _appControls.find(c => c.match && c.match.key && c.match.key === callerKey);
+  return c?.app_id || null;
 }
 
 // 限流检查：返回 { ok } 或 { ok:false, reason }；ok 时返回 release() 释放并发计数
