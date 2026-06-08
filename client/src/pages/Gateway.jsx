@@ -1080,6 +1080,36 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     setBusyId(null);
     await load();
   }
+
+  // 转发测试：用该应用的 api_key 向网关发一个最小请求，验证转发是否成功
+  const [testState, setTestState] = useState({});   // appId -> {busy|ok|error|latency}
+  async function runAppTest(app) {
+    const key = app.api_key;
+    if (!key) return;   // 无 key（未托管/虚拟行）不能测
+    setTestState(s => ({ ...s, [app.id]: { busy: true } }));
+    // 模型优先用绑定的路由；否则第一个虚拟模型；再否则一个占位
+    const model = app.route_id || virtualModels[0]?.id || 'claude-opus-4-8';
+    const base = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/$/, '');
+    const start = Date.now();
+    try {
+      const res = await fetch(`${base}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'authorization': `Bearer ${key}` },
+        body: JSON.stringify({ model, max_tokens: 16, messages: [{ role: 'user', content: 'Hi' }] }),
+      });
+      const latency = Date.now() - start;
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        const msg = b?.error?.detail || b?.error?.message || b?.detail || `HTTP ${res.status}`;
+        setTestState(s => ({ ...s, [app.id]: { ok: false, error: msg, latency } }));
+      } else {
+        setTestState(s => ({ ...s, [app.id]: { ok: true, latency } }));
+      }
+    } catch (e) {
+      setTestState(s => ({ ...s, [app.id]: { ok: false, error: e.message || '连接失败', latency: Date.now() - start } }));
+    }
+    setTimeout(() => setTestState(s => ({ ...s, [app.id]: null })), 8000);
+  }
   // API Key 应用「添加」：用其 config-file 预设创建 api-key 应用并打开设置（去写配置文件）
   async function addApiKeyApp(d) {
     const bindable = d.route_bindable !== false;
@@ -1259,6 +1289,27 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         })()}
                       </select>
                       )}
+
+                      {/* 转发测试：有 api_key 的应用可一键测试转发是否成功 */}
+                      {app.api_key && (() => {
+                        const ts = testState[app.id];
+                        return (
+                          <>
+                            {ts && !ts.busy && (
+                              <span title={ts.ok ? `${ts.latency}ms` : ts.error}
+                                className={`text-[10px] font-mono shrink-0 max-w-[120px] truncate ${ts.ok ? 'text-green-500 dark:text-green-400' : 'text-red-400'}`}>
+                                {ts.ok ? `✓ ${ts.latency}ms` : `✗ ${ts.error}`}
+                              </span>
+                            )}
+                            <button onClick={() => runAppTest(app)} disabled={ts?.busy}
+                              className={`text-[10px] px-2 py-1 rounded-lg border transition-colors shrink-0 ${ts?.busy
+                                ? 'border-gray-300 dark:border-gray-600 text-gray-400 opacity-60 cursor-wait'
+                                : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-500'}`}>
+                              {ts?.busy ? '测试中…' : '测试'}
+                            </button>
+                          </>
+                        );
+                      })()}
 
                       {/* 操作按钮：按托管方式区分 */}
                       {app.link_method === 'shim' ? (
