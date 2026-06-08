@@ -74,13 +74,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setStrategy:     (s) => ipcRenderer.invoke('gateway:setStrategy', s),
     testProvider:    (p) => ipcRenderer.invoke('gateway:testProvider', p),
     restart:         () => ipcRenderer.invoke('gateway:restart'),
-    getVirtualModels: () => ipcRenderer.invoke('gateway:getVirtualModels'),
-  },
-  virtualModels: {
-    list:   ()   => ipcRenderer.invoke('virtualModels:list'),
-    create: (vm) => ipcRenderer.invoke('virtualModels:create', vm),
-    update: (vm) => ipcRenderer.invoke('virtualModels:update', vm),
-    delete: (id) => ipcRenderer.invoke('virtualModels:delete', id),
   },
   localStats: {
     query: (days) => ipcRenderer.invoke('localStats:query', days),

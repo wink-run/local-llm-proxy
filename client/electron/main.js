@@ -317,30 +317,18 @@ function readLocalConfig() {
           cfg.initialized_routes = true;
         }
       }
-      // 首次启动但 virtual_models 未初始化：从 routes 默认文件的 virtual_models 段导入
-      // （虚拟模型与场景路由同属「路由」配置，统一放 tokenbank.routes.default.yaml）
-      if (!cfg.initialized_virtual_models && (!cfg.virtual_models || cfg.virtual_models.length === 0)) {
-        const defaultVms = loadDefaultYamlSection('tokenbank.routes.default.yaml', 'virtual_models');
-        if (defaultVms && defaultVms.length > 0) {
-          cfg.virtual_models = defaultVms.map(m => ({ ...m }));
-          cfg.initialized_virtual_models = true;
-        }
-      }
       // 用户显式取消托管的 agent_id 列表（自动托管会跳过这些）
       if (!Array.isArray(cfg.auto_host_disabled)) cfg.auto_host_disabled = [];
       return cfg;
     }
   } catch {}
-  // 全新安装：从默认文件初始化（场景路由 + 虚拟模型都来自 routes 默认文件）
+  // 全新安装：从默认文件初始化（场景路由从 routes 默认文件）
   const defaultRoutes = loadDefaultYamlSection('tokenbank.routes.default.yaml', 'scene_routes') || [];
-  const defaultVms = loadDefaultYamlSection('tokenbank.routes.default.yaml', 'virtual_models') || [];
   return {
     scene_routes: defaultRoutes.map(r => ({ ...r, created_at: new Date().toISOString() })),
-    virtual_models: defaultVms.map(m => ({ ...m })),
     local_keys: [], apps: [],
     policies: DEFAULT_POLICIES.map(p => ({ ...p, created_at: new Date().toISOString() })),
     initialized_routes: defaultRoutes.length > 0,
-    initialized_virtual_models: defaultVms.length > 0,
     auto_host_disabled: [],
   };
 }
@@ -898,41 +886,33 @@ function registerIPC() {
       try { mainWindow?.webContents?.send('apps:changed'); } catch {}
     }
 
-    // 路由配置（scene_routes / virtual_models 同属此文件）→ 写入 local-config
+    // 路由配置（scene_routes）→ 写入 local-config（本地优先：已有保留，只追加新）
     const hasScenes  = Array.isArray(parsed.scene_routes) && parsed.scene_routes.length > 0;
-    const hasVModels = Array.isArray(parsed.virtual_models) && parsed.virtual_models.length > 0;
     const addedRoutes = [];   // 本次同步「新增」的场景路由（本地没有、server 有）
-    if (hasScenes || hasVModels) {
+    if (hasScenes) {
       const cfg = readLocalConfig();
-      if (hasScenes) {
-        // 场景路由：用户可编辑 → 本地优先。本地已有的路由（按 id 或 model_key 匹配）一律保留、
-        // 不被下发覆盖；只追加 server 上本地还没有的新路由。
-        const now = new Date().toISOString();
-        const local = cfg.scene_routes || [];
-        const localKeys = new Set();
-        for (const r of local) { if (r.id) localKeys.add(r.id); if (r.model_key) localKeys.add(r.model_key); }
-        const newFromServer = parsed.scene_routes
-          .filter(r => !localKeys.has(r.id) && !localKeys.has(r.model_key))
-          .map(r => ({ ...r, created_at: r.created_at || now }));
-        for (const r of newFromServer) addedRoutes.push(r.scene_name || r.model_key || r.id);
-        cfg.scene_routes = [...local, ...newFromServer];
-        cfg.initialized_routes = true;
-      }
-      if (hasVModels) {
-        // 虚拟模型：下发作为初始值——仅当用户还没编辑过（未初始化）时才导入，不覆盖用户改动
-        if (!cfg.initialized_virtual_models) {
-          cfg.virtual_models = parsed.virtual_models.map(m => ({ ...m }));
-          cfg.initialized_virtual_models = true;
-        }
-      }
+      const now = new Date().toISOString();
+      const local = cfg.scene_routes || [];
+      const localKeys = new Set();
+      for (const r of local) { if (r.id) localKeys.add(r.id); if (r.model_key) localKeys.add(r.model_key); }
+      const newFromServer = parsed.scene_routes
+        .filter(r => !localKeys.has(r.id) && !localKeys.has(r.model_key))
+        .map(r => ({ ...r, created_at: r.created_at || now }));
+      for (const r of newFromServer) addedRoutes.push(r.scene_name || r.model_key || r.id);
+      cfg.scene_routes = [...local, ...newFromServer];
+      cfg.initialized_routes = true;
       writeLocalConfig(cfg);
       syncGatewayFromConfig(cfg);
-      gateway.setVirtualModels(cfg.virtual_models || []);
       applied.routes = true;
     }
 
+    // 工具配置变更后（claude_models 可能更新）→ 同步给网关
+    if (applied.tools) {
+      try { gateway.setClaudeModels(configLoader.claudeModels()); } catch {}
+    }
+
     if (!applied.tools && !applied.routes) {
-      return { ok: false, error: '文件中未找到可识别的配置段（tools / scene_routes / virtual_models）' };
+      return { ok: false, error: '文件中未找到可识别的配置段（tools / scene_routes）' };
     }
     return { ok: true, source, applied, addedApps, addedRoutes };
   }
@@ -1029,67 +1009,41 @@ function registerIPC() {
       openai:    '/v1/chat/completions',
       gemini:    '/v1beta',
     };
-    // agent_id → protocol / restrict_to_virtual（来自 tools 配置）
+    // agent_id → protocol（来自 tools 配置）
     const toolProto = {};
-    const toolRestrict = {};
     try {
       for (const t of require('./config-loader').tools()) {
         toolProto[t.id] = t.protocol;
-        toolRestrict[t.id] = t.restrict_to_virtual === true;
       }
     } catch {}
 
-    // 虚拟模型集合（来自 local-config，用户可编辑）
-    const virtualIds = new Set((cfg.virtual_models || []).map(m => m.id));
-    const isVirtualModel = (id) => virtualIds.has(id);
-
     const appControls = [];
     const keyScene = {};   // api-key → 绑定的路由（route_id → scene steps 或 单模型）
+    // route_id 绑定 → keyScene：命中场景路由用其降级链，否则视为单个真实模型。
+    // Claude 应用绑定后，claude-* 请求被透明改写成这里的真实模型。
+    const bindRoute = (key, routeId) => {
+      const route = routes.find(r => r.model_key === routeId || r.id === routeId);
+      keyScene[key] = {
+        steps: route?.steps?.length ? route.steps : [{ model: routeId }],
+        scene_name: route?.scene_name || routeId,
+      };
+    };
     for (const app of apps) {
-      // restrict_to_virtual：api-key 应用从 yaml 预设读，shim 应用从 tool 配置读
-      const preset = app.preset_id ? require('./config-loader').apiKeyApps().find(d => d.id === app.preset_id) : null;
-      const restrict = app.link_method === 'shim'
-        ? (toolRestrict[app.agent_id] === true)
-        : (preset?.restrict_to_virtual === true);
       const ctrl = {
         app_id: app.id, app_name: app.name,
         allow_stream:   app.allow_stream !== false,
         max_rpm:        app.max_rpm || null,
         max_concurrent: app.max_concurrent || null,
         allowed_models: app.allowed_models || [],
-        restrict_to_virtual: restrict,   // 虚拟模型约束
       };
       if ((app.link_method === 'api-key' || app.link_method === 'manual') && app.api_key) {
         appControls.push({ ...ctrl, match: { key: app.api_key } });
-        // route_id 绑定 → 网关按该 key 覆盖路由（命中场景路由用其降级链，否则视为单模型）
-        if (app.route_id) {
-          if (isVirtualModel(app.route_id)) {
-            // 虚拟模型绑定：直接创建单步路由
-            keyScene[app.api_key] = { steps: [{ model: app.route_id }], scene_name: app.route_id };
-          } else {
-            // 场景路由绑定：查找完整的降级链
-            const route = routes.find(r => r.model_key === app.route_id || r.id === app.route_id);
-            keyScene[app.api_key] = {
-              steps: route?.steps?.length ? route.steps : [{ model: app.route_id }],
-              scene_name: route?.scene_name || app.route_id,
-            };
-          }
-        }
+        if (app.route_id) bindRoute(app.api_key, app.route_id);
       } else if (app.link_method === 'shim' && app.agent_id) {
         const path = PROTOCOL_PATH[toolProto[app.agent_id]];
         if (path) appControls.push({ ...ctrl, match: { path } });
-        // shim 也按 key 绑定路由（shim 注入了 api_key 作鉴权）→ keyScene 改写模型
-        if (app.api_key && app.route_id) {
-          if (isVirtualModel(app.route_id)) {
-            keyScene[app.api_key] = { steps: [{ model: app.route_id }], scene_name: app.route_id };
-          } else {
-            const route = routes.find(r => r.model_key === app.route_id || r.id === app.route_id);
-            keyScene[app.api_key] = {
-              steps: route?.steps?.length ? route.steps : [{ model: app.route_id }],
-              scene_name: route?.scene_name || app.route_id,
-            };
-          }
-        }
+        // shim 注入了 api_key 作鉴权 → keyScene 按 key 改写模型
+        if (app.api_key && app.route_id) bindRoute(app.api_key, app.route_id);
       }
     }
     gateway.setAppControls(appControls);
@@ -1292,7 +1246,6 @@ function registerIPC() {
         type: t.type || 'cli',
         needs_ca: !!t.needs_ca,
         route_bindable: t.route_bindable !== false,
-        restrict_to_virtual: t.restrict_to_virtual === true,
         unsupported: !!t.unsupported,
         note: t.note || null,
         installed: t.installed,
@@ -1330,7 +1283,6 @@ function registerIPC() {
             type: tool ? tool.type : (app.type || 'cli'),
             note: tool ? tool.note : (app.note || null),
             route_bindable: tool ? tool.route_bindable : (app.route_bindable !== false),
-            restrict_to_virtual: tool ? tool.restrict_to_virtual : (app.restrict_to_virtual || false),
             auto_config: autoConfigOf(app.agent_id),
           };
         }
@@ -1353,7 +1305,6 @@ function registerIPC() {
         return { ...app, linked: true, installed: true, configured,
                  config_file: freshConfigFile, patch: freshPatch, env: freshEnv,
                  route_bindable: def ? def.route_bindable !== false : (app.route_bindable !== false),
-                 restrict_to_virtual: def ? def.restrict_to_virtual === true : (app.restrict_to_virtual || false),
                  host_method: freshConfigFile ? 'config-file' : 'api-key' };
       })
       // 机器上没有的 shim 应用不展示；api-key 应用始终展示
@@ -1377,7 +1328,6 @@ function registerIPC() {
         _virtual_apikey: true,
         preset_id: d.id,
         route_bindable: d.route_bindable !== false,
-        restrict_to_virtual: d.restrict_to_virtual === true,
         config_file: file, patch: d.patch, env: d.env || null,
         // 已配好（值已是我们的网关 → 自动识别为「已添加」）或命中 marker
         configured: configMatchesOurs(file, d.patch) || configHasMarker(file, d.marker),
@@ -1638,13 +1588,6 @@ function registerIPC() {
     return { ok: true };
   });
 
-  ipcMain.handle('gateway:getVirtualModels', () => {
-    try {
-      const cfg = readLocalConfig();
-      return Array.isArray(cfg.virtual_models) ? cfg.virtual_models : [];
-    } catch { return []; }
-  });
-
   // Claude Desktop 开发者模式状态：configLibrary 是否就绪（决定能否自动配置）
   ipcMain.handle('apps:claudeDevModeStatus', () => {
     return {
@@ -1652,69 +1595,6 @@ function registerIPC() {
       dev_mode_ready: claudeDevModeReady(),
       config_dir: CLAUDE_3P_CONFIG_DIR,
     };
-  });
-
-  // 虚拟模型映射 CRUD（持久化到 local-config.json，初始值来自 yaml）
-  ipcMain.handle('virtualModels:list', () => {
-    try {
-      const cfg = readLocalConfig();
-      return Array.isArray(cfg.virtual_models) ? cfg.virtual_models : [];
-    } catch { return []; }
-  });
-
-  // 虚拟模型映射：允许同一虚拟 id 多条（不同真实模型）= 该虚拟 id 的降级链。
-  // 唯一性按 (id, real_model) 复合判定；编辑/删除也用复合定位。
-  ipcMain.handle('virtualModels:create', (_e, vm) => {
-    const cfg = readLocalConfig();
-    if (!Array.isArray(cfg.virtual_models)) cfg.virtual_models = [];
-    const id = (vm.id || '').trim();
-    const real = (vm.real_model || '').trim();
-    if (!id) return { ok: false, error: 'id 不能为空' };
-    if (!real) return { ok: false, error: '真实模型不能为空' };
-    if (cfg.virtual_models.some(m => m.id === id && m.real_model === real))
-      return { ok: false, error: `映射 ${id} → ${real} 已存在` };
-    cfg.virtual_models.push({
-      id,
-      display_name: vm.display_name || id,
-      real_model: real,
-      description: vm.description || '',
-    });
-    cfg.initialized_virtual_models = true;
-    writeLocalConfig(cfg);
-    gateway.setVirtualModels(cfg.virtual_models);
-    return { ok: true };
-  });
-
-  ipcMain.handle('virtualModels:update', (_e, vm) => {
-    const cfg = readLocalConfig();
-    if (!Array.isArray(cfg.virtual_models)) cfg.virtual_models = [];
-    // 用旧的 (id, real_model) 复合定位（前端传 _oldRealModel）
-    const oldReal = vm._oldRealModel ?? vm.real_model;
-    const idx = cfg.virtual_models.findIndex(m => m.id === vm.id && m.real_model === oldReal);
-    if (idx < 0) return { ok: false, error: '虚拟模型映射不存在' };
-    cfg.virtual_models[idx] = {
-      ...cfg.virtual_models[idx],
-      display_name: vm.display_name ?? cfg.virtual_models[idx].display_name,
-      real_model: vm.real_model ?? cfg.virtual_models[idx].real_model,
-      description: vm.description ?? cfg.virtual_models[idx].description,
-    };
-    writeLocalConfig(cfg);
-    gateway.setVirtualModels(cfg.virtual_models);
-    return { ok: true };
-  });
-
-  ipcMain.handle('virtualModels:delete', (_e, arg) => {
-    const cfg = readLocalConfig();
-    if (!Array.isArray(cfg.virtual_models)) cfg.virtual_models = [];
-    // 兼容：传字符串=按 id 删全部该 id；传 {id, real_model}=只删那一条
-    if (typeof arg === 'string') {
-      cfg.virtual_models = cfg.virtual_models.filter(m => m.id !== arg);
-    } else if (arg && arg.id) {
-      cfg.virtual_models = cfg.virtual_models.filter(m => !(m.id === arg.id && m.real_model === arg.real_model));
-    }
-    writeLocalConfig(cfg);
-    gateway.setVirtualModels(cfg.virtual_models);
-    return { ok: true };
   });
 
   ipcMain.handle('gateway:testProvider', async (_e, { base_url, token } = {}) => {
@@ -1758,11 +1638,8 @@ app.whenReady().then(() => {
   });
   gateway.start(11430, readAgentConfig);
 
-  // 注入虚拟模型映射表（网关内部改写用）：从 local-config 读取（用户可编辑，初始值来自 yaml）
-  try {
-    const _vmCfg = readLocalConfig();
-    gateway.setVirtualModels(Array.isArray(_vmCfg.virtual_models) ? _vmCfg.virtual_models : []);
-  } catch {}
+  // 注入 Claude 客户端模型名（内部透明逻辑，来自 yaml config-loader）
+  try { gateway.setClaudeModels(require('./config-loader').claudeModels()); } catch {}
 
   // 默认启用一键托管：启动时自动接入本机已安装、用户未取消的 CLI 工具。
   try {

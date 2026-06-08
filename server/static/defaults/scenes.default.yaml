@@ -5,33 +5,6 @@
 
 version: 1
 
-# ════════ 虚拟模型映射 ════════
-# 虚拟模型名（对外）→ 真实模型名（对内 P2P）
-# Claude Desktop / Claude Code 校验强制 Anthropic 模型名，故需映射 →（网关改写）→ 真实 P2P 模型
-# 注意：必须覆盖客户端实际发送的所有模型名，否则未映射的模型路由失败会显示 "server is busy"
-# 与场景路由同属「路由」范畴，统一放在此文件，下发后作为初始值写入 local-config（用户可编辑）。
-virtual_models:
-  - id: claude-opus-4-8
-    display_name: Claude Opus 4.8
-    real_model: glm-4.7
-    description: Maps to GLM-4.7 backend
-
-  - id: claude-sonnet-4-5
-    display_name: Claude Sonnet 4.5
-    real_model: glm-4.7
-    description: Maps to GLM-4.7 backend
-
-  - id: claude-haiku-4-5
-    display_name: Claude Haiku 4.5
-    real_model: glm-4.5-flash
-    description: Maps to GLM-4.5-Flash backend (fast/background tasks)
-
-  - id: claude-opus-4
-    display_name: Claude Opus 4
-    real_model: glm-4.7
-    description: Maps to GLM-4.7 backend
-
-
 # ── 默认场景路由 ──────────────────────────────────────────────────────────────
 # 每条路由对应一个降级链：按 steps 顺序依次尝试，失败自动降到下一个。
 # 客户端使用 model_key（如 llm-router-xxxxxx）触发对应路由。

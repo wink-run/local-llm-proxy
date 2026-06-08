@@ -15,6 +15,16 @@ mitm:
     - file://{TOKENBANK_CA|}  # 用户显式指定 CA 路径（为空跳过）
     - auto                    # 回退：自动生成 name-constrained CA
 
+# Claude 客户端模型名（内部透明：仅供 /v1/models 暴露 + 标记 Claude 请求；真实模型来自应用绑定）
+claude_models:
+  - claude-opus-4-8
+  - claude-opus-4-6
+  - claude-opus-4-5
+  - claude-opus-4
+  - claude-sonnet-4-5
+  - claude-sonnet-4
+  - claude-haiku-4-5
+
 # ── 支持的 CLI 工具（接入方式 + 检测方式）──────────────────────────────────────
 tools:
   - id: claude-code

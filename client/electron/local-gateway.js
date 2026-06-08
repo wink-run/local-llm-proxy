@@ -767,11 +767,6 @@ function proxyResponsesViaChat(provider, responsesBody, model, res) {
 // Call one provider with format conversion; throws on HTTP error.
 // provider is already resolved (base_url/token correct, models populated).
 async function callProvider(provider, isAnthropic, streaming, reqPath, body, attemptModel, res) {
-  // 虚拟模型改写：虚拟模型名 → 真实模型名
-  const resolvedModel = resolveVirtualModel(attemptModel) || attemptModel;
-  if (resolvedModel !== attemptModel) {
-    console.log(`[gw] virtual: ${attemptModel} → ${resolvedModel}`);
-  }
   debugLog(`callProvider 选中 provider`, {
     provider_id: provider.id,
     provider_type: provider.type,
@@ -781,14 +776,13 @@ async function callProvider(provider, isAnthropic, streaming, reqPath, body, att
     streaming,
     reqPath,
     attemptModel,
-    resolvedModel,
   });
 
   // Codex Responses 请求：统一走 Responses⇄Chat 转换（上游按 Chat Completions 处理）
   if (reqPath === '/v1/responses' || reqPath === '/responses') {
-    return await proxyResponsesViaChat(provider, { ...body, model: resolvedModel }, resolvedModel, res);
+    return await proxyResponsesViaChat(provider, { ...body, model: attemptModel }, attemptModel, res);
   }
-  const attemptBody = { ...body, model: resolvedModel };
+  const attemptBody = { ...body, model: attemptModel };
 
   // Anthropic-compatible provider
   const isAnthropicProvider = /anthropic/i.test(provider.base_url || '') || provider.api_format === 'anthropic';
@@ -823,11 +817,10 @@ async function route(model, reqPath, body, res, callerKey) {
   const isResponses = reqPath === '/v1/responses' || reqPath === '/responses';
   const streaming   = !!body.stream;
 
-  // 虚拟模型：取该 id 的所有真实模型（同一 id 多条 = 降级链）。空 = 非虚拟模型。
-  // 保留原始请求名 origModel，用于路由明细区分「虚拟映射」vs「直连模型」。
+  // 保留原始请求名 origModel。Claude 客户端模型名（claude-*）经 keyScene 透明改写成
+  // 应用绑定的真实模型；claudeFrom 仅用于路由明细展示「claude名 → 真实」这层透明转化。
   const origModel = model;
-  const vmReals = resolveVirtualModels(origModel);
-  let virtualFrom = null;   // 走虚拟降级链时 = origModel（虚拟 id）
+  const claudeFrom = _claudeModels.includes(origModel) ? origModel : null;
 
   function fail(scene_name, failedModels) {
     debugLog(`<<< 路由失败 fail()`, {
@@ -838,7 +831,7 @@ async function route(model, reqPath, body, res, callerKey) {
       lastErr_stack: lastErr?.stack,
     });
     pushLog({
-      ts: t0, requested_model: origModel, model, scene_name, virtual_from: virtualFrom,
+      ts: t0, requested_model: origModel, model, scene_name, claude_from: claudeFrom,
       tried: failedModels?.length ? [...failedModels] : undefined,
       via: null, latency_ms: Date.now() - t0, status: 'error', error: lastErr?.message,
     });
@@ -854,24 +847,19 @@ async function route(model, reqPath, body, res, callerKey) {
     }
   }
 
-  // ── Scene route：绑定路由 / llm-router-* / 虚拟 id 直发（多条映射=降级链）──
+  // ── Scene route：应用绑定路由（keyScene）/ llm-router-* ──
+  // Claude 应用绑 route_id 后，keyScene[key] 把 claude-* 请求透明改写成绑定的真实模型/降级链。
   const boundScene = (callerKey && _keyScene[callerKey]) || null;
   const isLlmRouter = origModel.startsWith('llm-router-');
-  // 虚拟 id 直发（未绑场景、非 llm-router、有映射）→ 构造隐式降级场景：steps=各真实模型
-  const virtualScene = (!boundScene?.steps?.length && !isLlmRouter && vmReals.length)
-    ? { steps: vmReals.map(rm => ({ model: rm })), scene_name: origModel }
-    : null;
-  if (virtualScene) virtualFrom = origModel;
   debugLog(`route() 路由判定`, {
     requested_model: origModel,
     callerKey: callerKey?.slice(0, 20),
     has_boundScene: !!boundScene,
     boundScene_steps: boundScene?.steps,
     is_llm_router: isLlmRouter,
-    virtual_reals: vmReals,
   });
-  if (boundScene?.steps?.length || isLlmRouter || virtualScene) {
-    const scene = boundScene?.steps?.length ? boundScene : (virtualScene || _routerModelMap[origModel]);
+  if (boundScene?.steps?.length || isLlmRouter) {
+    const scene = boundScene?.steps?.length ? boundScene : _routerModelMap[origModel];
     if (!scene?.steps?.length) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'scene_not_found', model }));
@@ -882,10 +870,9 @@ async function route(model, reqPath, body, res, callerKey) {
     const failedModels = [];
 
     for (const step of scene.steps) {
-      // 场景步骤：step.model 已是真实模型；step.virtual_id 标记它来自哪个虚拟映射（用于路由明细）。
-      // 兼容旧数据：step.model 若直接是虚拟 id，则改写成第一个真实模型。
-      const stepModel     = resolveVirtualModel(step.model) || step.model;
-      const stepVirtualFrom = step.virtual_id || ((stepModel !== step.model) ? step.model : virtualFrom);
+      // 场景步骤就是真实模型；claudeFrom 标记原始 claude 名（路由明细展示透明转化）。
+      const stepModel     = step.model;
+      const stepClaudeFrom = claudeFrom;
       // Match providers by model list, not by tier — tier is informational only
       const stepCandidates = all.filter(p => providerHasModel(p, stepModel));
       const stepProviders = [
@@ -899,7 +886,7 @@ async function route(model, reqPath, body, res, callerKey) {
           const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, stepModel, res);
           pushLog({
             ts: t0, requested_model: origModel, model: stepModel,
-            scene_name: scene.scene_name, virtual_from: stepVirtualFrom,
+            scene_name: scene.scene_name, claude_from: stepClaudeFrom,
             tried: failedModels.length ? [...failedModels] : undefined,
             tier: provider.type, via: provider.id, via_label: provider.label,
             latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok',
@@ -970,7 +957,7 @@ async function route(model, reqPath, body, res, callerKey) {
       // 记录延迟（供 latency 策略下次参考）
       if (result.latency) reqRouter.recordLatency(provider.id, result.latency);
       pushLog({
-        ts: t0, requested_model: origModel, model, virtual_from: virtualFrom,
+        ts: t0, requested_model: origModel, model, claude_from: claudeFrom,
         tier: provider.type, via: provider.id, via_label: provider.label,
         latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok',
       });
@@ -1104,29 +1091,25 @@ function handleRequest(req, res) {
     return;
   }
 
-  // Models list：按调用方区分——
-  //   restrict_to_virtual 的应用（Claude Desktop/Code，校验必须 Anthropic 模型名）→ 只返回虚拟模型
-  //   其他客户端 → 返回全部（虚拟模型 + 在线 P2P + 各 provider 的真实模型）
+  // Models list：返回全部可用模型 + Claude 客户端模型名。
+  //   Claude 模型名（claude-*）让 Claude Desktop 通过「必须 Anthropic 模型」校验、有名字可选；
+  //   真实模型（在线 P2P + 各 provider）供其他客户端直接选用。
+  //   Claude 发的 claude-* 请求由 keyScene（应用绑定的路由）透明改写成真实模型。
   if (method === 'GET' && (cleanPath === '/v1/models' || cleanPath === '/models')) {
-    const authRaw = req.headers['authorization'] || req.headers['x-api-key'] || '';
-    const callerKey = authRaw.startsWith('Bearer ') ? authRaw.slice(7).trim() : authRaw.trim();
-    const ctrl = resolveAppControl(callerKey, cleanPath);
     const seen = new Set();
     const data = [];
     const add = (id, owned) => {
       if (id && !seen.has(id)) { seen.add(id); data.push({ id, object: 'model', created: 0, owned_by: owned || 'tokenbank' }); }
     };
-    // 虚拟模型（同一 id 多条只列一次）
-    for (const m of _virtualModels) add(m.id, 'tokenbank');
-    // 非 restrict 客户端：再列真实模型（在线 P2P + 各 provider 模型）
-    if (!ctrl || ctrl.restrict_to_virtual !== true) {
-      for (const id of _peerModels) add(id, 'p2p');
-      try {
-        for (const p of enabledProviders()) {
-          for (const m of (p.models || [])) add(typeof m === 'string' ? m : m.name, p.id);
-        }
-      } catch {}
-    }
+    // Claude 客户端模型名（透明逻辑）
+    for (const id of _claudeModels) add(id, 'anthropic');
+    // 真实模型：在线 P2P + 各 provider
+    for (const id of _peerModels) add(id, 'p2p');
+    try {
+      for (const p of enabledProviders()) {
+        for (const m of (p.models || [])) add(typeof m === 'string' ? m : m.name, p.id);
+      }
+    } catch {}
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ object: 'list', data }));
     return;
@@ -1193,20 +1176,10 @@ function handleRequest(req, res) {
 
     // ── 请求控制（按 app 配置强制执行）──────────────────────────────────────
     const ctrl = resolveAppControl(callerKey, cleanPath);
-    debugLog(`匹配的 app control`, ctrl ? { app_name: ctrl.app_name, restrict_to_virtual: ctrl.restrict_to_virtual, has_match_key: !!ctrl.match?.key } : 'null（未匹配任何应用，按默认策略路由）');
+    debugLog(`匹配的 app control`, ctrl ? { app_name: ctrl.app_name, has_match_key: !!ctrl.match?.key } : 'null（未匹配任何应用，按默认策略路由）');
     let release = () => {};
     if (ctrl) {
-      // 1) 虚拟模型约束：如果应用限制虚拟模型，模型必须在虚拟列表中
-      if (ctrl.restrict_to_virtual === true && model) {
-        const isVirtual = _virtualModels.some(m => m.id === model);
-        if (!isVirtual) {
-          const virtualIds = _virtualModels.map(m => m.id).join(', ');
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'model_not_allowed', detail: `「${ctrl.app_name}」仅支持虚拟模型，请使用：${virtualIds}` }));
-          return;
-        }
-      }
-      // 2) 允许模型白名单
+      // 1) 允许模型白名单
       if (Array.isArray(ctrl.allowed_models) && ctrl.allowed_models.length
           && model && !ctrl.allowed_models.includes(model)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
@@ -1302,23 +1275,14 @@ function getLog() {
 let _keyScene = {};
 function setKeySceneMap(map) { _keyScene = map && typeof map === 'object' ? map : {}; }
 
-// 虚拟模型映射表（对外 Anthropic 名 → 对内真实模型名）
-let _virtualModels = [];
-function setVirtualModels(list) { _virtualModels = Array.isArray(list) ? list : []; }
-
-// 虚拟模型 ID → 第一个真实模型（兼容旧调用：场景 step 等）
-function resolveVirtualModel(modelId) {
-  const vm = _virtualModels.find(m => m.id === modelId);
-  return vm ? vm.real_model : null;
-}
-// 虚拟模型 ID → 所有真实模型（同一 id 多条 = 降级链，按配置顺序）
-function resolveVirtualModels(modelId) {
-  return _virtualModels.filter(m => m.id === modelId).map(m => m.real_model).filter(Boolean);
-}
+// Claude 客户端模型名（内部透明逻辑）：仅用于 /v1/models 暴露给 Claude + 标记 Claude 请求。
+// 真实使用的模型来自「应用绑定的 route_id」（keyScene 透明改写），这里不做映射。
+let _claudeModels = [];
+function setClaudeModels(list) { _claudeModels = Array.isArray(list) ? list.filter(x => typeof x === 'string') : []; }
 
 // ── 应用请求控制（api-key 按 key 匹配，shim 按协议路径匹配）─────────────────────
 // 每项：{ app_id, app_name, match:{key|path}, allow_stream, allowed_models[],
-//         max_rpm, max_concurrent, restrict_to_virtual }
+//         max_rpm, max_concurrent }
 let _appControls = [];
 const _rlState   = new Map();   // app_id → { ts: number[], active: number }
 
@@ -1388,5 +1352,5 @@ module.exports = {
   start, stop, restart, setStrategy, getStatus, getLog,
   setKeySceneMap, setRouterModelMap, setPeerModels, setBackendConfig,
   setStatsRecorder, setLocalStats, setLocalConfigReader, setAppControls,
-  setVirtualModels,
+  setClaudeModels,
 };

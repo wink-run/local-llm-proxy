@@ -17,6 +17,21 @@ mitm:
     - file://{TOKENBANK_CA|}  # 用户显式指定 CA 路径（为空跳过）
     - auto                    # 回退：自动生成 name-constrained CA（约束=mitm-domains 并集）
 
+# ════════ Claude 客户端模型名（内部透明逻辑，内置，不随同步留空）════════
+# Claude Code/Desktop 强制用 Anthropic 模型名。这些名字仅用于：
+#   1) /v1/models 暴露给 Claude，让它通过「必须 Anthropic 模型」校验、有名字可选；
+#   2) 标记哪些请求模型属于 Claude 客户端。
+# 真实使用的模型来自「用户在应用列表给该应用绑定的模型/路由」（经 keyScene 透明改写），
+# 不在此处配置映射目标。
+claude_models:
+  - claude-opus-4-8
+  - claude-opus-4-6
+  - claude-opus-4-5
+  - claude-opus-4
+  - claude-sonnet-4-5
+  - claude-sonnet-4
+  - claude-haiku-4-5
+
 # ════════ 客户端接入（内置留空，从服务器同步）════════
 tools: []
 

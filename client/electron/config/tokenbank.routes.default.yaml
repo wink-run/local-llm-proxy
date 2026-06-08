@@ -1,12 +1,9 @@
 # tokenbank.routes.default.yaml
-# 场景路由 + 虚拟模型默认配置 —— 内置「留空」：均从服务器同步下发
+# 场景路由默认配置 —— 内置「留空」：场景路由从服务器同步下发
 #   （config.scenes → applyConfigDoc 写入 local-config）。
-# 未同步前本地无任何场景路由 / 虚拟模型。
+# 未同步前本地无任何场景路由。
 
 version: 1
-
-# ── 虚拟模型映射（内置留空，从服务器同步）──
-virtual_models: []
 
 # ── 场景路由（内置留空，从服务器同步）──
 scene_routes: []

@@ -14,6 +14,16 @@ mitm:
     - file://{TOKENBANK_CA|}
     - auto
 
+# Claude 客户端模型名（内部透明：仅供 /v1/models 暴露 + 标记 Claude 请求；真实模型来自应用绑定）
+claude_models:
+  - claude-opus-4-8
+  - claude-opus-4-6
+  - claude-opus-4-5
+  - claude-opus-4
+  - claude-sonnet-4-5
+  - claude-sonnet-4
+  - claude-haiku-4-5
+
 tools: []
 
 api_key_apps: []
