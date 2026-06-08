@@ -182,7 +182,7 @@ function PolicyManager() {
   );
 }
 
-// ── ImportConfigButton：导入配置（本地文件 or URL）─────────────────────────────
+// ── ImportConfigButton：在线同步（从服务器下发配置）─────────────────────────────
 // endpoint: 服务器端内置的配置文件路径，如 '/api/config/apps' 或 '/api/config/scenes'
 // URL 框只让用户填服务器根地址，文件路径由 endpoint 内置拼接
 function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
@@ -218,16 +218,6 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
     return `${prefix}（无新增）`;
   }
 
-  async function handleFile() {
-    if (!window.electronAPI?.toolsConfig) return;
-    setBusy(true); setMsg('');
-    const r = await window.electronAPI.toolsConfig.importFile();
-    if (r.canceled) { setBusy(false); return; }
-    setMsg(r.ok ? '✓ ' + importedMsg(r, '已导入') : '✗ ' + r.error);
-    if (r.ok && onImported) onImported();
-    setBusy(false);
-  }
-
   async function handleUrl() {
     const base = serverBase.trim().replace(/\/$/, '');
     if (!base || !window.electronAPI?.toolsConfig) return;
@@ -236,23 +226,17 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
     // 服务器配置端点需用户 JWT 鉴权，带上本地登录 token
     const token = localStorage.getItem('token');
     const r = await window.electronAPI.toolsConfig.importUrl(fullUrl, token);
-    setMsg(r.ok ? '✓ ' + importedMsg(r, '已从服务器导入') : '✗ ' + r.error);
+    setMsg(r.ok ? '✓ ' + importedMsg(r, '已同步') : '✗ ' + r.error);
     if (r.ok && onImported) { onImported(); setShowUrl(false); }
     setBusy(false);
   }
 
   return (
     <div className="relative">
-      <div className="flex items-center gap-1">
-        <button disabled={busy} onClick={handleFile}
-          className="text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors">
-          {busy ? '导入中…' : '📥 导入配置'}
-        </button>
-        <button onClick={openUrl}
-          className="text-xs px-1.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-          🔗
-        </button>
-      </div>
+      <button disabled={busy} onClick={openUrl}
+        className="text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors">
+        {busy ? '同步中…' : '🔄 在线同步'}
+      </button>
       {msg && <div className={`text-xs mt-1 ${msg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{msg}</div>}
       {showUrl && (
         <div className="absolute right-0 top-8 z-10 flex items-center gap-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 shadow-lg min-w-max">
@@ -262,7 +246,7 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
           <span className="text-[10px] text-gray-400 shrink-0 font-mono">{endpoint}</span>
           <button onClick={handleUrl} disabled={busy || !serverBase.trim()}
             className="text-xs px-2 py-0.5 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 shrink-0">
-            导入
+            同步
           </button>
         </div>
       )}
@@ -2103,8 +2087,8 @@ export default function Gateway() {
         {/* 导入功能：放最上面 */}
         <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-200 dark:border-gray-800">
           <div className="min-w-0">
-            <div className="text-sm font-medium text-gray-700 dark:text-gray-200">导入配置</div>
-            <p className="text-xs text-gray-500 mt-0.5">从本地文件或服务器下发导入「场景路由配置」，导入后自动应用并刷新</p>
+            <div className="text-sm font-medium text-gray-700 dark:text-gray-200">在线同步</div>
+            <p className="text-xs text-gray-500 mt-0.5">从服务器下发同步「场景路由配置」，同步后自动应用并刷新</p>
           </div>
           <ImportConfigButton onImported={() => { refresh(); loadSceneData(); loadAvailableModels(); }} endpoint="/api/config/scenes" />
         </div>
