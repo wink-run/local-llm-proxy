@@ -1104,14 +1104,29 @@ function handleRequest(req, res) {
     return;
   }
 
-  // Models list — return virtual models
+  // Models list：按调用方区分——
+  //   restrict_to_virtual 的应用（Claude Desktop/Code，校验必须 Anthropic 模型名）→ 只返回虚拟模型
+  //   其他客户端 → 返回全部（虚拟模型 + 在线 P2P + 各 provider 的真实模型）
   if (method === 'GET' && (cleanPath === '/v1/models' || cleanPath === '/models')) {
-    const data = _virtualModels.map(m => ({
-      id: m.id,
-      object: 'model',
-      owned_by: 'tokenbank',
-      display_name: m.display_name || m.id,
-    }));
+    const authRaw = req.headers['authorization'] || req.headers['x-api-key'] || '';
+    const callerKey = authRaw.startsWith('Bearer ') ? authRaw.slice(7).trim() : authRaw.trim();
+    const ctrl = resolveAppControl(callerKey, cleanPath);
+    const seen = new Set();
+    const data = [];
+    const add = (id, owned) => {
+      if (id && !seen.has(id)) { seen.add(id); data.push({ id, object: 'model', created: 0, owned_by: owned || 'tokenbank' }); }
+    };
+    // 虚拟模型（同一 id 多条只列一次）
+    for (const m of _virtualModels) add(m.id, 'tokenbank');
+    // 非 restrict 客户端：再列真实模型（在线 P2P + 各 provider 模型）
+    if (!ctrl || ctrl.restrict_to_virtual !== true) {
+      for (const id of _peerModels) add(id, 'p2p');
+      try {
+        for (const p of enabledProviders()) {
+          for (const m of (p.models || [])) add(typeof m === 'string' ? m : m.name, p.id);
+        }
+      } catch {}
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ object: 'list', data }));
     return;
