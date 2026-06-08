@@ -419,6 +419,45 @@ function configHasMarker(file, marker) {
   catch { return false; }
 }
 
+// 解析 patch 模板占位符：{BASE}=http://网关  {REVERSE}=host:port  {KEY}=应用 api_key
+function resolveTpl(v, apiKey) {
+  let reverse = '127.0.0.1:11430';
+  try { reverse = require('./config-loader').gatewayCtx().reverse || reverse; } catch {}
+  return String(v)
+    .replace(/\{BASE\}/g, 'http://' + reverse)
+    .replace(/\{REVERSE\}/g, reverse)
+    .replace(/\{KEY\}/g, apiKey || '');
+}
+
+// 配置文件里「我们要写的项」是否都已是我们的值（= 已配好，指向网关）。
+// 只比较不含 {KEY} 的项（base_url 等，与 key 无关），这样虚拟行（还没 api_key）也能判断。
+function configMatchesOurs(file, patch) {
+  try {
+    if (!file || !fs.existsSync(file) || !patch) return false;
+    const keys = Object.keys(patch).filter(k => !String(patch[k]).includes('{KEY}'));
+    if (!keys.length) return false;
+    const cur = require('./injector').readConfigValues(file, keys);
+    return keys.every(k => cur[k] !== undefined && String(cur[k]) === String(resolveTpl(patch[k], null)));
+  } catch { return false; }
+}
+
+// 写入前冲突检测：返回与「我们要写的值」不同的已有项 [{key, current, wanted}]。
+// patch 是已解析占位符的目标值（前端传入）。current 存在且 ≠ wanted 才算冲突。
+function detectConfigConflicts(file, patch) {
+  const conflicts = [];
+  try {
+    if (!file || !fs.existsSync(file) || !patch) return conflicts;
+    const keys = Object.keys(patch);
+    const cur = require('./injector').readConfigValues(file, keys);
+    for (const k of keys) {
+      if (cur[k] !== undefined && String(cur[k]) !== String(patch[k])) {
+        conflicts.push({ key: k, current: cur[k], wanted: patch[k] });
+      }
+    }
+  } catch {}
+  return conflicts;
+}
+
 // 安全地往 TOML 注入 patch：仅插入/替换我们的顶层键和表，保留其余原文（不 round-trip 整个文件）
 function safePatchToml(file, patch) {
   let text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
@@ -1278,8 +1317,11 @@ function registerIPC() {
         const freshEnv         = def?.env  ?? app.env;
         let configured = false;
         if (freshConfigFile) {
+          const cfgPath = resolveCfgPath(freshConfigFile);
+          // 优先「值匹配」：配置文件里的 base_url 等已是我们的网关 → 视为已配好（自动识别）
+          // 回退 marker 字符串命中（兼容我们写过 _configManagedBy 等标记）
           const marker = (def && def.marker) || app.api_key;
-          if (marker) configured = configHasMarker(resolveCfgPath(freshConfigFile), marker);
+          configured = configMatchesOurs(cfgPath, freshPatch) || (!!marker && configHasMarker(cfgPath, marker));
         }
         return { ...app, linked: true, installed: true, configured,
                  config_file: freshConfigFile, patch: freshPatch, env: freshEnv,
@@ -1310,7 +1352,8 @@ function registerIPC() {
         route_bindable: d.route_bindable !== false,
         restrict_to_virtual: d.restrict_to_virtual === true,
         config_file: file, patch: d.patch, env: d.env || null,
-        configured: configHasMarker(file, d.marker),   // 配置文件是否已含我们的路由
+        // 已配好（值已是我们的网关 → 自动识别为「已添加」）或命中 marker
+        configured: configMatchesOurs(file, d.patch) || configHasMarker(file, d.marker),
         installed: true, linked: false, api_key: null, route_id: null,
       });
     }
@@ -1413,12 +1456,17 @@ function registerIPC() {
 
   // 写入工具配置文件（config-file 注入：如 Codex Desktop API 模式改 ~/.codex/config.toml）。
   // 前端已把 {BASE}/{KEY} 解析进 patch/env；这里解析路径占位符 + 展开 ~ 后写入。
-  ipcMain.handle('apps:writeConfigFile', async (_e, { app_id, config_file, patch, env } = {}) => {
+  ipcMain.handle('apps:writeConfigFile', async (_e, { app_id, config_file, patch, env, force } = {}) => {
     try {
       const cl = require('./config-loader');
       let file = cl.resolvePlaceholders(String(config_file || ''), {});
       file = cl.expandHome(file);
       if (!file) return { ok: false, error: 'no-config-file' };
+      // 冲突检测：目标配置项已有值且与我们要写的不同 → 返回冲突，由前端确认是否覆盖（force=true 时跳过）
+      if (!force) {
+        const conflicts = detectConfigConflicts(file, patch || {});
+        if (conflicts.length) return { ok: false, conflicts, file };
+      }
       if (/\.json$/i.test(file)) {
         // JSON 配置（如 Claude Code/Desktop 的 ~/.claude/settings.json）：合并 patch（支持 a.b 点路径），保留其它字段
         let obj = {};

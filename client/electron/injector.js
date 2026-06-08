@@ -225,7 +225,25 @@ function statusConfigFile(configFile, gatewayHostPort) {
   return text.includes(gatewayHostPort);
 }
 
+// 读配置文件里指定点路径 key 的当前值（用于：写入前冲突检测 / 扫描时判断是否已配好）。
+// 返回 { key: 当前值 | undefined }。文件不存在 → 全 undefined。
+function readConfigValues(configFile, keys) {
+  const out = {};
+  if (!configFile || !fs.existsSync(configFile)) { for (const k of keys) out[k] = undefined; return out; }
+  let text = '';
+  try { text = fs.readFileSync(configFile, 'utf8'); } catch { for (const k of keys) out[k] = undefined; return out; }
+  const fmt = fmtOf(configFile);
+  if (fmt === 'toml') {
+    const flat = parseToml(text);
+    for (const k of keys) out[k] = (k in flat) ? flat[k] : undefined;
+  } else {
+    const obj = parseObj(text, fmt);
+    for (const k of keys) { const v = deepGet(obj, k); out[k] = (v === SENTINEL) ? undefined : v; }
+  }
+  return out;
+}
+
 module.exports = {
-  applyConfigFile, revertConfigFile, statusConfigFile,
+  applyConfigFile, revertConfigFile, statusConfigFile, readConfigValues,
   _internal: { parseToml, buildToml },
 };

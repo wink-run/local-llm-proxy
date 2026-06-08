@@ -486,15 +486,23 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   }
 
   // config-file 注入：解析 {BASE}/{KEY} 后改目标工具配置文件（如 Codex Desktop ~/.codex/config.toml）
-  async function writeConfigFile() {
+  async function writeConfigFile(force = false) {
     setWriteMsg('');
     const patch = {};
     for (const [k, v] of Object.entries(app.patch || {})) patch[k] = resolveEnv(v);
     const env = {};
     for (const [k, v] of Object.entries(app.env || {})) env[k] = resolveEnv(v);
     const r = await window.electronAPI?.apps?.writeConfigFile({
-      app_id: app.id, config_file: app.config_file, patch, env,
+      app_id: app.id, config_file: app.config_file, patch, env, force,
     }).catch(e => ({ ok: false, error: e.message }));
+    // 冲突：目标配置项已有不同的值 → 弹确认显示当前值，确认后强制覆盖
+    if (r && !r.ok && Array.isArray(r.conflicts) && r.conflicts.length) {
+      const lines = r.conflicts.map(c => `· ${c.key}\n    当前: ${c.current}\n    将改为: ${c.wanted}`).join('\n');
+      const ok = window.confirm(`配置文件已有不同的配置，是否覆盖？\n\n${lines}\n\n确定覆盖请点「确定」。`);
+      if (ok) return writeConfigFile(true);   // 用户确认 → 强制覆盖
+      setWriteMsg('✗ 已取消（未覆盖现有配置）');
+      return;
+    }
     if (r?.ok) {
       setWriteMsg(`✓ 已写入 ${r.file}${r.envCount ? `（含 ${r.envCount} 个环境变量）` : ''}，重启该应用后生效`);
       setWritten(true);     // 已写入 → 显示「取消 API Key 管理」
@@ -743,7 +751,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
                       取消 API Key 管理
                     </button>
                   ) : (
-                    <button onClick={writeConfigFile} disabled={needDevMode}
+                    <button onClick={() => writeConfigFile()} disabled={needDevMode}
                       title={needDevMode ? '请先在 Claude Desktop 启用开发者模式' : ''}
                       className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-40 disabled:cursor-not-allowed">
                       写入配置

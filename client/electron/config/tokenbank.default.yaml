@@ -1,7 +1,8 @@
 # tokenbank.yaml —— 端到端唯一真相源（方案 Y）
-# 一份配置同时管：客户端接入 + 上游 provider + 路由 + 证书来源。
-# 内置默认；可从云端拉取覆盖（remote）。
-# 铁律：真 key / 真证书永不进此文件，只放“去哪取”的引用（_ref）。
+# 内置默认「留空」：应用 / API Key 应用 / 场景路由 / 虚拟模型 均从服务器同步下发
+#   （applyConfigDoc 写 ~/.tokenbank/tokenbank.yaml，config-loader 优先读它）。
+# 仅保留网关基础设施（host/端口/证书来源），保证网关能启动。
+# 铁律：真 key / 真证书永不进此文件。
 
 version: 1
 
@@ -16,124 +17,8 @@ mitm:
     - file://{TOKENBANK_CA|}  # 用户显式指定 CA 路径（为空跳过）
     - auto                    # 回退：自动生成 name-constrained CA（约束=mitm-domains 并集）
 
-# ════════ 客户端接入 ════════
-tools:
-  - id: claude-code
-    name: Claude Code
-    route_bindable: true                    # 支持选择路由
-    restrict_to_virtual: true               # 但仅限虚拟模型和包含虚拟模型的场景
-    protocol: anthropic
-    detect:
-      command: claude
-      version-arg: --version
-      config-dirs: ['$CLAUDE_CONFIG_DIR', '~/.claude']
-    strategy: base_url-env
-    inject:
-      env:
-        ANTHROPIC_BASE_URL: http://{REVERSE}
-        ANTHROPIC_AUTH_TOKEN: "{KEY}"
+# ════════ 客户端接入（内置留空，从服务器同步）════════
+tools: []
 
-  - id: gemini-cli
-    name: Gemini CLI
-    protocol: gemini
-    detect:
-      command: gemini
-      version-arg: --version
-      config-dirs: ['~/.gemini']
-    strategy: base_url-env
-    inject:
-      env:
-        GEMINI_BASE_URL: http://{REVERSE}
-        GEMINI_API_KEY: "{KEY}"
-
-  # ── Codex CLI：认 OPENAI_BASE_URL/OPENAI_API_KEY，env 重定向到网关（无需证书）──
-  - id: codex
-    name: Codex (CLI)
-    protocol: responses
-    detect:
-      command: codex
-      version-arg: --version
-    strategy: base_url-env
-    inject:
-      env:
-        OPENAI_BASE_URL: http://{REVERSE}/v1
-        OPENAI_API_KEY: "{KEY}"
-
-  # ── OpenCode（sst/opencode）：认 OPENAI_BASE_URL/OPENAI_API_KEY，env 重定向（环境变量优先）──
-  - id: opencode
-    name: OpenCode
-    protocol: openai
-    detect:
-      command: opencode
-      version-arg: --version
-      config-dirs: ['~/.config/opencode']
-    strategy: base_url-env
-    inject:
-      env:
-        OPENAI_BASE_URL: http://{REVERSE}/v1
-        OPENAI_API_KEY: "{KEY}"
-
-  # ── Hermes Agent（NousResearch）：认 OPENAI_BASE_URL/OPENAI_API_KEY，env 重定向 ──
-  - id: hermes
-    name: Hermes Agent
-    protocol: openai
-    detect:
-      command: hermes
-      version-arg: --version
-      config-dirs: ['~/.hermes']
-    strategy: base_url-env
-    inject:
-      env:
-        OPENAI_BASE_URL: http://{REVERSE}/v1
-        OPENAI_API_KEY: "{KEY}"
-
-
-# ── API Key 应用（检测到已安装则在列表显示「添加」，写其配置文件指向网关）──
-# {BASE}=网关地址 {KEY}=应用 key（运行时按应用填入；真 key 不进此文件）
-api_key_apps:
-  - id: claude-desktop
-    name: Claude Desktop
-    icon: "🖥️"
-    appx: Claude
-    config_file: "{CLAUDE_3P_CONFIG}"
-    marker: tokenbank
-    enable_3p: true                         # 是否启用 Claude Desktop 3p 接入（false 则不显示该应用）
-    route_bindable: true
-    restrict_to_virtual: true               # 仅限虚拟模型
-    # 全部写进 JSON 配置文件（Claude Desktop 从 JSON 读 key，不读环境变量）
-    patch:
-      inferenceProvider: gateway
-      inferenceGatewayBaseUrl: "{BASE}"
-      inferenceGatewayApiKey: "{KEY}"
-      inferenceGatewayAuthScheme: bearer
-      modelDiscoveryEnabled: false
-      _configManagedBy: tokenbank
-
-  - id: codex-desktop
-    name: Codex Desktop
-    icon: "🖥️"
-    appx: OpenAI.Codex
-    config_file: "{CODEX_HOME|~/.codex}/config.toml"
-    marker: tokenbank
-    route_bindable: true                # Codex 支持模型改写
-    patch:
-      model_provider: tokenbank
-      model_providers.tokenbank.name: Tokenbank
-      model_providers.tokenbank.base_url: "{BASE}/v1"
-      model_providers.tokenbank.wire_api: responses
-      model_providers.tokenbank.env_key: TOKENBANK_API_KEY
-    env:
-      TOKENBANK_API_KEY: "{KEY}"
-
-  # ── OpenClaw：base_url 只能写配置文件（不认环境变量）→ 走 API Key 应用（命令检测，手动添加）──
-  - id: openclaw
-    name: OpenClaw
-    icon: "🦞"
-    command: openclaw                        # CLI 命令检测（非 appx 桌面包）
-    config_file: "~/.openclaw/openclaw.json"
-    marker: tokenbank
-    route_bindable: true
-    patch:
-      models.providers.tokenbank.baseUrl: "{BASE}/v1"
-      models.providers.tokenbank.apiKey: "{KEY}"
-      models.providers.tokenbank.api: openai-completions
+# ── API Key 应用（内置留空，从服务器同步）──
+api_key_apps: []
