@@ -1635,16 +1635,21 @@ function registerIPC() {
     } catch { return []; }
   });
 
+  // 虚拟模型映射：允许同一虚拟 id 多条（不同真实模型）= 该虚拟 id 的降级链。
+  // 唯一性按 (id, real_model) 复合判定；编辑/删除也用复合定位。
   ipcMain.handle('virtualModels:create', (_e, vm) => {
     const cfg = readLocalConfig();
     if (!Array.isArray(cfg.virtual_models)) cfg.virtual_models = [];
     const id = (vm.id || '').trim();
+    const real = (vm.real_model || '').trim();
     if (!id) return { ok: false, error: 'id 不能为空' };
-    if (cfg.virtual_models.some(m => m.id === id)) return { ok: false, error: '虚拟模型 ID 已存在' };
+    if (!real) return { ok: false, error: '真实模型不能为空' };
+    if (cfg.virtual_models.some(m => m.id === id && m.real_model === real))
+      return { ok: false, error: `映射 ${id} → ${real} 已存在` };
     cfg.virtual_models.push({
       id,
       display_name: vm.display_name || id,
-      real_model: vm.real_model || '',
+      real_model: real,
       description: vm.description || '',
     });
     cfg.initialized_virtual_models = true;
@@ -1656,8 +1661,10 @@ function registerIPC() {
   ipcMain.handle('virtualModels:update', (_e, vm) => {
     const cfg = readLocalConfig();
     if (!Array.isArray(cfg.virtual_models)) cfg.virtual_models = [];
-    const idx = cfg.virtual_models.findIndex(m => m.id === vm.id);
-    if (idx < 0) return { ok: false, error: '虚拟模型不存在' };
+    // 用旧的 (id, real_model) 复合定位（前端传 _oldRealModel）
+    const oldReal = vm._oldRealModel ?? vm.real_model;
+    const idx = cfg.virtual_models.findIndex(m => m.id === vm.id && m.real_model === oldReal);
+    if (idx < 0) return { ok: false, error: '虚拟模型映射不存在' };
     cfg.virtual_models[idx] = {
       ...cfg.virtual_models[idx],
       display_name: vm.display_name ?? cfg.virtual_models[idx].display_name,
@@ -1669,10 +1676,15 @@ function registerIPC() {
     return { ok: true };
   });
 
-  ipcMain.handle('virtualModels:delete', (_e, id) => {
+  ipcMain.handle('virtualModels:delete', (_e, arg) => {
     const cfg = readLocalConfig();
     if (!Array.isArray(cfg.virtual_models)) cfg.virtual_models = [];
-    cfg.virtual_models = cfg.virtual_models.filter(m => m.id !== id);
+    // 兼容：传字符串=按 id 删全部该 id；传 {id, real_model}=只删那一条
+    if (typeof arg === 'string') {
+      cfg.virtual_models = cfg.virtual_models.filter(m => m.id !== arg);
+    } else if (arg && arg.id) {
+      cfg.virtual_models = cfg.virtual_models.filter(m => !(m.id === arg.id && m.real_model === arg.real_model));
+    }
     writeLocalConfig(cfg);
     gateway.setVirtualModels(cfg.virtual_models);
     return { ok: true };

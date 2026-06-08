@@ -823,16 +823,11 @@ async function route(model, reqPath, body, res, callerKey) {
   const isResponses = reqPath === '/v1/responses' || reqPath === '/responses';
   const streaming   = !!body.stream;
 
-  // 虚拟模型改写：必须在任何 provider 选择前把虚拟名换成真实名，
-  // 否则 providerHasModel(p, '虚拟名') 永远匹配不到，候选 provider 为 0 → 502。
+  // 虚拟模型：取该 id 的所有真实模型（同一 id 多条 = 降级链）。空 = 非虚拟模型。
   // 保留原始请求名 origModel，用于路由明细区分「虚拟映射」vs「直连模型」。
   const origModel = model;
-  const realModel = resolveVirtualModel(model) || model;
-  const virtualFrom = (realModel !== origModel) ? origModel : null;  // 非 null = 经虚拟映射
-  if (virtualFrom) {
-    debugLog(`虚拟模型改写（route 入口）`, { from: origModel, to: realModel });
-    model = realModel;
-  }
+  const vmReals = resolveVirtualModels(origModel);
+  let virtualFrom = null;   // 走虚拟降级链时 = origModel（虚拟 id）
 
   function fail(scene_name, failedModels) {
     debugLog(`<<< 路由失败 fail()`, {
@@ -859,17 +854,24 @@ async function route(model, reqPath, body, res, callerKey) {
     }
   }
 
-  // ── Scene route：model=llm-router-* 触发，或 callerKey 绑定了路由（api-key 应用 route_id）──
+  // ── Scene route：绑定路由 / llm-router-* / 虚拟 id 直发（多条映射=降级链）──
   const boundScene = (callerKey && _keyScene[callerKey]) || null;
+  const isLlmRouter = origModel.startsWith('llm-router-');
+  // 虚拟 id 直发（未绑场景、非 llm-router、有映射）→ 构造隐式降级场景：steps=各真实模型
+  const virtualScene = (!boundScene?.steps?.length && !isLlmRouter && vmReals.length)
+    ? { steps: vmReals.map(rm => ({ model: rm })), scene_name: origModel }
+    : null;
+  if (virtualScene) virtualFrom = origModel;
   debugLog(`route() 路由判定`, {
-    requested_model: model,
+    requested_model: origModel,
     callerKey: callerKey?.slice(0, 20),
     has_boundScene: !!boundScene,
     boundScene_steps: boundScene?.steps,
-    is_llm_router: model.startsWith('llm-router-'),
+    is_llm_router: isLlmRouter,
+    virtual_reals: vmReals,
   });
-  if (boundScene?.steps?.length || model.startsWith('llm-router-')) {
-    const scene = boundScene?.steps?.length ? boundScene : _routerModelMap[model];
+  if (boundScene?.steps?.length || isLlmRouter || virtualScene) {
+    const scene = boundScene?.steps?.length ? boundScene : (virtualScene || _routerModelMap[origModel]);
     if (!scene?.steps?.length) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'scene_not_found', model }));
@@ -880,9 +882,10 @@ async function route(model, reqPath, body, res, callerKey) {
     const failedModels = [];
 
     for (const step of scene.steps) {
-      // 场景步骤模型同样支持虚拟改写（步骤可能配置为虚拟模型名）
+      // 场景步骤：step.model 已是真实模型；step.virtual_id 标记它来自哪个虚拟映射（用于路由明细）。
+      // 兼容旧数据：step.model 若直接是虚拟 id，则改写成第一个真实模型。
       const stepModel     = resolveVirtualModel(step.model) || step.model;
-      const stepVirtualFrom = (stepModel !== step.model) ? step.model : virtualFrom;
+      const stepVirtualFrom = step.virtual_id || ((stepModel !== step.model) ? step.model : virtualFrom);
       // Match providers by model list, not by tier — tier is informational only
       const stepCandidates = all.filter(p => providerHasModel(p, stepModel));
       const stepProviders = [
@@ -1288,10 +1291,14 @@ function setKeySceneMap(map) { _keyScene = map && typeof map === 'object' ? map 
 let _virtualModels = [];
 function setVirtualModels(list) { _virtualModels = Array.isArray(list) ? list : []; }
 
-// 虚拟模型 ID → 真实模型 ID（网关改写用）
+// 虚拟模型 ID → 第一个真实模型（兼容旧调用：场景 step 等）
 function resolveVirtualModel(modelId) {
   const vm = _virtualModels.find(m => m.id === modelId);
   return vm ? vm.real_model : null;
+}
+// 虚拟模型 ID → 所有真实模型（同一 id 多条 = 降级链，按配置顺序）
+function resolveVirtualModels(modelId) {
+  return _virtualModels.filter(m => m.id === modelId).map(m => m.real_model).filter(Boolean);
 }
 
 // ── 应用请求控制（api-key 按 key 匹配，shim 按协议路径匹配）─────────────────────

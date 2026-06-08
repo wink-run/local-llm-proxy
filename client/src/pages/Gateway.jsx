@@ -213,6 +213,8 @@ function VirtualModelManager({ availableModels = [], onChanged }) {
     setBusy(true);
     try {
       const d = { id: fId.trim(), display_name: fDisplay.trim() || fId.trim(), real_model: fReal.trim() };
+      // 编辑时带旧的 real_model 做复合定位（同一 id 可有多条）
+      if (editing !== 'new') d._oldRealModel = editing.real_model;
       const r = editing === 'new'
         ? await window.electronAPI.virtualModels.create(d)
         : await window.electronAPI.virtualModels.update(d);
@@ -223,9 +225,9 @@ function VirtualModelManager({ availableModels = [], onChanged }) {
     setBusy(false);
   }
 
-  async function del(id) {
-    if (!window.confirm(`删除虚拟模型 ${id}？`)) return;
-    await window.electronAPI.virtualModels.delete(id).catch(() => {});
+  async function del(vm) {
+    if (!window.confirm(`删除映射 ${vm.id} → ${vm.real_model}？`)) return;
+    await window.electronAPI.virtualModels.delete({ id: vm.id, real_model: vm.real_model }).catch(() => {});
     await load();
     onChanged?.();
   }
@@ -237,7 +239,7 @@ function VirtualModelManager({ availableModels = [], onChanged }) {
       <div className="flex items-center gap-2 mb-3">
         <span className="text-base">🎭</span>
         <h2 className="font-semibold text-gray-800 dark:text-gray-100 text-sm">虚拟模型映射</h2>
-        <span className="text-xs text-gray-400 dark:text-gray-500">对外 Anthropic 兼容名 → 对内真实模型；Claude Desktop / Claude Code 必须用虚拟模型</span>
+        <span className="text-xs text-gray-400 dark:text-gray-500">对外 Anthropic 兼容名 → 对内真实模型；同一虚拟 id 可加多条不同真实模型 = 降级链</span>
         <button onClick={openNew}
           className="ml-auto text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors">
           + 新建虚拟模型
@@ -246,15 +248,15 @@ function VirtualModelManager({ availableModels = [], onChanged }) {
 
       <div className="flex flex-col gap-1.5 mb-2">
         {vms.length === 0 && <div className="text-xs text-gray-400 py-1">暂无虚拟模型</div>}
-        {vms.map(vm => (
-          <div key={vm.id} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40 text-sm">
+        {vms.map((vm, i) => (
+          <div key={vm.id + '|' + vm.real_model + '|' + i} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40 text-sm">
             <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/40 text-blue-600 dark:text-blue-400 shrink-0">{vm.id}</span>
             <span className="text-gray-400 text-xs shrink-0">→</span>
             <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/40 text-green-600 dark:text-green-400 shrink-0">{vm.real_model}</span>
             <span className="text-xs text-gray-500 truncate flex-1">{vm.display_name}</span>
             <button onClick={() => openEdit(vm)}
               className="text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 shrink-0">编辑</button>
-            <button onClick={() => del(vm.id)}
+            <button onClick={() => del(vm)}
               className="text-xs px-2 py-0.5 rounded text-gray-400 hover:text-red-500 shrink-0">删除</button>
           </div>
         ))}
@@ -390,6 +392,16 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
 const LINK_METHOD_LABEL = { shim: '透明托管', 'api-key': 'API Key', manual: '手工添加' };
 // 按 API Key 路由的应用：自动写配置的 api-key，和用户自配的 manual（手工添加）
 const isKeyApp = (m) => m === 'api-key' || m === 'manual';
+
+// 场景路由是否「全部 step 都是同一个虚拟模型 id 的映射」——
+// 只有这样的场景才能给 Claude Code/Desktop（restrict_to_virtual）绑定：
+// 它们只发一个虚拟 id，降级链必须都对应那个 id（不同真实模型）。
+function sceneAllSameVirtualId(route, virtualIdSet) {
+  const steps = route.steps || [];
+  if (!steps.length) return false;
+  const vids = steps.map(s => s.virtual_id || (virtualIdSet.has(s.model || s.label) ? (s.model || s.label) : null));
+  return !vids.some(v => !v) && new Set(vids).size === 1;
+}
 const STRATEGY_LABEL = {
   'base_url-env': '环境变量注入 base_url',
   'config-file':  '自动写入配置文件',
@@ -636,9 +648,9 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
         {(() => {
           const avail = new Set(availableModels.map(m => m.id));
           const virtualIds = new Set(virtualModels.map(m => m.id));
-          const sceneHasVirtual = r => (r.steps || []).some(s => virtualIds.has(s.model || s.label));
+          // restrict_to_virtual 应用：只列「全部 step 同一虚拟 id」的场景；否则列 step 可用的
           const usable = app.restrict_to_virtual
-            ? routes.filter(sceneHasVirtual)
+            ? routes.filter(r => sceneAllSameVirtualId(r, virtualIds))
             : routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
           return usable.length > 0 && (
             <optgroup label="场景路由">
@@ -1220,11 +1232,9 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         {(() => {
                           const avail = new Set(availableModels.map(m => m.id));
                           const virtualIds = new Set(virtualModels.map(m => m.id));
-                          // 含虚拟模型的场景：步骤里有任一虚拟模型
-                          const sceneHasVirtual = r => (r.steps || []).some(s => virtualIds.has(s.model || s.label));
-                          // restrict_to_virtual 应用：场景只显示含虚拟模型的；否则显示步骤可用的
+                          // restrict_to_virtual 应用：只显示「全部 step 同一虚拟 id」的场景；否则显示步骤可用的
                           const usable = app.restrict_to_virtual
-                            ? routes.filter(sceneHasVirtual)
+                            ? routes.filter(r => sceneAllSameVirtualId(r, virtualIds))
                             : routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
                           return (
                             <>
@@ -1526,13 +1536,31 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
   const [name, setName]   = useState(route.scene_name || '');
   const [icon, setIcon]   = useState(route.icon || '🔀');
   const [steps, setSteps] = useState(route.steps || []);
+  const [vmodels, setVmodels] = useState([]);   // 虚拟模型映射（降级链 step 可选）
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = await window.electronAPI?.virtualModels?.list?.() || [];
+        setVmodels(Array.isArray(list) ? list : []);
+      } catch {}
+    })();
+  }, []);
 
   const addStep    = () => setSteps(prev => [...prev, { label: '', model: '', tier: 'free' }]);
   const removeStep = (i) => setSteps(prev => prev.filter((_, idx) => idx !== i));
-  const updateStep = (i, modelId) => {
-    const m    = availableModels.find(x => x.id === modelId);
-    const tier = m ? m.tier : 'free';
-    setSteps(prev => prev.map((s, idx) => idx === i ? { label: modelId, model: modelId, tier } : s));
+  // val 形如 "vm:虚拟id|真实模型"(虚拟映射) 或 "真实模型id"(真实模型)
+  const updateStep = (i, val) => {
+    let next;
+    if (val.startsWith('vm:')) {
+      const sep = val.indexOf('|');
+      const vid = val.slice(3, sep), real = val.slice(sep + 1);
+      next = { label: `${vid} → ${real}`, model: real, virtual_id: vid, tier: 'virtual' };
+    } else {
+      const m = availableModels.find(x => x.id === val);
+      next = { label: val, model: val, tier: m ? m.tier : 'free' };
+    }
+    setSteps(prev => prev.map((s, idx) => idx === i ? next : s));
   };
 
   const freeModels = availableModels.filter(m => m.tier === 'free');
@@ -1556,9 +1584,10 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
         {steps.map((step, i) => (
           <div key={i} className="flex items-center gap-2 group">
             <span className="text-[10px] text-gray-400 w-4 text-right shrink-0">{i + 1}</span>
-            <select value={step.model} onChange={e => updateStep(i, e.target.value)}
+            <select value={step.virtual_id ? `vm:${step.virtual_id}|${step.model}` : step.model} onChange={e => updateStep(i, e.target.value)}
               className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500">
               <option value="">-- 选择模型 --</option>
+              {vmodels.length > 0 && <optgroup label="🎭 虚拟模型映射">{vmodels.map((vm, k) => <option key={'vm'+k} value={`vm:${vm.id}|${vm.real_model}`}>{vm.id} → {vm.real_model}</option>)}</optgroup>}
               {freeModels.length > 0 && <optgroup label="🟢 免费层">{freeModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>}
               {p2pModels.length  > 0 && <optgroup label="🔵 P2P 层">{p2pModels.map(m =>  <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>}
               {paidModels.length > 0 && <optgroup label="🟡 付费层">{paidModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>}
