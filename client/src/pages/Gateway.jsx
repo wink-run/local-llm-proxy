@@ -1178,6 +1178,20 @@ function AppManager({ externalRoutes, availableModels = [] }) {
               </div>
             ) : (
               <div className="flex flex-col divide-y divide-gray-100 dark:divide-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
+                {/* 表头 */}
+                <div className="flex items-center gap-3 px-3 py-2 bg-gray-50 dark:bg-gray-800/50 text-[10px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wide">
+                  <span className="text-base shrink-0 invisible">🔧</span>
+                  <div className="w-28 shrink-0">应用</div>
+                  <div className="w-14 shrink-0">状态</div>
+                  <div className="w-16 shrink-0">接入方式</div>
+                  <div className="flex items-center gap-4 shrink-0">
+                    <div className="text-center w-12">请求数</div>
+                    <div className="text-center w-12">Token</div>
+                    <div className="text-center w-14">最后使用</div>
+                  </div>
+                  <div className="flex-1 min-w-0 max-w-[160px]">路由 / 模型</div>
+                  <div className="shrink-0 ml-auto">操作</div>
+                </div>
                 {apps.map(app => {
                   const st = appStats[app.id] || { calls: 0, tokens: 0, lastTs: null };
                   const fmtTokens = n => n >= 1_000_000 ? (n/1_000_000).toFixed(1)+'M'
@@ -1221,20 +1235,11 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         {LINK_METHOD_LABEL[app.link_method] || app.link_method}
                       </div>
 
-                      {/* 统计：请求数 / token / 最后使用 */}
+                      {/* 统计：请求数 / token / 最后使用（列名见表头）*/}
                       <div className="flex items-center gap-4 shrink-0">
-                        <div className="text-center w-12">
-                          <div className="text-xs font-semibold text-gray-700 dark:text-gray-200">{st.calls > 0 ? st.calls.toLocaleString() : '—'}</div>
-                          <div className="text-[9px] text-gray-400">请求</div>
-                        </div>
-                        <div className="text-center w-12">
-                          <div className="text-xs font-semibold text-gray-700 dark:text-gray-200">{st.tokens > 0 ? fmtTokens(st.tokens) : '—'}</div>
-                          <div className="text-[9px] text-gray-400">Token</div>
-                        </div>
-                        <div className="text-center w-14">
-                          <div className="text-[10px] font-medium text-gray-600 dark:text-gray-300">{fmtTime(st.lastTs)}</div>
-                          <div className="text-[9px] text-gray-400">最后用</div>
-                        </div>
+                        <div className="text-center w-12 text-xs font-semibold text-gray-700 dark:text-gray-200">{st.calls > 0 ? st.calls.toLocaleString() : '—'}</div>
+                        <div className="text-center w-12 text-xs font-semibold text-gray-700 dark:text-gray-200">{st.tokens > 0 ? fmtTokens(st.tokens) : '—'}</div>
+                        <div className="text-center w-14 text-[10px] font-medium text-gray-600 dark:text-gray-300">{fmtTime(st.lastTs)}</div>
                       </div>
 
                       {/* 路由下拉：api-key / 手工添加 / 透明托管(shim) 应用可绑路由；route_bindable=false(如 Claude)不显示 */}
