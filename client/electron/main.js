@@ -17,7 +17,16 @@ const agentLinker = require('./agent-linker');
 const isDev = !app.isPackaged;
 const VITE_URL = 'http://localhost:5173';
 const AGENT_CONFIG_PATH = path.join(os.homedir(), '.llm-agent', 'config.json');
-const CLAUDE_3P_CONFIG_DIR = path.join(os.homedir(), 'AppData', 'Local', 'Claude-3p', 'configLibrary');
+// Claude Desktop 3p 配置目录（按平台）：
+//   Windows → %LOCALAPPDATA%\Claude-3p\configLibrary
+//   macOS   → ~/Library/Application Support/Claude-3p/configLibrary
+//   Linux   → ~/.config/Claude-3p/configLibrary
+const CLAUDE_3P_CONFIG_DIR = (() => {
+  const home = os.homedir();
+  if (process.platform === 'win32')  return path.join(home, 'AppData', 'Local', 'Claude-3p', 'configLibrary');
+  if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'Claude-3p', 'configLibrary');
+  return path.join(home, '.config', 'Claude-3p', 'configLibrary');
+})();
 
 // Claude Desktop 开发者模式状态：configLibrary 是否存在且非空
 // 空 = 用户还没在 Claude Desktop 启用 Developer Mode（Help → Troubleshooting → Enable Developer Mode）
@@ -403,9 +412,27 @@ function commandInstalled(cmd) {
   catch { return false; }
 }
 
-// api_key 应用是否检测到（appx 桌面包 或 command CLI 命令，任一命中即可）
+// api_key 应用是否检测到（跨平台）：
+//   Windows → appx 包 / CLI 命令
+//   macOS   → /Applications/<App>.app / CLI 命令 / 配置目录已存在
+//   Linux   → CLI 命令 / 配置目录已存在
 function apiKeyAppDetected(d) {
-  return (d.appx && appxInstalled(d.appx)) || (d.command && commandInstalled(d.command));
+  if (d.appx && appxInstalled(d.appx)) return true;            // Windows Store 包
+  if (d.command && commandInstalled(d.command)) return true;   // CLI 命令（跨平台）
+  if (process.platform === 'win32') return false;              // Windows 仅靠上面两种
+  // 非 Windows（appx 检测不可用）的桌面应用回退：
+  // 1) macOS：按 appx 末段名探测 /Applications/<App>.app（OpenAI.Codex→Codex；Claude→Claude）
+  if (process.platform === 'darwin' && d.appx) {
+    const appName = String(d.appx).split('.').pop();
+    for (const base of ['/Applications', path.join(os.homedir(), 'Applications')]) {
+      try { if (fs.existsSync(path.join(base, appName + '.app'))) return true; } catch {}
+    }
+  }
+  // 2) 通用：配置文件所在目录已存在 = 该应用装过/跑过（null 路径跳过）
+  if (d.config_file) {
+    try { const f = resolveCfgPath(d.config_file); if (f && fs.existsSync(path.dirname(f))) return true; } catch {}
+  }
+  return false;
 }
 
 // 解析配置文件路径（{占位}+~）
