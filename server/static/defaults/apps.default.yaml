@@ -30,7 +30,6 @@ tools:
   - id: claude-code
     name: Claude Code
     route_bindable: true                    # 支持选择路由
-    restrict_to_virtual: true               # 但仅限虚拟模型和包含虚拟模型的场景
     protocol: anthropic
     detect:
       command: claude
@@ -108,7 +107,6 @@ api_key_apps:
     marker: tokenbank
     enable_3p: true                         # 是否启用 Claude Desktop 3p 接入（false 则不显示该应用）
     route_bindable: true
-    restrict_to_virtual: true               # 仅限虚拟模型
     # 全部写进 JSON 配置文件（Claude Desktop 从 JSON 读 key，不读环境变量）
     patch:
       inferenceProvider: gateway
