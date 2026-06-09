@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { getRates, getOnlineModels } from '../api/client';
 import { getGateway, getLocalConfig, getConfig } from '../api/adapter';
 import { listAgents, applyAgent, revertAgent } from '../api/agents';
@@ -571,50 +571,9 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
           <button onClick={dismiss} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg">✕</button>
         </div>
 
-        {isCfg ? (
-          <>
-            {/* Tab 导航 */}
-            <div className="flex border-b border-gray-200 dark:border-gray-800 px-2">
-              {['配置文件写入和 API Key', '路由规则和请求控制'].map((t, i) => (
-                <button key={i} onClick={() => setTab(i)}
-                  className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors ${tab === i
-                    ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                    : 'border-transparent text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'}`}>
-                  {t}
-                </button>
-              ))}
-            </div>
-            <div className="p-5 space-y-4">
-              {tab === 0
-                ? (needDevMode ? devModeGuide : <>{configFileSection}{apiKeyRow}</>)
-                : <>{routeSection}{controlSection}</>}
-            </div>
-            {/* 底部按钮：Tab1=写入配置/取消API Key管理/取消；Tab2=保存/取消 */}
-            <div className="flex gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800">
-              {tab === 0 ? (
-                <>
-                  {/* 已写入 → 取消 API Key 管理；未写入 → 写入配置（与列表按钮逻辑一致）*/}
-                  {written && onCancelManage ? (
-                    <button onClick={() => onCancelManage(app)}
-                      className="flex-1 py-2 text-sm rounded-xl border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
-                      取消 API Key 管理
-                    </button>
-                  ) : (
-                    <button onClick={() => writeConfigFile()} disabled={needDevMode}
-                      title={needDevMode ? '请先在 Claude Desktop 启用开发者模式' : ''}
-                      className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-40 disabled:cursor-not-allowed">
-                      写入配置
-                    </button>
-                  )}
-                  {btnCancel}
-                </>
-              ) : (
-                <>{btnSave}{btnCancel}</>
-              )}
-            </div>
-          </>
-        ) : isShim ? (
-          /* 透明托管：只编辑路由规则 + 请求控制（与 API Key 应用第二个 Tab 一致）*/
+        {(isCfg || isShim) ? (
+          /* 纳管（config-file API Key / 透明托管）：编辑只保留路由规则 + 请求控制。
+             配置文件写入/还原由列表的「纳管 / 还原」按钮完成，这里不再有 API Key 那个 Tab。*/
           <>
             <div className="p-5 space-y-4">
               {routeSection}{controlSection}
@@ -677,7 +636,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
     <div className="mb-3 bg-white dark:bg-gray-900 rounded-2xl border border-blue-200 dark:border-blue-800/50 shadow-sm">
       <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-200 dark:border-gray-800">
         <span className="text-xl">{icon}</span>
-        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">手工添加应用</h3>
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">新建应用</h3>
         <button onClick={onCancel} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg">✕</button>
       </div>
       <div className="p-5 space-y-4">
@@ -797,21 +756,26 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   const [settings, setSettings] = useState(null);     // 设置弹窗对应的 app（编辑/桌面应用托管）
   const [manualDraft, setManualDraft] = useState(null); // 手工添加的内联面板对应的 app
   const [appStats, setAppStats] = useState({});     // id → {calls,tokens,lastTs}
+  const [loading,  setLoading]  = useState(true);   // 首次加载中（应用检测较慢）→ 显示加载特效而非空状态
 
   const load = useCallback(async () => {
-    if (!window.electronAPI) return;
-    const [appList, localCfg, gw] = await Promise.all([
-      window.electronAPI.apps?.list().catch(() => []),
-      getLocalConfig().get().catch(() => ({})),
-      window.electronAPI.gateway?.status?.().catch(() => null),
-    ]);
-    const list = Array.isArray(appList) ? appList : [];
-    setApps(list);
-    setRoutes(localCfg?.scene_routes || []);
-    if (gw?.port) setLocalBase(`http://localhost:${gw.port}/v1`);
-    // 异步拉统计（不阻塞主列表渲染）
-    if (list.length && window.electronAPI.apps?.stats) {
-      window.electronAPI.apps.stats(list).then(s => setAppStats(s || {})).catch(() => {});
+    if (!window.electronAPI) { setLoading(false); return; }
+    try {
+      const [appList, localCfg, gw] = await Promise.all([
+        window.electronAPI.apps?.list().catch(() => []),
+        getLocalConfig().get().catch(() => ({})),
+        window.electronAPI.gateway?.status?.().catch(() => null),
+      ]);
+      const list = Array.isArray(appList) ? appList : [];
+      setApps(list);
+      setRoutes(localCfg?.scene_routes || []);
+      if (gw?.port) setLocalBase(`http://localhost:${gw.port}/v1`);
+      // 异步拉统计（不阻塞主列表渲染）
+      if (list.length && window.electronAPI.apps?.stats) {
+        window.electronAPI.apps.stats(list).then(s => setAppStats(s || {})).catch(() => {});
+      }
+    } finally {
+      setLoading(false);   // 首次置 false 后保持，后续刷新不再闪加载态
     }
   }, []);
 
@@ -823,6 +787,15 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     return () => { if (typeof off === 'function') off(); };
   }, [load]);
 
+  // 手工添加点击时就先持久化了一条草稿（为了显示 api_key）。若用户没保存/取消就切走 tab
+  // （AppManager 卸载），把这条未保存草稿删掉，否则切回来会多出一条「新应用」。
+  const manualDraftRef = useRef(null);
+  useEffect(() => { manualDraftRef.current = manualDraft; }, [manualDraft]);
+  useEffect(() => () => {
+    const d = manualDraftRef.current;
+    if (d?._isNew && d.id) window.electronAPI.apps?.delete(d.id).catch(() => {});
+  }, []);
+
   async function handleUpdateApp(data) {
     let id = data.id;
     // 虚拟 shim 应用（仅展示、未落库）：先落库拿到真实 id 再更新
@@ -833,7 +806,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
       }).catch(() => null);
       if (created?.id) id = created.id;
     }
-    const updated = await window.electronAPI.apps?.update({ ...data, id }).catch(() => null);
+    // 保存即清除草稿标记（新建面板保存后该应用才在列表显示）；对非草稿应用是无害的 no-op
+    const updated = await window.electronAPI.apps?.update({ ...data, id, draft: false }).catch(() => null);
     // shim 应用：路由/key 改动后需重写 shim 脚本才生效
     if (app?.link_method === 'shim' && app.agent_id) {
       await window.electronAPI.agents?.apply(app.agent_id).catch(() => {});
@@ -873,9 +847,11 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   // 手工添加：未被识别的应用 → 创建 manual 应用，内联展开 ManualAddPanel
   // （已识别的 CLI/桌面应用都在列表里直接托管，不走此入口）
   async function addCustom() {
+    // draft:true → 列表不显示这条临时条目（只在内联面板里编辑），保存时清除草稿标记才出现。
+    // 这样切 tab/不保存绝不会在列表里多出一条（不依赖卸载时的异步删除）。
     const created = await window.electronAPI.apps?.create({
       name: '新应用', icon: '🔧', link_method: 'manual',
-      route_id: defaultRouteId() || null,
+      route_id: defaultRouteId() || null, draft: true,
     }).catch(() => null);
     if (created?.id) setManualDraft({ ...created, _isNew: true });
   }
@@ -890,8 +866,9 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   }
 
   const [busyId, setBusyId] = useState(null);
-  // 透明托管开关：托管/取消托管（保留 auto_host_disabled，重启后记住）
+  // 透明托管开关：纳管/还原（保留 auto_host_disabled，重启后记住）。还原前弹确认。
   async function handleShimToggle(app, host) {
+    if (!host && !window.confirm('还原该应用？将撤销纳管、恢复原始状态（保留应用条目与统计，可随时重新纳管）。')) return;
     setBusyId(app.agent_id);
     const fn = host ? window.electronAPI.agents?.apply : window.electronAPI.agents?.revert;
     await fn?.(app.agent_id).catch(() => {});
@@ -909,22 +886,41 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     const model = app.route_id || availableModels[0]?.id || 'gpt-4o';
     const base = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/$/, '');
     const start = Date.now();
+    // 流式 + max_tokens:1：首块计延迟（首字），但把流读完整，让网关正常结束并落账
+    // （中途 abort 会导致不计入统计）；30s 硬超时防卡死。
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30000);
     try {
       const res = await fetch(`${base}/chat/completions`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'authorization': `Bearer ${key}` },
-        body: JSON.stringify({ model, max_tokens: 16, messages: [{ role: 'user', content: 'Hi' }] }),
+        body: JSON.stringify({ model, max_tokens: 1, stream: true, messages: [{ role: 'user', content: 'Hi' }] }),
+        signal: ctrl.signal,
       });
-      const latency = Date.now() - start;
       if (!res.ok) {
         const b = await res.json().catch(() => ({}));
         const msg = b?.error?.detail || b?.error?.message || b?.detail || `HTTP ${res.status}`;
-        setTestState(s => ({ ...s, [app.id]: { ok: false, error: msg, latency } }));
+        setTestState(s => ({ ...s, [app.id]: { ok: false, error: msg, latency: Date.now() - start } }));
       } else {
+        let latency = null;
+        const reader = res.body?.getReader();
+        if (reader) {
+          // 读到首块即记下首字延迟，再把剩余流读完（让网关完成请求并落账）
+          for (;;) {
+            const { done } = await reader.read();
+            if (latency == null) latency = Date.now() - start;
+            if (done) break;
+          }
+        } else { latency = Date.now() - start; }
         setTestState(s => ({ ...s, [app.id]: { ok: true, latency } }));
+        // 网关已落账 → 刷新统计（总请求数 / 总token）
+        setTimeout(() => load(), 600);
       }
     } catch (e) {
-      setTestState(s => ({ ...s, [app.id]: { ok: false, error: e.message || '连接失败', latency: Date.now() - start } }));
+      const msg = e?.name === 'AbortError' ? '超时（30s）' : (e?.message || '连接失败');
+      setTestState(s => ({ ...s, [app.id]: { ok: false, error: msg, latency: Date.now() - start } }));
+    } finally {
+      clearTimeout(timer);
     }
     setTimeout(() => setTestState(s => ({ ...s, [app.id]: null })), 8000);
   }
@@ -980,9 +976,9 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     await load();
   }
 
-  // 取消纳管：仅还原配置文件，保留应用条目与统计（与透明托管「取消」一致，可随时重新纳管）。
+  // 还原：仅还原配置文件，保留应用条目与统计（与透明托管「还原」一致，可随时重新纳管）。
   async function handleCancelManage(app) {
-    if (!window.confirm('取消纳管？将还原该应用的配置文件（保留应用条目与统计，可随时重新纳管）。')) return;
+    if (!window.confirm('还原该应用？将撤销纳管、恢复原始状态（保留应用条目与统计，可随时重新纳管）。')) return;
     setBusyId(app.id);
     await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {});
     setBusyId(null);
@@ -1002,6 +998,9 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     await load();
   }
 
+  // 列表只显示非草稿条目（新建面板未保存的临时条目 draft:true 不进列表）
+  const visibleApps = apps.filter(a => !a.draft);
+
   return (
     <>
       {/* 编辑已有应用 / 桌面应用托管 → 弹窗（AppSettingsPanel）*/}
@@ -1015,12 +1014,17 @@ function AppManager({ externalRoutes, availableModels = [] }) {
       <div className="p-4">
             {/* 操作栏 */}
             <div className="flex items-center gap-2 mb-3 flex-wrap">
-              <button onClick={addCustom}
+              <button onClick={() => manualDraft ? cancelManualDraft() : addCustom()}
                 className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors">
-                + 手工添加
+                + 新建应用
               </button>
-              <span className="text-xs text-gray-400 dark:text-gray-500">已识别的应用在下方列表中托管；此处手工添加未被识别的应用</span>
+              <span className="text-xs text-gray-400 dark:text-gray-500">已识别的应用在下方列表中纳管；此处新建未被识别的应用</span>
               <div className="ml-auto"><ImportConfigButton onImported={load} /></div>
+            </div>
+
+            {/* 提醒：纳管后若未生效需重启应用 */}
+            <div className="mb-3 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-lg px-3 py-2">
+              💡 点击「纳管」后若未生效，请重启对应应用（CLI 工具需重开终端）。
             </div>
 
             {/* 手工添加 → 内联面板（ManualAddPanel，独立组件）*/}
@@ -1031,27 +1035,32 @@ function AppManager({ externalRoutes, availableModels = [] }) {
             )}
 
             {/* 应用列表 */}
-            {apps.length === 0 ? (
+            {loading ? (
+              <div className="py-10 flex flex-col items-center justify-center gap-2 text-xs text-gray-400">
+                <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 border-t-blue-500 rounded-full animate-spin" />
+                加载中…
+              </div>
+            ) : visibleApps.length === 0 ? (
               <div className="py-6 text-center text-xs text-gray-400">
-                未检测到已安装的 CLI 工具。安装 Claude Code / Codex / Gemini CLI 后会显示在这里，点「托管」即可接入，或在 API Key 管理 Tab 手动添加应用。
+                未检测到已识别的应用。安装 Claude Code / Codex / Gemini CLI 后会显示在这里，点「纳管」即可接入；或用上方「+ 新建应用」添加未被识别的应用。
               </div>
             ) : (
-              <div className="flex flex-col divide-y divide-gray-100 dark:divide-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
-                {/* 表头 */}
-                <div className="flex items-center gap-3 px-3 py-2 bg-gray-50 dark:bg-gray-800/50 text-[10px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wide">
+              <div className={`flex flex-col divide-y divide-gray-100 dark:divide-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl ${visibleApps.length > 20 ? 'max-h-[min(75vh,900px)] overflow-y-auto' : 'overflow-hidden'}`}>
+                {/* 表头（超过 20 个时列表滚动，表头吸顶）*/}
+                <div className="flex items-center gap-3 px-3 py-2 bg-gray-100 dark:bg-gray-800 text-[10px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wide sticky top-0 z-10">
                   <span className="text-base shrink-0 invisible">🔧</span>
                   <div className="w-28 shrink-0">应用</div>
                   <div className="w-14 shrink-0">状态</div>
                   <div className="w-16 shrink-0">接入方式</div>
                   <div className="flex items-center gap-4 shrink-0">
-                    <div className="text-center w-12">请求数</div>
-                    <div className="text-center w-12">Token</div>
+                    <div className="text-center w-12">总请求数</div>
+                    <div className="text-center w-12">总Token</div>
                     <div className="text-center w-14">最后使用</div>
                   </div>
                   <div className="flex-1 min-w-0 max-w-[160px]">路由 / 模型</div>
                   <div className="shrink-0 ml-auto">操作</div>
                 </div>
-                {apps.map(app => {
+                {visibleApps.map(app => {
                   const st = appStats[app.id] || { calls: 0, tokens: 0, lastTs: null };
                   const fmtTokens = n => n >= 1_000_000 ? (n/1_000_000).toFixed(1)+'M'
                     : n >= 1000 ? (n/1000).toFixed(1)+'K' : String(n||0);
@@ -1185,7 +1194,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           {app.linked ? (
                             <button onClick={() => handleShimToggle(app, false)} disabled={busyId === app.agent_id}
                               className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 disabled:opacity-50 shrink-0">
-                              {busyId === app.agent_id ? '…' : '取消'}
+                              {busyId === app.agent_id ? '…' : '还原'}
                             </button>
                           ) : (
                             <button onClick={() => handleShimToggle(app, true)} disabled={busyId === app.agent_id}
@@ -1211,7 +1220,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           {app.configured ? (
                             <button onClick={() => handleCancelManage(app)} disabled={busyId === app.id}
                               className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 disabled:opacity-50 shrink-0">
-                              {busyId === app.id ? '…' : '取消'}
+                              {busyId === app.id ? '…' : '还原'}
                             </button>
                           ) : (
                             <button onClick={() => rehostApiKeyApp(app)} disabled={busyId === app.id}
@@ -1238,9 +1247,6 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                 })}
               </div>
             )}
-            <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
-              💡 已安装的 CLI 工具在列表中点「托管」即可接入；托管后需重开终端生效，关闭 Token Bank 时自动还原。
-            </p>
           </div>
     </>
   );
@@ -1493,13 +1499,13 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
       </div>
       <button onClick={addStep} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">+ 添加步骤</button>
       <div className="flex gap-2 pt-1">
-        <button onClick={onCancel}
-          className="text-xs bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
-          取消
-        </button>
         <button onClick={() => onSave({ ...route, scene_name: name, icon, steps })}
           className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg font-medium transition-colors">
           保存
+        </button>
+        <button onClick={onCancel}
+          className="text-xs bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
+          取消
         </button>
       </div>
     </div>
@@ -2131,25 +2137,22 @@ export default function Gateway() {
         {/* Tab1: 场景路由 */}
         {mainTab === 1 && (
         <div>
-        {/* 导入功能：放最上面 */}
-        <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-200 dark:border-gray-800">
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-gray-700 dark:text-gray-200">在线同步</div>
-            <p className="text-xs text-gray-500 mt-0.5">从服务器下发同步「场景路由配置」，同步后自动应用并刷新</p>
-          </div>
-          <ImportConfigButton onImported={() => { refresh(); loadSceneData(); loadAvailableModels(); }} endpoint="/api/config/scenes" />
-        </div>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800">
-          <div>
-            <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">路由配置</h2>
-            <p className="text-xs text-gray-500 mt-0.5">定义每个场景的模型降级链，通过 llm-router-xxx 触发</p>
-          </div>
+        {/* 操作栏：新建（蓝色，最左）｜说明｜在线同步（最右）——布局与应用列表一致 */}
+        <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-200 dark:border-gray-800 flex-wrap">
           <button
-            onClick={() => { setExpandedRoute(null); setNewRoute({ scene_name: '', icon: '🔀', steps: [] }); }}
-            className="text-xs bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+            onClick={() => { if (newRoute) { setNewRoute(null); } else { setExpandedRoute(null); setNewRoute({ scene_name: '', icon: '🔀', steps: [] }); } }}
+            className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors"
           >+ 新建路由</button>
+          <span className="text-xs text-gray-400 dark:text-gray-500">定义每个场景的模型降级链，通过 llm-router-xxx 触发</span>
+          <div className="ml-auto">
+            <ImportConfigButton onImported={() => { refresh(); loadSceneData(); loadAvailableModels(); }} endpoint="/api/config/scenes" />
+          </div>
         </div>
         <div className="divide-y divide-gray-100 dark:divide-gray-800/60">
+          {/* 新建路由编辑器：放在列表最上面 */}
+          {newRoute && (
+            <SceneRouteEditor key="new-route-editor" route={newRoute} availableModels={availableModels} onSave={saveRoute} onCancel={() => setNewRoute(null)} />
+          )}
           {routes.map(route => {
             const health = routeHealth[route.model_key] ?? { status: null, activeStep: null, degraded: false };
             const ftMs = health.first_token_ms;
@@ -2231,9 +2234,6 @@ export default function Gateway() {
             </div>
             );
           })}
-          {newRoute && (
-            <SceneRouteEditor key="new-route-editor" route={newRoute} availableModels={availableModels} onSave={saveRoute} onCancel={() => setNewRoute(null)} />
-          )}
           {routes.length === 0 && !newRoute && (
             <div className="px-5 py-8 text-xs text-gray-400 text-center">还没有场景路由，点击「新建路由」开始</div>
           )}

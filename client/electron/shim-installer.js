@@ -21,12 +21,19 @@ function ensureBinDir() {
 }
 
 // 探测命令真实路径（此时 shim 目录不应在 PATH 最前，避免探到自己）。
-// 返回绝对路径或 null。
+// 返回绝对路径或 null。结果缓存 30s —— apps:list 每次拉列表都要对每个 CLI 工具
+// 跑一次 where/command -v 子进程，切 tab 反复拉列表会很慢；缓存后避免重复 spawn。
+const _cmdCache = new Map();   // command -> { ts, path }
+const CMD_TTL = 30000;
 function resolveRealCommand(command) {
+  const now = Date.now();
+  const cached = _cmdCache.get(command);
+  if (cached && (now - cached.ts) < CMD_TTL) return cached.path;
   // 把 BIN_DIR 从 PATH 里剔除再查，确保不命中自己的 shim
   const sep = IS_WIN ? ';' : ':';
   const cleanPath = (process.env.PATH || '')
     .split(sep).filter(p => path.resolve(p || '.') !== path.resolve(BIN_DIR)).join(sep);
+  let result = null;
   try {
     if (IS_WIN) {
       // stdio 静音 stderr（命令不存在时 where 会往 stderr 打 INFO，无需显示）
@@ -35,15 +42,17 @@ function resolveRealCommand(command) {
         stdio: ['ignore', 'pipe', 'ignore'],
       }).toString();
       const first = out.split(/\r?\n/).find(l => l.trim());
-      return first ? first.trim() : null;
+      result = first ? first.trim() : null;
     } else {
       const out = execFileSync('sh', ['-lc', `command -v ${command}`], {
         env: { ...process.env, PATH: cleanPath },
         stdio: ['ignore', 'pipe', 'ignore'],
       }).toString();
-      return out.trim() || null;
+      result = out.trim() || null;
     }
-  } catch { return null; }
+  } catch { result = null; }
+  _cmdCache.set(command, { ts: now, path: result });
+  return result;
 }
 
 // 生成一个工具的 shim。envMap = {KEY: value}（要注入的环境变量）。

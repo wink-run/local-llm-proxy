@@ -1314,6 +1314,7 @@ function registerIPC() {
       inject: data.inject || (data.env ? 'env' : null),  // env | config-file
       config_file: data.config_file || null,     // config-file 注入：目标配置文件
       patch: data.patch || null,                 // config-file 注入：写入的字段（{BASE}/{KEY} 占位）
+      draft: data.draft === true,                // 草稿：新建面板未保存前的临时条目，列表不显示，保存时清除
       created_at: new Date().toISOString(),
     };
     apps.push(app);
