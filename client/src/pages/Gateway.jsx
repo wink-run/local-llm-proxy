@@ -1508,15 +1508,16 @@ function AgentLinker() {
 
 // ── Tier helpers ──────────────────────────────────────────────────────────────
 
+// 层级配色：柔和、跟随明暗模式（浅色 -50 底/-700 字，深色 -900/25 底/-300 字），与全站徽标一致
 function tierStyle(tier) {
-  if (tier === 'p2p')  return 'bg-blue-950/70 border-blue-300 dark:border-blue-800/30 text-blue-300';
-  if (tier === 'paid') return 'bg-amber-950/70 border-amber-800/30 text-amber-300';
-  return 'bg-green-950/70 border-green-300 dark:border-green-800/30 text-green-300';
+  if (tier === 'p2p')  return 'bg-blue-50 dark:bg-blue-900/25 border-blue-200 dark:border-blue-800/40 text-blue-700 dark:text-blue-300';
+  if (tier === 'paid') return 'bg-amber-50 dark:bg-amber-900/25 border-amber-200 dark:border-amber-800/40 text-amber-700 dark:text-amber-300';
+  return 'bg-emerald-50 dark:bg-emerald-900/25 border-emerald-200 dark:border-emerald-800/40 text-emerald-700 dark:text-emerald-300';
 }
 function tierDot(tier) {
-  if (tier === 'p2p')  return 'bg-blue-400';
-  if (tier === 'paid') return 'bg-amber-400';
-  return 'bg-green-400';
+  if (tier === 'p2p')  return 'bg-blue-500';
+  if (tier === 'paid') return 'bg-amber-500';
+  return 'bg-emerald-500';
 }
 function normTier(t) {
   if (t === 'p2p' || t === 'open' || t === 'free') return 'p2p';
@@ -2426,7 +2427,7 @@ export default function Gateway() {
                     <span title={healthTitle} className={`w-2 h-2 rounded-full shrink-0 ${healthDot}`} />
                     <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{route.scene_name}</span>
                     {health.degraded && (
-                      <span className="text-[9px] px-1 py-0.5 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 text-amber-600 dark:text-amber-400 shrink-0">
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800/40 text-rose-600 dark:text-rose-400 shrink-0">
                         降级中
                       </span>
                     )}
@@ -2437,7 +2438,7 @@ export default function Gateway() {
                     )}
                     {route.model_key && (
                       <>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800/40 text-purple-600 dark:text-purple-400 shrink-0">
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 shrink-0">
                           {route.model_key}
                         </span>
                         <span onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(route.model_key); }}
