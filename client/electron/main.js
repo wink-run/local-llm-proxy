@@ -1454,11 +1454,24 @@ function registerIPC() {
 
   // 注册来自 toolsConfig 的 shim 托管 app（透明托管时自动创建或更新 app 记录）
   // shim agent_id → data_source 对应关系
-  const AGENT_DATA_SOURCE = {
-    'claude-code': 'session-claude',
-    'codex':       'session-codex',
-    'gemini-cli':  'session-gemini',
-  };
+  // agent_id → data_source（从 session_sources 配置派生，不再硬编码）
+  const AGENT_DATA_SOURCE = (() => {
+    const m = {};
+    try {
+      for (const s of (require('./config-loader').sessionSources() || [])) {
+        if (s && s.agent_id && s.data_source) m[s.agent_id] = s.data_source;
+      }
+    } catch {}
+    return m;
+  })();
+
+  // 单个应用的用量明细（合并网关实时 + 会话补录）。查询前先增量补录一次会话文件，
+  // 保证 Claude/Codex/Gemini 直连官方的用量也并进来。
+  ipcMain.handle('apps:detail', (_e, { app, days } = {}) => {
+    try { sessionImport.run(localStats); } catch {}
+    const dataSource = (app && app.link_method === 'shim' && app.agent_id) ? AGENT_DATA_SOURCE[app.agent_id] : null;
+    return localStats.queryAppDetail({ appId: app && app.id, apiKey: app && app.api_key, dataSource, days: days || 30 });
+  });
 
   // 批量查所有应用的统计（调一次，合并进 apps:list 或单独查询）
   ipcMain.handle('apps:stats', (_e, appList) => {

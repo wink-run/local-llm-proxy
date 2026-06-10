@@ -106,6 +106,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   apps: {
     list:          ()       => ipcRenderer.invoke('apps:list'),
     stats:         (list)   => ipcRenderer.invoke('apps:stats', list),
+    detail:        (app, days) => ipcRenderer.invoke('apps:detail', { app, days }),
     create:        (d)      => ipcRenderer.invoke('apps:create', d),
     update:        (d)      => ipcRenderer.invoke('apps:update', d),
     delete:        (id)     => ipcRenderer.invoke('apps:delete', id),

@@ -245,6 +245,58 @@ function _empty() {
   };
 }
 
+/**
+ * 单个应用的用量明细（合并 proxy 实时 + session-* 会话补录，靠 request_id 已在写入时去重）。
+ * 归属规则（与 queryByApp 一致，三路 OR、互不重复计）：
+ *   - app_id 命中（新数据，最准）
+ *   - 旧数据按 api_key 兜底（app_id 为空）
+ *   - shim 应用「不走网关、直连官方」的部分按 data_source（session-claude/codex/gemini）
+ * 返回：总计 / 来源拆分(网关 vs 会话) / 按模型 / 按会话(session_id) / 最近明细。
+ */
+function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50 } = {}) {
+  const empty = { total: { calls: 0, tokens: 0, inTok: 0, outTok: 0, lastTs: null }, bySource: [], byModel: [], sessions: [], recent: [] };
+  if (!db) return empty;
+  const since = Math.floor(Date.now() / 1000) - days * 86400;
+  const where =
+    '(' +
+    '(@appId IS NOT NULL AND app_id = @appId) OR ' +
+    '(@apiKey IS NOT NULL AND app_id IS NULL AND api_key = @apiKey) OR ' +
+    '(@dataSource IS NOT NULL AND data_source = @dataSource)' +
+    ') AND ts >= @since';
+  const p = { appId: appId || null, apiKey: apiKey || null, dataSource: dataSource || null, since };
+  try {
+    const total = db.prepare(
+      `SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens) AS tokens, ` +
+      `SUM(input_tokens) AS inTok, SUM(output_tokens) AS outTok, MAX(ts) AS lastTs FROM requests WHERE ${where}`
+    ).get(p);
+    const bySource = db.prepare(
+      `SELECT CASE WHEN data_source='proxy' THEN 'proxy' ELSE 'session' END AS src, ` +
+      `COUNT(*) AS calls, SUM(input_tokens+output_tokens) AS tokens FROM requests WHERE ${where} GROUP BY src`
+    ).all(p);
+    const byModel = db.prepare(
+      `SELECT model, COUNT(*) AS calls, SUM(input_tokens+output_tokens) AS tokens FROM requests ` +
+      `WHERE ${where} AND model IS NOT NULL GROUP BY model ORDER BY calls DESC`
+    ).all(p);
+    const sessions = db.prepare(
+      `SELECT session_id, COUNT(*) AS calls, SUM(input_tokens+output_tokens) AS tokens, ` +
+      `MIN(ts) AS firstTs, MAX(ts) AS lastTs FROM requests ` +
+      `WHERE ${where} AND session_id IS NOT NULL GROUP BY session_id ORDER BY lastTs DESC LIMIT @lim`
+    ).all({ ...p, lim: limit });
+    const recent = db.prepare(
+      `SELECT ts, model, input_tokens AS inTok, output_tokens AS outTok, (input_tokens+output_tokens) AS tokens, ` +
+      `data_source AS source, status_code, session_id, provider_id FROM requests ` +
+      `WHERE ${where} ORDER BY ts DESC LIMIT @lim`
+    ).all({ ...p, lim: limit });
+    return {
+      total: { calls: total.calls || 0, tokens: total.tokens || 0, inTok: total.inTok || 0, outTok: total.outTok || 0, lastTs: total.lastTs || null },
+      bySource: bySource.map(r => ({ source: r.src, calls: r.calls, tokens: r.tokens || 0 })),
+      byModel: byModel.map(r => ({ model: r.model, calls: r.calls, tokens: r.tokens || 0 })),
+      sessions: sessions.map(r => ({ session_id: r.session_id, calls: r.calls, tokens: r.tokens || 0, firstTs: r.firstTs, lastTs: r.lastTs })),
+      recent: recent.map(r => ({ ts: r.ts, model: r.model, inTok: r.inTok || 0, outTok: r.outTok || 0, tokens: r.tokens || 0, source: r.source, status_code: r.status_code, session_id: r.session_id, provider_id: r.provider_id })),
+    };
+  } catch (e) { console.error('[local-stats] queryAppDetail failed:', e.message); return empty; }
+}
+
 function close() {
   if (db) {
     db.close();
@@ -295,4 +347,4 @@ function queryByDataSource(dataSource) {
   } catch { return { calls: 0, tokens: 0, lastTs: null }; }
 }
 
-module.exports = { init, record, queryDashboard, queryByApiKey, queryByApp, queryByDataSource, getImportState, setImportState, close };
+module.exports = { init, record, queryDashboard, queryByApiKey, queryByApp, queryByDataSource, queryAppDetail, getImportState, setImportState, close };

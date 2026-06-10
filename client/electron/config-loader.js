@@ -139,6 +139,13 @@ function claudeModels() {
 }
 // 检查某模型名是否是 Claude 客户端模型名
 function isClaudeModel(modelId) { return claudeModels().includes(modelId); }
+
+// 会话用量解析配置（内部固定逻辑，YAML 驱动）：当前配置有就用，否则回退内置默认。
+function sessionSources() {
+  const cur = get().session_sources;
+  if (Array.isArray(cur) && cur.length) return cur;
+  try { return ((yaml.load(fs.readFileSync(DEFAULT_YAML, 'utf8')) || {}).session_sources || []); } catch { return []; }
+}
 function caRef()     { return (get().mitm || {}).ca_ref || ['auto']; }
 
 // ── _ref 解析链（ca_ref / api_key_ref 共用）───────────────────────────────────
@@ -171,6 +178,6 @@ module.exports = {
   load, get, setCaPath, getCaPath,
   gatewayCtx, mitmDomains, shouldMitm, tools, appPresets, apiKeyApps,
   routing, caRef,
-  claudeModels, isClaudeModel,
+  claudeModels, isClaudeModel, sessionSources,
   resolveRef, resolvePlaceholders, expandHome,
 };

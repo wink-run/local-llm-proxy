@@ -747,8 +747,129 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
   );
 }
 
+// 单个应用的用量明细弹窗（合并网关实时 proxy + 会话补录 session-*，已在 DB 层按 request_id 去重）
+function AppDetailModal({ app, onClose }) {
+  const [days, setDays]       = useState(30);
+  const [data, setData]       = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    window.electronAPI?.apps?.detail?.(app, days)
+      .then(d => { if (alive) { setData(d); setLoading(false); } })
+      .catch(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [app, days]);
+
+  const fmtN = n => n >= 1_000_000 ? (n/1e6).toFixed(2)+'M' : n >= 1000 ? (n/1000).toFixed(1)+'K' : String(n||0);
+  const fmtTime = ts => ts ? new Date(ts*1000).toLocaleString('zh-CN',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+  const shortId = id => id ? (String(id).length > 12 ? String(id).slice(0,8)+'…'+String(id).slice(-4) : String(id)) : '—';
+  const proxy   = data?.bySource?.find(s => s.source === 'proxy')   || { calls:0, tokens:0 };
+  const session = data?.bySource?.find(s => s.source === 'session') || { calls:0, tokens:0 };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-3xl mx-4 max-h-[92vh] overflow-y-auto flex flex-col"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-200 dark:border-gray-800 sticky top-0 bg-white dark:bg-gray-900 z-10">
+          <span className="text-xl">{app.icon}</span>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">{app.name} · 用量明细</h3>
+          <select value={days} onChange={e => setDays(+e.target.value)}
+            className="text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-600 dark:text-gray-300">
+            <option value={7}>近 7 天</option><option value={30}>近 30 天</option><option value={90}>近 90 天</option>
+          </select>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg">✕</button>
+        </div>
+
+        {loading ? (
+          <div className="py-16 flex flex-col items-center gap-2 text-xs text-gray-400">
+            <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 border-t-blue-500 rounded-full animate-spin" />加载中…
+          </div>
+        ) : !data ? (
+          <div className="py-16 text-center text-xs text-gray-400">没有数据</div>
+        ) : (
+          <div className="p-5 space-y-5">
+            {/* 总计 */}
+            <div className="grid grid-cols-4 gap-3">
+              {[['总请求数', fmtN(data.total.calls)], ['总Token', fmtN(data.total.tokens)],
+                ['输入Token', fmtN(data.total.inTok)], ['输出Token', fmtN(data.total.outTok)]].map(([l,v]) => (
+                <div key={l} className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3">
+                  <div className="text-[10px] text-gray-400 dark:text-gray-500">{l}</div>
+                  <div className="text-xl font-bold text-gray-800 dark:text-gray-100 mt-0.5">{v}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* 来源拆分 */}
+            <div className="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/40 rounded-lg px-3 py-2">
+              来源：<span className="text-blue-600 dark:text-blue-400 font-medium">🛰️ 网关实时</span> {proxy.calls} 次 · {fmtN(proxy.tokens)} tok
+              <span className="mx-2 text-gray-300">|</span>
+              <span className="text-green-600 dark:text-green-400 font-medium">📄 会话补录</span> {session.calls} 次 · {fmtN(session.tokens)} tok
+              <div className="text-[10px] text-gray-400 mt-1">「网关实时」=经本网关转发；「会话补录」=直连官方、从本地会话(JSONL)解析。同一次调用已按 request_id 去重，不重复计。</div>
+            </div>
+
+            {/* 按模型 */}
+            <div>
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">按模型</div>
+              {data.byModel.length === 0 ? <div className="text-xs text-gray-400">—</div> : (
+                <div className="border border-gray-100 dark:border-gray-800 rounded-lg divide-y divide-gray-100 dark:divide-gray-800">
+                  {data.byModel.map(m => (
+                    <div key={m.model} className="flex items-center gap-3 px-3 py-1.5 text-xs">
+                      <span className="font-mono text-gray-700 dark:text-gray-300 flex-1 truncate">{m.model}</span>
+                      <span className="text-gray-500 w-16 text-right">{m.calls} 次</span>
+                      <span className="text-gray-700 dark:text-gray-300 w-20 text-right font-medium">{fmtN(m.tokens)} tok</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 按会话 */}
+            <div>
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">按会话（{data.sessions.length}）</div>
+              {data.sessions.length === 0 ? <div className="text-xs text-gray-400">无会话记录（API 类应用通常没有会话文件）</div> : (
+                <div className="border border-gray-100 dark:border-gray-800 rounded-lg divide-y divide-gray-100 dark:divide-gray-800 max-h-56 overflow-y-auto">
+                  {data.sessions.map(s => (
+                    <div key={s.session_id} className="flex items-center gap-3 px-3 py-1.5 text-xs">
+                      <span className="font-mono text-gray-600 dark:text-gray-400 flex-1 truncate" title={s.session_id}>{shortId(s.session_id)}</span>
+                      <span className="text-gray-500 w-12 text-right">{s.calls} 次</span>
+                      <span className="text-gray-700 dark:text-gray-300 w-20 text-right font-medium">{fmtN(s.tokens)} tok</span>
+                      <span className="text-gray-400 w-28 text-right">{fmtTime(s.lastTs)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 最近明细 */}
+            <div>
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">最近明细</div>
+              {data.recent.length === 0 ? <div className="text-xs text-gray-400">—</div> : (
+                <div className="border border-gray-100 dark:border-gray-800 rounded-lg divide-y divide-gray-100 dark:divide-gray-800 max-h-72 overflow-y-auto">
+                  {data.recent.map((r, i) => (
+                    <div key={i} className="flex items-center gap-2 px-3 py-1.5 text-[11px]">
+                      <span className="text-gray-400 w-24 shrink-0">{fmtTime(r.ts)}</span>
+                      <span className={`px-1 rounded text-[9px] shrink-0 ${r.source === 'proxy' ? 'bg-blue-50 text-blue-500 dark:bg-blue-900/20' : 'bg-green-50 text-green-600 dark:bg-green-900/20'}`}>
+                        {r.source === 'proxy' ? '网关' : '会话'}
+                      </span>
+                      <span className="font-mono text-gray-600 dark:text-gray-400 flex-1 truncate">{r.model || '—'}</span>
+                      <span className="text-gray-500 shrink-0">↑{fmtN(r.inTok)} ↓{fmtN(r.outTok)}</span>
+                      {r.status_code != null && r.status_code >= 400 && <span className="text-red-500 shrink-0">{r.status_code}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AppManager({ externalRoutes, availableModels = [] }) {
   const [apps,     setApps]     = useState([]);
+  const [detailApp, setDetailApp] = useState(null);   // 用量明细弹窗对应的 app
   const [routes,   setRoutes]   = useState([]);
   const [localBase, setLocalBase] = useState('');
   // 当 Gateway 的 routes 更新时同步进来（场景路由新建后立即可选）
@@ -1011,6 +1132,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
           onWritten={() => setSettings(s => s ? { ...s, _isNew: false, configured: true } : s)}
           onClose={closeSettings} onCancel={cancelSettings} />
       )}
+      {/* 用量明细弹窗（点击统计区打开）*/}
+      {detailApp && <AppDetailModal app={detailApp} onClose={() => setDetailApp(null)} />}
       <div className="p-4">
             {/* 操作栏 */}
             <div className="flex items-center gap-2 mb-3 flex-wrap">
