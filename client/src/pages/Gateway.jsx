@@ -255,7 +255,7 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
 }
 
 // ── AppManager：应用列表（Tab1: 所有应用 & 托管 | Tab2: API Key 管理）────────
-const LINK_METHOD_LABEL = { shim: '纳管', 'api-key': '纳管', manual: '手工' };
+const LINK_METHOD_LABEL = { shim: '应用', 'api-key': '应用', manual: 'API' };
 // 按 API Key 路由的应用：自动写配置的 api-key，和用户自配的 manual（手工添加）
 const isKeyApp = (m) => m === 'api-key' || m === 'manual';
 
@@ -490,7 +490,10 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
       <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">路由规则（模型或场景路由）</div>
       <select value={routeId} onChange={e => setRouteId(e.target.value)}
         className="w-full text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none text-gray-800 dark:text-gray-200">
-        <option value="">不绑定（走默认策略）</option>
+        {/* manual（手工添加）无官方可直连 → 必须绑定，「直连」改为不可选占位 */}
+        {app.link_method === 'manual'
+          ? <option value="" disabled>请选择模型 / 路由（手工添加必须绑定）</option>
+          : <option value="">直连（不路由，用原始模型名）</option>}
         {(() => {
           const avail = new Set(availableModels.map(m => m.id));
           const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
@@ -678,7 +681,8 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
           <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">路由规则（模型或场景路由）</div>
           <select value={routeId} onChange={e => setRouteId(e.target.value)}
             className="w-full text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none text-gray-800 dark:text-gray-200">
-            <option value="">不绑定（走默认策略）</option>
+            {/* 手工添加无官方可直连 → 必须绑定 */}
+            <option value="" disabled>请选择模型 / 路由（手工添加必须绑定）</option>
             {(() => {
               const avail = new Set(availableModels.map(m => m.id));
               const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
@@ -957,7 +961,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   }
 
   // 默认路由：新应用自动绑当前可用模型的第一个（P2P 在线 > 付费 > 免费）。
-  // 否则「不绑定」会把客户端原始模型名（claude-*/gpt-*）直连，P2P 后端没有这些名字必 502。
+  // 否则「直连」会把客户端原始模型名（claude-*/gpt-*）直发，P2P 后端没有这些名字必 502。
   function defaultRouteId() {
     const order = { p2p: 0, paid: 1, free: 2 };
     const pick = [...availableModels].sort(
@@ -1233,8 +1237,9 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         {LINK_METHOD_LABEL[app.link_method] || app.link_method}
                       </div>
 
-                      {/* 统计：请求数 / token / 最后使用（列名见表头）*/}
-                      <div className="flex items-center gap-4 shrink-0">
+                      {/* 统计：请求数 / token / 最后使用（点击打开用量明细）*/}
+                      <div className="flex items-center gap-4 shrink-0 cursor-pointer rounded hover:bg-gray-100/60 dark:hover:bg-gray-700/30 -mx-1 px-1"
+                        title="点击查看用量明细（含会话补录）" onClick={() => setDetailApp(app)}>
                         <div className="text-center w-12 text-xs font-semibold text-gray-700 dark:text-gray-200">{st.calls > 0 ? st.calls.toLocaleString() : '—'}</div>
                         <div className="text-center w-12 text-xs font-semibold text-gray-700 dark:text-gray-200">{st.tokens > 0 ? fmtTokens(st.tokens) : '—'}</div>
                         <div className="text-center w-14 text-[10px] font-medium text-gray-600 dark:text-gray-300">{fmtTime(st.lastTs)}</div>
@@ -1262,7 +1267,10 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           await load();
                         }}
                         className="flex-1 min-w-0 text-[10px] bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 outline-none text-gray-600 dark:text-gray-400 max-w-[160px] disabled:opacity-40 disabled:cursor-not-allowed">
-                        <option value="">不绑定</option>
+                        {/* manual 必须绑定，「直连」不可选 */}
+                        {isManual
+                          ? <option value="" disabled>请选择模型 / 路由</option>
+                          : <option value="">直连</option>}
                         {(() => {
                           const avail = new Set(availableModels.map(m => m.id));
                           const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
@@ -1573,22 +1581,109 @@ function ModelSelect({ availableModels, value, onChange }) {
 
 // ── SceneRouteEditor ──────────────────────────────────────────────────────────
 
+// 条件路由：条件类型元数据（与网关 evalWhen 的 type/op 一致）
+const RULE_COND_TYPES = [
+  { type: 'request_type', label: '请求类型', ops: ['is', 'not'], values: ['chat', 'image', 'video', 'embedding', 'audio'] },
+  { type: 'input_tokens', label: '输入Token', ops: ['gt', 'lt', 'gte', 'lte'], value: 'number' },
+  { type: 'keyword',      label: '关键词',   ops: ['match', 'contains'], value: 'text', placeholder: '正则或文本，如 翻译|translate' },
+  { type: 'model',        label: '请求模型', ops: ['is', 'contains'], value: 'text', placeholder: '如 claude-opus-4-8' },
+  { type: 'caller',       label: '调用方',   ops: ['is'], value: 'text', placeholder: 'API key' },
+  { type: 'classifier',   label: '智能分类', ops: ['is', 'not'], value: 'category' },
+];
+const RULE_OP_LABEL = { is: '是', not: '不是', gt: '>', lt: '<', gte: '≥', lte: '≤', match: '匹配(正则)', contains: '包含' };
+const RULE_SEL = 'bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-1.5 py-1 text-[11px] text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500';
+
+// 单条 when 条件编辑器：条件类型 + 算子 + 值（值控件随类型变化）。
+// categories：智能分类的类别集合（来自分类器配置），用于「智能分类」条件的值下拉。
+function RuleConditionEditor({ when, onChange, categories = [] }) {
+  const meta = RULE_COND_TYPES.find(c => c.type === when.type) || RULE_COND_TYPES[0];
+  const setType = (t) => {
+    const m = RULE_COND_TYPES.find(c => c.type === t);
+    const v = m.values ? m.values[0] : (m.value === 'number' ? 0 : (m.value === 'category' ? (categories[0] || '') : ''));
+    onChange({ type: t, op: m.ops[0], value: v });
+  };
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <span className="text-[11px] text-gray-500 shrink-0">当</span>
+      <select value={when.type} onChange={e => setType(e.target.value)} className={RULE_SEL}>
+        {RULE_COND_TYPES.map(c => <option key={c.type} value={c.type}>{c.label}</option>)}
+      </select>
+      <select value={when.op} onChange={e => onChange({ ...when, op: e.target.value })} className={RULE_SEL}>
+        {meta.ops.map(o => <option key={o} value={o}>{RULE_OP_LABEL[o] || o}</option>)}
+      </select>
+      {meta.values ? (
+        <select value={when.value} onChange={e => onChange({ ...when, value: e.target.value })} className={RULE_SEL}>
+          {meta.values.map(v => <option key={v} value={v}>{v}</option>)}
+        </select>
+      ) : meta.value === 'category' ? (
+        categories.length
+          ? <select value={when.value} onChange={e => onChange({ ...when, value: e.target.value })} className={RULE_SEL}>
+              {categories.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          : <input value={when.value} onChange={e => onChange({ ...when, value: e.target.value })} placeholder="类别（先在下方配置分类器）" className={RULE_SEL + ' w-44'} />
+      ) : meta.value === 'number' ? (
+        <input type="number" value={when.value} onChange={e => onChange({ ...when, value: +e.target.value })} className={RULE_SEL + ' w-24'} />
+      ) : (
+        <input value={when.value} onChange={e => onChange({ ...when, value: e.target.value })} placeholder={meta.placeholder} className={RULE_SEL + ' w-44'} />
+      )}
+    </div>
+  );
+}
+
+// 降级链编辑器（默认链 + 每条规则各一个）
+function ChainEditor({ steps, setSteps, availableModels }) {
+  const free = availableModels.filter(m => m.tier === 'free');
+  const p2p  = availableModels.filter(m => m.tier === 'p2p');
+  const paid = availableModels.filter(m => m.tier === 'paid');
+  const list = steps || [];
+  const add    = () => setSteps([...list, { label: '', model: '', tier: 'free' }]);
+  const remove = (i) => setSteps(list.filter((_, idx) => idx !== i));
+  const update = (i, val) => { const m = availableModels.find(x => x.id === val); setSteps(list.map((s, idx) => idx === i ? { label: val, model: val, tier: m ? m.tier : 'free' } : s)); };
+  return (
+    <div className="space-y-1.5">
+      {list.map((step, i) => (
+        <div key={i} className="flex items-center gap-2 group">
+          <span className="text-[10px] text-gray-400 w-4 text-right shrink-0">{i + 1}</span>
+          <select value={step.model} onChange={e => update(i, e.target.value)}
+            className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500">
+            <option value="">-- 选择模型 --</option>
+            {free.length > 0 && <optgroup label="🟢 免费层">{free.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>}
+            {p2p.length  > 0 && <optgroup label="🔵 P2P 层">{p2p.map(m =>  <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>}
+            {paid.length > 0 && <optgroup label="🟡 付费层">{paid.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>}
+          </select>
+          <button onClick={() => remove(i)}
+            className="text-[10px] text-gray-400 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity px-1">✕</button>
+        </div>
+      ))}
+      <button onClick={add} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">+ 添加步骤</button>
+    </div>
+  );
+}
+
 function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
   const [name, setName]   = useState(route.scene_name || '');
   const [icon, setIcon]   = useState(route.icon || '🔀');
   const [steps, setSteps] = useState(route.steps || []);
+  const [rules, setRules] = useState(route.rules || []);
+  const [clsModel, setClsModel] = useState(route.classifier?.model || '');
+  const [clsCats,  setClsCats]  = useState((route.classifier?.categories || ['代码', '数学', '翻译', '创意写作', '通用']).join('、'));
 
-  const addStep    = () => setSteps(prev => [...prev, { label: '', model: '', tier: 'free' }]);
-  const removeStep = (i) => setSteps(prev => prev.filter((_, idx) => idx !== i));
-  const updateStep = (i, val) => {
-    const m = availableModels.find(x => x.id === val);
-    const next = { label: val, model: val, tier: m ? m.tier : 'free' };
-    setSteps(prev => prev.map((s, idx) => idx === i ? next : s));
-  };
+  const setRuleAt  = (i, patch) => setRules(rules.map((r, idx) => idx === i ? { ...r, ...patch } : r));
+  const removeRule = (i) => setRules(rules.filter((_, idx) => idx !== i));
+  const addRule    = () => setRules([...rules, { when: { type: 'input_tokens', op: 'gt', value: 50000 }, steps: [] }]);
 
-  const freeModels = availableModels.filter(m => m.tier === 'free');
-  const p2pModels  = availableModels.filter(m => m.tier === 'p2p');
-  const paidModels = availableModels.filter(m => m.tier === 'paid');
+  const usesClassifier = rules.some(r => r.when?.type === 'classifier');
+  const categories = clsCats.split(/[、,，\s]+/).map(s => s.trim()).filter(Boolean);
+
+  function save() {
+    const clean = (arr) => (arr || []).filter(s => s.model).map(s => ({ model: s.model, tier: s.tier }));
+    const cleanRules = (rules || [])
+      .map(r => ({ when: r.when, steps: clean(r.steps) }))
+      .filter(r => r.when && r.when.type && r.steps.length);
+    const classifier = (usesClassifier && clsModel && categories.length)
+      ? { model: clsModel, categories } : undefined;
+    onSave({ ...route, scene_name: name, icon, rules: cleanRules.length ? cleanRules : undefined, steps: clean(steps), classifier });
+  }
 
   return (
     <div className="border-t border-gray-200/60 dark:border-gray-800/60 bg-gray-50/50 dark:bg-gray-800/20 px-5 py-4 space-y-3">
@@ -1597,32 +1692,60 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
           className="w-10 bg-gray-200 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none"
           maxLength={2} />
         <input value={name} onChange={e => setName(e.target.value)}
-          placeholder="场景名称，如：Claude Code"
+          placeholder="场景名称，如：智能路由"
           className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500" />
       </div>
+
+      {/* 条件规则（可选）：从上到下匹配，命中即用 */}
       <div className="text-xs text-gray-500 font-medium">
-        降级链 <span className="text-gray-400 dark:text-gray-500">· 失败时按顺序尝试下一步</span>
+        条件规则 <span className="text-gray-400 dark:text-gray-500">· 从上到下匹配，命中即用其降级链（可选）</span>
       </div>
       <div className="space-y-2">
-        {steps.map((step, i) => (
-          <div key={i} className="flex items-center gap-2 group">
-            <span className="text-[10px] text-gray-400 w-4 text-right shrink-0">{i + 1}</span>
-            <select value={step.model} onChange={e => updateStep(i, e.target.value)}
-              className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500">
-              <option value="">-- 选择模型 --</option>
-              {freeModels.length > 0 && <optgroup label="🟢 免费层">{freeModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>}
-              {p2pModels.length  > 0 && <optgroup label="🔵 P2P 层">{p2pModels.map(m =>  <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>}
-              {paidModels.length > 0 && <optgroup label="🟡 付费层">{paidModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>}
-            </select>
-            <button onClick={() => removeStep(i)}
-              className="text-[10px] text-gray-400 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity px-1">✕</button>
+        {rules.map((rule, ri) => (
+          <div key={ri} className="border border-gray-200 dark:border-gray-700 rounded-lg p-2 space-y-1.5 bg-white/60 dark:bg-gray-900/30">
+            <div className="flex items-start justify-between gap-2">
+              <RuleConditionEditor when={rule.when} onChange={w => setRuleAt(ri, { when: w })} categories={categories} />
+              <button onClick={() => removeRule(ri)} className="text-[10px] text-gray-400 hover:text-red-500 shrink-0 px-1">删除</button>
+            </div>
+            <div className="pl-3 border-l-2 border-gray-200 dark:border-gray-700">
+              <div className="text-[10px] text-gray-400 mb-1">→ 路由到（降级链）</div>
+              <ChainEditor steps={rule.steps} setSteps={s => setRuleAt(ri, { steps: s })} availableModels={availableModels} />
+            </div>
           </div>
         ))}
-        {steps.length === 0 && <p className="text-xs text-gray-500">还没有步骤，点击「添加步骤」</p>}
+        <button onClick={addRule} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">+ 添加规则</button>
       </div>
-      <button onClick={addStep} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">+ 添加步骤</button>
+
+      {/* 分类器配置（用到「智能分类」条件时显示）：先用便宜模型把输入归类，再按类别路由 */}
+      {usesClassifier && (
+        <div className="border border-indigo-200 dark:border-indigo-800/40 rounded-lg p-2.5 space-y-2 bg-indigo-50/40 dark:bg-indigo-900/10">
+          <div className="text-xs font-medium text-indigo-600 dark:text-indigo-400">🧠 分类器（每请求多一次小模型调用，有缓存）</div>
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] text-gray-500 w-12 shrink-0">分类模型</label>
+            <select value={clsModel} onChange={e => setClsModel(e.target.value)} className={RULE_SEL + ' flex-1'}>
+              <option value="">-- 选择便宜/快的模型 --</option>
+              {availableModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] text-gray-500 w-12 shrink-0">类别</label>
+            <input value={clsCats} onChange={e => setClsCats(e.target.value)} placeholder="顿号/逗号分隔，如 代码、数学、翻译、通用"
+              className={RULE_SEL + ' flex-1'} />
+          </div>
+          <div className="text-[10px] text-gray-400">规则里「智能分类 是 X」会把输入分到这些类别之一(X)再路由。</div>
+        </div>
+      )}
+
+      {/* 默认链（else）：规则都不命中时用 */}
+      <div className="text-xs text-gray-500 font-medium pt-1">
+        默认链{rules.length > 0 && <span className="text-gray-400 dark:text-gray-500">（否则）· 规则都不命中时用</span>}
+        <span className="text-gray-400 dark:text-gray-500"> · 失败时按顺序尝试下一步</span>
+      </div>
+      <ChainEditor steps={steps} setSteps={setSteps} availableModels={availableModels} />
+      {steps.length === 0 && rules.length === 0 && <p className="text-xs text-gray-500">还没有步骤，点击「添加步骤」</p>}
+
       <div className="flex gap-2 pt-1">
-        <button onClick={() => onSave({ ...route, scene_name: name, icon, steps })}
+        <button onClick={save}
           className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg font-medium transition-colors">
           保存
         </button>
@@ -2122,11 +2245,11 @@ export default function Gateway() {
     try {
       if (route.id) {
         await getLocalConfig().updateSceneRoute({
-          id: route.id, scene_name: route.scene_name, icon: route.icon, steps: route.steps,
+          id: route.id, scene_name: route.scene_name, icon: route.icon, steps: route.steps, rules: route.rules, classifier: route.classifier,
         });
       } else {
         await getLocalConfig().createSceneRoute({
-          scene_name: route.scene_name, icon: route.icon, steps: route.steps,
+          scene_name: route.scene_name, icon: route.icon, steps: route.steps, rules: route.rules, classifier: route.classifier,
         });
       }
       setNewRoute(null);
@@ -2305,6 +2428,11 @@ export default function Gateway() {
                     {health.degraded && (
                       <span className="text-[9px] px-1 py-0.5 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 text-amber-600 dark:text-amber-400 shrink-0">
                         降级中
+                      </span>
+                    )}
+                    {route.rules?.length > 0 && (
+                      <span title="含条件路由规则" className="text-[9px] px-1 py-0.5 rounded bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/40 text-indigo-600 dark:text-indigo-400 shrink-0">
+                        🔀 {route.rules.length} 条规则
                       </span>
                     )}
                     {route.model_key && (

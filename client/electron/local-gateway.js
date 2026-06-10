@@ -810,6 +810,146 @@ async function callProvider(provider, isAnthropic, streaming, reqPath, body, att
   return await proxyRequest(provider, reqPath, attemptBody, res);
 }
 
+// ── 条件路由规则引擎（零成本条件）──────────────────────────────────────────────
+// 请求模态（从路径推断）：chat / image / video / embedding / audio
+function modalityOf(reqPath) {
+  const p = String(reqPath || '');
+  if (/\/images?(\/|$)/.test(p)) return 'image';
+  if (/\/video/.test(p)) return 'video';
+  if (/\/embeddings$/.test(p)) return 'embedding';
+  if (/\/audio\//.test(p)) return 'audio';
+  return 'chat';  // /chat/completions /messages /responses /v1beta(gemini) 等
+}
+// 拼接输入文本（messages / input / prompt）—— 给 keyword/未来分类器用
+function extractText(body) {
+  if (!body || typeof body !== 'object') return '';
+  const parts = [];
+  const push = (c) => {
+    if (typeof c === 'string') parts.push(c);
+    else if (Array.isArray(c)) for (const s of c) { if (typeof s === 'string') parts.push(s); else if (s && typeof s.text === 'string') parts.push(s.text); }
+  };
+  if (Array.isArray(body.messages)) for (const m of body.messages) push(m && m.content);
+  if (Array.isArray(body.input))    for (const m of body.input)    push(typeof m === 'string' ? m : (m && m.content));
+  if (typeof body.prompt === 'string') parts.push(body.prompt);
+  if (typeof body.input === 'string')  parts.push(body.input);
+  return parts.join('\n');
+}
+// 粗估输入 token：约 4 字符/token（零成本，足够做长上下文分流）
+function estimateInputTokens(body) { return Math.ceil(extractText(body).length / 4); }
+
+// 单条 when 求值。type: request_type|model|input_tokens|keyword|caller；op: is/not/in/gt/lt/gte/lte/match/contains
+function evalWhen(when, ctx) {
+  if (!when || !when.type) return false;
+  const op = when.op || 'is', val = when.value;
+  let cur;
+  switch (when.type) {
+    case 'request_type': cur = ctx.modality; break;
+    case 'model':        cur = ctx.model; break;
+    case 'input_tokens': cur = ctx.input_tokens; break;
+    case 'keyword':      cur = ctx.text; break;
+    case 'caller':       cur = ctx.caller; break;
+    case 'classifier':   cur = ctx.classifier_label; break;   // 语义分类结果（懒计算，见 resolveSteps）
+    default: return false;
+  }
+  switch (op) {
+    case 'is':       return String(cur) === String(val);
+    case 'not':      return String(cur) !== String(val);
+    case 'in':       return Array.isArray(val) && val.map(String).includes(String(cur));
+    case 'gt':       return Number(cur) >  Number(val);
+    case 'lt':       return Number(cur) <  Number(val);
+    case 'gte':      return Number(cur) >= Number(val);
+    case 'lte':      return Number(cur) <= Number(val);
+    case 'match':    try { return new RegExp(val, 'i').test(String(cur || '')); } catch { return false; }
+    case 'contains': return String(cur || '').toLowerCase().includes(String(val).toLowerCase());
+    default: return false;
+  }
+}
+// 按规则选降级链（同步，不含分类器）：第一条命中的 rule.steps；都不中 → 默认 scene.steps。
+function pickSteps(scene, ctx) {
+  if (Array.isArray(scene && scene.rules)) {
+    for (const rule of scene.rules) {
+      if (rule && Array.isArray(rule.steps) && rule.steps.length && evalWhen(rule.when, ctx)) return rule.steps;
+    }
+  }
+  return (scene && scene.steps) || [];
+}
+
+// ── 语义分类器（有成本条件：先用便宜模型把输入归类，再按 label 路由）──────────────
+// 内部「调一次模型拿纯文本」，不写 res。支持 OpenAI / Anthropic 两种上游格式。
+function internalComplete(provider, model, prompt, maxTokens = 8) {
+  return new Promise((resolve, reject) => {
+    const isAnthropic = /anthropic/i.test(provider.base_url || '') || provider.api_format === 'anthropic';
+    let u; try { u = new URL(normBase(provider.base_url) + (isAnthropic ? '/v1/messages' : '/v1/chat/completions')); }
+    catch { return reject(new Error('invalid_url')); }
+    const body = isAnthropic
+      ? { model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }
+      : { model, max_tokens: maxTokens, temperature: 0, stream: false, messages: [{ role: 'user', content: prompt }] };
+    const bodyStr = JSON.stringify(body);
+    const headers = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) };
+    if (provider.token) {
+      if (isAnthropic) { headers['x-api-key'] = provider.token; headers['anthropic-version'] = '2023-06-01'; }
+      else headers['Authorization'] = `Bearer ${provider.token}`;
+    }
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({ hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + (u.search || ''), method: 'POST', headers, timeout: 15000 }, (rs) => {
+      let data = '';
+      rs.on('data', c => data += c);
+      rs.on('end', () => {
+        if (rs.statusCode >= 400) return reject(new Error('HTTP_' + rs.statusCode));
+        try {
+          const j = JSON.parse(data);
+          const text = isAnthropic
+            ? (Array.isArray(j.content) ? j.content.map(b => b.text || '').join('') : '')
+            : (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+          resolve(String(text || ''));
+        } catch (e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.write(bodyStr); req.end();
+  });
+}
+
+const _classifyCache = new Map();   // key(model|cats|snippet) → { ts, label }；5min 缓存
+async function classifyInput(text, classifier) {
+  if (!classifier || !classifier.model || !Array.isArray(classifier.categories) || !classifier.categories.length) return null;
+  const cats = classifier.categories.map(String);
+  const snippet = String(text || '').slice(0, classifier.max_chars || 600);
+  if (!snippet) return null;
+  const key = classifier.model + '|' + cats.join(',') + '|' + snippet;
+  const now = Date.now();
+  const hit = _classifyCache.get(key);
+  if (hit && now - hit.ts < 300000) return hit.label;
+  const provider = enabledProviders().find(p => providerHasModel(p, classifier.model));
+  if (!provider) return null;
+  const prompt = `把下面这条用户请求归到这些类别之一，只回类别词本身，不要解释。\n类别: ${cats.join(', ')}\n\n请求:\n${snippet}`;
+  let out;
+  try { out = await internalComplete(provider, classifier.model, prompt, 8); } catch { return null; }
+  const low = String(out || '').toLowerCase();
+  const label = cats.find(c => low.includes(String(c).toLowerCase())) || null;
+  _classifyCache.set(key, { ts: now, label });
+  if (_classifyCache.size > 500) _classifyCache.delete(_classifyCache.keys().next().value);
+  return label;
+}
+
+// 选降级链（异步）：含分类器规则时懒计算 label（每请求只分类一次）；第一条命中即用。
+async function resolveSteps(scene, ctx) {
+  if (Array.isArray(scene && scene.rules)) {
+    let classified = false;
+    for (const rule of scene.rules) {
+      if (!rule || !Array.isArray(rule.steps) || !rule.steps.length || !rule.when) continue;
+      if (rule.when.type === 'classifier' && !classified) {
+        ctx.classifier_label = await classifyInput(ctx.text, scene.classifier);
+        classified = true;
+      }
+      if (evalWhen(rule.when, ctx)) return rule.steps;
+    }
+  }
+  return (scene && scene.steps) || [];
+}
+
 async function route(model, reqPath, body, res, callerKey) {
   const t0          = Date.now();
   let lastErr       = null;
@@ -858,18 +998,31 @@ async function route(model, reqPath, body, res, callerKey) {
     boundScene_steps: boundScene?.steps,
     is_llm_router: isLlmRouter,
   });
-  if (boundScene?.steps?.length || isLlmRouter) {
-    const scene = boundScene?.steps?.length ? boundScene : _routerModelMap[origModel];
-    if (!scene?.steps?.length) {
+  const hasScene = (s) => !!(s && (s.steps?.length || s.rules?.length));
+  if (hasScene(boundScene) || isLlmRouter) {
+    const scene = hasScene(boundScene) ? boundScene : _routerModelMap[origModel];
+    if (!hasScene(scene)) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'scene_not_found', model }));
+      return;
+    }
+
+    // 按请求特征选本次降级链：命中的规则链 / 默认链（零成本条件，从路径+body 提取）
+    const ruleCtx = {
+      modality: modalityOf(reqPath), model: origModel,
+      input_tokens: estimateInputTokens(body), text: extractText(body), caller: callerKey,
+    };
+    const steps = await resolveSteps(scene, ruleCtx);
+    if (!steps.length) {   // 规则全不命中且无默认链
+      lastErr = new Error(`no rule matched for ${ruleCtx.modality} request and route has no default chain`);
+      fail(scene.scene_name, null);
       return;
     }
 
     const all          = enabledProviders();
     const failedModels = [];
 
-    for (const step of scene.steps) {
+    for (const step of steps) {
       // 场景步骤就是真实模型；claudeFrom 标记原始 claude 名（路由明细展示透明转化）。
       const stepModel     = step.model;
       const stepClaudeFrom = claudeFrom;
@@ -1363,4 +1516,6 @@ module.exports = {
   setKeySceneMap, setRouterModelMap, setPeerModels, setBackendConfig,
   setStatsRecorder, setLocalStats, setLocalConfigReader, setAppControls,
   setClaudeModels,
+  // 条件路由规则引擎（供单测/复用）
+  pickSteps, evalWhen, modalityOf, estimateInputTokens, extractText,
 };

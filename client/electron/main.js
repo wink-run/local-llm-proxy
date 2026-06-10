@@ -926,8 +926,8 @@ function registerIPC() {
     // llm-router-* → scene steps（从 scene_routes 生成）
     const routerMap = {};
     for (const r of routes) {
-      if (r.model_key && r.steps?.length) {
-        routerMap[r.model_key] = { steps: r.steps, scene_name: r.scene_name };
+      if (r.model_key && (r.steps?.length || r.rules?.length)) {
+        routerMap[r.model_key] = { steps: r.steps || [], scene_name: r.scene_name, rules: r.rules || null, classifier: r.classifier || null };
       }
     }
     gateway.setRouterModelMap(routerMap);
@@ -956,6 +956,8 @@ function registerIPC() {
       keyScene[key] = {
         steps: route?.steps?.length ? route.steps : [{ model: routeId }],
         scene_name: route?.scene_name || routeId,
+        rules: route?.rules || null,           // 条件路由规则（when → steps）
+        classifier: route?.classifier || null, // 语义分类器配置（model + categories）
       };
     };
     for (const app of apps) {
@@ -1013,11 +1015,13 @@ function registerIPC() {
 
   ipcMain.handle('localConfig:get', () => readLocalConfig());
 
-  ipcMain.handle('localConfig:createSceneRoute', (_e, { scene_name, icon, steps }) => {
+  ipcMain.handle('localConfig:createSceneRoute', (_e, { scene_name, icon, steps, rules, classifier }) => {
     const cfg   = readLocalConfig();
     const route = {
       id: rndHex(8), scene_name, icon: icon || '🔀',
       steps: steps || [],
+      rules: rules || null,           // 条件路由规则（when → steps）
+      classifier: classifier || null, // 语义分类器配置
       model_key: 'llm-router-' + rndHex(6),
       created_at: new Date().toISOString(),
     };
@@ -1027,11 +1031,11 @@ function registerIPC() {
     return route;
   });
 
-  ipcMain.handle('localConfig:updateSceneRoute', (_e, { id, scene_name, icon, steps }) => {
+  ipcMain.handle('localConfig:updateSceneRoute', (_e, { id, scene_name, icon, steps, rules, classifier }) => {
     const cfg = readLocalConfig();
     const idx = cfg.scene_routes.findIndex(r => r.id === id);
     if (idx === -1) return null;
-    cfg.scene_routes[idx] = { ...cfg.scene_routes[idx], scene_name, icon, steps };
+    cfg.scene_routes[idx] = { ...cfg.scene_routes[idx], scene_name, icon, steps, rules: rules || null, classifier: classifier || null };
     writeLocalConfig(cfg);
     syncGatewayFromConfig(cfg);
     return cfg.scene_routes[idx];
