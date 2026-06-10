@@ -12,7 +12,7 @@ COPY src ./src
 
 RUN npx vite build
 
-# ── Stage 2: runtime — zero npm packages (pure Node.js built-ins) ─────────────
+# ── Stage 2: runtime — minimal npm packages (js-yaml for config-loader) ──────
 FROM node:20-alpine
 WORKDIR /app
 
@@ -20,9 +20,18 @@ WORKDIR /app
 COPY cli    ./cli
 COPY shared ./shared
 
-# Gateway core (only local-gateway.js is needed; no Electron imports)
+# Gateway core modules (local-gateway.js + its dependencies)
 RUN mkdir -p ./electron
-COPY electron/local-gateway.js ./electron/local-gateway.js
+COPY electron/local-gateway.js   ./electron/local-gateway.js
+COPY electron/codex-transform.js ./electron/codex-transform.js
+COPY electron/request-router.js  ./electron/request-router.js
+COPY electron/config-loader.js   ./electron/config-loader.js
+COPY electron/config             ./electron/config
+
+# js-yaml is required by electron/config-loader.js (copy from builder to avoid npm install at runtime)
+RUN mkdir -p ./node_modules
+COPY --from=builder /build/node_modules/js-yaml  ./node_modules/js-yaml
+COPY --from=builder /build/node_modules/argparse ./node_modules/argparse
 
 # Pre-built Web UI (served by admin-api on :11431)
 COPY --from=builder /build/dist ./dist
