@@ -959,11 +959,15 @@
       <div class="wrap">
         <div class="reveal">
           <div class="sec-label" data-i18n="sec.quickstart">快速接入</div>
-          <h2 class="sec-h2" data-i18n="qs.h2">快速接入</h2>
-          <p class="sec-sub" data-i18n-html="qs.sub">客户端安装后自动启动本地网关，把 AI 应用的 <strong>Base URL</strong> 改为以下地址即可。</p>
+          <h2 class="sec-h2" data-i18n="qs.h2">快速上手</h2>
         </div>
 
-        <div class="qs-grid reveal" style="margin-top:32px;">
+        <!-- ── 接入使用 ── -->
+        <div class="reveal" style="margin:32px 0 14px;">
+          <div style="display:inline-flex;align-items:center;gap:8px;font-family:'DM Mono',monospace;font-size:.68rem;letter-spacing:.12em;color:var(--accent);border-left:2px solid var(--accent);padding-left:10px;" data-i18n="qs.part1">接入使用</div>
+          <p style="margin-top:6px;font-size:.85rem;color:var(--muted);" data-i18n-html="qs.sub">客户端安装后自动启动本地网关，把 AI 应用的 <strong>Base URL</strong> 改为以下地址即可。</p>
+        </div>
+        <div class="qs-grid reveal" style="margin-bottom:44px;">
           <div>
             <div class="qs-label" data-i18n="qs.openai.label">OpenAI 兼容应用</div>
             <p style="font-size:.85rem;color:var(--muted);" data-i18n="qs.openai.desc">Cursor、Copilot、Cherry Studio、Open WebUI 等：</p>
@@ -977,26 +981,41 @@
             <p style="font-size:.85rem;color:var(--muted);" data-i18n="qs.anthropic.desc">Claude Desktop、Claude Code 等：</p>
             <div class="code-block">
 <pre><span class="c">ANTHROPIC_BASE_URL</span>=<span class="s">http://127.0.0.1:11430</span>
-<span class="s"># API Key 填写 Token Bank Key</span></pre>
+<span class="cm"># API Key 填写 Token Bank Key</span></pre>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── 加入 P2P 贡献 ── -->
+        <div class="reveal" style="margin-bottom:14px;">
+          <div style="display:inline-flex;align-items:center;gap:8px;font-family:'DM Mono',monospace;font-size:.68rem;letter-spacing:.12em;color:var(--warn);border-left:2px solid var(--warn);padding-left:10px;" data-i18n="qs.part2">加入 P2P 贡献</div>
+          <p style="margin-top:6px;font-size:.85rem;color:var(--muted);" data-i18n="qs.p2p.intro">把闲置 API 额度贡献给社区，赚积分换其他模型。有两种参与方式：</p>
+        </div>
+        <div class="qs-grid reveal">
+          <div>
+            <div class="qs-label" style="color:var(--warn);" data-i18n="qs.p2p.label">桌面端贡献 · 最简单</div>
+            <p style="font-size:.85rem;color:var(--muted);" data-i18n="qs.p2p.desc">已安装客户端后，三步开启贡献：</p>
+            <div class="code-block" style="border-color:rgba(245,166,35,.2);">
+<pre><span class="cm"># ① 打开 Token Bank → 设置 → P2P 共享</span>
+<span class="cm"># ② 添加 API Key（OpenAI / Claude / 国内模型均可）</span>
+<span class="cm"># ③ 开启贡献开关，即刻开始赚积分</span>
+
+<span class="s">密钥仅在本机运行，Ctrl+C 即下线</span></pre>
+            </div>
+            <div style="margin-top:10px;padding:8px 12px;background:rgba(245,166,35,.06);border:1px solid rgba(245,166,35,.15);border-radius:7px;font-size:.78rem;color:var(--muted);line-height:1.6;" data-i18n-html="qs.p2p.earn">
+              每 1K token 贡献 → 积分 × 质量倍率（0.8×–1.5×）<br>积分可兑换任意模型额度
             </div>
           </div>
           <div>
-            <div class="qs-label" data-i18n="qs.docker.label">Docker 部署（服务器 / 无界面）</div>
-            <p style="font-size:.85rem;color:var(--muted);" data-i18n="qs.docker.desc">挂载配置目录，启动网关服务：</p>
-            <div class="code-block">
-<pre><span class="c">docker run</span> -d \
-  -p <span class="s">11430:11430</span> -p <span class="s">11431:11431</span> \
-  -v ./data:<span class="s">/data/.llm-agent</span> \
-  ghcr.io/wink-run/local-llm-proxy/gateway:<span class="s">latest</span></pre>
-            </div>
-          </div>
-          <div>
-            <div class="qs-label" data-i18n="qs.vps.label">VPS · FastAPI 后端</div>
-            <p style="font-size:.85rem;color:var(--muted);" data-i18n="qs.vps.desc">搭建 P2P 节点，开放 Worker 接入：</p>
-            <div class="code-block">
-<pre><span class="cm">cp</span> .env.example .env
-<span class="cm"># 填写 ADMIN_KEY 等配置</span>
-<span class="c">docker compose up -d --build</span></pre>
+            <div class="qs-label" style="color:var(--warn);" data-i18n="qs.worker.label">自建 P2P Worker 节点</div>
+            <p style="font-size:.85rem;color:var(--muted);" data-i18n="qs.worker.desc">VPS 上部署 FastAPI 后端，作为网络枢纽持续在线：</p>
+            <div class="code-block" style="border-color:rgba(245,166,35,.2);">
+<pre><span class="c">git clone</span> github.com/wink-run/local-llm-proxy
+<span class="cm">cd</span> server
+<span class="cm">cp</span> .env.example .env
+<span class="cm"># 填写 ADMIN_KEY、P2P_SECRET</span>
+<span class="c">docker compose up -d --build</span>
+<span class="cm"># Worker 注册：https://&lt;your-vps&gt;/api/worker/register</span></pre>
             </div>
           </div>
         </div>
@@ -1086,16 +1105,20 @@
       "dl.sub": "图形界面桌面客户端，一键启动本地网关，管理 Provider 与积分账户。支持 macOS 和 Windows。",
       "dl.loading": "加载中…", "dl.btn": "立即下载", "dl.soon": "即将发布",
       "dl.docker.btn": "查看镜像",
-      "qs.h2": "快速接入",
+      "qs.h2": "快速上手",
+      "qs.part1": "接入使用",
       "qs.sub": "客户端安装后自动启动本地网关，把 AI 应用的 <strong>Base URL</strong> 改为以下地址即可。",
       "qs.openai.label": "OpenAI 兼容应用",
       "qs.openai.desc": "Cursor、Copilot、Cherry Studio、Open WebUI 等：",
       "qs.anthropic.label": "Anthropic 格式应用",
       "qs.anthropic.desc": "Claude Desktop、Claude Code 等：",
-      "qs.docker.label": "Docker 部署（服务器 / 无界面）",
-      "qs.docker.desc": "挂载配置目录，启动网关服务：",
-      "qs.vps.label": "VPS · FastAPI 后端",
-      "qs.vps.desc": "搭建 P2P 节点，开放 Worker 接入：",
+      "qs.part2": "加入 P2P 贡献",
+      "qs.p2p.intro": "把闲置 API 额度贡献给社区，赚积分换其他模型。有两种参与方式：",
+      "qs.p2p.label": "桌面端贡献 · 最简单",
+      "qs.p2p.desc": "已安装客户端后，三步开启贡献：",
+      "qs.p2p.earn": "每 1K token 贡献 → 积分 × 质量倍率（0.8×–1.5×）<br>积分可兑换任意模型额度",
+      "qs.worker.label": "自建 P2P Worker 节点",
+      "qs.worker.desc": "VPS 上部署 FastAPI 后端，作为网络枢纽持续在线：",
       "disclaimer": "本项目仅供学习与研究使用。部署、共享 token 或转发请求须自行遵守法律法规及上游服务条款；由此产生的任何后果由使用者自行承担。",
       "disclaimer.short": "仅供学习与研究；使用后果自负。",
     },
@@ -1158,16 +1181,20 @@
       "dl.sub": "Desktop GUI client — start your local gateway, manage Providers and credits. Available for macOS and Windows.",
       "dl.loading": "Loading…", "dl.btn": "Download", "dl.soon": "Coming soon",
       "dl.docker.btn": "View image",
-      "qs.h2": "Quick setup",
+      "qs.h2": "Quick start",
+      "qs.part1": "Connect your apps",
       "qs.sub": "After installing, the gateway starts automatically. Just update the <strong>Base URL</strong> in your AI app.",
       "qs.openai.label": "OpenAI-compatible apps",
       "qs.openai.desc": "Cursor, Copilot, Cherry Studio, Open WebUI, etc.:",
       "qs.anthropic.label": "Anthropic-format apps",
       "qs.anthropic.desc": "Claude Desktop, Claude Code, etc.:",
-      "qs.docker.label": "Docker (server / headless)",
-      "qs.docker.desc": "Mount config dir and start the gateway service:",
-      "qs.vps.label": "VPS · FastAPI backend",
-      "qs.vps.desc": "Host a P2P node and accept Worker connections:",
+      "qs.part2": "Join P2P contribution",
+      "qs.p2p.intro": "Contribute idle API quota to the community, earn credits, spend on other models. Two ways to participate:",
+      "qs.p2p.label": "Desktop contribution · easiest",
+      "qs.p2p.desc": "With the client installed, enable in 3 steps:",
+      "qs.p2p.earn": "Every 1K tokens contributed → credits × quality multiplier (0.8×–1.5×)<br>Credits redeemable for any model",
+      "qs.worker.label": "Self-host a P2P Worker node",
+      "qs.worker.desc": "Deploy the FastAPI backend on a VPS as a persistent network hub:",
       "disclaimer": "This project is for educational and research purposes only. Deploying, sharing tokens, or forwarding requests must comply with applicable laws and upstream service terms. All consequences are the user's sole responsibility.",
       "disclaimer.short": "For educational and research use only. Use at your own risk.",
     }
