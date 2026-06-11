@@ -107,13 +107,16 @@ api_key_apps:
     marker: tokenbank
     enable_3p: true                         # 是否启用 Claude Desktop 3p 接入（false 则不显示该应用）
     route_bindable: true
-    # 全部写进 JSON 配置文件（Claude Desktop 从 JSON 读 key，不读环境变量）
+    allow_direct: false                     # GUI 桌面壳无本地用量源，直连无法统计 → 禁止直连，必须绑路由走网关
+    # 全部写进 JSON 配置文件（Claude Desktop 从 JSON 读 key，不读环境变量）。
+    # 客户端写入时会再注入 inferenceModels（name 用 Anthropic 名过 Claude Desktop 校验，
+    # labelOverride 显示绑定的路由名；keyScene 再把 claude-* 改写成该路由）+
+    # coworkEgressAllowedHosts / disableDeploymentModeChooser，并去掉 modelDiscoveryEnabled。
     patch:
       inferenceProvider: gateway
       inferenceGatewayBaseUrl: "{BASE}"
       inferenceGatewayApiKey: "{KEY}"
       inferenceGatewayAuthScheme: bearer
-      modelDiscoveryEnabled: false
       _configManagedBy: tokenbank
 
   - id: codex-desktop
@@ -123,6 +126,7 @@ api_key_apps:
     config_file: "{CODEX_HOME|~/.codex}/config.toml"
     marker: tokenbank
     route_bindable: true                    # Codex 支持模型改写
+    allow_direct: false                     # GUI 桌面壳无本地用量源 → 禁止直连，必须绑路由走网关
     patch:
       model_provider: tokenbank
       model_providers.tokenbank.name: Tokenbank

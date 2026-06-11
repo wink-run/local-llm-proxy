@@ -874,6 +874,7 @@ function AppDetailModal({ app, onClose }) {
 function AppManager({ externalRoutes, availableModels = [] }) {
   const [apps,     setApps]     = useState([]);
   const [detailApp, setDetailApp] = useState(null);   // 用量明细弹窗对应的 app
+  const [claudeModels, setClaudeModels] = useState([]);  // Claude 名（写 Claude Desktop inferenceModels 用）
   const [routes,   setRoutes]   = useState([]);
   const [localBase, setLocalBase] = useState('');
   // 当 Gateway 的 routes 更新时同步进来（场景路由新建后立即可选）
@@ -905,6 +906,9 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Claude 名（Claude Desktop inferenceModels 的 name 只能用 Anthropic 名）
+  useEffect(() => { window.electronAPI?.apps?.claudeModels?.().then(m => setClaudeModels(Array.isArray(m) ? m : [])).catch(() => {}); }, []);
 
   // 配置下发/变更后，主进程通知 → 重新加载应用列表（新托管/新可配置 api-key 行立即显示）
   useEffect(() => {
@@ -991,12 +995,36 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   }
 
   const [busyId, setBusyId] = useState(null);
-  // 透明托管开关：纳管/还原（保留 auto_host_disabled，重启后记住）。还原前弹确认。
-  async function handleShimToggle(app, host) {
-    if (!host && !window.confirm('还原该应用？将撤销纳管、恢复原始状态（保留应用条目与统计，可随时重新纳管）。')) return;
-    setBusyId(app.agent_id);
-    const fn = host ? window.electronAPI.agents?.apply : window.electronAPI.agents?.revert;
-    await fn?.(app.agent_id).catch(() => {});
+
+  // 纳管/还原（双轴的"纳管"轴）：
+  //   纳管(on)  = 标记 hosted=true，默认进入「直连」（官方，只读会话文件统计，不写网关配置/不注入 shim）。
+  //   还原(off) = 取消纳管 hosted=false + 清 route_id + 还原配置/撤 shim（回官方，不再读文件）。
+  // 「绑路由/走网关」由路由下拉负责（选模型 → 写配置/注入 shim）。
+  async function setTracked(app, on) {
+    if (on) {
+      let appId = app.id;
+      if (app._virtual && app.link_method === 'shim') {
+        const c = await window.electronAPI.apps?.ensureShimApp({ agent_id: app.agent_id, name: app.name, icon: app.icon }).catch(() => null);
+        if (c) appId = c.id;
+      }
+      setBusyId(appId);
+      // 不可直连(无本地用量源的桌面壳)：纳管直接绑默认路由 + 走网关（否则直连无法统计）
+      if (app.allow_direct === false) {
+        const def = defaultRouteId();
+        await window.electronAPI.apps?.update({ id: appId, hosted: true, route_id: def || null }).catch(() => {});
+        if (app.host_method === 'config-file') await writeApiKeyConfig({ ...app, id: appId, route_id: def || null });
+        else if (app.link_method === 'shim' && app.agent_id) await window.electronAPI.agents?.apply(app.agent_id).catch(() => {});
+      } else {
+        await window.electronAPI.apps?.update({ id: appId, hosted: true }).catch(() => {});   // 默认直连(只读文件)
+      }
+    } else {
+      if (!window.confirm('还原该应用？将取消纳管、恢复原始状态（不再读其会话文件统计；条目保留，可随时重新纳管）。')) return;
+      setBusyId(app.id);
+      if (app.link_method === 'shim' && app.agent_id) await window.electronAPI.agents?.revert(app.agent_id).catch(() => {});
+      else if (app.host_method === 'config-file') await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {});
+      await window.electronAPI.apps?.update({ id: app.id, hosted: false, route_id: null }).catch(() => {});
+      if (settings?.id === app.id) setSettings(null);
+    }
     setBusyId(null);
     await load();
   }
@@ -1051,14 +1079,38 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   }
   // 写入某 api-key 应用的配置文件指向网关（解析 {BASE}/{KEY}，处理冲突/失败）。
   // 返回 true=成功。onAbort：冲突取消/写入失败时的回滚回调（新建时删条目；重新纳管不删）。
+  // Claude Desktop 的 inferenceModels 校验：name 必须是 Anthropic 模型名（claude-*）。
+  // 所以 name 用 claude 名（过校验，keyScene 会把它改写成绑定的路由/模型），
+  // labelOverride 显示我们绑定的「路由名 / 模型名」让用户看得懂。未绑路由(直连)则不写。
+  function buildInferenceModels(app) {
+    const claudeName = (claudeModels && claudeModels[0]) || 'claude-sonnet-4-5';
+    const route = routes.find(x => x.model_key === app.route_id || x.id === app.route_id);
+    let label = null;
+    if (route) label = `${route.icon || '🔀'} ${route.scene_name}`;
+    else if (app.route_id) label = app.route_id;   // 绑的是单个真实模型
+    if (!label) return [];                          // 未绑路由（直连）→ 用默认
+    return [{ name: claudeName, labelOverride: label }];
+  }
+
   async function writeApiKeyConfig(app, { onAbort } = {}) {
     const gwOrigin = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/v1\/?$/, '');
     const resolveTpl = (tpl) => typeof tpl === 'string'
       ? tpl.replace(/\{BASE\}/g, gwOrigin).replace(/\{KEY\}/g, app.api_key || '')
       : tpl;
+    const isGatewayConfig = app.patch && 'inferenceProvider' in app.patch;   // Claude Desktop 等
+    const isCodexConfig   = app.patch && 'model_provider' in app.patch;      // Codex Desktop（OpenAI 风格）
     const run = async (force) => {
       const patch = {}; for (const [k, v] of Object.entries(app.patch || {})) patch[k] = resolveTpl(v);
       const env   = {}; for (const [k, v] of Object.entries(app.env   || {})) env[k]   = resolveTpl(v);
+      if (isGatewayConfig) {   // 显式 inferenceModels（不走 modelDiscovery，绕开 Anthropic 名校验）
+        delete patch.modelDiscoveryEnabled;
+        patch.coworkEgressAllowedHosts = ['*'];
+        patch.disableDeploymentModeChooser = true;
+        const im = buildInferenceModels(app);
+        if (im.length) patch.inferenceModels = im;   // 为空则不写，Claude 用默认
+      }
+      // Codex：OpenAI 风格、接受任意模型名 → 顶层 model 直接写绑定的路由/模型，Codex 界面即显示并使用它
+      if (isCodexConfig && app.route_id) patch.model = app.route_id;
       const r = await window.electronAPI?.apps?.writeConfigFile({
         app_id: app.id, config_file: app.config_file, patch, env, force,
       }).catch(e => ({ ok: false, error: e.message }));
@@ -1075,19 +1127,15 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     return run(false);
   }
 
-  // API Key 应用（虚拟行）「纳管」：创建 api-key 应用 + 一键写配置（与透明托管一致，不弹面板）。
+  // API Key 应用（虚拟行）「纳管」：建条目 + 标记 hosted（默认直连，不写配置）。要走网关在路由下拉选模型。
   async function addApiKeyApp(d) {
     setBusyId(d.id);
-    const bindable = d.route_bindable !== false;
     const created = await window.electronAPI.apps?.create({
       name: d.name, icon: d.icon, link_method: 'api-key',
-      preset_id: d.preset_id,
-      route_id: bindable ? (defaultRouteId() || null) : null,   // 不可绑路由(如 Claude)不设默认模型
+      preset_id: d.preset_id, route_id: null,
       inject: 'config-file', config_file: d.config_file, patch: d.patch, env: d.env || null,
     }).catch(() => null);
-    if (!created?.id) { setBusyId(null); return; }
-    // 失败/冲突取消 → 回滚刚创建的条目，回到「未纳管」虚拟行
-    await writeApiKeyConfig(created, { onAbort: () => window.electronAPI.apps?.delete(created.id).catch(() => {}) });
+    if (created?.id) await window.electronAPI.apps?.update({ id: created.id, hosted: true }).catch(() => {});
     setBusyId(null);
     await load();
   }
@@ -1096,6 +1144,11 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   // 请求数 / token 统计延续，不清零。失败不删条目，保留离线状态。
   async function rehostApiKeyApp(app) {
     setBusyId(app.id);
+    // 可绑路由的应用纳管前确保有路由，否则 claude-* 等原始名直发会 502
+    if (app.route_bindable !== false && !app.route_id) {
+      const def = defaultRouteId();
+      if (def) { await window.electronAPI.apps?.update({ id: app.id, route_id: def }).catch(() => {}); app = { ...app, route_id: def }; }
+    }
     await writeApiKeyConfig(app);
     setBusyId(null);
     await load();
@@ -1103,9 +1156,10 @@ function AppManager({ externalRoutes, availableModels = [] }) {
 
   // 还原：仅还原配置文件，保留应用条目与统计（与透明托管「还原」一致，可随时重新纳管）。
   async function handleCancelManage(app) {
-    if (!window.confirm('还原该应用？将撤销纳管、恢复原始状态（保留应用条目与统计，可随时重新纳管）。')) return;
+    if (!window.confirm('还原该应用？将取消纳管、恢复原始状态（不再读其会话文件统计；条目保留，可随时重新纳管）。')) return;
     setBusyId(app.id);
     await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {});
+    await window.electronAPI.apps?.update({ id: app.id, hosted: false, route_id: null }).catch(() => {});  // 取消纳管 + 直连官方
     setBusyId(null);
     if (settings?.id === app.id) setSettings(null);
     await load();
@@ -1200,36 +1254,39 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                     if (diff < 7*86400) return `${Math.floor(diff/86400)}天前`;
                     return new Date(ts*1000).toLocaleDateString('zh-CN',{month:'short',day:'numeric'});
                   };
-                  // 在线 = 已托管(shim linked) / config-file 应用已写入配置 / 纯 key 应用始终在线；
-                  // 离线 = 已安装但取消纳管（条目与统计保留，按钮变灰不消失）
+                  // 双轴状态：纳管(tracked) × 直连/绑路由。
+                  //   在线 = 纳管+绑路由(经网关) | 直连 = 纳管+无路由(只读文件，不走网关) | 未纳管(不读文件)
                   const keyApp = isKeyApp(app.link_method);
                   const isCfgApp = keyApp && app.host_method === 'config-file';
-                  const isManual = app.link_method === 'manual';   // 手工添加 → 蓝色；纳管(shim/api-key) → 绿色
-                  const isOnline = app.link_method === 'shim' ? app.linked
-                    : isCfgApp ? !!app.configured
-                    : keyApp;
-                  const statusDot = isOnline
-                    ? (isManual ? 'bg-blue-400' : 'bg-green-400 shadow-[0_0_6px] shadow-green-400/60')
+                  const isManual = app.link_method === 'manual';
+                  const hostable = app.link_method === 'shim' || isCfgApp;   // 有"纳管/直连"概念的应用
+                  const tracked  = app.hosted === true;
+                  const isOnline = hostable ? !!(app.hosted && app.route_id) : keyApp;  // 经网关
+                  const isDirect = hostable && tracked && !app.route_id;                // 纳管+直连
+                  const isActive = isOnline || isDirect || (!hostable && keyApp);        // 纳管中(行不压暗)
+                  const statusDot =
+                    isOnline ? (isManual ? 'bg-blue-400' : 'bg-green-400 shadow-[0_0_6px] shadow-green-400/60')
+                    : isDirect ? 'bg-blue-400'
                     : 'bg-gray-300 dark:bg-gray-600';
-                  const rowBg = isOnline
-                    ? (isManual
-                        ? 'bg-blue-50/40 dark:bg-blue-950/10'
-                        : 'bg-green-50/60 dark:bg-green-950/15')
+                  const rowBg =
+                    isOnline ? (isManual ? 'bg-blue-50/40 dark:bg-blue-950/10' : 'bg-green-50/60 dark:bg-green-950/15')
+                    : isDirect ? 'bg-blue-50/30 dark:bg-blue-950/10'
                     : 'bg-gray-50/50 dark:bg-gray-800/20';
+                  const statusLabel = isOnline ? '在线' : isDirect ? '直连' : (!hostable && keyApp) ? '在线' : '未纳管';
+                  const statusText = isOnline ? (isManual ? 'text-blue-500' : 'text-green-600 dark:text-green-400')
+                    : isDirect ? 'text-blue-500' : 'text-gray-400';
                   return (
                     // 离线不整行压暗（否则操作按钮看着像禁用）；离线感由灰底/灰点/「离线」标签/
                     // 图标灰度/灰名体现，操作按钮保持全亮可点（含「测试」）。
                     <div key={app.id} className={`flex items-center gap-3 px-3 py-2.5 transition-colors ${rowBg}`}>
                       {/* 图标 + 名称 */}
-                      <span className={`text-base shrink-0 ${isOnline ? '' : 'grayscale opacity-60'}`}>{app.icon}</span>
-                      <div className={`text-xs font-medium truncate w-28 shrink-0 ${isOnline ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'}`}>{app.name}</div>
+                      <span className={`text-base shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`}>{app.icon}</span>
+                      <div className={`text-xs font-medium truncate w-28 shrink-0 ${isActive ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'}`}>{app.name}</div>
 
-                      {/* 状态列（在线/离线） */}
+                      {/* 状态列（在线 / 直连 / 未纳管） */}
                       <div className="w-14 shrink-0 flex items-center gap-1.5">
                         <span className={`w-2 h-2 rounded-full shrink-0 ${statusDot}`} />
-                        <span className={`text-[11px] font-medium ${isOnline ? (isManual ? 'text-blue-500' : 'text-green-600 dark:text-green-400') : 'text-gray-400'}`}>
-                          {isOnline ? '在线' : '离线'}
-                        </span>
+                        <span className={`text-[11px] font-medium ${statusText}`}>{statusLabel}</span>
                       </div>
 
                       {/* 接入方式列 */}
@@ -1249,28 +1306,37 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       {(keyApp || app.link_method === 'shim') && !app._virtual_apikey && app.route_bindable !== false && (
                       <select
                         value={app.route_id || ''}
-                        disabled={!isOnline}
+                        disabled={hostable && !tracked}
                         onChange={async e => {
                           const val = e.target.value || null;
-                          let appId = app.id;
-                          if (app._virtual && app.link_method === 'shim') {
-                            const created = await window.electronAPI.apps?.ensureShimApp({
-                              agent_id: app.agent_id, name: app.name, icon: app.icon,
-                            }).catch(() => null);
-                            if (created) appId = created.id;
+                          // 直连官方(空) = 还原配置/撤 shim → 应用直连官方、不走网关；
+                          // 选模型/路由 = 写配置纳管/注入 shim → 走网关并按 keyScene 路由。
+                          setBusyId(app.id);
+                          // 选模型/路由 = 纳管 + 走网关（hosted:true）；直连官方(空) = 还原配置/撤 shim，保持纳管
+                          if (app.host_method === 'config-file') {        // Claude Desktop 等 config-file 应用
+                            await window.electronAPI.apps?.update({ id: app.id, route_id: val, ...(val ? { hosted: true } : {}) }).catch(() => {});
+                            if (val) await writeApiKeyConfig({ ...app, route_id: val });             // 写配置→网关
+                            else     await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {});  // 直连官方(还原)
+                          } else if (app.link_method === 'shim' && app.agent_id) {  // CLI 透明托管
+                            let appId = app.id;
+                            if (app._virtual) {
+                              const created = await window.electronAPI.apps?.ensureShimApp({ agent_id: app.agent_id, name: app.name, icon: app.icon }).catch(() => null);
+                              if (created) appId = created.id;
+                            }
+                            await window.electronAPI.apps?.update({ id: appId, route_id: val, ...(val ? { hosted: true } : {}) }).catch(() => {});
+                            if (val) await window.electronAPI.agents?.apply(app.agent_id).catch(() => {});   // 注入 shim → 网关
+                            else     await window.electronAPI.agents?.revert(app.agent_id).catch(() => {});  // 撤 shim → 直连官方
+                          } else {                                          // 纯 api-key / manual：只改路由
+                            await window.electronAPI.apps?.update({ id: app.id, route_id: val }).catch(() => {});
                           }
-                          await window.electronAPI.apps?.update({ id: appId, route_id: val }).catch(() => {});
-                          // shim：重写 shim 脚本以注入/更新 key（透明托管按 key 走 keyScene 路由）
-                          if (app.link_method === 'shim' && app.agent_id) {
-                            await window.electronAPI.agents?.apply(app.agent_id).catch(() => {});
-                          }
+                          setBusyId(null);
                           await load();
                         }}
                         className="flex-1 min-w-0 text-[10px] bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 outline-none text-gray-600 dark:text-gray-400 max-w-[160px] disabled:opacity-40 disabled:cursor-not-allowed">
-                        {/* manual 必须绑定，「直连」不可选 */}
-                        {isManual
-                          ? <option value="" disabled>请选择模型 / 路由</option>
-                          : <option value="">直连</option>}
+                        {/* manual / 无本地用量源的桌面壳(allow_direct:false) 必须绑路由；其余可「直连官方」*/}
+                        {(isManual || app.allow_direct === false)
+                          ? <option value="" disabled>请选择模型 / 路由（不可直连）</option>
+                          : <option value="">直连官方（不走网关）</option>}
                         {(() => {
                           const avail = new Set(availableModels.map(m => m.id));
                           const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
@@ -1316,21 +1382,21 @@ function AppManager({ externalRoutes, availableModels = [] }) {
 
                       {/* 操作按钮：按托管方式区分 */}
                       {app.link_method === 'shim' ? (
-                        /* 透明托管：编辑（路由规则 + 请求控制）+ 纳管/取消 开关；离线禁用编辑 */
+                        /* 透明托管：编辑（仅在线可用）+ 纳管/还原 开关（按 tracked）*/
                         <>
                           <button onClick={() => setSettings(app)} disabled={!isOnline}
                             className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent shrink-0">
                             编辑
                           </button>
-                          {app.linked ? (
-                            <button onClick={() => handleShimToggle(app, false)} disabled={busyId === app.agent_id}
+                          {tracked ? (
+                            <button onClick={() => setTracked(app, false)} disabled={busyId === app.agent_id || busyId === app.id}
                               className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 disabled:opacity-50 shrink-0">
-                              {busyId === app.agent_id ? '…' : '还原'}
+                              {(busyId === app.agent_id || busyId === app.id) ? '…' : '还原'}
                             </button>
                           ) : (
-                            <button onClick={() => handleShimToggle(app, true)} disabled={busyId === app.agent_id}
+                            <button onClick={() => setTracked(app, true)} disabled={busyId === app.agent_id || busyId === app.id}
                               className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 shrink-0 font-medium">
-                              {busyId === app.agent_id ? '…' : '纳管'}
+                              {(busyId === app.agent_id || busyId === app.id) ? '…' : '纳管'}
                             </button>
                           )}
                         </>
@@ -1341,20 +1407,20 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           {busyId === app.id ? '…' : '纳管'}
                         </button>
                       ) : app.host_method === 'config-file' ? (
-                        /* config-file api-key 应用：编辑常驻；已纳管→取消，未纳管→纳管（与透明托管一致：
-                           取消后条目与统计保留、按钮变灰不消失，可一键重新纳管）*/
+                        /* config-file api-key 应用：编辑（仅在线可用）+ 纳管/还原 开关（按 tracked）。
+                           纳管后默认直连（只读文件）；要走网关请在路由下拉选模型/路由。*/
                         <>
                           <button onClick={() => setSettings(app)} disabled={!isOnline}
                             className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent shrink-0">
                             编辑
                           </button>
-                          {app.configured ? (
-                            <button onClick={() => handleCancelManage(app)} disabled={busyId === app.id}
+                          {tracked ? (
+                            <button onClick={() => setTracked(app, false)} disabled={busyId === app.id}
                               className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 disabled:opacity-50 shrink-0">
                               {busyId === app.id ? '…' : '还原'}
                             </button>
                           ) : (
-                            <button onClick={() => rehostApiKeyApp(app)} disabled={busyId === app.id}
+                            <button onClick={() => setTracked(app, true)} disabled={busyId === app.id}
                               className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 shrink-0 font-medium">
                               {busyId === app.id ? '…' : '纳管'}
                             </button>

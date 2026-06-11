@@ -1263,9 +1263,13 @@ function registerIPC() {
         const freshConfigFile = def?.config_file || app.config_file;
         const freshPatch       = def?.patch || app.patch;
         const freshEnv         = def?.env  ?? app.env;
-        return { ...app, linked: true, installed: true, configured: app.hosted === true,
+        // 在线(经网关) = 纳管 且 绑了路由；纳管但直连(无 route_id) = 仅读文件、不走网关
+        return { ...app, linked: true, installed: true,
+                 hosted: app.hosted === true,
+                 configured: !!(app.hosted && app.route_id),
                  config_file: freshConfigFile, patch: freshPatch, env: freshEnv,
                  route_bindable: def ? def.route_bindable !== false : (app.route_bindable !== false),
+                 allow_direct: def ? def.allow_direct !== false : (app.allow_direct !== false),  // 无本地用量源的桌面壳=false
                  host_method: freshConfigFile ? 'config-file' : 'api-key' };
       })
       // 机器上没有的 shim 应用不展示；api-key 应用始终展示
@@ -1451,7 +1455,7 @@ function registerIPC() {
           try { if (fs.existsSync(file)) fs.unlinkSync(file); } catch {}  // 原本无文件 → 删掉我们建的
         }
       }
-      setAppHosted(app_id, false);
+      // 注意：不在此改 hosted。直连(还原配置)仍保持纳管；「还原」按钮由渲染层显式置 hosted=false。
       return { ok: true };
     } catch (e) { return { ok: false, error: e.message }; }
   });
@@ -1473,7 +1477,8 @@ function registerIPC() {
   // 保证 Claude/Codex/Gemini 直连官方的用量也并进来。
   ipcMain.handle('apps:detail', (_e, { app, days } = {}) => {
     try { sessionImport.run(localStats); } catch {}
-    const dataSource = (app && app.link_method === 'shim' && app.agent_id) ? AGENT_DATA_SOURCE[app.agent_id] : null;
+    // 纳管才并入会话文件用量；未纳管不读
+    const dataSource = (app && app.hosted && app.link_method === 'shim' && app.agent_id) ? AGENT_DATA_SOURCE[app.agent_id] : null;
     return localStats.queryAppDetail({ appId: app && app.id, apiKey: app && app.api_key, dataSource, days: days || 30 });
   });
 
@@ -1486,7 +1491,8 @@ function registerIPC() {
         // 按稳定 app_id 记账（取消/重新纳管、key 变化都不清零）；旧数据按 api_key 兜底
         s = localStats.queryByApp(app.id, app.api_key);
       } else if (app.link_method === 'shim' && app.agent_id) {
-        const ds = AGENT_DATA_SOURCE[app.agent_id];
+        // 纳管才读会话文件统计；未纳管不计
+        const ds = (app.hosted && AGENT_DATA_SOURCE[app.agent_id]) || null;
         s = ds ? localStats.queryByDataSource(ds) : { calls: 0, tokens: 0, lastTs: null };
       } else {
         s = { calls: 0, tokens: 0, lastTs: null };
@@ -1534,6 +1540,11 @@ function registerIPC() {
   ipcMain.handle('gateway:setRouterModelMap', (_e, map) => {
     gateway.setRouterModelMap(map);
     return { ok: true };
+  });
+
+  // Claude 客户端模型名（Anthropic 名）：Claude Desktop 的 inferenceModels 只接受这些名字
+  ipcMain.handle('apps:claudeModels', () => {
+    try { return require('./config-loader').claudeModels() || []; } catch { return []; }
   });
 
   // Claude Desktop 开发者模式状态：configLibrary 是否就绪（决定能否自动配置）

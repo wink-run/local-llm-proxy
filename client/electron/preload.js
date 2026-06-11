@@ -117,6 +117,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     writeConfigFile: (d)    => ipcRenderer.invoke('apps:writeConfigFile', d),
     revertConfigFile: (d)   => ipcRenderer.invoke('apps:revertConfigFile', d),
     claudeDevModeStatus: () => ipcRenderer.invoke('apps:claudeDevModeStatus'),
+    claudeModels:        () => ipcRenderer.invoke('apps:claudeModels'),
     // 配置下发/变更后主进程通知刷新应用列表
     onChanged: (cb) => {
       const h = () => cb();
