@@ -1008,11 +1008,12 @@ function AppManager({ externalRoutes, availableModels = [] }) {
         if (c) appId = c.id;
       }
       setBusyId(appId);
-      // 不可直连(无本地用量源的桌面壳)：纳管直接绑默认路由 + 走网关（否则直连无法统计）
+      // 不可直连(无本地用量源的桌面壳)：纳管直接走网关。优先复用上次选过的路由
+      //（还原时已保留 route_id），没有再退默认路由——重新纳管即按原路由配置写入。
       if (app.allow_direct === false) {
-        const def = defaultRouteId();
-        await window.electronAPI.apps?.update({ id: appId, hosted: true, route_id: def || null }).catch(() => {});
-        if (app.host_method === 'config-file') await writeApiKeyConfig({ ...app, id: appId, route_id: def || null });
+        const rid = app.route_id || defaultRouteId();
+        await window.electronAPI.apps?.update({ id: appId, hosted: true, route_id: rid || null }).catch(() => {});
+        if (app.host_method === 'config-file') await writeApiKeyConfig({ ...app, id: appId, route_id: rid || null });
         else if (app.link_method === 'shim' && app.agent_id) await window.electronAPI.agents?.apply(app.agent_id).catch(() => {});
       } else {
         await window.electronAPI.apps?.update({ id: appId, hosted: true }).catch(() => {});   // 默认直连(只读文件)
@@ -1022,7 +1023,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
       setBusyId(app.id);
       if (app.link_method === 'shim' && app.agent_id) await window.electronAPI.agents?.revert(app.agent_id).catch(() => {});
       else if (app.host_method === 'config-file') await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {});
-      await window.electronAPI.apps?.update({ id: app.id, hosted: false, route_id: null }).catch(() => {});
+      // 仅取消纳管，保留 route_id —— 重新纳管时直接复用这条路由配置，无需再选模型。
+      await window.electronAPI.apps?.update({ id: app.id, hosted: false }).catch(() => {});
       if (settings?.id === app.id) setSettings(null);
     }
     setBusyId(null);
@@ -1109,7 +1111,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
         const im = buildInferenceModels(app);
         if (im.length) patch.inferenceModels = im;   // 为空则不写，Claude 用默认
       }
-      // Codex：OpenAI 风格、接受任意模型名 → 顶层 model 直接写绑定的路由/模型，Codex 界面即显示并使用它
+      // Codex：OpenAI 风格、接受任意模型名 → 顶层 model 写绑定的路由/模型（运行时按此发起请求）。
+      // 注：Codex Desktop 的 GUI 模型选择器由其自身账号/provider 状态决定，配置文件改不动，仍显示「Custom」。
       if (isCodexConfig && app.route_id) patch.model = app.route_id;
       const r = await window.electronAPI?.apps?.writeConfigFile({
         app_id: app.id, config_file: app.config_file, patch, env, force,
@@ -1159,7 +1162,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     if (!window.confirm('还原该应用？将取消纳管、恢复原始状态（不再读其会话文件统计；条目保留，可随时重新纳管）。')) return;
     setBusyId(app.id);
     await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {});
-    await window.electronAPI.apps?.update({ id: app.id, hosted: false, route_id: null }).catch(() => {});  // 取消纳管 + 直连官方
+    await window.electronAPI.apps?.update({ id: app.id, hosted: false }).catch(() => {});  // 仅取消纳管，保留 route_id 供重新纳管复用
     setBusyId(null);
     if (settings?.id === app.id) setSettings(null);
     await load();
