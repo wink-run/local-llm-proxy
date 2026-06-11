@@ -991,6 +991,12 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   }
 
   const [busyId, setBusyId] = useState(null);
+  const [notice, setNotice] = useState({});   // id → 提示文字
+  function showNotice(id, msg, ms = 6000) {
+    setNotice(n => ({ ...n, [id]: msg }));
+    setTimeout(() => setNotice(n => { const c = { ...n }; delete c[id]; return c; }), ms);
+  }
+
   // 透明托管开关：纳管/还原（保留 auto_host_disabled，重启后记住）。还原前弹确认。
   async function handleShimToggle(app, host) {
     if (!host && !window.confirm('还原该应用？将撤销纳管、恢复原始状态（保留应用条目与统计，可随时重新纳管）。')) return;
@@ -998,6 +1004,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     const fn = host ? window.electronAPI.agents?.apply : window.electronAPI.agents?.revert;
     await fn?.(app.agent_id).catch(() => {});
     setBusyId(null);
+    showNotice(app.agent_id, host ? '✓ 已纳管，重开终端后生效' : '✓ 已还原，重开终端后生效');
     await load();
   }
 
@@ -1087,8 +1094,9 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     }).catch(() => null);
     if (!created?.id) { setBusyId(null); return; }
     // 失败/冲突取消 → 回滚刚创建的条目，回到「未纳管」虚拟行
-    await writeApiKeyConfig(created, { onAbort: () => window.electronAPI.apps?.delete(created.id).catch(() => {}) });
+    const ok = await writeApiKeyConfig(created, { onAbort: () => window.electronAPI.apps?.delete(created.id).catch(() => {}) });
     setBusyId(null);
+    if (ok) showNotice(created.id, '✓ 已纳管，重启应用后生效');
     await load();
   }
 
@@ -1096,8 +1104,9 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   // 请求数 / token 统计延续，不清零。失败不删条目，保留离线状态。
   async function rehostApiKeyApp(app) {
     setBusyId(app.id);
-    await writeApiKeyConfig(app);
+    const ok = await writeApiKeyConfig(app);
     setBusyId(null);
+    if (ok) showNotice(app.id, '✓ 已纳管，重启应用后生效');
     await load();
   }
 
@@ -1105,9 +1114,10 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   async function handleCancelManage(app) {
     if (!window.confirm('还原该应用？将撤销纳管、恢复原始状态（保留应用条目与统计，可随时重新纳管）。')) return;
     setBusyId(app.id);
-    await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {});
+    const r = await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => null);
     setBusyId(null);
     if (settings?.id === app.id) setSettings(null);
+    if (!r || r.ok !== false) showNotice(app.id, '✓ 已还原，重启应用后生效');
     await load();
   }
 
@@ -1263,6 +1273,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           // shim：重写 shim 脚本以注入/更新 key（透明托管按 key 走 keyScene 路由）
                           if (app.link_method === 'shim' && app.agent_id) {
                             await window.electronAPI.agents?.apply(app.agent_id).catch(() => {});
+                            showNotice(appId, '⚠ 路由已切换，重开终端后生效');
                           }
                           await load();
                         }}
@@ -1373,6 +1384,18 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           </button>
                         </>
                       )}
+                      {/* 操作结果提示（重启提醒）*/}
+                      {(() => {
+                        const key = app.agent_id || app.id;
+                        const msg = notice[key];
+                        if (!msg) return null;
+                        const isWarn = msg.startsWith('⚠');
+                        return (
+                          <span className={`text-[10px] shrink-0 font-medium ${isWarn ? 'text-amber-500 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}`}>
+                            {msg}
+                          </span>
+                        );
+                      })()}
                     </div>
                   );
                 })}
