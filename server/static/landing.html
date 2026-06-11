@@ -991,7 +991,7 @@
           <div style="display:inline-flex;align-items:center;gap:8px;font-family:'DM Mono',monospace;font-size:.68rem;letter-spacing:.12em;color:var(--warn);border-left:2px solid var(--warn);padding-left:10px;" data-i18n="qs.part2">加入 P2P 贡献</div>
           <p style="margin-top:6px;font-size:.85rem;color:var(--muted);" data-i18n="qs.p2p.intro">把闲置 API 额度贡献给社区，赚积分换其他模型：</p>
         </div>
-        <div class="reveal" style="margin-bottom:44px;max-width:640px;">
+        <div class="qs-grid reveal" style="margin-bottom:44px;">
           <div>
             <div class="qs-label" style="color:var(--warn);" data-i18n="qs.p2p.label">桌面端贡献 · 最简单</div>
             <p style="font-size:.85rem;color:var(--muted);" data-i18n="qs.p2p.desc">已安装客户端后，三步开启贡献：</p>
@@ -1004,6 +1004,22 @@
             </div>
             <div style="margin-top:10px;padding:8px 12px;background:rgba(245,166,35,.06);border:1px solid rgba(245,166,35,.15);border-radius:7px;font-size:.78rem;color:var(--muted);line-height:1.6;" data-i18n-html="qs.p2p.earn">
               每 1K token 贡献 → 积分 × 质量倍率（0.8×–1.5×）<br>积分可兑换任意模型额度
+            </div>
+          </div>
+          <div>
+            <div class="qs-label" style="color:var(--warn);" data-i18n="qs.p2p.docker.label">Docker 贡献 · 无界面 / 服务器</div>
+            <p style="font-size:.85rem;color:var(--muted);" data-i18n="qs.p2p.docker.desc">在服务器或无界面机器上运行，Web UI 配置 P2P：</p>
+            <div class="code-block" style="border-color:rgba(245,166,35,.2);">
+<pre><span class="c">docker run</span> -d \
+  -p <span class="s">11430:11430</span> -p <span class="s">11431:11431</span> \
+  -v ./data:<span class="s">/data/.llm-agent</span> \
+  ghcr.io/wink-run/local-llm-proxy/gateway:<span class="s">latest</span>
+
+<span class="cm"># 访问 http://&lt;host&gt;:11431 → 设置 → P2P 共享</span>
+<span class="cm"># 添加 API Key，开启贡献开关</span></pre>
+            </div>
+            <div style="margin-top:10px;padding:8px 12px;background:rgba(245,166,35,.06);border:1px solid rgba(245,166,35,.15);border-radius:7px;font-size:.78rem;color:var(--muted);line-height:1.6;" data-i18n="qs.p2p.docker.note">
+              适合 24h 在线服务器，持续贡献积分更高
             </div>
           </div>
         </div>
@@ -1125,6 +1141,9 @@
       "qs.p2p.label": "桌面端贡献 · 最简单",
       "qs.p2p.desc": "已安装客户端后，三步开启贡献：",
       "qs.p2p.earn": "每 1K token 贡献 → 积分 × 质量倍率（0.8×–1.5×）<br>积分可兑换任意模型额度",
+      "qs.p2p.docker.label": "Docker 贡献 · 无界面 / 服务器",
+      "qs.p2p.docker.desc": "在服务器或无界面机器上运行，Web UI 配置 P2P：",
+      "qs.p2p.docker.note": "适合 24h 在线服务器，持续贡献积分更高",
       "qs.part3": "私有化部署",
       "qs.ops.intro": "运营者在 VPS 上搭建独立后台，管理用户体系、Provider 接入与积分账本：",
       "qs.ops.label": "搭建运营服务后台",
@@ -1203,6 +1222,9 @@
       "qs.p2p.label": "Desktop contribution · easiest",
       "qs.p2p.desc": "With the client installed, enable in 3 steps:",
       "qs.p2p.earn": "Every 1K tokens contributed → credits × quality multiplier (0.8×–1.5×)<br>Credits redeemable for any model",
+      "qs.p2p.docker.label": "Docker contribution · headless / server",
+      "qs.p2p.docker.desc": "Run on a server or headless machine, configure P2P via Web UI:",
+      "qs.p2p.docker.note": "Ideal for 24h online servers — sustained uptime earns higher credits",
       "qs.part3": "Self-hosted deployment",
       "qs.ops.intro": "Operators deploy an independent backend on a VPS to manage users, Providers, and the credit ledger:",
       "qs.ops.label": "Deploy operator backend",
