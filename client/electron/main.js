@@ -1222,28 +1222,8 @@ function registerIPC() {
         _virtual: true,   // 未持久化，仅展示
       }));
 
-    // 纯用量展示应用（无 shim/不可纳管，仅看统计）：来自 session_sources 的 display_app 标记
-    let usageDisplayApps = [];
-    try {
-      const seenAgents = new Set([...savedApps, ...virtualShimApps].map(a => a.agent_id).filter(Boolean));
-      usageDisplayApps = (require('./config-loader').sessionSources() || [])
-        .filter(s => s && s.display_app && s.agent_id && !seenAgents.has(s.agent_id))
-        .map(s => ({
-          id: 'app-usage-' + s.agent_id,
-          name: s.display_app.name || s.agent_id,
-          icon: s.display_app.icon || '📊',
-          link_method: 'usage',          // 只读用量类型
-          agent_id: s.agent_id,
-          api_key: null,
-          route_id: null,
-          usage_only: true,
-          route_bindable: false,
-          _virtual: true,
-        }));
-    } catch {}
-
-    // 合并：持久化的 app + 虚拟的 shim app + 只读用量 app
-    const allApps = [...savedApps, ...virtualShimApps, ...usageDisplayApps];
+    // 合并：持久化的 app + 虚拟的 shim app
+    const allApps = [...savedApps, ...virtualShimApps];
 
     // shim 工具的自动配置详情（环境变量 / 自动写入文件），占位符已解析
     let toolDetails = [];
@@ -1493,12 +1473,17 @@ function registerIPC() {
     return m;
   })();
 
+  // api-key 应用并入的会话补录数据源（preset_id → data_source）。
+  // Claude Desktop 的 Cowork/Code tab 跑的是 Claude Code（entrypoint=claude-desktop，
+  // 写 ~/.claude/projects），由 session-import 路由到 session-claude-desktop；这里并回该应用。
+  const SESSION_DS_BY_PRESET = { 'claude-desktop': 'session-claude-desktop' };
+
   // 单个应用的用量明细（合并网关实时 + 会话补录）。查询前先增量补录一次会话文件，
   // 保证 Claude/Codex/Gemini 直连官方的用量也并进来。
   ipcMain.handle('apps:detail', (_e, { app, days } = {}) => {
     try { sessionImport.run(localStats); } catch {}
-    // 纳管才并入会话文件用量；未纳管不读。只读用量应用(usage_only)始终按 data_source 读。
-    const dataSource = (app && app.usage_only && app.agent_id) ? AGENT_DATA_SOURCE[app.agent_id]
+    // api-key 应用并入会话补录数据源（如 Claude Desktop 的 Cowork/Code）；shim 纳管才并入，未纳管不读。
+    const dataSource = (app && (app.link_method === 'api-key' || app.link_method === 'manual')) ? (SESSION_DS_BY_PRESET[app.preset_id] || null)
       : (app && app.hosted && app.link_method === 'shim' && app.agent_id) ? AGENT_DATA_SOURCE[app.agent_id] : null;
     return localStats.queryAppDetail({ appId: app && app.id, apiKey: app && app.api_key, dataSource, days: days || 30 });
   });
@@ -1509,15 +1494,12 @@ function registerIPC() {
     for (const app of (appList || [])) {
       let s;
       if (app.link_method === 'api-key' || app.link_method === 'manual') {
-        // 按稳定 app_id 记账（取消/重新纳管、key 变化都不清零）；旧数据按 api_key 兜底
-        s = localStats.queryByApp(app.id, app.api_key);
+        // 按稳定 app_id 记账（取消/重新纳管、key 变化都不清零）；旧数据按 api_key 兜底。
+        // 并入该应用的会话补录用量（如 Claude Desktop 的 Cowork/Code 本地用量），按 request_id 去重不重复。
+        s = localStats.queryByApp(app.id, app.api_key, SESSION_DS_BY_PRESET[app.preset_id] || null);
       } else if (app.link_method === 'shim' && app.agent_id) {
         // 纳管才读会话文件统计；未纳管不计
         const ds = (app.hosted && AGENT_DATA_SOURCE[app.agent_id]) || null;
-        s = ds ? localStats.queryByDataSource(ds) : { calls: 0, tokens: 0, lastTs: null };
-      } else if (app.usage_only && app.agent_id) {
-        // 只读用量应用（如 Claude Code Desktop）：无纳管概念，始终按 data_source 读
-        const ds = AGENT_DATA_SOURCE[app.agent_id] || null;
         s = ds ? localStats.queryByDataSource(ds) : { calls: 0, tokens: 0, lastTs: null };
       } else {
         s = { calls: 0, tokens: 0, lastTs: null };

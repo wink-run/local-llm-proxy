@@ -255,7 +255,7 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
 }
 
 // ── AppManager：应用列表（Tab1: 所有应用 & 托管 | Tab2: API Key 管理）────────
-const LINK_METHOD_LABEL = { shim: '应用', 'api-key': '应用', manual: 'API', usage: '用量' };
+const LINK_METHOD_LABEL = { shim: '应用', 'api-key': '应用', manual: 'API' };
 // 按 API Key 路由的应用：自动写配置的 api-key，和用户自配的 manual（手工添加）
 const isKeyApp = (m) => m === 'api-key' || m === 'manual';
 
@@ -1270,24 +1270,21 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                   const keyApp = isKeyApp(app.link_method);
                   const isCfgApp = keyApp && app.host_method === 'config-file';
                   const isManual = app.link_method === 'manual';
-                  const usageOnly = app.link_method === 'usage';   // 纯用量展示（如 Claude Code Desktop）：无纳管/无控件
                   const hostable = app.link_method === 'shim' || isCfgApp;   // 有"纳管/直连"概念的应用
                   const tracked  = app.hosted === true;
                   const isOnline = hostable ? !!(app.hosted && app.route_id) : keyApp;  // 经网关
                   const isDirect = hostable && tracked && !app.route_id;                // 纳管+直连
-                  const isActive = isOnline || isDirect || usageOnly || (!hostable && keyApp);  // 纳管中/只读(行不压暗)
+                  const isActive = isOnline || isDirect || (!hostable && keyApp);        // 纳管中(行不压暗)
                   const statusDot =
-                    usageOnly ? 'bg-slate-400'
-                    : isOnline ? (isManual ? 'bg-blue-400' : 'bg-green-400 shadow-[0_0_6px] shadow-green-400/60')
+                    isOnline ? (isManual ? 'bg-blue-400' : 'bg-green-400 shadow-[0_0_6px] shadow-green-400/60')
                     : isDirect ? 'bg-blue-400'
                     : 'bg-gray-300 dark:bg-gray-600';
                   const rowBg =
                     isOnline ? (isManual ? 'bg-blue-50/40 dark:bg-blue-950/10' : 'bg-green-50/60 dark:bg-green-950/15')
                     : isDirect ? 'bg-blue-50/30 dark:bg-blue-950/10'
                     : 'bg-gray-50/50 dark:bg-gray-800/20';
-                  const statusLabel = usageOnly ? '只读' : isOnline ? '在线' : isDirect ? '直连' : (!hostable && keyApp) ? '在线' : '未纳管';
-                  const statusText = usageOnly ? 'text-slate-500'
-                    : isOnline ? (isManual ? 'text-blue-500' : 'text-green-600 dark:text-green-400')
+                  const statusLabel = isOnline ? '在线' : isDirect ? '直连' : (!hostable && keyApp) ? '在线' : '未纳管';
+                  const statusText = isOnline ? (isManual ? 'text-blue-500' : 'text-green-600 dark:text-green-400')
                     : isDirect ? 'text-blue-500' : 'text-gray-400';
                   return (
                     // 离线不整行压暗（否则操作按钮看着像禁用）；离线感由灰底/灰点/「离线」标签/
@@ -1394,10 +1391,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         );
                       })()}
 
-                      {/* 操作按钮：按托管方式区分（只读用量应用无控件，仅看统计） */}
-                      {usageOnly ? (
-                        <span className="text-[10px] text-slate-400 shrink-0 px-2">只读用量</span>
-                      ) : app.link_method === 'shim' ? (
+                      {/* 操作按钮：按托管方式区分 */}
+                      {app.link_method === 'shim' ? (
                         /* 透明托管：编辑（仅在线可用）+ 纳管/还原 开关（按 tracked）*/
                         <>
                           <button onClick={() => setSettings(app)} disabled={!isOnline}

@@ -324,14 +324,17 @@ function queryByApiKey(apiKey) {
  * 按稳定的 app_id 查单个应用的统计（api-key 类 app）。
  * 统计跟着应用走，不受 api_key 变化 / 取消重新纳管影响（与 shim 用 data_source 同理）。
  * 兼容旧数据：旧行没有 app_id（NULL），用 api_key 兜底匹配（且避免与新行重复计）。
+ * dataSource 可选：并入该应用的会话补录用量（如 Claude Desktop 的 Cowork/Code 本地用量
+ * = session-claude-desktop）。三路 OR 互斥、SQL 一行只计一次，不会重复计。
  */
-function queryByApp(appId, apiKey) {
-  if (!db || (!appId && !apiKey)) return { calls: 0, tokens: 0, lastTs: null };
+function queryByApp(appId, apiKey, dataSource) {
+  if (!db || (!appId && !apiKey && !dataSource)) return { calls: 0, tokens: 0, lastTs: null };
   try {
     const r = db.prepare(
       'SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, MAX(ts) AS lastTs ' +
-      'FROM requests WHERE app_id = ? OR (app_id IS NULL AND api_key = ?)'
-    ).get(appId || null, apiKey || null);
+      'FROM requests WHERE app_id = @appId OR (app_id IS NULL AND api_key = @apiKey)' +
+      (dataSource ? ' OR data_source = @ds' : '')
+    ).get({ appId: appId || null, apiKey: apiKey || null, ds: dataSource || null });
     return { calls: r.calls || 0, tokens: r.tokens || 0, lastTs: r.lastTs || null };
   } catch { return { calls: 0, tokens: 0, lastTs: null }; }
 }

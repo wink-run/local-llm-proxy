@@ -65,15 +65,8 @@ session_sources:
       output_tokens: message.usage.output_tokens
       cache_create_tokens: message.usage.cache_creation_input_tokens
       cache_read_tokens: message.usage.cache_read_input_tokens
-
-  # Claude Code Desktop：纯用量展示应用（无 shim/不可安装/不可纳管）。不扫描文件，
-  # 仅注册 agent_id→data_source 供 AGENT_DATA_SOURCE + apps:list 生成只读用量条目。
-  # 其用量由上面 claude 源按 entrypoint=claude-desktop 路由到 session-claude-desktop。
-  - id: claude-desktop-code
-    data_source: session-claude-desktop
-    agent_id: claude-code-desktop
-    provider_id: claude-cli
-    display_app: { name: "Claude Code Desktop", icon: "🖥️" }
+    # 注：entrypoint=claude-desktop 的用量(=Claude Desktop App 的 Cowork/Code tab 跑的 Claude Code)
+    # 路由到 session-claude-desktop，由「Claude Desktop」api-key 应用并入展示（main.js SESSION_DS_BY_PRESET）。
 
   - id: codex
     data_source: session-codex
