@@ -1137,6 +1137,10 @@ function pushLog(entry) {
 // 兼容旧字段：tokens = input + output。
 // request_id = 上游响应 id（msg_/chatcmpl_），用于与会话文件导入跨来源去重；
 // data_source='proxy' 标记这是网关实时拦截记录；并补全延迟/首字/状态码/是否流式。
+// 合成唯一 request_id：上游未返回 id（多为 401/502/404 等错误响应）时兜底，杜绝 NULL。
+// 唯一 → 每条独立记录、不会误去重；成功响应仍优先用真实上游 msg_id（保证跨源去重）。
+function synthReqId() { return 'gw-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); }
+
 function recordStats(providerId, model, usage, tier, apiKey, streaming) {
   const inTok   = usage?.input_tokens        || 0;
   const outTok  = usage?.output_tokens       || 0;
@@ -1153,7 +1157,7 @@ function recordStats(providerId, model, usage, tier, apiKey, streaming) {
     output_tokens:        outTok,
     cache_create_tokens:  cCreate,
     cache_read_tokens:    cRead,
-    request_id:           usage?.message_id || null,
+    request_id:           usage?.message_id || synthReqId(),   // 强制非空：有真实上游 msg_id 用之(跨源去重)，否则合成唯一 id
     data_source:          'proxy',
     status_code:          (usage?.status_code != null) ? usage.status_code : 200,
     is_streaming:         !!streaming,
@@ -1163,7 +1167,7 @@ function recordStats(providerId, model, usage, tier, apiKey, streaming) {
 }
 
 // 失败也落账：所有 provider 都失败时记一条 0-token 的错误行（不丢账）。
-// request_id 留空 → 不参与去重、每次失败都独立记录。
+// request_id 用合成唯一 id（强制非空）→ 每次失败独立记录、不会误去重。
 function recordError(model, apiKey, err) {
   _statsRecorder?.({
     api_key:     apiKey || null,
@@ -1172,6 +1176,7 @@ function recordError(model, apiKey, err) {
     provider_id: null,
     tier:        null,
     tokens: 0, input_tokens: 0, output_tokens: 0,
+    request_id:  synthReqId(),
     data_source: 'proxy',
     status_code: err?.status || 502,
     error:       err?.message || 'all_providers_failed',
