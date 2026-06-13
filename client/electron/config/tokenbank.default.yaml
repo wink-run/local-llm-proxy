@@ -49,6 +49,14 @@ session_sources:
     require_fields: [message.usage]            # 必须存在才算一条用量
     request_id: [message.id, requestId]        # 跨源去重键（=上游 msg_xxx）
     require_request_id: true                   # 无 id 不记（避免重复扫描重复计）
+    # 按 entrypoint 路由：cli/未知→session-claude（Claude Code CLI），claude-desktop→单独应用；
+    # sdk-cli 是内部映射转发（网关已记为 proxy）→ 跳过，避免给 <synthetic> 等假模型记账/重复计。
+    data_source_map:
+      field: entrypoint
+      map:
+        claude-desktop: session-claude-desktop
+      skip: [sdk-cli]
+      default: session-claude
     fields:
       ts: timestamp
       model: message.model
@@ -57,6 +65,15 @@ session_sources:
       output_tokens: message.usage.output_tokens
       cache_create_tokens: message.usage.cache_creation_input_tokens
       cache_read_tokens: message.usage.cache_read_input_tokens
+
+  # Claude Code Desktop：纯用量展示应用（无 shim/不可安装/不可纳管）。不扫描文件，
+  # 仅注册 agent_id→data_source 供 AGENT_DATA_SOURCE + apps:list 生成只读用量条目。
+  # 其用量由上面 claude 源按 entrypoint=claude-desktop 路由到 session-claude-desktop。
+  - id: claude-desktop-code
+    data_source: session-claude-desktop
+    agent_id: claude-code-desktop
+    provider_id: claude-cli
+    display_app: { name: "Claude Code Desktop", icon: "🖥️" }
 
   - id: codex
     data_source: session-codex

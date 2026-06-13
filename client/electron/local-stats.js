@@ -348,4 +348,17 @@ function queryByDataSource(dataSource) {
   } catch { return { calls: 0, tokens: 0, lastTs: null }; }
 }
 
-module.exports = { init, record, queryDashboard, queryByApiKey, queryByApp, queryByDataSource, queryAppDetail, getImportState, setImportState, close };
+// 一次性迁移用：删除指定 data_source 的会话记录 + 清掉匹配文件的导入状态，
+// 让 session-import 重扫这些文件、按新规则（entrypoint）重新归属。proxy 实时记录不受影响。
+function resetSessionData(dataSources, pathLike) {
+  if (!db) return;
+  try {
+    if (Array.isArray(dataSources) && dataSources.length) {
+      const ph = dataSources.map(() => '?').join(',');
+      db.prepare(`DELETE FROM requests WHERE data_source IN (${ph})`).run(...dataSources);
+    }
+    if (pathLike) db.prepare('DELETE FROM import_state WHERE path LIKE ?').run(pathLike);
+  } catch (e) { console.error('[local-stats] resetSessionData failed:', e.message); }
+}
+
+module.exports = { init, record, queryDashboard, queryByApiKey, queryByApp, queryByDataSource, queryAppDetail, getImportState, setImportState, resetSessionData, close };

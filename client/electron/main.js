@@ -1222,8 +1222,28 @@ function registerIPC() {
         _virtual: true,   // 未持久化，仅展示
       }));
 
-    // 合并：持久化的 app + 虚拟的 shim app
-    const allApps = [...savedApps, ...virtualShimApps];
+    // 纯用量展示应用（无 shim/不可纳管，仅看统计）：来自 session_sources 的 display_app 标记
+    let usageDisplayApps = [];
+    try {
+      const seenAgents = new Set([...savedApps, ...virtualShimApps].map(a => a.agent_id).filter(Boolean));
+      usageDisplayApps = (require('./config-loader').sessionSources() || [])
+        .filter(s => s && s.display_app && s.agent_id && !seenAgents.has(s.agent_id))
+        .map(s => ({
+          id: 'app-usage-' + s.agent_id,
+          name: s.display_app.name || s.agent_id,
+          icon: s.display_app.icon || '📊',
+          link_method: 'usage',          // 只读用量类型
+          agent_id: s.agent_id,
+          api_key: null,
+          route_id: null,
+          usage_only: true,
+          route_bindable: false,
+          _virtual: true,
+        }));
+    } catch {}
+
+    // 合并：持久化的 app + 虚拟的 shim app + 只读用量 app
+    const allApps = [...savedApps, ...virtualShimApps, ...usageDisplayApps];
 
     // shim 工具的自动配置详情（环境变量 / 自动写入文件），占位符已解析
     let toolDetails = [];
@@ -1477,8 +1497,9 @@ function registerIPC() {
   // 保证 Claude/Codex/Gemini 直连官方的用量也并进来。
   ipcMain.handle('apps:detail', (_e, { app, days } = {}) => {
     try { sessionImport.run(localStats); } catch {}
-    // 纳管才并入会话文件用量；未纳管不读
-    const dataSource = (app && app.hosted && app.link_method === 'shim' && app.agent_id) ? AGENT_DATA_SOURCE[app.agent_id] : null;
+    // 纳管才并入会话文件用量；未纳管不读。只读用量应用(usage_only)始终按 data_source 读。
+    const dataSource = (app && app.usage_only && app.agent_id) ? AGENT_DATA_SOURCE[app.agent_id]
+      : (app && app.hosted && app.link_method === 'shim' && app.agent_id) ? AGENT_DATA_SOURCE[app.agent_id] : null;
     return localStats.queryAppDetail({ appId: app && app.id, apiKey: app && app.api_key, dataSource, days: days || 30 });
   });
 
@@ -1493,6 +1514,10 @@ function registerIPC() {
       } else if (app.link_method === 'shim' && app.agent_id) {
         // 纳管才读会话文件统计；未纳管不计
         const ds = (app.hosted && AGENT_DATA_SOURCE[app.agent_id]) || null;
+        s = ds ? localStats.queryByDataSource(ds) : { calls: 0, tokens: 0, lastTs: null };
+      } else if (app.usage_only && app.agent_id) {
+        // 只读用量应用（如 Claude Code Desktop）：无纳管概念，始终按 data_source 读
+        const ds = AGENT_DATA_SOURCE[app.agent_id] || null;
         s = ds ? localStats.queryByDataSource(ds) : { calls: 0, tokens: 0, lastTs: null };
       } else {
         s = { calls: 0, tokens: 0, lastTs: null };
@@ -1611,6 +1636,15 @@ app.whenReady().then(() => {
       if (r && r.imported > 0) { try { mainWindow?.webContents?.send('apps:changed'); } catch {} }
     } catch (e) { console.error('[session-import]', e.message); }
   };
+  // 一次性迁移：历史 Claude 会话用量都存成 session-claude（混了 cli / claude-desktop）。
+  // 删掉重扫，按 entrypoint 重新拆分（cli→session-claude、claude-desktop→session-claude-desktop、sdk-cli 跳过）。
+  try {
+    const MIG = '__migrate_claude_entrypoint_v1__';
+    if (!localStats.getImportState(MIG)) {
+      localStats.resetSessionData(['session-claude', 'session-claude-desktop'], '%.claude%projects%');
+      localStats.setImportState(MIG, 1, 0);
+    }
+  } catch (e) { console.error('[session-import] migrate', e.message); }
   runSessionImport();
   setInterval(runSessionImport, 30_000);
 

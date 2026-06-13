@@ -186,6 +186,16 @@ function emitRecord(localStats, src, rec, ctx, doc) {
   }
   if (src.require_request_id && isEmpty(request_id)) return false;
 
+  // 按记录字段(如 entrypoint)路由 data_source：命中 skip 列表的不导入（如 sdk-cli 内部转发）；
+  // 命中 map 的归到对应 data_source；否则用 default / 源默认 data_source。
+  let dataSource = src.data_source;
+  const dsm = src.data_source_map;
+  if (dsm && dsm.field) {
+    const ev = getPath(rec, dsm.field);
+    if (ev != null && Array.isArray(dsm.skip) && dsm.skip.includes(ev)) return false;
+    dataSource = (ev != null && dsm.map && (ev in dsm.map)) ? dsm.map[ev] : (dsm.default || src.data_source);
+  }
+
   const ok = localStats.record({
     ts:                  tsSeconds(tsv),
     api_key:             null,
@@ -197,7 +207,7 @@ function emitRecord(localStats, src, rec, ctx, doc) {
     cache_create_tokens: cCreate,
     cache_read_tokens:   cRead,
     request_id:          request_id != null ? request_id : null,
-    data_source:         src.data_source,
+    data_source:         dataSource,
     session_id:          session_id != null ? session_id : null,
     status_code:         200,
     is_streaming:        false,
