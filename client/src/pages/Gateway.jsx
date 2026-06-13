@@ -995,10 +995,15 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   }
 
   const [busyId, setBusyId] = useState(null);
+  const [notice, setNotice] = useState({});   // id → 提示文字
+  function showNotice(id, msg, ms = 6000) {
+    setNotice(n => ({ ...n, [id]: msg }));
+    setTimeout(() => setNotice(n => { const c = { ...n }; delete c[id]; return c; }), ms);
+  }
 
   // 纳管/还原（双轴的"纳管"轴）：
   //   纳管(on)  = 标记 hosted=true，默认进入「直连」（官方，只读会话文件统计，不写网关配置/不注入 shim）。
-  //   还原(off) = 取消纳管 hosted=false + 清 route_id + 还原配置/撤 shim（回官方，不再读文件）。
+  //   还原(off) = 取消纳管 hosted=false（保留 route_id）+ 还原配置/撤 shim（回官方，不再读文件）。
   // 「绑路由/走网关」由路由下拉负责（选模型 → 写配置/注入 shim）。
   async function setTracked(app, on) {
     if (on) {
@@ -1013,16 +1018,16 @@ function AppManager({ externalRoutes, availableModels = [] }) {
       if (app.allow_direct === false) {
         const rid = app.route_id || defaultRouteId();
         await window.electronAPI.apps?.update({ id: appId, hosted: true, route_id: rid || null }).catch(() => {});
-        if (app.host_method === 'config-file') await writeApiKeyConfig({ ...app, id: appId, route_id: rid || null });
-        else if (app.link_method === 'shim' && app.agent_id) await window.electronAPI.agents?.apply(app.agent_id).catch(() => {});
+        if (app.host_method === 'config-file') { await writeApiKeyConfig({ ...app, id: appId, route_id: rid || null }); showNotice(appId, '✓ 已纳管，重启应用后生效'); }
+        else if (app.link_method === 'shim' && app.agent_id) { await window.electronAPI.agents?.apply(app.agent_id).catch(() => {}); showNotice(appId, '✓ 已纳管，重开终端后生效'); }
       } else {
         await window.electronAPI.apps?.update({ id: appId, hosted: true }).catch(() => {});   // 默认直连(只读文件)
       }
     } else {
       if (!window.confirm('还原该应用？将取消纳管、恢复原始状态（不再读其会话文件统计；条目保留，可随时重新纳管）。')) return;
       setBusyId(app.id);
-      if (app.link_method === 'shim' && app.agent_id) await window.electronAPI.agents?.revert(app.agent_id).catch(() => {});
-      else if (app.host_method === 'config-file') await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {});
+      if (app.link_method === 'shim' && app.agent_id) { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); showNotice(app.id, '✓ 已还原，重开终端后生效'); }
+      else if (app.host_method === 'config-file') { await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {}); showNotice(app.id, '✓ 已还原，重启应用后生效'); }
       // 仅取消纳管，保留 route_id —— 重新纳管时直接复用这条路由配置，无需再选模型。
       await window.electronAPI.apps?.update({ id: app.id, hosted: false }).catch(() => {});
       if (settings?.id === app.id) setSettings(null);
@@ -1140,6 +1145,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     }).catch(() => null);
     if (created?.id) await window.electronAPI.apps?.update({ id: created.id, hosted: true }).catch(() => {});
     setBusyId(null);
+    if (created?.id) showNotice(created.id, '✓ 已纳管（默认直连，选模型即走网关）');
     await load();
   }
 
@@ -1152,8 +1158,9 @@ function AppManager({ externalRoutes, availableModels = [] }) {
       const def = defaultRouteId();
       if (def) { await window.electronAPI.apps?.update({ id: app.id, route_id: def }).catch(() => {}); app = { ...app, route_id: def }; }
     }
-    await writeApiKeyConfig(app);
+    const ok = await writeApiKeyConfig(app);
     setBusyId(null);
+    if (ok) showNotice(app.id, '✓ 已纳管，重启应用后生效');
     await load();
   }
 
@@ -1161,10 +1168,11 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   async function handleCancelManage(app) {
     if (!window.confirm('还原该应用？将取消纳管、恢复原始状态（不再读其会话文件统计；条目保留，可随时重新纳管）。')) return;
     setBusyId(app.id);
-    await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {});
+    const r = await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => null);
     await window.electronAPI.apps?.update({ id: app.id, hosted: false }).catch(() => {});  // 仅取消纳管，保留 route_id 供重新纳管复用
     setBusyId(null);
     if (settings?.id === app.id) setSettings(null);
+    if (!r || r.ok !== false) showNotice(app.id, '✓ 已还原，重启应用后生效');
     await load();
   }
 
@@ -1318,8 +1326,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           // 选模型/路由 = 纳管 + 走网关（hosted:true）；直连官方(空) = 还原配置/撤 shim，保持纳管
                           if (app.host_method === 'config-file') {        // Claude Desktop 等 config-file 应用
                             await window.electronAPI.apps?.update({ id: app.id, route_id: val, ...(val ? { hosted: true } : {}) }).catch(() => {});
-                            if (val) await writeApiKeyConfig({ ...app, route_id: val });             // 写配置→网关
-                            else     await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {});  // 直连官方(还原)
+                            if (val) { await writeApiKeyConfig({ ...app, route_id: val }); showNotice(app.id, '⚠ 路由已切换，重启应用后生效'); }   // 写配置→网关
+                            else     { await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {}); showNotice(app.id, '✓ 已切直连，重启应用后生效'); }  // 直连官方(还原)
                           } else if (app.link_method === 'shim' && app.agent_id) {  // CLI 透明托管
                             let appId = app.id;
                             if (app._virtual) {
@@ -1327,8 +1335,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                               if (created) appId = created.id;
                             }
                             await window.electronAPI.apps?.update({ id: appId, route_id: val, ...(val ? { hosted: true } : {}) }).catch(() => {});
-                            if (val) await window.electronAPI.agents?.apply(app.agent_id).catch(() => {});   // 注入 shim → 网关
-                            else     await window.electronAPI.agents?.revert(app.agent_id).catch(() => {});  // 撤 shim → 直连官方
+                            if (val) { await window.electronAPI.agents?.apply(app.agent_id).catch(() => {}); showNotice(appId, '⚠ 路由已切换，重开终端后生效'); }   // 注入 shim → 网关
+                            else     { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); showNotice(appId, '✓ 已撤接管，重开终端后生效'); }  // 撤 shim → 直连官方
                           } else {                                          // 纯 api-key / manual：只改路由
                             await window.electronAPI.apps?.update({ id: app.id, route_id: val }).catch(() => {});
                           }
@@ -1442,6 +1450,18 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           </button>
                         </>
                       )}
+                      {/* 操作结果提示（重启提醒）*/}
+                      {(() => {
+                        const key = app.agent_id || app.id;
+                        const msg = notice[key];
+                        if (!msg) return null;
+                        const isWarn = msg.startsWith('⚠');
+                        return (
+                          <span className={`text-[10px] shrink-0 font-medium ${isWarn ? 'text-amber-500 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}`}>
+                            {msg}
+                          </span>
+                        );
+                      })()}
                     </div>
                   );
                 })}
