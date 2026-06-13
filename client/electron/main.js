@@ -1602,11 +1602,17 @@ app.whenReady().then(() => {
 
   // 不再启动自动托管：已安装的 CLI 工具在应用列表里显示，由用户手动托管。
 
-  // 补录「不走网关、直连官方」的会话用量：启动跑一次 + 每 60s 增量扫一次。
+  // 补录「不走网关、直连官方」的会话用量：启动跑一次 + 每 30s 增量扫一次。
   // 与网关实时记录靠 request_id 跨来源去重，不会重复计。
-  const runSessionImport = () => { try { sessionImport.run(localStats); } catch (e) { console.error('[session-import]', e.message); } };
+  // 有新增就通知前端刷新——否则直连用量要等重启重新挂载才显示，不像网关那样"实时"。
+  const runSessionImport = () => {
+    try {
+      const r = sessionImport.run(localStats);
+      if (r && r.imported > 0) { try { mainWindow?.webContents?.send('apps:changed'); } catch {} }
+    } catch (e) { console.error('[session-import]', e.message); }
+  };
   runSessionImport();
-  setInterval(runSessionImport, 60_000);
+  setInterval(runSessionImport, 30_000);
 
   if (!isDev) setupAutoUpdater();
 
