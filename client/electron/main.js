@@ -1482,9 +1482,9 @@ function registerIPC() {
   // 保证 Claude/Codex/Gemini 直连官方的用量也并进来。
   ipcMain.handle('apps:detail', (_e, { app, days } = {}) => {
     try { sessionImport.run(localStats); } catch {}
-    // api-key 应用并入会话补录数据源（如 Claude Desktop 的 Cowork/Code）；shim 纳管才并入，未纳管不读。
+    // api-key 应用并入会话补录数据源（如 Claude Desktop 的 Cowork/Code）；shim 始终读其会话用量（真实历史，不随纳管/还原增删）。
     const dataSource = (app && (app.link_method === 'api-key' || app.link_method === 'manual')) ? (SESSION_DS_BY_PRESET[app.preset_id] || null)
-      : (app && app.hosted && app.link_method === 'shim' && app.agent_id) ? AGENT_DATA_SOURCE[app.agent_id] : null;
+      : (app && app.link_method === 'shim' && app.agent_id) ? AGENT_DATA_SOURCE[app.agent_id] : null;
     return localStats.queryAppDetail({ appId: app && app.id, apiKey: app && app.api_key, dataSource, days: days || 30 });
   });
 
@@ -1498,8 +1498,9 @@ function registerIPC() {
         // 并入该应用的会话补录用量（如 Claude Desktop 的 Cowork/Code 本地用量），按 request_id 去重不重复。
         s = localStats.queryByApp(app.id, app.api_key, SESSION_DS_BY_PRESET[app.preset_id] || null);
       } else if (app.link_method === 'shim' && app.agent_id) {
-        // 纳管才读会话文件统计；未纳管不计
-        const ds = (app.hosted && AGENT_DATA_SOURCE[app.agent_id]) || null;
+        // 会话文件用量是真实历史，始终展示（不随纳管/还原清零，与 api-key 应用一致）；
+        // 纳管/还原只控制是否走网关 / 注入 shim，不影响统计可见性。
+        const ds = AGENT_DATA_SOURCE[app.agent_id] || null;
         s = ds ? localStats.queryByDataSource(ds) : { calls: 0, tokens: 0, lastTs: null };
       } else {
         s = { calls: 0, tokens: 0, lastTs: null };
