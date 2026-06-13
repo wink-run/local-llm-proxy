@@ -8,8 +8,9 @@ let _insertStmt = null;
 let _getImportStateStmt = null;
 let _setImportStateStmt = null;
 
-// 注：tokens 保留为 input+output 之和，让既有 queryDashboard 的 SUM(tokens) 仍然成立；
-// input/output 分列让仪表盘以后能展示精细成本；cache_* 反映 Anthropic prompt-cache 命中/写入。
+// 注：展示用「token 总量」= input+output+cache_create+cache_read（与 cc-switch real_total 一致）。
+// Claude 重度用 prompt-cache 时量都在 cache_read，只算 input+output 会显示成 0/极小，故求和必须含 cache_*。
+// tokens 列仍存 input+output（历史兼容），但所有展示查询改为按四列实时求和。
 //
 // request_id：跨来源去重键。代理拦截用上游响应 id（Anthropic msg_xxx / OpenAI chatcmpl_xxx），
 //   JSONL 导入用会话文件里的 message.id（Claude）或合成键（Codex/Gemini）。同一次调用若既走了
@@ -189,7 +190,7 @@ function queryDashboard(days = 1) {
 
   // Total calls + tokens
   const tot = db.prepare(
-    'SELECT COUNT(*) AS calls, SUM(tokens) AS tokens FROM requests WHERE ts >= ?'
+    'SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens FROM requests WHERE ts >= ?'
   ).get(since);
 
   // Tier breakdown
@@ -209,13 +210,13 @@ function queryDashboard(days = 1) {
 
   // Model ranking
   const models = db.prepare(
-    'SELECT model, COUNT(*) AS calls, SUM(tokens) AS tokens FROM requests ' +
+    'SELECT model, COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens FROM requests ' +
     'WHERE ts >= ? AND model IS NOT NULL GROUP BY model ORDER BY calls DESC'
   ).all(since);
 
   // Per-key stats
   const keys = db.prepare(
-    'SELECT api_key, COUNT(*) AS calls, SUM(tokens) AS tokens FROM requests ' +
+    'SELECT api_key, COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens FROM requests ' +
     'WHERE ts >= ? AND api_key IS NOT NULL GROUP BY api_key ORDER BY calls DESC'
   ).all(since);
 
@@ -266,24 +267,24 @@ function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50 } = {
   const p = { appId: appId || null, apiKey: apiKey || null, dataSource: dataSource || null, since };
   try {
     const total = db.prepare(
-      `SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens) AS tokens, ` +
+      `SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, ` +
       `SUM(input_tokens) AS inTok, SUM(output_tokens) AS outTok, MAX(ts) AS lastTs FROM requests WHERE ${where}`
     ).get(p);
     const bySource = db.prepare(
       `SELECT CASE WHEN data_source='proxy' THEN 'proxy' ELSE 'session' END AS src, ` +
-      `COUNT(*) AS calls, SUM(input_tokens+output_tokens) AS tokens FROM requests WHERE ${where} GROUP BY src`
+      `COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens FROM requests WHERE ${where} GROUP BY src`
     ).all(p);
     const byModel = db.prepare(
-      `SELECT model, COUNT(*) AS calls, SUM(input_tokens+output_tokens) AS tokens FROM requests ` +
+      `SELECT model, COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens FROM requests ` +
       `WHERE ${where} AND model IS NOT NULL GROUP BY model ORDER BY calls DESC`
     ).all(p);
     const sessions = db.prepare(
-      `SELECT session_id, COUNT(*) AS calls, SUM(input_tokens+output_tokens) AS tokens, ` +
+      `SELECT session_id, COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, ` +
       `MIN(ts) AS firstTs, MAX(ts) AS lastTs FROM requests ` +
       `WHERE ${where} AND session_id IS NOT NULL GROUP BY session_id ORDER BY lastTs DESC LIMIT @lim`
     ).all({ ...p, lim: limit });
     const recent = db.prepare(
-      `SELECT ts, model, input_tokens AS inTok, output_tokens AS outTok, (input_tokens+output_tokens) AS tokens, ` +
+      `SELECT ts, model, input_tokens AS inTok, output_tokens AS outTok, (input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, ` +
       `data_source AS source, status_code, session_id, provider_id FROM requests ` +
       `WHERE ${where} ORDER BY ts DESC LIMIT @lim`
     ).all({ ...p, lim: limit });
@@ -312,7 +313,7 @@ function queryByApiKey(apiKey) {
   if (!db || !apiKey) return { calls: 0, tokens: 0, lastTs: null };
   try {
     const r = db.prepare(
-      'SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens) AS tokens, MAX(ts) AS lastTs ' +
+      'SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, MAX(ts) AS lastTs ' +
       'FROM requests WHERE api_key = ?'
     ).get(apiKey);
     return { calls: r.calls || 0, tokens: r.tokens || 0, lastTs: r.lastTs || null };
@@ -328,7 +329,7 @@ function queryByApp(appId, apiKey) {
   if (!db || (!appId && !apiKey)) return { calls: 0, tokens: 0, lastTs: null };
   try {
     const r = db.prepare(
-      'SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens) AS tokens, MAX(ts) AS lastTs ' +
+      'SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, MAX(ts) AS lastTs ' +
       'FROM requests WHERE app_id = ? OR (app_id IS NULL AND api_key = ?)'
     ).get(appId || null, apiKey || null);
     return { calls: r.calls || 0, tokens: r.tokens || 0, lastTs: r.lastTs || null };
@@ -340,7 +341,7 @@ function queryByDataSource(dataSource) {
   if (!db || !dataSource) return { calls: 0, tokens: 0, lastTs: null };
   try {
     const r = db.prepare(
-      'SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens) AS tokens, MAX(ts) AS lastTs ' +
+      'SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, MAX(ts) AS lastTs ' +
       'FROM requests WHERE data_source = ?'
     ).get(dataSource);
     return { calls: r.calls || 0, tokens: r.tokens || 0, lastTs: r.lastTs || null };
