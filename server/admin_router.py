@@ -1,12 +1,15 @@
 """管理员接口：Worker 列表、API Key、模型配置、用户管理、购买审批、系统配置"""
 
 import os
+import secrets
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
+import claude_oauth
 import database as db
 from dispatch import handle_chat
 from worker_pool import pool
@@ -205,36 +208,67 @@ async def set_config(req: ConfigRequest):
 
 # ── 虚拟 Agent ────────────────────────────────────────────────────────────────
 
+_VALID_API_STYLES = ("openai", "anthropic", "claude_oauth")
+
+
+def _redact_credentials(creds: dict) -> dict:
+    """列表展示用：只暴露 token 是否存在与过期时间，不回传明文。"""
+    if not creds:
+        return {}
+    out = {}
+    if creds.get("refresh_token"):
+        out["has_refresh_token"] = True
+    if creds.get("access_token"):
+        out["has_access_token"] = True
+    if creds.get("expires_at"):
+        out["expires_at"] = creds["expires_at"]
+    if creds.get("scope"):
+        out["scope"] = creds["scope"]
+    if creds.get("email"):
+        out["email"] = creds["email"]
+    return out
+
+
 @router.get("/virtual-agents", dependencies=[Depends(auth_admin)])
 async def list_virtual_agents():
-    agents = await db.list_virtual_agents()
+    # 仅列全局供给源；用户个人供给源（owner 非空）归用户端管理，不在后台展示
+    agents = await db.list_virtual_agents(owner_is_null=True)
     for a in agents:
         a["api_key"] = a["api_key"][:6] + "****" if len(a.get("api_key", "")) > 6 else "****"
+        a["credentials"] = _redact_credentials(a.get("credentials") or {})
     return {"agents": agents}
 
 
 class VirtualAgentRequest(BaseModel):
     name: str
-    base_url: str
-    api_key: str
+    base_url: str = ""
+    api_key: str = ""
     api_style: str = "openai"
-    models: list = []   # list[str | {name, type}]
+    models: list = []        # list[str | {name, type}]
     enabled: bool = True
+    refresh_token: str = ""  # claude_oauth 账号用：订阅 OAuth 的 refresh_token
 
 
 @router.post("/virtual-agents", dependencies=[Depends(auth_admin)])
 async def create_virtual_agent(req: VirtualAgentRequest):
-    if req.api_style not in ("openai", "anthropic"):
-        raise HTTPException(400, "api_style 必须是 openai 或 anthropic")
+    if req.api_style not in _VALID_API_STYLES:
+        raise HTTPException(400, "api_style 必须是 openai、anthropic 或 claude_oauth")
     if not req.name.strip():
         raise HTTPException(400, "name 不能为空")
-    if not req.base_url.strip():
-        raise HTTPException(400, "base_url 不能为空")
-    if not req.api_key.strip():
-        raise HTTPException(400, "api_key 不能为空")
+    credentials = None
+    if req.api_style == "claude_oauth":
+        # OAuth 账号：凭 refresh_token 自动换 token，base_url 留空回落官方端点
+        if not req.refresh_token.strip():
+            raise HTTPException(400, "claude_oauth 账号必须提供 refresh_token")
+        credentials = {"refresh_token": req.refresh_token.strip()}
+    else:
+        if not req.base_url.strip():
+            raise HTTPException(400, "base_url 不能为空")
+        if not req.api_key.strip():
+            raise HTTPException(400, "api_key 不能为空")
     agent = await db.create_virtual_agent(
         req.name.strip(), req.base_url.strip(), req.api_key.strip(),
-        req.api_style, req.models, req.enabled,
+        req.api_style, req.models, req.enabled, credentials,
     )
     await _sync_virtual_pool()
     return {"ok": True, "agent": agent}
@@ -242,23 +276,28 @@ async def create_virtual_agent(req: VirtualAgentRequest):
 
 class UpdateVirtualAgentRequest(BaseModel):
     name: str
-    base_url: str
+    base_url: str = ""
     api_key: str = ""
     api_style: str = "openai"
-    models: list = []   # list[str | {name, type}]
+    models: list = []        # list[str | {name, type}]
     enabled: bool = True
+    refresh_token: str = ""  # 非空时替换 claude_oauth 凭证（重新授权）
 
 
 @router.patch("/virtual-agents/{agent_id}", dependencies=[Depends(auth_admin)])
 async def update_virtual_agent(agent_id: int, req: UpdateVirtualAgentRequest):
-    if req.api_style not in ("openai", "anthropic"):
-        raise HTTPException(400, "api_style 必须是 openai 或 anthropic")
+    if req.api_style not in _VALID_API_STYLES:
+        raise HTTPException(400, "api_style 必须是 openai、anthropic 或 claude_oauth")
     existing = await db.get_virtual_agent(agent_id)
     if not existing:
         raise HTTPException(404, "Virtual agent not found")
+    # 提供了新 refresh_token 才重置凭证（清掉旧 access_token，强制下次刷新）
+    credentials = None
+    if req.refresh_token.strip():
+        credentials = {"refresh_token": req.refresh_token.strip()}
     await db.update_virtual_agent(
         agent_id, req.name.strip(), req.base_url.strip(), req.api_key.strip(),
-        req.api_style, req.models, req.enabled,
+        req.api_style, req.models, req.enabled, credentials,
     )
     await _sync_virtual_pool()
     return {"ok": True}
@@ -272,3 +311,91 @@ async def delete_virtual_agent(agent_id: int):
     await db.delete_virtual_agent(agent_id)
     await _sync_virtual_pool()
     return {"ok": True}
+
+
+# ── Claude 订阅一键登录（PKCE 授权码流）────────────────────────────────────────
+# 内存会话存储：session_id -> {verifier, scope, is_setup_token, created}
+# 单进程 FastAPI 用内存即可；30 分钟过期。
+_OAUTH_LOGIN_SESSIONS: dict[str, dict] = {}
+_OAUTH_SESSION_TTL = 30 * 60
+
+
+def _gc_oauth_sessions() -> None:
+    now = time.time()
+    for sid in [k for k, v in _OAUTH_LOGIN_SESSIONS.items()
+                if now - v["created"] > _OAUTH_SESSION_TTL]:
+        _OAUTH_LOGIN_SESSIONS.pop(sid, None)
+
+
+class OAuthStartRequest(BaseModel):
+    setup_token: bool = False   # True 走 user:inference（约 1 年有效）
+
+
+@router.post("/oauth/claude/start", dependencies=[Depends(auth_admin)])
+async def oauth_claude_start(req: OAuthStartRequest):
+    """第 1 步：生成授权 URL。前端引导用户在浏览器打开并登录授权。"""
+    _gc_oauth_sessions()
+    verifier = claude_oauth.generate_code_verifier()
+    challenge = claude_oauth.generate_code_challenge(verifier)
+    state = claude_oauth.generate_state()
+    scope = claude_oauth.SCOPE_INFERENCE if req.setup_token else claude_oauth.SCOPE_OAUTH
+    auth_url = claude_oauth.build_authorization_url(state, challenge, scope)
+    session_id = secrets.token_urlsafe(16)
+    _OAUTH_LOGIN_SESSIONS[session_id] = {
+        "verifier": verifier,
+        "scope": scope,
+        "is_setup_token": req.setup_token,
+        "created": time.time(),
+    }
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "auth_url": auth_url,
+        "instructions": "在浏览器打开 auth_url 登录授权，复制回调页地址栏中的 code 参数（形如 code#state），调用 /oauth/claude/exchange 完成。",
+    }
+
+
+class OAuthExchangeRequest(BaseModel):
+    session_id: str
+    code: str
+    # 可选：直接建虚拟 Agent（一步到位）。给了 name 即创建。
+    name: str = ""
+    models: list = []
+    enabled: bool = True
+
+
+@router.post("/oauth/claude/exchange", dependencies=[Depends(auth_admin)])
+async def oauth_claude_exchange(req: OAuthExchangeRequest):
+    """第 2 步：用授权码换 token；可选直接创建 claude_oauth 虚拟 Agent。"""
+    _gc_oauth_sessions()
+    sess = _OAUTH_LOGIN_SESSIONS.get(req.session_id)
+    if not sess:
+        raise HTTPException(400, "session 不存在或已过期，请重新发起 /oauth/claude/start")
+    if not req.code.strip():
+        raise HTTPException(400, "code 不能为空")
+    try:
+        creds = await claude_oauth.exchange_code(
+            req.code.strip(), sess["verifier"], sess["is_setup_token"],
+        )
+    except Exception as e:
+        raise HTTPException(400, f"授权码交换失败：{e}")
+    _OAUTH_LOGIN_SESSIONS.pop(req.session_id, None)
+    if not creds.get("refresh_token"):
+        raise HTTPException(400, "上游未返回 refresh_token，无法长期使用，请重试授权")
+
+    result = {
+        "ok": True,
+        "email": creds.get("email", ""),
+        "scope": creds.get("scope", ""),
+        "expires_at": creds.get("expires_at"),
+        # 返回 refresh_token 供前端落库或人工保存（admin-only 接口）
+        "refresh_token": creds["refresh_token"],
+    }
+    # 一步到位：给了 name 就直接建账号
+    if req.name.strip():
+        agent = await db.create_virtual_agent(
+            req.name.strip(), "", "", "claude_oauth", req.models, req.enabled, creds,
+        )
+        await _sync_virtual_pool()
+        result["agent"] = {k: agent[k] for k in ("id", "name", "api_style", "models")}
+    return result

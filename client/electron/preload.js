@@ -22,6 +22,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     scan:  () => ipcRenderer.invoke('config:scan'),
     importKeys: () => ipcRenderer.invoke('config:importKeys'),
   },
+  oauth: {
+    start:        (provider, opts) => ipcRenderer.invoke('oauth:start', { provider, ...(opts || {}) }),
+    exchange:     (sessionId, code) => ipcRenderer.invoke('oauth:exchange', { sessionId, code }),
+    poll:         (sessionId) => ipcRenderer.invoke('oauth:poll', { sessionId }),
+    openExternal: (url) => ipcRenderer.invoke('oauth:openExternal', { url }),
+  },
   claude: {
     configure: (baseUrl, apiKey, models) => ipcRenderer.invoke('claude:configure', { baseUrl, apiKey, models }),
     status: () => ipcRenderer.invoke('claude:status'),

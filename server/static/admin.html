@@ -443,7 +443,13 @@ select.form-input{cursor:pointer}
           <tr v-if="virtualAgents.length === 0" class="empty-row"><td colspan="6">{{ T.noVirtualAgents }}</td></tr>
           <tr v-for="a in virtualAgents" :key="a.id" :class="{ inactive: !a.enabled }">
             <td>{{ a.name }}</td>
-            <td class="mono" style="font-size:12px;color:#94a3b8">{{ a.base_url }}</td>
+            <td class="mono" style="font-size:12px;color:#94a3b8">
+              <span v-if="a.api_style==='claude_oauth'" :style="(a.credentials && a.credentials.has_refresh_token) ? 'color:#a78bfa' : 'color:#f87171'">
+                🔑 {{ (a.credentials && a.credentials.has_refresh_token) ? (lang==='zh'?'已登录':'linked') : (lang==='zh'?'未登录':'no token') }}
+                <span v-if="a.credentials && a.credentials.email" style="color:#64748b"> · {{ a.credentials.email }}</span>
+              </span>
+              <span v-else>{{ a.base_url }}</span>
+            </td>
             <td><span class="tag">{{ a.api_style }}</span></td>
             <td><span v-for="m in a.models" :key="vaModelName(m)" class="tag">{{ vaModelName(m) }}<span v-if="vaModelType(m)==='image'" style="margin-left:3px;color:#a78bfa;font-size:10px">图</span></span></td>
             <td><span :class="a.enabled ? 'badge badge-on' : 'badge badge-off'">{{ a.enabled ? T.enabled : T.disabled }}</span></td>
@@ -463,20 +469,13 @@ select.form-input{cursor:pointer}
             <label>{{ T.vaName }} *</label>
             <input v-model="vaForm.name" class="form-input" style="width:100%" placeholder="My LLM Service" />
           </div>
-          <div class="form-group" style="margin-bottom:12px">
-            <label>{{ T.vaBaseUrl }} *</label>
-            <input v-model="vaForm.base_url" class="form-input" style="width:100%" placeholder="https://api.example.com" />
-          </div>
-          <div class="form-group" style="margin-bottom:12px">
-            <label>{{ T.vaApiKey }} {{ vaEditId ? '（留空则不修改）' : '*' }}</label>
-            <input v-model="vaForm.api_key" class="form-input" style="width:100%" type="password" placeholder="sk-..." autocomplete="new-password" />
-          </div>
           <div class="form-row" style="gap:12px;margin-bottom:12px">
             <div class="form-group" style="flex:1">
               <label>{{ T.vaApiStyle }}</label>
               <select v-model="vaForm.api_style" class="form-input" style="width:100%">
                 <option value="openai">openai</option>
                 <option value="anthropic">anthropic</option>
+                <option value="claude_oauth">claude_oauth（Claude 订阅）</option>
               </select>
             </div>
             <div class="form-group" style="flex:1">
@@ -487,6 +486,39 @@ select.form-input{cursor:pointer}
               </select>
             </div>
           </div>
+
+          <!-- 普通 api_key 账号 -->
+          <template v-if="vaForm.api_style !== 'claude_oauth'">
+            <div class="form-group" style="margin-bottom:12px">
+              <label>{{ T.vaBaseUrl }} *</label>
+              <input v-model="vaForm.base_url" class="form-input" style="width:100%" placeholder="https://api.example.com" />
+            </div>
+            <div class="form-group" style="margin-bottom:12px">
+              <label>{{ T.vaApiKey }} {{ vaEditId ? '（留空则不修改）' : '*' }}</label>
+              <input v-model="vaForm.api_key" class="form-input" style="width:100%" type="password" placeholder="sk-..." autocomplete="new-password" />
+            </div>
+          </template>
+          <template v-else>
+            <div class="form-group" style="margin-bottom:12px">
+              <label>{{ lang==='zh'?'上游地址（留空=官方 api.anthropic.com）':'Base URL (blank = official api.anthropic.com)' }}</label>
+              <input v-model="vaForm.base_url" class="form-input" style="width:100%" placeholder="https://api.anthropic.com" />
+            </div>
+            <div style="background:#161922;border:1px solid #2d3148;border-radius:8px;padding:14px;margin-bottom:12px">
+              <div style="font-size:12px;color:#94a3b8;margin-bottom:10px">{{ lang==='zh'?'Claude 订阅登录（OAuth）':'Claude subscription login (OAuth)' }}</div>
+              <div v-if="vaOAuth.refresh_token" style="color:#4ade80;font-size:13px;margin-bottom:8px">
+                ✓ {{ lang==='zh'?'已获取登录凭证':'Credential obtained' }}<span v-if="vaOAuth.email"> · {{ vaOAuth.email }}</span>
+              </div>
+              <div v-else-if="vaEditId" style="color:#64748b;font-size:12px;margin-bottom:8px">{{ lang==='zh'?'已绑定订阅账号；如需更换可重新登录':'Already linked; re-login to replace' }}</div>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#94a3b8;margin-bottom:10px;cursor:pointer">
+                <input type="checkbox" v-model="vaOAuth.setupToken" /> {{ lang==='zh'?'Setup Token（仅推理，约 1 年有效）':'Setup token (inference only, ~1y)' }}
+              </label>
+              <button type="button" class="btn-sm" @click="vaStartOAuth" :disabled="vaOAuth.busy">{{ lang==='zh'?'① 打开授权页':'① Open auth page' }}</button>
+              <template v-if="vaOAuth.started">
+                <input v-model="vaOAuth.code" class="form-input" style="width:100%;margin-top:10px" :placeholder="lang==='zh'?'粘贴回调地址里的 code（形如 code#state）':'Paste code from callback (code#state)'" />
+                <button type="button" class="btn btn-indigo btn-sm" style="margin-top:8px" @click="vaExchangeOAuth" :disabled="vaOAuth.busy || !vaOAuth.code.trim()">{{ lang==='zh'?'② 完成登录':'② Finish login' }}</button>
+              </template>
+            </div>
+          </template>
           <div class="form-group" style="margin-bottom:16px">
             <label>{{ T.vaModels }}</label>
             <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px">
@@ -920,6 +952,11 @@ createApp({
     const vaEditId = ref(null)
     const vaForm = ref({ name:'', base_url:'', api_key:'', api_style:'openai', models:[], enabled:true })
     const vaMsg = ref('')
+    // Claude 订阅 OAuth 登录子流程的瞬时状态
+    const vaOAuth = ref({ sessionId:'', code:'', email:'', refresh_token:'', setupToken:false, busy:false, started:false })
+    function resetVaOAuth() {
+      vaOAuth.value = { sessionId:'', code:'', email:'', refresh_token:'', setupToken:false, busy:false, started:false }
+    }
     async function fetchVirtualAgents() {
       try { const d = await (await api('/admin/virtual-agents')).json(); virtualAgents.value = d.agents||[] } catch {}
     }
@@ -930,6 +967,7 @@ createApp({
     function vaModelType(m) { return typeof m === 'string' ? 'chat' : (m.type || 'chat') }
     function openVaModal(agent) {
       vaMsg.value = ''
+      resetVaOAuth()
       if (agent) {
         vaEditId.value = agent.id
         vaForm.value = { name:agent.name, base_url:agent.base_url, api_key:'', api_style:agent.api_style,
@@ -940,19 +978,51 @@ createApp({
       }
       vaModalOpen.value = true
     }
+    async function vaStartOAuth() {
+      vaMsg.value = ''
+      vaOAuth.value.busy = true
+      try {
+        const r = await api('/admin/oauth/claude/start', {method:'POST', body:JSON.stringify({setup_token: vaOAuth.value.setupToken})})
+        const d = await r.json()
+        if (!r.ok) { vaMsg.value = d.detail || 'Error'; return }
+        vaOAuth.value.sessionId = d.session_id
+        vaOAuth.value.started = true
+        window.open(d.auth_url, '_blank')
+      } catch { vaMsg.value = 'Error' } finally { vaOAuth.value.busy = false }
+    }
+    async function vaExchangeOAuth() {
+      vaMsg.value = ''
+      vaOAuth.value.busy = true
+      try {
+        const r = await api('/admin/oauth/claude/exchange', {method:'POST',
+          body:JSON.stringify({session_id: vaOAuth.value.sessionId, code: vaOAuth.value.code.trim()})})
+        const d = await r.json()
+        if (!r.ok) { vaMsg.value = d.detail || 'Error'; return }
+        vaOAuth.value.refresh_token = d.refresh_token
+        vaOAuth.value.email = d.email || ''
+        vaOAuth.value.started = false
+        vaOAuth.value.code = ''
+      } catch { vaMsg.value = 'Error' } finally { vaOAuth.value.busy = false }
+    }
     function closeVaModal() { vaModalOpen.value = false }
     function vaAddModel() { vaForm.value.models.push({name:'', type:'chat'}) }
     function vaRemoveModel(i) { vaForm.value.models.splice(i, 1) }
     function vaSetModelType(i, t) { vaForm.value.models[i].type = t }
     async function saveVirtualAgent() {
       vaMsg.value = ''
+      const isOauth = vaForm.value.api_style === 'claude_oauth'
       const payload = {
         name: vaForm.value.name.trim(),
         base_url: vaForm.value.base_url.trim(),
-        api_key: vaForm.value.api_key.trim(),
+        api_key: isOauth ? '' : vaForm.value.api_key.trim(),
         api_style: vaForm.value.api_style,
         models: vaForm.value.models.filter(m=>m.name.trim()).map(m=>({name:m.name.trim(), type:m.type})),
         enabled: vaForm.value.enabled,
+      }
+      if (isOauth) {
+        // 新建必须先登录拿到 refresh_token；编辑时留空表示沿用已绑定账号
+        if (vaOAuth.value.refresh_token) payload.refresh_token = vaOAuth.value.refresh_token
+        else if (!vaEditId.value) { vaMsg.value = lang.value==='zh' ? '请先完成 Claude 订阅登录' : 'Please finish Claude login first'; return }
       }
       try {
         let r

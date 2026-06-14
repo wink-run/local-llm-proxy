@@ -658,6 +658,48 @@ function registerIPC() {
   ipcMain.handle('config:scan',  () => scanLLMConfigs());
   ipcMain.handle('config:importKeys', () => scanProviderKeys());
 
+  // ── 供给源 OAuth 订阅登录（Claude / Codex / Google / Copilot）──────────────
+  // PKCE 流：start 返回 authUrl，用户浏览器授权后粘贴 code，exchange 换 credentials。
+  // 设备码流（codex/copilot）：start 返回 userCode+verificationUrl，poll 轮询。
+  const oauthMod = require('./oauth');
+  const _oauthSessions = new Map(); // sessionId -> { provider, session, created }
+  function gcOauthSessions() {
+    const now = Date.now();
+    for (const [k, v] of _oauthSessions) if (now - v.created > 30 * 60 * 1000) _oauthSessions.delete(k);
+  }
+  ipcMain.handle('oauth:start', async (_e, { provider, setupToken } = {}) => {
+    gcOauthSessions();
+    const mod = oauthMod.getModule(provider);
+    if (!mod) throw new Error('unsupported oauth provider: ' + provider);
+    const r = await mod.startLogin({ setupToken });
+    const sessionId = require('crypto').randomUUID();
+    _oauthSessions.set(sessionId, { provider, session: r.session, created: Date.now() });
+    return { sessionId, mode: mod.mode, authUrl: r.authUrl || null,
+             userCode: r.userCode || null, verificationUrl: r.verificationUrl || null };
+  });
+  ipcMain.handle('oauth:exchange', async (_e, { sessionId, code } = {}) => {
+    const s = _oauthSessions.get(sessionId);
+    if (!s) throw new Error('session 不存在或已过期，请重新登录');
+    const mod = oauthMod.getModule(s.provider);
+    const credentials = await mod.completeLogin(s.session, code);
+    _oauthSessions.delete(sessionId);
+    return { ok: true, oauth_provider: s.provider, credentials, email: credentials.email || '' };
+  });
+  // 设备码流轮询（codex/copilot 用；PKCE 流不需要）
+  ipcMain.handle('oauth:poll', async (_e, { sessionId } = {}) => {
+    const s = _oauthSessions.get(sessionId);
+    if (!s) throw new Error('session 不存在或已过期');
+    const mod = oauthMod.getModule(s.provider);
+    if (typeof mod.poll !== 'function') throw new Error('provider 不支持轮询');
+    const result = await mod.poll(s.session);
+    if (result && result.credentials) {
+      _oauthSessions.delete(sessionId);
+      return { ok: true, done: true, oauth_provider: s.provider, credentials: result.credentials, email: result.credentials.email || '' };
+    }
+    return { ok: true, done: false, status: (result && result.status) || 'pending' };
+  });
+  ipcMain.handle('oauth:openExternal', (_e, { url } = {}) => { if (url) shell.openExternal(url); return { ok: true }; });
+
   // Write Claude Code config into ~/.claude/settings.local.json
   ipcMain.handle('claude:configure', async (_e, { baseUrl, apiKey, models = [] }) => {
     const settingsPath = path.join(os.homedir(), '.claude', 'settings.local.json');
@@ -1564,15 +1606,28 @@ function registerIPC() {
     };
   });
 
-  ipcMain.handle('gateway:testProvider', async (_e, { base_url, token } = {}) => {
+  ipcMain.handle('gateway:testProvider', async (_e, p = {}) => {
+    const base_url = p.base_url;
     if (!base_url || typeof base_url !== 'string') return { ok: false, error: 'base_url required' };
     try {
-      const result = await nodeRequest(
-        base_url.replace(/\/$/, '') + '/models',
-        'GET',
-        token ? { Authorization: `Bearer ${token}` } : {},
-        null,
-      );
+      let headers = {};
+      if (p.auth_type === 'oauth' && p.oauth_provider) {
+        // OAuth 供给源：刷新凭证 + 用该 provider 的注入头探测
+        const ready = await oauthMod.prepare(
+          { id: p.id, auth_type: 'oauth', oauth_provider: p.oauth_provider, credentials: p.credentials },
+          readAgentConfig, writeAgentConfig,
+        );
+        if (ready._oauth) {
+          const ap = ready._oauth.applyAuth({ headers: {}, body: {}, credentials: ready.credentials });
+          headers = { ...ap.headers };
+          delete headers['Content-Type'];
+          delete headers['Content-Length'];
+        }
+      } else if (p.token) {
+        if (/anthropic/i.test(base_url)) { headers['x-api-key'] = p.token; headers['anthropic-version'] = '2023-06-01'; }
+        else headers['Authorization'] = `Bearer ${p.token}`;
+      }
+      const result = await nodeRequest(base_url.replace(/\/$/, '') + '/models', 'GET', headers, null);
       return { ok: result.status >= 200 && result.status < 400, status: result.status };
     } catch (err) {
       return { ok: false, error: err.message };
@@ -1603,7 +1658,7 @@ app.whenReady().then(() => {
     const a = apps.find(x => x.link_method === 'shim' && x.agent_id === toolId);
     return a ? a.api_key : null;
   });
-  gateway.start(11430, readAgentConfig);
+  gateway.start(11430, readAgentConfig, writeAgentConfig);
 
   // 注入 Claude 客户端模型名（内部透明逻辑，来自 yaml config-loader）
   try { gateway.setClaudeModels(require('./config-loader').claudeModels()); } catch {}

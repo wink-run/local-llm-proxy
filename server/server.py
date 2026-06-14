@@ -25,6 +25,7 @@ from dispatch_image import handle_image
 from settler import run_settler
 from user_router import router as user_router
 from scene_router import router as scene_router
+from provider_router import router as provider_router
 from config_router import router as config_router
 from worker_pool import pool, WorkerConnection
 
@@ -74,6 +75,7 @@ app.add_middleware(
 app.include_router(admin_router, prefix="/admin")
 app.include_router(user_router, prefix="/user")
 app.include_router(scene_router, prefix="/user")
+app.include_router(provider_router, prefix="/user")   # 个人供给源 /user/providers + /user/oauth/claude/*
 app.include_router(config_router, prefix="/api")   # GET /api/config/tools|routes (user JWT)
                                                     # PUT/DELETE /api/config/tools|routes (admin)
 app.include_router(device_router, tags=["device"])
@@ -458,9 +460,9 @@ async def auth_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bea
 
 
 @app.get("/v1/models")
-async def list_models(_key: dict = Depends(auth_user)):
-    # 列出当前在线 Worker 上报的全部模型名（与管理员「模型配置」是否录入无关，避免 Agent 在线却列表为空）
-    model_types = pool.all_model_types()
+async def list_models(key_info: dict = Depends(auth_user)):
+    # 列出当前用户可见的模型：公共（真实 + 全局虚拟）+ 本人个人供给源；个人源对他人隐藏
+    model_types = pool.models_for_user(key_info.get("user_id"))
     return {
         "object": "list",
         "data": [
@@ -476,13 +478,7 @@ async def chat_completions(request: Request, key_info: dict = Depends(auth_user)
     body = await request.json()
     consumer_user_id: Optional[int] = key_info.get("user_id")
     resp = await handle_chat(body, consumer_user_id=consumer_user_id, key_id=key_info.get("id"))
-
-    # 非流式：拿到完整 JSON 后按 usage 扣费（流式在 dispatch 内 SSE 结束时扣）
-    if consumer_user_id and isinstance(resp, dict):
-        await db.consume_credits_for_usage(
-            consumer_user_id, body.get("model", ""), resp.get("usage") or {}
-        )
-
+    # 扣费（含个人源豁免）统一在 dispatch.handle_chat 内完成，避免双重扣费
     return resp
 
 
@@ -605,8 +601,5 @@ async def messages(request: Request, key_info: dict = Depends(_auth_anthropic)):
             headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
         )
 
-    # Non-streaming: consume credits then convert format
-    if consumer_user_id and isinstance(resp, dict):
-        await db.consume_credits_for_usage(consumer_user_id, model, resp.get("usage") or {})
-
+    # Non-streaming: 扣费已在 dispatch.handle_chat 内完成（含个人源豁免），此处仅转换格式
     return _openai_to_anthropic(resp, model)

@@ -289,6 +289,89 @@ td{padding:10px 12px;vertical-align:middle}
       </table>
     </div>
 
+    <!-- ══ Providers（我的供给源）══ -->
+    <div v-show="activeTab === 'providers'" class="tab-content">
+      <div class="toolbar">
+        <span style="color:#64748b;font-size:13px">{{ lang==='zh'?'把你自己的订阅源（API Key 或 Claude 订阅）加为个人供给源，仅你可用，可在路由中与其它模型混用':'Add your own API key or Claude subscription as a private supply source' }}</span>
+        <button class="btn btn-indigo toolbar-right" @click="openProviderModal(null)">＋ {{ lang==='zh'?'添加供给源':'Add provider' }}</button>
+      </div>
+      <table>
+        <thead><tr>
+          <th>{{ lang==='zh'?'名称':'Name' }}</th><th>{{ lang==='zh'?'类型':'Type' }}</th>
+          <th>{{ lang==='zh'?'地址/登录态':'Source' }}</th><th>{{ lang==='zh'?'模型':'Models' }}</th>
+          <th>{{ T.status }}</th><th>{{ T.actions }}</th>
+        </tr></thead>
+        <tbody>
+          <tr v-if="providers.length === 0" class="empty-row"><td colspan="6">{{ lang==='zh'?'还没有个人供给源':'No personal providers yet' }}</td></tr>
+          <tr v-for="p in providers" :key="p.id" :style="p.enabled ? '' : 'opacity:.5'">
+            <td>{{ p.name }}</td>
+            <td><span class="badge badge-blue">{{ p.api_style }}</span></td>
+            <td>
+              <span v-if="p.api_style==='claude_oauth'" :style="(p.credentials&&p.credentials.has_refresh_token)?'color:#a78bfa':'color:#f87171'">
+                🔑 {{ (p.credentials&&p.credentials.has_refresh_token)?(lang==='zh'?'已登录':'linked'):(lang==='zh'?'未登录':'no token') }}
+                <span v-if="p.credentials&&p.credentials.email" style="color:#64748b"> · {{ p.credentials.email }}</span>
+              </span>
+              <span v-else class="mono" style="color:#94a3b8;font-size:12px">{{ p.base_url }}</span>
+            </td>
+            <td><span v-for="m in p.models" :key="provModelName(m)" class="badge" style="margin:1px;background:#1e2130;color:#94a3b8">{{ provModelName(m) }}</span></td>
+            <td><span :class="p.enabled?'badge badge-on':'badge badge-off'">{{ p.enabled?T.enabled:T.disabled }}</span></td>
+            <td>
+              <button class="btn-xs" @click="openProviderModal(p)">{{ lang==='zh'?'编辑':'Edit' }}</button>
+              <button class="btn-xs btn-danger" style="margin-left:4px" @click="deleteProvider(p)">{{ T.delete }}</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Modal -->
+      <div v-if="provModalOpen" style="position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100" @click.self="closeProviderModal">
+        <div style="background:#1a1d27;border:1px solid #2d3148;border-radius:12px;padding:24px;width:460px;max-width:95vw;max-height:90vh;overflow:auto">
+          <div style="font-size:14px;font-weight:600;color:#e2e8f0;margin-bottom:16px">{{ provEditId ? (lang==='zh'?'编辑供给源':'Edit provider') : (lang==='zh'?'添加供给源':'Add provider') }}</div>
+          <div class="field"><label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px">{{ lang==='zh'?'名称':'Name' }} *</label><input v-model="provForm.name" class="form-input" style="width:100%" placeholder="My Claude" /></div>
+          <div class="field"><label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px">{{ lang==='zh'?'类型':'Type' }}</label>
+            <select v-model="provForm.api_style" class="form-input" style="width:100%" :disabled="!!provEditId">
+              <option value="openai">openai（API Key）</option>
+              <option value="anthropic">anthropic（API Key）</option>
+              <option value="claude_oauth">claude_oauth（Claude {{ lang==='zh'?'订阅':'sub' }}）</option>
+            </select>
+          </div>
+          <template v-if="provForm.api_style !== 'claude_oauth'">
+            <div class="field"><label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px">Base URL *</label><input v-model="provForm.base_url" class="form-input" style="width:100%" placeholder="https://api.example.com" /></div>
+            <div class="field"><label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px">API Key {{ provEditId ? (lang==='zh'?'（留空不改）':'(blank=keep)') : '*' }}</label><input v-model="provForm.api_key" class="form-input" style="width:100%" type="password" autocomplete="new-password" placeholder="sk-..." /></div>
+          </template>
+          <template v-else>
+            <div class="field"><label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px">{{ lang==='zh'?'上游地址（留空=官方 api.anthropic.com）':'Base URL (blank = official)' }}</label><input v-model="provForm.base_url" class="form-input" style="width:100%" placeholder="https://api.anthropic.com" /></div>
+            <div style="background:#161922;border:1px solid #2d3148;border-radius:8px;padding:12px;margin-bottom:14px">
+              <div style="font-size:12px;color:#94a3b8;margin-bottom:8px">{{ lang==='zh'?'Claude 订阅登录（OAuth）':'Claude subscription login (OAuth)' }}</div>
+              <div v-if="provOAuth.refresh_token" style="color:#4ade80;font-size:13px;margin-bottom:8px">✓ {{ lang==='zh'?'已获取登录凭证':'Credential obtained' }}<span v-if="provOAuth.email"> · {{ provOAuth.email }}</span></div>
+              <div v-else-if="provEditId" style="color:#64748b;font-size:12px;margin-bottom:8px">{{ lang==='zh'?'已绑定（如需更换可重新登录）':'Linked (re-login to replace)' }}</div>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#94a3b8;margin-bottom:8px;cursor:pointer"><input type="checkbox" v-model="provOAuth.setupToken" /> Setup Token（{{ lang==='zh'?'仅推理·约1年':'inference·~1y' }}）</label>
+              <button type="button" class="btn-sm" @click="provStartOAuth" :disabled="provOAuth.busy">{{ lang==='zh'?'① 打开授权页':'① Open auth page' }}</button>
+              <template v-if="provOAuth.started">
+                <input v-model="provOAuth.code" class="form-input" style="width:100%;margin-top:8px" :placeholder="lang==='zh'?'粘贴回调里的 code（code#state）':'Paste code (code#state)'" />
+                <button type="button" class="btn btn-indigo btn-sm" style="margin-top:6px" @click="provExchangeOAuth" :disabled="provOAuth.busy || !provOAuth.code.trim()">{{ lang==='zh'?'② 完成登录':'② Finish login' }}</button>
+              </template>
+            </div>
+          </template>
+          <div class="field">
+            <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px">{{ lang==='zh'?'模型（路由可选用）':'Models (selectable in routes)' }}</label>
+            <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px">
+              <div v-for="(m,i) in provForm.models" :key="i" style="display:flex;gap:6px">
+                <input v-model="provForm.models[i].name" class="form-input" style="flex:1;min-width:0" placeholder="model id" />
+                <button type="button" @click="provRemoveModel(i)" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:18px;padding:0 4px">×</button>
+              </div>
+            </div>
+            <button type="button" @click="provAddModel" style="background:none;border:none;color:#818cf8;font-size:12px;cursor:pointer;padding:0">＋ {{ lang==='zh'?'添加模型':'Add model' }}</button>
+          </div>
+          <div v-if="provMsg" style="color:#f87171;font-size:13px;margin-bottom:10px">{{ provMsg }}</div>
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn-sm" @click="closeProviderModal">{{ lang==='zh'?'取消':'Cancel' }}</button>
+            <button class="btn btn-indigo" @click="saveProvider">{{ lang==='zh'?'保存':'Save' }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ══ Settlements ══ -->
     <div v-show="activeTab === 'settlements'" class="tab-content">
       <div class="toolbar">
@@ -452,7 +535,7 @@ const LANGS = {
     email: '邮箱', password: '密码', nickname: '昵称（可选）', nicknamePlaceholder: '留空使用邮箱前缀',
     referralCode: '推荐码（可选）', referralPlaceholder: '好友推荐码',
     portalTitle: '用户中心', logout: '退出',
-    tabs: { overview:'积分概览', keys:'我的 API Keys', debug:'API 调试', settlements:'结算明细', transactions:'积分流水', purchase:'购买积分', referral:'推荐分享' },
+    tabs: { overview:'积分概览', keys:'我的 API Keys', providers:'我的供给源', debug:'API 调试', settlements:'结算明细', transactions:'积分流水', purchase:'购买积分', referral:'推荐分享' },
     balance: '当前余额', earned: '累计获得', spent: '累计消费', credits: '积分',
     accountInfo: '账户信息', nickname2: '昵称', registeredAt: '注册时间',
     apikeyPerm: 'API Key 权限', permGranted: '已开通', permNotGranted: '未开通（线下购买后开通）',
@@ -497,7 +580,7 @@ const LANGS = {
     email: 'Email', password: 'Password', nickname: 'Nickname (optional)', nicknamePlaceholder: 'Defaults to email prefix',
     referralCode: 'Referral code (optional)', referralPlaceholder: "Friend's referral code",
     portalTitle: 'User Portal', logout: 'Sign Out',
-    tabs: { overview:'Credits', keys:'API Keys', debug:'API Debug', settlements:'Settlements', transactions:'Transactions', purchase:'Buy Credits', referral:'Referral' },
+    tabs: { overview:'Credits', keys:'API Keys', providers:'My Providers', debug:'API Debug', settlements:'Settlements', transactions:'Transactions', purchase:'Buy Credits', referral:'Referral' },
     balance: 'Balance', earned: 'Total Earned', spent: 'Total Spent', credits: 'credits',
     accountInfo: 'Account Info', nickname2: 'Nickname', registeredAt: 'Registered',
     apikeyPerm: 'API Key Access', permGranted: 'Enabled', permNotGranted: 'Not enabled (purchase credits to unlock)',
@@ -559,6 +642,7 @@ createApp({
       const all = [
         { key:'overview',     label: tabs.overview },
         { key:'keys',         label: tabs.keys, requireApikey: true },
+        { key:'providers',    label: tabs.providers },
         { key:'debug',        label: tabs.debug, requireApikey: true },
         { key:'settlements',  label: tabs.settlements },
         { key:'transactions', label: tabs.transactions },
@@ -620,6 +704,7 @@ createApp({
     function switchTab(k) {
       activeTab.value = k
       if (k === 'keys')         fetchMyKeys()
+      if (k === 'providers')    fetchProviders()
       if (k === 'debug')        { fetchMyKeys().then(() => initDebugTab()) }
       if (k === 'settlements')  fetchSettlements()
       if (k === 'transactions') fetchTransactions()
@@ -646,6 +731,76 @@ createApp({
     const keyReveal = ref({})
     function toggleKeyReveal(id) {
       keyReveal.value = { ...keyReveal.value, [id]: !keyReveal.value[id] }
+    }
+
+    /* ── 我的供给源（个人 Provider）── */
+    const providers = ref([])
+    const provModalOpen = ref(false)
+    const provEditId = ref(null)
+    const provForm = ref({ name:'', api_style:'openai', base_url:'', api_key:'', models:[] })
+    const provMsg = ref('')
+    const provOAuth = ref({ sessionId:'', code:'', email:'', refresh_token:'', setupToken:false, busy:false, started:false })
+    function resetProvOAuth() { provOAuth.value = { sessionId:'', code:'', email:'', refresh_token:'', setupToken:false, busy:false, started:false } }
+    function provModelName(m) { return typeof m === 'string' ? m : (m.name || '') }
+    async function fetchProviders() {
+      try { const d = await (await userApi('/user/providers')).json(); providers.value = d.providers || [] } catch {}
+    }
+    function openProviderModal(p) {
+      provMsg.value = ''; resetProvOAuth()
+      if (p) {
+        provEditId.value = p.id
+        provForm.value = { name:p.name, api_style:p.api_style, base_url:p.base_url||'', api_key:'',
+          models:(p.models||[]).map(m=>({name: provModelName(m)})) }
+      } else {
+        provEditId.value = null
+        provForm.value = { name:'', api_style:'openai', base_url:'', api_key:'', models:[] }
+      }
+      provModalOpen.value = true
+    }
+    function closeProviderModal() { provModalOpen.value = false }
+    function provAddModel() { provForm.value.models.push({name:''}) }
+    function provRemoveModel(i) { provForm.value.models.splice(i,1) }
+    async function provStartOAuth() {
+      provMsg.value=''; provOAuth.value.busy=true
+      try {
+        const d = await (await userApi('/user/oauth/claude/start',{method:'POST',body:JSON.stringify({setup_token:provOAuth.value.setupToken})})).json()
+        provOAuth.value.sessionId = d.session_id; provOAuth.value.started = true
+        window.open(d.auth_url, '_blank')
+      } catch { provMsg.value='Error' } finally { provOAuth.value.busy=false }
+    }
+    async function provExchangeOAuth() {
+      provMsg.value=''; provOAuth.value.busy=true
+      try {
+        const r = await userApi('/user/oauth/claude/exchange',{method:'POST',body:JSON.stringify({session_id:provOAuth.value.sessionId,code:provOAuth.value.code.trim()})})
+        const d = await r.json()
+        if (!r.ok) { provMsg.value = d.detail||'Error'; return }
+        provOAuth.value.refresh_token = d.refresh_token; provOAuth.value.email = d.email||''
+        provOAuth.value.started = false; provOAuth.value.code = ''
+      } catch { provMsg.value='Error' } finally { provOAuth.value.busy=false }
+    }
+    async function saveProvider() {
+      provMsg.value = ''
+      const isOauth = provForm.value.api_style === 'claude_oauth'
+      const models = provForm.value.models.filter(m=>m.name && m.name.trim()).map(m=>({name:m.name.trim(), type:'chat'}))
+      const payload = { name: provForm.value.name.trim(), api_style: provForm.value.api_style,
+        base_url: provForm.value.base_url.trim(), api_key: provForm.value.api_key.trim(), models, enabled: true }
+      if (isOauth) {
+        if (provOAuth.value.refresh_token) payload.refresh_token = provOAuth.value.refresh_token
+        else if (!provEditId.value) { provMsg.value = lang.value==='zh'?'请先完成 Claude 订阅登录':'Finish Claude login first'; return }
+      }
+      if (!provEditId.value) payload.auth_type = isOauth ? 'claude_oauth' : 'api_key'
+      try {
+        let r
+        if (provEditId.value) r = await userApi(`/user/providers/${provEditId.value}`,{method:'PATCH',body:JSON.stringify(payload)})
+        else r = await userApi('/user/providers',{method:'POST',body:JSON.stringify(payload)})
+        if (!r.ok) { const d = await r.json(); provMsg.value = d.detail || 'Error'; return }
+        provModalOpen.value = false
+        await fetchProviders()
+      } catch { provMsg.value = 'Error' }
+    }
+    async function deleteProvider(p) {
+      if (!confirm((lang.value==='zh'?'确认删除供给源 ':'Delete provider ') + p.name + ' ?')) return
+      try { await userApi(`/user/providers/${p.id}`,{method:'DELETE'}); providers.value = providers.value.filter(x=>x.id!==p.id) } catch {}
     }
     const workerKeyVisible = ref(false)
 
@@ -820,6 +975,9 @@ createApp({
       loggedIn, authTab, authLoading, authErr, authOk, form, doLogin, doRegister, logout,
       profile, activeTab, visibleTabs, switchTab,
       myKeys, newKeyNote, createKey, toggleKey, deleteKey, maskKey,
+      providers, provModalOpen, provEditId, provForm, provMsg, provOAuth,
+      provModelName, fetchProviders, openProviderModal, closeProviderModal,
+      provAddModel, provRemoveModel, provStartOAuth, provExchangeOAuth, saveProvider, deleteProvider,
       settlements, fetchSettlements,
       transactions, fetchTransactions,
       purchaseAmt, purchaseNote, purchaseLoading, purchaseMsg, purchaseMsgOk,

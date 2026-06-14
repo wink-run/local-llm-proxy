@@ -267,17 +267,26 @@ async def _migrate_virtual_agents() -> None:
             await db.execute("ALTER TABLE users ADD COLUMN is_virtual INTEGER DEFAULT 0")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS virtual_agents (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                name       TEXT NOT NULL,
-                base_url   TEXT NOT NULL,
-                api_key    TEXT NOT NULL,
-                api_style  TEXT NOT NULL DEFAULT 'openai',
-                models     TEXT NOT NULL DEFAULT '[]',
-                enabled    INTEGER DEFAULT 1,
-                user_id    INTEGER REFERENCES users(id),
-                created_at TEXT DEFAULT (datetime('now'))
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT NOT NULL,
+                base_url    TEXT NOT NULL,
+                api_key     TEXT NOT NULL,
+                api_style   TEXT NOT NULL DEFAULT 'openai',
+                models      TEXT NOT NULL DEFAULT '[]',
+                enabled     INTEGER DEFAULT 1,
+                user_id     INTEGER REFERENCES users(id),
+                credentials TEXT DEFAULT '',
+                owner_user_id INTEGER REFERENCES users(id),
+                created_at  TEXT DEFAULT (datetime('now'))
             )
         """)
+        # 为旧库补列：credentials（OAuth 凭证 JSON）、owner_user_id（个人供给源归属，NULL=全局）
+        async with db.execute("PRAGMA table_info(virtual_agents)") as cur:
+            vcols = {r[1] for r in await cur.fetchall()}
+        if "credentials" not in vcols:
+            await db.execute("ALTER TABLE virtual_agents ADD COLUMN credentials TEXT DEFAULT ''")
+        if "owner_user_id" not in vcols:
+            await db.execute("ALTER TABLE virtual_agents ADD COLUMN owner_user_id INTEGER")
         await db.commit()
 
 
@@ -891,14 +900,46 @@ async def get_spin_status(user_id: int) -> dict:
 
 # ── virtual_agents ────────────────────────────────────────────────────────────
 
+def _parse_agent_credentials(row: dict) -> dict:
+    """把行里的 credentials 字段还原为 dict（解析失败回退空）。
+
+    单一读入口：将来若启用对称加密（CREDENTIALS_KEY），只需在此解密后再 json.loads。
+    """
+    import json as _json
+    raw = row.get("credentials")
+    if not raw:
+        return {}
+    try:
+        val = _json.loads(raw)
+        return val if isinstance(val, dict) else {}
+    except (ValueError, TypeError):
+        return {}
+
+
+def _dump_agent_credentials(credentials: Optional[dict]) -> str:
+    """单一写入口：将 credentials dict 序列化落库。
+
+    将来若启用对称加密（CREDENTIALS_KEY），只需在此 json.dumps 后再加密。
+    """
+    import json as _json
+    return _json.dumps(credentials or {})
+
+
 async def create_virtual_agent(name: str, base_url: str, api_key: str,
                                 api_style: str, models_list: list,
-                                enabled: bool = True) -> dict:
-    """创建虚拟 Agent，同时创建关联虚拟账户，返回新记录。"""
+                                enabled: bool = True,
+                                credentials: Optional[dict] = None,
+                                owner_user_id: Optional[int] = None) -> dict:
+    """创建虚拟 Agent，同时创建关联虚拟账户，返回新记录。
+
+    credentials：OAuth 账号凭证（claude_oauth 用），普通 api_key 账号传 None。
+    owner_user_id：归属真实用户（个人供给源）；None=全局/管理员。
+    """
     import json as _json
     ref_code = "VREF-" + secrets.token_urlsafe(6).upper()
     worker_key = "vwk-" + secrets.token_urlsafe(32)
     virtual_email = f"virtual-{secrets.token_urlsafe(8)}@virtual.local"
+    creds_json = _dump_agent_credentials(credentials)
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """INSERT INTO users
@@ -909,31 +950,54 @@ async def create_virtual_agent(name: str, base_url: str, api_key: str,
         virtual_user_id = cur.lastrowid
         models_json = _json.dumps(models_list)
         cur2 = await db.execute(
-            """INSERT INTO virtual_agents (name, base_url, api_key, api_style, models, enabled, user_id)
-               VALUES (?,?,?,?,?,?,?)""",
-            (name, base_url, api_key, api_style, models_json, int(enabled), virtual_user_id),
+            """INSERT INTO virtual_agents
+               (name, base_url, api_key, api_style, models, enabled, user_id, credentials, owner_user_id)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (name, base_url, api_key, api_style, models_json, int(enabled),
+             virtual_user_id, creds_json, owner_user_id),
         )
         await db.commit()
         return {
             "id": cur2.lastrowid, "name": name, "base_url": base_url,
             "api_style": api_style, "models": models_list,
             "enabled": int(enabled), "user_id": virtual_user_id,
+            "credentials": credentials or {}, "owner_user_id": owner_user_id,
         }
 
 
-async def list_virtual_agents(enabled_only: bool = False) -> list:
+async def list_virtual_agents(enabled_only: bool = False,
+                              owner_user_id: Optional[int] = None,
+                              owner_is_null: bool = False) -> list:
+    """列出虚拟 Agent。
+
+    owner_user_id 非 None：仅该用户的个人源；owner_is_null=True：仅全局源（管理后台用）。
+    """
     import json as _json
+    where, args = [], []
+    if enabled_only:
+        where.append("enabled=1")
+    if owner_user_id is not None:
+        where.append("owner_user_id=?")
+        args.append(owner_user_id)
+    elif owner_is_null:
+        where.append("owner_user_id IS NULL")
+    sql = "SELECT * FROM virtual_agents"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY created_at DESC"
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        sql = "SELECT * FROM virtual_agents"
-        if enabled_only:
-            sql += " WHERE enabled=1"
-        sql += " ORDER BY created_at DESC"
-        async with db.execute(sql) as cur:
+        async with db.execute(sql, args) as cur:
             rows = [dict(r) for r in await cur.fetchall()]
     for r in rows:
         r["models"] = _json.loads(r["models"] or "[]")
+        r["credentials"] = _parse_agent_credentials(r)
     return rows
+
+
+async def list_virtual_agents_by_owner(owner_user_id: int) -> list:
+    """某用户的全部个人供给源（含禁用）。"""
+    return await list_virtual_agents(owner_user_id=owner_user_id)
 
 
 async def get_virtual_agent(agent_id: int) -> Optional[dict]:
@@ -946,13 +1010,23 @@ async def get_virtual_agent(agent_id: int) -> Optional[dict]:
                 return None
             row = dict(r)
     row["models"] = _json.loads(row["models"] or "[]")
+    row["credentials"] = _parse_agent_credentials(row)
     return row
+
+
+async def get_virtual_agent_owned(agent_id: int, owner_user_id: int) -> Optional[dict]:
+    """按归属取个人供给源；非本人拥有则返回 None（防越权）。"""
+    agent = await get_virtual_agent(agent_id)
+    if not agent or agent.get("owner_user_id") != owner_user_id:
+        return None
+    return agent
 
 
 async def update_virtual_agent(agent_id: int, name: str, base_url: str,
                                 api_key: str, api_style: str,
-                                models_list: list, enabled: bool) -> None:
-    """api_key 为空串时不更新密钥字段。"""
+                                models_list: list, enabled: bool,
+                                credentials: Optional[dict] = None) -> None:
+    """api_key 为空串时不更新密钥字段；credentials 为 None 时不更新凭证字段。"""
     import json as _json
     models_json = _json.dumps(models_list)
     async with aiosqlite.connect(DB_PATH) as db:
@@ -970,9 +1044,24 @@ async def update_virtual_agent(agent_id: int, name: str, base_url: str,
                    WHERE id=?""",
                 (name, base_url, api_style, models_json, int(enabled), agent_id),
             )
+        if credentials is not None:
+            await db.execute(
+                "UPDATE virtual_agents SET credentials=? WHERE id=?",
+                (_dump_agent_credentials(credentials), agent_id),
+            )
         await db.execute(
             "UPDATE users SET nickname=? WHERE id=(SELECT user_id FROM virtual_agents WHERE id=?)",
             (name, agent_id),
+        )
+        await db.commit()
+
+
+async def update_virtual_agent_credentials(agent_id: int, credentials: dict) -> None:
+    """仅更新 OAuth 凭证（token 刷新后回写，避免触动其它字段）。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE virtual_agents SET credentials=? WHERE id=?",
+            (_dump_agent_credentials(credentials), agent_id),
         )
         await db.commit()
 

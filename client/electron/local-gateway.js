@@ -8,6 +8,7 @@ const os    = require('os');
 const path  = require('path');
 const codexTransform = require('./codex-transform');
 const reqRouter = require('./request-router');
+const oauth = require('./oauth');
 
 // ── In-memory state ───────────────────────────────────────────────────────────
 
@@ -24,6 +25,7 @@ function debugLog(label, data) {
 }
 
 let _getConfig   = null;     // () => config object (set at start)
+let _saveConfig  = null;     // (config) => void  写回配置（OAuth 刷新后回写凭证）
 let _server      = null;
 let _port        = 11430;
 // 'llm-router-{id}' → { steps: [{model, tier, ...}], scene_name }
@@ -153,14 +155,16 @@ function proxyRequest(provider, reqPath, body, res) {
 
     const mod      = u.protocol === 'https:' ? https : http;
     // 只对 OAI 路径注入 stream_options（Anthropic /v1/messages 不识别）
-    const sendBody = /\/chat\/completions$/.test(reqPath) ? withUsageOption(body) : body;
-    const bodyStr  = JSON.stringify(sendBody);
-    const headers  = {
+    let sendBody = /\/chat\/completions$/.test(reqPath) ? withUsageOption(body) : body;
+    let headers  = {
       'Content-Type':   'application/json',
-      'Content-Length': Buffer.byteLength(bodyStr),
       'Accept':         'text/event-stream, application/json',
     };
-    if (provider.token) {
+    if (provider._oauth) {
+      // OAuth 供给源：注入 Bearer + 指纹头 + system，覆盖默认认证头
+      const ap = provider._oauth.applyAuth({ headers, body: sendBody, credentials: provider.credentials });
+      headers = ap.headers; sendBody = ap.body;
+    } else if (provider.token) {
       if (/anthropic/i.test(provider.base_url || '') || provider.api_format === 'anthropic') {
         headers['x-api-key'] = provider.token;
         headers['anthropic-version'] = '2023-06-01';
@@ -168,6 +172,8 @@ function proxyRequest(provider, reqPath, body, res) {
         headers['Authorization'] = `Bearer ${provider.token}`;
       }
     }
+    const bodyStr = JSON.stringify(sendBody);
+    headers['Content-Length'] = Buffer.byteLength(bodyStr);
 
     const opts = {
       hostname: u.hostname,
@@ -285,7 +291,8 @@ function proxyConvertSync(provider, oaiBody, model, res) {
       'Content-Type':   'application/json',
       'Content-Length': Buffer.byteLength(bodyStr),
     };
-    if (provider.token) headers['Authorization'] = `Bearer ${provider.token}`;
+    if (provider._oauth) Object.assign(headers, provider._oauth.applyAuth({ headers, credentials: provider.credentials }).headers);
+    else if (provider.token) headers['Authorization'] = `Bearer ${provider.token}`;
 
     const t0       = Date.now();
     const proxyReq = mod.request({
@@ -344,7 +351,8 @@ function proxyConvertStream(provider, oaiBody, model, res) {
       'Content-Length': Buffer.byteLength(bodyStr),
       'Accept':         'text/event-stream, application/json',
     };
-    if (provider.token) headers['Authorization'] = `Bearer ${provider.token}`;
+    if (provider._oauth) Object.assign(headers, provider._oauth.applyAuth({ headers, credentials: provider.credentials }).headers);
+    else if (provider.token) headers['Authorization'] = `Bearer ${provider.token}`;
 
     const t0       = Date.now();
     const proxyReq = mod.request({
@@ -436,20 +444,23 @@ function proxyConvertStream(provider, oaiBody, model, res) {
 
 function proxyAnthropicSync(provider, oaiBody, model, res) {
   return new Promise((resolve, reject) => {
-    const anthBody  = oaiRequestToAnthropic({ ...oaiBody, stream: false });
+    let anthBody    = oaiRequestToAnthropic({ ...oaiBody, stream: false });
     const base      = normBase(provider.base_url);
     const fullUrl   = base + '/v1/messages';
     let u;
     try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
 
     const mod     = u.protocol === 'https:' ? https : http;
-    const bodyStr = JSON.stringify(anthBody);
-    const headers = {
+    let headers   = {
       'Content-Type':      'application/json',
-      'Content-Length':    Buffer.byteLength(bodyStr),
       'anthropic-version': '2023-06-01',
     };
-    if (provider.token) headers['x-api-key'] = provider.token;
+    if (provider._oauth) {
+      const ap = provider._oauth.applyAuth({ headers, body: anthBody, credentials: provider.credentials });
+      headers = ap.headers; anthBody = ap.body;
+    } else if (provider.token) headers['x-api-key'] = provider.token;
+    const bodyStr = JSON.stringify(anthBody);
+    headers['Content-Length'] = Buffer.byteLength(bodyStr);
 
     const t0       = Date.now();
     const proxyReq = mod.request({
@@ -490,21 +501,24 @@ function proxyAnthropicSync(provider, oaiBody, model, res) {
 
 function proxyAnthropicStream(provider, oaiBody, model, res) {
   return new Promise((resolve, reject) => {
-    const anthBody  = oaiRequestToAnthropic({ ...oaiBody, stream: true });
+    let anthBody    = oaiRequestToAnthropic({ ...oaiBody, stream: true });
     const base      = normBase(provider.base_url);
     const fullUrl   = base + '/v1/messages';
     let u;
     try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
 
     const mod     = u.protocol === 'https:' ? https : http;
-    const bodyStr = JSON.stringify(anthBody);
-    const headers = {
+    let headers   = {
       'Content-Type':      'application/json',
-      'Content-Length':    Buffer.byteLength(bodyStr),
       'anthropic-version': '2023-06-01',
       'Accept':            'text/event-stream',
     };
-    if (provider.token) headers['x-api-key'] = provider.token;
+    if (provider._oauth) {
+      const ap = provider._oauth.applyAuth({ headers, body: anthBody, credentials: provider.credentials });
+      headers = ap.headers; anthBody = ap.body;
+    } else if (provider.token) headers['x-api-key'] = provider.token;
+    const bodyStr = JSON.stringify(anthBody);
+    headers['Content-Length'] = Buffer.byteLength(bodyStr);
 
     const t0       = Date.now();
     const proxyReq = mod.request({
@@ -594,7 +608,8 @@ function proxyP2PSync(provider, oaiBody, model, res) {
       'Content-Length': Buffer.byteLength(bodyStr),
       'Accept':         'text/event-stream, application/json',
     };
-    if (provider.token) headers['Authorization'] = `Bearer ${provider.token}`;
+    if (provider._oauth) Object.assign(headers, provider._oauth.applyAuth({ headers, credentials: provider.credentials }).headers);
+    else if (provider.token) headers['Authorization'] = `Bearer ${provider.token}`;
 
     const t0 = Date.now();
     const proxyReq = mod.request({
@@ -683,7 +698,8 @@ function proxyResponsesViaChat(provider, responsesBody, model, res) {
       'Content-Length': Buffer.byteLength(bodyStr),
       'Accept':         'text/event-stream, application/json',
     };
-    if (provider.token) headers['Authorization'] = `Bearer ${provider.token}`;
+    if (provider._oauth) Object.assign(headers, provider._oauth.applyAuth({ headers, credentials: provider.credentials }).headers);
+    else if (provider.token) headers['Authorization'] = `Bearer ${provider.token}`;
 
     const t0 = Date.now();
     let firstTokenMs = null;
@@ -762,11 +778,118 @@ function proxyResponsesViaChat(provider, responsesBody, model, res) {
   });
 }
 
+// ── Codex Responses → Anthropic 供给源（如 Claude OAuth）──────────────────────
+// Codex 客户端走 Responses 协议，但 Claude 供给源是 Anthropic /v1/messages。
+// 串联现有转换器：Responses→Chat（codexTransform）→ Anthropic（oaiRequestToAnthropic）出，
+// 回程 Anthropic→Chat（anthropicRespToOai）→ Responses（chatToResponses / ChatToResponsesStream）。
+function proxyResponsesViaAnthropic(provider, responsesBody, model, res) {
+  return new Promise((resolve, reject) => {
+    const streaming = !!responsesBody.stream;
+    const chatBody  = codexTransform.responsesToChat({ ...responsesBody, model });
+    let anthBody    = oaiRequestToAnthropic({ ...chatBody, stream: streaming });
+
+    const base    = normBase(provider.base_url);
+    const fullUrl = base + '/v1/messages';
+    let u;
+    try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
+    const mod = u.protocol === 'https:' ? https : http;
+
+    let headers = { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01' };
+    if (streaming) headers['Accept'] = 'text/event-stream';
+    if (provider._oauth) {
+      const ap = provider._oauth.applyAuth({ headers, body: anthBody, credentials: provider.credentials });
+      headers = ap.headers; anthBody = ap.body;
+    } else if (provider.token) headers['x-api-key'] = provider.token;
+    const bodyStr = JSON.stringify(anthBody);
+    headers['Content-Length'] = Buffer.byteLength(bodyStr);
+
+    const t0 = Date.now();
+    let firstTokenMs = null;
+    const proxyReq = mod.request({
+      hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + (u.search || ''), method: 'POST', headers, timeout: 120_000,
+    }, (proxyRes) => {
+      if (proxyRes.statusCode >= 400) {
+        const ec = [];
+        proxyRes.on('data', c => ec.push(c));
+        proxyRes.on('end', () => {
+          const errBody = Buffer.concat(ec).toString().slice(0, 800);
+          debugLog('proxyResponsesViaAnthropic 上游错误', { status: proxyRes.statusCode, body: errBody, sent_headers: Object.keys(headers) });
+          reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode, body: errBody }));
+        });
+        proxyRes.on('error', () => reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode })));
+        return;
+      }
+      if (res.headersSent) { proxyRes.resume(); return reject(new Error('headers_already_sent')); }
+      const status = proxyRes.statusCode;
+
+      if (streaming) {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no', 'Access-Control-Allow-Origin': '*' });
+        const sm = new codexTransform.ChatToResponsesStream();
+        const chatId = 'chatcmpl-' + Math.random().toString(36).slice(2, 26);
+        let buf = '', usageIn = 0, usageOut = 0, started = false;
+        const feed = (obj) => { res.write(sm.handleChunk(obj)); };
+        proxyRes.on('data', (chunk) => {
+          buf += chunk.toString();
+          const lines = buf.split('\n');
+          buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data:')) continue;
+            const ds = line.slice(5).replace(/^ /, '').trim();
+            if (!ds || ds === '[DONE]') continue;
+            let evt; try { evt = JSON.parse(ds); } catch { continue; }
+            if (evt.type === 'message_start') {
+              usageIn = evt.message?.usage?.input_tokens || 0;
+              if (!started) { started = true; feed({ id: chatId, choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] }); }
+            } else if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta' && evt.delta.text) {
+              if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
+              feed({ id: chatId, choices: [{ index: 0, delta: { content: evt.delta.text }, finish_reason: null }] });
+            } else if (evt.type === 'message_delta') {
+              if (evt.usage?.output_tokens != null) usageOut = evt.usage.output_tokens;
+              const stop = evt.delta?.stop_reason;
+              if (stop) feed({ id: chatId, choices: [{ index: 0, delta: {}, finish_reason: stop === 'end_turn' ? 'stop' : stop }],
+                usage: { prompt_tokens: usageIn, completion_tokens: usageOut, total_tokens: usageIn + usageOut } });
+            }
+          }
+        });
+        const done = () => ({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0,
+          input_tokens: usageIn, output_tokens: usageOut, message_id: sm.getResponseId ? sm.getResponseId() : null, status_code: status });
+        proxyRes.on('end', () => { if (!sm.completed) res.write(sm.finalize()); res.end(); resolve(done()); });
+        proxyRes.on('error', (err) => { if (!sm.completed) res.write(sm.failedEvent(`Stream error: ${err.message}`, 'stream_error')); res.destroy(err); resolve(done()); });
+      } else {
+        const chunks = [];
+        proxyRes.on('data', c => chunks.push(c));
+        proxyRes.on('end', () => {
+          try {
+            const anthResp = JSON.parse(Buffer.concat(chunks).toString());
+            const respObj  = codexTransform.chatToResponses(anthropicRespToOai(anthResp));
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify(respObj));
+            const latency = Date.now() - t0;
+            resolve({ provider: provider.id, latency, first_token_ms: latency,
+              input_tokens: anthResp.usage?.input_tokens || 0, output_tokens: anthResp.usage?.output_tokens || 0,
+              cache_read_tokens: anthResp.usage?.cache_read_input_tokens || 0,
+              message_id: anthResp.id || null, status_code: status });
+          } catch (err) { reject(err); }
+        });
+        proxyRes.on('error', reject);
+      }
+    });
+    proxyReq.on('error', reject);
+    proxyReq.on('timeout', () => { proxyReq.destroy(); reject(new Error('timeout')); });
+    proxyReq.write(bodyStr);
+    proxyReq.end();
+  });
+}
+
 // ── Route ─────────────────────────────────────────────────────────────────────
 
 // Call one provider with format conversion; throws on HTTP error.
 // provider is already resolved (base_url/token correct, models populated).
 async function callProvider(provider, isAnthropic, streaming, reqPath, body, attemptModel, res) {
+  // OAuth 供给源：确保 access_token 有效（必要时刷新并回写 config），附加 _oauth 模块
+  provider = await oauth.prepare(provider, _getConfig, _saveConfig);
+
   debugLog(`callProvider 选中 provider`, {
     provider_id: provider.id,
     provider_type: provider.type,
@@ -778,9 +901,13 @@ async function callProvider(provider, isAnthropic, streaming, reqPath, body, att
     attemptModel,
   });
 
-  // Codex Responses 请求：统一走 Responses⇄Chat 转换（上游按 Chat Completions 处理）
+  // Codex Responses 请求：anthropic 供给源走 Responses→Anthropic 桥，否则走 Responses⇄Chat
   if (reqPath === '/v1/responses' || reqPath === '/responses') {
-    return await proxyResponsesViaChat(provider, { ...body, model: attemptModel }, attemptModel, res);
+    const toAnthropic = /anthropic/i.test(provider.base_url || '') || provider.api_format === 'anthropic';
+    const rb = { ...body, model: attemptModel };
+    return toAnthropic
+      ? await proxyResponsesViaAnthropic(provider, rb, attemptModel, res)
+      : await proxyResponsesViaChat(provider, rb, attemptModel, res);
   }
   const attemptBody = { ...body, model: attemptModel };
 
@@ -1380,11 +1507,12 @@ function handleRequest(req, res) {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-function start(port, getConfig) {
+function start(port, getConfig, saveConfig) {
   if (_server) return;
-  _port      = port || 11430;
-  _getConfig = getConfig;
-  _server    = http.createServer(handleRequest);
+  _port       = port || 11430;
+  _getConfig  = getConfig;
+  _saveConfig = saveConfig || null;
+  _server     = http.createServer(handleRequest);
   _server.listen(_port, '127.0.0.1', () => {
     console.log(`[gateway] listening on 127.0.0.1:${_port}`);
   });

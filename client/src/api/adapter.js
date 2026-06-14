@@ -59,6 +59,12 @@ const electronAdapter = {
     scan:  ()    => window.electronAPI.config.scan(),
     importKeys: () => window.electronAPI.config.importKeys(),
   },
+  oauth: {
+    start:        (provider, opts) => window.electronAPI.oauth.start(provider, opts),
+    exchange:     (sessionId, code) => window.electronAPI.oauth.exchange(sessionId, code),
+    poll:         (sessionId) => window.electronAPI.oauth.poll(sessionId),
+    openExternal: (url) => window.electronAPI.oauth.openExternal(url),
+  },
 };
 
 // ── HTTP adapter ──────────────────────────────────────────────────────────────
@@ -88,6 +94,13 @@ const httpAdapter = {
     scan:  ()    => Promise.resolve([]), // no HTTP equivalent — server-side scan not available remotely
     importKeys: () => Promise.resolve([]), // 本机扫描仅桌面端，HTTP 模式无等价
   },
+  oauth: {
+    // OAuth 订阅登录依赖桌面端本地流程，HTTP/远程模式不支持
+    start:        () => Promise.reject(new Error('OAuth 登录仅桌面客户端支持')),
+    exchange:     () => Promise.reject(new Error('OAuth 登录仅桌面客户端支持')),
+    poll:         () => Promise.reject(new Error('OAuth 登录仅桌面客户端支持')),
+    openExternal: (url) => { try { window.open(url, '_blank'); } catch {} return Promise.resolve({ ok: true }); },
+  },
 };
 
 // ── Exports ───────────────────────────────────────────────────────────────────
@@ -97,3 +110,4 @@ const httpAdapter = {
 export function getGateway()     { return (isElectron() && window.electronAPI.gateway)     ? electronAdapter.gateway     : httpAdapter.gateway;     }
 export function getLocalConfig() { return (isElectron() && window.electronAPI.localConfig) ? electronAdapter.localConfig : httpAdapter.localConfig; }
 export function getConfig()      { return (isElectron() && window.electronAPI.config)      ? electronAdapter.config      : httpAdapter.config;      }
+export function getOauth()       { return (isElectron() && window.electronAPI.oauth)       ? electronAdapter.oauth       : httpAdapter.oauth;       }

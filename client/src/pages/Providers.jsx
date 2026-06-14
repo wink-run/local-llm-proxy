@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getNetwork, getProfile, listKeys, createKey, deleteKey, getProviderCatalog } from '../api/client';
 import { getServerUrl } from '../config';
-import { getGateway, getLocalConfig, getConfig } from '../api/adapter';
+import { getGateway, getLocalConfig, getConfig, getOauth } from '../api/adapter';
 
 // 内置兜底目录：当后端 /api/catalog 不可达（离线 / VPS 宕机）时使用。
 // 正常情况下目录由后端下发，改源请改 server/catalog.py。
@@ -19,8 +19,10 @@ const FALLBACK_PROVIDER_META = {
   siliconflow:     { icon: '🧪', label: 'SiliconFlow',    hint: '国内免费源，新人 ¥16：siliconflow.cn',    keyless: false, key_prefix: ['sk-'],                 signup_url: 'https://cloud.siliconflow.cn/account/ak' },
   cohere:          { icon: '🐬', label: 'Cohere',         hint: 'Trial Key 免费：dashboard.cohere.com',    keyless: false, key_prefix: [],                      signup_url: 'https://dashboard.cohere.com/api-keys' },
   'tokenbank-p2p': { icon: '🌐', label: 'P2P 分享网络',  hint: '消耗积分使用社区共享算力',                 keyless: true,  key_prefix: [],                      signup_url: '' },
-  openai:          { icon: '🤖', label: 'OpenAI',         hint: '付费 API，支持 GPT-4o / o3 等全系模型',   keyless: false, key_prefix: ['sk-proj-', 'sk-'],     signup_url: 'https://platform.openai.com/api-keys' },
-  'anthropic-paid':{ icon: '🧬', label: 'Anthropic',      hint: '付费 API，Claude 3.5 / 3.7 等系列',       keyless: false, key_prefix: ['sk-ant-'],             signup_url: 'https://console.anthropic.com/settings/keys' },
+  openai:          { icon: '🤖', label: 'OpenAI',         hint: '付费 API，支持 GPT-4o / o3 等全系模型',   keyless: false, key_prefix: ['sk-proj-', 'sk-'],     signup_url: 'https://platform.openai.com/api-keys', oauth: { provider: 'codex', label: 'ChatGPT 订阅登录' } },
+  'anthropic-paid':{ icon: '🧬', label: 'Anthropic',      hint: '付费 API，Claude 3.5 / 3.7 等系列',       keyless: false, key_prefix: ['sk-ant-'],             signup_url: 'https://console.anthropic.com/settings/keys', oauth: { provider: 'claude', label: 'Claude 订阅登录' } },
+  gemini:          { icon: '💎', label: 'Google Gemini',  hint: 'API Key 或 Google 账号订阅登录',          keyless: false, key_prefix: ['AIza'],                signup_url: 'https://aistudio.google.com/app/apikey', oauth: { provider: 'google', label: 'Google 账号登录' } },
+  'github-copilot':{ icon: '🐱', label: 'GitHub Copilot', hint: '用 GitHub 账号登录（需 Copilot 订阅）',   keyless: true,  key_prefix: [],                      signup_url: 'https://github.com/features/copilot', oauth: { provider: 'copilot', label: 'GitHub 登录' } },
   deepseek:        { icon: '🐋', label: 'DeepSeek',       hint: '官方付费：platform.deepseek.com',         keyless: false, key_prefix: ['sk-'],                 signup_url: 'https://platform.deepseek.com/api_keys' },
   xai:             { icon: '✖️', label: 'xAI Grok',       hint: '付费 API：console.x.ai',                  keyless: false, key_prefix: ['xai-'],                signup_url: 'https://console.x.ai' },
   fireworks:       { icon: '🎆', label: 'Fireworks',      hint: '低价高速：fireworks.ai',                  keyless: false, key_prefix: ['fw_'],                 signup_url: 'https://fireworks.ai/account/api-keys' },
@@ -41,6 +43,8 @@ const FALLBACK_PROVIDERS = [
   { id: 'tokenbank-p2p',   type: 'p2p',  enabled: true,  token: '', base_url: '', models: [] },
   { id: 'openai',          type: 'paid', enabled: false, token: '', base_url: 'https://api.openai.com/v1', models: [] },
   { id: 'anthropic-paid',  type: 'paid', enabled: false, token: '', base_url: 'https://api.anthropic.com/v1', models: [] },
+  { id: 'gemini',          type: 'paid', enabled: false, token: '', base_url: 'https://generativelanguage.googleapis.com/v1beta/openai/', models: [] },
+  { id: 'github-copilot',  type: 'paid', enabled: false, token: '', base_url: 'https://api.githubcopilot.com', models: [] },
   { id: 'deepseek',        type: 'paid', enabled: false, token: '', base_url: 'https://api.deepseek.com/v1', models: [] },
   { id: 'xai',             type: 'paid', enabled: false, token: '', base_url: 'https://api.x.ai/v1', models: [] },
   { id: 'fireworks',       type: 'paid', enabled: false, token: '', base_url: 'https://api.fireworks.ai/inference/v1', models: [] },
@@ -50,6 +54,16 @@ const TIER_CONFIG = {
   free: { dot: 'bg-green-500', label: '免费层',  hint: '不消耗额度，优先路由',      cols: 'grid-cols-2' },
   p2p:  { dot: 'bg-blue-500',  label: 'P2P 层',  hint: '消耗少量积分，社区算力',    cols: 'grid-cols-1' },
   paid: { dot: 'bg-amber-400', label: '付费层',  hint: '直接计费，作为最终兜底',    cols: 'grid-cols-2' },
+};
+
+// 各预设支持的 OAuth 订阅登录（客户端本地常量）。
+// 后端 /api/catalog 可能尚未下发 oauth 字段或新预设，这里在客户端侧统一叠加，
+// 保证不依赖后端是否已部署对应改动。
+const OAUTH_BY_ID = {
+  'anthropic-paid': { provider: 'claude',  label: 'Claude 订阅登录' },
+  openai:           { provider: 'codex',   label: 'ChatGPT 订阅登录' },
+  gemini:           { provider: 'google',  label: 'Google 账号登录' },
+  'github-copilot': { provider: 'copilot', label: 'GitHub 登录' },
 };
 
 // 把后端下发的 catalog 拆成展示 meta 映射 + 默认 provider 列表（与本地配置合并的种子）
@@ -62,6 +76,7 @@ function catalogToState(catalog) {
       icon: p.icon, label: p.label, hint: p.hint, keyless: !!p.keyless,
       key_prefix: Array.isArray(p.key_prefix) ? p.key_prefix : [],
       signup_url: p.signup_url || '',
+      oauth: p.oauth || OAUTH_BY_ID[p.id] || null,   // 客户端侧叠加 OAuth 能力
     };
     defaults.push({
       id: p.id,
@@ -71,6 +86,16 @@ function catalogToState(catalog) {
       base_url: p.base_url || '',
       models: [],
     });
+  }
+  // 后端目录里缺失的 OAuth 预设（如 gemini / github-copilot）从内置兜底补出来
+  for (const id of Object.keys(OAUTH_BY_ID)) {
+    if (!meta[id]) {
+      if (FALLBACK_PROVIDER_META[id]) meta[id] = { ...FALLBACK_PROVIDER_META[id] };
+      const fb = FALLBACK_PROVIDERS.find(p => p.id === id);
+      if (fb) defaults.push({ ...fb });
+    } else if (!meta[id].oauth) {
+      meta[id].oauth = OAUTH_BY_ID[id];
+    }
   }
   return { meta, defaults };
 }
@@ -499,7 +524,7 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest }) {
     if (!provider.base_url) { setTestMsg('请先填写 Base URL'); return; }
     setTesting(true); setTestMsg('');
     try {
-      const result = await onTest(provider.base_url, provider.token);
+      const result = await onTest(provider);
       setTestMsg(result.ok ? '✓ 连接成功' : `✗ ${result.error || `HTTP ${result.status}`}`);
     } catch (e) {
       setTestMsg(`✗ ${e.message || '未知错误'}`);
@@ -601,16 +626,86 @@ function ProviderCard({ provider, meta, onUpdate, onTest }) {
   const [testMsg,    setTestMsg]    = useState('');
 
   meta = meta || {};
-  const isP2P   = provider.type === 'p2p';
-  const hasKey  = !!provider.token;
-  const configured = meta.keyless || hasKey;
+  const isP2P    = provider.type === 'p2p';
+  const oauthCap = meta.oauth || null;                 // 该预设支持的 OAuth 登录（可选）
+  const isOauthCfg = provider.auth_type === 'oauth';
+  const hasOauth = !!(provider.credentials && provider.credentials.refresh_token);
+  const hasKey   = !isOauthCfg && !!provider.token;
+  // keyless 但支持 OAuth（如 Copilot）：必须登录后才算配置好
+  const configured = (meta.keyless && !oauthCap) || hasKey || hasOauth;
+  const canApiKey = !meta.keyless;
   const modelCount = (provider.models || []).length;
+
+  // 添加方式：api_key / oauth（仅当预设支持 OAuth 时可切换）
+  const [method, setMethod] = useState(isOauthCfg ? 'oauth' : 'api_key');
+  const [oauth, setOauth] = useState({ sessionId: '', code: '', busy: false, msg: '', started: false, mode: '', userCode: '' });
+  const pollRef = useRef(false);
+
+  function resetOauth() { setOauth({ sessionId: '', code: '', busy: false, msg: '', started: false, mode: '', userCode: '' }); }
+
+  function saveOauthCreds(r) {
+    onUpdate(provider.id, {
+      auth_type: 'oauth', oauth_provider: r.oauth_provider,
+      credentials: r.credentials, token: '', enabled: true,
+    });
+    resetOauth();
+    setExpanded(false);
+  }
+
+  async function startOauth() {
+    if (!oauthCap) return;
+    setOauth(o => ({ ...o, busy: true, msg: '' }));
+    try {
+      const api = getOauth();
+      const r = await api.start(oauthCap.provider, {});
+      if (r.mode === 'device') {
+        if (r.verificationUrl) await api.openExternal(r.verificationUrl);
+        setOauth(o => ({ ...o, busy: false, started: true, mode: 'device', sessionId: r.sessionId, userCode: r.userCode || '' }));
+        pollRef.current = true;
+        pollDevice(r.sessionId);
+      } else if (r.mode === 'paste') {
+        setOauth(o => ({ ...o, busy: false, started: true, mode: 'paste', sessionId: r.sessionId }));
+      } else {
+        if (r.authUrl) await api.openExternal(r.authUrl);
+        setOauth(o => ({ ...o, busy: false, started: true, mode: 'pkce', sessionId: r.sessionId }));
+      }
+    } catch (e) { setOauth(o => ({ ...o, busy: false, msg: e.message || '登录失败' })); }
+  }
+
+  async function pollDevice(sessionId) {
+    const api = getOauth();
+    for (let i = 0; i < 60 && pollRef.current; i++) {
+      await new Promise(res => setTimeout(res, 5000));
+      if (!pollRef.current) return;
+      let r;
+      try { r = await api.poll(sessionId); }
+      catch (e) { pollRef.current = false; setOauth(o => ({ ...o, msg: e.message || '轮询失败', started: false })); return; }
+      if (r.done) { pollRef.current = false; saveOauthCreds(r); return; }
+    }
+  }
+
+  // pkce 粘贴 code / paste 粘贴凭证：都走 exchange
+  async function finishOauth() {
+    setOauth(o => ({ ...o, busy: true, msg: '' }));
+    try {
+      const r = await getOauth().exchange(oauth.sessionId, oauth.code.trim());
+      saveOauthCreds(r);
+    } catch (e) { setOauth(o => ({ ...o, busy: false, msg: e.message || '换取凭证失败' })); }
+  }
+
+  function cancelOauth() { pollRef.current = false; resetOauth(); }
+
+  function clearOauth() {
+    pollRef.current = false;
+    onUpdate(provider.id, { auth_type: 'api_key', oauth_provider: '', credentials: null });
+    setMethod('api_key');
+  }
 
   async function handleTest() {
     if (!provider.base_url) { setTestMsg('请先填写 Base URL'); return; }
     setTesting(true); setTestMsg('');
     try {
-      const result = await onTest(provider.base_url, provider.token);
+      const result = await onTest(provider);
       setTestMsg(result.ok ? '✓ 连接成功' : `✗ ${result.error || `HTTP ${result.status}`}`);
     } catch (e) {
       setTestMsg(`✗ ${e.message || '未知错误'}`);
@@ -636,7 +731,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest }) {
               <span className={`text-sm font-medium ${provider.enabled ? 'text-gray-800 dark:text-gray-200' : 'text-gray-600 dark:text-gray-400'}`}>
                 {meta.label}
               </span>
-              <StatusBadge enabled={provider.enabled} hasKey={hasKey} keyless={meta.keyless} />
+              <StatusBadge enabled={provider.enabled} hasKey={hasKey || hasOauth} keyless={meta.keyless && !oauthCap} />
             </div>
             <div className="flex items-center gap-2 shrink-0">
               {!isP2P && provider.enabled && (
@@ -656,42 +751,115 @@ function ProviderCard({ provider, meta, onUpdate, onTest }) {
             <p className="text-xs text-gray-500 mt-1">{meta.hint}</p>
           )}
 
-          {/* API key row (configured providers) */}
-          {!meta.keyless && !isP2P && configured && !expanded && (
+          {/* Configured (collapsed) row */}
+          {!isP2P && !(meta.keyless && !oauthCap) && configured && !expanded && (
             <div className="flex items-center gap-2 mt-2">
-              <code className="text-xs text-gray-500 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded font-mono">
-                {hasKey ? provider.token.slice(0, 4) + '•'.repeat(12) : '（未配置）'}
-              </code>
-              <button onClick={() => setExpanded(true)} className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-300">修改</button>
+              {isOauthCfg ? (
+                <code className="text-xs text-purple-600 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/30 px-2 py-1 rounded font-mono">
+                  🔑 已登录{provider.credentials?.email ? ' · ' + provider.credentials.email : ''}
+                </code>
+              ) : (
+                <code className="text-xs text-gray-500 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded font-mono">
+                  {hasKey ? provider.token.slice(0, 4) + '•'.repeat(12) : '（未配置）'}
+                </code>
+              )}
+              <button onClick={() => { setExpanded(true); setMethod(isOauthCfg ? 'oauth' : 'api_key'); }} className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-300">修改</button>
             </div>
           )}
 
           {/* Inline setup / edit panel */}
-          {!meta.keyless && !isP2P && (!configured || expanded) && (
+          {!isP2P && (canApiKey || oauthCap) && (!configured || expanded) && (
             <div className="mt-3 space-y-2">
-              <div className="flex gap-2">
-                <input
-                  value={provider.token}
-                  onChange={e => onUpdate(provider.id, { token: e.target.value })}
-                  type={showKey ? 'text' : 'password'}
-                  placeholder="粘贴 API Key"
-                  autoComplete="off"
-                  className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
-                />
-                <button onClick={() => setShowKey(v => !v)}
-                  className="shrink-0 px-2.5 text-xs rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
-                  {showKey ? '隐藏' : '显示'}
-                </button>
-              </div>
-              <div className="flex items-center gap-3">
-                {meta.signup_url && (
-                  <a href={meta.signup_url} target="_blank" rel="noreferrer"
-                    className="text-xs text-blue-600 dark:text-blue-400 hover:underline">去领 key ↗</a>
-                )}
-                {expanded && (
-                  <button onClick={() => setExpanded(false)} className="text-xs text-gray-600 hover:text-gray-600 dark:text-gray-400">取消</button>
-                )}
-              </div>
+              {/* 添加方式切换（同时支持 API Key 与 OAuth 时显示） */}
+              {canApiKey && oauthCap && (
+                <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-700 overflow-hidden text-xs">
+                  <button onClick={() => setMethod('api_key')}
+                    className={method === 'api_key' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>API Key</button>
+                  <button onClick={() => setMethod('oauth')}
+                    className={method === 'oauth' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>{oauthCap.label}</button>
+                </div>
+              )}
+
+              {/* API Key 方式 */}
+              {canApiKey && (!oauthCap || method === 'api_key') && (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      value={provider.token}
+                      onChange={e => onUpdate(provider.id, { token: e.target.value, auth_type: 'api_key' })}
+                      type={showKey ? 'text' : 'password'}
+                      placeholder="粘贴 API Key"
+                      autoComplete="off"
+                      className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
+                    />
+                    <button onClick={() => setShowKey(v => !v)}
+                      className="shrink-0 px-2.5 text-xs rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+                      {showKey ? '隐藏' : '显示'}
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {meta.signup_url && (
+                      <a href={meta.signup_url} target="_blank" rel="noreferrer"
+                        className="text-xs text-blue-600 dark:text-blue-400 hover:underline">去领 key ↗</a>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {/* OAuth 订阅登录方式 */}
+              {oauthCap && (!canApiKey || method === 'oauth') && (
+                <div className="space-y-2">
+                  {hasOauth && (
+                    <p className="text-xs text-green-600 dark:text-green-400">
+                      ✓ 已登录{provider.credentials?.email ? ' · ' + provider.credentials.email : ''}
+                      <button onClick={clearOauth} className="ml-2 text-gray-500 hover:text-red-500">退出</button>
+                    </p>
+                  )}
+                  {!oauth.started && (
+                    <button onClick={startOauth} disabled={oauth.busy}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-blue-600 dark:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50">
+                      {oauth.busy ? '…' : (hasOauth ? '重新登录' : `登录 ${oauthCap.label}`)}
+                    </button>
+                  )}
+
+                  {/* 设备码流（Codex / Copilot）：显示验证码并自动轮询 */}
+                  {oauth.started && oauth.mode === 'device' && (
+                    <div className="text-xs text-gray-600 dark:text-gray-300 space-y-1">
+                      <p>已打开授权页，请在浏览器中输入验证码：</p>
+                      <p className="font-mono text-base tracking-widest text-blue-600 dark:text-blue-400 select-all">{oauth.userCode}</p>
+                      <p className="text-gray-400">授权完成后将自动登录…<button onClick={cancelOauth} className="ml-2 text-gray-500 hover:text-red-500">取消</button></p>
+                    </div>
+                  )}
+
+                  {/* PKCE 流（Claude）：粘贴回调 code */}
+                  {oauth.started && oauth.mode === 'pkce' && (
+                    <div className="flex gap-2">
+                      <input value={oauth.code} onChange={e => setOauth(o => ({ ...o, code: e.target.value }))}
+                        placeholder="粘贴回调里的 code（code#state）"
+                        className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500" />
+                      <button onClick={finishOauth} disabled={oauth.busy || !oauth.code.trim()}
+                        className="shrink-0 px-3 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50">② 完成</button>
+                    </div>
+                  )}
+
+                  {/* 粘贴流（Gemini）：粘贴 ya29 token 或 oauth_creds.json */}
+                  {oauth.started && oauth.mode === 'paste' && (
+                    <div className="space-y-2">
+                      <textarea value={oauth.code} onChange={e => setOauth(o => ({ ...o, code: e.target.value }))}
+                        placeholder="粘贴 Google access token（ya29 开头）或 oauth_creds.json 全文" rows={3}
+                        className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm font-mono focus:outline-none focus:border-blue-500" />
+                      <button onClick={finishOauth} disabled={oauth.busy || !oauth.code.trim()}
+                        className="px-3 py-1 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50">完成</button>
+                    </div>
+                  )}
+
+                  {oauth.msg && <p className="text-xs text-red-500">{oauth.msg}</p>}
+                </div>
+              )}
+
+              {expanded && (
+                <button onClick={() => setExpanded(false)} className="text-xs text-gray-600 hover:text-gray-600 dark:text-gray-400">取消</button>
+              )}
             </div>
           )}
 
@@ -703,8 +871,8 @@ function ProviderCard({ provider, meta, onUpdate, onTest }) {
           )}
         </div>
 
-        {/* "立即启用" button for unconfigured key-requiring providers */}
-        {!meta.keyless && !isP2P && !configured && !expanded && (
+        {/* "立即启用" button for unconfigured providers needing a key or OAuth login */}
+        {(canApiKey || oauthCap) && !isP2P && !configured && !expanded && (
           <button onClick={() => { setExpanded(true); onUpdate(provider.id, { enabled: true }); }}
             className="shrink-0 text-xs px-3 py-1.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-blue-600 dark:text-blue-400 border border-gray-300 dark:border-gray-700 rounded-lg transition-colors">
             立即启用 →
@@ -810,8 +978,11 @@ export default function Providers() {
     setProviders(prev => [...prev, { id, type: 'paid', enabled: true, token: '', base_url: '', models: [] }]);
   }
 
-  async function testProvider(base_url, token) {
-    return getGateway().testProvider({ base_url, token });
+  async function testProvider(p) {
+    return getGateway().testProvider({
+      id: p.id, base_url: p.base_url, token: p.token,
+      auth_type: p.auth_type, oauth_provider: p.oauth_provider, credentials: p.credentials,
+    });
   }
 
   const [expandedTiers, setExpandedTiers] = useState(new Set());

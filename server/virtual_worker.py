@@ -70,17 +70,22 @@ def _anthropic_resp_to_openai(data: dict) -> dict:
 class VirtualWorkerConnection:
     base_url: str
     api_key: str
-    api_style: str          # 'openai' 或 'anthropic'
+    api_style: str          # 'openai' | 'anthropic' | 'claude_oauth'
     models: list
     worker_id: str
     name: str
     model_types: dict = field(default_factory=dict)
     user_id: Optional[int] = None
+    # OAuth 账号（api_style='claude_oauth'）使用，存 access_token/refresh_token/expires_at
+    credentials: dict = field(default_factory=dict)
+    agent_id: Optional[int] = None   # 用于 token 刷新后回写数据库
+    owner_user_id: Optional[int] = None   # 个人供给源归属真实用户；None=全局共享
     connected_at: datetime = field(default_factory=datetime.now)
     active_requests: int = 0
     pending: dict = field(default_factory=dict)
     period_start: float = field(default_factory=time.time)
     period_stats: dict = field(default_factory=dict)
+    _oauth_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def send(self, data: dict) -> None:
         """dispatch.py 调用此方法分发请求；spawn task 避免阻塞事件循环。"""
@@ -102,6 +107,8 @@ class VirtualWorkerConnection:
         try:
             if self.api_style == "anthropic":
                 await self._dispatch_anthropic(entry, q, payload, stream, model)
+            elif self.api_style == "claude_oauth":
+                await self._dispatch_claude_oauth(entry, q, payload, stream, model)
             else:
                 await self._dispatch_openai(entry, q, payload, stream, model)
         except Exception as e:
@@ -178,6 +185,43 @@ class VirtualWorkerConnection:
             "anthropic-version": "2023-06-01",
         }
         body = _to_anthropic_body(payload)
+        await self._run_anthropic(entry, q, url, headers, body, stream, model)
+
+    async def _ensure_oauth_token(self) -> dict:
+        """确保 OAuth access_token 有效；临近过期则刷新并回写数据库。"""
+        import claude_oauth
+        async with self._oauth_lock:
+            creds = self.credentials or {}
+            if not claude_oauth.needs_refresh(creds):
+                return creds
+            refresh_token = creds.get("refresh_token")
+            if not refresh_token:
+                raise RuntimeError("OAuth 账号缺少 refresh_token，请重新授权")
+            new_creds = await claude_oauth.refresh_access_token(refresh_token)
+            self.credentials = new_creds
+            if self.agent_id is not None:
+                try:
+                    import database as _db
+                    await _db.update_virtual_agent_credentials(self.agent_id, new_creds)
+                except Exception:
+                    # 回写失败不阻断请求；下次仍会按内存中的 creds 判断刷新
+                    pass
+            return new_creds
+
+    async def _dispatch_claude_oauth(self, entry: dict, q: asyncio.Queue,
+                                     payload: dict, stream: bool, model: str) -> None:
+        """Claude 订阅账号（OAuth）：刷新 token → 伪装 CLI 头 → 注入 system → 转发。"""
+        import claude_oauth
+        creds = await self._ensure_oauth_token()
+        base = (self.base_url or claude_oauth.ANTHROPIC_BASE_URL).rstrip("/")
+        url = base + "/v1/messages"
+        headers = claude_oauth.build_oauth_headers(creds["access_token"])
+        body = claude_oauth.inject_claude_code_system(_to_anthropic_body(payload))
+        await self._run_anthropic(entry, q, url, headers, body, stream, model)
+
+    async def _run_anthropic(self, entry: dict, q: asyncio.Queue, url: str,
+                             headers: dict, body: dict, stream: bool, model: str) -> None:
+        """向 Anthropic Messages 端点发请求并把响应转成 OpenAI 格式回传。"""
         async with httpx.AsyncClient(timeout=120) as client:
             if stream:
                 async with client.stream("POST", url, json=body, headers=headers) as resp:

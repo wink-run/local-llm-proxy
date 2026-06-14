@@ -14,6 +14,9 @@
   key_prefix      该源 API key 的常见前缀（智能粘贴时用于自动识别；可多个）。
                   歧义前缀（如 sk-）会由客户端拿 key 试探 base_url/models 来消歧。
   signup_url      领取 / 创建 API key 的页面深链（卡片「去领 key」按钮用）
+  oauth           可选。该源支持的 OAuth 订阅登录添加方式：
+                  {"provider": "claude"|"codex"|"google"|"copilot", "label": "按钮文案"}
+                  客户端据此在预设卡片上额外提供「OAuth 登录」添加方式（除 API Key 外）。
 """
 
 TIERS = ["free", "p2p", "paid"]
@@ -58,10 +61,21 @@ PROVIDER_CATALOG = [
     # ── 付费层 ──
     {"id": "openai", "type": "paid", "enabled_default": False, "base_url": "https://api.openai.com/v1",
      "icon": "🤖", "label": "OpenAI", "hint": "付费 API，支持 GPT-4o / o3 等全系模型", "keyless": False,
-     "key_prefix": ["sk-proj-", "sk-"], "signup_url": "https://platform.openai.com/api-keys"},
+     "key_prefix": ["sk-proj-", "sk-"], "signup_url": "https://platform.openai.com/api-keys",
+     "oauth": {"provider": "codex", "label": "ChatGPT 订阅登录"}},
     {"id": "anthropic-paid", "type": "paid", "enabled_default": False, "base_url": "https://api.anthropic.com/v1",
      "icon": "🧬", "label": "Anthropic", "hint": "付费 API，Claude 3.5 / 3.7 等系列", "keyless": False,
-     "key_prefix": ["sk-ant-"], "signup_url": "https://console.anthropic.com/settings/keys"},
+     "key_prefix": ["sk-ant-"], "signup_url": "https://console.anthropic.com/settings/keys",
+     "oauth": {"provider": "claude", "label": "Claude 订阅登录"}},
+    {"id": "gemini", "type": "paid", "enabled_default": False,
+     "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+     "icon": "💎", "label": "Google Gemini", "hint": "API Key 或 Google 账号订阅登录", "keyless": False,
+     "key_prefix": ["AIza"], "signup_url": "https://aistudio.google.com/app/apikey",
+     "oauth": {"provider": "google", "label": "Google 账号登录"}},
+    {"id": "github-copilot", "type": "paid", "enabled_default": False, "base_url": "https://api.githubcopilot.com",
+     "icon": "🐱", "label": "GitHub Copilot", "hint": "用 GitHub 账号登录（需 Copilot 订阅）", "keyless": True,
+     "key_prefix": [], "signup_url": "https://github.com/features/copilot",
+     "oauth": {"provider": "copilot", "label": "GitHub 登录"}},
     {"id": "deepseek", "type": "paid", "enabled_default": False, "base_url": "https://api.deepseek.com/v1",
      "icon": "🐋", "label": "DeepSeek", "hint": "官方付费：platform.deepseek.com", "keyless": False,
      "key_prefix": ["sk-"], "signup_url": "https://platform.deepseek.com/api_keys"},
