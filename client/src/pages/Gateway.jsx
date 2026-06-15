@@ -188,26 +188,7 @@ function PolicyManager() {
 function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
   const [busy, setBusy] = useState(false);
   const [msg,  setMsg]  = useState('');
-  const [showUrl, setShowUrl] = useState(false);
-  const [serverBase, setServerBase] = useState(''); // 只填服务器根地址
 
-  // 点开 URL 框时，预填登录时配置的服务器根地址
-  async function openUrl() {
-    if (!showUrl && !serverBase) {
-      try {
-        const cfg = await getLocalConfig().get();
-        const base = cfg?.cloud_config?.url;
-        if (base) {
-          // 取根地址（去掉 /api、/v1 等路径后缀）
-          const origin = base.replace(/\/$/, '').replace(/\/(api|v\d+)(\/.*)?$/, '');
-          setServerBase(origin);
-        }
-      } catch {}
-    }
-    setShowUrl(v => !v);
-  }
-
-  // 同步成功提示：带上新增的应用 / 路由数量
   function importedMsg(r, prefix) {
     const apps = Array.isArray(r.addedApps) ? r.addedApps : [];
     const routes = Array.isArray(r.addedRoutes) ? r.addedRoutes : [];
@@ -218,38 +199,29 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
     return `${prefix}（无新增）`;
   }
 
-  async function handleUrl() {
-    const base = serverBase.trim().replace(/\/$/, '');
-    if (!base || !window.electronAPI?.toolsConfig) return;
-    const fullUrl = base + endpoint;
+  async function handleSync() {
+    if (!window.electronAPI?.toolsConfig) return;
     setBusy(true); setMsg('');
-    // 服务器配置端点需用户 JWT 鉴权，带上本地登录 token
-    const token = localStorage.getItem('token');
-    const r = await window.electronAPI.toolsConfig.importUrl(fullUrl, token);
-    setMsg(r.ok ? '✓ ' + importedMsg(r, '已同步') : '✗ ' + r.error);
-    if (r.ok && onImported) { onImported(); setShowUrl(false); }
+    try {
+      const cfg = await getLocalConfig().get();
+      const base = cfg?.cloud_config?.url;
+      if (!base) { setMsg('✗ 未配置服务器地址'); setBusy(false); return; }
+      const origin = base.replace(/\/$/, '').replace(/\/(api|v\d+)(\/.*)?$/, '');
+      const token = localStorage.getItem('token');
+      const r = await window.electronAPI.toolsConfig.importUrl(origin + endpoint, token);
+      setMsg(r.ok ? '✓ ' + importedMsg(r, '已同步') : '✗ ' + r.error);
+      if (r.ok && onImported) onImported();
+    } catch (e) { setMsg('✗ ' + e.message); }
     setBusy(false);
   }
 
   return (
-    <div className="relative">
-      <button disabled={busy} onClick={openUrl}
+    <div>
+      <button disabled={busy} onClick={handleSync}
         className="text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors">
         {busy ? '同步中…' : '🔄 在线同步'}
       </button>
       {msg && <div className={`text-xs mt-1 ${msg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{msg}</div>}
-      {showUrl && (
-        <div className="absolute right-0 top-8 z-10 flex items-center gap-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 shadow-lg min-w-max">
-          <input value={serverBase} onChange={e => setServerBase(e.target.value)}
-            placeholder="https://your-server.com"
-            className="text-xs bg-transparent border-none outline-none text-gray-700 dark:text-gray-200 w-52" />
-          <span className="text-[10px] text-gray-400 shrink-0 font-mono">{endpoint}</span>
-          <button onClick={handleUrl} disabled={busy || !serverBase.trim()}
-            className="text-xs px-2 py-0.5 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 shrink-0">
-            同步
-          </button>
-        </div>
-      )}
     </div>
   );
 }
