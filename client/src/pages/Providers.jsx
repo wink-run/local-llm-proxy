@@ -75,7 +75,9 @@ function catalogToState(catalog) {
       icon: p.icon, label: p.label, hint: p.hint, keyless: !!p.keyless,
       key_prefix: Array.isArray(p.key_prefix) ? p.key_prefix : [],
       signup_url: p.signup_url || '',
-      oauth: p.oauth || OAUTH_BY_ID[p.id] || null,   // 客户端侧叠加 OAuth 能力
+      // OAuth 能力以客户端为准（仅客户端有对应 oauth 模块）；不信任远端 catalog 的 oauth 字段，
+      // 否则远端未重新部署时会下发已废弃的能力（如 gemini 的 google 登录）。
+      oauth: OAUTH_BY_ID[p.id] || null,
     };
     defaults.push({
       id: p.id,
