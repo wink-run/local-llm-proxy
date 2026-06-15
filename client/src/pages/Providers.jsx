@@ -755,17 +755,22 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
 
           {/* Configured (collapsed) row */}
           {!isP2P && !(meta.keyless && !oauthCap) && configured && !expanded && (
-            <div className="flex items-center gap-2 mt-2">
-              {isOauthCfg ? (
-                <code className="text-xs text-purple-600 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/30 px-2 py-1 rounded font-mono">
-                  🔑 已登录{provider.credentials?.email ? ' · ' + provider.credentials.email : ''}
-                </code>
-              ) : (
-                <code className="text-xs text-gray-500 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded font-mono">
-                  {hasKey ? provider.token.slice(0, 4) + '•'.repeat(12) : '（未配置）'}
-                </code>
+            <div className="mt-2 space-y-1">
+              <div className="flex items-center gap-2">
+                {isOauthCfg ? (
+                  <code className="text-xs text-purple-600 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/30 px-2 py-1 rounded font-mono">
+                    🔑 已登录{provider.credentials?.email ? ' · ' + provider.credentials.email : ''}
+                  </code>
+                ) : (
+                  <code className="text-xs text-gray-500 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded font-mono">
+                    {hasKey ? provider.token.slice(0, 4) + '•'.repeat(12) : '（未配置）'}
+                  </code>
+                )}
+                <button onClick={() => { setExpanded(true); setMethod(isOauthCfg ? 'oauth' : 'api_key'); }} className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-300">修改</button>
+              </div>
+              {provider.base_url && (
+                <p className="text-[11px] text-gray-400 dark:text-gray-600 font-mono break-all">{provider.base_url}</p>
               )}
-              <button onClick={() => { setExpanded(true); setMethod(isOauthCfg ? 'oauth' : 'api_key'); }} className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-300">修改</button>
             </div>
           )}
 
@@ -864,6 +869,19 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
                   {oauth.msg && <p className="text-xs text-red-500">{oauth.msg}</p>}
                 </div>
               )}
+
+              {/* Base URL override */}
+              <div className="space-y-1">
+                <label className="text-[11px] text-gray-500 dark:text-gray-400">Base URL</label>
+                <input
+                  value={provider.base_url || ''}
+                  onChange={e => onUpdate(provider.id, { base_url: e.target.value })}
+                  type="text"
+                  placeholder="留空使用默认地址"
+                  autoComplete="off"
+                  className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm font-mono text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
+                />
+              </div>
 
               {expanded && (
                 <button onClick={() => setExpanded(false)} className="text-xs text-gray-600 hover:text-gray-600 dark:text-gray-400">取消</button>

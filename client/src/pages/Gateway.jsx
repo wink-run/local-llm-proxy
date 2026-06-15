@@ -1028,8 +1028,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
       setBusyId(app.id);
       if (app.link_method === 'shim' && app.agent_id) { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); showNotice(app.id, '✓ 已还原，重开终端后生效'); }
       else if (app.host_method === 'config-file') { await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {}); showNotice(app.id, '✓ 已还原，重启应用后生效'); }
-      // 仅取消纳管，保留 route_id —— 重新纳管时直接复用这条路由配置，无需再选模型。
-      await window.electronAPI.apps?.update({ id: app.id, hosted: false }).catch(() => {});
+      // 取消纳管并清空路由，回到「直连」状态。
+      await window.electronAPI.apps?.update({ id: app.id, hosted: false, route_id: null }).catch(() => {});
       if (settings?.id === app.id) setSettings(null);
     }
     setBusyId(null);
@@ -1169,7 +1169,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     if (!window.confirm('还原该应用？将取消纳管、恢复原始状态（不再读其会话文件统计；条目保留，可随时重新纳管）。')) return;
     setBusyId(app.id);
     const r = await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => null);
-    await window.electronAPI.apps?.update({ id: app.id, hosted: false }).catch(() => {});  // 仅取消纳管，保留 route_id 供重新纳管复用
+    await window.electronAPI.apps?.update({ id: app.id, hosted: false, route_id: null }).catch(() => {});
     setBusyId(null);
     if (settings?.id === app.id) setSettings(null);
     if (!r || r.ok !== false) showNotice(app.id, '✓ 已还原，重启应用后生效');
