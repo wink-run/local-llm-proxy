@@ -9,7 +9,7 @@ Keys in system_config:
 """
 
 import os
-import yaml as _yaml
+import re
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -22,27 +22,69 @@ from admin_router import auth_admin   # reuse existing admin bearer auth
 router = APIRouter()
 
 
-class _IndentDumper(_yaml.Dumper):
-    """Force block sequences to indent under their parent key.
-
-    PyYAML's default emits compact notation (list items at col 0) which
-    js-yaml 4.x rejects with "bad indentation of a mapping entry".
-    """
-    def increase_indent(self, flow=False, indentless=False):
-        return super().increase_indent(flow, False)
-
-
 def _normalize_yaml(text: str) -> str:
+    """Ensure block sequences are indented under their parent mapping key.
+
+    PyYAML emits compact notation (list items at col 0) which js-yaml 4.x
+    rejects. Try PyYAML re-dump; fall back to a line-level text fix.
+    """
     try:
-        parsed = _yaml.safe_load(text)
+        import yaml
+
+        class _D(yaml.Dumper):
+            def increase_indent(self, flow=False, indentless=False):
+                return super().increase_indent(flow, False)
+
+        parsed = yaml.safe_load(text)
         if parsed is None:
             return text
-        return _yaml.dump(
-            parsed, Dumper=_IndentDumper,
+        return yaml.dump(
+            parsed, Dumper=_D,
             allow_unicode=True, sort_keys=False, default_flow_style=False,
         ).rstrip()
+    except ImportError:
+        pass
     except Exception:
         return text
+
+    # PyYAML not available — fix only the specific pattern js-yaml rejects:
+    # a sequence item "^- " appearing at indent <= its parent mapping key indent.
+    lines = text.splitlines()
+    out = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        stripped = line.rstrip()
+        # Mapping key with no inline value (e.g. "scene_routes:")
+        m = re.match(r'^(\s*)(\S[^:]*)\s*:\s*$', stripped)
+        if m:
+            key_indent = len(m.group(1))
+            # Look ahead: next non-empty line
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            if j < len(lines):
+                next_line = lines[j]
+                next_indent = len(next_line) - len(next_line.lstrip())
+                if next_line.lstrip().startswith('- ') and next_indent <= key_indent:
+                    # Collect and re-indent the whole sequence block
+                    add = key_indent + 2 - next_indent
+                    while j < len(lines):
+                        l = lines[j]
+                        if l.strip() == '':
+                            out.append(l)
+                            j += 1
+                            continue
+                        cur_indent = len(l) - len(l.lstrip())
+                        if cur_indent < next_indent:
+                            break  # back to parent level
+                        out.append(' ' * add + l)
+                        j += 1
+                    i = j
+                    continue
+        i += 1
+    return '\n'.join(out)
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
 
