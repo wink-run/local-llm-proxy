@@ -708,8 +708,15 @@ function proxyResponsesViaChat(provider, responsesBody, model, res) {
       path: u.pathname + (u.search || ''), method: 'POST', headers, timeout: 120_000,
     }, (proxyRes) => {
       if (proxyRes.statusCode >= 400) {
-        proxyRes.resume();
-        return reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode }));
+        const ec = [];
+        proxyRes.on('data', c => ec.push(c));
+        proxyRes.on('end', () => {
+          const errBody = Buffer.concat(ec).toString().slice(0, 800);
+          debugLog('proxyResponsesViaChat 上游错误', { status: proxyRes.statusCode, base_url: provider.base_url, provider: provider.id, body: errBody });
+          reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode, body: errBody }));
+        });
+        proxyRes.on('error', () => reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode })));
+        return;
       }
       if (res.headersSent) { proxyRes.resume(); return reject(new Error('headers_already_sent')); }
       const status = proxyRes.statusCode;
