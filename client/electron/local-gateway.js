@@ -101,11 +101,16 @@ function anthropicRespToOai(anth) {
 
 // ── Provider helpers ──────────────────────────────────────────────────────────
 
-// 归一 base_url：去掉尾部斜杠 + 尾部 /v1。
-// 网关转发时统一用 base + '/v1/chat/completions'（或 '/v1/messages'），
-// 所以无论用户填的 base 带不带 /v1 都能拼对（避免 /v1/v1 双段）。
+// 归一 base_url：去掉尾部斜杠 + 任意版本尾段（/v1 /v2 /v3 …）。
+// 网关转发时用 base + '/' + apiVer(原url) + '/chat/completions'，
+// 保留原版本号（如 /v3）而不是一律改成 /v1。
 function normBase(url) {
-  return (url || '').replace(/\/+$/, '').replace(/\/v1$/, '');
+  return (url || '').replace(/\/+$/, '').replace(/\/v\d+$/, '');
+}
+// 提取 base_url 末尾版本号，默认 v1。
+function apiVer(url) {
+  const m = (url || '').replace(/\/+$/, '').match(/\/(v\d+)$/);
+  return m ? m[1] : 'v1';
 }
 
 // OAI 流式默认不返回 usage，需在请求体加 stream_options.include_usage=true 才会在末帧返回。
@@ -147,8 +152,9 @@ function providerHasModel(provider, model) {
 
 function proxyRequest(provider, reqPath, body, res) {
   return new Promise((resolve, reject) => {
-    const base     = normBase(provider.base_url);
-    const fullUrl  = base + reqPath;
+    const base    = normBase(provider.base_url);
+    const ver     = apiVer(provider.base_url);
+    const fullUrl = base + reqPath.replace(/^\/v1\//, `/${ver}/`);
     let u;
     try { u = new URL(fullUrl); }
     catch { return reject(new Error('invalid_url')); }
@@ -281,7 +287,7 @@ function proxyRequest(provider, reqPath, body, res) {
 function proxyConvertSync(provider, oaiBody, model, res) {
   return new Promise((resolve, reject) => {
     const base    = normBase(provider.base_url);
-    const fullUrl = base + '/v1/chat/completions';
+    const fullUrl = base + '/' + apiVer(provider.base_url) + '/chat/completions';
     let u;
     try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
 
@@ -340,7 +346,7 @@ function proxyConvertSync(provider, oaiBody, model, res) {
 function proxyConvertStream(provider, oaiBody, model, res) {
   return new Promise((resolve, reject) => {
     const base    = normBase(provider.base_url);
-    const fullUrl = base + '/v1/chat/completions';
+    const fullUrl = base + '/' + apiVer(provider.base_url) + '/chat/completions';
     let u;
     try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
 
@@ -597,7 +603,7 @@ function proxyP2PSync(provider, oaiBody, model, res) {
   return new Promise((resolve, reject) => {
     const streamBody = withUsageOption({ ...oaiBody, stream: true });
     const base    = normBase(provider.base_url);
-    const fullUrl = base + '/v1/chat/completions';
+    const fullUrl = base + '/' + apiVer(provider.base_url) + '/chat/completions';
     let u;
     try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
 
@@ -687,7 +693,7 @@ function proxyResponsesViaChat(provider, responsesBody, model, res) {
     const chatBody = codexTransform.responsesToChat({ ...responsesBody, model });
 
     const base    = normBase(provider.base_url);
-    const fullUrl = base + '/v1/chat/completions';
+    const fullUrl = base + '/' + apiVer(provider.base_url) + '/chat/completions';
     let u;
     try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
 
@@ -796,7 +802,7 @@ function proxyResponsesViaAnthropic(provider, responsesBody, model, res) {
     let anthBody    = oaiRequestToAnthropic({ ...chatBody, stream: streaming });
 
     const base    = normBase(provider.base_url);
-    const fullUrl = base + '/v1/messages';
+    const fullUrl = base + '/' + apiVer(provider.base_url) + '/messages';
     let u;
     try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
     const mod = u.protocol === 'https:' ? https : http;
@@ -1013,7 +1019,8 @@ function pickSteps(scene, ctx) {
 function internalComplete(provider, model, prompt, maxTokens = 8) {
   return new Promise((resolve, reject) => {
     const isAnthropic = /anthropic/i.test(provider.base_url || '') || provider.api_format === 'anthropic';
-    let u; try { u = new URL(normBase(provider.base_url) + (isAnthropic ? '/v1/messages' : '/v1/chat/completions')); }
+    const _ver = apiVer(provider.base_url);
+    let u; try { u = new URL(normBase(provider.base_url) + (isAnthropic ? `/${_ver}/messages` : `/${_ver}/chat/completions`)); }
     catch { return reject(new Error('invalid_url')); }
     const body = isAnthropic
       ? { model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }

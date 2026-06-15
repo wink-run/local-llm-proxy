@@ -1630,8 +1630,8 @@ function registerIPC() {
       }
       const base = base_url.replace(/\/$/, '');
       let result = await nodeRequest(base + '/models', 'GET', headers, null);
-      // If /models returns 404, retry with /v1/models (base_url without /v1 suffix)
-      if (result.status === 404 && !base.endsWith('/v1')) {
+      // If /models returns 404 and base has no version suffix, also try /v1/models
+      if (result.status === 404 && !/\/v\d+$/.test(base)) {
         const r2 = await nodeRequest(base + '/v1/models', 'GET', headers, null);
         if (r2.status !== 404) result = r2;
       }
