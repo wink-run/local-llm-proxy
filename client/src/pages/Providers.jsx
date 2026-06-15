@@ -21,7 +21,7 @@ const FALLBACK_PROVIDER_META = {
   'tokenbank-p2p': { icon: '🌐', label: 'P2P 分享网络',  hint: '消耗积分使用社区共享算力',                 keyless: true,  key_prefix: [],                      signup_url: '' },
   openai:          { icon: '🤖', label: 'OpenAI',         hint: '付费 API，支持 GPT-4o / o3 等全系模型',   keyless: false, key_prefix: ['sk-proj-', 'sk-'],     signup_url: 'https://platform.openai.com/api-keys', oauth: { provider: 'codex', label: 'ChatGPT 订阅登录' } },
   'anthropic-paid':{ icon: '🧬', label: 'Anthropic',      hint: '付费 API，Claude 3.5 / 3.7 等系列',       keyless: false, key_prefix: ['sk-ant-'],             signup_url: 'https://console.anthropic.com/settings/keys', oauth: { provider: 'claude', label: 'Claude 订阅登录' } },
-  gemini:          { icon: '💎', label: 'Google Gemini',  hint: 'API Key 或 Google 账号订阅登录',          keyless: false, key_prefix: ['AIza'],                signup_url: 'https://aistudio.google.com/app/apikey', oauth: { provider: 'google', label: 'Google 账号登录' } },
+  gemini:          { icon: '💎', label: 'Google Gemini',  hint: 'AI Studio 免费领 API Key',                keyless: false, key_prefix: ['AIza'],                signup_url: 'https://aistudio.google.com/app/apikey' },
   'github-copilot':{ icon: '🐱', label: 'GitHub Copilot', hint: '用 GitHub 账号登录（需 Copilot 订阅）',   keyless: true,  key_prefix: [],                      signup_url: 'https://github.com/features/copilot', oauth: { provider: 'copilot', label: 'GitHub 登录' } },
   deepseek:        { icon: '🐋', label: 'DeepSeek',       hint: '官方付费：platform.deepseek.com',         keyless: false, key_prefix: ['sk-'],                 signup_url: 'https://platform.deepseek.com/api_keys' },
   xai:             { icon: '✖️', label: 'xAI Grok',       hint: '付费 API：console.x.ai',                  keyless: false, key_prefix: ['xai-'],                signup_url: 'https://console.x.ai' },
@@ -62,7 +62,6 @@ const TIER_CONFIG = {
 const OAUTH_BY_ID = {
   'anthropic-paid': { provider: 'claude',  label: 'Claude 订阅登录' },
   openai:           { provider: 'codex',   label: 'ChatGPT 订阅登录' },
-  gemini:           { provider: 'google',  label: 'Google 账号登录' },
   'github-copilot': { provider: 'copilot', label: 'GitHub 登录' },
 };
 
@@ -658,9 +657,10 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
     try {
       const api = getOauth();
       const r = await api.start(oauthCap.provider, {});
-      if (r.mode === 'device') {
-        if (r.verificationUrl) await api.openExternal(r.verificationUrl);
-        setOauth(o => ({ ...o, busy: false, started: true, mode: 'device', sessionId: r.sessionId, userCode: r.userCode || '' }));
+      if (r.mode === 'device' || r.mode === 'loopback') {
+        const openUrl = r.verificationUrl || r.authUrl;
+        if (openUrl) await api.openExternal(openUrl);
+        setOauth(o => ({ ...o, busy: false, started: true, mode: r.mode, sessionId: r.sessionId, userCode: r.userCode || '' }));
         pollRef.current = true;
         pollDevice(r.sessionId);
       } else if (r.mode === 'paste') {
@@ -822,11 +822,17 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
                     </button>
                   )}
 
-                  {/* 设备码流（Codex / Copilot）：显示验证码并自动轮询 */}
-                  {oauth.started && oauth.mode === 'device' && (
+                  {/* 设备码流（Codex / Copilot）+ loopback 流（Gemini）：自动轮询完成 */}
+                  {oauth.started && (oauth.mode === 'device' || oauth.mode === 'loopback') && (
                     <div className="text-xs text-gray-600 dark:text-gray-300 space-y-1">
-                      <p>已打开授权页，请在浏览器中输入验证码：</p>
-                      <p className="font-mono text-base tracking-widest text-blue-600 dark:text-blue-400 select-all">{oauth.userCode}</p>
+                      {oauth.userCode ? (
+                        <>
+                          <p>已打开授权页，请在浏览器中输入验证码：</p>
+                          <p className="font-mono text-base tracking-widest text-blue-600 dark:text-blue-400 select-all">{oauth.userCode}</p>
+                        </>
+                      ) : (
+                        <p>已打开浏览器，请在 Google 页面完成授权…</p>
+                      )}
                       <p className="text-gray-400">授权完成后将自动登录…<button onClick={cancelOauth} className="ml-2 text-gray-500 hover:text-red-500">取消</button></p>
                     </div>
                   )}

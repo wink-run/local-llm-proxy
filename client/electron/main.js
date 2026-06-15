@@ -992,7 +992,7 @@ function registerIPC() {
 
     const appControls = [];
     const keyScene = {};   // api-key → 绑定的路由（route_id → scene steps 或 单模型）
-    // route_id 绑定 → keyScene：命中场景路由用其降级链，否则视为单个真实模型。
+    // route_id 绑定 → keyScene：命中场景路由用其路由链，否则视为单个真实模型。
     // Claude 应用绑定后，claude-* 请求被透明改写成这里的真实模型。
     const bindRoute = (key, routeId) => {
       const route = routes.find(r => r.model_key === routeId || r.id === routeId);
@@ -1629,7 +1629,8 @@ function registerIPC() {
         else headers['Authorization'] = `Bearer ${p.token}`;
       }
       const result = await nodeRequest(base_url.replace(/\/$/, '') + '/models', 'GET', headers, null);
-      return { ok: result.status >= 200 && result.status < 400, status: result.status };
+      const ok = result.status >= 200 && result.status < 400;
+      return { ok, status: result.status, error: ok ? undefined : (result.body || '').slice(0, 300) };
     } catch (err) {
       return { ok: false, error: err.message };
     }

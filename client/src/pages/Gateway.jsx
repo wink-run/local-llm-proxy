@@ -1720,7 +1720,7 @@ function RuleConditionEditor({ when, onChange, categories = [] }) {
   );
 }
 
-// 降级链编辑器（默认链 + 每条规则各一个）
+// 路由链编辑器（默认链 + 每条规则各一个）
 function ChainEditor({ steps, setSteps, availableModels }) {
   const free = availableModels.filter(m => m.tier === 'free');
   const p2p  = availableModels.filter(m => m.tier === 'p2p');
@@ -1788,7 +1788,7 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
 
       {/* 条件规则（可选）：从上到下匹配，命中即用 */}
       <div className="text-xs text-gray-500 font-medium">
-        条件规则 <span className="text-gray-400 dark:text-gray-500">· 从上到下匹配，命中即用其降级链（可选）</span>
+        条件规则 <span className="text-gray-400 dark:text-gray-500">· 从上到下匹配，命中即用其路由链（可选）</span>
       </div>
       <div className="space-y-2">
         {rules.map((rule, ri) => (
@@ -1798,7 +1798,7 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
               <button onClick={() => removeRule(ri)} className="text-[10px] text-gray-400 hover:text-red-500 shrink-0 px-1">删除</button>
             </div>
             <div className="pl-3 border-l-2 border-gray-200 dark:border-gray-700">
-              <div className="text-[10px] text-gray-400 mb-1">→ 路由到（降级链）</div>
+              <div className="text-[10px] text-gray-400 mb-1">→ 路由到（路由链）</div>
               <ChainEditor steps={rule.steps} setSteps={s => setRuleAt(ri, { steps: s })} availableModels={availableModels} />
             </div>
           </div>
@@ -2479,7 +2479,7 @@ export default function Gateway() {
             onClick={() => { if (newRoute) { setNewRoute(null); } else { setExpandedRoute(null); setNewRoute({ scene_name: '', icon: '🔀', steps: [] }); } }}
             className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors"
           >+ 新建路由</button>
-          <span className="text-xs text-gray-400 dark:text-gray-500">定义每个场景的模型降级链，通过 llm-router-xxx 触发</span>
+          <span className="text-xs text-gray-400 dark:text-gray-500">定义每个场景的模型路由链，通过 llm-router-xxx 触发</span>
           <div className="ml-auto">
             <ImportConfigButton onImported={() => { refresh(); loadSceneData(); loadAvailableModels(); }} endpoint="/api/config/scenes" />
           </div>

@@ -991,7 +991,7 @@ function evalWhen(when, ctx) {
     default: return false;
   }
 }
-// 按规则选降级链（同步，不含分类器）：第一条命中的 rule.steps；都不中 → 默认 scene.steps。
+// 按规则选路由链（同步，不含分类器）：第一条命中的 rule.steps；都不中 → 默认 scene.steps。
 function pickSteps(scene, ctx) {
   if (Array.isArray(scene && scene.rules)) {
     for (const rule of scene.rules) {
@@ -1061,7 +1061,7 @@ async function classifyInput(text, classifier) {
   return label;
 }
 
-// 选降级链（异步）：含分类器规则时懒计算 label（每请求只分类一次）；第一条命中即用。
+// 选路由链（异步）：含分类器规则时懒计算 label（每请求只分类一次）；第一条命中即用。
 async function resolveSteps(scene, ctx) {
   if (Array.isArray(scene && scene.rules)) {
     let classified = false;
@@ -1115,7 +1115,7 @@ async function route(model, reqPath, body, res, callerKey) {
   }
 
   // ── Scene route：应用绑定路由（keyScene）/ llm-router-* ──
-  // Claude 应用绑 route_id 后，keyScene[key] 把 claude-* 请求透明改写成绑定的真实模型/降级链。
+  // Claude 应用绑 route_id 后，keyScene[key] 把 claude-* 请求透明改写成绑定的真实模型/路由链。
   const boundScene = (callerKey && _keyScene[callerKey]) || null;
   const isLlmRouter = origModel.startsWith('llm-router-');
   debugLog(`route() 路由判定`, {
@@ -1134,7 +1134,7 @@ async function route(model, reqPath, body, res, callerKey) {
       return;
     }
 
-    // 按请求特征选本次降级链：命中的规则链 / 默认链（零成本条件，从路径+body 提取）
+    // 按请求特征选本次路由链：命中的规则链 / 默认链（零成本条件，从路径+body 提取）
     const ruleCtx = {
       modality: modalityOf(reqPath), model: origModel,
       input_tokens: estimateInputTokens(body), text: extractText(body), caller: callerKey,

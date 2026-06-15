@@ -279,54 +279,9 @@ const COPILOT = {
   },
 };
 
-// Google Gemini：无浏览器授权流，粘贴 ya29 token 或 oauth_creds.json；有 refresh_token 才能刷新。
-const GEMINI = {
-  mode: 'paste',
-  async startLogin() {
-    return { paste: true, instructions: '粘贴 Google access token（ya29 开头）或 oauth_creds.json 全文',
-      session: { name: 'google' } };
-  },
-  async completeLogin(_session, pasted) {
-    const text = String(pasted || '').trim();
-    let creds;
-    if (text.startsWith('ya29.')) {
-      creds = { access_token: text, token_type: 'Bearer' };
-    } else if (text.startsWith('{')) {
-      const j = JSON.parse(text);
-      creds = { access_token: j.access_token || '', refresh_token: j.refresh_token || '',
-        client_id: j.client_id || '', client_secret: j.client_secret || '', token_type: 'Bearer' };
-      if (j.expiry_date) creds.expires_at = Math.floor(j.expiry_date / 1000);
-    } else {
-      throw new Error('无法识别：需 ya29 开头的 token 或 oauth_creds.json');
-    }
-    if (!creds.access_token) throw new Error('缺少 access_token');
-    return creds;
-  },
-  needsRefresh(creds) {
-    if (!creds.refresh_token || !creds.client_id) return false; // 无法刷新则用到失效为止
-    return needsRefresh(creds);
-  },
-  async refresh(creds) {
-    const r = await fetchStatus('https://oauth2.googleapis.com/token', { method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: creds.refresh_token,
-        client_id: creds.client_id, client_secret: creds.client_secret || '' }).toString() });
-    if (r.status >= 400 || !r.json) throw new Error('google refresh HTTP ' + r.status);
-    const next = normalizeToken(r.json, creds.refresh_token);
-    next.client_id = creds.client_id; next.client_secret = creds.client_secret;
-    return next;
-  },
-  applyAuth(creds, headers, body) {
-    const h = { ...headers };
-    h['Authorization'] = `Bearer ${creds.access_token}`;
-    h['Content-Type'] = 'application/json';
-    delete h['x-api-key'];
-    delete h['x-goog-api-key'];
-    return { headers: h, body }; // baseUrl 用 provider 配置（OpenAI 兼容 Gemini 端点）
-  },
-};
+// 注：Gemini 走 API Key（其 OpenAI 兼容端点不支持 OAuth），故不在此注册 OAuth provider。
 
-Object.assign(PROVIDERS, { codex: CODEX, copilot: COPILOT, google: GEMINI });
+Object.assign(PROVIDERS, { codex: CODEX, copilot: COPILOT });
 
 // ── 统一登录 / 刷新 ────────────────────────────────────────────────────────────
 // 怪异的流程（设备码 / 粘贴凭证）放在各 provider 配置里以 startLogin/completeLogin/poll 覆盖；
