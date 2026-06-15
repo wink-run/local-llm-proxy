@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  version: require('../package.json').version,
   agent: {
     start: () => ipcRenderer.invoke('agent:start'),
     stop: () => ipcRenderer.invoke('agent:stop'),

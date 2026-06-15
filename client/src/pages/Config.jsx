@@ -499,10 +499,16 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Version footer */}
-      <div className="text-[10px] text-gray-700 pb-2">
-        Token Bank · 本地网关 ·{' '}
+      <div className="text-[10px] text-gray-400 dark:text-gray-600 pb-2 flex items-center gap-2">
+        <span>Token Bank</span>
+        {window.electronAPI?.version && (
+          <span className="font-mono bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-gray-500 dark:text-gray-400">
+            v{window.electronAPI.version}
+          </span>
+        )}
+        <span>·</span>
         <a href="https://github.com/wink-run/local-llm-proxy" target="_blank" rel="noreferrer"
-          className="hover:text-gray-500 transition-colors underline">
+          className="hover:text-gray-500 dark:hover:text-gray-400 transition-colors underline">
           GitHub
         </a>
       </div>
