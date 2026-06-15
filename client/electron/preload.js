@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('agent:status', handler);
       return () => ipcRenderer.removeListener('agent:status', handler);
     },
+    getLogs: () => ipcRenderer.invoke('agent:getLogs'),
     onLog: (cb) => {
       const handler = (_e, line) => cb(line);
       ipcRenderer.on('agent:log', handler);

@@ -192,11 +192,16 @@ function updateTrayMenu() {
 
 // ── Agent ─────────────────────────────────────────────────────────────────────
 
+const _agentLogBuf = [];   // keep last 200 lines for late-mounting pages
+const AGENT_LOG_MAX = 200;
+
 function startAgent() {
   console.log('[main] startAgent called, isRunning=', agent.isRunning());
   agent.start({
     onLog: (line) => {
       console.log('[agent-log]', line);
+      _agentLogBuf.push(line);
+      if (_agentLogBuf.length > AGENT_LOG_MAX) _agentLogBuf.shift();
       mainWindow?.webContents.send('agent:log', line);
     },
     onStatus: (status) => {
@@ -651,9 +656,10 @@ function nodeRequest(url, method, headers, body) {
 
 function registerIPC() {
   ipcMain.on('app:version', (e) => { e.returnValue = app.getVersion(); });
-  ipcMain.handle('agent:start', () => { startAgent(); return { running: agent.isRunning() }; });
-  ipcMain.handle('agent:stop',  () => { stopAgent();  return { running: false }; });
-  ipcMain.handle('agent:status', () => ({ running: agent.isRunning() }));
+  ipcMain.handle('agent:start',   () => { startAgent(); return { running: agent.isRunning() }; });
+  ipcMain.handle('agent:stop',    () => { stopAgent();  return { running: false }; });
+  ipcMain.handle('agent:status',  () => ({ running: agent.isRunning() }));
+  ipcMain.handle('agent:getLogs', () => [..._agentLogBuf]);
   ipcMain.handle('config:read',  () => readAgentConfig());
   ipcMain.handle('config:write', (_e, cfg) => { writeAgentConfig(cfg); return { ok: true }; });
   ipcMain.handle('config:scan',  () => scanLLMConfigs());

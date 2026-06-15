@@ -164,11 +164,15 @@ export default function Contribute() {
   useEffect(() => {
     if (!window.electronAPI) return;
     window.electronAPI.agent.getStatus().then(({ running: r }) => setRunning(r));
+    // Load historical logs buffered in main process before subscribing to new ones
+    window.electronAPI.agent.getLogs?.().then(lines => {
+      if (lines?.length) setLogs(lines.map(l => l.trimEnd()));
+    });
     const disposeStatus = window.electronAPI.agent.onStatus(({ running: r, error }) => {
       setRunning(r);
-      if (error) setLogs(prev => [...prev.slice(-99), `[error] ${error}`]);
+      if (error) setLogs(prev => [...prev.slice(-199), `[error] ${error}`]);
     });
-    const disposeLog = window.electronAPI.agent.onLog(line => setLogs(prev => [...prev.slice(-99), line.trimEnd()]));
+    const disposeLog = window.electronAPI.agent.onLog(line => setLogs(prev => [...prev.slice(-199), line.trimEnd()]));
     return () => { disposeStatus?.(); disposeLog?.(); };
   }, []);
 

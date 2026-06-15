@@ -1091,7 +1091,7 @@ async function resolveSteps(scene, ctx) {
   return (scene && scene.steps) || [];
 }
 
-async function route(model, reqPath, body, res, callerKey) {
+async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   const t0          = Date.now();
   let lastErr       = null;
   const isAnthropic = reqPath === '/v1/messages';
@@ -1160,7 +1160,7 @@ async function route(model, reqPath, body, res, callerKey) {
       return;
     }
 
-    const all          = enabledProviders();
+    const all          = enabledProviders().filter(p => !skipP2P || p.type !== 'p2p');
     const failedModels = [];
 
     for (const step of steps) {
@@ -1204,7 +1204,7 @@ async function route(model, reqPath, body, res, callerKey) {
   }
 
   // ── Direct model request ──────────────────────────────────────────────────
-  const allEnabled = enabledProviders();
+  const allEnabled = enabledProviders().filter(p => !skipP2P || p.type !== 'p2p');
 
   // ★ 三层特征提取 + 策略组调度：按 policy 决定 provider 优先顺序
   let sorted;
@@ -1507,8 +1507,9 @@ function handleRequest(req, res) {
       res.on('close', release);
     }
 
+    const skipP2P = !!req.headers['x-p2p-hop'];
     try {
-      await route(model, cleanPath, body, res, callerKey);
+      await route(model, cleanPath, body, res, callerKey, skipP2P);
     } catch (err) {
       release();
       if (!res.headersSent) {

@@ -189,6 +189,7 @@ function forwardRequest(reqId, payload, cfg) {
   const headers = {
     'Content-Type': 'application/json',
     'Content-Length': Buffer.byteLength(body),
+    'X-P2P-Hop': '1',  // tells the gateway to skip P2P to break forwarding loops
   };
   if (cfg.llm_token) headers['Authorization'] = `Bearer ${cfg.llm_token}`;
   if (anthropic) headers['anthropic-version'] = '2023-06-01';
