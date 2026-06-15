@@ -1628,7 +1628,13 @@ function registerIPC() {
         if (/anthropic/i.test(base_url)) { headers['x-api-key'] = p.token; headers['anthropic-version'] = '2023-06-01'; }
         else headers['Authorization'] = `Bearer ${p.token}`;
       }
-      const result = await nodeRequest(base_url.replace(/\/$/, '') + '/models', 'GET', headers, null);
+      const base = base_url.replace(/\/$/, '');
+      let result = await nodeRequest(base + '/models', 'GET', headers, null);
+      // If /models returns 404, retry with /v1/models (base_url without /v1 suffix)
+      if (result.status === 404 && !base.endsWith('/v1')) {
+        const r2 = await nodeRequest(base + '/v1/models', 'GET', headers, null);
+        if (r2.status !== 404) result = r2;
+      }
       const ok = result.status >= 200 && result.status < 400;
       return { ok, status: result.status, error: ok ? undefined : (result.body || '').slice(0, 300) };
     } catch (err) {
