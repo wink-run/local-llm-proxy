@@ -650,6 +650,7 @@ function nodeRequest(url, method, headers, body) {
 // ── IPC handlers ──────────────────────────────────────────────────────────────
 
 function registerIPC() {
+  ipcMain.on('app:version', (e) => { e.returnValue = app.getVersion(); });
   ipcMain.handle('agent:start', () => { startAgent(); return { running: agent.isRunning() }; });
   ipcMain.handle('agent:stop',  () => { stopAgent();  return { running: false }; });
   ipcMain.handle('agent:status', () => ({ running: agent.isRunning() }));
