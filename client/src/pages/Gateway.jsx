@@ -2492,13 +2492,18 @@ export default function Gateway() {
           {routes.map(route => {
             const health = routeHealth[route.model_key] ?? { status: null, activeStep: null, degraded: false };
             const ftMs = health.first_token_ms;
+            // 本地供给源是否缺少该路由用到的模型（缺则名称前的点也标红）
+            const availSet = new Set(availableModels.map(m => m.id));
+            const routeMissing = (route.steps || []).some(s => !availSet.has(s.model || s.label));
             const healthDot =
+              routeMissing ? 'bg-red-500' :
               health.status === 'error' ? 'bg-red-500' :
               health.status === 'ok'
                 ? (ftMs != null && ftMs > 3000 ? 'bg-amber-400' : 'bg-green-500')
                 : 'bg-gray-300 dark:bg-gray-600';
             const ftLabel = ftMs != null ? `首token ${(ftMs / 1000).toFixed(1)}s` : null;
             const healthTitle =
+              routeMissing ? '含本地不可用的模型，需重新设置' :
               health.status === 'error' ? '最近请求失败' :
               health.status === 'ok'
                 ? [health.degraded ? '已降级' : '运行正常', ftLabel].filter(Boolean).join(' · ')
@@ -2536,29 +2541,41 @@ export default function Gateway() {
                     )}
                   </div>
                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                    {(route.steps || []).map((step, i) => {
-                      const t = resolveStepTier(step.model || step.label, step, availableModels);
-                      const stepName = step.model || step.label;
-                      const isActive = health.activeStep === stepName;
-                      const isFailed = health.triedSteps?.includes(stepName);
-                      return (
-                        <React.Fragment key={i}>
-                          {i > 0 && <span className="text-gray-400 text-xs">→</span>}
-                          <span className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded border transition-all ${
-                            isActive
-                              ? 'bg-green-100 dark:bg-green-900/40 border-green-400 dark:border-green-600 text-green-800 dark:text-green-200'
-                              : tierStyle(t)
-                          }`}>
-                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                              isActive ? 'bg-green-500' : isFailed ? 'bg-red-500' : tierDot(t)
-                            }`} />
-                            {step.label || step.model}
-                            <span className="opacity-50">({TIER_SHORT[t] || t})</span>
-                          </span>
-                        </React.Fragment>
-                      );
-                    })}
-                    {!route.steps?.length && <span className="text-xs text-gray-400">暂无步骤</span>}
+                    {(() => {
+                      const steps = route.steps || [];
+                      return (<>
+                        {steps.map((step, i) => {
+                          const t = resolveStepTier(step.model || step.label, step, availableModels);
+                          const stepName = step.model || step.label;
+                          const isActive = health.activeStep === stepName;
+                          const isFailed = health.triedSteps?.includes(stepName);
+                          const missing = !availSet.has(stepName);   // 本地供给源里没有该模型
+                          return (
+                            <React.Fragment key={i}>
+                              {i > 0 && <span className="text-gray-400 text-xs">→</span>}
+                              <span title={missing ? '本地供给源没有此模型，请在「供给源」启用对应模型或重新设置该路由' : undefined}
+                                className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded border transition-all ${
+                                  isActive
+                                    ? 'bg-green-100 dark:bg-green-900/40 border-green-400 dark:border-green-600 text-green-800 dark:text-green-200'
+                                    : missing
+                                      ? 'bg-red-50 dark:bg-red-900/20 border-red-300 dark:border-red-700 text-red-600 dark:text-red-300'
+                                      : tierStyle(t)
+                                }`}>
+                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                  isActive ? 'bg-green-500' : (missing || isFailed) ? 'bg-red-500' : tierDot(t)
+                                }`} />
+                                {step.label || step.model}
+                                <span className="opacity-50">({TIER_SHORT[t] || t})</span>
+                              </span>
+                            </React.Fragment>
+                          );
+                        })}
+                        {!steps.length && <span className="text-xs text-gray-400">暂无步骤</span>}
+                        {routeMissing && (
+                          <span className="text-[10px] text-red-600 dark:text-red-400 ml-1 shrink-0">⚠ 含本地不可用的模型，需重新设置</span>
+                        )}
+                      </>);
+                    })()}
                   </div>
                 </div>
                 <button onClick={e => { e.stopPropagation(); setExpandedRoute(expandedRoute === route.id ? null : route.id); }}
