@@ -619,9 +619,9 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest }) {
   );
 }
 
-function ProviderCard({ provider, meta, onUpdate, onTest }) {
+function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = false }) {
   const [showKey,    setShowKey]    = useState(false);
-  const [expanded,   setExpanded]   = useState(false);
+  const [expanded,   setExpanded]   = useState(initialExpanded);
   const [testing,    setTesting]    = useState(false);
   const [testMsg,    setTestMsg]    = useState('');
 
@@ -985,27 +985,17 @@ export default function Providers() {
     });
   }
 
-  const [expandedTiers, setExpandedTiers] = useState(new Set());
+  const [addingTier, setAddingTier] = useState(null);  // 'free' | 'paid' | null
+  const [addingId,   setAddingId]   = useState(null);  // providerId being configured in picker
 
-  function toggleTier(tier) {
-    setExpandedTiers(prev => {
-      const next = new Set(prev);
-      next.has(tier) ? next.delete(tier) : next.add(tier);
-      return next;
-    });
-  }
-
-  // A provider counts as "configured" if it has been actively set up
-  function isConfigured(p) {
-    const m = meta[p.id];
-    if (!m) return !!(p.base_url); // custom: has URL
-    if (m.keyless) return p.enabled;
-    return p.enabled || !!p.token;
-  }
+  // When a provider gets enabled from the picker, deselect it
+  useEffect(() => {
+    if (!addingId) return;
+    const p = providers.find(p => p.id === addingId);
+    if (p?.enabled) setAddingId(null);
+  }, [providers, addingId]);
 
   const tiers = ['free', 'p2p', 'paid'];
-  const COLS = 2;        // grid-cols-2 for free/paid
-  const VISIBLE_ROWS = 2; // show 2 rows = 4 cards before folding
 
   return (
     <div className="p-6 space-y-6">
@@ -1021,53 +1011,106 @@ export default function Providers() {
 
       {/* Tier sections */}
       {tiers.map(tier => {
-        const cfg        = TIER_CONFIG[tier];
-        const allItems   = providers.filter(p => p.type === tier);
-        const foldable   = tier === 'free' || tier === 'paid';
-        const isExpanded = expandedTiers.has(tier);
+        const cfg      = TIER_CONFIG[tier];
+        const allItems = providers.filter(p => p.type === tier);
 
-        // Sort: configured first, then by original order
-        const sorted = foldable
-          ? [...allItems].sort((a, b) => (isConfigured(b) ? 1 : 0) - (isConfigured(a) ? 1 : 0))
-          : allItems;
+        if (tier === 'p2p') {
+          return (
+            <section key={tier} className="space-y-3">
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
+                <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{cfg.label}</h2>
+                <span className="text-xs text-gray-500">{cfg.hint}</span>
+              </div>
+              <div className={`grid ${cfg.cols} gap-3`}>
+                {allItems.map(p => <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} />)}
+              </div>
+            </section>
+          );
+        }
 
-        const limit      = COLS * VISIBLE_ROWS; // 4
-        const canFold    = foldable && sorted.length > limit;
-        const visible    = canFold && !isExpanded ? sorted.slice(0, limit) : sorted;
-        const hiddenCnt  = sorted.length - limit;
+        const enabledItems  = allItems.filter(p => p.enabled);
+        const disabledItems = allItems.filter(p => !p.enabled);
+        const isOpen        = addingTier === tier;
+
+        function togglePicker() {
+          if (isOpen) { setAddingTier(null); setAddingId(null); }
+          else        { setAddingTier(tier); setAddingId(null); }
+        }
 
         return (
           <section key={tier} className="space-y-3">
             <div className="flex items-center gap-2">
               <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
               <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{cfg.label}</h2>
-              <span className="text-xs text-gray-600">{cfg.hint}</span>
+              <span className="text-xs text-gray-500">{cfg.hint}</span>
             </div>
+
             <div className={`grid ${cfg.cols} gap-3`}>
-              {visible.map(p =>
-                tier === 'p2p' ? (
-                  <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} />
-                ) : meta[p.id] ? (
-                  <ProviderCard key={p.id} provider={p} meta={meta[p.id]} onUpdate={updateProvider} onTest={testProvider} />
-                ) : (
-                  <CustomProviderCard key={p.id} provider={p} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} />
-                )
+              {/* Enabled providers */}
+              {enabledItems.map(p =>
+                meta[p.id]
+                  ? <ProviderCard key={p.id} provider={p} meta={meta[p.id]} onUpdate={updateProvider} onTest={testProvider} />
+                  : <CustomProviderCard key={p.id} provider={p} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} />
               )}
+
+              {/* Add card */}
+              <button onClick={togglePicker}
+                className={`flex flex-col items-center justify-center gap-1.5 rounded-2xl border-2 border-dashed min-h-[90px] transition-colors ${
+                  isOpen
+                    ? 'border-blue-400 dark:border-blue-600 text-blue-500 dark:text-blue-400 bg-blue-50/50 dark:bg-blue-950/10'
+                    : 'border-gray-200 dark:border-gray-700 text-gray-400 hover:border-gray-300 dark:hover:border-gray-600 hover:text-gray-500'
+                }`}>
+                <span className="text-xl leading-none">{isOpen ? '×' : '+'}</span>
+                <span className="text-xs font-medium">{isOpen ? '收起' : '添加供给源'}</span>
+                {!isOpen && disabledItems.length > 0 && (
+                  <span className="text-[10px] text-gray-300 dark:text-gray-600">{disabledItems.length} 个可选</span>
+                )}
+              </button>
             </div>
-            {/* Fold / expand toggle */}
-            {canFold && (
-              <button onClick={() => toggleTier(tier)}
-                className="w-full flex items-center justify-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 py-1 transition-colors">
-                {isExpanded
-                  ? <><span>收起</span><span className="text-[10px]">▲</span></>
-                  : <><span>展开另 {hiddenCnt} 个供给源</span><span className="text-[10px]">▼</span></>}
-              </button>
-            )}
-            {tier === 'paid' && (
-              <button onClick={addCustomProvider}
-                className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 border border-dashed border-gray-300 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600 rounded-xl px-4 py-2.5 transition-colors w-full">
-                <span className="text-base leading-none">+</span> 添加 OpenAI 兼容源
-              </button>
+
+            {/* Picker panel */}
+            {isOpen && (
+              <div className="p-4 bg-gray-50 dark:bg-gray-800/40 rounded-2xl border border-gray-200 dark:border-gray-700 space-y-3">
+                <p className="text-xs text-gray-500 dark:text-gray-400">选择要添加的供给源：</p>
+                <div className="flex flex-wrap gap-2">
+                  {disabledItems.map(p => {
+                    const m = meta[p.id] || {};
+                    const sel = addingId === p.id;
+                    return (
+                      <button key={p.id} onClick={() => setAddingId(sel ? null : p.id)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
+                          sel
+                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
+                            : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'
+                        }`}>
+                        <span>{m.icon || '🔌'}</span>
+                        <span>{m.label || p.id}</span>
+                      </button>
+                    );
+                  })}
+                  {tier === 'paid' && (
+                    <button onClick={() => { addCustomProvider(); setAddingTier(null); }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-gray-300 dark:border-gray-600 text-xs text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-500 transition-colors bg-white dark:bg-gray-900">
+                      <span>+</span> 自定义 OpenAI 兼容源
+                    </button>
+                  )}
+                </div>
+
+                {/* Config card for selected provider */}
+                {addingId && (() => {
+                  const p = disabledItems.find(pr => pr.id === addingId);
+                  if (!p) return null;
+                  return (
+                    <div className="mt-1">
+                      {meta[addingId]
+                        ? <ProviderCard key={addingId} provider={p} meta={meta[addingId]} onUpdate={updateProvider} onTest={testProvider} initialExpanded />
+                        : <CustomProviderCard key={addingId} provider={p} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} />
+                      }
+                    </div>
+                  );
+                })()}
+              </div>
             )}
           </section>
         );
