@@ -9,6 +9,7 @@ Keys in system_config:
 """
 
 import os
+import yaml as _yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -19,6 +20,29 @@ from auth import get_current_user_id
 from admin_router import auth_admin   # reuse existing admin bearer auth
 
 router = APIRouter()
+
+
+class _IndentDumper(_yaml.Dumper):
+    """Force block sequences to indent under their parent key.
+
+    PyYAML's default emits compact notation (list items at col 0) which
+    js-yaml 4.x rejects with "bad indentation of a mapping entry".
+    """
+    def increase_indent(self, flow=False, indentless=False):
+        return super().increase_indent(flow, False)
+
+
+def _normalize_yaml(text: str) -> str:
+    try:
+        parsed = _yaml.safe_load(text)
+        if parsed is None:
+            return text
+        return _yaml.dump(
+            parsed, Dumper=_IndentDumper,
+            allow_unicode=True, sort_keys=False, default_flow_style=False,
+        ).rstrip()
+    except Exception:
+        return text
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
 
@@ -93,7 +117,7 @@ async def get_tools_config(uid: int = Depends(get_current_user_id)):
     content = await db.get_config("config.apps", "")
     if not content:
         raise HTTPException(404, "Tools config not uploaded yet")
-    return PlainTextResponse(content, media_type="text/yaml; charset=utf-8")
+    return PlainTextResponse(_normalize_yaml(content), media_type="text/yaml; charset=utf-8")
 
 
 @router.get("/config/scenes")
@@ -102,4 +126,4 @@ async def get_routes_config(uid: int = Depends(get_current_user_id)):
     content = await db.get_config("config.scenes", "")
     if not content:
         raise HTTPException(404, "Routes config not uploaded yet")
-    return PlainTextResponse(content, media_type="text/yaml; charset=utf-8")
+    return PlainTextResponse(_normalize_yaml(content), media_type="text/yaml; charset=utf-8")
