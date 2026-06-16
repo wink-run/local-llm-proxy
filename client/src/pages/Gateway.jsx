@@ -1250,7 +1250,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
               <div className={`flex flex-col divide-y divide-gray-100 dark:divide-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl ${visibleApps.length > 20 ? 'max-h-[min(75vh,900px)] overflow-y-auto' : 'overflow-hidden'}`}>
                 {/* 表头（超过 20 个时列表滚动，表头吸顶）*/}
                 <div className="flex items-center gap-3 px-3 py-2 bg-gray-100 dark:bg-gray-800 text-[10px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wide sticky top-0 z-10">
-                  <span className="text-base shrink-0 invisible">🔧</span>
+                  <span className="text-base w-6 text-center shrink-0 invisible">🔧</span>
                   <div className="w-28 shrink-0">应用</div>
                   <div className="w-14 shrink-0">状态</div>
                   <div className="w-16 shrink-0">接入方式</div>
@@ -1303,7 +1303,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                     // 图标灰度/灰名体现，操作按钮保持全亮可点（含「测试」）。
                     <div key={app.id} className={`flex items-center gap-3 px-3 py-2.5 transition-colors ${rowBg}`}>
                       {/* 图标 + 名称 */}
-                      <span className={`text-base shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`}>{app.icon}</span>
+                      <span className={`text-base w-6 text-center shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`}>{app.icon}</span>
                       <div className={`text-xs font-medium truncate w-28 shrink-0 ${isActive ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'}`}>{app.name}</div>
 
                       {/* 状态列（在线 / 直连 / 未纳管） */}
