@@ -1255,9 +1255,9 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                   <div className="w-14 shrink-0">状态</div>
                   <div className="w-16 shrink-0">接入方式</div>
                   <div className="flex items-center gap-4 shrink-0">
-                    <div className="text-center w-12">总请求数</div>
-                    <div className="text-center w-12">总Token</div>
-                    <div className="text-center w-14">最后使用</div>
+                    <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden">总请求数</div>
+                    <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden">总Token</div>
+                    <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden">最后使用</div>
                   </div>
                   <div className="flex-1 min-w-0 max-w-[160px]">路由 / 模型</div>
                   <div className="w-[60px] shrink-0 text-right">测试</div>
@@ -1320,9 +1320,9 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       {/* 统计：请求数 / token / 最后使用（点击打开用量明细）*/}
                       <div className="flex items-center gap-4 shrink-0 cursor-pointer rounded hover:bg-gray-100/60 dark:hover:bg-gray-700/30 -mx-1 px-1"
                         title="点击查看用量明细（含会话补录）" onClick={() => setDetailApp(app)}>
-                        <div className="text-center w-12 text-xs font-semibold text-gray-700 dark:text-gray-200">{st.calls > 0 ? st.calls.toLocaleString() : '—'}</div>
-                        <div className="text-center w-12 text-xs font-semibold text-gray-700 dark:text-gray-200">{st.tokens > 0 ? fmtTokens(st.tokens) : '—'}</div>
-                        <div className="text-center w-14 text-[10px] font-medium text-gray-600 dark:text-gray-300">{fmtTime(st.lastTs)}</div>
+                        <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden tabular-nums text-xs font-semibold text-gray-700 dark:text-gray-200">{st.calls > 0 ? st.calls.toLocaleString() : '—'}</div>
+                        <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden tabular-nums text-xs font-semibold text-gray-700 dark:text-gray-200">{st.tokens > 0 ? fmtTokens(st.tokens) : '—'}</div>
+                        <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden text-[10px] font-medium text-gray-600 dark:text-gray-300">{fmtTime(st.lastTs)}</div>
                       </div>
 
                       {/* 路由下拉槽（固定宽，缺省占位保持列对齐）：api-key / 手工 / shim 可绑路由；
