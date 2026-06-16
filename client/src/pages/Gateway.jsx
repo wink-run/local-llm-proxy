@@ -1259,8 +1259,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                     <div className="text-center w-12">总Token</div>
                     <div className="text-center w-14">最后使用</div>
                   </div>
-                  <div className="w-[150px] shrink-0">路由 / 模型</div>
-                  <div className="w-[96px] shrink-0 text-right">测试</div>
+                  <div className="flex-1 min-w-0 max-w-[160px]">路由 / 模型</div>
+                  <div className="w-[60px] shrink-0 text-right">测试</div>
                   <div className="shrink-0">操作</div>
                 </div>
                 {visibleApps.map(app => {
@@ -1327,7 +1327,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
 
                       {/* 路由下拉槽（固定宽，缺省占位保持列对齐）：api-key / 手工 / shim 可绑路由；
                           route_bindable=false(如 Claude)不显示；仅直连(cursor)只有「直连」一项且禁用。 */}
-                      <div className="w-[150px] shrink-0">
+                      <div className="flex-1 min-w-0 max-w-[160px]">
                       {(((keyApp || app.link_method === 'shim') && app.route_bindable !== false) || isDirectOnly) && !app._virtual_apikey && (
                       <select
                         value={app.route_id || ''}
@@ -1389,7 +1389,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       </div>
 
                       {/* 转发测试槽（固定宽，保持列对齐）：有 api_key 的应用可测；仅直连(cursor)显示但置灰 */}
-                      <div className="w-[96px] shrink-0 flex items-center justify-end gap-1.5">
+                      <div className="w-[60px] shrink-0 flex items-center justify-end gap-1.5">
                       {(app.api_key || isDirectOnly) && (() => {
                         const ts = testState[app.id];
                         return (
