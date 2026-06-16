@@ -776,7 +776,7 @@ function registerIPC() {
     return localStats.queryDashboard(d);
   });
   // 手动触发会话文件补录（扫 ~/.claude、~/.codex、~/.gemini），返回各来源计数
-  ipcMain.handle('sessionImport:run', () => sessionImport.run(localStats));
+  ipcMain.handle('sessionImport:run', () => sessionImport.run(localStats, { skip: computeImportSkip() }));
   // 探测本机 AI 工具/本地服务，返回是否已接入网关的清单
   ipcMain.handle('detectTools:scan', async () => {
     const r = await detectTools.scan();
@@ -1225,13 +1225,39 @@ function registerIPC() {
           description: '', allowed_models: [], max_rpm: null, max_concurrent: null, allow_stream: true,
           env: d.env || null, preset_id: d.id, inject: 'config-file',
           config_file: d.config_file || null, patch: d.patch || null,
-          hosted: false,   // 状态跟随操作：建条目=离线，点「纳管」才写配置
+          hosted: true,    // 默认纳管+直连：只读会话日志统计，不写配置/不走网关（绑路由才走网关）
           created_at: new Date().toISOString(),
         });
         savedPresets.add(d.id); managedFiles.add(nf); mutated = true;
       }
       if (mutated) { saveApps(cur); try { syncGatewayFromConfig(readLocalConfig()); } catch {} }
     } catch (e) { console.error('[apps:list] materialize api-key failed:', e.message); }
+
+    // direct_only 会话源 → 自动建「仅直连·只统计」应用（默认纳管+直连，只读会话日志、不绑路由/不走网关）。
+    // 由内置 session_sources 驱动（cursor 等），检测=会话根目录存在。
+    try {
+      const cur = getApps();
+      const haveDirect = new Set(cur.filter(a => a.link_method === 'direct').map(a => a.agent_id));
+      let mutated = false;
+      for (const s of (require('./config-loader').sessionSources() || [])) {
+        if (!s || !s.direct_only || !s.agent_id) continue;
+        if (haveDirect.has(s.agent_id)) continue;
+        let detected = false;
+        try { detected = fs.existsSync(require('./config-loader').expandHome(s.root || '')); } catch {}
+        if (!detected) continue;
+        cur.push({
+          id: 'app-direct-' + s.agent_id,
+          name: s.app_name || s.agent_id, icon: s.app_icon || '🖱',
+          link_method: 'direct', agent_id: s.agent_id,
+          api_key: null, route_id: null,
+          route_bindable: false, direct_only: true,
+          hosted: true,    // 默认纳管+直连：只读会话日志统计
+          created_at: new Date().toISOString(),
+        });
+        haveDirect.add(s.agent_id); mutated = true;
+      }
+      if (mutated) saveApps(cur);
+    } catch (e) { console.error('[apps:list] materialize direct failed:', e.message); }
 
     // 被管理员禁用（enable_3p:false）的 api_key 应用预设 id —— 这些应用整条隐藏
     const disabledPresets = new Set(
@@ -1262,6 +1288,7 @@ function registerIPC() {
         note: t.note || null,
         installed: t.installed,
         linked: t.linked,
+        hosted: true,     // 默认纳管+直连：检测到即只读会话日志统计（取消纳管才停扫）
         _virtual: true,   // 未持久化，仅展示
       }));
 
@@ -1286,12 +1313,19 @@ function registerIPC() {
     // 注入实时托管状态 + 自动配置详情
     const rows = allApps
       .map(app => {
+        // 「仅直连·只统计」应用（cursor 等）：只读会话日志，不绑路由/不走网关。
+        if (app.link_method === 'direct') {
+          return { ...app, linked: false, installed: true,
+                   hosted: app.hosted === true,
+                   direct_only: true, route_bindable: false, host_method: 'direct' };
+        }
         if (app.link_method === 'shim') {
           const tool = agentTools.find(t => t.id === app.agent_id);
           return {
             ...app,
             linked: tool ? tool.linked : false,
             installed: tool ? tool.installed : false,
+            hosted: app.hosted !== false,   // 默认纳管+直连（检测到即统计），仅显式取消纳管(false)才停扫
             type: tool ? tool.type : (app.type || 'cli'),
             note: tool ? tool.note : (app.note || null),
             route_bindable: tool ? tool.route_bindable : (app.route_bindable !== false),
@@ -1315,7 +1349,8 @@ function registerIPC() {
                  allow_direct: def ? def.allow_direct !== false : (app.allow_direct !== false),  // 无本地用量源的桌面壳=false
                  host_method: freshConfigFile ? 'config-file' : 'api-key' };
       })
-      // 机器上没有的 shim 应用不展示；api-key 应用始终展示
+      // 机器上没有的 shim 应用不展示；api-key 应用始终展示。
+      // （检测靠 resolveRealCommand，已补上 npm 全局 bin 等目录兜底，不受 app 继承 PATH 不全影响。）
       .filter(app => app.link_method !== 'shim' || app.installed);
 
     // 追加：检测到、但还没"添加"过的 API Key 应用（虚拟行，显示「添加」）
@@ -1521,13 +1556,48 @@ function registerIPC() {
   // 写 ~/.claude/projects），由 session-import 路由到 session-claude-desktop；这里并回该应用。
   const SESSION_DS_BY_PRESET = { 'claude-desktop': 'session-claude-desktop' };
 
+  // 「与网关 proxy 记录天然去重」的会话 data_source 集合（源带 proxy_dedup，如 Claude：
+  // 会话 request_id=上游 msg_id，走网关时同一次调用 proxy+会话只记一次）。
+  // 含源主 data_source 及其 data_source_map 的所有目标（如 session-claude / session-claude-desktop）。
+  const PROXY_DEDUP_DS = (() => {
+    const s = new Set();
+    try {
+      for (const src of (require('./config-loader').sessionSources() || [])) {
+        if (src && src.proxy_dedup) {
+          if (src.data_source) s.add(src.data_source);
+          const m = src.data_source_map && src.data_source_map.map;
+          if (m) for (const v of Object.values(m)) s.add(v);
+        }
+      }
+    } catch {}
+    return s;
+  })();
+
+  // 扫描时要跳过的会话 data_source 集合：
+  //   1) 取消纳管(hosted:false) → 停止统计其日志；
+  //   2) 已绑路由走网关(hosted && route_id) 且该源非 proxy_dedup → 网关已记 proxy，跳过扫描避免重复计
+  //      （codex/gemini 用合成 request_id，和 proxy 对不上、不会自动去重 → 必须靠这里跳过；Claude 例外）。
+  // shim/direct 经 AGENT_DATA_SOURCE，api-key 经 SESSION_DS_BY_PRESET；虚拟/未操作的应用=默认纳管(不在集合内)。
+  function computeImportSkip() {
+    const skip = new Set();
+    try {
+      for (const app of getApps()) {
+        const ds = AGENT_DATA_SOURCE[app.agent_id] || SESSION_DS_BY_PRESET[app.preset_id];
+        if (!ds) continue;
+        if (app.hosted === false) { skip.add(ds); continue; }
+        if (app.hosted && app.route_id && !PROXY_DEDUP_DS.has(ds)) skip.add(ds);
+      }
+    } catch {}
+    return skip;
+  }
+
   // 单个应用的用量明细（合并网关实时 + 会话补录）。查询前先增量补录一次会话文件，
   // 保证 Claude/Codex/Gemini 直连官方的用量也并进来。
   ipcMain.handle('apps:detail', (_e, { app, days } = {}) => {
-    try { sessionImport.run(localStats); } catch {}
-    // api-key 应用并入会话补录数据源（如 Claude Desktop 的 Cowork/Code）；shim 始终读其会话用量（真实历史，不随纳管/还原增删）。
+    try { sessionImport.run(localStats, { skip: computeImportSkip() }); } catch {}
+    // api-key 应用并入会话补录数据源（如 Claude Desktop 的 Cowork/Code）；shim/direct 始终读其会话用量（真实历史，不随纳管/还原增删）。
     const dataSource = (app && (app.link_method === 'api-key' || app.link_method === 'manual')) ? (SESSION_DS_BY_PRESET[app.preset_id] || null)
-      : (app && app.link_method === 'shim' && app.agent_id) ? AGENT_DATA_SOURCE[app.agent_id] : null;
+      : (app && (app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) ? AGENT_DATA_SOURCE[app.agent_id] : null;
     return localStats.queryAppDetail({ appId: app && app.id, apiKey: app && app.api_key, dataSource, days: days || 30 });
   });
 
@@ -1540,9 +1610,9 @@ function registerIPC() {
         // 按稳定 app_id 记账（取消/重新纳管、key 变化都不清零）；旧数据按 api_key 兜底。
         // 并入该应用的会话补录用量（如 Claude Desktop 的 Cowork/Code 本地用量），按 request_id 去重不重复。
         s = localStats.queryByApp(app.id, app.api_key, SESSION_DS_BY_PRESET[app.preset_id] || null);
-      } else if (app.link_method === 'shim' && app.agent_id) {
+      } else if ((app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) {
         // 会话文件用量是真实历史，始终展示（不随纳管/还原清零，与 api-key 应用一致）；
-        // 纳管/还原只控制是否走网关 / 注入 shim，不影响统计可见性。
+        // 纳管/还原只控制是否走网关 / 注入 shim / 是否继续扫描，不影响已有统计可见性。
         const ds = AGENT_DATA_SOURCE[app.agent_id] || null;
         s = ds ? localStats.queryByDataSource(ds) : { calls: 0, tokens: 0, lastTs: null };
       } else {
@@ -1678,7 +1748,7 @@ app.whenReady().then(() => {
   // 有新增就通知前端刷新——否则直连用量要等重启重新挂载才显示，不像网关那样"实时"。
   const runSessionImport = () => {
     try {
-      const r = sessionImport.run(localStats);
+      const r = sessionImport.run(localStats, { skip: computeImportSkip() });
       if (r && r.imported > 0) { try { mainWindow?.webContents?.send('apps:changed'); } catch {} }
     } catch (e) { console.error('[session-import]', e.message); }
   };
@@ -1691,6 +1761,15 @@ app.whenReady().then(() => {
       localStats.setImportState(MIG, 1, 0);
     }
   } catch (e) { console.error('[session-import] migrate', e.message); }
+  // 一次性迁移：早期 cursor 源要求 message.usage（Cursor 不记 usage）→ 旧版扫到 0 条仍标记文件已处理，
+  // 导致改成「按请求数计」后文件被当作未变跳过。清掉 cursor 导入状态，让其按新规则重扫。
+  try {
+    const MIG = '__migrate_cursor_requests_v1__';
+    if (!localStats.getImportState(MIG)) {
+      localStats.resetSessionData(['session-cursor'], '%.cursor%agent-transcripts%');
+      localStats.setImportState(MIG, 1, 0);
+    }
+  } catch (e) { console.error('[session-import] migrate cursor', e.message); }
   runSessionImport();
   setInterval(runSessionImport, 30_000);
 

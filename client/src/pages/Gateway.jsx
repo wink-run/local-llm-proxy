@@ -255,7 +255,7 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
 }
 
 // ── AppManager：应用列表（Tab1: 所有应用 & 托管 | Tab2: API Key 管理）────────
-const LINK_METHOD_LABEL = { shim: '应用', 'api-key': '应用', manual: 'API' };
+const LINK_METHOD_LABEL = { shim: '应用', 'api-key': '应用', manual: 'API', direct: '直连' };
 // 按 API Key 路由的应用：自动写配置的 api-key，和用户自配的 manual（手工添加）
 const isKeyApp = (m) => m === 'api-key' || m === 'manual';
 
@@ -1024,13 +1024,23 @@ function AppManager({ externalRoutes, availableModels = [] }) {
         await window.electronAPI.apps?.update({ id: appId, hosted: true }).catch(() => {});   // 默认直连(只读文件)
       }
     } else {
-      if (!window.confirm('还原该应用？将取消纳管、恢复原始状态（不再读其会话文件统计；条目保留，可随时重新纳管）。')) return;
-      setBusyId(app.id);
-      if (app.link_method === 'shim' && app.agent_id) { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); showNotice(app.id, '✓ 已还原，重开终端后生效'); }
-      else if (app.host_method === 'config-file') { await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {}); showNotice(app.id, '✓ 已还原，重启应用后生效'); }
+      const msg = app.link_method === 'direct'
+        ? '取消纳管该应用？将停止统计其会话日志（历史数据保留，可随时重新纳管）。'
+        : '还原该应用？将取消纳管、恢复原始状态（不再读其会话文件统计；条目保留，可随时重新纳管）。';
+      if (!window.confirm(msg)) return;
+      // 虚拟 shim（未持久化）：先落条目，否则 hosted:false 无处可写，取消纳管不生效。
+      let appId = app.id;
+      if (app._virtual && app.link_method === 'shim') {
+        const c = await window.electronAPI.apps?.ensureShimApp({ agent_id: app.agent_id, name: app.name, icon: app.icon }).catch(() => null);
+        if (c) appId = c.id;
+      }
+      setBusyId(appId);
+      if (app.link_method === 'shim' && app.agent_id) { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); showNotice(appId, '✓ 已还原，重开终端后生效'); }
+      else if (app.host_method === 'config-file') { await window.electronAPI.apps?.revertConfigFile({ app_id: appId, config_file: app.config_file }).catch(() => {}); showNotice(appId, '✓ 已还原，重启应用后生效'); }
+      else if (app.link_method === 'direct') { showNotice(appId, '✓ 已取消纳管，停止统计'); }
       // 取消纳管并清空路由，回到「直连」状态。
-      await window.electronAPI.apps?.update({ id: app.id, hosted: false, route_id: null }).catch(() => {});
-      if (settings?.id === app.id) setSettings(null);
+      await window.electronAPI.apps?.update({ id: appId, hosted: false, route_id: null }).catch(() => {});
+      if (settings?.id === appId) setSettings(null);
     }
     setBusyId(null);
     await load();
@@ -1270,7 +1280,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                   const keyApp = isKeyApp(app.link_method);
                   const isCfgApp = keyApp && app.host_method === 'config-file';
                   const isManual = app.link_method === 'manual';
-                  const hostable = app.link_method === 'shim' || isCfgApp;   // 有"纳管/直连"概念的应用
+                  const isDirectOnly = app.link_method === 'direct';        // 仅直连·只统计（cursor 等）
+                  const hostable = app.link_method === 'shim' || isCfgApp || isDirectOnly;   // 有"纳管/直连"概念的应用
                   const tracked  = app.hosted === true;
                   const isOnline = hostable ? !!(app.hosted && app.route_id) : keyApp;  // 经网关
                   const isDirect = hostable && tracked && !app.route_id;                // 纳管+直连
@@ -1313,12 +1324,14 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         <div className="text-center w-14 text-[10px] font-medium text-gray-600 dark:text-gray-300">{fmtTime(st.lastTs)}</div>
                       </div>
 
-                      {/* 路由下拉：api-key / 手工添加 / 透明托管(shim) 应用可绑路由；route_bindable=false(如 Claude)不显示 */}
-                      {(keyApp || app.link_method === 'shim') && !app._virtual_apikey && app.route_bindable !== false && (
+                      {/* 路由下拉：api-key / 手工添加 / 透明托管(shim) 应用可绑路由；route_bindable=false(如 Claude)不显示。
+                          仅直连应用(cursor 等)：保留下拉但只有「直连」一项且禁用，UI 一致、不可绑路由。 */}
+                      {(((keyApp || app.link_method === 'shim') && app.route_bindable !== false) || isDirectOnly) && !app._virtual_apikey && (
                       <select
                         value={app.route_id || ''}
-                        disabled={hostable && !tracked}
+                        disabled={isDirectOnly || (hostable && !tracked)}
                         onChange={async e => {
+                          if (isDirectOnly) return;   // 仅直连应用：不可改路由
                           const val = e.target.value || null;
                           // 直连官方(空) = 还原配置/撤 shim → 应用直连官方、不走网关；
                           // 选模型/路由 = 写配置纳管/注入 shim → 走网关并按 keyScene 路由。
@@ -1344,11 +1357,13 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           await load();
                         }}
                         className="flex-1 min-w-0 text-[10px] bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 outline-none text-gray-600 dark:text-gray-400 max-w-[160px] disabled:opacity-40 disabled:cursor-not-allowed">
-                        {/* manual / 无本地用量源的桌面壳(allow_direct:false) 必须绑路由；其余可「直连官方」*/}
-                        {(isManual || app.allow_direct === false)
+                        {/* 仅直连应用(cursor)：只有「直连」一项；manual / 无本地用量源桌面壳必须绑路由；其余可「直连官方」*/}
+                        {isDirectOnly
+                          ? <option value="">直连（仅统计，不走网关）</option>
+                          : (isManual || app.allow_direct === false)
                           ? <option value="" disabled>请选择模型 / 路由（不可直连）</option>
                           : <option value="">直连官方（不走网关）</option>}
-                        {(() => {
+                        {!isDirectOnly && (() => {
                           const avail = new Set(availableModels.map(m => m.id));
                           const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
                           return (
@@ -1370,8 +1385,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       </select>
                       )}
 
-                      {/* 转发测试：有 api_key 的应用可一键测试转发是否成功 */}
-                      {app.api_key && (() => {
+                      {/* 转发测试：有 api_key 的应用可一键测试转发；仅直连应用(cursor)也显示但置灰(不可测) */}
+                      {(app.api_key || isDirectOnly) && (() => {
                         const ts = testState[app.id];
                         return (
                           <>
@@ -1392,7 +1407,27 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       })()}
 
                       {/* 操作按钮：按托管方式区分 */}
-                      {app.link_method === 'shim' ? (
+                      {isDirectOnly ? (
+                        /* 仅直连·只统计（cursor 等）：与其它应用「直连」态一致——编辑/测试不可用，还原可用（=取消纳管，停统计）*/
+                        <>
+                          <button onClick={() => setSettings(app)} disabled={!isOnline}
+                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent shrink-0">
+                            编辑
+                          </button>
+                          {tracked ? (
+                            <button onClick={() => setTracked(app, false)} disabled={busyId === app.id}
+                              title="还原：停止统计该应用的会话日志（历史数据保留）"
+                              className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 disabled:opacity-50 shrink-0">
+                              {busyId === app.id ? '…' : '还原'}
+                            </button>
+                          ) : (
+                            <button onClick={() => setTracked(app, true)} disabled={busyId === app.id}
+                              className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 shrink-0 font-medium">
+                              {busyId === app.id ? '…' : '纳管'}
+                            </button>
+                          )}
+                        </>
+                      ) : app.link_method === 'shim' ? (
                         /* 透明托管：编辑（仅在线可用）+ 纳管/还原 开关（按 tracked）*/
                         <>
                           <button onClick={() => setSettings(app)} disabled={!isOnline}

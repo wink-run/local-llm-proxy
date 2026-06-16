@@ -36,7 +36,9 @@ function resolveEnvKeys(toolId, envMap) {
   return out;
 }
 
-// 工具是否已装（命令可执行）
+// 工具是否已装（命令可执行）。
+// 注意：不靠「配置/会话目录存在」判断——那不可靠（~/.gemini 可能是 Antigravity 造的、
+// ~/.codex 被 Codex Desktop 共用），会把没装 CLI 的工具误报为已装。
 function isInstalled(tool) {
   const cmd = tool.detect && tool.detect.command;
   if (!cmd) return false;

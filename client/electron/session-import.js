@@ -320,14 +320,18 @@ function importSource(localStats, src) {
 // ── 入口 ────────────────────────────────────────────────────────────────────
 
 // 扫描 config-loader.session_sources 配置的所有来源并补录到 local-stats。
-function run(localStats) {
+// opts.skip：data_source 集合（Set 或数组）——命中的源不扫（取消纳管的应用 → 停止统计其日志）。
+function run(localStats, opts = {}) {
   if (!localStats || typeof localStats.record !== 'function') {
     return { ok: false, error: 'local-stats not ready', imported: 0, sources: [] };
   }
+  const skip = opts.skip instanceof Set ? opts.skip : new Set(opts.skip || []);
   let defs = [];
   try { defs = require('./config-loader').sessionSources() || []; } catch {}
   const sources = [];
   for (const src of defs) {
+    // 取消纳管的应用：跳过其会话源（不再产生新统计；历史数据保留）。
+    if (src && src.data_source && skip.has(src.data_source)) continue;
     try { sources.push(importSource(localStats, src)); }
     catch (e) { sources.push({ source: src && src.id, imported: 0, error: e.message }); }
   }
