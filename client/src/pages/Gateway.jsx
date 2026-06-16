@@ -1259,8 +1259,9 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                     <div className="text-center w-12">总Token</div>
                     <div className="text-center w-14">最后使用</div>
                   </div>
-                  <div className="flex-1 min-w-0 max-w-[160px]">路由 / 模型</div>
-                  <div className="shrink-0 ml-auto">操作</div>
+                  <div className="w-[150px] shrink-0">路由 / 模型</div>
+                  <div className="w-[96px] shrink-0 text-right">测试</div>
+                  <div className="shrink-0">操作</div>
                 </div>
                 {visibleApps.map(app => {
                   const st = appStats[app.id] || { calls: 0, tokens: 0, lastTs: null };
@@ -1324,8 +1325,9 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         <div className="text-center w-14 text-[10px] font-medium text-gray-600 dark:text-gray-300">{fmtTime(st.lastTs)}</div>
                       </div>
 
-                      {/* 路由下拉：api-key / 手工添加 / 透明托管(shim) 应用可绑路由；route_bindable=false(如 Claude)不显示。
-                          仅直连应用(cursor 等)：保留下拉但只有「直连」一项且禁用，UI 一致、不可绑路由。 */}
+                      {/* 路由下拉槽（固定宽，缺省占位保持列对齐）：api-key / 手工 / shim 可绑路由；
+                          route_bindable=false(如 Claude)不显示；仅直连(cursor)只有「直连」一项且禁用。 */}
+                      <div className="w-[150px] shrink-0">
                       {(((keyApp || app.link_method === 'shim') && app.route_bindable !== false) || isDirectOnly) && !app._virtual_apikey && (
                       <select
                         value={app.route_id || ''}
@@ -1356,7 +1358,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           setBusyId(null);
                           await load();
                         }}
-                        className="flex-1 min-w-0 text-[10px] bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 outline-none text-gray-600 dark:text-gray-400 max-w-[160px] disabled:opacity-40 disabled:cursor-not-allowed">
+                        className="w-full text-[10px] bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 outline-none text-gray-600 dark:text-gray-400 disabled:opacity-40 disabled:cursor-not-allowed">
                         {/* 仅直连应用(cursor)：只有「直连」一项；manual / 无本地用量源桌面壳必须绑路由；其余可「直连官方」*/}
                         {isDirectOnly
                           ? <option value="">直连（仅统计，不走网关）</option>
@@ -1384,8 +1386,10 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         })()}
                       </select>
                       )}
+                      </div>
 
-                      {/* 转发测试：有 api_key 的应用可一键测试转发；仅直连应用(cursor)也显示但置灰(不可测) */}
+                      {/* 转发测试槽（固定宽，保持列对齐）：有 api_key 的应用可测；仅直连(cursor)显示但置灰 */}
+                      <div className="w-[96px] shrink-0 flex items-center justify-end gap-1.5">
                       {(app.api_key || isDirectOnly) && (() => {
                         const ts = testState[app.id];
                         return (
@@ -1405,8 +1409,10 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           </>
                         );
                       })()}
+                      </div>
 
-                      {/* 操作按钮：按托管方式区分 */}
+                      {/* 操作按钮（固定容器，统一起点）：按托管方式区分 */}
+                      <div className="flex items-center gap-2 shrink-0">
                       {isDirectOnly ? (
                         /* 仅直连·只统计（cursor 等）：与其它应用「直连」态一致——编辑/测试不可用，还原可用（=取消纳管，停统计）*/
                         <>
@@ -1485,6 +1491,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           </button>
                         </>
                       )}
+                      </div>
                       {/* 操作结果提示（重启提醒）*/}
                       {(() => {
                         const key = app.agent_id || app.id;
