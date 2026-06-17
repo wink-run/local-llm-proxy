@@ -1,9 +1,50 @@
 # tokenbank.routes.default.yaml
-# 场景路由默认配置 —— 内置「留空」：场景路由从服务器同步下发
-#   （config.scenes → applyConfigDoc 写入 local-config）。
-# 未同步前本地无任何场景路由。
+# 场景路由离线默认 — 与 server/static/defaults/scenes.default.yaml 保持同步。
+# 首次启动 scene_routes 为空时由 main.js 加载；在线后 config.scenes 下发追加。
 
 version: 1
 
-# ── 场景路由（内置留空，从服务器同步）──
-scene_routes: []
+scene_routes:
+  - id: route-code
+    scene_name: 代码助手
+    icon: 💻
+    model_key: llm-router-code
+    steps:
+      - model: claude-sonnet-4-6
+        tier: paid
+      - model: gpt-4o
+        tier: paid
+      - model: deepseek-chat
+        tier: paid
+
+  - id: route-chat
+    scene_name: 日常对话
+    icon: 💬
+    model_key: llm-router-chat
+    steps:
+      - model: deepseek-chat
+        tier: paid
+      - model: gpt-4o-mini
+        tier: paid
+
+  - id: route-long
+    scene_name: 长上下文
+    icon: 📄
+    model_key: llm-router-long
+    steps:
+      - model: claude-sonnet-4-6
+        tier: paid
+      - model: gemini-2.5-pro
+        tier: paid
+
+  - id: route-fast
+    scene_name: 快速响应
+    icon: ⚡
+    model_key: llm-router-fast
+    steps:
+      - model: claude-haiku-4-5
+        tier: paid
+      - model: gpt-4o-mini
+        tier: paid
+      - model: llama-3.3-70b
+        tier: paid

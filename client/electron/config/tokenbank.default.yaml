@@ -1,8 +1,9 @@
-# tokenbank.yaml —— 端到端唯一真相源（方案 Y）
-# 内置默认「留空」：应用 / API Key 应用 / 场景路由 / 虚拟模型 均从服务器同步下发
-#   （applyConfigDoc 写 ~/.tokenbank/tokenbank.yaml，config-loader 优先读它）。
-# 仅保留网关基础设施（host/端口/证书来源），保证网关能启动。
-# 铁律：真 key / 真证书永不进此文件。
+# tokenbank.yaml —— 客户端基础设施 + 会话解析（内置，不同步覆盖）
+# 分工：
+#   tokenbank.default.yaml     → gateway / mitm / claude_models / session_sources（本文件）
+#   tokenbank.tools.default.yaml → 计费目录离线回退（与 server apps.default.yaml 同步）
+#   tokenbank.routes.default.yaml → 场景路由离线回退（与 server scenes.default.yaml 同步）
+# tools / api_key_apps 留空，由 GET /config/apps 写入 ~/.tokenbank/tokenbank.yaml。
 
 version: 1
 
@@ -28,6 +29,7 @@ claude_models:
   - claude-opus-4-6
   - claude-opus-4-5
   - claude-opus-4
+  - claude-sonnet-4-6
   - claude-sonnet-4-5
   - claude-sonnet-4
   - claude-haiku-4-5

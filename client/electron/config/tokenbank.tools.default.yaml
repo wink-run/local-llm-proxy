@@ -1,8 +1,7 @@
 # tokenbank.tools.default.yaml
-# 工具 + 个人页计费目录默认配置。
-# 客户端内置：未从服务器同步前，个人页订阅/按量目录读此文件。
-# 服务器通过 PUT /config/apps 下发同 schema 的 tokenbank.tools.yaml 覆盖。
-# 铁律：真 key / 真证书永不进此文件。
+# 客户端离线回退：未从服务器同步前，个人页订阅/按量目录读此文件。
+# 计费段须与 server/static/defaults/apps.default.yaml 保持同步。
+# tools / api_key_apps 留空，等 GET /config/apps 下发。
 
 version: 1
 
@@ -21,6 +20,7 @@ claude_models:
   - claude-opus-4-6
   - claude-opus-4-5
   - claude-opus-4
+  - claude-sonnet-4-6
   - claude-sonnet-4-5
   - claude-sonnet-4
   - claude-haiku-4-5
@@ -122,16 +122,6 @@ subscription_plans:
       label: Cursor Ultra
       monthly_usd: 200
 
-  deepseek:
-    - id: deepseek-pro
-      label: DeepSeek Pro
-      monthly_usd: null
-
-  xai:
-    - id: grok-premium
-      label: Grok Premium
-      monthly_usd: null
-
 # ════════ 个人页：按量付费供给源（各 provider 独立 pricing）════════
 payg_providers:
   - id: openai
@@ -150,9 +140,10 @@ payg_providers:
     label: Anthropic
     icon: "🧬"
     aliases: [claude-cli]
-    models: [claude-sonnet-4-5, claude-sonnet-4, claude-haiku-4-5, claude-opus-4-6]
+    models: [claude-sonnet-4-6, claude-sonnet-4-5, claude-sonnet-4, claude-haiku-4-5, claude-opus-4-6]
     pricing:
       claude-opus-4-6:   { in: 5.00,  out: 25.00, cacheRead: 0.50,  cacheWrite: 6.25 }
+      claude-sonnet-4-6: { in: 3.00,  out: 15.00, cacheRead: 0.30,  cacheWrite: 3.75 }
       claude-sonnet-4-5: { in: 3.00,  out: 15.00, cacheRead: 0.30,  cacheWrite: 3.75 }
       claude-sonnet-4:   { in: 3.00,  out: 15.00, cacheRead: 0.30,  cacheWrite: 3.75 }
       claude-haiku-4-5:  { in: 1.00,  out: 5.00,  cacheRead: 0.10,  cacheWrite: 1.25 }

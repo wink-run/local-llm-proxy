@@ -23,7 +23,10 @@ const FALLBACK_SUBSCRIPTION_PLANS = {
     { id: 'copilot-pro', label: 'GitHub Copilot Pro', monthly_usd: 10 },
     { id: 'copilot-business', label: 'Copilot Business', monthly_usd: 19 },
   ],
-  cursor: [{ id: 'cursor-pro', label: 'Cursor Pro', monthly_usd: 20 }],
+  cursor: [
+    { id: 'cursor-pro', label: 'Cursor Pro', monthly_usd: 20 },
+    { id: 'cursor-ultra', label: 'Cursor Ultra', monthly_usd: 200 },
+  ],
 };
 
 function normPlan(p) {

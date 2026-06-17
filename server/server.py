@@ -42,6 +42,9 @@ _bearer = HTTPBearer(auto_error=False)
 async def lifespan(app: FastAPI):
     await db.init_db()
     logger.info("Database ready")
+    from config_seed import seed_default_configs
+    await seed_default_configs()
+    logger.info("Default config seeded (if empty)")
     from admin_router import _sync_virtual_pool
     await _sync_virtual_pool()
     logger.info("Virtual agents synced")
