@@ -226,7 +226,7 @@ function queryDashboard(days = 1) {
 
   // Model ranking
   const models = db.prepare(
-    'SELECT model, COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens FROM requests ' +
+    'SELECT model, COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, SUM(cost_usd) AS cost_usd FROM requests ' +
     'WHERE ts >= ? AND model IS NOT NULL GROUP BY model ORDER BY calls DESC'
   ).all(since);
 
@@ -249,7 +249,7 @@ function queryDashboard(days = 1) {
     agent_sources: agentRows.map(r => ({ source: r.data_source, calls: r.calls, tokens: r.tokens || 0 })),
     tiers,
     hourly,
-    models:    models.map(r => ({ model: r.model, calls: r.calls, tokens: r.tokens || 0 })),
+    models:    models.map(r => ({ model: r.model, calls: r.calls, tokens: r.tokens || 0, cost_usd: r.cost_usd || 0 })),
     keys:      keys.map(r => ({ api_key: r.api_key, calls: r.calls, tokens: r.tokens || 0 })),
     providers: providers.map(r => ({ id: r.provider_id, tier: r.tier, calls: r.calls })),
   };

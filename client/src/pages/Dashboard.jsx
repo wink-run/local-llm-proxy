@@ -3,9 +3,18 @@ import { useState, useEffect, useCallback } from 'react';
 const RANGES = ['今日', '7 天', '30 天'];
 const RANGE_DAYS = { '今日': 1, '7 天': 7, '30 天': 30 };
 
-// Provider → tier mapping (same logic as Gateway)
 const PAID_PROVIDERS = ['openai', 'anthropic-paid', 'openrouter', 'anthropic'];
 const P2P_PROVIDERS  = ['tokenbank-p2p'];
+
+const DATA_SOURCE_LABELS = {
+  'proxy':            { label: '🛰️ 网关实时',   color: 'bg-blue-500' },
+  'session-claude':   { label: '🔷 Claude Code', color: 'bg-indigo-500' },
+  'session-codex':    { label: '⚡ Codex',        color: 'bg-yellow-500' },
+  'session-gemini':   { label: '♊ Gemini CLI',   color: 'bg-teal-500' },
+  'session-cursor':   { label: '🖱️ Cursor',      color: 'bg-purple-500' },
+  'session-opencode': { label: '📝 OpenCode',     color: 'bg-orange-500' },
+  'session-copilot':  { label: '🤖 Copilot CLI',  color: 'bg-green-500' },
+};
 
 function tierFromProvider(id = '') {
   if (P2P_PROVIDERS.includes(id))  return 'p2p';
@@ -13,10 +22,12 @@ function tierFromProvider(id = '') {
   return 'free';
 }
 
+const fmtN    = n => n >= 1_000_000 ? (n/1e6).toFixed(2)+'M' : n >= 1000 ? (n/1000).toFixed(1)+'K' : String(n||0);
+const fmtCost = n => (n != null && n > 0) ? ('$' + n.toFixed(n < 0.01 ? 4 : 3)) : '—';
+
 function TierDonut({ byProvider = {} }) {
   let free = 0, p2p = 0, paid = 0, total = 0;
   for (const [id, v] of Object.entries(byProvider)) {
-    // Use stored tier if available (set by gateway at record time), else infer from id
     const t = v.tier || tierFromProvider(id);
     const n = v.calls || 0;
     if (t === 'free') free += n;
@@ -28,9 +39,8 @@ function TierDonut({ byProvider = {} }) {
     <div className="flex items-center justify-center h-full text-xs text-gray-600">无数据</div>
   );
 
-  const r = 36, circ = 2 * Math.PI * r; // 226.2
+  const r = 36, circ = 2 * Math.PI * r;
   const fPct = free / total, pPct = p2p / total, aPct = paid / total;
-  // offsets: start from top (-90deg = offset = circ/4)
   const fLen = fPct * circ, p2pLen = pPct * circ, aLen = aPct * circ;
   const fOff = circ * 0.25;
   const p2pOff = fOff - fLen;
@@ -76,9 +86,9 @@ function TierDonut({ byProvider = {} }) {
 }
 
 function TrendBars({ data = [] }) {
-  const [tip, setTip] = useState(null); // { i, x }
+  const [tip, setTip] = useState(null);
   const max = Math.max(...data, 1);
-  const H = 96; // px — matches h-24
+  const H = 96;
   return (
     <div className="space-y-1">
       <div className="relative flex items-end gap-1 h-24">
@@ -86,12 +96,9 @@ function TrendBars({ data = [] }) {
           const px = Math.max(Math.round((v / max) * H), v > 0 ? 4 : 2);
           const now = new Date().getHours();
           return (
-            <div
-              key={i}
-              className="flex-1 cursor-default relative"
+            <div key={i} className="flex-1 cursor-default relative"
               onMouseEnter={e => setTip({ i, rect: e.currentTarget.getBoundingClientRect() })}
-              onMouseLeave={() => setTip(null)}
-            >
+              onMouseLeave={() => setTip(null)}>
               {tip?.i === i && (
                 <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 z-10
                   bg-gray-800 dark:bg-gray-700 text-white text-[10px] rounded px-1.5 py-0.5
@@ -99,10 +106,8 @@ function TrendBars({ data = [] }) {
                   {i}:00 · {v} 次
                 </div>
               )}
-              <div
-                className={`w-full rounded-sm transition-all duration-300 ${i === now ? 'bg-blue-500' : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-400 dark:hover:bg-gray-500'}`}
-                style={{ height: `${px}px` }}
-              />
+              <div className={`w-full rounded-sm transition-all duration-300 ${i === now ? 'bg-blue-500' : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-400 dark:hover:bg-gray-500'}`}
+                style={{ height: `${px}px` }} />
             </div>
           );
         })}
@@ -119,7 +124,7 @@ function TrendBars({ data = [] }) {
 export default function Dashboard() {
   const [range, setRange]         = useState('今日');
   const [localKeys, setLocalKeys] = useState([]);
-  const [localData, setLocalData] = useState(null);   // queryDashboard result
+  const [localData, setLocalData] = useState(null);
   const [gwStatus, setGwStatus]   = useState(null);
   const [loading, setLoading]     = useState(true);
 
@@ -137,13 +142,11 @@ export default function Dashboard() {
       }
       setLocalData(data);
 
-      // Key notes come from localConfig (Electron) or we skip enrichment (CLI)
       if (window.electronAPI?.localConfig) {
         const cfg = await window.electronAPI.localConfig.get();
         setLocalKeys(cfg.local_keys || []);
       }
 
-      // Gateway running status (port display)
       const fetchStatus = window.electronAPI?.gateway
         ? () => window.electronAPI.gateway.status().then(setGwStatus).catch(() => {})
         : () => fetch('/api/gateway/status').then(r => r.json()).then(setGwStatus).catch(() => {});
@@ -169,10 +172,11 @@ export default function Dashboard() {
     }
   };
 
-  // ── Derived from local SQLite ──────────────────────────────────────────────
+  // ── Derived ───────────────────────────────────────────────────────────────
   const totalCalls  = localData?.total_calls  ?? 0;
   const totalTokens = localData?.total_tokens ?? 0;
-  const fmtTokens   = totalTokens >= 1000 ? `${(totalTokens / 1000).toFixed(1)}K` : String(totalTokens);
+  const totalCost   = localData?.total_cost   ?? 0;
+  const agentSources = localData?.agent_sources ?? [];
 
   const freeCalls  = localData?.tiers?.free  ?? 0;
   const p2pCalls   = localData?.tiers?.p2p   ?? 0;
@@ -180,32 +184,30 @@ export default function Dashboard() {
   const freeRatio  = totalCalls > 0 ? Math.round(freeCalls / totalCalls * 100) : 0;
 
   const trendData  = localData?.hourly ?? Array(24).fill(0);
-
-  // byProvider for donut chart: { [provider_id]: { calls, tier } }
   const byProvider = Object.fromEntries(
     (localData?.providers ?? []).map(p => [p.id, { calls: p.calls, tier: p.tier }])
   );
 
-  // Scene table: enrich local key stats with notes from localConfig
-  const keyNoteMap = new Map(localKeys.map(k => [k.key, k]));
+  const keyNoteMap   = new Map(localKeys.map(k => [k.key, k]));
   const enrichedKeys = (localData?.keys ?? []).map(k => {
     const lk = keyNoteMap.get(k.api_key);
     return {
       _local_key_id: lk?.id   || null,
       api_key:       k.api_key,
       app_name:      lk?.note || null,
-      scene_name:    null,
       request_count: k.calls,
       total_tokens:  k.tokens,
-      total_credits: 0,
     };
   });
 
-  // Model rankings
-  const modelStats     = localData?.models ?? [];
-  const maxModel       = modelStats[0]?.calls || 1;
-  const modelByTokens  = [...modelStats].filter(m => m.tokens > 0).sort((a, b) => b.tokens - a.tokens);
+  const modelStats    = localData?.models ?? [];
+  const maxModel      = modelStats[0]?.calls || 1;
+  const modelByTokens = [...modelStats].filter(m => m.tokens > 0).sort((a, b) => b.tokens - a.tokens);
   const maxModelTokens = modelByTokens[0]?.tokens || 1;
+  const modelByCost   = [...modelStats].filter(m => (m.cost_usd || 0) > 0).sort((a, b) => b.cost_usd - a.cost_usd);
+  const maxModelCost  = modelByCost[0]?.cost_usd || 1;
+
+  const sourceTotal = agentSources.reduce((s, r) => s + r.calls, 0) || 1;
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-5 bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 min-h-screen">
@@ -233,8 +235,8 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-4 gap-3">
+      {/* Summary cards — 5列 */}
+      <div className="grid grid-cols-5 gap-3">
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
           <div className="text-xs text-gray-500">总请求数</div>
           <div className="text-2xl font-bold mt-1">{totalCalls}</div>
@@ -247,13 +249,20 @@ export default function Dashboard() {
         </div>
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
           <div className="text-xs text-gray-500">Token 消耗</div>
-          <div className="text-2xl font-bold text-purple-600 dark:text-purple-400 mt-1">{fmtTokens}</div>
+          <div className="text-2xl font-bold text-purple-600 dark:text-purple-400 mt-1">{fmtN(totalTokens)}</div>
           <div className="text-[10px] text-gray-600 mt-0.5">{range} 合计</div>
         </div>
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
           <div className="text-xs text-gray-500">付费调用</div>
           <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">{paidCalls + p2pCalls}</div>
           <div className="text-[10px] text-gray-600 mt-0.5">{paidCalls} 付费层 · {p2pCalls} P2P 层</div>
+        </div>
+        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+          <div className="text-xs text-gray-500">估算费用</div>
+          <div className={`text-2xl font-bold mt-1 ${totalCost > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400'}`}>
+            {fmtCost(totalCost)}
+          </div>
+          <div className="text-[10px] text-gray-600 mt-0.5">仅含 API Key 类调用</div>
         </div>
       </div>
 
@@ -268,6 +277,34 @@ export default function Dashboard() {
           <TrendBars data={trendData} />
         </div>
       </div>
+
+      {/* 工具来源分布 */}
+      {agentSources.length > 0 && (
+        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">工具来源分布</h2>
+            <span className="text-xs text-gray-500">{range} · {totalCalls} 次合计</span>
+          </div>
+          <div className="space-y-3">
+            {agentSources.map(s => {
+              const meta  = DATA_SOURCE_LABELS[s.source] || { label: s.source, color: 'bg-gray-400' };
+              const pct   = Math.round(s.calls / sourceTotal * 100);
+              return (
+                <div key={s.source} className="flex items-center gap-3">
+                  <div className="w-32 shrink-0 text-xs text-gray-600 dark:text-gray-400 truncate">{meta.label}</div>
+                  <div className="flex-1 bg-gray-100 dark:bg-gray-800 rounded-full h-2.5 overflow-hidden">
+                    <div className={`h-full rounded-full transition-all duration-500 ${meta.color}`}
+                      style={{ width: `${Math.max(pct, 1)}%` }} />
+                  </div>
+                  <span className="w-16 shrink-0 text-right text-xs text-gray-500">{s.calls} 次</span>
+                  <span className="w-10 shrink-0 text-right text-[10px] text-gray-400">{pct}%</span>
+                  <span className="w-20 shrink-0 text-right text-xs text-gray-500">{fmtN(s.tokens)} tok</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Scene app breakdown */}
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
@@ -304,16 +341,12 @@ export default function Dashboard() {
                       <div className="text-[10px] text-gray-600">次请求</div>
                     </div>
                     <div>
-                      <div className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-                        {s.total_tokens >= 1000 ? `${(s.total_tokens / 1000).toFixed(1)}K` : s.total_tokens}
-                      </div>
+                      <div className="text-sm font-semibold text-gray-700 dark:text-gray-300">{fmtN(s.total_tokens)}</div>
                       <div className="text-[10px] text-gray-600">tokens</div>
                     </div>
                     {s._local_key_id && (
-                      <button
-                        onClick={() => handleDeleteKey(s._local_key_id)}
-                        className="text-[10px] text-gray-700 hover:text-red-600 dark:text-red-400 transition-colors"
-                      >删除</button>
+                      <button onClick={() => handleDeleteKey(s._local_key_id)}
+                        className="text-[10px] text-gray-700 hover:text-red-600 dark:text-red-400 transition-colors">删除</button>
                     )}
                   </div>
                 </div>
@@ -323,9 +356,9 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Model rankings */}
-      <div className="grid grid-cols-2 gap-4">
-        {/* Call count ranking */}
+      {/* Model rankings — 3 columns */}
+      <div className="grid grid-cols-3 gap-4">
+        {/* Call count */}
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5">
           <div className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-4">模型调用排行</div>
           {modelStats.length === 0 ? (
@@ -335,9 +368,7 @@ export default function Dashboard() {
               {modelStats.map(m => (
                 <div key={m.model}>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-mono text-gray-700 dark:text-gray-300 truncate max-w-[160px]" title={m.model}>
-                      {m.model}
-                    </span>
+                    <span className="text-xs font-mono text-gray-700 dark:text-gray-300 truncate max-w-[140px]" title={m.model}>{m.model}</span>
                     <span className="text-xs text-gray-600 dark:text-gray-400 shrink-0 ml-2">{m.calls} 次</span>
                   </div>
                   <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
@@ -350,31 +381,48 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Token consumption ranking */}
+        {/* Token consumption */}
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5">
           <div className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-4">模型 Token 消耗排行</div>
           {modelByTokens.length === 0 ? (
             <p className="text-xs text-gray-600">暂无数据</p>
           ) : (
             <div className="space-y-3">
-              {modelByTokens.map(m => {
-                const tok = m.tokens || 0;
-                const fmt = tok >= 1000 ? `${(tok / 1000).toFixed(1)}K` : String(tok);
-                return (
-                  <div key={m.model}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-mono text-gray-700 dark:text-gray-300 truncate max-w-[160px]" title={m.model}>
-                        {m.model}
-                      </span>
-                      <span className="text-xs text-purple-600 dark:text-purple-400 shrink-0 ml-2">{fmt} tok</span>
-                    </div>
-                    <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full transition-all duration-500 bg-purple-500"
-                        style={{ width: `${Math.round(tok / maxModelTokens * 100)}%` }} />
-                    </div>
+              {modelByTokens.map(m => (
+                <div key={m.model}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-mono text-gray-700 dark:text-gray-300 truncate max-w-[140px]" title={m.model}>{m.model}</span>
+                    <span className="text-xs text-purple-600 dark:text-purple-400 shrink-0 ml-2">{fmtN(m.tokens)} tok</span>
                   </div>
-                );
-              })}
+                  <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                    <div className="h-full rounded-full transition-all duration-500 bg-purple-500"
+                      style={{ width: `${Math.round((m.tokens||0) / maxModelTokens * 100)}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Cost ranking */}
+        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5">
+          <div className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-4">模型费用排行</div>
+          {modelByCost.length === 0 ? (
+            <p className="text-xs text-gray-600 dark:text-gray-500">暂无费用数据（仅含 API Key 调用）</p>
+          ) : (
+            <div className="space-y-3">
+              {modelByCost.map(m => (
+                <div key={m.model}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-mono text-gray-700 dark:text-gray-300 truncate max-w-[140px]" title={m.model}>{m.model}</span>
+                    <span className="text-xs text-emerald-600 dark:text-emerald-400 shrink-0 ml-2">{fmtCost(m.cost_usd)}</span>
+                  </div>
+                  <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                    <div className="h-full rounded-full transition-all duration-500 bg-emerald-500"
+                      style={{ width: `${Math.round((m.cost_usd||0) / maxModelCost * 100)}%` }} />
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
