@@ -9,6 +9,7 @@ const path  = require('path');
 const codexTransform = require('./codex-transform');
 const reqRouter = require('./request-router');
 const oauth = require('./oauth');
+const { estimateCost } = require('./pricing');
 
 // ── In-memory state ───────────────────────────────────────────────────────────
 
@@ -1187,7 +1188,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           });
           const stepTok  = (result.input_tokens || 0) + (result.output_tokens || 0);
           const stepTier = _providerTier(provider);
-          recordStats(provider.id, stepModel, result, stepTier, callerKey, streaming);
+          recordStats(provider.id, stepModel, result, stepTier, callerKey, streaming, provider.billing_type || null);
           reportUsage(provider.id, stepModel, stepTok);
           stepSucceeded = true;
           return;
@@ -1257,7 +1258,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       });
       const directTok  = (result.input_tokens || 0) + (result.output_tokens || 0);
       const directTier = _providerTier(provider);
-      recordStats(provider.id, model, result, directTier, callerKey, streaming);
+      recordStats(provider.id, model, result, directTier, callerKey, streaming, provider.billing_type || null);
       reportUsage(provider.id, model, directTok);
       return;
     } catch (err) {
@@ -1282,7 +1283,7 @@ function pushLog(entry) {
 // 唯一 → 每条独立记录、不会误去重；成功响应仍优先用真实上游 msg_id（保证跨源去重）。
 function synthReqId() { return 'gw-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); }
 
-function recordStats(providerId, model, usage, tier, apiKey, streaming) {
+function recordStats(providerId, model, usage, tier, apiKey, streaming, billingType) {
   const inTok   = usage?.input_tokens        || 0;
   const outTok  = usage?.output_tokens       || 0;
   const cCreate = usage?.cache_create_tokens || 0;
@@ -1304,6 +1305,8 @@ function recordStats(providerId, model, usage, tier, apiKey, streaming) {
     is_streaming:         !!streaming,
     latency_ms:           (usage?.latency        != null) ? usage.latency        : null,
     first_token_ms:       (usage?.first_token_ms != null) ? usage.first_token_ms : null,
+    cost_usd:             estimateCost(model, inTok, outTok, cCreate, cRead),
+    billing_type:         billingType || null,
   });
 }
 
