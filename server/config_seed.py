@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import database as db
+from config_merge import merge_apps_yaml_text
 
 _DEFAULTS_DIR = Path(__file__).resolve().parent / "static" / "defaults"
 
@@ -23,3 +24,16 @@ async def seed_default_configs() -> None:
         content = path.read_text(encoding="utf-8").strip()
         if content:
             await db.set_config(key, content)
+
+    # 已有 config.apps 时，与最新 apps.default.yaml 合并（补 subscription_to_api 等新字段）
+    await migrate_apps_config_with_defaults()
+
+
+async def migrate_apps_config_with_defaults() -> None:
+    """将 DB 中的 config.apps 与内置默认合并后写回（有变更才更新）。"""
+    content = await db.get_config("config.apps", "")
+    if not content.strip():
+        return
+    merged = merge_apps_yaml_text(content)
+    if merged and merged != content.strip():
+        await db.set_config("config.apps", merged)

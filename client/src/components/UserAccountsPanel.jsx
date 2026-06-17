@@ -1,8 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
-
-const TX_LABEL = {
-  contribute: '贡献', consume: '消耗', referral: '推荐', purchase: '充值', adjust: '调整', spin: '转盘',
-};
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { getConfig } from '../api/adapter';
+import { useLang } from '../store/lang';
+import { isAccountOkMsg } from '../i18n';
 
 const CUSTOM_APP = '__custom_app__';
 const CUSTOM_PLAN = '__custom_plan__';
@@ -35,8 +34,10 @@ export default function UserAccountsPanel({
   CheckinCard,
   SpinCard,
   purchaseForm,
+  initialTab = 'p2p',
 }) {
-  const [tab, setTab] = useState('p2p');
+  const { t } = useLang();
+  const [tab, setTab] = useState(initialTab);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -45,6 +46,7 @@ export default function UserAccountsPanel({
   // 订阅：添加表单
   const [addSubSource, setAddSubSource] = useState('');
   const [addSubPlan, setAddSubPlan] = useState('');
+  const [addSubUseApi, setAddSubUseApi] = useState(false);
   const [customAppName, setCustomAppName] = useState('');
   const [customPlanLabel, setCustomPlanLabel] = useState('');
   const [customPlanUsd, setCustomPlanUsd] = useState('');
@@ -52,6 +54,7 @@ export default function UserAccountsPanel({
   function resetSubForm() {
     setAddSubSource('');
     setAddSubPlan('');
+    setAddSubUseApi(false);
     setCustomAppName('');
     setCustomPlanLabel('');
     setCustomPlanUsd('');
@@ -62,18 +65,24 @@ export default function UserAccountsPanel({
     setAddSubPlan('');
     setCustomPlanLabel('');
     setCustomPlanUsd('');
-    if (value !== CUSTOM_APP) setCustomAppName('');
+    if (value !== CUSTOM_APP) {
+      setCustomAppName('');
+      const item = catalog.find(c => c.source_id === value);
+      setAddSubUseApi(item?.subscription_to_api === true);
+    } else {
+      setAddSubUseApi(false);
+    }
   }
 
   // 按量：添加 provider
   const [addPaygId, setAddPaygId] = useState('');
   const [customPaygLabel, setCustomPaygLabel] = useState('');
   const [paygExpanded, setPaygExpanded] = useState(null);
-  const [pricingFilter, setPricingFilter] = useState('');
   const [overrides, setOverrides] = useState({});
   const [providerPricing, setProviderPricing] = useState({});
   const [subMsg, setSubMsg] = useState('');
   const [paygMsg, setPaygMsg] = useState('');
+  const pricingSaveTimer = useRef(null);
 
   function onPaygSelectChange(value) {
     setAddPaygId(value);
@@ -104,11 +113,16 @@ export default function UserAccountsPanel({
     return () => unsub?.();
   }, [load]);
 
-  async function saveAccounts(patch) {
+  useEffect(() => () => {
+    if (pricingSaveTimer.current) clearTimeout(pricingSaveTimer.current);
+  }, []);
+
+  async function saveAccounts(patch, { quiet = false } = {}) {
     if (!window.electronAPI?.localConfig?.setUserAccounts) {
-      setMsg('当前环境无法保存（请使用桌面版）');
-      setSubMsg('当前环境无法保存（请使用桌面版）');
-      setPaygMsg('当前环境无法保存（请使用桌面版）');
+      const tip = t('accounts.cannotSaveDesktop');
+      setMsg(tip);
+      setSubMsg(tip);
+      setPaygMsg(tip);
       return false;
     }
     setSaving(true);
@@ -123,13 +137,15 @@ export default function UserAccountsPanel({
         ...patch,
       });
       setData(r);
-      setMsg('已保存');
-      setSubMsg('已添加');
-      setPaygMsg('已添加');
-      setTimeout(() => { setMsg(''); setSubMsg(''); setPaygMsg(''); }, 2000);
+      if (!quiet) {
+        setMsg(t('accounts.saved'));
+        setSubMsg(t('accounts.added'));
+        setPaygMsg(t('accounts.added'));
+        setTimeout(() => { setMsg(''); setSubMsg(''); setPaygMsg(''); }, 2000);
+      }
       return true;
-    } catch (e) {
-      const tip = '保存失败，请确认已登录且服务器可达';
+    } catch {
+      const tip = t('accounts.saveFailed');
       setMsg(tip);
       setSubMsg(tip);
       setPaygMsg(tip);
@@ -149,7 +165,7 @@ export default function UserAccountsPanel({
   const catalogItem = !isCustomApp ? catalog.find(c => c.source_id === addSubSource) : null;
   const planOptions = catalogItem?.plans?.length
     ? catalogItem.plans
-    : (catalogItem ? [{ id: 'other', label: '其他套餐', monthly_usd: null }] : []);
+    : (catalogItem ? [{ id: 'other', label: t('accounts.otherPlan'), monthly_usd: null }] : []);
 
   async function addSubscription() {
     setSubMsg('');
@@ -157,11 +173,11 @@ export default function UserAccountsPanel({
       const name = customAppName.trim();
       const planLabel = customPlanLabel.trim();
       if (!name || !planLabel) {
-        setSubMsg('请填写应用名称和套餐名称');
+        setSubMsg(t('accounts.err.appPlan'));
         return;
       }
       if (subs.some(s => s.app_name.toLowerCase() === name.toLowerCase())) {
-        setSubMsg(`已存在应用「${name}」`);
+        setSubMsg(t('accounts.err.appExists', { name }));
         return;
       }
       const sourceId = `custom-${name.toLowerCase().replace(/\s+/g, '-').slice(0, 32)}-${Date.now().toString(36)}`;
@@ -176,6 +192,7 @@ export default function UserAccountsPanel({
         plan_label: planLabel,
         monthly_usd: Number.isFinite(monthly) ? monthly : null,
         custom: true,
+        subscription_to_api: addSubUseApi,
       }];
       setData(d => ({ ...(d || {}), user_subscriptions: next }));
       const ok = await saveAccounts({ user_subscriptions: next });
@@ -184,11 +201,11 @@ export default function UserAccountsPanel({
     }
 
     if (!addSubSource || !catalogItem) {
-      setSubMsg('请选择应用');
+      setSubMsg(t('accounts.err.selectApp'));
       return;
     }
     if (subs.some(s => s.source_id === addSubSource)) {
-      setSubMsg('该应用已添加');
+      setSubMsg(t('accounts.err.appAdded'));
       return;
     }
 
@@ -196,7 +213,7 @@ export default function UserAccountsPanel({
     if (isCustomPlan) {
       const planLabel = customPlanLabel.trim();
       if (!planLabel) {
-        setSubMsg('请填写套餐名称');
+        setSubMsg(t('accounts.err.planName'));
         return;
       }
       plan_id = 'custom';
@@ -205,12 +222,12 @@ export default function UserAccountsPanel({
       if (monthly_usd != null && !Number.isFinite(monthly_usd)) monthly_usd = null;
     } else {
       if (!addSubPlan) {
-        setSubMsg('请选择套餐');
+        setSubMsg(t('accounts.err.selectPlan'));
         return;
       }
       const plan = planOptions.find(p => p.id === addSubPlan);
       if (!plan) {
-        setSubMsg('请选择有效套餐');
+        setSubMsg(t('accounts.err.invalidPlan'));
         return;
       }
       plan_id = plan.id;
@@ -227,6 +244,7 @@ export default function UserAccountsPanel({
       plan_id,
       plan_label,
       monthly_usd,
+      subscription_to_api: addSubUseApi,
     }];
     setData(d => ({ ...(d || {}), user_subscriptions: next }));
     const ok = await saveAccounts({ user_subscriptions: next });
@@ -236,6 +254,19 @@ export default function UserAccountsPanel({
   const canAddSubscription = isCustomApp
     ? customAppName.trim() && customPlanLabel.trim()
     : addSubSource && (isCustomPlan ? customPlanLabel.trim() : addSubPlan);
+
+  /** 是否启用「订阅转 API」（用户手工设置优先，否则目录默认） */
+  function subUseApi(s) {
+    const cat = catalog.find(c => c.source_id === s.source_id);
+    if (s.subscription_to_api != null) return s.subscription_to_api === true;
+    return cat?.subscription_to_api === true;
+  }
+
+  function updateSubApiFlag(id, useApi) {
+    const next = subs.map(s => (s.id === id ? { ...s, subscription_to_api: useApi } : s));
+    setData(d => ({ ...d, user_subscriptions: next }));
+    saveAccounts({ user_subscriptions: next });
+  }
 
   function removeSubscription(id) {
     const next = subs.filter(s => s.id !== id);
@@ -250,11 +281,11 @@ export default function UserAccountsPanel({
     if (isCustomPayg) {
       const label = customPaygLabel.trim();
       if (!label) {
-        setPaygMsg('请填写供给源名称');
+        setPaygMsg(t('accounts.err.providerName'));
         return;
       }
       if (payg.some(p => p.label.toLowerCase() === label.toLowerCase())) {
-        setPaygMsg(`已存在供给源「${label}」`);
+        setPaygMsg(t('accounts.err.providerLabelExists', { name: label }));
         return;
       }
       const slug = label.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-').replace(/^-|-$/g, '').slice(0, 32) || 'provider';
@@ -279,11 +310,11 @@ export default function UserAccountsPanel({
     }
 
     if (!addPaygId) {
-      setPaygMsg('请选择供给源');
+      setPaygMsg(t('accounts.err.selectProvider'));
       return;
     }
     if (payg.some(p => p.provider_id === addPaygId)) {
-      setPaygMsg('该供给源已添加');
+      setPaygMsg(t('accounts.err.providerExists'));
       return;
     }
     const meta = paygOptions.find(p => p.id === addPaygId || p.provider_id === addPaygId)
@@ -304,10 +335,26 @@ export default function UserAccountsPanel({
   const isCustomPayg = addPaygId === CUSTOM_PAYG;
   const canAddPayg = isCustomPayg ? !!customPaygLabel.trim() : !!addPaygId;
 
-  function removePayg(id) {
+  async function removePayg(id) {
+    const item = payg.find(p => p.id === id);
+    if (!item) return;
+    setPaygMsg('');
+    try {
+      const cfg = await getConfig().read().catch(() => ({}));
+      const enabled = (cfg?.providers || []).some(
+        pr => pr.id === item.provider_id && pr.enabled,
+      );
+      if (enabled) {
+        setPaygMsg(t('accounts.err.providerOffline'));
+        return;
+      }
+    } catch {
+      // 读配置失败时不阻断移除
+    }
     const next = payg.filter(p => p.id !== id);
     setData(d => ({ ...d, user_payg_providers: next }));
     saveAccounts({ user_payg_providers: next });
+    if (paygExpanded === id) setPaygExpanded(null);
   }
 
   function addModelToPayg(paygId, modelName) {
@@ -322,22 +369,49 @@ export default function UserAccountsPanel({
     saveAccounts({ user_payg_providers: next });
   }
 
-  function updatePricing(providerId, model, field, value) {
-    const num = value === '' ? null : Number(value);
-    setOverrides(prev => ({
-      ...prev,
-      [providerId]: { ...(prev[providerId] || {}), [model]: { ...(prev[providerId]?.[model] || {}), [field]: num } },
-    }));
+  /** 从按量账户登记中删除单个模型（含刊例价覆盖） */
+  function removeModelFromPayg(paygId, modelName) {
+    const item = payg.find(p => p.id === paygId);
+    if (!item || !(item.models || []).includes(modelName)) return;
+    const nextPayg = payg.map(p => {
+      if (p.id !== paygId) return p;
+      return { ...p, models: (p.models || []).filter(m => m !== modelName) };
+    });
+    const nextOverrides = { ...overrides };
+    const pid = item.provider_id;
+    if (nextOverrides[pid]?.[modelName]) {
+      const perModel = { ...nextOverrides[pid] };
+      delete perModel[modelName];
+      if (Object.keys(perModel).length) nextOverrides[pid] = perModel;
+      else delete nextOverrides[pid];
+    }
+    setOverrides(nextOverrides);
+    setData(d => ({ ...d, user_payg_providers: nextPayg }));
+    saveAccounts({ user_payg_providers: nextPayg, provider_pricing_overrides: nextOverrides });
   }
 
-  function savePricing() {
-    saveAccounts({ provider_pricing_overrides: overrides });
+  function updatePricing(providerId, model, field, value) {
+    const num = value === '' ? null : Number(value);
+    setOverrides(prev => {
+      const next = {
+        ...prev,
+        [providerId]: {
+          ...(prev[providerId] || {}),
+          [model]: { ...(prev[providerId]?.[model] || {}), [field]: num },
+        },
+      };
+      if (pricingSaveTimer.current) clearTimeout(pricingSaveTimer.current);
+      pricingSaveTimer.current = setTimeout(() => {
+        saveAccounts({ provider_pricing_overrides: next }, { quiet: true });
+      }, 400);
+      return next;
+    });
   }
 
   const tabs = [
-    { id: 'p2p', label: '积分账户', sub: 'P2P', color: 'blue' },
-    { id: 'subscription', label: '订阅账户', sub: `${subs.length} 个`, color: 'amber' },
-    { id: 'payg', label: '按量付费', sub: `${payg.length} 个`, color: 'emerald' },
+    { id: 'p2p', label: t('accounts.tab.p2p'), sub: t('accounts.tab.p2pSub'), color: 'blue' },
+    { id: 'subscription', label: t('accounts.tab.subscription'), sub: t('accounts.count', { n: subs.length }), color: 'amber' },
+    { id: 'payg', label: t('accounts.tab.payg'), sub: t('accounts.count', { n: payg.length }), color: 'emerald' },
   ];
 
   return (
@@ -369,27 +443,28 @@ export default function UserAccountsPanel({
                   💎 {Math.floor(user?.credits_balance ?? 0).toLocaleString()}
                 </p>
                 <p className="text-xs text-gray-400 mt-1">
-                  累计 <span className="text-green-600">+{Math.floor(user?.credits_earned ?? 0).toLocaleString()}</span>
+                  {t('accounts.totalEarned')}{' '}
+                  <span className="text-green-600">+{Math.floor(user?.credits_earned ?? 0).toLocaleString()}</span>
                   {' / '}
                   <span className="text-red-500">-{Math.floor(user?.credits_spent ?? 0).toLocaleString()}</span>
                 </p>
               </div>
               <button type="button" onClick={onCreditsToggle}
                 className="text-xs text-gray-400 hover:text-gray-600">
-                {creditsOpen ? '收起明细 ▲' : '展开明细 ▼'}
+                {creditsOpen ? t('accounts.collapseDetail') : t('accounts.expandDetail')}
               </button>
             </div>
 
             {creditsOpen && (
               <div className="space-y-3 pt-2 border-t border-gray-100 dark:border-gray-700">
-                <h3 className="text-sm font-medium text-gray-600 dark:text-gray-300">积分流水</h3>
+                <h3 className="text-sm font-medium text-gray-600 dark:text-gray-300">{t('accounts.creditsLedger')}</h3>
                 {txs.length === 0 ? (
-                  <p className="text-sm text-gray-400">暂无记录</p>
+                  <p className="text-sm text-gray-400">{t('accounts.noRecords')}</p>
                 ) : txs.slice(0, 10).map(tx => (
                   <div key={tx.id} className="flex items-center justify-between text-sm">
                     <div>
                       <span className="text-gray-700 dark:text-gray-300">
-                        {TX_LABEL[tx.type] || tx.type}{tx.model_name ? ` · ${tx.model_name}` : ''}
+                        {t(`accounts.tx.${tx.type}`) !== `accounts.tx.${tx.type}` ? t(`accounts.tx.${tx.type}`) : tx.type}{tx.model_name ? ` · ${tx.model_name}` : ''}
                       </span>
                       <span className="text-xs text-gray-400 ml-2">{tx.created_at?.slice(0, 16)}</span>
                     </div>
@@ -406,7 +481,7 @@ export default function UserAccountsPanel({
               {CheckinCard && <CheckinCard onSuccess={onRefreshUser} />}
               {SpinCard && <SpinCard onSuccess={onRefreshUser} />}
             </div>
-            <p className="text-[11px] text-gray-400">P2P 网络消耗积分调用社区共享算力，可在「贡献」页赚取积分。</p>
+            <p className="text-[11px] text-gray-400">{t('accounts.p2pHint')}</p>
           </>
         )}
 
@@ -414,32 +489,41 @@ export default function UserAccountsPanel({
         {tab === 'subscription' && (
           <>
             {loading ? (
-              <p className="text-sm text-gray-400">加载中…</p>
+              <p className="text-sm text-gray-400">{t('accounts.loading')}</p>
             ) : (
               <>
-                <p className="text-xs text-gray-500">应用目录来自服务端下发；也可添加自定义应用与自定义套餐（月费仅供等效价参考）。</p>
+                <p className="text-xs text-gray-500">{t('accounts.subHint')}</p>
 
                 {/* 已添加 */}
                 {subs.length === 0 ? (
-                  <p className="text-sm text-gray-400 py-4 text-center">尚未添加应用订阅</p>
+                  <p className="text-sm text-gray-400 py-4 text-center">{t('accounts.noSubscriptions')}</p>
                 ) : (
                   <div className="space-y-2">
                     {subs.map(s => (
                       <div key={s.id}
-                        className="flex items-center gap-3 px-4 py-3 rounded-xl bg-amber-50/60 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-800/30">
-                        <span className="text-lg">{s.app_icon}</span>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium text-gray-800 dark:text-gray-200">{s.app_name}</div>
-                          <div className="text-xs text-gray-500">
-                            {s.plan_label || s.plan_id}
-                            {s.monthly_usd != null ? ` · $${s.monthly_usd}/月` : ''}
-                            {s.custom || s.plan_id === 'custom' ? (
-                              <span className="ml-1 text-amber-600/80">自定义</span>
-                            ) : null}
-                          </div>
-                        </div>
+                        className="flex items-center gap-3 px-4 py-3 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900">
+                        <span className="text-lg shrink-0">{s.app_icon}</span>
+                        <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate max-w-[7rem] shrink-0">
+                          {s.app_name}
+                        </span>
+                        <span className="text-xs text-gray-500 truncate flex-1 min-w-0">
+                          {s.plan_label || s.plan_id}
+                          {s.monthly_usd != null ? ` · $${s.monthly_usd}${t('accounts.perMonth')}` : ''}
+                          {(s.custom || s.plan_id === 'custom') && (
+                            <span className="ml-1 text-gray-400">{t('accounts.custom')}</span>
+                          )}
+                        </span>
+                        <select
+                          value={subUseApi(s) ? 'api' : 'stats'}
+                          onChange={e => updateSubApiFlag(s.id, e.target.value === 'api')}
+                          disabled={saving}
+                          className="text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1.5 shrink-0"
+                        >
+                          <option value="api">{t('accounts.convertApi')}</option>
+                          <option value="stats">{t('accounts.statsOnly')}</option>
+                        </select>
                         <button type="button" onClick={() => removeSubscription(s.id)}
-                          className="text-xs text-red-400 hover:text-red-500 shrink-0">移除</button>
+                          className="text-xs text-red-400 hover:text-red-500 shrink-0">{t('accounts.remove')}</button>
                       </div>
                     ))}
                   </div>
@@ -448,42 +532,57 @@ export default function UserAccountsPanel({
                 {/* 添加 */}
                 <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-gray-700">
                   {subMsg && (
-                    <p className={`text-xs ${subMsg.includes('已添加') || subMsg.includes('已保存') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
+                    <p className={`text-xs ${isAccountOkMsg(subMsg, t) ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
                       {subMsg}
                     </p>
                   )}
                   <div className="flex flex-wrap items-end gap-2">
                     <div className="flex-1 min-w-[140px]">
-                      <label className="text-[10px] text-gray-400 block mb-1">应用</label>
+                      <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.app')}</label>
                       <select value={addSubSource} onChange={e => onSubSourceChange(e.target.value)}
                         className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2">
-                        <option value="">选择应用…</option>
+                        <option value="">{t('accounts.selectApp')}</option>
                         {catalog.filter(c => !subs.some(s => s.source_id === c.source_id)).map(c => (
-                          <option key={c.source_id} value={c.source_id}>{c.app_icon} {c.app_name}</option>
+                          <option key={c.source_id} value={c.source_id}>
+                            {c.app_icon} {c.app_name}{c.subscription_to_api ? ` · ${t('accounts.convertApi')}` : ''}
+                          </option>
                         ))}
-                        <option value={CUSTOM_APP}>➕ 自定义应用…</option>
+                        <option value={CUSTOM_APP}>{t('accounts.customApp')}</option>
                       </select>
                     </div>
 
                     {!isCustomApp && (
                       <div className="flex-1 min-w-[120px]">
-                        <label className="text-[10px] text-gray-400 block mb-1">套餐</label>
+                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.plan')}</label>
                         <select value={addSubPlan} onChange={e => setAddSubPlan(e.target.value)} disabled={!addSubSource}
                           className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2 disabled:opacity-50">
-                          <option value="">选择套餐…</option>
+                          <option value="">{t('accounts.selectPlan')}</option>
                           {planOptions.map(p => (
                             <option key={p.id} value={p.id}>
-                              {p.label}{p.monthly_usd != null ? ` ($${p.monthly_usd}/月)` : ''}
+                              {p.label}{p.monthly_usd != null ? ` ($${p.monthly_usd}${t('accounts.perMonth')})` : ''}
                             </option>
                           ))}
-                          <option value={CUSTOM_PLAN}>➕ 自定义套餐…</option>
+                          <option value={CUSTOM_PLAN}>{t('accounts.customPlan')}</option>
                         </select>
                       </div>
                     )}
 
+                    <div className="flex-1 min-w-[110px]">
+                      <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.attr')}</label>
+                      <select
+                        value={addSubUseApi ? 'api' : 'stats'}
+                        onChange={e => setAddSubUseApi(e.target.value === 'api')}
+                        disabled={!isCustomApp && !catalogItem}
+                        className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2 disabled:opacity-50"
+                      >
+                        <option value="stats">{t('accounts.statsOnly')}</option>
+                        <option value="api">{t('accounts.convertApi')}</option>
+                      </select>
+                    </div>
+
                     <button type="button" onClick={addSubscription} disabled={!canAddSubscription || saving}
                       className="text-xs px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50">
-                      {saving ? '保存中…' : '添加订阅'}
+                      {saving ? t('accounts.saving') : t('accounts.addSubscription')}
                     </button>
                   </div>
 
@@ -491,21 +590,21 @@ export default function UserAccountsPanel({
                   {isCustomApp && (
                     <div className="flex flex-wrap items-end gap-2 pl-1">
                       <div className="flex-1 min-w-[120px]">
-                        <label className="text-[10px] text-gray-400 block mb-1">应用名称</label>
+                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.appName')}</label>
                         <input value={customAppName} onChange={e => setCustomAppName(e.target.value)}
                           placeholder="如 Cursor、Warp…"
                           className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2" />
                       </div>
                       <div className="flex-1 min-w-[120px]">
-                        <label className="text-[10px] text-gray-400 block mb-1">套餐名称</label>
+                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.planName')}</label>
                         <input value={customPlanLabel} onChange={e => setCustomPlanLabel(e.target.value)}
                           placeholder="如 Pro、Business…"
                           className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2" />
                       </div>
                       <div className="w-24">
-                        <label className="text-[10px] text-gray-400 block mb-1">月费 USD</label>
+                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.monthlyUsd')}</label>
                         <input type="number" min="0" step="0.01" value={customPlanUsd}
-                          onChange={e => setCustomPlanUsd(e.target.value)} placeholder="选填"
+                          onChange={e => setCustomPlanUsd(e.target.value)} placeholder={t('accounts.optional')}
                           className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2 text-right" />
                       </div>
                     </div>
@@ -515,15 +614,15 @@ export default function UserAccountsPanel({
                   {!isCustomApp && isCustomPlan && (
                     <div className="flex flex-wrap items-end gap-2 pl-1">
                       <div className="flex-1 min-w-[120px]">
-                        <label className="text-[10px] text-gray-400 block mb-1">套餐名称</label>
+                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.planName')}</label>
                         <input value={customPlanLabel} onChange={e => setCustomPlanLabel(e.target.value)}
-                          placeholder="输入套餐名…"
+                          placeholder={t('accounts.err.planPlaceholder')}
                           className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2" />
                       </div>
                       <div className="w-24">
-                        <label className="text-[10px] text-gray-400 block mb-1">月费 USD</label>
+                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.monthlyUsd')}</label>
                         <input type="number" min="0" step="0.01" value={customPlanUsd}
-                          onChange={e => setCustomPlanUsd(e.target.value)} placeholder="选填"
+                          onChange={e => setCustomPlanUsd(e.target.value)} placeholder={t('accounts.optional')}
                           className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2 text-right" />
                       </div>
                     </div>
@@ -538,14 +637,19 @@ export default function UserAccountsPanel({
         {tab === 'payg' && (
           <>
             {loading ? (
-              <p className="text-sm text-gray-400">加载中…</p>
+              <p className="text-sm text-gray-400">{t('accounts.loading')}</p>
             ) : (
               <>
-                <p className="text-xs text-gray-500">供给源目录来自服务端下发；也可添加自定义 provider，再配置模型刊例价（USD / 百万 Token）。</p>
+                <p className="text-xs text-gray-500">{t('accounts.paygHint')}</p>
+                {paygMsg && (
+                  <p className={`text-xs ${isAccountOkMsg(paygMsg, t) ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
+                    {paygMsg}
+                  </p>
+                )}
 
                 {/* 已添加 provider */}
                 {payg.length === 0 ? (
-                  <p className="text-sm text-gray-400 py-4 text-center">尚未添加按量付费供给源</p>
+                  <p className="text-sm text-gray-400 py-4 text-center">{t('accounts.noPayg')}</p>
                 ) : (
                   <div className="space-y-2">
                     {payg.map(p => (
@@ -553,17 +657,17 @@ export default function UserAccountsPanel({
                         <button type="button" onClick={() => setPaygExpanded(paygExpanded === p.id ? null : p.id)}
                           className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700/30">
                           <span>{p.icon}</span>
-                          <span className="text-sm font-medium text-gray-800 dark:text-gray-200 flex-1">
+                          <span className="text-sm font-medium text-gray-800 dark:text-gray-200 flex-1 min-w-0 truncate">
                             {p.label}
-                            {p.custom && <span className="ml-1 text-[10px] text-emerald-600/80">自定义</span>}
+                            {p.custom && <span className="ml-1 text-[10px] text-emerald-600/80">{t('accounts.custom')}</span>}
                           </span>
-                          <span className="text-xs text-gray-400">{(p.models || []).length} 模型</span>
-                          <span className="text-gray-400">{paygExpanded === p.id ? '▲' : '▼'}</span>
+                          <span className="text-xs text-gray-400 shrink-0">{t('accounts.modelsCount', { n: (p.models || []).length })}</span>
+                          <span className="text-gray-400 shrink-0">{paygExpanded === p.id ? '▲' : '▼'}</span>
                         </button>
                         {paygExpanded === p.id && (
                           <div className="px-4 pb-4 space-y-3 border-t border-gray-100 dark:border-gray-700">
                             <div className="flex gap-2 pt-2">
-                              <input id={`model-add-${p.id}`} placeholder="模型名，如 gpt-4o"
+                              <input id={`model-add-${p.id}`} placeholder={t('accounts.modelPlaceholder')}
                                 className="flex-1 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1.5 font-mono"
                                 onKeyDown={e => {
                                   if (e.key === 'Enter') {
@@ -577,7 +681,7 @@ export default function UserAccountsPanel({
                                   addModelToPayg(p.id, el?.value);
                                   if (el) el.value = '';
                                 }}
-                                className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white">添加模型</button>
+                                className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white">{t('accounts.addModel')}</button>
                             </div>
 
                             {/* 该 provider 下的模型报价 */}
@@ -585,15 +689,20 @@ export default function UserAccountsPanel({
                               <table className="w-full text-xs">
                                 <thead className="bg-gray-50 dark:bg-gray-700/50 text-gray-500">
                                   <tr>
-                                    <th className="text-left px-2 py-1.5">模型</th>
-                                    <th className="text-right px-1 py-1.5">输入</th>
-                                    <th className="text-right px-1 py-1.5">输出</th>
-                                    <th className="text-right px-2 py-1.5">缓存读</th>
+                                    <th className="text-left px-2 py-1.5">{t('accounts.modelCol')}</th>
+                                    <th className="text-right px-1 py-1.5">{t('accounts.inputCol')}</th>
+                                    <th className="text-right px-1 py-1.5">{t('accounts.outputCol')}</th>
+                                    <th className="text-right px-1 py-1.5">{t('accounts.cacheReadCol')}</th>
+                                    <th className="w-8" />
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                                  {pricingRowsForProvider(p.provider_id, p.models, providerPricing, overrides)
-                                    .filter(r => !pricingFilter || r.model.toLowerCase().includes(pricingFilter.toLowerCase()))
+                                  {(p.models || []).length === 0 ? (
+                                    <tr>
+                                      <td colSpan={5} className="px-2 py-2 text-gray-400 text-center">{t('accounts.noModels')}</td>
+                                    </tr>
+                                  ) : pricingRowsForProvider(p.provider_id, p.models, providerPricing, overrides)
+                                    .filter(r => (p.models || []).includes(r.model))
                                     .map(r => (
                                     <tr key={r.model} className={r._override ? 'bg-amber-50/50 dark:bg-amber-900/10' : ''}>
                                       <td className="px-2 py-1 font-mono text-gray-700 dark:text-gray-300 truncate max-w-[8rem]" title={r.model}>{r.model}</td>
@@ -604,6 +713,11 @@ export default function UserAccountsPanel({
                                             className="w-12 ml-auto block text-right tabular-nums bg-transparent border border-transparent hover:border-gray-200 dark:hover:border-gray-600 focus:border-blue-400 rounded px-0.5" />
                                         </td>
                                       ))}
+                                      <td className="px-1 py-1 text-center">
+                                        <button type="button" title={t('accounts.deleteModel')}
+                                          onClick={() => removeModelFromPayg(p.id, r.model)}
+                                          className="text-gray-400 hover:text-red-500 leading-none">×</button>
+                                      </td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -611,7 +725,7 @@ export default function UserAccountsPanel({
                             </div>
 
                             <button type="button" onClick={() => removePayg(p.id)}
-                              className="text-xs text-red-400 hover:text-red-500">移除此供给源</button>
+                              className="text-xs text-red-400 hover:text-red-500">{t('accounts.removeProvider')}</button>
                           </div>
                         )}
                       </div>
@@ -622,33 +736,33 @@ export default function UserAccountsPanel({
                 {/* 添加 provider */}
                 <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-gray-700">
                   {paygMsg && (
-                    <p className={`text-xs ${paygMsg.includes('已添加') || paygMsg.includes('已保存') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
+                    <p className={`text-xs ${isAccountOkMsg(paygMsg, t) ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
                       {paygMsg}
                     </p>
                   )}
                   <div className="flex flex-wrap items-end gap-2">
                     <div className="flex-1 min-w-[140px]">
-                      <label className="text-[10px] text-gray-400 block mb-1">供给源</label>
+                      <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.provider')}</label>
                       <select value={addPaygId} onChange={e => onPaygSelectChange(e.target.value)}
                         className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2">
-                        <option value="">选择供给源…</option>
+                        <option value="">{t('accounts.selectProvider')}</option>
                         {paygOptions.filter(o => !payg.some(p => p.provider_id === (o.id || o.provider_id))).map(o => (
                           <option key={o.id || o.provider_id} value={o.id || o.provider_id}>{o.icon} {o.label}</option>
                         ))}
-                        <option value={CUSTOM_PAYG}>➕ 自定义供给源…</option>
+                        <option value={CUSTOM_PAYG}>{t('accounts.customProvider')}</option>
                       </select>
                     </div>
                     {!isCustomPayg && (
                       <button type="button" onClick={addPaygProvider} disabled={!canAddPayg || saving}
                         className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50">
-                        {saving ? '保存中…' : '添加'}
+                        {saving ? t('accounts.saving') : t('accounts.add')}
                       </button>
                     )}
                   </div>
                   {isCustomPayg && (
                     <div className="flex flex-wrap items-end gap-2 pl-1">
                       <div className="flex-1 min-w-[160px]">
-                        <label className="text-[10px] text-gray-400 block mb-1">供给源名称</label>
+                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.providerName')}</label>
                         <input value={customPaygLabel} onChange={e => setCustomPaygLabel(e.target.value)}
                           placeholder="如 MiniMax、Moonshot…"
                           className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2"
@@ -656,23 +770,11 @@ export default function UserAccountsPanel({
                       </div>
                       <button type="button" onClick={addPaygProvider} disabled={!canAddPayg || saving}
                         className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50">
-                        {saving ? '保存中…' : '添加'}
+                        {saving ? t('accounts.saving') : t('accounts.add')}
                       </button>
                     </div>
                   )}
                 </div>
-
-                {payg.length > 0 && (
-                  <div className="flex justify-end gap-2 pt-2">
-                    <input value={pricingFilter} onChange={e => setPricingFilter(e.target.value)}
-                      placeholder="搜索模型…"
-                      className="text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1.5 w-32" />
-                    <button type="button" onClick={savePricing} disabled={saving}
-                      className="text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white disabled:opacity-50">
-                      {saving ? '保存中…' : '保存报价'}
-                    </button>
-                  </div>
-                )}
               </>
             )}
           </>

@@ -5,17 +5,22 @@ import { getGateway, getLocalConfig, getConfig } from '../api/adapter';
 import { listAgents, applyAgent, revertAgent } from '../api/agents';
 import claudeDevModeImg1 from '../assets/claude-devmode-1.webp';
 import claudeDevModeImg2 from '../assets/claude-devmode-2.webp';
+import { useLang } from '../store/lang';
 
 // ── PolicyManager：策略组管理 UI ──────────────────────────────────────────────
-const STRATEGY_OPTIONS = [
-  { value: 'fallback',    label: '故障转移', desc: '按序尝试，主挂了用备' },
-  { value: 'round-robin', label: '轮询',     desc: '依次循环使用' },
-  { value: 'weighted',    label: '加权随机', desc: '按权重随机选择' },
-  { value: 'latency',     label: '延迟优先', desc: '选历史延迟最低的' },
-  { value: 'direct',      label: '直连',     desc: '只用第一个，不降级' },
-];
+function strategyOptions(t) {
+  return [
+    { value: 'fallback',    label: t('gateway.strategy.fallback'),    desc: t('gateway.strategy.fallbackDesc') },
+    { value: 'round-robin', label: t('gateway.strategy.roundRobin'),  desc: t('gateway.strategy.roundRobinDesc') },
+    { value: 'weighted',    label: t('gateway.strategy.weighted'),    desc: t('gateway.strategy.weightedDesc') },
+    { value: 'latency',     label: t('gateway.strategy.latency'),     desc: t('gateway.strategy.latencyDesc') },
+    { value: 'direct',      label: t('gateway.strategy.direct'),      desc: t('gateway.strategy.directDesc') },
+  ];
+}
 
 function PolicyManager() {
+  const { t } = useLang();
+  const STRATEGY_OPTIONS = strategyOptions(t);
   const [policies, setPolicies] = useState([]);
   const [providers, setProviders] = useState([]);
   const [editing, setEditing] = useState(null);   // null | policy object | 'new'
@@ -49,7 +54,7 @@ function PolicyManager() {
   function cancelEdit() { setEditing(null); setMsg(''); }
 
   async function save() {
-    if (!formName.trim()) return setMsg('策略名不能为空');
+    if (!formName.trim()) return setMsg(t('gateway.policy.nameRequired'));
     setBusy(true);
     try {
       const d = { name: formName.trim(), strategy: formStrategy, providers: formProviders };
@@ -61,7 +66,7 @@ function PolicyManager() {
   }
 
   async function del(id) {
-    if (!window.confirm('删除策略组？')) return;
+    if (!window.confirm(t('gateway.policy.confirmDelete'))) return;
     await window.electronAPI.policies.delete(id);
     await load();
   }
@@ -78,30 +83,30 @@ function PolicyManager() {
     <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 mb-4">
       <div className="flex items-center gap-2 mb-3">
         <span className="text-base">⚖️</span>
-        <h2 className="font-semibold text-gray-800 dark:text-gray-100 text-sm">路由策略组</h2>
-        <span className="text-xs text-gray-400 dark:text-gray-500">配置 provider 调度策略，透明接入与场景路由均可使用</span>
+        <h2 className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{t('gateway.policy.title')}</h2>
+        <span className="text-xs text-gray-400 dark:text-gray-500">{t('gateway.policy.subtitle')}</span>
         <button onClick={openNew}
           className="ml-auto text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors">
-          + 新建策略组
+          {t('gateway.policy.new')}
         </button>
       </div>
 
       {/* 策略组列表 */}
       <div className="flex flex-col gap-1.5 mb-2">
-        {policies.length === 0 && <div className="text-xs text-gray-400 py-1">暂无策略组</div>}
+        {policies.length === 0 && <div className="text-xs text-gray-400 py-1">{t('gateway.policy.empty')}</div>}
         {policies.map(p => (
           <div key={p.id} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40 text-sm">
             <span className="font-medium text-gray-800 dark:text-gray-100 truncate flex-1">{p.name}</span>
             <span className="text-xs text-gray-400 dark:text-gray-500 shrink-0">
               {STRATEGY_OPTIONS.find(s => s.value === p.strategy)?.label || p.strategy}
             </span>
-            <span className="text-xs text-gray-400 shrink-0">{(p.providers||[]).length} 个 provider</span>
+            <span className="text-xs text-gray-400 shrink-0">{t('gateway.policy.providerCount', { n: (p.providers||[]).length })}</span>
             <button onClick={() => openEdit(p)}
               className="text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 shrink-0">
-              编辑
+              {t('gateway.common.edit')}
             </button>
             <button onClick={() => del(p.id)}
-              className="text-xs text-red-400 hover:text-red-600 shrink-0">删</button>
+              className="text-xs text-red-400 hover:text-red-600 shrink-0">{t('gateway.common.del')}</button>
           </div>
         ))}
       </div>
@@ -110,19 +115,19 @@ function PolicyManager() {
       {editing && (
         <div className="mt-3 p-3 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30">
           <div className="text-xs font-medium text-gray-700 dark:text-gray-200 mb-2">
-            {editing === 'new' ? '新建策略组' : `编辑：${editing.name}`}
+            {editing === 'new' ? t('gateway.policy.newTitle') : t('gateway.policy.editTitle', { name: editing.name })}
           </div>
           <div className="flex flex-col gap-2">
             {/* 名称 */}
             <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500 w-14 shrink-0">策略名</label>
+              <label className="text-xs text-gray-500 w-14 shrink-0">{t('gateway.policy.nameLabel')}</label>
               <input value={formName} onChange={e => setFormName(e.target.value)}
-                placeholder="如：code-policy"
+                placeholder={t('gateway.policy.namePlaceholder')}
                 className="flex-1 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 outline-none focus:border-blue-400 text-gray-800 dark:text-gray-200" />
             </div>
             {/* Strategy */}
             <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500 w-14 shrink-0">执行方式</label>
+              <label className="text-xs text-gray-500 w-14 shrink-0">{t('gateway.policy.strategyLabel')}</label>
               <select value={formStrategy} onChange={e => setFormStrategy(e.target.value)}
                 className="flex-1 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200">
                 {STRATEGY_OPTIONS.map(o => (
@@ -136,7 +141,7 @@ function PolicyManager() {
                 <label className="text-xs text-gray-500 w-14 shrink-0">Provider</label>
                 <select defaultValue="" onChange={e => { addProvider(e.target.value); e.target.value = ''; }}
                   className="flex-1 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200">
-                  <option value="">+ 添加 provider…</option>
+                  <option value="">{t('gateway.policy.addProvider')}</option>
                   {providers.filter(p => !formProviders.find(fp => fp.id === p.id)).map(p => (
                     <option key={p.id} value={p.id}>{p.label || p.id}</option>
                   ))}
@@ -158,7 +163,7 @@ function PolicyManager() {
                 </div>
               ))}
               {formProviders.length === 0 && (
-                <div className="ml-16 text-xs text-gray-400">暂无 provider（保存后策略将 fallthrough 到默认逻辑）</div>
+                <div className="ml-16 text-xs text-gray-400">{t('gateway.policy.noProviders')}</div>
               )}
             </div>
             {/* 操作 */}
@@ -166,18 +171,18 @@ function PolicyManager() {
             <div className="flex gap-2 ml-16">
               <button onClick={save} disabled={busy}
                 className="text-xs px-3 py-1 rounded bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50">
-                {busy ? '保存中…' : '保存'}
+                {busy ? t('gateway.common.saving') : t('gateway.common.save')}
               </button>
               <button onClick={cancelEdit}
                 className="text-xs px-3 py-1 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300">
-                取消
+                {t('gateway.common.cancel')}
               </button>
             </div>
           </div>
         </div>
       )}
       <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-        💡 策略组由 yaml 路由规则自动匹配（如「有 tool calls → code-policy」），也可在场景路由中直接指定。
+        {t('gateway.policy.hint')}
       </p>
     </div>
   );
@@ -185,6 +190,7 @@ function PolicyManager() {
 
 // ── ImportConfigButton：在线同步（地址取自设置页，不在 UI 展示）────────────
 function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
+  const { t } = useLang();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const msgTimerRef = useRef(null);
@@ -203,17 +209,17 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
     const apps = Array.isArray(r.addedApps) ? r.addedApps : [];
     const routes = Array.isArray(r.addedRoutes) ? r.addedRoutes : [];
     const parts = [];
-    if (apps.length)   parts.push(`新增 ${apps.length} 个应用：${apps.join('、')}`);
-    if (routes.length) parts.push(`新增 ${routes.length} 条路由：${routes.join('、')}`);
+    if (apps.length)   parts.push(t('gateway.sync.addedApps', { n: apps.length, list: apps.join('、') }));
+    if (routes.length) parts.push(t('gateway.sync.addedRoutes', { n: routes.length, list: routes.join('、') }));
     if (parts.length)  return `${prefix}，${parts.join('；')}`;
-    return `${prefix}（无新增）`;
+    return t('gateway.sync.noChanges', { prefix });
   }
 
   async function handleSync() {
     if (!window.electronAPI?.toolsConfig) return;
     const base = await getSyncServerBase();
     if (!base) {
-      setMsg('✗ 未配置服务器地址，请先在设置页填写 Token Bank 服务地址');
+      setMsg(t('gateway.sync.noServer'));
       return;
     }
     const fullUrl = base + endpoint;
@@ -221,7 +227,7 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
     setMsg('');
     const token = localStorage.getItem('token');
     const r = await window.electronAPI.toolsConfig.importUrl(fullUrl, token);
-    setMsg(r.ok ? '✓ ' + importedMsg(r, '已同步') : '✗ ' + r.error);
+    setMsg(r.ok ? '✓ ' + importedMsg(r, t('gateway.sync.done')) : '✗ ' + r.error);
     if (r.ok && onImported) onImported();
     setBusy(false);
   }
@@ -229,9 +235,9 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
   return (
     <div className="flex flex-col items-end gap-0.5">
       <button type="button" disabled={busy} onClick={handleSync}
-        title="从 Token Bank 服务器拉取最新配置"
+        title={t('gateway.sync.title')}
         className="text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors">
-        {busy ? '同步中…' : '🔄 在线同步'}
+        {busy ? t('gateway.sync.syncing') : t('gateway.sync.btn')}
       </button>
       {msg && <div className={`text-xs ${msg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{msg}</div>}
     </div>
@@ -240,20 +246,36 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
 
 // ── AppManager：应用列表（Tab1: 所有应用 & 托管 | Tab2: API Key 管理）────────
 // 接入方式列：仅「应用」/「API」（manual=手工 API，其余均为应用）
-function linkMethodLabel(method) {
-  return method === 'manual' ? 'API' : '应用';
+function linkMethodLabel(method, t) {
+  return method === 'manual' ? t('gateway.link.api') : t('gateway.link.app');
 }
 // 按 API Key 路由的应用：自动写配置的 api-key，和用户自配的 manual（手工添加）
 const isKeyApp = (m) => m === 'api-key' || m === 'manual';
 
-const STRATEGY_LABEL = {
-  'base_url-env': '环境变量注入 base_url',
-  'config-file':  '自动写入配置文件',
-  'mitm-env':     '代理 + 证书注入',
-};
+function tierModelLabel(tier, t) {
+  if (tier === 'free') return t('gateway.app.tier.free');
+  if (tier === 'p2p') return t('gateway.app.tier.p2p');
+  return t('gateway.app.tier.paid');
+}
+function tierLayerLabel(tier, t) {
+  if (tier === 'free') return t('gateway.app.tier.freeLayer');
+  if (tier === 'p2p') return t('gateway.app.tier.p2pLayer');
+  return t('gateway.app.tier.paidLayer');
+}
+
+
+function strategyLabel(key, t) {
+  const map = {
+    'base_url-env': t('gateway.strategyLabel.baseUrlEnv'),
+    'config-file':  t('gateway.strategyLabel.configFile'),
+    'mitm-env':     t('gateway.strategyLabel.mitmEnv'),
+  };
+  return map[key] || key;
+}
 
 // 单个应用的设置面板（路由规则绑定 + 详细配置）
 function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', onUpdate, onDelete, onRegenKey, onCancelManage, onWritten, onClose, onCancel }) {
+  const { t } = useLang();
   const dismiss = onCancel || onClose;   // ✕/取消/点遮罩 → 取消（新应用未保存会被丢弃）
   const [name,        setName]        = useState(app.name || '');
   const [icon,        setIcon]        = useState(app.icon || '🔧');
@@ -326,8 +348,8 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   async function writeEnv() {
     setWriteMsg('');
     const r = await window.electronAPI?.apps?.writeEnv(parseEnvText(envText)).catch(e => ({ ok: false, error: e.message }));
-    if (r?.ok) setWriteMsg(`✓ 已写入 ${r.count} 个环境变量，重开终端后生效`);
-    else setWriteMsg('✗ ' + (r?.error || '写入失败'));
+    if (r?.ok) setWriteMsg(t('gateway.app.envWritten', { count: r.count }));
+    else setWriteMsg('✗ ' + (r?.error || t('gateway.common.writeFailed')));
   }
 
   // config-file 注入：解析 {BASE}/{KEY} 后改目标工具配置文件（如 Codex Desktop ~/.codex/config.toml）
@@ -342,17 +364,17 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     }).catch(e => ({ ok: false, error: e.message }));
     // 冲突：目标配置项已有不同的值 → 弹确认显示当前值，确认后强制覆盖
     if (r && !r.ok && Array.isArray(r.conflicts) && r.conflicts.length) {
-      const lines = r.conflicts.map(c => `· ${c.key}\n    当前: ${c.current}\n    将改为: ${c.wanted}`).join('\n');
-      const ok = window.confirm(`配置文件已有不同的配置，是否覆盖？\n\n${lines}\n\n确定覆盖请点「确定」。`);
+      const lines = r.conflicts.map(c => `· ${c.key}\n${t('gateway.app.conflictCurrent', { val: c.current })}\n${t('gateway.app.conflictWanted', { val: c.wanted })}`).join('\n');
+      const ok = window.confirm(t('gateway.app.conflictConfirm', { lines }));
       if (ok) return writeConfigFile(true);   // 用户确认 → 强制覆盖
-      setWriteMsg('✗ 已取消（未覆盖现有配置）');
+      setWriteMsg(t('gateway.app.conflictCancelled'));
       return;
     }
     if (r?.ok) {
-      setWriteMsg(`✓ 已写入 ${r.file}${r.envCount ? `（含 ${r.envCount} 个环境变量）` : ''}，重启该应用后生效`);
+      setWriteMsg(t('gateway.app.configWritten', { file: r.file, envPart: r.envCount ? t('gateway.app.configWrittenEnvPart', { n: r.envCount }) : '' }));
       setWritten(true);     // 已写入 → 显示「取消 API Key 管理」
       onWritten?.();        // 通知父级：该应用已落地（清除 _isNew，取消时不再删除）
-    } else setWriteMsg('✗ ' + (r?.error || '写入失败'));
+    } else setWriteMsg('✗ ' + (r?.error || t('gateway.common.writeFailed')));
   }
 
   const ICONS = ['🤖','✏️','🔧','💻','🎯','🌐','📱','🔑','⚡','🛠️','🎨','📊'];
@@ -360,9 +382,9 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   // ── 各区块（按布局组合：config-file 应用走两 Tab，其余走单页）──
   const baseInfoSection = (
     <div>
-      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">基础信息</div>
+      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.basicInfo')}</div>
       <div className="flex gap-2 mb-2">
-        <input value={name} onChange={e => setName(e.target.value)} placeholder="应用名称"
+        <input value={name} onChange={e => setName(e.target.value)} placeholder={t('gateway.app.namePlaceholder')}
           className="flex-1 text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-gray-800 dark:text-gray-200" />
       </div>
       <div className="flex flex-wrap gap-1.5 mb-2">
@@ -373,7 +395,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
           </button>
         ))}
       </div>
-      <textarea value={desc} onChange={e => setDesc(e.target.value)} placeholder="描述（可选）" rows={2}
+      <textarea value={desc} onChange={e => setDesc(e.target.value)} placeholder={t('gateway.app.descPlaceholder')} rows={2}
         className="w-full text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none resize-none text-gray-600 dark:text-gray-400" />
     </div>
   );
@@ -385,11 +407,11 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
         <code className="flex-1 text-[11px] font-mono bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-gray-600 dark:text-gray-400 truncate">{app.api_key}</code>
         <button onClick={() => { navigator.clipboard.writeText(app.api_key); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
           className="text-xs px-2 py-1.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 shrink-0">
-          {copied ? '已复制✓' : '复制'}
+          {copied ? t('gateway.common.copied') : t('gateway.common.copy')}
         </button>
         {onRegenKey && (
           <button onClick={() => onRegenKey(app.id)}
-            className="text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 shrink-0">重置</button>
+            className="text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 shrink-0">{t('gateway.common.reset')}</button>
         )}
       </div>
     </div>
@@ -398,19 +420,19 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   const envSection = app.link_method === 'api-key' && app.env && !app.config_file && (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <div className="text-xs font-medium text-gray-500 dark:text-gray-400">环境变量（写入后该工具指向网关）</div>
+        <div className="text-xs font-medium text-gray-500 dark:text-gray-400">{t('gateway.app.envTitle')}</div>
         <button onClick={writeEnv}
           className="text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white shrink-0">
-          写入配置
+          {t('gateway.app.writeConfig')}
         </button>
       </div>
       <textarea value={envText} onChange={e => setEnvText(e.target.value)} rows={Math.max(2, envText.split('\n').length)}
         spellCheck={false}
         className="w-full font-mono text-[11px] bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 outline-none focus:border-blue-400 text-gray-700 dark:text-gray-200 resize-y"
-        placeholder="VAR=value（每行一条）" />
+        placeholder={t('gateway.app.envPlaceholder')} />
       {writeMsg && <div className={`text-[11px] mt-1 ${writeMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{writeMsg}</div>}
       <div className="text-[10px] text-gray-400 mt-1">
-        💡 「写入配置」会把上述变量写入系统（Windows: 用户环境变量；macOS/Linux: shell 配置），重开终端后该工具即指向本网关。
+        {t('gateway.app.envHint')}
       </div>
     </div>
   );
@@ -421,21 +443,21 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     <div className="rounded-lg border border-amber-300 dark:border-amber-700/50 bg-amber-50/60 dark:bg-amber-950/20 p-3">
       <div className="flex items-center gap-2 mb-2">
         <span className="text-base">⚠️</span>
-        <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">需要先在 Claude Desktop 启用开发者模式</span>
+        <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">{t('gateway.app.devModeTitle')}</span>
       </div>
       <div className="text-xs text-gray-600 dark:text-gray-300 space-y-1 mb-3">
-        <p>检测到 Claude Desktop 已安装，但还没启用第三方网关（开发者模式）。请按以下步骤操作：</p>
-        <p>1️⃣ 打开 Claude Desktop → 顶部菜单 <b>Help → Troubleshooting → Enable Developer Mode</b></p>
-        <p>2️⃣ 重启 Claude Desktop，首屏会出现 <b>Configure third-party inference</b>，选择 <b>Gateway</b></p>
-        <p>3️⃣ 完成后回到本页点「刷新」，即可自动写入网关配置</p>
+        <p>{t('gateway.app.devModeIntro')}</p>
+        <p>{t('gateway.app.devModeStep1')}</p>
+        <p>{t('gateway.app.devModeStep2')}</p>
+        <p>{t('gateway.app.devModeStep3')}</p>
       </div>
       <div className="grid grid-cols-2 gap-2 mb-3">
         <div>
-          <div className="text-[10px] text-gray-400 mb-1">步骤 1：启用开发者模式</div>
+          <div className="text-[10px] text-gray-400 mb-1">{t('gateway.app.devModeImg1')}</div>
           <img src={claudeDevModeImg1} alt="Enable Developer Mode" className="rounded border border-gray-200 dark:border-gray-700 w-full" />
         </div>
         <div>
-          <div className="text-[10px] text-gray-400 mb-1">步骤 2：选择 Gateway</div>
+          <div className="text-[10px] text-gray-400 mb-1">{t('gateway.app.devModeImg2')}</div>
           <img src={claudeDevModeImg2} alt="Configure Gateway" className="rounded border border-gray-200 dark:border-gray-700 w-full" />
         </div>
       </div>
@@ -443,11 +465,11 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
         onClick={async () => {
           const st = await window.electronAPI?.apps?.claudeDevModeStatus?.();
           setClaudeDevMode(st || null);
-          if (st?.dev_mode_ready) setWriteMsg('✓ 已检测到开发者模式，可以写入配置了');
-          else setWriteMsg('✗ 仍未检测到，请确认已启用开发者模式并重启 Claude Desktop');
+          if (st?.dev_mode_ready) setWriteMsg(t('gateway.app.devModeReady'));
+          else setWriteMsg(t('gateway.app.devModeNotReady'));
         }}
         className="text-xs px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white transition-colors">
-        🔄 我已启用，刷新检测
+        {t('gateway.app.devModeRefresh')}
       </button>
       {writeMsg && <div className={`text-[11px] mt-2 ${writeMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{writeMsg}</div>}
     </div>
@@ -455,37 +477,37 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
 
   const configFileSection = app.config_file && (
     <div>
-      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">配置文件注入（指向网关）</div>
+      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.configFileTitle')}</div>
       <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2 space-y-1">
         <div className="font-mono text-[11px] text-gray-700 dark:text-gray-300 break-all">{app.config_file}</div>
         {Object.entries(app.patch || {}).map(([k, v]) => (
           <div key={k} className="font-mono text-[10px] text-gray-500 break-all">{k} = {resolveEnv(v)}</div>
         ))}
         {Object.keys(app.env || {}).length > 0 && (
-          <div className="font-mono text-[10px] text-gray-400 pt-1">+ 环境变量：{Object.keys(app.env).join(', ')}</div>
+          <div className="font-mono text-[10px] text-gray-400 pt-1">{t('gateway.app.envVars', { list: Object.keys(app.env).join(', ') })}</div>
         )}
       </div>
       {writeMsg && <div className={`text-[11px] mt-1 ${writeMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{writeMsg}</div>}
       <div className="text-[10px] text-gray-400 mt-1">
-        💡 「写入配置」会改写上述配置文件并指向本网关（API 模式）；需用 API Key 登录该应用，重启后生效。
+        {t('gateway.app.configFileHint')}
       </div>
     </div>
   );
 
   const routeSection = (isKeyApp(app.link_method) || app.link_method === 'shim') && app.route_bindable !== false && (
     <div>
-      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">路由规则（模型或场景路由）</div>
+      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.routeRules')}</div>
       <select value={routeId} onChange={e => setRouteId(e.target.value)}
         className="w-full text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none text-gray-800 dark:text-gray-200">
         {/* manual（手工添加）无官方可直连 → 必须绑定，「直连」改为不可选占位 */}
         {app.link_method === 'manual'
-          ? <option value="" disabled>请选择模型 / 路由（手工添加必须绑定）</option>
-          : <option value="">直连（不路由，用原始模型名）</option>}
+          ? <option value="" disabled>{t('gateway.app.routeRequired')}</option>
+          : <option value="">{t('gateway.app.routeDirect')}</option>}
         {(() => {
           const avail = new Set(availableModels.map(m => m.id));
           const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
           return usable.length > 0 && (
-            <optgroup label="场景路由">
+            <optgroup label={t('gateway.app.sceneRoutes')}>
               {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
             </optgroup>
           );
@@ -493,7 +515,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
         {['free','p2p','paid'].map(tier => {
           const tm = availableModels.filter(m => m.tier === tier);
           if (!tm.length) return null;
-          const label = tier === 'free' ? '🟢 免费模型' : tier === 'p2p' ? '🔵 P2P 模型' : '🟣 付费模型';
+          const label = tierModelLabel(tier, t);
           return <optgroup key={tier} label={label}>{tm.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>;
         })}
       </select>
@@ -502,28 +524,28 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
 
   const controlSection = (isKeyApp(app.link_method) || app.link_method === 'shim') && (
     <div>
-      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">请求控制</div>
+      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.requestControl')}</div>
       <div className="space-y-2">
         <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-500 w-20 shrink-0">允许流式</label>
+          <label className="text-xs text-gray-500 w-20 shrink-0">{t('gateway.app.allowStream')}</label>
           <button onClick={() => setAllowStream(!allowStream)}
             className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${allowStream ? 'bg-blue-600' : 'bg-gray-400'}`}>
             <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${allowStream ? 'translate-x-4' : 'translate-x-0.5'}`} />
           </button>
         </div>
         <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-500 w-20 shrink-0">RPM 限制</label>
-          <input type="number" value={maxRpm} onChange={e => setMaxRpm(e.target.value)} placeholder="不限"
+          <label className="text-xs text-gray-500 w-20 shrink-0">{t('gateway.app.rpmLimit')}</label>
+          <input type="number" value={maxRpm} onChange={e => setMaxRpm(e.target.value)} placeholder={t('gateway.common.noLimit')}
             className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
         </div>
         <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-500 w-20 shrink-0">并发限制</label>
-          <input type="number" value={maxConc} onChange={e => setMaxConc(e.target.value)} placeholder="不限"
+          <label className="text-xs text-gray-500 w-20 shrink-0">{t('gateway.app.concurrencyLimit')}</label>
+          <input type="number" value={maxConc} onChange={e => setMaxConc(e.target.value)} placeholder={t('gateway.common.noLimit')}
             className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
         </div>
         <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-500 w-20 shrink-0">允许模型</label>
-          <input value={models} onChange={e => setModels(e.target.value)} placeholder="空=不限，逗号分隔"
+          <label className="text-xs text-gray-500 w-20 shrink-0">{t('gateway.app.allowedModels')}</label>
+          <input value={models} onChange={e => setModels(e.target.value)} placeholder={t('gateway.app.modelsPlaceholder')}
             className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
         </div>
       </div>
@@ -532,7 +554,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
 
   const accessSection = isKeyApp(app.link_method) && app.api_key && !app.env && !app.config_file && (
     <div>
-      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">接入配置</div>
+      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.accessConfig')}</div>
       <KeyConfigPanel apiKey={app.api_key} localBase="http://127.0.0.1:11430/v1"
         model={routeId || undefined} hideAuto />
     </div>
@@ -541,13 +563,13 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   const btnSave = (
     <button onClick={save} disabled={busy}
       className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
-      {busy ? '保存中…' : '保存'}
+      {busy ? t('gateway.common.saving') : t('gateway.common.save')}
     </button>
   );
   const btnCancel = (
     <button onClick={dismiss}
       className="px-4 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400">
-      取消
+      {t('gateway.common.cancel')}
     </button>
   );
 
@@ -557,7 +579,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-200 dark:border-gray-800">
           <span className="text-xl">{icon}</span>
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">{app.name || '应用设置'}</h3>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">{app.name || t('gateway.app.settingsTitle')}</h3>
           <button onClick={dismiss} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg">✕</button>
         </div>
 
@@ -581,7 +603,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
               {onDelete && isKeyApp(app.link_method) && (
                 <button onClick={() => onDelete(app.id)}
                   className="px-4 py-2 text-sm rounded-xl border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
-                  删除
+                  {t('gateway.common.delete')}
                 </button>
               )}
               {btnSave}{btnCancel}
@@ -596,6 +618,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
 // 手工添加面板（内联）：未被识别的应用 —— 仅给 Key + base_url，用户自行配置指向网关。
 // 与 AppSettingsPanel（弹窗，用于编辑/桌面应用托管）是两套独立组件。
 function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKey, onSave, onCancel }) {
+  const { t } = useLang();
   const [name,        setName]        = useState(app.name || '');
   const [icon,        setIcon]        = useState(app.icon || '🔧');
   const [desc,        setDesc]        = useState(app.description || '');
@@ -626,14 +649,14 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
     <div className="mb-3 bg-white dark:bg-gray-900 rounded-2xl border border-blue-200 dark:border-blue-800/50 shadow-sm">
       <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-200 dark:border-gray-800">
         <span className="text-xl">{icon}</span>
-        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">新建应用</h3>
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">{t('gateway.app.newTitle')}</h3>
         <button onClick={onCancel} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg">✕</button>
       </div>
       <div className="p-5 space-y-4">
         {/* 基础信息 */}
         <div>
-          <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">基础信息</div>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="应用名称"
+          <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.basicInfo')}</div>
+          <input value={name} onChange={e => setName(e.target.value)} placeholder={t('gateway.app.namePlaceholder')}
             className="w-full text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-gray-800 dark:text-gray-200 mb-2" />
           <div className="flex flex-wrap gap-1.5 mb-2">
             {ICONS.map(e => (
@@ -643,7 +666,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
               </button>
             ))}
           </div>
-          <textarea value={desc} onChange={e => setDesc(e.target.value)} placeholder="描述（可选）" rows={2}
+          <textarea value={desc} onChange={e => setDesc(e.target.value)} placeholder={t('gateway.app.descPlaceholder')} rows={2}
             className="w-full text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none resize-none text-gray-600 dark:text-gray-400" />
         </div>
         {/* API Key */}
@@ -654,27 +677,27 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
               <code className="flex-1 text-[11px] font-mono bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-gray-600 dark:text-gray-400 truncate">{app.api_key}</code>
               <button onClick={() => { navigator.clipboard.writeText(app.api_key); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
                 className="text-xs px-2 py-1.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 shrink-0">
-                {copied ? '已复制✓' : '复制'}
+                {copied ? t('gateway.common.copied') : t('gateway.common.copy')}
               </button>
               {onRegenKey && (
                 <button onClick={() => onRegenKey(app.id)}
-                  className="text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 shrink-0">重置</button>
+                  className="text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 shrink-0">{t('gateway.common.reset')}</button>
               )}
             </div>
           </div>
         )}
         {/* 路由规则 */}
         <div>
-          <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">路由规则（模型或场景路由）</div>
+          <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.routeRules')}</div>
           <select value={routeId} onChange={e => setRouteId(e.target.value)}
             className="w-full text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none text-gray-800 dark:text-gray-200">
             {/* 手工添加无官方可直连 → 必须绑定 */}
-            <option value="" disabled>请选择模型 / 路由（手工添加必须绑定）</option>
+            <option value="" disabled>{t('gateway.app.routeRequired')}</option>
             {(() => {
               const avail = new Set(availableModels.map(m => m.id));
               const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
               return usable.length > 0 && (
-                <optgroup label="场景路由">
+                <optgroup label={t('gateway.app.sceneRoutes')}>
                   {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
                 </optgroup>
               );
@@ -682,35 +705,35 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
             {['free','p2p','paid'].map(tier => {
               const tm = availableModels.filter(m => m.tier === tier);
               if (!tm.length) return null;
-              const label = tier === 'free' ? '🟢 免费模型' : tier === 'p2p' ? '🔵 P2P 模型' : '🟣 付费模型';
+              const label = tierModelLabel(tier, t);
               return <optgroup key={tier} label={label}>{tm.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>;
             })}
           </select>
         </div>
         {/* 请求控制 */}
         <div>
-          <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">请求控制</div>
+          <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.requestControl')}</div>
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500 w-20 shrink-0">允许流式</label>
+              <label className="text-xs text-gray-500 w-20 shrink-0">{t('gateway.app.allowStream')}</label>
               <button onClick={() => setAllowStream(!allowStream)}
                 className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${allowStream ? 'bg-blue-600' : 'bg-gray-400'}`}>
                 <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${allowStream ? 'translate-x-4' : 'translate-x-0.5'}`} />
               </button>
             </div>
             <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500 w-20 shrink-0">RPM 限制</label>
-              <input type="number" value={maxRpm} onChange={e => setMaxRpm(e.target.value)} placeholder="不限"
+              <label className="text-xs text-gray-500 w-20 shrink-0">{t('gateway.app.rpmLimit')}</label>
+              <input type="number" value={maxRpm} onChange={e => setMaxRpm(e.target.value)} placeholder={t('gateway.common.noLimit')}
                 className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
             </div>
             <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500 w-20 shrink-0">并发限制</label>
-              <input type="number" value={maxConc} onChange={e => setMaxConc(e.target.value)} placeholder="不限"
+              <label className="text-xs text-gray-500 w-20 shrink-0">{t('gateway.app.concurrencyLimit')}</label>
+              <input type="number" value={maxConc} onChange={e => setMaxConc(e.target.value)} placeholder={t('gateway.common.noLimit')}
                 className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
             </div>
             <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500 w-20 shrink-0">允许模型</label>
-              <input value={models} onChange={e => setModels(e.target.value)} placeholder="空=不限，逗号分隔"
+              <label className="text-xs text-gray-500 w-20 shrink-0">{t('gateway.app.allowedModels')}</label>
+              <input value={models} onChange={e => setModels(e.target.value)} placeholder={t('gateway.app.modelsPlaceholder')}
                 className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
             </div>
           </div>
@@ -718,7 +741,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
         {/* 接入配置：Key + base_url + 示例（用户自行把应用指向网关）*/}
         {app.api_key && (
           <div>
-            <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">接入配置（把你的应用指向以下地址）</div>
+            <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.accessConfigHint')}</div>
             <KeyConfigPanel apiKey={app.api_key} localBase="http://127.0.0.1:11430/v1"
               model={routeId || undefined} hideAuto />
           </div>
@@ -727,11 +750,11 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
       <div className="flex gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800">
         <button onClick={save} disabled={busy}
           className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
-          {busy ? '保存中…' : '保存'}
+          {busy ? t('gateway.common.saving') : t('gateway.common.save')}
         </button>
         <button onClick={onCancel}
           className="px-4 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400">
-          取消
+          {t('gateway.common.cancel')}
         </button>
       </div>
     </div>
@@ -756,6 +779,7 @@ function TraceStatPill({ label, value, tone }) {
 
 // Session Trace 弹窗（参考 tokentelemetry，简化版）
 function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
+  const { t } = useLang();
   const [trace, setTrace]     = useState(null);
   const [loading, setLoading] = useState(true);
   const [stepIdx, setStepIdx] = useState(0);
@@ -784,7 +808,7 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
         onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-800 shrink-0 space-y-2">
           <div className="flex items-center gap-3">
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-sm">← 返回</button>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-sm">{t('gateway.common.back')}</button>
             <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">Session Trace</h3>
             <span className="text-[10px] px-2 py-0.5 rounded bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 uppercase">{agentId || 'agent'}</span>
             <span className="font-mono text-[10px] text-gray-400">{sessionId?.slice(0, 8)}…</span>
@@ -810,14 +834,14 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
         </div>
 
         {loading ? (
-          <div className="py-16 flex justify-center text-xs text-gray-400">加载 Trace…</div>
+          <div className="py-16 flex justify-center text-xs text-gray-400">{t('gateway.trace.loading')}</div>
         ) : trace?.error ? (
-          <div className="py-16 text-center text-xs text-gray-400">未找到会话文件</div>
+          <div className="py-16 text-center text-xs text-gray-400">{t('gateway.trace.notFound')}</div>
         ) : (
           <>
             {/* 会话元信息 */}
             <div className="px-5 py-2 text-[11px] text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800 shrink-0 flex flex-wrap gap-x-4 gap-y-1">
-              <span>项目 <strong className="text-gray-700 dark:text-gray-300">{trace.project || '—'}</strong></span>
+              <span>{t('gateway.detail.projectLabel')} <strong className="text-gray-700 dark:text-gray-300">{trace.project || '—'}</strong></span>
               {projectPathTooltip(trace) !== '—' && (
                 <span className="font-mono truncate max-w-xs" title={projectPathTooltip(trace)}>{projectPathTooltip(trace)}</span>
               )}
@@ -853,7 +877,7 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
                     )}
                   </div>
                 ) : (
-                  <div className="text-xs text-gray-400">选择左侧步骤查看详情</div>
+                  <div className="text-xs text-gray-400">{t('gateway.trace.selectStep')}</div>
                 )}
               </div>
             </div>
@@ -909,19 +933,18 @@ function traceAgentIdForApp(app) {
 }
 
 /** 数据来源摘要：网关 / 会话补录（或二者皆有） */
-function buildDataSourceSummary(app, proxy, session, fmtN) {
+function buildDataSourceSummary(app, proxy, session, fmtN, t) {
   const hasGateway = app.link_method === 'api-key' || app.link_method === 'shim';
   const hasSession = appHasSessionImport(app);
   const tags = [];
-  // 仅有数据或纯网关应用时才展示网关行（Desktop 直连官方时多为 0，不占位）
   if (hasGateway && proxy.calls > 0) {
-    tags.push({ icon: '🛰️', label: '网关实时', calls: proxy.calls, tokens: proxy.tokens, tone: 'blue' });
+    tags.push({ icon: '🛰️', label: t('gateway.detail.sourceGateway'), calls: proxy.calls, tokens: proxy.tokens, tone: 'blue' });
   }
   if (hasSession) {
-    tags.push({ icon: '📄', label: '会话补录', calls: session.calls, tokens: session.tokens, tone: 'green' });
+    tags.push({ icon: '📄', label: t('gateway.detail.sourceSession'), calls: session.calls, tokens: session.tokens, tone: 'green' });
   }
   const summary = tags.length === 2
-    ? '网关实时 + 会话补录'
+    ? t('gateway.detail.sourceBoth')
     : tags[0]?.label || '—';
   return { summary, tags };
 }
@@ -971,6 +994,7 @@ function shortProjectName(row) {
 
 // 单个应用的用量明细弹窗
 function AppDetailModal({ app, onClose }) {
+  const { t } = useLang();
   const [days, setDays]           = useState(30);
   const [data, setData]           = useState(null);
   const [loading, setLoading]     = useState(true);
@@ -998,7 +1022,7 @@ function AppDetailModal({ app, onClose }) {
   const proxy   = data?.bySource?.find(s => s.source === 'proxy')   || { calls:0, tokens:0 };
   const session = data?.bySource?.find(s => s.source === 'session') || { calls:0, tokens:0 };
 
-  const sourceSummary = buildDataSourceSummary(app, proxy, session, fmtN);
+  const sourceSummary = buildDataSourceSummary(app, proxy, session, fmtN, t);
   const sessionHistoryRows = (data?.activity?.length ? data.activity : (data?.sessions || []).map(s => ({
     ...s, project: '—', context: shortId(s.session_id),
   }))).map(r => ({
@@ -1031,39 +1055,39 @@ function AppDetailModal({ app, onClose }) {
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-200 dark:border-gray-800 sticky top-0 bg-white dark:bg-gray-900 z-10">
           <span className="text-xl">{app.icon}</span>
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">{app.name} · 用量明细</h3>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">{t('gateway.detail.usageTitle', { name: app.name })}</h3>
           <select value={days} onChange={e => setDays(+e.target.value)}
             className="text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-600 dark:text-gray-300">
-            <option value={7}>近 7 天</option><option value={30}>近 30 天</option><option value={90}>近 90 天</option>
+            <option value={7}>{t('gateway.detail.days7')}</option><option value={30}>{t('gateway.detail.days30')}</option><option value={90}>{t('gateway.detail.days90')}</option>
           </select>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg">✕</button>
         </div>
 
         {loading ? (
           <div className="py-16 flex flex-col items-center gap-2 text-xs text-gray-400">
-            <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 border-t-blue-500 rounded-full animate-spin" />加载中…
+            <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 border-t-blue-500 rounded-full animate-spin" />{t('gateway.common.loading')}
           </div>
         ) : !data ? (
-          <div className="py-16 text-center text-xs text-gray-400">没有数据</div>
+          <div className="py-16 text-center text-xs text-gray-400">{t('gateway.common.noData')}</div>
         ) : (
           <div className="p-5 space-y-6">
 
             {/* 1. 数据来源 */}
-            <DetailSection n="1" title="数据来源">
+            <DetailSection n="1" title={t('gateway.detail.dataSource')}>
               <div className="text-xs text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/40 rounded-lg px-3 py-2.5">
                 <span className="text-gray-700 dark:text-gray-300">{sourceSummary.summary}</span>
                 {sourceSummary.tags.length > 1 && (
-                  <span className="text-[10px] text-gray-400 ml-2">· 已去重合并</span>
+                  <span className="text-[10px] text-gray-400 ml-2">{t('gateway.detail.deduped')}</span>
                 )}
                 <div className="flex flex-wrap gap-2 mt-2">
-                  {sourceSummary.tags.map(t => (
-                    <span key={t.label}
+                  {sourceSummary.tags.map(tag => (
+                    <span key={tag.label}
                       className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] ${
                         t.tone === 'blue'
                           ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/25 dark:text-blue-400'
                           : 'bg-green-50 text-green-600 dark:bg-green-900/25 dark:text-green-400'
                       }`}>
-                      {t.icon} {t.label} {t.calls} 次 · {fmtN(t.tokens)} tok
+                      {tag.icon} {tag.label} {tag.calls} {tr('gateway.common.times')} · {fmtN(tag.tokens)} tok
                     </span>
                   ))}
                 </div>
@@ -1071,14 +1095,14 @@ function AppDetailModal({ app, onClose }) {
             </DetailSection>
 
             {/* 2. 概要总计 */}
-            <DetailSection n="2" title="概要总计">
+            <DetailSection n="2" title={t('gateway.detail.summary')}>
               <div className="grid grid-cols-5 gap-2">
                 {[
-                  ['总请求数', fmtN(data.total.calls)],
-                  ['总Token',  fmtN(data.total.tokens)],
-                  ['输入Token', fmtN(data.total.inTok)],
-                  ['输出Token', fmtN(data.total.outTok)],
-                  ['估算费用',  fmtCost(data.total.totalCost) || '—'],
+                  [t('gateway.detail.totalCalls'), fmtN(data.total.calls)],
+                  [t('gateway.detail.totalTokens'),  fmtN(data.total.tokens)],
+                  [t('gateway.detail.inputTokens'), fmtN(data.total.inTok)],
+                  [t('gateway.detail.outputTokens'), fmtN(data.total.outTok)],
+                  [t('gateway.detail.estCost'),  fmtCost(data.total.totalCost) || '—'],
                 ].map(([l,v]) => (
                   <div key={l} className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3">
                     <div className="text-[10px] text-gray-400 dark:text-gray-500">{l}</div>
@@ -1086,38 +1110,38 @@ function AppDetailModal({ app, onClose }) {
                   </div>
                 ))}
               </div>
-              <p className="text-[10px] text-gray-400 mt-2">费用按 API 刊例价估算；订阅类接入显示等效价，非实际账单。</p>
+              <p className="text-[10px] text-gray-400 mt-2">{t('gateway.detail.costHint')}</p>
             </DetailSection>
 
             {/* 3. 按模型统计（无 model 字段的应用不展示） */}
             {showModelStats && (
-            <DetailSection n="3" title="按模型统计" hint={modelFilter ? `已筛选：${modelFilter}` : '点击行可筛选下方调用明细'}>
+            <DetailSection n="3" title={t('gateway.detail.byModel')} hint={modelFilter ? t('gateway.detail.filterActive', { model: modelFilter }) : t('gateway.detail.filterHint')}>
               <div className="border border-gray-100 dark:border-gray-800 rounded-lg divide-y divide-gray-100 dark:divide-gray-800">
                 {data.byModel.map(m => (
                   <div key={m.model}
                     onClick={() => setModelFilter(modelFilter === m.model ? null : m.model)}
                     className={`flex items-center gap-3 px-3 py-1.5 text-xs cursor-pointer select-none hover:bg-gray-50 dark:hover:bg-gray-800/60 ${modelFilter === m.model ? 'bg-blue-50 dark:bg-blue-900/10' : ''}`}>
                     <span className="font-mono text-gray-700 dark:text-gray-300 flex-1 min-w-0 break-all">{m.model}</span>
-                    <span className="text-gray-500 w-16 text-right">{m.calls} 次</span>
+                    <span className="text-gray-500 w-16 text-right">{m.calls} {t('gateway.common.times')}</span>
                     <span className="text-gray-700 dark:text-gray-300 w-20 text-right font-medium">{fmtN(m.tokens)} tok</span>
                   </div>
                 ))}
               </div>
               {modelFilter && (
                 <button type="button" onClick={() => setModelFilter(null)}
-                  className="text-[10px] text-blue-600 dark:text-blue-400 mt-1.5">清除模型筛选</button>
+                  className="text-[10px] text-blue-600 dark:text-blue-400 mt-1.5">{t('gateway.detail.clearFilter')}</button>
               )}
             </DetailSection>
             )}
 
             {/* 4. 按会话历史 */}
-            <DetailSection n={secSession} title="按会话历史" hint={canTrace ? 'Trace 查看步骤' : undefined}>
+            <DetailSection n={secSession} title={t('gateway.detail.bySession')} hint={canTrace ? t('gateway.detail.traceHint') : undefined}>
               {sessionHistoryRows.length === 0 ? (
-                <div className="text-xs text-gray-400 px-1">无会话记录</div>
+                <div className="text-xs text-gray-400 px-1">{t('gateway.detail.noSessions')}</div>
               ) : (
                 <div className="border border-gray-100 dark:border-gray-800 rounded-lg overflow-hidden">
                   <div className="grid grid-cols-[minmax(5.5rem,1.15fr)_minmax(0,2fr)_3.5rem_3.5rem_4.5rem_3.5rem] gap-2 px-3 py-1.5 text-[10px] font-medium text-gray-400 bg-gray-50 dark:bg-gray-800/40 border-b border-gray-100 dark:border-gray-800">
-                    <span>项目</span><span>上下文</span><span className="text-right">请求</span><span className="text-right">Token</span><span className="text-right">时间</span><span className="text-right">{canTrace ? 'Trace' : '明细'}</span>
+                    <span>{t('gateway.detail.colProject')}</span><span>{t('gateway.detail.colContext')}</span><span className="text-right">{t('gateway.detail.colRequests')}</span><span className="text-right">Token</span><span className="text-right">{t('gateway.detail.colTime')}</span><span className="text-right">{canTrace ? 'Trace' : t('gateway.detail.colDetail')}</span>
                   </div>
                   <div className="divide-y divide-gray-100 dark:divide-gray-800 max-h-64 overflow-y-auto">
                     {sessionHistoryRows.map(row => (
@@ -1163,7 +1187,7 @@ function AppDetailModal({ app, onClose }) {
 
             {/* 5. 调用明细（无 model 的应用不展示） */}
             {showCallDetails && (
-            <DetailSection n={secCalls} title={showModelStats ? '按模型调用明细' : '调用明细'} hint={`${recentSorted.length} 条 · 时间倒序`}>
+            <DetailSection n={secCalls} title={showModelStats ? t('gateway.detail.byModelCalls') : t('gateway.detail.callDetails')} hint={t('gateway.detail.recentCount', { n: recentSorted.length })}>
               {recentSorted.length === 0 ? (
                 <div className="text-xs text-gray-400 px-1">—</div>
               ) : (
@@ -1172,7 +1196,7 @@ function AppDetailModal({ app, onClose }) {
                     <div key={i} className="flex items-center gap-2 px-3 py-1.5 text-[11px] flex-wrap">
                       <span className="text-gray-400 w-24 shrink-0">{fmtTime(r.ts)}</span>
                       <span className={`px-1 rounded text-[9px] shrink-0 ${r.source === 'proxy' ? 'bg-blue-50 text-blue-500 dark:bg-blue-900/20' : 'bg-green-50 text-green-600 dark:bg-green-900/20'}`}>
-                        {r.source === 'proxy' ? '网关' : '会话'}
+                        {r.source === 'proxy' ? t('gateway.detail.sourceProxy') : t('gateway.detail.sourceSess')}
                       </span>
                       {showModelStats && (
                         <span className="font-mono text-[10px] text-gray-600 dark:text-gray-400 shrink-0 break-all" title={r.model}>{r.model || '—'}</span>
@@ -1202,6 +1226,7 @@ function AppDetailModal({ app, onClose }) {
 }
 
 function AppManager({ externalRoutes, availableModels = [] }) {
+  const { t } = useLang();
   const [apps,     setApps]     = useState([]);
   const [detailApp, setDetailApp] = useState(null);   // 用量明细弹窗对应的 app
   const [claudeModels, setClaudeModels] = useState([]);  // Claude 名（写 Claude Desktop inferenceModels 用）
@@ -1277,7 +1302,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   }
 
   async function handleDeleteApp(id) {
-    if (!window.confirm('删除该应用？')) return;
+    if (!window.confirm(t('gateway.apps.confirmDelete'))) return;
     await window.electronAPI.apps?.delete(id).catch(() => {});
     if (settings?.id === id) setSettings(null);
     await load();
@@ -1309,7 +1334,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     // draft:true → 列表不显示这条临时条目（只在内联面板里编辑），保存时清除草稿标记才出现。
     // 这样切 tab/不保存绝不会在列表里多出一条（不依赖卸载时的异步删除）。
     const created = await window.electronAPI.apps?.create({
-      name: '新应用', icon: '🔧', link_method: 'manual',
+      name: t('gateway.apps.newAppName'), icon: '🔧', link_method: 'manual',
       route_id: defaultRouteId() || null, draft: true,
     }).catch(() => null);
     if (created?.id) setManualDraft({ ...created, _isNew: true });
@@ -1347,29 +1372,29 @@ function AppManager({ externalRoutes, availableModels = [] }) {
       await window.electronAPI.apps?.update({ id: appId, hosted: true, route_id: null }).catch(() => {});
       if (app.host_method === 'config-file') {
         await window.electronAPI.apps?.revertConfigFile({ app_id: appId, config_file: app.config_file }).catch(() => {});
-        showNotice(appId, '✓ 已纳管（官方订阅），重启应用后生效');
+        showNotice(appId, t('gateway.apps.managedOfficial'));
       } else if (app.link_method === 'shim' && app.agent_id) {
         await window.electronAPI.agents?.revert(app.agent_id).catch(() => {});
-        showNotice(appId, '✓ 已纳管（官方订阅），重开终端后生效');
+        showNotice(appId, t('gateway.apps.managedOfficialShell'));
       } else if (app.link_method === 'direct') {
-        showNotice(appId, '✓ 已纳管，开始统计会话');
+        showNotice(appId, t('gateway.apps.managedSession'));
       } else {
-        showNotice(appId, '✓ 已纳管（官方订阅）');
+        showNotice(appId, t('gateway.apps.managedOfficialShort'));
       }
     } else {
       const msg = app.link_method === 'direct'
-        ? '取消纳管该应用？将停止统计其会话日志（历史数据保留，可随时重新纳管）。'
-        : '还原该应用？将取消纳管、恢复官方订阅（不再读其会话文件统计；条目保留，可随时重新纳管）。';
+        ? t('gateway.apps.confirmUntrackDirect')
+        : t('gateway.apps.confirmRevert');
       if (!window.confirm(msg)) return;
       setBusyId(appId);
       if (app.link_method === 'shim' && app.agent_id) {
         await window.electronAPI.agents?.revert(app.agent_id).catch(() => {});
-        showNotice(appId, '✓ 已还原，重开终端后生效');
+        showNotice(appId, t('gateway.apps.revertedShell'));
       } else if (app.host_method === 'config-file') {
         await window.electronAPI.apps?.revertConfigFile({ app_id: appId, config_file: app.config_file }).catch(() => {});
-        showNotice(appId, '✓ 已还原，重启应用后生效');
+        showNotice(appId, t('gateway.apps.revertedApp'));
       } else if (app.link_method === 'direct') {
-        showNotice(appId, '✓ 已取消纳管，停止统计');
+        showNotice(appId, t('gateway.apps.untracked'));
       }
       await window.electronAPI.apps?.update({ id: appId, hosted: false, route_id: null }).catch(() => {});
       if (settings?.id === appId) setSettings(null);
@@ -1419,7 +1444,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
         setTimeout(() => load(), 600);
       }
     } catch (e) {
-      const msg = e?.name === 'AbortError' ? '超时（30s）' : (e?.message || '连接失败');
+      const msg = e?.name === 'AbortError' ? t('gateway.common.timeout30s') : (e?.message || t('gateway.common.connectFailed'));
       setTestState(s => ({ ...s, [app.id]: { ok: false, error: msg, latency: Date.now() - start } }));
     } finally {
       clearTimeout(timer);
@@ -1466,12 +1491,12 @@ function AppManager({ externalRoutes, availableModels = [] }) {
       }).catch(e => ({ ok: false, error: e.message }));
       // 冲突：目标配置项已有不同的值 → 确认后强制覆盖；取消则回滚
       if (r && !r.ok && Array.isArray(r.conflicts) && r.conflicts.length) {
-        const lines = r.conflicts.map(c => `· ${c.key}\n    当前: ${c.current}\n    将改为: ${c.wanted}`).join('\n');
-        if (window.confirm(`配置文件已有不同的配置，是否覆盖？\n\n${lines}\n\n确定覆盖请点「确定」。`)) return run(true);
+        const lines = r.conflicts.map(c => `· ${c.key}\n${t('gateway.app.conflictCurrent', { val: c.current })}\n${t('gateway.app.conflictWanted', { val: c.wanted })}`).join('\n');
+        if (window.confirm(t('gateway.app.conflictConfirm', { lines }))) return run(true);
         await onAbort?.();
         return false;
       }
-      if (!r?.ok) { await onAbort?.(); window.alert('纳管失败：' + (r?.error || '写入配置失败')); return false; }
+      if (!r?.ok) { await onAbort?.(); window.alert(t('gateway.apps.hostFailed', { msg: r?.error || t('gateway.common.writeFailed') })); return false; }
       return true;
     };
     return run(false);
@@ -1487,7 +1512,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     }).catch(() => null);
     if (created?.id) await window.electronAPI.apps?.update({ id: created.id, hosted: true }).catch(() => {});
     setBusyId(null);
-    if (created?.id) showNotice(created.id, '✓ 已纳管（默认官方订阅，选模型即走网关）');
+    if (created?.id) showNotice(created.id, t('gateway.apps.managedDefault'));
     await load();
   }
 
@@ -1533,15 +1558,15 @@ function AppManager({ externalRoutes, availableModels = [] }) {
             <div className="flex items-center gap-2 mb-3 flex-wrap">
               <button onClick={() => manualDraft ? cancelManualDraft() : addCustom()}
                 className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors">
-                + 新建应用
+                {t('gateway.apps.new')}
               </button>
-              <span className="text-xs text-gray-400 dark:text-gray-500">已识别的应用在下方列表中纳管；此处新建未被识别的应用</span>
+              <span className="text-xs text-gray-400 dark:text-gray-500">{t('gateway.apps.newHint')}</span>
               <div className="ml-auto"><ImportConfigButton onImported={load} /></div>
             </div>
 
             {/* 提醒：纳管后若未生效需重启应用 */}
             <div className="mb-3 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-lg px-3 py-2">
-              💡 点击「纳管」后若未生效，请重启对应应用（CLI 工具需重开终端）。
+              {t('gateway.apps.restartHint')}
             </div>
 
             {/* 手工添加 → 内联面板（ManualAddPanel，独立组件）*/}
@@ -1555,28 +1580,28 @@ function AppManager({ externalRoutes, availableModels = [] }) {
             {loading ? (
               <div className="py-10 flex flex-col items-center justify-center gap-2 text-xs text-gray-400">
                 <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 border-t-blue-500 rounded-full animate-spin" />
-                加载中…
+                {t('gateway.apps.loading')}
               </div>
             ) : visibleApps.length === 0 ? (
               <div className="py-6 text-center text-xs text-gray-400">
-                未检测到已识别的应用。安装 Claude Code / Codex / Gemini CLI 后会显示在这里，点「纳管」即可接入；或用上方「+ 新建应用」添加未被识别的应用。
+                {t('gateway.apps.empty')}
               </div>
             ) : (
               <div className={`flex flex-col divide-y divide-gray-100 dark:divide-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl ${visibleApps.length > 20 ? 'max-h-[min(75vh,900px)] overflow-y-auto' : 'overflow-hidden'}`}>
                 {/* 表头（超过 20 个时列表滚动，表头吸顶）*/}
                 <div className="flex items-center gap-3 px-3 py-2 bg-gray-100 dark:bg-gray-800 text-[10px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wide sticky top-0 z-10">
                   <span className="text-base w-6 text-center shrink-0 invisible">🔧</span>
-                  <div className="w-28 shrink-0">应用</div>
-                  <div className="w-14 shrink-0">状态</div>
-                  <div className="w-16 shrink-0">接入方式</div>
+                  <div className="w-28 shrink-0">{t('gateway.apps.colApp')}</div>
+                  <div className="w-14 shrink-0">{t('gateway.apps.colStatus')}</div>
+                  <div className="w-16 shrink-0">{t('gateway.apps.colLink')}</div>
                   <div className="flex items-center gap-4 shrink-0">
-                    <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden">总请求数</div>
-                    <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden">总Token</div>
-                    <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden">最后使用</div>
+                    <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden">{t('gateway.apps.colCalls')}</div>
+                    <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden">{t('gateway.apps.colTokens')}</div>
+                    <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden">{t('gateway.apps.colLastUsed')}</div>
                   </div>
-                  <div className="flex-1 min-w-0 max-w-[160px]">路由 / 模型</div>
-                  <div className="w-[60px] shrink-0 text-right">测试</div>
-                  <div className="shrink-0">操作</div>
+                  <div className="flex-1 min-w-0 max-w-[160px]">{t('gateway.apps.colRoute')}</div>
+                  <div className="w-[60px] shrink-0 text-right">{t('gateway.apps.colTest')}</div>
+                  <div className="shrink-0">{t('gateway.apps.colActions')}</div>
                 </div>
                 {visibleApps.map(app => {
                   const st = appStats[app.id] || { calls: 0, tokens: 0, lastTs: null };
@@ -1585,10 +1610,10 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                   const fmtTime = ts => {
                     if (!ts) return '—';
                     const diff = Math.floor((Date.now() - ts*1000)/1000);
-                    if (diff < 60) return '刚刚';
-                    if (diff < 3600) return `${Math.floor(diff/60)}m前`;
-                    if (diff < 86400) return `${Math.floor(diff/3600)}h前`;
-                    if (diff < 7*86400) return `${Math.floor(diff/86400)}天前`;
+                    if (diff < 60) return t('gateway.common.justNow');
+                    if (diff < 3600) return t('gateway.common.minutesAgo', { n: Math.floor(diff/60) });
+                    if (diff < 86400) return t('gateway.common.hoursAgo', { n: Math.floor(diff/3600) });
+                    if (diff < 7*86400) return t('gateway.common.daysAgo', { n: Math.floor(diff/86400) });
                     return new Date(ts*1000).toLocaleDateString('zh-CN',{month:'short',day:'numeric'});
                   };
                   // 状态列：在线(已纳管) / 未纳管；经网关与否由路由下拉区分
@@ -1618,7 +1643,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                   const rowBg = isManaged
                     ? 'bg-green-50/60 dark:bg-green-950/15'
                     : 'bg-gray-50/50 dark:bg-gray-800/20';
-                  const statusLabel = isManaged ? '在线' : '未纳管';
+                  const statusLabel = isManaged ? t('gateway.apps.statusOnline') : t('gateway.apps.statusUntracked');
                   const statusText = isManaged ? 'text-green-600 dark:text-green-400' : 'text-gray-400';
                   return (
                     // 离线不整行压暗（否则操作按钮看着像禁用）；离线感由灰底/灰点/「离线」标签/
@@ -1636,12 +1661,12 @@ function AppManager({ externalRoutes, availableModels = [] }) {
 
                       {/* 接入方式列 */}
                       <div className="w-16 shrink-0 text-[11px] text-gray-400 truncate">
-                        {linkMethodLabel(app.link_method)}
+                        {linkMethodLabel(app.link_method, t)}
                       </div>
 
                       {/* 统计：请求数 / token / 最后使用（点击打开用量明细）*/}
                       <div className="flex items-center gap-4 shrink-0 cursor-pointer rounded hover:bg-gray-100/60 dark:hover:bg-gray-700/30 -mx-1 px-1"
-                        title="点击查看用量明细（含会话补录）" onClick={() => setDetailApp(app)}>
+                        title={t('gateway.apps.statsTitle')} onClick={() => setDetailApp(app)}>
                         <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden tabular-nums text-xs font-semibold text-gray-700 dark:text-gray-200">{st.calls > 0 ? st.calls.toLocaleString() : '—'}</div>
                         <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden tabular-nums text-xs font-semibold text-gray-700 dark:text-gray-200">{st.tokens > 0 ? fmtTokens(st.tokens) : '—'}</div>
                         <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden text-[10px] font-medium text-gray-600 dark:text-gray-300">{fmtTime(st.lastTs)}</div>
@@ -1663,8 +1688,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           // 选模型/路由 = 纳管 + 走网关（hosted:true）；直连官方(空) = 还原配置/撤 shim，保持纳管
                           if (app.host_method === 'config-file') {        // Claude Desktop 等 config-file 应用
                             await window.electronAPI.apps?.update({ id: app.id, route_id: val, ...(val ? { hosted: true } : {}) }).catch(() => {});
-                            if (val) { await writeApiKeyConfig({ ...app, route_id: val }); showNotice(app.id, '⚠ 路由已切换，重启应用后生效'); }   // 写配置→网关
-                            else     { await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {}); showNotice(app.id, '✓ 已切官方订阅，重启应用后生效'); }
+                            if (val) { await writeApiKeyConfig({ ...app, route_id: val }); showNotice(app.id, t('gateway.apps.routeSwitchedApp')); }   // 写配置→网关
+                            else     { await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {}); showNotice(app.id, t('gateway.apps.routeOfficialApp')); }
                           } else if (app.link_method === 'shim' && app.agent_id) {  // CLI 透明托管
                             let appId = app.id;
                             if (app._virtual) {
@@ -1672,8 +1697,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                               if (created) appId = created.id;
                             }
                             await window.electronAPI.apps?.update({ id: appId, route_id: val, ...(val ? { hosted: true } : {}) }).catch(() => {});
-                            if (val) { await window.electronAPI.agents?.apply(app.agent_id).catch(() => {}); showNotice(appId, '⚠ 路由已切换，重开终端后生效'); }   // 注入 shim → 网关
-                            else     { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); showNotice(appId, '✓ 已切官方订阅，重开终端后生效'); }
+                            if (val) { await window.electronAPI.agents?.apply(app.agent_id).catch(() => {}); showNotice(appId, t('gateway.apps.routeSwitchedShell')); }   // 注入 shim → 网关
+                            else     { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); showNotice(appId, t('gateway.apps.routeOfficialShell')); }
                           } else {                                          // 纯 api-key / manual
                             await window.electronAPI.apps?.update({
                               id: app.id,
@@ -1687,22 +1712,22 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         className="w-full text-[10px] bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 outline-none text-gray-600 dark:text-gray-400 disabled:opacity-40 disabled:cursor-not-allowed">
                         {/* Cursor 等仅官方订阅应用：固定一项；manual 必须绑路由；其余可选官方订阅或走网关 */}
                         {isManual
-                          ? <option value="" disabled>请选择模型 / 路由（手工添加必须绑定）</option>
-                          : <option value="">官方订阅（不走网关）</option>}
+                          ? <option value="" disabled>{t('gateway.app.routeRequired')}</option>
+                          : <option value="">{t('gateway.app.routeOfficial')}</option>}
                         {!isDirectOnly && (() => {
                           const avail = new Set(availableModels.map(m => m.id));
                           const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
                           return (
                             <>
                               {usable.length > 0 && (
-                                <optgroup label="场景路由">
+                                <optgroup label={t('gateway.app.sceneRoutes')}>
                                   {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
                                 </optgroup>
                               )}
                               {['free','p2p','paid'].map(tier => {
                                 const tm = availableModels.filter(m => m.tier === tier);
                                 if (!tm.length) return null;
-                                const label = tier === 'free' ? '🟢 免费模型' : tier === 'p2p' ? '🔵 P2P 模型' : '🟣 付费模型';
+                                const label = tierModelLabel(tier, t);
                                 return <optgroup key={tier} label={label}>{tm.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>;
                               })}
                             </>
@@ -1728,7 +1753,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                               className={`text-[10px] px-2 py-1 rounded-lg border transition-colors shrink-0 ${ts?.busy
                                 ? 'border-gray-300 dark:border-gray-600 text-gray-400 opacity-60 cursor-wait'
                                 : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-500'} disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-gray-200 disabled:hover:text-gray-500`}>
-                              {ts?.busy ? '测试中…' : '测试'}
+                              {ts?.busy ? t('gateway.common.testing') : t('gateway.common.test')}
                             </button>
                           </>
                         );
@@ -1742,18 +1767,18 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         <>
                           <button onClick={() => setSettings(app)} disabled={!isGatewayRouted}
                             className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent shrink-0">
-                            编辑
+                            {t('gateway.common.edit')}
                           </button>
                           {tracked ? (
                             <button onClick={() => setTracked(app, false)} disabled={busyId === app.id}
-                              title="还原：停止统计该应用的会话日志（历史数据保留）"
+                              title={t('gateway.apps.revertTitle')}
                               className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 disabled:opacity-50 shrink-0">
-                              {busyId === app.id ? '…' : '还原'}
+                              {busyId === app.id ? '…' : t('gateway.common.revert')}
                             </button>
                           ) : (
                             <button onClick={() => setTracked(app, true)} disabled={busyId === app.id}
                               className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 shrink-0 font-medium">
-                              {busyId === app.id ? '…' : '纳管'}
+                              {busyId === app.id ? '…' : t('gateway.common.manage')}
                             </button>
                           )}
                         </>
@@ -1762,17 +1787,17 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         <>
                           <button onClick={() => setSettings(app)} disabled={!isGatewayRouted}
                             className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent shrink-0">
-                            编辑
+                            {t('gateway.common.edit')}
                           </button>
                           {tracked ? (
                             <button onClick={() => setTracked(app, false)} disabled={busyId === app.agent_id || busyId === app.id}
                               className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 disabled:opacity-50 shrink-0">
-                              {(busyId === app.agent_id || busyId === app.id) ? '…' : '还原'}
+                              {(busyId === app.agent_id || busyId === app.id) ? '…' : t('gateway.common.revert')}
                             </button>
                           ) : (
                             <button onClick={() => setTracked(app, true)} disabled={busyId === app.agent_id || busyId === app.id}
                               className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 shrink-0 font-medium">
-                              {(busyId === app.agent_id || busyId === app.id) ? '…' : '纳管'}
+                              {(busyId === app.agent_id || busyId === app.id) ? '…' : t('gateway.common.manage')}
                             </button>
                           )}
                         </>
@@ -1780,24 +1805,24 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         /* API Key 应用（未纳管虚拟行）：一键纳管（写配置文件指向网关），与透明托管一致 */
                         <button onClick={() => addApiKeyApp(app)} disabled={busyId === app.id}
                           className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 shrink-0 font-medium">
-                          {busyId === app.id ? '…' : '纳管'}
+                          {busyId === app.id ? '…' : t('gateway.common.manage')}
                         </button>
                       ) : app.host_method === 'config-file' ? (
                         /* config-file api-key 应用：编辑（仅经网关可用）+ 纳管/还原；纳管/还原默认官方订阅 */
                         <>
                           <button onClick={() => setSettings(app)} disabled={!isGatewayRouted}
                             className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent shrink-0">
-                            编辑
+                            {t('gateway.common.edit')}
                           </button>
                           {tracked ? (
                             <button onClick={() => setTracked(app, false)} disabled={busyId === app.id}
                               className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 disabled:opacity-50 shrink-0">
-                              {busyId === app.id ? '…' : '还原'}
+                              {busyId === app.id ? '…' : t('gateway.common.revert')}
                             </button>
                           ) : (
                             <button onClick={() => setTracked(app, true)} disabled={busyId === app.id}
                               className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 shrink-0 font-medium">
-                              {busyId === app.id ? '…' : '纳管'}
+                              {busyId === app.id ? '…' : t('gateway.common.manage')}
                             </button>
                           )}
                         </>
@@ -1806,11 +1831,11 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         <>
                           <button onClick={() => setSettings(app)}
                             className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
-                            设置
+                            {t('gateway.common.settings')}
                           </button>
                           <button onClick={() => handleDeleteApp(app.id)}
                             className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 shrink-0">
-                            删除
+                            {t('gateway.common.delete')}
                           </button>
                         </>
                       )}
@@ -1838,6 +1863,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
 }
 
 function AgentLinker() {
+  const { t } = useLang();
   const [agents, setAgents]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy]       = useState({});   // id → true
@@ -1856,12 +1882,12 @@ function AgentLinker() {
     try {
       const r = await applyAgent(id);
       if (r.ok) {
-        let msg = r.needsRestartShell ? '✓ 已接入，重开终端后生效' : '✓ 已接入';
-        if (r.enabledProvider) msg += `，已开启供给源 [${r.enabledProvider}]，请去供给源页填写 Key`;
+        let msg = r.needsRestartShell ? t('gateway.agent.appliedShell') : t('gateway.agent.applied');
+        if (r.enabledProvider) msg += t('gateway.agent.enabledProvider', { name: r.enabledProvider });
         setNotice(n => ({ ...n, [id]: msg }));
         await refresh();
       } else {
-        setNotice(n => ({ ...n, [id]: '✗ ' + (r.error || '失败') }));
+        setNotice(n => ({ ...n, [id]: '✗ ' + (r.error || t('gateway.common.failed')) }));
       }
     } catch (e) { setNotice(n => ({ ...n, [id]: '✗ ' + e.message })); }
     setBusy(b => ({ ...b, [id]: false }));
@@ -1872,8 +1898,8 @@ function AgentLinker() {
     setNotice(n => ({ ...n, [id]: '' }));
     try {
       const r = await revertAgent(id);
-      if (r.ok) { setNotice(n => ({ ...n, [id]: '✓ 已还原' })); await refresh(); }
-      else       { setNotice(n => ({ ...n, [id]: '✗ ' + (r.error || '失败') })); }
+      if (r.ok) { setNotice(n => ({ ...n, [id]: t('gateway.agent.reverted') })); await refresh(); }
+      else       { setNotice(n => ({ ...n, [id]: '✗ ' + (r.error || t('gateway.common.failed')) })); }
     } catch (e) { setNotice(n => ({ ...n, [id]: '✗ ' + e.message })); }
     setBusy(b => ({ ...b, [id]: false }));
   }
@@ -1882,17 +1908,17 @@ function AgentLinker() {
     <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 mb-4">
       <div className="flex items-center gap-2 mb-3">
         <span className="text-base">🔌</span>
-        <h2 className="font-semibold text-gray-800 dark:text-gray-100 text-sm">CLI Agent 透明接入</h2>
-        <span className="text-xs text-gray-400 dark:text-gray-500">自动把本机 CLI 工具流量导入网关，无需手动配置</span>
+        <h2 className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{t('gateway.agent.title')}</h2>
+        <span className="text-xs text-gray-400 dark:text-gray-500">{t('gateway.agent.subtitle')}</span>
         <div className="ml-auto flex items-center gap-2">
-          <button onClick={refresh} className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">↻ 刷新</button>
+          <button onClick={refresh} className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">{t('gateway.common.refresh')}</button>
           <ImportConfigButton onImported={refresh} />
         </div>
       </div>
       {loading ? (
-        <div className="text-xs text-gray-400 py-2">检测中…</div>
+        <div className="text-xs text-gray-400 py-2">{t('gateway.agent.detecting')}</div>
       ) : agents.length === 0 ? (
-        <div className="text-xs text-gray-400 py-2">未检测到已知 CLI Agent（配置文件加载中）</div>
+        <div className="text-xs text-gray-400 py-2">{t('gateway.agent.empty')}</div>
       ) : (
         <div className="flex flex-col gap-2">
           {agents.map(a => (
@@ -1911,7 +1937,7 @@ function AgentLinker() {
               <div className="flex-1 min-w-0">
                 <span className="font-medium text-gray-800 dark:text-gray-100">{a.name}</span>
                 <span className="ml-2 text-xs text-gray-400">
-                  {a.installed ? (STRATEGY_LABEL[a.strategy] || a.strategy) : '未安装'}
+                  {a.installed ? (strategyLabel(a.strategy, t) || a.strategy) : t('gateway.agent.notInstalled')}
                 </span>
               </div>
 
@@ -1920,7 +1946,7 @@ function AgentLinker() {
                 <span className={`text-xs px-2 py-0.5 rounded-full shrink-0
                   ${a.linked ? 'bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300'
                               : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}>
-                  {a.linked ? '接入中' : '未接入'}
+                  {a.linked ? t('gateway.agent.linked') : t('gateway.agent.notLinked')}
                 </span>
               )}
 
@@ -1938,7 +1964,7 @@ function AgentLinker() {
                   disabled={busy[a.id]}
                   onClick={() => handleApply(a.id)}
                   className="shrink-0 text-xs px-3 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 transition-colors">
-                  {busy[a.id] ? '接入中…' : '一键接入'}
+                  {busy[a.id] ? t('gateway.agent.applying') : t('gateway.agent.apply')}
                 </button>
               )}
               {a.installed && a.linked && (
@@ -1946,7 +1972,7 @@ function AgentLinker() {
                   disabled={busy[a.id]}
                   onClick={() => handleRevert(a.id)}
                   className="shrink-0 text-xs px-3 py-1 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 disabled:opacity-50 transition-colors">
-                  {busy[a.id] ? '还原中…' : '还原'}
+                  {busy[a.id] ? t('gateway.agent.reverting') : t('gateway.common.revert')}
                 </button>
               )}
             </div>
@@ -1954,7 +1980,7 @@ function AgentLinker() {
         </div>
       )}
       <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
-        💡 接入后需<b>重开终端</b>才能对新启动的工具生效；关闭 Token Bank 时自动还原。
+        {t('gateway.agent.hint')}
       </p>
     </div>
   );
@@ -1990,7 +2016,9 @@ function resolveStepTier(stepModel, step, availableModels) {
 
 // ── CopyButton ────────────────────────────────────────────────────────────────
 
-function CopyButton({ text, label = '复制', className = '' }) {
+function CopyButton({ text, label: labelProp, className = '' }) {
+  const { t } = useLang();
+  const label = labelProp ?? t('gateway.common.copy');
   const [copied, setCopied] = useState(false);
   function copy() {
     navigator.clipboard.writeText(text).then(() => {
@@ -2001,7 +2029,7 @@ function CopyButton({ text, label = '复制', className = '' }) {
   return (
     <button onClick={copy}
       className={`text-xs px-2.5 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors min-w-[48px] ${className}`}>
-      {copied ? '已复制 ✓' : label}
+      {copied ? t('gateway.common.copiedSpace') : label}
     </button>
   );
 }
@@ -2009,6 +2037,7 @@ function CopyButton({ text, label = '复制', className = '' }) {
 // ── ModelSelect ───────────────────────────────────────────────────────────────
 
 function ModelSelect({ availableModels, value, onChange }) {
+  const { t } = useLang();
   const freeModels = availableModels.filter(m => m.tier === 'free');
   const p2pModels  = availableModels.filter(m => m.tier === 'p2p');
   const paidModels = availableModels.filter(m => m.tier === 'paid');
@@ -2016,17 +2045,17 @@ function ModelSelect({ availableModels, value, onChange }) {
     <select value={value} onChange={e => onChange(e.target.value)}
       className="w-full bg-gray-200 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-2 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500">
       {freeModels.length > 0 && (
-        <optgroup label="🟢 免费层">
+        <optgroup label={t('gateway.app.tier.freeLayer')}>
           {freeModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
         </optgroup>
       )}
       {p2pModels.length > 0 && (
-        <optgroup label="🔵 P2P 层">
+        <optgroup label={t('gateway.app.tier.p2pLayer')}>
           {p2pModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
         </optgroup>
       )}
       {paidModels.length > 0 && (
-        <optgroup label="🟡 付费层">
+        <optgroup label={t('gateway.app.tier.paidLayer')}>
           {paidModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
         </optgroup>
       )}
@@ -2037,20 +2066,27 @@ function ModelSelect({ availableModels, value, onChange }) {
 // ── SceneRouteEditor ──────────────────────────────────────────────────────────
 
 // 条件路由：条件类型元数据（与网关 evalWhen 的 type/op 一致）
-const RULE_COND_TYPES = [
-  { type: 'request_type', label: '请求类型', ops: ['is', 'not'], values: ['chat', 'image', 'video', 'embedding', 'audio'] },
-  { type: 'input_tokens', label: '输入Token', ops: ['gt', 'lt', 'gte', 'lte'], value: 'number' },
-  { type: 'keyword',      label: '关键词',   ops: ['match', 'contains'], value: 'text', placeholder: '正则或文本，如 翻译|translate' },
-  { type: 'model',        label: '请求模型', ops: ['is', 'contains'], value: 'text', placeholder: '如 claude-opus-4-8' },
-  { type: 'caller',       label: '调用方',   ops: ['is'], value: 'text', placeholder: 'API key' },
-  { type: 'classifier',   label: '智能分类', ops: ['is', 'not'], value: 'category' },
-];
-const RULE_OP_LABEL = { is: '是', not: '不是', gt: '>', lt: '<', gte: '≥', lte: '≤', match: '匹配(正则)', contains: '包含' };
+function ruleCondTypes(t) {
+  return [
+    { type: 'request_type', label: t('gateway.rule.type.requestType'), ops: ['is', 'not'], values: ['chat', 'image', 'video', 'embedding', 'audio'] },
+    { type: 'input_tokens', label: t('gateway.rule.type.inputTokens'), ops: ['gt', 'lt', 'gte', 'lte'], value: 'number' },
+    { type: 'keyword',      label: t('gateway.rule.type.keyword'),     ops: ['match', 'contains'], value: 'text', placeholder: t('gateway.rule.keywordPlaceholder') },
+    { type: 'model',        label: t('gateway.rule.type.model'),       ops: ['is', 'contains'], value: 'text', placeholder: t('gateway.rule.modelPlaceholder') },
+    { type: 'caller',       label: t('gateway.rule.type.caller'),      ops: ['is'], value: 'text', placeholder: t('gateway.rule.callerPlaceholder') },
+    { type: 'classifier',   label: t('gateway.rule.type.classifier'),  ops: ['is', 'not'], value: 'category' },
+  ];
+}
+function ruleOpLabel(t) {
+  return { is: t('gateway.rule.op.is'), not: t('gateway.rule.op.not'), gt: '>', lt: '<', gte: '≥', lte: '≤', match: t('gateway.rule.op.match'), contains: t('gateway.rule.op.contains') };
+}
 const RULE_SEL = 'bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-1.5 py-1 text-[11px] text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500';
 
 // 单条 when 条件编辑器：条件类型 + 算子 + 值（值控件随类型变化）。
 // categories：智能分类的类别集合（来自分类器配置），用于「智能分类」条件的值下拉。
 function RuleConditionEditor({ when, onChange, categories = [] }) {
+  const { t } = useLang();
+  const RULE_COND_TYPES = ruleCondTypes(t);
+  const RULE_OP_LABEL = ruleOpLabel(t);
   const meta = RULE_COND_TYPES.find(c => c.type === when.type) || RULE_COND_TYPES[0];
   const setType = (t) => {
     const m = RULE_COND_TYPES.find(c => c.type === t);
@@ -2059,7 +2095,7 @@ function RuleConditionEditor({ when, onChange, categories = [] }) {
   };
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
-      <span className="text-[11px] text-gray-500 shrink-0">当</span>
+      <span className="text-[11px] text-gray-500 shrink-0">{t('gateway.rule.when')}</span>
       <select value={when.type} onChange={e => setType(e.target.value)} className={RULE_SEL}>
         {RULE_COND_TYPES.map(c => <option key={c.type} value={c.type}>{c.label}</option>)}
       </select>
@@ -2075,7 +2111,7 @@ function RuleConditionEditor({ when, onChange, categories = [] }) {
           ? <select value={when.value} onChange={e => onChange({ ...when, value: e.target.value })} className={RULE_SEL}>
               {categories.map(v => <option key={v} value={v}>{v}</option>)}
             </select>
-          : <input value={when.value} onChange={e => onChange({ ...when, value: e.target.value })} placeholder="类别（先在下方配置分类器）" className={RULE_SEL + ' w-44'} />
+          : <input value={when.value} onChange={e => onChange({ ...when, value: e.target.value })} placeholder={t('gateway.rule.categoryPlaceholder')} className={RULE_SEL + ' w-44'} />
       ) : meta.value === 'number' ? (
         <input type="number" value={when.value} onChange={e => onChange({ ...when, value: +e.target.value })} className={RULE_SEL + ' w-24'} />
       ) : (
@@ -2087,6 +2123,7 @@ function RuleConditionEditor({ when, onChange, categories = [] }) {
 
 // 路由链编辑器（默认链 + 每条规则各一个）
 function ChainEditor({ steps, setSteps, availableModels }) {
+  const { t } = useLang();
   const free = availableModels.filter(m => m.tier === 'free');
   const p2p  = availableModels.filter(m => m.tier === 'p2p');
   const paid = availableModels.filter(m => m.tier === 'paid');
@@ -2101,27 +2138,28 @@ function ChainEditor({ steps, setSteps, availableModels }) {
           <span className="text-[10px] text-gray-400 w-4 text-right shrink-0">{i + 1}</span>
           <select value={step.model} onChange={e => update(i, e.target.value)}
             className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500">
-            <option value="">-- 选择模型 --</option>
-            {free.length > 0 && <optgroup label="🟢 免费层">{free.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>}
-            {p2p.length  > 0 && <optgroup label="🔵 P2P 层">{p2p.map(m =>  <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>}
-            {paid.length > 0 && <optgroup label="🟡 付费层">{paid.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>}
+            <option value="">{t('gateway.route.selectModel')}</option>
+            {free.length > 0 && <optgroup label={t('gateway.app.tier.freeLayer')}>{free.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>}
+            {p2p.length  > 0 && <optgroup label={t('gateway.app.tier.p2pLayer')}>{p2p.map(m =>  <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>}
+            {paid.length > 0 && <optgroup label={t('gateway.app.tier.paidLayer')}>{paid.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>}
           </select>
           <button onClick={() => remove(i)}
             className="text-[10px] text-gray-400 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity px-1">✕</button>
         </div>
       ))}
-      <button onClick={add} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">+ 添加步骤</button>
+      <button onClick={add} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">{t('gateway.route.addStep')}</button>
     </div>
   );
 }
 
 function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
+  const { t } = useLang();
   const [name, setName]   = useState(route.scene_name || '');
   const [icon, setIcon]   = useState(route.icon || '🔀');
   const [steps, setSteps] = useState(route.steps || []);
   const [rules, setRules] = useState(route.rules || []);
   const [clsModel, setClsModel] = useState(route.classifier?.model || '');
-  const [clsCats,  setClsCats]  = useState((route.classifier?.categories || ['代码', '数学', '翻译', '创意写作', '通用']).join('、'));
+  const [clsCats,  setClsCats]  = useState((route.classifier?.categories || t('gateway.rule.defaultCategories').split(/[,、]/).map(s => s.trim()).filter(Boolean)).join('、'));
 
   const setRuleAt  = (i, patch) => setRules(rules.map((r, idx) => idx === i ? { ...r, ...patch } : r));
   const removeRule = (i) => setRules(rules.filter((_, idx) => idx !== i));
@@ -2147,66 +2185,66 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
           className="w-10 bg-gray-200 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none"
           maxLength={2} />
         <input value={name} onChange={e => setName(e.target.value)}
-          placeholder="场景名称，如：智能路由"
+          placeholder={t('gateway.route.namePlaceholder')}
           className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500" />
       </div>
 
       {/* 条件规则（可选）：从上到下匹配，命中即用 */}
       <div className="text-xs text-gray-500 font-medium">
-        条件规则 <span className="text-gray-400 dark:text-gray-500">· 从上到下匹配，命中即用其路由链（可选）</span>
+        {t('gateway.route.conditionalRules')} <span className="text-gray-400 dark:text-gray-500">{t('gateway.route.conditionalHint')}</span>
       </div>
       <div className="space-y-2">
         {rules.map((rule, ri) => (
           <div key={ri} className="border border-gray-200 dark:border-gray-700 rounded-lg p-2 space-y-1.5 bg-white/60 dark:bg-gray-900/30">
             <div className="flex items-start justify-between gap-2">
               <RuleConditionEditor when={rule.when} onChange={w => setRuleAt(ri, { when: w })} categories={categories} />
-              <button onClick={() => removeRule(ri)} className="text-[10px] text-gray-400 hover:text-red-500 shrink-0 px-1">删除</button>
+              <button onClick={() => removeRule(ri)} className="text-[10px] text-gray-400 hover:text-red-500 shrink-0 px-1">{t('gateway.common.delete')}</button>
             </div>
             <div className="pl-3 border-l-2 border-gray-200 dark:border-gray-700">
-              <div className="text-[10px] text-gray-400 mb-1">→ 路由到（路由链）</div>
+              <div className="text-[10px] text-gray-400 mb-1">{t('gateway.route.routeTo')}</div>
               <ChainEditor steps={rule.steps} setSteps={s => setRuleAt(ri, { steps: s })} availableModels={availableModels} />
             </div>
           </div>
         ))}
-        <button onClick={addRule} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">+ 添加规则</button>
+        <button onClick={addRule} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">{t('gateway.route.addRule')}</button>
       </div>
 
       {/* 分类器配置（用到「智能分类」条件时显示）：先用便宜模型把输入归类，再按类别路由 */}
       {usesClassifier && (
         <div className="border border-indigo-200 dark:border-indigo-800/40 rounded-lg p-2.5 space-y-2 bg-indigo-50/40 dark:bg-indigo-900/10">
-          <div className="text-xs font-medium text-indigo-600 dark:text-indigo-400">🧠 分类器（每请求多一次小模型调用，有缓存）</div>
+          <div className="text-xs font-medium text-indigo-600 dark:text-indigo-400">{t('gateway.route.classifier')}</div>
           <div className="flex items-center gap-2">
-            <label className="text-[11px] text-gray-500 w-12 shrink-0">分类模型</label>
+            <label className="text-[11px] text-gray-500 w-12 shrink-0">{t('gateway.route.clsModel')}</label>
             <select value={clsModel} onChange={e => setClsModel(e.target.value)} className={RULE_SEL + ' flex-1'}>
-              <option value="">-- 选择便宜/快的模型 --</option>
+              <option value="">{t('gateway.route.clsModelPlaceholder')}</option>
               {availableModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
             </select>
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-[11px] text-gray-500 w-12 shrink-0">类别</label>
-            <input value={clsCats} onChange={e => setClsCats(e.target.value)} placeholder="顿号/逗号分隔，如 代码、数学、翻译、通用"
+            <label className="text-[11px] text-gray-500 w-12 shrink-0">{t('gateway.route.clsCategories')}</label>
+            <input value={clsCats} onChange={e => setClsCats(e.target.value)} placeholder={t('gateway.route.clsCategoriesPlaceholder')}
               className={RULE_SEL + ' flex-1'} />
           </div>
-          <div className="text-[10px] text-gray-400">规则里「智能分类 是 X」会把输入分到这些类别之一(X)再路由。</div>
+          <div className="text-[10px] text-gray-400">{t('gateway.route.clsHint')}</div>
         </div>
       )}
 
       {/* 默认链（else）：规则都不命中时用 */}
       <div className="text-xs text-gray-500 font-medium pt-1">
-        默认链{rules.length > 0 && <span className="text-gray-400 dark:text-gray-500">（否则）· 规则都不命中时用</span>}
-        <span className="text-gray-400 dark:text-gray-500"> · 失败时按顺序尝试下一步</span>
+        {t('gateway.route.defaultChain')}{rules.length > 0 && <span className="text-gray-400 dark:text-gray-500">{t('gateway.route.defaultElse')}</span>}
+        <span className="text-gray-400 dark:text-gray-500">{t('gateway.route.fallbackHint')}</span>
       </div>
       <ChainEditor steps={steps} setSteps={setSteps} availableModels={availableModels} />
-      {steps.length === 0 && rules.length === 0 && <p className="text-xs text-gray-500">还没有步骤，点击「添加步骤」</p>}
+      {steps.length === 0 && rules.length === 0 && <p className="text-xs text-gray-500">{t('gateway.route.noSteps')}</p>}
 
       <div className="flex gap-2 pt-1">
         <button onClick={save}
           className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg font-medium transition-colors">
-          保存
+          {t('gateway.common.save')}
         </button>
         <button onClick={onCancel}
           className="text-xs bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
-          取消
+          {t('gateway.common.cancel')}
         </button>
       </div>
     </div>
@@ -2285,14 +2323,16 @@ const CONFIG_TABS = [
   { id: 'python',   label: 'Python' },
   { id: 'nodejs',   label: 'Node.js' },
   { id: 'openai',   label: 'OpenAI SDK' },
-  { id: 'auto',     label: '⚡ 自动配置' },
+  { id: 'auto',     labelKey: 'gateway.key.autoConfig' },
 ];
 
 function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
+  const { t } = useLang();
+  const TOOLS = autoConfigTools(t);
   const [tab,     setTab]     = useState('curl');
   const [tool,    setTool]    = useState('claude-code');
   const [writeOk, setWriteOk] = useState(false);
-  const tabs = hideAuto ? CONFIG_TABS.filter(t => t.id !== 'auto') : CONFIG_TABS;
+  const tabs = hideAuto ? CONFIG_TABS.filter(tabItem => tabItem.id !== 'auto') : CONFIG_TABS;
 
   const isRouter = model?.startsWith('llm-router-');
   const envText  = [
@@ -2306,7 +2346,7 @@ function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
       await window.electronAPI?.claude?.configure(localBase, apiKey, []);
       setWriteOk(true);
     } catch (e) {
-      alert('写入失败: ' + e.message);
+      alert(t('gateway.common.writeFailed') + ': ' + e.message);
     }
   }
 
@@ -2317,20 +2357,20 @@ function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
     <div className="border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
       {/* Tab bar */}
       <div className="flex items-center bg-gray-50 dark:bg-gray-800/60 border-b border-gray-200 dark:border-gray-700">
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => { setTab(t.id); setWriteOk(false); }}
+        {tabs.map(tabItem => (
+          <button key={tabItem.id} onClick={() => { setTab(tabItem.id); setWriteOk(false); }}
             className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
-              tab === t.id
+              tab === tabItem.id
                 ? 'border-blue-500 text-blue-600 dark:text-blue-400'
                 : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
             }`}>
-            {t.label}
+            {tabItem.labelKey ? t(tabItem.labelKey) : tabItem.label}
           </button>
         ))}
         {isCodeTab && (
           <>
             <div className="flex-1" />
-            <CopyButton text={code} label="复制" className="mx-2 py-1 text-[10px]" />
+            <CopyButton text={code} label={t('gateway.common.copy')} className="mx-2 py-1 text-[10px]" />
           </>
         )}
       </div>
@@ -2348,13 +2388,13 @@ function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
           {/* Model name badge */}
           {model && (
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-gray-500">模型名称</span>
+              <span className="text-[10px] text-gray-500">{t('gateway.key.modelName')}</span>
               <code className={`text-[11px] font-mono px-2 py-0.5 rounded border ${
                 isRouter
                   ? 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-800/40 text-purple-600 dark:text-purple-400'
                   : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300'
               }`}>{model}</code>
-              <CopyButton text={model} label="复制" className="py-0.5 text-[10px]" />
+              <CopyButton text={model} label={t('gateway.common.copy')} className="py-0.5 text-[10px]" />
             </div>
           )}
           <div className="grid grid-cols-4 gap-2">
@@ -2373,8 +2413,8 @@ function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
           </div>
           <div className="bg-gray-50 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-700">
-              <span className="text-[10px] text-gray-500 font-medium">环境变量</span>
-              <CopyButton text={envText} label="复制全部" className="py-0.5 text-[10px]" />
+              <span className="text-[10px] text-gray-500 font-medium">{t('gateway.key.envVars')}</span>
+              <CopyButton text={envText} label={t('gateway.common.copyAll')} className="py-0.5 text-[10px]" />
             </div>
             <pre className="px-3 py-2.5 text-[11px] font-mono text-gray-700 dark:text-gray-300 leading-relaxed">
               {envText}
@@ -2383,7 +2423,7 @@ function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
           {tool === 'claude-code' && window.electronAPI?.claude && (
             <button onClick={handleWrite} disabled={writeOk}
               className="w-full py-2 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:bg-green-700 text-white">
-              {writeOk ? '✓ 已写入 ~/.claude/settings.json' : '⚡ 自动写入 Claude Code 配置'}
+              {writeOk ? t('gateway.key.writtenClaude') : t('gateway.key.writeClaude')}
             </button>
           )}
         </div>
@@ -2395,6 +2435,7 @@ function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
 // ── InstanceList ──────────────────────────────────────────────────────────────
 
 function InstanceList({ keysScene, onDelete, localBase, newKeyId, routeHealth }) {
+  const { t } = useLang();
   const [expandedId, setExpandedId] = useState(newKeyId ?? null);
 
   // Auto-expand whenever a brand-new key is passed in
@@ -2434,7 +2475,7 @@ function InstanceList({ keysScene, onDelete, localBase, newKeyId, routeHealth })
       }
     } catch (e) {
       const latency = Date.now() - start;
-      setTestState(s => ({ ...s, [k.id]: { ok: false, error: e.message || '连接失败', latency } }));
+      setTestState(s => ({ ...s, [k.id]: { ok: false, error: e.message || t('gateway.common.connectFailed'), latency } }));
     }
     setTimeout(() => setTestState(s => ({ ...s, [k.id]: null })), 6000);
   }
@@ -2443,15 +2484,15 @@ function InstanceList({ keysScene, onDelete, localBase, newKeyId, routeHealth })
   return (
     <div className="border-t border-gray-200 dark:border-gray-800">
       <div className="px-5 py-3 flex items-center justify-between">
-        <span className="text-xs text-gray-500 font-medium">应用列表</span>
-        <span className="text-[10px] text-gray-400">{keysScene.length} 个</span>
+        <span className="text-xs text-gray-500 font-medium">{t('gateway.key.appList')}</span>
+        <span className="text-[10px] text-gray-400">{t('gateway.key.appCount', { n: keysScene.length })}</span>
       </div>
       <div className="max-h-96 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-800/60">
         {sorted.map(k => {
           const ts = testState[k.id];
           const rh = k.model_key ? (routeHealth?.[k.model_key] ?? null) : null;
           const rhFt = rh?.first_token_ms ?? null;
-          const rhFtLabel = rhFt != null ? `首token ${(rhFt / 1000).toFixed(1)}s` : null;
+          const rhFtLabel = rhFt != null ? t('gateway.route.firstToken', { s: (rhFt / 1000).toFixed(1) }) : null;
           // test result overrides health dot (temporary, 6s)
           const dotColor = ts && !ts.busy
             ? ts.ok ? 'bg-green-500' : 'bg-red-500'
@@ -2463,14 +2504,14 @@ function InstanceList({ keysScene, onDelete, localBase, newKeyId, routeHealth })
               : k.is_active ? 'bg-green-500' : 'bg-gray-400';
           const dotTitle = ts && !ts.busy
             ? ts.ok
-              ? `测试通过${ts.latency ? ` · ${ts.latency}ms` : ''}`
-              : `测试失败 · ${ts.error || '连接错误'}`
+              ? t('gateway.key.testPassed', { latency: ts.latency ? t('gateway.key.testPassedLatency', { ms: ts.latency }) : '' })
+              : t('gateway.key.testFailed', { error: ts.error || t('gateway.common.connectError') })
             : rh
-              ? rh.status === 'error' ? '路由最近请求失败'
+              ? rh.status === 'error' ? t('gateway.key.routeRecentFailed')
                 : rh.status === 'ok'
-                  ? [rh.degraded ? `已降级至 ${rh.activeStep}` : `命中 ${rh.activeStep}`, rhFtLabel].filter(Boolean).join(' · ')
-                  : '路由暂无请求记录'
-              : k.is_active ? '应用已启用' : '应用未启用';
+                  ? [rh.degraded ? t('gateway.route.degradedTo', { step: rh.activeStep }) : t('gateway.route.hitStep', { step: rh.activeStep }), rhFtLabel].filter(Boolean).join(' · ')
+                  : t('gateway.key.routeNoRequests')
+              : k.is_active ? t('gateway.key.appEnabled') : t('gateway.key.appDisabled');
           return (
             <div key={k.id}>
               <div
@@ -2480,7 +2521,7 @@ function InstanceList({ keysScene, onDelete, localBase, newKeyId, routeHealth })
                 <div title={dotTitle} className={`w-1.5 h-1.5 rounded-full shrink-0 cursor-help ${dotColor}`} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{k.app_name || k.note || '未命名'}</span>
+                    <span className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{k.app_name || k.note || t('gateway.common.unnamed')}</span>
                     {k.scene_name && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40 shrink-0">
                         {k.icon} {k.scene_name}
@@ -2506,11 +2547,11 @@ function InstanceList({ keysScene, onDelete, localBase, newKeyId, routeHealth })
                         ? 'border-gray-300 dark:border-gray-600 text-gray-400 opacity-60 cursor-wait'
                         : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-500 dark:hover:text-blue-400'
                     }`}>
-                    {ts?.busy ? '测试中…' : '测试'}
+                    {ts?.busy ? t('gateway.common.testing') : t('gateway.common.test')}
                   </button>
-                  <CopyButton text={k.key} label="复制" className="text-[10px] py-1 px-2 min-w-0" />
+                  <CopyButton text={k.key} label={t('gateway.common.copy')} className="text-[10px] py-1 px-2 min-w-0" />
                   <button onClick={() => onDelete(k.id)}
-                    className="text-[10px] text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors">删除</button>
+                    className="text-[10px] text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors">{t('gateway.common.delete')}</button>
                 </div>
                 <span className="text-gray-400 text-[10px] shrink-0">{expandedId === k.id ? '▲' : '▼'}</span>
               </div>
@@ -2533,16 +2574,19 @@ function InstanceList({ keysScene, onDelete, localBase, newKeyId, routeHealth })
 
 // ── Auto-config tool list ─────────────────────────────────────────────────────
 
-const TOOLS = [
-  { id: 'claude-code', icon: '🤖', label: 'Claude Code', hint: '自动写入' },
-  { id: 'cursor',      icon: '🔮', label: 'Cursor',      hint: '手动配置' },
-  { id: 'continue',   icon: '🪟', label: 'Continue',    hint: '手动配置' },
-  { id: 'other',       icon: '📋', label: '其他',         hint: '通用' },
-];
+function autoConfigTools(t) {
+  return [
+    { id: 'claude-code', icon: '🤖', label: t('gateway.tool.claudeCode'), hint: t('gateway.tool.autoWrite') },
+    { id: 'cursor',      icon: '🔮', label: t('gateway.tool.cursor'),     hint: t('gateway.tool.manualConfig') },
+    { id: 'continue',    icon: '🪟', label: t('gateway.tool.continue'),   hint: t('gateway.tool.manualConfig') },
+    { id: 'other',       icon: '📋', label: t('gateway.tool.other'),      hint: t('gateway.tool.generic') },
+  ];
+}
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function Gateway() {
+  const { t } = useLang();
   const [status, setStatus]     = useState(null);
   const [stats, setStats]       = useState(null);
   const [logEntries, setLog]    = useState([]);
@@ -2605,24 +2649,29 @@ export default function Gateway() {
     const models = [];
     const seen   = new Set();
     const add    = (id, tier) => { if (id && !seen.has(id)) { seen.add(id); models.push({ id, tier }); } };
+    const modelId = (m) => (typeof m === 'string' ? m : (m?.name || m?.id || ''));
 
-    // 本地已启用 provider 的模型（本地直连，始终可用）
+    // 个人页已登记、可在供给源页接入的付费 id
+    let gatewayAllow = null;
+    try {
+      const acc = await window.electronAPI?.localConfig?.getUserAccounts?.();
+      if (acc?.gateway_provider_ids) gatewayAllow = new Set(acc.gateway_provider_ids);
+    } catch {}
+
+    // 本地已启用供给源的模型（付费须个人页登记 + 供给源页 enabled）
     try {
       const cfg = await getConfig().read();
       for (const p of (cfg?.providers || [])) {
         if (!p.enabled || p.type === 'p2p') continue;
-        for (const m of (p.models || [])) add(typeof m === 'string' ? m : m.name, p.type);
+        if (p.type === 'paid' && gatewayAllow && !gatewayAllow.has(p.id)) continue;
+        for (const m of (p.models || [])) add(modelId(m), p.type);
       }
     } catch {}
 
-    // 只列「现在能提供的」：
-    //   付费(premium/paid) —— 后端用真实 key 直供，始终可用
-    //   P2P(open/free)     —— 由 peer worker 提供，仅当前在线（/v1/models）才列
+    // P2P：仅列当前在线模型（不再从服务端 rates 注入付费模型）
     try {
       let rates = [];
       try { rates = (await getRates()).data?.models || []; } catch {}
-      // 在线 P2P 集：优先用网关的 peerModels（cloud token 拉取，可靠），
-      // 回退到 /v1/models（用户 token，可能 401）
       const online = new Set();
       try {
         const gw = await getGateway().status();
@@ -2633,10 +2682,9 @@ export default function Gateway() {
       }
       for (const m of rates) {
         const tier = normTier(m.tier);
-        if (tier === 'paid') add(m.name, 'paid');         // 付费始终可用
-        else if (online.has(m.name)) add(m.name, tier);   // P2P 需在线
+        if (tier === 'paid') continue;
+        if (online.has(m.name)) add(m.name, tier);
       }
-      // 在线但 rates 里没有的，按 p2p 兜底列出
       for (const id of online) add(id, 'p2p');
     } catch (e) {
       console.error('loadAvailableModels', e);
@@ -2711,14 +2759,14 @@ export default function Gateway() {
       setExpandedRoute(null);
       await loadSceneData();
     } catch (e) {
-      alert('保存失败: ' + e.message);
+      alert(t('gateway.common.saveFailed', { msg: e.message }));
     }
   };
 
   const removeRoute = async (id) => {
-    if (!confirm('删除此场景路由？')) return;
+    if (!confirm(t('gateway.route.confirmDelete'))) return;
     try { await getLocalConfig().deleteSceneRoute(id); await loadSceneData(); }
-    catch (e) { alert('删除失败'); }
+    catch (e) { alert(t('gateway.common.deleteFailed')); }
   };
 
   // ── App key actions ────────────────────────────────────────────────────────
@@ -2737,16 +2785,16 @@ export default function Gateway() {
       setNewKeyId(key.id);
       await loadSceneData();
     } catch (e) {
-      alert('创建失败: ' + e.message);
+      alert(t('gateway.common.createFailed', { msg: e.message }));
     } finally {
       setAppBusy(false);
     }
   }
 
   async function handleDeleteKey(keyId) {
-    if (!confirm('删除此 Key？操作不可恢复。')) return;
+    if (!confirm(t('gateway.route.confirmDeleteKey'))) return;
     try { await getLocalConfig().deleteKey(keyId); await loadSceneData(); }
-    catch (e) { alert('删除失败'); }
+    catch (e) { alert(t('gateway.common.deleteFailed')); }
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -2760,14 +2808,14 @@ export default function Gateway() {
           <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${status?.running ? 'bg-green-400' : 'bg-gray-400'}`} />
           <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${status?.running ? 'bg-green-500' : 'bg-gray-400'}`} />
         </span>
-        <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">网关</h1>
+        <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('gateway.title')}</h1>
         {status && (
           <span className={`text-xs px-2 py-0.5 rounded-full border ${
             status.running
               ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 border-green-300 dark:border-green-800/50'
               : 'bg-gray-100 dark:bg-gray-800 text-gray-500 border-gray-300 dark:border-gray-700'
           }`}>
-            {status.running ? `运行中 · :${status.port}` : '已停止'}
+            {status.running ? t('gateway.running', { port: status.port }) : t('gateway.stopped')}
           </span>
         )}
         <button
@@ -2780,24 +2828,24 @@ export default function Gateway() {
             setRestarting(false);
           }}
           disabled={restarting}
-          title="重启网关"
+          title={t('gateway.restartTitle')}
           className="ml-auto flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50"
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"
             className={`w-3.5 h-3.5 ${restarting ? 'animate-spin' : ''}`}>
             <path fillRule="evenodd" d="M13.836 2.477a.75.75 0 0 1 .75.75v3.182a.75.75 0 0 1-.75.75h-3.182a.75.75 0 0 1 0-1.5h1.37l-.84-.841a4.5 4.5 0 0 0-7.08 1.01.75.75 0 1 1-1.3-.75 6 6 0 0 1 9.44-1.344l.842.841V3.227a.75.75 0 0 1 .75-.75Zm-.911 7.5A.75.75 0 0 1 13.199 11a6 6 0 0 1-9.44 1.344l-.84-.841v1.371a.75.75 0 0 1-1.5 0V9.691a.75.75 0 0 1 .75-.75H5.35a.75.75 0 0 1 0 1.5H3.98l.841.841a4.5 4.5 0 0 0 7.08-1.01.75.75 0 0 1 1.025-.295Z" clipRule="evenodd" />
           </svg>
-          {restarting ? '重启中…' : '重启'}
+          {restarting ? t('gateway.restarting') : t('gateway.restart')}
         </button>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-4 gap-3">
         {[
-          { label: '今日请求', value: totalCalls,   color: 'text-gray-900 dark:text-gray-100' },
-          { label: '免费命中率', value: `${freeRatio}%`, color: 'text-green-600 dark:text-green-400' },
-          { label: '错误率',   value: `${errorRatio}%`, color: 'text-amber-600 dark:text-amber-400' },
-          { label: '平均延迟', value: avgLatency > 0 ? `${avgLatency}ms` : '—', color: 'text-gray-900 dark:text-gray-100' },
+          { label: t('gateway.stat.todayCalls'), value: totalCalls,   color: 'text-gray-900 dark:text-gray-100' },
+          { label: t('gateway.stat.freeHitRate'), value: `${freeRatio}%`, color: 'text-green-600 dark:text-green-400' },
+          { label: t('gateway.stat.errorRate'),   value: `${errorRatio}%`, color: 'text-amber-600 dark:text-amber-400' },
+          { label: t('gateway.stat.avgLatency'), value: avgLatency > 0 ? `${avgLatency}ms` : '—', color: 'text-gray-900 dark:text-gray-100' },
         ].map(({ label, value, color }) => (
           <div key={label} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-3">
             <div className="text-xs text-gray-500">{label}</div>
@@ -2808,24 +2856,24 @@ export default function Gateway() {
 
       {/* Endpoint */}
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-4">
-        <div className="text-xs text-gray-500 uppercase tracking-wide font-medium mb-2">接入端点</div>
+        <div className="text-xs text-gray-500 uppercase tracking-wide font-medium mb-2">{t('gateway.endpoint')}</div>
         <div className="flex items-center gap-2">
           <code className="flex-1 text-sm font-mono text-green-600 dark:text-green-400 bg-gray-100 dark:bg-gray-800 rounded-lg px-3 py-2 border border-gray-300 dark:border-gray-700">
             {localBase}
           </code>
-          <CopyButton text={localBase} label="复制" />
+          <CopyButton text={localBase} label={t('gateway.common.copy')} />
         </div>
       </div>
 
       {/* 应用列表 / 场景路由 Tab */}
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
         <div className="flex border-b border-gray-200 dark:border-gray-800">
-          {['📱 应用列表', '🔀 场景路由'].map((t, i) => (
+          {[t('gateway.tab.apps'), t('gateway.tab.routes')].map((tabLabel, i) => (
             <button key={i} onClick={() => setMainTab(i)}
               className={`px-5 py-3 text-sm font-medium transition-colors ${mainTab === i
                 ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-500'
                 : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}>
-              {t}
+              {tabLabel}
             </button>
           ))}
         </div>
@@ -2843,8 +2891,8 @@ export default function Gateway() {
           <button
             onClick={() => { if (newRoute) { setNewRoute(null); } else { setExpandedRoute(null); setNewRoute({ scene_name: '', icon: '🔀', steps: [] }); } }}
             className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors"
-          >+ 新建路由</button>
-          <span className="text-xs text-gray-400 dark:text-gray-500">定义每个场景的模型路由链，通过 llm-router-xxx 触发</span>
+          >{t('gateway.route.new')}</button>
+          <span className="text-xs text-gray-400 dark:text-gray-500">{t('gateway.route.hint')}</span>
           <div className="ml-auto">
             <ImportConfigButton onImported={() => { refresh(); loadSceneData(); loadAvailableModels(); }} endpoint="/api/config/scenes" />
           </div>
@@ -2866,13 +2914,13 @@ export default function Gateway() {
               health.status === 'ok'
                 ? (ftMs != null && ftMs > 3000 ? 'bg-amber-400' : 'bg-green-500')
                 : 'bg-gray-300 dark:bg-gray-600';
-            const ftLabel = ftMs != null ? `首token ${(ftMs / 1000).toFixed(1)}s` : null;
+            const ftLabel = ftMs != null ? t('gateway.route.firstToken', { s: (ftMs / 1000).toFixed(1) }) : null;
             const healthTitle =
-              routeMissing ? '含本地不可用的模型，需重新设置' :
-              health.status === 'error' ? '最近请求失败' :
+              routeMissing ? t('gateway.route.missingModels') :
+              health.status === 'error' ? t('gateway.route.recentFailed') :
               health.status === 'ok'
-                ? [health.degraded ? '已降级' : '运行正常', ftLabel].filter(Boolean).join(' · ')
-                : '暂无请求记录';
+                ? [health.degraded ? t('gateway.route.degradedShort') : t('gateway.route.runningOk'), ftLabel].filter(Boolean).join(' · ')
+                : t('gateway.route.noRequests');
             return (
             <div key={route.id}>
               <div
@@ -2887,12 +2935,12 @@ export default function Gateway() {
                     <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{route.scene_name}</span>
                     {health.degraded && (
                       <span className="text-[9px] px-1 py-0.5 rounded bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800/40 text-rose-600 dark:text-rose-400 shrink-0">
-                        降级中
+                        {t('gateway.route.degraded')}
                       </span>
                     )}
                     {route.rules?.length > 0 && (
-                      <span title="含条件路由规则" className="text-[9px] px-1 py-0.5 rounded bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/40 text-indigo-600 dark:text-indigo-400 shrink-0">
-                        🔀 {route.rules.length} 条规则
+                      <span title={t('gateway.route.rulesTitle')} className="text-[9px] px-1 py-0.5 rounded bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/40 text-indigo-600 dark:text-indigo-400 shrink-0">
+                        {t('gateway.route.rulesCount', { n: route.rules.length })}
                       </span>
                     )}
                     {route.model_key && (
@@ -2901,7 +2949,7 @@ export default function Gateway() {
                           {route.model_key}
                         </span>
                         <span onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(route.model_key); }}
-                          className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer transition-colors shrink-0">复制</span>
+                          className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer transition-colors shrink-0">{t('gateway.common.copy')}</span>
                       </>
                     )}
                   </div>
@@ -2910,34 +2958,34 @@ export default function Gateway() {
                       const steps = route.steps || [];
                       return (<>
                         {steps.map((step, i) => {
-                          const t = resolveStepTier(step.model || step.label, step, availableModels);
+                          const stepTier = resolveStepTier(step.model || step.label, step, availableModels);
                           const stepName = step.model || step.label;
                           const isActive = health.activeStep === stepName;
                           const isFailed = health.triedSteps?.includes(stepName);
-                          const missing = !availSet.has(stepName);   // 本地供给源里没有该模型
+                          const missing = !availSet.has(stepName);
                           return (
                             <React.Fragment key={i}>
                               {i > 0 && <span className="text-gray-400 text-xs">→</span>}
-                              <span title={missing ? '本地供给源没有此模型，请在「供给源」启用对应模型或重新设置该路由' : undefined}
+                              <span title={missing ? t('gateway.route.missingModelTitle') : undefined}
                                 className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded border transition-all ${
                                   isActive
                                     ? 'bg-green-100 dark:bg-green-900/40 border-green-400 dark:border-green-600 text-green-800 dark:text-green-200'
                                     : missing
                                       ? 'bg-red-50 dark:bg-red-900/20 border-red-300 dark:border-red-700 text-red-600 dark:text-red-300'
-                                      : tierStyle(t)
+                                      : tierStyle(stepTier)
                                 }`}>
                                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                                  isActive ? 'bg-green-500' : (missing || isFailed) ? 'bg-red-500' : tierDot(t)
+                                  isActive ? 'bg-green-500' : (missing || isFailed) ? 'bg-red-500' : tierDot(stepTier)
                                 }`} />
                                 {step.label || step.model}
-                                <span className="opacity-50">({TIER_SHORT[t] || t})</span>
+                                <span className="opacity-50">({TIER_SHORT[stepTier] || stepTier})</span>
                               </span>
                             </React.Fragment>
                           );
                         })}
-                        {!steps.length && <span className="text-xs text-gray-400">暂无步骤</span>}
+                        {!steps.length && <span className="text-xs text-gray-400">{t('gateway.route.noStepsShort')}</span>}
                         {routeMissing && (
-                          <span className="text-[10px] text-red-600 dark:text-red-400 ml-1 shrink-0">⚠ 含本地不可用的模型，需重新设置</span>
+                          <span className="text-[10px] text-red-600 dark:text-red-400 ml-1 shrink-0">{t('gateway.route.missingModelsWarn')}</span>
                         )}
                       </>);
                     })()}
@@ -2945,10 +2993,10 @@ export default function Gateway() {
                 </div>
                 <button onClick={e => { e.stopPropagation(); setExpandedRoute(expandedRoute === route.id ? null : route.id); }}
                   className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors mt-0.5 shrink-0">
-                  {expandedRoute === route.id ? '收起' : '编辑'}
+                  {expandedRoute === route.id ? t('gateway.common.collapse') : t('gateway.common.edit')}
                 </button>
                 <button onClick={e => { e.stopPropagation(); removeRoute(route.id); }}
-                  className="text-[10px] text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors mt-1 shrink-0">删除</button>
+                  className="text-[10px] text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors mt-1 shrink-0">{t('gateway.common.delete')}</button>
                 <span className="text-gray-400 text-xs mt-1 shrink-0">{expandedRoute === route.id ? '▲' : '▼'}</span>
               </div>
               {expandedRoute === route.id && (
@@ -2958,7 +3006,7 @@ export default function Gateway() {
             );
           })}
           {routes.length === 0 && !newRoute && (
-            <div className="px-5 py-8 text-xs text-gray-400 text-center">还没有场景路由，点击「新建路由」开始</div>
+            <div className="px-5 py-8 text-xs text-gray-400 text-center">{t('gateway.route.empty')}</div>
           )}
         </div>
         </div>
@@ -2968,11 +3016,11 @@ export default function Gateway() {
       {/* 路由明细 — 仅在「场景路由」Tab 显示，应用列表 Tab 不显示 */}
       {mainTab === 1 && (
       <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5">
-        <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">路由明细</h2>
+        <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">{t('gateway.log.title')}</h2>
         {logEntries.length === 0 ? (
           <p className="text-sm text-gray-500">
-            暂无请求记录。将 AI 工具的 base_url 指向{' '}
-            <code className="font-mono text-green-600 dark:text-green-400">{localBase}</code> 后开始使用。
+            {t('gateway.log.empty')}{' '}
+            <code className="font-mono text-green-600 dark:text-green-400">{localBase}</code>{t('gateway.log.emptySuffix')}
           </p>
         ) : (
           <div className="max-h-80 overflow-y-auto space-y-1.5 pr-1">
@@ -2995,7 +3043,7 @@ export default function Gateway() {
                     {/* Claude 透明映射标记：claude 名 → (改写成真实模型) */}
                     {e.claude_from && (
                       <>
-                        <span title="Claude 请求名透明映射到真实模型" className="font-mono text-[10px] px-1 py-0.5 rounded bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/40 text-indigo-600 dark:text-indigo-400 shrink-0">
+                        <span title={t('gateway.log.claudeMap')} className="font-mono text-[10px] px-1 py-0.5 rounded bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/40 text-indigo-600 dark:text-indigo-400 shrink-0">
                           🎭 {e.claude_from}
                         </span>
                         <span className="text-gray-300 dark:text-gray-600">→</span>
@@ -3020,14 +3068,14 @@ export default function Gateway() {
                         }`}>({e.tier})</span>
                       )}
                       {!e.claude_from && !isRouter && (
-                        <span title="直连模型（未经 Claude 透明映射）" className="ml-1 text-[9px] text-gray-400">直连</span>
+                        <span title={t('gateway.log.directTitle')} className="ml-1 text-[9px] text-gray-400">{t('gateway.log.direct')}</span>
                       )}
                     </span>
                   </div>
 
                   <span className="text-gray-400 shrink-0">→</span>
                   <span className={`shrink-0 font-medium ${e.status === 'ok' ? 'text-blue-600 dark:text-blue-400' : 'text-red-500'}`}>
-                    {e.status === 'ok' ? (e.via_label || e.via || '—') : '失败'}
+                    {e.status === 'ok' ? (e.via_label || e.via || '—') : t('gateway.log.failed')}
                   </span>
                   <span className="text-gray-400 shrink-0">{e.latency_ms}ms</span>
                 </div>

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { makeT } from '../i18n';
 
 const LangContext = createContext(null);
@@ -12,6 +12,10 @@ export function LangProvider({ children }) {
     localStorage.setItem('lang', l);
     setLangState(l);
   }
+
+  useEffect(() => {
+    document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN';
+  }, [lang]);
 
   const t = makeT(lang);
 

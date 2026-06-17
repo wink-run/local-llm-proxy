@@ -11,11 +11,11 @@ export default function Sidebar() {
   const location = useLocation();
 
   const NAV = [
-    { to: '/gateway',   icon: '🔀', label: '网关' },
-    { to: '/providers', icon: '⚡', label: '供给源' },
-    { to: '/contribute',icon: '💪', label: '贡献' },
-    { to: '/dashboard', icon: '📊', label: '盘点' },
-    { to: '/debug',     icon: '🐛', label: t('nav.debug') },
+    { to: '/gateway',   icon: '🔀', labelKey: 'nav.gateway' },
+    { to: '/providers', icon: '⚡', labelKey: 'nav.providers' },
+    { to: '/contribute',icon: '💪', labelKey: 'nav.contribute' },
+    { to: '/dashboard', icon: '📊', labelKey: 'nav.dashboard' },
+    { to: '/debug',     icon: '🐛', labelKey: 'nav.debug' },
   ];
   const profileActive = location.pathname === '/';
   return (
@@ -25,13 +25,13 @@ export default function Sidebar() {
         <img src={logoSvg} alt="Token Bank" className="w-8 h-8 shrink-0" />
         <div className="min-w-0">
           <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">Token Bank</p>
-          <p className="text-xs text-gray-400 dark:text-gray-500 leading-tight">token 共享网络</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 leading-tight">{t('sidebar.tagline')}</p>
         </div>
       </div>
 
       {/* Nav items */}
       <nav className="flex-1 flex flex-col gap-0.5 px-2">
-        {NAV.map(({ to, icon, label }) => (
+        {NAV.map(({ to, icon, labelKey }) => (
           <NavLink
             key={to}
             to={to}
@@ -43,7 +43,7 @@ export default function Sidebar() {
             }
           >
             <span className="text-base w-5 text-center shrink-0">{icon}</span>
-            <span className="truncate">{label}</span>
+            <span className="truncate">{t(labelKey)}</span>
           </NavLink>
         ))}
       </nav>
@@ -64,7 +64,7 @@ export default function Sidebar() {
             <p className="text-xs text-gray-400 dark:text-gray-500 truncate">{user.email}</p>
             {user.credits_balance != null && (
               <p className="text-xs text-gray-400 dark:text-gray-500 truncate mt-0.5">
-                💎 {Math.floor(user.credits_balance ?? 0).toLocaleString()} 积分
+                💎 {Math.floor(user.credits_balance ?? 0).toLocaleString()} {t('credits.unit')}
               </p>
             )}
           </button>

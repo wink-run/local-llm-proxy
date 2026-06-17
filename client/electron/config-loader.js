@@ -166,10 +166,28 @@ function billingSection(key) {
   return Array.isArray(cur) ? [] : {};
 }
 
-// 个人页：可订阅应用目录（由 tokenbank.tools.yaml 下发）
+// 个人页：可订阅应用目录（由 tokenbank.tools.yaml 下发，缺字段时与内置默认按 source_id 合并）
 function subscriptionApps() {
+  const defaults = toolsDefaultDoc().subscription_apps || [];
+  const defBySource = Object.fromEntries(
+    defaults.map(a => [a.source_id || a.id || a.agent_id, a]),
+  );
   const list = billingSection('subscription_apps');
-  return Array.isArray(list) ? list : [];
+  const cur = Array.isArray(list) ? list : [];
+  if (!cur.length) return defaults;
+  return cur.map(a => {
+    const key = a.source_id || a.id || a.agent_id;
+    const def = defBySource[key] || {};
+    return {
+      ...def,
+      ...a,
+      plan_provider_id: a.plan_provider_id != null ? a.plan_provider_id : def.plan_provider_id,
+      // 下发配置未带该字段时，回退内置默认（如 Claude Code → true）
+      subscription_to_api: a.subscription_to_api != null
+        ? a.subscription_to_api === true
+        : def.subscription_to_api === true,
+    };
+  });
 }
 
 // 个人页：按量付费供给源目录

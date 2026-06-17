@@ -115,6 +115,11 @@ function _lookupProvider(providerId, model) {
   return null;
 }
 
+/** provider 是否配置了该模型的刊例价 */
+function hasProviderPricing(providerId, model) {
+  return !!_lookupProvider(providerId, model);
+}
+
 /** 按 provider 刊例价（yaml + 用户覆盖） */
 function applyProviderPricing(byProvider = {}) {
   PROVIDER_PRICING = {};
@@ -160,4 +165,18 @@ function estimateCost(model, inputTokens, outputTokens, cacheWriteTokens, cacheR
   return inCost + outCost + cwCost + crCost;
 }
 
-module.exports = { estimateCost, PRICING, applyOverrides, applyProviderPricing };
+/**
+ * 按量刊例价估算：仅使用 provider 独立刊例价，无配置则返回 0（不回退全局价）。
+ * 用于盘点等费用展示。
+ */
+function estimatePaygCost(model, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, providerId) {
+  const p = _lookupProvider(providerId, model);
+  if (!p) return 0;
+  const inCost = ((inputTokens      || 0) / 1e6) * (p.in  || 0);
+  const outCost= ((outputTokens     || 0) / 1e6) * (p.out || 0);
+  const cwCost = ((cacheWriteTokens || 0) / 1e6) * (p.cacheWrite || p.in * 1.25 || 0);
+  const crCost = ((cacheReadTokens  || 0) / 1e6) * (p.cacheRead  != null ? p.cacheRead : p.in * 0.10);
+  return inCost + outCost + cwCost + crCost;
+}
+
+module.exports = { estimateCost, estimatePaygCost, hasProviderPricing, PRICING, applyOverrides, applyProviderPricing };

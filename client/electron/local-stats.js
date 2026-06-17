@@ -8,6 +8,44 @@ let _insertStmt = null;
 let _getImportStateStmt = null;
 let _setImportStateStmt = null;
 
+// 盘点费用口径：仅 api-key 计费 + provider 刊例价（无刊例价则为 0）
+const { estimatePaygCost } = require('./pricing');
+const { resolvePricingProviderId } = require('./billing-config');
+
+/** 按 provider/model 聚合 token 后重算按量刊例价（不读库内 cost_usd，避免全局兜底价） */
+function _queryPaygCostMaps(where, params) {
+  const empty = { total: 0, byModel: {}, byProviderTier: {} };
+  if (!db) return empty;
+  try {
+    const rows = db.prepare(
+      `SELECT provider_id, tier, model,
+        SUM(input_tokens) AS inTok, SUM(output_tokens) AS outTok,
+        SUM(cache_create_tokens) AS cCreate, SUM(cache_read_tokens) AS cRead
+       FROM requests WHERE ${where} AND billing_type = 'api-key'
+       GROUP BY provider_id, tier, model`
+    ).all(params);
+    const byModel = {};
+    const byProviderTier = {};
+    let total = 0;
+    for (const r of rows) {
+      const c = estimatePaygCost(
+        r.model, r.inTok || 0, r.outTok || 0, r.cCreate || 0, r.cRead || 0,
+        resolvePricingProviderId(r.provider_id),
+      );
+      total += c;
+      if (r.model) byModel[r.model] = (byModel[r.model] || 0) + c;
+      if (r.provider_id != null) {
+        const key = `${r.provider_id}|${r.tier || ''}`;
+        byProviderTier[key] = (byProviderTier[key] || 0) + c;
+      }
+    }
+    return { total, byModel, byProviderTier };
+  } catch (e) {
+    console.error('[local-stats] _queryPaygCostMaps failed:', e.message);
+    return empty;
+  }
+}
+
 // 注：展示用「token 总量」= input+output+cache_create+cache_read（与 cc-switch real_total 一致）。
 // Claude 重度用 prompt-cache 时量都在 cache_read，只算 input+output 会显示成 0/极小，故求和必须含 cache_*。
 // tokens 列仍存 input+output（历史兼容），但所有展示查询改为按四列实时求和。
@@ -237,7 +275,7 @@ function queryDashboard(days = 1) {
   // Model ranking（排除 Cursor 等无 model 的会话源，避免 Read/Shell 等工具名误入）
   const excludeModelDs = dataSourcesWithoutModelStats();
   let modelSql =
-    'SELECT model, COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, SUM(cost_usd) AS cost_usd FROM requests ' +
+    'SELECT model, COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens FROM requests ' +
     'WHERE ts >= ? AND model IS NOT NULL';
   if (excludeModelDs.length) {
     modelSql += ` AND (data_source IS NULL OR data_source NOT IN (${excludeModelDs.map(() => '?').join(',')}))`;
@@ -245,16 +283,31 @@ function queryDashboard(days = 1) {
   modelSql += ' GROUP BY model ORDER BY calls DESC';
   const models = db.prepare(modelSql).all(since, ...excludeModelDs);
 
+  // 按量刊例价：仅 api-key + provider 有配置刊例价才计入
+  let paygWhere = 'ts >= ?';
+  const paygParams = { since };
+  let paygModelWhere = 'ts >= ? AND model IS NOT NULL';
+  const paygModelParams = [since];
+  if (excludeModelDs.length) {
+    const dsClause = ` AND (data_source IS NULL OR data_source NOT IN (${excludeModelDs.map(() => '?').join(',')}))`;
+    paygModelWhere += dsClause;
+    paygModelParams.push(...excludeModelDs);
+  }
+  const paygAll = _queryPaygCostMaps('ts >= @since', paygParams);
+  const paygModels = _queryPaygCostMaps(paygModelWhere, paygModelParams);
+
   // Per-key stats
   const keys = db.prepare(
     'SELECT api_key, COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens FROM requests ' +
     'WHERE ts >= ? AND api_key IS NOT NULL GROUP BY api_key ORDER BY calls DESC'
   ).all(since);
 
-  // Per-provider with tier (for donut chart)
+  // Per-provider with tier + 按量费用（仅 provider 刊例价）
   const providers = db.prepare(
-    'SELECT provider_id, tier, COUNT(*) AS calls FROM requests ' +
-    'WHERE ts >= ? AND provider_id IS NOT NULL GROUP BY provider_id ORDER BY calls DESC'
+    'SELECT provider_id, tier, COUNT(*) AS calls, ' +
+    'SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens ' +
+    'FROM requests ' +
+    'WHERE ts >= ? AND provider_id IS NOT NULL GROUP BY provider_id, tier ORDER BY calls DESC'
   ).all(since);
 
   return {
@@ -264,9 +317,16 @@ function queryDashboard(days = 1) {
     agent_sources: agentRows.map(r => ({ source: r.data_source, calls: r.calls, tokens: r.tokens || 0 })),
     tiers,
     hourly,
-    models:    models.map(r => ({ model: r.model, calls: r.calls, tokens: r.tokens || 0, cost_usd: r.cost_usd || 0 })),
+    models:    models.map(r => ({
+      model: r.model, calls: r.calls, tokens: r.tokens || 0,
+      cost_usd: paygModels.byModel[r.model] || 0,
+    })),
     keys:      keys.map(r => ({ api_key: r.api_key, calls: r.calls, tokens: r.tokens || 0 })),
-    providers: providers.map(r => ({ id: r.provider_id, tier: r.tier, calls: r.calls })),
+    providers: providers.map(r => ({
+      id: r.provider_id, tier: r.tier, calls: r.calls, tokens: r.tokens || 0,
+      cost_usd: paygAll.byProviderTier[`${r.provider_id}|${r.tier || ''}`] || 0,
+    })),
+    payg_usage_cost: paygAll.total,
   };
 }
 
@@ -276,6 +336,7 @@ function _empty() {
     tiers: { free: 0, p2p: 0, paid: 0 },
     hourly: Array(24).fill(0),
     models: [], keys: [], providers: [], agent_sources: [],
+    payg_usage_cost: 0,
   };
 }
 
@@ -407,8 +468,9 @@ function queryAppStatsInPeriod({ appId, apiKey, dataSource, days = 30 } = {}) {
   try {
     const total = db.prepare(
       `SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, ` +
-      `SUM(cost_usd) AS cost, MAX(ts) AS lastTs FROM requests WHERE ${where}`
+      `MAX(ts) AS lastTs FROM requests WHERE ${where}`
     ).get(p);
+    const paygCost = _queryPaygCostMaps(`${where}`, p).total;
     const bySource = db.prepare(
       `SELECT CASE WHEN data_source='proxy' THEN 'proxy' ELSE 'session' END AS src, ` +
       `COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens ` +
@@ -419,7 +481,7 @@ function queryAppStatsInPeriod({ appId, apiKey, dataSource, days = 30 } = {}) {
     return {
       calls: total.calls || 0,
       tokens: total.tokens || 0,
-      cost: total.cost || 0,
+      cost: paygCost,
       lastTs: total.lastTs || null,
       proxyCalls: proxy.calls || 0,
       sessionCalls: session.calls || 0,

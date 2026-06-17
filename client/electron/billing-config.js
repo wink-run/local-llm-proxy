@@ -172,6 +172,8 @@ function subscriptionAppCatalog(cfg = {}) {
       agent_id: a.agent_id,
       provider_id: a.provider_id,
       plan_provider_id: planKey,
+      // 订阅是否可转为 API 供给源（yaml subscription_to_api，默认 false）
+      subscription_to_api: a.subscription_to_api === true,
       app_name: a.app_name || a.name || a.agent_id,
       app_icon: a.app_icon || a.icon || '🔧',
       plans: appPlans,
@@ -183,13 +185,230 @@ function paygProviderCatalog() {
   return configLoader.paygProviders().map(normPaygEntry);
 }
 
+/**
+ * 个人页已登记的付费供给源 id（订阅 + 按量，含仅统计类）：
+ * - 订阅账户 → subscription_catalog.plan_provider_id
+ * - 按量账户 → user_payg_providers.provider_id
+ */
+function resolveUserPaidProviderIds(cfg = {}) {
+  const ids = new Set();
+  const catalogBySource = Object.fromEntries(
+    subscriptionAppCatalog(cfg).map(c => [c.source_id, c]),
+  );
+  for (const sub of cfg.user_subscriptions || []) {
+    const pid = catalogBySource[sub.source_id]?.plan_provider_id;
+    if (pid) ids.add(pid);
+  }
+  for (const p of cfg.user_payg_providers || []) {
+    if (p.provider_id) ids.add(p.provider_id);
+  }
+  return [...ids];
+}
+
+/** 单条订阅是否启用「订阅转 API」：用户登记优先，否则 yaml 目录默认 */
+function resolveSubUseApi(sub, catalogBySource) {
+  if (sub?.subscription_to_api != null) return sub.subscription_to_api === true;
+  const cat = catalogBySource[sub?.source_id];
+  return cat?.subscription_to_api === true;
+}
+
+/** 订阅转 API 时对应的供给源 id（自定义订阅固定用 source_id） */
+function subscriptionGatewayProviderId(sub, catalogBySource) {
+  if (!sub) return null;
+  if (sub.custom) return sub.source_id || null;
+  const cat = catalogBySource[sub.source_id];
+  return cat?.plan_provider_id || null;
+}
+
+/** 订阅转 API 的验证方式：目录应用 OAuth，自定义订阅 API Key */
+function subscriptionGatewayAuthMode(sub, catalogBySource) {
+  if (!resolveSubUseApi(sub, catalogBySource)) return null;
+  if (sub.custom) return 'api_key';
+  const cat = catalogBySource[sub.source_id];
+  return cat?.plan_provider_id ? 'oauth' : 'api_key';
+}
+
+/** 订阅登记且 subscription_to_api=true 的供给源 id */
+function resolveSubscriptionGatewayProviderIds(cfg = {}) {
+  const ids = new Set();
+  const catalogBySource = Object.fromEntries(
+    subscriptionAppCatalog(cfg).map(c => [c.source_id, c]),
+  );
+  for (const sub of cfg.user_subscriptions || []) {
+    const pid = subscriptionGatewayProviderId(sub, catalogBySource);
+    if (pid && resolveSubUseApi(sub, catalogBySource)) ids.add(pid);
+  }
+  return [...ids];
+}
+
+/** 个人页按量账户对应的供给源 id */
+function resolveGatewayPaygProviderIds(cfg = {}) {
+  const ids = new Set();
+  for (const p of cfg.user_payg_providers || []) {
+    if (p.provider_id) ids.add(p.provider_id);
+  }
+  return [...ids];
+}
+
+/** 各 provider 在供给源页的验证方式：oauth（订阅转 API）/ api_key（按量）/ both */
+function resolveProviderGatewayAuthMap(cfg = {}) {
+  const catalogBySource = Object.fromEntries(
+    subscriptionAppCatalog(cfg).map(c => [c.source_id, c]),
+  );
+  const modes = {};
+
+  for (const sub of cfg.user_subscriptions || []) {
+    const pid = subscriptionGatewayProviderId(sub, catalogBySource);
+    const auth = subscriptionGatewayAuthMode(sub, catalogBySource);
+    if (!pid || !auth) continue;
+    if (modes[pid] && modes[pid] !== auth) modes[pid] = 'both';
+    else modes[pid] = auth;
+  }
+
+  for (const p of cfg.user_payg_providers || []) {
+    const id = p.provider_id;
+    if (!id) continue;
+    if (modes[id] === 'oauth') modes[id] = 'both';
+    else modes[id] = 'api_key';
+  }
+  return modes;
+}
+
+/** 供给源选择器条目（与 Providers 页展示一致） */
+function buildGatewayPickerEntries(cfg = {}) {
+  const catalogBySource = Object.fromEntries(
+    subscriptionAppCatalog(cfg).map(c => [c.source_id, c]),
+  );
+  const entries = [];
+
+  for (const sub of cfg.user_subscriptions || []) {
+    if (!resolveSubUseApi(sub, catalogBySource)) continue;
+    if (sub.custom) {
+      entries.push({
+        providerId: sub.source_id,
+        pickerKey: `sub:${sub.source_id}`,
+        label: sub.app_name || sub.source_id,
+        icon: sub.app_icon || '🔧',
+        authMode: 'api_key',
+        source: 'subscription',
+        custom: true,
+      });
+      continue;
+    }
+    const cat = catalogBySource[sub.source_id];
+    const pid = cat?.plan_provider_id;
+    if (!pid) continue;
+    entries.push({
+      providerId: pid,
+      pickerKey: `sub:${sub.source_id}`,
+      label: sub.app_name || cat?.app_name || pid,
+      icon: sub.app_icon || cat?.app_icon || '🔷',
+      authMode: 'oauth',
+      source: 'subscription',
+    });
+  }
+
+  for (const payg of cfg.user_payg_providers || []) {
+    const pid = payg.provider_id;
+    if (!pid) continue;
+    entries.push({
+      providerId: pid,
+      pickerKey: `payg:${pid}`,
+      label: payg.label || pid,
+      icon: payg.icon || '🔧',
+      authMode: 'api_key',
+      source: 'payg',
+    });
+  }
+  return entries;
+}
+
+/** 可在供给源页接入的 id：订阅转 API + 按量账户 */
+function resolveUserGatewayProviderIds(cfg = {}) {
+  return [...new Set([
+    ...resolveSubscriptionGatewayProviderIds(cfg),
+    ...resolveGatewayPaygProviderIds(cfg),
+  ])];
+}
+
+/** 仅用量统计、不能在供给源页接入的 provider（订阅未开启 subscription_to_api） */
+function resolveStatsOnlyProviderIds(cfg = {}) {
+  const gateway = new Set(resolveUserGatewayProviderIds(cfg));
+  const paygIds = new Set(
+    (cfg.user_payg_providers || []).map(p => p.provider_id).filter(Boolean),
+  );
+  const catalogBySource = Object.fromEntries(
+    subscriptionAppCatalog(cfg).map(c => [c.source_id, c]),
+  );
+  const statsOnly = new Set();
+  for (const sub of cfg.user_subscriptions || []) {
+    const cat = catalogBySource[sub.source_id];
+    const pid = cat?.plan_provider_id;
+    // 有订阅映射但未开 subscription_to_api，且未单独登记按量 → 仅统计
+    if (pid && !gateway.has(pid) && !paygIds.has(pid)) statsOnly.add(pid);
+  }
+  return [...statsOnly];
+}
+
+/** 提取 provider.models 条目中的模型名 */
+function modelEntryId(m) {
+  if (typeof m === 'string') return m;
+  if (m && typeof m === 'object') return String(m.name || m.id || m.model || '');
+  return '';
+}
+
+/**
+ * 清理旧逻辑遗留的供给源配置：
+ * - 移除未在个人页登记的 custom-* 供给源
+ * - 未启用的付费源清空 models（去掉 yaml 预填）
+ * - 已启用但不在个人页登记列表的付费源强制禁用
+ */
+function migrateAgentProviders(cfg = {}) {
+  const gatewayIds = new Set(resolveUserGatewayProviderIds(cfg));
+  if (!Array.isArray(cfg.providers)) return { cfg, changed: false };
+  let changed = false;
+  const next = [];
+  for (const raw of cfg.providers) {
+    const p = { ...raw };
+    if (p.type === 'paid') {
+      if (String(p.id || '').startsWith('custom-') && !gatewayIds.has(p.id)) {
+        changed = true;
+        continue;
+      }
+      if (!p.enabled) {
+        if (Array.isArray(p.models) && p.models.length) {
+          p.models = [];
+          changed = true;
+        }
+      } else if (!gatewayIds.has(p.id)) {
+        p.enabled = false;
+        p.models = [];
+        changed = true;
+      }
+    }
+    next.push(p);
+  }
+  if (changed) cfg.providers = next;
+  return { cfg, changed };
+}
+
 function getUserAccounts(cfg = {}) {
   const billing = getBillingSettings(cfg);
+  const paidIds = resolveUserPaidProviderIds(cfg);
+  const gatewaySubIds = resolveSubscriptionGatewayProviderIds(cfg);
+  const gatewayPaygIds = resolveGatewayPaygProviderIds(cfg);
   return {
     subscription_catalog: subscriptionAppCatalog(cfg),
     payg_provider_catalog: paygProviderCatalog(),
     user_subscriptions: Array.isArray(cfg.user_subscriptions) ? cfg.user_subscriptions : [],
     user_payg_providers: Array.isArray(cfg.user_payg_providers) ? cfg.user_payg_providers : [],
+    paid_provider_ids: paidIds,
+    gateway_provider_ids: resolveUserGatewayProviderIds(cfg),
+    gateway_subscription_provider_ids: gatewaySubIds,
+    gateway_payg_provider_ids: gatewayPaygIds,
+    provider_gateway_auth: resolveProviderGatewayAuthMap(cfg),
+    gateway_picker_entries: buildGatewayPickerEntries(cfg),
+    stats_only_provider_ids: resolveStatsOnlyProviderIds(cfg),
     ...billing,
   };
 }
@@ -202,6 +421,17 @@ module.exports = {
   getUserAccounts,
   subscriptionAppCatalog,
   paygProviderCatalog,
+  resolveUserPaidProviderIds,
+  resolveUserGatewayProviderIds,
+  resolveSubscriptionGatewayProviderIds,
+  resolveGatewayPaygProviderIds,
+  resolveProviderGatewayAuthMap,
+  buildGatewayPickerEntries,
+  subscriptionGatewayProviderId,
+  resolveSubUseApi,
+  migrateAgentProviders,
+  modelEntryId,
+  resolveStatsOnlyProviderIds,
   resolvePricingProviderId,
   applyPricingOverrides,
   normPlan,

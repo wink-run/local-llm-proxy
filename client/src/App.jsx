@@ -2,7 +2,7 @@ import React from 'react';
 import { MemoryRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './store/index';
 import { ThemeProvider } from './store/theme';
-import { LangProvider } from './store/lang';
+import { LangProvider, useLang } from './store/lang';
 import Sidebar from './components/Sidebar';
 import Profile    from './pages/Profile';
 import TokenDashboard from './pages/TokenDashboard';
@@ -18,12 +18,13 @@ import { useDeviceReporter } from './hooks/useDeviceReporter';
 
 function Layout() {
   const { user, loading } = useAuth();
+  const { t } = useLang();
   useDeviceReporter(user);
 
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50 dark:bg-gray-950 text-gray-500 dark:text-gray-400">
-        加载中…
+        {t('common.loading')}
       </div>
     );
   }

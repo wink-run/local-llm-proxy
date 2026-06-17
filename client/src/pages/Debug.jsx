@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { getConfig, getLocalConfig, getGateway } from '../api/adapter';
+import { useLang } from '../store/lang';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -119,7 +120,7 @@ async function doStreamChat({ baseUrl, token, model, messages, stream, anthropic
   } catch (e) { onError(e.message); }
 }
 
-async function doGenerateImage({ baseUrl, token, model, prompt, ratio, resolution, onDone, onError }) {
+async function doGenerateImage({ baseUrl, token, model, prompt, ratio, resolution, onDone, onError, t }) {
   const url = buildImageUrl(baseUrl);
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -133,7 +134,7 @@ async function doGenerateImage({ baseUrl, token, model, prompt, ratio, resolutio
     const data = JSON.parse(text);
     if (data.detail || data.error) throw new Error(data.detail || data.error?.message || 'Error');
     const images = (data.data || []).map(item => item.b64_json || item.url || '').filter(Boolean);
-    if (!images.length) throw new Error(`上游返回空图像列表: ${text.slice(0, 200)}`);
+    if (!images.length) throw new Error(t('debug.emptyImageList', { text: text.slice(0, 200) }));
     onDone({ images, totalMs: Date.now() - startTime });
   };
 
@@ -152,16 +153,14 @@ async function doGenerateImage({ baseUrl, token, model, prompt, ratio, resolutio
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const LOCAL_GW = { id: '__local_gw__', label: '本地网关', base_url: 'http://127.0.0.1:11430', token: '', models: [] };
-// base_url is overwritten at runtime with the actual running port from gateway status
-const CUSTOM   = { id: '__custom__',   label: '自定义…',  base_url: '',                        token: '', models: [] };
+const LOCAL_GW = { id: '__local_gw__', base_url: 'http://127.0.0.1:11430', token: '', models: [] };
+const CUSTOM   = { id: '__custom__',   base_url: '', token: '', models: [] };
 
-const TIER_LABEL = { free: '免费层', p2p: 'P2P', paid: '付费层' };
 const TIER_ORDER = ['free', 'p2p', 'paid'];
 
 function normModel(m) { return typeof m === 'string' ? { name: m, type: 'chat' } : { name: m.name, type: m.type || 'chat' }; }
 
-function providerOptions(cfg, localCfg, localGw = LOCAL_GW) {
+function providerOptions(cfg, localCfg, localGw, t) {
   // Build local gateway model list: collect all enabled provider models tagged with tier
   const gwModels = [];
   const seen = new Set();
@@ -178,7 +177,7 @@ function providerOptions(cfg, localCfg, localGw = LOCAL_GW) {
     }
   }
 
-  const opts = [{ ...localGw, models: gwModels }];
+  const opts = [{ ...localGw, label: t('debug.localGw'), models: gwModels }];
   for (const p of (cfg?.providers || [])) {
     if (!p.enabled || p.type === 'p2p' || !p.base_url) continue;
     const label = (() => { try { return new URL(p.base_url).hostname; } catch { return p.id; } })();
@@ -187,10 +186,10 @@ function providerOptions(cfg, localCfg, localGw = LOCAL_GW) {
   // P2P backend from local-config cloud_config
   const cc = localCfg?.cloud_config;
   if (cc?.url) {
-    const label = (() => { try { return new URL(cc.url).hostname; } catch { return 'P2P 后端'; } })();
+    const label = (() => { try { return new URL(cc.url).hostname; } catch { return t('debug.p2pBackend'); } })();
     opts.push({ id: '__p2p__', label: `🌐 ${label}`, base_url: cc.url, token: cc.token || '', models: [] });
   }
-  opts.push(CUSTOM);
+  opts.push({ ...CUSTOM, label: t('debug.custom') });
   return opts;
 }
 
@@ -199,8 +198,9 @@ const defaultPanel = () => ({ conversation: [], input: '', systemPrompt: '', sho
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function Debug() {
+  const { t } = useLang();
   const [cfg,            setCfg]           = useState(null);
-  const [provOpts,       setProvOpts]      = useState([LOCAL_GW, CUSTOM]);
+  const [provOpts,       setProvOpts]      = useState([]);
   const [selectedId,     setSelectedId]    = useState('__local_gw__');
   const [manualBaseUrl,  setManualBaseUrl] = useState('');
   const [token,          setToken]         = useState('');
@@ -229,9 +229,9 @@ export default function Debug() {
       setCfg(c);
       const gwPort = gwStatus?.port || 11430;
       const localGw = { ...LOCAL_GW, base_url: `http://127.0.0.1:${gwPort}` };
-      setProvOpts(providerOptions(c, lc, localGw));
+      setProvOpts(providerOptions(c, lc, localGw, t));
     });
-  }, []);
+  }, [t]);
 
   // When selected provider changes
   useEffect(() => {
@@ -306,7 +306,7 @@ export default function Debug() {
       setSending(true);
       await doGenerateImage({
         baseUrl: effectiveBase, token, model, prompt: text,
-        ratio: imageRatio || undefined, resolution: imageResolution || undefined,
+        ratio: imageRatio || undefined, resolution: imageResolution || undefined, t,
         onDone: ({ images, totalMs }) => {
           setPanels(prev => {
             const p = prev.main; const next = [...p.conversation];
@@ -388,7 +388,7 @@ export default function Debug() {
           {/* Base URL (custom or display) */}
           {selectedId === '__custom__' ? (
             <input value={manualBaseUrl} onChange={e => setManualBaseUrl(e.target.value)}
-              placeholder="Base URL，如 http://host:3000"
+              placeholder={t('debug.baseUrlPh')}
               className="flex-1 min-w-[200px] bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
           ) : (
             <code className="text-xs font-mono text-gray-500 dark:text-gray-400 truncate max-w-[260px]">{effectiveBase}</code>
@@ -400,11 +400,11 @@ export default function Debug() {
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-800/40 shrink-0">Anthropic</span>
             )}
             <input value={token} onChange={e => setToken(e.target.value)}
-              type={showToken ? 'text' : 'password'} placeholder="API Key（可选）" autoComplete="off"
+              type={showToken ? 'text' : 'password'} placeholder={t('debug.apiKeyPh')} autoComplete="off"
               className="w-36 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 text-xs font-mono text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500" />
             <button onClick={() => setShowToken(v => !v)}
               className="text-[10px] px-2 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors shrink-0">
-              {showToken ? '隐藏' : '显示'}
+              {showToken ? t('debug.hide') : t('debug.show')}
             </button>
           </div>
         </div>
@@ -415,7 +415,7 @@ export default function Debug() {
           {loadingModels ? (
             <span className="text-xs text-gray-400 dark:text-gray-500 flex items-center gap-1.5">
               <span className="w-3 h-3 border border-gray-300 border-t-blue-400 rounded-full animate-spin" />
-              加载模型…
+              {t('debug.loadingModels')}
             </span>
           ) : !manualModel && filteredModels.length > 0 ? (
             <select value={model} onChange={e => setModel(e.target.value)}
@@ -424,7 +424,7 @@ export default function Debug() {
                 ? TIER_ORDER.map(tier => {
                     const tms = filteredModels.filter(m => m.tier === tier);
                     return tms.length ? (
-                      <optgroup key={tier} label={TIER_LABEL[tier]}>
+                      <optgroup key={tier} label={t(`debug.tier.${tier}`)}>
                         {tms.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
                       </optgroup>
                     ) : null;
@@ -434,20 +434,20 @@ export default function Debug() {
             </select>
           ) : (
             <input value={model} onChange={e => setModel(e.target.value)}
-              placeholder="模型名，如 gpt-4o"
+              placeholder={t('debug.modelPh')}
               className="bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500 w-44" />
           )}
           {/* Toggle dropdown ↔ manual */}
           {!loadingModels && models.length > 0 && (
             <button onClick={() => setManualModel(v => !v)}
               className="text-[10px] text-gray-400 hover:text-blue-500 transition-colors shrink-0">
-              {manualModel ? '从列表选' : '手动输入'}
+              {manualModel ? t('debug.pickFromList') : t('debug.manualInput')}
             </button>
           )}
 
           {/* Mode toggle */}
           <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 shrink-0">
-            {[{ v: false, l: '对话' }, { v: true, l: '图像' }].map(({ v, l }) => (
+            {[{ v: false, l: t('debug.modeChat') }, { v: true, l: t('debug.modeImage') }].map(({ v, l }) => (
               <button key={String(v)} onClick={() => setPanel({ imageMode: v })}
                 className={`px-3 py-1.5 text-xs font-medium transition-colors ${
                   imageMode === v ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
@@ -460,12 +460,12 @@ export default function Debug() {
             <>
               <select value={imageRatio} onChange={e => setPanel({ imageRatio: e.target.value })}
                 className="bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 focus:outline-none">
-                <option value="">比例(默认)</option>
+                <option value="">{t('debug.ratioDefault')}</option>
                 {['1:1','4:3','3:4','16:9','9:16','3:2','2:3','21:9'].map(r => <option key={r} value={r}>{r}</option>)}
               </select>
               <select value={imageResolution} onChange={e => setPanel({ imageResolution: e.target.value })}
                 className="bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 focus:outline-none">
-                <option value="">分辨率(默认)</option>
+                <option value="">{t('debug.resolutionDefault')}</option>
                 {['1k','2k','4k'].map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </>
@@ -476,7 +476,7 @@ export default function Debug() {
             <>
               <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 cursor-pointer select-none">
                 <input type="checkbox" checked={streamMode} onChange={e => setPanel({ streamMode: e.target.checked })} className="w-3.5 h-3.5 accent-blue-600" />
-                流式
+                {t('debug.stream')}
               </label>
               <button onClick={() => setPanel({ showSystem: !showSystem })}
                 className={`text-xs px-2 py-1 rounded-md transition-colors ${showSystem ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}>
@@ -488,7 +488,7 @@ export default function Debug() {
           {conversation.length > 0 && (
             <button onClick={() => setPanel({ conversation: [], input: '' })}
               className="ml-auto text-xs text-gray-400 dark:text-gray-500 hover:text-red-500 dark:hover:text-red-400 transition-colors">
-              清空
+              {t('debug.clear')}
             </button>
           )}
         </div>
@@ -496,7 +496,7 @@ export default function Debug() {
         {/* System prompt */}
         {!imageMode && showSystem && (
           <textarea value={systemPrompt} onChange={e => setPanel({ systemPrompt: e.target.value })}
-            rows={2} placeholder="System Prompt（可选）"
+            rows={2} placeholder={t('debug.systemPh')}
             className="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500 resize-none" />
         )}
       </div>
@@ -506,7 +506,7 @@ export default function Debug() {
         {conversation.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 dark:text-gray-600 select-none">
             <p className="text-3xl mb-2">{imageMode ? '🎨' : '🐛'}</p>
-            <p className="text-sm">{imageMode ? '输入提示词生成图片' : '选择供给源和模型，发送消息开始调试'}</p>
+            <p className="text-sm">{imageMode ? t('debug.emptyImage') : t('debug.emptyChat')}</p>
           </div>
         )}
 
@@ -522,7 +522,7 @@ export default function Debug() {
                 <div className="rounded-2xl overflow-hidden bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent">
                   {msg.generating ? (
                     <div className="px-4 py-6 flex items-center gap-2 text-sm text-gray-400 dark:text-gray-500">
-                      <span className="w-4 h-4 border-2 border-gray-300 border-t-blue-500 rounded-full animate-spin" /> 生成中…
+                      <span className="w-4 h-4 border-2 border-gray-300 border-t-blue-500 rounded-full animate-spin" /> {t('debug.generating')}
                     </div>
                   ) : (msg.images || []).length > 0 ? (
                     <div className="space-y-2 p-2">
@@ -533,16 +533,16 @@ export default function Debug() {
                             <img src={imgSrc} alt={`gen-${j}`} className="rounded-xl max-w-full cursor-zoom-in" onClick={() => setLightbox(imgSrc)} />
                             <div className="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                               <button onClick={async () => { try { const b = await (await fetch(imgSrc)).blob(); await navigator.clipboard.write([new ClipboardItem({ [b.type]: b })]); } catch {} }}
-                                className="px-2 py-1 text-xs bg-black/60 hover:bg-black/80 text-white rounded-lg backdrop-blur-sm">复制</button>
+                                className="px-2 py-1 text-xs bg-black/60 hover:bg-black/80 text-white rounded-lg backdrop-blur-sm">{t('debug.copy')}</button>
                               <button onClick={() => { const a = document.createElement('a'); a.href = imgSrc; a.download = `gen-${Date.now()}.png`; a.click(); }}
-                                className="px-2 py-1 text-xs bg-black/60 hover:bg-black/80 text-white rounded-lg backdrop-blur-sm">保存</button>
+                                className="px-2 py-1 text-xs bg-black/60 hover:bg-black/80 text-white rounded-lg backdrop-blur-sm">{t('debug.saveImage')}</button>
                             </div>
                           </div>
                         );
                       })}
                     </div>
                   ) : (
-                    <div className="px-4 py-3 text-sm text-gray-400 dark:text-gray-500">无图像返回</div>
+                    <div className="px-4 py-3 text-sm text-gray-400 dark:text-gray-500">{t('debug.noImage')}</div>
                   )}
                 </div>
               ) : (
@@ -557,12 +557,12 @@ export default function Debug() {
               )}
               {msg.timing && (
                 <p className="text-xs text-gray-400 dark:text-gray-600 mt-1 px-1">
-                  {msg.timing.firstTokenMs != null ? `首 token ${msg.timing.firstTokenMs} ms · ` : ''}总计 {msg.timing.totalMs} ms
+                  {msg.timing.firstTokenMs != null ? t('debug.firstToken', { ms: msg.timing.firstTokenMs }) : ''}{t('debug.total', { ms: msg.timing.totalMs })}
                 </p>
               )}
             </div>
             {msg.role === 'user' && (
-              <div className="w-7 h-7 rounded-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center text-gray-600 dark:text-gray-300 text-xs shrink-0 mt-0.5 ml-2">我</div>
+              <div className="w-7 h-7 rounded-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center text-gray-600 dark:text-gray-300 text-xs shrink-0 mt-0.5 ml-2">{t('debug.me')}</div>
             )}
           </div>
         ))}
@@ -573,7 +573,7 @@ export default function Debug() {
       <div className="shrink-0 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-4 py-3">
         <div className="flex gap-2 items-end">
           <textarea ref={textareaRef} value={input} onChange={handleInputChange} onKeyDown={handleKeyDown}
-            placeholder={imageMode ? '输入图像提示词… (Cmd+Enter 发送)' : '输入消息… (Cmd+Enter 发送)'}
+            placeholder={imageMode ? t('debug.inputImagePh') : t('debug.inputChatPh')}
             rows={1} style={{ resize: 'none' }}
             className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500 overflow-hidden" />
           <button onClick={handleSend} disabled={sending || !input.trim() || !model || !effectiveBase}

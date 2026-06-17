@@ -18,6 +18,7 @@ from typing import Optional
 import database as db
 from auth import get_current_user_id
 from admin_router import auth_admin   # reuse existing admin bearer auth
+from config_merge import merge_apps_yaml_text
 
 router = APIRouter()
 
@@ -159,6 +160,8 @@ async def get_tools_config(uid: int = Depends(get_current_user_id)):
     content = await db.get_config("config.apps", "")
     if not content:
         raise HTTPException(404, "Tools config not uploaded yet")
+    # 与内置默认合并，确保客户端拉取到 subscription_to_api 等新字段
+    content = merge_apps_yaml_text(content)
     return PlainTextResponse(_normalize_yaml(content), media_type="text/yaml; charset=utf-8")
 
 

@@ -5,7 +5,7 @@ import { useEffect, useRef } from 'react';
 import { isElectron, getGateway, getConfig } from '../api/adapter';
 import { registerDevice, heartbeatDevice } from '../api/client';
 
-const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const HEARTBEAT_INTERVAL_MS = 60 * 1000; // 60s（服务端 2 分钟无心跳会标离线，须小于该阈值）
 const RECONNECT_INTERVAL_MS = 30 * 1000;      // retry interval while offline
 const MAX_FAILURES_BEFORE_RECONNECT = 2;       // failures before trying re-register
 
@@ -18,6 +18,31 @@ let _heartbeatTimer      = null;
 let _consecutiveFailures = 0;
 let _reregistering       = false; // guard against concurrent re-register attempts
 
+/** 生成稳定的本地设备 ID（仅首次无记录时调用一次） */
+function _generateDeviceId() {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return 'dev-' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * 解析并持久化设备 ID：localStorage → config.json → 新生成。
+ * 避免每次启动因 localStorage 为空而向服务端注册新设备。
+ */
+async function _resolveDeviceId(port, cfg) {
+  const storageKey = `llm_gateway_device_id_${port}`;
+  let id = (localStorage.getItem(storageKey) || cfg?.device_id || '').trim();
+  if (!id) {
+    id = _generateDeviceId();
+    localStorage.setItem(storageKey, id);
+    await getConfig().write({ ...(cfg || {}), device_id: id }).catch(() => {});
+  } else if (!localStorage.getItem(storageKey)) {
+    // config 有 ID 但 localStorage 缺失时同步回写
+    localStorage.setItem(storageKey, id);
+  }
+  return { id, storageKey };
+}
+
 async function _doRegister() {
   try {
     // Fetch actual gateway port — each CLI instance runs on a different port,
@@ -25,13 +50,11 @@ async function _doRegister() {
     const gwStatus = await getGateway().status().catch(() => null);
     const port     = gwStatus?.port || 11430;
 
-    // Per-port key: instances on different ports each get their own device_id
-    const storageKey = `llm_gateway_device_id_${port}`;
-    const storedId   = localStorage.getItem(storageKey) || '';
+    const cfg = await getConfig().read().catch(() => ({}));
+    const { id: storedId, storageKey } = await _resolveDeviceId(port, cfg);
 
     const type     = isElectron() ? 'desktop' : 'cli';
     const platform = navigator.platform || navigator.userAgent || '';
-    const cfg      = await getConfig().read().catch(() => ({}));
     const version  = cfg?.version || '1.0.0';
     // CLI instances always append port so multiple instances on the same machine are distinguishable.
     // Electron is a single instance so just use the configured name (or fallback "Desktop").

@@ -1896,6 +1896,20 @@ app.whenReady().then(() => {
   gateway.setStatsRecorder(localStats.record);
   gateway.setLocalStats(localStats);
   gateway.setLocalConfigReader(readLocalConfig);   // 供策略组调度查 policies[]
+  // 清理旧版付费供给源预填数据（须在 gateway 启动前）
+  try {
+    const billingConfig = require('./billing-config');
+    const localCfg = readLocalConfig();
+    const agentCfg = readAgentConfig() || { providers: [] };
+    const { cfg: migrated, changed } = billingConfig.migrateAgentProviders({
+      ...localCfg,
+      providers: agentCfg.providers,
+    });
+    if (changed) {
+      writeAgentConfig({ ...agentCfg, providers: migrated.providers });
+      console.log('[main] migrated agent providers: removed stale paid/custom entries');
+    }
+  } catch (e) { console.warn('[main] provider migration skipped:', e.message); }
   // shim 写脚本时按 toolId 取该 shim 应用的 api_key（解析 inject.env 的 {KEY}）
   agentLinker.setKeyResolver((toolId) => {
     const apps = readLocalConfig().apps || [];

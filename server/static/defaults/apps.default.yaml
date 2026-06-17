@@ -154,42 +154,56 @@ api_key_apps:
 # ════════ 个人页：订阅账户 / 按量付费目录（与客户端 tokenbank.tools.default.yaml 同 schema）════════
 # 管理员上传 config.apps 时一并下发；客户端 applyConfigDoc 写入 ~/.tokenbank/tokenbank.yaml
 
+# subscription_to_api: 订阅是否可转为 API 供给源（供给源页可选）；默认 false
 subscription_apps:
   - source_id: claude
     agent_id: claude-code
     app_name: Claude Code
     app_icon: "🔷"
     plan_provider_id: anthropic-paid
+    subscription_to_api: true
+
   - source_id: codex
     agent_id: codex
     app_name: Codex
     app_icon: "⚡"
     plan_provider_id: openai
+    subscription_to_api: false
+
   - source_id: gemini
     agent_id: gemini-cli
     app_name: Gemini CLI
     app_icon: "♊"
     plan_provider_id: gemini
+    subscription_to_api: false
+
   - source_id: cursor
     agent_id: cursor
     app_name: Cursor
     app_icon: "🖱️"
     plan_provider_id: cursor
+    subscription_to_api: false
+
   - source_id: copilot-cli
     agent_id: copilot
     app_name: GitHub Copilot
     app_icon: "🤖"
     plan_provider_id: github-copilot
+    subscription_to_api: false
+
   - source_id: qwen
     agent_id: qwen-code
     app_name: Qwen Code
     app_icon: "🐉"
     plan_provider_id: null
+    subscription_to_api: false
+
   - source_id: antigravity
     agent_id: antigravity
     app_name: Antigravity
     app_icon: "🚀"
     plan_provider_id: gemini
+    subscription_to_api: false
 
 subscription_plans:
   anthropic-paid:

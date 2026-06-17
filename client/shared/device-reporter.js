@@ -8,7 +8,7 @@ const os     = require('os');
 const crypto = require('crypto');
 const { readAgentConfig, writeAgentConfig } = require('./config-loader');
 
-const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const HEARTBEAT_INTERVAL_MS = 60 * 1000; // 60s（服务端 2 分钟无心跳会标离线）
 
 // ── Module state ──────────────────────────────────────────────────────────────
 
@@ -54,14 +54,24 @@ function _post(url, body, token) {
 
 // ── Registration ──────────────────────────────────────────────────────────────
 
+/** 生成并持久化本地设备 ID（仅首次无记录时调用） */
+function _ensureLocalDeviceId(existing) {
+  if (existing) return existing;
+  const id = 'dev-' + crypto.randomBytes(8).toString('hex');
+  const cfg = readAgentConfig() || {};
+  cfg.device_id = id;
+  try { writeAgentConfig(cfg); } catch (_) {}
+  return id;
+}
+
 /**
  * POST to /device/register → returns device_id string.
- * Falls back to a local random ID on any error.
+ * 失败时沿用已持久化的本地 ID，避免每次启动随机生成新设备。
  */
 async function _register() {
-  const fallback = () => 'dev-' + crypto.randomBytes(8).toString('hex');
+  const persisted = _config?.device_id || '';
 
-  if (!_config?.serverUrl || !_config?.token) return fallback();
+  if (!_config?.serverUrl || !_config?.token) return persisted;
 
   try {
     const res = await _post(
@@ -72,20 +82,22 @@ async function _register() {
         platform     : _config.platform,
         version      : _config.version,
         gateway_port : 11430,
-        device_id    : _config.device_id || '',
+        device_id    : persisted,
       },
       _config.token
     );
 
     if (res.status >= 200 && res.status < 300) {
       const json = JSON.parse(res.body);
-      if (json?.device_id) return json.device_id;
+      // 服务端 devices 表主键字段为 id
+      const id = json?.id || json?.device_id;
+      if (id) return id;
     }
   } catch (_) {
-    // Network or parse error — use fallback
+    // Network or parse error — keep persisted id
   }
 
-  return fallback();
+  return persisted;
 }
 
 // ── Heartbeat ─────────────────────────────────────────────────────────────────
@@ -126,6 +138,8 @@ async function init(options) {
   // Merge options with any existing agent config
   const existing = readAgentConfig() || {};
 
+  const localDeviceId = _ensureLocalDeviceId(existing.device_id || null);
+
   _config = {
     type      : options.type     || 'desktop',
     name      : options.name     || os.hostname(),
@@ -133,7 +147,7 @@ async function init(options) {
     version   : options.version  || '0.0.0',
     serverUrl : options.serverUrl || existing.serverUrl || null,
     token     : options.token    || existing.token      || null,
-    device_id : existing.device_id || null,
+    device_id : localDeviceId,
   };
 
   // Always call register on startup: confirms the device_id with the server,
@@ -149,7 +163,7 @@ async function init(options) {
 }
 
 /**
- * Start the 5-minute heartbeat loop.
+ * Start the 60-second heartbeat loop.
  * getStats: optional async/sync () => { calls, errors, providers_active }
  */
 function start(getStats) {

@@ -1,8 +1,43 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getNetwork, getProfile, listKeys, createKey, deleteKey, getProviderCatalog } from '../api/client';
 import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
 import { getGateway, getLocalConfig, getConfig, getOauth } from '../api/adapter';
+import { useLang } from '../store/lang';
+
+/** 按当前语言覆盖 meta 中的 label / hint / oauth.label */
+function localizeProviderMeta(metaMap, t) {
+  const out = { ...metaMap };
+  for (const [id, m] of Object.entries(out)) {
+    const next = { ...m };
+    const labelKey = `providers.meta.${id}.label`;
+    const hintKey = `providers.meta.${id}.hint`;
+    if (t(labelKey) !== labelKey) next.label = t(labelKey);
+    if (t(hintKey) !== hintKey) next.hint = t(hintKey);
+    if (m.oauth?.provider) {
+      const oauthKey = `providers.oauth.${m.oauth.provider}`;
+      if (t(oauthKey) !== oauthKey) next.oauth = { ...m.oauth, label: t(oauthKey) };
+    }
+    out[id] = next;
+  }
+  return out;
+}
+
+function getTierConfig(t) {
+  return {
+    free: { dot: 'bg-green-500', label: t('providers.tier.free.label'), hint: t('providers.tier.free.hint'), cols: 'grid-cols-2' },
+    p2p:  { dot: 'bg-blue-500',  label: t('providers.tier.p2p.label'),  hint: t('providers.tier.p2p.hint'),  cols: 'grid-cols-1' },
+    paid: { dot: 'bg-amber-400', label: t('providers.tier.paid.label'), hint: t('providers.tier.paid.hint'), cols: 'grid-cols-2' },
+  };
+}
+
+function getOAuthById(t) {
+  return {
+    'anthropic-paid': { provider: 'claude',  label: t('providers.oauth.claude') },
+    openai:           { provider: 'codex',   label: t('providers.oauth.codex') },
+    'github-copilot': { provider: 'copilot', label: t('providers.oauth.copilot') },
+  };
+}
 
 // 内置兜底目录：当后端 /api/catalog 不可达（离线 / VPS 宕机）时使用。
 // 正常情况下目录由后端下发，改源请改 server/catalog.py。
@@ -50,23 +85,8 @@ const FALLBACK_PROVIDERS = [
   { id: 'fireworks',       type: 'paid', enabled: false, token: '', base_url: 'https://api.fireworks.ai/inference/v1', models: [] },
 ];
 
-const TIER_CONFIG = {
-  free: { dot: 'bg-green-500', label: '免费层',  hint: '不消耗额度，优先路由',      cols: 'grid-cols-2' },
-  p2p:  { dot: 'bg-blue-500',  label: 'P2P 层',  hint: '消耗少量积分，社区算力',    cols: 'grid-cols-1' },
-  paid: { dot: 'bg-amber-400', label: '付费层',  hint: '直接计费，作为最终兜底',    cols: 'grid-cols-2' },
-};
-
-// 各预设支持的 OAuth 订阅登录（客户端本地常量）。
-// 后端 /api/catalog 可能尚未下发 oauth 字段或新预设，这里在客户端侧统一叠加，
-// 保证不依赖后端是否已部署对应改动。
-const OAUTH_BY_ID = {
-  'anthropic-paid': { provider: 'claude',  label: 'Claude 订阅登录' },
-  openai:           { provider: 'codex',   label: 'ChatGPT 订阅登录' },
-  'github-copilot': { provider: 'copilot', label: 'GitHub 登录' },
-};
-
 // 把后端下发的 catalog 拆成展示 meta 映射 + 默认 provider 列表（与本地配置合并的种子）
-function catalogToState(catalog) {
+function catalogToState(catalog, oauthById) {
   const meta = {};
   const defaults = [];
   for (const p of catalog?.providers || []) {
@@ -77,7 +97,7 @@ function catalogToState(catalog) {
       signup_url: p.signup_url || '',
       // OAuth 能力以客户端为准（仅客户端有对应 oauth 模块）；不信任远端 catalog 的 oauth 字段，
       // 否则远端未重新部署时会下发已废弃的能力（如 gemini 的 google 登录）。
-      oauth: OAUTH_BY_ID[p.id] || null,
+      oauth: oauthById[p.id] || null,
     };
     defaults.push({
       id: p.id,
@@ -89,16 +109,256 @@ function catalogToState(catalog) {
     });
   }
   // 后端目录里缺失的 OAuth 预设（如 gemini / github-copilot）从内置兜底补出来
-  for (const id of Object.keys(OAUTH_BY_ID)) {
+  for (const id of Object.keys(oauthById)) {
     if (!meta[id]) {
       if (FALLBACK_PROVIDER_META[id]) meta[id] = { ...FALLBACK_PROVIDER_META[id] };
       const fb = FALLBACK_PROVIDERS.find(p => p.id === id);
       if (fb) defaults.push({ ...fb });
     } else if (!meta[id].oauth) {
-      meta[id].oauth = OAUTH_BY_ID[id];
+      meta[id].oauth = oauthById[id];
     }
   }
   return { meta, defaults };
+}
+
+/** 从个人页登记 / meta 解析供给源展示名（优先于 URL hostname） */
+function resolveProviderDisplayName(id, provider, userPayg = [], userSubs = [], metaMap = {}) {
+  const payg = userPayg.find(u => u.provider_id === id);
+  if (payg?.label) return payg.label;
+  const sub = userSubs.find(s => s.custom && s.source_id === id);
+  if (sub?.app_name) return sub.app_name;
+  if (metaMap[id]?.label) return metaMap[id].label;
+  return provider?.displayName || provider?.label || '';
+}
+
+function withProviderDisplayName(provider, userPayg, userSubs, metaMap) {
+  const name = resolveProviderDisplayName(provider.id, provider, userPayg, userSubs, metaMap);
+  return name ? { ...provider, displayName: name } : provider;
+}
+
+/** 合并个人页按量账户中的自定义供给源到本地 providers 列表 */
+function mergeUserPaygIntoProviders(resolved, metaMap, userPayg = [], t) {
+  const providers = [...resolved];
+  const meta = { ...metaMap };
+  for (const p of userPayg) {
+    const id = p.provider_id;
+    if (!id) continue;
+    const existing = providers.find(x => x.id === id);
+    if (existing) {
+      if (p.label) existing.displayName = p.label;
+      if (!(existing.models || []).length && (p.models || []).length) {
+        existing.models = [...p.models];
+      }
+      if (!meta[id]) {
+        meta[id] = {
+          icon: p.icon || '🔧',
+          label: p.label || id,
+          hint: t('providers.hint.userPayg'),
+          keyless: false,
+          key_prefix: [],
+          signup_url: '',
+        };
+      } else if (p.label) {
+        meta[id] = { ...meta[id], label: p.label };
+      }
+      continue;
+    }
+    providers.push({
+      id,
+      type: 'paid',
+      enabled: false,
+      token: '',
+      base_url: '',
+      models: [...(p.models || [])],
+      displayName: p.label || id,
+    });
+    if (!meta[id]) {
+      meta[id] = {
+        icon: p.icon || '🔧',
+        label: p.label || id,
+        hint: t('providers.hint.userPayg'),
+        keyless: false,
+        key_prefix: [],
+        signup_url: '',
+      };
+    }
+  }
+  return { providers, meta };
+}
+
+/**
+ * 个人页登记的供给源 → 付费层可选列表。
+ * 跨 free/paid 层匹配（如 groq 在目录为免费层，但个人页按量登记后应在付费层接入）。
+ */
+function buildPersonalPaidPool(allProviders, paidIds, userPayg = [], userSubs = []) {
+  const pool = [];
+  const seen = new Set();
+
+  for (const id of paidIds || []) {
+    if (!id || seen.has(id)) continue;
+    const live = allProviders.find(p => p.id === id);
+    const payg = userPayg.find(u => u.provider_id === id);
+    const sub = (userSubs || []).find(s => s.custom && s.source_id === id);
+    const displayName = sub?.app_name || payg?.label;
+    if (live) {
+      // 在付费层展示；写入时仍用原 id，保留 free 层条目的 base_url 等
+      const enriched = displayName ? { ...live, displayName } : live;
+      pool.push(enriched.type === 'paid' ? enriched : { ...enriched, type: 'paid' });
+      seen.add(id);
+      continue;
+    }
+    const fb = FALLBACK_PROVIDERS.find(p => p.id === id);
+    if (payg || sub || id.startsWith('custom-') || fb) {
+      pool.push({
+        ...(fb || { id, type: 'paid', enabled: false, token: '', base_url: '', models: [] }),
+        id,
+        type: 'paid',
+        enabled: fb?.enabled ?? false,
+        models: [...(payg?.models || fb?.models || [])],
+        displayName,
+      });
+      seen.add(id);
+    }
+  }
+  return pool;
+}
+
+/** 个人页登记项 → 供给源选择器条目（渲染端回退；Electron 优先用 billing-config 下发） */
+function buildGatewayPickerEntries(userSubs, userPayg, subscriptionCatalog) {
+  const catalogBySource = Object.fromEntries(
+    (subscriptionCatalog || []).map(c => [c.source_id, c]),
+  );
+  const entries = [];
+
+  for (const sub of userSubs || []) {
+    const useApi = sub.subscription_to_api != null
+      ? sub.subscription_to_api === true
+      : catalogBySource[sub.source_id]?.subscription_to_api === true;
+    if (!useApi) continue;
+
+    if (sub.custom) {
+      entries.push({
+        providerId: sub.source_id,
+        pickerKey: `sub:${sub.source_id}`,
+        label: sub.app_name || sub.source_id,
+        icon: sub.app_icon || '🔧',
+        authMode: 'api_key',
+        source: 'subscription',
+        custom: true,
+      });
+      continue;
+    }
+
+    const cat = catalogBySource[sub.source_id];
+    const pid = cat?.plan_provider_id;
+    if (!pid) continue;
+    entries.push({
+      providerId: pid,
+      pickerKey: `sub:${sub.source_id}`,
+      label: sub.app_name || cat?.app_name || pid,
+      icon: sub.app_icon || cat?.app_icon || '🔷',
+      authMode: 'oauth',
+      source: 'subscription',
+    });
+  }
+
+  for (const payg of userPayg || []) {
+    const pid = payg.provider_id;
+    if (!pid) continue;
+    entries.push({
+      providerId: pid,
+      pickerKey: `payg:${pid}`,
+      label: payg.label || pid,
+      icon: payg.icon || '🔧',
+      authMode: 'api_key',
+      source: 'payg',
+    });
+  }
+  return entries;
+}
+
+/** 是否为个人页登记的自定义订阅（可转 API）供给源 */
+function isCustomSubscriptionGatewayId(id, userSubs = []) {
+  return (userSubs || []).some(s => s.custom && s.source_id === id);
+}
+
+/** 已启用卡片：按当前 auth 配置解析验证方式 */
+function resolveCardAuthMode(provider, gatewayAuth) {
+  if (gatewayAuth === 'oauth' || gatewayAuth === 'api_key') return gatewayAuth;
+  if (gatewayAuth === 'both') {
+    if (provider.auth_type === 'oauth' || provider.credentials?.refresh_token) return 'oauth';
+    if (provider.token) return 'api_key';
+    return 'oauth';
+  }
+  return null;
+}
+
+/** 合并个人页自定义订阅（可转 API）到 providers 列表 */
+function mergeCustomSubscriptionProviders(resolved, metaMap, userSubs, paidIds = [], t) {
+  const providers = [...resolved];
+  const meta = { ...metaMap };
+  const allow = new Set(paidIds || []);
+
+  for (const sub of userSubs || []) {
+    if (!sub.custom) continue;
+    const useApi = sub.subscription_to_api === true;
+    const id = sub.source_id;
+    if (!id || !useApi || !allow.has(id)) continue;
+
+    if (!providers.find(p => p.id === id)) {
+      providers.push({
+        id,
+        type: 'paid',
+        enabled: false,
+        token: '',
+        base_url: '',
+        models: [],
+        displayName: sub.app_name || id,
+      });
+    } else {
+      const existing = providers.find(p => p.id === id);
+      if (sub.app_name) existing.displayName = sub.app_name;
+    }
+    if (!meta[id]) {
+      meta[id] = {
+        icon: sub.app_icon || '🔧',
+        label: sub.app_name || id,
+        hint: t('providers.hint.customSub'),
+        keyless: false,
+        key_prefix: [],
+        signup_url: '',
+      };
+    }
+  }
+  return { providers, meta };
+}
+
+function StatsOnlyHint({ names }) {
+  const { t, lang } = useLang();
+  if (!names?.length) return null;
+  const sep = lang === 'en' ? ', ' : '、';
+  return (
+    <p className="text-xs text-gray-500 dark:text-gray-400">
+      {t('providers.statsOnly', { names: names.join(sep) })}
+    </p>
+  );
+}
+
+function PersonalPageHint({ onGo }) {
+  const { t } = useLang();
+  return (
+    <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/80 dark:bg-amber-950/20 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+      <p>
+        {t('providers.personalPage.before')}
+        <strong className="mx-1">{t('providers.personalPage.profile')}</strong>
+        {t('providers.personalPage.after')}
+      </p>
+      <button type="button" onClick={onGo}
+        className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline">
+        {t('providers.personalPage.go')}
+      </button>
+    </div>
+  );
 }
 
 function Toggle({ enabled, onChange }) {
@@ -113,6 +373,7 @@ function Toggle({ enabled, onChange }) {
 // ── P2P Network Card ──────────────────────────────────────────────────────────
 
 function P2PNetworkCard({ provider, onUpdate }) {
+  const { t } = useLang();
   const navigate   = useNavigate();
   const [network,  setNetwork]  = useState(null);
   const [balance,  setBalance]  = useState(null);
@@ -169,7 +430,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
       setNewNote('');
       reloadKeys(newKey?.key || newKey);
     } catch (e) {
-      alert('创建失败: ' + (e.message || '未知错误'));
+      alert(t('providers.err.createFailed', { msg: e.message || t('providers.err.unknown') }));
     } finally {
       setCreating(false);
     }
@@ -184,7 +445,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
       if (selectedKey === keyStr) setSelectedKey(remaining[0]?.key || '');
       if (savedKey === keyStr) setSavedKey('');
     } catch (e) {
-      alert('删除失败: ' + (e.message || '未知错误'));
+      alert(t('providers.err.deleteFailed', { msg: e.message || t('providers.err.unknown') }));
     } finally {
       setDeletingId(null);
     }
@@ -203,7 +464,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
       setKeySaved(true);
       setTimeout(() => setKeySaved(false), 2000);
     } catch (e) {
-      alert('保存失败: ' + e.message);
+      alert(t('providers.err.saveFailed', { msg: e.message }));
     } finally {
       setKeySaving(false);
     }
@@ -253,14 +514,14 @@ function P2PNetworkCard({ provider, onUpdate }) {
   }
 
   function ModelSub({ m }) {
-    if (m.nodes === 0) return <span className="text-gray-600">暂不可用</span>;
+    if (m.nodes === 0) return <span className="text-gray-600">{t('providers.p2p.unavailable')}</span>;
     const avgS = m.latencyCount > 0 ? (m.totalLatency / m.latencyCount / 1000).toFixed(1) : null;
     return (
       <>
-        <span>{m.nodes} 节点</span>
+        <span>{t('providers.p2p.nodeCount', { n: m.nodes })}</span>
         {avgS
           ? <span className="text-gray-500"> · avg {avgS}s</span>
-          : <span className="text-green-600 dark:text-green-400"> · 空闲</span>}
+          : <span className="text-green-600 dark:text-green-400">{t('providers.p2p.idle')}</span>}
       </>
     );
   }
@@ -273,10 +534,10 @@ function P2PNetworkCard({ provider, onUpdate }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-gray-800 dark:text-gray-200">P2P 分享网络</span>
+              <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{t('providers.meta.tokenbank-p2p.label')}</span>
               {provider.enabled && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 border border-green-300 dark:border-green-800/50">
-                  ● 运行中
+                  {t('providers.p2p.running')}
                 </span>
               )}
             </div>
@@ -284,12 +545,12 @@ function P2PNetworkCard({ provider, onUpdate }) {
           </div>
           {!loading && (
             <p className="text-xs text-gray-500 mt-1">
-              {balance !== null ? `余额 ${Math.round(balance)} 积分` : ''}
+              {balance !== null ? t('providers.p2p.balance', { n: Math.round(balance) }) : ''}
               {balance !== null && totalNodes > 0 ? ' · ' : ''}
-              {totalNodes > 0 ? `网络节点 ${totalNodes}` : '获取节点中…'}
+              {totalNodes > 0 ? t('providers.p2p.nodes', { n: totalNodes }) : t('providers.p2p.fetchingNodes')}
             </p>
           )}
-          {loading && <p className="text-xs text-gray-600 mt-1">加载中…</p>}
+          {loading && <p className="text-xs text-gray-600 mt-1">{t('providers.p2p.loading')}</p>}
         </div>
       </div>
 
@@ -298,15 +559,15 @@ function P2PNetworkCard({ provider, onUpdate }) {
         <div className="px-4 pb-4 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-xs text-gray-500">
-              当前可用模型 <span className="text-gray-700">· 社区节点提供</span>
+              {t('providers.p2p.modelsTitle')} <span className="text-gray-700">{t('providers.p2p.modelsSub')}</span>
             </span>
             <button onClick={() => navigate('/network')}
               className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 flex items-center gap-1">
-              🌐 全球网络 →
+              {t('providers.p2p.globalNetwork')}
             </button>
           </div>
           {modelStats.length === 0 && !loading ? (
-            <p className="text-xs text-gray-600 py-2">暂无在线节点</p>
+            <p className="text-xs text-gray-600 py-2">{t('providers.p2p.noNodes')}</p>
           ) : (
             <div className="grid grid-cols-2 gap-2">
               {(modelStats.length > 0 ? modelStats : Array(4).fill(null)).map((m, i) => (
@@ -336,10 +597,10 @@ function P2PNetworkCard({ provider, onUpdate }) {
             className="w-full flex items-center justify-between px-4 py-2.5 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors"
           >
             <span className="flex items-center gap-2">
-              <span>🔑 网关转发 API Key</span>
+              <span>{t('providers.p2p.gatewayKey')}</span>
               {savedKey
-                ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-800/40">已配置</span>
-                : <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/40">未配置</span>
+                ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-800/40">{t('providers.p2p.configured')}</span>
+                : <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/40">{t('providers.p2p.notConfigured')}</span>
               }
             </span>
             <span className="text-gray-400">{showKeyConfig ? '▲' : '▼'}</span>
@@ -347,15 +608,15 @@ function P2PNetworkCard({ provider, onUpdate }) {
 
           {showKeyConfig && (
             <div className="px-4 pb-4 space-y-3">
-              <p className="text-[11px] text-gray-500">选择一个 API Key 用于本地网关转发 P2P 请求时鉴权。</p>
+              <p className="text-[11px] text-gray-500">{t('providers.p2p.keyHint')}</p>
 
               {keysLoading ? (
-                <p className="text-xs text-gray-400">加载中…</p>
+                <p className="text-xs text-gray-400">{t('providers.common.loading')}</p>
               ) : (
                 <div className="space-y-2">
                   {/* Key list */}
                   {apiKeys.length === 0 ? (
-                    <p className="text-xs text-gray-400 dark:text-gray-500">暂无 Key，点击下方新建</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500">{t('providers.p2p.noKeys')}</p>
                   ) : (
                     <div className="space-y-1.5">
                       {apiKeys.map(k => (
@@ -368,7 +629,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
                             {k.note && <p className="text-xs text-gray-700 dark:text-gray-300 truncate">{k.note}</p>}
                             <p className="text-[10px] font-mono text-gray-400 dark:text-gray-500">
                               {k.key.slice(0, 14)}…
-                              {k.key === savedKey && <span className="ml-1.5 text-green-500">✓ 使用中</span>}
+                              {k.key === savedKey && <span className="ml-1.5 text-green-500">{t('providers.p2p.inUse')}</span>}
                             </p>
                           </div>
                           <button
@@ -387,7 +648,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
                   {selectedKey && selectedKey !== savedKey && (
                     <button onClick={handleSaveKey} disabled={keySaving}
                       className="w-full px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-colors">
-                      {keySaving ? '保存…' : keySaved ? '✓ 已保存' : `设为网关 Key`}
+                      {keySaving ? t('providers.p2p.saving') : keySaved ? t('providers.p2p.savedKey') : t('providers.p2p.setGatewayKey')}
                     </button>
                   )}
 
@@ -397,12 +658,12 @@ function P2PNetworkCard({ provider, onUpdate }) {
                       value={newNote}
                       onChange={e => setNewNote(e.target.value)}
                       onKeyDown={e => e.key === 'Enter' && handleCreate()}
-                      placeholder="备注（可选）"
+                      placeholder={t('providers.p2p.notePlaceholder')}
                       className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
                     />
                     <button onClick={handleCreate} disabled={creating}
                       className="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 text-xs text-gray-700 dark:text-gray-300 rounded-lg transition-colors whitespace-nowrap">
-                      {creating ? '创建…' : '+ 新建 Key'}
+                      {creating ? t('providers.p2p.creating') : t('providers.p2p.newKey')}
                     </button>
                   </div>
                 </div>
@@ -415,6 +676,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
 }
 
 function StatusBadge({ enabled, hasKey, keyless }) {
+  const { t } = useLang();
   if (!enabled) return null;
   const connected = keyless || hasKey;
   return (
@@ -423,7 +685,7 @@ function StatusBadge({ enabled, hasKey, keyless }) {
         ? 'bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 border-green-300 dark:border-green-800/50'
         : 'bg-gray-100 dark:bg-gray-800 text-gray-500 border-gray-300 dark:border-gray-700'
     }`}>
-      {connected ? '● 已启用' : '● 需配置'}
+      {connected ? t('providers.badge.enabled') : t('providers.badge.needsConfig')}
     </span>
   );
 }
@@ -434,6 +696,7 @@ function normModel(m) {
 }
 
 function ModelListEditor({ models = [], onChange, scrollable = false }) {
+  const { t } = useLang();
   const [input,     setInput]     = useState('');
   const [inputType, setInputType] = useState('chat');
 
@@ -462,13 +725,13 @@ function ModelListEditor({ models = [], onChange, scrollable = false }) {
                 <span className="px-2 py-0.5">{m.name}</span>
                 <button
                   onClick={() => toggleType(m.name)}
-                  title="切换文本/图像"
+                  title={t('providers.models.toggleType')}
                   className={`px-1.5 py-0.5 text-[10px] font-sans border-l border-gray-300 dark:border-gray-700 transition-colors ${
                     m.type === 'image'
                       ? 'bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 hover:bg-purple-200 dark:hover:bg-purple-800/60'
                       : 'bg-blue-50 dark:bg-blue-900/20 text-blue-500 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40'
                   }`}>
-                  {m.type === 'image' ? '图' : '文'}
+                  {m.type === 'image' ? t('providers.models.typeImage') : t('providers.models.typeText')}
                 </button>
                 <button onClick={() => remove(m.name)} className="px-1.5 py-0.5 border-l border-gray-300 dark:border-gray-700 text-gray-400 hover:text-red-500 dark:hover:text-red-400 leading-none">×</button>
               </span>
@@ -482,15 +745,15 @@ function ModelListEditor({ models = [], onChange, scrollable = false }) {
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && add()}
-          placeholder="输入模型名，回车添加"
+          placeholder={t('providers.models.placeholder')}
           className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
         />
         <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600 shrink-0 text-[10px] font-medium">
-          {[['chat', '文本'], ['image', '图像']].map(([t, label]) => (
-            <button key={t} type="button" onClick={() => setInputType(t)}
+          {[['chat', t('providers.models.chat')], ['image', t('providers.models.image')]].map(([typeKey, label]) => (
+            <button key={typeKey} type="button" onClick={() => setInputType(typeKey)}
               className={`px-2 py-1.5 transition-colors ${
-                inputType === t
-                  ? t === 'chat' ? 'bg-blue-600 text-white' : 'bg-purple-600 text-white'
+                inputType === typeKey
+                  ? typeKey === 'chat' ? 'bg-blue-600 text-white' : 'bg-purple-600 text-white'
                   : 'bg-white dark:bg-gray-800 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
               }`}>
               {label}
@@ -502,34 +765,35 @@ function ModelListEditor({ models = [], onChange, scrollable = false }) {
           disabled={!input.trim()}
           className="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 text-xs text-gray-700 dark:text-gray-300 rounded-lg transition-colors whitespace-nowrap"
         >
-          添加
+          {t('providers.models.add')}
         </button>
       </div>
       {normalized.length === 0 && (
-        <p className="text-[11px] text-gray-400">未添加模型时，此供给源接受所有模型请求</p>
+        <p className="text-[11px] text-gray-400">{t('providers.models.emptyHint')}</p>
       )}
     </div>
   );
 }
 
 function CustomProviderCard({ provider, onUpdate, onRemove, onTest }) {
+  const { t } = useLang();
   const [showKey, setShowKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testMsg, setTestMsg] = useState('');
   const modelCount = (provider.models || []).length;
 
-  const displayLabel = (() => {
-    try { const h = new URL(provider.base_url || '').hostname; return h || '自定义源'; } catch { return '自定义源'; }
+  const displayLabel = provider.displayName || provider.label || (() => {
+    try { const h = new URL(provider.base_url || '').hostname; return h || t('providers.custom.defaultName'); } catch { return t('providers.custom.defaultName'); }
   })();
 
   async function handleTest() {
-    if (!provider.base_url) { setTestMsg('请先填写 Base URL'); return; }
+    if (!provider.base_url) { setTestMsg(t('providers.test.needBaseUrl')); return; }
     setTesting(true); setTestMsg('');
     try {
       const result = await onTest(provider);
-      setTestMsg(result.ok ? '✓ 连接成功' : `✗ ${result.error || `HTTP ${result.status}`}`);
+      setTestMsg(result.ok ? t('providers.test.success') : `✗ ${result.error || `HTTP ${result.status}`}`);
     } catch (e) {
-      setTestMsg(`✗ ${e.message || '未知错误'}`);
+      setTestMsg(`✗ ${e.message || t('providers.err.unknown')}`);
     } finally {
       setTimeout(() => setTestMsg(''), 3000);
       setTesting(false);
@@ -550,7 +814,7 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest }) {
               </span>
               {provider.enabled && provider.base_url && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 border border-green-300 dark:border-green-800/50 shrink-0">
-                  ● 已启用
+                  {t('providers.badge.enabled')}
                 </span>
               )}
             </div>
@@ -558,12 +822,12 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest }) {
               {provider.enabled && provider.base_url && (
                 <button onClick={handleTest} disabled={testing}
                   className="text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors">
-                  {testing ? '…' : '测试'}
+                  {testing ? '…' : t('providers.common.test')}
                 </button>
               )}
               <Toggle enabled={provider.enabled} onChange={() => onUpdate(provider.id, { enabled: !provider.enabled })} />
               <button onClick={() => onRemove(provider.id)}
-                title="删除此供给源"
+                title={t('providers.custom.removeTitle')}
                 className="text-gray-400 hover:text-red-500 dark:hover:text-red-400 text-lg leading-none transition-colors">×</button>
             </div>
           </div>
@@ -581,7 +845,7 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest }) {
                 const v = e.target.value.replace(/\/v1\/?$/, '').replace(/\/$/, '');
                 if (v !== e.target.value) onUpdate(provider.id, { base_url: v });
               }}
-              placeholder="Base URL，如 http://host:3000（无需 /v1）"
+              placeholder={t('providers.custom.baseUrlPlaceholder')}
               className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
             />
             <div className="flex gap-2">
@@ -589,13 +853,13 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest }) {
                 value={provider.token || ''}
                 onChange={e => onUpdate(provider.id, { token: e.target.value })}
                 type={showKey ? 'text' : 'password'}
-                placeholder="API Key（可选）"
+                placeholder={t('providers.custom.apiKeyOptional')}
                 autoComplete="off"
                 className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
               />
               <button onClick={() => setShowKey(v => !v)}
                 className="shrink-0 px-2.5 text-xs rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
-                {showKey ? '隐藏' : '显示'}
+                {showKey ? t('providers.common.hide') : t('providers.common.show')}
               </button>
             </div>
           </div>
@@ -605,10 +869,10 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest }) {
       {/* Model list */}
       <div className="border-t border-gray-100 dark:border-gray-800 px-4 py-3 space-y-2">
         <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-500">模型列表</span>
+          <span className="text-xs text-gray-500">{t('providers.models.list')}</span>
           {modelCount > 0
-            ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">{modelCount} 个</span>
-            : <span className="text-[10px] text-gray-400">未限制</span>
+            ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">{t('providers.models.count', { n: modelCount })}</span>
+            : <span className="text-[10px] text-gray-400">{t('providers.models.unlimited')}</span>
           }
         </div>
         <ModelListEditor
@@ -621,16 +885,8 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest }) {
   );
 }
 
-const SUBSCRIPTION_PLANS_FALLBACK = {
-  'anthropic-paid': [{ id: 'claude-pro', label: 'Claude Pro' }, { id: 'max5x', label: 'Claude Max (5×)' }, { id: 'max20x', label: 'Claude Max (20×)' }],
-  openai: [{ id: 'chatgpt-plus', label: 'ChatGPT Plus' }, { id: 'chatgpt-team', label: 'ChatGPT Team' }, { id: 'chatgpt-pro', label: 'ChatGPT Pro' }],
-  gemini: [{ id: 'gemini-advanced', label: 'Gemini Advanced' }, { id: 'google-one-ai', label: 'Google One AI' }],
-  'github-copilot': [{ id: 'copilot-pro', label: 'Copilot Pro' }, { id: 'copilot-business', label: 'Copilot Business' }],
-  deepseek: [{ id: 'deepseek-pro', label: 'DeepSeek Pro' }],
-  xai: [{ id: 'grok-premium', label: 'Grok Premium' }],
-};
-
-function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = false, subscriptionPlans = [] }) {
+function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = false, gatewayAuthMode = null }) {
+  const { t } = useLang();
   const [showKey,    setShowKey]    = useState(false);
   const [expanded,   setExpanded]   = useState(initialExpanded);
   const [testing,    setTesting]    = useState(false);
@@ -639,23 +895,27 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
   meta = meta || {};
   const isP2P    = provider.type === 'p2p';
   const oauthCap = meta.oauth || null;                 // 该预设支持的 OAuth 登录（可选）
-  const isOauthCfg = provider.auth_type === 'oauth';
+  const forceOauth  = gatewayAuthMode === 'oauth';
+  const forceApiKey = gatewayAuthMode === 'api_key';
+  const isOauthCfg = forceOauth || provider.auth_type === 'oauth';
   const hasOauth = !!(provider.credentials && provider.credentials.refresh_token);
   const hasKey   = !isOauthCfg && !!provider.token;
-  const billingType    = provider.billing_type    || 'api-key';
-  const subMode        = provider.sub_mode        || 'accounting';
-  const subPlan        = provider.subscription_plan || '';
-  const isSubscription = billingType === 'subscription';
-  const subPlans       = subscriptionPlans.length
-    ? subscriptionPlans
-    : (SUBSCRIPTION_PLANS_FALLBACK[provider.id] || [{ id: 'other', label: '其他套餐' }]);
-  // keyless 但支持 OAuth（如 Copilot）：必须登录后才算配置好；订阅记账模式不需要 key
-  const configured = (meta.keyless && !oauthCap) || hasKey || hasOauth || (isSubscription && subMode === 'accounting');
-  const canApiKey = !meta.keyless;
+  const billingType    = forceApiKey ? 'api-key' : (provider.billing_type || 'api-key');
+  const subMode        = forceOauth ? 'api-proxy' : (provider.sub_mode || 'accounting');
+  const isSubscription = forceOauth || billingType === 'subscription';
+  // 付费层：订阅转 API 走 OAuth；按量走 API Key
+  const configured = forceOauth
+    ? hasOauth
+    : forceApiKey
+      ? hasKey
+      : ((meta.keyless && !oauthCap) || hasKey || hasOauth || (isSubscription && subMode === 'accounting'));
+  const canApiKey = !meta.keyless && !forceOauth;
+  const showOauthUi = forceOauth ? !!oauthCap : (oauthCap && (!forceApiKey));
+  const showApiKeyUi = forceApiKey || (canApiKey && !forceOauth);
   const modelCount = (provider.models || []).length;
 
-  // 添加方式：api_key / oauth（仅当预设支持 OAuth 时可切换）
-  const [method, setMethod] = useState(isOauthCfg ? 'oauth' : 'api_key');
+  // 添加方式：api_key / oauth（按量可切换；订阅转 API 固定 OAuth）
+  const [method, setMethod] = useState(forceOauth || isOauthCfg ? 'oauth' : 'api_key');
   const [oauth, setOauth] = useState({ sessionId: '', code: '', busy: false, msg: '', started: false, mode: '', userCode: '' });
   const pollRef = useRef(false);
 
@@ -688,7 +948,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
         if (r.authUrl) await api.openExternal(r.authUrl);
         setOauth(o => ({ ...o, busy: false, started: true, mode: 'pkce', sessionId: r.sessionId }));
       }
-    } catch (e) { setOauth(o => ({ ...o, busy: false, msg: e.message || '登录失败' })); }
+    } catch (e) { setOauth(o => ({ ...o, busy: false, msg: e.message || t('providers.err.loginFailed') })); }
   }
 
   async function pollDevice(sessionId) {
@@ -698,7 +958,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
       if (!pollRef.current) return;
       let r;
       try { r = await api.poll(sessionId); }
-      catch (e) { pollRef.current = false; setOauth(o => ({ ...o, msg: e.message || '轮询失败', started: false })); return; }
+      catch (e) { pollRef.current = false; setOauth(o => ({ ...o, msg: e.message || t('providers.err.pollFailed'), started: false })); return; }
       if (r.done) { pollRef.current = false; saveOauthCreds(r); return; }
     }
   }
@@ -709,7 +969,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
     try {
       const r = await getOauth().exchange(oauth.sessionId, oauth.code.trim());
       saveOauthCreds(r);
-    } catch (e) { setOauth(o => ({ ...o, busy: false, msg: e.message || '换取凭证失败' })); }
+    } catch (e) { setOauth(o => ({ ...o, busy: false, msg: e.message || t('providers.err.exchangeFailed') })); }
   }
 
   function cancelOauth() { pollRef.current = false; resetOauth(); }
@@ -721,13 +981,13 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
   }
 
   async function handleTest() {
-    if (!provider.base_url) { setTestMsg('请先填写 Base URL'); return; }
+    if (!provider.base_url) { setTestMsg(t('providers.test.needBaseUrl')); return; }
     setTesting(true); setTestMsg('');
     try {
       const result = await onTest(provider);
-      setTestMsg(result.ok ? '✓ 连接成功' : `✗ ${result.error || `HTTP ${result.status}`}`);
+      setTestMsg(result.ok ? t('providers.test.success') : `✗ ${result.error || `HTTP ${result.status}`}`);
     } catch (e) {
-      setTestMsg(`✗ ${e.message || '未知错误'}`);
+      setTestMsg(`✗ ${e.message || t('providers.err.unknown')}`);
     } finally {
       setTimeout(() => setTestMsg(''), 3000);
       setTesting(false);
@@ -756,7 +1016,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
               {!isP2P && provider.enabled && (
                 <button onClick={handleTest} disabled={testing}
                   className="text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors">
-                  {testing ? '…' : '测试'}
+                  {testing ? '…' : t('providers.common.test')}
                 </button>
               )}
               <Toggle enabled={provider.enabled} onChange={() => onUpdate(provider.id, { enabled: !provider.enabled })} />
@@ -767,7 +1027,9 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
           {testMsg ? (
             <p className={`text-xs mt-1 ${testMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>{testMsg}</p>
           ) : (
-            <p className="text-xs text-gray-500 mt-1">{meta.hint}</p>
+            <p className="text-xs text-gray-500 mt-1">
+              {forceOauth ? t('providers.card.hint.oauth') : forceApiKey ? t('providers.card.hint.apiKey') : meta.hint}
+            </p>
           )}
 
           {/* Configured (collapsed) row */}
@@ -776,18 +1038,18 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
               <div className="flex items-center gap-2">
                 {isSubscription ? (
                   <code className="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 px-2 py-1 rounded font-mono">
-                    📋 订阅{subMode === 'accounting' ? '·记账' : '·转API'}{subPlan ? ' · ' + (subPlans.find(p => p.id === subPlan)?.label || subPlan) : ''}
+                    {t('providers.card.sub')}{subMode === 'accounting' ? t('providers.card.subAccounting') : t('providers.card.subApiProxy')}
                   </code>
                 ) : isOauthCfg ? (
                   <code className="text-xs text-purple-600 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/30 px-2 py-1 rounded font-mono">
-                    🔑 已登录{provider.credentials?.email ? ' · ' + provider.credentials.email : ''}
+                    {t('providers.card.loggedIn')}{provider.credentials?.email ? ' · ' + provider.credentials.email : ''}
                   </code>
                 ) : (
                   <code className="text-xs text-gray-500 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded font-mono">
-                    {hasKey ? provider.token.slice(0, 4) + '•'.repeat(12) : '（未配置）'}
+                    {hasKey ? provider.token.slice(0, 4) + '•'.repeat(12) : t('providers.card.notConfigured')}
                   </code>
                 )}
-                <button onClick={() => { setExpanded(true); setMethod(isOauthCfg ? 'oauth' : 'api_key'); }} className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-300">修改</button>
+                <button onClick={() => { setExpanded(true); setMethod(isOauthCfg ? 'oauth' : 'api_key'); }} className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-300">{t('providers.common.edit')}</button>
               </div>
               {provider.base_url && (
                 <p className="text-[11px] text-gray-400 dark:text-gray-600 font-mono break-all">{provider.base_url}</p>
@@ -796,52 +1058,41 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
           )}
 
           {/* Inline setup / edit panel */}
-          {!isP2P && (canApiKey || oauthCap) && (!configured || expanded) && (
+          {!isP2P && (showApiKeyUi || showOauthUi) && (!configured || expanded) && (
             <div className="mt-3 space-y-2">
-              {/* 计费方式切换（订阅 / API Key） */}
-              {canApiKey && (
+              {/* 计费方式切换（仅非付费层强制模式时显示） */}
+              {canApiKey && !forceOauth && !forceApiKey && (
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-gray-500 dark:text-gray-400 shrink-0">计费方式</span>
+                  <span className="text-[11px] text-gray-500 dark:text-gray-400 shrink-0">{t('providers.card.billingMode')}</span>
                   <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-700 overflow-hidden text-xs">
                     <button onClick={() => onUpdate(provider.id, { billing_type: 'api-key' })}
                       className={billingType === 'api-key' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>API Key</button>
                     <button onClick={() => onUpdate(provider.id, { billing_type: 'subscription' })}
-                      className={isSubscription ? 'px-3 py-1 bg-amber-500 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>订阅</button>
+                      className={isSubscription ? 'px-3 py-1 bg-amber-500 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>{t('providers.card.subscription')}</button>
                   </div>
                 </div>
               )}
 
-              {/* 订阅套餐 + 接入方式 */}
-              {isSubscription && (
+              {/* 订阅接入方式（非付费层强制 OAuth 时可选） */}
+              {isSubscription && !forceApiKey && !forceOauth && oauthCap && (
                 <div className="space-y-2 pl-1">
                   <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-gray-500 shrink-0">套餐</span>
-                    <select value={subPlan} onChange={e => onUpdate(provider.id, { subscription_plan: e.target.value })}
-                      className="text-xs bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-2 py-1 outline-none text-gray-700 dark:text-gray-300">
-                      <option value="">选择套餐</option>
-                      {subPlans.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-                      <option value="other">其他</option>
-                    </select>
-                  </div>
-                  {oauthCap && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-gray-500 shrink-0">接入方式</span>
-                      <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-700 overflow-hidden text-xs">
-                        <button onClick={() => onUpdate(provider.id, { sub_mode: 'accounting' })}
-                          className={subMode === 'accounting' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>仅记账</button>
-                        <button onClick={() => onUpdate(provider.id, { sub_mode: 'api-proxy' })}
-                          className={subMode === 'api-proxy' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>订阅转 API</button>
-                      </div>
+                    <span className="text-[11px] text-gray-500 shrink-0">{t('providers.card.accessMode')}</span>
+                    <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-700 overflow-hidden text-xs">
+                      <button onClick={() => onUpdate(provider.id, { sub_mode: 'accounting' })}
+                        className={subMode === 'accounting' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>{t('providers.card.accountingOnly')}</button>
+                      <button onClick={() => onUpdate(provider.id, { sub_mode: 'api-proxy' })}
+                        className={subMode === 'api-proxy' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>{t('providers.card.subToApi')}</button>
                     </div>
-                  )}
+                  </div>
                   {subMode === 'accounting' && (
-                    <p className="text-[11px] text-gray-400 dark:text-gray-500">官方订阅客户端，本网关仅统计用量与费用，不转发流量。</p>
+                    <p className="text-[11px] text-gray-400 dark:text-gray-500">{t('providers.card.accountingHint')}</p>
                   )}
                 </div>
               )}
 
-              {/* 添加方式切换（同时支持 API Key 与 OAuth 时显示，且非订阅模式） */}
-              {!isSubscription && canApiKey && oauthCap && (
+              {/* API Key / OAuth 切换（同时登记订阅与按量时） */}
+              {!isSubscription && canApiKey && oauthCap && !forceOauth && !forceApiKey && (
                 <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-700 overflow-hidden text-xs">
                   <button onClick={() => setMethod('api_key')}
                     className={method === 'api_key' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>API Key</button>
@@ -851,44 +1102,47 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
               )}
 
               {/* API Key 方式 */}
-              {!isSubscription && canApiKey && (!oauthCap || method === 'api_key') && (
+              {showApiKeyUi && !isSubscription && (!oauthCap || method === 'api_key' || forceApiKey) && (
                 <>
                   <div className="flex gap-2">
                     <input
                       value={provider.token}
                       onChange={e => onUpdate(provider.id, { token: e.target.value, auth_type: 'api_key' })}
                       type={showKey ? 'text' : 'password'}
-                      placeholder="粘贴 API Key"
+                      placeholder={t('providers.card.pasteApiKey')}
                       autoComplete="off"
                       className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
                     />
                     <button onClick={() => setShowKey(v => !v)}
                       className="shrink-0 px-2.5 text-xs rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
-                      {showKey ? '隐藏' : '显示'}
+                      {showKey ? t('providers.common.hide') : t('providers.common.show')}
                     </button>
                   </div>
                   <div className="flex items-center gap-3">
                     {meta.signup_url && (
                       <a href={meta.signup_url} target="_blank" rel="noreferrer"
-                        className="text-xs text-blue-600 dark:text-blue-400 hover:underline">去领 key ↗</a>
+                        className="text-xs text-blue-600 dark:text-blue-400 hover:underline">{t('providers.card.getKey')}</a>
                     )}
                   </div>
                 </>
               )}
 
-              {/* OAuth 订阅登录方式 */}
-              {oauthCap && (!canApiKey || method === 'oauth' || (isSubscription && subMode === 'api-proxy')) && (
+              {/* OAuth 订阅登录 */}
+              {showOauthUi && (!canApiKey || method === 'oauth' || (isSubscription && subMode === 'api-proxy') || forceOauth) && (
                 <div className="space-y-2">
+                  {forceOauth && !oauthCap && (
+                    <p className="text-[11px] text-amber-600 dark:text-amber-400">{t('providers.card.oauthUnsupported')}</p>
+                  )}
                   {hasOauth && (
                     <p className="text-xs text-green-600 dark:text-green-400">
-                      ✓ 已登录{provider.credentials?.email ? ' · ' + provider.credentials.email : ''}
-                      <button onClick={clearOauth} className="ml-2 text-gray-500 hover:text-red-500">退出</button>
+                      {t('providers.card.oauthLoggedIn')}{provider.credentials?.email ? ' · ' + provider.credentials.email : ''}
+                      <button onClick={clearOauth} className="ml-2 text-gray-500 hover:text-red-500">{t('providers.card.logout')}</button>
                     </p>
                   )}
                   {!oauth.started && (
                     <button onClick={startOauth} disabled={oauth.busy}
                       className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-blue-600 dark:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50">
-                      {oauth.busy ? '…' : (hasOauth ? '重新登录' : `登录 ${oauthCap.label}`)}
+                      {oauth.busy ? '…' : (hasOauth ? t('providers.card.relogin') : t('providers.card.login', { label: oauthCap.label }))}
                     </button>
                   )}
 
@@ -897,13 +1151,13 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
                     <div className="text-xs text-gray-600 dark:text-gray-300 space-y-1">
                       {oauth.userCode ? (
                         <>
-                          <p>已打开授权页，请在浏览器中输入验证码：</p>
+                          <p>{t('providers.card.deviceCodeHint')}</p>
                           <p className="font-mono text-base tracking-widest text-blue-600 dark:text-blue-400 select-all">{oauth.userCode}</p>
                         </>
                       ) : (
-                        <p>已打开浏览器，请在 Google 页面完成授权…</p>
+                        <p>{t('providers.card.browserAuthHint')}</p>
                       )}
-                      <p className="text-gray-400">授权完成后将自动登录…<button onClick={cancelOauth} className="ml-2 text-gray-500 hover:text-red-500">取消</button></p>
+                      <p className="text-gray-400">{t('providers.card.autoLoginHint')}<button onClick={cancelOauth} className="ml-2 text-gray-500 hover:text-red-500">{t('providers.common.cancel')}</button></p>
                     </div>
                   )}
 
@@ -911,10 +1165,10 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
                   {oauth.started && oauth.mode === 'pkce' && (
                     <div className="flex gap-2">
                       <input value={oauth.code} onChange={e => setOauth(o => ({ ...o, code: e.target.value }))}
-                        placeholder="粘贴回调里的 code（code#state）"
+                        placeholder={t('providers.card.codePlaceholder')}
                         className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500" />
                       <button onClick={finishOauth} disabled={oauth.busy || !oauth.code.trim()}
-                        className="shrink-0 px-3 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50">② 完成</button>
+                        className="shrink-0 px-3 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50">{t('providers.card.finishStep')}</button>
                     </div>
                   )}
 
@@ -922,10 +1176,10 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
                   {oauth.started && oauth.mode === 'paste' && (
                     <div className="space-y-2">
                       <textarea value={oauth.code} onChange={e => setOauth(o => ({ ...o, code: e.target.value }))}
-                        placeholder="粘贴 Google access token（ya29 开头）或 oauth_creds.json 全文" rows={3}
+                        placeholder={t('providers.card.pasteTokenPlaceholder')} rows={3}
                         className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm font-mono focus:outline-none focus:border-blue-500" />
                       <button onClick={finishOauth} disabled={oauth.busy || !oauth.code.trim()}
-                        className="px-3 py-1 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50">完成</button>
+                        className="px-3 py-1 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50">{t('providers.card.finish')}</button>
                     </div>
                   )}
 
@@ -940,14 +1194,14 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
                   value={provider.base_url || ''}
                   onChange={e => onUpdate(provider.id, { base_url: e.target.value })}
                   type="text"
-                  placeholder="留空使用默认地址"
+                  placeholder={t('providers.card.defaultBaseUrl')}
                   autoComplete="off"
                   className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm font-mono text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
                 />
               </div>
 
               {expanded && (
-                <button onClick={() => setExpanded(false)} className="text-xs text-gray-600 hover:text-gray-600 dark:text-gray-400">取消</button>
+                <button onClick={() => setExpanded(false)} className="text-xs text-gray-600 hover:text-gray-600 dark:text-gray-400">{t('providers.common.cancel')}</button>
               )}
             </div>
           )}
@@ -955,7 +1209,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
           {/* P2P info */}
           {isP2P && (
             <p className="text-xs text-gray-500 mt-1">
-              消耗积分调用社区共享算力，积分不足时自动跳过此层。
+              {t('providers.p2p.creditsHint')}
             </p>
           )}
         </div>
@@ -964,7 +1218,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
         {(canApiKey || oauthCap) && !isP2P && !configured && !expanded && (
           <button onClick={() => { setExpanded(true); onUpdate(provider.id, { enabled: true }); }}
             className="shrink-0 text-xs px-3 py-1.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-blue-600 dark:text-blue-400 border border-gray-300 dark:border-gray-700 rounded-lg transition-colors">
-            立即启用 →
+            {t('providers.card.enableNow')}
           </button>
         )}
       </div>
@@ -973,10 +1227,10 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
       {!isP2P && (
         <div className="border-t border-gray-100 dark:border-gray-800 px-4 py-3 space-y-2">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">模型列表</span>
+            <span className="text-xs text-gray-500">{t('providers.models.list')}</span>
             {modelCount > 0
-              ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">{modelCount} 个</span>
-              : <span className="text-[10px] text-gray-400">未限制</span>
+              ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">{t('providers.models.count', { n: modelCount })}</span>
+              : <span className="text-[10px] text-gray-400">{t('providers.models.unlimited')}</span>
             }
           </div>
           <ModelListEditor
@@ -992,24 +1246,67 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
 
 
 export default function Providers() {
+  const { t } = useLang();
+  const navigate = useNavigate();
+  const tierConfig = useMemo(() => getTierConfig(t), [t]);
+  const oauthById = useMemo(() => getOAuthById(t), [t]);
   const [providers, setProviders] = useState(FALLBACK_PROVIDERS);
   const [meta,      setMeta]      = useState(FALLBACK_PROVIDER_META);
-  const [subscriptionPlans, setSubscriptionPlans] = useState(SUBSCRIPTION_PLANS_FALLBACK);
+  const [paidAllowlist, setPaidAllowlist] = useState(null);  // null=加载中
+  const [providerGatewayAuth, setProviderGatewayAuth] = useState({});
+  const [userSubscriptions, setUserSubscriptions] = useState([]);
+  const [subscriptionCatalog, setSubscriptionCatalog] = useState([]);
+  const [statsOnlyIds, setStatsOnlyIds] = useState([]);
+  const [userPayg, setUserPayg] = useState([]);
   const [savedMsg,  setSavedMsg]  = useState('');
   // Track the last value written/loaded so we skip the initial load trigger
   const lastSaved = useRef(null);
+  const [addingPickerKey, setAddingPickerKey] = useState(null);
+  const [addingAuthMode, setAddingAuthMode] = useState(null);
+  const [gatewayPickerEntries, setGatewayPickerEntries] = useState([]);
+
+  const loadUserPaidAccounts = useCallback(async () => {
+    if (!window.electronAPI?.localConfig?.getUserAccounts) {
+      setPaidAllowlist([]);
+      setUserPayg([]);
+      return;
+    }
+    try {
+      const r = await window.electronAPI.localConfig.getUserAccounts();
+      setPaidAllowlist(r.gateway_provider_ids || []);
+      setProviderGatewayAuth(r.provider_gateway_auth || {});
+      setUserSubscriptions(r.user_subscriptions || []);
+      setSubscriptionCatalog(r.subscription_catalog || []);
+      setGatewayPickerEntries(
+        r.gateway_picker_entries?.length
+          ? r.gateway_picker_entries
+          : buildGatewayPickerEntries(r.user_subscriptions, r.user_payg_providers, r.subscription_catalog),
+      );
+      setStatsOnlyIds(r.stats_only_provider_ids || []);
+      setUserPayg(r.user_payg_providers || []);
+    } catch {
+      setPaidAllowlist([]);
+      setUserPayg([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadUserPaidAccounts();
+    const unsub = window.electronAPI?.localConfig?.onBillingChanged?.(loadUserPaidAccounts);
+    return () => unsub?.();
+  }, [loadUserPaidAccounts]);
 
   useEffect(() => {
     (async () => {
       // 1) 源目录由后端下发，拉不到则回退内置兜底
       let defaults = FALLBACK_PROVIDERS;
-      let metaMap  = FALLBACK_PROVIDER_META;
+      let metaMap  = localizeProviderMeta(FALLBACK_PROVIDER_META, t);
       try {
         const { data } = await getProviderCatalog();
         if (data?.providers?.length) {
-          const s = catalogToState(data);
+          const s = catalogToState(data, oauthById);
           defaults = s.defaults;
-          metaMap  = s.meta;
+          metaMap  = localizeProviderMeta(s.meta, t);
         }
       } catch { /* 离线 / VPS 不可达：用兜底目录 */ }
       setMeta(metaMap);
@@ -1032,17 +1329,20 @@ export default function Providers() {
       } else {
         resolved = defaults;
       }
-      lastSaved.current = resolved;
-      setProviders(resolved);
-
-      // 订阅套餐从个人页配置读取（与 billing-config 默认合并）
-      if (window.electronAPI?.localConfig?.getBilling) {
-        window.electronAPI.localConfig.getBilling()
-          .then(r => { if (r?.subscription_plans) setSubscriptionPlans(r.subscription_plans); })
-          .catch(() => {});
-      }
+      const merged = mergeUserPaygIntoProviders(resolved, metaMap, userPayg, t);
+      const withCustomSubs = mergeCustomSubscriptionProviders(
+        merged.providers, merged.meta, userSubscriptions, paidAllowlist || [], t,
+      );
+      lastSaved.current = withCustomSubs.providers;
+      setProviders(withCustomSubs.providers);
+      setMeta(localizeProviderMeta(withCustomSubs.meta, t));
     })();
-  }, []);
+  }, [userPayg, userSubscriptions, paidAllowlist, t, oauthById]);
+
+  // 语言切换时刷新 meta 文案
+  useEffect(() => {
+    setMeta(prev => localizeProviderMeta(prev, t));
+  }, [t]);
 
   // Auto-save with 500 ms debounce; skip initial load
   useEffect(() => {
@@ -1055,25 +1355,75 @@ export default function Providers() {
         );
         await getConfig().write({ ...cfg, providers: normalizedProviders });
         lastSaved.current = providers;
-        setSavedMsg('已保存');
+        setSavedMsg(t('providers.saved'));
         setTimeout(() => setSavedMsg(''), 1500);
       } catch {}
     }, 500);
     return () => clearTimeout(timer);
-  }, [providers]);
+  }, [providers, meta, t]);
 
   const updateProvider = useCallback((id, patch) => {
-    setProviders(prev => prev.map(p => p.id === id ? { ...p, ...patch } : p));
+    setProviders(prev => {
+      const i = prev.findIndex(p => p.id === id);
+      if (i < 0) {
+        return [...prev, { id, type: 'paid', enabled: false, token: '', base_url: '', models: [], ...patch }];
+      }
+      return prev.map(p => (p.id === id ? { ...p, ...patch } : p));
+    });
   }, []);
+
+  /** 选中选择器条目：按订阅/按量预设验证方式 */
+  const selectPickerEntry = useCallback((entry) => {
+    const isDeselect = addingPickerKey === entry.pickerKey;
+    if (isDeselect) {
+      setAddingPickerKey(null);
+      setAddingId(null);
+      setAddingAuthMode(null);
+      return;
+    }
+    setAddingPickerKey(entry.pickerKey);
+    setAddingId(entry.providerId);
+    setAddingAuthMode(entry.authMode);
+    const base = {
+      id: entry.providerId,
+      type: 'paid',
+      enabled: false,
+      token: '',
+      base_url: '',
+      models: [],
+      displayName: entry.label,
+    };
+    if (entry.authMode === 'oauth') {
+      updateProvider(entry.providerId, {
+        ...base,
+        auth_type: 'oauth',
+        billing_type: 'subscription',
+        sub_mode: 'api-proxy',
+      });
+    } else {
+      updateProvider(entry.providerId, {
+        ...base,
+        auth_type: 'api_key',
+        billing_type: 'api-key',
+        credentials: null,
+        oauth_provider: '',
+      });
+    }
+  }, [addingPickerKey, updateProvider]);
 
   const removeProvider = useCallback((id) => {
     setProviders(prev => prev.filter(p => p.id !== id));
   }, []);
 
   function addCustomProvider() {
-    const id = `custom-${Date.now()}`;
-    setProviders(prev => [...prev, { id, type: 'paid', enabled: true, token: '', base_url: '', models: [] }]);
+    navigate('/', { state: { accountsTab: 'payg' } });
   }
+
+  const goPersonalPage = () => navigate('/', { state: { accountsTab: 'subscription' } });
+  const paidAccountsLoaded = paidAllowlist !== null;
+  const hasPersonalPaid = paidAccountsLoaded && (paidAllowlist.length > 0 || statsOnlyIds.length > 0);
+  const hasGatewayPaid = paidAccountsLoaded && paidAllowlist.length > 0;
+  const statsOnlyLabels = statsOnlyIds.map(id => meta[id]?.label || FALLBACK_PROVIDER_META[id]?.label || id);
 
   async function testProvider(p) {
     return getGateway().testProvider({
@@ -1089,7 +1439,11 @@ export default function Providers() {
   useEffect(() => {
     if (!addingId) return;
     const p = providers.find(p => p.id === addingId);
-    if (p?.enabled) setAddingId(null);
+    if (p?.enabled) {
+      setAddingId(null);
+      setAddingPickerKey(null);
+      setAddingAuthMode(null);
+    }
   }, [providers, addingId]);
 
   const tiers = ['free', 'p2p', 'paid'];
@@ -1100,15 +1454,15 @@ export default function Providers() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">供给源</h1>
-          <p className="text-sm text-gray-500 mt-0.5">启用供给源后，网关可按场景路由请求</p>
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('providers.title')}</h1>
+          <p className="text-sm text-gray-500 mt-0.5">{t('providers.subtitle')}</p>
         </div>
         {savedMsg && <span className="text-sm text-green-600 dark:text-green-400">{savedMsg}</span>}
       </div>
 
       {/* Tier sections */}
       {tiers.map(tier => {
-        const cfg      = TIER_CONFIG[tier];
+        const cfg      = tierConfig[tier];
         const allItems = providers.filter(p => p.type === tier);
 
         if (tier === 'p2p') {
@@ -1126,13 +1480,56 @@ export default function Providers() {
           );
         }
 
-        const enabledItems  = allItems.filter(p => p.enabled);
-        const disabledItems = allItems.filter(p => !p.enabled);
+        // 付费层：按个人页登记 id 构建池（含目录标为 free 的按量源，如 groq）
+        const personalPool = tier === 'paid'
+          ? buildPersonalPaidPool(providers, paidAllowlist || [], userPayg, userSubscriptions)
+          : [];
+        const liveState = (p) => withProviderDisplayName(providers.find(x => x.id === p.id) || p, userPayg, userSubscriptions, meta);
+        const enabledItems  = tier === 'paid'
+          ? personalPool.filter(p => liveState(p).enabled)
+          : allItems.filter(p => p.enabled);
+        const disabledItems = tier === 'paid'
+          ? personalPool.filter(p => !liveState(p).enabled)
+          : allItems.filter(p => !p.enabled);
+        const disabledPickerEntries = tier === 'paid'
+          ? gatewayPickerEntries.filter(e => !liveState({ id: e.providerId }).enabled)
+          : [];
+        const disabledSubEntries = disabledPickerEntries.filter(e => e.source === 'subscription');
+        const disabledPaygEntries = disabledPickerEntries.filter(e => e.source === 'payg');
+        const disabledCustomSubEntries = disabledSubEntries.filter(e => e.custom);
+        const disabledCatalogSubEntries = disabledSubEntries.filter(e => !e.custom);
         const isOpen        = addingTier === tier;
 
         function togglePicker() {
-          if (isOpen) { setAddingTier(null); setAddingId(null); }
-          else        { setAddingTier(tier); setAddingId(null); }
+          if (isOpen) {
+            setAddingTier(null);
+            setAddingId(null);
+            setAddingPickerKey(null);
+            setAddingAuthMode(null);
+          } else {
+            setAddingTier(tier);
+          }
+        }
+
+        function renderPickerButton(entry) {
+          const sel = addingPickerKey === entry.pickerKey;
+          const authTag = entry.authMode === 'oauth' ? 'OAuth' : 'Key';
+          return (
+            <button key={entry.pickerKey} type="button" onClick={() => selectPickerEntry(entry)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
+                sel
+                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
+                  : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'
+              }`}>
+              <span>{entry.icon}</span>
+              <span>{entry.label}</span>
+              <span className={`text-[10px] px-1 rounded ${
+                entry.authMode === 'oauth'
+                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                  : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+              }`}>{authTag}</span>
+            </button>
+          );
         }
 
         return (
@@ -1145,13 +1542,15 @@ export default function Providers() {
 
             <div className={`grid ${cfg.cols} gap-3`}>
               {/* Enabled providers */}
-              {enabledItems.map(p =>
-                meta[p.id]
-                  ? <ProviderCard key={p.id} provider={p} meta={meta[p.id]} onUpdate={updateProvider} onTest={testProvider} subscriptionPlans={subscriptionPlans[p.id] || []} />
-                  : <CustomProviderCard key={p.id} provider={p} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} />
-              )}
+              {enabledItems.map(p => {
+                const live = tier === 'paid' ? liveState(p) : p;
+                const useCustomCard = isCustomSubscriptionGatewayId(live.id, userSubscriptions) || !meta[live.id];
+                return !useCustomCard
+                  ? <ProviderCard key={live.id} provider={live} meta={meta[live.id]} onUpdate={updateProvider} onTest={testProvider} gatewayAuthMode={tier === 'paid' ? resolveCardAuthMode(live, providerGatewayAuth[live.id]) : null} />
+                  : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} />;
+              })}
 
-              {/* Add card */}
+              {/* 添加供给源：始终展示；付费层无个人页账户时点开显示引导 */}
               <button onClick={togglePicker}
                 className={`flex flex-col items-center justify-center gap-1.5 rounded-2xl border-2 border-dashed min-h-[90px] transition-colors ${
                   isOpen
@@ -1159,9 +1558,12 @@ export default function Providers() {
                     : 'border-gray-200 dark:border-gray-700 text-gray-400 hover:border-gray-300 dark:hover:border-gray-600 hover:text-gray-500'
                 }`}>
                 <span className="text-xl leading-none">{isOpen ? '×' : '+'}</span>
-                <span className="text-xs font-medium">{isOpen ? '收起' : '添加供给源'}</span>
-                {!isOpen && disabledItems.length > 0 && (
-                  <span className="text-[10px] text-gray-300 dark:text-gray-600">{disabledItems.length} 个可选</span>
+                <span className="text-xs font-medium">{isOpen ? t('providers.add.collapse') : t('providers.add.expand')}</span>
+                {!isOpen && tier === 'paid' && paidAccountsLoaded && !hasGatewayPaid && (
+                  <span className="text-[10px] text-amber-500 dark:text-amber-400">{t('providers.add.needProfile')}</span>
+                )}
+                {!isOpen && disabledPickerEntries.length > 0 && (
+                  <span className="text-[10px] text-gray-300 dark:text-gray-600">{t('providers.add.availableCount', { n: disabledPickerEntries.length })}</span>
                 )}
               </button>
             </div>
@@ -1169,13 +1571,63 @@ export default function Providers() {
             {/* Picker panel */}
             {isOpen && (
               <div className="p-4 bg-gray-50 dark:bg-gray-800/40 rounded-2xl border border-gray-200 dark:border-gray-700 space-y-3">
-                <p className="text-xs text-gray-500 dark:text-gray-400">选择要添加的供给源：</p>
+                {tier === 'paid' && !paidAccountsLoaded && (
+                  <p className="text-xs text-gray-400">{t('providers.add.loadingAccounts')}</p>
+                )}
+                {tier === 'paid' && paidAccountsLoaded && !hasGatewayPaid ? (
+                  <>
+                    <PersonalPageHint onGo={goPersonalPage} />
+                    <StatsOnlyHint names={statsOnlyLabels} />
+                  </>
+                ) : (
+                <>
+                <StatsOnlyHint names={statsOnlyLabels} />
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  {tier === 'paid'
+                    ? t('providers.add.paidHint')
+                    : t('providers.add.freeHint')}
+                </p>
+                {tier === 'paid' ? (
+                  <div className="space-y-3">
+                    {disabledCatalogSubEntries.length > 0 && (
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-medium text-amber-700 dark:text-amber-300">{t('providers.add.catalogSub')}</p>
+                        <div className="flex flex-wrap gap-2">
+                          {disabledCatalogSubEntries.map(renderPickerButton)}
+                        </div>
+                      </div>
+                    )}
+                    {disabledCustomSubEntries.length > 0 && (
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-medium text-amber-700/80 dark:text-amber-300/80">{t('providers.add.customSub')}</p>
+                        <div className="flex flex-wrap gap-2">
+                          {disabledCustomSubEntries.map(renderPickerButton)}
+                        </div>
+                      </div>
+                    )}
+                    {disabledPaygEntries.length > 0 && (
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-medium text-emerald-700 dark:text-emerald-300">{t('providers.add.payg')}</p>
+                        <div className="flex flex-wrap gap-2">
+                          {disabledPaygEntries.map(renderPickerButton)}
+                        </div>
+                      </div>
+                    )}
+                    {disabledPickerEntries.length === 0 && hasGatewayPaid && (
+                      <p className="text-xs text-gray-400">{t('providers.add.allAdded')}</p>
+                    )}
+                    <button type="button" onClick={() => { addCustomProvider(); setAddingTier(null); }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-gray-300 dark:border-gray-600 text-xs text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-500 transition-colors bg-white dark:bg-gray-900">
+                      <span>+</span> {t('providers.add.goProfile')}
+                    </button>
+                  </div>
+                ) : (
                 <div className="flex flex-wrap gap-2">
                   {disabledItems.map(p => {
                     const m = meta[p.id] || {};
                     const sel = addingId === p.id;
                     return (
-                      <button key={p.id} onClick={() => setAddingId(sel ? null : p.id)}
+                      <button key={p.id} type="button" onClick={() => setAddingId(sel ? null : p.id)}
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
                           sel
                             ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
@@ -1186,27 +1638,54 @@ export default function Providers() {
                       </button>
                     );
                   })}
-                  {tier === 'paid' && (
-                    <button onClick={() => { addCustomProvider(); setAddingTier(null); }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-gray-300 dark:border-gray-600 text-xs text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-500 transition-colors bg-white dark:bg-gray-900">
-                      <span>+</span> 自定义 OpenAI 兼容源
-                    </button>
+                  {disabledItems.length === 0 && (
+                    <p className="text-xs text-gray-400">{t('providers.add.noneAvailable')}</p>
                   )}
                 </div>
+                )}
 
                 {/* Config card for selected provider */}
                 {addingId && (() => {
-                  const p = disabledItems.find(pr => pr.id === addingId);
+                  const entry = gatewayPickerEntries.find(e => e.pickerKey === addingPickerKey)
+                    || gatewayPickerEntries.find(e => e.providerId === addingId);
+                  const pid = addingId;
+                  const stubFromEntry = entry ? {
+                    id: pid,
+                    type: 'paid',
+                    enabled: false,
+                    token: '',
+                    base_url: '',
+                    models: [],
+                    displayName: entry.label,
+                  } : null;
+                  const p = tier === 'paid'
+                    ? (personalPool.find(pr => pr.id === pid) || providers.find(pr => pr.id === pid) || stubFromEntry)
+                    : disabledItems.find(pr => pr.id === pid);
                   if (!p) return null;
+                  const live = tier === 'paid' ? liveState(p) : p;
+                  const cardAuth = tier === 'paid'
+                    ? (addingAuthMode || resolveCardAuthMode(live, providerGatewayAuth[pid]))
+                    : null;
+                  const useCustomCard = entry?.custom || isCustomSubscriptionGatewayId(pid, userSubscriptions) || !meta[pid];
                   return (
                     <div className="mt-1">
-                      {meta[addingId]
-                        ? <ProviderCard key={addingId} provider={p} meta={meta[addingId]} onUpdate={updateProvider} onTest={testProvider} initialExpanded subscriptionPlans={subscriptionPlans[addingId] || []} />
-                        : <CustomProviderCard key={addingId} provider={p} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} />
+                      {entry && (
+                        <p className="text-[10px] text-gray-400 mb-2">
+                          {t('providers.add.configuring', {
+                            label: entry.label,
+                            auth: entry.authMode === 'oauth' ? t('providers.add.authOauth') : t('providers.add.authApiKey'),
+                          })}
+                        </p>
+                      )}
+                      {!useCustomCard
+                        ? <ProviderCard key={pid} provider={live} meta={meta[pid]} onUpdate={updateProvider} onTest={testProvider} initialExpanded gatewayAuthMode={cardAuth} />
+                        : <CustomProviderCard key={pid} provider={live} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} />
                       }
                     </div>
                   );
                 })()}
+                </>
+                )}
               </div>
             )}
           </section>

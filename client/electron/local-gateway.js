@@ -144,9 +144,45 @@ function enabledProviders() {
 // Returns true if provider can serve the given model
 function providerHasModel(provider, model) {
   const list = provider.models;
-  if (!Array.isArray(list) || list.length === 0) return true; // no list = serves any
-  // models may be strings or {name, type} objects
+  // P2P 仅服务云端在线模型列表，不能因 models 为空就匹配任意模型（否则会抢在付费源之前回退）
+  if (provider.type === 'p2p') {
+    return _peerModels.size > 0 && _peerModels.has(model);
+  }
+  if (!Array.isArray(list) || list.length === 0) return true; // 无列表 = 接受任意（付费/免费自定义源）
   return list.some(m => (typeof m === 'string' ? m : m.name) === model);
+}
+
+/** 从上游 4xx/5xx 响应体提取可读错误信息 */
+function formatHttpError(statusCode, bodyStr) {
+  let msg = `HTTP_${statusCode}`;
+  if (!bodyStr) return msg;
+  try {
+    const j = JSON.parse(bodyStr);
+    const em = j.error?.message || j.error?.detail || (typeof j.error === 'string' ? j.error : '');
+    if (em) return `${msg}: ${em}`;
+  } catch {}
+  const t = String(bodyStr).trim().slice(0, 240);
+  return t ? `${msg}: ${t}` : msg;
+}
+
+function readProxyError(proxyRes, reject) {
+  const chunks = [];
+  proxyRes.on('data', c => chunks.push(c));
+  proxyRes.on('end', () => {
+    const body = Buffer.concat(chunks).toString();
+    const msg = formatHttpError(proxyRes.statusCode, body);
+    reject(Object.assign(new Error(msg), { status: proxyRes.statusCode, body }));
+  });
+  proxyRes.on('error', () => {
+    reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode }));
+  });
+}
+
+/** 路由失败时优先展示付费/本地源错误，避免 P2P 401 掩盖上游真实原因 */
+function pickBestRouteError(errors) {
+  if (!errors?.length) return null;
+  const nonP2p = errors.find(e => e.id !== 'tokenbank-p2p');
+  return (nonP2p || errors[0]).err;
 }
 
 // ── HTTP proxy ────────────────────────────────────────────────────────────────
@@ -197,8 +233,7 @@ function proxyRequest(provider, reqPath, body, res) {
 
     const proxyReq = mod.request(opts, (proxyRes) => {
       if (proxyRes.statusCode >= 400) {
-        proxyRes.resume();
-        return reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode }));
+        return readProxyError(proxyRes, reject);
       }
       if (res.headersSent) {
         proxyRes.resume();
@@ -1163,6 +1198,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
 
     const all          = enabledProviders().filter(p => !skipP2P || p.type !== 'p2p');
     const failedModels = [];
+    const stepErrors   = [];
 
     for (const step of steps) {
       // 场景步骤就是真实模型；claudeFrom 标记原始 claude 名（路由明细展示透明转化）。
@@ -1193,6 +1229,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           stepSucceeded = true;
           return;
         } catch (err) {
+          stepErrors.push({ id: provider.id, err });
           lastErr = err;
           if (res.headersSent) return;
         }
@@ -1200,6 +1237,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       if (!stepSucceeded) failedModels.push(stepModel);
     }
 
+    lastErr = pickBestRouteError(stepErrors) || lastErr;
     fail(scene.scene_name, failedModels);
     return;
   }
@@ -1246,6 +1284,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     candidates: sorted.map(p => ({ id: p.id, type: p.type, models: p.models })),
   });
 
+  const routeErrors = [];
   for (const provider of sorted) {
     try {
       const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, model, res);
@@ -1262,11 +1301,13 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       reportUsage(provider.id, model, directTok);
       return;
     } catch (err) {
+      routeErrors.push({ id: provider.id, err });
       lastErr = err;
       if (res.headersSent) return;
     }
   }
 
+  lastErr = pickBestRouteError(routeErrors) || lastErr;
   fail(null, null);
 }
 
