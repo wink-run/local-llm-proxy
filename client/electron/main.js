@@ -1723,6 +1723,8 @@ function registerIPC() {
     const cc = readLocalConfig().cloud_config || {};
     if (cc.url && cc.token) fetchPeerModels(cc.url, cc.token);
   }, 60_000);
+
+  return { computeImportSkip };
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
@@ -1730,7 +1732,7 @@ function registerIPC() {
 app.whenReady().then(() => {
   createWindow();
   createTray();
-  registerIPC();
+  const { computeImportSkip } = registerIPC();
   // Init local SQLite stats DB in Electron userData directory
   localStats.init(app.getPath('userData'));
   gateway.setStatsRecorder(localStats.record);
