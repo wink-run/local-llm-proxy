@@ -28,6 +28,30 @@ const ORDER_STATUS = { pending: '待审核', approved: '已通过', rejected: '�
 const RANGES    = ['今日', '7 天', '30 天'];
 const RANGE_DAYS = { '今日': 1, '7 天': 7, '30 天': 30 };
 
+const DATA_SOURCE_LABELS = {
+  'proxy':            '🛰️ 网关实时',
+  'session-claude':   '🔷 Claude Code',
+  'session-codex':    '⚡ Codex',
+  'session-gemini':   '♊ Gemini CLI',
+  'session-cursor':   '🖱️ Cursor',
+  'session-opencode': '📝 OpenCode',
+  'session-copilot':  '🤖 Copilot CLI',
+};
+
+const SUB_PLAN_LABELS = {
+  'claude-pro':       'Claude Pro',
+  'max5x':            'Claude Max 5×',
+  'max20x':           'Claude Max 20×',
+  'chatgpt-plus':     'ChatGPT Plus',
+  'chatgpt-team':     'ChatGPT Team',
+  'chatgpt-pro':      'ChatGPT Pro',
+  'gemini-advanced':  'Gemini Advanced',
+  'copilot-pro':      'Copilot Pro',
+  'copilot-business': 'Copilot Business',
+  'cursor-pro':       'Cursor Pro',
+  'cursor-ultra':     'Cursor Ultra',
+};
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function ProviderBar({ id, calls, totalCalls }) {
@@ -129,6 +153,54 @@ function SpinCard({ onSuccess }) {
   );
 }
 
+// ── Agent source chart ────────────────────────────────────────────────────────
+function AgentSourceChart({ sources }) {
+  if (!sources?.length) return null;
+  const maxCalls = Math.max(...sources.map(s => s.calls), 1);
+  return (
+    <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+      <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">工具来源分布</h2>
+      <div className="space-y-2.5">
+        {sources.map(s => {
+          const label = DATA_SOURCE_LABELS[s.source] || s.source;
+          const pct   = Math.round(s.calls / maxCalls * 100);
+          return (
+            <div key={s.source} className="flex items-center gap-3 text-sm">
+              <div className="w-32 shrink-0 text-xs text-gray-600 dark:text-gray-400 truncate">{label}</div>
+              <div className="flex-1 bg-gray-100 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
+                <div className="h-2 rounded-full bg-emerald-400 transition-all duration-500" style={{ width: `${pct}%` }} />
+              </div>
+              <span className="w-10 shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">{s.calls}</span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+// ── Subscription bar ──────────────────────────────────────────────────────────
+function SubscriptionBar({ providers }) {
+  const subs = (providers || []).filter(p => p.billing_type === 'subscription' && p.enabled);
+  if (!subs.length) return null;
+  return (
+    <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+      <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">订阅接入</h2>
+      <div className="divide-y divide-gray-100 dark:divide-gray-700/50">
+        {subs.map(p => (
+          <div key={p.id} className="flex items-center gap-3 py-2 first:pt-0 last:pb-0">
+            <span className="text-xs text-gray-700 dark:text-gray-300 w-28 shrink-0 font-medium">{p.label || p.id}</span>
+            <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/40">
+              {SUB_PLAN_LABELS[p.subscription_plan] || '订阅'}
+            </span>
+            <span className="text-[11px] text-gray-400">{p.sub_mode === 'api-proxy' ? '订阅转 API' : '仅记账'}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // ── Devices section ───────────────────────────────────────────────────────────
 
 const DEVICE_ICON = { desktop: '💻', cli: '🖥' };
@@ -226,11 +298,15 @@ export default function TokenDashboard() {
   const [rangeStats,  setRangeStats] = useState({ calls: 0, tokens: 0, free: 0, p2p: 0, paid: 0 });
   const [rangeModels, setRangeModels]= useState([]);
   const [localData,   setLocalData]  = useState(null);
+  const [cfgProviders, setCfgProviders] = useState([]);
 
   useEffect(() => {
     refreshUser();
     getTransactions().then(r => setTxs(r.data.transactions || [])).catch(() => {});
     getPurchaseOrders().then(r => { setOrders(r.data.orders || []); if (r.data.contact_info) setAdminInfo(String(r.data.contact_info)); }).catch(() => {});
+    if (window.electronAPI?.config?.read) {
+      window.electronAPI.config.read().then(cfg => { if (cfg?.providers?.length) setCfgProviders(cfg.providers); }).catch(() => {});
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -319,11 +395,14 @@ export default function TokenDashboard() {
               </p>
             )}
           </div>
-          {/* Right: tokens */}
+          {/* Right: tokens + cost */}
           <div className="border-l border-blue-500/40 pl-4">
             <p className="text-xs text-blue-300 mb-1">Token 消耗</p>
             <p className="text-4xl font-bold text-white">{fmtRangeTokens}</p>
-            <p className="text-xs text-blue-300 mt-2">各设备 {range} 合计</p>
+            {localData?.total_cost > 0 && (
+              <p className="text-sm font-mono text-blue-200 mt-1">${localData.total_cost.toFixed(localData.total_cost < 0.01 ? 4 : 3)} 估算</p>
+            )}
+            <p className="text-xs text-blue-300 mt-1">各设备 {range} 合计</p>
           </div>
         </div>
       </div>
@@ -394,6 +473,12 @@ export default function TokenDashboard() {
 
       {/* Devices */}
       <DevicesSection />
+
+      {/* Agent/tool source chart */}
+      <AgentSourceChart sources={localData?.agent_sources} />
+
+      {/* Subscription providers */}
+      <SubscriptionBar providers={cfgProviders} />
 
       {/* Provider breakdown — local stats */}
       <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
