@@ -76,6 +76,8 @@ const MIGRATIONS = [
   'ALTER TABLE requests ADD COLUMN latency_ms          INTEGER',
   'ALTER TABLE requests ADD COLUMN first_token_ms      INTEGER',
   'ALTER TABLE requests ADD COLUMN app_id              TEXT',
+  'ALTER TABLE requests ADD COLUMN cost_usd     REAL',
+  'ALTER TABLE requests ADD COLUMN billing_type TEXT',
 ];
 
 /** @param {string} dbDir  Directory that will hold local-stats.db */
@@ -99,8 +101,8 @@ function init(dbDir) {
     _insertStmt = db.prepare(
       'INSERT OR IGNORE INTO requests ' +
       '(ts, api_key, app_id, model, provider_id, tier, tokens, input_tokens, output_tokens, cache_create_tokens, cache_read_tokens, ' +
-      ' request_id, data_source, session_id, status_code, error, is_streaming, latency_ms, first_token_ms) ' +
-      'VALUES (?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?)'
+      ' request_id, data_source, session_id, status_code, error, is_streaming, latency_ms, first_token_ms, cost_usd, billing_type) ' +
+      'VALUES (?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?)'
     );
     _getImportStateStmt = db.prepare('SELECT mtime, size FROM import_state WHERE path = ?');
     _setImportStateStmt = db.prepare(
@@ -129,7 +131,8 @@ function init(dbDir) {
 function record({ api_key, app_id, model, provider_id, tier, tokens,
                   input_tokens, output_tokens, cache_create_tokens, cache_read_tokens,
                   ts, request_id, data_source, session_id, status_code, error,
-                  is_streaming, latency_ms, first_token_ms } = {}) {
+                  is_streaming, latency_ms, first_token_ms,
+                  cost_usd, billing_type } = {}) {
   if (!db || !_insertStmt) return false;
   try {
     const inTok   = input_tokens        || 0;
@@ -155,6 +158,8 @@ function record({ api_key, app_id, model, provider_id, tier, tokens,
       is_streaming ? 1 : 0,
       (latency_ms     != null) ? latency_ms     : null,
       (first_token_ms != null) ? first_token_ms : null,
+      (cost_usd       != null) ? cost_usd       : null,
+      billing_type  || null,
     );
     return info.changes > 0; // 0 = deduped by request_id unique index
   } catch (e) {
@@ -193,6 +198,17 @@ function queryDashboard(days = 1) {
     'SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens FROM requests WHERE ts >= ?'
   ).get(since);
 
+  // Cost total for period
+  const costRow = db.prepare(
+    'SELECT SUM(cost_usd) AS total_cost FROM requests WHERE ts >= ?'
+  ).get(since);
+
+  // Agent/tool source breakdown by data_source
+  const agentRows = db.prepare(
+    "SELECT data_source, COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens FROM requests " +
+    "WHERE ts >= ? AND data_source IS NOT NULL GROUP BY data_source ORDER BY calls DESC"
+  ).all(since);
+
   // Tier breakdown
   const tierRows = db.prepare(
     "SELECT tier, COUNT(*) AS calls FROM requests WHERE ts >= ? GROUP BY tier"
@@ -229,6 +245,8 @@ function queryDashboard(days = 1) {
   return {
     total_calls:  tot.calls  || 0,
     total_tokens: tot.tokens || 0,
+    total_cost:    costRow.total_cost || 0,
+    agent_sources: agentRows.map(r => ({ source: r.data_source, calls: r.calls, tokens: r.tokens || 0 })),
     tiers,
     hourly,
     models:    models.map(r => ({ model: r.model, calls: r.calls, tokens: r.tokens || 0 })),
@@ -239,10 +257,10 @@ function queryDashboard(days = 1) {
 
 function _empty() {
   return {
-    total_calls: 0, total_tokens: 0,
+    total_calls: 0, total_tokens: 0, total_cost: 0,
     tiers: { free: 0, p2p: 0, paid: 0 },
     hourly: Array(24).fill(0),
-    models: [], keys: [], providers: [],
+    models: [], keys: [], providers: [], agent_sources: [],
   };
 }
 
@@ -255,7 +273,7 @@ function _empty() {
  * 返回：总计 / 来源拆分(网关 vs 会话) / 按模型 / 按会话(session_id) / 最近明细。
  */
 function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50 } = {}) {
-  const empty = { total: { calls: 0, tokens: 0, inTok: 0, outTok: 0, lastTs: null }, bySource: [], byModel: [], sessions: [], recent: [] };
+  const empty = { total: { calls: 0, tokens: 0, inTok: 0, outTok: 0, lastTs: null, totalCost: 0 }, bySource: [], byModel: [], sessions: [], recent: [] };
   if (!db) return empty;
   const since = Math.floor(Date.now() / 1000) - days * 86400;
   const where =
@@ -268,7 +286,8 @@ function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50 } = {
   try {
     const total = db.prepare(
       `SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, ` +
-      `SUM(input_tokens) AS inTok, SUM(output_tokens) AS outTok, MAX(ts) AS lastTs FROM requests WHERE ${where}`
+      `SUM(input_tokens) AS inTok, SUM(output_tokens) AS outTok, MAX(ts) AS lastTs, ` +
+      `SUM(cost_usd) AS totalCost FROM requests WHERE ${where}`
     ).get(p);
     const bySource = db.prepare(
       `SELECT CASE WHEN data_source='proxy' THEN 'proxy' ELSE 'session' END AS src, ` +
@@ -285,15 +304,15 @@ function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50 } = {
     ).all({ ...p, lim: limit });
     const recent = db.prepare(
       `SELECT ts, model, input_tokens AS inTok, output_tokens AS outTok, (input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, ` +
-      `data_source AS source, status_code, session_id, provider_id FROM requests ` +
+      `data_source AS source, status_code, session_id, provider_id, cost_usd, billing_type, latency_ms FROM requests ` +
       `WHERE ${where} ORDER BY ts DESC LIMIT @lim`
     ).all({ ...p, lim: limit });
     return {
-      total: { calls: total.calls || 0, tokens: total.tokens || 0, inTok: total.inTok || 0, outTok: total.outTok || 0, lastTs: total.lastTs || null },
+      total: { calls: total.calls || 0, tokens: total.tokens || 0, inTok: total.inTok || 0, outTok: total.outTok || 0, lastTs: total.lastTs || null, totalCost: total.totalCost || 0 },
       bySource: bySource.map(r => ({ source: r.src, calls: r.calls, tokens: r.tokens || 0 })),
       byModel: byModel.map(r => ({ model: r.model, calls: r.calls, tokens: r.tokens || 0 })),
       sessions: sessions.map(r => ({ session_id: r.session_id, calls: r.calls, tokens: r.tokens || 0, firstTs: r.firstTs, lastTs: r.lastTs })),
-      recent: recent.map(r => ({ ts: r.ts, model: r.model, inTok: r.inTok || 0, outTok: r.outTok || 0, tokens: r.tokens || 0, source: r.source, status_code: r.status_code, session_id: r.session_id, provider_id: r.provider_id })),
+      recent: recent.map(r => ({ ts: r.ts, model: r.model, inTok: r.inTok || 0, outTok: r.outTok || 0, tokens: r.tokens || 0, source: r.source, status_code: r.status_code, session_id: r.session_id, provider_id: r.provider_id, cost_usd: r.cost_usd || 0, billing_type: r.billing_type || null, latency_ms: r.latency_ms || null })),
     };
   } catch (e) { console.error('[local-stats] queryAppDetail failed:', e.message); return empty; }
 }
