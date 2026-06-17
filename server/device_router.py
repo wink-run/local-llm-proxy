@@ -55,6 +55,9 @@ async def device_heartbeat(req: HeartbeatRequest, uid: int = Depends(get_current
     if owner_id != uid:
         raise HTTPException(404, "Device not found")
     stats = req.stats or {}
+    inventory = stats.get("inventory")
+    if isinstance(inventory, dict) and not inventory:
+        inventory = None
     await db.record_device_heartbeat(
         device_id=req.device_id,
         user_id=uid,
@@ -62,6 +65,7 @@ async def device_heartbeat(req: HeartbeatRequest, uid: int = Depends(get_current
         calls=int(stats.get("calls", 0)),
         errors=int(stats.get("errors", 0)),
         providers=int(stats.get("providers_active", 0)),
+        inventory=inventory,
     )
     return {"ok": True}
 

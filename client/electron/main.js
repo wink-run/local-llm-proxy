@@ -9,6 +9,8 @@ const agent = require('./agent-worker');
 const gateway = require('./local-gateway');
 const localStats = require('./local-stats');
 const sessionImport = require('./session-import');
+const sessionBrowser = require('./session-browser');
+const { STATS_DIR, computeImportSkip } = require('../shared/telemetry');
 const detectTools = require('./detect-tools');
 const agentLinker = require('./agent-linker');
 // device-reporter is used by the CLI only; desktop registration is handled
@@ -748,6 +750,15 @@ function registerIPC() {
     return nodeRequest(url, method, headers, body);
   });
 
+  // 登录 / 注册 / profile：走主进程 HTTP，避免系统代理拦截
+  ipcMain.handle('auth:request', async (_e, { base, method = 'GET', path, body, token }) => {
+    const url = `${String(base).replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const payload = body != null ? JSON.stringify(body) : null;
+    return nodeRequest(url, method, headers, payload);
+  });
+
   // Streaming HTTP request — sends chunks back via webContents events
   ipcMain.on('llm:stream', (event, { reqId, url, method, headers, body }) => {
     const u = new URL(url);
@@ -824,7 +835,11 @@ function registerIPC() {
   // scene_routes 段               → local-config.scene_routes
   const configLoader = require('./config-loader');
   const TB_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.yaml');
-  const TOOLS_SECTIONS = new Set(['version','tools','mitm','gateway','app_presets','api_key_apps']);
+  const TOOLS_SECTIONS = new Set([
+    'version', 'tools', 'mitm', 'gateway', 'app_presets', 'api_key_apps',
+    // 个人页计费目录（与 tools 同文件下发）
+    'subscription_plans', 'subscription_apps', 'payg_providers',
+  ]);
   const ROUTES_SECTIONS = new Set(['scene_routes']);
 
   function applyConfigDoc(parsed, source) {
@@ -844,8 +859,14 @@ function registerIPC() {
         for (const t of configLoader.tools()) beforeIds.add('tool:' + t.id);
         for (const a of (configLoader.apiKeyApps() || [])) beforeIds.add('app:' + a.id);
       } catch {}
-      // 只保留 tools 相关的段写入 yaml（剥离 scene_routes 等路由段）
-      const toolsDoc = {};
+      // 合并已有 tokenbank.yaml，避免部分下发抹掉其它段
+      let existing = {};
+      try {
+        if (fs.existsSync(TB_YAML)) {
+          existing = yamlLib.load(fs.readFileSync(TB_YAML, 'utf8')) || {};
+        }
+      } catch {}
+      const toolsDoc = { ...existing };
       for (const k of Object.keys(parsed)) {
         if (TOOLS_SECTIONS.has(k) || k === 'version') toolsDoc[k] = parsed[k];
       }
@@ -885,9 +906,15 @@ function registerIPC() {
       applied.routes = true;
     }
 
-    // 工具配置变更后（claude_models 可能更新）→ 同步给网关
+    // 工具配置变更后（claude_models / 计费目录可能更新）→ 同步给网关与刊例价
     if (applied.tools) {
       try { gateway.setClaudeModels(configLoader.claudeModels()); } catch {}
+      try {
+        const cfg = readLocalConfig();
+        require('./billing-config').applyPricingOverrides(cfg.provider_pricing_overrides || {});
+      } catch {}
+      // 通知前端刷新个人页报价 / 订阅目录
+      try { mainWindow?.webContents?.send('billing:changed'); } catch {}
     }
 
     if (!applied.tools && !applied.routes) {
@@ -1059,10 +1086,95 @@ function registerIPC() {
 
   // Sync on startup
   const _initCfg = readLocalConfig();
+  try {
+        require('./billing-config').applyPricingOverrides(_initCfg.provider_pricing_overrides || {});
+  } catch {}
   syncGatewayFromConfig(_initCfg);
   fetchPeerModels(_initCfg.cloud_config?.url, _initCfg.cloud_config?.token);
 
   ipcMain.handle('localConfig:get', () => readLocalConfig());
+
+  // 个人页计费：云端同步辅助
+  const cloudBilling = require('./cloud-billing-sync');
+  const billingConfigMod = require('./billing-config');
+
+  /** 解析 Token Bank 服务地址：优先调用方传入，其次 cloud_config.url */
+  function resolveBillingServerUrl(serverUrl) {
+    const explicit = cloudBilling.normalizeBase(serverUrl);
+    if (explicit) return explicit;
+    const cfg = readLocalConfig();
+    return cloudBilling.normalizeBase(cfg?.cloud_config?.url);
+  }
+
+  function applyUserBillingCfg(cfg, overrides) {
+    billingConfigMod.applyPricingOverrides(overrides || cfg.provider_pricing_overrides || {});
+    writeLocalConfig(cfg);
+  }
+
+  async function pullUserBilling({ token, serverUrl } = {}) {
+    let cfg = readLocalConfig();
+    const base = resolveBillingServerUrl(serverUrl);
+    const remote = await cloudBilling.syncFromCloud(token, base, cfg);
+    cfg = cloudBilling.applyToCfg(cfg, remote);
+    applyUserBillingCfg(cfg);
+    return cfg;
+  }
+
+  async function pushUserBilling({ token, serverUrl, ...patch } = {}) {
+    let cfg = readLocalConfig();
+    if (Array.isArray(patch.user_subscriptions)) cfg.user_subscriptions = patch.user_subscriptions;
+    if (Array.isArray(patch.user_payg_providers)) cfg.user_payg_providers = patch.user_payg_providers;
+    if (patch.subscription_plans && typeof patch.subscription_plans === 'object') {
+      cfg.subscription_plans = patch.subscription_plans;
+    }
+    if (patch.provider_pricing_overrides && typeof patch.provider_pricing_overrides === 'object') {
+      cfg.provider_pricing_overrides = patch.provider_pricing_overrides;
+    }
+    // 先写本地，再尝试同步云端（未登录也可保存）
+    applyUserBillingCfg(cfg);
+    if (!token) return cfg;
+    const base = resolveBillingServerUrl(serverUrl);
+    if (!base) return cfg;
+    try {
+      const remote = await cloudBilling.saveUserBilling(token, base, cloudBilling.pickBilling(cfg));
+      cfg = cloudBilling.applyToCfg(cfg, remote);
+      applyUserBillingCfg(cfg);
+    } catch (err) {
+      console.warn('[billing] cloud sync failed, kept local:', err?.message || err);
+    }
+    return cfg;
+  }
+
+  // 订阅套餐 + 模型刊例价（个人页管理）
+  ipcMain.handle('localConfig:getBilling', async (_e, auth = {}) => {
+    const cfg = await pullUserBilling(auth);
+    return billingConfigMod.getBillingSettings(cfg);
+  });
+  ipcMain.handle('localConfig:setBilling', async (_e, payload = {}) => {
+    const { token, serverUrl, subscription_plans, provider_pricing_overrides } = payload;
+    const cfg = await pushUserBilling({
+      token, serverUrl, subscription_plans, provider_pricing_overrides,
+    });
+    return billingConfigMod.getBillingSettings(cfg);
+  });
+  ipcMain.handle('localConfig:resetBilling', async (_e, payload = {}) => {
+    const { token, serverUrl, scope } = payload;
+    const patch = {};
+    if (scope === 'pricing' || scope === 'all') patch.provider_pricing_overrides = {};
+    if (scope === 'plans' || scope === 'all') patch.subscription_plans = {};
+    const cfg = await pushUserBilling({ token, serverUrl, ...patch });
+    return billingConfigMod.getUserAccounts(cfg);
+  });
+
+  // 个人页：积分 / 订阅 / 按量付费账户
+  ipcMain.handle('localConfig:getUserAccounts', async (_e, auth = {}) => {
+    const cfg = await pullUserBilling(auth);
+    return billingConfigMod.getUserAccounts(cfg);
+  });
+  ipcMain.handle('localConfig:setUserAccounts', async (_e, payload = {}) => {
+    const cfg = await pushUserBilling(payload);
+    return billingConfigMod.getUserAccounts(cfg);
+  });
 
   ipcMain.handle('localConfig:createSceneRoute', (_e, { scene_name, icon, steps, rules, classifier }) => {
     const cfg   = readLocalConfig();
@@ -1239,18 +1351,21 @@ function registerIPC() {
       if (mutated) { saveApps(cur); try { syncGatewayFromConfig(readLocalConfig()); } catch {} }
     } catch (e) { console.error('[apps:list] materialize api-key failed:', e.message); }
 
-    // direct_only 会话源 → 自动建「仅直连·只统计」应用（默认纳管+直连，只读会话日志、不绑路由/不走网关）。
-    // 由内置 session_sources 驱动（cursor 等），检测=会话根目录存在。
+    // direct_only 会话源 → 仅当本机会话数据目录存在时才创建并展示（未安装不显示）。
+    const configLoader = require('./config-loader');
+    const directInstalled = (agentId) => {
+      const src = (configLoader.sessionSources() || []).find(s => s.agent_id === agentId);
+      if (!src?.root) return false;
+      try { return fs.existsSync(configLoader.expandHome(src.root)); } catch { return false; }
+    };
     try {
       const cur = getApps();
       const haveDirect = new Set(cur.filter(a => a.link_method === 'direct').map(a => a.agent_id));
       let mutated = false;
-      for (const s of (require('./config-loader').sessionSources() || [])) {
+      for (const s of (configLoader.sessionSources() || [])) {
         if (!s || !s.direct_only || !s.agent_id) continue;
         if (haveDirect.has(s.agent_id)) continue;
-        let detected = false;
-        try { detected = fs.existsSync(require('./config-loader').expandHome(s.root || '')); } catch {}
-        if (!detected) continue;
+        if (!directInstalled(s.agent_id)) continue;
         cur.push({
           id: 'app-direct-' + s.agent_id,
           name: s.app_name || s.agent_id, icon: s.app_icon || '🖱',
@@ -1355,9 +1470,9 @@ function registerIPC() {
                  allow_direct: def ? def.allow_direct !== false : (app.allow_direct !== false),  // 无本地用量源的桌面壳=false
                  host_method: freshConfigFile ? 'config-file' : 'api-key' };
       })
-      // 机器上没有的 shim 应用不展示；api-key 应用始终展示。
-      // （检测靠 resolveRealCommand，已补上 npm 全局 bin 等目录兜底，不受 app 继承 PATH 不全影响。）
-      .filter(app => app.link_method !== 'shim' || app.installed);
+      // 机器上没有的 shim / direct 应用不展示；api-key 应用始终展示。
+      .filter(app => app.link_method !== 'shim' || app.installed)
+      .filter(app => app.link_method !== 'direct' || directInstalled(app.agent_id));
 
     // 追加：检测到、但还没"添加"过的 API Key 应用（虚拟行，显示「添加」）
     // 去重以「目标配置文件」为准：配置文件才是应用的真实身份（同一文件不可能托管两次）。
@@ -1558,44 +1673,16 @@ function registerIPC() {
   })();
 
   // api-key 应用并入的会话补录数据源（preset_id → data_source）。
-  // Claude Desktop 的 Cowork/Code tab 跑的是 Claude Code（entrypoint=claude-desktop，
-  // 写 ~/.claude/projects），由 session-import 路由到 session-claude-desktop；这里并回该应用。
-  const SESSION_DS_BY_PRESET = { 'claude-desktop': 'session-claude-desktop' };
+  // Claude Desktop → session-claude-desktop；Codex Desktop → session-codex（~/.codex/sessions）。
+  const SESSION_DS_BY_PRESET = {
+    'claude-desktop': 'session-claude-desktop',
+    'codex-desktop':  'session-codex',
+  };
 
   // 「与网关 proxy 记录天然去重」的会话 data_source 集合（源带 proxy_dedup，如 Claude：
   // 会话 request_id=上游 msg_id，走网关时同一次调用 proxy+会话只记一次）。
   // 含源主 data_source 及其 data_source_map 的所有目标（如 session-claude / session-claude-desktop）。
-  const PROXY_DEDUP_DS = (() => {
-    const s = new Set();
-    try {
-      for (const src of (require('./config-loader').sessionSources() || [])) {
-        if (src && src.proxy_dedup) {
-          if (src.data_source) s.add(src.data_source);
-          const m = src.data_source_map && src.data_source_map.map;
-          if (m) for (const v of Object.values(m)) s.add(v);
-        }
-      }
-    } catch {}
-    return s;
-  })();
-
-  // 扫描时要跳过的会话 data_source 集合：
-  //   1) 取消纳管(hosted:false) → 停止统计其日志；
-  //   2) 已绑路由走网关(hosted && route_id) 且该源非 proxy_dedup → 网关已记 proxy，跳过扫描避免重复计
-  //      （codex/gemini 用合成 request_id，和 proxy 对不上、不会自动去重 → 必须靠这里跳过；Claude 例外）。
-  // shim/direct 经 AGENT_DATA_SOURCE，api-key 经 SESSION_DS_BY_PRESET；虚拟/未操作的应用=默认纳管(不在集合内)。
-  function computeImportSkip() {
-    const skip = new Set();
-    try {
-      for (const app of getApps()) {
-        const ds = AGENT_DATA_SOURCE[app.agent_id] || SESSION_DS_BY_PRESET[app.preset_id];
-        if (!ds) continue;
-        if (app.hosted === false) { skip.add(ds); continue; }
-        if (app.hosted && app.route_id && !PROXY_DEDUP_DS.has(ds)) skip.add(ds);
-      }
-    } catch {}
-    return skip;
-  }
+  // 扫描跳过逻辑见 shared/telemetry.js computeImportSkip()。
 
   // 单个应用的用量明细（合并网关实时 + 会话补录）。查询前先增量补录一次会话文件，
   // 保证 Claude/Codex/Gemini 直连官方的用量也并进来。
@@ -1604,10 +1691,56 @@ function registerIPC() {
     // api-key 应用并入会话补录数据源（如 Claude Desktop 的 Cowork/Code）；shim/direct 始终读其会话用量（真实历史，不随纳管/还原增删）。
     const dataSource = (app && (app.link_method === 'api-key' || app.link_method === 'manual')) ? (SESSION_DS_BY_PRESET[app.preset_id] || null)
       : (app && (app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) ? AGENT_DATA_SOURCE[app.agent_id] : null;
-    return localStats.queryAppDetail({ appId: app && app.id, apiKey: app && app.api_key, dataSource, days: days || 30 });
+    const detail = localStats.queryAppDetail({ appId: app && app.id, apiKey: app && app.api_key, dataSource, days: days || 30 });
+    // 动态明细：Claude/Codex 桌面与 CLI 共用同目录，Desktop 按 preset 并入对应 data_source
+    const activityAgentId = (app && app.agent_id === 'claude-code') ? 'claude-code'
+      : (app && app.preset_id === 'claude-desktop') ? 'claude-code'
+      : (app && (app.agent_id === 'codex' || app.preset_id === 'codex-desktop')) ? 'codex'
+      : (app && app.agent_id);
+    const entrypointFilter = dataSource === 'session-claude-desktop'
+      ? (ep) => sessionImport.claudeDataSourceForEntrypoint(ep) === 'session-claude-desktop'
+      : dataSource === 'session-claude'
+        ? (ep) => sessionImport.claudeDataSourceForEntrypoint(ep) === 'session-claude'
+        : null;
+    if (activityAgentId) {
+      const scanned = sessionBrowser.listActivity(activityAgentId, {
+        limit: 50, sinceDays: days || 30, entrypointMatch: entrypointFilter || undefined,
+      });
+      if (scanned.length) {
+        detail.activity = sessionBrowser.mergeActivityWithStats(scanned, detail.sessions)
+          .map(a => sessionBrowser.normalizeActivityRow(a, activityAgentId));
+      }
+      if (detail.recent?.length) {
+        detail.recent = sessionBrowser.enrichRecentDetail(activityAgentId, detail.recent, detail.activity);
+      }
+    }
+    detail.hasModelStats = configLoader.agentHasModelStats(app && (
+      app.agent_id || (app.preset_id === 'claude-desktop' ? 'claude-code' : null)
+      || (app.preset_id === 'codex-desktop' ? 'codex' : null)
+    ));
+    return detail;
+  });
+
+  ipcMain.handle('apps:sessionTrace', (_e, { agent_id, session_id } = {}) => {
+    if (!agent_id || !session_id) return { error: 'missing_params', steps: [] };
+    const trace = sessionBrowser.getTrace(agent_id, session_id);
+    const dbRow = localStats.querySessionDetail(session_id);
+    return sessionBrowser.enrichTraceWithDb(trace, dbRow);
   });
 
   // 批量查所有应用的统计（调一次，合并进 apps:list 或单独查询）
+  /** 解析应用对应的会话补录 data_source（与 apps:detail / apps:stats 一致） */
+  function appSessionDataSource(app) {
+    if (!app) return null;
+    if (app.link_method === 'api-key' || app.link_method === 'manual') {
+      return SESSION_DS_BY_PRESET[app.preset_id] || null;
+    }
+    if ((app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) {
+      return AGENT_DATA_SOURCE[app.agent_id] || null;
+    }
+    return null;
+  }
+
   ipcMain.handle('apps:stats', (_e, appList) => {
     const stats = {};
     for (const app of (appList || [])) {
@@ -1615,11 +1748,11 @@ function registerIPC() {
       if (app.link_method === 'api-key' || app.link_method === 'manual') {
         // 按稳定 app_id 记账（取消/重新纳管、key 变化都不清零）；旧数据按 api_key 兜底。
         // 并入该应用的会话补录用量（如 Claude Desktop 的 Cowork/Code 本地用量），按 request_id 去重不重复。
-        s = localStats.queryByApp(app.id, app.api_key, SESSION_DS_BY_PRESET[app.preset_id] || null);
+        s = localStats.queryByApp(app.id, app.api_key, appSessionDataSource(app));
       } else if ((app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) {
         // 会话文件用量是真实历史，始终展示（不随纳管/还原清零，与 api-key 应用一致）；
         // 纳管/还原只控制是否走网关 / 注入 shim / 是否继续扫描，不影响已有统计可见性。
-        const ds = AGENT_DATA_SOURCE[app.agent_id] || null;
+        const ds = appSessionDataSource(app);
         s = ds ? localStats.queryByDataSource(ds) : { calls: 0, tokens: 0, lastTs: null };
       } else {
         s = { calls: 0, tokens: 0, lastTs: null };
@@ -1627,6 +1760,33 @@ function registerIPC() {
       stats[app.id] = s;
     }
     return stats;
+  });
+
+  // 盘点页：按网关应用聚合用量（合并原「工具来源 + 场景应用」）
+  ipcMain.handle('localStats:appsUsage', (_e, days) => {
+    const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
+    try { sessionImport.run(localStats, { skip: computeImportSkip() }); } catch {}
+    const apps = getApps().filter(a => !a.draft);
+    return apps.map(app => {
+      const dataSource = appSessionDataSource(app);
+      const st = localStats.queryAppStatsInPeriod({
+        appId: app.id,
+        apiKey: app.api_key,
+        dataSource,
+        days: d,
+      });
+      return {
+        id: app.id,
+        name: app.name,
+        icon: app.icon || '🔧',
+        link_method: app.link_method,
+        agent_id: app.agent_id || null,
+        preset_id: app.preset_id || null,
+        ...st,
+      };
+    })
+      .filter(a => a.calls > 0)
+      .sort((a, b) => b.calls - a.calls);
   });
 
   ipcMain.handle('apps:ensureShimApp', (_e, { agent_id, name, icon }) => {
@@ -1723,8 +1883,6 @@ function registerIPC() {
     const cc = readLocalConfig().cloud_config || {};
     if (cc.url && cc.token) fetchPeerModels(cc.url, cc.token);
   }, 60_000);
-
-  return { computeImportSkip };
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
@@ -1732,9 +1890,9 @@ function registerIPC() {
 app.whenReady().then(() => {
   createWindow();
   createTray();
-  const { computeImportSkip } = registerIPC();
-  // Init local SQLite stats DB in Electron userData directory
-  localStats.init(app.getPath('userData'));
+  registerIPC();
+  // Init local SQLite stats DB（与 CLI 共用 ~/.tokenbank）
+  localStats.init(STATS_DIR);
   gateway.setStatsRecorder(localStats.record);
   gateway.setLocalStats(localStats);
   gateway.setLocalConfigReader(readLocalConfig);   // 供策略组调度查 policies[]
@@ -1778,6 +1936,14 @@ app.whenReady().then(() => {
       localStats.setImportState(MIG, 1, 0);
     }
   } catch (e) { console.error('[session-import] migrate cursor', e.message); }
+  // 一次性迁移：claude-desktop-3p 曾误归 session-claude → 重扫按 entrypoint 拆分
+  try {
+    const MIG = '__migrate_claude_desktop_3p_v1__';
+    if (!localStats.getImportState(MIG)) {
+      localStats.resetSessionData(['session-claude', 'session-claude-desktop'], '%.claude%projects%');
+      localStats.setImportState(MIG, 1, 0);
+    }
+  } catch (e) { console.error('[session-import] migrate desktop-3p', e.message); }
   runSessionImport();
   setInterval(runSessionImport, 30_000);
 

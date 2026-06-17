@@ -107,7 +107,7 @@ api_key_apps:
     marker: tokenbank
     enable_3p: true                         # 是否启用 Claude Desktop 3p 接入（false 则不显示该应用）
     route_bindable: true
-    allow_direct: false                     # GUI 桌面壳无本地用量源，直连无法统计 → 禁止直连，必须绑路由走网关
+    allow_direct: false                     # 纳管时默认绑路由走网关（仍可手动切回直连官方）
     # 全部写进 JSON 配置文件（Claude Desktop 从 JSON 读 key，不读环境变量）。
     # 客户端写入时会再注入 inferenceModels（name 用 Anthropic 名过 Claude Desktop 校验，
     # labelOverride 显示绑定的路由名；keyScene 再把 claude-* 改写成该路由）+
@@ -126,7 +126,7 @@ api_key_apps:
     config_file: "{CODEX_HOME|~/.codex}/config.toml"
     marker: tokenbank
     route_bindable: true                    # Codex 支持模型改写
-    allow_direct: false                     # GUI 桌面壳无本地用量源 → 禁止直连，必须绑路由走网关
+    allow_direct: false                     # 纳管时默认绑路由走网关（仍可手动切回直连官方）
     patch:
       model_provider: tokenbank
       model_providers.tokenbank.name: Tokenbank
@@ -148,3 +148,119 @@ api_key_apps:
       models.providers.tokenbank.baseUrl: "{BASE}/v1"
       models.providers.tokenbank.apiKey: "{KEY}"
       models.providers.tokenbank.api: openai-completions
+
+# ════════ 个人页：订阅账户 / 按量付费目录（与客户端 tokenbank.tools.default.yaml 同 schema）════════
+# 管理员上传 config.apps 时一并下发；客户端 applyConfigDoc 写入 ~/.tokenbank/tokenbank.yaml
+
+subscription_apps:
+  - source_id: claude
+    agent_id: claude-code
+    app_name: Claude Code
+    app_icon: "🔷"
+    plan_provider_id: anthropic-paid
+  - source_id: codex
+    agent_id: codex
+    app_name: Codex
+    app_icon: "⚡"
+    plan_provider_id: openai
+  - source_id: gemini
+    agent_id: gemini-cli
+    app_name: Gemini CLI
+    app_icon: "♊"
+    plan_provider_id: gemini
+  - source_id: cursor
+    agent_id: cursor
+    app_name: Cursor
+    app_icon: "🖱️"
+    plan_provider_id: cursor
+  - source_id: copilot-cli
+    agent_id: copilot
+    app_name: GitHub Copilot
+    app_icon: "🤖"
+    plan_provider_id: github-copilot
+  - source_id: qwen
+    agent_id: qwen-code
+    app_name: Qwen Code
+    app_icon: "🐉"
+    plan_provider_id: null
+  - source_id: antigravity
+    agent_id: antigravity
+    app_name: Antigravity
+    app_icon: "🚀"
+    plan_provider_id: gemini
+
+subscription_plans:
+  anthropic-paid:
+    - { id: claude-pro, label: Claude Pro, monthly_usd: 20 }
+    - { id: max5x, label: Claude Max (5×), monthly_usd: 100 }
+    - { id: max20x, label: Claude Max (20×), monthly_usd: 200 }
+  openai:
+    - { id: chatgpt-plus, label: ChatGPT Plus, monthly_usd: 20 }
+    - { id: chatgpt-team, label: ChatGPT Team, monthly_usd: 25 }
+    - { id: chatgpt-pro, label: ChatGPT Pro, monthly_usd: 200 }
+  gemini:
+    - { id: gemini-advanced, label: Gemini Advanced, monthly_usd: 20 }
+    - { id: google-one-ai, label: Google One AI, monthly_usd: 20 }
+  github-copilot:
+    - { id: copilot-pro, label: GitHub Copilot Pro, monthly_usd: 10 }
+    - { id: copilot-business, label: Copilot Business, monthly_usd: 19 }
+  cursor:
+    - { id: cursor-pro, label: Cursor Pro, monthly_usd: 20 }
+    - { id: cursor-ultra, label: Cursor Ultra, monthly_usd: 200 }
+
+payg_providers:
+  - id: openai
+    label: OpenAI
+    icon: "🤖"
+    aliases: [codex-cli]
+    models: [gpt-4o, gpt-4o-mini, gpt-4.1, gpt-5, gpt-5-mini]
+    pricing:
+      gpt-4o:      { in: 2.50, out: 10.00, cacheRead: 1.25, cacheWrite: 3.13 }
+      gpt-4o-mini: { in: 0.15, out: 0.60,  cacheRead: 0.075, cacheWrite: 0.19 }
+      gpt-4.1:     { in: 2.50, out: 10.00, cacheRead: 1.25, cacheWrite: 3.13 }
+      gpt-5:       { in: 1.25, out: 10.00, cacheRead: 0.125, cacheWrite: 1.56 }
+      gpt-5-mini:  { in: 0.15, out: 0.60,  cacheRead: 0.015, cacheWrite: 0.19 }
+  - id: anthropic-paid
+    label: Anthropic
+    icon: "🧬"
+    aliases: [claude-cli]
+    models: [claude-sonnet-4-5, claude-sonnet-4, claude-haiku-4-5, claude-opus-4-6]
+    pricing:
+      claude-opus-4-6:   { in: 5.00, out: 25.00, cacheRead: 0.50, cacheWrite: 6.25 }
+      claude-sonnet-4-5: { in: 3.00, out: 15.00, cacheRead: 0.30, cacheWrite: 3.75 }
+      claude-haiku-4-5:  { in: 1.00, out: 5.00,  cacheRead: 0.10, cacheWrite: 1.25 }
+  - id: gemini
+    label: Google Gemini
+    icon: "💎"
+    aliases: [gemini-cli]
+    models: [gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash]
+    pricing:
+      gemini-2.5-pro:   { in: 1.25, out: 10.00, cacheRead: 0.125, cacheWrite: 1.56 }
+      gemini-2.5-flash: { in: 0.30, out: 2.50,  cacheRead: 0.03,  cacheWrite: 0.38 }
+  - id: deepseek
+    label: DeepSeek
+    icon: "🐋"
+    models: [deepseek-chat, deepseek-reasoner]
+    pricing:
+      deepseek-chat: { in: 0.14, out: 0.28, cacheRead: 0.003, cacheWrite: 0.18 }
+  - id: xai
+    label: xAI Grok
+    icon: "✖️"
+    aliases: [grok]
+    models: [grok-4, grok-3-mini]
+    pricing:
+      grok-4: { in: 3.00, out: 15.00 }
+  - id: openrouter
+    label: OpenRouter
+    icon: "🛣"
+    models: [gpt-4o, claude-sonnet-4-5]
+    pricing:
+      gpt-4o:            { in: 3.00, out: 12.00, cacheRead: 1.50 }
+      claude-sonnet-4-5: { in: 3.50, out: 16.00, cacheRead: 0.35 }
+  - id: groq
+    label: Groq
+    icon: "⚡"
+    models: [llama-3.3-70b, llama-3.1-8b]
+    pricing:
+      llama-3.3-70b: { in: 0.59, out: 0.79 }
+

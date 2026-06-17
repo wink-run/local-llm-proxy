@@ -6,24 +6,165 @@ const RANGE_DAYS = { '今日': 1, '7 天': 7, '30 天': 30 };
 const PAID_PROVIDERS = ['openai', 'anthropic-paid', 'openrouter', 'anthropic'];
 const P2P_PROVIDERS  = ['tokenbank-p2p'];
 
-const DATA_SOURCE_LABELS = {
-  'proxy':            { label: '🛰️ 网关实时',   color: 'bg-blue-500' },
-  'session-claude':   { label: '🔷 Claude Code', color: 'bg-indigo-500' },
-  'session-codex':    { label: '⚡ Codex',        color: 'bg-yellow-500' },
-  'session-gemini':   { label: '♊ Gemini CLI',   color: 'bg-teal-500' },
-  'session-cursor':   { label: '🖱️ Cursor',      color: 'bg-purple-500' },
-  'session-opencode': { label: '📝 OpenCode',     color: 'bg-orange-500' },
-  'session-copilot':  { label: '🤖 Copilot CLI',  color: 'bg-green-500' },
-};
+const fmtN    = n => n >= 1_000_000 ? (n/1e6).toFixed(2)+'M' : n >= 1000 ? (n/1000).toFixed(1)+'K' : String(n||0);
+const fmtCost = n => (n != null && n > 0) ? ('$' + n.toFixed(n < 0.01 ? 4 : 3)) : '—';
+
+function linkMethodLabel(method) {
+  return method === 'manual' ? 'API' : '应用';
+}
+
+const APP_USAGE_COLORS = [
+  'bg-indigo-500', 'bg-purple-500', 'bg-violet-500', 'bg-pink-500',
+  'bg-amber-500', 'bg-emerald-500', 'bg-blue-500', 'bg-teal-500',
+];
+
+/** 来源构成：网关实时 vs 会话补录 */
+function SourceMixBar({ proxy, session, total, className = 'h-2' }) {
+  const t = total || proxy + session || 1;
+  const pPct = Math.round((proxy / t) * 100);
+  const sPct = Math.max(0, 100 - pPct);
+  if (!proxy && !session) {
+    return <div className={`flex-1 bg-gray-100 dark:bg-gray-800 rounded-full ${className}`} />;
+  }
+  return (
+    <div className={`flex-1 flex rounded-full overflow-hidden ${className}`} title={`网关 ${proxy} · 会话 ${session}`}>
+      {pPct > 0 && <div className="bg-blue-500 h-full" style={{ width: `${pPct}%` }} />}
+      {sPct > 0 && <div className="bg-violet-400/80 h-full" style={{ width: `${sPct}%` }} />}
+    </div>
+  );
+}
+
+/** 应用占比总览条（参考 tokentelemetry agent share） */
+function AppShareStrip({ rows, metric = 'tokens' }) {
+  if (!rows?.length) return null;
+  const total = rows.reduce((s, r) => s + (r[metric] || 0), 0) || 1;
+  return (
+    <div className="space-y-2">
+      <div className="flex h-3 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-800">
+        {rows.map((r, i) => {
+          const v = r[metric] || 0;
+          if (!v) return null;
+          const pct = Math.max((v / total) * 100, 0.5);
+          return (
+            <div
+              key={r.id}
+              className={`h-full ${APP_USAGE_COLORS[i % APP_USAGE_COLORS.length]}`}
+              style={{ width: `${pct}%` }}
+              title={`${r.name} · ${fmtN(v)}`}
+            />
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
+        {rows.slice(0, 8).map((r, i) => (
+          <span key={r.id} className="inline-flex items-center gap-1.5 text-[10px] text-gray-500">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${APP_USAGE_COLORS[i % APP_USAGE_COLORS.length]}`} />
+            <span className="truncate max-w-[8rem]">{r.icon} {r.name}</span>
+            <span className="text-gray-400">{Math.round(((r[metric] || 0) / total) * 100)}%</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AppUsageSection({ rows, range, loading, sortBy, onSortBy }) {
+  const maxCalls = Math.max(...(rows || []).map(r => r.calls), 1);
+  const maxTokens = Math.max(...(rows || []).map(r => r.tokens), 1);
+  const sorted = [...(rows || [])].sort((a, b) =>
+    sortBy === 'tokens' ? (b.tokens - a.tokens) : (b.calls - a.calls));
+
+  return (
+    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800 space-y-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">应用用量</h2>
+            <p className="text-xs text-gray-500 mt-0.5">与网关应用一致 · 网关实时 + 会话补录</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">{range}</span>
+            <div className="flex gap-0.5 bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5">
+              {[['calls', '按请求'], ['tokens', '按 Token']].map(([k, label]) => (
+                <button key={k} type="button" onClick={() => onSortBy(k)}
+                  className={`px-2 py-0.5 text-[10px] rounded-md transition-colors ${
+                    sortBy === k ? 'bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 shadow-sm' : 'text-gray-500'
+                  }`}>{label}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+        {!loading && sorted.length > 0 && <AppShareStrip rows={sorted} metric={sortBy} />}
+        <div className="flex items-center gap-3 text-[10px] text-gray-400">
+          <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" />网关实时</span>
+          <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-violet-400" />会话补录</span>
+        </div>
+      </div>
+      {loading ? (
+        <div className="px-5 py-8 text-xs text-gray-600 text-center">加载中…</div>
+      ) : sorted.length === 0 ? (
+        <div className="px-5 py-8 text-xs text-gray-600 text-center">
+          暂无用量。请先在「网关」纳管应用，或等待会话补录完成。
+        </div>
+      ) : (
+        <>
+          <div className="hidden sm:grid grid-cols-[minmax(0,1.4fr)_4.5rem_4.5rem_4rem_minmax(0,1fr)] gap-3 px-5 py-2 text-[10px] font-medium text-gray-400 uppercase tracking-wide border-b border-gray-100 dark:border-gray-800">
+            <span>应用</span>
+            <span className="text-right">请求</span>
+            <span className="text-right">Token</span>
+            <span className="text-right">费用</span>
+            <span>来源构成</span>
+          </div>
+          <div className="divide-y divide-gray-200/50 dark:divide-gray-800/50">
+            {sorted.map((r, i) => (
+              <div key={r.id} className="px-5 py-3.5 hover:bg-gray-50/50 dark:hover:bg-gray-800/20">
+                <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1.4fr)_4.5rem_4.5rem_4rem_minmax(0,1fr)] gap-3 items-center">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`w-1 h-8 rounded-full shrink-0 ${APP_USAGE_COLORS[i % APP_USAGE_COLORS.length]}`} />
+                    <span className="text-base shrink-0">{r.icon}</span>
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{r.name}</div>
+                      <div className="text-[10px] text-gray-500 truncate">
+                        {linkMethodLabel(r.link_method)}
+                        {r.proxyCalls > 0 && r.sessionCalls > 0 ? ' · 混合来源' : r.proxyCalls > 0 ? ' · 网关' : ' · 会话'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="sm:text-right">
+                    <div className="text-sm font-semibold tabular-nums">{r.calls.toLocaleString()}</div>
+                    <div className="mt-1 h-1 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden hidden sm:block">
+                      <div className={`h-full rounded-full ${APP_USAGE_COLORS[i % APP_USAGE_COLORS.length]}`}
+                        style={{ width: `${Math.round(r.calls / maxCalls * 100)}%` }} />
+                    </div>
+                  </div>
+                  <div className="sm:text-right">
+                    <div className="text-sm font-semibold tabular-nums text-purple-600 dark:text-purple-400">{fmtN(r.tokens)}</div>
+                    <div className="mt-1 h-1 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden hidden sm:block">
+                      <div className="h-full rounded-full bg-purple-500"
+                        style={{ width: `${Math.round((r.tokens || 0) / maxTokens * 100)}%` }} />
+                    </div>
+                  </div>
+                  <div className="sm:text-right text-xs text-emerald-600 dark:text-emerald-400 tabular-nums">{fmtCost(r.cost)}</div>
+                  <SourceMixBar
+                    proxy={sortBy === 'tokens' ? r.proxyTokens : r.proxyCalls}
+                    session={sortBy === 'tokens' ? r.sessionTokens : r.sessionCalls}
+                    total={sortBy === 'tokens' ? r.tokens : r.calls}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 function tierFromProvider(id = '') {
   if (P2P_PROVIDERS.includes(id))  return 'p2p';
   if (PAID_PROVIDERS.includes(id)) return 'paid';
   return 'free';
 }
-
-const fmtN    = n => n >= 1_000_000 ? (n/1e6).toFixed(2)+'M' : n >= 1000 ? (n/1000).toFixed(1)+'K' : String(n||0);
-const fmtCost = n => (n != null && n > 0) ? ('$' + n.toFixed(n < 0.01 ? 4 : 3)) : '—';
 
 function TierDonut({ byProvider = {} }) {
   let free = 0, p2p = 0, paid = 0, total = 0;
@@ -123,8 +264,9 @@ function TrendBars({ data = [] }) {
 
 export default function Dashboard() {
   const [range, setRange]         = useState('今日');
-  const [localKeys, setLocalKeys] = useState([]);
   const [localData, setLocalData] = useState(null);
+  const [appsUsage, setAppsUsage] = useState([]);
+  const [usageSort, setUsageSort] = useState('calls');
   const [gwStatus, setGwStatus]   = useState(null);
   const [loading, setLoading]     = useState(true);
 
@@ -135,17 +277,19 @@ export default function Dashboard() {
       let data;
       if (window.electronAPI?.localStats) {
         data = await window.electronAPI.localStats.query(days);
+        if (window.electronAPI.localStats.appsUsage) {
+          const usage = await window.electronAPI.localStats.appsUsage(days);
+          setAppsUsage(usage || []);
+        } else {
+          setAppsUsage([]);
+        }
       } else {
         const r = await fetch(`/api/local-stats?days=${days}`);
         if (!r.ok) throw new Error(`local-stats ${r.status}`);
         data = await r.json();
+        setAppsUsage([]);
       }
       setLocalData(data);
-
-      if (window.electronAPI?.localConfig) {
-        const cfg = await window.electronAPI.localConfig.get();
-        setLocalKeys(cfg.local_keys || []);
-      }
 
       const fetchStatus = window.electronAPI?.gateway
         ? () => window.electronAPI.gateway.status().then(setGwStatus).catch(() => {})
@@ -160,23 +304,10 @@ export default function Dashboard() {
 
   useEffect(() => { load(); }, [load]);
 
-  const handleDeleteKey = async (localKeyId) => {
-    if (!confirm('删除此 API Key？')) return;
-    try {
-      if (window.electronAPI?.localConfig) {
-        await window.electronAPI.localConfig.deleteKey(localKeyId);
-      }
-      await load();
-    } catch {
-      alert('删除失败');
-    }
-  };
-
   // ── Derived ───────────────────────────────────────────────────────────────
   const totalCalls  = localData?.total_calls  ?? 0;
   const totalTokens = localData?.total_tokens ?? 0;
   const totalCost   = localData?.total_cost   ?? 0;
-  const agentSources = localData?.agent_sources ?? [];
 
   const freeCalls  = localData?.tiers?.free  ?? 0;
   const p2pCalls   = localData?.tiers?.p2p   ?? 0;
@@ -188,26 +319,12 @@ export default function Dashboard() {
     (localData?.providers ?? []).map(p => [p.id, { calls: p.calls, tier: p.tier }])
   );
 
-  const keyNoteMap   = new Map(localKeys.map(k => [k.key, k]));
-  const enrichedKeys = (localData?.keys ?? []).map(k => {
-    const lk = keyNoteMap.get(k.api_key);
-    return {
-      _local_key_id: lk?.id   || null,
-      api_key:       k.api_key,
-      app_name:      lk?.note || null,
-      request_count: k.calls,
-      total_tokens:  k.tokens,
-    };
-  });
-
   const modelStats    = localData?.models ?? [];
   const maxModel      = modelStats[0]?.calls || 1;
   const modelByTokens = [...modelStats].filter(m => m.tokens > 0).sort((a, b) => b.tokens - a.tokens);
   const maxModelTokens = modelByTokens[0]?.tokens || 1;
   const modelByCost   = [...modelStats].filter(m => (m.cost_usd || 0) > 0).sort((a, b) => b.cost_usd - a.cost_usd);
   const maxModelCost  = modelByCost[0]?.cost_usd || 1;
-
-  const sourceTotal = agentSources.reduce((s, r) => s + r.calls, 0) || 1;
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-5 bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 min-h-screen">
@@ -217,7 +334,7 @@ export default function Dashboard() {
         <div>
           <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">盘点</h1>
           <div className="flex items-center gap-2 mt-1">
-            <p className="text-sm text-gray-500">基于场景应用的用量与费用分析</p>
+            <p className="text-sm text-gray-500">按网关应用汇总用量与费用</p>
             <span className="flex items-center gap-1 text-xs text-gray-500 border border-gray-200 dark:border-gray-700 rounded-full px-2 py-0.5">
               <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${gwStatus?.running !== false ? 'bg-green-500' : 'bg-gray-400'}`}/>
               {window.electronAPI ? '💻 桌面版' : '🖥 命令行版'}
@@ -262,7 +379,7 @@ export default function Dashboard() {
           <div className={`text-2xl font-bold mt-1 ${totalCost > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400'}`}>
             {fmtCost(totalCost)}
           </div>
-          <div className="text-[10px] text-gray-600 mt-0.5">仅含 API Key 类调用</div>
+          <div className="text-[10px] text-gray-600 mt-0.5">API 刊例价估算；订阅接入非实际账单</div>
         </div>
       </div>
 
@@ -278,83 +395,13 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* 工具来源分布 */}
-      {agentSources.length > 0 && (
-        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">工具来源分布</h2>
-            <span className="text-xs text-gray-500">{range} · {totalCalls} 次合计</span>
-          </div>
-          <div className="space-y-3">
-            {agentSources.map(s => {
-              const meta  = DATA_SOURCE_LABELS[s.source] || { label: s.source, color: 'bg-gray-400' };
-              const pct   = Math.round(s.calls / sourceTotal * 100);
-              return (
-                <div key={s.source} className="flex items-center gap-3">
-                  <div className="w-32 shrink-0 text-xs text-gray-600 dark:text-gray-400 truncate">{meta.label}</div>
-                  <div className="flex-1 bg-gray-100 dark:bg-gray-800 rounded-full h-2.5 overflow-hidden">
-                    <div className={`h-full rounded-full transition-all duration-500 ${meta.color}`}
-                      style={{ width: `${Math.max(pct, 1)}%` }} />
-                  </div>
-                  <span className="w-16 shrink-0 text-right text-xs text-gray-500">{s.calls} 次</span>
-                  <span className="w-10 shrink-0 text-right text-[10px] text-gray-400">{pct}%</span>
-                  <span className="w-20 shrink-0 text-right text-xs text-gray-500">{fmtN(s.tokens)} tok</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Scene app breakdown */}
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800">
-          <div>
-            <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">场景应用用量</h2>
-            <p className="text-xs text-gray-500 mt-0.5">按场景应用实例拆分请求量与积分</p>
-          </div>
-          <span className="text-xs text-gray-600">{range}</span>
-        </div>
-        {loading ? (
-          <div className="px-5 py-8 text-xs text-gray-600 text-center">加载中…</div>
-        ) : enrichedKeys.length === 0 ? (
-          <div className="px-5 py-8 text-xs text-gray-600 text-center">
-            暂无消费记录。先在下方创建 API Key，再去「网关」绑定场景路由。
-          </div>
-        ) : (
-          <div className="divide-y divide-gray-200/50 dark:divide-gray-800/50">
-            {enrichedKeys.map(s => (
-              <div key={s.api_key} className="px-5 py-4 hover:bg-gray-100/20 dark:bg-gray-800/20">
-                <div className="flex items-center gap-4">
-                  <div className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0 mt-0.5"/>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                        {s.app_name || '未命名'}
-                      </span>
-                      <code className="text-[10px] font-mono text-gray-600">{s.api_key?.slice(0, 12)}…</code>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-6 text-right shrink-0">
-                    <div>
-                      <div className="text-sm font-semibold text-gray-800 dark:text-gray-200">{s.request_count}</div>
-                      <div className="text-[10px] text-gray-600">次请求</div>
-                    </div>
-                    <div>
-                      <div className="text-sm font-semibold text-gray-700 dark:text-gray-300">{fmtN(s.total_tokens)}</div>
-                      <div className="text-[10px] text-gray-600">tokens</div>
-                    </div>
-                    {s._local_key_id && (
-                      <button onClick={() => handleDeleteKey(s._local_key_id)}
-                        className="text-[10px] text-gray-700 hover:text-red-600 dark:text-red-400 transition-colors">删除</button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <AppUsageSection
+        rows={appsUsage}
+        range={range}
+        loading={loading}
+        sortBy={usageSort}
+        onSortBy={setUsageSort}
+      />
 
       {/* Model rankings — 3 columns */}
       <div className="grid grid-cols-3 gap-4">

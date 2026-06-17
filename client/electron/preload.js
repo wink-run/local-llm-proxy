@@ -1,7 +1,18 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+/** 个人页计费 API 鉴权（跨终端同步用） */
+function billingAuth() {
+  return {
+    token: localStorage.getItem('token') || '',
+    serverUrl: localStorage.getItem('serverUrl') || '',
+  };
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   version: ipcRenderer.sendSync('app:version'),
+  auth: {
+    request: (opts) => ipcRenderer.invoke('auth:request', opts),
+  },
   agent: {
     start: () => ipcRenderer.invoke('agent:start'),
     stop: () => ipcRenderer.invoke('agent:stop'),
@@ -85,6 +96,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   localStats: {
     query: (days) => ipcRenderer.invoke('localStats:query', days),
+    appsUsage: (days) => ipcRenderer.invoke('localStats:appsUsage', days),
   },
   sessionImport: {
     run: () => ipcRenderer.invoke('sessionImport:run'),
@@ -115,6 +127,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     list:          ()       => ipcRenderer.invoke('apps:list'),
     stats:         (list)   => ipcRenderer.invoke('apps:stats', list),
     detail:        (app, days) => ipcRenderer.invoke('apps:detail', { app, days }),
+    sessionTrace:  (agent_id, session_id) => ipcRenderer.invoke('apps:sessionTrace', { agent_id, session_id }),
     create:        (d)      => ipcRenderer.invoke('apps:create', d),
     update:        (d)      => ipcRenderer.invoke('apps:update', d),
     delete:        (id)     => ipcRenderer.invoke('apps:delete', id),
@@ -142,5 +155,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteKey:         (id) => ipcRenderer.invoke('localConfig:deleteKey', id),
     bindKey:           (d) => ipcRenderer.invoke('localConfig:bindKey', d),
     setCloudConfig:    (d) => ipcRenderer.invoke('localConfig:setCloudConfig', d),
+    getBilling:      ()  => ipcRenderer.invoke('localConfig:getBilling', billingAuth()),
+    setBilling:      (d) => ipcRenderer.invoke('localConfig:setBilling', { ...d, ...billingAuth() }),
+    resetBilling:    (d) => ipcRenderer.invoke('localConfig:resetBilling', { ...d, ...billingAuth() }),
+    getUserAccounts: ()  => ipcRenderer.invoke('localConfig:getUserAccounts', billingAuth()),
+    setUserAccounts: (d) => ipcRenderer.invoke('localConfig:setUserAccounts', { ...d, ...billingAuth() }),
+    // 服务端配置下发 / 同步后刷新报价
+    onBillingChanged: (cb) => {
+      const h = () => cb();
+      ipcRenderer.on('billing:changed', h);
+      return () => ipcRenderer.removeListener('billing:changed', h);
+    },
   },
 });

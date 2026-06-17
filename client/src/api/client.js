@@ -1,27 +1,72 @@
 import axios from 'axios';
 import { getServerUrl } from '../config';
 
-const http = axios.create({ timeout: 10000 });
+const http = axios.create({ timeout: 15000 });
 
 // Read serverUrl and token from localStorage on every request
 http.interceptors.request.use((config) => {
-  const base = getServerUrl();
-  config.baseURL = base;
+  config.baseURL = getServerUrl();
   const token = localStorage.getItem('token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
+/** Electron 主进程发请求，绕过系统代理 / CORS */
+async function authRequest(method, path, { body, token } = {}) {
+  if (window.electronAPI?.auth?.request) {
+    const base = getServerUrl();
+    const r = await window.electronAPI.auth.request({
+      base, method, path, body: body ?? null, token: token || null,
+    });
+    let data = null;
+    if (r.body) {
+      try { data = JSON.parse(r.body); } catch { data = { detail: r.body }; }
+    }
+    if (r.status >= 400) {
+      const detail = data?.detail ?? data?.message ?? r.body ?? `HTTP ${r.status}`;
+      const err = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+      err.response = { status: r.status, data };
+      throw err;
+    }
+    return { data };
+  }
+  const cfg = { method, url: path };
+  if (body != null) cfg.data = body;
+  if (token) cfg.headers = { Authorization: `Bearer ${token}` };
+  return http.request(cfg);
+}
+
+function formatApiError(err, fallback) {
+  if (err.response?.data?.detail) {
+    const d = err.response.data.detail;
+    return typeof d === 'string' ? d : JSON.stringify(d);
+  }
+  if (err.code === 'ECONNABORTED' || /timeout/i.test(err.message)) {
+    const base = getServerUrl();
+    return base ? `连接超时，请检查服务地址 ${base}` : '连接超时，请先配置 Token Bank 服务地址';
+  }
+  if (!err.response) {
+    const base = getServerUrl();
+    return base
+      ? `无法连接服务器 ${base}，请确认地址正确且服务已启动`
+      : '请先填写 Token Bank 服务地址';
+  }
+  return fallback;
+}
+
+export { formatApiError };
+
 export function login(email, password) {
-  return http.post('/user/login', { email, password });
+  return authRequest('POST', '/user/login', { body: { email, password } });
 }
 
 export function register(email, password, nickname = '', referral_code = '') {
-  return http.post('/user/register', { email, password, nickname, referral_code });
+  return authRequest('POST', '/user/register', { body: { email, password, nickname, referral_code } });
 }
 
 export function getProfile() {
-  return http.get('/user/profile');
+  const token = localStorage.getItem('token');
+  return authRequest('GET', '/user/profile', { token });
 }
 
 export function getStats() {
@@ -94,6 +139,14 @@ export function getProviderCatalog() {
   return http.get('/api/catalog');
 }
 
+export function getUserAccountsSettings() {
+  return http.get('/user/accounts');
+}
+
+export function saveUserAccountsSettings(body) {
+  return http.put('/user/accounts', body);
+}
+
 // ── Scene Routes ──────────────────────────────────────────────────────────────
 
 export function getSceneRoutes() {
@@ -128,6 +181,11 @@ export function getDashboardStats(days = 30) {
 
 export function getModelStats(days = 30) {
   return http.get(`/user/model-stats?days=${days}`);
+}
+
+/** 个人页看板：各端上报盘点数据按设备维度聚合（云端） */
+export function getInventoryStats(days = 1) {
+  return http.get(`/user/inventory-stats?days=${days}`);
 }
 
 

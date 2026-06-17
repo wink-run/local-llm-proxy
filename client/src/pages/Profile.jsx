@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../store/index';
 import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getRates, getUserDevices, deleteDevice } from '../api/client';
 import { getServerUrl } from '../config';
+import BillingConfigSection from '../components/BillingConfigSection';
 
 const TX_LABEL = {
   contribute: '贡献',
@@ -757,6 +758,8 @@ export default function Profile() {
         <CheckinCard onSuccess={refreshUser} />
         <SpinCard onSuccess={refreshUser} />
       </div>
+
+      <BillingConfigSection />
 
       <ContributeSection />
 

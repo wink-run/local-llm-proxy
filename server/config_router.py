@@ -4,7 +4,7 @@ Admin uploads tool/route config YAML → stored in system_config table.
 Authenticated users GET the config YAML → client applies it locally.
 
 Keys in system_config:
-  config.apps   → tokenbank.tools.yaml content (tools/protocols/routing)
+  config.apps   → tokenbank.tools.yaml content (tools/protocols/routing/billing)
   config.scenes  → tokenbank.routes.yaml content (scene_routes)
 """
 

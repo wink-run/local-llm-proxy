@@ -16,6 +16,7 @@ const gateway  = require('../electron/local-gateway');
 const adminApi = require('./admin-api');
 const reporter = require('../shared/device-reporter');
 const { readLocalConfig, readAgentConfig } = require('../shared/config-loader');
+const { initGatewayTelemetry } = require('../shared/telemetry');
 
 // ── Arg parsing ───────────────────────────────────────────────────────────────
 
@@ -96,6 +97,9 @@ async function cmdStart(port, adminPort) {
   gateway.start(port, readAgentConfig);
   console.log(`[gateway] HTTP gateway started on port ${port}`);
 
+  // 本地统计 + 会话补录（与 Electron 共用 ~/.tokenbank/local-stats.db）
+  const telemetry = initGatewayTelemetry(gateway);
+
   // Start admin API
   adminApi.start(adminPort, gateway);
   console.log(`[gateway] Admin API started on port ${adminPort}`);
@@ -126,6 +130,7 @@ async function cmdStart(port, adminPort) {
   function shutdown() {
     console.log('\n[gateway] Shutting down...');
     reporter.stop();
+    telemetry.shutdown();
     gateway.stop();
     adminApi.stop();
     process.exit(0);

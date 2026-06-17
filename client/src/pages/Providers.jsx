@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getNetwork, getProfile, listKeys, createKey, deleteKey, getProviderCatalog } from '../api/client';
-import { getServerUrl } from '../config';
+import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
 import { getGateway, getLocalConfig, getConfig, getOauth } from '../api/adapter';
 
 // 内置兜底目录：当后端 /api/catalog 不可达（离线 / VPS 宕机）时使用。
@@ -195,9 +195,10 @@ function P2PNetworkCard({ provider, onUpdate }) {
     setKeySaving(true);
     try {
       await getLocalConfig().setCloudConfig({
-        url:   getServerUrl(),
+        url:   normalizeServerBase(getServerUrl()),
         token: selectedKey,
       });
+      await syncCloudConfigUrl(getServerUrl());
       setSavedKey(selectedKey);
       setKeySaved(true);
       setTimeout(() => setKeySaved(false), 2000);
@@ -620,16 +621,16 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest }) {
   );
 }
 
-const SUBSCRIPTION_PLANS = {
-  'anthropic-paid': [['claude-pro','Claude Pro'],['max5x','Claude Max (5×)'],['max20x','Claude Max (20×)']],
-  'openai':         [['chatgpt-plus','ChatGPT Plus'],['chatgpt-team','ChatGPT Team'],['chatgpt-pro','ChatGPT Pro']],
-  'gemini':         [['gemini-advanced','Gemini Advanced'],['google-one-ai','Google One AI']],
-  'github-copilot': [['copilot-pro','GitHub Copilot Pro'],['copilot-business','Copilot Business']],
-  'deepseek':       [['deepseek-pro','DeepSeek Pro']],
-  'xai':            [['grok-premium','Grok Premium']],
+const SUBSCRIPTION_PLANS_FALLBACK = {
+  'anthropic-paid': [{ id: 'claude-pro', label: 'Claude Pro' }, { id: 'max5x', label: 'Claude Max (5×)' }, { id: 'max20x', label: 'Claude Max (20×)' }],
+  openai: [{ id: 'chatgpt-plus', label: 'ChatGPT Plus' }, { id: 'chatgpt-team', label: 'ChatGPT Team' }, { id: 'chatgpt-pro', label: 'ChatGPT Pro' }],
+  gemini: [{ id: 'gemini-advanced', label: 'Gemini Advanced' }, { id: 'google-one-ai', label: 'Google One AI' }],
+  'github-copilot': [{ id: 'copilot-pro', label: 'Copilot Pro' }, { id: 'copilot-business', label: 'Copilot Business' }],
+  deepseek: [{ id: 'deepseek-pro', label: 'DeepSeek Pro' }],
+  xai: [{ id: 'grok-premium', label: 'Grok Premium' }],
 };
 
-function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = false }) {
+function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = false, subscriptionPlans = [] }) {
   const [showKey,    setShowKey]    = useState(false);
   const [expanded,   setExpanded]   = useState(initialExpanded);
   const [testing,    setTesting]    = useState(false);
@@ -641,16 +642,17 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
   const isOauthCfg = provider.auth_type === 'oauth';
   const hasOauth = !!(provider.credentials && provider.credentials.refresh_token);
   const hasKey   = !isOauthCfg && !!provider.token;
-  // keyless 但支持 OAuth（如 Copilot）：必须登录后才算配置好；订阅记账模式不需要 key
-  const configured = (meta.keyless && !oauthCap) || hasKey || hasOauth || (isSubscription && subMode === 'accounting');
-  const canApiKey = !meta.keyless;
-  const modelCount = (provider.models || []).length;
-
   const billingType    = provider.billing_type    || 'api-key';
   const subMode        = provider.sub_mode        || 'accounting';
   const subPlan        = provider.subscription_plan || '';
   const isSubscription = billingType === 'subscription';
-  const subPlans       = SUBSCRIPTION_PLANS[provider.id] || [['other', '其他套餐']];
+  const subPlans       = subscriptionPlans.length
+    ? subscriptionPlans
+    : (SUBSCRIPTION_PLANS_FALLBACK[provider.id] || [{ id: 'other', label: '其他套餐' }]);
+  // keyless 但支持 OAuth（如 Copilot）：必须登录后才算配置好；订阅记账模式不需要 key
+  const configured = (meta.keyless && !oauthCap) || hasKey || hasOauth || (isSubscription && subMode === 'accounting');
+  const canApiKey = !meta.keyless;
+  const modelCount = (provider.models || []).length;
 
   // 添加方式：api_key / oauth（仅当预设支持 OAuth 时可切换）
   const [method, setMethod] = useState(isOauthCfg ? 'oauth' : 'api_key');
@@ -774,7 +776,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
               <div className="flex items-center gap-2">
                 {isSubscription ? (
                   <code className="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 px-2 py-1 rounded font-mono">
-                    📋 订阅{subMode === 'accounting' ? '·记账' : '·转API'}{subPlan ? ' · ' + (subPlans.find(([v])=>v===subPlan)?.[1] || subPlan) : ''}
+                    📋 订阅{subMode === 'accounting' ? '·记账' : '·转API'}{subPlan ? ' · ' + (subPlans.find(p => p.id === subPlan)?.label || subPlan) : ''}
                   </code>
                 ) : isOauthCfg ? (
                   <code className="text-xs text-purple-600 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/30 px-2 py-1 rounded font-mono">
@@ -817,7 +819,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
                     <select value={subPlan} onChange={e => onUpdate(provider.id, { subscription_plan: e.target.value })}
                       className="text-xs bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-2 py-1 outline-none text-gray-700 dark:text-gray-300">
                       <option value="">选择套餐</option>
-                      {subPlans.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      {subPlans.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
                       <option value="other">其他</option>
                     </select>
                   </div>
@@ -833,7 +835,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
                     </div>
                   )}
                   {subMode === 'accounting' && (
-                    <p className="text-[11px] text-gray-400 dark:text-gray-500">直连官方客户端，本网关仅统计用量与费用，不转发流量。</p>
+                    <p className="text-[11px] text-gray-400 dark:text-gray-500">官方订阅客户端，本网关仅统计用量与费用，不转发流量。</p>
                   )}
                 </div>
               )}
@@ -992,6 +994,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
 export default function Providers() {
   const [providers, setProviders] = useState(FALLBACK_PROVIDERS);
   const [meta,      setMeta]      = useState(FALLBACK_PROVIDER_META);
+  const [subscriptionPlans, setSubscriptionPlans] = useState(SUBSCRIPTION_PLANS_FALLBACK);
   const [savedMsg,  setSavedMsg]  = useState('');
   // Track the last value written/loaded so we skip the initial load trigger
   const lastSaved = useRef(null);
@@ -1031,6 +1034,13 @@ export default function Providers() {
       }
       lastSaved.current = resolved;
       setProviders(resolved);
+
+      // 订阅套餐从个人页配置读取（与 billing-config 默认合并）
+      if (window.electronAPI?.localConfig?.getBilling) {
+        window.electronAPI.localConfig.getBilling()
+          .then(r => { if (r?.subscription_plans) setSubscriptionPlans(r.subscription_plans); })
+          .catch(() => {});
+      }
     })();
   }, []);
 
@@ -1137,7 +1147,7 @@ export default function Providers() {
               {/* Enabled providers */}
               {enabledItems.map(p =>
                 meta[p.id]
-                  ? <ProviderCard key={p.id} provider={p} meta={meta[p.id]} onUpdate={updateProvider} onTest={testProvider} />
+                  ? <ProviderCard key={p.id} provider={p} meta={meta[p.id]} onUpdate={updateProvider} onTest={testProvider} subscriptionPlans={subscriptionPlans[p.id] || []} />
                   : <CustomProviderCard key={p.id} provider={p} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} />
               )}
 
@@ -1191,7 +1201,7 @@ export default function Providers() {
                   return (
                     <div className="mt-1">
                       {meta[addingId]
-                        ? <ProviderCard key={addingId} provider={p} meta={meta[addingId]} onUpdate={updateProvider} onTest={testProvider} initialExpanded />
+                        ? <ProviderCard key={addingId} provider={p} meta={meta[addingId]} onUpdate={updateProvider} onTest={testProvider} initialExpanded subscriptionPlans={subscriptionPlans[addingId] || []} />
                         : <CustomProviderCard key={addingId} provider={p} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} />
                       }
                     </div>

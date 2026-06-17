@@ -1,12 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { login, register, getProfile } from '../api/client';
+import { login, register, getProfile, formatApiError } from '../api/client';
 import { useAuth } from '../store/index';
 import { useTheme } from '../store/theme';
 import { getConfig, getGateway } from '../api/adapter';
 import logo from '../assets/logo.svg';
 import { useLang } from '../store/lang';
-import { DEFAULT_SERVER_URL } from '../config';
+import { SERVER_URL_PLACEHOLDER, normalizeServerBase, syncCloudConfigUrl, bootstrapServerUrl } from '../config';
+
+/** 切换服务器时清除旧 token，避免跨服鉴权失败 */
+function persistServerUrl(url) {
+  const next = normalizeServerBase(url);
+  if (!next) return '';
+  const prev = normalizeServerBase(localStorage.getItem('serverUrl') || '');
+  if (prev && prev !== next) localStorage.removeItem('token');
+  localStorage.setItem('serverUrl', next);
+  return next;
+}
 
 function Field({ label, type = 'text', value, onChange, placeholder }) {
   return (
@@ -82,7 +92,7 @@ export default function Config() {
   const navigate = useNavigate();
 
   const [serverUrl, setServerUrl] = useState(
-    () => localStorage.getItem('serverUrl') || DEFAULT_SERVER_URL
+    () => normalizeServerBase(localStorage.getItem('serverUrl') || '')
   );
   const [mode, setMode] = useState('login'); // 'login' | 'register'
   const [email, setEmail] = useState('');
@@ -97,6 +107,7 @@ export default function Config() {
   useEffect(() => {
     if (!window.electronAPI) return;
     window.electronAPI.config.read().then((cfg) => { if (!cfg) setFirstRun(true); });
+    bootstrapServerUrl().then((url) => { if (url) setServerUrl(url); });
   }, []);
 
   async function afterAuth(token) {
@@ -114,14 +125,19 @@ export default function Config() {
   async function handleLogin(e) {
     e.preventDefault();
     setError('');
+    const base = persistServerUrl(serverUrl);
+    if (!base) {
+      setError('请先填写 Token Bank 服务地址');
+      return;
+    }
     setSaving(true);
     try {
-      localStorage.setItem('serverUrl', serverUrl);
+      setServerUrl(base);
       const res = await login(email, password);
       await afterAuth(res.data.token);
     } catch (err) {
       localStorage.removeItem('token');
-      setError(err.response?.data?.detail || t('config.loginFailed'));
+      setError(formatApiError(err, t('config.loginFailed')));
     } finally {
       setSaving(false);
     }
@@ -130,14 +146,19 @@ export default function Config() {
   async function handleRegister(e) {
     e.preventDefault();
     setError('');
+    const base = persistServerUrl(serverUrl);
+    if (!base) {
+      setError('请先填写 Token Bank 服务地址');
+      return;
+    }
     setSaving(true);
     try {
-      localStorage.setItem('serverUrl', serverUrl);
+      setServerUrl(base);
       const res = await register(email, password, nickname, referralCode);
       await afterAuth(res.data.token);
     } catch (err) {
       localStorage.removeItem('token');
-      setError(err.response?.data?.detail || '注册失败，请重试');
+      setError(formatApiError(err, '注册失败，请重试'));
     } finally {
       setSaving(false);
     }
@@ -177,11 +198,10 @@ export default function Config() {
               value={serverUrl}
               onChange={(e) => setServerUrl(e.target.value)}
               onBlur={(e) => {
-                const v = e.target.value.trim() || DEFAULT_SERVER_URL;
+                const v = persistServerUrl(e.target.value);
                 setServerUrl(v);
-                localStorage.setItem('serverUrl', v);
               }}
-              placeholder={DEFAULT_SERVER_URL}
+              placeholder={SERVER_URL_PLACEHOLDER}
               className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-500"
             />
           </div>
@@ -314,7 +334,9 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
   async function handleSave() {
     setSaving(true);
     try {
-      localStorage.setItem('serverUrl', serverUrl);
+      const base = persistServerUrl(serverUrl);
+      setServerUrl(base);
+      await syncCloudConfigUrl(base);
       const current = (await getConfig().read().catch(() => null)) || {};
       await getConfig().write({
         ...current,
@@ -450,12 +472,12 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
             type="text"
             value={serverUrl}
             onChange={e => setServerUrl(e.target.value)}
-            onBlur={e => {
-              const v = e.target.value.trim() || DEFAULT_SERVER_URL;
+            onBlur={async e => {
+              const v = persistServerUrl(e.target.value);
               setServerUrl(v);
-              localStorage.setItem('serverUrl', v);
+              await syncCloudConfigUrl(v);
             }}
-            placeholder={DEFAULT_SERVER_URL}
+            placeholder={SERVER_URL_PLACEHOLDER}
             className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500 font-mono"
           />
         </div>

@@ -54,14 +54,35 @@ async function _doRegister() {
   }
 }
 
+/** 采集本机 1/7/30 天盘点快照，随心跳上报云端 */
+async function _collectInventory() {
+  const query = window.electronAPI?.localStats?.query;
+  if (query) {
+    const [d1, d7, d30] = await Promise.all([
+      query(1).catch(() => null),
+      query(7).catch(() => null),
+      query(30).catch(() => null),
+    ]);
+    const inv = {};
+    if (d1) inv['1'] = d1;
+    if (d7) inv['7'] = d7;
+    if (d30) inv['30'] = d30;
+    return inv;
+  }
+  const d1 = await getGateway().getDailyStats().catch(() => ({}));
+  return d1?.total_calls != null ? { '1': d1 } : {};
+}
+
 async function _sendHeartbeat() {
   if (!_deviceId) return;
   try {
-    const s = await getGateway().getDailyStats().catch(() => ({}));
+    const inv = await _collectInventory();
+    const d1 = inv['1'] || {};
     await heartbeatDevice(_deviceId, {
-      calls            : s?.total_calls  || 0,
+      calls            : d1?.total_calls  || 0,
       errors           : 0,  // not tracked in local stats
-      providers_active : (s?.providers || []).length,
+      providers_active : (d1?.providers || []).length,
+      inventory        : inv,
     });
     // Successful heartbeat — reset failure counter
     _consecutiveFailures = 0;

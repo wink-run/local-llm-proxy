@@ -210,6 +210,8 @@ async def init_db() -> None:
     await _migrate_image_support()
     await _migrate_scene_routes()
     await _migrate_devices()
+    await _migrate_device_inventory()
+    await _migrate_user_billing()
 
 
 async def _migrate() -> None:
@@ -1332,8 +1334,161 @@ async def upsert_device(device_id: str, user_id: int, type_: str, name: str,
             return dict(row) if row else {}
 
 
+async def _migrate_device_inventory() -> None:
+    """devices.inventory_json：各端上报的盘点快照（按 1/7/30 天）。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("PRAGMA table_info(devices)") as cur:
+            cols = {r[1] for r in await cur.fetchall()}
+        if "inventory_json" not in cols:
+            await db.execute(
+                "ALTER TABLE devices ADD COLUMN inventory_json TEXT NOT NULL DEFAULT '{}'"
+            )
+        await db.commit()
+
+
+def _empty_inventory() -> dict:
+    return {
+        "total_calls": 0, "total_tokens": 0, "total_cost": 0,
+        "tiers": {"free": 0, "p2p": 0, "paid": 0},
+        "hourly": [0] * 24,
+        "models": [], "providers": [], "agent_sources": [], "devices": [],
+    }
+
+
+def _merge_inventory_list(rows_list: list, key_field: str) -> list:
+    """合并多设备同名维度（provider/model/source）。"""
+    acc: dict = {}
+    for rows in rows_list:
+        for r in rows or []:
+            k = r.get(key_field)
+            if not k:
+                continue
+            if k not in acc:
+                acc[k] = dict(r)
+            else:
+                acc[k]["calls"] = acc[k].get("calls", 0) + (r.get("calls") or 0)
+                acc[k]["tokens"] = acc[k].get("tokens", 0) + (r.get("tokens") or 0)
+                if "cost_usd" in r or "cost_usd" in acc[k]:
+                    acc[k]["cost_usd"] = (acc[k].get("cost_usd") or 0) + (r.get("cost_usd") or 0)
+    return sorted(acc.values(), key=lambda x: x.get("calls", 0), reverse=True)
+
+
+def merge_device_inventories(device_rows: list, days: int) -> dict:
+    """将各设备上报的盘点 JSON 按时间范围合并为用户总览。"""
+    import json as _json
+
+    key = str(days)
+    merged = _empty_inventory()
+    provider_rows, model_rows, agent_rows = [], [], []
+
+    for dev in device_rows:
+        raw = dev.get("inventory_json") or "{}"
+        try:
+            inv_all = _json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except (ValueError, TypeError):
+            inv_all = {}
+        snap = inv_all.get(key) or inv_all.get(str(days))
+        if not snap:
+            continue
+
+        merged["total_calls"] += int(snap.get("total_calls") or 0)
+        merged["total_tokens"] += int(snap.get("total_tokens") or 0)
+        merged["total_cost"] += float(snap.get("total_cost") or 0)
+
+        tiers = snap.get("tiers") or {}
+        for t in ("free", "p2p", "paid"):
+            merged["tiers"][t] += int(tiers.get(t) or 0)
+
+        if days == 1 and isinstance(snap.get("hourly"), list):
+            for i, v in enumerate(snap["hourly"][:24]):
+                merged["hourly"][i] += int(v or 0)
+
+        provider_rows.append(snap.get("providers") or [])
+        model_rows.append(snap.get("models") or [])
+        agent_rows.append(snap.get("agent_sources") or [])
+
+        dev_tiers = {t: int((tiers or {}).get(t) or 0) for t in ("free", "p2p", "paid")}
+        dev_models = sorted(snap.get("models") or [], key=lambda x: x.get("calls", 0), reverse=True)
+        dev_sources = sorted(snap.get("agent_sources") or [], key=lambda x: x.get("calls", 0), reverse=True)
+        dev_providers = sorted(snap.get("providers") or [], key=lambda x: x.get("calls", 0), reverse=True)
+
+        merged["devices"].append({
+            "device_id": dev.get("id"),
+            "name": dev.get("name") or dev.get("id"),
+            "type": dev.get("type"),
+            "platform": dev.get("platform"),
+            "version": dev.get("version") or "",
+            "online": bool(dev.get("online")),
+            "calls": int(snap.get("total_calls") or 0),
+            "tokens": int(snap.get("total_tokens") or 0),
+            "cost": float(snap.get("total_cost") or 0),
+            "tiers": dev_tiers,
+            "providers_count": len(snap.get("providers") or []),
+            "top_models": dev_models[:3],
+            "top_sources": dev_sources[:3],
+            "top_providers": dev_providers[:3],
+            # 完整列表供分布图按端筛选
+            "agent_sources": snap.get("agent_sources") or [],
+            "providers": dev_providers,
+            "models": dev_models,
+        })
+
+    merged["devices"].sort(key=lambda d: d.get("calls", 0), reverse=True)
+    total_calls = merged["total_calls"] or 0
+    for d in merged["devices"]:
+        d["share_pct"] = round(d["calls"] / total_calls * 100) if total_calls > 0 else 0
+    merged["providers"] = _merge_inventory_list(provider_rows, "id")
+    merged["models"] = _merge_inventory_list(model_rows, "model")
+    merged["agent_sources"] = _merge_inventory_list(agent_rows, "source")
+    return merged
+
+
+async def update_device_inventory(device_id: str, user_id: int, inventory: dict) -> None:
+    """合并写入设备盘点快照（键：1 / 7 / 30）。"""
+    import json as _json
+
+    if not inventory:
+        return
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT inventory_json FROM devices WHERE id=? AND user_id=?",
+            (device_id, user_id),
+        ) as cur:
+            row = await cur.fetchone()
+        existing: dict = {}
+        if row and row[0]:
+            try:
+                existing = _json.loads(row[0])
+            except (ValueError, TypeError):
+                existing = {}
+        for k, v in inventory.items():
+            if v is not None:
+                existing[str(k)] = v
+        await db.execute(
+            "UPDATE devices SET inventory_json=? WHERE id=? AND user_id=?",
+            (_json.dumps(existing, ensure_ascii=False), device_id, user_id),
+        )
+        await db.commit()
+
+
+async def get_user_inventory_stats(user_id: int, days: int = 1) -> dict:
+    """汇总用户所有设备上报的盘点数据。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM devices WHERE user_id=? ORDER BY created_at DESC",
+            (user_id,),
+        ) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+    out = merge_device_inventories(rows, days)
+    out["days"] = days
+    out["device_count"] = len(out["devices"])
+    return out
+
+
 async def record_device_heartbeat(device_id: str, user_id: int, online: bool,
-                                   calls: int, errors: int, providers: int) -> None:
+                                   calls: int, errors: int, providers: int,
+                                   inventory: dict | None = None) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "UPDATE devices SET online=?, last_seen=datetime('now') WHERE id=?",
@@ -1345,6 +1500,8 @@ async def record_device_heartbeat(device_id: str, user_id: int, online: bool,
             (device_id, user_id, calls, errors, providers),
         )
         await db.commit()
+    if inventory:
+        await update_device_inventory(device_id, user_id, inventory)
 
 
 async def get_user_devices(user_id: int) -> list[dict]:
@@ -1393,6 +1550,89 @@ async def sweep_offline_devices() -> int:
         )
         await db.commit()
         return cur.rowcount
+
+
+# ── 个人页账户配置（跨终端同步）────────────────────────────────────────────────
+
+USER_BILLING_KEYS = (
+    "user_subscriptions",
+    "user_payg_providers",
+    "provider_pricing_overrides",
+    "subscription_plans",
+)
+
+
+def _empty_user_billing() -> dict:
+    return {
+        "user_subscriptions": [],
+        "user_payg_providers": [],
+        "provider_pricing_overrides": {},
+        "subscription_plans": {},
+    }
+
+
+def _normalize_user_billing(raw: dict | None) -> dict:
+    """归一化用户计费配置 JSON。"""
+    import json as _json
+    base = _empty_user_billing()
+    if not raw:
+        return base
+    if isinstance(raw, str):
+        try:
+            raw = _json.loads(raw)
+        except (ValueError, TypeError):
+            return base
+    if not isinstance(raw, dict):
+        return base
+    if isinstance(raw.get("user_subscriptions"), list):
+        base["user_subscriptions"] = raw["user_subscriptions"]
+    if isinstance(raw.get("user_payg_providers"), list):
+        base["user_payg_providers"] = raw["user_payg_providers"]
+    if isinstance(raw.get("provider_pricing_overrides"), dict):
+        base["provider_pricing_overrides"] = raw["provider_pricing_overrides"]
+    if isinstance(raw.get("subscription_plans"), dict):
+        base["subscription_plans"] = raw["subscription_plans"]
+    return base
+
+
+async def _migrate_user_billing() -> None:
+    """users.billing_json：个人页订阅 / 按量 provider / 刊例价覆盖。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("PRAGMA table_info(users)") as cur:
+            cols = {r[1] for r in await cur.fetchall()}
+        if "billing_json" not in cols:
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN billing_json TEXT NOT NULL DEFAULT '{}'"
+            )
+        await db.commit()
+
+
+async def get_user_billing(user_id: int) -> dict:
+    import json as _json
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT billing_json FROM users WHERE id=?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return _empty_user_billing()
+    return _normalize_user_billing(row[0])
+
+
+async def set_user_billing(user_id: int, patch: dict) -> dict:
+    """合并更新用户计费配置并返回完整快照。"""
+    import json as _json
+    current = await get_user_billing(user_id)
+    for key in USER_BILLING_KEYS:
+        if key in patch and patch[key] is not None:
+            current[key] = patch[key]
+    payload = _json.dumps(current, ensure_ascii=False)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE users SET billing_json=? WHERE id=?", (payload, user_id)
+        )
+        await db.commit()
+    return current
 
 
 async def get_wall_users(limit: int = 50) -> list[dict]:

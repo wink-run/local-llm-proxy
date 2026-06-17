@@ -42,6 +42,7 @@ session_sources:
     agent_id: claude-code
     provider_id: claude-cli
     tier: paid
+    billing_type: subscription
     proxy_dedup: true                          # 会话 request_id=上游 msg_id，与网关 proxy 记录天然去重 →
                                                # 即便绑路由走网关也照常扫描（不会重复计）。codex/gemini 无此能力。
     root: "~/.claude/projects"
@@ -51,12 +52,15 @@ session_sources:
     require_fields: [message.usage]            # 必须存在才算一条用量
     request_id: [message.id, requestId]        # 跨源去重键（=上游 msg_xxx）
     require_request_id: true                   # 无 id 不记（避免重复扫描重复计）
-    # 按 entrypoint 路由：cli/未知→session-claude（Claude Code CLI），claude-desktop→单独应用；
+    # 按 entrypoint 路由：cli/未知→session-claude（Claude Code CLI），claude-desktop*→Desktop 应用；
     # sdk-cli 是内部映射转发（网关已记为 proxy）→ 跳过，避免给 <synthetic> 等假模型记账/重复计。
     data_source_map:
       field: entrypoint
       map:
         claude-desktop: session-claude-desktop
+        claude-desktop-3p: session-claude-desktop   # Desktop 启用第三方网关（Token Bank 等）
+      prefix_map:
+        claude-desktop: session-claude-desktop      # 兜底：claude-desktop-* 变体
       skip: [sdk-cli]
       default: session-claude
     fields:
@@ -75,6 +79,7 @@ session_sources:
     agent_id: codex
     provider_id: codex-cli
     tier: paid
+    billing_type: subscription
     root: "~/.codex/sessions"
     glob: "**/*.jsonl"
     format: jsonl
@@ -99,6 +104,7 @@ session_sources:
     agent_id: gemini-cli
     provider_id: gemini-cli
     tier: paid
+    billing_type: subscription
     root: "~/.gemini/tmp"
     glob: "**/chats/session-*.json"
     format: json
@@ -122,6 +128,7 @@ session_sources:
     agent_id: cursor
     provider_id: cursor
     tier: paid
+    billing_type: subscription
     direct_only: true                          # 标记：main.js 据此物化为「仅直连·只统计」应用（不绑路由/不走网关）
     app_name: Cursor
     app_icon: "🖱"
@@ -134,6 +141,8 @@ session_sources:
     # 只能按 assistant 消息计「请求数」，token 计 0；故不强制 require usage、也不 skip_if_zero。
     # 若将来 Cursor 版本开始写 message.usage，下面字段会自动取到、token 即有值。
     request_id: "cursor:{session_id}:{index}"  # 同文件未变不重扫；跨扫描 INSERT OR IGNORE 去重
+    record_label: assistant_tools               # 无 model 时从工具名/文本生成标签
+    model_stats: false                          # 用量明细不展示「按模型统计 / 调用明细」
     fields:
       ts: [timestamp, message.timestamp]
       model: message.model
@@ -147,6 +156,7 @@ session_sources:
     agent_id: opencode
     provider_id: opencode-cli
     tier: paid
+    billing_type: api-key
     format: sqlite
     db: "~/.local/share/opencode/opencode.db"  # WAL 模式：解释器会一并看 -wal mtime
     # 取每条 assistant 消息；message.data 是 JSON，session_id/message_id 来自行列
@@ -171,12 +181,77 @@ session_sources:
     agent_id: copilot
     provider_id: github-copilot
     tier: paid
+    billing_type: subscription
     direct_only: true                            # 不走网关，仅补录统计
     app_name: GitHub Copilot
     app_icon: "🤖"
     format: copilot-events                       # 自定义格式：一目录=一会话，events.jsonl
     root: "~/.copilot/session-state"
     glob: "*/events.jsonl"                       # <sessId>/events.jsonl
+
+  - id: qwen                                     # Qwen Code：~/.qwen/projects/*/chats/*.jsonl
+    data_source: session-qwen
+    agent_id: qwen-code
+    provider_id: qwen-cli
+    tier: paid
+    billing_type: subscription
+    direct_only: true
+    app_name: Qwen Code
+    app_icon: "🐉"
+    root: "~/.qwen/projects"
+    glob: "*/chats/*.jsonl"
+    format: jsonl
+    session_id_from: filename
+    record_filter: { field: type, equals: assistant }
+    require_fields: [message.usage]
+    skip_if_zero: true
+    request_id: "qwen:{session_id}:{index}"
+    fields:
+      ts: timestamp
+      model: message.model
+      input_tokens: message.usage.input_tokens
+      output_tokens: message.usage.output_tokens
+      cache_create_tokens: message.usage.cache_creation_input_tokens
+      cache_read_tokens: message.usage.cache_read_input_tokens
+
+  - id: antigravity                              # Antigravity：~/.gemini/tmp/<hash>/chats/*.json
+    data_source: session-antigravity
+    agent_id: antigravity
+    provider_id: antigravity
+    tier: paid
+    billing_type: subscription
+    direct_only: true
+    app_name: Antigravity
+    app_icon: "🚀"
+    root: "~/.gemini/tmp"
+    glob: "**/chats/*.json"
+    format: json
+    doc_session_id: [sessionId, session_id]
+    doc_skip: { field: kind, equals: main }      # kind=main 属于 Gemini CLI，留给 session-gemini
+    iterate: messages
+    record_filter: { field: type, equals: gemini }
+    skip_if_zero: true
+    request_id: "antigravity:{session_id}:{index}"
+    fields:
+      input_tokens: tokens.input
+      output_tokens: tokens.output
+      cache_read_tokens: tokens.cached
+    doc_fallback:
+      model: model
+      ts: [lastUpdated, updatedAt]
+
+  - id: grok                                     # Grok Build：~/.grok/sessions/<cwd>/<uuid>/
+    data_source: session-grok
+    agent_id: grok
+    provider_id: grok
+    tier: paid
+    billing_type: api-key
+    direct_only: true
+    app_name: Grok
+    app_icon: "𝕏"
+    format: grok-session
+    root: "~/.grok/sessions"
+    skip_if_zero: true
 
 # ════════ 客户端接入（内置留空，从服务器同步）════════
 tools: []

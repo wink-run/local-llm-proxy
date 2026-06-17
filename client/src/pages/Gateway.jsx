@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { getRates, getOnlineModels } from '../api/client';
+import { getSyncServerBase } from '../config';
 import { getGateway, getLocalConfig, getConfig } from '../api/adapter';
 import { listAgents, applyAgent, revertAgent } from '../api/agents';
 import claudeDevModeImg1 from '../assets/claude-devmode-1.webp';
@@ -182,32 +183,22 @@ function PolicyManager() {
   );
 }
 
-// ── ImportConfigButton：在线同步（从服务器下发配置）─────────────────────────────
-// endpoint: 服务器端内置的配置文件路径，如 '/api/config/apps' 或 '/api/config/scenes'
-// URL 框只让用户填服务器根地址，文件路径由 endpoint 内置拼接
+// ── ImportConfigButton：在线同步（地址取自设置页，不在 UI 展示）────────────
 function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
   const [busy, setBusy] = useState(false);
-  const [msg,  setMsg]  = useState('');
-  const [showUrl, setShowUrl] = useState(false);
-  const [serverBase, setServerBase] = useState(''); // 只填服务器根地址
+  const [msg, setMsg] = useState('');
+  const msgTimerRef = useRef(null);
 
-  // 点开 URL 框时，预填登录时配置的服务器根地址
-  async function openUrl() {
-    if (!showUrl && !serverBase) {
-      try {
-        const cfg = await getLocalConfig().get();
-        const base = cfg?.cloud_config?.url;
-        if (base) {
-          // 取根地址（去掉 /api、/v1 等路径后缀）
-          const origin = base.replace(/\/$/, '').replace(/\/(api|v\d+)(\/.*)?$/, '');
-          setServerBase(origin);
-        }
-      } catch {}
-    }
-    setShowUrl(v => !v);
-  }
+  // 同步结果提示 5 秒后自动隐藏
+  useEffect(() => {
+    if (!msg) return;
+    if (msgTimerRef.current) clearTimeout(msgTimerRef.current);
+    msgTimerRef.current = setTimeout(() => setMsg(''), 5000);
+    return () => {
+      if (msgTimerRef.current) clearTimeout(msgTimerRef.current);
+    };
+  }, [msg]);
 
-  // 同步成功提示：带上新增的应用 / 路由数量
   function importedMsg(r, prefix) {
     const apps = Array.isArray(r.addedApps) ? r.addedApps : [];
     const routes = Array.isArray(r.addedRoutes) ? r.addedRoutes : [];
@@ -218,44 +209,40 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
     return `${prefix}（无新增）`;
   }
 
-  async function handleUrl() {
-    const base = serverBase.trim().replace(/\/$/, '');
-    if (!base || !window.electronAPI?.toolsConfig) return;
+  async function handleSync() {
+    if (!window.electronAPI?.toolsConfig) return;
+    const base = await getSyncServerBase();
+    if (!base) {
+      setMsg('✗ 未配置服务器地址，请先在设置页填写 Token Bank 服务地址');
+      return;
+    }
     const fullUrl = base + endpoint;
-    setBusy(true); setMsg('');
-    // 服务器配置端点需用户 JWT 鉴权，带上本地登录 token
+    setBusy(true);
+    setMsg('');
     const token = localStorage.getItem('token');
     const r = await window.electronAPI.toolsConfig.importUrl(fullUrl, token);
     setMsg(r.ok ? '✓ ' + importedMsg(r, '已同步') : '✗ ' + r.error);
-    if (r.ok && onImported) { onImported(); setShowUrl(false); }
+    if (r.ok && onImported) onImported();
     setBusy(false);
   }
 
   return (
-    <div className="relative">
-      <button disabled={busy} onClick={openUrl}
+    <div className="flex flex-col items-end gap-0.5">
+      <button type="button" disabled={busy} onClick={handleSync}
+        title="从 Token Bank 服务器拉取最新配置"
         className="text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors">
         {busy ? '同步中…' : '🔄 在线同步'}
       </button>
-      {msg && <div className={`text-xs mt-1 ${msg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{msg}</div>}
-      {showUrl && (
-        <div className="absolute right-0 top-8 z-10 flex items-center gap-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 shadow-lg min-w-max">
-          <input value={serverBase} onChange={e => setServerBase(e.target.value)}
-            placeholder="https://your-server.com"
-            className="text-xs bg-transparent border-none outline-none text-gray-700 dark:text-gray-200 w-52" />
-          <span className="text-[10px] text-gray-400 shrink-0 font-mono">{endpoint}</span>
-          <button onClick={handleUrl} disabled={busy || !serverBase.trim()}
-            className="text-xs px-2 py-0.5 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 shrink-0">
-            同步
-          </button>
-        </div>
-      )}
+      {msg && <div className={`text-xs ${msg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{msg}</div>}
     </div>
   );
 }
 
 // ── AppManager：应用列表（Tab1: 所有应用 & 托管 | Tab2: API Key 管理）────────
-const LINK_METHOD_LABEL = { shim: '应用', 'api-key': '应用', manual: 'API', direct: '直连' };
+// 接入方式列：仅「应用」/「API」（manual=手工 API，其余均为应用）
+function linkMethodLabel(method) {
+  return method === 'manual' ? 'API' : '应用';
+}
 // 按 API Key 路由的应用：自动写配置的 api-key，和用户自配的 manual（手工添加）
 const isKeyApp = (m) => m === 'api-key' || m === 'manual';
 
@@ -751,17 +738,252 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
   );
 }
 
-// 单个应用的用量明细弹窗（合并网关实时 proxy + 会话补录 session-*，已在 DB 层按 request_id 去重）
+// Trace 顶栏指标 pill（参考 tokentelemetry）
+function TraceStatPill({ label, value, tone }) {
+  const toneCls = tone === 'blue' ? 'text-blue-600 dark:text-blue-400'
+    : tone === 'amber' ? 'text-amber-600 dark:text-amber-400'
+    : tone === 'red' ? 'text-red-600 dark:text-red-400'
+    : tone === 'emerald' ? 'text-emerald-600 dark:text-emerald-400'
+    : tone === 'cyan' ? 'text-cyan-600 dark:text-cyan-400'
+    : 'text-gray-800 dark:text-gray-100';
+  return (
+    <div className="inline-flex items-center gap-1 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-md px-2 h-7">
+      <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">{label}</span>
+      <span className={`text-[11px] font-semibold tabular-nums ${toneCls}`}>{value}</span>
+    </div>
+  );
+}
+
+// Session Trace 弹窗（参考 tokentelemetry，简化版）
+function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
+  const [trace, setTrace]     = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [stepIdx, setStepIdx] = useState(0);
+  const agentId = traceAgentId || app?.agent_id;
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setStepIdx(0);
+    window.electronAPI?.apps?.sessionTrace?.(agentId, sessionId)
+      .then(t => { if (alive) { setTrace(t); setLoading(false); } })
+      .catch(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [app, sessionId, agentId]);
+
+  const steps = trace?.steps || [];
+  const cur   = steps[stepIdx] || null;
+  const st    = trace?.stats || {};
+  const tok   = st.tokens || {};
+  const fmtN  = n => (n >= 1000 ? (n / 1000).toFixed(1) + 'K' : String(n ?? 0));
+  const fmtTime = ts => ts ? new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-4xl mx-4 max-h-[92vh] overflow-hidden flex flex-col"
+        onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-800 shrink-0 space-y-2">
+          <div className="flex items-center gap-3">
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-sm">← 返回</button>
+            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">Session Trace</h3>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 uppercase">{agentId || 'agent'}</span>
+            <span className="font-mono text-[10px] text-gray-400">{sessionId?.slice(0, 8)}…</span>
+          </div>
+          {!loading && !trace?.error && st.steps != null && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <TraceStatPill label="Steps" value={st.steps} />
+              <TraceStatPill label="Tools" value={st.tools ?? 0} tone="blue" />
+              {(st.artifacts ?? 0) > 0 && <TraceStatPill label="Arts" value={st.artifacts} tone="emerald" />}
+              <TraceStatPill label="Reason" value={st.reasoning ?? 0} tone="amber" />
+              <TraceStatPill label="Turns" value={st.turns ?? 0} />
+              <TraceStatPill label="Dur" value={st.duration || '—'} />
+              <TraceStatPill label="Err" value={st.errors ?? 0} tone={(st.errors ?? 0) > 0 ? 'red' : undefined} />
+              <div className="hidden sm:flex items-center gap-2 ml-1 px-2 h-7 rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40">
+                <span className="text-[9px] text-gray-400">INPUT <strong className="text-gray-700 dark:text-gray-200">{fmtN(tok.input)}</strong></span>
+                <span className="text-gray-300">|</span>
+                <span className="text-[9px] text-gray-400">OUTPUT <strong className="text-gray-700 dark:text-gray-200">{fmtN(tok.output)}</strong></span>
+                <span className="text-gray-300">|</span>
+                <span className="text-[9px] text-gray-400">CACHED <strong className="text-cyan-600 dark:text-cyan-400">{fmtN(tok.cached)}</strong></span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {loading ? (
+          <div className="py-16 flex justify-center text-xs text-gray-400">加载 Trace…</div>
+        ) : trace?.error ? (
+          <div className="py-16 text-center text-xs text-gray-400">未找到会话文件</div>
+        ) : (
+          <>
+            {/* 会话元信息 */}
+            <div className="px-5 py-2 text-[11px] text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800 shrink-0 flex flex-wrap gap-x-4 gap-y-1">
+              <span>项目 <strong className="text-gray-700 dark:text-gray-300">{trace.project || '—'}</strong></span>
+              {projectPathTooltip(trace) !== '—' && (
+                <span className="font-mono truncate max-w-xs" title={projectPathTooltip(trace)}>{projectPathTooltip(trace)}</span>
+              )}
+            </div>
+
+            <div className="flex flex-1 min-h-0">
+              {/* 步骤索引 */}
+              <div className="w-44 shrink-0 border-r border-gray-100 dark:border-gray-800 overflow-y-auto max-h-[55vh]">
+                {steps.map((s, i) => (
+                  <button key={i} onClick={() => setStepIdx(i)}
+                    className={`w-full text-left px-3 py-1.5 text-[11px] border-b border-gray-50 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/40 ${stepIdx === i ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300' : 'text-gray-600 dark:text-gray-400'}`}>
+                    <span className="text-gray-400 mr-1">{String(i).padStart(3, '0')}</span>
+                    <span className={`px-1 rounded text-[9px] mr-1 ${s.kind === 'tool' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' : s.kind === 'user' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30' : s.reasoning ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/20' : 'bg-gray-100 text-gray-600 dark:bg-gray-800'}`}>
+                      {s.kind === 'tool' ? s.tool || s.label : s.kind === 'user' ? 'USER' : s.reasoning ? 'REASON' : 'AI'}
+                    </span>
+                    <span className="truncate block">{s.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* 步骤详情 */}
+              <div className="flex-1 p-4 overflow-y-auto max-h-[55vh]">
+                {cur ? (
+                  <div className="space-y-2">
+                    <div className="text-[10px] text-gray-400">{fmtTime(cur.ts)} · {cur.label}</div>
+                    {cur.text && (
+                      <pre className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words bg-gray-50 dark:bg-gray-800/50 rounded-lg p-3 max-h-80 overflow-y-auto">{cur.text}</pre>
+                    )}
+                    {cur.input != null && (
+                      <pre className="text-[11px] font-mono text-gray-600 dark:text-gray-400 whitespace-pre-wrap break-all bg-gray-50 dark:bg-gray-800/50 rounded-lg p-3 max-h-60 overflow-y-auto">
+                        {typeof cur.input === 'string' ? cur.input : JSON.stringify(cur.input, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-400">选择左侧步骤查看详情</div>
+                )}
+              </div>
+            </div>
+
+            {/* 步骤进度条 */}
+            {steps.length > 1 && (
+              <div className="px-5 py-3 border-t border-gray-100 dark:border-gray-800 shrink-0">
+                <div className="flex items-center gap-3 text-[10px] text-gray-400 mb-1">
+                  <span>Step {stepIdx + 1} / {steps.length}</span>
+                  <span className="flex-1" />
+                  <span>{cur?.label}</span>
+                </div>
+                <input type="range" min={0} max={steps.length - 1} value={stepIdx}
+                  onChange={e => setStepIdx(+e.target.value)}
+                  className="w-full h-1 accent-blue-600 cursor-pointer" />
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 用量明细区块标题（1–5 结构化） */
+function DetailSection({ n, title, hint, children }) {
+  return (
+    <section>
+      <div className="flex items-baseline gap-2 mb-2">
+        <span className="w-4 h-4 rounded-full bg-gray-100 dark:bg-gray-800 text-[10px] font-bold text-gray-500 dark:text-gray-400 flex items-center justify-center shrink-0">{n}</span>
+        <h4 className="text-xs font-semibold text-gray-700 dark:text-gray-300">{title}</h4>
+        {hint && <span className="text-[10px] text-gray-400 font-normal ml-1">{hint}</span>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/** Claude Desktop 等：会话 jsonl 补录（无 agent_id 的 api-key 应用） */
+function appHasSessionImport(app) {
+  if (!app) return false;
+  if (app.agent_id || app.link_method === 'direct' || app.link_method === 'shim') return true;
+  return app.preset_id === 'claude-desktop' || app.preset_id === 'codex-desktop';
+}
+
+/** 可打开 Session Trace 的 agent（Claude Desktop 共用 claude-code jsonl） */
+function traceAgentIdForApp(app) {
+  if (!app) return null;
+  if (['cursor', 'claude-code', 'codex'].includes(app.agent_id)) return app.agent_id;
+  if (app.preset_id === 'claude-desktop') return 'claude-code';
+  if (app.preset_id === 'codex-desktop') return 'codex';
+  return null;
+}
+
+/** 数据来源摘要：网关 / 会话补录（或二者皆有） */
+function buildDataSourceSummary(app, proxy, session, fmtN) {
+  const hasGateway = app.link_method === 'api-key' || app.link_method === 'shim';
+  const hasSession = appHasSessionImport(app);
+  const tags = [];
+  // 仅有数据或纯网关应用时才展示网关行（Desktop 直连官方时多为 0，不占位）
+  if (hasGateway && proxy.calls > 0) {
+    tags.push({ icon: '🛰️', label: '网关实时', calls: proxy.calls, tokens: proxy.tokens, tone: 'blue' });
+  }
+  if (hasSession) {
+    tags.push({ icon: '📄', label: '会话补录', calls: session.calls, tokens: session.tokens, tone: 'green' });
+  }
+  const summary = tags.length === 2
+    ? '网关实时 + 会话补录'
+    : tags[0]?.label || '—';
+  return { summary, tags };
+}
+
+/** 悬浮提示用：真实工作区路径（过滤 Agent 内部存储目录） */
+function projectPathTooltip(row) {
+  const p = row?.project_path;
+  if (!p) return row?.project || '—';
+  const s = String(p).replace(/\\/g, '/');
+  if (!/\/\.claude\/projects\//.test(s) && !/\/\.codex\/sessions\//.test(s)) return p;
+  const slug = s.split('/').filter(Boolean).pop() || '';
+  if (!slug) return p;
+  // githubprojects 仓库名可含连字符
+  const gh = slug.match(/^(.*?githubprojects-)(.+)$/i);
+  if (gh) {
+    const prefixPath = '/' + gh[1].replace(/-$/, '').replace(/^-/, '').replace(/-/g, '/');
+    if (/^\/(Users|home|var|opt|Volumes|tmp)\//i.test(prefixPath)) {
+      return `${prefixPath}/${gh[2]}`;
+    }
+  }
+  const decoded = '/' + slug.replace(/^-/, '').replace(/-/g, '/');
+  if (/^\/(Users|home|var|opt|Volumes|tmp)\//i.test(decoded)) return decoded;
+  return p;
+}
+
+/** 从会话行提取短项目名（与 session-browser 逻辑一致） */
+function shortProjectName(row) {
+  if (!row) return '—';
+  const p = row.project;
+  if (p && !p.includes('/') && !/^-?Users-/i.test(p) && !/^githubprojects-/i.test(p)
+      && !/^\d{1,2}$/.test(p) && p.length <= 64
+      && !(/^-?[A-Za-z]+-/.test(p) && (p.match(/-/g) || []).length >= 3)) {
+    return p;
+  }
+  const raw = row.project_path || p || '';
+  const m = String(raw).match(/githubprojects-(.+)$/i);
+  if (m) return m[1];
+  const slug = String(raw).replace(/\\/g, '/').split('/').filter(Boolean).pop() || raw;
+  const decoded = slug && /^-?[A-Za-z]/.test(slug) && slug.includes('-')
+    ? '/' + slug.replace(/^-/, '').replace(/-/g, '/')
+    : null;
+  if (decoded && /^\/(Users|home|var|opt|Volumes|tmp)\//i.test(decoded)) {
+    return decoded.split('/').filter(Boolean).pop() || decoded;
+  }
+  return p || slug || '—';
+}
+
+// 单个应用的用量明细弹窗
 function AppDetailModal({ app, onClose }) {
   const [days, setDays]           = useState(30);
   const [data, setData]           = useState(null);
   const [loading, setLoading]     = useState(true);
   const [selectedSid, setSelectedSid] = useState(null);
+  const [traceSid, setTraceSid]   = useState(null);
+  const [modelFilter, setModelFilter] = useState(null);  // 从「按模型」筛选下方调用明细
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
     setSelectedSid(null);
+    setTraceSid(null);
+    setModelFilter(null);
     window.electronAPI?.apps?.detail?.(app, days)
       .then(d => { if (alive) { setData(d); setLoading(false); } })
       .catch(() => { if (alive) setLoading(false); });
@@ -776,9 +998,34 @@ function AppDetailModal({ app, onClose }) {
   const proxy   = data?.bySource?.find(s => s.source === 'proxy')   || { calls:0, tokens:0 };
   const session = data?.bySource?.find(s => s.source === 'session') || { calls:0, tokens:0 };
 
-  const sidCalls = selectedSid ? (data?.recent || []).filter(r => r.session_id === selectedSid) : [];
+  const sourceSummary = buildDataSourceSummary(app, proxy, session, fmtN);
+  const sessionHistoryRows = (data?.activity?.length ? data.activity : (data?.sessions || []).map(s => ({
+    ...s, project: '—', context: shortId(s.session_id),
+  }))).map(r => ({
+    ...r,
+    project: shortProjectName(r),
+    project_path: projectPathTooltip(r),
+  }));
+  const traceAgentId = traceAgentIdForApp(app);
+  const canTrace = !!traceAgentId;
+  // Cursor 等无真实 model 的应用：不展示「按模型统计」与「调用明细」
+  const showModelStats = data?.hasModelStats !== false && (data?.byModel?.length ?? 0) > 0;
+  const showCallDetails = data?.hasModelStats !== false;
+  const secSession = showModelStats ? 4 : 3;
+  const secCalls   = showModelStats ? 5 : 4;
+
+  // 调用明细：时间倒序平铺（可选按「按模型统计」筛选）
+  const recentSorted = (() => {
+    let rows = [...(data?.recent || [])];
+    if (modelFilter) rows = rows.filter(r => r.model === modelFilter);
+    return rows.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  })();
 
   return (
+    <>
+      {traceSid && canTrace && (
+        <SessionTraceModal app={app} sessionId={traceSid} traceAgentId={traceAgentId} onClose={() => setTraceSid(null)} />
+      )}
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-3xl mx-4 max-h-[92vh] overflow-y-auto flex flex-col"
         onClick={e => e.stopPropagation()}>
@@ -799,105 +1046,143 @@ function AppDetailModal({ app, onClose }) {
         ) : !data ? (
           <div className="py-16 text-center text-xs text-gray-400">没有数据</div>
         ) : (
-          <div className="p-5 space-y-5">
-            {/* 总计 */}
-            <div className="grid grid-cols-5 gap-2">
-              {[
-                ['总请求数', fmtN(data.total.calls)],
-                ['总Token',  fmtN(data.total.tokens)],
-                ['输入Token', fmtN(data.total.inTok)],
-                ['输出Token', fmtN(data.total.outTok)],
-                ['估算费用',  fmtCost(data.total.totalCost) || '—'],
-              ].map(([l,v]) => (
-                <div key={l} className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3">
-                  <div className="text-[10px] text-gray-400 dark:text-gray-500">{l}</div>
-                  <div className="text-lg font-bold text-gray-800 dark:text-gray-100 mt-0.5 truncate">{v}</div>
-                </div>
-              ))}
-            </div>
+          <div className="p-5 space-y-6">
 
-            {/* 来源拆分 */}
-            <div className="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/40 rounded-lg px-3 py-2">
-              来源：<span className="text-blue-600 dark:text-blue-400 font-medium">🛰️ 网关实时</span> {proxy.calls} 次 · {fmtN(proxy.tokens)} tok
-              <span className="mx-2 text-gray-300">|</span>
-              <span className="text-green-600 dark:text-green-400 font-medium">📄 会话补录</span> {session.calls} 次 · {fmtN(session.tokens)} tok
-              <div className="text-[10px] text-gray-400 mt-1">「网关实时」=经本网关转发；「会话补录」=直连官方、从本地会话(JSONL)解析。同一次调用已按 request_id 去重，不重复计。</div>
-            </div>
-
-            {/* 按模型 */}
-            <div>
-              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">按模型</div>
-              {data.byModel.length === 0 ? <div className="text-xs text-gray-400">—</div> : (
-                <div className="border border-gray-100 dark:border-gray-800 rounded-lg divide-y divide-gray-100 dark:divide-gray-800">
-                  {data.byModel.map(m => (
-                    <div key={m.model} className="flex items-center gap-3 px-3 py-1.5 text-xs">
-                      <span className="font-mono text-gray-700 dark:text-gray-300 flex-1 truncate">{m.model}</span>
-                      <span className="text-gray-500 w-16 text-right">{m.calls} 次</span>
-                      <span className="text-gray-700 dark:text-gray-300 w-20 text-right font-medium">{fmtN(m.tokens)} tok</span>
-                    </div>
+            {/* 1. 数据来源 */}
+            <DetailSection n="1" title="数据来源">
+              <div className="text-xs text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/40 rounded-lg px-3 py-2.5">
+                <span className="text-gray-700 dark:text-gray-300">{sourceSummary.summary}</span>
+                {sourceSummary.tags.length > 1 && (
+                  <span className="text-[10px] text-gray-400 ml-2">· 已去重合并</span>
+                )}
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {sourceSummary.tags.map(t => (
+                    <span key={t.label}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] ${
+                        t.tone === 'blue'
+                          ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/25 dark:text-blue-400'
+                          : 'bg-green-50 text-green-600 dark:bg-green-900/25 dark:text-green-400'
+                      }`}>
+                      {t.icon} {t.label} {t.calls} 次 · {fmtN(t.tokens)} tok
+                    </span>
                   ))}
                 </div>
-              )}
-            </div>
+              </div>
+            </DetailSection>
 
-            {/* 按会话（可点击展开调用明细） */}
-            <div>
-              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">按会话（{data.sessions.length}）</div>
-              {data.sessions.length === 0 ? (
-                <div className="text-xs text-gray-400">无会话记录（API 接入类应用无会话文件，调用明细见下方「最近明细」）</div>
+            {/* 2. 概要总计 */}
+            <DetailSection n="2" title="概要总计">
+              <div className="grid grid-cols-5 gap-2">
+                {[
+                  ['总请求数', fmtN(data.total.calls)],
+                  ['总Token',  fmtN(data.total.tokens)],
+                  ['输入Token', fmtN(data.total.inTok)],
+                  ['输出Token', fmtN(data.total.outTok)],
+                  ['估算费用',  fmtCost(data.total.totalCost) || '—'],
+                ].map(([l,v]) => (
+                  <div key={l} className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3">
+                    <div className="text-[10px] text-gray-400 dark:text-gray-500">{l}</div>
+                    <div className="text-lg font-bold text-gray-800 dark:text-gray-100 mt-0.5 truncate">{v}</div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-gray-400 mt-2">费用按 API 刊例价估算；订阅类接入显示等效价，非实际账单。</p>
+            </DetailSection>
+
+            {/* 3. 按模型统计（无 model 字段的应用不展示） */}
+            {showModelStats && (
+            <DetailSection n="3" title="按模型统计" hint={modelFilter ? `已筛选：${modelFilter}` : '点击行可筛选下方调用明细'}>
+              <div className="border border-gray-100 dark:border-gray-800 rounded-lg divide-y divide-gray-100 dark:divide-gray-800">
+                {data.byModel.map(m => (
+                  <div key={m.model}
+                    onClick={() => setModelFilter(modelFilter === m.model ? null : m.model)}
+                    className={`flex items-center gap-3 px-3 py-1.5 text-xs cursor-pointer select-none hover:bg-gray-50 dark:hover:bg-gray-800/60 ${modelFilter === m.model ? 'bg-blue-50 dark:bg-blue-900/10' : ''}`}>
+                    <span className="font-mono text-gray-700 dark:text-gray-300 flex-1 min-w-0 break-all">{m.model}</span>
+                    <span className="text-gray-500 w-16 text-right">{m.calls} 次</span>
+                    <span className="text-gray-700 dark:text-gray-300 w-20 text-right font-medium">{fmtN(m.tokens)} tok</span>
+                  </div>
+                ))}
+              </div>
+              {modelFilter && (
+                <button type="button" onClick={() => setModelFilter(null)}
+                  className="text-[10px] text-blue-600 dark:text-blue-400 mt-1.5">清除模型筛选</button>
+              )}
+            </DetailSection>
+            )}
+
+            {/* 4. 按会话历史 */}
+            <DetailSection n={secSession} title="按会话历史" hint={canTrace ? 'Trace 查看步骤' : undefined}>
+              {sessionHistoryRows.length === 0 ? (
+                <div className="text-xs text-gray-400 px-1">无会话记录</div>
               ) : (
-                <div className="border border-gray-100 dark:border-gray-800 rounded-lg divide-y divide-gray-100 dark:divide-gray-800 max-h-72 overflow-y-auto">
-                  {data.sessions.map(s => {
-                    const open = selectedSid === s.session_id;
-                    const calls = open ? (data?.recent || []).filter(r => r.session_id === s.session_id) : [];
-                    return (
-                      <div key={s.session_id}>
+                <div className="border border-gray-100 dark:border-gray-800 rounded-lg overflow-hidden">
+                  <div className="grid grid-cols-[minmax(5.5rem,1.15fr)_minmax(0,2fr)_3.5rem_3.5rem_4.5rem_3.5rem] gap-2 px-3 py-1.5 text-[10px] font-medium text-gray-400 bg-gray-50 dark:bg-gray-800/40 border-b border-gray-100 dark:border-gray-800">
+                    <span>项目</span><span>上下文</span><span className="text-right">请求</span><span className="text-right">Token</span><span className="text-right">时间</span><span className="text-right">{canTrace ? 'Trace' : '明细'}</span>
+                  </div>
+                  <div className="divide-y divide-gray-100 dark:divide-gray-800 max-h-64 overflow-y-auto">
+                    {sessionHistoryRows.map(row => (
+                      <div key={row.session_id}>
                         <div
-                          className={`flex items-center gap-3 px-3 py-1.5 text-xs cursor-pointer select-none hover:bg-gray-50 dark:hover:bg-gray-800/60 ${open ? 'bg-blue-50 dark:bg-blue-900/10' : ''}`}
-                          onClick={() => setSelectedSid(open ? null : s.session_id)}
-                        >
-                          <span className="text-gray-400 shrink-0">{open ? '▾' : '▸'}</span>
-                          <span className="font-mono text-gray-600 dark:text-gray-400 flex-1 truncate" title={s.session_id}>{shortId(s.session_id)}</span>
-                          <span className="text-gray-500 w-12 text-right">{s.calls} 次</span>
-                          <span className="text-gray-700 dark:text-gray-300 w-20 text-right font-medium">{fmtN(s.tokens)} tok</span>
-                          <span className="text-gray-400 w-28 text-right">{fmtTime(s.lastTs)}</span>
+                          className={`grid grid-cols-[minmax(5.5rem,1.15fr)_minmax(0,2fr)_3.5rem_3.5rem_4.5rem_3.5rem] gap-2 px-3 py-2 text-xs items-center hover:bg-gray-50 dark:hover:bg-gray-800/40 ${selectedSid === row.session_id ? 'bg-blue-50/50 dark:bg-blue-900/10' : ''}`}>
+                          <span className="font-medium text-gray-700 dark:text-gray-300 truncate min-w-0" title={projectPathTooltip(row)}>{row.project}</span>
+                          <span className="text-gray-600 dark:text-gray-400 truncate" title={row.context}>{row.context || '—'}</span>
+                          <span className="text-gray-500 text-right">{row.calls || 0}</span>
+                          <span className="text-gray-700 dark:text-gray-300 text-right font-medium">{fmtN(row.tokens)}</span>
+                          <span className="text-gray-400 text-right text-[10px]">{fmtTime(row.lastTs)}</span>
+                          <span className="text-right">
+                            {canTrace ? (
+                              <button type="button" onClick={() => setTraceSid(row.session_id)}
+                                className="text-[10px] px-2 py-0.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400">
+                                Trace
+                              </button>
+                            ) : (
+                              <button type="button" onClick={() => setSelectedSid(selectedSid === row.session_id ? null : row.session_id)}
+                                className="text-[10px] text-gray-400 hover:text-gray-600">
+                                {selectedSid === row.session_id ? '▾' : '▸'}
+                              </button>
+                            )}
+                          </span>
                         </div>
-                        {open && (
-                          <div className="bg-gray-50 dark:bg-gray-800/30 divide-y divide-gray-100 dark:divide-gray-800/60 pl-6">
-                            {calls.length === 0 ? (
-                              <div className="px-3 py-2 text-[11px] text-gray-400">无明细（此会话的调用不在最近50条内）</div>
-                            ) : calls.map((r, i) => (
+                        {selectedSid === row.session_id && !canTrace && (
+                          <div className="bg-gray-50 dark:bg-gray-800/30 divide-y divide-gray-100 dark:divide-gray-800/60 pl-4 pb-1">
+                            {(data?.recent || []).filter(r => r.session_id === row.session_id).slice(0, 20).map((r, i) => (
                               <div key={i} className="flex items-center gap-2 px-3 py-1 text-[11px]">
                                 <span className="text-gray-400 w-20 shrink-0">{fmtTime(r.ts)}</span>
-                                <span className="font-mono text-gray-600 dark:text-gray-400 flex-1 truncate">{r.model || '—'}</span>
+                                <span className="text-gray-600 dark:text-gray-400 flex-1 truncate">{r.label || r.model || '—'}</span>
                                 <span className="text-gray-500 shrink-0">↑{fmtN(r.inTok)} ↓{fmtN(r.outTok)}</span>
-                                {fmtMs(r.latency_ms) && <span className="text-gray-400 shrink-0">{fmtMs(r.latency_ms)}</span>}
-                                {fmtCost(r.cost_usd) && <span className="text-emerald-600 dark:text-emerald-400 shrink-0">{fmtCost(r.cost_usd)}</span>}
-                                {r.status_code != null && r.status_code >= 400 && <span className="text-red-500 shrink-0">{r.status_code}</span>}
                               </div>
                             ))}
                           </div>
                         )}
                       </div>
-                    );
-                  })}
+                    ))}
+                  </div>
                 </div>
               )}
-            </div>
+            </DetailSection>
 
-            {/* 最近明细（API 接入类应用 / 无会话分组时显示） */}
-            <div>
-              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">最近明细</div>
-              {data.recent.length === 0 ? <div className="text-xs text-gray-400">—</div> : (
-                <div className="border border-gray-100 dark:border-gray-800 rounded-lg divide-y divide-gray-100 dark:divide-gray-800 max-h-72 overflow-y-auto">
-                  {data.recent.map((r, i) => (
-                    <div key={i} className="flex items-center gap-2 px-3 py-1.5 text-[11px]">
+            {/* 5. 调用明细（无 model 的应用不展示） */}
+            {showCallDetails && (
+            <DetailSection n={secCalls} title={showModelStats ? '按模型调用明细' : '调用明细'} hint={`${recentSorted.length} 条 · 时间倒序`}>
+              {recentSorted.length === 0 ? (
+                <div className="text-xs text-gray-400 px-1">—</div>
+              ) : (
+                <div className="border border-gray-100 dark:border-gray-800 rounded-lg divide-y divide-gray-100 dark:divide-gray-800 max-h-80 overflow-y-auto">
+                  {recentSorted.map((r, i) => (
+                    <div key={i} className="flex items-center gap-2 px-3 py-1.5 text-[11px] flex-wrap">
                       <span className="text-gray-400 w-24 shrink-0">{fmtTime(r.ts)}</span>
                       <span className={`px-1 rounded text-[9px] shrink-0 ${r.source === 'proxy' ? 'bg-blue-50 text-blue-500 dark:bg-blue-900/20' : 'bg-green-50 text-green-600 dark:bg-green-900/20'}`}>
                         {r.source === 'proxy' ? '网关' : '会话'}
                       </span>
-                      <span className="font-mono text-gray-600 dark:text-gray-400 flex-1 truncate">{r.model || '—'}</span>
-                      <span className="text-gray-500 shrink-0">↑{fmtN(r.inTok)} ↓{fmtN(r.outTok)}</span>
+                      {showModelStats && (
+                        <span className="font-mono text-[10px] text-gray-600 dark:text-gray-400 shrink-0 break-all" title={r.model}>{r.model || '—'}</span>
+                      )}
+                      {!showModelStats && (
+                        <span className="text-gray-600 dark:text-gray-400 flex-1 truncate" title={r.label || r.context}>
+                          {r.label || r.context || shortId(r.session_id) || '—'}
+                        </span>
+                      )}
+                      <span className="text-gray-500 shrink-0 tabular-nums ml-auto">↑{fmtN(r.inTok)} ↓{fmtN(r.outTok)}</span>
                       {fmtMs(r.latency_ms) && <span className="text-gray-400 shrink-0">{fmtMs(r.latency_ms)}</span>}
                       {fmtCost(r.cost_usd) && <span className="text-emerald-600 dark:text-emerald-400 shrink-0">{fmtCost(r.cost_usd)}</span>}
                       {r.status_code != null && r.status_code >= 400 && <span className="text-red-500 shrink-0">{r.status_code}</span>}
@@ -905,11 +1190,14 @@ function AppDetailModal({ app, onClose }) {
                   ))}
                 </div>
               )}
-            </div>
+            </DetailSection>
+            )}
+
           </div>
         )}
       </div>
     </div>
+    </>
   );
 }
 
@@ -1043,44 +1331,46 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     setTimeout(() => setNotice(n => { const c = { ...n }; delete c[id]; return c; }), ms);
   }
 
-  // 纳管/还原（双轴的"纳管"轴）：
-  //   纳管(on)  = 标记 hosted=true，默认进入「直连」（官方，只读会话文件统计，不写网关配置/不注入 shim）。
-  //   还原(off) = 取消纳管 hosted=false（保留 route_id）+ 还原配置/撤 shim（回官方，不再读文件）。
-  // 「绑路由/走网关」由路由下拉负责（选模型 → 写配置/注入 shim）。
+  // 纳管/还原：
+  //   纳管 = hosted:true + route_id:null + 官方订阅（还原配置/撤 shim，不走网关）
+  //   还原 = hosted:false + route_id:null + 官方订阅（同上，停止纳管统计）
+  // 走网关由路由下拉单独选择模型/路由触发。
   async function setTracked(app, on) {
+    let appId = app.id;
+    if (app._virtual && app.link_method === 'shim') {
+      const c = await window.electronAPI.apps?.ensureShimApp({ agent_id: app.agent_id, name: app.name, icon: app.icon }).catch(() => null);
+      if (c) appId = c.id;
+    }
     if (on) {
-      let appId = app.id;
-      if (app._virtual && app.link_method === 'shim') {
-        const c = await window.electronAPI.apps?.ensureShimApp({ agent_id: app.agent_id, name: app.name, icon: app.icon }).catch(() => null);
-        if (c) appId = c.id;
-      }
       setBusyId(appId);
-      // 不可直连(无本地用量源的桌面壳)：纳管直接走网关。优先复用上次选过的路由
-      //（还原时已保留 route_id），没有再退默认路由——重新纳管即按原路由配置写入。
-      if (app.allow_direct === false) {
-        const rid = app.route_id || defaultRouteId();
-        await window.electronAPI.apps?.update({ id: appId, hosted: true, route_id: rid || null }).catch(() => {});
-        if (app.host_method === 'config-file') { await writeApiKeyConfig({ ...app, id: appId, route_id: rid || null }); showNotice(appId, '✓ 已纳管，重启应用后生效'); }
-        else if (app.link_method === 'shim' && app.agent_id) { await window.electronAPI.agents?.apply(app.agent_id).catch(() => {}); showNotice(appId, '✓ 已纳管，重开终端后生效'); }
+      // 纳管默认官方订阅：清空路由，确保不注入网关
+      await window.electronAPI.apps?.update({ id: appId, hosted: true, route_id: null }).catch(() => {});
+      if (app.host_method === 'config-file') {
+        await window.electronAPI.apps?.revertConfigFile({ app_id: appId, config_file: app.config_file }).catch(() => {});
+        showNotice(appId, '✓ 已纳管（官方订阅），重启应用后生效');
+      } else if (app.link_method === 'shim' && app.agent_id) {
+        await window.electronAPI.agents?.revert(app.agent_id).catch(() => {});
+        showNotice(appId, '✓ 已纳管（官方订阅），重开终端后生效');
+      } else if (app.link_method === 'direct') {
+        showNotice(appId, '✓ 已纳管，开始统计会话');
       } else {
-        await window.electronAPI.apps?.update({ id: appId, hosted: true }).catch(() => {});   // 默认直连(只读文件)
+        showNotice(appId, '✓ 已纳管（官方订阅）');
       }
     } else {
       const msg = app.link_method === 'direct'
         ? '取消纳管该应用？将停止统计其会话日志（历史数据保留，可随时重新纳管）。'
-        : '还原该应用？将取消纳管、恢复原始状态（不再读其会话文件统计；条目保留，可随时重新纳管）。';
+        : '还原该应用？将取消纳管、恢复官方订阅（不再读其会话文件统计；条目保留，可随时重新纳管）。';
       if (!window.confirm(msg)) return;
-      // 虚拟 shim（未持久化）：先落条目，否则 hosted:false 无处可写，取消纳管不生效。
-      let appId = app.id;
-      if (app._virtual && app.link_method === 'shim') {
-        const c = await window.electronAPI.apps?.ensureShimApp({ agent_id: app.agent_id, name: app.name, icon: app.icon }).catch(() => null);
-        if (c) appId = c.id;
-      }
       setBusyId(appId);
-      if (app.link_method === 'shim' && app.agent_id) { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); showNotice(appId, '✓ 已还原，重开终端后生效'); }
-      else if (app.host_method === 'config-file') { await window.electronAPI.apps?.revertConfigFile({ app_id: appId, config_file: app.config_file }).catch(() => {}); showNotice(appId, '✓ 已还原，重启应用后生效'); }
-      else if (app.link_method === 'direct') { showNotice(appId, '✓ 已取消纳管，停止统计'); }
-      // 取消纳管并清空路由，回到「直连」状态。
+      if (app.link_method === 'shim' && app.agent_id) {
+        await window.electronAPI.agents?.revert(app.agent_id).catch(() => {});
+        showNotice(appId, '✓ 已还原，重开终端后生效');
+      } else if (app.host_method === 'config-file') {
+        await window.electronAPI.apps?.revertConfigFile({ app_id: appId, config_file: app.config_file }).catch(() => {});
+        showNotice(appId, '✓ 已还原，重启应用后生效');
+      } else if (app.link_method === 'direct') {
+        showNotice(appId, '✓ 已取消纳管，停止统计');
+      }
       await window.electronAPI.apps?.update({ id: appId, hosted: false, route_id: null }).catch(() => {});
       if (settings?.id === appId) setSettings(null);
     }
@@ -1197,35 +1487,18 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     }).catch(() => null);
     if (created?.id) await window.electronAPI.apps?.update({ id: created.id, hosted: true }).catch(() => {});
     setBusyId(null);
-    if (created?.id) showNotice(created.id, '✓ 已纳管（默认直连，选模型即走网关）');
+    if (created?.id) showNotice(created.id, '✓ 已纳管（默认官方订阅，选模型即走网关）');
     await load();
   }
 
-  // 已保存但已取消纳管的 api-key 应用「重新纳管」：用现有条目(同 api_key)重写配置 →
-  // 请求数 / token 统计延续，不清零。失败不删条目，保留离线状态。
+  // 已保存但已取消纳管的 api-key 应用「重新纳管」→ 默认官方订阅（与列表纳管一致）
   async function rehostApiKeyApp(app) {
-    setBusyId(app.id);
-    // 可绑路由的应用纳管前确保有路由，否则 claude-* 等原始名直发会 502
-    if (app.route_bindable !== false && !app.route_id) {
-      const def = defaultRouteId();
-      if (def) { await window.electronAPI.apps?.update({ id: app.id, route_id: def }).catch(() => {}); app = { ...app, route_id: def }; }
-    }
-    const ok = await writeApiKeyConfig(app);
-    setBusyId(null);
-    if (ok) showNotice(app.id, '✓ 已纳管，重启应用后生效');
-    await load();
+    await setTracked(app, true);
   }
 
-  // 还原：仅还原配置文件，保留应用条目与统计（与透明托管「还原」一致，可随时重新纳管）。
+  // 还原：与 setTracked(off) 一致，路由恢复官方订阅
   async function handleCancelManage(app) {
-    if (!window.confirm('还原该应用？将取消纳管、恢复原始状态（不再读其会话文件统计；条目保留，可随时重新纳管）。')) return;
-    setBusyId(app.id);
-    const r = await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => null);
-    await window.electronAPI.apps?.update({ id: app.id, hosted: false, route_id: null }).catch(() => {});
-    setBusyId(null);
-    if (settings?.id === app.id) setSettings(null);
-    if (!r || r.ok !== false) showNotice(app.id, '✓ 已还原，重启应用后生效');
-    await load();
+    await setTracked(app, false);
   }
 
   // 保存设置（已在面板内 onUpdate 持久化）→ 仅关闭并刷新
@@ -1318,28 +1591,35 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                     if (diff < 7*86400) return `${Math.floor(diff/86400)}天前`;
                     return new Date(ts*1000).toLocaleDateString('zh-CN',{month:'short',day:'numeric'});
                   };
-                  // 双轴状态：纳管(tracked) × 直连/绑路由。
-                  //   在线 = 纳管+绑路由(经网关) | 直连 = 纳管+无路由(只读文件，不走网关) | 未纳管(不读文件)
+                  // 状态列：在线(已纳管) / 未纳管；经网关与否由路由下拉区分
                   const keyApp = isKeyApp(app.link_method);
                   const isCfgApp = keyApp && app.host_method === 'config-file';
                   const isManual = app.link_method === 'manual';
-                  const isDirectOnly = app.link_method === 'direct';        // 仅直连·只统计（cursor 等）
-                  const hostable = app.link_method === 'shim' || isCfgApp || isDirectOnly;   // 有"纳管/直连"概念的应用
+                  const isDirectOnly = app.link_method === 'direct';        // 仅官方订阅（cursor 等）
+                  const hostable = app.link_method === 'shim' || isCfgApp || isDirectOnly;
                   const tracked  = app.hosted === true;
-                  const isOnline = hostable ? !!(app.hosted && app.route_id) : keyApp;  // 经网关
-                  const isDirect = hostable && tracked && !app.route_id;                // 纳管+直连
-                  const isActive = isOnline || isDirect || (!hostable && keyApp);        // 纳管中(行不压暗)
-                  const statusDot =
-                    isOnline ? (isManual ? 'bg-blue-400' : 'bg-green-400 shadow-[0_0_6px] shadow-green-400/60')
-                    : isDirect ? 'bg-blue-400'
+                  const isManaged = hostable ? tracked : (keyApp && !app._virtual_apikey);
+                  const isGatewayRouted = hostable ? !!(tracked && app.route_id) : !!(keyApp && app.route_id);
+                  // 路由下拉当前值：api-key/manual 有 route_id 即展示；shim/config-file 需纳管后
+                  const routeSelectValue = (() => {
+                    if (!app.route_id) return '';
+                    const rid = app.route_id;
+                    const avail = new Set(availableModels.map(m => m.id));
+                    const routeKeys = routes.map(r => r.model_key || r.id);
+                    const known = avail.has(rid) || routeKeys.includes(rid);
+                    if (keyApp && !isDirectOnly) return known ? rid : '';
+                    if (!tracked) return '';
+                    return known ? rid : '';
+                  })();
+                  const isActive = isManaged;
+                  const statusDot = isManaged
+                    ? 'bg-green-400 shadow-[0_0_6px] shadow-green-400/60'
                     : 'bg-gray-300 dark:bg-gray-600';
-                  const rowBg =
-                    isOnline ? (isManual ? 'bg-blue-50/40 dark:bg-blue-950/10' : 'bg-green-50/60 dark:bg-green-950/15')
-                    : isDirect ? 'bg-blue-50/30 dark:bg-blue-950/10'
+                  const rowBg = isManaged
+                    ? 'bg-green-50/60 dark:bg-green-950/15'
                     : 'bg-gray-50/50 dark:bg-gray-800/20';
-                  const statusLabel = isOnline ? '在线' : isDirect ? '直连' : (!hostable && keyApp) ? '在线' : '未纳管';
-                  const statusText = isOnline ? (isManual ? 'text-blue-500' : 'text-green-600 dark:text-green-400')
-                    : isDirect ? 'text-blue-500' : 'text-gray-400';
+                  const statusLabel = isManaged ? '在线' : '未纳管';
+                  const statusText = isManaged ? 'text-green-600 dark:text-green-400' : 'text-gray-400';
                   return (
                     // 离线不整行压暗（否则操作按钮看着像禁用）；离线感由灰底/灰点/「离线」标签/
                     // 图标灰度/灰名体现，操作按钮保持全亮可点（含「测试」）。
@@ -1348,7 +1628,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       <span className={`text-base w-6 text-center shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`}>{app.icon}</span>
                       <div className={`text-xs font-medium truncate w-28 shrink-0 ${isActive ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'}`}>{app.name}</div>
 
-                      {/* 状态列（在线 / 直连 / 未纳管） */}
+                      {/* 状态列（在线 / 未纳管） */}
                       <div className="w-14 shrink-0 flex items-center gap-1.5">
                         <span className={`w-2 h-2 rounded-full shrink-0 ${statusDot}`} />
                         <span className={`text-[11px] font-medium ${statusText}`}>{statusLabel}</span>
@@ -1356,7 +1636,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
 
                       {/* 接入方式列 */}
                       <div className="w-16 shrink-0 text-[11px] text-gray-400 truncate">
-                        {LINK_METHOD_LABEL[app.link_method] || app.link_method}
+                        {linkMethodLabel(app.link_method)}
                       </div>
 
                       {/* 统计：请求数 / token / 最后使用（点击打开用量明细）*/}
@@ -1372,7 +1652,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       <div className="flex-1 min-w-0 max-w-[160px]">
                       {(((keyApp || app.link_method === 'shim') && app.route_bindable !== false) || isDirectOnly) && !app._virtual_apikey && (
                       <select
-                        value={app.route_id || ''}
+                        value={routeSelectValue}
                         disabled={isDirectOnly || (hostable && !tracked)}
                         onChange={async e => {
                           if (isDirectOnly) return;   // 仅直连应用：不可改路由
@@ -1384,7 +1664,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           if (app.host_method === 'config-file') {        // Claude Desktop 等 config-file 应用
                             await window.electronAPI.apps?.update({ id: app.id, route_id: val, ...(val ? { hosted: true } : {}) }).catch(() => {});
                             if (val) { await writeApiKeyConfig({ ...app, route_id: val }); showNotice(app.id, '⚠ 路由已切换，重启应用后生效'); }   // 写配置→网关
-                            else     { await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {}); showNotice(app.id, '✓ 已切直连，重启应用后生效'); }  // 直连官方(还原)
+                            else     { await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {}); showNotice(app.id, '✓ 已切官方订阅，重启应用后生效'); }
                           } else if (app.link_method === 'shim' && app.agent_id) {  // CLI 透明托管
                             let appId = app.id;
                             if (app._virtual) {
@@ -1393,20 +1673,22 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                             }
                             await window.electronAPI.apps?.update({ id: appId, route_id: val, ...(val ? { hosted: true } : {}) }).catch(() => {});
                             if (val) { await window.electronAPI.agents?.apply(app.agent_id).catch(() => {}); showNotice(appId, '⚠ 路由已切换，重开终端后生效'); }   // 注入 shim → 网关
-                            else     { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); showNotice(appId, '✓ 已撤接管，重开终端后生效'); }  // 撤 shim → 直连官方
-                          } else {                                          // 纯 api-key / manual：只改路由
-                            await window.electronAPI.apps?.update({ id: app.id, route_id: val }).catch(() => {});
+                            else     { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); showNotice(appId, '✓ 已切官方订阅，重开终端后生效'); }
+                          } else {                                          // 纯 api-key / manual
+                            await window.electronAPI.apps?.update({
+                              id: app.id,
+                              route_id: val,
+                              ...(val ? { hosted: true } : {}),
+                            }).catch(() => {});
                           }
                           setBusyId(null);
                           await load();
                         }}
                         className="w-full text-[10px] bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 outline-none text-gray-600 dark:text-gray-400 disabled:opacity-40 disabled:cursor-not-allowed">
-                        {/* 仅直连应用(cursor)：只有「直连」一项；manual / 无本地用量源桌面壳必须绑路由；其余可「直连官方」*/}
-                        {isDirectOnly
-                          ? <option value="">直连（仅统计，不走网关）</option>
-                          : (isManual || app.allow_direct === false)
-                          ? <option value="" disabled>请选择模型 / 路由（不可直连）</option>
-                          : <option value="">直连官方（不走网关）</option>}
+                        {/* Cursor 等仅官方订阅应用：固定一项；manual 必须绑路由；其余可选官方订阅或走网关 */}
+                        {isManual
+                          ? <option value="" disabled>请选择模型 / 路由（手工添加必须绑定）</option>
+                          : <option value="">官方订阅（不走网关）</option>}
                         {!isDirectOnly && (() => {
                           const avail = new Set(availableModels.map(m => m.id));
                           const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
@@ -1442,7 +1724,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                                 {ts.ok ? `✓ ${ts.latency}ms` : `✗ ${ts.error}`}
                               </span>
                             )}
-                            <button onClick={() => runAppTest(app)} disabled={ts?.busy || !isOnline}
+                            <button onClick={() => runAppTest(app)} disabled={ts?.busy || !isGatewayRouted}
                               className={`text-[10px] px-2 py-1 rounded-lg border transition-colors shrink-0 ${ts?.busy
                                 ? 'border-gray-300 dark:border-gray-600 text-gray-400 opacity-60 cursor-wait'
                                 : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-500'} disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-gray-200 disabled:hover:text-gray-500`}>
@@ -1456,9 +1738,9 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       {/* 操作按钮（固定容器，统一起点）：按托管方式区分 */}
                       <div className="flex items-center gap-2 shrink-0">
                       {isDirectOnly ? (
-                        /* 仅直连·只统计（cursor 等）：与其它应用「直连」态一致——编辑/测试不可用，还原可用（=取消纳管，停统计）*/
+                        /* 仅官方订阅（cursor 等）：只读会话统计，编辑/测试不可用，还原=取消纳管停统计 */
                         <>
-                          <button onClick={() => setSettings(app)} disabled={!isOnline}
+                          <button onClick={() => setSettings(app)} disabled={!isGatewayRouted}
                             className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent shrink-0">
                             编辑
                           </button>
@@ -1478,7 +1760,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       ) : app.link_method === 'shim' ? (
                         /* 透明托管：编辑（仅在线可用）+ 纳管/还原 开关（按 tracked）*/
                         <>
-                          <button onClick={() => setSettings(app)} disabled={!isOnline}
+                          <button onClick={() => setSettings(app)} disabled={!isGatewayRouted}
                             className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent shrink-0">
                             编辑
                           </button>
@@ -1501,10 +1783,9 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           {busyId === app.id ? '…' : '纳管'}
                         </button>
                       ) : app.host_method === 'config-file' ? (
-                        /* config-file api-key 应用：编辑（仅在线可用）+ 纳管/还原 开关（按 tracked）。
-                           纳管后默认直连（只读文件）；要走网关请在路由下拉选模型/路由。*/
+                        /* config-file api-key 应用：编辑（仅经网关可用）+ 纳管/还原；纳管/还原默认官方订阅 */
                         <>
-                          <button onClick={() => setSettings(app)} disabled={!isOnline}
+                          <button onClick={() => setSettings(app)} disabled={!isGatewayRouted}
                             className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent shrink-0">
                             编辑
                           </button>

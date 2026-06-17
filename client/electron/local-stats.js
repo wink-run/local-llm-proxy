@@ -182,6 +182,16 @@ function setImportState(filePath, mtime, size) {
   catch (e) { console.error('[local-stats] setImportState failed:', e.message); }
 }
 
+/** 不参与「模型排行」的 data_source（Cursor 等无真实 model，只有工具标签） */
+function dataSourcesWithoutModelStats() {
+  try {
+    return (require('./config-loader').sessionSources() || [])
+      .filter(s => s.model_stats === false || s.record_label === 'assistant_tools')
+      .map(s => s.data_source)
+      .filter(Boolean);
+  } catch { return []; }
+}
+
 /** Returns aggregated dashboard data for the last `days` calendar days. */
 function queryDashboard(days = 1) {
   if (!db) return _empty();
@@ -224,11 +234,16 @@ function queryDashboard(days = 1) {
   const hourly = Array(24).fill(0);
   for (const r of hourlyRows) hourly[r.h] = r.calls;
 
-  // Model ranking
-  const models = db.prepare(
+  // Model ranking（排除 Cursor 等无 model 的会话源，避免 Read/Shell 等工具名误入）
+  const excludeModelDs = dataSourcesWithoutModelStats();
+  let modelSql =
     'SELECT model, COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, SUM(cost_usd) AS cost_usd FROM requests ' +
-    'WHERE ts >= ? AND model IS NOT NULL GROUP BY model ORDER BY calls DESC'
-  ).all(since);
+    'WHERE ts >= ? AND model IS NOT NULL';
+  if (excludeModelDs.length) {
+    modelSql += ` AND (data_source IS NULL OR data_source NOT IN (${excludeModelDs.map(() => '?').join(',')}))`;
+  }
+  modelSql += ' GROUP BY model ORDER BY calls DESC';
+  const models = db.prepare(modelSql).all(since, ...excludeModelDs);
 
   // Per-key stats
   const keys = db.prepare(
@@ -317,6 +332,22 @@ function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50 } = {
   } catch (e) { console.error('[local-stats] queryAppDetail failed:', e.message); return empty; }
 }
 
+/** 单会话 DB 汇总（Trace 顶栏 Token / 持续时间补全） */
+function querySessionDetail(sessionId) {
+  if (!db || !sessionId) return null;
+  try {
+    const row = db.prepare(
+      `SELECT COUNT(*) AS calls, SUM(input_tokens) AS inTok, SUM(output_tokens) AS outTok, ` +
+      `SUM(cache_read_tokens) AS cached, MIN(ts) AS firstTs, MAX(ts) AS lastTs, SUM(cost_usd) AS cost_usd ` +
+      `FROM requests WHERE session_id = @sid`
+    ).get({ sid: sessionId });
+    return row || null;
+  } catch (e) {
+    console.error('[local-stats] querySessionDetail failed:', e.message);
+    return null;
+  }
+}
+
 function close() {
   if (db) {
     db.close();
@@ -358,6 +389,49 @@ function queryByApp(appId, apiKey, dataSource) {
   } catch { return { calls: 0, tokens: 0, lastTs: null }; }
 }
 
+/** 时间窗口内单个应用用量（与 queryAppDetail / apps:stats 归属规则一致） */
+function queryAppStatsInPeriod({ appId, apiKey, dataSource, days = 30 } = {}) {
+  const empty = {
+    calls: 0, tokens: 0, cost: 0, lastTs: null,
+    proxyCalls: 0, sessionCalls: 0, proxyTokens: 0, sessionTokens: 0,
+  };
+  if (!db || (!appId && !apiKey && !dataSource)) return empty;
+  const since = Math.floor(Date.now() / 1000) - days * 86400;
+  const where =
+    '(' +
+    '(@appId IS NOT NULL AND app_id = @appId) OR ' +
+    '(@apiKey IS NOT NULL AND app_id IS NULL AND api_key = @apiKey) OR ' +
+    '(@dataSource IS NOT NULL AND data_source = @dataSource)' +
+    ') AND ts >= @since';
+  const p = { appId: appId || null, apiKey: apiKey || null, dataSource: dataSource || null, since };
+  try {
+    const total = db.prepare(
+      `SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, ` +
+      `SUM(cost_usd) AS cost, MAX(ts) AS lastTs FROM requests WHERE ${where}`
+    ).get(p);
+    const bySource = db.prepare(
+      `SELECT CASE WHEN data_source='proxy' THEN 'proxy' ELSE 'session' END AS src, ` +
+      `COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens ` +
+      `FROM requests WHERE ${where} GROUP BY src`
+    ).all(p);
+    const proxy = bySource.find(r => r.src === 'proxy') || {};
+    const session = bySource.find(r => r.src === 'session') || {};
+    return {
+      calls: total.calls || 0,
+      tokens: total.tokens || 0,
+      cost: total.cost || 0,
+      lastTs: total.lastTs || null,
+      proxyCalls: proxy.calls || 0,
+      sessionCalls: session.calls || 0,
+      proxyTokens: proxy.tokens || 0,
+      sessionTokens: session.tokens || 0,
+    };
+  } catch (e) {
+    console.error('[local-stats] queryAppStatsInPeriod failed:', e.message);
+    return empty;
+  }
+}
+
 /** 按 data_source 查单个工具的统计（shim 类 app 用 session-claude / session-codex 等）。*/
 function queryByDataSource(dataSource) {
   if (!db || !dataSource) return { calls: 0, tokens: 0, lastTs: null };
@@ -383,4 +457,8 @@ function resetSessionData(dataSources, pathLike) {
   } catch (e) { console.error('[local-stats] resetSessionData failed:', e.message); }
 }
 
-module.exports = { init, record, queryDashboard, queryByApiKey, queryByApp, queryByDataSource, queryAppDetail, getImportState, setImportState, resetSessionData, close };
+module.exports = {
+  init, record, queryDashboard, queryByApiKey, queryByApp, queryByDataSource,
+  queryAppDetail, queryAppStatsInPeriod, querySessionDetail,
+  getImportState, setImportState, resetSessionData, close,
+};

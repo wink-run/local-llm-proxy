@@ -1305,7 +1305,7 @@ function recordStats(providerId, model, usage, tier, apiKey, streaming, billingT
     is_streaming:         !!streaming,
     latency_ms:           (usage?.latency        != null) ? usage.latency        : null,
     first_token_ms:       (usage?.first_token_ms != null) ? usage.first_token_ms : null,
-    cost_usd:             estimateCost(model, inTok, outTok, cCreate, cRead),
+    cost_usd:             estimateCost(model, inTok, outTok, cCreate, cRead, providerId),
     billing_type:         billingType || null,
   });
 }
@@ -1424,10 +1424,10 @@ function handleRequest(req, res) {
     const qs   = new URL('http://x' + url).searchParams;
     const days = Math.max(1, Math.min(365, parseInt(qs.get('days'), 10) || 1));
     const data = _localStats ? _localStats.queryDashboard(days) : {
-      total_calls: 0, total_tokens: 0,
+      total_calls: 0, total_tokens: 0, total_cost: 0,
       tiers: { free: 0, p2p: 0, paid: 0 },
       hourly: Array(24).fill(0),
-      models: [], keys: [], providers: [],
+      models: [], keys: [], providers: [], agent_sources: [],
     };
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(data));

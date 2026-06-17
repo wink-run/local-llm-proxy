@@ -10,6 +10,8 @@ const os   = require('os');
 const yaml = require('js-yaml');
 
 const DEFAULT_YAML = path.join(__dirname, 'config', 'tokenbank.default.yaml');
+// 工具/计费目录内置默认（个人页订阅应用、按量供给源、刊例价；与服务器 config.apps 同 schema）
+const TOOLS_DEFAULT_YAML = path.join(__dirname, 'config', 'tokenbank.tools.default.yaml');
 // 用户导入/服务器下发的配置覆盖文件（main.js 的 applyConfigDoc 写这里）。存在则优先于内置默认。
 const USER_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.yaml');
 
@@ -146,6 +148,53 @@ function sessionSources() {
   if (Array.isArray(cur) && cur.length) return cur;
   try { return ((yaml.load(fs.readFileSync(DEFAULT_YAML, 'utf8')) || {}).session_sources || []); } catch { return []; }
 }
+
+/** 读取 tools 默认 yaml（计费目录回退源） */
+function toolsDefaultDoc() {
+  try { return yaml.load(fs.readFileSync(TOOLS_DEFAULT_YAML, 'utf8')) || {}; } catch { return {}; }
+}
+
+/** 计费段：当前下发配置优先，空则回退 tokenbank.tools.default.yaml */
+function billingSection(key) {
+  const cur = get()[key];
+  const empty = cur == null
+    || (Array.isArray(cur) && !cur.length)
+    || (typeof cur === 'object' && !Array.isArray(cur) && !Object.keys(cur).length);
+  if (!empty) return cur;
+  const fb = toolsDefaultDoc()[key];
+  if (fb != null) return fb;
+  return Array.isArray(cur) ? [] : {};
+}
+
+// 个人页：可订阅应用目录（由 tokenbank.tools.yaml 下发）
+function subscriptionApps() {
+  const list = billingSection('subscription_apps');
+  return Array.isArray(list) ? list : [];
+}
+
+// 个人页：按量付费供给源目录
+function paygProviders() {
+  const list = billingSection('payg_providers');
+  return Array.isArray(list) ? list : [];
+}
+
+// 订阅套餐模板（按 plan_provider_id 索引）
+function subscriptionPlansDefaults() {
+  const plans = billingSection('subscription_plans');
+  return plans && typeof plans === 'object' && !Array.isArray(plans) ? plans : {};
+}
+
+/** 该 Agent 是否会话补录真实 model（Cursor 等只有工具标签 → false） */
+function agentHasModelStats(agentId) {
+  if (!agentId) return true;
+  const src = sessionSources().find(s => s.agent_id === agentId);
+  if (!src) return true;
+  if (src.model_stats === false) return false;
+  if (src.record_label === 'assistant_tools') return false;
+  if (src.fields && src.fields.model) return true;
+  if (Array.isArray(src.meta) && src.meta.some(m => m.set && m.set.model)) return true;
+  return false;
+}
 function caRef()     { return (get().mitm || {}).ca_ref || ['auto']; }
 
 // ── _ref 解析链（ca_ref / api_key_ref 共用）───────────────────────────────────
@@ -178,6 +227,7 @@ module.exports = {
   load, get, setCaPath, getCaPath,
   gatewayCtx, mitmDomains, shouldMitm, tools, appPresets, apiKeyApps,
   routing, caRef,
-  claudeModels, isClaudeModel, sessionSources,
+  claudeModels, isClaudeModel, sessionSources, agentHasModelStats,
+  subscriptionApps, paygProviders, subscriptionPlansDefaults,
   resolveRef, resolvePlaceholders, expandHome,
 };

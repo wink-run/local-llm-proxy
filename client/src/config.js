@@ -1,5 +1,56 @@
-export const DEFAULT_SERVER_URL = 'http://81.70.249.144:8000';
+/** 登录页占位提示（非默认地址） */
+export const SERVER_URL_PLACEHOLDER = 'http://your-host:port';
 
+/** 设置页「Token Bank 服务地址」（localStorage.serverUrl） */
 export function getServerUrl() {
-  return localStorage.getItem('serverUrl') || DEFAULT_SERVER_URL;
+  return normalizeServerBase(localStorage.getItem('serverUrl') || '');
+}
+
+/** 归一化为服务器根地址（去掉 /api、/v1 等后缀） */
+export function normalizeServerBase(url) {
+  if (!url) return '';
+  return String(url).trim().replace(/\/$/, '').replace(/\/(api|v\d+)(\/.*)?$/, '');
+}
+
+/**
+ * 启动时：若设置页未填地址，从网关 cloud_config.url 回填（不写死默认 IP）。
+ */
+export async function bootstrapServerUrl() {
+  const stored = normalizeServerBase(localStorage.getItem('serverUrl') || '');
+  if (stored) return stored;
+  if (typeof window !== 'undefined' && window.electronAPI?.localConfig?.get) {
+    try {
+      const cfg = await window.electronAPI.localConfig.get();
+      const url = normalizeServerBase(cfg?.cloud_config?.url || '');
+      if (url) {
+        localStorage.setItem('serverUrl', url);
+        return url;
+      }
+    } catch {}
+  }
+  return '';
+}
+
+/**
+ * 配置同步 / API 请求用的服务器根地址。
+ * 以设置页「Token Bank 服务地址」为准（getServerUrl）。
+ */
+export async function getSyncServerBase() {
+  const url = getServerUrl() || await bootstrapServerUrl();
+  return normalizeServerBase(url);
+}
+
+/** 将 Token Bank 服务地址写入 cloud_config（与 P2P 网关对齐） */
+export async function syncCloudConfigUrl(url) {
+  if (typeof window === 'undefined' || !window.electronAPI?.localConfig?.setCloudConfig) return;
+  const base = normalizeServerBase(url || getServerUrl());
+  if (!base) return;
+  try {
+    const cfg = await window.electronAPI.localConfig.get();
+    const token = cfg?.cloud_config?.token;
+    await window.electronAPI.localConfig.setCloudConfig({
+      url: base,
+      ...(token ? { token } : {}),
+    });
+  } catch {}
 }

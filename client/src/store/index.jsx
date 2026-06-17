@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { getProfile, listKeys } from '../api/client';
-import { getServerUrl } from '../config';
+import { getServerUrl, normalizeServerBase, getSyncServerBase, syncCloudConfigUrl, bootstrapServerUrl } from '../config';
 
 const AuthContext = createContext(null);
 
@@ -16,7 +16,7 @@ async function syncCloudKey() {
     const active = (Array.isArray(keys) ? keys : []).find(k => k.is_active);
     if (active) {
       await window.electronAPI.localConfig.setCloudConfig({
-        url:   getServerUrl(),
+        url:   normalizeServerBase(getServerUrl()),
         token: active.key,
       });
     }
@@ -24,15 +24,23 @@ async function syncCloudKey() {
 }
 
 // 启动/登录时静默在线同步一次：从服务器拉取「工具/应用」+「场景路由」配置并合并。
-// applyConfigDoc 本地优先——只追加新增项，不覆盖用户已有的应用/路由。鉴权用登录 JWT。
 async function syncRemoteConfig() {
   if (!window.electronAPI?.toolsConfig?.importUrl) return;
   const token = localStorage.getItem('token');
   if (!token) return;
-  const base = getServerUrl().replace(/\/$/, '');
+  const base = await getSyncServerBase();
+  if (!base) return;
   for (const ep of ['/api/config/apps', '/api/config/scenes']) {
     try { await window.electronAPI.toolsConfig.importUrl(base + ep, token); } catch {}
   }
+}
+
+// 从云端拉取个人页订阅 / 按量 provider / 刊例价覆盖（跨终端）
+async function syncUserBilling() {
+  if (!window.electronAPI?.localConfig?.getUserAccounts) return;
+  const token = localStorage.getItem('token');
+  if (!token) return;
+  try { await window.electronAPI.localConfig.getUserAccounts(); } catch {}
 }
 
 export function AuthProvider({ children }) {
@@ -56,16 +64,20 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const token = localStorage.getItem('token');
-    if (!token) { setLoading(false); return; }
-    getProfile()
-      .then((r) => {
-        setUser(r.data);
-        startPolling();
-        syncCloudKey();
-        syncRemoteConfig();   // 每次程序启动自动在线同步一次配置
-      })
-      .catch(() => { localStorage.removeItem('token'); })
-      .finally(() => setLoading(false));
+    bootstrapServerUrl().then(() => {
+      if (!token) { setLoading(false); return; }
+      getProfile()
+        .then((r) => {
+          setUser(r.data);
+          startPolling();
+          syncCloudKey();
+          syncCloudConfigUrl();
+          syncRemoteConfig();
+          syncUserBilling();
+        })
+        .catch(() => { localStorage.removeItem('token'); })
+        .finally(() => setLoading(false));
+    });
     return () => stopPolling();
   }, []);
 
@@ -74,7 +86,9 @@ export function AuthProvider({ children }) {
     setUser(userData);
     startPolling();
     syncCloudKey();
+    syncCloudConfigUrl();
     syncRemoteConfig();
+    syncUserBilling();
   }
 
   function logout() {
@@ -98,6 +112,14 @@ export function AuthProvider({ children }) {
   );
 }
 
+const defaultAuth = {
+  user: null,
+  loading: false,
+  loginSuccess: () => {},
+  logout: () => {},
+  refreshUser: () => Promise.resolve(),
+};
+
 export function useAuth() {
-  return useContext(AuthContext);
+  return useContext(AuthContext) ?? defaultAuth;
 }

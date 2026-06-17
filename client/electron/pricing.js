@@ -1,6 +1,5 @@
 // client/electron/pricing.js
-// USD per million tokens — ported from tokentelemetry pricing.py (2026-05-17)
-// Keys are lowercase model-id substrings; lookup is exact-match first, then prefix-scan.
+// USD per million tokens — 全局兜底 + 按 provider 独立刊例价（payg_providers.pricing）
 'use strict';
 
 const PRICING = {
@@ -81,12 +80,18 @@ const PRICING = {
   '_default':          { in: 2.00,  out: 10.00,  cacheRead: 0.50,  cacheWrite: 2.50 },
 };
 
+const _BASE_PRICING = JSON.parse(JSON.stringify(PRICING));
+
 // Sorted by key length descending for prefix-match fallback
-const _sortedKeys = Object.keys(PRICING)
+let _sortedKeys = Object.keys(PRICING)
   .filter(k => k !== '_default')
   .sort((a, b) => b.length - a.length);
 
-function _lookup(model) {
+// providerId → { model → rates }
+let PROVIDER_PRICING = {};
+let _providerSortedKeys = {};
+
+function _lookupGlobal(model) {
   if (!model) return PRICING['_default'];
   const m = String(model).toLowerCase();
   if (PRICING[m]) return PRICING[m];
@@ -96,13 +101,58 @@ function _lookup(model) {
   return PRICING['_default'];
 }
 
+function _lookupProvider(providerId, model) {
+  if (!providerId || !model) return null;
+  const pid = String(providerId).toLowerCase();
+  const table = PROVIDER_PRICING[pid];
+  if (!table) return null;
+  const m = String(model).toLowerCase();
+  if (table[m]) return table[m];
+  const keys = _providerSortedKeys[pid] || [];
+  for (const k of keys) {
+    if (m.includes(k)) return table[k];
+  }
+  return null;
+}
+
+/** 按 provider 刊例价（yaml + 用户覆盖） */
+function applyProviderPricing(byProvider = {}) {
+  PROVIDER_PRICING = {};
+  _providerSortedKeys = {};
+  for (const [pid, models] of Object.entries(byProvider || {})) {
+    const key = String(pid).toLowerCase();
+    PROVIDER_PRICING[key] = {};
+    for (const [m, v] of Object.entries(models || {})) {
+      if (!v || typeof v !== 'object') continue;
+      PROVIDER_PRICING[key][String(m).toLowerCase()] = { ...v };
+    }
+    _providerSortedKeys[key] = Object.keys(PROVIDER_PRICING[key]).sort((a, b) => b.length - a.length);
+  }
+}
+
+/** 全局刊例价覆盖（无 provider 时回退） */
+function applyOverrides(overrides = {}) {
+  for (const k of Object.keys(PRICING)) delete PRICING[k];
+  Object.assign(PRICING, JSON.parse(JSON.stringify(_BASE_PRICING)));
+  if (overrides && typeof overrides === 'object') {
+    for (const [k, v] of Object.entries(overrides)) {
+      if (!v || typeof v !== 'object') continue;
+      PRICING[k.toLowerCase()] = { ...(PRICING[k.toLowerCase()] || {}), ...v };
+    }
+  }
+  _sortedKeys = Object.keys(PRICING).filter(k => k !== '_default').sort((a, b) => b.length - a.length);
+}
+
+// 兼容旧名
+function _lookup(model) { return _lookupGlobal(model); }
+
 /**
  * Estimate USD cost for one request.
  * All token counts are raw counts (not millions).
  * Returns 0 for unknown/zero-token requests.
  */
-function estimateCost(model, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens) {
-  const p      = _lookup(model);
+function estimateCost(model, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, providerId) {
+  const p = _lookupProvider(providerId, model) || _lookupGlobal(model);
   const inCost = ((inputTokens      || 0) / 1e6) * (p.in  || 0);
   const outCost= ((outputTokens     || 0) / 1e6) * (p.out || 0);
   const cwCost = ((cacheWriteTokens || 0) / 1e6) * (p.cacheWrite || p.in * 1.25 || 0);
@@ -110,4 +160,4 @@ function estimateCost(model, inputTokens, outputTokens, cacheWriteTokens, cacheR
   return inCost + outCost + cwCost + crCost;
 }
 
-module.exports = { estimateCost, PRICING };
+module.exports = { estimateCost, PRICING, applyOverrides, applyProviderPricing };

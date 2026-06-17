@@ -17,6 +17,33 @@
 const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
+const { estimateCost } = require('./pricing');
+const { resolvePricingProviderId } = require('./billing-config');
+
+// 各 Agent 默认计费类型（对齐 tokentelemetry billing_mode 默认值）
+const AGENT_BILLING = {
+  'claude-code':  'subscription',
+  'codex':        'subscription',
+  'gemini-cli':   'subscription',
+  'cursor':       'subscription',
+  'copilot':      'subscription',
+  'qwen-code':    'subscription',
+  'antigravity':  'subscription',
+  'opencode-cli': 'api-key',
+  'grok':         'api-key',
+};
+
+function resolveBillingType(src) {
+  return src.billing_type || AGENT_BILLING[src.agent_id] || 'api-key';
+}
+
+/** 会话补录行的 cost_usd / billing_type（与网关 recordStats 一致） */
+function recordExtras(src, model, inTok, outTok, cCreate, cRead) {
+  return {
+    cost_usd:     estimateCost(model, inTok, outTok, cCreate, cRead, resolvePricingProviderId(src.provider_id)),
+    billing_type: resolveBillingType(src),
+  };
+}
 
 // ── 通用辅助 ────────────────────────────────────────────────────────────────
 
@@ -134,6 +161,28 @@ function fillTemplate(tpl, ctx, rec) {
   });
 }
 
+/** 按 data_source_map 规则解析 entrypoint → data_source */
+function resolveDataSourceFromMap(dsm, entrypoint, fallback) {
+  if (!dsm) return fallback;
+  const ev = entrypoint;
+  if (ev != null && dsm.map && (ev in dsm.map)) return dsm.map[ev];
+  if (ev != null && dsm.prefix_map) {
+    // 最长前缀优先（claude-desktop-3p 先于 claude-desktop）
+    const prefixes = Object.keys(dsm.prefix_map).sort((a, b) => b.length - a.length);
+    for (const prefix of prefixes) {
+      if (String(ev).startsWith(prefix)) return dsm.prefix_map[prefix];
+    }
+  }
+  return dsm.default || fallback;
+}
+
+/** Claude 会话 entrypoint → data_source（与 session-import 路由一致） */
+function claudeDataSourceForEntrypoint(entrypoint) {
+  let src;
+  try { src = (require('./config-loader').sessionSources() || []).find(s => s.id === 'claude'); } catch {}
+  return resolveDataSourceFromMap(src?.data_source_map, entrypoint, src?.data_source || 'session-claude');
+}
+
 // ── 单条记录的构建与写入（jsonl/json 共用）────────────────────────────────────
 // rec=当前对象，ctx={ model, session_id, seq, index, prev } ，doc=整文件级回退源（json）。
 // 返回 true=写入了一行新数据。
@@ -176,6 +225,13 @@ function emitRecord(localStats, src, rec, ctx, doc) {
   let tsv = f.ts ? getPath(rec, f.ts) : undefined;
   if (tsv === undefined && src.doc_fallback) tsv = getPath(doc, src.doc_fallback.ts);
 
+  if (tsv === undefined && ctx.estimated_ts_ms != null) tsv = ctx.estimated_ts_ms;
+
+  // 无 model 时从 assistant 工具/文本生成标签（仅 model_stats≠false 的源；Cursor 等不写 model 列）
+  if ((model == null || model === '') && src.record_label === 'assistant_tools' && src.model_stats !== false) {
+    try { model = require('./session-browser').assistantLineLabel(rec); } catch {}
+  }
+
   // request_id：模板 or 字段路径
   ctx.session_id = session_id;
   let request_id;
@@ -186,14 +242,17 @@ function emitRecord(localStats, src, rec, ctx, doc) {
   }
   if (src.require_request_id && isEmpty(request_id)) return false;
 
+  // 跳过网关内部占位 model（Desktop 经 3p 转发时偶现）
+  if (model === '<synthetic>') return false;
+
   // 按记录字段(如 entrypoint)路由 data_source：命中 skip 列表的不导入（如 sdk-cli 内部转发）；
-  // 命中 map 的归到对应 data_source；否则用 default / 源默认 data_source。
+  // 命中 map / prefix_map 的归到对应 data_source；否则用 default / 源默认 data_source。
   let dataSource = src.data_source;
   const dsm = src.data_source_map;
   if (dsm && dsm.field) {
     const ev = getPath(rec, dsm.field);
     if (ev != null && Array.isArray(dsm.skip) && dsm.skip.includes(ev)) return false;
-    dataSource = (ev != null && dsm.map && (ev in dsm.map)) ? dsm.map[ev] : (dsm.default || src.data_source);
+    dataSource = resolveDataSourceFromMap(dsm, ev, src.data_source);
   }
 
   const ok = localStats.record({
@@ -211,6 +270,7 @@ function emitRecord(localStats, src, rec, ctx, doc) {
     session_id:          session_id != null ? session_id : null,
     status_code:         200,
     is_streaming:        false,
+    ...recordExtras(src, model, inTok, outTok, cCreate, cRead),
   });
   if (ok) ctx.seq++;   // 仅写入成功才推进 seq（与旧逻辑一致）
   return ok;
@@ -322,6 +382,7 @@ function importCopilotEventsSource(localStats, src) {
         session_id:          sessionId,
         status_code:         200,
         is_streaming:        false,
+        ...recordExtras(src, modelName, inTok, outTok, 0, 0),
       });
       if (ok) imported++;
     }
@@ -331,10 +392,64 @@ function importCopilotEventsSource(localStats, src) {
   return { source: src.id || src.data_source, imported, skipped, files_scanned };
 }
 
+// ── Grok Build：~/.grok/sessions/<cwd>/<uuid>/summary.json + signals.json ───
+function importGrokSessionsSource(localStats, src) {
+  const root = expandHome(src.root || '~/.grok/sessions');
+  const re   = globToRe('**/summary.json');
+  const files = root ? walk(root, rel => re.test(rel)) : [];
+  let imported = 0, skipped = 0, files_scanned = 0;
+
+  for (const summaryPath of files) {
+    let st; try { st = fs.statSync(summaryPath); } catch { continue; }
+    if (unchanged(localStats, summaryPath, st)) { skipped++; continue; }
+    files_scanned++;
+
+    const sessDir   = path.dirname(summaryPath);
+    const sessionId = path.basename(sessDir);
+    let summary = {};
+    try { summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8')); }
+    catch { markDone(localStats, summaryPath, st); continue; }
+
+    // Grok 无 prompt/completion 拆分：优先 signals.contextTokensUsed
+    let totalTok = 0;
+    try {
+      const sig = JSON.parse(fs.readFileSync(path.join(sessDir, 'signals.json'), 'utf8'));
+      const ctx = sig.contextTokensUsed;
+      if (Number.isFinite(+ctx) && +ctx > 0) totalTok = +ctx;
+    } catch {}
+
+    if (src.skip_if_zero && totalTok === 0) { markDone(localStats, summaryPath, st); continue; }
+
+    const model = summary.current_model_id || summary.currentModelId || 'grok-build';
+    const tsRaw = summary.updated_at || summary.updatedAt || summary.created_at || summary.createdAt;
+    const ok = localStats.record({
+      ts:                  tsSeconds(tsRaw),
+      api_key:             null,
+      model,
+      provider_id:         src.provider_id || null,
+      tier:                src.tier || 'paid',
+      input_tokens:        0,
+      output_tokens:       totalTok,
+      cache_create_tokens: 0,
+      cache_read_tokens:   0,
+      request_id:          `grok:${sessionId}`,
+      data_source:         src.data_source,
+      session_id:          sessionId,
+      status_code:         200,
+      is_streaming:        false,
+      ...recordExtras(src, model, 0, totalTok, 0, 0),
+    });
+    if (ok) imported++;
+    markDone(localStats, summaryPath, st);
+  }
+  return { source: src.id || src.data_source, imported, skipped, files_scanned };
+}
+
 // ── 单个 source 的扫描 ────────────────────────────────────────────────────────
 function importSource(localStats, src) {
   if (src.format === 'sqlite')         return importSqliteSource(localStats, src);
   if (src.format === 'copilot-events') return importCopilotEventsSource(localStats, src);
+  if (src.format === 'grok-session')   return importGrokSessionsSource(localStats, src);
   const root = expandHome(src.root || '');
   const re   = globToRe(src.glob || '**/*');
   const files = root ? walk(root, rel => re.test(rel)) : [];
@@ -351,6 +466,11 @@ function importSource(localStats, src) {
       let doc;
       try { doc = JSON.parse(fs.readFileSync(file, 'utf8')); }
       catch { markDone(localStats, file, st); continue; }
+      // doc_skip：整文件级跳过（如 Antigravity 排除 kind=main 的 Gemini CLI 会话）
+      if (src.doc_skip && matchFilter(doc, src.doc_skip)) {
+        markDone(localStats, file, st);
+        continue;
+      }
       const session_id = getPath(doc, src.doc_session_id) || baseId;
       const arr = getPath(doc, src.iterate);
       const items = Array.isArray(arr) ? arr : [];
@@ -363,13 +483,25 @@ function importSource(localStats, src) {
       });
     } else {
       // jsonl：逐行；维护运行上下文（meta 行更新 model/session_id；accumulate 累计 prev）
+      let rawText;
+      try { rawText = fs.readFileSync(file, 'utf8'); } catch { markDone(localStats, file, st); continue; }
+      const parsedLines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+      const lineCount = parsedLines.length;
+      const fileT0 = st.birthtimeMs;
+      const fileSpan = Math.max(st.mtimeMs - st.birthtimeMs, lineCount * 500);
+
       const ctx = {
         model: undefined,
         session_id: src.session_id_from === 'filename' ? baseId : undefined,
         seq: 0, index: 0, prev: { input: 0, output: 0, cached: 0 },
       };
-      eachJsonlLine(file, (e, idx) => {
-        ctx.index = idx;
+      let lineIdx = 0;
+      for (const s of parsedLines) {
+        let e;
+        try { e = JSON.parse(s); } catch { lineIdx++; continue; }
+        ctx.index = lineIdx;
+        ctx.estimated_ts_ms = fileT0 + (lineIdx / Math.max(lineCount, 1)) * fileSpan;
+        lineIdx++;
         // meta 行：更新上下文，不产记录
         let consumed = false;
         for (const m of (src.meta || [])) {
@@ -382,10 +514,10 @@ function importSource(localStats, src) {
             break;
           }
         }
-        if (consumed) return;
-        if (!matchFilter(e, src.record_filter)) return;
+        if (consumed) continue;
+        if (!matchFilter(e, src.record_filter)) continue;
         if (emitRecord(localStats, src, e, ctx, null)) imported++;
-      });
+      }
     }
 
     markDone(localStats, file, st);
@@ -416,4 +548,4 @@ function run(localStats, opts = {}) {
   return { ok: true, imported, sources };
 }
 
-module.exports = { run, importSource, emitRecord, matchFilter, getPath };
+module.exports = { run, importSource, emitRecord, matchFilter, getPath, recordExtras, resolveBillingType, resolveDataSourceFromMap, claudeDataSourceForEntrypoint };

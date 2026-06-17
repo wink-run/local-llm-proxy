@@ -235,11 +235,41 @@ async def dashboard_stats(days: int = 30, uid: int = Depends(get_current_user_id
     return {"stats": stats, "days": days}
 
 
+@router.get("/inventory-stats")
+async def inventory_stats(days: int = 1, uid: int = Depends(get_current_user_id)):
+    """个人页看板：汇总各端上报的盘点数据（按设备维度合并）。"""
+    if days not in (1, 7, 30):
+        days = 1
+    return await db.get_user_inventory_stats(uid, days)
+
+
 @router.get("/model-stats")
 async def model_stats(days: int = 30, uid: int = Depends(get_current_user_id)):
     models = await db.get_model_stats(uid, days)
     hourly = await db.get_hourly_stats(uid)
     return {"models": models, "hourly": hourly}
+
+
+# ── 个人页账户（订阅 / 按量 provider / 刊例价，跨终端同步）────────────────────
+
+class UserAccountsUpdate(BaseModel):
+    user_subscriptions: list | None = None
+    user_payg_providers: list | None = None
+    provider_pricing_overrides: dict | None = None
+    subscription_plans: dict | None = None
+
+
+@router.get("/accounts")
+async def get_user_accounts(uid: int = Depends(get_current_user_id)):
+    """读取当前用户的订阅与按量付费配置。"""
+    return await db.get_user_billing(uid)
+
+
+@router.put("/accounts")
+async def put_user_accounts(req: UserAccountsUpdate, uid: int = Depends(get_current_user_id)):
+    """保存订阅 / provider / 刊例价覆盖（与客户端 local-config 字段一致）。"""
+    patch = req.model_dump(exclude_unset=True)
+    return await db.set_user_billing(uid, patch)
 
 
 @router.get("/stats")
