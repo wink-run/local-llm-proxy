@@ -256,9 +256,85 @@ function importSqliteSource(localStats, src) {
   return { source: src.id, imported, skipped: 0, files_scanned: 1 };
 }
 
+// ── Copilot CLI events.jsonl（copilot-events format）─────────────────────────
+// 每个会话目录 (<sessId>/events.jsonl) 对应一次会话；token 优先取 session.shutdown
+// 里的 modelMetrics，否则累加 assistant.message 事件里的 usage。
+// request_id = "copilot:<sessId>:<model>" 保证跨扫描去重。
+function importCopilotEventsSource(localStats, src) {
+  const root  = expandHome(src.root || '');
+  const re    = globToRe(src.glob || '*/events.jsonl');
+  const files = root ? walk(root, rel => re.test(rel)) : [];
+  let imported = 0, skipped = 0, files_scanned = 0;
+
+  for (const file of files) {
+    let st; try { st = fs.statSync(file); } catch { continue; }
+    if (unchanged(localStats, file, st)) { skipped++; continue; }
+    files_scanned++;
+
+    const sessionId = path.basename(path.dirname(file));
+    const events = [];
+    eachJsonlLine(file, e => events.push(e));
+
+    // Session start timestamp
+    const startEvt = events.find(e => e.type === 'session.start');
+    const ts = startEvt ? tsSeconds(startEvt.startTs || startEvt.ts || startEvt.timestamp) : Math.floor(st.mtimeMs / 1000);
+
+    // Prefer session.shutdown modelMetrics (most accurate)
+    const shutdownEvt = events.find(e => e.type === 'session.shutdown');
+    const modelMetrics = shutdownEvt?.modelMetrics || shutdownEvt?.model_metrics || null;
+
+    const records = {};  // modelName → { inTok, outTok }
+
+    if (modelMetrics && typeof modelMetrics === 'object') {
+      for (const [modelName, m] of Object.entries(modelMetrics)) {
+        const inTok  = num(m.inputTokens  ?? m.input_tokens  ?? 0);
+        const outTok = num(m.outputTokens ?? m.output_tokens ?? 0);
+        if (inTok > 0 || outTok > 0) records[modelName] = { inTok, outTok };
+      }
+    }
+
+    // Fall back to summing assistant.message usage when no shutdown metrics
+    if (Object.keys(records).length === 0) {
+      for (const e of events) {
+        if (e.type !== 'assistant.message') continue;
+        const model = e.model || 'github-copilot';
+        if (!records[model]) records[model] = { inTok: 0, outTok: 0 };
+        const u = e.usage || e.tokenUsage || {};
+        records[model].inTok  += num(u.inputTokens  ?? u.input_tokens  ?? 0);
+        records[model].outTok += num(u.outputTokens ?? u.output_tokens ?? 0);
+      }
+    }
+
+    for (const [modelName, { inTok, outTok }] of Object.entries(records)) {
+      if (inTok === 0 && outTok === 0) continue;
+      const ok = localStats.record({
+        ts,
+        api_key:             null,
+        model:               modelName,
+        provider_id:         src.provider_id || null,
+        tier:                src.tier || 'paid',
+        input_tokens:        inTok,
+        output_tokens:       outTok,
+        cache_create_tokens: 0,
+        cache_read_tokens:   0,
+        request_id:          `copilot:${sessionId}:${modelName}`,
+        data_source:         src.data_source,
+        session_id:          sessionId,
+        status_code:         200,
+        is_streaming:        false,
+      });
+      if (ok) imported++;
+    }
+
+    markDone(localStats, file, st);
+  }
+  return { source: src.id || src.data_source, imported, skipped, files_scanned };
+}
+
 // ── 单个 source 的扫描 ────────────────────────────────────────────────────────
 function importSource(localStats, src) {
-  if (src.format === 'sqlite') return importSqliteSource(localStats, src);
+  if (src.format === 'sqlite')         return importSqliteSource(localStats, src);
+  if (src.format === 'copilot-events') return importCopilotEventsSource(localStats, src);
   const root = expandHome(src.root || '');
   const re   = globToRe(src.glob || '**/*');
   const files = root ? walk(root, rel => re.test(rel)) : [];

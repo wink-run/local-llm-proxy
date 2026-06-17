@@ -166,6 +166,18 @@ session_sources:
       cache_read_tokens: tokens.cache.read
       cache_create_tokens: tokens.cache.write
 
+  - id: copilot-cli                              # GitHub Copilot CLI：扫 ~/.copilot/session-state
+    data_source: session-copilot
+    agent_id: copilot
+    provider_id: github-copilot
+    tier: paid
+    direct_only: true                            # 不走网关，仅补录统计
+    app_name: GitHub Copilot
+    app_icon: "🤖"
+    format: copilot-events                       # 自定义格式：一目录=一会话，events.jsonl
+    root: "~/.copilot/session-state"
+    glob: "*/events.jsonl"                       # <sessId>/events.jsonl
+
 # ════════ 客户端接入（内置留空，从服务器同步）════════
 tools: []
 
