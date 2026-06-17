@@ -753,23 +753,30 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
 
 // 单个应用的用量明细弹窗（合并网关实时 proxy + 会话补录 session-*，已在 DB 层按 request_id 去重）
 function AppDetailModal({ app, onClose }) {
-  const [days, setDays]       = useState(30);
-  const [data, setData]       = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [days, setDays]           = useState(30);
+  const [data, setData]           = useState(null);
+  const [loading, setLoading]     = useState(true);
+  const [selectedSid, setSelectedSid] = useState(null);
+
   useEffect(() => {
     let alive = true;
     setLoading(true);
+    setSelectedSid(null);
     window.electronAPI?.apps?.detail?.(app, days)
       .then(d => { if (alive) { setData(d); setLoading(false); } })
       .catch(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [app, days]);
 
-  const fmtN = n => n >= 1_000_000 ? (n/1e6).toFixed(2)+'M' : n >= 1000 ? (n/1000).toFixed(1)+'K' : String(n||0);
+  const fmtN    = n => n >= 1_000_000 ? (n/1e6).toFixed(2)+'M' : n >= 1000 ? (n/1000).toFixed(1)+'K' : String(n||0);
+  const fmtCost = n => (n != null && n > 0) ? ('$' + n.toFixed(n < 0.01 ? 4 : 3)) : null;
+  const fmtMs   = n => (n != null) ? (n >= 1000 ? (n/1000).toFixed(1)+'s' : n+'ms') : null;
   const fmtTime = ts => ts ? new Date(ts*1000).toLocaleString('zh-CN',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
   const shortId = id => id ? (String(id).length > 12 ? String(id).slice(0,8)+'…'+String(id).slice(-4) : String(id)) : '—';
   const proxy   = data?.bySource?.find(s => s.source === 'proxy')   || { calls:0, tokens:0 };
   const session = data?.bySource?.find(s => s.source === 'session') || { calls:0, tokens:0 };
+
+  const sidCalls = selectedSid ? (data?.recent || []).filter(r => r.session_id === selectedSid) : [];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
@@ -794,12 +801,17 @@ function AppDetailModal({ app, onClose }) {
         ) : (
           <div className="p-5 space-y-5">
             {/* 总计 */}
-            <div className="grid grid-cols-4 gap-3">
-              {[['总请求数', fmtN(data.total.calls)], ['总Token', fmtN(data.total.tokens)],
-                ['输入Token', fmtN(data.total.inTok)], ['输出Token', fmtN(data.total.outTok)]].map(([l,v]) => (
+            <div className="grid grid-cols-5 gap-2">
+              {[
+                ['总请求数', fmtN(data.total.calls)],
+                ['总Token',  fmtN(data.total.tokens)],
+                ['输入Token', fmtN(data.total.inTok)],
+                ['输出Token', fmtN(data.total.outTok)],
+                ['估算费用',  fmtCost(data.total.totalCost) || '—'],
+              ].map(([l,v]) => (
                 <div key={l} className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3">
                   <div className="text-[10px] text-gray-400 dark:text-gray-500">{l}</div>
-                  <div className="text-xl font-bold text-gray-800 dark:text-gray-100 mt-0.5">{v}</div>
+                  <div className="text-lg font-bold text-gray-800 dark:text-gray-100 mt-0.5 truncate">{v}</div>
                 </div>
               ))}
             </div>
@@ -828,24 +840,52 @@ function AppDetailModal({ app, onClose }) {
               )}
             </div>
 
-            {/* 按会话 */}
+            {/* 按会话（可点击展开调用明细） */}
             <div>
               <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">按会话（{data.sessions.length}）</div>
-              {data.sessions.length === 0 ? <div className="text-xs text-gray-400">无会话记录（API 类应用通常没有会话文件）</div> : (
-                <div className="border border-gray-100 dark:border-gray-800 rounded-lg divide-y divide-gray-100 dark:divide-gray-800 max-h-56 overflow-y-auto">
-                  {data.sessions.map(s => (
-                    <div key={s.session_id} className="flex items-center gap-3 px-3 py-1.5 text-xs">
-                      <span className="font-mono text-gray-600 dark:text-gray-400 flex-1 truncate" title={s.session_id}>{shortId(s.session_id)}</span>
-                      <span className="text-gray-500 w-12 text-right">{s.calls} 次</span>
-                      <span className="text-gray-700 dark:text-gray-300 w-20 text-right font-medium">{fmtN(s.tokens)} tok</span>
-                      <span className="text-gray-400 w-28 text-right">{fmtTime(s.lastTs)}</span>
-                    </div>
-                  ))}
+              {data.sessions.length === 0 ? (
+                <div className="text-xs text-gray-400">无会话记录（API 接入类应用无会话文件，调用明细见下方「最近明细」）</div>
+              ) : (
+                <div className="border border-gray-100 dark:border-gray-800 rounded-lg divide-y divide-gray-100 dark:divide-gray-800 max-h-72 overflow-y-auto">
+                  {data.sessions.map(s => {
+                    const open = selectedSid === s.session_id;
+                    const calls = open ? (data?.recent || []).filter(r => r.session_id === s.session_id) : [];
+                    return (
+                      <div key={s.session_id}>
+                        <div
+                          className={`flex items-center gap-3 px-3 py-1.5 text-xs cursor-pointer select-none hover:bg-gray-50 dark:hover:bg-gray-800/60 ${open ? 'bg-blue-50 dark:bg-blue-900/10' : ''}`}
+                          onClick={() => setSelectedSid(open ? null : s.session_id)}
+                        >
+                          <span className="text-gray-400 shrink-0">{open ? '▾' : '▸'}</span>
+                          <span className="font-mono text-gray-600 dark:text-gray-400 flex-1 truncate" title={s.session_id}>{shortId(s.session_id)}</span>
+                          <span className="text-gray-500 w-12 text-right">{s.calls} 次</span>
+                          <span className="text-gray-700 dark:text-gray-300 w-20 text-right font-medium">{fmtN(s.tokens)} tok</span>
+                          <span className="text-gray-400 w-28 text-right">{fmtTime(s.lastTs)}</span>
+                        </div>
+                        {open && (
+                          <div className="bg-gray-50 dark:bg-gray-800/30 divide-y divide-gray-100 dark:divide-gray-800/60 pl-6">
+                            {calls.length === 0 ? (
+                              <div className="px-3 py-2 text-[11px] text-gray-400">无明细（此会话的调用不在最近50条内）</div>
+                            ) : calls.map((r, i) => (
+                              <div key={i} className="flex items-center gap-2 px-3 py-1 text-[11px]">
+                                <span className="text-gray-400 w-20 shrink-0">{fmtTime(r.ts)}</span>
+                                <span className="font-mono text-gray-600 dark:text-gray-400 flex-1 truncate">{r.model || '—'}</span>
+                                <span className="text-gray-500 shrink-0">↑{fmtN(r.inTok)} ↓{fmtN(r.outTok)}</span>
+                                {fmtMs(r.latency_ms) && <span className="text-gray-400 shrink-0">{fmtMs(r.latency_ms)}</span>}
+                                {fmtCost(r.cost_usd) && <span className="text-emerald-600 dark:text-emerald-400 shrink-0">{fmtCost(r.cost_usd)}</span>}
+                                {r.status_code != null && r.status_code >= 400 && <span className="text-red-500 shrink-0">{r.status_code}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
 
-            {/* 最近明细 */}
+            {/* 最近明细（API 接入类应用 / 无会话分组时显示） */}
             <div>
               <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">最近明细</div>
               {data.recent.length === 0 ? <div className="text-xs text-gray-400">—</div> : (
@@ -858,6 +898,8 @@ function AppDetailModal({ app, onClose }) {
                       </span>
                       <span className="font-mono text-gray-600 dark:text-gray-400 flex-1 truncate">{r.model || '—'}</span>
                       <span className="text-gray-500 shrink-0">↑{fmtN(r.inTok)} ↓{fmtN(r.outTok)}</span>
+                      {fmtMs(r.latency_ms) && <span className="text-gray-400 shrink-0">{fmtMs(r.latency_ms)}</span>}
+                      {fmtCost(r.cost_usd) && <span className="text-emerald-600 dark:text-emerald-400 shrink-0">{fmtCost(r.cost_usd)}</span>}
                       {r.status_code != null && r.status_code >= 400 && <span className="text-red-500 shrink-0">{r.status_code}</span>}
                     </div>
                   ))}
