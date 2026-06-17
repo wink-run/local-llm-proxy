@@ -620,6 +620,15 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest }) {
   );
 }
 
+const SUBSCRIPTION_PLANS = {
+  'anthropic-paid': [['claude-pro','Claude Pro'],['max5x','Claude Max (5×)'],['max20x','Claude Max (20×)']],
+  'openai':         [['chatgpt-plus','ChatGPT Plus'],['chatgpt-team','ChatGPT Team'],['chatgpt-pro','ChatGPT Pro']],
+  'gemini':         [['gemini-advanced','Gemini Advanced'],['google-one-ai','Google One AI']],
+  'github-copilot': [['copilot-pro','GitHub Copilot Pro'],['copilot-business','Copilot Business']],
+  'deepseek':       [['deepseek-pro','DeepSeek Pro']],
+  'xai':            [['grok-premium','Grok Premium']],
+};
+
 function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = false }) {
   const [showKey,    setShowKey]    = useState(false);
   const [expanded,   setExpanded]   = useState(initialExpanded);
@@ -632,10 +641,16 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
   const isOauthCfg = provider.auth_type === 'oauth';
   const hasOauth = !!(provider.credentials && provider.credentials.refresh_token);
   const hasKey   = !isOauthCfg && !!provider.token;
-  // keyless 但支持 OAuth（如 Copilot）：必须登录后才算配置好
-  const configured = (meta.keyless && !oauthCap) || hasKey || hasOauth;
+  // keyless 但支持 OAuth（如 Copilot）：必须登录后才算配置好；订阅记账模式不需要 key
+  const configured = (meta.keyless && !oauthCap) || hasKey || hasOauth || (isSubscription && subMode === 'accounting');
   const canApiKey = !meta.keyless;
   const modelCount = (provider.models || []).length;
+
+  const billingType    = provider.billing_type    || 'api-key';
+  const subMode        = provider.sub_mode        || 'accounting';
+  const subPlan        = provider.subscription_plan || '';
+  const isSubscription = billingType === 'subscription';
+  const subPlans       = SUBSCRIPTION_PLANS[provider.id] || [['other', '其他套餐']];
 
   // 添加方式：api_key / oauth（仅当预设支持 OAuth 时可切换）
   const [method, setMethod] = useState(isOauthCfg ? 'oauth' : 'api_key');
@@ -757,7 +772,11 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
           {!isP2P && !(meta.keyless && !oauthCap) && configured && !expanded && (
             <div className="mt-2 space-y-1">
               <div className="flex items-center gap-2">
-                {isOauthCfg ? (
+                {isSubscription ? (
+                  <code className="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 px-2 py-1 rounded font-mono">
+                    📋 订阅{subMode === 'accounting' ? '·记账' : '·转API'}{subPlan ? ' · ' + (subPlans.find(([v])=>v===subPlan)?.[1] || subPlan) : ''}
+                  </code>
+                ) : isOauthCfg ? (
                   <code className="text-xs text-purple-600 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/30 px-2 py-1 rounded font-mono">
                     🔑 已登录{provider.credentials?.email ? ' · ' + provider.credentials.email : ''}
                   </code>
@@ -777,8 +796,50 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
           {/* Inline setup / edit panel */}
           {!isP2P && (canApiKey || oauthCap) && (!configured || expanded) && (
             <div className="mt-3 space-y-2">
-              {/* 添加方式切换（同时支持 API Key 与 OAuth 时显示） */}
-              {canApiKey && oauthCap && (
+              {/* 计费方式切换（订阅 / API Key） */}
+              {canApiKey && (
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-gray-500 dark:text-gray-400 shrink-0">计费方式</span>
+                  <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-700 overflow-hidden text-xs">
+                    <button onClick={() => onUpdate(provider.id, { billing_type: 'api-key' })}
+                      className={billingType === 'api-key' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>API Key</button>
+                    <button onClick={() => onUpdate(provider.id, { billing_type: 'subscription' })}
+                      className={isSubscription ? 'px-3 py-1 bg-amber-500 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>订阅</button>
+                  </div>
+                </div>
+              )}
+
+              {/* 订阅套餐 + 接入方式 */}
+              {isSubscription && (
+                <div className="space-y-2 pl-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-gray-500 shrink-0">套餐</span>
+                    <select value={subPlan} onChange={e => onUpdate(provider.id, { subscription_plan: e.target.value })}
+                      className="text-xs bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-2 py-1 outline-none text-gray-700 dark:text-gray-300">
+                      <option value="">选择套餐</option>
+                      {subPlans.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      <option value="other">其他</option>
+                    </select>
+                  </div>
+                  {oauthCap && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-gray-500 shrink-0">接入方式</span>
+                      <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-700 overflow-hidden text-xs">
+                        <button onClick={() => onUpdate(provider.id, { sub_mode: 'accounting' })}
+                          className={subMode === 'accounting' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>仅记账</button>
+                        <button onClick={() => onUpdate(provider.id, { sub_mode: 'api-proxy' })}
+                          className={subMode === 'api-proxy' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>订阅转 API</button>
+                      </div>
+                    </div>
+                  )}
+                  {subMode === 'accounting' && (
+                    <p className="text-[11px] text-gray-400 dark:text-gray-500">直连官方客户端，本网关仅统计用量与费用，不转发流量。</p>
+                  )}
+                </div>
+              )}
+
+              {/* 添加方式切换（同时支持 API Key 与 OAuth 时显示，且非订阅模式） */}
+              {!isSubscription && canApiKey && oauthCap && (
                 <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-700 overflow-hidden text-xs">
                   <button onClick={() => setMethod('api_key')}
                     className={method === 'api_key' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>API Key</button>
@@ -788,7 +849,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
               )}
 
               {/* API Key 方式 */}
-              {canApiKey && (!oauthCap || method === 'api_key') && (
+              {!isSubscription && canApiKey && (!oauthCap || method === 'api_key') && (
                 <>
                   <div className="flex gap-2">
                     <input
@@ -814,7 +875,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
               )}
 
               {/* OAuth 订阅登录方式 */}
-              {oauthCap && (!canApiKey || method === 'oauth') && (
+              {oauthCap && (!canApiKey || method === 'oauth' || (isSubscription && subMode === 'api-proxy')) && (
                 <div className="space-y-2">
                   {hasOauth && (
                     <p className="text-xs text-green-600 dark:text-green-400">
