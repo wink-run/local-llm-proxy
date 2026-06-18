@@ -35,11 +35,9 @@ COPY electron/local-gateway.js \
 COPY electron/oauth ./electron/oauth
 COPY electron/config ./electron/config
 
-# js-yaml（config-loader）+ better-sqlite3（local-stats / session-import）
-COPY --from=builder /build/node_modules/js-yaml  ./node_modules/js-yaml
-COPY --from=builder /build/node_modules/argparse ./node_modules/argparse
+# 运行时 npm 依赖（须一次安装；后执行的 npm install 会清空已 COPY 的 node_modules）
 RUN apk add --no-cache --virtual .build-deps python3 make g++ \
-  && npm install --prefix /app better-sqlite3@12.10.0 --omit=dev \
+  && npm install --prefix /app js-yaml@4.1.1 better-sqlite3@12.10.0 --omit=dev \
   && apk del .build-deps
 
 # Pre-built Web UI (served by admin-api on :11431)
