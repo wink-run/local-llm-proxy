@@ -190,15 +190,8 @@ jobs:
             # 拉取镜像
             docker pull ${{ env.IMAGE }}:${{ github.ref_name }}
 
-            # 准备配置
+            # 持久化目录（local-config.json 由网关首次启动自动创建）
             mkdir -p gateway-data
-            cat > gateway-data/local-config.json << 'EOF'
-            {
-              "cloud_config": { "url": "http://YOUR_BACKEND:8000", "token": "YOUR_P2P_KEY" },
-              "scene_routes": [],
-              "local_keys": []
-            }
-            EOF
 
             # 启动
             docker run -d \

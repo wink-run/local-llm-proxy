@@ -171,20 +171,10 @@ pm2 start cli/gateway.js -- start
 git clone https://github.com/wink-run/local-llm-proxy.git
 cd local-llm-proxy
 
-mkdir -p gateway-data
-cat > gateway-data/local-config.json << 'EOF'
-{
-  "cloud_config": {
-    "url": "http://YOUR_BACKEND:8000",
-    "token": "YOUR_P2P_KEY"
-  },
-  "scene_routes": [],
-  "local_keys": []
-}
-EOF
-
 docker compose up gateway -d
 ```
+
+The `gateway-data/` volume is mounted automatically; **`local-config.json` is created on first start**. Configure routes and apps in the Web UI on `:11431`. See [`gateway-data/README.md`](./gateway-data/README.md).
 
 | Port | Purpose |
 |---|---|

@@ -532,7 +532,7 @@ export default {
   'dashboard.sourceMixTitle': 'Gateway {proxy} · Session {session}',
 
   'contribute.title': 'Contribute',
-  'contribute.subtitle': 'Share local compute or API keys on the P2P network and earn credits',
+  'contribute.subtitle': 'Share local model services on the P2P network, earn credits to consume other models. API keys are never uploaded — safe and risk-free.',
   'contribute.running': 'Contributing',
   'contribute.stopped': 'Stopped',
   'contribute.agentRunning': 'Agent running · {n} req/min',

@@ -47,8 +47,35 @@ function writeAgentConfig(cfg) {
 
 const DEFAULT_LOCAL_CONFIG_PATH = path.join(os.homedir(), '.llm-agent', 'local-config.json');
 
+/** 首次启动时的空配置（路由/应用等在 Web UI 创建） */
+function defaultLocalConfig() {
+  const cfg = { scene_routes: [], apps: [], cloud_config: {} };
+  // Docker / CLI：环境变量 TOKEN_SERVER_URL 可预填后端地址
+  try {
+    const { defaultServerUrlFromEnv } = require('./default-server-url');
+    const url = defaultServerUrlFromEnv();
+    if (url) cfg.cloud_config.url = url;
+  } catch {}
+  return cfg;
+}
+
 /**
- * Returns local config object { scene_routes, local_keys, cloud_config } or null.
+ * 确保 local-config.json 存在；缺失或无效时写入默认空配置。
+ * @returns {object} 当前有效配置
+ */
+function ensureLocalConfig(localConfigPath) {
+  const p = localConfigPath || DEFAULT_LOCAL_CONFIG_PATH;
+  _ensureDir(p);
+  const existing = _readJson(p);
+  if (existing && typeof existing === 'object') return existing;
+  const cfg = defaultLocalConfig();
+  _writeJsonAtomic(p, cfg);
+  console.log('[config] created default local-config:', p);
+  return cfg;
+}
+
+/**
+ * Returns local config object or null if file missing/invalid.
  * @param {string} [localConfigPath] - optional override; defaults to ~/.llm-agent/local-config.json
  */
 function readLocalConfig(localConfigPath) {
@@ -122,5 +149,7 @@ module.exports = {
   writeAgentConfig,
   readLocalConfig,
   writeLocalConfig,
+  ensureLocalConfig,
+  defaultLocalConfig,
   watchConfigs,
 };

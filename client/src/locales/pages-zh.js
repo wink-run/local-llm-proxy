@@ -535,7 +535,7 @@ export default {
 
   // ── 贡献 ──
   'contribute.title': '贡献',
-  'contribute.subtitle': '将本地算力或 API Key 共享到 P2P 网络，赚取积分用于消费其他模型',
+  'contribute.subtitle': '将本地模型服务共享到 P2P 网络，赚取积分用于消费其他模型，不上传 API Key，安全无风险',
   'contribute.running': '贡献中',
   'contribute.stopped': '已停止',
   'contribute.agentRunning': 'agent 运行中 · {n} req/min',

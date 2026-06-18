@@ -173,21 +173,10 @@ pm2 start cli/gateway.js -- start
 git clone https://github.com/wink-run/local-llm-proxy.git
 cd local-llm-proxy
 
-# 准备配置文件
-mkdir -p gateway-data
-cat > gateway-data/local-config.json << 'EOF'
-{
-  "cloud_config": {
-    "url": "http://YOUR_BACKEND:8000",
-    "token": "YOUR_P2P_KEY"
-  },
-  "scene_routes": [],
-  "local_keys": []
-}
-EOF
-
 docker compose up gateway -d
 ```
+
+配置目录 `gateway-data/` 由 Compose 自动挂载；**`local-config.json` 在首次启动时由程序创建**，路由与应用在 `:11431` Web UI 中配置。说明见 [`gateway-data/README.md`](./gateway-data/README.md)。
 
 | 端口 | 用途 |
 |---|---|

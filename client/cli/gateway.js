@@ -16,7 +16,7 @@ const fs   = require('fs');
 const gateway  = require('../electron/local-gateway');
 const adminApi = require('./admin-api');
 const reporter = require('../shared/device-reporter');
-const { readLocalConfig, readAgentConfig } = require('../shared/config-loader');
+const { readLocalConfig, readAgentConfig, ensureLocalConfig } = require('../shared/config-loader');
 const { defaultServerUrlFromEnv } = require('../shared/default-server-url');
 const { refreshGatewayPeerModels } = require('../shared/peer-models-sync');
 const { initGatewayTelemetry } = require('../shared/telemetry');
@@ -81,7 +81,8 @@ function getToken(adminPort) {
 // ── Commands ──────────────────────────────────────────────────────────────────
 
 async function cmdStart(port, adminPort) {
-  const lc = readLocalConfig() || { scene_routes: [], local_keys: [], cloud_config: {} };
+  // 首次启动自动创建 ~/.llm-agent/local-config.json（Docker 挂载目录同理）
+  const lc = ensureLocalConfig();
   // Docker 端口映射需监听 0.0.0.0；本机 CLI 默认仍用 127.0.0.1
   const bindHost = process.env.GATEWAY_BIND_HOST
     || (fs.existsSync('/.dockerenv') ? '0.0.0.0' : '127.0.0.1');
