@@ -36,7 +36,8 @@ services:
       GATEWAY_UPSTREAM: ${GATEWAY_UPSTREAM:-gateway:11431}
     volumes:
       - ./nginx/templates/default.conf.template:/etc/nginx/templates/default.conf.template:ro
-      - ./nginx/certs:/etc/nginx/certs:ro
+      - ./nginx/certs:/etc/nginx/certs
+      - ./nginx/docker-entrypoint.d/20-generate-certs.sh:/docker-entrypoint.d/20-generate-certs.sh:ro
       - certbot_www:/var/www/certbot:ro
     depends_on:
       - proxy
@@ -54,7 +55,8 @@ services:
       GATEWAY_UPSTREAM: ${GATEWAY_UPSTREAM:-gateway:11431}
     volumes:
       - ./nginx/templates/gateway.conf.template:/etc/nginx/templates/default.conf.template:ro
-      - ./nginx/certs:/etc/nginx/certs:ro
+      - ./nginx/certs:/etc/nginx/certs
+      - ./nginx/docker-entrypoint.d/20-generate-certs.sh:/docker-entrypoint.d/20-generate-certs.sh:ro
       - certbot_www:/var/www/certbot:ro
     depends_on:
       - gateway
