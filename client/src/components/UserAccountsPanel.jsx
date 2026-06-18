@@ -154,7 +154,7 @@ export default function UserAccountsPanel({
     if (pricingSaveTimer.current) clearTimeout(pricingSaveTimer.current);
   }, []);
 
-  async function saveAccounts(patch, { quiet = false } = {}) {
+  async function saveAccounts(patch, { quiet = false, successMsg } = {}) {
     if (!window.electronAPI?.localConfig?.setUserAccounts) {
       const tip = t('accounts.cannotSaveDesktop');
       setMsg(tip);
@@ -176,8 +176,12 @@ export default function UserAccountsPanel({
       setData(r);
       if (!quiet) {
         setMsg(t('accounts.saved'));
-        setSubMsg(t('accounts.added'));
-        setPaygMsg(t('accounts.added'));
+        if ('user_subscriptions' in patch) {
+          setSubMsg(successMsg ?? t('accounts.added'));
+        }
+        if ('user_payg_providers' in patch) {
+          setPaygMsg(successMsg ?? t('accounts.added'));
+        }
         setTimeout(() => { setMsg(''); setSubMsg(''); setPaygMsg(''); }, 2000);
       }
       return true;
@@ -486,7 +490,7 @@ export default function UserAccountsPanel({
     }
     const next = payg.filter(p => p.id !== id);
     setData(d => ({ ...d, user_payg_providers: next }));
-    saveAccounts({ user_payg_providers: next });
+    saveAccounts({ user_payg_providers: next }, { successMsg: t('accounts.removed') });
     if (paygExpanded === id) setPaygExpanded(null);
   }
 

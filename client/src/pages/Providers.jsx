@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { getNetwork, getProfile, listKeys, createKey, deleteKey, getProviderCatalog } from '../api/client';
 import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
@@ -146,7 +147,8 @@ function mergeUserPaygIntoProviders(resolved, metaMap, userPayg = [], t) {
     const existing = providers.find(x => x.id === id);
     if (existing) {
       if (p.label) existing.displayName = p.label;
-      if (!(existing.models || []).length && (p.models || []).length) {
+      // 个人页模型仅作初始参考；本地已有配置则保留（供给源页可独立增删）
+      if (!(existing.models && existing.models.length) && (p.models || []).length) {
         existing.models = [...p.models];
       }
       if (!meta[id]) {
@@ -184,6 +186,46 @@ function mergeUserPaygIntoProviders(resolved, metaMap, userPayg = [], t) {
     }
   }
   return { providers, meta };
+}
+
+/** 个人页按量账户（用于识别按量供给源） */
+function resolvePaygAccount(providerId, userPayg = []) {
+  return (userPayg || []).find(p => p.provider_id === providerId) || null;
+}
+
+function isPaygManagedProvider(providerId, userPayg = []) {
+  return !!resolvePaygAccount(providerId, userPayg);
+}
+
+/** 个人页按量账户已配置的模型（供给源页仅可从中选取） */
+function buildPaygProfileModels(providerId, userPayg = []) {
+  const payg = resolvePaygAccount(providerId, userPayg);
+  const names = new Set();
+  for (const m of payg?.models || []) {
+    const n = typeof m === 'string' ? m.trim() : String(m?.name || '').trim();
+    if (n) names.add(n);
+  }
+  return [...names].sort((a, b) => a.localeCompare(b));
+}
+
+/** 模型输入候选：非按量供给源可用刊例价目录；按量仅用 buildPaygProfileModels */
+function buildModelSuggestions(providerId, userPayg = [], providerPricing = {}, paygCatalog = []) {
+  const names = new Set();
+  const add = (m) => {
+    const n = typeof m === 'string' ? m.trim() : String(m?.name || '').trim();
+    if (n) names.add(n);
+  };
+
+  const payg = resolvePaygAccount(providerId, userPayg);
+  for (const m of payg?.models || []) add(m);
+
+  const cat = (paygCatalog || []).find(p => (p.provider_id || p.id) === providerId);
+  for (const m of cat?.models || []) add(m);
+  for (const m of Object.keys(cat?.pricing || {})) add(m);
+
+  for (const m of Object.keys(providerPricing[providerId] || {})) add(m);
+
+  return [...names].sort((a, b) => a.localeCompare(b));
 }
 
 /**
@@ -720,24 +762,135 @@ function normModel(m) {
   return typeof m === 'string' ? { name: m, type: 'chat' } : { name: m.name, type: m.type || 'chat' };
 }
 
-function ModelListEditor({ models = [], onChange, scrollable = false }) {
+/** 按量供给源：剔除个人页未配置的模型 */
+function filterPaygModels(models, providerId, userPayg) {
+  const allowed = new Set(buildPaygProfileModels(providerId, userPayg));
+  return (models || []).map(normModel).filter(m => allowed.has(m.name));
+}
+
+function ModelListEditor({ models = [], onChange, scrollable = false, suggestions = [], profileOnly = false }) {
   const { t } = useLang();
   const [input,     setInput]     = useState('');
   const [inputType, setInputType] = useState('chat');
+  const [open,      setOpen]      = useState(false);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const [menuStyle, setMenuStyle] = useState(null);
+  const inputRef = useRef(null);
 
   const normalized = models.map(normModel);
+  const existingNames = useMemo(() => new Set(normalized.map(m => m.name)), [normalized]);
+  const allowedSet = useMemo(() => new Set(suggestions || []), [suggestions]);
 
-  function add() {
-    const n = input.trim();
-    if (!n || normalized.some(m => m.name === n)) { setInput(''); return; }
+  const filteredSuggestions = useMemo(() => {
+    const q = input.trim().toLowerCase();
+    return (suggestions || [])
+      .filter(name => !existingNames.has(name))
+      .filter(name => !q || name.toLowerCase().includes(q))
+      .slice(0, 10);
+  }, [suggestions, input, existingNames]);
+
+  const showSuggestions = open && filteredSuggestions.length > 0;
+
+  function canAdd(name) {
+    const n = (name ?? input).trim();
+    if (!n || existingNames.has(n)) return false;
+    if (profileOnly && !allowedSet.has(n)) return false;
+    return true;
+  }
+
+  // 下拉挂到 body，避免被卡片 overflow-hidden 裁切
+  const updateMenuPosition = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const maxH = 160;
+    const gap = 4;
+    const spaceBelow = window.innerHeight - rect.bottom - gap;
+    const spaceAbove = rect.top - gap;
+    const openUp = spaceBelow < Math.min(maxH, filteredSuggestions.length * 32) && spaceAbove > spaceBelow;
+    const height = Math.min(maxH, openUp ? spaceAbove : spaceBelow);
+    setMenuStyle({
+      left: rect.left,
+      width: rect.width,
+      top: openUp ? rect.top - gap - height : rect.bottom + gap,
+      maxHeight: Math.max(height, 80),
+    });
+  }, [filteredSuggestions.length]);
+
+  useEffect(() => {
+    setActiveIdx(0);
+  }, [filteredSuggestions.length, input]);
+
+  useEffect(() => {
+    if (!showSuggestions) {
+      setMenuStyle(null);
+      return;
+    }
+    updateMenuPosition();
+    window.addEventListener('scroll', updateMenuPosition, true);
+    window.addEventListener('resize', updateMenuPosition);
+    return () => {
+      window.removeEventListener('scroll', updateMenuPosition, true);
+      window.removeEventListener('resize', updateMenuPosition);
+    };
+  }, [showSuggestions, updateMenuPosition]);
+
+  function add(nameOverride) {
+    const n = (nameOverride ?? input).trim();
+    if (!canAdd(n)) { setInput(''); setOpen(false); return; }
     onChange([...normalized, { name: n, type: inputType }]);
     setInput('');
+    setOpen(false);
   }
 
   function remove(name)     { onChange(normalized.filter(m => m.name !== name)); }
   function toggleType(name) {
     onChange(normalized.map(m => m.name === name ? { ...m, type: m.type === 'chat' ? 'image' : 'chat' } : m));
   }
+
+  function handleInputKeyDown(e) {
+    if (!open || filteredSuggestions.length === 0) {
+      if (e.key === 'Enter') { e.preventDefault(); if (canAdd()) add(); }
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveIdx(i => (i + 1) % filteredSuggestions.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveIdx(i => (i - 1 + filteredSuggestions.length) % filteredSuggestions.length);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      add(filteredSuggestions[activeIdx]);
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  }
+
+  const suggestionMenu = showSuggestions && menuStyle && createPortal(
+    <ul
+      style={{ position: 'fixed', left: menuStyle.left, top: menuStyle.top, width: menuStyle.width, maxHeight: menuStyle.maxHeight, zIndex: 9999 }}
+      className="overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg py-1"
+      role="listbox"
+    >
+      {filteredSuggestions.map((name, i) => (
+        <li key={name} role="option" aria-selected={i === activeIdx}>
+          <button
+            type="button"
+            onMouseDown={e => { e.preventDefault(); add(name); }}
+            className={`w-full text-left px-3 py-1.5 text-xs font-mono transition-colors ${
+              i === activeIdx
+                ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800'
+            }`}
+          >
+            {name}
+          </button>
+        </li>
+      ))}
+    </ul>,
+    document.body,
+  );
 
   return (
     <div className="space-y-2">
@@ -764,15 +917,25 @@ function ModelListEditor({ models = [], onChange, scrollable = false }) {
           </div>
         </div>
       )}
-      {/* add input with type picker */}
+      {/* add input with type picker + suggestions */}
       <div className="flex gap-2">
-        <input
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && add()}
-          placeholder={t('providers.models.placeholder')}
-          className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
-        />
+        <div className="relative flex-1 min-w-0">
+          <input
+            ref={inputRef}
+            value={input}
+            onChange={e => { setInput(e.target.value); setOpen(true); requestAnimationFrame(updateMenuPosition); }}
+            onFocus={() => { setOpen(true); requestAnimationFrame(updateMenuPosition); }}
+            onBlur={() => setTimeout(() => setOpen(false), 120)}
+            onKeyDown={handleInputKeyDown}
+            placeholder={profileOnly ? t('providers.models.paygPickPlaceholder') : t('providers.models.placeholder')}
+            className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
+            autoComplete="off"
+            role="combobox"
+            aria-expanded={showSuggestions}
+            aria-autocomplete="list"
+          />
+          {suggestionMenu}
+        </div>
         <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600 shrink-0 text-[10px] font-medium">
           {[['chat', t('providers.models.chat')], ['image', t('providers.models.image')]].map(([typeKey, label]) => (
             <button key={typeKey} type="button" onClick={() => setInputType(typeKey)}
@@ -786,26 +949,83 @@ function ModelListEditor({ models = [], onChange, scrollable = false }) {
           ))}
         </div>
         <button
-          onClick={add}
-          disabled={!input.trim()}
+          onClick={() => add()}
+          disabled={!canAdd()}
           className="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 text-xs text-gray-700 dark:text-gray-300 rounded-lg transition-colors whitespace-nowrap"
         >
           {t('providers.models.add')}
         </button>
       </div>
-      {normalized.length === 0 && (
+      {profileOnly && suggestions.length === 0 && (
+        <p className="text-[11px] text-gray-400">{t('providers.models.paygNoProfileModels')}</p>
+      )}
+      {normalized.length === 0 && !profileOnly && (
         <p className="text-[11px] text-gray-400">{t('providers.models.emptyHint')}</p>
       )}
     </div>
   );
 }
 
-function CustomProviderCard({ provider, onUpdate, onRemove, onTest }) {
+/** 供给源卡片内模型区；按量供给源可独立编辑，新增供给源引导去个人页 */
+function ProviderModelSection({ provider, userPayg, onGoPayg, onUpdate, scrollable = false, providerPricing = {}, paygCatalog = [] }) {
+  const { t } = useLang();
+  const isPayg = isPaygManagedProvider(provider.id, userPayg);
+  const models = provider.models || [];
+  const modelCount = models.length;
+  const profileModels = useMemo(
+    () => (isPayg ? buildPaygProfileModels(provider.id, userPayg) : []),
+    [isPayg, provider.id, userPayg],
+  );
+  const suggestions = useMemo(
+    () => (isPayg
+      ? profileModels
+      : buildModelSuggestions(provider.id, userPayg, providerPricing, paygCatalog)),
+    [isPayg, provider.id, userPayg, providerPricing, paygCatalog, profileModels],
+  );
+
+  function handleModelsChange(next) {
+    let out = next;
+    if (isPayg) {
+      const allowed = new Set(profileModels);
+      out = next.map(normModel).filter(m => allowed.has(m.name));
+    }
+    onUpdate(provider.id, { models: out });
+  }
+
+  return (
+    <div className="border-t border-gray-100 dark:border-gray-800 px-4 py-3 space-y-2">
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-gray-500">{t('providers.models.list')}</span>
+        {modelCount > 0
+          ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">{t('providers.models.count', { n: modelCount })}</span>
+          : <span className="text-[10px] text-gray-400">{t('providers.models.unlimited')}</span>
+        }
+      </div>
+      <ModelListEditor
+        models={models}
+        onChange={handleModelsChange}
+        scrollable={scrollable}
+        suggestions={suggestions}
+        profileOnly={isPayg}
+      />
+      {isPayg && (
+        <p className="text-[11px] text-gray-500 dark:text-gray-400">
+          {t('providers.models.paygHint')}{' '}
+          <button type="button" onClick={onGoPayg}
+            className="text-emerald-600 dark:text-emerald-400 hover:underline">
+            {t('providers.models.goPaygProfile')}
+          </button>
+        </p>
+      )}
+    </div>
+  );
+}
+
+function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [], onGoPayg, providerPricing = {}, paygCatalog = [] }) {
   const { t } = useLang();
   const [showKey, setShowKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testMsg, setTestMsg] = useState('');
-  const modelCount = (provider.models || []).length;
 
   const displayLabel = provider.displayName || provider.label || (() => {
     try { const h = new URL(provider.base_url || '').hostname; return h || t('providers.custom.defaultName'); } catch { return t('providers.custom.defaultName'); }
@@ -891,26 +1111,21 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest }) {
         </div>
       </div>
 
-      {/* Model list */}
-      <div className="border-t border-gray-100 dark:border-gray-800 px-4 py-3 space-y-2">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-500">{t('providers.models.list')}</span>
-          {modelCount > 0
-            ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">{t('providers.models.count', { n: modelCount })}</span>
-            : <span className="text-[10px] text-gray-400">{t('providers.models.unlimited')}</span>
-          }
-        </div>
-        <ModelListEditor
-          models={provider.models || []}
-          onChange={models => onUpdate(provider.id, { models })}
-          scrollable
-        />
-      </div>
+      {/* Model list — 按量供给源模型来自个人页 */}
+      <ProviderModelSection
+        provider={provider}
+        userPayg={userPayg}
+        onGoPayg={onGoPayg}
+        onUpdate={onUpdate}
+        scrollable
+        providerPricing={providerPricing}
+        paygCatalog={paygCatalog}
+      />
     </div>
   );
 }
 
-function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = false, gatewayAuthMode = null }) {
+function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = false, gatewayAuthMode = null, userPayg = [], onGoPayg, providerPricing = {}, paygCatalog = [] }) {
   const { t } = useLang();
   const [showKey,    setShowKey]    = useState(false);
   const [expanded,   setExpanded]   = useState(initialExpanded);
@@ -937,7 +1152,6 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
   const canApiKey = !meta.keyless && !forceOauth;
   const showOauthUi = forceOauth ? !!oauthCap : (oauthCap && (!forceApiKey));
   const showApiKeyUi = forceApiKey || (canApiKey && !forceOauth);
-  const modelCount = (provider.models || []).length;
 
   // 添加方式：api_key / oauth（按量可切换；订阅转 API 固定 OAuth）
   const [method, setMethod] = useState(forceOauth || isOauthCfg ? 'oauth' : 'api_key');
@@ -1248,22 +1462,17 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
         )}
       </div>
 
-      {/* Model list section — always visible, scrollable when > 5 models */}
+      {/* Model list section — 按量供给源模型来自个人页 */}
       {!isP2P && (
-        <div className="border-t border-gray-100 dark:border-gray-800 px-4 py-3 space-y-2">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">{t('providers.models.list')}</span>
-            {modelCount > 0
-              ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">{t('providers.models.count', { n: modelCount })}</span>
-              : <span className="text-[10px] text-gray-400">{t('providers.models.unlimited')}</span>
-            }
-          </div>
-          <ModelListEditor
-            models={provider.models || []}
-            onChange={models => onUpdate(provider.id, { models })}
-            scrollable
-          />
-        </div>
+        <ProviderModelSection
+          provider={provider}
+          userPayg={userPayg}
+          onGoPayg={onGoPayg}
+          onUpdate={onUpdate}
+          scrollable
+          providerPricing={providerPricing}
+          paygCatalog={paygCatalog}
+        />
       )}
     </div>
   );
@@ -1283,6 +1492,8 @@ export default function Providers() {
   const [subscriptionCatalog, setSubscriptionCatalog] = useState([]);
   const [statsOnlyIds, setStatsOnlyIds] = useState([]);
   const [userPayg, setUserPayg] = useState([]);
+  const [providerPricing, setProviderPricing] = useState({});
+  const [paygCatalog, setPaygCatalog] = useState([]);
   const [savedMsg,  setSavedMsg]  = useState('');
   // Track the last value written/loaded so we skip the initial load trigger
   const lastSaved = useRef(null);
@@ -1294,6 +1505,8 @@ export default function Providers() {
     if (!window.electronAPI?.localConfig?.getUserAccounts) {
       setPaidAllowlist([]);
       setUserPayg([]);
+      setProviderPricing({});
+      setPaygCatalog([]);
       return;
     }
     try {
@@ -1309,9 +1522,13 @@ export default function Providers() {
       );
       setStatsOnlyIds(r.stats_only_provider_ids || []);
       setUserPayg(r.user_payg_providers || []);
+      setProviderPricing(r.provider_pricing || {});
+      setPaygCatalog(r.payg_provider_catalog || []);
     } catch {
       setPaidAllowlist([]);
       setUserPayg([]);
+      setProviderPricing({});
+      setPaygCatalog([]);
     }
   }, []);
 
@@ -1375,9 +1592,15 @@ export default function Providers() {
     const timer = setTimeout(async () => {
       try {
         const cfg = (await getConfig().read()) || {};
-        const normalizedProviders = providers.map(p =>
-          meta[p.id] ? p : { ...p, base_url: (p.base_url || '').replace(/\/v1\/?$/, '').replace(/\/$/, '') }
-        );
+        const normalizedProviders = providers.map(p => {
+          const base = meta[p.id]
+            ? p
+            : { ...p, base_url: (p.base_url || '').replace(/\/v1\/?$/, '').replace(/\/$/, '') };
+          if (isPaygManagedProvider(p.id, userPayg)) {
+            return { ...base, models: filterPaygModels(base.models, p.id, userPayg) };
+          }
+          return base;
+        });
         await getConfig().write({ ...cfg, providers: normalizedProviders });
         lastSaved.current = providers;
         setSavedMsg(t('providers.saved'));
@@ -1385,9 +1608,12 @@ export default function Providers() {
       } catch {}
     }, 500);
     return () => clearTimeout(timer);
-  }, [providers, meta, t]);
+  }, [providers, meta, t, userPayg]);
 
   const updateProvider = useCallback((id, patch) => {
+    if (isPaygManagedProvider(id, userPayg) && patch.models != null) {
+      patch = { ...patch, models: filterPaygModels(patch.models, id, userPayg) };
+    }
     setProviders(prev => {
       const i = prev.findIndex(p => p.id === id);
       if (i < 0) {
@@ -1395,7 +1621,7 @@ export default function Providers() {
       }
       return prev.map(p => (p.id === id ? { ...p, ...patch } : p));
     });
-  }, []);
+  }, [userPayg]);
 
   /** 选中选择器条目：按订阅/按量预设验证方式 */
   const selectPickerEntry = useCallback((entry) => {
@@ -1445,6 +1671,7 @@ export default function Providers() {
   }
 
   const goPersonalPage = () => navigate('/', { state: { accountsTab: 'subscription' } });
+  const goPaygProfile = () => navigate('/', { state: { accountsTab: 'payg' } });
   const paidAccountsLoaded = paidAllowlist !== null;
   const hasPersonalPaid = paidAccountsLoaded && (paidAllowlist.length > 0 || statsOnlyIds.length > 0);
   const hasGatewayPaid = paidAccountsLoaded && paidAllowlist.length > 0;
@@ -1571,8 +1798,8 @@ export default function Providers() {
                 const live = tier === 'paid' ? liveState(p) : p;
                 const useCustomCard = isCustomSubscriptionGatewayId(live.id, userSubscriptions) || !meta[live.id];
                 return !useCustomCard
-                  ? <ProviderCard key={live.id} provider={live} meta={meta[live.id]} onUpdate={updateProvider} onTest={testProvider} gatewayAuthMode={tier === 'paid' ? resolveCardAuthMode(live, providerGatewayAuth[live.id]) : null} />
-                  : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} />;
+                  ? <ProviderCard key={live.id} provider={live} meta={meta[live.id]} onUpdate={updateProvider} onTest={testProvider} gatewayAuthMode={tier === 'paid' ? resolveCardAuthMode(live, providerGatewayAuth[live.id]) : null} userPayg={userPayg} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />
+                  : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} userPayg={userPayg} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />;
               })}
 
               {/* 添加供给源：始终展示；付费层无个人页账户时点开显示引导 */}
@@ -1703,8 +1930,8 @@ export default function Providers() {
                         </p>
                       )}
                       {!useCustomCard
-                        ? <ProviderCard key={pid} provider={live} meta={meta[pid]} onUpdate={updateProvider} onTest={testProvider} initialExpanded gatewayAuthMode={cardAuth} />
-                        : <CustomProviderCard key={pid} provider={live} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} />
+                        ? <ProviderCard key={pid} provider={live} meta={meta[pid]} onUpdate={updateProvider} onTest={testProvider} initialExpanded gatewayAuthMode={cardAuth} userPayg={userPayg} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />
+                        : <CustomProviderCard key={pid} provider={live} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} userPayg={userPayg} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />
                       }
                     </div>
                   );

@@ -216,6 +216,7 @@ const locales = {
     'accounts.providerName': '供给源名称',
     'accounts.saved': '已保存',
     'accounts.added': '已添加',
+    'accounts.removed': '已移除',
     'accounts.saveFailed': '保存失败，请确认已登录且服务器可达',
     'accounts.cannotSaveDesktop': '当前环境无法保存（请使用桌面版）',
     'accounts.err.appPlan': '请填写应用名称和套餐名称',
@@ -463,6 +464,7 @@ const locales = {
     'accounts.providerName': 'Provider name',
     'accounts.saved': 'Saved',
     'accounts.added': 'Added',
+    'accounts.removed': 'Removed',
     'accounts.saveFailed': 'Save failed — sign in and check server connectivity',
     'accounts.cannotSaveDesktop': 'Saving unavailable (desktop app required)',
     'accounts.err.appPlan': 'Enter app and plan names',
@@ -514,5 +516,5 @@ export function makeT(lang) {
 /** 成功类提示（中英文） */
 export function isAccountOkMsg(msg, t) {
   if (!msg) return false;
-  return [t('accounts.saved'), t('accounts.added')].includes(msg);
+  return [t('accounts.saved'), t('accounts.added'), t('accounts.removed')].includes(msg);
 }
