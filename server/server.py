@@ -69,11 +69,16 @@ def _cleanup_img_cache() -> None:
 
 
 app = FastAPI(title="LLM Proxy", lifespan=lifespan)
+# CORS：允许浏览器跨域（Vite localhost 调试等）；生产可设 CORS_ORIGINS 收紧
+_cors_raw = os.getenv("CORS_ORIGINS", "*").strip()
+_cors_origins = ["*"] if _cors_raw in ("", "*") else [o.strip() for o in _cors_raw.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 app.include_router(admin_router, prefix="/admin")
 app.include_router(user_router, prefix="/user")

@@ -1,9 +1,27 @@
 /** 登录页占位提示（非默认地址） */
 export const SERVER_URL_PLACEHOLDER = 'http://your-host:port';
 
+/** Vite 本地开发时的同源 API 代理前缀（见 vite.config.js） */
+export const DEV_API_PROXY_PREFIX = '/__tokenbank_api__';
+
 /** 设置页「Token Bank 服务地址」（localStorage.serverUrl） */
 export function getServerUrl() {
   return normalizeServerBase(localStorage.getItem('serverUrl') || '');
+}
+
+/**
+ * axios / 浏览器 API 请求的 baseURL。
+ * Vite dev 且目标为默认远程服务时走同源代理，避免 CORS。
+ */
+export function getApiBaseUrl() {
+  if (import.meta.env.DEV && typeof window !== 'undefined' && !window.electronAPI) {
+    const stored = getServerUrl();
+    const proxyTarget = defaultServerUrlFromEnv() || 'https://tokenbank.wink.run';
+    if (!stored || stored === proxyTarget) {
+      return DEV_API_PROXY_PREFIX;
+    }
+  }
+  return getServerUrl();
 }
 
 /** 归一化为服务器根地址（去掉 /api、/v1 等后缀） */

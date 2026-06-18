@@ -1,11 +1,11 @@
 import axios from 'axios';
-import { getServerUrl } from '../config';
+import { getServerUrl, getApiBaseUrl } from '../config';
 
 const http = axios.create({ timeout: 15000 });
 
 // Read serverUrl and token from localStorage on every request
 http.interceptors.request.use((config) => {
-  config.baseURL = getServerUrl();
+  config.baseURL = getApiBaseUrl();
   const token = localStorage.getItem('token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
@@ -30,7 +30,7 @@ async function authRequest(method, path, { body, token } = {}) {
     }
     return { data };
   }
-  const cfg = { method, url: path };
+  const cfg = { method, url: path, baseURL: getApiBaseUrl() };
   if (body != null) cfg.data = body;
   if (token) cfg.headers = { Authorization: `Bearer ${token}` };
   return http.request(cfg);

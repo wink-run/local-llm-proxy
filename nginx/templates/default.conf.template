@@ -6,6 +6,12 @@ map $http_upgrade $connection_upgrade {
     ''      close;
 }
 
+# 浏览器跨域（Vite localhost 等）：回显 Origin，无 Origin 时用 *
+map $http_origin $cors_allow_origin {
+    ""      "*";
+    default $http_origin;
+}
+
 # HTTP：ACME 校验 + 跳转 HTTPS
 server {
     listen 80;
@@ -35,6 +41,18 @@ server {
 
     # 用户门户 / 管理后台 / OpenAI 兼容 API / WebSocket Worker
     location / {
+        # CORS preflight（nginx 层兜底，避免上游未返回 Allow-Origin）
+        if ($request_method = OPTIONS) {
+            add_header Access-Control-Allow-Origin  $cors_allow_origin always;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "Authorization, Content-Type, X-Requested-With, x-api-key, anthropic-version" always;
+            add_header Access-Control-Max-Age 86400 always;
+            return 204;
+        }
+
+        add_header Access-Control-Allow-Origin  $cors_allow_origin always;
+        add_header Access-Control-Allow-Headers "Authorization, Content-Type" always;
+
         proxy_pass http://${UPSTREAM};
         proxy_http_version 1.1;
 
