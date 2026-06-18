@@ -12,8 +12,15 @@ COPY src ./src
 
 RUN npx vite build
 
-# ── Stage 2: runtime — minimal npm packages (js-yaml for config-loader) ──────
-FROM node:20-alpine
+# ── Stage 2: native deps（Debian/glibc 有 better-sqlite3 预编译包，避免 Alpine musl 编译）──
+FROM node:20-bookworm-slim AS native-deps
+WORKDIR /deps
+RUN npm config set fetch-retries 5 \
+  && npm config set fetch-retry-mintimeout 20000 \
+  && npm install --omit=dev js-yaml@4.1.1 better-sqlite3@12.10.0
+
+# ── Stage 3: runtime ──────────────────────────────────────────────────────────
+FROM node:20-bookworm-slim
 WORKDIR /app
 
 # CLI entry + shared helpers
@@ -21,7 +28,7 @@ COPY cli    ./cli
 COPY shared ./shared
 
 # Gateway core modules (local-gateway.js + telemetry dependencies)
-RUN mkdir -p ./electron ./node_modules
+RUN mkdir -p ./electron
 COPY electron/local-gateway.js \
      electron/codex-transform.js \
      electron/request-router.js \
@@ -36,10 +43,8 @@ COPY electron/local-gateway.js \
 COPY electron/oauth ./electron/oauth
 COPY electron/config ./electron/config
 
-# 运行时 npm 依赖（须一次安装；后执行的 npm install 会清空已 COPY 的 node_modules）
-RUN apk add --no-cache --virtual .build-deps python3 make g++ \
-  && npm install --prefix /app js-yaml@4.1.1 better-sqlite3@12.10.0 --omit=dev \
-  && apk del .build-deps
+# 运行时 npm 依赖（来自 native-deps 阶段，无需 node-gyp 编译）
+COPY --from=native-deps /deps/node_modules ./node_modules
 
 # Pre-built Web UI (served by admin-api on :11431)
 COPY --from=builder /build/dist ./dist
