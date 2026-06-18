@@ -12,6 +12,7 @@ const crypto = require('crypto');
 
 const { readAgentConfig, writeAgentConfig, readLocalConfig, writeLocalConfig } = require('../shared/config-loader');
 const { defaultServerUrlFromEnv } = require('../shared/default-server-url');
+const { refreshGatewayPeerModels } = require('../shared/peer-models-sync');
 const { localStats } = require('../shared/telemetry');
 const billingConfig = require('../electron/billing-config');
 const cloudBilling = require('../electron/cloud-billing-sync');
@@ -348,6 +349,15 @@ async function handleRequest(req, res) {
     return json(res, 200, _gateway.getStatus());
   }
 
+  if (method === 'POST' && url === '/api/gateway/refresh-peer-models') {
+    try {
+      const names = await refreshGatewayPeerModels(_gateway, readLocalConfig, defaultServerUrlFromEnv);
+      return json(res, 200, { ok: true, peerModels: names });
+    } catch (e) {
+      return json(res, 500, { error: e.message });
+    }
+  }
+
   if (method === 'GET' && url === '/api/gateway/log') {
     return json(res, 200, { log: _gateway.getLog() });
   }
@@ -409,6 +419,7 @@ async function handleRequest(req, res) {
     lc.cloud_config = { url: body.url || '', token: body.token || '' };
     writeLocalConfig(lc);
     syncGateway(lc);
+    refreshGatewayPeerModels(_gateway, readLocalConfig, defaultServerUrlFromEnv).catch(() => {});
     return json(res, 200, { ok: true });
   }
 

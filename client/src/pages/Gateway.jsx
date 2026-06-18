@@ -1944,7 +1944,8 @@ function tierDot(tier) {
   return 'bg-emerald-500';
 }
 function normTier(t) {
-  if (t === 'p2p' || t === 'open' || t === 'free') return 'p2p';
+  if (t === 'free' || t === 'open') return 'free';
+  if (t === 'p2p') return 'p2p';
   if (t === 'paid' || t === 'premium') return 'paid';
   return 'p2p';
 }
@@ -2612,15 +2613,45 @@ export default function Gateway() {
       }
     } catch {}
 
-    // P2P：仅列当前在线模型（不再从服务端 rates 注入付费模型）
+    // P2P：优先读本地网关 peerModels /v1/models（Docker 与 Electron 一致）
     try {
       let rates = [];
       try { rates = (await getRates()).data?.models || []; } catch {}
       const online = new Set();
+      let gwPort = null;
       try {
         const gw = await getGateway().status();
+        gwPort = gw?.port || null;
         for (const id of (gw?.peerModels || [])) online.add(id);
       } catch {}
+      // 同源拉本地 /v1/models（含 P2P + 已启用供给源模型）
+      if (gwPort) {
+        try {
+          const host = typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1';
+          const lr = await fetch(`http://${host}:${gwPort}/v1/models`);
+          if (lr.ok) {
+            const lj = await lr.json();
+            const cfgForTier = (await getConfig().read().catch(() => null)) || {};
+            const provById = Object.fromEntries((cfgForTier.providers || []).map(p => [p.id, p]));
+            for (const m of (lj.data || [])) {
+              const id = m.id;
+              if (!id) continue;
+              const owned = m.owned_by || '';
+              if (owned === 'p2p' || owned === 'tokenbank-p2p') {
+                online.add(id);
+                add(id, 'p2p');
+              } else if (owned === 'anthropic') {
+                // Claude 透明名，跳过
+              } else {
+                const pt = provById[owned]?.type;
+                if (pt === 'free') add(id, 'free');
+                else if (pt === 'paid') add(id, 'paid');
+                else if (pt === 'p2p') { online.add(id); add(id, 'p2p'); }
+              }
+            }
+          }
+        } catch {}
+      }
       if (online.size === 0) {
         try { for (const m of ((await getOnlineModels()).data?.data || [])) online.add(m.id); } catch {}
       }
@@ -2641,7 +2672,10 @@ export default function Gateway() {
     refresh();
     loadSceneData();
     loadAvailableModels();
-    const id = setInterval(refresh, 5000);
+    const id = setInterval(() => {
+      refresh();
+      loadAvailableModels();
+    }, 5000);
     return () => clearInterval(id);
   }, [refresh, loadSceneData, loadAvailableModels]);
 

@@ -18,7 +18,11 @@ const adminApi = require('./admin-api');
 const reporter = require('../shared/device-reporter');
 const { readLocalConfig, readAgentConfig } = require('../shared/config-loader');
 const { defaultServerUrlFromEnv } = require('../shared/default-server-url');
+const { refreshGatewayPeerModels } = require('../shared/peer-models-sync');
 const { initGatewayTelemetry } = require('../shared/telemetry');
+
+const PEER_MODELS_POLL_MS = 60_000;
+let _peerModelsTimer = null;
 
 // ── Arg parsing ───────────────────────────────────────────────────────────────
 
@@ -91,13 +95,15 @@ async function cmdStart(port, adminPort) {
   }
   gateway.setRouterModelMap(routerMap);
 
-  // Configure P2P backend if cloud config is present
+  // P2P：拉取云端在线模型（与 Electron fetchPeerModels 一致）
   const cc = lc.cloud_config || {};
   const serverUrl = cc.url || defaultServerUrlFromEnv() || null;
-  if (serverUrl && cc.token) {
-    gateway.setBackendConfig({ url: serverUrl, token: cc.token });
-    gateway.setPeerModels([]);
-  }
+  await refreshGatewayPeerModels(gateway, readLocalConfig, defaultServerUrlFromEnv);
+  if (_peerModelsTimer) clearInterval(_peerModelsTimer);
+  _peerModelsTimer = setInterval(
+    () => refreshGatewayPeerModels(gateway, readLocalConfig, defaultServerUrlFromEnv),
+    PEER_MODELS_POLL_MS,
+  );
 
   // Start HTTP gateway
   gateway.start(port, readAgentConfig, undefined, bindHost);
@@ -135,6 +141,7 @@ async function cmdStart(port, adminPort) {
   // Graceful shutdown
   function shutdown() {
     console.log('\n[gateway] Shutting down...');
+    if (_peerModelsTimer) clearInterval(_peerModelsTimer);
     reporter.stop();
     telemetry.shutdown();
     gateway.stop();
