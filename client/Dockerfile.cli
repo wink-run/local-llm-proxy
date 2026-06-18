@@ -20,18 +20,27 @@ WORKDIR /app
 COPY cli    ./cli
 COPY shared ./shared
 
-# Gateway core modules (local-gateway.js + its dependencies)
-RUN mkdir -p ./electron
-COPY electron/local-gateway.js   ./electron/local-gateway.js
-COPY electron/codex-transform.js ./electron/codex-transform.js
-COPY electron/request-router.js  ./electron/request-router.js
-COPY electron/config-loader.js   ./electron/config-loader.js
-COPY electron/config             ./electron/config
+# Gateway core modules (local-gateway.js + telemetry dependencies)
+RUN mkdir -p ./electron ./node_modules
+COPY electron/local-gateway.js \
+     electron/codex-transform.js \
+     electron/request-router.js \
+     electron/config-loader.js \
+     electron/pricing.js \
+     electron/billing-config.js \
+     electron/local-stats.js \
+     electron/session-import.js \
+     electron/session-browser.js \
+     ./electron/
+COPY electron/oauth ./electron/oauth
+COPY electron/config ./electron/config
 
-# js-yaml is required by electron/config-loader.js (copy from builder to avoid npm install at runtime)
-RUN mkdir -p ./node_modules
+# js-yaml（config-loader）+ better-sqlite3（local-stats / session-import）
 COPY --from=builder /build/node_modules/js-yaml  ./node_modules/js-yaml
 COPY --from=builder /build/node_modules/argparse ./node_modules/argparse
+RUN apk add --no-cache --virtual .build-deps python3 make g++ \
+  && npm install --prefix /app better-sqlite3@12.10.0 --omit=dev \
+  && apk del .build-deps
 
 # Pre-built Web UI (served by admin-api on :11431)
 COPY --from=builder /build/dist ./dist
