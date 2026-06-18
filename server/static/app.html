@@ -378,7 +378,7 @@ td{padding:10px 12px;vertical-align:middle}
           <p v-if="acctMsg" :style="{ fontSize:'12px', marginBottom:'10px', color: acctMsgOk ? '#4ade80' : '#f87171' }">{{ acctMsg }}</p>
 
           <div style="font-size:12px;font-weight:600;color:#94a3b8;margin:12px 0 8px">{{ T.sectionAppSubs }}</div>
-          <div v-if="appSubs.length === 0" style="color:#4a5568;font-size:13px;text-align:center;padding:16px">{{ T.noAppSubscriptions }}</div>
+          <div v-if="!(appSubs && appSubs.length)" style="color:#4a5568;font-size:13px;text-align:center;padding:16px">{{ T.noAppSubscriptions }}</div>
           <div v-for="s in appSubs" :key="s.id" class="list-row">
             <span class="icon">{{ s.app_icon }}</span>
             <div class="meta"><div class="title">{{ s.app_name }}</div>{{ s.plan_label || s.plan_id }}{{ s.monthly_usd != null ? ' · $' + s.monthly_usd + T.perMonth : '' }}</div>
@@ -389,7 +389,7 @@ td{padding:10px 12px;vertical-align:middle}
           </div>
 
           <div style="font-size:12px;font-weight:600;color:#94a3b8;margin:16px 0 8px;border-top:1px solid #2d3148;padding-top:12px">{{ T.sectionApiSubs }}</div>
-          <div v-if="apiSubs.length === 0" style="color:#4a5568;font-size:13px;text-align:center;padding:16px">{{ T.noApiSubscriptions }}</div>
+          <div v-if="!(apiSubs && apiSubs.length)" style="color:#4a5568;font-size:13px;text-align:center;padding:16px">{{ T.noApiSubscriptions }}</div>
           <div v-for="s in apiSubs" :key="s.id" class="list-row">
             <span class="icon">{{ s.app_icon }}</span>
             <div class="meta"><div class="title">{{ s.app_name }}</div>{{ s.plan_label || s.plan_id }}{{ s.monthly_usd != null ? ' · $' + s.monthly_usd + T.perMonth : '' }}</div>
@@ -448,7 +448,7 @@ td{padding:10px 12px;vertical-align:middle}
       <div class="account-panel">
         <div class="account-body">
           <p style="font-size:12px;color:#64748b;margin-bottom:14px">{{ T.paygHint }}</p>
-          <div v-if="userPayg.length === 0" style="color:#4a5568;font-size:13px;text-align:center;padding:24px">{{ T.noPayg }}</div>
+          <div v-if="!(userPayg && userPayg.length)" style="color:#4a5568;font-size:13px;text-align:center;padding:24px">{{ T.noPayg }}</div>
           <div v-for="p in userPayg" :key="p.id" style="margin-bottom:10px;border:1px solid #2d3148;border-radius:8px;overflow:hidden">
             <button type="button" style="width:100%;display:flex;align-items:center;gap:10px;padding:12px 14px;background:#13151f;border:none;color:#e2e8f0;cursor:pointer;text-align:left" @click="paygExpanded = paygExpanded === p.id ? null : p.id">
               <span>{{ p.icon }}</span><span style="flex:1;font-weight:500">{{ p.label }}</span>
@@ -527,7 +527,7 @@ td{padding:10px 12px;vertical-align:middle}
       <div class="card" v-if="(inventory.models||[]).length">
         <div class="section-title">{{ T.usageByModel }}</div>
         <table><thead><tr><th>{{ T.model }}</th><th>{{ T.usageCalls }}</th><th>Token</th></tr></thead>
-          <tbody><tr v-for="m in inventory.models.slice(0,20)" :key="m.model"><td class="mono">{{ m.model }}</td><td>{{ m.calls }}</td><td>{{ fmtCompact(m.tokens) }}</td></tr></tbody>
+          <tbody><tr v-for="m in (inventory.models || []).slice(0, 20)" :key="m.model"><td class="mono">{{ m.model }}</td><td>{{ m.calls }}</td><td>{{ fmtCompact(m.tokens) }}</td></tr></tbody>
         </table>
       </div>
       <div v-if="!inventory.total_calls && !usageLoading" class="card" style="text-align:center;color:#64748b;padding:32px">{{ T.noUsage }}</div>
@@ -837,31 +837,56 @@ createApp({
     const authErr = ref(''), authOk = ref('')
     const form = ref({ email:'', password:'', nickname:'', referral_code:'' })
 
+    const profile = ref({})
+
+    /* ── 订阅 / 按量账户（须在 visibleTabs 之前初始化，避免渲染期 TDZ/undefined）── */
+    const EMPTY_ACCOUNTS = {
+      user_subscriptions: [],
+      user_payg_providers: [],
+      subscription_catalog: [],
+      api_subscription_catalog: [],
+      payg_provider_catalog: [],
+      provider_pricing: {},
+      provider_pricing_overrides: {},
+    }
+    const userAccounts = ref({ ...EMPTY_ACCOUNTS })
+    const acctSaving = ref(false), acctMsg = ref(''), acctMsgOk = ref(false)
+    const addSubKind = ref('app'), addSubSource = ref(''), addSubPlan = ref(''), addApiSource = ref(''), addApiPlan = ref('')
+    const customAppName = ref(''), customPlanLabel = ref(''), customPlanUsd = ref('')
+    const addPaygId = ref(''), customPaygLabel = ref(''), paygExpanded = ref(null)
+    let pricingSaveTimer = null
+
+    function uid() { return `ua-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }
+    const subs = computed(() => userAccounts.value?.user_subscriptions || [])
+    const userPayg = computed(() => userAccounts.value?.user_payg_providers || [])
+    const appSubs = computed(() => (subs.value || []).filter(s => (s.subscription_kind || 'app') !== 'api'))
+    const apiSubs = computed(() => (subs.value || []).filter(s => s.subscription_kind === 'api'))
+    const subCount = computed(() => subs.value.length)
+    const paygCount = computed(() => userPayg.value.length)
+
     const visibleTabs = computed(() => {
-      const tabs = T.value.tabs
-      const subs = userAccounts.value?.user_subscriptions || []
-      const paygList = userAccounts.value?.user_payg_providers || []
+      const tabs = T.value.tabs || {}
       const all = [
-        { key:'credits',      label: tabs.credits },
-        { key:'subscription', label: tabs.subscription, sub: subs.length },
-        { key:'payg',         label: tabs.payg, sub: paygList.length },
-        { key:'usage',        label: tabs.usage },
-        { key:'keys',         label: tabs.keys, requireApikey: true },
-        { key:'providers',    label: tabs.providers },
-        { key:'debug',        label: tabs.debug, requireApikey: true },
+        { key:'credits',      label: tabs.credits || 'Credits' },
+        { key:'subscription', label: tabs.subscription || 'Subscriptions', sub: subCount.value },
+        { key:'payg',         label: tabs.payg || 'Pay-as-you-go', sub: paygCount.value },
+        { key:'usage',        label: tabs.usage || 'Usage' },
+        { key:'keys',         label: tabs.keys || 'API Keys', requireApikey: true },
+        { key:'providers',    label: tabs.providers || 'Providers' },
+        { key:'debug',        label: tabs.debug || 'Debug', requireApikey: true },
       ]
       return all.filter(t => !t.requireApikey || profile.value.can_create_apikey)
     })
 
     const creditsSubTabs = computed(() => {
-      const s = T.value.creditsSubs
+      const s = T.value.creditsSubs || {}
       return [
-        { key:'overview', label: s.overview },
-        { key:'transactions', label: s.transactions },
-        { key:'settlements', label: s.settlements },
-        { key:'purchase', label: s.purchase },
-        { key:'rates', label: s.rates },
-        { key:'referral', label: s.referral },
+        { key:'overview', label: s.overview || 'Overview' },
+        { key:'transactions', label: s.transactions || 'Ledger' },
+        { key:'settlements', label: s.settlements || 'Settlements' },
+        { key:'purchase', label: s.purchase || 'Purchase' },
+        { key:'rates', label: s.rates || 'Rates' },
+        { key:'referral', label: s.referral || 'Referral' },
       ]
     })
 
@@ -908,7 +933,6 @@ createApp({
 
     function logout() { localStorage.removeItem('user_token'); loggedIn.value = false }
 
-    const profile = ref({})
     async function fetchProfile() {
       try { const d = await (await userApi('/user/profile')).json(); profile.value = d } catch {}
     }
@@ -1075,18 +1099,7 @@ createApp({
       finally { spinBusy.value = false }
     }
 
-    /* ── 订阅 / 按量账户 ── */
-    const userAccounts = ref(null), acctSaving = ref(false), acctMsg = ref(''), acctMsgOk = ref(false)
-    const addSubKind = ref('app'), addSubSource = ref(''), addSubPlan = ref(''), addApiSource = ref(''), addApiPlan = ref('')
-    const customAppName = ref(''), customPlanLabel = ref(''), customPlanUsd = ref('')
-    const addPaygId = ref(''), customPaygLabel = ref(''), paygExpanded = ref(null)
-    let pricingSaveTimer = null
-
-    function uid() { return `ua-${Date.now()}-${Math.random().toString(36).slice(2,8)}` }
-    const subs = computed(() => userAccounts.value?.user_subscriptions || [])
-    const userPayg = computed(() => userAccounts.value?.user_payg_providers || [])
-    const appSubs = computed(() => subs.value.filter(s => (s.subscription_kind || 'app') !== 'api'))
-    const apiSubs = computed(() => subs.value.filter(s => s.subscription_kind === 'api'))
+    /* ── 订阅 / 按量：目录与 CRUD ── */
     const availableAppCatalog = computed(() => (userAccounts.value?.subscription_catalog || []).filter(c => !subs.value.some(s => s.source_id === c.source_id)))
     const availableApiCatalog = computed(() => (userAccounts.value?.api_subscription_catalog || []).filter(c => !apiSubs.value.some(s => !s.custom && s.source_id === c.source_id)))
     const availablePaygCatalog = computed(() => (userAccounts.value?.payg_provider_catalog || []).filter(o => !userPayg.value.some(p => p.provider_id === (o.id || o.provider_id))))
@@ -1095,28 +1108,40 @@ createApp({
     const appPlanOptions = computed(() => {
       const c = catalogItem.value
       if (!c) return []
-      return c.plans?.length ? c.plans : [{ id:'other', label: T.value.selectPlan, monthly_usd: null }]
+      const plans = Array.isArray(c.plans) ? c.plans : []
+      return plans.length ? plans : [{ id:'other', label: T.value.selectPlan, monthly_usd: null }]
     })
     const apiPlanOptions = computed(() => {
       const c = apiCatalogItem.value
       if (!c) return []
-      return c.plans?.length ? c.plans : [{ id:'other', label: T.value.selectPlan, monthly_usd: null }]
+      const plans = Array.isArray(c.plans) ? c.plans : []
+      return plans.length ? plans : [{ id:'other', label: T.value.selectPlan, monthly_usd: null }]
     })
 
     async function fetchUserAccounts() {
-      try { userAccounts.value = await (await userApi('/user/accounts')).json() } catch {}
+      try {
+        const d = await (await userApi('/user/accounts')).json()
+        userAccounts.value = { ...EMPTY_ACCOUNTS, ...d,
+          user_subscriptions: Array.isArray(d.user_subscriptions) ? d.user_subscriptions : [],
+          user_payg_providers: Array.isArray(d.user_payg_providers) ? d.user_payg_providers : [],
+        }
+      } catch {}
     }
     async function saveAccounts(patch) {
       acctSaving.value = true; acctMsg.value = ''
       try {
         const body = {
-          user_subscriptions: userAccounts.value?.user_subscriptions,
-          user_payg_providers: userAccounts.value?.user_payg_providers,
+          user_subscriptions: userAccounts.value?.user_subscriptions || [],
+          user_payg_providers: userAccounts.value?.user_payg_providers || [],
           provider_pricing_overrides: userAccounts.value?.provider_pricing_overrides || {},
           ...patch,
         }
         const r = await userApi('/user/accounts', { method:'PUT', body: JSON.stringify(body) })
-        userAccounts.value = await r.json()
+        const d = await r.json()
+        userAccounts.value = { ...EMPTY_ACCOUNTS, ...d,
+          user_subscriptions: Array.isArray(d.user_subscriptions) ? d.user_subscriptions : [],
+          user_payg_providers: Array.isArray(d.user_payg_providers) ? d.user_payg_providers : [],
+        }
         acctMsgOk.value = true; acctMsg.value = lang.value === 'zh' ? '已保存' : 'Saved'
         setTimeout(() => { acctMsg.value = '' }, 2000)
         return true
