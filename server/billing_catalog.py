@@ -49,16 +49,16 @@ async def load_merged_apps_doc() -> dict:
     doc = merge_apps_doc(parsed if isinstance(parsed, dict) else {})
     # 目录段以默认 yaml 为底，管理员配置可覆盖
     for key in ("subscription_plans", "payg_providers"):
-        if defaults.get(key):
-            base = dict(defaults.get(key) or {})
-            over = doc.get(key) if isinstance(doc.get(key), dict | list) else None
-            if key == "subscription_plans" and isinstance(over, dict):
-                merged = {**base, **over}
-                doc[key] = merged
-            elif key == "payg_providers" and isinstance(over, list) and over:
-                doc[key] = over
-            elif key not in doc or not doc.get(key):
-                doc[key] = defaults[key]
+        if not defaults.get(key):
+            continue
+        if key == "subscription_plans":
+            if key not in doc or not isinstance(doc.get(key), dict):
+                doc[key] = dict(defaults[key])
+            else:
+                doc[key] = {**defaults[key], **doc[key]}
+        elif key == "payg_providers":
+            if not doc.get(key):
+                doc[key] = list(defaults[key])
     return doc
 
 

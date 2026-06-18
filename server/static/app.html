@@ -194,7 +194,9 @@ td{padding:10px 12px;vertical-align:middle}
     </header>
 
     <nav>
-      <button v-for="t in visibleTabs" :key="t.key" :class="{ active: activeTab === t.key }" @click="switchTab(t.key)">{{ t.label }}</button>
+      <button v-for="t in visibleTabs" :key="t.key" :class="{ active: activeTab === t.key }" @click="switchTab(t.key)">
+        {{ t.label }}<span v-if="t.sub != null" style="font-size:11px;opacity:.7;margin-left:2px">({{ t.sub }})</span>
+      </button>
     </nav>
 
     <!-- ══ 积分账户 ══ -->
@@ -206,7 +208,7 @@ td{padding:10px 12px;vertical-align:middle}
       </div>
 
       <div class="subnav">
-        <button v-for="s in creditsSubTabs" :key="s.key" :class="{ active: creditsSub === s.key }" @click="creditsSub = s.key">{{ s.label }}</button>
+        <button v-for="s in creditsSubTabs" :key="s.key" :class="{ active: creditsSub === s.key }" @click="switchCreditsSub(s.key)">{{ s.label }}</button>
       </div>
 
       <!-- 概览：账户信息、签到、Worker Key -->
@@ -644,99 +646,6 @@ td{padding:10px 12px;vertical-align:middle}
       </div>
     </div>
 
-    <!-- ══ Settlements ══ -->
-    <div v-show="activeTab === 'settlements'" class="tab-content">
-      <div class="toolbar">
-        <span style="color:#64748b;font-size:13px">{{ T.settlementHint }}</span>
-        <button class="btn-sm toolbar-right" @click="fetchSettlements">{{ T.refresh }}</button>
-      </div>
-      <table>
-        <thead><tr><th>{{ T.settledAt }}</th><th>Worker</th><th>{{ T.model }}</th><th>Token</th><th>{{ T.quality }}</th><th>{{ T.credited }}</th></tr></thead>
-        <tbody>
-          <tr v-if="settlements.length === 0" class="empty-row"><td colspan="6">{{ T.noSettlements }}</td></tr>
-          <tr v-for="s in settlements" :key="s.id">
-            <td style="color:#64748b">{{ fmtTime(s.period_end) }}</td>
-            <td class="mono" style="color:#64748b">{{ s.worker_id }}</td>
-            <td><span class="tag">{{ s.model_name || '—' }}</span></td>
-            <td>{{ s.output_tokens?.toLocaleString() }}</td>
-            <td>
-              <span class="badge badge-blue">× {{ fmt2(s.multiplier) }}</span>
-              <div class="mult-info">
-                <span class="mult-pill">{{ T.online }} <b>{{ fmt0(s.online_mins) }}min</b></span>
-                <span class="mult-pill">{{ T.latency }} <b>{{ fmt0(s.avg_latency) }}ms</b></span>
-                <span class="mult-pill">{{ T.successRate }} <b>{{ pct(s.success_rate) }}</b></span>
-              </div>
-            </td>
-            <td style="color:#4ade80;font-weight:600">+{{ fmt2(s.credits_awarded) }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- ══ Transactions ══ -->
-    <div v-show="activeTab === 'transactions'" class="tab-content">
-      <div class="toolbar"><button class="btn-sm toolbar-right" @click="fetchTransactions">{{ T.refresh }}</button></div>
-      <table>
-        <thead><tr><th>{{ T.time }}</th><th>{{ T.type }}</th><th>{{ T.model }}</th><th>Token</th><th>{{ T.delta }}</th><th>{{ T.balanceAfter }}</th><th>{{ T.note }}</th></tr></thead>
-        <tbody>
-          <tr v-if="transactions.length === 0" class="empty-row"><td colspan="7">{{ T.noTransactions }}</td></tr>
-          <tr v-for="t in transactions" :key="t.id">
-            <td style="color:#64748b">{{ fmtTime(t.created_at) }}</td>
-            <td><span :class="txBadge(t.type)">{{ txLabel(t.type) }}</span></td>
-            <td><span v-if="t.model_name" class="tag">{{ t.model_name }}</span><span v-else style="color:#4a5568">—</span></td>
-            <td style="color:#64748b">{{ t.tokens ? t.tokens.toLocaleString() : '—' }}</td>
-            <td :style="t.delta > 0 ? 'color:#4ade80;font-weight:600' : 'color:#f87171;font-weight:600'">{{ t.delta > 0 ? '+' : '' }}{{ fmt2(t.delta) }}</td>
-            <td style="color:#94a3b8">{{ fmt2(t.balance_after) }}</td>
-            <td style="color:#64748b;font-size:12px">{{ t.note || '—' }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- ══ Purchase ══ -->
-    <div v-show="activeTab === 'purchase'" class="tab-content">
-      <div class="card">
-        <div class="section-title">{{ T.submitPurchase }}</div>
-        <p style="color:#64748b;font-size:13px;margin-bottom:20px">{{ T.purchaseHint }}</p>
-        <div class="form-row" style="margin-bottom:16px">
-          <div class="form-group">
-            <label>{{ T.amount }}</label>
-            <input v-model.number="purchaseAmt" class="form-input" type="number" min="1" placeholder="500" />
-          </div>
-          <div class="form-group">
-            <label>{{ T.note }}</label>
-            <input v-model="purchaseNote" class="form-input" type="text" :placeholder="T.purchaseNotePlaceholder" />
-          </div>
-          <div class="form-group" style="justify-content:flex-end">
-            <button class="btn btn-indigo" :disabled="purchaseLoading || !purchaseAmt" @click="submitPurchase">
-              {{ purchaseLoading ? T.submitting : T.submit }}
-            </button>
-          </div>
-        </div>
-        <div v-if="purchaseMsg" :class="purchaseMsgOk ? 'ok' : 'err'" style="text-align:left;margin-bottom:16px">{{ purchaseMsg }}</div>
-        <div class="section-title" style="margin-top:8px">{{ T.contactInfo }}</div>
-        <div v-if="contactInfo" class="contact-box">{{ contactInfo }}</div>
-        <div v-else style="color:#4a5568;font-size:13px">{{ T.noContact }}</div>
-      </div>
-      <div class="card">
-        <div class="section-title">{{ T.myOrders }}</div>
-        <table>
-          <thead><tr><th>{{ T.time }}</th><th>{{ T.credits }}</th><th>{{ T.status }}</th><th>{{ T.note }}</th><th>{{ T.adminNote }}</th></tr></thead>
-          <tbody>
-            <tr v-if="purchaseOrders.length === 0" class="empty-row"><td colspan="5">{{ T.noOrders }}</td></tr>
-            <tr v-for="o in purchaseOrders" :key="o.id">
-              <td style="color:#64748b">{{ fmtTime(o.created_at) }}</td>
-              <td style="font-weight:600">{{ o.amount_credits }}</td>
-              <td><span :class="orderBadge(o.status)">{{ orderLabel(o.status) }}</span></td>
-              <td style="color:#64748b">{{ o.note || '—' }}</td>
-              <td style="color:#64748b">{{ o.admin_note || '—' }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <button class="btn-sm" style="margin-top:12px" @click="fetchPurchaseOrders">{{ T.refresh }}</button>
-      </div>
-    </div>
-
     <!-- ══ API Debug（使用与本站 OpenAI 兼容接口相同的 Key） ══ -->
     <div v-show="activeTab === 'debug'" class="tab-content">
       <div class="card" style="margin-bottom:16px">
@@ -777,28 +686,11 @@ td{padding:10px 12px;vertical-align:middle}
       </div>
     </div>
 
-    <!-- ══ Referral ══ -->
-    <div v-show="activeTab === 'referral'" class="tab-content">
-      <div class="card">
-        <div class="section-title">{{ T.myReferralCode }}</div>
-        <p style="color:#64748b;font-size:13px;margin-bottom:16px">{{ T.referralDesc }}</p>
-        <div class="copy-row" style="margin-bottom:20px">
-          <div class="copy-val mono" style="font-size:18px;letter-spacing:2px">{{ profile.referral_code }}</div>
-          <button class="btn-sm" @click="copy(profile.referral_code)">{{ T.copy }}</button>
-        </div>
-        <div class="section-title">{{ T.referralLink }}</div>
-        <div class="copy-row">
-          <div class="copy-val" style="font-size:12px">{{ referralLink }}</div>
-          <button class="btn-sm" @click="copy(referralLink)">{{ T.copy }}</button>
-        </div>
-      </div>
-    </div>
-
   </div>
 </div>
 
 <script>
-const { createApp, ref, computed, onMounted, nextTick, reactive } = Vue
+const { createApp, ref, computed, onMounted, nextTick, reactive, watch } = Vue
 
 const LANGS = {
   zh: {
@@ -807,8 +699,26 @@ const LANGS = {
     email: '邮箱', password: '密码', nickname: '昵称（可选）', nicknamePlaceholder: '留空使用邮箱前缀',
     referralCode: '推荐码（可选）', referralPlaceholder: '好友推荐码',
     portalTitle: '用户中心', logout: '退出',
-    tabs: { overview:'积分概览', keys:'我的 API Keys', providers:'我的供给源', debug:'API 调试', settlements:'结算明细', transactions:'积分流水', purchase:'购买积分', referral:'推荐分享' },
+    tabs: { credits:'积分账户', subscription:'订阅账户', payg:'按量付费', usage:'用量情况', keys:'API Keys', providers:'我的供给源', debug:'API 调试',
+      transactions:'积分流水', settlements:'结算明细', purchase:'购买积分', referral:'推荐分享' },
+    creditsSubs: { overview:'概览', transactions:'流水', settlements:'结算', purchase:'购买', rates:'换算', referral:'推荐' },
     balance: '当前余额', earned: '累计获得', spent: '累计消费', credits: '积分',
+    checkinTitle: '每日签到', checkinBtn: '签到', checkinDone: '已签到', checkinReward: '签到得', checkinTotal: '累计',
+    spinTitle: '每日转盘', spinBtn: '抽奖', spinLeft: '剩余', spinExhausted: '今日次数已用完',
+    subHint: '登记你正在使用的 APP / API 订阅，用于用量归属与费用估算。',
+    paygHint: '登记按量付费 API 供给源及模型刊例价（USD / 百万 Token）。',
+    sectionAppSubs: 'APP 订阅', sectionApiSubs: 'API 订阅', noAppSubscriptions: '暂无 APP 订阅', noApiSubscriptions: '暂无 API 订阅',
+    subKind: '类型', subKindApp: 'APP 订阅', subKindApi: 'API 订阅', apiSubscription: 'API 订阅', selectApiSubscription: '选择…',
+    app: '应用', selectApp: '选择应用', plan: '套餐', selectPlan: '选择套餐', customApp: '自定义应用', customApi: '自定义 API',
+    customPlan: '自定义套餐', addSubscription: '添加订阅', statsOnly: '仅统计', convertApi: '转 API', perMonth: '/月',
+    appName: '应用名称', planName: '套餐名称', apiProviderName: 'API 名称', monthlyUsd: '月费 USD', customNamePh: '如 DeepSeek',
+    noPayg: '暂无按量账户', provider: '供给源', selectProvider: '选择…', customProvider: '自定义', providerName: '名称',
+    add: '添加', addModel: '添加模型', removeProvider: '移除', models: '模型', modelPlaceholder: '模型 ID',
+    inputCol: '输入', outputCol: '输出', cacheReadCol: '缓存读',
+    usageTitle: '用量总览', usageCalls: '调用次数', usageTokens: 'Token', usageCost: '估算费用', usageTier: '免费/P2P/付费',
+    devices: '台设备', deviceStats: '各端用量', usageByProvider: '按供给源', usageByModel: '按模型', noUsage: '暂无用量数据（请用桌面端登录并产生调用）',
+    costEstimate: '估算仅供参考', loading: '加载中…', offline: '离线',
+    contactLabel: '联系方式', contactPlaceholder: '手机 / 微信 / 邮箱',
     accountInfo: '账户信息', nickname2: '昵称', registeredAt: '注册时间',
     apikeyPerm: 'API Key 权限', permGranted: '已开通', permNotGranted: '未开通（线下购买后开通）',
     workerKeyDesc: '将此 Key 填入 Agent 注册命令中，贡献算力可自动累积积分。',
@@ -820,8 +730,8 @@ const LANGS = {
     settledAt: '结算时间', credited: '获得积分', noSettlements: '暂无结算记录',
     online: '在线', latency: '首Token延迟', successRate: '成功率',
     time: '时间', type: '类型', delta: '变动', balanceAfter: '余额', noTransactions: '暂无流水记录',
-    txLabels: { contribute:'贡献', consume:'消费', referral:'推荐', purchase:'充值', adjust:'调整' },
-    submitPurchase: '提交购买申请', purchaseHint: '提交申请后，请按下方联系方式完成线下付款，管理员确认后自动充值。',
+    txLabels: { contribute:'贡献', consume:'消费', referral:'推荐', purchase:'充值', adjust:'调整', checkin:'签到', spin:'转盘' },
+    submitPurchase: '申领积分', purchaseHint: '提交申请并填写联系方式，管理员将与你联系确定积分额度。',
     amount: '积分数量', purchaseNotePlaceholder: '支付方式/金额',
     submitting: '提交中…', submit: '提交申请',
     purchaseSuccess: '申请已提交，请按联系方式完成付款',
@@ -852,8 +762,26 @@ const LANGS = {
     email: 'Email', password: 'Password', nickname: 'Nickname (optional)', nicknamePlaceholder: 'Defaults to email prefix',
     referralCode: 'Referral code (optional)', referralPlaceholder: "Friend's referral code",
     portalTitle: 'User Portal', logout: 'Sign Out',
-    tabs: { overview:'Credits', keys:'API Keys', providers:'My Providers', debug:'API Debug', settlements:'Settlements', transactions:'Transactions', purchase:'Buy Credits', referral:'Referral' },
+    tabs: { credits:'Credits', subscription:'Subscriptions', payg:'Pay-as-you-go', usage:'Usage', keys:'API Keys', providers:'My Providers', debug:'API Debug',
+      transactions:'Transactions', settlements:'Settlements', purchase:'Buy Credits', referral:'Referral' },
+    creditsSubs: { overview:'Overview', transactions:'Ledger', settlements:'Settlements', purchase:'Purchase', rates:'Rates', referral:'Referral' },
     balance: 'Balance', earned: 'Total Earned', spent: 'Total Spent', credits: 'credits',
+    checkinTitle: 'Daily Check-in', checkinBtn: 'Check in', checkinDone: 'Done', checkinReward: 'Reward', checkinTotal: 'Streak',
+    spinTitle: 'Daily Spin', spinBtn: 'Spin', spinLeft: 'Left', spinExhausted: 'No spins left today',
+    subHint: 'Register APP / API subscriptions for usage attribution and cost estimates.',
+    paygHint: 'Register pay-as-you-go providers and list prices (USD per 1M tokens).',
+    sectionAppSubs: 'APP subscriptions', sectionApiSubs: 'API subscriptions', noAppSubscriptions: 'No APP subscriptions', noApiSubscriptions: 'No API subscriptions',
+    subKind: 'Kind', subKindApp: 'APP', subKindApi: 'API', apiSubscription: 'API product', selectApiSubscription: 'Select…',
+    app: 'App', selectApp: 'Select app', plan: 'Plan', selectPlan: 'Select plan', customApp: 'Custom app', customApi: 'Custom API',
+    customPlan: 'Custom plan', addSubscription: 'Add', statsOnly: 'Stats only', convertApi: 'As API', perMonth: '/mo',
+    appName: 'App name', planName: 'Plan name', apiProviderName: 'API name', monthlyUsd: 'Monthly USD', customNamePh: 'e.g. DeepSeek',
+    noPayg: 'No pay-as-you-go accounts', provider: 'Provider', selectProvider: 'Select…', customProvider: 'Custom', providerName: 'Name',
+    add: 'Add', addModel: 'Add model', removeProvider: 'Remove', models: 'models', modelPlaceholder: 'model id',
+    inputCol: 'In', outputCol: 'Out', cacheReadCol: 'Cache',
+    usageTitle: 'Usage overview', usageCalls: 'Calls', usageTokens: 'Tokens', usageCost: 'Est. cost', usageTier: 'Free/P2P/Paid',
+    devices: 'devices', deviceStats: 'By device', usageByProvider: 'By provider', usageByModel: 'By model', noUsage: 'No usage yet (use desktop client)',
+    costEstimate: 'Estimate only', loading: 'Loading…', offline: 'Offline',
+    contactLabel: 'Contact', contactPlaceholder: 'Phone / WeChat / Email',
     accountInfo: 'Account Info', nickname2: 'Nickname', registeredAt: 'Registered',
     apikeyPerm: 'API Key Access', permGranted: 'Enabled', permNotGranted: 'Not enabled (purchase credits to unlock)',
     workerKeyDesc: 'Add this key to your Agent registration command to earn credits automatically.',
@@ -865,7 +793,7 @@ const LANGS = {
     settledAt: 'Settled At', credited: 'Credits', noSettlements: 'No settlements yet',
     online: 'Online', latency: 'Avg TTFT', successRate: 'Success',
     time: 'Time', type: 'Type', delta: 'Change', balanceAfter: 'Balance', noTransactions: 'No transactions yet',
-    txLabels: { contribute:'Contribute', consume:'Consume', referral:'Referral', purchase:'Purchase', adjust:'Adjust' },
+    txLabels: { contribute:'Contribute', consume:'Consume', referral:'Referral', purchase:'Purchase', adjust:'Adjust', checkin:'Check-in', spin:'Spin' },
     submitPurchase: 'Submit Purchase Request', purchaseHint: 'After submitting, complete payment via the contact below. Credits will be added after admin confirmation.',
     amount: 'Amount (credits)', purchaseNotePlaceholder: 'Payment method / amount',
     submitting: 'Submitting…', submit: 'Submit Request',
@@ -911,17 +839,30 @@ createApp({
 
     const visibleTabs = computed(() => {
       const tabs = T.value.tabs
+      const subs = userAccounts.value?.user_subscriptions || []
+      const paygList = userAccounts.value?.user_payg_providers || []
       const all = [
-        { key:'overview',     label: tabs.overview },
+        { key:'credits',      label: tabs.credits },
+        { key:'subscription', label: tabs.subscription, sub: subs.length },
+        { key:'payg',         label: tabs.payg, sub: paygList.length },
+        { key:'usage',        label: tabs.usage },
         { key:'keys',         label: tabs.keys, requireApikey: true },
         { key:'providers',    label: tabs.providers },
         { key:'debug',        label: tabs.debug, requireApikey: true },
-        { key:'settlements',  label: tabs.settlements },
-        { key:'transactions', label: tabs.transactions },
-        { key:'purchase',     label: tabs.purchase },
-        { key:'referral',     label: tabs.referral },
       ]
       return all.filter(t => !t.requireApikey || profile.value.can_create_apikey)
+    })
+
+    const creditsSubTabs = computed(() => {
+      const s = T.value.creditsSubs
+      return [
+        { key:'overview', label: s.overview },
+        { key:'transactions', label: s.transactions },
+        { key:'settlements', label: s.settlements },
+        { key:'purchase', label: s.purchase },
+        { key:'rates', label: s.rates },
+        { key:'referral', label: s.referral },
+      ]
     })
 
     function getToken() { return localStorage.getItem('user_token') || '' }
@@ -972,15 +913,21 @@ createApp({
       try { const d = await (await userApi('/user/profile')).json(); profile.value = d } catch {}
     }
 
-    const activeTab = ref('overview')
+    const activeTab = ref('credits')
+    const creditsSub = ref('overview')
     function switchTab(k) {
       activeTab.value = k
+      if (k === 'credits') {
+        if (creditsSub.value === 'transactions') fetchTransactions()
+        if (creditsSub.value === 'settlements') fetchSettlements()
+        if (creditsSub.value === 'purchase') fetchPurchaseOrders()
+        if (creditsSub.value === 'overview') { fetchCheckinStatus(); fetchSpinStatus() }
+      }
       if (k === 'keys')         fetchMyKeys()
       if (k === 'providers')    fetchProviders()
       if (k === 'debug')        { fetchMyKeys().then(() => initDebugTab()) }
-      if (k === 'settlements')  fetchSettlements()
-      if (k === 'transactions') fetchTransactions()
-      if (k === 'purchase')     fetchPurchaseOrders()
+      if (k === 'subscription' || k === 'payg') fetchUserAccounts()
+      if (k === 'usage')        fetchInventoryStats()
     }
 
     const myKeys = ref([]), newKeyNote = ref('')
@@ -1082,22 +1029,226 @@ createApp({
     const transactions = ref([])
     async function fetchTransactions() { try { const d = await (await userApi('/user/transactions')).json(); transactions.value=d.transactions||[] } catch {} }
 
-    const purchaseAmt=ref(null),purchaseNote=ref(''),purchaseLoading=ref(false)
+    const purchaseContact=ref(''),purchaseNote=ref(''),purchaseLoading=ref(false)
     const purchaseMsg=ref(''),purchaseMsgOk=ref(false),purchaseOrders=ref([]),contactInfo=ref('')
     async function fetchPurchaseOrders() { try { const d = await (await userApi('/user/purchase-orders')).json(); purchaseOrders.value=d.orders||[]; if (d.contact_info) contactInfo.value=d.contact_info } catch {} }
     async function submitPurchase() {
-      if (!purchaseAmt.value||purchaseAmt.value<=0) return
+      if (!purchaseContact.value.trim()) return
       purchaseLoading.value=true; purchaseMsg.value=''
       try {
-        const r = await userApi('/user/purchase-order',{method:'POST',body:JSON.stringify({amount_credits:purchaseAmt.value,note:purchaseNote.value})})
+        const note = `联系方式：${purchaseContact.value.trim()}${purchaseNote.value.trim() ? '；' + purchaseNote.value.trim() : ''}`
+        const r = await userApi('/user/purchase-order',{method:'POST',body:JSON.stringify({amount_credits:0,note})})
         const d = await r.json()
         if (!r.ok) { purchaseMsg.value=d.detail||'Error'; purchaseMsgOk.value=false; return }
         purchaseMsgOk.value=true; purchaseMsg.value=T.value.purchaseSuccess
         if (d.contact_info) contactInfo.value=d.contact_info
-        purchaseAmt.value=null; purchaseNote.value=''
+        purchaseContact.value=''; purchaseNote.value=''
         purchaseOrders.value.unshift(d.order)
+        fetchProfile()
       } catch { purchaseMsg.value='Network error'; purchaseMsgOk.value=false }
       finally { purchaseLoading.value=false }
+    }
+
+    /* ── 签到 / 转盘 ── */
+    const checkinStatus = ref(null), checkinBusy = ref(false), checkinMsg = ref('')
+    const spinStatus = ref(null), spinBusy = ref(false), spinMsg = ref('')
+    async function fetchCheckinStatus() { try { checkinStatus.value = await (await userApi('/user/checkin/status')).json() } catch {} }
+    async function fetchSpinStatus() { try { spinStatus.value = await (await userApi('/user/spin/status')).json() } catch {} }
+    async function doCheckin() {
+      checkinBusy.value = true; checkinMsg.value = ''
+      try {
+        const d = await (await userApi('/user/checkin', { method:'POST' })).json()
+        checkinMsg.value = `+${d.credits}`
+        await fetchCheckinStatus(); await fetchProfile()
+      } catch (e) { checkinMsg.value = e.message || 'Error' }
+      finally { checkinBusy.value = false }
+    }
+    async function doSpin() {
+      spinBusy.value = true; spinMsg.value = ''
+      try {
+        const r = await userApi('/user/spin', { method:'POST' })
+        const d = await r.json()
+        if (!r.ok) { spinMsg.value = d.detail || 'Error'; return }
+        spinMsg.value = `+${d.credits}`
+        await fetchSpinStatus(); await fetchProfile()
+      } catch (e) { spinMsg.value = e.message || 'Error' }
+      finally { spinBusy.value = false }
+    }
+
+    /* ── 订阅 / 按量账户 ── */
+    const userAccounts = ref(null), acctSaving = ref(false), acctMsg = ref(''), acctMsgOk = ref(false)
+    const addSubKind = ref('app'), addSubSource = ref(''), addSubPlan = ref(''), addApiSource = ref(''), addApiPlan = ref('')
+    const customAppName = ref(''), customPlanLabel = ref(''), customPlanUsd = ref('')
+    const addPaygId = ref(''), customPaygLabel = ref(''), paygExpanded = ref(null)
+    let pricingSaveTimer = null
+
+    function uid() { return `ua-${Date.now()}-${Math.random().toString(36).slice(2,8)}` }
+    const subs = computed(() => userAccounts.value?.user_subscriptions || [])
+    const userPayg = computed(() => userAccounts.value?.user_payg_providers || [])
+    const appSubs = computed(() => subs.value.filter(s => (s.subscription_kind || 'app') !== 'api'))
+    const apiSubs = computed(() => subs.value.filter(s => s.subscription_kind === 'api'))
+    const availableAppCatalog = computed(() => (userAccounts.value?.subscription_catalog || []).filter(c => !subs.value.some(s => s.source_id === c.source_id)))
+    const availableApiCatalog = computed(() => (userAccounts.value?.api_subscription_catalog || []).filter(c => !apiSubs.value.some(s => !s.custom && s.source_id === c.source_id)))
+    const availablePaygCatalog = computed(() => (userAccounts.value?.payg_provider_catalog || []).filter(o => !userPayg.value.some(p => p.provider_id === (o.id || o.provider_id))))
+    const catalogItem = computed(() => (userAccounts.value?.subscription_catalog || []).find(c => c.source_id === addSubSource.value))
+    const apiCatalogItem = computed(() => (userAccounts.value?.api_subscription_catalog || []).find(c => c.source_id === addApiSource.value))
+    const appPlanOptions = computed(() => {
+      const c = catalogItem.value
+      if (!c) return []
+      return c.plans?.length ? c.plans : [{ id:'other', label: T.value.selectPlan, monthly_usd: null }]
+    })
+    const apiPlanOptions = computed(() => {
+      const c = apiCatalogItem.value
+      if (!c) return []
+      return c.plans?.length ? c.plans : [{ id:'other', label: T.value.selectPlan, monthly_usd: null }]
+    })
+
+    async function fetchUserAccounts() {
+      try { userAccounts.value = await (await userApi('/user/accounts')).json() } catch {}
+    }
+    async function saveAccounts(patch) {
+      acctSaving.value = true; acctMsg.value = ''
+      try {
+        const body = {
+          user_subscriptions: userAccounts.value?.user_subscriptions,
+          user_payg_providers: userAccounts.value?.user_payg_providers,
+          provider_pricing_overrides: userAccounts.value?.provider_pricing_overrides || {},
+          ...patch,
+        }
+        const r = await userApi('/user/accounts', { method:'PUT', body: JSON.stringify(body) })
+        userAccounts.value = await r.json()
+        acctMsgOk.value = true; acctMsg.value = lang.value === 'zh' ? '已保存' : 'Saved'
+        setTimeout(() => { acctMsg.value = '' }, 2000)
+        return true
+      } catch {
+        acctMsgOk.value = false; acctMsg.value = lang.value === 'zh' ? '保存失败' : 'Save failed'
+        return false
+      } finally { acctSaving.value = false }
+    }
+    function subUseApi(s) {
+      if (s.subscription_kind === 'api') return true
+      const cat = (userAccounts.value?.subscription_catalog || []).find(c => c.source_id === s.source_id)
+      if (s.subscription_to_api != null) return s.subscription_to_api === true
+      return cat?.subscription_to_api === true
+    }
+    function onSubSourceChange() { addSubPlan.value = ''; customPlanLabel.value = ''; customPlanUsd.value = '' }
+    async function addSubscription() {
+      const list = [...subs.value]
+      if (addSubKind.value === 'api') {
+        if (addApiSource.value === '__custom_api__') {
+          const name = customAppName.value.trim(), planLabel = customPlanLabel.value.trim()
+          if (!name || !planLabel) return
+          list.push({ id: uid(), subscription_kind:'api', custom:true, source_id:`api-custom-${Date.now()}`, plan_provider_id:`api-custom-${Date.now()}`, app_name:name, app_icon:'🔑', plan_id:'custom', plan_label:planLabel, monthly_usd: customPlanUsd.value === '' ? null : Number(customPlanUsd.value), subscription_to_api:true })
+        } else if (addApiSource.value && addApiPlan.value) {
+          const cat = apiCatalogItem.value, plan = apiPlanOptions.value.find(p => p.id === addApiPlan.value)
+          if (!cat || !plan) return
+          list.push({ id: uid(), subscription_kind:'api', source_id:addApiSource.value, plan_provider_id:cat.plan_provider_id, app_name:cat.app_name, app_icon:cat.app_icon, plan_id:plan.id, plan_label:plan.label, monthly_usd:plan.monthly_usd, subscription_to_api:true })
+        } else return
+      } else if (addSubSource.value === '__custom_app__') {
+        const name = customAppName.value.trim(), planLabel = customPlanLabel.value.trim()
+        if (!name || !planLabel) return
+        list.push({ id: uid(), subscription_kind:'app', source_id:`custom-${Date.now()}`, app_name:name, app_icon:'🔧', plan_id:'custom', plan_label:planLabel, monthly_usd: customPlanUsd.value === '' ? null : Number(customPlanUsd.value), custom:true, subscription_to_api:false })
+      } else if (addSubSource.value) {
+        const cat = catalogItem.value
+        if (!cat) return
+        let plan_id, plan_label, monthly_usd
+        if (addSubPlan.value === '__custom_plan__') {
+          plan_id = 'custom'; plan_label = customPlanLabel.value.trim(); monthly_usd = customPlanUsd.value === '' ? null : Number(customPlanUsd.value)
+          if (!plan_label) return
+        } else {
+          const plan = appPlanOptions.value.find(p => p.id === addSubPlan.value)
+          if (!plan) return
+          plan_id = plan.id; plan_label = plan.label; monthly_usd = plan.monthly_usd
+        }
+        list.push({ id: uid(), subscription_kind:'app', source_id:addSubSource.value, agent_id:cat.agent_id, app_name:cat.app_name, app_icon:cat.app_icon, plan_id, plan_label, monthly_usd, subscription_to_api: cat.subscription_to_api === true })
+      } else return
+      userAccounts.value = { ...userAccounts.value, user_subscriptions: list }
+      if (await saveAccounts({ user_subscriptions: list })) {
+        addSubSource.value = ''; addSubPlan.value = ''; addApiSource.value = ''; addApiPlan.value = ''
+        customAppName.value = ''; customPlanLabel.value = ''; customPlanUsd.value = ''
+      }
+    }
+    function removeSubscription(id) {
+      const list = subs.value.filter(s => s.id !== id)
+      userAccounts.value = { ...userAccounts.value, user_subscriptions: list }
+      saveAccounts({ user_subscriptions: list })
+    }
+    function updateSubApiFlag(id, useApi) {
+      const list = subs.value.map(s => s.id === id && s.subscription_kind !== 'api' ? { ...s, subscription_to_api: useApi } : s)
+      userAccounts.value = { ...userAccounts.value, user_subscriptions: list }
+      saveAccounts({ user_subscriptions: list })
+    }
+    async function addPaygProvider() {
+      const list = [...userPayg.value]
+      if (addPaygId.value === '__custom_payg__') {
+        const label = customPaygLabel.value.trim()
+        if (!label) return
+        const pid = `custom-${Date.now()}`
+        list.push({ id: uid(), provider_id: pid, label, icon:'🔧', models:[], enabled:true, custom:true })
+      } else if (addPaygId.value) {
+        const meta = (userAccounts.value?.payg_provider_catalog || []).find(o => (o.id || o.provider_id) === addPaygId.value) || {}
+        list.push({ id: uid(), provider_id: addPaygId.value, label: meta.label || addPaygId.value, icon: meta.icon || '🔧', models: [...(meta.models || [])], enabled:true })
+      } else return
+      userAccounts.value = { ...userAccounts.value, user_payg_providers: list }
+      if (await saveAccounts({ user_payg_providers: list })) { addPaygId.value = ''; customPaygLabel.value = '' }
+    }
+    function removePayg(id) {
+      const list = userPayg.value.filter(p => p.id !== id)
+      userAccounts.value = { ...userAccounts.value, user_payg_providers: list }
+      saveAccounts({ user_payg_providers: list })
+      if (paygExpanded.value === id) paygExpanded.value = null
+    }
+    function addModelToPayg(paygId, modelName) {
+      const name = (modelName || '').trim()
+      if (!name) return
+      const item = userPayg.value.find(p => p.id === paygId)
+      if (!item || (item.models || []).includes(name)) return
+      const list = userPayg.value.map(p => p.id === paygId ? { ...p, models: [...(p.models || []), name] } : p)
+      userAccounts.value = { ...userAccounts.value, user_payg_providers: list }
+      saveAccounts({ user_payg_providers: list })
+    }
+    function removeModelFromPayg(paygId, modelName) {
+      const item = userPayg.value.find(p => p.id === paygId)
+      if (!item) return
+      const list = userPayg.value.map(p => p.id === paygId ? { ...p, models: (p.models || []).filter(m => m !== modelName) } : p)
+      const ovr = { ...(userAccounts.value?.provider_pricing_overrides || {}) }
+      const pid = item.provider_id
+      if (ovr[pid]?.[modelName]) { const per = { ...ovr[pid] }; delete per[modelName]; if (Object.keys(per).length) ovr[pid] = per; else delete ovr[pid] }
+      userAccounts.value = { ...userAccounts.value, user_payg_providers: list, provider_pricing_overrides: ovr }
+      saveAccounts({ user_payg_providers: list, provider_pricing_overrides: ovr })
+    }
+    function pricingRowsFor(p) {
+      const pid = p.provider_id
+      const base = userAccounts.value?.provider_pricing?.[pid] || {}
+      const ovr = userAccounts.value?.provider_pricing_overrides?.[pid] || {}
+      return (p.models || []).map(model => ({ model, ...base[model], ...ovr[model] }))
+    }
+    function updatePricing(providerId, model, field, value) {
+      const num = value === '' ? null : Number(value)
+      const ovr = { ...(userAccounts.value?.provider_pricing_overrides || {}) }
+      ovr[providerId] = { ...(ovr[providerId] || {}), [model]: { ...(ovr[providerId]?.[model] || {}), [field]: num } }
+      userAccounts.value = { ...userAccounts.value, provider_pricing_overrides: ovr }
+      if (pricingSaveTimer) clearTimeout(pricingSaveTimer)
+      pricingSaveTimer = setTimeout(() => saveAccounts({ provider_pricing_overrides: ovr }), 400)
+    }
+
+    /* ── 用量盘点 ── */
+    const usageDays = ref(1), usageLoading = ref(false)
+    const inventory = ref({ total_calls:0, total_tokens:0, total_cost:0, tiers:{free:0,p2p:0,paid:0}, devices:[], providers:[], models:[] })
+    const usageRanges = computed(() => lang.value === 'zh'
+      ? [{ days:1, label:'今日' }, { days:7, label:'7天' }, { days:30, label:'30天' }]
+      : [{ days:1, label:'Today' }, { days:7, label:'7d' }, { days:30, label:'30d' }])
+    async function fetchInventoryStats() {
+      usageLoading.value = true
+      try { inventory.value = await (await userApi(`/user/inventory-stats?days=${usageDays.value}`)).json() } catch {}
+      finally { usageLoading.value = false }
+    }
+    function setUsageDays(d) { usageDays.value = d; fetchInventoryStats() }
+    function fmtCompact(n) {
+      const v = Number(n) || 0
+      if (v >= 1000000) return (v/1000000).toFixed(1)+'M'
+      if (v >= 1000) return (v/1000).toFixed(1)+'K'
+      return String(Math.round(v))
     }
 
     const referralLink = computed(() => profile.value.referral_code ? `${location.origin}/app?ref=${profile.value.referral_code}` : '')
@@ -1233,7 +1384,27 @@ createApp({
       } catch {}
     }
 
-    async function boot() { await fetchProfile(); fetchRates() }
+    async function boot() {
+      await fetchProfile()
+      fetchRates()
+      fetchUserAccounts()
+      fetchCheckinStatus()
+      fetchSpinStatus()
+    }
+
+    function switchCreditsSub(k) {
+      creditsSub.value = k
+      if (k === 'transactions') fetchTransactions()
+      if (k === 'settlements') fetchSettlements()
+      if (k === 'purchase') fetchPurchaseOrders()
+    }
+
+    watch(creditsSub, (k) => {
+      if (activeTab.value !== 'credits') return
+      if (k === 'transactions') fetchTransactions()
+      if (k === 'settlements') fetchSettlements()
+      if (k === 'purchase') fetchPurchaseOrders()
+    })
 
     onMounted(() => {
       if (loggedIn.value) boot()
@@ -1245,15 +1416,22 @@ createApp({
     return {
       lang, T, toggleLang,
       loggedIn, authTab, authLoading, authErr, authOk, form, doLogin, doRegister, logout,
-      profile, activeTab, visibleTabs, switchTab,
+      profile, activeTab, visibleTabs, switchTab, creditsSub, creditsSubTabs, switchCreditsSub,
       myKeys, newKeyNote, createKey, toggleKey, deleteKey, maskKey,
       providers, provModalOpen, provEditId, provForm, provMsg, provOAuth,
       provModelName, fetchProviders, openProviderModal, closeProviderModal,
       provAddModel, provRemoveModel, provStartOAuth, provExchangeOAuth, saveProvider, deleteProvider,
-      settlements, fetchSettlements,
-      transactions, fetchTransactions,
-      purchaseAmt, purchaseNote, purchaseLoading, purchaseMsg, purchaseMsgOk,
+      settlements, fetchSettlements, transactions, fetchTransactions,
+      purchaseContact, purchaseNote, purchaseLoading, purchaseMsg, purchaseMsgOk,
       purchaseOrders, contactInfo, submitPurchase, fetchPurchaseOrders,
+      checkinStatus, checkinBusy, checkinMsg, doCheckin, spinStatus, spinBusy, spinMsg, doSpin,
+      userAccounts, userPayg, appSubs, apiSubs, acctSaving, acctMsg, acctMsgOk,
+      addSubKind, addSubSource, addSubPlan, addApiSource, addApiPlan,
+      customAppName, customPlanLabel, customPlanUsd, addPaygId, customPaygLabel, paygExpanded,
+      availableAppCatalog, availableApiCatalog, availablePaygCatalog, appPlanOptions, apiPlanOptions,
+      subUseApi, onSubSourceChange, addSubscription, removeSubscription, updateSubApiFlag,
+      addPaygProvider, removePayg, addModelToPayg, removeModelFromPayg, pricingRowsFor, updatePricing,
+      usageDays, usageLoading, inventory, usageRanges, setUsageDays, fmtCompact,
       rateModels, rateExchange, exchangeTiers, referralLink, copy, fmtTime, fmt1, fmt2, fmt0, pct,
       keyReveal, toggleKeyReveal, workerKeyVisible,
       debugApiKey, debugModel, debugModels, keysForDebug, fetchDebugModels, initDebugTab,
