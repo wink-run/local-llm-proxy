@@ -81,6 +81,14 @@ subscription_apps:
     plan_provider_id: gemini
     subscription_to_api: false
 
+# ════════ 个人页：预置 API 订阅目录（与 APP 订阅、按量供给源分离）════════
+# 仅登记「API 厂商订阅产品」（如火山引擎 Coding Plan），不含 ChatGPT/Claude 等 APP 订阅。
+api_subscription_apps:
+  - source_id: api-volcengine
+    app_name: 火山引擎
+    app_icon: "🌋"
+    plan_provider_id: volcengine
+
 # ════════ 个人页：订阅套餐模板（按 plan_provider_id 索引）════════
 subscription_plans:
   anthropic-paid:
@@ -128,6 +136,14 @@ subscription_plans:
     - id: cursor-ultra
       label: Cursor Ultra
       monthly_usd: 200
+
+  volcengine:
+    - id: coding-lite
+      label: Coding Plan Lite · 40元/月
+      monthly_usd: 5.71
+    - id: coding-pro
+      label: Coding Plan Pro · 200元/月
+      monthly_usd: 28.57
 
 # ════════ 个人页：按量付费供给源（各 provider 独立 pricing）════════
 payg_providers:

@@ -205,6 +205,13 @@ subscription_apps:
     plan_provider_id: gemini
     subscription_to_api: false
 
+# 预置 API 订阅（仅 API 厂商订阅产品，不含 APP 订阅）
+api_subscription_apps:
+  - source_id: api-volcengine
+    app_name: 火山引擎
+    app_icon: "🌋"
+    plan_provider_id: volcengine
+
 subscription_plans:
   anthropic-paid:
     - { id: claude-pro, label: Claude Pro, monthly_usd: 20 }
@@ -223,6 +230,9 @@ subscription_plans:
   cursor:
     - { id: cursor-pro, label: Cursor Pro, monthly_usd: 20 }
     - { id: cursor-ultra, label: Cursor Ultra, monthly_usd: 200 }
+  volcengine:
+    - { id: coding-lite, label: Coding Plan Lite · 40元/月, monthly_usd: 5.71 }
+    - { id: coding-pro, label: Coding Plan Pro · 200元/月, monthly_usd: 28.57 }
 
 payg_providers:
   - id: openai

@@ -231,12 +231,11 @@ function buildGatewayPickerEntries(userSubs, userPayg, subscriptionCatalog) {
   const entries = [];
 
   for (const sub of userSubs || []) {
-    const useApi = sub.subscription_to_api != null
-      ? sub.subscription_to_api === true
-      : catalogBySource[sub.source_id]?.subscription_to_api === true;
-    if (!useApi) continue;
-
     if (sub.custom) {
+      const useApi = sub.subscription_kind === 'api'
+        || sub.subscription_to_api === true
+        || catalogBySource[sub.source_id]?.subscription_to_api === true;
+      if (!useApi) continue;
       entries.push({
         providerId: sub.source_id,
         pickerKey: `sub:${sub.source_id}`,
@@ -248,6 +247,26 @@ function buildGatewayPickerEntries(userSubs, userPayg, subscriptionCatalog) {
       });
       continue;
     }
+
+    if (sub.subscription_kind === 'api') {
+      const pid = sub.plan_provider_id || sub.source_id;
+      if (!pid) continue;
+      entries.push({
+        providerId: pid,
+        pickerKey: `sub:${sub.source_id || `api-${pid}`}`,
+        label: sub.app_name || pid,
+        icon: sub.app_icon || '🔑',
+        authMode: 'api_key',
+        source: 'subscription',
+        custom: true,
+      });
+      continue;
+    }
+
+    const useApi = sub.subscription_to_api != null
+      ? sub.subscription_to_api === true
+      : catalogBySource[sub.source_id]?.subscription_to_api === true;
+    if (!useApi) continue;
 
     const cat = catalogBySource[sub.source_id];
     const pid = cat?.plan_provider_id;
@@ -277,9 +296,13 @@ function buildGatewayPickerEntries(userSubs, userPayg, subscriptionCatalog) {
   return entries;
 }
 
-/** 是否为个人页登记的自定义订阅（可转 API）供给源 */
+/** 是否为个人页登记的 API 订阅 / 自定义订阅供给源（走 API Key 卡片） */
 function isCustomSubscriptionGatewayId(id, userSubs = []) {
-  return (userSubs || []).some(s => s.custom && s.source_id === id);
+  return (userSubs || []).some(s => {
+    if (s.custom && s.source_id === id) return true;
+    if (s.subscription_kind === 'api' && (s.plan_provider_id === id || s.source_id === id)) return true;
+    return false;
+  });
 }
 
 /** 已启用卡片：按当前 auth 配置解析验证方式 */
@@ -293,17 +316,19 @@ function resolveCardAuthMode(provider, gatewayAuth) {
   return null;
 }
 
-/** 合并个人页自定义订阅（可转 API）到 providers 列表 */
+/** 合并个人页 API 订阅 / 自定义订阅到 providers 列表 */
 function mergeCustomSubscriptionProviders(resolved, metaMap, userSubs, paidIds = [], t) {
   const providers = [...resolved];
   const meta = { ...metaMap };
   const allow = new Set(paidIds || []);
 
   for (const sub of userSubs || []) {
-    if (!sub.custom) continue;
-    const useApi = sub.subscription_to_api === true;
-    const id = sub.source_id;
-    if (!id || !useApi || !allow.has(id)) continue;
+    const isApiSub = sub.subscription_kind === 'api';
+    if (!sub.custom && !isApiSub) continue;
+    const id = isApiSub ? (sub.plan_provider_id || sub.source_id) : sub.source_id;
+    if (!id) continue;
+    const useApi = isApiSub || sub.subscription_to_api === true;
+    if (!useApi || !allow.has(id)) continue;
 
     if (!providers.find(p => p.id === id)) {
       providers.push({
@@ -323,7 +348,7 @@ function mergeCustomSubscriptionProviders(resolved, metaMap, userSubs, paidIds =
       meta[id] = {
         icon: sub.app_icon || '🔧',
         label: sub.app_name || id,
-        hint: t('providers.hint.customSub'),
+        hint: t(isApiSub ? 'providers.hint.apiSub' : 'providers.hint.customSub'),
         keyless: false,
         key_prefix: [],
         signup_url: '',

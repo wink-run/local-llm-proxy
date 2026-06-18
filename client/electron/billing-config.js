@@ -27,6 +27,10 @@ const FALLBACK_SUBSCRIPTION_PLANS = {
     { id: 'cursor-pro', label: 'Cursor Pro', monthly_usd: 20 },
     { id: 'cursor-ultra', label: 'Cursor Ultra', monthly_usd: 200 },
   ],
+  volcengine: [
+    { id: 'coding-lite', label: 'Coding Plan Lite · 40元/月', monthly_usd: 5.71 },
+    { id: 'coding-pro', label: 'Coding Plan Pro · 200元/月', monthly_usd: 28.57 },
+  ],
 };
 
 function normPlan(p) {
@@ -181,6 +185,24 @@ function subscriptionAppCatalog(cfg = {}) {
   });
 }
 
+/** 预置 API 订阅目录（ChatGPT、Claude 等；与供给源页 provider 列表分离） */
+function apiSubscriptionCatalog(cfg = {}) {
+  const plans = getSubscriptionPlans(cfg);
+  return configLoader.apiSubscriptionApps().map(a => {
+    const planKey = a.plan_provider_id || null;
+    const appPlans = Array.isArray(a.plans) && a.plans.length
+      ? a.plans.map(normPlan).filter(Boolean)
+      : (planKey && plans[planKey] ? plans[planKey] : []);
+    return {
+      source_id: a.source_id || a.id,
+      plan_provider_id: planKey,
+      app_name: a.app_name || a.name || a.source_id,
+      app_icon: a.app_icon || a.icon || '🔑',
+      plans: appPlans,
+    };
+  });
+}
+
 function paygProviderCatalog() {
   return configLoader.paygProviders().map(normPaygEntry);
 }
@@ -196,6 +218,10 @@ function resolveUserPaidProviderIds(cfg = {}) {
     subscriptionAppCatalog(cfg).map(c => [c.source_id, c]),
   );
   for (const sub of cfg.user_subscriptions || []) {
+    if (sub.subscription_kind === 'api' && sub.plan_provider_id) {
+      ids.add(sub.plan_provider_id);
+      continue;
+    }
     const pid = catalogBySource[sub.source_id]?.plan_provider_id;
     if (pid) ids.add(pid);
   }
@@ -207,6 +233,7 @@ function resolveUserPaidProviderIds(cfg = {}) {
 
 /** 单条订阅是否启用「订阅转 API」：用户登记优先，否则 yaml 目录默认 */
 function resolveSubUseApi(sub, catalogBySource) {
+  if (sub?.subscription_kind === 'api') return true;
   if (sub?.subscription_to_api != null) return sub.subscription_to_api === true;
   const cat = catalogBySource[sub?.source_id];
   return cat?.subscription_to_api === true;
@@ -215,14 +242,16 @@ function resolveSubUseApi(sub, catalogBySource) {
 /** 订阅转 API 时对应的供给源 id（自定义订阅固定用 source_id） */
 function subscriptionGatewayProviderId(sub, catalogBySource) {
   if (!sub) return null;
-  if (sub.custom) return sub.source_id || null;
+  if (sub.custom) return sub.source_id || sub.plan_provider_id || null;
+  if (sub.subscription_kind === 'api') return sub.plan_provider_id || null;
   const cat = catalogBySource[sub.source_id];
   return cat?.plan_provider_id || null;
 }
 
-/** 订阅转 API 的验证方式：目录应用 OAuth，自定义订阅 API Key */
+/** 订阅转 API 的验证方式：APP 目录 OAuth；API 订阅与自定义均 API Key */
 function subscriptionGatewayAuthMode(sub, catalogBySource) {
   if (!resolveSubUseApi(sub, catalogBySource)) return null;
+  if (sub.subscription_kind === 'api') return 'api_key';
   if (sub.custom) return 'api_key';
   const cat = catalogBySource[sub.source_id];
   return cat?.plan_provider_id ? 'oauth' : 'api_key';
@@ -289,6 +318,20 @@ function buildGatewayPickerEntries(cfg = {}) {
         pickerKey: `sub:${sub.source_id}`,
         label: sub.app_name || sub.source_id,
         icon: sub.app_icon || '🔧',
+        authMode: 'api_key',
+        source: 'subscription',
+        custom: true,
+      });
+      continue;
+    }
+    if (sub.subscription_kind === 'api') {
+      const pid = sub.plan_provider_id || sub.source_id;
+      if (!pid) continue;
+      entries.push({
+        providerId: pid,
+        pickerKey: `sub:${sub.source_id || `api-${pid}`}`,
+        label: sub.app_name || pid,
+        icon: sub.app_icon || '🔑',
         authMode: 'api_key',
         source: 'subscription',
         custom: true,
@@ -399,6 +442,7 @@ function getUserAccounts(cfg = {}) {
   const gatewayPaygIds = resolveGatewayPaygProviderIds(cfg);
   return {
     subscription_catalog: subscriptionAppCatalog(cfg),
+    api_subscription_catalog: apiSubscriptionCatalog(cfg),
     payg_provider_catalog: paygProviderCatalog(),
     user_subscriptions: Array.isArray(cfg.user_subscriptions) ? cfg.user_subscriptions : [],
     user_payg_providers: Array.isArray(cfg.user_payg_providers) ? cfg.user_payg_providers : [],
@@ -420,6 +464,7 @@ module.exports = {
   getBillingSettings,
   getUserAccounts,
   subscriptionAppCatalog,
+  apiSubscriptionCatalog,
   paygProviderCatalog,
   resolveUserPaidProviderIds,
   resolveUserGatewayProviderIds,

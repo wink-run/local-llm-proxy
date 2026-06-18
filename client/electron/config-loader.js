@@ -190,6 +190,30 @@ function subscriptionApps() {
   });
 }
 
+// 个人页：预置 API 订阅目录（与 APP 订阅、按量供给源分离）
+function apiSubscriptionApps() {
+  const defaults = toolsDefaultDoc().api_subscription_apps || [];
+  const defBySource = Object.fromEntries(
+    defaults.map(a => [a.source_id || a.id, a]),
+  );
+  const list = billingSection('api_subscription_apps');
+  const cur = Array.isArray(list) ? list : [];
+  const curBySource = Object.fromEntries(
+    cur.filter(a => a?.source_id).map(a => [a.source_id, a]),
+  );
+  // 以内置默认为准，只展示默认 source_id；tokenbank.yaml / 服务端残留的旧条目不再出现
+  if (!defaults.length) return cur;
+  return defaults.map(def => {
+    const key = def.source_id || def.id;
+    const over = curBySource[key] || {};
+    return {
+      ...def,
+      ...over,
+      plan_provider_id: over.plan_provider_id != null ? over.plan_provider_id : def.plan_provider_id,
+    };
+  });
+}
+
 // 个人页：按量付费供给源目录
 function paygProviders() {
   const list = billingSection('payg_providers');
@@ -246,6 +270,6 @@ module.exports = {
   gatewayCtx, mitmDomains, shouldMitm, tools, appPresets, apiKeyApps,
   routing, caRef,
   claudeModels, isClaudeModel, sessionSources, agentHasModelStats,
-  subscriptionApps, paygProviders, subscriptionPlansDefaults,
+  subscriptionApps, apiSubscriptionApps, paygProviders, subscriptionPlansDefaults,
   resolveRef, resolvePlaceholders, expandHome,
 };

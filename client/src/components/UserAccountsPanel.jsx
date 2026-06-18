@@ -6,10 +6,20 @@ import { isAccountOkMsg } from '../i18n';
 const CUSTOM_APP = '__custom_app__';
 const CUSTOM_PLAN = '__custom_plan__';
 const CUSTOM_PAYG = '__custom_payg__';
+const CUSTOM_API = '__custom_api__';
+const SUB_KIND_APP = 'app';
+const SUB_KIND_API = 'api';
+
+function subscriptionKind(s) {
+  return s?.subscription_kind === SUB_KIND_API ? SUB_KIND_API : SUB_KIND_APP;
+}
 
 function uid() {
   return `ua-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
+
+/** 用户手动添加模型时的默认刊例价（USD / 百万 Token） */
+const DEFAULT_MODEL_PRICING = { in: 1, out: 5, cacheRead: 0.1 };
 
 /** 合并某 provider 下各模型的刊例价（yaml 默认 + 用户覆盖） */
 function pricingRowsForProvider(providerId, models, merged, overrides) {
@@ -44,17 +54,35 @@ export default function UserAccountsPanel({
   const [msg, setMsg] = useState('');
 
   // 订阅：添加表单
+  const [addSubKind, setAddSubKind] = useState(SUB_KIND_APP);
   const [addSubSource, setAddSubSource] = useState('');
   const [addSubPlan, setAddSubPlan] = useState('');
   const [addSubUseApi, setAddSubUseApi] = useState(false);
+  const [addApiSource, setAddApiSource] = useState('');
+  const [addApiPlan, setAddApiPlan] = useState('');
   const [customAppName, setCustomAppName] = useState('');
   const [customPlanLabel, setCustomPlanLabel] = useState('');
   const [customPlanUsd, setCustomPlanUsd] = useState('');
 
   function resetSubForm() {
+    setAddSubKind(SUB_KIND_APP);
     setAddSubSource('');
     setAddSubPlan('');
     setAddSubUseApi(false);
+    setAddApiSource('');
+    setAddApiPlan('');
+    setCustomAppName('');
+    setCustomPlanLabel('');
+    setCustomPlanUsd('');
+  }
+
+  function onSubKindChange(kind) {
+    setAddSubKind(kind);
+    setAddSubSource('');
+    setAddSubPlan('');
+    setAddSubUseApi(false);
+    setAddApiSource('');
+    setAddApiPlan('');
     setCustomAppName('');
     setCustomPlanLabel('');
     setCustomPlanUsd('');
@@ -72,6 +100,15 @@ export default function UserAccountsPanel({
     } else {
       setAddSubUseApi(false);
     }
+  }
+
+  /** 切换预置 API 订阅 / 自定义 API */
+  function onApiSourceChange(value) {
+    setAddApiSource(value);
+    setAddApiPlan('');
+    setCustomAppName('');
+    setCustomPlanLabel('');
+    setCustomPlanUsd('');
   }
 
   // 按量：添加 provider
@@ -156,19 +193,104 @@ export default function UserAccountsPanel({
   }
 
   const catalog = data?.subscription_catalog || [];
+  const apiCatalog = data?.api_subscription_catalog || [];
   const subs = data?.user_subscriptions || [];
   const payg = data?.user_payg_providers || [];
   const paygOptions = data?.payg_provider_catalog || [];
+  const appSubs = subs.filter(s => subscriptionKind(s) === SUB_KIND_APP);
+  const apiSubs = subs.filter(s => subscriptionKind(s) === SUB_KIND_API);
 
   const isCustomApp = addSubSource === CUSTOM_APP;
   const isCustomPlan = addSubPlan === CUSTOM_PLAN;
+  const isCustomApi = addApiSource === CUSTOM_API;
   const catalogItem = !isCustomApp ? catalog.find(c => c.source_id === addSubSource) : null;
+  const apiCatalogItem = !isCustomApi ? apiCatalog.find(c => c.source_id === addApiSource) : null;
   const planOptions = catalogItem?.plans?.length
     ? catalogItem.plans
     : (catalogItem ? [{ id: 'other', label: t('accounts.otherPlan'), monthly_usd: null }] : []);
+  const apiPlanOptions = apiCatalogItem?.plans?.length
+    ? apiCatalogItem.plans
+    : (apiCatalogItem ? [{ id: 'other', label: t('accounts.otherPlan'), monthly_usd: null }] : []);
 
   async function addSubscription() {
     setSubMsg('');
+    if (addSubKind === SUB_KIND_API) {
+      if (!addApiSource) {
+        setSubMsg(t('accounts.err.selectApiSubscription'));
+        return;
+      }
+
+      // 自定义 API 订阅：名称 + 套餐 + 可选月费
+      if (isCustomApi) {
+        const name = customAppName.trim();
+        const planLabel = customPlanLabel.trim();
+        if (!name || !planLabel) {
+          setSubMsg(t('accounts.err.apiPlan'));
+          return;
+        }
+        if (apiSubs.some(s => s.app_name.toLowerCase() === name.toLowerCase())) {
+          setSubMsg(t('accounts.err.apiExists', { name }));
+          return;
+        }
+        const slug = name.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-').replace(/^-|-$/g, '').slice(0, 32) || 'api';
+        const sourceId = `api-custom-${slug}-${Date.now().toString(36)}`;
+        const monthly = customPlanUsd === '' ? null : Number(customPlanUsd);
+        const next = [...subs, {
+          id: uid(),
+          subscription_kind: SUB_KIND_API,
+          custom: true,
+          source_id: sourceId,
+          plan_provider_id: sourceId,
+          agent_id: null,
+          app_name: name,
+          app_icon: '🔑',
+          plan_id: 'custom',
+          plan_label: planLabel,
+          monthly_usd: Number.isFinite(monthly) ? monthly : null,
+          subscription_to_api: true,
+        }];
+        setData(d => ({ ...(d || {}), user_subscriptions: next }));
+        const ok = await saveAccounts({ user_subscriptions: next });
+        if (ok) resetSubForm();
+        return;
+      }
+
+      if (!apiCatalogItem) {
+        setSubMsg(t('accounts.err.selectApiSubscription'));
+        return;
+      }
+      if (!addApiPlan) {
+        setSubMsg(t('accounts.err.selectPlan'));
+        return;
+      }
+      if (apiSubs.some(s => !s.custom && s.source_id === addApiSource)) {
+        setSubMsg(t('accounts.err.apiSubscriptionAdded'));
+        return;
+      }
+      const plan = apiPlanOptions.find(p => p.id === addApiPlan);
+      if (!plan) {
+        setSubMsg(t('accounts.err.invalidPlan'));
+        return;
+      }
+      const next = [...subs, {
+        id: uid(),
+        subscription_kind: SUB_KIND_API,
+        source_id: addApiSource,
+        plan_provider_id: apiCatalogItem.plan_provider_id,
+        agent_id: null,
+        app_name: apiCatalogItem.app_name,
+        app_icon: apiCatalogItem.app_icon,
+        plan_id: plan.id,
+        plan_label: plan.label || plan.id,
+        monthly_usd: plan.monthly_usd ?? null,
+        subscription_to_api: true,
+      }];
+      setData(d => ({ ...(d || {}), user_subscriptions: next }));
+      const ok = await saveAccounts({ user_subscriptions: next });
+      if (ok) resetSubForm();
+      return;
+    }
+
     if (isCustomApp) {
       const name = customAppName.trim();
       const planLabel = customPlanLabel.trim();
@@ -184,6 +306,7 @@ export default function UserAccountsPanel({
       const monthly = customPlanUsd === '' ? null : Number(customPlanUsd);
       const next = [...subs, {
         id: uid(),
+        subscription_kind: SUB_KIND_APP,
         source_id: sourceId,
         agent_id: null,
         app_name: name,
@@ -237,6 +360,7 @@ export default function UserAccountsPanel({
 
     const next = [...subs, {
       id: uid(),
+      subscription_kind: SUB_KIND_APP,
       source_id: addSubSource,
       agent_id: catalogItem.agent_id,
       app_name: catalogItem.app_name,
@@ -251,19 +375,28 @@ export default function UserAccountsPanel({
     if (ok) resetSubForm();
   }
 
-  const canAddSubscription = isCustomApp
-    ? customAppName.trim() && customPlanLabel.trim()
-    : addSubSource && (isCustomPlan ? customPlanLabel.trim() : addSubPlan);
+  const canAddSubscription = addSubKind === SUB_KIND_API
+    ? (isCustomApi
+      ? customAppName.trim() && customPlanLabel.trim()
+      : addApiSource && addApiPlan)
+    : isCustomApp
+      ? customAppName.trim() && customPlanLabel.trim()
+      : addSubSource && (isCustomPlan ? customPlanLabel.trim() : addSubPlan);
 
-  /** 是否启用「订阅转 API」（用户手工设置优先，否则目录默认） */
+  /** 是否启用「订阅转 API」（API 类固定 true；APP 类用户设置优先，否则目录默认） */
   function subUseApi(s) {
+    if (subscriptionKind(s) === SUB_KIND_API) return true;
     const cat = catalog.find(c => c.source_id === s.source_id);
     if (s.subscription_to_api != null) return s.subscription_to_api === true;
     return cat?.subscription_to_api === true;
   }
 
   function updateSubApiFlag(id, useApi) {
-    const next = subs.map(s => (s.id === id ? { ...s, subscription_to_api: useApi } : s));
+    const next = subs.map(s => (
+      s.id === id && subscriptionKind(s) === SUB_KIND_APP
+        ? { ...s, subscription_to_api: useApi }
+        : s
+    ));
     setData(d => ({ ...d, user_subscriptions: next }));
     saveAccounts({ user_subscriptions: next });
   }
@@ -360,13 +493,38 @@ export default function UserAccountsPanel({
   function addModelToPayg(paygId, modelName) {
     const name = (modelName || '').trim();
     if (!name) return;
+    const item = payg.find(p => p.id === paygId);
+    if (!item || (item.models || []).includes(name)) return;
+
     const next = payg.map(p => {
       if (p.id !== paygId) return p;
-      if ((p.models || []).includes(name)) return p;
       return { ...p, models: [...(p.models || []), name] };
     });
+
+    // 无 yaml 默认价时，写入缺省刊例价
+    const pid = item.provider_id;
+    const baseRow = (providerPricing[pid] || {})[name] || {};
+    const ovrRow = (overrides[pid] || {})[name] || {};
+    const hasPricing = ['in', 'out', 'cacheRead'].some(
+      f => ovrRow[f] != null || baseRow[f] != null,
+    );
+    let nextOverrides = overrides;
+    if (!hasPricing) {
+      nextOverrides = {
+        ...overrides,
+        [pid]: {
+          ...(overrides[pid] || {}),
+          [name]: { ...DEFAULT_MODEL_PRICING },
+        },
+      };
+      setOverrides(nextOverrides);
+    }
+
     setData(d => ({ ...d, user_payg_providers: next }));
-    saveAccounts({ user_payg_providers: next });
+    saveAccounts({
+      user_payg_providers: next,
+      ...(nextOverrides !== overrides ? { provider_pricing_overrides: nextOverrides } : {}),
+    });
   }
 
   /** 从按量账户登记中删除单个模型（含刊例价覆盖） */
@@ -418,15 +576,15 @@ export default function UserAccountsPanel({
     <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl overflow-hidden">
       {/* 账户类型切换 */}
       <div className="flex border-b border-gray-100 dark:border-gray-700">
-        {tabs.map(t => (
-          <button key={t.id} type="button" onClick={() => setTab(t.id)}
+        {tabs.map(tabItem => (
+          <button key={tabItem.id} type="button" onClick={() => setTab(tabItem.id)}
             className={`flex-1 px-4 py-3 text-left transition-colors ${
-              tab === t.id
+              tab === tabItem.id
                 ? 'bg-gray-50 dark:bg-gray-700/50 border-b-2 border-blue-500'
                 : 'hover:bg-gray-50/50 dark:hover:bg-gray-700/30'
             }`}>
-            <div className="text-sm font-semibold text-gray-800 dark:text-gray-200">{t.label}</div>
-            <div className="text-[10px] text-gray-400 mt-0.5">{t.sub}</div>
+            <div className="text-sm font-semibold text-gray-800 dark:text-gray-200">{tabItem.label}</div>
+            <div className="text-[10px] text-gray-400 mt-0.5">{tabItem.sub}</div>
           </button>
         ))}
       </div>
@@ -494,40 +652,72 @@ export default function UserAccountsPanel({
               <>
                 <p className="text-xs text-gray-500">{t('accounts.subHint')}</p>
 
-                {/* 已添加 */}
-                {subs.length === 0 ? (
-                  <p className="text-sm text-gray-400 py-4 text-center">{t('accounts.noSubscriptions')}</p>
-                ) : (
-                  <div className="space-y-2">
-                    {subs.map(s => (
-                      <div key={s.id}
-                        className="flex items-center gap-3 px-4 py-3 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900">
-                        <span className="text-lg shrink-0">{s.app_icon}</span>
-                        <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate max-w-[7rem] shrink-0">
-                          {s.app_name}
-                        </span>
-                        <span className="text-xs text-gray-500 truncate flex-1 min-w-0">
-                          {s.plan_label || s.plan_id}
-                          {s.monthly_usd != null ? ` · $${s.monthly_usd}${t('accounts.perMonth')}` : ''}
-                          {(s.custom || s.plan_id === 'custom') && (
-                            <span className="ml-1 text-gray-400">{t('accounts.custom')}</span>
-                          )}
-                        </span>
-                        <select
-                          value={subUseApi(s) ? 'api' : 'stats'}
-                          onChange={e => updateSubApiFlag(s.id, e.target.value === 'api')}
-                          disabled={saving}
-                          className="text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1.5 shrink-0"
-                        >
-                          <option value="api">{t('accounts.convertApi')}</option>
-                          <option value="stats">{t('accounts.statsOnly')}</option>
-                        </select>
-                        <button type="button" onClick={() => removeSubscription(s.id)}
-                          className="text-xs text-red-400 hover:text-red-500 shrink-0">{t('accounts.remove')}</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                {/* APP 订阅 */}
+                <div className="space-y-2">
+                  <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-300">{t('accounts.sectionAppSubs')}</h4>
+                  {appSubs.length === 0 ? (
+                    <p className="text-sm text-gray-400 py-2 text-center">{t('accounts.noAppSubscriptions')}</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {appSubs.map(s => (
+                        <div key={s.id}
+                          className="flex items-center gap-3 px-4 py-3 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900">
+                          <span className="text-lg shrink-0">{s.app_icon}</span>
+                          <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate max-w-[7rem] shrink-0">
+                            {s.app_name}
+                          </span>
+                          <span className="text-xs text-gray-500 truncate flex-1 min-w-0">
+                            {s.plan_label || s.plan_id}
+                            {s.monthly_usd != null ? ` · $${s.monthly_usd}${t('accounts.perMonth')}` : ''}
+                            {(s.custom || s.plan_id === 'custom') && (
+                              <span className="ml-1 text-gray-400">{t('accounts.custom')}</span>
+                            )}
+                          </span>
+                          <select
+                            value={subUseApi(s) ? 'api' : 'stats'}
+                            onChange={e => updateSubApiFlag(s.id, e.target.value === 'api')}
+                            disabled={saving}
+                            className="text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1.5 shrink-0"
+                          >
+                            <option value="stats">{t('accounts.statsOnly')}</option>
+                            <option value="api">{t('accounts.convertApi')}</option>
+                          </select>
+                          <button type="button" onClick={() => removeSubscription(s.id)}
+                            className="text-xs text-red-400 hover:text-red-500 shrink-0">{t('accounts.remove')}</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* API 订阅 */}
+                <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-gray-700">
+                  <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-300">{t('accounts.sectionApiSubs')}</h4>
+                  {apiSubs.length === 0 ? (
+                    <p className="text-sm text-gray-400 py-2 text-center">{t('accounts.noApiSubscriptions')}</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {apiSubs.map(s => (
+                        <div key={s.id}
+                          className="flex items-center gap-3 px-4 py-3 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900">
+                          <span className="text-lg shrink-0">{s.app_icon}</span>
+                          <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate max-w-[8rem] shrink-0">
+                            {s.app_name}
+                          </span>
+                          <span className="text-xs text-gray-500 truncate flex-1 min-w-0">
+                            {s.plan_label || s.plan_id}
+                            {s.monthly_usd != null ? ` · $${s.monthly_usd}${t('accounts.perMonth')}` : ''}
+                            {s.custom && (
+                              <span className="ml-1 text-gray-400">{t('accounts.custom')}</span>
+                            )}
+                          </span>
+                          <button type="button" onClick={() => removeSubscription(s.id)}
+                            className="text-xs text-red-400 hover:text-red-500 shrink-0">{t('accounts.remove')}</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 {/* 添加 */}
                 <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-gray-700">
@@ -537,6 +727,47 @@ export default function UserAccountsPanel({
                     </p>
                   )}
                   <div className="flex flex-wrap items-end gap-2">
+                    <div className="w-full sm:w-auto min-w-[140px]">
+                      <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.subKind')}</label>
+                      <select value={addSubKind} onChange={e => onSubKindChange(e.target.value)}
+                        className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2">
+                        <option value={SUB_KIND_APP}>{t('accounts.subKindApp')}</option>
+                        <option value={SUB_KIND_API}>{t('accounts.subKindApi')}</option>
+                      </select>
+                    </div>
+
+                    {addSubKind === SUB_KIND_API ? (
+                      <>
+                        <div className="flex-1 min-w-[140px]">
+                          <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.apiSubscription')}</label>
+                          <select value={addApiSource} onChange={e => onApiSourceChange(e.target.value)}
+                            className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2">
+                            <option value="">{t('accounts.selectApiSubscription')}</option>
+                            {apiCatalog.filter(c => !apiSubs.some(s => !s.custom && s.source_id === c.source_id)).map(c => (
+                              <option key={c.source_id} value={c.source_id}>
+                                {c.app_icon} {c.app_name}
+                              </option>
+                            ))}
+                            <option value={CUSTOM_API}>{t('accounts.customApi')}</option>
+                          </select>
+                        </div>
+                        {!isCustomApi && (
+                        <div className="flex-1 min-w-[120px]">
+                          <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.plan')}</label>
+                          <select value={addApiPlan} onChange={e => setAddApiPlan(e.target.value)} disabled={!addApiSource}
+                            className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2 disabled:opacity-50">
+                            <option value="">{t('accounts.selectPlan')}</option>
+                            {apiPlanOptions.map(p => (
+                              <option key={p.id} value={p.id}>
+                                {p.label}{p.monthly_usd != null ? ` ($${p.monthly_usd}${t('accounts.perMonth')})` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
                     <div className="flex-1 min-w-[140px]">
                       <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.app')}</label>
                       <select value={addSubSource} onChange={e => onSubSourceChange(e.target.value)}
@@ -544,7 +775,7 @@ export default function UserAccountsPanel({
                         <option value="">{t('accounts.selectApp')}</option>
                         {catalog.filter(c => !subs.some(s => s.source_id === c.source_id)).map(c => (
                           <option key={c.source_id} value={c.source_id}>
-                            {c.app_icon} {c.app_name}{c.subscription_to_api ? ` · ${t('accounts.convertApi')}` : ''}
+                            {c.app_icon} {c.app_name}
                           </option>
                         ))}
                         <option value={CUSTOM_APP}>{t('accounts.customApp')}</option>
@@ -568,7 +799,7 @@ export default function UserAccountsPanel({
                     )}
 
                     <div className="flex-1 min-w-[110px]">
-                      <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.attr')}</label>
+                      <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.appMode')}</label>
                       <select
                         value={addSubUseApi ? 'api' : 'stats'}
                         onChange={e => setAddSubUseApi(e.target.value === 'api')}
@@ -579,6 +810,8 @@ export default function UserAccountsPanel({
                         <option value="api">{t('accounts.convertApi')}</option>
                       </select>
                     </div>
+                      </>
+                    )}
 
                     <button type="button" onClick={addSubscription} disabled={!canAddSubscription || saving}
                       className="text-xs px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50">
@@ -586,8 +819,32 @@ export default function UserAccountsPanel({
                     </button>
                   </div>
 
-                  {/* 自定义应用：名称 + 套餐 + 月费 */}
-                  {isCustomApp && (
+                  {/* 自定义 API：名称 + 套餐 + 月费 */}
+                  {addSubKind === SUB_KIND_API && isCustomApi && (
+                    <div className="flex flex-wrap items-end gap-2 pl-1">
+                      <div className="flex-1 min-w-[120px]">
+                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.apiProviderName')}</label>
+                        <input value={customAppName} onChange={e => setCustomAppName(e.target.value)}
+                          placeholder="如 DeepSeek、Moonshot…"
+                          className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2" />
+                      </div>
+                      <div className="flex-1 min-w-[120px]">
+                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.planName')}</label>
+                        <input value={customPlanLabel} onChange={e => setCustomPlanLabel(e.target.value)}
+                          placeholder="如 Pro、Team…"
+                          className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2" />
+                      </div>
+                      <div className="w-24">
+                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.monthlyUsd')}</label>
+                        <input type="number" min="0" step="0.01" value={customPlanUsd}
+                          onChange={e => setCustomPlanUsd(e.target.value)} placeholder={t('accounts.optional')}
+                          className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2 text-right" />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 自定义 APP：名称 + 套餐 + 月费 */}
+                  {addSubKind === SUB_KIND_APP && isCustomApp && (
                     <div className="flex flex-wrap items-end gap-2 pl-1">
                       <div className="flex-1 min-w-[120px]">
                         <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.appName')}</label>
@@ -610,8 +867,8 @@ export default function UserAccountsPanel({
                     </div>
                   )}
 
-                  {/* 目录应用 + 自定义套餐 */}
-                  {!isCustomApp && isCustomPlan && (
+                  {/* 目录 APP + 自定义套餐 */}
+                  {addSubKind === SUB_KIND_APP && !isCustomApp && isCustomPlan && (
                     <div className="flex flex-wrap items-end gap-2 pl-1">
                       <div className="flex-1 min-w-[120px]">
                         <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.planName')}</label>

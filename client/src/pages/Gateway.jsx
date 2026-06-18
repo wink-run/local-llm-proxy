@@ -249,6 +249,8 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
 function linkMethodLabel(method, t) {
   return method === 'manual' ? t('gateway.link.api') : t('gateway.link.app');
 }
+// 应用列表统一栅格，保证表头与数据列对齐
+const APPS_TABLE_GRID = 'grid grid-cols-[1.5rem_7rem_7rem_4rem_3.5rem_3.5rem_3.5rem_minmax(0,10rem)_3.75rem_auto] gap-x-3 items-center px-3 min-w-[52rem]';
 // 按 API Key 路由的应用：自动写配置的 api-key，和用户自配的 manual（手工添加）
 const isKeyApp = (m) => m === 'api-key' || m === 'manual';
 
@@ -281,16 +283,12 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   const [icon,        setIcon]        = useState(app.icon || '🔧');
   const [desc,        setDesc]        = useState(app.description || '');
   const [routeId,     setRouteId]     = useState(app.route_id || '');
-  const [allowStream, setAllowStream] = useState(app.allow_stream !== false);
-  const [maxRpm,      setMaxRpm]      = useState(app.max_rpm || '');
-  const [maxConc,     setMaxConc]     = useState(app.max_concurrent || '');
-  const [models,      setModels]      = useState((app.allowed_models || []).join(', '));
   const [busy,        setBusy]        = useState(false);
   const [copied,      setCopied]      = useState(false);
   const [claudeDevMode, setClaudeDevMode] = useState(null); // Claude Desktop 开发者模式状态
-  // config-file 类 API Key 应用：两 Tab（0=配置文件写入和 API Key｜1=路由规则和请求控制）
+  // config-file 类 API Key 应用：两 Tab（0=配置文件写入和 API Key｜1=路由规则）
   const isCfg = app.link_method === 'api-key' && !!app.config_file;
-  const isShim = app.link_method === 'shim';   // 透明托管：只编辑路由规则 + 请求控制
+  const isShim = app.link_method === 'shim';   // 透明托管：路由规则 + 基础信息
   const isClaudeDesktop = app.preset_id === 'claude-desktop';
   // Claude Desktop 且开发者模式未就绪 → 需引导用户先启用
   const needDevMode = isClaudeDesktop && claudeDevMode && !claudeDevMode.dev_mode_ready;
@@ -335,10 +333,6 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     await onUpdate({
       id: app.id, name, icon, description: desc,
       route_id: routeId || null,
-      allow_stream: allowStream,
-      max_rpm: maxRpm ? +maxRpm : null,
-      max_concurrent: maxConc ? +maxConc : null,
-      allowed_models: models.split(',').map(s => s.trim()).filter(Boolean),
       ...(app.env && !app.config_file ? { env: parseEnvText(envText) } : {}),
     });
     setBusy(false);
@@ -522,36 +516,6 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     </div>
   );
 
-  const controlSection = (isKeyApp(app.link_method) || app.link_method === 'shim') && (
-    <div>
-      <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.requestControl')}</div>
-      <div className="space-y-2">
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-500 w-20 shrink-0">{t('gateway.app.allowStream')}</label>
-          <button onClick={() => setAllowStream(!allowStream)}
-            className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${allowStream ? 'bg-blue-600' : 'bg-gray-400'}`}>
-            <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${allowStream ? 'translate-x-4' : 'translate-x-0.5'}`} />
-          </button>
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-500 w-20 shrink-0">{t('gateway.app.rpmLimit')}</label>
-          <input type="number" value={maxRpm} onChange={e => setMaxRpm(e.target.value)} placeholder={t('gateway.common.noLimit')}
-            className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-500 w-20 shrink-0">{t('gateway.app.concurrencyLimit')}</label>
-          <input type="number" value={maxConc} onChange={e => setMaxConc(e.target.value)} placeholder={t('gateway.common.noLimit')}
-            className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-500 w-20 shrink-0">{t('gateway.app.allowedModels')}</label>
-          <input value={models} onChange={e => setModels(e.target.value)} placeholder={t('gateway.app.modelsPlaceholder')}
-            className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
-        </div>
-      </div>
-    </div>
-  );
-
   const accessSection = isKeyApp(app.link_method) && app.api_key && !app.env && !app.config_file && (
     <div>
       <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.accessConfig')}</div>
@@ -584,11 +548,10 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
         </div>
 
         {(isCfg || isShim) ? (
-          /* 纳管（config-file API Key / 透明托管）：编辑只保留路由规则 + 请求控制。
-             配置文件写入/还原由列表的「纳管 / 还原」按钮完成，这里不再有 API Key 那个 Tab。*/
+          /* 纳管应用（config-file / 透明托管）：基础信息 + 路由规则 */
           <>
             <div className="p-5 space-y-4">
-              {routeSection}{controlSection}
+              {baseInfoSection}{routeSection}
             </div>
             <div className="flex gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800">
               {btnSave}{btnCancel}
@@ -597,7 +560,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
         ) : (
           <>
             <div className="p-5 space-y-4">
-              {baseInfoSection}{apiKeyRow}{envSection}{routeSection}{controlSection}{accessSection}
+              {baseInfoSection}{apiKeyRow}{envSection}{routeSection}{accessSection}
             </div>
             <div className="flex gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800">
               {onDelete && isKeyApp(app.link_method) && (
@@ -623,10 +586,6 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
   const [icon,        setIcon]        = useState(app.icon || '🔧');
   const [desc,        setDesc]        = useState(app.description || '');
   const [routeId,     setRouteId]     = useState(app.route_id || '');
-  const [allowStream, setAllowStream] = useState(app.allow_stream !== false);
-  const [maxRpm,      setMaxRpm]      = useState(app.max_rpm || '');
-  const [maxConc,     setMaxConc]     = useState(app.max_concurrent || '');
-  const [models,      setModels]      = useState((app.allowed_models || []).join(', '));
   const [busy,        setBusy]        = useState(false);
   const [copied,      setCopied]      = useState(false);
   const ICONS = ['🤖','✏️','🔧','💻','🎯','🌐','📱','🔑','⚡','🛠️','🎨','📊'];
@@ -636,10 +595,6 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
     await onUpdate({
       id: app.id, name, icon, description: desc,
       route_id: routeId || null,
-      allow_stream: allowStream,
-      max_rpm: maxRpm ? +maxRpm : null,
-      max_concurrent: maxConc ? +maxConc : null,
-      allowed_models: models.split(',').map(s => s.trim()).filter(Boolean),
     });
     setBusy(false);
     onSave();
@@ -709,34 +664,6 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
               return <optgroup key={tier} label={label}>{tm.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>;
             })}
           </select>
-        </div>
-        {/* 请求控制 */}
-        <div>
-          <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.requestControl')}</div>
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500 w-20 shrink-0">{t('gateway.app.allowStream')}</label>
-              <button onClick={() => setAllowStream(!allowStream)}
-                className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${allowStream ? 'bg-blue-600' : 'bg-gray-400'}`}>
-                <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${allowStream ? 'translate-x-4' : 'translate-x-0.5'}`} />
-              </button>
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500 w-20 shrink-0">{t('gateway.app.rpmLimit')}</label>
-              <input type="number" value={maxRpm} onChange={e => setMaxRpm(e.target.value)} placeholder={t('gateway.common.noLimit')}
-                className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500 w-20 shrink-0">{t('gateway.app.concurrencyLimit')}</label>
-              <input type="number" value={maxConc} onChange={e => setMaxConc(e.target.value)} placeholder={t('gateway.common.noLimit')}
-                className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500 w-20 shrink-0">{t('gateway.app.allowedModels')}</label>
-              <input value={models} onChange={e => setModels(e.target.value)} placeholder={t('gateway.app.modelsPlaceholder')}
-                className="flex-1 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200" />
-            </div>
-          </div>
         </div>
         {/* 接入配置：Key + base_url + 示例（用户自行把应用指向网关）*/}
         {app.api_key && (
@@ -1083,11 +1010,11 @@ function AppDetailModal({ app, onClose }) {
                   {sourceSummary.tags.map(tag => (
                     <span key={tag.label}
                       className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] ${
-                        t.tone === 'blue'
+                        tag.tone === 'blue'
                           ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/25 dark:text-blue-400'
                           : 'bg-green-50 text-green-600 dark:bg-green-900/25 dark:text-green-400'
                       }`}>
-                      {tag.icon} {tag.label} {tag.calls} {tr('gateway.common.times')} · {fmtN(tag.tokens)} tok
+                      {tag.icon} {tag.label} {tag.calls} {t('gateway.common.times')} · {fmtN(tag.tokens)} tok
                     </span>
                   ))}
                 </div>
@@ -1587,21 +1514,19 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                 {t('gateway.apps.empty')}
               </div>
             ) : (
-              <div className={`flex flex-col divide-y divide-gray-100 dark:divide-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl ${visibleApps.length > 20 ? 'max-h-[min(75vh,900px)] overflow-y-auto' : 'overflow-hidden'}`}>
+              <div className={`flex flex-col divide-y divide-gray-100 dark:divide-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-x-auto ${visibleApps.length > 20 ? 'max-h-[min(75vh,900px)] overflow-y-auto' : ''}`}>
                 {/* 表头（超过 20 个时列表滚动，表头吸顶）*/}
-                <div className="flex items-center gap-3 px-3 py-2 bg-gray-100 dark:bg-gray-800 text-[10px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wide sticky top-0 z-10">
-                  <span className="text-base w-6 text-center shrink-0 invisible">🔧</span>
-                  <div className="w-28 shrink-0">{t('gateway.apps.colApp')}</div>
-                  <div className="w-14 shrink-0">{t('gateway.apps.colStatus')}</div>
-                  <div className="w-16 shrink-0">{t('gateway.apps.colLink')}</div>
-                  <div className="flex items-center gap-4 shrink-0">
-                    <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden">{t('gateway.apps.colCalls')}</div>
-                    <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden">{t('gateway.apps.colTokens')}</div>
-                    <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden">{t('gateway.apps.colLastUsed')}</div>
-                  </div>
-                  <div className="flex-1 min-w-0 max-w-[160px]">{t('gateway.apps.colRoute')}</div>
-                  <div className="w-[60px] shrink-0 text-right">{t('gateway.apps.colTest')}</div>
-                  <div className="shrink-0">{t('gateway.apps.colActions')}</div>
+                <div className={`${APPS_TABLE_GRID} py-2 bg-gray-100 dark:bg-gray-800 text-[10px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wide sticky top-0 z-10`}>
+                  <span className="text-base text-center shrink-0 invisible">🔧</span>
+                  <div className="min-w-0">{t('gateway.apps.colApp')}</div>
+                  <div className="min-w-0">{t('gateway.apps.colStatus')}</div>
+                  <div className="min-w-0">{t('gateway.apps.colLink')}</div>
+                  <div className="text-center min-w-0">{t('gateway.apps.colCalls')}</div>
+                  <div className="text-center min-w-0">{t('gateway.apps.colTokens')}</div>
+                  <div className="text-center min-w-0">{t('gateway.apps.colLastUsed')}</div>
+                  <div className="min-w-0">{t('gateway.apps.colRoute')}</div>
+                  <div className="text-right min-w-0">{t('gateway.apps.colTest')}</div>
+                  <div className="min-w-0">{t('gateway.apps.colActions')}</div>
                 </div>
                 {visibleApps.map(app => {
                   const st = appStats[app.id] || { calls: 0, tokens: 0, lastTs: null };
@@ -1643,38 +1568,44 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                   const rowBg = isManaged
                     ? 'bg-green-50/60 dark:bg-green-950/15'
                     : 'bg-gray-50/50 dark:bg-gray-800/20';
-                  const statusLabel = isManaged ? t('gateway.apps.statusOnline') : t('gateway.apps.statusUntracked');
+                  const isApiLink = app.link_method === 'manual';
+                  const statusLabel = !isManaged
+                    ? t('gateway.apps.statusUntracked')
+                    : isApiLink
+                      ? t('gateway.apps.statusApiOnline')
+                      : t('gateway.apps.statusOnline');
                   const statusText = isManaged ? 'text-green-600 dark:text-green-400' : 'text-gray-400';
                   return (
                     // 离线不整行压暗（否则操作按钮看着像禁用）；离线感由灰底/灰点/「离线」标签/
                     // 图标灰度/灰名体现，操作按钮保持全亮可点（含「测试」）。
-                    <div key={app.id} className={`flex items-center gap-3 px-3 py-2.5 transition-colors ${rowBg}`}>
+                    <div key={app.id} className={`${APPS_TABLE_GRID} py-2.5 transition-colors ${rowBg}`}>
                       {/* 图标 + 名称 */}
-                      <span className={`text-base w-6 text-center shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`}>{app.icon}</span>
-                      <div className={`text-xs font-medium truncate w-28 shrink-0 ${isActive ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'}`}>{app.name}</div>
+                      <span className={`text-base text-center shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`}>{app.icon}</span>
+                      <div
+                        className={`text-xs font-medium truncate min-w-0 ${isActive ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'}`}
+                        title={app.name}
+                      >{app.name}</div>
 
-                      {/* 状态列（在线 / 未纳管） */}
-                      <div className="w-14 shrink-0 flex items-center gap-1.5">
+                      {/* 状态列：应用=已纳管/未纳管，API=在线 */}
+                      <div className="min-w-0 flex items-center gap-1.5 overflow-hidden">
                         <span className={`w-2 h-2 rounded-full shrink-0 ${statusDot}`} />
-                        <span className={`text-[11px] font-medium ${statusText}`}>{statusLabel}</span>
+                        <span className={`text-[11px] font-medium truncate ${statusText}`}>{statusLabel}</span>
                       </div>
 
                       {/* 接入方式列 */}
-                      <div className="w-16 shrink-0 text-[11px] text-gray-400 truncate">
+                      <div className="min-w-0 text-[11px] text-gray-400 truncate">
                         {linkMethodLabel(app.link_method, t)}
                       </div>
 
                       {/* 统计：请求数 / token / 最后使用（点击打开用量明细）*/}
-                      <div className="flex items-center gap-4 shrink-0 cursor-pointer rounded hover:bg-gray-100/60 dark:hover:bg-gray-700/30 -mx-1 px-1"
-                        title={t('gateway.apps.statsTitle')} onClick={() => setDetailApp(app)}>
-                        <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden tabular-nums text-xs font-semibold text-gray-700 dark:text-gray-200">{st.calls > 0 ? st.calls.toLocaleString() : '—'}</div>
-                        <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden tabular-nums text-xs font-semibold text-gray-700 dark:text-gray-200">{st.tokens > 0 ? fmtTokens(st.tokens) : '—'}</div>
-                        <div className="text-center w-14 shrink-0 min-w-0 overflow-hidden text-[10px] font-medium text-gray-600 dark:text-gray-300">{fmtTime(st.lastTs)}</div>
+                      <div className="contents cursor-pointer" title={t('gateway.apps.statsTitle')} onClick={() => setDetailApp(app)}>
+                        <div className="text-center min-w-0 overflow-hidden tabular-nums text-xs font-semibold text-gray-700 dark:text-gray-200 rounded hover:bg-gray-100/60 dark:hover:bg-gray-700/30">{st.calls > 0 ? st.calls.toLocaleString() : '—'}</div>
+                        <div className="text-center min-w-0 overflow-hidden tabular-nums text-xs font-semibold text-gray-700 dark:text-gray-200 rounded hover:bg-gray-100/60 dark:hover:bg-gray-700/30">{st.tokens > 0 ? fmtTokens(st.tokens) : '—'}</div>
+                        <div className="text-center min-w-0 overflow-hidden text-[10px] font-medium text-gray-600 dark:text-gray-300 rounded hover:bg-gray-100/60 dark:hover:bg-gray-700/30">{fmtTime(st.lastTs)}</div>
                       </div>
 
-                      {/* 路由下拉槽（固定宽，缺省占位保持列对齐）：api-key / 手工 / shim 可绑路由；
-                          route_bindable=false(如 Claude)不显示；仅直连(cursor)只有「直连」一项且禁用。 */}
-                      <div className="flex-1 min-w-0 max-w-[160px]">
+                      {/* 路由下拉槽 */}
+                      <div className="min-w-0">
                       {(((keyApp || app.link_method === 'shim') && app.route_bindable !== false) || isDirectOnly) && !app._virtual_apikey && (
                       <select
                         value={routeSelectValue}
@@ -1737,8 +1668,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       )}
                       </div>
 
-                      {/* 转发测试槽（固定宽，保持列对齐）：有 api_key 的应用可测；仅直连(cursor)显示但置灰 */}
-                      <div className="w-[60px] shrink-0 flex items-center justify-end gap-1.5">
+                      {/* 转发测试槽 */}
+                      <div className="min-w-0 flex items-center justify-end gap-1.5">
                       {(app.api_key || isDirectOnly) && (() => {
                         const ts = testState[app.id];
                         return (
@@ -1760,14 +1691,14 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       })()}
                       </div>
 
-                      {/* 操作按钮（固定容器，统一起点）：按托管方式区分 */}
-                      <div className="flex items-center gap-2 shrink-0">
+                      {/* 操作按钮 */}
+                      <div className="flex items-center gap-2 shrink-0 flex-nowrap justify-end">
                       {isDirectOnly ? (
-                        /* 仅官方订阅（cursor 等）：只读会话统计，编辑/测试不可用，还原=取消纳管停统计 */
+                        /* 仅官方订阅（cursor 等）：只读会话统计，设置/测试在走网关时可用，还原=取消纳管停统计 */
                         <>
-                          <button onClick={() => setSettings(app)} disabled={!isGatewayRouted}
-                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent shrink-0">
-                            {t('gateway.common.edit')}
+                          <button onClick={() => setSettings(app)}
+                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
+                            {t('gateway.common.settings')}
                           </button>
                           {tracked ? (
                             <button onClick={() => setTracked(app, false)} disabled={busyId === app.id}
@@ -1783,11 +1714,11 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           )}
                         </>
                       ) : app.link_method === 'shim' ? (
-                        /* 透明托管：编辑（仅在线可用）+ 纳管/还原 开关（按 tracked）*/
+                        /* 透明托管：设置 + 纳管/还原 开关（按 tracked）*/
                         <>
-                          <button onClick={() => setSettings(app)} disabled={!isGatewayRouted}
-                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent shrink-0">
-                            {t('gateway.common.edit')}
+                          <button onClick={() => setSettings(app)}
+                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
+                            {t('gateway.common.settings')}
                           </button>
                           {tracked ? (
                             <button onClick={() => setTracked(app, false)} disabled={busyId === app.agent_id || busyId === app.id}
@@ -1808,11 +1739,11 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           {busyId === app.id ? '…' : t('gateway.common.manage')}
                         </button>
                       ) : app.host_method === 'config-file' ? (
-                        /* config-file api-key 应用：编辑（仅经网关可用）+ 纳管/还原；纳管/还原默认官方订阅 */
+                        /* config-file api-key 应用：设置 + 纳管/还原；纳管/还原默认官方订阅 */
                         <>
-                          <button onClick={() => setSettings(app)} disabled={!isGatewayRouted}
-                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent shrink-0">
-                            {t('gateway.common.edit')}
+                          <button onClick={() => setSettings(app)}
+                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
+                            {t('gateway.common.settings')}
                           </button>
                           {tracked ? (
                             <button onClick={() => setTracked(app, false)} disabled={busyId === app.id}
@@ -1839,7 +1770,6 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           </button>
                         </>
                       )}
-                      </div>
                       {/* 操作结果提示（重启提醒）*/}
                       {(() => {
                         const key = app.agent_id || app.id;
@@ -1852,6 +1782,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           </span>
                         );
                       })()}
+                      </div>
                     </div>
                   );
                 })}

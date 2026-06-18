@@ -838,7 +838,7 @@ function registerIPC() {
   const TOOLS_SECTIONS = new Set([
     'version', 'tools', 'mitm', 'gateway', 'app_presets', 'api_key_apps',
     // 个人页计费目录（与 tools 同文件下发）
-    'subscription_plans', 'subscription_apps', 'payg_providers',
+    'subscription_plans', 'subscription_apps', 'api_subscription_apps', 'payg_providers',
   ]);
   const ROUTES_SECTIONS = new Set(['scene_routes']);
 
@@ -1037,13 +1037,7 @@ function registerIPC() {
       };
     };
     for (const app of apps) {
-      const ctrl = {
-        app_id: app.id, app_name: app.name,
-        allow_stream:   app.allow_stream !== false,
-        max_rpm:        app.max_rpm || null,
-        max_concurrent: app.max_concurrent || null,
-        allowed_models: app.allowed_models || [],
-      };
+      const ctrl = { app_id: app.id, app_name: app.name };
       if ((app.link_method === 'api-key' || app.link_method === 'manual') && app.api_key) {
         appControls.push({ ...ctrl, match: { key: app.api_key } });
         if (app.route_id) bindRoute(app.api_key, app.route_id);

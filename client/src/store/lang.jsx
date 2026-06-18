@@ -3,6 +3,13 @@ import { makeT } from '../i18n';
 
 const LangContext = createContext(null);
 
+/** HMR 或 Provider 未就绪时的回退，避免 Layout 解构报错 */
+const defaultLang = {
+  lang: 'zh',
+  setLang: () => {},
+  t: makeT('zh'),
+};
+
 export function LangProvider({ children }) {
   const [lang, setLangState] = useState(
     () => localStorage.getItem('lang') || 'zh'
@@ -27,5 +34,5 @@ export function LangProvider({ children }) {
 }
 
 export function useLang() {
-  return useContext(LangContext);
+  return useContext(LangContext) ?? defaultLang;
 }

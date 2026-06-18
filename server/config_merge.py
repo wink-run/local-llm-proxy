@@ -62,6 +62,35 @@ def merge_apps_doc(current: dict | None) -> dict:
             out.get("subscription_apps"),
             defaults.get("subscription_apps"),
         )
+    if defaults.get("api_subscription_apps") or out.get("api_subscription_apps"):
+        out["api_subscription_apps"] = merge_api_subscription_apps(
+            out.get("api_subscription_apps"),
+            defaults.get("api_subscription_apps"),
+        )
+    return out
+
+
+def merge_api_subscription_apps(current: list | None, defaults: list | None) -> list:
+    """API 订阅目录以内置默认为准，忽略已从默认移除的 source_id。"""
+    def_list = list(defaults or [])
+    if not def_list:
+        return list(current or [])
+    cur_by: dict[str, dict] = {}
+    for app in current or []:
+        if isinstance(app, dict) and app.get("source_id"):
+            cur_by[app["source_id"]] = dict(app)
+    out: list[dict] = []
+    for base in def_list:
+        if not isinstance(base, dict):
+            continue
+        sid = base.get("source_id")
+        if not sid:
+            continue
+        over = cur_by.get(sid) or {}
+        merged = {**base, **over}
+        if over.get("plan_provider_id") is None and base.get("plan_provider_id") is not None:
+            merged["plan_provider_id"] = base["plan_provider_id"]
+        out.append(merged)
     return out
 
 
