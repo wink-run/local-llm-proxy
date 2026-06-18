@@ -112,6 +112,8 @@ export default function Config() {
 
   async function afterAuth(token) {
     localStorage.setItem('token', token);
+    const base = normalizeServerBase(localStorage.getItem('serverUrl') || '');
+    await syncCloudConfigUrl(base);
     const profileRes = await getProfile();
     loginSuccess(token, profileRes.data);
     if (window.electronAPI) {

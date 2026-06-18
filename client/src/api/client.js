@@ -140,11 +140,16 @@ export function getProviderCatalog() {
 }
 
 export function getUserAccountsSettings() {
-  return http.get('/user/accounts');
+  return authRequest('GET', '/user/accounts');
 }
 
 export function saveUserAccountsSettings(body) {
-  return http.put('/user/accounts', body);
+  return authRequest('PUT', '/user/accounts', { body });
+}
+
+/** 云端用户中心聚合（积分 / 账户 / 用量 / 流水 / 结算） */
+export function getUserCenter(days = 1) {
+  return authRequest('GET', `/user/center?days=${days}`);
 }
 
 // ── Scene Routes ──────────────────────────────────────────────────────────────

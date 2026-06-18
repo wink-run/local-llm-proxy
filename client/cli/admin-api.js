@@ -130,7 +130,12 @@ function userBearerToken(req) {
   return m ? m[1].trim() : '';
 }
 
-function resolveBillingServerUrl() {
+function resolveBillingServerUrl(req) {
+  const hdr = req?.headers?.['x-tokenbank-server'] || req?.headers?.['X-TokenBank-Server'];
+  if (hdr) {
+    const fromHdr = cloudBilling.normalizeBase(String(hdr));
+    if (fromHdr) return fromHdr;
+  }
   const cfg = readLocalConfig() || {};
   return cloudBilling.normalizeBase(cfg.cloud_config?.url) || defaultServerUrlFromEnv() || '';
 }
@@ -139,9 +144,9 @@ function applyUserBillingCfg(cfg) {
   try { billingConfig.applyPricingOverrides(cfg.provider_pricing_overrides || {}); } catch {}
 }
 
-async function pullUserBillingApi(token) {
+async function pullUserBillingApi(token, req) {
   let cfg = readLocalConfig() || { scene_routes: [], local_keys: [] };
-  const base = resolveBillingServerUrl();
+  const base = resolveBillingServerUrl(req);
   if (token && base) {
     try {
       const remote = await cloudBilling.syncFromCloud(token, base, cfg);
@@ -151,12 +156,14 @@ async function pullUserBillingApi(token) {
     } catch (e) {
       console.warn('[admin-api] billing pull failed:', e.message);
     }
+  } else if (token && !base) {
+    console.warn('[admin-api] billing pull skipped: Token Bank server URL not configured');
   }
   applyUserBillingCfg(cfg);
   return billingConfig.getUserAccounts(cfg);
 }
 
-async function pushUserBillingApi(token, patch) {
+async function pushUserBillingApi(token, req, patch) {
   let cfg = readLocalConfig() || { scene_routes: [], local_keys: [] };
   if (Array.isArray(patch.user_subscriptions)) cfg.user_subscriptions = patch.user_subscriptions;
   if (Array.isArray(patch.user_payg_providers)) cfg.user_payg_providers = patch.user_payg_providers;
@@ -170,7 +177,7 @@ async function pushUserBillingApi(token, patch) {
   syncGateway(cfg);
   applyUserBillingCfg(cfg);
   if (token) {
-    const base = resolveBillingServerUrl();
+    const base = resolveBillingServerUrl(req);
     if (base) {
       try {
         const remote = await cloudBilling.saveUserBilling(token, base, cloudBilling.pickBilling(cfg));
@@ -317,16 +324,28 @@ async function handleRequest(req, res) {
     return json(res, 200, { ok: true });
   }
 
+  // 云端账户保存后写入本地网关缓存（供离线估价，非 UI 数据源）
+  if (method === 'POST' && url === '/api/local-config/billing-cache') {
+    const body = await parseBody(req, res);
+    if (body === null) return;
+    let cfg = readLocalConfig() || { scene_routes: [], local_keys: [] };
+    cfg = cloudBilling.applyToCfg(cfg, cloudBilling.pickBilling(body));
+    writeLocalConfig(cfg);
+    syncGateway(cfg);
+    applyUserBillingCfg(cfg);
+    return json(res, 200, { ok: true });
+  }
+
   // 个人页：订阅 / 按量（与 Electron 相同，经云端 /user/accounts 同步）
   if (method === 'GET' && url === '/api/user-accounts') {
-    const data = await pullUserBillingApi(userBearerToken(req));
+    const data = await pullUserBillingApi(userBearerToken(req), req);
     return json(res, 200, data);
   }
 
   if (method === 'PUT' && url === '/api/user-accounts') {
     const body = await parseBody(req, res);
     if (body === null) return;
-    const data = await pushUserBillingApi(userBearerToken(req), body);
+    const data = await pushUserBillingApi(userBearerToken(req), req, body);
     return json(res, 200, data);
   }
 

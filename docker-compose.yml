@@ -74,6 +74,7 @@ services:
       - HOME=/data
       - NODE_ENV=production
       - GATEWAY_BIND_HOST=0.0.0.0
+      - TOKEN_SERVER_URL=https://tokenbank.wink.run/
     restart: unless-stopped
     healthcheck:
       test:

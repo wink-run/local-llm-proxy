@@ -1,6 +1,8 @@
 /** 登录页占位提示（非默认地址） */
 export const SERVER_URL_PLACEHOLDER = 'http://your-host:port';
 
+import { getLocalConfig } from './api/adapter';
+
 /** Vite 本地开发时的同源 API 代理前缀（见 vite.config.js） */
 export const DEV_API_PROXY_PREFIX = '/__tokenbank_api__';
 
@@ -67,6 +69,17 @@ export async function bootstrapServerUrl() {
       }
     } catch {}
   }
+
+  // Docker / 浏览器 CLI：从网关 local-config 回填服务地址
+  try {
+    const cfg = await getLocalConfig().get();
+    const url = normalizeServerBase(cfg?.cloud_config?.url || '');
+    if (url) {
+      localStorage.setItem('serverUrl', url);
+      return url;
+    }
+  } catch {}
+
   return '';
 }
 
@@ -79,17 +92,21 @@ export async function getSyncServerBase() {
   return normalizeServerBase(url);
 }
 
-/** 将 Token Bank 服务地址写入 cloud_config（与 P2P 网关对齐） */
+/** 将 Token Bank 服务地址写入 cloud_config（Docker CLI 经 admin-api 持久化，供云端同步） */
 export async function syncCloudConfigUrl(url) {
-  if (typeof window === 'undefined' || !window.electronAPI?.localConfig?.setCloudConfig) return;
+  if (typeof window === 'undefined') return;
   const base = normalizeServerBase(url || getServerUrl());
   if (!base) return;
   try {
-    const cfg = await window.electronAPI.localConfig.get();
-    const token = cfg?.cloud_config?.token;
-    await window.electronAPI.localConfig.setCloudConfig({
+    const lc = getLocalConfig();
+    let p2pToken;
+    if (lc.get) {
+      const cfg = await lc.get();
+      p2pToken = cfg?.cloud_config?.token;
+    }
+    await lc.setCloudConfig({
       url: base,
-      ...(token ? { token } : {}),
+      ...(p2pToken ? { token: p2pToken } : {}),
     });
   } catch {}
 }

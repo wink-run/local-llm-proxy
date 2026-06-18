@@ -1182,6 +1182,19 @@ function registerIPC() {
     return billingConfigMod.getUserAccounts(cfg);
   });
 
+  /** 本地 legacy 数据（迁移到云端用） */
+  ipcMain.handle('localConfig:getBillingLegacy', () => {
+    return cloudBilling.pickBilling(readLocalConfig());
+  });
+
+  /** UI 从云端读写后，同步刊例价缓存到本地网关 */
+  ipcMain.handle('localConfig:syncBillingCache', (_e, patch = {}) => {
+    let cfg = readLocalConfig();
+    cfg = cloudBilling.applyToCfg(cfg, patch);
+    applyUserBillingCfg(cfg);
+    return { ok: true };
+  });
+
   ipcMain.handle('localConfig:createSceneRoute', (_e, { scene_name, icon, steps, rules, classifier }) => {
     const cfg   = readLocalConfig();
     const route = {
