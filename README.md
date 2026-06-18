@@ -19,6 +19,14 @@ You've probably run into these problems:
 
 **Token Bank is a local LLM gateway** that sits between your AI tools and every LLM provider. It helps you understand your token usage, cut costs automatically, and turn idle quota into credits.
 
+**Three pillars in v0.4:**
+
+| Pillar | What you get |
+|---|---|
+| **Agent trace & onboarding** | Register Cursor, Claude Code, Codex CLI, Cherry Studio, and other agents in one gateway — proxy traffic in real time or import session logs so usage is traced even when apps bypass the gateway |
+| **Personal subscription hub** | Manage APP subscriptions (stats-only or API gateway), API subscriptions (e.g. Volcengine), and pay-as-you-go providers with per-model list prices — gateway picks models from your profile |
+| **Multi-dimensional analytics** | Dashboard slices usage by **app · provider · model · tier · cost · device · time range**, with subscription amortization and PAYG estimates in one view |
+
 ---
 
 ## Three things it does
@@ -27,10 +35,26 @@ You've probably run into these problems:
 
 Token Bank logs every request: which route it took, which model answered, how many tokens it used, and how long it took.
 
-- **Daily dashboard**: total calls, free tier hit rate, provider breakdown, model distribution
+- **Agent-aware inventory**: onboard common agents in the Gateway tab; see per-app calls, tokens, cost, and proxy vs session-import mix
+- **Daily dashboard**: total calls, free tier hit rate, provider breakdown, model distribution (by calls / tokens / cost)
 - **Call log**: route result, status, and latency for every request
-- **Multi-device view**: today's usage per device (desktop + CLI + server)
+- **Multi-device view**: today's usage per device (desktop + CLI + server), aggregated in the cloud when signed in
+- **Billing overlay**: subscription plans amortized by day + pay-as-you-go list-price estimates alongside raw token stats
 - **Credit history**: every earn and spend is recorded; balance is always up to date
+
+---
+
+### Personal subscription & PAYG (Profile)
+
+Keep subscriptions and metered providers in one place — separate from the raw provider key store:
+
+| Type | Purpose |
+|---|---|
+| **APP subscription** | ChatGPT, Claude, Gemini, etc. — stats-only, or convert to API gateway via OAuth |
+| **API subscription** | Vendor API plans (e.g. Volcengine Coding Plan) — API Key gateway, independent catalog |
+| **Pay-as-you-go** | OpenAI, Anthropic, custom providers — register models and USD/M-token list prices; gateway only allows models you configured here |
+
+The **Providers** page wires keys and routes; the **Profile → Subscriptions / PAYG** tabs define what counts toward billing analytics and which models each PAYG source may expose.
 
 ---
 
@@ -173,12 +197,12 @@ docker compose up gateway -d
 
 | Page | What you can do |
 |---|---|
-| **Dashboard** | Token usage, provider breakdown, model distribution, recent calls, per-device stats |
-| **Gateway** | Supply chain config, scene routes, gateway status and logs |
-| **Providers** | Add and manage local models and API keys, auto-scan and import |
+| **Dashboard** | Multi-dimensional stats: app/agent share, provider tier mix, model rankings (calls · tokens · cost), hourly trend, estimated PAYG + subscription cost |
+| **Gateway** | Onboard agents (Cursor, Claude Code, Codex, …), supply chain config, scene routes, gateway status and logs |
+| **Providers** | Free / P2P / paid tiers; APP-sub OAuth vs API-sub Key vs PAYG Key; model allowlists synced from Profile PAYG |
+| **Profile** | P2P credits · **Subscriptions** (APP + API) · **Pay-as-you-go** (providers, models, list prices) · per-device inventory |
 | **Network** | Global node map, online contributors, available models |
 | **Contribute** | Node status, settlement history, quality multiplier trend |
-| **Profile** | Credit balance, transaction history, device management, credit requests |
 
 ---
 

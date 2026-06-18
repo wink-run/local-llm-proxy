@@ -152,6 +152,12 @@
     }
     .btn-cta.ghost:hover { border-color: var(--border-hi); background: rgba(255,255,255,.03); }
 
+    .hero-pill {
+      font-family: "DM Mono", monospace; font-size: .68rem; letter-spacing: .04em;
+      padding: 6px 12px; border-radius: 999px;
+      border: 1px solid rgba(0,212,170,.25); background: rgba(0,212,170,.06); color: var(--accent);
+    }
+
     @keyframes rise {
       from { opacity: 0; transform: translateY(14px); }
       to   { opacity: 1; transform: translateY(0); }
@@ -472,6 +478,7 @@
       </a>
       <div class="nav-links">
         <a class="tl" href="#gateway">网关</a>
+        <a class="tl" href="#hub" data-i18n="nav.hub">三大能力</a>
         <a class="tl" href="#stats">用量统计</a>
         <a class="tl" href="#providers">Provider</a>
         <a class="tl" href="#download">下载</a>
@@ -491,8 +498,13 @@
       <p class="hero-eyebrow" data-i18n="hero.eyebrow">Personal AI Hub · Local Gateway · Multi-device</p>
       <h1 class="hero-h1" data-i18n-html="hero.h1">你的<em>个人 AI 中枢</em>，统一接入智能路由</h1>
       <p class="hero-sub" data-i18n-html="hero.sub">
-        本地网关透明代理所有 AI 请求，<strong>智能路由到最优 Provider</strong>，并跨应用、跨设备归集所有 AI 用量——就像 iOS 电量统计，<strong>所有 AI 应用自然纳入</strong>。
+        本地网关透明代理所有 AI 请求，<strong>纳管常见 Agent 并追溯 Trace</strong>，<strong>个人页统一管理订阅与按量</strong>，<strong>多维度统计分析</strong>——就像 iOS 电量统计，所有 AI 应用自然纳入。
       </p>
+      <div class="hero-pills" style="margin-top:24px;display:flex;flex-wrap:wrap;gap:8px;opacity:0;animation:rise .65s .24s ease forwards;">
+        <span class="hero-pill" data-i18n="hero.pill1">Agent 纳管 · Trace</span>
+        <span class="hero-pill" data-i18n="hero.pill2">订阅 / 按量管理</span>
+        <span class="hero-pill" data-i18n="hero.pill3">多维统计分析</span>
+      </div>
       <div class="hero-cta">
         <a href="#download"    class="btn-cta primary" data-i18n="cta.download">下载客户端</a>
         <a href="#gateway"     class="btn-cta ghost"   data-i18n="cta.howworks">了解原理</a>
@@ -554,6 +566,61 @@
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Three pillars ── -->
+    <section class="section" id="hub">
+      <div class="wrap">
+        <div class="reveal">
+          <div class="sec-label" data-i18n="sec.hub">v0.4 · 三大能力</div>
+          <h2 class="sec-h2" data-i18n-html="hub.h2">纳管 Agent、<em>管理订阅</em>、看懂每一分钱</h2>
+          <p class="sec-sub" data-i18n="hub.sub">不只是转发请求——Token Bank 把常见 AI Agent 纳入统一 Trace，在个人页维护订阅与按量账户，再在盘点页从多个维度拆解用量与费用。</p>
+        </div>
+
+        <div class="grid-3 reveal" style="margin-top:32px;">
+          <article class="card accent-card">
+            <div class="card-num" data-i18n="hub.c1.num">01 / Agent</div>
+            <div class="card-icon">🧭</div>
+            <h3 data-i18n="hub.c1.title">常见 Agent 纳管 · Trace</h3>
+            <p data-i18n="hub.c1.body">在网关登记 Cursor、Claude Code、Codex CLI、Cherry Studio 等应用。走网关的请求实时记录；直连官方的会话可补录导入——同一套应用维度统计。</p>
+            <div class="tier-badge-row" style="margin-top:12px;">
+              <span class="tbadge tbadge-g">网关实时</span>
+              <span class="tbadge tbadge-g">会话补录</span>
+              <span class="tbadge tbadge-g">按应用聚合</span>
+            </div>
+          </article>
+          <article class="card accent-card">
+            <div class="card-num" data-i18n="hub.c2.num">02 / 订阅</div>
+            <div class="card-icon">📋</div>
+            <h3 data-i18n="hub.c2.title">个人订阅管理</h3>
+            <p data-i18n="hub.c2.body">APP 订阅（仅统计或可转 API）、API 订阅（如火山引擎）、按量付费（模型 + 刊例价）分栏维护。供给源页接入 Key，个人页决定计费口径与按量可用模型。</p>
+            <div class="tier-badge-row" style="margin-top:12px;">
+              <span class="tbadge tbadge-y">APP / API</span>
+              <span class="tbadge tbadge-y">按量刊例价</span>
+              <span class="tbadge tbadge-y">OAuth / Key</span>
+            </div>
+          </article>
+          <article class="card accent-card">
+            <div class="card-num" data-i18n="hub.c3.num">03 / 分析</div>
+            <div class="card-icon">📊</div>
+            <h3 data-i18n="hub.c3.title">多维度统计分析</h3>
+            <p data-i18n="hub.c3.body">盘点页按应用、供给源、模型、路由层（免费/P2P/付费）、费用、设备与时间范围切片。订阅折算与按量估算同屏展示，一眼看清钱花在哪。</p>
+            <div class="tier-badge-row" style="margin-top:12px;">
+              <span class="tbadge tbadge-r">应用占比</span>
+              <span class="tbadge tbadge-r">模型排行</span>
+              <span class="tbadge tbadge-r">费用估算</span>
+            </div>
+          </article>
+        </div>
+
+        <!-- dimension chips -->
+        <div class="fmt-grid reveal" style="margin-top:24px;">
+          <div class="fmt-chip"><div class="fc-dot" style="background:#00d4aa;"></div><div><div class="fc-name" data-i18n="hub.dim.app">应用 / Agent</div><div class="fc-path">Cursor · Claude Code · Codex</div></div></div>
+          <div class="fmt-chip"><div class="fc-dot" style="background:#f5a623;"></div><div><div class="fc-name" data-i18n="hub.dim.provider">供给源 / 路由层</div><div class="fc-path">free · p2p · paid</div></div></div>
+          <div class="fmt-chip"><div class="fc-dot" style="background:#6c8fff;"></div><div><div class="fc-name" data-i18n="hub.dim.model">模型</div><div class="fc-path">calls · tokens · cost</div></div></div>
+          <div class="fmt-chip"><div class="fc-dot" style="background:#a77bff;"></div><div><div class="fc-name" data-i18n="hub.dim.billing">订阅 + 按量</div><div class="fc-path">amortized · list price</div></div></div>
         </div>
       </div>
     </section>
@@ -669,7 +736,7 @@
             <div class="sec-label" data-i18n="sec.stats">用量统计</div>
             <h2 class="sec-h2" data-i18n-html="stats.h2">所有 AI 消耗<br><em>一屏看清</em></h2>
             <p class="sec-sub" data-i18n-html="stats.sub">
-              类比 <strong>iOS 电量统计</strong>——所有 AI 应用自然纳入，无需逐一配置。走网关的、直连官方的、Claude Code 的、Codex 的，全部汇聚到同一个 Dashboard。
+              类比 <strong>iOS 电量统计</strong>——从<strong>应用、供给源、模型、费用、设备</strong>多个维度拆解。走网关的、会话补录的、Claude Code 的、Codex 的，全部汇聚到同一个盘点页。
             </p>
 
             <div class="device-row">
@@ -697,16 +764,16 @@
 
             <div class="stat-row">
               <div class="stat-pill">
-                <div class="sp-val">3<em>+</em></div>
-                <div class="sp-label" data-i18n="stats.sp1">数据来源自动接入</div>
+                <div class="sp-val">6<em>维</em></div>
+                <div class="sp-label" data-i18n="stats.sp1">应用·源·模型·层·费·设备</div>
               </div>
               <div class="stat-pill">
-                <div class="sp-val">∞<em> </em></div>
-                <div class="sp-label" data-i18n="stats.sp2">AI 应用均可覆盖</div>
+                <div class="sp-val">2<em>源</em></div>
+                <div class="sp-label" data-i18n="stats.sp2">网关实时 + 会话补录</div>
               </div>
               <div class="stat-pill">
                 <div class="sp-val">1<em>屏</em></div>
-                <div class="sp-label" data-i18n="stats.sp3">多设备统一看板</div>
+                <div class="sp-label" data-i18n="stats.sp3">订阅折算 + 按量估算</div>
               </div>
             </div>
           </div>
@@ -1071,21 +1138,35 @@
   /* ── i18n ── */
   var LANGS = {
     zh: {
-      "nav.portal": "用户中心", "nav.wall": "运营大屏", "footer.admin": "管理后台",
+      "nav.portal": "用户中心", "nav.wall": "运营大屏", "nav.hub": "三大能力", "footer.admin": "管理后台",
       "flow.label": "请求链路", "flow.app": "应用", "flow.anyapp": "任意 AI 应用",
       "flow.gateway": "本地网关", "flow.provider": "服务商",
       "flow.free": "免费 <span class='flow-badge badge-free'>free</span>",
       "flow.p2p":  "P2P 共享 <span class='flow-badge badge-p2p'>p2p</span>",
       "flow.paid": "付费 <span class='flow-badge badge-paid'>paid</span>",
       "sec.gateway": "本地网关", "sec.optimize": "Token 优化", "sec.stats": "用量统计",
+      "sec.hub": "v0.4 · 三大能力",
       "sec.providers": "Provider 层级", "sec.p2p": "P2P 共享 · 本项目特色",
       "sec.download": "下载", "sec.quickstart": "快速接入",
       "gw.num1": "01 / 代理", "gw.num2": "02 / 路由", "gw.num3": "03 / 管理",
       "p2p.earn.label": "贡献赚积分", "p2p.spend.label": "调用花积分",
       "dl.docker.qs": "Docker 快速启动",
-      "hero.eyebrow": "个人 AI 中枢 · 本地网关 · 多设备归集",
+      "hero.eyebrow": "个人 AI 中枢 · Agent 纳管 · 订阅与按量 · 多维统计",
       "hero.h1": "你的<em>个人 AI 中枢</em>，统一接入智能路由",
-      "hero.sub": "本地网关透明代理所有 AI 请求，<strong>智能路由到最优 Provider</strong>，并跨应用、跨设备归集所有 AI 用量——就像 iOS 电量统计，<strong>所有 AI 应用自然纳入</strong>。",
+      "hero.sub": "本地网关透明代理所有 AI 请求，<strong>纳管常见 Agent 并追溯 Trace</strong>，<strong>个人页统一管理订阅与按量</strong>，<strong>多维度统计分析</strong>——就像 iOS 电量统计，所有 AI 应用自然纳入。",
+      "hero.pill1": "Agent 纳管 · Trace",
+      "hero.pill2": "订阅 / 按量管理",
+      "hero.pill3": "多维统计分析",
+      "hub.h2": "纳管 Agent、<em>管理订阅</em>、看懂每一分钱",
+      "hub.sub": "不只是转发请求——Token Bank 把常见 AI Agent 纳入统一 Trace，在个人页维护订阅与按量账户，再在盘点页从多个维度拆解用量与费用。",
+      "hub.c1.num": "01 / Agent", "hub.c1.title": "常见 Agent 纳管 · Trace",
+      "hub.c1.body": "在网关登记 Cursor、Claude Code、Codex CLI、Cherry Studio 等应用。走网关的请求实时记录；直连官方的会话可补录导入——同一套应用维度统计。",
+      "hub.c2.num": "02 / 订阅", "hub.c2.title": "个人订阅管理",
+      "hub.c2.body": "APP 订阅（仅统计或可转 API）、API 订阅（如火山引擎）、按量付费（模型 + 刊例价）分栏维护。供给源页接入 Key，个人页决定计费口径与按量可用模型。",
+      "hub.c3.num": "03 / 分析", "hub.c3.title": "多维度统计分析",
+      "hub.c3.body": "盘点页按应用、供给源、模型、路由层（免费/P2P/付费）、费用、设备与时间范围切片。订阅折算与按量估算同屏展示，一眼看清钱花在哪。",
+      "hub.dim.app": "应用 / Agent", "hub.dim.provider": "供给源 / 路由层",
+      "hub.dim.model": "模型", "hub.dim.billing": "订阅 + 按量",
       "cta.download": "下载客户端", "cta.howworks": "了解原理",
       "gw.h2": "多格式接入，<em>无感代理</em>",
       "gw.sub": "本地网关同时兼容主流 AI 接口格式，AI 应用无需任何改造，只需把 Base URL 指向 <strong>127.0.0.1:11430</strong>，请求自动流入并被路由到最优 Provider。",
@@ -1102,8 +1183,8 @@
       "opt.s3.title": "多 Key 轮询", "opt.s3.body": "同一 Provider 绑定多个 API Key，自动轮询使用，均摊速率限制，避免单 Key 触发限流。",
       "opt.s4.title": "用量感知调度", "opt.s4.body": "实时感知各 Provider 当日用量，接近限额时自动切换，保持服务连续性。",
       "stats.h2": "所有 AI 消耗<br><em>一屏看清</em>",
-      "stats.sub": "类比 <strong>iOS 电量统计</strong>——所有 AI 应用自然纳入，无需逐一配置。走网关的、直连官方的、Claude Code 的、Codex 的，全部汇聚到同一个 Dashboard。",
-      "stats.sp1": "数据来源自动接入", "stats.sp2": "AI 应用均可覆盖", "stats.sp3": "多设备统一看板",
+      "stats.sub": "类比 <strong>iOS 电量统计</strong>——从<strong>应用、供给源、模型、费用、设备</strong>多个维度拆解。走网关的、会话补录的、Claude Code 的、Codex 的，全部汇聚到同一个盘点页。",
+      "stats.sp1": "应用·源·模型·层·费·设备", "stats.sp2": "网关实时 + 会话补录", "stats.sp3": "订阅折算 + 按量估算",
       "stats.mock.title": "AI 用量 · 本月",
       "prov.h2": "三层 Provider，<em>自动择优</em>",
       "prov.sub": "路由按成本优先级自动选择，能用免费的绝不走付费，P2P 共享也能进一步降低成本。",
@@ -1152,21 +1233,35 @@
       "disclaimer.short": "仅供学习与研究；使用后果自负。",
     },
     en: {
-      "nav.portal": "User Portal", "nav.wall": "Live Dashboard", "footer.admin": "Admin",
+      "nav.portal": "User Portal", "nav.wall": "Live Dashboard", "nav.hub": "Three pillars", "footer.admin": "Admin",
       "flow.label": "REQUEST FLOW", "flow.app": "APP", "flow.anyapp": "Any AI App",
       "flow.gateway": "LOCAL GATEWAY", "flow.provider": "PROVIDER",
       "flow.free": "Free <span class='flow-badge badge-free'>free</span>",
       "flow.p2p":  "P2P Shared <span class='flow-badge badge-p2p'>p2p</span>",
       "flow.paid": "Paid <span class='flow-badge badge-paid'>paid</span>",
       "sec.gateway": "LOCAL GATEWAY", "sec.optimize": "TOKEN OPTIMIZATION", "sec.stats": "USAGE ANALYTICS",
+      "sec.hub": "v0.4 · THREE PILLARS",
       "sec.providers": "PROVIDER TIERS", "sec.p2p": "P2P SHARING · KEY FEATURE",
       "sec.download": "DOWNLOAD", "sec.quickstart": "QUICKSTART",
       "gw.num1": "01 / PROXY", "gw.num2": "02 / ROUTE", "gw.num3": "03 / ADMIN",
       "p2p.earn.label": "EARN · Contribute for Credits", "p2p.spend.label": "SPEND · Pay with Credits",
       "dl.docker.qs": "DOCKER QUICKSTART",
-      "hero.eyebrow": "Personal AI Hub · Local Gateway · Multi-device",
+      "hero.eyebrow": "Personal AI Hub · Agent trace · Subscriptions · Analytics",
       "hero.h1": "Your <em>Personal AI Hub</em> — Unified Access, Smart Routing",
-      "hero.sub": "The local gateway transparently proxies all AI requests, <strong>routes to the best Provider</strong>, and aggregates usage across apps and devices — like iOS battery stats, <strong>every AI app is naturally included</strong>.",
+      "hero.sub": "The local gateway proxies all AI traffic, <strong>onboards common agents with full trace</strong>, <strong>manages subscriptions and PAYG on your profile</strong>, and delivers <strong>multi-dimensional analytics</strong> — like iOS battery stats for every AI app.",
+      "hero.pill1": "Agent onboarding · Trace",
+      "hero.pill2": "Subscriptions · PAYG",
+      "hero.pill3": "Multi-dimensional stats",
+      "hub.h2": "Onboard agents, <em>manage subscriptions</em>, see every dollar",
+      "hub.sub": "More than a proxy — Token Bank traces common AI agents, maintains subscription and pay-as-you-go accounts on your profile, and breaks usage down across multiple dimensions on the Dashboard.",
+      "hub.c1.num": "01 / AGENTS", "hub.c1.title": "Common agent onboarding · Trace",
+      "hub.c1.body": "Register Cursor, Claude Code, Codex CLI, Cherry Studio, and more in the Gateway. Proxy traffic is logged in real time; direct API sessions can be imported — one app-level view for all.",
+      "hub.c2.num": "02 / BILLING", "hub.c2.title": "Personal subscription hub",
+      "hub.c2.body": "APP subscriptions (stats-only or API gateway), API subscriptions (e.g. Volcengine), and pay-as-you-go (models + list prices). Providers page holds keys; Profile defines billing scope and PAYG model allowlists.",
+      "hub.c3.num": "03 / ANALYTICS", "hub.c3.title": "Multi-dimensional analytics",
+      "hub.c3.body": "Dashboard slices by app, provider, model, tier (free/P2P/paid), cost, device, and time range. Subscription amortization and PAYG estimates on one screen.",
+      "hub.dim.app": "App / Agent", "hub.dim.provider": "Provider / Tier",
+      "hub.dim.model": "Model", "hub.dim.billing": "Sub + PAYG",
       "cta.download": "Download", "cta.howworks": "How it works",
       "gw.h2": "Multi-format access,<br><em>zero-config proxy</em>",
       "gw.sub": "The local gateway supports all major AI API formats. No app changes needed — just point your <strong>Base URL</strong> to <strong>127.0.0.1:11430</strong> and requests are automatically routed to the best Provider.",
@@ -1183,8 +1278,8 @@
       "opt.s3.title": "Multi-key rotation", "opt.s3.body": "Bind multiple API keys to one Provider and auto-rotate, spreading rate limits to avoid single-key throttling.",
       "opt.s4.title": "Usage-aware dispatch", "opt.s4.body": "Monitors daily quota in real time and auto-switches Providers as limits approach, keeping service continuous.",
       "stats.h2": "All AI spend,<br><em>one screen</em>",
-      "stats.sub": "Like <strong>iOS battery stats</strong> — every AI app is automatically included with zero configuration. Gateway requests, direct API calls, Claude Code, Codex — all aggregated in one Dashboard.",
-      "stats.sp1": "Sources auto-detected", "stats.sp2": "Any AI app covered", "stats.sp3": "Multi-device unified",
+      "stats.sub": "Like <strong>iOS battery stats</strong> — broken down by <strong>app, provider, model, cost, and device</strong>. Gateway proxy, session import, Claude Code, Codex — all in one Dashboard.",
+      "stats.sp1": "App · source · model · tier · cost · device", "stats.sp2": "Live proxy + session import", "stats.sp3": "Sub amortization + PAYG est.",
       "stats.mock.title": "AI Usage · This Month",
       "prov.h2": "Three Provider tiers,<br><em>auto-selected</em>",
       "prov.sub": "Routes by cost priority — free first, never paid when free is available. P2P sharing further reduces costs.",

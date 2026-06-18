@@ -21,8 +21,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: client/package-lock.json
+          # 不使用 setup-node 内置 npm cache，避免 macOS runner 上出现 EEXIST 缓存冲突
 
       - uses: actions/setup-python@v5
         with:
@@ -37,8 +36,20 @@ jobs:
         working-directory: client
 
       - name: Install dependencies
-        run: npm ci
         working-directory: client
+        env:
+          # 每次 workflow 使用独立缓存目录，规避 ~/.npm/_cacache/tmp EEXIST
+          npm_config_cache: /tmp/npm-cache-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            echo "npm ci attempt ${attempt}..."
+            npm cache clean --force
+            npm ci && exit 0
+            echo "npm ci failed, retrying..."
+            sleep 3
+          done
+          exit 1
 
       - name: Build (Vite + electron-builder)
         run: npm run build -- --publish never
@@ -61,8 +72,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: client/package-lock.json
 
       - name: Install Python setuptools (node-gyp needs distutils, removed in Python 3.12+)
         run: pip install setuptools
@@ -73,8 +82,21 @@ jobs:
         working-directory: client
 
       - name: Install dependencies
-        run: npm ci
         working-directory: client
+        env:
+          npm_config_cache: ${{ runner.temp }}\npm-cache-${{ github.run_id }}-${{ github.run_attempt }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          for ($i = 1; $i -le 3; $i++) {
+            Write-Host "npm ci attempt $i..."
+            npm cache clean --force
+            npm ci
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Write-Host "npm ci failed, retrying..."
+            Start-Sleep -Seconds 3
+          }
+          exit 1
 
       - name: Build (Vite + electron-builder)
         run: npm run build -- --publish never
