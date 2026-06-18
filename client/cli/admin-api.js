@@ -324,18 +324,6 @@ async function handleRequest(req, res) {
     return json(res, 200, { ok: true });
   }
 
-  // 云端账户保存后写入本地网关缓存（供离线估价，非 UI 数据源）
-  if (method === 'POST' && url === '/api/local-config/billing-cache') {
-    const body = await parseBody(req, res);
-    if (body === null) return;
-    let cfg = readLocalConfig() || { scene_routes: [], local_keys: [] };
-    cfg = cloudBilling.applyToCfg(cfg, cloudBilling.pickBilling(body));
-    writeLocalConfig(cfg);
-    syncGateway(cfg);
-    applyUserBillingCfg(cfg);
-    return json(res, 200, { ok: true });
-  }
-
   // 个人页：订阅 / 按量（与 Electron 相同，经云端 /user/accounts 同步）
   if (method === 'GET' && url === '/api/user-accounts') {
     const data = await pullUserBillingApi(userBearerToken(req), req);

@@ -44,6 +44,7 @@ export default function UserAccountsPanel({
   onRefreshUser,
   CheckinCard,
   SpinCard,
+  purchaseForm,
   initialTab = 'p2p',
 }) {
   const { t } = useLang();
@@ -624,6 +625,7 @@ export default function UserAccountsPanel({
                     </span>
                   </div>
                 ))}
+                {purchaseForm}
               </div>
             )}
 

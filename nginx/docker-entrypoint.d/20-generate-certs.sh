@@ -6,13 +6,7 @@ CERT_DIR=/etc/nginx/certs
 mkdir -p "$CERT_DIR"
 
 if ! command -v openssl >/dev/null 2>&1; then
-  if command -v apk >/dev/null 2>&1; then
-    apk add --no-cache openssl >/dev/null 2>&1 || true
-  fi
-fi
-
-if ! command -v openssl >/dev/null 2>&1; then
-  echo "[nginx] openssl not available, cannot generate dev certs"
+  echo "[nginx] openssl not found, skipping cert generation"
   exit 0
 fi
 
@@ -35,7 +29,7 @@ gen_self_signed() {
 }
 
 # Token Bank 后端 HTTPS（profile: https）
-if [ ! -f "$CERT_DIR/fullchain.pem" ] || [ ! -f "$CERT_DIR/privkey.pem" ]; then
+if [ -n "${DOMAIN:-}" ] || [ ! -f "$CERT_DIR/fullchain.pem" ]; then
   domain="${DOMAIN:-tokenbank.example.com}"
   gen_self_signed \
     "$CERT_DIR/fullchain.pem" \
@@ -45,7 +39,7 @@ if [ ! -f "$CERT_DIR/fullchain.pem" ] || [ ! -f "$CERT_DIR/privkey.pem" ]; then
 fi
 
 # CLI Gateway HTTPS（profile: gateway-https）
-if [ ! -f "$CERT_DIR/gateway-fullchain.pem" ] || [ ! -f "$CERT_DIR/gateway-privkey.pem" ]; then
+if [ -n "${GATEWAY_DOMAIN:-}" ] || [ ! -f "$CERT_DIR/gateway-fullchain.pem" ]; then
   gw="${GATEWAY_DOMAIN:-gateway.example.com}"
   gen_self_signed \
     "$CERT_DIR/gateway-fullchain.pem" \

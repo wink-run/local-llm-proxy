@@ -163,10 +163,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resetBilling:    (d) => ipcRenderer.invoke('localConfig:resetBilling', { ...d, ...billingAuth() }),
     getUserAccounts: ()  => ipcRenderer.invoke('localConfig:getUserAccounts', billingAuth()),
     setUserAccounts: (d) => ipcRenderer.invoke('localConfig:setUserAccounts', { ...d, ...billingAuth() }),
-    /** 读取本地 legacy 计费（仅迁移用，UI 不依赖） */
-    getBillingLegacy: () => ipcRenderer.invoke('localConfig:getBillingLegacy'),
-    /** 将云端计费写入本地网关缓存 */
-    syncBillingCache: (d) => ipcRenderer.invoke('localConfig:syncBillingCache', d),
     // 服务端配置下发 / 同步后刷新报价
     onBillingChanged: (cb) => {
       const h = () => cb();

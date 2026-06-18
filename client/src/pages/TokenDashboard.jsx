@@ -3,16 +3,31 @@ import { useLocation } from 'react-router-dom';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { useAuth } from '../store/index';
 import { useLang } from '../store/lang';
-import { getTransactions, checkin, getCheckinStatus, spin, getSpinStatus, getUserDevices, deleteDevice, getInventoryStats } from '../api/client';
+import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getUserDevices, deleteDevice, getInventoryStats } from '../api/client';
 import UserAccountsPanel from '../components/UserAccountsPanel';
-import CreditsBillingSection from '../components/CreditsBillingSection';
 import { enrichBillingCost } from '../utils/billing-cost';
 import { loadUserAccounts } from '../api/userAccounts';
 
-/** 从云端拉取各设备聚合盘点，并合并订阅折算 + 按量费用 */
+/** 从云端拉取各设备聚合盘点；失败时回退本机数据，并合并订阅折算 + 按量费用 */
 async function fetchDashboardStats(days) {
-  const r = await getInventoryStats(days);
-  const raw = { ...r.data, source: 'cloud' };
+  let raw = null;
+  try {
+    const r = await getInventoryStats(days);
+    if (r.data) raw = { ...r.data, source: 'cloud' };
+  } catch {
+    // 未登录或云端不可用时回退
+  }
+  if (!raw) {
+    if (window.electronAPI?.localStats) {
+      const local = await window.electronAPI.localStats.query(days);
+      raw = { ...local, source: 'local', devices: [] };
+    } else {
+      const r = await fetch(`/api/local-stats?days=${days}`);
+      if (!r.ok) throw new Error(`local-stats ${r.status}`);
+      const local = await r.json();
+      raw = { ...local, source: 'local', devices: [] };
+    }
+  }
 
   let subs = [];
   let payg = [];
@@ -35,6 +50,8 @@ const PROVIDER_COLORS = {
   openai:         { bg: 'bg-orange-500', label: 'OpenAI',           type: 'paid' },
   'anthropic-paid':{ bg: 'bg-red-500',   label: 'Anthropic',        type: 'paid' },
 };
+
+const ORDER_STATUS_KEYS = { pending: 'profile.order.pending', approved: 'profile.order.approved', rejected: 'profile.order.rejected' };
 
 const RANGE_KEYS = ['today', '7d', '30d'];
 const RANGE_DAYS = { today: 1, '7d': 7, '30d': 30 };
@@ -507,24 +524,32 @@ export default function TokenDashboard() {
   const location = useLocation();
   const accountsTab = location.state?.accountsTab;
   const [txs,      setTxs]      = useState([]);
+  const [orders,   setOrders]   = useState([]);
+  const [adminInfo,setAdminInfo]= useState('');
+  const [contact,  setContact]  = useState('');
+  const [note,     setNote]     = useState('');
+  const [submitting,setSubmitting]=useState(false);
+  const [orderMsg, setOrderMsg] = useState('');
+  const [orderMsgOk,setOrderMsgOk]=useState(false);
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [range,       setRange]      = useState('today');
   const [rangeStats,  setRangeStats] = useState({ calls: 0, tokens: 0, free: 0, p2p: 0, paid: 0 });
   const [localData,   setLocalData]  = useState(null);
-  const [usageError,  setUsageError]  = useState(false);
+  const [dataSource,  setDataSource]  = useState('cloud');
   const [deviceList,  setDeviceList]  = useState([]);
   const [distFilter,  setDistFilter]  = useState('all');
   useEffect(() => {
     refreshUser();
     getTransactions().then(r => setTxs(r.data.transactions || [])).catch(() => {});
+    getPurchaseOrders().then(r => { setOrders(r.data.orders || []); if (r.data.contact_info) setAdminInfo(String(r.data.contact_info)); }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     const days = RANGE_DAYS[range];
-    setUsageError(false);
     fetchDashboardStats(days).then(data => {
       setLocalData(data);
+      setDataSource(data.source || 'cloud');
       setRangeStats({
         calls:  data.total_calls  || 0,
         tokens: data.total_tokens || 0,
@@ -534,12 +559,7 @@ export default function TokenDashboard() {
       });
       setDeviceList(data.devices || []);
       setDistFilter('all');
-    }).catch(() => {
-      setUsageError(true);
-      setLocalData(null);
-      setRangeStats({ calls: 0, tokens: 0, free: 0, p2p: 0, paid: 0 });
-      setDeviceList([]);
-    });
+    }).catch(() => {});
   }, [range]);
 
   if (!user) return null;
@@ -547,12 +567,28 @@ export default function TokenDashboard() {
   const heroTotal   = rangeStats.calls;
   const heroFree    = rangeStats.free;
 
+  const localTotalCalls = localData?.total_calls ?? 0;
+
   const fmtRangeCalls  = heroTotal >= 1000 ? `${(heroTotal / 1000).toFixed(1)}K` : String(heroTotal);
   const fmtRangeTokens = rangeStats.tokens >= 1000 ? `${(rangeStats.tokens / 1000).toFixed(1)}K` : String(rangeStats.tokens);
   const deviceCount    = localData?.device_count ?? localData?.devices?.length ?? 0;
   const onlineCount    = (localData?.devices || []).filter(d => d.online).length;
 
   const rangeLabel = t(`profile.range.${range}`);
+
+  async function handleOrder(e) {
+    e.preventDefault();
+    if (submitting || !contact.trim()) return;
+    setSubmitting(true); setOrderMsg('');
+    try {
+      const r = await createPurchaseOrder(0, `联系方式：${contact.trim()}${note.trim() ? `；${note.trim()}` : ''}`);
+      setOrderMsgOk(true); setOrderMsg(t('profile.purchase.success'));
+      if (r.data.contact_info) setAdminInfo(String(r.data.contact_info));
+      setOrders(prev => [r.data.order, ...prev]); setContact(''); setNote('');
+    } catch (err) {
+      setOrderMsgOk(false); setOrderMsg(err.response?.data?.detail || t('profile.purchase.failed'));
+    } finally { setSubmitting(false); }
+  }
 
   const subCostStr = localData?.subscription_cost > 0
     ? `$${localData.subscription_cost.toFixed(2)}`
@@ -565,41 +601,16 @@ export default function TokenDashboard() {
     <div className="p-8 space-y-8">
 
       {/* Hero */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-full bg-blue-700 flex items-center justify-center text-xl font-bold text-white shrink-0">
-            {(user.nickname || user.email || '?')[0].toUpperCase()}
-          </div>
-          <div>
-            <p className="text-xl font-bold text-gray-900 dark:text-gray-100">{user.nickname}</p>
-            <p className="text-sm text-gray-400 truncate">{user.email}</p>
-          </div>
+      <div className="flex items-center gap-4">
+        <div className="w-12 h-12 rounded-full bg-blue-700 flex items-center justify-center text-xl font-bold text-white shrink-0">
+          {(user.nickname || user.email || '?')[0].toUpperCase()}
         </div>
-        <p className="text-[11px] text-gray-400 shrink-0">{t('hub.dataFromCloud')}</p>
+        <div>
+          <p className="text-xl font-bold text-gray-900 dark:text-gray-100">{user.nickname}</p>
+          <p className="text-sm text-gray-400 truncate">{user.email}</p>
+        </div>
       </div>
 
-      {/* 账户管理：积分 / 订阅 / 按量 */}
-      <div>
-        <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">{t('hub.section.accounts')}</h2>
-        <UserAccountsPanel
-          initialTab={accountsTab === 'subscription' || accountsTab === 'payg' ? accountsTab : 'p2p'}
-          user={user}
-          txs={txs}
-          creditsOpen={creditsOpen}
-          onCreditsToggle={() => setCreditsOpen(v => !v)}
-          onRefreshUser={refreshUser}
-          CheckinCard={CheckinCard}
-          SpinCard={SpinCard}
-        />
-      </div>
-
-      {/* 用量情况 */}
-      <div>
-        <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">{t('hub.section.usage')}</h2>
-        {usageError ? (
-          <p className="text-sm text-gray-400 bg-white dark:bg-gray-800 rounded-2xl p-5">{t('profile.usageEmpty')}</p>
-        ) : (
-          <>
       {/* Usage card with range selector */}
       <div className="bg-gradient-to-br from-blue-700 to-blue-900 rounded-2xl p-6">
         {/* Header row */}
@@ -640,7 +651,9 @@ export default function TokenDashboard() {
             <p className="text-xs text-blue-300 mb-1">{t('profile.tokens')}</p>
             <p className="text-3xl sm:text-4xl font-bold text-white">{fmtRangeTokens}</p>
             <p className="text-xs text-blue-300 mt-2">
-              {t('profile.cloudTotal', { range: rangeLabel })}
+              {dataSource === 'cloud'
+                ? t('profile.cloudTotal', { range: rangeLabel })
+                : t('profile.localTotal', { range: rangeLabel })}
             </p>
           </div>
           <div className="border-l border-blue-500/40 pl-4">
@@ -663,6 +676,35 @@ export default function TokenDashboard() {
       {/* 我的设备 */}
       <DevicesSection />
 
+      {/* 三类账户：积分 / 订阅 / 按量付费 */}
+      <UserAccountsPanel
+        initialTab={accountsTab === 'subscription' || accountsTab === 'payg' ? accountsTab : 'p2p'}
+        user={user}
+        txs={txs}
+        creditsOpen={creditsOpen}
+        onCreditsToggle={() => setCreditsOpen(v => !v)}
+        onRefreshUser={refreshUser}
+        CheckinCard={CheckinCard}
+        SpinCard={SpinCard}
+        purchaseForm={(
+          <div className="border-t border-gray-100 dark:border-gray-700 pt-4 space-y-3">
+            <h3 className="text-sm font-medium text-gray-600 dark:text-gray-300">{t('profile.purchase.title')}</h3>
+            <form onSubmit={handleOrder} className="space-y-2">
+              <input value={contact} onChange={e => setContact(e.target.value)} placeholder={t('profile.purchase.contact')} required
+                className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-gray-900 dark:text-gray-100 placeholder-gray-400" />
+              <input value={note} onChange={e => setNote(e.target.value)} placeholder={t('profile.purchase.note')}
+                className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-gray-900 dark:text-gray-100 placeholder-gray-400" />
+              <button type="submit" disabled={submitting || !contact.trim()}
+                className="w-full py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white">
+                {submitting ? t('profile.purchase.submitting') : t('profile.purchase.submit')}
+              </button>
+            </form>
+            {orderMsg && <p className={`text-sm ${orderMsgOk ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{orderMsg}</p>}
+            {adminInfo && <div className="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-900 rounded-lg px-3 py-2 whitespace-pre-wrap">{adminInfo}</div>}
+          </div>
+        )}
+      />
+
       {/* 用量分布：工具 / 供给 / 模型（可按端筛选） */}
       <UsageDistributionPanel
         localData={localData}
@@ -671,15 +713,7 @@ export default function TokenDashboard() {
         filterId={distFilter}
         onFilterChange={setDistFilter}
       />
-          </>
-        )}
-      </div>
 
-      {/* 积分结算及购买 */}
-      <div>
-        <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">{t('hub.section.creditsBilling')}</h2>
-        <CreditsBillingSection txs={txs} />
-      </div>
 
     </div>
   );
