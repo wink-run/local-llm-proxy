@@ -11,6 +11,7 @@ const localStats = require('./local-stats');
 const sessionImport = require('./session-import');
 const sessionBrowser = require('./session-browser');
 const { STATS_DIR, computeImportSkip } = require('../shared/telemetry');
+const { defaultServerUrlFromEnv } = require('../shared/default-server-url');
 const detectTools = require('./detect-tools');
 const agentLinker = require('./agent-linker');
 // device-reporter is used by the CLI only; desktop registration is handled
@@ -290,6 +291,14 @@ function loadDefaultYamlSection(filename, section) {
   } catch { return null; }
 }
 
+function applyEnvServerDefault(cfg) {
+  const url = defaultServerUrlFromEnv();
+  if (!url) return cfg;
+  if (!cfg.cloud_config) cfg.cloud_config = {};
+  if (!cfg.cloud_config.url) cfg.cloud_config.url = url;
+  return cfg;
+}
+
 function readLocalConfig() {
   try {
     const p = localConfigPath();
@@ -326,18 +335,18 @@ function readLocalConfig() {
       }
       // 用户显式取消托管的 agent_id 列表（自动托管会跳过这些）
       if (!Array.isArray(cfg.auto_host_disabled)) cfg.auto_host_disabled = [];
-      return cfg;
+      return applyEnvServerDefault(cfg);
     }
   } catch {}
   // 全新安装：从默认文件初始化（场景路由从 routes 默认文件）
   const defaultRoutes = loadDefaultYamlSection('tokenbank.routes.default.yaml', 'scene_routes') || [];
-  return {
+  return applyEnvServerDefault({
     scene_routes: defaultRoutes.map(r => ({ ...r, created_at: new Date().toISOString() })),
     local_keys: [], apps: [],
     policies: DEFAULT_POLICIES.map(p => ({ ...p, created_at: new Date().toISOString() })),
     initialized_routes: defaultRoutes.length > 0,
     auto_host_disabled: [],
-  };
+  });
 }
 
 function writeLocalConfig(cfg) {
@@ -658,6 +667,7 @@ function nodeRequest(url, method, headers, body) {
 
 function registerIPC() {
   ipcMain.on('app:version', (e) => { e.returnValue = app.getVersion(); });
+  ipcMain.on('app:defaultServerUrl', (e) => { e.returnValue = defaultServerUrlFromEnv(); });
   ipcMain.handle('agent:start',   () => { startAgent(); return { running: agent.isRunning() }; });
   ipcMain.handle('agent:stop',    () => { stopAgent();  return { running: false }; });
   ipcMain.handle('agent:status',  () => ({ running: agent.isRunning() }));
@@ -1092,12 +1102,14 @@ function registerIPC() {
   const cloudBilling = require('./cloud-billing-sync');
   const billingConfigMod = require('./billing-config');
 
-  /** 解析 Token Bank 服务地址：优先调用方传入，其次 cloud_config.url */
+  /** 解析 Token Bank 服务地址：优先调用方传入，其次 cloud_config.url，最后 env */
   function resolveBillingServerUrl(serverUrl) {
     const explicit = cloudBilling.normalizeBase(serverUrl);
     if (explicit) return explicit;
     const cfg = readLocalConfig();
-    return cloudBilling.normalizeBase(cfg?.cloud_config?.url);
+    const fromCfg = cloudBilling.normalizeBase(cfg?.cloud_config?.url);
+    if (fromCfg) return fromCfg;
+    return defaultServerUrlFromEnv();
   }
 
   function applyUserBillingCfg(cfg, overrides) {

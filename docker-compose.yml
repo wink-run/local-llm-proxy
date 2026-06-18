@@ -4,8 +4,11 @@ services:
   proxy:
     build:
       context: ./server
+    # 生产环境经 nginx 暴露 HTTPS 时可注释下一行，仅保留 expose
     ports:
       - "8000:8000"
+    expose:
+      - "8000"
     env_file: .env
     environment:
       - DB_PATH=/app/data/proxy.db
@@ -17,6 +20,45 @@ services:
       options:
         max-size: "20m"
         max-file: "5"
+
+  # ── Nginx HTTPS 反代（绑定域名）────────────────────────────────────────────
+  # 用法见 .env.example：放置证书后 docker compose --profile https up -d
+  nginx:
+    image: nginx:1.27-alpine
+    profiles: [https]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-tokenbank.example.com}
+      UPSTREAM: ${NGINX_UPSTREAM:-proxy:8000}
+      GATEWAY_DOMAIN: ${GATEWAY_DOMAIN:-gateway.example.com}
+      GATEWAY_UPSTREAM: ${GATEWAY_UPSTREAM:-gateway:11431}
+    volumes:
+      - ./nginx/templates/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - certbot_www:/var/www/certbot:ro
+    depends_on:
+      - proxy
+    restart: unless-stopped
+
+  # 可选：同时为 CLI Gateway 配置 HTTPS（需 gateway-fullchain.pem 等）
+  nginx-gateway:
+    image: nginx:1.27-alpine
+    profiles: [gateway-https]
+    ports:
+      - "8443:443"
+      - "8080:80"
+    environment:
+      GATEWAY_DOMAIN: ${GATEWAY_DOMAIN:-gateway.example.com}
+      GATEWAY_UPSTREAM: ${GATEWAY_UPSTREAM:-gateway:11431}
+    volumes:
+      - ./nginx/templates/gateway.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - certbot_www:/var/www/certbot:ro
+    depends_on:
+      - gateway
+    restart: unless-stopped
 
   # ── CLI Gateway (headless, no Electron) ──────────────────────────────────────
   gateway:
@@ -53,3 +95,4 @@ services:
 
 volumes:
   db_data:
+  certbot_www:

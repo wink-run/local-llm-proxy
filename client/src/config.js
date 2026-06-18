@@ -12,12 +12,33 @@ export function normalizeServerBase(url) {
   return String(url).trim().replace(/\/$/, '').replace(/\/(api|v\d+)(\/.*)?$/, '');
 }
 
-/**
- * 启动时：若设置页未填地址，从网关 cloud_config.url 回填（不写死默认 IP）。
- */
+/** 环境变量 / 构建注入的默认 Token Bank 服务地址 */
+function defaultServerUrlFromEnv() {
+  return normalizeServerBase(import.meta.env.VITE_TOKEN_SERVER_URL || '');
+}
+
+/** 启动时：若设置页未填地址，从 env / 网关 cloud_config.url 回填 */
 export async function bootstrapServerUrl() {
   const stored = normalizeServerBase(localStorage.getItem('serverUrl') || '');
   if (stored) return stored;
+
+  // Electron 运行时 env（打包后仍可通过 TOKEN_SERVER_URL 指定）
+  const fromElectron = typeof window !== 'undefined' && window.electronAPI?.app?.defaultServerUrl
+    ? normalizeServerBase(window.electronAPI.app.defaultServerUrl() || '')
+    : '';
+  if (fromElectron) {
+    localStorage.setItem('serverUrl', fromElectron);
+    await syncCloudConfigUrl(fromElectron);
+    return fromElectron;
+  }
+
+  const fromEnv = defaultServerUrlFromEnv();
+  if (fromEnv) {
+    localStorage.setItem('serverUrl', fromEnv);
+    await syncCloudConfigUrl(fromEnv);
+    return fromEnv;
+  }
+
   if (typeof window !== 'undefined' && window.electronAPI?.localConfig?.get) {
     try {
       const cfg = await window.electronAPI.localConfig.get();

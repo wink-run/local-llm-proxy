@@ -11,6 +11,7 @@ const path   = require('path');
 const crypto = require('crypto');
 
 const { readAgentConfig, writeAgentConfig, readLocalConfig, writeLocalConfig } = require('../shared/config-loader');
+const { defaultServerUrlFromEnv } = require('../shared/default-server-url');
 
 // ── Module state ──────────────────────────────────────────────────────────────
 
@@ -115,7 +116,8 @@ function syncGateway(lc) {
   }
   _gateway.setRouterModelMap(routerMap);
   const cc = lc.cloud_config || {};
-  if (cc.url && cc.token) _gateway.setBackendConfig({ url: cc.url, token: cc.token });
+  const serverUrl = cc.url || defaultServerUrlFromEnv() || '';
+  if (serverUrl && cc.token) _gateway.setBackendConfig({ url: serverUrl, token: cc.token });
 }
 
 // ── testProvider ─────────────────────────────────────────────────────────────

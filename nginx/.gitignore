@@ -1,0 +1,4 @@
+# 证书勿提交仓库；将 fullchain.pem / privkey.pem 放在此目录
+*.pem
+*.key
+*.crt

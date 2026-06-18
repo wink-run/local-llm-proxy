@@ -16,6 +16,7 @@ const gateway  = require('../electron/local-gateway');
 const adminApi = require('./admin-api');
 const reporter = require('../shared/device-reporter');
 const { readLocalConfig, readAgentConfig } = require('../shared/config-loader');
+const { defaultServerUrlFromEnv } = require('../shared/default-server-url');
 const { initGatewayTelemetry } = require('../shared/telemetry');
 
 // ── Arg parsing ───────────────────────────────────────────────────────────────
@@ -88,8 +89,9 @@ async function cmdStart(port, adminPort) {
 
   // Configure P2P backend if cloud config is present
   const cc = lc.cloud_config || {};
-  if (cc.url && cc.token) {
-    gateway.setBackendConfig({ url: cc.url, token: cc.token });
+  const serverUrl = cc.url || defaultServerUrlFromEnv() || null;
+  if (serverUrl && cc.token) {
+    gateway.setBackendConfig({ url: serverUrl, token: cc.token });
     gateway.setPeerModels([]);
   }
 
@@ -110,7 +112,7 @@ async function cmdStart(port, adminPort) {
     name: os.hostname(),
     platform: `${process.platform}/${os.release()}`,
     version: '1.0.0',
-    serverUrl: cc.url || null,
+    serverUrl: serverUrl,
     token: cc.token || null,
   });
 

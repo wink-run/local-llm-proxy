@@ -10,6 +10,9 @@ function billingAuth() {
 
 contextBridge.exposeInMainWorld('electronAPI', {
   version: ipcRenderer.sendSync('app:version'),
+  app: {
+    defaultServerUrl: () => ipcRenderer.sendSync('app:defaultServerUrl'),
+  },
   auth: {
     request: (opts) => ipcRenderer.invoke('auth:request', opts),
   },

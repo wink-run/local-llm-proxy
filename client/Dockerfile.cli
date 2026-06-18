@@ -43,6 +43,8 @@ EXPOSE 11430 11431
 ENV HOME=/data
 # Override the default ~/.llm-agent path used by config-loader.js
 ENV LLM_AGENT_CONFIG_DIR=/data/.llm-agent
+# 默认 Token Bank 服务地址（未在 local-config.json 配置 cloud_config.url 时使用）
+# ENV TOKEN_SERVER_URL=https://your-token-server.example.com
 
 ENTRYPOINT ["node", "cli/gateway.js"]
 CMD ["start"]
