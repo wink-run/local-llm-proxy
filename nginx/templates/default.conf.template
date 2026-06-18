@@ -41,17 +41,25 @@ server {
 
     # 用户门户 / 管理后台 / OpenAI 兼容 API / WebSocket Worker
     location / {
-        # CORS preflight（nginx 层兜底，避免上游未返回 Allow-Origin）
+        # 去掉上游 FastAPI CORS 头，避免与 nginx 重复（浏览器只接受单个 Allow-Origin）
+        proxy_hide_header Access-Control-Allow-Origin;
+        proxy_hide_header Access-Control-Allow-Methods;
+        proxy_hide_header Access-Control-Allow-Headers;
+        proxy_hide_header Access-Control-Allow-Credentials;
+        proxy_hide_header Access-Control-Expose-Headers;
+        proxy_hide_header Access-Control-Max-Age;
+
+        # CORS preflight（仅 nginx 层响应，避免与上游重复）
         if ($request_method = OPTIONS) {
             add_header Access-Control-Allow-Origin  $cors_allow_origin always;
             add_header Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS" always;
-            add_header Access-Control-Allow-Headers "Authorization, Content-Type, X-Requested-With, x-api-key, anthropic-version" always;
+            add_header Access-Control-Allow-Headers "Authorization, Content-Type, X-Requested-With, x-api-key, anthropic-version, X-TokenBank-Server" always;
             add_header Access-Control-Max-Age 86400 always;
             return 204;
         }
 
         add_header Access-Control-Allow-Origin  $cors_allow_origin always;
-        add_header Access-Control-Allow-Headers "Authorization, Content-Type" always;
+        add_header Access-Control-Allow-Headers "Authorization, Content-Type, X-TokenBank-Server" always;
 
         proxy_pass http://${UPSTREAM};
         proxy_http_version 1.1;

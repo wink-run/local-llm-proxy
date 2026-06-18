@@ -69,13 +69,15 @@ def _cleanup_img_cache() -> None:
 
 
 app = FastAPI(title="LLM Proxy", lifespan=lifespan)
-# CORS：允许浏览器跨域（Vite localhost 调试等）；生产可设 CORS_ORIGINS 收紧
+# CORS：直连 8000 / 开发调试；经 nginx HTTPS 反代时由 nginx 统一加头（见 default.conf.template）
 _cors_raw = os.getenv("CORS_ORIGINS", "*").strip()
 _cors_origins = ["*"] if _cors_raw in ("", "*") else [o.strip() for o in _cors_raw.split(",") if o.strip()]
+# 与 allow_origins=["*"] 二选一，避免同时回显 Origin 与 * 导致重复头
+_cors_use_wildcard = "*" in _cors_origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_origin_regex=None if _cors_use_wildcard else r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
