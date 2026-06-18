@@ -1,5 +1,6 @@
 """SQLite 数据库操作层（全部异步）"""
 
+import logging
 import os
 import random
 import secrets
@@ -9,6 +10,7 @@ from typing import Optional
 import aiosqlite
 
 DB_PATH = os.getenv("DB_PATH", "proxy.db")
+logger = logging.getLogger(__name__)
 
 
 # ── 初始化 & 迁移 ─────────────────────────────────────────────────────────────
@@ -670,6 +672,28 @@ async def get_consume_rate(model_name: str) -> Optional[float]:
         ) as cur:
             row = await cur.fetchone()
             return row[0] if row else None
+
+
+async def get_or_ensure_consume_rate(
+    model_name: str, model_type: str = "chat"
+) -> Optional[float]:
+    """查询消费率；模型尚未入库时自动写入 open 层默认倍率（不覆盖管理员已有配置）。"""
+    rate = await get_consume_rate(model_name)
+    if rate is not None:
+        return rate
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT 1 FROM model_configs WHERE name=?", (model_name,)
+        ) as cur:
+            if await cur.fetchone():
+                return None  # 已存在但被禁用等，尊重管理员配置
+    created = await ensure_default_open_models([model_name], {model_name: model_type})
+    if created:
+        logger.info(
+            "auto-created model_configs (open defaults): %s",
+            model_name,
+        )
+    return await get_consume_rate(model_name)
 
 
 async def get_image_tokens_weight() -> int:

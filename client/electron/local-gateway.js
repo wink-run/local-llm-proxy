@@ -1204,8 +1204,9 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       // 场景步骤就是真实模型；claudeFrom 标记原始 claude 名（路由明细展示透明转化）。
       const stepModel     = step.model;
       const stepClaudeFrom = claudeFrom;
-      // Match providers by model list, not by tier — tier is informational only
-      const stepCandidates = all.filter(p => providerHasModel(p, stepModel));
+      // Match providers by model list；step.tier 指定时只走对应供给层（同模型跨 P2P/付费）
+      let stepCandidates = all.filter(p => providerHasModel(p, stepModel));
+      if (step.tier) stepCandidates = stepCandidates.filter(p => p.type === step.tier);
       const stepProviders = [
         ...stepCandidates.filter(p => Array.isArray(p.models) && p.models.length > 0),
         ...stepCandidates.filter(p => !Array.isArray(p.models) || p.models.length === 0),

@@ -21,7 +21,7 @@ async def handle_image(body: dict, consumer_user_id: int | None = None):
     response_format = body.get("response_format", "b64_json")
 
     if consumer_user_id is not None:
-        rate = await db.get_consume_rate(model)
+        rate = await db.get_or_ensure_consume_rate(model, model_type="image")
         if rate is None:
             raise HTTPException(
                 400,

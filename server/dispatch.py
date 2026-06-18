@@ -50,7 +50,7 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
     if consumer_user_id is not None and not owns_personal:
         rate = None
         for m in models_to_try:
-            rate = await db.get_consume_rate(m)
+            rate = await db.get_or_ensure_consume_rate(m)
             if rate is not None:
                 break
         if rate is None:

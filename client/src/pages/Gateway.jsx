@@ -1,12 +1,22 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { getRates, getOnlineModels } from '../api/client';
+import { loadGatewayAvailableModels } from '../api/gatewayModels';
 import { getSyncServerBase } from '../config';
 import { getGateway, getLocalConfig, getConfig, getApps } from '../api/adapter';
 import { listAgents, applyAgent, revertAgent } from '../api/agents';
-import { loadUserAccounts } from '../api/userAccounts';
 import claudeDevModeImg1 from '../assets/claude-devmode-1.webp';
 import claudeDevModeImg2 from '../assets/claude-devmode-2.webp';
 import { useLang } from '../store/lang';
+import {
+  encodeTierModelRoute,
+  modelIdFromRoute,
+  routeSelectValue,
+  isKnownRouteSelectValue,
+} from '../lib/route-binding';
+
+// tier:id 作为下拉唯一 value，避免同模型跨层选中错位
+function modelTierKey(m) {
+  return encodeTierModelRoute(m.tier, m.id);
+}
 
 // ── PolicyManager：策略组管理 UI ──────────────────────────────────────────────
 function strategyOptions(t) {
@@ -276,7 +286,6 @@ function tierLayerLabel(tier, t) {
   return t('gateway.app.tier.paidLayer');
 }
 
-
 function strategyLabel(key, t) {
   const map = {
     'base_url-env': t('gateway.strategyLabel.baseUrlEnv'),
@@ -293,7 +302,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   const [name,        setName]        = useState(app.name || '');
   const [icon,        setIcon]        = useState(app.icon || '🔧');
   const [desc,        setDesc]        = useState(app.description || '');
-  const [routeId,     setRouteId]     = useState(app.route_id || '');
+  const [routeId,     setRouteId]     = useState(() => routeSelectValue(app.route_id, availableModels, routes));
   const [busy,        setBusy]        = useState(false);
   const [copied,      setCopied]      = useState(false);
   const [claudeDevMode, setClaudeDevMode] = useState(null); // Claude Desktop 开发者模式状态
@@ -521,7 +530,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
           const tm = availableModels.filter(m => m.tier === tier);
           if (!tm.length) return null;
           const label = tierModelLabel(tier, t);
-          return <optgroup key={tier} label={label}>{tm.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>;
+          return <optgroup key={tier} label={label}>{tm.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}</optgroup>;
         })}
       </select>
     </div>
@@ -531,7 +540,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     <div>
       <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.accessConfig')}</div>
       <KeyConfigPanel apiKey={app.api_key} localBase="http://127.0.0.1:11430/v1"
-        model={routeId || undefined} hideAuto />
+        model={routeId ? (modelIdFromRoute(routeId, routes) || routeId) : undefined} hideAuto />
     </div>
   );
 
@@ -596,7 +605,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
   const [name,        setName]        = useState(app.name || '');
   const [icon,        setIcon]        = useState(app.icon || '🔧');
   const [desc,        setDesc]        = useState(app.description || '');
-  const [routeId,     setRouteId]     = useState(app.route_id || '');
+  const [routeId,     setRouteId]     = useState(() => routeSelectValue(app.route_id, availableModels, routes));
   const [busy,        setBusy]        = useState(false);
   const [copied,      setCopied]      = useState(false);
   const ICONS = ['🤖','✏️','🔧','💻','🎯','🌐','📱','🔑','⚡','🛠️','🎨','📊'];
@@ -672,7 +681,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
               const tm = availableModels.filter(m => m.tier === tier);
               if (!tm.length) return null;
               const label = tierModelLabel(tier, t);
-              return <optgroup key={tier} label={label}>{tm.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>;
+              return <optgroup key={tier} label={label}>{tm.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}</optgroup>;
             })}
           </select>
         </div>
@@ -681,7 +690,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
           <div>
             <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.accessConfigHint')}</div>
             <KeyConfigPanel apiKey={app.api_key} localBase="http://127.0.0.1:11430/v1"
-              model={routeId || undefined} hideAuto />
+              model={routeId ? (modelIdFromRoute(routeId, routes) || routeId) : undefined} hideAuto />
           </div>
         )}
       </div>
@@ -1266,7 +1275,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     const order = { p2p: 0, paid: 1, free: 2 };
     const pick = [...availableModels].sort(
       (a, b) => (order[a.tier] ?? 9) - (order[b.tier] ?? 9))[0];
-    return pick?.id || '';
+    return pick ? encodeTierModelRoute(pick.tier, pick.id) : '';
   }
 
   // 手工添加：未被识别的应用 → 创建 manual 应用，内联展开 ManualAddPanel
@@ -1350,7 +1359,11 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     if (!key) return;   // 无 key（未托管/虚拟行）不能测
     setTestState(s => ({ ...s, [app.id]: { busy: true } }));
     // 模型优先用绑定的路由；否则第一个可用真实模型；再否则一个占位
-    const model = app.route_id || availableModels[0]?.id || 'gpt-4o';
+    const model = app.route_id
+      ? (routes.some(r => r.model_key === app.route_id || r.id === app.route_id)
+          ? app.route_id
+          : (modelIdFromRoute(app.route_id, routes) || app.route_id))
+      : (availableModels[0]?.id || 'gpt-4o');
     const base = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/$/, '');
     const start = Date.now();
     // 流式 + max_tokens:1：首块计延迟（首字），但把流读完整，让网关正常结束并落账
@@ -1401,7 +1414,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     const route = routes.find(x => x.model_key === app.route_id || x.id === app.route_id);
     let label = null;
     if (route) label = `${route.icon || '🔀'} ${route.scene_name}`;
-    else if (app.route_id) label = app.route_id;   // 绑的是单个真实模型
+    else if (app.route_id) label = modelIdFromRoute(app.route_id, routes) || app.route_id;
     if (!label) return [];                          // 未绑路由（直连）→ 用默认
     return [{ name: claudeName, labelOverride: label }];
   }
@@ -1425,7 +1438,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
       }
       // Codex：OpenAI 风格、接受任意模型名 → 顶层 model 写绑定的路由/模型（运行时按此发起请求）。
       // 注：Codex Desktop 的 GUI 模型选择器由其自身账号/provider 状态决定，配置文件改不动，仍显示「Custom」。
-      if (isCodexConfig && app.route_id) patch.model = app.route_id;
+      if (isCodexConfig && app.route_id) patch.model = modelIdFromRoute(app.route_id, routes) || app.route_id;
       const r = await appsApi.writeConfigFile({
         app_id: app.id, config_file: app.config_file, patch, env, force,
       }).catch(e => ({ ok: false, error: e.message }));
@@ -1563,16 +1576,14 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                   const tracked  = app.hosted === true;
                   const isManaged = hostable ? tracked : (keyApp && !app._virtual_apikey);
                   const isGatewayRouted = hostable ? !!(tracked && app.route_id) : !!(keyApp && app.route_id);
-                  // 路由下拉当前值：api-key/manual 有 route_id 即展示；shim/config-file 需纳管后
-                  const routeSelectValue = (() => {
+                  // 路由下拉当前值：tier:id 区分同模型跨层；api-key/manual 有 route_id 即展示
+                  const currentRouteValue = (() => {
                     if (!app.route_id) return '';
-                    const rid = app.route_id;
-                    const avail = new Set(availableModels.map(m => m.id));
-                    const routeKeys = routes.map(r => r.model_key || r.id);
-                    const known = avail.has(rid) || routeKeys.includes(rid);
-                    if (keyApp && !isDirectOnly) return known ? rid : '';
+                    const val = routeSelectValue(app.route_id, availableModels, routes);
+                    const known = isKnownRouteSelectValue(val, availableModels, routes);
+                    if (keyApp && !isDirectOnly) return known ? val : '';
                     if (!tracked) return '';
-                    return known ? rid : '';
+                    return known ? val : '';
                   })();
                   const isActive = isManaged;
                   const statusDot = isManaged
@@ -1621,7 +1632,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       <div className="min-w-0">
                       {(((keyApp || app.link_method === 'shim') && app.route_bindable !== false) || isDirectOnly) && !app._virtual_apikey && (
                       <select
-                        value={routeSelectValue}
+                        value={currentRouteValue}
                         disabled={isDirectOnly || (hostable && !tracked)}
                         onChange={async e => {
                           if (isDirectOnly) return;   // 仅直连应用：不可改路由
@@ -1672,7 +1683,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                                 const tm = availableModels.filter(m => m.tier === tier);
                                 if (!tm.length) return null;
                                 const label = tierModelLabel(tier, t);
-                                return <optgroup key={tier} label={label}>{tm.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>;
+                                return <optgroup key={tier} label={label}>{tm.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}</optgroup>;
                               })}
                             </>
                           );
@@ -1943,20 +1954,14 @@ function tierDot(tier) {
   if (tier === 'paid') return 'bg-amber-500';
   return 'bg-emerald-500';
 }
-function normTier(t) {
-  if (t === 'free' || t === 'open') return 'free';
-  if (t === 'p2p') return 'p2p';
-  if (t === 'paid' || t === 'premium') return 'paid';
-  return 'p2p';
-}
-
 // Short tier label for inline display, e.g. "glm-5.1(p2p)"
 const TIER_SHORT = { p2p: 'p2p', free: 'free', paid: 'paid' };
 
-// Resolve step tier: prefer availableModels lookup (most accurate), fallback to stored
+// Resolve step tier: 优先 step 上记录的 tier（同 id 跨层时），再查 availableModels
 function resolveStepTier(stepModel, step, availableModels) {
+  if (step?.tier) return step.tier;
   const m = availableModels.find(x => x.id === stepModel);
-  return m ? m.tier : (step?.tier || 'free');
+  return m ? m.tier : 'free';
 }
 
 // ── CopyButton ────────────────────────────────────────────────────────────────
@@ -1991,17 +1996,17 @@ function ModelSelect({ availableModels, value, onChange }) {
       className="w-full bg-gray-200 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-2 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500">
       {freeModels.length > 0 && (
         <optgroup label={t('gateway.app.tier.freeLayer')}>
-          {freeModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+          {freeModels.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}
         </optgroup>
       )}
       {p2pModels.length > 0 && (
         <optgroup label={t('gateway.app.tier.p2pLayer')}>
-          {p2pModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+          {p2pModels.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}
         </optgroup>
       )}
       {paidModels.length > 0 && (
         <optgroup label={t('gateway.app.tier.paidLayer')}>
-          {paidModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+          {paidModels.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}
         </optgroup>
       )}
     </select>
@@ -2075,18 +2080,24 @@ function ChainEditor({ steps, setSteps, availableModels }) {
   const list = steps || [];
   const add    = () => setSteps([...list, { label: '', model: '', tier: 'free' }]);
   const remove = (i) => setSteps(list.filter((_, idx) => idx !== i));
-  const update = (i, val) => { const m = availableModels.find(x => x.id === val); setSteps(list.map((s, idx) => idx === i ? { label: val, model: val, tier: m ? m.tier : 'free' } : s)); };
+  const update = (i, val) => {
+    const m = availableModels.find(x => modelTierKey(x) === val)
+           || availableModels.find(x => x.id === val);
+    const modelId = m?.id ?? val;
+    const tier = m?.tier ?? 'free';
+    setSteps(list.map((s, idx) => idx === i ? { label: modelId, model: modelId, tier } : s));
+  };
   return (
     <div className="space-y-1.5">
       {list.map((step, i) => (
         <div key={i} className="flex items-center gap-2 group">
           <span className="text-[10px] text-gray-400 w-4 text-right shrink-0">{i + 1}</span>
-          <select value={step.model} onChange={e => update(i, e.target.value)}
+          <select value={step.model && step.tier ? modelTierKey({ id: step.model, tier: step.tier }) : (step.model || '')} onChange={e => update(i, e.target.value)}
             className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500">
             <option value="">{t('gateway.route.selectModel')}</option>
-            {free.length > 0 && <optgroup label={t('gateway.app.tier.freeLayer')}>{free.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>}
-            {p2p.length  > 0 && <optgroup label={t('gateway.app.tier.p2pLayer')}>{p2p.map(m =>  <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>}
-            {paid.length > 0 && <optgroup label={t('gateway.app.tier.paidLayer')}>{paid.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}</optgroup>}
+            {free.length > 0 && <optgroup label={t('gateway.app.tier.freeLayer')}>{free.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}</optgroup>}
+            {p2p.length  > 0 && <optgroup label={t('gateway.app.tier.p2pLayer')}>{p2p.map(m =>  <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}</optgroup>}
+            {paid.length > 0 && <optgroup label={t('gateway.app.tier.paidLayer')}>{paid.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}</optgroup>}
           </select>
           <button onClick={() => remove(i)}
             className="text-[10px] text-gray-400 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity px-1">✕</button>
@@ -2162,7 +2173,7 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
             <label className="text-[11px] text-gray-500 w-12 shrink-0">{t('gateway.route.clsModel')}</label>
             <select value={clsModel} onChange={e => setClsModel(e.target.value)} className={RULE_SEL + ' flex-1'}>
               <option value="">{t('gateway.route.clsModelPlaceholder')}</option>
-              {availableModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+              {availableModels.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}
             </select>
           </div>
           <div className="flex items-center gap-2">
@@ -2591,81 +2602,11 @@ export default function Gateway() {
   }, []);
 
   const loadAvailableModels = useCallback(async () => {
-    const models = [];
-    const seen   = new Set();
-    const add    = (id, tier) => { if (id && !seen.has(id)) { seen.add(id); models.push({ id, tier }); } };
-    const modelId = (m) => (typeof m === 'string' ? m : (m?.name || m?.id || ''));
-
-    // 个人页已登记、可在供给源页接入的付费 id
-    let gatewayAllow = null;
     try {
-      const acc = await loadUserAccounts();
-      if (acc?.gateway_provider_ids) gatewayAllow = new Set(acc.gateway_provider_ids);
-    } catch {}
-
-    // 本地已启用供给源的模型（付费须个人页登记 + 供给源页 enabled）
-    try {
-      const cfg = await getConfig().read();
-      for (const p of (cfg?.providers || [])) {
-        if (!p.enabled || p.type === 'p2p') continue;
-        if (p.type === 'paid' && gatewayAllow && !gatewayAllow.has(p.id)) continue;
-        for (const m of (p.models || [])) add(modelId(m), p.type);
-      }
-    } catch {}
-
-    // P2P：优先读本地网关 peerModels /v1/models（Docker 与 Electron 一致）
-    try {
-      let rates = [];
-      try { rates = (await getRates()).data?.models || []; } catch {}
-      const online = new Set();
-      let gwPort = null;
-      try {
-        const gw = await getGateway().status();
-        gwPort = gw?.port || null;
-        for (const id of (gw?.peerModels || [])) online.add(id);
-      } catch {}
-      // 同源拉本地 /v1/models（含 P2P + 已启用供给源模型）
-      if (gwPort) {
-        try {
-          const host = typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1';
-          const lr = await fetch(`http://${host}:${gwPort}/v1/models`);
-          if (lr.ok) {
-            const lj = await lr.json();
-            const cfgForTier = (await getConfig().read().catch(() => null)) || {};
-            const provById = Object.fromEntries((cfgForTier.providers || []).map(p => [p.id, p]));
-            for (const m of (lj.data || [])) {
-              const id = m.id;
-              if (!id) continue;
-              const owned = m.owned_by || '';
-              if (owned === 'p2p' || owned === 'tokenbank-p2p') {
-                online.add(id);
-                add(id, 'p2p');
-              } else if (owned === 'anthropic') {
-                // Claude 透明名，跳过
-              } else {
-                const pt = provById[owned]?.type;
-                if (pt === 'free') add(id, 'free');
-                else if (pt === 'paid') add(id, 'paid');
-                else if (pt === 'p2p') { online.add(id); add(id, 'p2p'); }
-              }
-            }
-          }
-        } catch {}
-      }
-      if (online.size === 0) {
-        try { for (const m of ((await getOnlineModels()).data?.data || [])) online.add(m.id); } catch {}
-      }
-      for (const m of rates) {
-        const tier = normTier(m.tier);
-        if (tier === 'paid') continue;
-        if (online.has(m.name)) add(m.name, tier);
-      }
-      for (const id of online) add(id, 'p2p');
+      setAvailableModels(await loadGatewayAvailableModels());
     } catch (e) {
       console.error('loadAvailableModels', e);
     }
-
-    setAvailableModels(models);
   }, []);
 
   useEffect(() => {

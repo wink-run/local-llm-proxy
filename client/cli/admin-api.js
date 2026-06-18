@@ -13,6 +13,7 @@ const crypto = require('crypto');
 const { readAgentConfig, writeAgentConfig, readLocalConfig, writeLocalConfig } = require('../shared/config-loader');
 const { defaultServerUrlFromEnv } = require('../shared/default-server-url');
 const { refreshGatewayPeerModels } = require('../shared/peer-models-sync');
+const { bindRouteToKeyScene } = require('../shared/route-binding');
 const { localStats } = require('../shared/telemetry');
 const billingConfig = require('../electron/billing-config');
 const cloudBilling = require('../electron/cloud-billing-sync');
@@ -185,24 +186,15 @@ function syncGateway(lc) {
 
   const appControls = [];
   const keyScene = {};
-  const bindRoute = (key, routeId) => {
-    const route = routes.find(r => r.model_key === routeId || r.id === routeId);
-    keyScene[key] = {
-      steps: route?.steps?.length ? route.steps : [{ model: routeId }],
-      scene_name: route?.scene_name || routeId,
-      rules: route?.rules || null,
-      classifier: route?.classifier || null,
-    };
-  };
   for (const app of apps) {
     const ctrl = { app_id: app.id, app_name: app.name };
     if ((app.link_method === 'api-key' || app.link_method === 'manual') && app.api_key) {
       appControls.push({ ...ctrl, match: { key: app.api_key } });
-      if (app.route_id) bindRoute(app.api_key, app.route_id);
+      if (app.route_id) bindRouteToKeyScene(keyScene, app.api_key, app.route_id, routes);
     } else if (app.link_method === 'shim' && app.agent_id) {
       const p = PROTOCOL_PATH[toolProto[app.agent_id]];
       if (p) appControls.push({ ...ctrl, match: { path: p } });
-      if (app.api_key && app.route_id) bindRoute(app.api_key, app.route_id);
+      if (app.api_key && app.route_id) bindRouteToKeyScene(keyScene, app.api_key, app.route_id, routes);
     }
   }
   _gateway.setAppControls(appControls);

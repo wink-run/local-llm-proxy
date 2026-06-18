@@ -1034,28 +1034,17 @@ function registerIPC() {
     } catch {}
 
     const appControls = [];
-    const keyScene = {};   // api-key → 绑定的路由（route_id → scene steps 或 单模型）
-    // route_id 绑定 → keyScene：命中场景路由用其路由链，否则视为单个真实模型。
-    // Claude 应用绑定后，claude-* 请求被透明改写成这里的真实模型。
-    const bindRoute = (key, routeId) => {
-      const route = routes.find(r => r.model_key === routeId || r.id === routeId);
-      keyScene[key] = {
-        steps: route?.steps?.length ? route.steps : [{ model: routeId }],
-        scene_name: route?.scene_name || routeId,
-        rules: route?.rules || null,           // 条件路由规则（when → steps）
-        classifier: route?.classifier || null, // 语义分类器配置（model + categories）
-      };
-    };
+    const keyScene = {};
+    const { bindRouteToKeyScene } = require('../shared/route-binding');
     for (const app of apps) {
       const ctrl = { app_id: app.id, app_name: app.name };
       if ((app.link_method === 'api-key' || app.link_method === 'manual') && app.api_key) {
         appControls.push({ ...ctrl, match: { key: app.api_key } });
-        if (app.route_id) bindRoute(app.api_key, app.route_id);
+        if (app.route_id) bindRouteToKeyScene(keyScene, app.api_key, app.route_id, routes);
       } else if (app.link_method === 'shim' && app.agent_id) {
         const path = PROTOCOL_PATH[toolProto[app.agent_id]];
         if (path) appControls.push({ ...ctrl, match: { path } });
-        // shim 注入了 api_key 作鉴权 → keyScene 按 key 改写模型
-        if (app.api_key && app.route_id) bindRoute(app.api_key, app.route_id);
+        if (app.api_key && app.route_id) bindRouteToKeyScene(keyScene, app.api_key, app.route_id, routes);
       }
     }
     gateway.setAppControls(appControls);

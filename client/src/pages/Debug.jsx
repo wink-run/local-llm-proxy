@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { getConfig, getLocalConfig, getGateway } from '../api/adapter';
+import { loadGatewayAvailableModels, resolveGatewayModelType } from '../api/gatewayModels';
 import { useLang } from '../store/lang';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -161,23 +162,8 @@ const TIER_ORDER = ['free', 'p2p', 'paid'];
 function normModel(m) { return typeof m === 'string' ? { name: m, type: 'chat' } : { name: m.name, type: m.type || 'chat' }; }
 
 function providerOptions(cfg, localCfg, localGw, t) {
-  // Build local gateway model list: collect all enabled provider models tagged with tier
-  const gwModels = [];
-  const seen = new Set();
-  for (const tier of TIER_ORDER) {
-    for (const p of (cfg?.providers || [])) {
-      if (!p.enabled || p.type !== tier) continue;
-      if (p.type !== 'p2p' && !p.base_url) continue;
-      for (const m of (p.models || [])) {
-        const { name, type } = normModel(m);
-        if (!name || seen.has(name)) continue;
-        seen.add(name);
-        gwModels.push({ name, type, tier });
-      }
-    }
-  }
-
-  const opts = [{ ...localGw, label: t('debug.localGw'), models: gwModels }];
+  // 本地网关模型由 loadGatewayAvailableModels() 动态拉取（含 free/p2p/paid）
+  const opts = [{ ...localGw, label: t('debug.localGw'), models: [] }];
   for (const p of (cfg?.providers || [])) {
     if (!p.enabled || p.type === 'p2p' || !p.base_url) continue;
     const label = (() => { try { return new URL(p.base_url).hostname; } catch { return p.id; } })();
@@ -240,6 +226,36 @@ export default function Debug() {
       setToken(''); setModels([]); setModel(''); setManualModel(true); return;
     }
     setToken(opt.token || '');
+
+    // 本地网关：拉 /v1/models + P2P 在线，按 free/p2p/paid 分层
+    if (selectedId === '__local_gw__') {
+      setLoadingModels(true); setModels([]); setModel(''); setManualModel(false);
+      let cancelled = false;
+      (async () => {
+        try {
+          const [list, c] = await Promise.all([
+            loadGatewayAvailableModels(),
+            getConfig().read().catch(() => null),
+          ]);
+          if (cancelled) return;
+          const mapped = list.map(({ id, tier }) => ({
+            name: id,
+            tier,
+            type: resolveGatewayModelType(id, c),
+          }));
+          setModels(mapped);
+          const preferred = mapped.filter(m => imageMode ? m.type === 'image' : m.type !== 'image');
+          setModel((preferred[0] || mapped[0])?.name || '');
+          setManualModel(mapped.length === 0);
+        } catch {
+          if (!cancelled) { setModels([]); setManualModel(true); }
+        } finally {
+          if (!cancelled) setLoadingModels(false);
+        }
+      })();
+      return () => { cancelled = true; };
+    }
+
     const staticMods = opt.models || [];
     if (staticMods.length > 0) {
       setModels(staticMods);
@@ -279,7 +295,7 @@ export default function Debug() {
       }
     };
     doFetch();
-  }, [selectedId, provOpts]);
+  }, [selectedId, provOpts, imageMode]);
 
   // When imageMode changes, try to switch to right model type
   useEffect(() => {
@@ -425,7 +441,7 @@ export default function Debug() {
                     const tms = filteredModels.filter(m => m.tier === tier);
                     return tms.length ? (
                       <optgroup key={tier} label={t(`debug.tier.${tier}`)}>
-                        {tms.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
+                        {tms.map(m => <option key={`${m.tier}:${m.name}`} value={m.name}>{m.name}</option>)}
                       </optgroup>
                     ) : null;
                   })
