@@ -261,15 +261,21 @@ class UserAccountsUpdate(BaseModel):
 
 @router.get("/accounts")
 async def get_user_accounts(uid: int = Depends(get_current_user_id)):
-    """读取当前用户的订阅与按量付费配置。"""
-    return await db.get_user_billing(uid)
+    """读取当前用户的订阅与按量付费配置（含服务端目录）。"""
+    from billing_catalog import build_user_accounts_snapshot
+
+    billing = await db.get_user_billing(uid)
+    return await build_user_accounts_snapshot(billing)
 
 
 @router.put("/accounts")
 async def put_user_accounts(req: UserAccountsUpdate, uid: int = Depends(get_current_user_id)):
     """保存订阅 / provider / 刊例价覆盖（与客户端 local-config 字段一致）。"""
+    from billing_catalog import build_user_accounts_snapshot
+
     patch = req.model_dump(exclude_unset=True)
-    return await db.set_user_billing(uid, patch)
+    billing = await db.set_user_billing(uid, patch)
+    return await build_user_accounts_snapshot(billing)
 
 
 @router.get("/stats")
