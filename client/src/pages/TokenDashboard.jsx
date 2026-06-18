@@ -6,6 +6,7 @@ import { useLang } from '../store/lang';
 import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getUserDevices, deleteDevice, getInventoryStats } from '../api/client';
 import UserAccountsPanel from '../components/UserAccountsPanel';
 import { enrichBillingCost } from '../utils/billing-cost';
+import { loadUserAccounts } from '../api/userAccounts';
 
 /** 从云端拉取各设备聚合盘点；失败时回退本机数据，并合并订阅折算 + 按量费用 */
 async function fetchDashboardStats(days) {
@@ -31,14 +32,12 @@ async function fetchDashboardStats(days) {
   let subs = [];
   let payg = [];
   let catalog = [];
-  if (window.electronAPI?.localConfig?.getUserAccounts) {
-    try {
-      const acct = await window.electronAPI.localConfig.getUserAccounts();
-      subs = acct.user_subscriptions || [];
-      payg = acct.user_payg_providers || [];
-      catalog = acct.subscription_catalog || [];
-    } catch { /* 无账户配置时仅显示按量 token 费用 */ }
-  }
+  try {
+    const acct = await loadUserAccounts();
+    subs = acct.user_subscriptions || [];
+    payg = acct.user_payg_providers || [];
+    catalog = acct.subscription_catalog || [];
+  } catch { /* 无账户配置时仅显示按量 token 费用 */ }
 
   return enrichBillingCost(raw, subs, payg, days, catalog);
 }

@@ -12,6 +12,9 @@ const crypto = require('crypto');
 
 const { readAgentConfig, writeAgentConfig, readLocalConfig, writeLocalConfig } = require('../shared/config-loader');
 const { defaultServerUrlFromEnv } = require('../shared/default-server-url');
+const { localStats } = require('../shared/telemetry');
+const billingConfig = require('../electron/billing-config');
+const cloudBilling = require('../electron/cloud-billing-sync');
 
 // ── Module state ──────────────────────────────────────────────────────────────
 
@@ -120,6 +123,69 @@ function syncGateway(lc) {
   if (serverUrl && cc.token) _gateway.setBackendConfig({ url: serverUrl, token: cc.token });
 }
 
+/** 用户 JWT（个人页登录 token，非 P2P cloud_config.token） */
+function userBearerToken(req) {
+  const h = req.headers.authorization || req.headers.Authorization || '';
+  const m = /^Bearer\s+(.+)$/i.exec(String(h));
+  return m ? m[1].trim() : '';
+}
+
+function resolveBillingServerUrl() {
+  const cfg = readLocalConfig() || {};
+  return cloudBilling.normalizeBase(cfg.cloud_config?.url) || defaultServerUrlFromEnv() || '';
+}
+
+function applyUserBillingCfg(cfg) {
+  try { billingConfig.applyPricingOverrides(cfg.provider_pricing_overrides || {}); } catch {}
+}
+
+async function pullUserBillingApi(token) {
+  let cfg = readLocalConfig() || { scene_routes: [], local_keys: [] };
+  const base = resolveBillingServerUrl();
+  if (token && base) {
+    try {
+      const remote = await cloudBilling.syncFromCloud(token, base, cfg);
+      cfg = cloudBilling.applyToCfg(cfg, remote);
+      writeLocalConfig(cfg);
+      syncGateway(cfg);
+    } catch (e) {
+      console.warn('[admin-api] billing pull failed:', e.message);
+    }
+  }
+  applyUserBillingCfg(cfg);
+  return billingConfig.getUserAccounts(cfg);
+}
+
+async function pushUserBillingApi(token, patch) {
+  let cfg = readLocalConfig() || { scene_routes: [], local_keys: [] };
+  if (Array.isArray(patch.user_subscriptions)) cfg.user_subscriptions = patch.user_subscriptions;
+  if (Array.isArray(patch.user_payg_providers)) cfg.user_payg_providers = patch.user_payg_providers;
+  if (patch.subscription_plans && typeof patch.subscription_plans === 'object') {
+    cfg.subscription_plans = patch.subscription_plans;
+  }
+  if (patch.provider_pricing_overrides && typeof patch.provider_pricing_overrides === 'object') {
+    cfg.provider_pricing_overrides = patch.provider_pricing_overrides;
+  }
+  writeLocalConfig(cfg);
+  syncGateway(cfg);
+  applyUserBillingCfg(cfg);
+  if (token) {
+    const base = resolveBillingServerUrl();
+    if (base) {
+      try {
+        const remote = await cloudBilling.saveUserBilling(token, base, cloudBilling.pickBilling(cfg));
+        cfg = cloudBilling.applyToCfg(cfg, remote);
+        writeLocalConfig(cfg);
+        syncGateway(cfg);
+        applyUserBillingCfg(cfg);
+      } catch (e) {
+        console.warn('[admin-api] billing push failed:', e.message);
+      }
+    }
+  }
+  return billingConfig.getUserAccounts(cfg);
+}
+
 // ── testProvider ─────────────────────────────────────────────────────────────
 
 function testProvider(base_url, token) {
@@ -195,6 +261,21 @@ async function handleRequest(req, res) {
     return json(res, 200, _gateway.getDailyStats());
   }
 
+  // 本地 SQLite 统计（Dashboard / Profile / 盘点页；与 gateway :11430 同源逻辑）
+  if (method === 'GET' && url.startsWith('/api/local-stats')) {
+    const qs = new URL('http://x' + req.url).searchParams;
+    const days = Math.max(1, Math.min(365, parseInt(qs.get('days'), 10) || 1));
+    const data = (localStats && typeof localStats.queryDashboard === 'function')
+      ? localStats.queryDashboard(days)
+      : {
+          total_calls: 0, total_tokens: 0, total_cost: 0,
+          tiers: { free: 0, p2p: 0, paid: 0 },
+          hourly: Array(24).fill(0),
+          models: [], keys: [], providers: [], agent_sources: [],
+        };
+    return json(res, 200, data);
+  }
+
   if (method === 'POST' && url === '/api/gateway/restart') {
     _gateway.restart();
     return json(res, 200, { ok: true });
@@ -234,6 +315,19 @@ async function handleRequest(req, res) {
     writeLocalConfig(lc);
     syncGateway(lc);
     return json(res, 200, { ok: true });
+  }
+
+  // 个人页：订阅 / 按量（与 Electron 相同，经云端 /user/accounts 同步）
+  if (method === 'GET' && url === '/api/user-accounts') {
+    const data = await pullUserBillingApi(userBearerToken(req));
+    return json(res, 200, data);
+  }
+
+  if (method === 'PUT' && url === '/api/user-accounts') {
+    const body = await parseBody(req, res);
+    if (body === null) return;
+    const data = await pushUserBillingApi(userBearerToken(req), body);
+    return json(res, 200, data);
   }
 
   // ── Scene routes ────────────────────────────────────────────────────────────
@@ -341,6 +435,11 @@ async function handleRequest(req, res) {
   // Try to serve the exact path first
   const relPath = url === '/' ? 'index.html' : url.replace(/^\//, '');
   if (serveStatic(res, relPath)) return;
+
+  // 未实现的 /api/* 返回 JSON 404，避免 SPA index.html 被 fetch().json() 误解析
+  if (url.startsWith('/api/')) {
+    return json(res, 404, { error: 'Not found' });
+  }
 
   // SPA fallback — serve index.html for non-asset paths
   if (!url.startsWith('/assets/')) {

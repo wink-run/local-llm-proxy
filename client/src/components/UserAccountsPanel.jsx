@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { getConfig } from '../api/adapter';
+import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
 import { useLang } from '../store/lang';
 import { isAccountOkMsg } from '../i18n';
 
@@ -127,12 +128,8 @@ export default function UserAccountsPanel({
   }
 
   const load = useCallback(() => {
-    if (!window.electronAPI?.localConfig?.getUserAccounts) {
-      setLoading(false);
-      return;
-    }
     setLoading(true);
-    window.electronAPI.localConfig.getUserAccounts()
+    loadUserAccounts()
       .then(r => {
         setData(r);
         setOverrides(JSON.parse(JSON.stringify(r.provider_pricing_overrides || {})));
@@ -142,7 +139,7 @@ export default function UserAccountsPanel({
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, user?.id]);
 
   // 服务端下发新报价后自动刷新
   useEffect(() => {
@@ -155,19 +152,12 @@ export default function UserAccountsPanel({
   }, []);
 
   async function saveAccounts(patch, { quiet = false, successMsg } = {}) {
-    if (!window.electronAPI?.localConfig?.setUserAccounts) {
-      const tip = t('accounts.cannotSaveDesktop');
-      setMsg(tip);
-      setSubMsg(tip);
-      setPaygMsg(tip);
-      return false;
-    }
     setSaving(true);
     setMsg('');
     setSubMsg('');
     setPaygMsg('');
     try {
-      const r = await window.electronAPI.localConfig.setUserAccounts({
+      const r = await saveUserAccounts({
         user_subscriptions: data?.user_subscriptions,
         user_payg_providers: data?.user_payg_providers,
         provider_pricing_overrides: overrides,

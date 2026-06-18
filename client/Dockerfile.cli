@@ -28,6 +28,7 @@ COPY electron/local-gateway.js \
      electron/config-loader.js \
      electron/pricing.js \
      electron/billing-config.js \
+     electron/cloud-billing-sync.js \
      electron/local-stats.js \
      electron/session-import.js \
      electron/session-browser.js \

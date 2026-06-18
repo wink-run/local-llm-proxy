@@ -89,6 +89,7 @@ export default {
   'gateway.sync.addedApps': 'Added {n} apps: {list}',
   'gateway.sync.addedRoutes': 'Added {n} routes: {list}',
   'gateway.sync.noChanges': '{prefix} (no changes)',
+  'gateway.sync.cliOnly': 'Online sync and app onboarding require the desktop client; configure routes manually in Docker',
 
   // ── Link methods ──
   'gateway.link.app': 'App',
@@ -184,6 +185,7 @@ export default {
   'gateway.apps.revertTitle': 'Revert: stop session log collection (history kept)',
   'gateway.apps.managedDefault': '✓ Managed (official by default; pick a model to use gateway)',
   'gateway.apps.hostFailed': 'Manage failed: {msg}',
+  'gateway.apps.cliOnly': 'App onboarding requires the desktop client (use providers & routes in Docker)',
 
   // ── Agent linker ──
   'gateway.agent.title': 'CLI agent transparent link',

@@ -3,6 +3,7 @@ import { getRates, getOnlineModels } from '../api/client';
 import { getSyncServerBase } from '../config';
 import { getGateway, getLocalConfig, getConfig } from '../api/adapter';
 import { listAgents, applyAgent, revertAgent } from '../api/agents';
+import { loadUserAccounts } from '../api/userAccounts';
 import claudeDevModeImg1 from '../assets/claude-devmode-1.webp';
 import claudeDevModeImg2 from '../assets/claude-devmode-2.webp';
 import { useLang } from '../store/lang';
@@ -54,6 +55,7 @@ function PolicyManager() {
   function cancelEdit() { setEditing(null); setMsg(''); }
 
   async function save() {
+    if (!window.electronAPI?.policies) return setMsg(t('gateway.sync.cliOnly'));
     if (!formName.trim()) return setMsg(t('gateway.policy.nameRequired'));
     setBusy(true);
     try {
@@ -66,6 +68,7 @@ function PolicyManager() {
   }
 
   async function del(id) {
+    if (!window.electronAPI?.policies) return;
     if (!window.confirm(t('gateway.policy.confirmDelete'))) return;
     await window.electronAPI.policies.delete(id);
     await load();
@@ -216,7 +219,6 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
   }
 
   async function handleSync() {
-    if (!window.electronAPI?.toolsConfig) return;
     const base = await getSyncServerBase();
     if (!base) {
       setMsg(t('gateway.sync.noServer'));
@@ -226,9 +228,18 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
     setBusy(true);
     setMsg('');
     const token = localStorage.getItem('token');
-    const r = await window.electronAPI.toolsConfig.importUrl(fullUrl, token);
-    setMsg(r.ok ? '✓ ' + importedMsg(r, t('gateway.sync.done')) : '✗ ' + r.error);
-    if (r.ok && onImported) onImported();
+
+    // 桌面端：主进程拉 YAML 并合并
+    if (window.electronAPI?.toolsConfig?.importUrl) {
+      const r = await window.electronAPI.toolsConfig.importUrl(fullUrl, token);
+      setMsg(r.ok ? '✓ ' + importedMsg(r, t('gateway.sync.done')) : '✗ ' + r.error);
+      if (r.ok && onImported) onImported();
+      setBusy(false);
+      return;
+    }
+
+    // Docker / 浏览器 CLI 模式：在线同步需桌面端能力
+    setMsg('✗ ' + t('gateway.sync.cliOnly'));
     setBusy(false);
   }
 
@@ -1167,23 +1178,32 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   const [loading,  setLoading]  = useState(true);   // 首次加载中（应用检测较慢）→ 显示加载特效而非空状态
 
   const load = useCallback(async () => {
-    if (!window.electronAPI) { setLoading(false); return; }
     try {
-      const [appList, localCfg, gw] = await Promise.all([
-        window.electronAPI.apps?.list().catch(() => []),
-        getLocalConfig().get().catch(() => ({})),
-        window.electronAPI.gateway?.status?.().catch(() => null),
-      ]);
-      const list = Array.isArray(appList) ? appList : [];
-      setApps(list);
+      const localCfg = await getLocalConfig().get().catch(() => ({}));
       setRoutes(localCfg?.scene_routes || []);
-      if (gw?.port) setLocalBase(`http://localhost:${gw.port}/v1`);
-      // 异步拉统计（不阻塞主列表渲染）
-      if (list.length && window.electronAPI.apps?.stats) {
-        window.electronAPI.apps.stats(list).then(s => setAppStats(s || {})).catch(() => {});
+
+      if (window.electronAPI?.apps?.list) {
+        const [appList, gw] = await Promise.all([
+          window.electronAPI.apps.list().catch(() => []),
+          window.electronAPI.gateway?.status?.().catch(() => null),
+        ]);
+        const list = Array.isArray(appList) ? appList : [];
+        setApps(list);
+        if (gw?.port) setLocalBase(`http://127.0.0.1:${gw.port}/v1`);
+        if (list.length && window.electronAPI?.apps?.stats) {
+          window.electronAPI.apps.stats(list).then(s => setAppStats(s || {})).catch(() => {});
+        }
+      } else {
+        // Docker / 浏览器 CLI：无本机应用检测，仅展示已持久化的 apps
+        setApps(Array.isArray(localCfg?.apps) ? localCfg.apps : []);
+        const gw = await getGateway().status().catch(() => null);
+        if (gw?.port) {
+          const host = typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1';
+          setLocalBase(`http://${host}:${gw.port}/v1`);
+        }
       }
     } finally {
-      setLoading(false);   // 首次置 false 后保持，后续刷新不再闪加载态
+      setLoading(false);
     }
   }, []);
 
@@ -1258,6 +1278,10 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   // 手工添加：未被识别的应用 → 创建 manual 应用，内联展开 ManualAddPanel
   // （已识别的 CLI/桌面应用都在列表里直接托管，不走此入口）
   async function addCustom() {
+    if (!window.electronAPI?.apps?.create) {
+      window.alert(t('gateway.apps.cliOnly'));
+      return;
+    }
     // draft:true → 列表不显示这条临时条目（只在内联面板里编辑），保存时清除草稿标记才出现。
     // 这样切 tab/不保存绝不会在列表里多出一条（不依赖卸载时的异步删除）。
     const created = await window.electronAPI.apps?.create({
@@ -2585,7 +2609,7 @@ export default function Gateway() {
     // 个人页已登记、可在供给源页接入的付费 id
     let gatewayAllow = null;
     try {
-      const acc = await window.electronAPI?.localConfig?.getUserAccounts?.();
+      const acc = await loadUserAccounts();
       if (acc?.gateway_provider_ids) gatewayAllow = new Set(acc.gateway_provider_ids);
     } catch {}
 

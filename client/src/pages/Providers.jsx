@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { getNetwork, getProfile, listKeys, createKey, deleteKey, getProviderCatalog } from '../api/client';
+import { loadUserAccounts } from '../api/userAccounts';
 import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
 import { getGateway, getLocalConfig, getConfig, getOauth } from '../api/adapter';
 import { useLang } from '../store/lang';
@@ -1502,15 +1503,8 @@ export default function Providers() {
   const [gatewayPickerEntries, setGatewayPickerEntries] = useState([]);
 
   const loadUserPaidAccounts = useCallback(async () => {
-    if (!window.electronAPI?.localConfig?.getUserAccounts) {
-      setPaidAllowlist([]);
-      setUserPayg([]);
-      setProviderPricing({});
-      setPaygCatalog([]);
-      return;
-    }
     try {
-      const r = await window.electronAPI.localConfig.getUserAccounts();
+      const r = await loadUserAccounts();
       setPaidAllowlist(r.gateway_provider_ids || []);
       setProviderGatewayAuth(r.provider_gateway_auth || {});
       setUserSubscriptions(r.user_subscriptions || []);

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { getProfile, listKeys } from '../api/client';
+import { loadUserAccounts } from '../api/userAccounts';
 import { getServerUrl, normalizeServerBase, getSyncServerBase, syncCloudConfigUrl, bootstrapServerUrl } from '../config';
 
 const AuthContext = createContext(null);
@@ -37,10 +38,9 @@ async function syncRemoteConfig() {
 
 // 从云端拉取个人页订阅 / 按量 provider / 刊例价覆盖（跨终端）
 async function syncUserBilling() {
-  if (!window.electronAPI?.localConfig?.getUserAccounts) return;
   const token = localStorage.getItem('token');
   if (!token) return;
-  try { await window.electronAPI.localConfig.getUserAccounts(); } catch {}
+  try { await loadUserAccounts(); } catch {}
 }
 
 export function AuthProvider({ children }) {

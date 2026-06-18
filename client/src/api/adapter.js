@@ -30,6 +30,10 @@ async function adminFetch(path, options = {}) {
     try { const j = await res.json(); detail = j?.error || JSON.stringify(j); } catch {}
     throw new Error(`Admin API ${method} ${path} → ${res.status}${detail ? `: ${detail}` : ''}`);
   }
+  const ct = res.headers.get('content-type') || '';
+  if (!ct.includes('application/json')) {
+    throw new Error(`Admin API ${method} ${path}: expected JSON, got ${ct.split(';')[0] || 'unknown'}`);
+  }
   return res.json();
 }
 

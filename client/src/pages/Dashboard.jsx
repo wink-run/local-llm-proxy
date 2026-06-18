@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { enrichDashboardBilling } from '../utils/billing-cost';
+import { loadUserAccounts } from '../api/userAccounts';
 import { useLang } from '../store/lang';
 import { RANGE_KEYS, RANGE_DAYS } from '../utils/ranges';
 
@@ -294,12 +295,10 @@ export default function Dashboard() {
 
       // 估算费用：与个人页一致，仅统计按量 API 刊例价（不含订阅月费折算）
       let payg = [];
-      if (window.electronAPI?.localConfig?.getUserAccounts) {
-        try {
-          const acct = await window.electronAPI.localConfig.getUserAccounts();
-          payg = acct.user_payg_providers || [];
-        } catch { /* 无账户配置时回退 payg_usage_cost */ }
-      }
+      try {
+        const acct = await loadUserAccounts();
+        payg = acct.user_payg_providers || [];
+      } catch { /* 无账户配置时回退 payg_usage_cost */ }
       setLocalData(enrichDashboardBilling(data, payg, days));
 
       const fetchStatus = window.electronAPI?.gateway

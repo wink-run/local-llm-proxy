@@ -89,6 +89,7 @@ export default {
   'gateway.sync.addedApps': '新增 {n} 个应用：{list}',
   'gateway.sync.addedRoutes': '新增 {n} 条路由：{list}',
   'gateway.sync.noChanges': '{prefix}（无新增）',
+  'gateway.sync.cliOnly': '在线同步与应用纳管需桌面客户端，Docker 版请手动配置路由',
 
   // ── 接入方式 ──
   'gateway.link.app': '应用',
@@ -184,6 +185,7 @@ export default {
   'gateway.apps.revertTitle': '还原：停止统计该应用的会话日志（历史数据保留）',
   'gateway.apps.managedDefault': '✓ 已纳管（默认官方订阅，选模型即走网关）',
   'gateway.apps.hostFailed': '纳管失败：{msg}',
+  'gateway.apps.cliOnly': '应用纳管需桌面客户端（Docker 版可配置供给源与场景路由）',
 
   // ── AgentLinker ──
   'gateway.agent.title': 'CLI Agent 透明接入',
