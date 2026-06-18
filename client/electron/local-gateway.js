@@ -1537,14 +1537,14 @@ function handleRequest(req, res) {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-function start(port, getConfig, saveConfig) {
+function start(port, getConfig, saveConfig, bindHost = '127.0.0.1') {
   if (_server) return;
   _port       = port || 11430;
   _getConfig  = getConfig;
   _saveConfig = saveConfig || null;
   _server     = http.createServer(handleRequest);
-  _server.listen(_port, '127.0.0.1', () => {
-    console.log(`[gateway] listening on 127.0.0.1:${_port}`);
+  _server.listen(_port, bindHost, () => {
+    console.log(`[gateway] listening on ${bindHost}:${_port}`);
   });
   _server.on('error', (err) => {
     console.error('[gateway] server error:', err.message);

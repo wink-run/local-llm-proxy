@@ -73,6 +73,7 @@ services:
     environment:
       - HOME=/data
       - NODE_ENV=production
+      - GATEWAY_BIND_HOST=0.0.0.0
     restart: unless-stopped
     healthcheck:
       test:

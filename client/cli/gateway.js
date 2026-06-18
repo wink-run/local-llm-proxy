@@ -11,6 +11,7 @@
 const http = require('http');
 const os   = require('os');
 const path = require('path');
+const fs   = require('fs');
 
 const gateway  = require('../electron/local-gateway');
 const adminApi = require('./admin-api');
@@ -77,6 +78,9 @@ function getToken(adminPort) {
 
 async function cmdStart(port, adminPort) {
   const lc = readLocalConfig() || { scene_routes: [], local_keys: [], cloud_config: {} };
+  // Docker 端口映射需监听 0.0.0.0；本机 CLI 默认仍用 127.0.0.1
+  const bindHost = process.env.GATEWAY_BIND_HOST
+    || (fs.existsSync('/.dockerenv') ? '0.0.0.0' : '127.0.0.1');
 
   // Build router map from scene_routes
   const routerMap = {};
@@ -96,14 +100,14 @@ async function cmdStart(port, adminPort) {
   }
 
   // Start HTTP gateway
-  gateway.start(port, readAgentConfig);
+  gateway.start(port, readAgentConfig, undefined, bindHost);
   console.log(`[gateway] HTTP gateway started on port ${port}`);
 
   // 本地统计 + 会话补录（与 Electron 共用 ~/.tokenbank/local-stats.db）
   const telemetry = initGatewayTelemetry(gateway);
 
   // Start admin API
-  adminApi.start(adminPort, gateway);
+  adminApi.start(adminPort, gateway, bindHost);
   console.log(`[gateway] Admin API started on port ${adminPort}`);
 
   // Init device reporter

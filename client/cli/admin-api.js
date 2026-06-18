@@ -358,7 +358,7 @@ async function handleRequest(req, res) {
  * @param {object} gatewayInstance  — the local-gateway module
  * @returns {http.Server}
  */
-function start(port, gatewayInstance) {
+function start(port, gatewayInstance, bindHost = '127.0.0.1') {
   _gateway = gatewayInstance;
 
   _server = http.createServer((req, res) => {
@@ -368,8 +368,8 @@ function start(port, gatewayInstance) {
     });
   });
 
-  _server.listen(port, '127.0.0.1', () => {
-    // Listening
+  _server.listen(port, bindHost, () => {
+    console.log(`[admin-api] listening on ${bindHost}:${port}`);
   });
 
   return _server;
