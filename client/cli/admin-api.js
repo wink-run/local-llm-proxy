@@ -16,6 +16,7 @@ const { refreshGatewayPeerModels } = require('../shared/peer-models-sync');
 const { localStats } = require('../shared/telemetry');
 const billingConfig = require('../electron/billing-config');
 const cloudBilling = require('../electron/cloud-billing-sync');
+const agentControl = require('./agent-control');
 
 // ── Module state ──────────────────────────────────────────────────────────────
 
@@ -406,6 +407,26 @@ async function handleRequest(req, res) {
     return json(res, 200, { ok: true });
   }
 
+  // ── P2P 贡献 Agent（Docker / CLI，对应 Electron agent:* IPC）────────────────
+
+  if (method === 'GET' && url === '/api/agent/status') {
+    return json(res, 200, { running: agentControl.isRunning() });
+  }
+
+  if (method === 'GET' && url === '/api/agent/logs') {
+    return json(res, 200, { logs: agentControl.getLogs() });
+  }
+
+  if (method === 'POST' && url === '/api/agent/start') {
+    agentControl.startAgent();
+    return json(res, 200, { running: agentControl.isRunning() });
+  }
+
+  if (method === 'POST' && url === '/api/agent/stop') {
+    agentControl.stopAgent();
+    return json(res, 200, { running: false });
+  }
+
   // ── Local config routes ─────────────────────────────────────────────────────
 
   if (method === 'GET' && url === '/api/local-config') {
@@ -638,6 +659,7 @@ function start(port, gatewayInstance, bindHost = '127.0.0.1') {
  * Stop the admin API server.
  */
 function stop() {
+  agentControl.stopAgent();
   if (_server) {
     _server.close();
     _server = null;

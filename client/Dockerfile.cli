@@ -20,7 +20,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ libsqlite3-dev \
   && npm config set fetch-retries 5 \
   && npm config set fetch-retry-mintimeout 20000 \
-  && npm install --omit=dev js-yaml@4.1.1 better-sqlite3@12.10.0 \
+  && npm install --omit=dev js-yaml@4.1.1 better-sqlite3@12.10.0 ws@8.20.0 \
   && rm -rf /var/lib/apt/lists/*
 
 # ── Stage 3: runtime（与 native-deps 同 Node 版本）────────────────────────────
@@ -43,6 +43,7 @@ COPY electron/local-gateway.js \
      electron/local-stats.js \
      electron/session-import.js \
      electron/session-browser.js \
+     electron/agent-worker.js \
      ./electron/
 COPY electron/oauth ./electron/oauth
 COPY electron/config ./electron/config

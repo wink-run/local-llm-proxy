@@ -2,6 +2,10 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { getStats, getSettlements } from '../api/client';
 import { getConfig, getGateway } from '../api/adapter';
+import {
+  getAgentStatus, startAgent, stopAgent, getAgentLogs,
+  subscribeAgentEvents, useAgentPolling,
+} from '../api/agentControl';
 import RateChart from '../components/RateChart';
 import { useLang } from '../store/lang';
 function multiplierToStars(m) {
@@ -162,21 +166,40 @@ export default function Contribute() {
   const [chartData,   setChartData]   = useState([]);
   const [settlements, setSettlements] = useState([]);
   const [logs,        setLogs]        = useState([]);
+  const [agentError,  setAgentError]  = useState('');
   const logRef = useRef(null);
 
   useEffect(() => {
-    if (!window.electronAPI) return;
-    window.electronAPI.agent.getStatus().then(({ running: r }) => setRunning(r));
-    // Load historical logs buffered in main process before subscribing to new ones
-    window.electronAPI.agent.getLogs?.().then(lines => {
-      if (lines?.length) setLogs(lines.map(l => l.trimEnd()));
+    const unsub = subscribeAgentEvents({
+      onStatus: ({ running: r, error }) => {
+        setRunning(r);
+        if (error) setLogs(prev => [...prev.slice(-199), `[error] ${error}`]);
+      },
+      onLog: (line) => setLogs(prev => [...prev.slice(-199), line.trimEnd()]),
     });
-    const disposeStatus = window.electronAPI.agent.onStatus(({ running: r, error }) => {
-      setRunning(r);
-      if (error) setLogs(prev => [...prev.slice(-199), `[error] ${error}`]);
-    });
-    const disposeLog = window.electronAPI.agent.onLog(line => setLogs(prev => [...prev.slice(-199), line.trimEnd()]));
-    return () => { disposeStatus?.(); disposeLog?.(); };
+    if (unsub) {
+      getAgentStatus().then(({ running: r }) => setRunning(r));
+      getAgentLogs().then(lines => {
+        if (lines?.length) setLogs(lines.map(l => String(l).trimEnd()));
+      });
+      return unsub;
+    }
+
+    // Docker / CLI：轮询 admin-api
+    if (!useAgentPolling()) return undefined;
+    let cancelled = false;
+    async function poll() {
+      try {
+        const st = await getAgentStatus();
+        if (cancelled) return;
+        setRunning(!!st.running);
+        const lines = await getAgentLogs();
+        if (!cancelled && lines.length) setLogs(lines.map(l => String(l).trimEnd()));
+      } catch {}
+    }
+    poll();
+    const id = setInterval(poll, 2000);
+    return () => { cancelled = true; clearInterval(id); };
   }, []);
 
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [logs]);
@@ -199,6 +222,29 @@ export default function Contribute() {
     getSettlements().then(r => setSettlements((r.data.settlements || []).slice(0, 10))).catch(() => {});
   }, []);
 
+  async function handleStart() {
+    setAgentError('');
+    try {
+      await startAgent();
+      const st = await getAgentStatus();
+      setRunning(!!st.running);
+      const lines = await getAgentLogs();
+      if (lines.length) setLogs(lines.map(l => String(l).trimEnd()));
+    } catch (e) {
+      setAgentError(e.message || String(e));
+    }
+  }
+
+  async function handleStop() {
+    setAgentError('');
+    try {
+      await stopAgent();
+      setRunning(false);
+    } catch (e) {
+      setAgentError(e.message || String(e));
+    }
+  }
+
   return (
     <div className="p-6 space-y-5">
       <div>
@@ -219,12 +265,15 @@ export default function Contribute() {
           )}
         </div>
         <div className="flex gap-2">
-          <button onClick={() => window.electronAPI?.agent.start()} disabled={running}
+          <button onClick={handleStart} disabled={running}
             className="px-4 py-2 bg-green-700 hover:bg-green-600 disabled:opacity-40 rounded-lg text-sm font-medium text-white transition-colors">{t('contribute.start')}</button>
-          <button onClick={() => window.electronAPI?.agent.stop()} disabled={!running}
+          <button onClick={handleStop} disabled={!running}
             className="px-4 py-2 bg-red-700 hover:bg-red-600 disabled:opacity-40 rounded-lg text-sm font-medium text-white transition-colors">{t('contribute.stop')}</button>
         </div>
       </div>
+      {agentError && (
+        <p className="text-sm text-red-600 dark:text-red-400">{agentError}</p>
+      )}
 
       <ContributionConfigCard />
 

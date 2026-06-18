@@ -1,12 +1,25 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { getProfile, listKeys } from '../api/client';
 import { loadUserAccounts } from '../api/userAccounts';
-import { getLocalConfig } from '../api/adapter';
+import { getLocalConfig, getConfig } from '../api/adapter';
 import { getServerUrl, normalizeServerBase, getSyncServerBase, syncCloudConfigUrl, bootstrapServerUrl } from '../config';
 
 const AuthContext = createContext(null);
 
 const POLL_INTERVAL = 30_000;
+
+// Docker / CLI：登录后将 worker_key 写入 config.json，供贡献 Agent 注册
+async function syncAgentCredentials(userData) {
+  if (window.electronAPI?.config?.write) return;
+  const base = normalizeServerBase(getServerUrl());
+  const wk = userData?.worker_key;
+  if (!base || !wk) return;
+  try {
+    const current = (await getConfig().read().catch(() => null)) || {};
+    const wsUrl = base.replace(/^https?/, (m) => (m === 'https' ? 'wss' : 'ws')) + '/ws/worker';
+    await getConfig().write({ ...current, server_url: wsUrl, worker_key: wk });
+  } catch {}
+}
 
 // Push the user's first active cloud key + backend URL into the local gateway
 // so it can forward P2P model requests to the backend.
@@ -70,6 +83,7 @@ export function AuthProvider({ children }) {
         .then((r) => {
           setUser(r.data);
           startPolling();
+          syncAgentCredentials(r.data);
           syncCloudKey();
           syncCloudConfigUrl();
           syncRemoteConfig();
@@ -85,6 +99,7 @@ export function AuthProvider({ children }) {
     localStorage.setItem('token', token);
     setUser(userData);
     startPolling();
+    syncAgentCredentials(userData);
     syncCloudKey();
     syncCloudConfigUrl();
     syncRemoteConfig();

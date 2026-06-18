@@ -15,6 +15,7 @@ const fs   = require('fs');
 
 const gateway  = require('../electron/local-gateway');
 const adminApi = require('./admin-api');
+const agentControl = require('./agent-control');
 const reporter = require('../shared/device-reporter');
 const { readLocalConfig, readAgentConfig, ensureLocalConfig } = require('../shared/config-loader');
 const { defaultServerUrlFromEnv } = require('../shared/default-server-url');
@@ -139,10 +140,17 @@ async function cmdStart(port, adminPort) {
   console.log(`[gateway] Ready. Gateway :${port}  Admin :${adminPort}`);
   console.log('[gateway] Press Ctrl+C to stop.');
 
+  // 与桌面版一致：配置 auto_start 且已登录（有 worker_key）时自动启动贡献 Agent
+  const agentCfg = readAgentConfig();
+  if (agentCfg?.auto_start && agentCfg?.worker_key) {
+    agentControl.startAgent();
+  }
+
   // Graceful shutdown
   function shutdown() {
     console.log('\n[gateway] Shutting down...');
     if (_peerModelsTimer) clearInterval(_peerModelsTimer);
+    agentControl.stopAgent();
     reporter.stop();
     telemetry.shutdown();
     gateway.stop();
