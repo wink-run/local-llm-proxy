@@ -200,7 +200,7 @@ td{padding:10px 12px;vertical-align:middle}
     </nav>
 
     <!-- ══ 积分账户 ══ -->
-    <div v-show="activeTab === 'credits'" class="tab-content">
+    <div v-if="activeTab === 'credits'" class="tab-content">
       <div class="cards-row">
         <div class="card"><div class="card-title">{{ T.balance }}</div><div class="card-value">{{ fmt1(profile.credits_balance) }}<span class="unit">{{ T.credits }}</span></div></div>
         <div class="card"><div class="card-title">{{ T.earned }}</div><div class="card-value">{{ fmt1(profile.credits_earned) }}<span class="unit">{{ T.credits }}</span></div></div>
@@ -252,11 +252,11 @@ td{padding:10px 12px;vertical-align:middle}
 
       <!-- 积分流水 -->
       <div v-if="creditsSub === 'transactions'" class="card">
-        <div class="toolbar"><span class="section-title" style="margin:0;border:none;padding:0">{{ T.tabs.transactions }}</span><button class="btn-sm toolbar-right" @click="fetchTransactions">{{ T.refresh }}</button></div>
+        <div class="toolbar"><span class="section-title" style="margin:0;border:none;padding:0">{{ T.tabs?.transactions || '' }}</span><button class="btn-sm toolbar-right" @click="fetchTransactions">{{ T.refresh }}</button></div>
         <table>
           <thead><tr><th>{{ T.time }}</th><th>{{ T.type }}</th><th>{{ T.model }}</th><th>Token</th><th>{{ T.delta }}</th><th>{{ T.balanceAfter }}</th><th>{{ T.note }}</th></tr></thead>
           <tbody>
-            <tr v-if="transactions.length === 0" class="empty-row"><td colspan="7">{{ T.noTransactions }}</td></tr>
+            <tr v-if="safeLen(transactions) === 0" class="empty-row"><td colspan="7">{{ T.noTransactions }}</td></tr>
             <tr v-for="t in transactions" :key="t.id">
               <td style="color:#64748b">{{ fmtTime(t.created_at) }}</td>
               <td><span :class="txBadge(t.type)">{{ txLabel(t.type) }}</span></td>
@@ -276,7 +276,7 @@ td{padding:10px 12px;vertical-align:middle}
         <table>
           <thead><tr><th>{{ T.settledAt }}</th><th>Worker</th><th>{{ T.model }}</th><th>Token</th><th>{{ T.quality }}</th><th>{{ T.credited }}</th></tr></thead>
           <tbody>
-            <tr v-if="settlements.length === 0" class="empty-row"><td colspan="6">{{ T.noSettlements }}</td></tr>
+            <tr v-if="safeLen(settlements) === 0" class="empty-row"><td colspan="6">{{ T.noSettlements }}</td></tr>
             <tr v-for="s in settlements" :key="s.id">
               <td style="color:#64748b">{{ fmtTime(s.period_end) }}</td>
               <td class="mono" style="color:#64748b">{{ s.worker_id }}</td>
@@ -311,7 +311,7 @@ td{padding:10px 12px;vertical-align:middle}
           <table>
             <thead><tr><th>{{ T.time }}</th><th>{{ T.credits }}</th><th>{{ T.status }}</th><th>{{ T.note }}</th><th>{{ T.adminNote }}</th></tr></thead>
             <tbody>
-              <tr v-if="purchaseOrders.length === 0" class="empty-row"><td colspan="5">{{ T.noOrders }}</td></tr>
+              <tr v-if="safeLen(purchaseOrders) === 0" class="empty-row"><td colspan="5">{{ T.noOrders }}</td></tr>
               <tr v-for="o in purchaseOrders" :key="o.id">
                 <td style="color:#64748b">{{ fmtTime(o.created_at) }}</td>
                 <td style="font-weight:600">{{ o.amount_credits || '—' }}</td>
@@ -339,7 +339,7 @@ td{padding:10px 12px;vertical-align:middle}
           </div>
         </div>
         <div style="font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:10px">{{ T.econRates }}</div>
-        <table v-if="rateModels.length > 0">
+        <table v-if="safeLen(rateModels) > 0">
           <thead><tr><th>{{ T.model }}</th><th>{{ T.tier }}</th><th style="color:#2dd4bf">{{ T.earnRate }}</th><th style="color:#fbbf24">{{ T.spendRate }}</th></tr></thead>
           <tbody>
             <tr v-for="m in rateModels" :key="m.name">
@@ -371,14 +371,14 @@ td{padding:10px 12px;vertical-align:middle}
     </div>
 
     <!-- ══ 订阅账户 ══ -->
-    <div v-show="activeTab === 'subscription'" class="tab-content">
+    <div v-if="activeTab === 'subscription'" class="tab-content">
       <div class="account-panel">
         <div class="account-body">
           <p style="font-size:12px;color:#64748b;margin-bottom:14px">{{ T.subHint }}</p>
           <p v-if="acctMsg" :style="{ fontSize:'12px', marginBottom:'10px', color: acctMsgOk ? '#4ade80' : '#f87171' }">{{ acctMsg }}</p>
 
           <div style="font-size:12px;font-weight:600;color:#94a3b8;margin:12px 0 8px">{{ T.sectionAppSubs }}</div>
-          <div v-if="!(appSubs && appSubs.length)" style="color:#4a5568;font-size:13px;text-align:center;padding:16px">{{ T.noAppSubscriptions }}</div>
+          <div v-if="safeLen(appSubs) === 0" style="color:#4a5568;font-size:13px;text-align:center;padding:16px">{{ T.noAppSubscriptions }}</div>
           <div v-for="s in appSubs" :key="s.id" class="list-row">
             <span class="icon">{{ s.app_icon }}</span>
             <div class="meta"><div class="title">{{ s.app_name }}</div>{{ s.plan_label || s.plan_id }}{{ s.monthly_usd != null ? ' · $' + s.monthly_usd + T.perMonth : '' }}</div>
@@ -389,7 +389,7 @@ td{padding:10px 12px;vertical-align:middle}
           </div>
 
           <div style="font-size:12px;font-weight:600;color:#94a3b8;margin:16px 0 8px;border-top:1px solid #2d3148;padding-top:12px">{{ T.sectionApiSubs }}</div>
-          <div v-if="!(apiSubs && apiSubs.length)" style="color:#4a5568;font-size:13px;text-align:center;padding:16px">{{ T.noApiSubscriptions }}</div>
+          <div v-if="safeLen(apiSubs) === 0" style="color:#4a5568;font-size:13px;text-align:center;padding:16px">{{ T.noApiSubscriptions }}</div>
           <div v-for="s in apiSubs" :key="s.id" class="list-row">
             <span class="icon">{{ s.app_icon }}</span>
             <div class="meta"><div class="title">{{ s.app_name }}</div>{{ s.plan_label || s.plan_id }}{{ s.monthly_usd != null ? ' · $' + s.monthly_usd + T.perMonth : '' }}</div>
@@ -444,11 +444,11 @@ td{padding:10px 12px;vertical-align:middle}
     </div>
 
     <!-- ══ 按量付费账户 ══ -->
-    <div v-show="activeTab === 'payg'" class="tab-content">
+    <div v-if="activeTab === 'payg'" class="tab-content">
       <div class="account-panel">
         <div class="account-body">
           <p style="font-size:12px;color:#64748b;margin-bottom:14px">{{ T.paygHint }}</p>
-          <div v-if="!(userPayg && userPayg.length)" style="color:#4a5568;font-size:13px;text-align:center;padding:24px">{{ T.noPayg }}</div>
+          <div v-if="safeLen(userPayg) === 0" style="color:#4a5568;font-size:13px;text-align:center;padding:24px">{{ T.noPayg }}</div>
           <div v-for="p in userPayg" :key="p.id" style="margin-bottom:10px;border:1px solid #2d3148;border-radius:8px;overflow:hidden">
             <button type="button" style="width:100%;display:flex;align-items:center;gap:10px;padding:12px 14px;background:#13151f;border:none;color:#e2e8f0;cursor:pointer;text-align:left" @click="paygExpanded = paygExpanded === p.id ? null : p.id">
               <span>{{ p.icon }}</span><span style="flex:1;font-weight:500">{{ p.label }}</span>
@@ -490,7 +490,7 @@ td{padding:10px 12px;vertical-align:middle}
     </div>
 
     <!-- ══ 用量情况 ══ -->
-    <div v-show="activeTab === 'usage'" class="tab-content">
+    <div v-if="activeTab === 'usage'" class="tab-content">
       <div class="usage-hero">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
           <span style="font-size:13px;color:#c7d2fe">{{ T.usageTitle }}</span>
@@ -535,7 +535,7 @@ td{padding:10px 12px;vertical-align:middle}
     </div>
 
     <!-- ══ API Keys ══ -->
-    <div v-show="activeTab === 'keys'" class="tab-content">
+    <div v-if="activeTab === 'keys'" class="tab-content">
       <div class="toolbar">
         <input v-model="newKeyNote" class="note-input" :placeholder="T.notePlaceholder" @keyup.enter="createKey" />
         <button class="btn btn-indigo" @click="createKey">＋ {{ T.newKey }}</button>
@@ -543,7 +543,7 @@ td{padding:10px 12px;vertical-align:middle}
       <table>
         <thead><tr><th>ID</th><th>Key</th><th>{{ T.note }}</th><th>{{ T.status }}</th><th>{{ T.createdAt }}</th><th>{{ T.actions }}</th></tr></thead>
         <tbody>
-          <tr v-if="myKeys.length === 0" class="empty-row"><td colspan="6">{{ T.noKeys }}</td></tr>
+          <tr v-if="safeLen(myKeys) === 0" class="empty-row"><td colspan="6">{{ T.noKeys }}</td></tr>
           <tr v-for="k in myKeys" :key="k.id" :style="k.is_active ? '' : 'opacity:.5'">
             <td style="color:#64748b">{{ k.id }}</td>
             <td>
@@ -564,7 +564,7 @@ td{padding:10px 12px;vertical-align:middle}
     </div>
 
     <!-- ══ Providers（我的供给源）══ -->
-    <div v-show="activeTab === 'providers'" class="tab-content">
+    <div v-if="activeTab === 'providers'" class="tab-content">
       <div class="toolbar">
         <span style="color:#64748b;font-size:13px">{{ lang==='zh'?'把你自己的订阅源（API Key 或 Claude 订阅）加为个人供给源，仅你可用，可在路由中与其它模型混用':'Add your own API key or Claude subscription as a private supply source' }}</span>
         <button class="btn btn-indigo toolbar-right" @click="openProviderModal(null)">＋ {{ lang==='zh'?'添加供给源':'Add provider' }}</button>
@@ -576,7 +576,7 @@ td{padding:10px 12px;vertical-align:middle}
           <th>{{ T.status }}</th><th>{{ T.actions }}</th>
         </tr></thead>
         <tbody>
-          <tr v-if="providers.length === 0" class="empty-row"><td colspan="6">{{ lang==='zh'?'还没有个人供给源':'No personal providers yet' }}</td></tr>
+          <tr v-if="safeLen(providers) === 0" class="empty-row"><td colspan="6">{{ lang==='zh'?'还没有个人供给源':'No personal providers yet' }}</td></tr>
           <tr v-for="p in providers" :key="p.id" :style="p.enabled ? '' : 'opacity:.5'">
             <td>{{ p.name }}</td>
             <td><span class="badge badge-blue">{{ p.api_style }}</span></td>
@@ -647,7 +647,7 @@ td{padding:10px 12px;vertical-align:middle}
     </div>
 
     <!-- ══ API Debug（使用与本站 OpenAI 兼容接口相同的 Key） ══ -->
-    <div v-show="activeTab === 'debug'" class="tab-content">
+    <div v-if="activeTab === 'debug'" class="tab-content">
       <div class="card" style="margin-bottom:16px">
         <div class="section-title">{{ T.debugTitle }}</div>
         <p style="color:#64748b;font-size:13px;margin-bottom:12px">{{ T.debugHint }}</p>
@@ -661,7 +661,7 @@ td{padding:10px 12px;vertical-align:middle}
           </div>
           <button type="button" class="btn-sm" @click="fetchDebugModels">{{ T.refreshModels }}</button>
         </div>
-        <p v-if="keysForDebug.length === 0" style="color:#f59e0b;font-size:12px;margin-top:8px">{{ T.debugNoKeys }}</p>
+        <p v-if="safeLen(keysForDebug) === 0" style="color:#f59e0b;font-size:12px;margin-top:8px">{{ T.debugNoKeys }}</p>
       </div>
       <div class="debug-layout">
         <div class="debug-toolbar">
@@ -670,10 +670,10 @@ td{padding:10px 12px;vertical-align:middle}
             <option v-for="m in debugModels" :key="m" :value="m">{{ m }}</option>
           </select>
           <button type="button" class="btn-sm" @click="clearDebugChat">{{ T.clearChat }}</button>
-          <span v-if="debugModels.length === 0 && debugApiKey" style="color:#f59e0b;font-size:12px">⚠ {{ T.noOnlineModels }}</span>
+          <span v-if="safeLen(debugModels) === 0 && debugApiKey" style="color:#f59e0b;font-size:12px">⚠ {{ T.noOnlineModels }}</span>
         </div>
         <div class="chat-area" ref="debugChatArea">
-          <div v-if="debugChatMsgs.length === 0" class="chat-placeholder">{{ T.chatPlaceholder }}</div>
+          <div v-if="safeLen(debugChatMsgs) === 0" class="chat-placeholder">{{ T.chatPlaceholder }}</div>
           <div v-for="m in debugChatMsgs" :key="m.id" :class="['chat-msg', m.role]">
             <div class="msg-label">{{ m.role === 'user' ? T.you : 'AI' }}</div>
             <div :class="['msg-bubble', m.streaming ? 'cursor' : '']">{{ m.content }}</div>
@@ -823,15 +823,35 @@ const LANGS = {
 
 createApp({
   setup() {
-    const lang = ref(localStorage.getItem('lang') || 'zh')
-    const T = computed(() => LANGS[lang.value])
+    // 部分环境（iframe / Electron webview）禁止 localStorage，回退内存存储
+    const _memStore = {}
+    function storageGet(key) {
+      try {
+        const v = localStorage.getItem(key)
+        if (v != null) { _memStore[key] = v; return v }
+      } catch (_) {}
+      return _memStore[key] ?? null
+    }
+    function storageSet(key, val) {
+      _memStore[key] = val
+      try { localStorage.setItem(key, val) } catch (_) {}
+    }
+    function storageRemove(key) {
+      delete _memStore[key]
+      try { localStorage.removeItem(key) } catch (_) {}
+    }
+    function asArray(v) { return Array.isArray(v) ? v : [] }
+    function safeLen(v) { return asArray(v).length }
+
+    const lang = ref(storageGet('lang') || 'zh')
+    const T = computed(() => LANGS[lang.value] || LANGS.zh)
     function toggleLang() {
       lang.value = lang.value === 'zh' ? 'en' : 'zh'
-      localStorage.setItem('lang', lang.value)
+      storageSet('lang', lang.value)
       document.documentElement.lang = lang.value === 'zh' ? 'zh-CN' : 'en'
     }
 
-    const loggedIn = ref(!!localStorage.getItem('user_token'))
+    const loggedIn = ref(!!storageGet('user_token'))
     const authTab = ref('login')
     const authLoading = ref(false)
     const authErr = ref(''), authOk = ref('')
@@ -857,10 +877,10 @@ createApp({
     let pricingSaveTimer = null
 
     function uid() { return `ua-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }
-    const subs = computed(() => userAccounts.value?.user_subscriptions || [])
-    const userPayg = computed(() => userAccounts.value?.user_payg_providers || [])
-    const appSubs = computed(() => (subs.value || []).filter(s => (s.subscription_kind || 'app') !== 'api'))
-    const apiSubs = computed(() => (subs.value || []).filter(s => s.subscription_kind === 'api'))
+    const subs = computed(() => asArray(userAccounts.value?.user_subscriptions))
+    const userPayg = computed(() => asArray(userAccounts.value?.user_payg_providers))
+    const appSubs = computed(() => subs.value.filter(s => (s.subscription_kind || 'app') !== 'api'))
+    const apiSubs = computed(() => subs.value.filter(s => s.subscription_kind === 'api'))
     const subCount = computed(() => subs.value.length)
     const paygCount = computed(() => userPayg.value.length)
 
@@ -890,7 +910,7 @@ createApp({
       ]
     })
 
-    function getToken() { return localStorage.getItem('user_token') || '' }
+    function getToken() { return storageGet('user_token') || '' }
 
     async function userApi(path, opts = {}) {
       const r = await fetch(path, {
@@ -909,9 +929,9 @@ createApp({
         const r = await fetch('/user/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email:form.value.email, password:form.value.password }) })
         const d = await r.json()
         if (!r.ok) { authErr.value = d.detail || T.value.loggingIn; return }
-        localStorage.setItem('user_token', d.token)
+        storageSet('user_token', d.token)
         loggedIn.value = true
-        boot()
+        boot().catch(() => {})
       } catch { authErr.value = 'Network error' }
       finally { authLoading.value = false }
     }
@@ -925,13 +945,13 @@ createApp({
         const d = await r.json()
         if (!r.ok) { authErr.value = d.detail || 'Error'; return }
         authOk.value = lang.value === 'zh' ? '注册成功！正在登录…' : 'Registered! Signing in…'
-        localStorage.setItem('user_token', d.token)
-        setTimeout(() => { loggedIn.value = true; boot() }, 800)
+        storageSet('user_token', d.token)
+        setTimeout(() => { loggedIn.value = true; boot().catch(() => {}) }, 800)
       } catch { authErr.value = 'Network error' }
       finally { authLoading.value = false }
     }
 
-    function logout() { localStorage.removeItem('user_token'); loggedIn.value = false }
+    function logout() { storageRemove('user_token'); loggedIn.value = false }
 
     async function fetchProfile() {
       try { const d = await (await userApi('/user/profile')).json(); profile.value = d } catch {}
@@ -955,7 +975,7 @@ createApp({
     }
 
     const myKeys = ref([]), newKeyNote = ref('')
-    async function fetchMyKeys() { try { const d = await (await userApi('/user/keys')).json(); myKeys.value = d.keys||[] } catch {} }
+    async function fetchMyKeys() { try { const d = await (await userApi('/user/keys')).json(); myKeys.value = asArray(d.keys) } catch {} }
     async function createKey() {
       try { const k = await (await userApi('/user/keys',{method:'POST',body:JSON.stringify({note:newKeyNote.value})})).json(); myKeys.value.unshift(k); newKeyNote.value='' } catch {}
     }
@@ -986,7 +1006,7 @@ createApp({
     function resetProvOAuth() { provOAuth.value = { sessionId:'', code:'', email:'', refresh_token:'', setupToken:false, busy:false, started:false } }
     function provModelName(m) { return typeof m === 'string' ? m : (m.name || '') }
     async function fetchProviders() {
-      try { const d = await (await userApi('/user/providers')).json(); providers.value = d.providers || [] } catch {}
+      try { const d = await (await userApi('/user/providers')).json(); providers.value = asArray(d.providers) } catch {}
     }
     function openProviderModal(p) {
       provMsg.value = ''; resetProvOAuth()
@@ -1048,14 +1068,14 @@ createApp({
     const workerKeyVisible = ref(false)
 
     const settlements = ref([])
-    async function fetchSettlements() { try { const d = await (await userApi('/user/settlements')).json(); settlements.value=d.settlements||[] } catch {} }
+    async function fetchSettlements() { try { const d = await (await userApi('/user/settlements')).json(); settlements.value = asArray(d.settlements) } catch {} }
 
     const transactions = ref([])
-    async function fetchTransactions() { try { const d = await (await userApi('/user/transactions')).json(); transactions.value=d.transactions||[] } catch {} }
+    async function fetchTransactions() { try { const d = await (await userApi('/user/transactions')).json(); transactions.value = asArray(d.transactions) } catch {} }
 
     const purchaseContact=ref(''),purchaseNote=ref(''),purchaseLoading=ref(false)
     const purchaseMsg=ref(''),purchaseMsgOk=ref(false),purchaseOrders=ref([]),contactInfo=ref('')
-    async function fetchPurchaseOrders() { try { const d = await (await userApi('/user/purchase-orders')).json(); purchaseOrders.value=d.orders||[]; if (d.contact_info) contactInfo.value=d.contact_info } catch {} }
+    async function fetchPurchaseOrders() { try { const d = await (await userApi('/user/purchase-orders')).json(); purchaseOrders.value = asArray(d.orders); if (d.contact_info) contactInfo.value = d.contact_info } catch {} }
     async function submitPurchase() {
       if (!purchaseContact.value.trim()) return
       purchaseLoading.value=true; purchaseMsg.value=''
@@ -1100,11 +1120,11 @@ createApp({
     }
 
     /* ── 订阅 / 按量：目录与 CRUD ── */
-    const availableAppCatalog = computed(() => (userAccounts.value?.subscription_catalog || []).filter(c => !subs.value.some(s => s.source_id === c.source_id)))
-    const availableApiCatalog = computed(() => (userAccounts.value?.api_subscription_catalog || []).filter(c => !apiSubs.value.some(s => !s.custom && s.source_id === c.source_id)))
-    const availablePaygCatalog = computed(() => (userAccounts.value?.payg_provider_catalog || []).filter(o => !userPayg.value.some(p => p.provider_id === (o.id || o.provider_id))))
-    const catalogItem = computed(() => (userAccounts.value?.subscription_catalog || []).find(c => c.source_id === addSubSource.value))
-    const apiCatalogItem = computed(() => (userAccounts.value?.api_subscription_catalog || []).find(c => c.source_id === addApiSource.value))
+    const availableAppCatalog = computed(() => asArray(userAccounts.value?.subscription_catalog).filter(c => !subs.value.some(s => s.source_id === c.source_id)))
+    const availableApiCatalog = computed(() => asArray(userAccounts.value?.api_subscription_catalog).filter(c => !apiSubs.value.some(s => !s.custom && s.source_id === c.source_id)))
+    const availablePaygCatalog = computed(() => asArray(userAccounts.value?.payg_provider_catalog).filter(o => !userPayg.value.some(p => p.provider_id === (o.id || o.provider_id))))
+    const catalogItem = computed(() => asArray(userAccounts.value?.subscription_catalog).find(c => c.source_id === addSubSource.value))
+    const apiCatalogItem = computed(() => asArray(userAccounts.value?.api_subscription_catalog).find(c => c.source_id === addApiSource.value))
     const appPlanOptions = computed(() => {
       const c = catalogItem.value
       if (!c) return []
@@ -1122,8 +1142,11 @@ createApp({
       try {
         const d = await (await userApi('/user/accounts')).json()
         userAccounts.value = { ...EMPTY_ACCOUNTS, ...d,
-          user_subscriptions: Array.isArray(d.user_subscriptions) ? d.user_subscriptions : [],
-          user_payg_providers: Array.isArray(d.user_payg_providers) ? d.user_payg_providers : [],
+          user_subscriptions: asArray(d.user_subscriptions),
+          user_payg_providers: asArray(d.user_payg_providers),
+          subscription_catalog: asArray(d.subscription_catalog),
+          api_subscription_catalog: asArray(d.api_subscription_catalog),
+          payg_provider_catalog: asArray(d.payg_provider_catalog),
         }
       } catch {}
     }
@@ -1139,8 +1162,11 @@ createApp({
         const r = await userApi('/user/accounts', { method:'PUT', body: JSON.stringify(body) })
         const d = await r.json()
         userAccounts.value = { ...EMPTY_ACCOUNTS, ...d,
-          user_subscriptions: Array.isArray(d.user_subscriptions) ? d.user_subscriptions : [],
-          user_payg_providers: Array.isArray(d.user_payg_providers) ? d.user_payg_providers : [],
+          user_subscriptions: asArray(d.user_subscriptions),
+          user_payg_providers: asArray(d.user_payg_providers),
+          subscription_catalog: asArray(d.subscription_catalog),
+          api_subscription_catalog: asArray(d.api_subscription_catalog),
+          payg_provider_catalog: asArray(d.payg_provider_catalog),
         }
         acctMsgOk.value = true; acctMsg.value = lang.value === 'zh' ? '已保存' : 'Saved'
         setTimeout(() => { acctMsg.value = '' }, 2000)
@@ -1152,7 +1178,7 @@ createApp({
     }
     function subUseApi(s) {
       if (s.subscription_kind === 'api') return true
-      const cat = (userAccounts.value?.subscription_catalog || []).find(c => c.source_id === s.source_id)
+      const cat = asArray(userAccounts.value?.subscription_catalog).find(c => c.source_id === s.source_id)
       if (s.subscription_to_api != null) return s.subscription_to_api === true
       return cat?.subscription_to_api === true
     }
@@ -1307,7 +1333,7 @@ createApp({
     const debugChatLoading = ref(false)
     const debugChatArea = ref(null)
     let debugMsgSeq = 0
-    const keysForDebug = computed(() => (myKeys.value || []).filter(k => k.is_active))
+    const keysForDebug = computed(() => asArray(myKeys.value).filter(k => k.is_active))
 
     async function fetchDebugModels() {
       const k = (debugApiKey.value || '').trim()
@@ -1393,9 +1419,9 @@ createApp({
     function fmt0(n) { return n==null?'—':Math.round(n) }
     function pct(n)  { return n==null?'—':(n*100).toFixed(0)+'%' }
 
-    function txLabel(type) { return T.value.txLabels[type] || type }
+    function txLabel(type) { return (T.value.txLabels || {})[type] || type }
     function txBadge(type) { return {contribute:'badge badge-green',consume:'badge badge-red',referral:'badge badge-blue',purchase:'badge badge-blue',adjust:'badge badge-yellow'}[type]||'badge' }
-    function orderLabel(s) { return T.value.orderLabels[s] || s }
+    function orderLabel(s) { return (T.value.orderLabels || {})[s] || s }
     function orderBadge(s) { return {pending:'badge badge-yellow',approved:'badge badge-green',rejected:'badge badge-red'}[s]||'badge' }
 
     const rateModels = ref([])
@@ -1404,7 +1430,7 @@ createApp({
     async function fetchRates() {
       try {
         const d = await (await fetch('/api/rates')).json()
-        rateModels.value = d.models || []
+        rateModels.value = asArray(d.models)
         rateExchange.value = d.exchange || {}
       } catch {}
     }
@@ -1432,14 +1458,14 @@ createApp({
     })
 
     onMounted(() => {
-      if (loggedIn.value) boot()
+      if (loggedIn.value) boot().catch(() => {})
       const params = new URLSearchParams(location.search)
       const ref = params.get('ref')
       if (ref) form.value.referral_code = ref
     })
 
     return {
-      lang, T, toggleLang,
+      lang, T, toggleLang, safeLen,
       loggedIn, authTab, authLoading, authErr, authOk, form, doLogin, doRegister, logout,
       profile, activeTab, visibleTabs, switchTab, creditsSub, creditsSubTabs, switchCreditsSub,
       myKeys, newKeyNote, createKey, toggleKey, deleteKey, maskKey,
