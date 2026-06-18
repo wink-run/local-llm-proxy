@@ -185,7 +185,7 @@ export default {
   'gateway.apps.revertTitle': 'Revert: stop session log collection (history kept)',
   'gateway.apps.managedDefault': '✓ Managed (official by default; pick a model to use gateway)',
   'gateway.apps.hostFailed': 'Manage failed: {msg}',
-  'gateway.apps.cliOnly': 'App onboarding requires the desktop client (use providers & routes in Docker)',
+  'gateway.apps.cliOnly': 'Local config writes need the desktop client (Docker can create apps and bind routes)',
 
   // ── Agent linker ──
   'gateway.agent.title': 'CLI agent transparent link',

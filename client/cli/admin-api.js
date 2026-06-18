@@ -108,16 +108,104 @@ function serveStatic(res, relPath) {
   return true;
 }
 
+// ── Apps（local-config.apps[]，与 Electron apps:* IPC 同结构）──────────────────
+
+function readAppsCfg() {
+  const cfg = readLocalConfig() || { scene_routes: [], local_keys: [] };
+  if (!Array.isArray(cfg.apps)) cfg.apps = [];
+  return cfg;
+}
+
+function persistAppsCfg(cfg) {
+  writeLocalConfig(cfg);
+  syncGateway(cfg);
+  return cfg;
+}
+
+function createAppRecord(data = {}) {
+  return {
+    id: 'app-' + rndHex(8),
+    name: data.name || '未命名应用',
+    icon: data.icon || '🔧',
+    link_method: data.link_method || 'api-key',
+    agent_id: data.agent_id || null,
+    api_key: (data.link_method === 'api-key' || data.link_method === 'manual')
+      ? ('sk-local-' + rndHex(16)) : null,
+    route_id: data.route_id || null,
+    description: data.description || '',
+    allowed_models: data.allowed_models || [],
+    max_rpm: data.max_rpm || null,
+    max_concurrent: data.max_concurrent || null,
+    allow_stream: data.allow_stream !== false,
+    env: data.env || null,
+    preset_id: data.preset_id || null,
+    inject: data.inject || (data.env ? 'env' : null),
+    config_file: data.config_file || null,
+    patch: data.patch || null,
+    hosted: data.hosted === true,
+    draft: data.draft === true,
+    created_at: new Date().toISOString(),
+  };
+}
+
 // ── syncGateway ───────────────────────────────────────────────────────────────
 
 function syncGateway(lc) {
   if (!_gateway) return;
+  const routes = lc.scene_routes || [];
+  const apps = lc.apps || [];
   const routerMap = {};
-  for (const r of (lc.scene_routes || [])) {
-    if (r.model_key && r.steps?.length)
-      routerMap[r.model_key] = { steps: r.steps, scene_name: r.scene_name };
+  for (const r of routes) {
+    if (r.model_key && (r.steps?.length || r.rules?.length)) {
+      routerMap[r.model_key] = {
+        steps: r.steps || [],
+        scene_name: r.scene_name,
+        rules: r.rules || null,
+        classifier: r.classifier || null,
+      };
+    }
   }
   _gateway.setRouterModelMap(routerMap);
+
+  // 应用 api_key / shim → 路由改写（与 Electron syncGatewayFromConfig 一致）
+  const PROTOCOL_PATH = {
+    anthropic: '/v1/messages',
+    responses: '/v1/responses',
+    openai:    '/v1/chat/completions',
+    gemini:    '/v1beta',
+  };
+  const toolProto = {};
+  try {
+    for (const t of require('../electron/config-loader').tools()) {
+      toolProto[t.id] = t.protocol;
+    }
+  } catch {}
+
+  const appControls = [];
+  const keyScene = {};
+  const bindRoute = (key, routeId) => {
+    const route = routes.find(r => r.model_key === routeId || r.id === routeId);
+    keyScene[key] = {
+      steps: route?.steps?.length ? route.steps : [{ model: routeId }],
+      scene_name: route?.scene_name || routeId,
+      rules: route?.rules || null,
+      classifier: route?.classifier || null,
+    };
+  };
+  for (const app of apps) {
+    const ctrl = { app_id: app.id, app_name: app.name };
+    if ((app.link_method === 'api-key' || app.link_method === 'manual') && app.api_key) {
+      appControls.push({ ...ctrl, match: { key: app.api_key } });
+      if (app.route_id) bindRoute(app.api_key, app.route_id);
+    } else if (app.link_method === 'shim' && app.agent_id) {
+      const p = PROTOCOL_PATH[toolProto[app.agent_id]];
+      if (p) appControls.push({ ...ctrl, match: { path: p } });
+      if (app.api_key && app.route_id) bindRoute(app.api_key, app.route_id);
+    }
+  }
+  _gateway.setAppControls(appControls);
+  _gateway.setKeySceneMap(keyScene);
+
   const cc = lc.cloud_config || {};
   const serverUrl = cc.url || defaultServerUrlFromEnv() || '';
   if (serverUrl && cc.token) _gateway.setBackendConfig({ url: serverUrl, token: cc.token });
@@ -335,6 +423,60 @@ async function handleRequest(req, res) {
     if (body === null) return;
     const data = await pushUserBillingApi(userBearerToken(req), req, body);
     return json(res, 200, data);
+  }
+
+  // ── Apps（Docker Web UI 新建/编辑应用）──────────────────────────────────────
+
+  if (method === 'GET' && url === '/api/apps') {
+    const cfg = readAppsCfg();
+    return json(res, 200, cfg.apps);
+  }
+
+  if (method === 'POST' && url === '/api/apps') {
+    const body = await parseBody(req, res);
+    if (body === null) return;
+    const cfg = readAppsCfg();
+    const app = createAppRecord(body);
+    cfg.apps.push(app);
+    persistAppsCfg(cfg);
+    return json(res, 200, app);
+  }
+
+  const appMatch = url.match(/^\/api\/apps\/([^/]+)(\/regen-key)?$/);
+  if (appMatch) {
+    const appId = decodeURIComponent(appMatch[1]);
+    const regen = !!appMatch[2];
+
+    if (method === 'PUT') {
+      const body = await parseBody(req, res);
+      if (body === null) return;
+      const cfg = readAppsCfg();
+      const idx = cfg.apps.findIndex(a => a.id === appId);
+      if (idx === -1) return json(res, 404, { error: 'not found' });
+      const { api_key: _drop, id: _id, ...patch } = body;
+      cfg.apps[idx] = { ...cfg.apps[idx], ...patch };
+      persistAppsCfg(cfg);
+      return json(res, 200, cfg.apps[idx]);
+    }
+
+    if (method === 'DELETE') {
+      const cfg = readAppsCfg();
+      cfg.apps = cfg.apps.filter(a => a.id !== appId);
+      persistAppsCfg(cfg);
+      return json(res, 200, { ok: true });
+    }
+
+    if (method === 'POST' && regen) {
+      const cfg = readAppsCfg();
+      const idx = cfg.apps.findIndex(a => a.id === appId);
+      if (idx === -1) return json(res, 404, { error: 'not found' });
+      if (!(cfg.apps[idx].link_method === 'api-key' || cfg.apps[idx].link_method === 'manual')) {
+        return json(res, 400, { error: 'not-key-app' });
+      }
+      cfg.apps[idx].api_key = 'sk-local-' + rndHex(16);
+      persistAppsCfg(cfg);
+      return json(res, 200, { ok: true, api_key: cfg.apps[idx].api_key });
+    }
   }
 
   // ── Scene routes ────────────────────────────────────────────────────────────

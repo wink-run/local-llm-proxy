@@ -105,6 +105,24 @@ const httpAdapter = {
     poll:         () => Promise.reject(new Error('OAuth 登录仅桌面客户端支持')),
     openExternal: (url) => { try { window.open(url, '_blank'); } catch {} return Promise.resolve({ ok: true }); },
   },
+  apps: {
+    list:           ()        => adminFetch('/api/apps'),
+    create:         (d)       => adminFetch('/api/apps', { method: 'POST', body: JSON.stringify(d) }),
+    update:         ({ id, ...d }) => adminFetch(`/api/apps/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(d) }),
+    delete:         (id)      => adminFetch(`/api/apps/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    regenKey:       (id)      => adminFetch(`/api/apps/${encodeURIComponent(id)}/regen-key`, { method: 'POST' }),
+    ensureShimApp:  ()        => Promise.resolve(null),
+    stats:          ()        => Promise.resolve({}),
+    presets:        ()        => Promise.resolve([]),
+    claudeModels:   ()        => Promise.resolve([]),
+    claudeDevModeStatus: ()   => Promise.resolve({ installed: false, dev_mode_ready: false }),
+    writeEnv:       ()        => Promise.resolve({ ok: false, error: 'desktop-only' }),
+    writeConfigFile:()        => Promise.resolve({ ok: false, error: 'desktop-only' }),
+    revertConfigFile: ()      => Promise.resolve({ ok: true }),
+    detail:         ()        => Promise.resolve(null),
+    sessionTrace:   ()        => Promise.resolve(null),
+    onChanged:      undefined,
+  },
 };
 
 // ── Exports ───────────────────────────────────────────────────────────────────
@@ -115,3 +133,5 @@ export function getGateway()     { return (isElectron() && window.electronAPI.ga
 export function getLocalConfig() { return (isElectron() && window.electronAPI.localConfig) ? electronAdapter.localConfig : httpAdapter.localConfig; }
 export function getConfig()      { return (isElectron() && window.electronAPI.config)      ? electronAdapter.config      : httpAdapter.config;      }
 export function getOauth()       { return (isElectron() && window.electronAPI.oauth)       ? electronAdapter.oauth       : httpAdapter.oauth;       }
+/** 应用纳管 CRUD：桌面 IPC 或 Docker admin-api */
+export function getApps()        { return (isElectron() && window.electronAPI?.apps)       ? window.electronAPI.apps       : httpAdapter.apps;        }

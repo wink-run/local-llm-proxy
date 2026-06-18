@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { getRates, getOnlineModels } from '../api/client';
 import { getSyncServerBase } from '../config';
-import { getGateway, getLocalConfig, getConfig } from '../api/adapter';
+import { getGateway, getLocalConfig, getConfig, getApps } from '../api/adapter';
 import { listAgents, applyAgent, revertAgent } from '../api/agents';
 import { loadUserAccounts } from '../api/userAccounts';
 import claudeDevModeImg1 from '../assets/claude-devmode-1.webp';
@@ -1165,6 +1165,7 @@ function AppDetailModal({ app, onClose }) {
 
 function AppManager({ externalRoutes, availableModels = [] }) {
   const { t } = useLang();
+  const appsApi = getApps();
   const [apps,     setApps]     = useState([]);
   const [detailApp, setDetailApp] = useState(null);   // 用量明细弹窗对应的 app
   const [claudeModels, setClaudeModels] = useState([]);  // Claude 名（写 Claude Desktop inferenceModels 用）
@@ -1182,41 +1183,34 @@ function AppManager({ externalRoutes, availableModels = [] }) {
       const localCfg = await getLocalConfig().get().catch(() => ({}));
       setRoutes(localCfg?.scene_routes || []);
 
-      if (window.electronAPI?.apps?.list) {
-        const [appList, gw] = await Promise.all([
-          window.electronAPI.apps.list().catch(() => []),
-          window.electronAPI.gateway?.status?.().catch(() => null),
-        ]);
-        const list = Array.isArray(appList) ? appList : [];
-        setApps(list);
-        if (gw?.port) setLocalBase(`http://127.0.0.1:${gw.port}/v1`);
-        if (list.length && window.electronAPI?.apps?.stats) {
-          window.electronAPI.apps.stats(list).then(s => setAppStats(s || {})).catch(() => {});
-        }
-      } else {
-        // Docker / 浏览器 CLI：无本机应用检测，仅展示已持久化的 apps
-        setApps(Array.isArray(localCfg?.apps) ? localCfg.apps : []);
-        const gw = await getGateway().status().catch(() => null);
-        if (gw?.port) {
-          const host = typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1';
-          setLocalBase(`http://${host}:${gw.port}/v1`);
-        }
+      const [appList, gw] = await Promise.all([
+        appsApi.list().catch(() => []),
+        getGateway().status().catch(() => null),
+      ]);
+      const list = Array.isArray(appList) ? appList : [];
+      setApps(list);
+      if (gw?.port) {
+        const host = typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1';
+        setLocalBase(`http://${host}:${gw.port}/v1`);
+      }
+      if (list.length && appsApi.stats) {
+        appsApi.stats(list).then(s => setAppStats(s || {})).catch(() => {});
       }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [appsApi]);
 
   useEffect(() => { load(); }, [load]);
 
   // Claude 名（Claude Desktop inferenceModels 的 name 只能用 Anthropic 名）
-  useEffect(() => { window.electronAPI?.apps?.claudeModels?.().then(m => setClaudeModels(Array.isArray(m) ? m : [])).catch(() => {}); }, []);
+  useEffect(() => { appsApi.claudeModels?.().then(m => setClaudeModels(Array.isArray(m) ? m : [])).catch(() => {}); }, [appsApi]);
 
   // 配置下发/变更后，主进程通知 → 重新加载应用列表（新托管/新可配置 api-key 行立即显示）
   useEffect(() => {
-    const off = window.electronAPI?.apps?.onChanged?.(() => load());
+    const off = appsApi.onChanged?.(() => load());
     return () => { if (typeof off === 'function') off(); };
-  }, [load]);
+  }, [load, appsApi]);
 
   // 手工添加点击时就先持久化了一条草稿（为了显示 api_key）。若用户没保存/取消就切走 tab
   // （AppManager 卸载），把这条未保存草稿删掉，否则切回来会多出一条「新应用」。
@@ -1224,7 +1218,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   useEffect(() => { manualDraftRef.current = manualDraft; }, [manualDraft]);
   useEffect(() => () => {
     const d = manualDraftRef.current;
-    if (d?._isNew && d.id) window.electronAPI.apps?.delete(d.id).catch(() => {});
+    if (d?._isNew && d.id) getApps().delete(d.id).catch(() => {});
   }, []);
 
   async function handleUpdateApp(data) {
@@ -1232,13 +1226,13 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     // 虚拟 shim 应用（仅展示、未落库）：先落库拿到真实 id 再更新
     const app = apps.find(a => a.id === data.id);
     if (app?._virtual && app.link_method === 'shim') {
-      const created = await window.electronAPI.apps?.ensureShimApp({
+      const created = await appsApi.ensureShimApp?.({
         agent_id: app.agent_id, name: app.name, icon: app.icon,
       }).catch(() => null);
       if (created?.id) id = created.id;
     }
     // 保存即清除草稿标记（新建面板保存后该应用才在列表显示）；对非草稿应用是无害的 no-op
-    const updated = await window.electronAPI.apps?.update({ ...data, id, draft: false }).catch(() => null);
+    const updated = await appsApi.update({ ...data, id, draft: false }).catch(() => null);
     // shim 应用：路由/key 改动后需重写 shim 脚本才生效
     if (app?.link_method === 'shim' && app.agent_id) {
       await window.electronAPI.agents?.apply(app.agent_id).catch(() => {});
@@ -1250,17 +1244,17 @@ function AppManager({ externalRoutes, availableModels = [] }) {
 
   async function handleDeleteApp(id) {
     if (!window.confirm(t('gateway.apps.confirmDelete'))) return;
-    await window.electronAPI.apps?.delete(id).catch(() => {});
+    await appsApi.delete(id).catch(() => {});
     if (settings?.id === id) setSettings(null);
     await load();
   }
 
   async function handleRegenKey(id) {
-    const r = await window.electronAPI.apps?.regenKey(id).catch(() => null);
+    const r = await appsApi.regenKey(id).catch(() => null);
     if (r?.ok) {
       await load();
       // 用最新 key 刷新设置弹窗 / 手工添加面板
-      const fresh = (await window.electronAPI.apps?.list().catch(() => []) || []).find(a => a.id === id);
+      const fresh = (await appsApi.list().catch(() => []) || []).find(a => a.id === id);
       if (fresh && settings?.id === id) setSettings(fresh);
       if (fresh && manualDraft?.id === id) setManualDraft({ ...fresh, _isNew: true });
     }
@@ -1278,13 +1272,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   // 手工添加：未被识别的应用 → 创建 manual 应用，内联展开 ManualAddPanel
   // （已识别的 CLI/桌面应用都在列表里直接托管，不走此入口）
   async function addCustom() {
-    if (!window.electronAPI?.apps?.create) {
-      window.alert(t('gateway.apps.cliOnly'));
-      return;
-    }
     // draft:true → 列表不显示这条临时条目（只在内联面板里编辑），保存时清除草稿标记才出现。
-    // 这样切 tab/不保存绝不会在列表里多出一条（不依赖卸载时的异步删除）。
-    const created = await window.electronAPI.apps?.create({
+    const created = await appsApi.create({
       name: t('gateway.apps.newAppName'), icon: '🔧', link_method: 'manual',
       route_id: defaultRouteId() || null, draft: true,
     }).catch(() => null);
@@ -1296,7 +1285,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   async function cancelManualDraft() {
     const d = manualDraft;
     setManualDraft(null);
-    if (d?.id) await window.electronAPI.apps?.delete(d.id).catch(() => {});
+    if (d?.id) await appsApi.delete(d.id).catch(() => {});
     await load();
   }
 
@@ -1314,15 +1303,15 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   async function setTracked(app, on) {
     let appId = app.id;
     if (app._virtual && app.link_method === 'shim') {
-      const c = await window.electronAPI.apps?.ensureShimApp({ agent_id: app.agent_id, name: app.name, icon: app.icon }).catch(() => null);
+      const c = await appsApi.ensureShimApp({ agent_id: app.agent_id, name: app.name, icon: app.icon }).catch(() => null);
       if (c) appId = c.id;
     }
     if (on) {
       setBusyId(appId);
       // 纳管默认官方订阅：清空路由，确保不注入网关
-      await window.electronAPI.apps?.update({ id: appId, hosted: true, route_id: null }).catch(() => {});
+      await appsApi.update({ id: appId, hosted: true, route_id: null }).catch(() => {});
       if (app.host_method === 'config-file') {
-        await window.electronAPI.apps?.revertConfigFile({ app_id: appId, config_file: app.config_file }).catch(() => {});
+        await appsApi.revertConfigFile({ app_id: appId, config_file: app.config_file }).catch(() => {});
         showNotice(appId, t('gateway.apps.managedOfficial'));
       } else if (app.link_method === 'shim' && app.agent_id) {
         await window.electronAPI.agents?.revert(app.agent_id).catch(() => {});
@@ -1342,12 +1331,12 @@ function AppManager({ externalRoutes, availableModels = [] }) {
         await window.electronAPI.agents?.revert(app.agent_id).catch(() => {});
         showNotice(appId, t('gateway.apps.revertedShell'));
       } else if (app.host_method === 'config-file') {
-        await window.electronAPI.apps?.revertConfigFile({ app_id: appId, config_file: app.config_file }).catch(() => {});
+        await appsApi.revertConfigFile({ app_id: appId, config_file: app.config_file }).catch(() => {});
         showNotice(appId, t('gateway.apps.revertedApp'));
       } else if (app.link_method === 'direct') {
         showNotice(appId, t('gateway.apps.untracked'));
       }
-      await window.electronAPI.apps?.update({ id: appId, hosted: false, route_id: null }).catch(() => {});
+      await appsApi.update({ id: appId, hosted: false, route_id: null }).catch(() => {});
       if (settings?.id === appId) setSettings(null);
     }
     setBusyId(null);
@@ -1437,7 +1426,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
       // Codex：OpenAI 风格、接受任意模型名 → 顶层 model 写绑定的路由/模型（运行时按此发起请求）。
       // 注：Codex Desktop 的 GUI 模型选择器由其自身账号/provider 状态决定，配置文件改不动，仍显示「Custom」。
       if (isCodexConfig && app.route_id) patch.model = app.route_id;
-      const r = await window.electronAPI?.apps?.writeConfigFile({
+      const r = await appsApi.writeConfigFile({
         app_id: app.id, config_file: app.config_file, patch, env, force,
       }).catch(e => ({ ok: false, error: e.message }));
       // 冲突：目标配置项已有不同的值 → 确认后强制覆盖；取消则回滚
@@ -1456,12 +1445,12 @@ function AppManager({ externalRoutes, availableModels = [] }) {
   // API Key 应用（虚拟行）「纳管」：建条目 + 标记 hosted（默认直连，不写配置）。要走网关在路由下拉选模型。
   async function addApiKeyApp(d) {
     setBusyId(d.id);
-    const created = await window.electronAPI.apps?.create({
+    const created = await appsApi.create({
       name: d.name, icon: d.icon, link_method: 'api-key',
       preset_id: d.preset_id, route_id: null,
       inject: 'config-file', config_file: d.config_file, patch: d.patch, env: d.env || null,
     }).catch(() => null);
-    if (created?.id) await window.electronAPI.apps?.update({ id: created.id, hosted: true }).catch(() => {});
+    if (created?.id) await appsApi.update({ id: created.id, hosted: true }).catch(() => {});
     setBusyId(null);
     if (created?.id) showNotice(created.id, t('gateway.apps.managedDefault'));
     await load();
@@ -1484,7 +1473,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
     const s = settings;
     setSettings(null);
     if (s?._isNew && s.id) {
-      await window.electronAPI.apps?.delete(s.id).catch(() => {});
+      await appsApi.delete(s.id).catch(() => {});
     }
     await load();
   }
@@ -1642,20 +1631,20 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           setBusyId(app.id);
                           // 选模型/路由 = 纳管 + 走网关（hosted:true）；直连官方(空) = 还原配置/撤 shim，保持纳管
                           if (app.host_method === 'config-file') {        // Claude Desktop 等 config-file 应用
-                            await window.electronAPI.apps?.update({ id: app.id, route_id: val, ...(val ? { hosted: true } : {}) }).catch(() => {});
+                            await appsApi.update({ id: app.id, route_id: val, ...(val ? { hosted: true } : {}) }).catch(() => {});
                             if (val) { await writeApiKeyConfig({ ...app, route_id: val }); showNotice(app.id, t('gateway.apps.routeSwitchedApp')); }   // 写配置→网关
-                            else     { await window.electronAPI.apps?.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {}); showNotice(app.id, t('gateway.apps.routeOfficialApp')); }
+                            else     { await appsApi.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {}); showNotice(app.id, t('gateway.apps.routeOfficialApp')); }
                           } else if (app.link_method === 'shim' && app.agent_id) {  // CLI 透明托管
                             let appId = app.id;
                             if (app._virtual) {
-                              const created = await window.electronAPI.apps?.ensureShimApp({ agent_id: app.agent_id, name: app.name, icon: app.icon }).catch(() => null);
+                              const created = await appsApi.ensureShimApp({ agent_id: app.agent_id, name: app.name, icon: app.icon }).catch(() => null);
                               if (created) appId = created.id;
                             }
-                            await window.electronAPI.apps?.update({ id: appId, route_id: val, ...(val ? { hosted: true } : {}) }).catch(() => {});
+                            await appsApi.update({ id: appId, route_id: val, ...(val ? { hosted: true } : {}) }).catch(() => {});
                             if (val) { await window.electronAPI.agents?.apply(app.agent_id).catch(() => {}); showNotice(appId, t('gateway.apps.routeSwitchedShell')); }   // 注入 shim → 网关
                             else     { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); showNotice(appId, t('gateway.apps.routeOfficialShell')); }
                           } else {                                          // 纯 api-key / manual
-                            await window.electronAPI.apps?.update({
+                            await appsApi.update({
                               id: app.id,
                               route_id: val,
                               ...(val ? { hosted: true } : {}),
