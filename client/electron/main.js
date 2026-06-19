@@ -110,10 +110,10 @@ function openExternalSafe(url) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 960,
-    height: 680,
-    minWidth: 800,
-    minHeight: 560,
+    width: 860,
+    height: 620,
+    minWidth: 860,
+    minHeight: 620,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

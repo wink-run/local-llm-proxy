@@ -19,7 +19,7 @@ export default function Sidebar() {
   ];
   const profileActive = location.pathname === '/';
   return (
-    <aside className="w-44 flex flex-col pb-5 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 shrink-0">
+    <aside className="w-40 flex flex-col pb-5 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 shrink-0">
       {/* Logo — pt-9 避开 macOS 交通灯；electron-drag 允许拖动窗口 */}
       <div className="electron-drag flex items-center gap-2.5 px-4 pt-9 mb-6 select-none">
         <img src={logoSvg} alt="Token Bank" className="w-8 h-8 shrink-0" />

@@ -42,7 +42,7 @@ function Layout() {
       {user && <Sidebar />}
       <main className="flex-1 overflow-y-auto min-w-0">
         <Routes>
-          <Route path="/"          element={user ? <TokenDashboard /> : <Navigate to="/config" replace />} />
+          <Route path="/"          element={<Navigate to={user ? '/gateway' : '/config'} replace />} />
           <Route path="/gateway"   element={user ? <Gateway />        : <Navigate to="/config" replace />} />
           <Route path="/providers" element={user ? <Providers />      : <Navigate to="/config" replace />} />
           <Route path="/contribute"element={user ? <Contribute />     : <Navigate to="/config" replace />} />
@@ -51,7 +51,7 @@ function Layout() {
           <Route path="/network"   element={<Network />} />
           <Route path="/config"    element={<Config />} />
           <Route path="/debug"     element={<Debug />} />
-          <Route path="*"          element={<Navigate to={user ? '/' : '/config'} replace />} />
+          <Route path="*"          element={<Navigate to={user ? '/gateway' : '/config'} replace />} />
         </Routes>
       </main>
       <UpdateNotification />

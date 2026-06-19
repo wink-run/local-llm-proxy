@@ -271,7 +271,7 @@ function linkMethodLabel(method, t) {
   return method === 'manual' ? t('gateway.link.api') : t('gateway.link.app');
 }
 // 应用列表统一栅格，保证表头与数据列对齐
-const APPS_TABLE_GRID = 'grid grid-cols-[1.5rem_7rem_7rem_4rem_3.5rem_3.5rem_3.5rem_minmax(0,10rem)_3.75rem_auto] gap-x-3 items-center px-3 min-w-[52rem]';
+const APPS_TABLE_GRID = 'grid grid-cols-[1.5rem_minmax(4rem,6rem)_4.5rem_3.5rem_3.5rem_3.5rem_3.5rem_minmax(0,1fr)_3rem_auto] gap-x-2 items-center px-3';
 // 按 API Key 路由的应用：自动写配置的 api-key，和用户自配的 manual（手工添加）
 const isKeyApp = (m) => m === 'api-key' || m === 'manual';
 
@@ -1540,7 +1540,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                 {t('gateway.apps.empty')}
               </div>
             ) : (
-              <div className={`flex flex-col divide-y divide-gray-100 dark:divide-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-x-auto ${visibleApps.length > 20 ? 'max-h-[min(75vh,900px)] overflow-y-auto' : ''}`}>
+              <div className={`flex flex-col divide-y divide-gray-100 dark:divide-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden ${visibleApps.length > 20 ? 'max-h-[min(75vh,900px)] overflow-y-auto' : ''}`}>
                 {/* 表头（超过 20 个时列表滚动，表头吸顶）*/}
                 <div className={`${APPS_TABLE_GRID} py-2 bg-gray-100 dark:bg-gray-800 text-[10px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wide sticky top-0 z-10`}>
                   <span className="text-base text-center shrink-0 invisible">🔧</span>
