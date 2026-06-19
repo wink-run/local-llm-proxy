@@ -43,6 +43,16 @@ async function _resolveDeviceId(port, cfg) {
   return { id, storageKey };
 }
 
+/** 浏览器 / Docker Web 环境下的平台说明（非 Electron） */
+function _browserPlatform() {
+  const ua = navigator.userAgent || '';
+  const mac = ua.match(/Mac OS X (\d+[._]\d+(?:[._]\d+)?)/);
+  if (mac) return `macOS ${mac[1].replace(/_/g, '.')}`;
+  const win = ua.match(/Windows NT (\d+\.\d+)/);
+  if (win) return parseFloat(win[1]) >= 10 ? 'Windows' : `Windows NT ${win[1]}`;
+  return navigator.userAgentData?.platform || navigator.platform || 'Web';
+}
+
 async function _doRegister() {
   try {
     // Fetch actual gateway port — each CLI instance runs on a different port,
@@ -53,13 +63,35 @@ async function _doRegister() {
     const cfg = await getConfig().read().catch(() => ({}));
     const { id: storedId, storageKey } = await _resolveDeviceId(port, cfg);
 
-    const type     = isElectron() ? 'desktop' : 'cli';
-    const platform = navigator.platform || navigator.userAgent || '';
-    const version  = cfg?.version || '1.0.0';
-    // CLI instances always append port so multiple instances on the same machine are distinguishable.
-    // Electron is a single instance so just use the configured name (or fallback "Desktop").
-    const baseName = cfg?.name || (isElectron() ? 'Desktop' : 'CLI');
-    const name     = isElectron() ? baseName : `${baseName}:${port}`;
+    const type = isElectron() ? 'desktop' : 'cli';
+    let name;
+    let platform;
+    let version;
+
+    if (isElectron() && window.electronAPI?.app?.getDeviceIdentity) {
+      // 桌面版：使用主进程采集的系统电脑名与 OS 版本
+      const identity = window.electronAPI.app.getDeviceIdentity({ customName: cfg?.name || '' });
+      name     = identity?.name || cfg?.name || '桌面设备';
+      platform = identity?.platform || _browserPlatform();
+      version  = identity?.version || window.electronAPI?.version || cfg?.version || '0.0.0';
+    } else {
+      // Docker Web / CLI：经 admin API 获取 IP 等设备标识
+      let identity = null;
+      try {
+        const r = await fetch('/api/device-identity');
+        if (r.ok) identity = await r.json();
+      } catch {}
+      if (identity?.name) {
+        name     = identity.name;
+        platform = identity.platform || _browserPlatform();
+        version  = identity.version || cfg?.version || '1.0.0';
+      } else {
+        const host = (cfg?.name || 'CLI').replace(/\.local$/i, '');
+        name     = `${host} · CLI :${port}`;
+        platform = _browserPlatform();
+        version  = cfg?.version || '1.0.0';
+      }
+    }
 
     const res   = await registerDevice({ device_id: storedId, type, name, platform, version, gateway_port: port });
     // Backend returns the devices table row: primary key column is "id", not "device_id"

@@ -20,8 +20,8 @@ export default function Sidebar() {
   const profileActive = location.pathname === '/';
   return (
     <aside className="w-44 flex flex-col pb-5 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 shrink-0">
-      {/* Logo — pt-9 clears macOS hiddenInset traffic lights (~28px) */}
-      <div className="flex items-center gap-2.5 px-4 pt-9 mb-6 select-none">
+      {/* Logo — pt-9 避开 macOS 交通灯；electron-drag 允许拖动窗口 */}
+      <div className="electron-drag flex items-center gap-2.5 px-4 pt-9 mb-6 select-none">
         <img src={logoSvg} alt="Token Bank" className="w-8 h-8 shrink-0" />
         <div className="min-w-0">
           <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight">Token Bank</p>
@@ -30,7 +30,7 @@ export default function Sidebar() {
       </div>
 
       {/* Nav items */}
-      <nav className="flex-1 flex flex-col gap-0.5 px-2">
+      <nav className="electron-no-drag flex-1 flex flex-col gap-0.5 px-2">
         {NAV.map(({ to, icon, labelKey }) => (
           <NavLink
             key={to}
@@ -51,7 +51,7 @@ export default function Sidebar() {
       {/* User footer — profile + settings */}
       {user && (
         <div className={
-          'mx-2 flex items-center gap-1 rounded-lg border ' +
+          'electron-no-drag mx-2 flex items-center gap-1 rounded-lg border ' +
           (profileActive
             ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700'
             : 'border-gray-100 dark:border-gray-800')

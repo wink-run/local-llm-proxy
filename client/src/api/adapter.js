@@ -45,6 +45,7 @@ const electronAdapter = {
     getDailyStats: (days) => window.electronAPI.localStats.query(days || 1),
     getLog:        ()  => window.electronAPI.gateway.getLog(),
     restart:       ()  => window.electronAPI.gateway.restart(),
+    refreshPeerModels: () => window.electronAPI.gateway.refreshPeerModels(),
     testProvider:  (p) => window.electronAPI.gateway.testProvider(p),
   },
   localConfig: {
@@ -80,6 +81,7 @@ const httpAdapter = {
     // admin-api returns { log: [...] }, but callers expect the array directly
     getLog:        ()  => adminFetch('/api/gateway/log').then(r => r.log || []),
     restart:       ()  => adminFetch('/api/gateway/restart', { method: 'POST' }),
+    refreshPeerModels: () => adminFetch('/api/gateway/refresh-peer-models', { method: 'POST' }),
     testProvider:  (p) => adminFetch('/api/gateway/test-provider', { method: 'POST', body: JSON.stringify(p) }),
   },
   localConfig: {

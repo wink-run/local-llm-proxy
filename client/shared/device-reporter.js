@@ -7,6 +7,7 @@ const http   = require('http');
 const os     = require('os');
 const crypto = require('crypto');
 const { readAgentConfig, writeAgentConfig } = require('./config-loader');
+const deviceIdentity = require('./device-identity');
 
 const HEARTBEAT_INTERVAL_MS = 60 * 1000; // 60s（服务端 2 分钟无心跳会标离线）
 
@@ -140,11 +141,18 @@ async function init(options) {
 
   const localDeviceId = _ensureLocalDeviceId(existing.device_id || null);
 
+  const identity = deviceIdentity.collect({
+    type     : options.type || 'desktop',
+    port     : options.port || options.gateway_port || null,
+    version  : options.version || '0.0.0',
+    customName: options.name || '',
+  });
+
   _config = {
     type      : options.type     || 'desktop',
-    name      : options.name     || os.hostname(),
-    platform  : options.platform || `${process.platform}/${os.release()}`,
-    version   : options.version  || '0.0.0',
+    name      : options.name     || identity.name,
+    platform  : options.platform || identity.platform,
+    version   : options.version  || identity.version,
     serverUrl : options.serverUrl || existing.serverUrl || null,
     token     : options.token    || existing.token      || null,
     device_id : localDeviceId,

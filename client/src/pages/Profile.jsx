@@ -3,6 +3,7 @@ import { useAuth } from '../store/index';
 import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getRates, getUserDevices, deleteDevice } from '../api/client';
 import { getServerUrl } from '../config';
 import BillingConfigSection from '../components/BillingConfigSection';
+import { formatDeviceTitle, formatDeviceSubtitle } from '../lib/device-display';
 
 const TX_LABEL = {
   contribute: '贡献',
@@ -519,7 +520,6 @@ function SpinCard({ onSuccess }) {
 }
 
 const DEVICE_ICON    = { desktop: '💻', cli: '🖥' };
-const DEVICE_LABEL   = { desktop: '桌面版', cli: '命令行版' };
 
 function DeviceStatBar({ calls, errors }) {
   const total    = Math.max(calls, 1);
@@ -612,7 +612,7 @@ function DevicesSection() {
                     <span className="text-lg shrink-0 select-none">{DEVICE_ICON[d.type] || '🖥'}</span>
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-sm font-semibold text-gray-800 dark:text-gray-100 truncate">{d.name || d.device_id}</span>
+                        <span className="text-sm font-semibold text-gray-800 dark:text-gray-100 truncate">{formatDeviceTitle(d)}</span>
                         <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${
                           d.online
                             ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400'
@@ -622,10 +622,11 @@ function DevicesSection() {
                         </span>
                       </div>
                       <div className="text-[11px] text-gray-400 mt-0.5 truncate">
-                        {DEVICE_LABEL[d.type] || d.type}
-                        {d.version   ? ` · v${d.version}`   : ''}
-                        {d.platform  ? ` · ${d.platform}`   : ''}
-                        {lastSeen    ? ` · ${new Date(lastSeen).toLocaleString('zh-CN', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })}` : ''}
+                        {formatDeviceSubtitle(d, {
+                          lastSeen: lastSeen
+                            ? new Date(lastSeen).toLocaleString('zh-CN', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })
+                            : '',
+                        })}
                       </div>
                     </div>
                   </div>

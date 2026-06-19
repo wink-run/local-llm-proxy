@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { getServerUrl, getApiBaseUrl } from '../config';
+import { getServerUrl, normalizeServerBase, getApiBaseUrl } from '../config';
 
 const http = axios.create({ timeout: 15000 });
 
@@ -130,9 +130,31 @@ export function getRates() {
   return http.get('/api/rates');
 }
 
-// 当前在线 worker 实际能提供的模型（OpenAI 风格 /v1/models）
-export function getOnlineModels() {
-  return http.get('/v1/models');
+// 当前在线 worker 模型（OpenAI /v1/models；需用户 API Key，非登录 JWT）
+export async function getOnlineModels() {
+  const { getLocalConfig } = await import('./adapter');
+  const cfg = await getLocalConfig().get().catch(() => null);
+  const apiKey = cfg?.cloud_config?.token;
+  if (!apiKey) return { data: { object: 'list', data: [] } };
+
+  const base = normalizeServerBase(cfg?.cloud_config?.url || getServerUrl());
+  if (window.electronAPI?.auth?.request) {
+    const r = await window.electronAPI.auth.request({
+      base, method: 'GET', path: '/v1/models', token: apiKey,
+    });
+    let data = { object: 'list', data: [] };
+    if (r.body) {
+      try { data = JSON.parse(r.body); } catch { /* keep empty */ }
+    }
+    if (r.status >= 400) return { data: { object: 'list', data: [] } };
+    return { data };
+  }
+
+  const res = await fetch(`${base}/v1/models`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  if (!res.ok) return { data: { object: 'list', data: [] } };
+  return { data: await res.json() };
 }
 
 export function getProviderCatalog() {

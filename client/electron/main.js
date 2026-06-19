@@ -12,6 +12,7 @@ const sessionImport = require('./session-import');
 const sessionBrowser = require('./session-browser');
 const { STATS_DIR, computeImportSkip } = require('../shared/telemetry');
 const { defaultServerUrlFromEnv } = require('../shared/default-server-url');
+const deviceIdentity = require('../shared/device-identity');
 const detectTools = require('./detect-tools');
 const agentLinker = require('./agent-linker');
 // device-reporter is used by the CLI only; desktop registration is handled
@@ -78,6 +79,8 @@ function getClaudeCloudConfig() {
 
 let mainWindow = null;
 let tray = null;
+/** macOS 点关闭仅隐藏窗口；托盘/Cmd+Q 退出时设为 true，避免 close 拦截 quit */
+let isQuitting = false;
 
 // ── Icons ──────────────────────────────────────────────────────────────────────
 
@@ -145,7 +148,7 @@ function createWindow() {
   });
 
   mainWindow.on('close', (e) => {
-    if (process.platform === 'darwin') {
+    if (process.platform === 'darwin' && !isQuitting) {
       e.preventDefault();
       mainWindow.hide();
     }
@@ -187,7 +190,7 @@ function updateTrayMenu() {
     { type: 'separator' },
     { label: '打开主窗口', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
     { type: 'separator' },
-    { label: '退出', click: () => app.quit() },
+    { label: '退出', click: () => { isQuitting = true; app.quit(); } },
   ]);
   tray.setContextMenu(menu);
   tray.setImage(getTrayIcon(running ? 'running' : 'stopped'));
@@ -668,6 +671,14 @@ function nodeRequest(url, method, headers, body) {
 function registerIPC() {
   ipcMain.on('app:version', (e) => { e.returnValue = app.getVersion(); });
   ipcMain.on('app:defaultServerUrl', (e) => { e.returnValue = defaultServerUrlFromEnv(); });
+  // 设备注册用：系统电脑名 + macOS/Windows 版本说明
+  ipcMain.on('app:getDeviceIdentity', (e, opts) => {
+    e.returnValue = deviceIdentity.collect({
+      type: 'desktop',
+      version: app.getVersion(),
+      customName: opts?.customName || '',
+    });
+  });
   ipcMain.handle('agent:start',   () => { startAgent(); return { running: agent.isRunning() }; });
   ipcMain.handle('agent:stop',    () => { stopAgent();  return { running: false }; });
   ipcMain.handle('agent:status',  () => ({ running: agent.isRunning() }));
@@ -1874,6 +1885,12 @@ function registerIPC() {
   });
 
   // Periodically refresh P2P model list so newly available models are detected
+  ipcMain.handle('gateway:refreshPeerModels', async () => {
+    const cc = readLocalConfig().cloud_config || {};
+    await fetchPeerModels(cc.url, cc.token);
+    return gateway.getStatus();
+  });
+
   setInterval(() => {
     const cc = readLocalConfig().cloud_config || {};
     if (cc.url && cc.token) fetchPeerModels(cc.url, cc.token);
@@ -1975,6 +1992,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  isQuitting = true;
   agent.stop(); gateway.stop(); localStats.close();
   // 退出即还原所有接入：删 shim / 还原 PATH / 还原配置文件 / 停 MITM，绝不残留
   try { agentLinker.revertEverythingOnExit(); } catch (e) { console.error('[agent-linker] revert on exit failed:', e.message); }

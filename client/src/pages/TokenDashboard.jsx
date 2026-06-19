@@ -7,6 +7,7 @@ import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPu
 import UserAccountsPanel from '../components/UserAccountsPanel';
 import { enrichBillingCost } from '../utils/billing-cost';
 import { loadUserAccounts } from '../api/userAccounts';
+import { formatDeviceTitle, formatLegacyPlatform } from '../lib/device-display';
 
 /** 从云端拉取各设备聚合盘点；失败时回退本机数据，并合并订阅折算 + 按量费用 */
 async function fetchDashboardStats(days) {
@@ -483,11 +484,11 @@ function DevicesSection() {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5">
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.online ? 'bg-green-500' : 'bg-gray-400'}`} />
-                <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{d.name}</span>
+                <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{formatDeviceTitle(d)}</span>
                 {d.version && <span className="text-xs text-gray-400 shrink-0">v{d.version}</span>}
               </div>
               <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-xs text-gray-400 truncate">{d.platform}</span>
+                <span className="text-xs text-gray-400 truncate">{formatLegacyPlatform(d.platform)}</span>
                 {(d.today_calls > 0 || d.today_errors > 0) && (
                   <span className="text-xs text-gray-400 shrink-0">
                     {t('profile.todayCalls', { n: d.today_calls })}

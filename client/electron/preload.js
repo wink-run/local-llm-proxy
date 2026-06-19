@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   version: ipcRenderer.sendSync('app:version'),
   app: {
     defaultServerUrl: () => ipcRenderer.sendSync('app:defaultServerUrl'),
+    getDeviceIdentity: (opts) => ipcRenderer.sendSync('app:getDeviceIdentity', opts || {}),
   },
   auth: {
     request: (opts) => ipcRenderer.invoke('auth:request', opts),
@@ -96,6 +97,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setStrategy:     (s) => ipcRenderer.invoke('gateway:setStrategy', s),
     testProvider:    (p) => ipcRenderer.invoke('gateway:testProvider', p),
     restart:         () => ipcRenderer.invoke('gateway:restart'),
+    refreshPeerModels: () => ipcRenderer.invoke('gateway:refreshPeerModels'),
   },
   localStats: {
     query: (days) => ipcRenderer.invoke('localStats:query', days),

@@ -1,3 +1,6 @@
+/** 官方默认 Token Bank 服务地址（与 client/shared/default-server-url.js 保持一致） */
+export const DEFAULT_TOKEN_SERVER_URL = 'https://tokenbank.wink.run';
+
 /** 登录页占位提示（非默认地址） */
 export const SERVER_URL_PLACEHOLDER = 'http://your-host:port';
 
@@ -18,7 +21,7 @@ export function getServerUrl() {
 export function getApiBaseUrl() {
   if (import.meta.env.DEV && typeof window !== 'undefined' && !window.electronAPI) {
     const stored = getServerUrl();
-    const proxyTarget = defaultServerUrlFromEnv() || 'https://tokenbank.wink.run';
+    const proxyTarget = defaultServerUrlFromEnv();
     if (!stored || stored === proxyTarget) {
       return DEV_API_PROXY_PREFIX;
     }
@@ -32,9 +35,9 @@ export function normalizeServerBase(url) {
   return String(url).trim().replace(/\/$/, '').replace(/\/(api|v\d+)(\/.*)?$/, '');
 }
 
-/** 环境变量 / 构建注入的默认 Token Bank 服务地址 */
+/** 环境变量 / 构建注入的默认 Token Bank 服务地址（未注入时回退官方默认） */
 function defaultServerUrlFromEnv() {
-  return normalizeServerBase(import.meta.env.VITE_TOKEN_SERVER_URL || '');
+  return normalizeServerBase(import.meta.env.VITE_TOKEN_SERVER_URL || '') || DEFAULT_TOKEN_SERVER_URL;
 }
 
 /** 启动时：若设置页未填地址，从 env / 网关 cloud_config.url 回填 */
@@ -80,7 +83,10 @@ export async function bootstrapServerUrl() {
     }
   } catch {}
 
-  return '';
+  // 兜底：确保打包版始终有可用的官方默认地址
+  localStorage.setItem('serverUrl', DEFAULT_TOKEN_SERVER_URL);
+  await syncCloudConfigUrl(DEFAULT_TOKEN_SERVER_URL);
+  return DEFAULT_TOKEN_SERVER_URL;
 }
 
 /**

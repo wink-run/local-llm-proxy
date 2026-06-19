@@ -16,6 +16,8 @@ import Debug      from './pages/Debug';
 import UpdateNotification from './components/UpdateNotification';
 import { useDeviceReporter } from './hooks/useDeviceReporter';
 
+const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
+
 function Layout() {
   const { user, loading } = useAuth();
   const { t } = useLang();
@@ -31,8 +33,14 @@ function Layout() {
 
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100">
+      {isElectron && !user && (
+        <div className="electron-drag fixed inset-x-0 top-0 h-11 z-50" aria-hidden />
+      )}
+      {isElectron && user && (
+        <div className="electron-drag fixed top-0 left-44 right-0 h-9 z-40" aria-hidden />
+      )}
       {user && <Sidebar />}
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto min-w-0">
         <Routes>
           <Route path="/"          element={user ? <TokenDashboard /> : <Navigate to="/config" replace />} />
           <Route path="/gateway"   element={user ? <Gateway />        : <Navigate to="/config" replace />} />

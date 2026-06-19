@@ -12,6 +12,8 @@ const http = require('http');
 const os   = require('os');
 const path = require('path');
 const fs   = require('fs');
+const deviceIdentity = require('../shared/device-identity');
+const pkg = require('../package.json');
 
 const gateway  = require('../electron/local-gateway');
 const adminApi = require('./admin-api');
@@ -118,12 +120,17 @@ async function cmdStart(port, adminPort) {
   adminApi.start(adminPort, gateway, bindHost);
   console.log(`[gateway] Admin API started on port ${adminPort}`);
 
-  // Init device reporter
+  // Init device reporter（系统电脑名 + OS 版本说明）
+  const identity = deviceIdentity.collect({
+    type: 'cli',
+    port,
+    version: pkg.version || '0.0.0',
+  });
   await reporter.init({
     type: 'cli',
-    name: os.hostname(),
-    platform: `${process.platform}/${os.release()}`,
-    version: '1.0.0',
+    name: identity.name,
+    platform: identity.platform,
+    version: identity.version,
     serverUrl: serverUrl,
     token: cc.token || null,
   });
