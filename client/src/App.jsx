@@ -4,7 +4,6 @@ import { AuthProvider, useAuth } from './store/index';
 import { ThemeProvider } from './store/theme';
 import { LangProvider, useLang } from './store/lang';
 import Sidebar from './components/Sidebar';
-import Profile    from './pages/Profile';
 import TokenDashboard from './pages/TokenDashboard';
 import Gateway    from './pages/Gateway';
 import Providers  from './pages/Providers';
@@ -43,11 +42,11 @@ function Layout() {
       <main className="flex-1 overflow-y-auto min-w-0">
         <Routes>
           <Route path="/"          element={<Navigate to={user ? '/gateway' : '/config'} replace />} />
+          <Route path="/account"   element={user ? <TokenDashboard /> : <Navigate to="/config" replace />} />
           <Route path="/gateway"   element={user ? <Gateway />        : <Navigate to="/config" replace />} />
           <Route path="/providers" element={user ? <Providers />      : <Navigate to="/config" replace />} />
           <Route path="/contribute"element={user ? <Contribute />     : <Navigate to="/config" replace />} />
           <Route path="/dashboard" element={user ? <Dashboard />      : <Navigate to="/config" replace />} />
-          <Route path="/profile"   element={user ? <Profile />        : <Navigate to="/config" replace />} />
           <Route path="/network"   element={<Network />} />
           <Route path="/config"    element={<Config />} />
           <Route path="/debug"     element={<Debug />} />

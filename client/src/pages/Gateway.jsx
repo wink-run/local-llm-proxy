@@ -2623,16 +2623,12 @@ export default function Gateway() {
   // ── Computed stats ──────────────────────────────────────────────────────────
 
   const totalCalls   = stats?.total_calls ?? 0;
-  const totalErrors  = 0;  // not tracked in local stats
-  const providerEntries = [...(stats?.providers ?? [])]
-    .sort((a, b) => b.calls - a.calls)
-    .map(p => [p.id, { calls: p.calls, tier: p.tier }]);
-  const freeCalls    = providerEntries
-    .filter(([id]) => !['tokenbank-p2p', 'openai', 'anthropic-paid'].includes(id))
-    .reduce((s, [, v]) => s + v.calls, 0);
-  const freeRatio    = totalCalls > 0 ? Math.round((freeCalls / totalCalls) * 100) : 0;
-  const errorRatio   = (totalCalls + totalErrors) > 0
-    ? ((totalErrors / (totalCalls + totalErrors)) * 100).toFixed(1) : '0.0';
+  const totalTokens  = stats?.total_tokens ?? 0;
+  const totalCost    = stats?.total_cost ?? 0;
+  const proxyCalls   = (stats?.agent_sources ?? []).find(s => s.source === 'proxy')?.calls ?? 0;
+  const gatewayRatio = totalCalls > 0 ? Math.round((proxyCalls / totalCalls) * 100) : null;
+  const fmtTokens    = n => n >= 1_000_000 ? (n / 1e6).toFixed(2) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'K' : String(n || 0);
+  const fmtCost      = n => n > 0 ? '$' + n.toFixed(n < 0.01 ? 4 : 3) : '—';
   const okLogs       = logEntries.filter(e => e.status === 'ok');
   const avgLatency   = okLogs.length > 0
     ? Math.round(okLogs.reduce((s, e) => s + e.latency_ms, 0) / okLogs.length) : 0;
@@ -2761,14 +2757,14 @@ export default function Gateway() {
       {/* Stats */}
       <div className="grid grid-cols-4 gap-3">
         {[
-          { label: t('gateway.stat.todayCalls'), value: totalCalls,   color: 'text-gray-900 dark:text-gray-100' },
-          { label: t('gateway.stat.freeHitRate'), value: `${freeRatio}%`, color: 'text-green-600 dark:text-green-400' },
-          { label: t('gateway.stat.errorRate'),   value: `${errorRatio}%`, color: 'text-amber-600 dark:text-amber-400' },
+          { label: t('gateway.stat.todayCalls'), value: totalCalls > 0 ? totalCalls.toLocaleString() : '—', color: 'text-gray-900 dark:text-gray-100' },
+          { label: t('gateway.stat.todayTokens'), value: fmtTokens(totalTokens), color: 'text-blue-600 dark:text-blue-400' },
+          { label: t('gateway.stat.gatewayRatio'), value: gatewayRatio !== null ? `${gatewayRatio}%` : '—', color: 'text-violet-600 dark:text-violet-400' },
           { label: t('gateway.stat.avgLatency'), value: avgLatency > 0 ? `${avgLatency}ms` : '—', color: 'text-gray-900 dark:text-gray-100' },
         ].map(({ label, value, color }) => (
           <div key={label} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-3">
             <div className="text-xs text-gray-500">{label}</div>
-            <div className={`text-2xl font-bold mt-1 ${color}`}>{value}</div>
+            <div className={`text-2xl font-bold mt-1 tabular-nums ${color}`}>{value}</div>
           </div>
         ))}
       </div>

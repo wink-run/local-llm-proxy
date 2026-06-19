@@ -17,7 +17,7 @@ export default function Sidebar() {
     { to: '/dashboard', icon: '📊', labelKey: 'nav.dashboard' },
     { to: '/debug',     icon: '🐛', labelKey: 'nav.debug' },
   ];
-  const profileActive = location.pathname === '/';
+  const profileActive = location.pathname === '/account';
   return (
     <aside className="w-40 flex flex-col pb-5 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 shrink-0">
       {/* Logo — pt-9 避开 macOS 交通灯；electron-drag 允许拖动窗口 */}
@@ -57,7 +57,7 @@ export default function Sidebar() {
             : 'border-gray-100 dark:border-gray-800')
         }>
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate('/account')}
             className="flex-1 min-w-0 px-3 py-2.5 text-left"
           >
             <p className={`text-xs font-medium truncate ${profileActive ? 'text-blue-700 dark:text-blue-300' : 'text-gray-700 dark:text-gray-300'}`}>{user.nickname}</p>

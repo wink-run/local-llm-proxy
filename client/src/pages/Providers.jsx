@@ -1664,8 +1664,8 @@ export default function Providers() {
     navigate('/', { state: { accountsTab: 'payg' } });
   }
 
-  const goPersonalPage = () => navigate('/', { state: { accountsTab: 'subscription' } });
-  const goPaygProfile = () => navigate('/', { state: { accountsTab: 'payg' } });
+  const goPersonalPage = () => navigate('/account', { state: { accountsTab: 'subscription' } });
+  const goPaygProfile = () => navigate('/account', { state: { accountsTab: 'payg' } });
   const paidAccountsLoaded = paidAllowlist !== null;
   const hasPersonalPaid = paidAccountsLoaded && (paidAllowlist.length > 0 || statsOnlyIds.length > 0);
   const hasGatewayPaid = paidAccountsLoaded && paidAllowlist.length > 0;

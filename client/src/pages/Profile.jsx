@@ -712,7 +712,7 @@ export default function Profile() {
   if (!user) return null;
 
   return (
-    <div className="p-8 space-y-8">
+    <div className="px-5 py-5 space-y-5">
       <div className="flex items-center gap-4">
         <div className="w-14 h-14 rounded-full bg-blue-700 flex items-center justify-center text-2xl font-bold text-white shrink-0">
           {(user.nickname || user.email || '?')[0].toUpperCase()}
