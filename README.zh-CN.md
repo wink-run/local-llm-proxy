@@ -130,6 +130,14 @@ P2P 网络 (用积分消费)
 从 [Releases](https://github.com/wink-run/local-llm-proxy/releases/latest) 下载安装包：
 
 - **macOS** `.dmg` — 双击安装，托盘常驻，支持后台自动更新
+
+  若提示 **「已损坏，无法打开」**（Gatekeeper 拦截，非文件损坏），安装后在终端执行：
+
+  ```bash
+  xattr -cr "/Applications/Token Bank.app"
+  ```
+
+  然后重新打开。或在「系统设置 → 隐私与安全性」中选择「仍要打开」。
 - **Windows** `.exe` — NSIS 安装包，支持后台自动更新
 
 安装后打开 → 进入「配置」页 → 填写账号服务地址和 P2P Key → 完成。
