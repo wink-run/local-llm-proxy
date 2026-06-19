@@ -29,6 +29,7 @@ FROM node:20.18-bookworm-slim
 WORKDIR /app
 
 # CLI entry + shared helpers
+COPY package.json ./package.json
 COPY cli    ./cli
 COPY shared ./shared
 
