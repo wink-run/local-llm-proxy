@@ -1,0 +1,9 @@
+[    1608ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:5176/node_modules/.vite/deps/chunk-PJEEZAML.js?v=eeef496a:21550
+[    1635ms] [WARNING] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition. @ http://localhost:5176/node_modules/.vite/deps/react-router-dom.js?v=eeef496a:4435
+[    1635ms] [WARNING] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath. @ http://localhost:5176/node_modules/.vite/deps/react-router-dom.js?v=eeef496a:4435
+[    1646ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5176/favicon.ico:0
+[    1743ms] [VERBOSE] [DOM] Input elements should have autocomplete attributes (suggested: "current-password"): (More info: https://goo.gl/9p2vKq) %o @ http://localhost:5176/providers:0
+[   21751ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5176/api/config:0
+[  757052ms] [ERROR] loadSceneData SyntaxError: Unexpected token '<', "<!DOCTYPE "... is not valid JSON @ http://localhost:5176/src/pages/Gateway.jsx:4704
+[  757060ms] Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+[  757103ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://81.70.249.144:8000/v1/models:0

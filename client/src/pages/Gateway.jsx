@@ -93,7 +93,7 @@ function PolicyManager() {
   function moveUp(idx) { if (idx === 0) return; const a = [...formProviders]; [a[idx-1], a[idx]] = [a[idx], a[idx-1]]; setFormProviders(a); }
 
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 mb-4">
+    <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-4 mb-4">
       <div className="flex items-center gap-2 mb-3">
         <span className="text-base">⚖️</span>
         <h2 className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{t('gateway.policy.title')}</h2>
@@ -108,14 +108,14 @@ function PolicyManager() {
       <div className="flex flex-col gap-1.5 mb-2">
         {policies.length === 0 && <div className="text-xs text-gray-400 py-1">{t('gateway.policy.empty')}</div>}
         {policies.map(p => (
-          <div key={p.id} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40 text-sm">
+          <div key={p.id} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800/40 text-sm">
             <span className="font-medium text-gray-800 dark:text-gray-100 truncate flex-1">{p.name}</span>
             <span className="text-xs text-gray-400 dark:text-gray-500 shrink-0">
               {STRATEGY_OPTIONS.find(s => s.value === p.strategy)?.label || p.strategy}
             </span>
             <span className="text-xs text-gray-400 shrink-0">{t('gateway.policy.providerCount', { n: (p.providers||[]).length })}</span>
             <button onClick={() => openEdit(p)}
-              className="text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 shrink-0">
+              className="text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-zinc-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 shrink-0">
               {t('gateway.common.edit')}
             </button>
             <button onClick={() => del(p.id)}
@@ -136,13 +136,13 @@ function PolicyManager() {
               <label className="text-xs text-gray-500 w-14 shrink-0">{t('gateway.policy.nameLabel')}</label>
               <input value={formName} onChange={e => setFormName(e.target.value)}
                 placeholder={t('gateway.policy.namePlaceholder')}
-                className="flex-1 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 outline-none focus:border-blue-400 text-gray-800 dark:text-gray-200" />
+                className="flex-1 text-xs bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-600 rounded px-2 py-1 outline-none focus:border-blue-400 text-gray-800 dark:text-gray-200" />
             </div>
             {/* Strategy */}
             <div className="flex items-center gap-2">
               <label className="text-xs text-gray-500 w-14 shrink-0">{t('gateway.policy.strategyLabel')}</label>
               <select value={formStrategy} onChange={e => setFormStrategy(e.target.value)}
-                className="flex-1 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200">
+                className="flex-1 text-xs bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-600 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200">
                 {STRATEGY_OPTIONS.map(o => (
                   <option key={o.value} value={o.value}>{o.label} — {o.desc}</option>
                 ))}
@@ -153,7 +153,7 @@ function PolicyManager() {
               <div className="flex items-center gap-2 mb-1">
                 <label className="text-xs text-gray-500 w-14 shrink-0">Provider</label>
                 <select defaultValue="" onChange={e => { addProvider(e.target.value); e.target.value = ''; }}
-                  className="flex-1 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200">
+                  className="flex-1 text-xs bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-600 rounded px-2 py-1 outline-none text-gray-800 dark:text-gray-200">
                   <option value="">{t('gateway.policy.addProvider')}</option>
                   {providers.filter(p => !formProviders.find(fp => fp.id === p.id)).map(p => (
                     <option key={p.id} value={p.id}>{p.label || p.id}</option>
@@ -166,7 +166,7 @@ function PolicyManager() {
                   {formStrategy === 'weighted' && (
                     <label className="text-xs text-gray-400">weight
                       <input type="number" min="1" value={fp.weight} onChange={e => setWeight(fp.id, e.target.value)}
-                        className="ml-1 w-12 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-1 py-0.5 text-center" />
+                        className="ml-1 w-12 text-xs bg-white dark:bg-zinc-800 border border-gray-300 dark:border-zinc-600 rounded px-1 py-0.5 text-center" />
                     </label>
                   )}
                   <button onClick={() => moveUp(idx)} disabled={idx===0}
@@ -187,7 +187,7 @@ function PolicyManager() {
                 {busy ? t('gateway.common.saving') : t('gateway.common.save')}
               </button>
               <button onClick={cancelEdit}
-                className="text-xs px-3 py-1 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300">
+                className="text-xs px-3 py-1 rounded bg-gray-200 dark:bg-zinc-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300">
                 {t('gateway.common.cancel')}
               </button>
             </div>
@@ -257,7 +257,7 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
     <div className="flex flex-col items-end gap-0.5">
       <button type="button" disabled={busy} onClick={handleSync}
         title={t('gateway.sync.title')}
-        className="text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors">
+        className="text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors">
         {busy ? t('gateway.sync.syncing') : t('gateway.sync.btn')}
       </button>
       {msg && <div className={`text-xs ${msg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{msg}</div>}
@@ -399,7 +399,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
       <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.basicInfo')}</div>
       <div className="flex gap-2 mb-2">
         <input value={name} onChange={e => setName(e.target.value)} placeholder={t('gateway.app.namePlaceholder')}
-          className="flex-1 text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-gray-800 dark:text-gray-200" />
+          className="flex-1 text-sm bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-gray-800 dark:text-gray-200" />
       </div>
       <div className="flex flex-wrap gap-1.5 mb-2">
         {ICONS.map(e => (
@@ -410,7 +410,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
         ))}
       </div>
       <textarea value={desc} onChange={e => setDesc(e.target.value)} placeholder={t('gateway.app.descPlaceholder')} rows={2}
-        className="w-full text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none resize-none text-gray-600 dark:text-gray-400" />
+        className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none resize-none text-gray-600 dark:text-gray-400" />
     </div>
   );
 
@@ -418,14 +418,14 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     <div>
       <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">API Key</div>
       <div className="flex items-center gap-2">
-        <code className="flex-1 text-[11px] font-mono bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-gray-600 dark:text-gray-400 truncate">{app.api_key}</code>
+        <code className="flex-1 text-[11px] font-mono bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1.5 text-gray-600 dark:text-gray-400 truncate">{app.api_key}</code>
         <button onClick={() => { navigator.clipboard.writeText(app.api_key); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-          className="text-xs px-2 py-1.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 shrink-0">
+          className="text-xs px-2 py-1.5 rounded bg-gray-200 dark:bg-zinc-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 shrink-0">
           {copied ? t('gateway.common.copied') : t('gateway.common.copy')}
         </button>
         {onRegenKey && (
           <button onClick={() => onRegenKey(app.id)}
-            className="text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 shrink-0">{t('gateway.common.reset')}</button>
+            className="text-xs px-2 py-1.5 rounded border border-zinc-200 dark:border-zinc-700 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 shrink-0">{t('gateway.common.reset')}</button>
         )}
       </div>
     </div>
@@ -442,7 +442,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
       </div>
       <textarea value={envText} onChange={e => setEnvText(e.target.value)} rows={Math.max(2, envText.split('\n').length)}
         spellCheck={false}
-        className="w-full font-mono text-[11px] bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 outline-none focus:border-blue-400 text-gray-700 dark:text-gray-200 resize-y"
+        className="w-full font-mono text-[11px] bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2 outline-none focus:border-blue-400 text-gray-700 dark:text-gray-200 resize-y"
         placeholder={t('gateway.app.envPlaceholder')} />
       {writeMsg && <div className={`text-[11px] mt-1 ${writeMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{writeMsg}</div>}
       <div className="text-[10px] text-gray-400 mt-1">
@@ -468,11 +468,11 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
       <div className="grid grid-cols-2 gap-2 mb-3">
         <div>
           <div className="text-[10px] text-gray-400 mb-1">{t('gateway.app.devModeImg1')}</div>
-          <img src={claudeDevModeImg1} alt="Enable Developer Mode" className="rounded border border-gray-200 dark:border-gray-700 w-full" />
+          <img src={claudeDevModeImg1} alt="Enable Developer Mode" className="rounded border border-zinc-200 dark:border-zinc-700 w-full" />
         </div>
         <div>
           <div className="text-[10px] text-gray-400 mb-1">{t('gateway.app.devModeImg2')}</div>
-          <img src={claudeDevModeImg2} alt="Configure Gateway" className="rounded border border-gray-200 dark:border-gray-700 w-full" />
+          <img src={claudeDevModeImg2} alt="Configure Gateway" className="rounded border border-zinc-200 dark:border-zinc-700 w-full" />
         </div>
       </div>
       <button
@@ -492,7 +492,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   const configFileSection = app.config_file && (
     <div>
       <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.configFileTitle')}</div>
-      <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2 space-y-1">
+      <div className="bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-2 space-y-1">
         <div className="font-mono text-[11px] text-gray-700 dark:text-gray-300 break-all">{app.config_file}</div>
         {Object.entries(app.patch || {}).map(([k, v]) => (
           <div key={k} className="font-mono text-[10px] text-gray-500 break-all">{k} = {resolveEnv(v)}</div>
@@ -512,7 +512,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     <div>
       <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.routeRules')}</div>
       <select value={routeId} onChange={e => setRouteId(e.target.value)}
-        className="w-full text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none text-gray-800 dark:text-gray-200">
+        className="w-full text-sm bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none text-gray-800 dark:text-gray-200">
         {/* manual（手工添加）无官方可直连 → 必须绑定，「直连」改为不可选占位 */}
         {app.link_method === 'manual'
           ? <option value="" disabled>{t('gateway.app.routeRequired')}</option>
@@ -552,16 +552,16 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   );
   const btnCancel = (
     <button onClick={dismiss}
-      className="px-4 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400">
+      className="px-4 py-2 text-sm rounded-xl border border-zinc-200 dark:border-zinc-700 text-gray-600 dark:text-gray-400">
       {t('gateway.common.cancel')}
     </button>
   );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={dismiss}>
-      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-2xl mx-4 max-h-[92vh] overflow-y-auto flex flex-col"
+      <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl mx-4 max-h-[92vh] overflow-y-auto flex flex-col"
         onClick={e => e.stopPropagation()}>
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
           <span className="text-xl">{icon}</span>
           <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">{app.name || t('gateway.app.settingsTitle')}</h3>
           <button onClick={dismiss} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg">✕</button>
@@ -573,7 +573,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
             <div className="p-5 space-y-4">
               {baseInfoSection}{routeSection}
             </div>
-            <div className="flex gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800">
+            <div className="flex gap-2 px-5 py-4 border-t border-zinc-200 dark:border-zinc-800">
               {btnSave}{btnCancel}
             </div>
           </>
@@ -582,7 +582,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
             <div className="p-5 space-y-4">
               {baseInfoSection}{apiKeyRow}{envSection}{routeSection}{accessSection}
             </div>
-            <div className="flex gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800">
+            <div className="flex gap-2 px-5 py-4 border-t border-zinc-200 dark:border-zinc-800">
               {onDelete && isKeyApp(app.link_method) && (
                 <button onClick={() => onDelete(app.id)}
                   className="px-4 py-2 text-sm rounded-xl border border-red-200 dark:border-red-900/50 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
@@ -621,8 +621,8 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
   }
 
   return (
-    <div className="mb-3 bg-white dark:bg-gray-900 rounded-2xl border border-blue-200 dark:border-blue-800/50 shadow-sm">
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-200 dark:border-gray-800">
+    <div className="mb-3 bg-white dark:bg-zinc-900 rounded-2xl border border-blue-200 dark:border-blue-800/50 shadow-sm">
+      <div className="flex items-center gap-3 px-5 py-3 border-b border-zinc-200 dark:border-zinc-800">
         <span className="text-xl">{icon}</span>
         <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">{t('gateway.app.newTitle')}</h3>
         <button onClick={onCancel} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg">✕</button>
@@ -632,7 +632,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
         <div>
           <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.basicInfo')}</div>
           <input value={name} onChange={e => setName(e.target.value)} placeholder={t('gateway.app.namePlaceholder')}
-            className="w-full text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-gray-800 dark:text-gray-200 mb-2" />
+            className="w-full text-sm bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-gray-800 dark:text-gray-200 mb-2" />
           <div className="flex flex-wrap gap-1.5 mb-2">
             {ICONS.map(e => (
               <button key={e} onClick={() => setIcon(e)}
@@ -642,21 +642,21 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
             ))}
           </div>
           <textarea value={desc} onChange={e => setDesc(e.target.value)} placeholder={t('gateway.app.descPlaceholder')} rows={2}
-            className="w-full text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none resize-none text-gray-600 dark:text-gray-400" />
+            className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none resize-none text-gray-600 dark:text-gray-400" />
         </div>
         {/* API Key */}
         {app.api_key && (
           <div>
             <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">API Key</div>
             <div className="flex items-center gap-2">
-              <code className="flex-1 text-[11px] font-mono bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-gray-600 dark:text-gray-400 truncate">{app.api_key}</code>
+              <code className="flex-1 text-[11px] font-mono bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1.5 text-gray-600 dark:text-gray-400 truncate">{app.api_key}</code>
               <button onClick={() => { navigator.clipboard.writeText(app.api_key); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-                className="text-xs px-2 py-1.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 shrink-0">
+                className="text-xs px-2 py-1.5 rounded bg-gray-200 dark:bg-zinc-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 shrink-0">
                 {copied ? t('gateway.common.copied') : t('gateway.common.copy')}
               </button>
               {onRegenKey && (
                 <button onClick={() => onRegenKey(app.id)}
-                  className="text-xs px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 shrink-0">{t('gateway.common.reset')}</button>
+                  className="text-xs px-2 py-1.5 rounded border border-zinc-200 dark:border-zinc-700 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 shrink-0">{t('gateway.common.reset')}</button>
               )}
             </div>
           </div>
@@ -665,7 +665,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
         <div>
           <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('gateway.app.routeRules')}</div>
           <select value={routeId} onChange={e => setRouteId(e.target.value)}
-            className="w-full text-sm bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 outline-none text-gray-800 dark:text-gray-200">
+            className="w-full text-sm bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none text-gray-800 dark:text-gray-200">
             {/* 手工添加无官方可直连 → 必须绑定 */}
             <option value="" disabled>{t('gateway.app.routeRequired')}</option>
             {(() => {
@@ -694,13 +694,13 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
           </div>
         )}
       </div>
-      <div className="flex gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800">
+      <div className="flex gap-2 px-5 py-4 border-t border-zinc-200 dark:border-zinc-800">
         <button onClick={save} disabled={busy}
           className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
           {busy ? t('gateway.common.saving') : t('gateway.common.save')}
         </button>
         <button onClick={onCancel}
-          className="px-4 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400">
+          className="px-4 py-2 text-sm rounded-xl border border-zinc-200 dark:border-zinc-700 text-gray-600 dark:text-gray-400">
           {t('gateway.common.cancel')}
         </button>
       </div>
@@ -717,7 +717,7 @@ function TraceStatPill({ label, value, tone }) {
     : tone === 'cyan' ? 'text-cyan-600 dark:text-cyan-400'
     : 'text-gray-800 dark:text-gray-100';
   return (
-    <div className="inline-flex items-center gap-1 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-md px-2 h-7">
+    <div className="inline-flex items-center gap-1 bg-gray-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded-md px-2 h-7">
       <span className="text-[9px] font-medium text-gray-400 uppercase tracking-wider">{label}</span>
       <span className={`text-[11px] font-semibold tabular-nums ${toneCls}`}>{value}</span>
     </div>
@@ -751,9 +751,9 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-4xl mx-4 max-h-[92vh] overflow-hidden flex flex-col"
+      <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-4xl mx-4 max-h-[92vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}>
-        <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-800 shrink-0 space-y-2">
+        <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 space-y-2">
           <div className="flex items-center gap-3">
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-sm">{t('gateway.common.back')}</button>
             <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">Session Trace</h3>
@@ -769,7 +769,7 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
               <TraceStatPill label="Turns" value={st.turns ?? 0} />
               <TraceStatPill label="Dur" value={st.duration || '—'} />
               <TraceStatPill label="Err" value={st.errors ?? 0} tone={(st.errors ?? 0) > 0 ? 'red' : undefined} />
-              <div className="hidden sm:flex items-center gap-2 ml-1 px-2 h-7 rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40">
+              <div className="hidden sm:flex items-center gap-2 ml-1 px-2 h-7 rounded-md border border-zinc-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800/40">
                 <span className="text-[9px] text-gray-400">INPUT <strong className="text-gray-700 dark:text-gray-200">{fmtN(tok.input)}</strong></span>
                 <span className="text-gray-300">|</span>
                 <span className="text-[9px] text-gray-400">OUTPUT <strong className="text-gray-700 dark:text-gray-200">{fmtN(tok.output)}</strong></span>
@@ -787,7 +787,7 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
         ) : (
           <>
             {/* 会话元信息 */}
-            <div className="px-5 py-2 text-[11px] text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800 shrink-0 flex flex-wrap gap-x-4 gap-y-1">
+            <div className="px-5 py-2 text-[11px] text-gray-500 dark:text-gray-400 border-b border-zinc-100 dark:border-zinc-800 shrink-0 flex flex-wrap gap-x-4 gap-y-1">
               <span>{t('gateway.detail.projectLabel')} <strong className="text-gray-700 dark:text-gray-300">{trace.project || '—'}</strong></span>
               {projectPathTooltip(trace) !== '—' && (
                 <span className="font-mono truncate max-w-xs" title={projectPathTooltip(trace)}>{projectPathTooltip(trace)}</span>
@@ -796,12 +796,12 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
 
             <div className="flex flex-1 min-h-0">
               {/* 步骤索引 */}
-              <div className="w-44 shrink-0 border-r border-gray-100 dark:border-gray-800 overflow-y-auto max-h-[55vh]">
+              <div className="w-44 shrink-0 border-r border-zinc-100 dark:border-zinc-800 overflow-y-auto max-h-[55vh]">
                 {steps.map((s, i) => (
                   <button key={i} onClick={() => setStepIdx(i)}
-                    className={`w-full text-left px-3 py-1.5 text-[11px] border-b border-gray-50 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/40 ${stepIdx === i ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300' : 'text-gray-600 dark:text-gray-400'}`}>
+                    className={`w-full text-left px-3 py-1.5 text-[11px] border-b border-gray-50 dark:border-zinc-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/40 ${stepIdx === i ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300' : 'text-gray-600 dark:text-gray-400'}`}>
                     <span className="text-gray-400 mr-1">{String(i).padStart(3, '0')}</span>
-                    <span className={`px-1 rounded text-[9px] mr-1 ${s.kind === 'tool' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' : s.kind === 'user' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30' : s.reasoning ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/20' : 'bg-gray-100 text-gray-600 dark:bg-gray-800'}`}>
+                    <span className={`px-1 rounded text-[9px] mr-1 ${s.kind === 'tool' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' : s.kind === 'user' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30' : s.reasoning ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/20' : 'bg-gray-100 text-gray-600 dark:bg-zinc-800'}`}>
                       {s.kind === 'tool' ? s.tool || s.label : s.kind === 'user' ? 'USER' : s.reasoning ? 'REASON' : 'AI'}
                     </span>
                     <span className="truncate block">{s.label}</span>
@@ -815,10 +815,10 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
                   <div className="space-y-2">
                     <div className="text-[10px] text-gray-400">{fmtTime(cur.ts)} · {cur.label}</div>
                     {cur.text && (
-                      <pre className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words bg-gray-50 dark:bg-gray-800/50 rounded-lg p-3 max-h-80 overflow-y-auto">{cur.text}</pre>
+                      <pre className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words bg-gray-50 dark:bg-zinc-800/50 rounded-lg p-3 max-h-80 overflow-y-auto">{cur.text}</pre>
                     )}
                     {cur.input != null && (
-                      <pre className="text-[11px] font-mono text-gray-600 dark:text-gray-400 whitespace-pre-wrap break-all bg-gray-50 dark:bg-gray-800/50 rounded-lg p-3 max-h-60 overflow-y-auto">
+                      <pre className="text-[11px] font-mono text-gray-600 dark:text-gray-400 whitespace-pre-wrap break-all bg-gray-50 dark:bg-zinc-800/50 rounded-lg p-3 max-h-60 overflow-y-auto">
                         {typeof cur.input === 'string' ? cur.input : JSON.stringify(cur.input, null, 2)}
                       </pre>
                     )}
@@ -831,7 +831,7 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
 
             {/* 步骤进度条 */}
             {steps.length > 1 && (
-              <div className="px-5 py-3 border-t border-gray-100 dark:border-gray-800 shrink-0">
+              <div className="px-5 py-3 border-t border-zinc-100 dark:border-zinc-800 shrink-0">
                 <div className="flex items-center gap-3 text-[10px] text-gray-400 mb-1">
                   <span>Step {stepIdx + 1} / {steps.length}</span>
                   <span className="flex-1" />
@@ -854,7 +854,7 @@ function DetailSection({ n, title, hint, children }) {
   return (
     <section>
       <div className="flex items-baseline gap-2 mb-2">
-        <span className="w-4 h-4 rounded-full bg-gray-100 dark:bg-gray-800 text-[10px] font-bold text-gray-500 dark:text-gray-400 flex items-center justify-center shrink-0">{n}</span>
+        <span className="w-4 h-4 rounded-full bg-gray-100 dark:bg-zinc-800 text-[10px] font-bold text-gray-500 dark:text-gray-400 flex items-center justify-center shrink-0">{n}</span>
         <h4 className="text-xs font-semibold text-gray-700 dark:text-gray-300">{title}</h4>
         {hint && <span className="text-[10px] text-gray-400 font-normal ml-1">{hint}</span>}
       </div>
@@ -998,13 +998,13 @@ function AppDetailModal({ app, onClose }) {
         <SessionTraceModal app={app} sessionId={traceSid} traceAgentId={traceAgentId} onClose={() => setTraceSid(null)} />
       )}
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-3xl mx-4 max-h-[92vh] overflow-y-auto flex flex-col"
+      <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-3xl mx-4 max-h-[92vh] overflow-y-auto flex flex-col"
         onClick={e => e.stopPropagation()}>
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-200 dark:border-gray-800 sticky top-0 bg-white dark:bg-gray-900 z-10">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 sticky top-0 bg-white dark:bg-zinc-900 z-10">
           <span className="text-xl">{app.icon}</span>
           <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 flex-1">{t('gateway.detail.usageTitle', { name: app.name })}</h3>
           <select value={days} onChange={e => setDays(+e.target.value)}
-            className="text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 outline-none text-gray-600 dark:text-gray-300">
+            className="text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1 outline-none text-gray-600 dark:text-gray-300">
             <option value={7}>{t('gateway.detail.days7')}</option><option value={30}>{t('gateway.detail.days30')}</option><option value={90}>{t('gateway.detail.days90')}</option>
           </select>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg">✕</button>
@@ -1012,7 +1012,7 @@ function AppDetailModal({ app, onClose }) {
 
         {loading ? (
           <div className="py-16 flex flex-col items-center gap-2 text-xs text-gray-400">
-            <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 border-t-blue-500 rounded-full animate-spin" />{t('gateway.common.loading')}
+            <div className="w-5 h-5 border-2 border-gray-300 dark:border-zinc-600 border-t-blue-500 rounded-full animate-spin" />{t('gateway.common.loading')}
           </div>
         ) : !data ? (
           <div className="py-16 text-center text-xs text-gray-400">{t('gateway.common.noData')}</div>
@@ -1021,7 +1021,7 @@ function AppDetailModal({ app, onClose }) {
 
             {/* 1. 数据来源 */}
             <DetailSection n="1" title={t('gateway.detail.dataSource')}>
-              <div className="text-xs text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/40 rounded-lg px-3 py-2.5">
+              <div className="text-xs text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-zinc-800/40 rounded-lg px-3 py-2.5">
                 <span className="text-gray-700 dark:text-gray-300">{sourceSummary.summary}</span>
                 {sourceSummary.tags.length > 1 && (
                   <span className="text-[10px] text-gray-400 ml-2">{t('gateway.detail.deduped')}</span>
@@ -1051,7 +1051,7 @@ function AppDetailModal({ app, onClose }) {
                   [t('gateway.detail.outputTokens'), fmtN(data.total.outTok)],
                   [t('gateway.detail.estCost'),  fmtCost(data.total.totalCost) || '—'],
                 ].map(([l,v]) => (
-                  <div key={l} className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3">
+                  <div key={l} className="bg-gray-50 dark:bg-zinc-800/50 rounded-xl p-3">
                     <div className="text-[10px] text-gray-400 dark:text-gray-500">{l}</div>
                     <div className="text-lg font-bold text-gray-800 dark:text-gray-100 mt-0.5 truncate">{v}</div>
                   </div>
@@ -1063,7 +1063,7 @@ function AppDetailModal({ app, onClose }) {
             {/* 3. 按模型统计（无 model 字段的应用不展示） */}
             {showModelStats && (
             <DetailSection n="3" title={t('gateway.detail.byModel')} hint={modelFilter ? t('gateway.detail.filterActive', { model: modelFilter }) : t('gateway.detail.filterHint')}>
-              <div className="border border-gray-100 dark:border-gray-800 rounded-lg divide-y divide-gray-100 dark:divide-gray-800">
+              <div className="border border-zinc-100 dark:border-zinc-800 rounded-lg divide-y divide-gray-100 dark:divide-gray-800">
                 {data.byModel.map(m => (
                   <div key={m.model}
                     onClick={() => setModelFilter(modelFilter === m.model ? null : m.model)}
@@ -1086,8 +1086,8 @@ function AppDetailModal({ app, onClose }) {
               {sessionHistoryRows.length === 0 ? (
                 <div className="text-xs text-gray-400 px-1">{t('gateway.detail.noSessions')}</div>
               ) : (
-                <div className="border border-gray-100 dark:border-gray-800 rounded-lg overflow-hidden">
-                  <div className="grid grid-cols-[minmax(5.5rem,1.15fr)_minmax(0,2fr)_3.5rem_3.5rem_4.5rem_3.5rem] gap-2 px-3 py-1.5 text-[10px] font-medium text-gray-400 bg-gray-50 dark:bg-gray-800/40 border-b border-gray-100 dark:border-gray-800">
+                <div className="border border-zinc-100 dark:border-zinc-800 rounded-lg overflow-hidden">
+                  <div className="grid grid-cols-[minmax(5.5rem,1.15fr)_minmax(0,2fr)_3.5rem_3.5rem_4.5rem_3.5rem] gap-2 px-3 py-1.5 text-[10px] font-medium text-gray-400 bg-gray-50 dark:bg-zinc-800/40 border-b border-zinc-100 dark:border-zinc-800">
                     <span>{t('gateway.detail.colProject')}</span><span>{t('gateway.detail.colContext')}</span><span className="text-right">{t('gateway.detail.colRequests')}</span><span className="text-right">Token</span><span className="text-right">{t('gateway.detail.colTime')}</span><span className="text-right">{canTrace ? 'Trace' : t('gateway.detail.colDetail')}</span>
                   </div>
                   <div className="divide-y divide-gray-100 dark:divide-gray-800 max-h-64 overflow-y-auto">
@@ -1115,7 +1115,7 @@ function AppDetailModal({ app, onClose }) {
                           </span>
                         </div>
                         {selectedSid === row.session_id && !canTrace && (
-                          <div className="bg-gray-50 dark:bg-gray-800/30 divide-y divide-gray-100 dark:divide-gray-800/60 pl-4 pb-1">
+                          <div className="bg-gray-50 dark:bg-zinc-800/30 divide-y divide-gray-100 dark:divide-gray-800/60 pl-4 pb-1">
                             {(data?.recent || []).filter(r => r.session_id === row.session_id).slice(0, 20).map((r, i) => (
                               <div key={i} className="flex items-center gap-2 px-3 py-1 text-[11px]">
                                 <span className="text-gray-400 w-20 shrink-0">{fmtTime(r.ts)}</span>
@@ -1138,7 +1138,7 @@ function AppDetailModal({ app, onClose }) {
               {recentSorted.length === 0 ? (
                 <div className="text-xs text-gray-400 px-1">—</div>
               ) : (
-                <div className="border border-gray-100 dark:border-gray-800 rounded-lg divide-y divide-gray-100 dark:divide-gray-800 max-h-80 overflow-y-auto">
+                <div className="border border-zinc-100 dark:border-zinc-800 rounded-lg divide-y divide-gray-100 dark:divide-gray-800 max-h-80 overflow-y-auto">
                   {recentSorted.map((r, i) => (
                     <div key={i} className="flex items-center gap-2 px-3 py-1.5 text-[11px] flex-wrap">
                       <span className="text-gray-400 w-24 shrink-0">{fmtTime(r.ts)}</span>
@@ -1510,15 +1510,15 @@ function AppManager({ externalRoutes, availableModels = [] }) {
             {/* 操作栏 */}
             <div className="flex items-center gap-2 mb-3 flex-wrap">
               <button onClick={() => manualDraft ? cancelManualDraft() : addCustom()}
-                className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors">
+                className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white transition-colors font-medium">
                 {t('gateway.apps.new')}
               </button>
-              <span className="text-xs text-gray-400 dark:text-gray-500">{t('gateway.apps.newHint')}</span>
+              <span className="text-[11px] text-gray-400 dark:text-gray-500">{t('gateway.apps.newHint')}</span>
               <div className="ml-auto"><ImportConfigButton onImported={load} /></div>
             </div>
 
             {/* 提醒：纳管后若未生效需重启应用 */}
-            <div className="mb-3 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded-lg px-3 py-2">
+            <div className="mb-3 text-[10px] text-gray-400 dark:text-gray-500 px-1">
               {t('gateway.apps.restartHint')}
             </div>
 
@@ -1532,7 +1532,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
             {/* 应用列表 */}
             {loading ? (
               <div className="py-10 flex flex-col items-center justify-center gap-2 text-xs text-gray-400">
-                <div className="w-5 h-5 border-2 border-gray-300 dark:border-gray-600 border-t-blue-500 rounded-full animate-spin" />
+                <div className="w-5 h-5 border-2 border-gray-300 dark:border-zinc-600 border-t-blue-500 rounded-full animate-spin" />
                 {t('gateway.apps.loading')}
               </div>
             ) : visibleApps.length === 0 ? (
@@ -1540,9 +1540,9 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                 {t('gateway.apps.empty')}
               </div>
             ) : (
-              <div className={`flex flex-col divide-y divide-gray-100 dark:divide-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden ${visibleApps.length > 20 ? 'max-h-[min(75vh,900px)] overflow-y-auto' : ''}`}>
+              <div className={`flex flex-col divide-y divide-gray-100 dark:divide-gray-800/60 border border-zinc-200 dark:border-zinc-700/60 rounded-xl overflow-hidden ${visibleApps.length > 20 ? 'max-h-[min(75vh,900px)] overflow-y-auto' : ''}`}>
                 {/* 表头（超过 20 个时列表滚动，表头吸顶）*/}
-                <div className={`${APPS_TABLE_GRID} py-2 bg-gray-100 dark:bg-gray-800 text-[10px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wide sticky top-0 z-10`}>
+                <div className={`${APPS_TABLE_GRID} py-1.5 bg-gray-50 dark:bg-zinc-800/50 text-[9px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-widest sticky top-0 z-10 border-b border-zinc-100 dark:border-zinc-800`}>
                   <span className="text-base text-center shrink-0 invisible">🔧</span>
                   <div className="min-w-0">{t('gateway.apps.colApp')}</div>
                   <div className="min-w-0">{t('gateway.apps.colStatus')}</div>
@@ -1551,7 +1551,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                   <div className="text-center min-w-0">{t('gateway.apps.colTokens')}</div>
                   <div className="text-center min-w-0">{t('gateway.apps.colLastUsed')}</div>
                   <div className="min-w-0">{t('gateway.apps.colRoute')}</div>
-                  <div className="text-right min-w-0">{t('gateway.apps.colTest')}</div>
+                  <div className="min-w-0" />
                   <div className="min-w-0">{t('gateway.apps.colActions')}</div>
                 </div>
                 {visibleApps.map(app => {
@@ -1588,10 +1588,10 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                   const isActive = isManaged;
                   const statusDot = isManaged
                     ? 'bg-green-400 shadow-[0_0_6px] shadow-green-400/60'
-                    : 'bg-gray-300 dark:bg-gray-600';
+                    : 'bg-gray-300 dark:bg-zinc-600';
                   const rowBg = isManaged
-                    ? 'bg-green-50/60 dark:bg-green-950/15'
-                    : 'bg-gray-50/50 dark:bg-gray-800/20';
+                    ? 'bg-white dark:bg-zinc-900/60 hover:bg-gray-50/80 dark:hover:bg-gray-800/30'
+                    : 'bg-gray-50/40 dark:bg-zinc-800/10 hover:bg-gray-50 dark:hover:bg-gray-800/20';
                   const isApiLink = app.link_method === 'manual';
                   const statusLabel = !isManaged
                     ? t('gateway.apps.statusUntracked')
@@ -1664,7 +1664,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           setBusyId(null);
                           await load();
                         }}
-                        className="w-full text-[10px] bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 outline-none text-gray-600 dark:text-gray-400 disabled:opacity-40 disabled:cursor-not-allowed">
+                        className="w-full text-[10px] bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-1.5 py-1 outline-none text-gray-600 dark:text-gray-400 disabled:opacity-40 disabled:cursor-not-allowed">
                         {/* Cursor 等仅官方订阅应用：固定一项；manual 必须绑路由；其余可选官方订阅或走网关 */}
                         {isManual
                           ? <option value="" disabled>{t('gateway.app.routeRequired')}</option>
@@ -1706,8 +1706,8 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                             )}
                             <button onClick={() => runAppTest(app)} disabled={ts?.busy || !isGatewayRouted}
                               className={`text-[10px] px-2 py-1 rounded-lg border transition-colors shrink-0 ${ts?.busy
-                                ? 'border-gray-300 dark:border-gray-600 text-gray-400 opacity-60 cursor-wait'
-                                : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-500'} disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-gray-200 disabled:hover:text-gray-500`}>
+                                ? 'border-gray-300 dark:border-zinc-600 text-gray-400 opacity-60 cursor-wait'
+                                : 'border-zinc-200 dark:border-zinc-700 text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-500'} disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-gray-200 disabled:hover:text-gray-500`}>
                               {ts?.busy ? t('gateway.common.testing') : t('gateway.common.test')}
                             </button>
                           </>
@@ -1721,18 +1721,18 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         /* 仅官方订阅（cursor 等）：只读会话统计，设置/测试在走网关时可用，还原=取消纳管停统计 */
                         <>
                           <button onClick={() => setSettings(app)}
-                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
+                            className="text-[10px] px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0">
                             {t('gateway.common.settings')}
                           </button>
                           {tracked ? (
                             <button onClick={() => setTracked(app, false)} disabled={busyId === app.id}
                               title={t('gateway.apps.revertTitle')}
-                              className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 disabled:opacity-50 shrink-0">
+                              className="text-[10px] px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
                               {busyId === app.id ? '…' : t('gateway.common.revert')}
                             </button>
                           ) : (
                             <button onClick={() => setTracked(app, true)} disabled={busyId === app.id}
-                              className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 shrink-0 font-medium">
+                              className="text-[10px] px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
                               {busyId === app.id ? '…' : t('gateway.common.manage')}
                             </button>
                           )}
@@ -1741,17 +1741,17 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         /* 透明托管：设置 + 纳管/还原 开关（按 tracked）*/
                         <>
                           <button onClick={() => setSettings(app)}
-                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
+                            className="text-[10px] px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0">
                             {t('gateway.common.settings')}
                           </button>
                           {tracked ? (
                             <button onClick={() => setTracked(app, false)} disabled={busyId === app.agent_id || busyId === app.id}
-                              className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 disabled:opacity-50 shrink-0">
+                              className="text-[10px] px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
                               {(busyId === app.agent_id || busyId === app.id) ? '…' : t('gateway.common.revert')}
                             </button>
                           ) : (
                             <button onClick={() => setTracked(app, true)} disabled={busyId === app.agent_id || busyId === app.id}
-                              className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 shrink-0 font-medium">
+                              className="text-[10px] px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
                               {(busyId === app.agent_id || busyId === app.id) ? '…' : t('gateway.common.manage')}
                             </button>
                           )}
@@ -1759,24 +1759,24 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       ) : app._virtual_apikey ? (
                         /* API Key 应用（未纳管虚拟行）：一键纳管（写配置文件指向网关），与透明托管一致 */
                         <button onClick={() => addApiKeyApp(app)} disabled={busyId === app.id}
-                          className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 shrink-0 font-medium">
+                          className="text-[10px] px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
                           {busyId === app.id ? '…' : t('gateway.common.manage')}
                         </button>
                       ) : app.host_method === 'config-file' ? (
                         /* config-file api-key 应用：设置 + 纳管/还原；纳管/还原默认官方订阅 */
                         <>
                           <button onClick={() => setSettings(app)}
-                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
+                            className="text-[10px] px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0">
                             {t('gateway.common.settings')}
                           </button>
                           {tracked ? (
                             <button onClick={() => setTracked(app, false)} disabled={busyId === app.id}
-                              className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 disabled:opacity-50 shrink-0">
+                              className="text-[10px] px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
                               {busyId === app.id ? '…' : t('gateway.common.revert')}
                             </button>
                           ) : (
                             <button onClick={() => setTracked(app, true)} disabled={busyId === app.id}
-                              className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 shrink-0 font-medium">
+                              className="text-[10px] px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
                               {busyId === app.id ? '…' : t('gateway.common.manage')}
                             </button>
                           )}
@@ -1785,11 +1785,11 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         /* 普通 api-key 应用：设置 + 删除 */
                         <>
                           <button onClick={() => setSettings(app)}
-                            className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0">
+                            className="text-[10px] px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0">
                             {t('gateway.common.settings')}
                           </button>
                           <button onClick={() => handleDeleteApp(app.id)}
-                            className="text-[10px] px-2 py-1 rounded-lg border border-red-200 dark:border-red-900/50 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 shrink-0">
+                            className="text-[10px] px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors shrink-0">
                             {t('gateway.common.delete')}
                           </button>
                         </>
@@ -1860,7 +1860,7 @@ function AgentLinker() {
   }
 
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 mb-4">
+    <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-4 mb-4">
       <div className="flex items-center gap-2 mb-3">
         <span className="text-base">🔌</span>
         <h2 className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{t('gateway.agent.title')}</h2>
@@ -1879,14 +1879,14 @@ function AgentLinker() {
           {agents.map(a => (
             <div key={a.id}
               className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-sm transition-colors
-                ${!a.installed ? 'opacity-40 border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/30' :
+                ${!a.installed ? 'opacity-40 border-zinc-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800/30' :
                   a.linked ? 'border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/30' :
-                             'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40'}`}
+                             'border-zinc-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800/40'}`}
             >
               {/* 状态点 */}
               <span className={`w-2 h-2 rounded-full shrink-0 ${
-                !a.installed ? 'bg-gray-300 dark:bg-gray-600' :
-                a.linked     ? 'bg-green-400' : 'bg-gray-400 dark:bg-gray-500'}`} />
+                !a.installed ? 'bg-gray-300 dark:bg-zinc-600' :
+                a.linked     ? 'bg-green-400' : 'bg-gray-400 dark:bg-zinc-500'}`} />
 
               {/* 名称 + 策略 */}
               <div className="flex-1 min-w-0">
@@ -1900,7 +1900,7 @@ function AgentLinker() {
               {a.installed && (
                 <span className={`text-xs px-2 py-0.5 rounded-full shrink-0
                   ${a.linked ? 'bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300'
-                              : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}>
+                              : 'bg-gray-100 dark:bg-zinc-700 text-gray-500 dark:text-gray-400'}`}>
                   {a.linked ? t('gateway.agent.linked') : t('gateway.agent.notLinked')}
                 </span>
               )}
@@ -1926,7 +1926,7 @@ function AgentLinker() {
                 <button
                   disabled={busy[a.id]}
                   onClick={() => handleRevert(a.id)}
-                  className="shrink-0 text-xs px-3 py-1 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 disabled:opacity-50 transition-colors">
+                  className="shrink-0 text-xs px-3 py-1 rounded-lg bg-gray-200 dark:bg-zinc-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 disabled:opacity-50 transition-colors">
                   {busy[a.id] ? t('gateway.agent.reverting') : t('gateway.common.revert')}
                 </button>
               )}
@@ -1978,7 +1978,7 @@ function CopyButton({ text, label: labelProp, className = '' }) {
   }
   return (
     <button onClick={copy}
-      className={`text-xs px-2.5 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors min-w-[48px] ${className}`}>
+      className={`text-xs px-2.5 py-2 rounded-lg bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors min-w-[48px] ${className}`}>
       {copied ? t('gateway.common.copiedSpace') : label}
     </button>
   );
@@ -1993,7 +1993,7 @@ function ModelSelect({ availableModels, value, onChange }) {
   const paidModels = availableModels.filter(m => m.tier === 'paid');
   return (
     <select value={value} onChange={e => onChange(e.target.value)}
-      className="w-full bg-gray-200 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-2 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500">
+      className="w-full bg-gray-200 dark:bg-zinc-700 border border-gray-300 dark:border-zinc-600 rounded-lg px-2.5 py-2 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500">
       {freeModels.length > 0 && (
         <optgroup label={t('gateway.app.tier.freeLayer')}>
           {freeModels.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}
@@ -2029,7 +2029,7 @@ function ruleCondTypes(t) {
 function ruleOpLabel(t) {
   return { is: t('gateway.rule.op.is'), not: t('gateway.rule.op.not'), gt: '>', lt: '<', gte: '≥', lte: '≤', match: t('gateway.rule.op.match'), contains: t('gateway.rule.op.contains') };
 }
-const RULE_SEL = 'bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-1.5 py-1 text-[11px] text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500';
+const RULE_SEL = 'bg-gray-100 dark:bg-zinc-700 border border-gray-300 dark:border-zinc-600 rounded px-1.5 py-1 text-[11px] text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500';
 
 // 单条 when 条件编辑器：条件类型 + 算子 + 值（值控件随类型变化）。
 // categories：智能分类的类别集合（来自分类器配置），用于「智能分类」条件的值下拉。
@@ -2093,7 +2093,7 @@ function ChainEditor({ steps, setSteps, availableModels }) {
         <div key={i} className="flex items-center gap-2 group">
           <span className="text-[10px] text-gray-400 w-4 text-right shrink-0">{i + 1}</span>
           <select value={step.model && step.tier ? modelTierKey({ id: step.model, tier: step.tier }) : (step.model || '')} onChange={e => update(i, e.target.value)}
-            className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500">
+            className="flex-1 bg-gray-100 dark:bg-zinc-700 border border-gray-300 dark:border-zinc-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500">
             <option value="">{t('gateway.route.selectModel')}</option>
             {free.length > 0 && <optgroup label={t('gateway.app.tier.freeLayer')}>{free.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}</optgroup>}
             {p2p.length  > 0 && <optgroup label={t('gateway.app.tier.p2pLayer')}>{p2p.map(m =>  <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}</optgroup>}
@@ -2135,14 +2135,14 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
   }
 
   return (
-    <div className="border-t border-gray-200/60 dark:border-gray-800/60 bg-gray-50/50 dark:bg-gray-800/20 px-5 py-4 space-y-3">
+    <div className="border-t border-gray-200/60 dark:border-zinc-800/60 bg-gray-50/50 dark:bg-zinc-800/20 px-5 py-4 space-y-3">
       <div className="flex gap-2">
         <input value={icon} onChange={e => setIcon(e.target.value)}
-          className="w-10 bg-gray-200 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none"
+          className="w-10 bg-gray-200 dark:bg-zinc-700 border border-gray-300 dark:border-zinc-600 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none"
           maxLength={2} />
         <input value={name} onChange={e => setName(e.target.value)}
           placeholder={t('gateway.route.namePlaceholder')}
-          className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500" />
+          className="flex-1 bg-gray-100 dark:bg-zinc-700 border border-gray-300 dark:border-zinc-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:border-blue-500" />
       </div>
 
       {/* 条件规则（可选）：从上到下匹配，命中即用 */}
@@ -2151,12 +2151,12 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
       </div>
       <div className="space-y-2">
         {rules.map((rule, ri) => (
-          <div key={ri} className="border border-gray-200 dark:border-gray-700 rounded-lg p-2 space-y-1.5 bg-white/60 dark:bg-gray-900/30">
+          <div key={ri} className="border border-zinc-200 dark:border-zinc-700 rounded-lg p-2 space-y-1.5 bg-white/60 dark:bg-zinc-900/30">
             <div className="flex items-start justify-between gap-2">
               <RuleConditionEditor when={rule.when} onChange={w => setRuleAt(ri, { when: w })} categories={categories} />
               <button onClick={() => removeRule(ri)} className="text-[10px] text-gray-400 hover:text-red-500 shrink-0 px-1">{t('gateway.common.delete')}</button>
             </div>
-            <div className="pl-3 border-l-2 border-gray-200 dark:border-gray-700">
+            <div className="pl-3 border-l-2 border-zinc-200 dark:border-zinc-700">
               <div className="text-[10px] text-gray-400 mb-1">{t('gateway.route.routeTo')}</div>
               <ChainEditor steps={rule.steps} setSteps={s => setRuleAt(ri, { steps: s })} availableModels={availableModels} />
             </div>
@@ -2199,7 +2199,7 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
           {t('gateway.common.save')}
         </button>
         <button onClick={onCancel}
-          className="text-xs bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
+          className="text-xs bg-gray-100 dark:bg-zinc-700 border border-gray-300 dark:border-zinc-600 text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
           {t('gateway.common.cancel')}
         </button>
       </div>
@@ -2310,9 +2310,9 @@ function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
   const code = isCodeTab ? codeSnippet(tab, localBase, apiKey, model) : '';
 
   return (
-    <div className="border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
+    <div className="border border-zinc-200 dark:border-zinc-700 rounded-xl overflow-hidden">
       {/* Tab bar */}
-      <div className="flex items-center bg-gray-50 dark:bg-gray-800/60 border-b border-gray-200 dark:border-gray-700">
+      <div className="flex items-center bg-gray-50 dark:bg-zinc-800/60 border-b border-zinc-200 dark:border-zinc-700">
         {tabs.map(tabItem => (
           <button key={tabItem.id} onClick={() => { setTab(tabItem.id); setWriteOk(false); }}
             className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
@@ -2333,7 +2333,7 @@ function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
 
       {/* Code snippet */}
       {isCodeTab && (
-        <pre className="px-4 py-3 text-[11px] font-mono leading-relaxed text-gray-700 dark:text-gray-300 overflow-x-auto bg-gray-50/30 dark:bg-gray-900/30 whitespace-pre">
+        <pre className="px-4 py-3 text-[11px] font-mono leading-relaxed text-gray-700 dark:text-gray-300 overflow-x-auto bg-gray-50/30 dark:bg-zinc-900/30 whitespace-pre">
           {code}
         </pre>
       )}
@@ -2348,7 +2348,7 @@ function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
               <code className={`text-[11px] font-mono px-2 py-0.5 rounded border ${
                 isRouter
                   ? 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-800/40 text-purple-600 dark:text-purple-400'
-                  : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300'
+                  : 'bg-gray-100 dark:bg-zinc-800 border-gray-300 dark:border-zinc-700 text-gray-700 dark:text-gray-300'
               }`}>{model}</code>
               <CopyButton text={model} label={t('gateway.common.copy')} className="py-0.5 text-[10px]" />
             </div>
@@ -2359,7 +2359,7 @@ function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
                 className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border transition-colors ${
                   tool === t.id
                     ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                    : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40 hover:border-gray-400 dark:hover:border-gray-600'
+                    : 'border-zinc-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800/40 hover:border-gray-400 dark:hover:border-gray-600'
                 }`}>
                 <span className="text-xl">{t.icon}</span>
                 <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">{t.label}</span>
@@ -2367,8 +2367,8 @@ function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
               </button>
             ))}
           </div>
-          <div className="bg-gray-50 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-700">
+          <div className="bg-gray-50 dark:bg-zinc-800/40 border border-zinc-200 dark:border-zinc-700 rounded-lg overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-200 dark:border-zinc-700">
               <span className="text-[10px] text-gray-500 font-medium">{t('gateway.key.envVars')}</span>
               <CopyButton text={envText} label={t('gateway.common.copyAll')} className="py-0.5 text-[10px]" />
             </div>
@@ -2438,7 +2438,7 @@ function InstanceList({ keysScene, onDelete, localBase, newKeyId, routeHealth })
 
   if (keysScene.length === 0) return null;
   return (
-    <div className="border-t border-gray-200 dark:border-gray-800">
+    <div className="border-t border-zinc-200 dark:border-zinc-800">
       <div className="px-5 py-3 flex items-center justify-between">
         <span className="text-xs text-gray-500 font-medium">{t('gateway.key.appList')}</span>
         <span className="text-[10px] text-gray-400">{t('gateway.key.appCount', { n: keysScene.length })}</span>
@@ -2500,8 +2500,8 @@ function InstanceList({ keysScene, onDelete, localBase, newKeyId, routeHealth })
                     disabled={ts?.busy}
                     className={`text-[10px] px-2 py-1 rounded border transition-colors shrink-0 ${
                       ts?.busy
-                        ? 'border-gray-300 dark:border-gray-600 text-gray-400 opacity-60 cursor-wait'
-                        : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-500 dark:hover:text-blue-400'
+                        ? 'border-gray-300 dark:border-zinc-600 text-gray-400 opacity-60 cursor-wait'
+                        : 'border-gray-300 dark:border-zinc-600 text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-500 dark:hover:text-blue-400'
                     }`}>
                     {ts?.busy ? t('gateway.common.testing') : t('gateway.common.test')}
                   </button>
@@ -2728,7 +2728,7 @@ export default function Gateway() {
           <span className={`text-xs px-2 py-0.5 rounded-full border ${
             status.running
               ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 border-green-300 dark:border-green-800/50'
-              : 'bg-gray-100 dark:bg-gray-800 text-gray-500 border-gray-300 dark:border-gray-700'
+              : 'bg-gray-100 dark:bg-zinc-800 text-gray-500 border-gray-300 dark:border-zinc-700'
           }`}>
             {status.running ? t('gateway.running', { port: status.port }) : t('gateway.stopped')}
           </span>
@@ -2744,7 +2744,7 @@ export default function Gateway() {
           }}
           disabled={restarting}
           title={t('gateway.restartTitle')}
-          className="ml-auto flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50"
+          className="ml-auto flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50"
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"
             className={`w-3.5 h-3.5 ${restarting ? 'animate-spin' : ''}`}>
@@ -2755,42 +2755,36 @@ export default function Gateway() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-4 gap-2.5">
         {[
           { label: t('gateway.stat.todayCalls'), value: totalCalls > 0 ? totalCalls.toLocaleString() : '—', color: 'text-gray-900 dark:text-gray-100' },
           { label: t('gateway.stat.todayTokens'), value: fmtTokens(totalTokens), color: 'text-blue-600 dark:text-blue-400' },
           { label: t('gateway.stat.gatewayRatio'), value: gatewayRatio !== null ? `${gatewayRatio}%` : '—', color: 'text-violet-600 dark:text-violet-400' },
-          { label: t('gateway.stat.avgLatency'), value: avgLatency > 0 ? `${avgLatency}ms` : '—', color: 'text-gray-900 dark:text-gray-100' },
+          { label: t('gateway.stat.avgLatency'), value: avgLatency > 0 ? `${avgLatency}ms` : '—', color: 'text-gray-500 dark:text-gray-400' },
         ].map(({ label, value, color }) => (
-          <div key={label} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-3">
-            <div className="text-xs text-gray-500">{label}</div>
-            <div className={`text-2xl font-bold mt-1 tabular-nums ${color}`}>{value}</div>
+          <div key={label} className="bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800/80 rounded-xl px-4 py-3.5 shadow-sm">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1.5">{label}</div>
+            <div className={`text-[22px] font-bold leading-none tabular-nums tracking-tight ${color}`}>{value}</div>
           </div>
         ))}
       </div>
 
-      {/* Endpoint */}
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-4">
-        <div className="text-xs text-gray-500 uppercase tracking-wide font-medium mb-2">{t('gateway.endpoint')}</div>
-        <div className="flex items-center gap-2">
-          <code className="flex-1 text-sm font-mono text-green-600 dark:text-green-400 bg-gray-100 dark:bg-gray-800 rounded-lg px-3 py-2 border border-gray-300 dark:border-gray-700">
-            {localBase}
-          </code>
-          <CopyButton text={localBase} label={t('gateway.common.copy')} />
-        </div>
-      </div>
-
       {/* 应用列表 / 场景路由 Tab */}
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
-        <div className="flex border-b border-gray-200 dark:border-gray-800">
+      <div className="bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800/80 rounded-2xl overflow-hidden shadow-sm">
+        {/* Tab bar + Endpoint 合并一行 */}
+        <div className="flex items-center border-b border-zinc-100 dark:border-zinc-800">
           {[t('gateway.tab.apps'), t('gateway.tab.routes')].map((tabLabel, i) => (
             <button key={i} onClick={() => setMainTab(i)}
-              className={`px-5 py-3 text-sm font-medium transition-colors ${mainTab === i
+              className={`px-4 py-2.5 text-xs font-semibold transition-colors ${mainTab === i
                 ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-500'
-                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}>
+                : 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300'}`}>
               {tabLabel}
             </button>
           ))}
+          <div className="ml-auto flex items-center gap-2 px-3">
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono">{localBase}</span>
+            <CopyButton text={localBase} label={t('gateway.common.copy')} />
+          </div>
         </div>
 
         {/* Tab0: 应用列表 & 托管 */}
@@ -2802,7 +2796,7 @@ export default function Gateway() {
         {mainTab === 1 && (
         <div>
         {/* 操作栏：新建（蓝色，最左）｜说明｜在线同步（最右）——布局与应用列表一致 */}
-        <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-200 dark:border-gray-800 flex-wrap">
+        <div className="flex items-center gap-2 px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 flex-wrap">
           <button
             onClick={() => { if (newRoute) { setNewRoute(null); } else { setExpandedRoute(null); setNewRoute({ scene_name: '', icon: '🔀', steps: [] }); } }}
             className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors"
@@ -2828,7 +2822,7 @@ export default function Gateway() {
               health.status === 'error' ? 'bg-red-500' :
               health.status === 'ok'
                 ? (ftMs != null && ftMs > 3000 ? 'bg-amber-400' : 'bg-green-500')
-                : 'bg-gray-300 dark:bg-gray-600';
+                : 'bg-gray-300 dark:bg-zinc-600';
             const ftLabel = ftMs != null ? t('gateway.route.firstToken', { s: (ftMs / 1000).toFixed(1) }) : null;
             const healthTitle =
               routeMissing ? t('gateway.route.missingModels') :
@@ -2839,15 +2833,23 @@ export default function Gateway() {
             return (
             <div key={route.id}>
               <div
-                className="flex items-start gap-4 px-5 py-3.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors"
+                className="flex items-center gap-3 px-5 py-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors"
                 onClick={() => setExpandedRoute(expandedRoute === route.id ? null : route.id)}
               >
-                <span className="text-lg mt-0.5">{route.icon}</span>
+                <span className="text-base shrink-0">{route.icon}</span>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    {/* Health dot */}
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span title={healthTitle} className={`w-2 h-2 rounded-full shrink-0 ${healthDot}`} />
-                    <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{route.scene_name}</span>
+                    <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">{route.scene_name}</span>
+                    {route.model_key && (
+                      <>
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-gray-500 dark:text-gray-400 shrink-0">
+                          {route.model_key}
+                        </span>
+                        <span onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(route.model_key); }}
+                          className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer transition-colors shrink-0">{t('gateway.common.copy')}</span>
+                      </>
+                    )}
                     {health.degraded && (
                       <span className="text-[9px] px-1 py-0.5 rounded bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800/40 text-rose-600 dark:text-rose-400 shrink-0">
                         {t('gateway.route.degraded')}
@@ -2857,15 +2859,6 @@ export default function Gateway() {
                       <span title={t('gateway.route.rulesTitle')} className="text-[9px] px-1 py-0.5 rounded bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/40 text-indigo-600 dark:text-indigo-400 shrink-0">
                         {t('gateway.route.rulesCount', { n: route.rules.length })}
                       </span>
-                    )}
-                    {route.model_key && (
-                      <>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 shrink-0">
-                          {route.model_key}
-                        </span>
-                        <span onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(route.model_key); }}
-                          className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer transition-colors shrink-0">{t('gateway.common.copy')}</span>
-                      </>
                     )}
                   </div>
                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
@@ -2880,9 +2873,9 @@ export default function Gateway() {
                           const missing = !availSet.has(stepName);
                           return (
                             <React.Fragment key={i}>
-                              {i > 0 && <span className="text-gray-400 text-xs">→</span>}
+                              {i > 0 && <span className="text-gray-300 dark:text-gray-600 text-xs">→</span>}
                               <span title={missing ? t('gateway.route.missingModelTitle') : undefined}
-                                className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded border transition-all ${
+                                className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-md border transition-all ${
                                   isActive
                                     ? 'bg-green-100 dark:bg-green-900/40 border-green-400 dark:border-green-600 text-green-800 dark:text-green-200'
                                     : missing
@@ -2893,26 +2886,29 @@ export default function Gateway() {
                                   isActive ? 'bg-green-500' : (missing || isFailed) ? 'bg-red-500' : tierDot(stepTier)
                                 }`} />
                                 {step.label || step.model}
-                                <span className="opacity-50">({TIER_SHORT[stepTier] || stepTier})</span>
+                                <span className="opacity-40">({TIER_SHORT[stepTier] || stepTier})</span>
                               </span>
                             </React.Fragment>
                           );
                         })}
                         {!steps.length && <span className="text-xs text-gray-400">{t('gateway.route.noStepsShort')}</span>}
                         {routeMissing && (
-                          <span className="text-[10px] text-red-600 dark:text-red-400 ml-1 shrink-0">{t('gateway.route.missingModelsWarn')}</span>
+                          <span className="text-[10px] text-red-500 dark:text-red-400 ml-1 shrink-0">{t('gateway.route.missingModelsWarn')}</span>
                         )}
                       </>);
                     })()}
                   </div>
                 </div>
-                <button onClick={e => { e.stopPropagation(); setExpandedRoute(expandedRoute === route.id ? null : route.id); }}
-                  className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors mt-0.5 shrink-0">
-                  {expandedRoute === route.id ? t('gateway.common.collapse') : t('gateway.common.edit')}
-                </button>
-                <button onClick={e => { e.stopPropagation(); removeRoute(route.id); }}
-                  className="text-[10px] text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors mt-1 shrink-0">{t('gateway.common.delete')}</button>
-                <span className="text-gray-400 text-xs mt-1 shrink-0">{expandedRoute === route.id ? '▲' : '▼'}</span>
+                <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
+                  <button onClick={() => setExpandedRoute(expandedRoute === route.id ? null : route.id)}
+                    className="text-[10px] px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                    {expandedRoute === route.id ? t('gateway.common.collapse') : t('gateway.common.edit')}
+                  </button>
+                  <button onClick={() => removeRoute(route.id)}
+                    className="text-[10px] px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+                    {t('gateway.common.delete')}
+                  </button>
+                </div>
               </div>
               {expandedRoute === route.id && (
                 <SceneRouteEditor key={'editor-' + route.id} route={route} availableModels={availableModels} onSave={saveRoute} onCancel={() => setExpandedRoute(null)} />
@@ -2930,7 +2926,7 @@ export default function Gateway() {
 
       {/* 路由明细 — 仅在「场景路由」Tab 显示，应用列表 Tab 不显示 */}
       {mainTab === 1 && (
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5">
+      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
         <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">{t('gateway.log.title')}</h2>
         {logEntries.length === 0 ? (
           <p className="text-sm text-gray-500">
@@ -2943,7 +2939,7 @@ export default function Gateway() {
               const isRouter = e.requested_model?.startsWith('llm-router-');
               return (
                 <div key={`${e.ts}-${e.via}-${i}`}
-                  className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800/60">
+                  className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-gray-50 dark:bg-zinc-800/60">
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${e.status === 'ok' ? 'bg-green-400' : 'bg-red-400'}`} />
                   <span className="font-mono text-gray-400 shrink-0 w-12">
                     {new Date(e.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}

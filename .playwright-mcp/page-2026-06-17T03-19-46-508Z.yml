@@ -1,0 +1,24 @@
+- main [ref=e4]:
+  - generic [ref=e6]:
+    - generic [ref=e7]:
+      - img "Token Bank" [ref=e8]
+      - heading "Token Bank" [level=1] [ref=e9]
+    - generic [ref=e10]:
+      - generic [ref=e11]: 服务端地址 (HTTP/HTTPS)
+      - textbox "http://81.70.249.144:8000" [ref=e12]
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - generic [ref=e15]: 邮箱
+        - textbox "you@example.com" [ref=e16]
+      - generic [ref=e17]:
+        - generic [ref=e18]: 密码
+        - textbox "••••••" [ref=e19]
+      - button "登录" [ref=e20] [cursor=pointer]
+      - paragraph [ref=e21]:
+        - text: 没有账户？
+        - button "去注册" [ref=e22] [cursor=pointer]
+    - paragraph [ref=e23]:
+      - text: 基于
+      - link "local-llm-proxy" [ref=e24] [cursor=pointer]:
+        - /url: https://github.com/wink-run/local-llm-proxy
+      - text: 开源项目，仅用于学习，不得用于非法用途或因不可抗力，导致积分清零等，本网站概不负责
