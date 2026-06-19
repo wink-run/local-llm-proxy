@@ -89,14 +89,14 @@ function ContributionConfigCard() {
 
       {/* Fixed forwarding URL */}
       <div className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2">
-        <span className="text-[10px] text-gray-400 shrink-0">{t('contribute.forwardUrl')}</span>
+        <span className="text-[10px] text-zinc-400 shrink-0">{t('contribute.forwardUrl')}</span>
         <code className="text-xs font-mono text-green-600 dark:text-green-400 truncate">{localGw}</code>
       </div>
 
       {/* Model selection */}
       <div className="space-y-2">
         <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-500">{t('contribute.models')}</span>
+          <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('contribute.models')}</span>
           {selectedNames.size > 0 && (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">
               {t('contribute.modelsSelected', { n: selectedNames.size })}
@@ -105,7 +105,7 @@ function ContributionConfigCard() {
         </div>
 
         {availableModels.length === 0 ? (
-          <p className="text-xs text-gray-400 dark:text-gray-600">{t('contribute.noModelsHint')}</p>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500 dark:text-zinc-400">{t('contribute.noModelsHint')}</p>
         ) : (
           <div className="flex flex-wrap gap-1.5">
             {availableModels.map(m => {
@@ -118,13 +118,13 @@ function ContributionConfigCard() {
                       ? isImage
                         ? 'bg-purple-100 dark:bg-purple-900/40 border-purple-400 dark:border-purple-700 text-purple-700 dark:text-purple-300'
                         : 'bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-700 text-blue-700 dark:text-blue-300'
-                      : 'bg-zinc-100 dark:bg-zinc-800 border-gray-300 dark:border-gray-600 text-zinc-500 dark:text-zinc-400 hover:border-gray-400 dark:hover:border-gray-500'
+                      : 'bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-600 text-zinc-500 dark:text-zinc-400 hover:border-zinc-400 dark:hover:border-zinc-500'
                   }`}>
                   {m.name}
                   <span className={`text-[9px] px-1 py-0.5 rounded font-medium ${
                     sel
                       ? isImage ? 'bg-purple-200 dark:bg-purple-800 text-purple-700 dark:text-purple-300' : 'bg-blue-200 dark:bg-blue-800 text-blue-700 dark:text-blue-300'
-                      : 'bg-gray-200 dark:bg-gray-700 text-zinc-500 dark:text-zinc-400'
+                      : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400'
                   }`}>
                     {isImage ? t('contribute.modelTypeImage') : t('contribute.modelTypeText')}
                   </span>
@@ -137,15 +137,15 @@ function ContributionConfigCard() {
 
       {/* Node name */}
       <div>
-        <label className="block text-xs text-gray-500 mb-1">{t('contribute.nodeName')}</label>
+        <label className="block text-[10px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">{t('contribute.nodeName')}</label>
         <input value={nodeName} onChange={e => setNodeName(e.target.value)} placeholder={t('contribute.nodeNamePh')}
-          className="w-full bg-zinc-100 dark:bg-zinc-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500" />
+          className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-600 focus:outline-none focus:border-blue-500" />
       </div>
 
       {/* Auto-start toggle */}
       <label className="flex items-center gap-3 cursor-pointer select-none">
         <div onClick={() => setAutoStart(v => !v)}
-          className={`relative w-10 h-6 rounded-full transition-colors ${autoStart ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}>
+          className={`relative w-10 h-6 rounded-full transition-colors ${autoStart ? 'bg-blue-600' : 'bg-zinc-300 dark:bg-zinc-600'}`}>
           <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${autoStart ? 'translate-x-5' : 'translate-x-1'}`} />
         </div>
         <span className="text-sm text-zinc-700 dark:text-zinc-300">{t('contribute.autoStart')}</span>
@@ -248,8 +248,8 @@ export default function Contribute() {
   return (
     <div className="p-6 space-y-5">
       <div>
-        <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">{t('contribute.title')}</h1>
-        <p className="text-sm text-gray-500 mt-0.5">{t('contribute.subtitle')}</p>
+        <h1 className="text-[17px] font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{t('contribute.title')}</h1>
+        <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">{t('contribute.subtitle')}</p>
       </div>
 
       {/* Start/Stop */}
@@ -257,11 +257,11 @@ export default function Contribute() {
         <div className="flex items-center gap-3">
           <span className="relative flex h-3 w-3">
             {running && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />}
-            <span className={`relative inline-flex rounded-full h-3 w-3 ${running ? 'bg-green-500' : 'bg-gray-600'}`} />
+            <span className={`relative inline-flex rounded-full h-3 w-3 ${running ? 'bg-green-500' : 'bg-zinc-600'}`} />
           </span>
           <span className="text-base font-medium text-zinc-800 dark:text-zinc-200">{running ? t('contribute.running') : t('contribute.stopped')}</span>
           {stats && running && (
-            <span className="text-xs text-gray-500">{t('contribute.agentRunning', { n: stats.contribute_req_per_min ?? 0 })}</span>
+            <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('contribute.agentRunning', { n: stats.contribute_req_per_min ?? 0 })}</span>
           )}
         </div>
         <div className="flex gap-2">
@@ -280,36 +280,36 @@ export default function Contribute() {
       {stats && (
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
-            <p className="text-xs text-gray-500 mb-1">{t('contribute.rate')}</p>
+            <p className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">{t('contribute.rate')}</p>
             <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{stats.contribute_req_per_min ?? 0}</p>
-            <p className="text-xs text-gray-600">req/min</p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">req/min</p>
           </div>
           <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
-            <p className="text-xs text-gray-500 mb-1">{t('contribute.activeReqs')}</p>
+            <p className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">{t('contribute.activeReqs')}</p>
             <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.active_requests ?? 0}</p>
           </div>
           <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
-            <p className="text-xs text-gray-500 mb-1">{t('contribute.onlineNodes')}</p>
+            <p className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">{t('contribute.onlineNodes')}</p>
             <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.active_workers ?? 0}</p>
           </div>
         </div>
       )}
 
       <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4">
-        <p className="text-xs text-gray-500 mb-3">{t('contribute.chartTitle')}</p>
+        <p className="text-xs text-zinc-400 dark:text-zinc-500 mb-3">{t('contribute.chartTitle')}</p>
         <RateChart data={chartData} />
       </div>
 
       <section>
         <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-3">{t('contribute.settlements')}</h2>
         {settlements.length === 0 ? (
-          <p className="text-gray-500 text-sm">{t('contribute.noSettlements')}</p>
+          <p className="text-zinc-400 dark:text-zinc-500 text-sm">{t('contribute.noSettlements')}</p>
         ) : (
           <div className="space-y-2">
             {settlements.map(s => (
               <div key={s.id ?? s.period_end}
                 className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-3 grid grid-cols-5 gap-2 text-sm items-center">
-                <span className="text-gray-500 text-xs">{s.period_end?.slice(0, 16)}</span>
+                <span className="text-zinc-400 dark:text-zinc-500 text-xs">{s.period_end?.slice(0, 16)}</span>
                 <span className="text-zinc-700 dark:text-zinc-300">{(s.output_tokens ?? 0).toLocaleString()} tok</span>
                 <span className="text-yellow-500 text-xs">{multiplierToStars(s.multiplier ?? 1)}</span>
                 <span className="text-zinc-700 dark:text-zinc-300">{(s.multiplier ?? 1).toFixed(2)}×</span>
@@ -323,7 +323,7 @@ export default function Contribute() {
       <section>
         <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-2">{t('contribute.agentLog')}</h2>
         <div ref={logRef} className="bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 h-36 overflow-y-auto font-mono text-xs text-zinc-600 dark:text-zinc-400 space-y-0.5">
-          {logs.length === 0 ? <span className="text-gray-600">{t('contribute.logEmpty')}</span> : logs.map((line, i) => <div key={i}>{line}</div>)}
+          {logs.length === 0 ? <span className="text-zinc-500 dark:text-zinc-400">{t('contribute.logEmpty')}</span> : logs.map((line, i) => <div key={i}>{line}</div>)}
         </div>
       </section>
     </div>
