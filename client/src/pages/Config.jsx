@@ -27,7 +27,7 @@ function Field({ label, type = 'text', value, onChange, placeholder }) {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full bg-gray-100 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-500"
+        className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:border-blue-500"
       />
     </div>
   );
@@ -42,7 +42,7 @@ function ThemeSelector() {
     { value: 'dark',   label: t('theme.dark') },
   ];
   return (
-    <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-zinc-700">
+    <div className="flex rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-700">
       {THEMES.map((th) => (
         <button
           key={th.value}
@@ -68,7 +68,7 @@ const LANGS = [
 function LangSelector() {
   const { lang, setLang, t } = useLang();
   return (
-    <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-zinc-700">
+    <div className="flex rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-700">
       {LANGS.map((l) => (
         <button
           key={l.value}
@@ -179,7 +179,7 @@ export default function Config() {
   // Not logged in: show only login form
   if (!user) {
     return (
-      <div className="flex h-full items-center justify-center bg-gray-50 dark:bg-zinc-950">
+      <div className="flex h-full items-center justify-center bg-zinc-50 dark:bg-zinc-950">
         <div className="w-full max-w-sm px-8 py-10 space-y-6">
           {/* Brand */}
           <div className="flex flex-col items-center gap-2 mb-2">
@@ -204,7 +204,7 @@ export default function Config() {
                 setServerUrl(v);
               }}
               placeholder={SERVER_URL_PLACEHOLDER}
-              className="w-full bg-gray-100 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-500"
+              className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:border-blue-500"
             />
           </div>
 
@@ -217,7 +217,7 @@ export default function Config() {
                 className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors">
                 {saving ? t('config.loggingIn') : t('config.login')}
               </button>
-              <p className="text-center text-sm text-gray-600 dark:text-gray-500">
+              <p className="text-center text-sm text-zinc-600 dark:text-zinc-500">
                 {t('config.noAccount')}
                 <button type="button" onClick={() => switchMode('register')}
                   className="text-blue-500 hover:underline ml-1">{t('config.register')}</button>
@@ -234,7 +234,7 @@ export default function Config() {
                 className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors">
                 {saving ? t('config.registering') : t('config.registerBtn')}
               </button>
-              <p className="text-center text-sm text-gray-600 dark:text-gray-500">
+              <p className="text-center text-sm text-zinc-600 dark:text-zinc-500">
                 {t('config.hasAccount')}
                 <button type="button" onClick={() => switchMode('login')}
                   className="text-blue-500 hover:underline ml-1">{t('config.goLogin')}</button>
@@ -287,7 +287,7 @@ function SelectRow({ label, hint, value, onChange, options }) {
   return (
     <Row label={label} hint={hint}>
       <select value={value} onChange={e => onChange(e.target.value)}
-        className="bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-700 dark:text-zinc-300 focus:outline-none focus:border-blue-500">
+        className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-700 dark:text-zinc-300 focus:outline-none focus:border-blue-500">
         {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
     </Row>
@@ -385,8 +385,8 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Gateway section */}
-      <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-200 dark:border-zinc-800">
+      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.gateway')}</h2>
         </div>
         <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
@@ -396,7 +396,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
                 type="number"
                 value={gatewayPort}
                 onChange={e => setGatewayPort(e.target.value)}
-                className="w-24 bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-800 dark:text-zinc-200 text-right font-mono focus:outline-none focus:border-blue-500"
+                className="w-24 bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-800 dark:text-zinc-200 text-right font-mono focus:outline-none focus:border-blue-500"
               />
               <span className="text-xs text-gray-600">{t('settings.restartNote')}</span>
             </div>
@@ -430,8 +430,8 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Routing section */}
-      <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-200 dark:border-zinc-800">
+      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.routing')}</h2>
         </div>
         <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
@@ -460,26 +460,26 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Appearance section */}
-      <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-200 dark:border-zinc-800">
+      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.appearance')}</h2>
         </div>
         <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
           <Row label={t('config.theme')} hint={t('settings.themeHint')}>
-            <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-zinc-700 text-xs">
+            <div className="flex rounded-lg overflow-hidden border border-zinc-300 dark:border-zinc-700 text-xs">
               {THEME_OPTIONS.map(o => (
                 <button key={o.value} onClick={() => setTheme(o.value)}
-                  className={`px-3 py-1.5 font-medium transition-colors ${theme === o.value ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
+                  className={`px-3 py-1.5 font-medium transition-colors ${theme === o.value ? 'bg-blue-600 text-white' : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
                   {o.label}
                 </button>
               ))}
             </div>
           </Row>
           <Row label={t('config.lang')} hint={t('config.langHint')}>
-            <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-zinc-700 text-xs">
+            <div className="flex rounded-lg overflow-hidden border border-zinc-300 dark:border-zinc-700 text-xs">
               {LANG_OPTIONS.map(o => (
                 <button key={o.value} onClick={() => setLang(o.value)}
-                  className={`px-3 py-1.5 font-medium transition-colors ${lang === o.value ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
+                  className={`px-3 py-1.5 font-medium transition-colors ${lang === o.value ? 'bg-blue-600 text-white' : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
                   {o.label}
                 </button>
               ))}
@@ -489,8 +489,8 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Server URL */}
-      <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-200 dark:border-zinc-800">
+      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.server')}</h2>
         </div>
         <div className="px-5 py-4">
@@ -505,19 +505,19 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
               await syncCloudConfigUrl(v);
             }}
             placeholder={SERVER_URL_PLACEHOLDER}
-            className="w-full bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500 font-mono"
+            className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500 font-mono"
           />
         </div>
       </div>
 
       {/* Account section */}
-      <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-200 dark:border-zinc-800">
+      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.account')}</h2>
         </div>
         <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
           <Row label={t('config.email')} hint={user.email}>
-            <span className="text-xs text-gray-500 bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 px-3 py-1.5 rounded-lg">
+            <span className="text-xs text-gray-500 bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 rounded-lg">
               {user.nickname || '—'}
             </span>
           </Row>
@@ -541,7 +541,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
           {saving ? t('settings.saving') : t('settings.save')}
         </button>
         <button onClick={handleReset}
-          className="px-4 py-2.5 bg-gray-100 dark:bg-zinc-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-zinc-700 dark:text-zinc-300 text-sm rounded-xl border border-gray-300 dark:border-zinc-700 transition-colors">
+          className="px-4 py-2.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-zinc-700 dark:text-zinc-300 text-sm rounded-xl border border-zinc-300 dark:border-zinc-700 transition-colors">
           {t('settings.reset')}
         </button>
         {savedMsg && <span className="text-xs text-green-600 dark:text-green-400">✓ {savedMsg}</span>}
@@ -551,7 +551,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       <div className="text-[10px] text-gray-400 dark:text-gray-600 pb-2 flex items-center gap-2">
         <span>Token Bank</span>
         {window.electronAPI?.version && (
-          <span className="font-mono bg-gray-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-500 dark:text-zinc-400">
+          <span className="font-mono bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-500 dark:text-zinc-400">
             v{window.electronAPI.version}
           </span>
         )}

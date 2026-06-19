@@ -58,7 +58,7 @@ export default function Sidebar() {
             className={({ isActive }) =>
               'flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13.5px] transition-colors ' +
               (isActive
-                ? 'bg-zinc-900 dark:bg-white/10 text-white dark:text-white font-semibold'
+                ? 'bg-zinc-200/80 dark:bg-white/10 text-zinc-900 dark:text-white font-semibold'
                 : 'text-zinc-500 dark:text-zinc-400 hover:bg-zinc-200/60 dark:hover:bg-white/5 hover:text-zinc-900 dark:hover:text-zinc-100')
             }
           >
@@ -75,17 +75,17 @@ export default function Sidebar() {
             onClick={() => navigate('/account')}
             className={`w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-left transition-colors ${
               profileActive
-                ? 'bg-zinc-900 dark:bg-white/10'
+                ? 'bg-zinc-200/80 dark:bg-white/10'
                 : 'hover:bg-zinc-200/60 dark:hover:bg-white/5'
             }`}
           >
-            <div className="w-6 h-6 rounded-full bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center shrink-0 text-[10px] font-bold text-zinc-600 dark:text-zinc-300 uppercase">
+            <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-[10px] font-bold uppercase ${profileActive ? 'bg-zinc-700 dark:bg-zinc-500 text-white' : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300'}`}>
               {(user.nickname || user.email)?.[0]}
             </div>
             <div className="flex-1 min-w-0">
-              <p className={`text-[11.5px] font-semibold leading-tight truncate ${profileActive ? 'text-white' : 'text-zinc-700 dark:text-zinc-200'}`}>{user.nickname}</p>
+              <p className={`text-[11.5px] font-semibold leading-tight truncate ${profileActive ? 'text-zinc-900 dark:text-white' : 'text-zinc-700 dark:text-zinc-200'}`}>{user.nickname}</p>
               {user.credits_balance != null && (
-                <p className={`text-[10px] leading-tight truncate mt-0.5 ${profileActive ? 'text-zinc-300 dark:text-zinc-400' : 'text-zinc-400 dark:text-zinc-500'}`}>
+                <p className={`text-[10px] leading-tight truncate mt-0.5 ${profileActive ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-400 dark:text-zinc-500'}`}>
                   💎 {Math.floor(user.credits_balance ?? 0).toLocaleString()} {t('credits.unit')}
                 </p>
               )}
@@ -96,7 +96,7 @@ export default function Sidebar() {
             title={t('nav.settings')}
             className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg transition-colors ${
               location.pathname === '/config'
-                ? 'bg-zinc-900 dark:bg-white/10 text-white'
+                ? 'bg-zinc-200/80 dark:bg-white/10 text-zinc-900 dark:text-white'
                 : 'text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-200/60 dark:hover:bg-white/5'
             }`}
           >
