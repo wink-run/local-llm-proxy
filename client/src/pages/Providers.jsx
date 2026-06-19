@@ -1048,7 +1048,7 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
 
   return (
     <div className={`bg-white dark:bg-zinc-900 border rounded-2xl overflow-hidden transition-opacity ${
-      provider.enabled ? 'border-zinc-200 dark:border-zinc-800' : 'border-zinc-200 dark:border-zinc-800 opacity-50'
+      provider.enabled ? 'border-zinc-200 dark:border-zinc-800' : 'border-zinc-200/60 dark:border-zinc-800/60 opacity-60'
     }`}>
       <div className="flex items-start gap-3 p-4">
         <div className="w-9 h-9 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-base shrink-0">🔗</div>
@@ -1236,11 +1236,11 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
 
   return (
     <div className={`bg-white dark:bg-zinc-900 border rounded-2xl overflow-hidden transition-opacity ${
-      provider.enabled ? 'border-zinc-200 dark:border-zinc-800' : 'border-zinc-200 dark:border-zinc-800 opacity-50'
+      provider.enabled ? 'border-zinc-200 dark:border-zinc-800' : 'border-zinc-200/60 dark:border-zinc-800/60 opacity-60'
     }`}>
-      <div className="flex items-start gap-3 p-4">
+      <div className="flex items-start gap-3 p-3.5">
         {/* Icon */}
-        <div className="w-9 h-9 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-base shrink-0">
+        <div className="w-8 h-8 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-[15px] shrink-0 mt-0.5">
           {meta.icon}
         </div>
         {/* Body */}
@@ -1700,10 +1700,10 @@ export default function Providers() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">{t('providers.title')}</h1>
-          <p className="text-sm text-zinc-500 mt-0.5">{t('providers.subtitle')}</p>
+          <h1 className="text-[17px] font-bold text-zinc-900 dark:text-zinc-100 tracking-tight">{t('providers.title')}</h1>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">{t('providers.subtitle')}</p>
         </div>
-        {savedMsg && <span className="text-sm text-green-600 dark:text-green-400">{savedMsg}</span>}
+        {savedMsg && <span className="text-xs font-medium text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-2.5 py-1 rounded-full">{savedMsg}</span>}
       </div>
 
       {/* Tier sections */}
@@ -1715,9 +1715,9 @@ export default function Providers() {
           return (
             <section key={tier} className="space-y-3">
               <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
-                <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{cfg.label}</h2>
-                <span className="text-xs text-zinc-500">{cfg.hint}</span>
+                <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+                <h2 className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">{cfg.label}</h2>
+                <span className="text-[11px] text-zinc-400 dark:text-zinc-500">{cfg.hint}</span>
               </div>
               <div className={`grid ${cfg.cols} gap-3`}>
                 {allItems.map(p => <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} />)}

@@ -21,13 +21,13 @@ function persistServerUrl(url) {
 function Field({ label, type = 'text', value, onChange, placeholder }) {
   return (
     <div>
-      <label className="block text-sm text-zinc-500 dark:text-zinc-400 mb-1">{label}</label>
+      <label className="block text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mb-1.5 uppercase tracking-wider">{label}</label>
       <input
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+        className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2.5 text-[13px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:border-blue-400 focus:bg-white dark:focus:bg-zinc-700/50 transition-colors"
       />
     </div>
   );
@@ -180,11 +180,14 @@ export default function Config() {
   if (!user) {
     return (
       <div className="flex h-full items-center justify-center bg-zinc-50 dark:bg-zinc-950">
-        <div className="w-full max-w-sm px-8 py-10 space-y-6">
+        <div className="w-full max-w-[320px] px-8 py-10 space-y-5">
           {/* Brand */}
-          <div className="flex flex-col items-center gap-2 mb-2">
-            <img src={logo} alt="Token Bank" className="w-16 h-16" />
-            <h1 className="text-xl font-bold text-zinc-900 dark:text-zinc-100">Token Bank</h1>
+          <div className="flex flex-col items-center gap-3 mb-4">
+            <img src={logo} alt="Token Bank" className="w-14 h-14" />
+            <div className="text-center">
+              <h1 className="text-[17px] font-bold text-zinc-900 dark:text-zinc-100 tracking-tight">Token Bank</h1>
+              <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">个人 AI 中枢</p>
+            </div>
           </div>
 
           {firstRun && (
@@ -194,7 +197,7 @@ export default function Config() {
           )}
 
           <div className="space-y-2">
-            <label className="block text-sm text-zinc-500 dark:text-zinc-400">{t('config.serverUrl')}</label>
+            <label className="block text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mb-1.5 uppercase tracking-wider">{t('config.serverUrl')}</label>
             <input
               type="text"
               value={serverUrl}
@@ -204,7 +207,7 @@ export default function Config() {
                 setServerUrl(v);
               }}
               placeholder={SERVER_URL_PLACEHOLDER}
-              className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+              className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2.5 text-[13px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:border-blue-400 focus:bg-white dark:focus:bg-zinc-700/50 transition-colors"
             />
           </div>
 
@@ -214,7 +217,7 @@ export default function Config() {
               <Field label={t('config.password')} type="password" value={password} onChange={setPassword} placeholder="••••••" />
               {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
               <button type="submit" disabled={saving}
-                className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors">
+                className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-50 rounded-lg text-[13px] font-semibold text-white transition-colors">
                 {saving ? t('config.loggingIn') : t('config.login')}
               </button>
               <p className="text-center text-sm text-zinc-600 dark:text-zinc-500">
@@ -231,7 +234,7 @@ export default function Config() {
               <Field label={t('config.referral')} type="text" value={referralCode} onChange={setReferralCode} placeholder={t('config.referralPh')} />
               {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
               <button type="submit" disabled={saving}
-                className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors">
+                className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-50 rounded-lg text-[13px] font-semibold text-white transition-colors">
                 {saving ? t('config.registering') : t('config.registerBtn')}
               </button>
               <p className="text-center text-sm text-zinc-600 dark:text-zinc-500">
