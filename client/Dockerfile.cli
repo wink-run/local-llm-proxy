@@ -8,6 +8,7 @@ RUN npm ci --ignore-scripts
 
 # Copy only the frontend source needed for vite build
 COPY index.html vite.config.js tailwind.config.js postcss.config.js ./
+COPY shared ./shared
 COPY src ./src
 
 RUN npx vite build
