@@ -83,7 +83,7 @@ function ContributionConfigCard() {
   return (
     <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5 space-y-4">
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{t('contribute.configTitle')}</span>
+        <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('contribute.configTitle')}</span>
         {savedMsg && <span className="text-xs text-green-600 dark:text-green-400">{savedMsg}</span>}
       </div>
 
@@ -118,13 +118,13 @@ function ContributionConfigCard() {
                       ? isImage
                         ? 'bg-purple-100 dark:bg-purple-900/40 border-purple-400 dark:border-purple-700 text-purple-700 dark:text-purple-300'
                         : 'bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-700 text-blue-700 dark:text-blue-300'
-                      : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-gray-400 dark:hover:border-gray-500'
+                      : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-zinc-500 dark:text-zinc-400 hover:border-gray-400 dark:hover:border-gray-500'
                   }`}>
                   {m.name}
                   <span className={`text-[9px] px-1 py-0.5 rounded font-medium ${
                     sel
                       ? isImage ? 'bg-purple-200 dark:bg-purple-800 text-purple-700 dark:text-purple-300' : 'bg-blue-200 dark:bg-blue-800 text-blue-700 dark:text-blue-300'
-                      : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                      : 'bg-gray-200 dark:bg-gray-700 text-zinc-500 dark:text-zinc-400'
                   }`}>
                     {isImage ? t('contribute.modelTypeImage') : t('contribute.modelTypeText')}
                   </span>
@@ -139,7 +139,7 @@ function ContributionConfigCard() {
       <div>
         <label className="block text-xs text-gray-500 mb-1">{t('contribute.nodeName')}</label>
         <input value={nodeName} onChange={e => setNodeName(e.target.value)} placeholder={t('contribute.nodeNamePh')}
-          className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500" />
+          className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500" />
       </div>
 
       {/* Auto-start toggle */}
@@ -148,7 +148,7 @@ function ContributionConfigCard() {
           className={`relative w-10 h-6 rounded-full transition-colors ${autoStart ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}>
           <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${autoStart ? 'translate-x-5' : 'translate-x-1'}`} />
         </div>
-        <span className="text-sm text-gray-700 dark:text-gray-300">{t('contribute.autoStart')}</span>
+        <span className="text-sm text-zinc-700 dark:text-zinc-300">{t('contribute.autoStart')}</span>
       </label>
 
       <button onClick={save} disabled={saving}
@@ -248,7 +248,7 @@ export default function Contribute() {
   return (
     <div className="p-6 space-y-5">
       <div>
-        <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('contribute.title')}</h1>
+        <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">{t('contribute.title')}</h1>
         <p className="text-sm text-gray-500 mt-0.5">{t('contribute.subtitle')}</p>
       </div>
 
@@ -259,7 +259,7 @@ export default function Contribute() {
             {running && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />}
             <span className={`relative inline-flex rounded-full h-3 w-3 ${running ? 'bg-green-500' : 'bg-gray-600'}`} />
           </span>
-          <span className="text-base font-medium text-gray-800 dark:text-gray-200">{running ? t('contribute.running') : t('contribute.stopped')}</span>
+          <span className="text-base font-medium text-zinc-800 dark:text-zinc-200">{running ? t('contribute.running') : t('contribute.stopped')}</span>
           {stats && running && (
             <span className="text-xs text-gray-500">{t('contribute.agentRunning', { n: stats.contribute_req_per_min ?? 0 })}</span>
           )}
@@ -286,11 +286,11 @@ export default function Contribute() {
           </div>
           <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-3">
             <p className="text-xs text-gray-500 mb-1">{t('contribute.activeReqs')}</p>
-            <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.active_requests ?? 0}</p>
+            <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.active_requests ?? 0}</p>
           </div>
           <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-3">
             <p className="text-xs text-gray-500 mb-1">{t('contribute.onlineNodes')}</p>
-            <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.active_workers ?? 0}</p>
+            <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.active_workers ?? 0}</p>
           </div>
         </div>
       )}
@@ -301,7 +301,7 @@ export default function Contribute() {
       </div>
 
       <section>
-        <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">{t('contribute.settlements')}</h2>
+        <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-3">{t('contribute.settlements')}</h2>
         {settlements.length === 0 ? (
           <p className="text-gray-500 text-sm">{t('contribute.noSettlements')}</p>
         ) : (
@@ -310,9 +310,9 @@ export default function Contribute() {
               <div key={s.id ?? s.period_end}
                 className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl px-4 py-3 grid grid-cols-5 gap-2 text-sm items-center">
                 <span className="text-gray-500 text-xs">{s.period_end?.slice(0, 16)}</span>
-                <span className="text-gray-700 dark:text-gray-300">{(s.output_tokens ?? 0).toLocaleString()} tok</span>
+                <span className="text-zinc-700 dark:text-zinc-300">{(s.output_tokens ?? 0).toLocaleString()} tok</span>
                 <span className="text-yellow-500 text-xs">{multiplierToStars(s.multiplier ?? 1)}</span>
-                <span className="text-gray-700 dark:text-gray-300">{(s.multiplier ?? 1).toFixed(2)}×</span>
+                <span className="text-zinc-700 dark:text-zinc-300">{(s.multiplier ?? 1).toFixed(2)}×</span>
                 <span className="text-green-600 dark:text-green-400 font-medium">+{(s.credits_awarded ?? 0).toFixed(1)}</span>
               </div>
             ))}
@@ -321,8 +321,8 @@ export default function Contribute() {
       </section>
 
       <section>
-        <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">{t('contribute.agentLog')}</h2>
-        <div ref={logRef} className="bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl p-3 h-36 overflow-y-auto font-mono text-xs text-gray-600 dark:text-gray-400 space-y-0.5">
+        <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-2">{t('contribute.agentLog')}</h2>
+        <div ref={logRef} className="bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl p-3 h-36 overflow-y-auto font-mono text-xs text-zinc-600 dark:text-zinc-400 space-y-0.5">
           {logs.length === 0 ? <span className="text-gray-600">{t('contribute.logEmpty')}</span> : logs.map((line, i) => <div key={i}>{line}</div>)}
         </div>
       </section>

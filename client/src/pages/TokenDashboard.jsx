@@ -118,13 +118,13 @@ function ProviderBar({ id, calls, totalCalls, tier }) {
   const type  = tier || meta.type || 'paid';
   return (
     <div className="flex items-center gap-3 text-sm">
-      <div className="w-28 shrink-0 text-xs text-gray-600 dark:text-gray-400 truncate" title={id}>{meta.label}</div>
-      <div className="flex-1 bg-gray-100 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
+      <div className="w-28 shrink-0 text-xs text-zinc-600 dark:text-zinc-400 truncate" title={id}>{meta.label}</div>
+      <div className="flex-1 bg-gray-100 dark:bg-zinc-700 rounded-full h-2 overflow-hidden">
         <div className={`h-2 rounded-full ${meta.bg}`} style={{ width: `${pct}%` }} />
       </div>
       <div className="w-16 shrink-0 text-right">
-        <span className="text-xs font-medium text-gray-700 dark:text-gray-300">{calls} {t('profile.times')}</span>
-        <span className="text-xs text-gray-400 dark:text-gray-500 ml-1">{Math.round(pct)}%</span>
+        <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">{calls} {t('profile.times')}</span>
+        <span className="text-xs text-zinc-400 dark:text-zinc-500 ml-1">{Math.round(pct)}%</span>
       </div>
       <span className={`shrink-0 text-xs px-1.5 py-0.5 rounded-full ${
         type === 'free' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
@@ -158,17 +158,17 @@ function CheckinCard({ onSuccess }) {
 
   const done = status?.checked_in_today;
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl px-4 py-4 flex flex-col gap-3">
+    <div className="bg-white dark:bg-zinc-800 border border-gray-100 dark:border-transparent rounded-2xl px-4 py-4 flex flex-col gap-3">
       <div className="flex items-center gap-2">
         <span className="text-xl select-none">📅</span>
         <p className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('profile.checkin.title')}</p>
       </div>
-      <p className="text-xs text-gray-400 dark:text-gray-500">
+      <p className="text-xs text-zinc-400 dark:text-zinc-500">
         {status === null ? t('profile.checkin.loading') : done ? t('profile.checkin.done', { n: status.credits_today }) : t('profile.checkin.reward', { n: status.reward })}
       </p>
       {msg && <span className={`text-xs font-medium ${msg.startsWith('+') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{msg}</span>}
       <button onClick={handleCheckin} disabled={checking || done}
-        className={`py-1.5 rounded-lg text-sm font-medium transition-colors ${done ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 cursor-default' : 'bg-blue-600 hover:bg-blue-500 text-white'} disabled:opacity-60`}>
+        className={`py-1.5 rounded-lg text-sm font-medium transition-colors ${done ? 'bg-gray-100 dark:bg-zinc-700 text-gray-400 cursor-default' : 'bg-blue-600 hover:bg-blue-500 text-white'} disabled:opacity-60`}>
         {checking ? t('profile.checkin.checking') : done ? t('profile.checkin.doneBtn') : t('profile.checkin.btn')}
       </button>
     </div>
@@ -197,17 +197,17 @@ function SpinCard({ onSuccess }) {
 
   const exhausted = status?.spins_left === 0;
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl px-4 py-4 flex flex-col gap-3">
+    <div className="bg-white dark:bg-zinc-800 border border-gray-100 dark:border-transparent rounded-2xl px-4 py-4 flex flex-col gap-3">
       <div className="flex items-center gap-2">
         <span className="text-xl select-none">🎡</span>
         <p className="text-sm font-medium text-gray-700 dark:text-gray-200">{t('profile.spin.title')}</p>
       </div>
-      <p className="text-xs text-gray-400 dark:text-gray-500">
+      <p className="text-xs text-zinc-400 dark:text-zinc-500">
         {status === null ? t('profile.checkin.loading') : exhausted ? t('profile.spin.exhausted') : t('profile.spin.left', { n: status.spins_left })}
       </p>
       {msg && <span className={`text-xs font-medium ${msg.startsWith('+') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{msg}</span>}
       <button onClick={handleSpin} disabled={spinning || exhausted || !status}
-        className={`py-1.5 rounded-lg text-sm font-medium transition-colors ${exhausted ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 cursor-default' : 'bg-blue-600 hover:bg-blue-500 text-white'} disabled:opacity-60`}>
+        className={`py-1.5 rounded-lg text-sm font-medium transition-colors ${exhausted ? 'bg-gray-100 dark:bg-zinc-700 text-gray-400 cursor-default' : 'bg-blue-600 hover:bg-blue-500 text-white'} disabled:opacity-60`}>
         {spinning ? t('profile.spin.spinning') : exhausted ? t('profile.spin.tomorrow') : t('profile.spin.btn')}
       </button>
     </div>
@@ -289,7 +289,7 @@ function DeviceSharePies({ devices, rangeLabel }) {
   }
 
   return (
-    <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-4">
+    <section className="bg-white dark:bg-zinc-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">{t('profile.deviceShare')}</h2>
         <span className="text-xs text-gray-400">{t('profile.allDevicesTotal')} · {rangeLabel}</span>
@@ -327,7 +327,7 @@ function UsageDistributionPanel({ localData, devices, rangeLabel, filterId, onFi
             className={`px-2.5 py-1 text-xs rounded-lg transition-colors ${
               filterId === 'all'
                 ? 'bg-blue-600 text-white font-medium'
-                : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                : 'bg-gray-100 dark:bg-zinc-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
             }`}>
             {t('profile.allDevices')}
           </button>
@@ -336,7 +336,7 @@ function UsageDistributionPanel({ localData, devices, rangeLabel, filterId, onFi
               className={`px-2.5 py-1 text-xs rounded-lg transition-colors truncate max-w-[140px] ${
                 filterId === d.device_id
                   ? 'bg-blue-600 text-white font-medium'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                  : 'bg-gray-100 dark:bg-zinc-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
               }`}
               title={d.name}>
               {DEVICE_ICON[d.type] || '🖥'} {d.name}
@@ -352,7 +352,7 @@ function UsageDistributionPanel({ localData, devices, rangeLabel, filterId, onFi
 
       {/* 工具来源 */}
       {agent_sources?.length > 0 && (
-        <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+        <section className="bg-white dark:bg-zinc-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">{t('profile.appUsage')}</h2>
             <span className="text-xs text-gray-400">{scopeLabel} · {rangeLabel}</span>
@@ -371,13 +371,13 @@ function UsageDistributionPanel({ localData, devices, rangeLabel, filterId, onFi
       )}
 
       {/* 供给来源 */}
-      <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+      <section className="bg-white dark:bg-zinc-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">{t('profile.providerUsage')}</h2>
           <span className="text-xs text-gray-400">{scopeLabel} · {rangeLabel}</span>
         </div>
         {providerEntries.length === 0 ? (
-          <p className="text-xs text-gray-400 dark:text-gray-500">{t('profile.noData')}</p>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500">{t('profile.noData')}</p>
         ) : (
           <div className="space-y-2.5">
             {providerEntries.map(p => (
@@ -388,13 +388,13 @@ function UsageDistributionPanel({ localData, devices, rangeLabel, filterId, onFi
       </section>
 
       {/* 模型使用 */}
-      <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+      <section className="bg-white dark:bg-zinc-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">{t('profile.modelUsage')}</h2>
           <span className="text-xs text-gray-400">{scopeLabel} · {rangeLabel}</span>
         </div>
         {modelList.length === 0 ? (
-          <p className="text-xs text-gray-400 dark:text-gray-500">{t('profile.noData')}</p>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500">{t('profile.noData')}</p>
         ) : (
           <DistBarList
             items={modelList.slice(0, 8).map(m => ({
@@ -424,12 +424,12 @@ function DistBarList({ items, total, barClass }) {
         return (
           <div key={item.key} className="flex items-center gap-3 text-sm">
             <div
-              className={`w-36 shrink-0 text-xs text-gray-600 dark:text-gray-400 truncate ${item.mono ? 'font-mono' : ''}`}
+              className={`w-36 shrink-0 text-xs text-zinc-600 dark:text-zinc-400 truncate ${item.mono ? 'font-mono' : ''}`}
               title={item.title || item.label}
             >
               {item.label}
             </div>
-            <div className="flex-1 bg-gray-100 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
+            <div className="flex-1 bg-gray-100 dark:bg-zinc-700 rounded-full h-2 overflow-hidden">
               <div className={`h-2 rounded-full ${barClass} transition-all duration-500`} style={{ width: `${barPct}%` }} />
             </div>
             <span className="w-16 shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">
@@ -474,17 +474,17 @@ function DevicesSection() {
   if (devices.length === 0) return null;
 
   return (
-    <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+    <section className="bg-white dark:bg-zinc-800 border border-gray-100 dark:border-transparent rounded-2xl p-5 space-y-3">
       <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">{t('profile.devicesTitle')}</h2>
       <div className="space-y-2">
         {devices.map((d, i) => (
           <div key={`${d.device_id ?? ''}-${i}`}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-gray-900">
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-zinc-900">
             <span className="text-base select-none shrink-0">{DEVICE_ICON[d.type] || '🖥'}</span>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5">
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.online ? 'bg-green-500' : 'bg-gray-400'}`} />
-                <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{formatDeviceTitle(d)}</span>
+                <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{formatDeviceTitle(d)}</span>
                 {d.version && <span className="text-xs text-gray-400 shrink-0">v{d.version}</span>}
               </div>
               <div className="flex items-center gap-2 mt-0.5">
@@ -500,7 +500,7 @@ function DevicesSection() {
             <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full ${
               d.online
                 ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
-                : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                : 'bg-gray-100 dark:bg-zinc-700 text-gray-500 dark:text-gray-400'
             }`}>
               {d.online ? t('profile.online') : t('profile.offline')}
             </span>
@@ -599,16 +599,16 @@ export default function TokenDashboard() {
     : ' —';
 
   return (
-    <div className="p-8 space-y-8">
+    <div className="p-6 space-y-5">
 
       {/* Hero */}
-      <div className="flex items-center gap-4">
-        <div className="w-12 h-12 rounded-full bg-blue-700 flex items-center justify-center text-xl font-bold text-white shrink-0">
+      <div className="flex items-center gap-3.5">
+        <div className="w-10 h-10 rounded-full bg-zinc-800 dark:bg-zinc-700 flex items-center justify-center text-base font-bold text-white shrink-0">
           {(user.nickname || user.email || '?')[0].toUpperCase()}
         </div>
         <div>
-          <p className="text-xl font-bold text-gray-900 dark:text-gray-100">{user.nickname}</p>
-          <p className="text-sm text-gray-400 truncate">{user.email}</p>
+          <p className="text-lg font-bold text-zinc-900 dark:text-zinc-100 tracking-tight">{user.nickname}</p>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500 truncate">{user.email}</p>
         </div>
       </div>
 
@@ -688,20 +688,20 @@ export default function TokenDashboard() {
         CheckinCard={CheckinCard}
         SpinCard={SpinCard}
         purchaseForm={(
-          <div className="border-t border-gray-100 dark:border-gray-700 pt-4 space-y-3">
+          <div className="border-t border-gray-100 dark:border-zinc-700 pt-4 space-y-3">
             <h3 className="text-sm font-medium text-gray-600 dark:text-gray-300">{t('profile.purchase.title')}</h3>
             <form onSubmit={handleOrder} className="space-y-2">
               <input value={contact} onChange={e => setContact(e.target.value)} placeholder={t('profile.purchase.contact')} required
-                className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-gray-900 dark:text-gray-100 placeholder-gray-400" />
+                className="w-full bg-gray-100 dark:bg-zinc-700 border border-gray-200 dark:border-zinc-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-zinc-900 dark:text-zinc-100 placeholder-gray-400" />
               <input value={note} onChange={e => setNote(e.target.value)} placeholder={t('profile.purchase.note')}
-                className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-gray-900 dark:text-gray-100 placeholder-gray-400" />
+                className="w-full bg-gray-100 dark:bg-zinc-700 border border-gray-200 dark:border-zinc-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-zinc-900 dark:text-zinc-100 placeholder-gray-400" />
               <button type="submit" disabled={submitting || !contact.trim()}
                 className="w-full py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white">
                 {submitting ? t('profile.purchase.submitting') : t('profile.purchase.submit')}
               </button>
             </form>
             {orderMsg && <p className={`text-sm ${orderMsgOk ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{orderMsg}</p>}
-            {adminInfo && <div className="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-900 rounded-lg px-3 py-2 whitespace-pre-wrap">{adminInfo}</div>}
+            {adminInfo && <div className="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-zinc-900 rounded-lg px-3 py-2 whitespace-pre-wrap">{adminInfo}</div>}
           </div>
         )}
       />

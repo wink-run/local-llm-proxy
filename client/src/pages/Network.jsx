@@ -94,11 +94,11 @@ export default function Network() {
         <div>
           <div className="mb-1">
             <button onClick={() => navigate('/providers')}
-              className="text-xs text-gray-600 hover:text-gray-600 dark:text-gray-400 transition-colors">
+              className="text-xs text-gray-600 hover:text-zinc-600 dark:text-zinc-400 transition-colors">
               {t('network.backProviders')}
             </button>
           </div>
-          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+          <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
             {t('network.title')}
             <span className="text-[10px] bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 border border-blue-300 dark:border-blue-800/50 px-1.5 py-0.5 rounded-full font-normal">
               {t('network.running')}
@@ -121,12 +121,12 @@ export default function Network() {
         </div>
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-3">
           <div className="text-xs text-gray-500">{t('network.availableModels')}</div>
-          <div className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">{loading ? '—' : totalModels}</div>
+          <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-1">{loading ? '—' : totalModels}</div>
           <div className="text-[10px] text-gray-600 mt-0.5">{t('network.dedupModels')}</div>
         </div>
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-3">
           <div className="text-xs text-gray-500">{t('network.contribTokens')}</div>
-          <div className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">
+          <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-1">
             {loading ? '—' : totalTokens > 999 ? (totalTokens / 1000).toFixed(1) + 'K' : totalTokens}
           </div>
           <div className="text-[10px] text-gray-600 mt-0.5">{t('network.thisPeriod')}</div>
@@ -150,7 +150,7 @@ export default function Network() {
           {/* Left: Model list */}
           <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
             <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{t('network.modelsTitle')}</h2>
+              <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('network.modelsTitle')}</h2>
               <span className="text-[10px] text-gray-600">{t('network.sortByNodes')}</span>
             </div>
             <div className="divide-y divide-gray-200/50 dark:divide-gray-800/50">
@@ -170,7 +170,7 @@ export default function Network() {
                     <PingDot color={dot} />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className={`text-xs font-mono font-medium ${m.nodes === 0 ? 'text-gray-500' : 'text-gray-800 dark:text-gray-200'}`}>
+                        <span className={`text-xs font-mono font-medium ${m.nodes === 0 ? 'text-gray-500' : 'text-zinc-800 dark:text-zinc-200'}`}>
                           {m.name}
                         </span>
                         {size && (
@@ -184,7 +184,7 @@ export default function Network() {
                     <div className="text-right shrink-0">
                       {m.nodes > 0 ? (
                         <>
-                          <div className="text-xs font-medium text-gray-700 dark:text-gray-300">{t('network.nodes', { n: m.nodes })}</div>
+                          <div className="text-xs font-medium text-zinc-700 dark:text-zinc-300">{t('network.nodes', { n: m.nodes })}</div>
                           <div className="text-[10px] mt-0.5 text-gray-600">
                             {avgS ? t('network.avgSeconds', { s: avgS }) : '—'}
                           </div>
@@ -208,7 +208,7 @@ export default function Network() {
             {/* Contributor ranking */}
             <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
               <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{t('network.leaderboard')}</h2>
+                <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('network.leaderboard')}</h2>
                 <span className="text-[10px] text-gray-600">{t('network.leaderboardHint')}</span>
               </div>
               <div className="divide-y divide-gray-200/50 dark:divide-gray-800/50">
@@ -216,19 +216,19 @@ export default function Network() {
                   <div className="px-5 py-6 text-xs text-gray-600">{t('network.noContribData')}</div>
                 ) : topWorkers.map((w, i) => {
                   const rank     = i + 1;
-                  const rankColor = rank === 1 ? 'text-amber-600 dark:text-amber-400' : rank === 2 ? 'text-gray-700 dark:text-gray-300' : rank === 3 ? 'text-amber-700' : 'text-gray-600';
+                  const rankColor = rank === 1 ? 'text-amber-600 dark:text-amber-400' : rank === 2 ? 'text-zinc-700 dark:text-zinc-300' : rank === 3 ? 'text-amber-700' : 'text-gray-600';
                   const modelSummary = (w.models || []).slice(0, 3).join(' · ');
                   return (
                     <div key={w.worker_id || w.name} className="flex items-center gap-3 px-5 py-3">
                       <span className={`text-xs font-bold w-5 shrink-0 ${rankColor}`}>#{rank}</span>
                       <div className="flex-1 min-w-0">
-                        <div className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate">{w.name}</div>
+                        <div className="text-xs font-medium text-zinc-700 dark:text-zinc-300 truncate">{w.name}</div>
                         {modelSummary && (
                           <div className="text-[10px] text-gray-600 mt-0.5 truncate">{modelSummary}</div>
                         )}
                       </div>
                       <div className="text-right shrink-0">
-                        <div className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                        <div className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
                           {(w.period_tokens || 0).toLocaleString()} tok
                         </div>
                         <div className="text-[10px] text-gray-600">{w.avg_latency_ms ?? 0} ms</div>
@@ -242,7 +242,7 @@ export default function Network() {
             {/* My node status */}
             <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-4 space-y-3">
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{t('network.myNode')}</h2>
+                <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('network.myNode')}</h2>
                 {myStats && myStats.active_workers > 0 ? (
                   <span className="text-[10px] bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400 border border-green-300 dark:border-green-800/30 px-1.5 py-0.5 rounded-full">
                     {t('network.online')}
@@ -258,11 +258,11 @@ export default function Network() {
                   <div className="grid grid-cols-2 gap-3">
                     <div className="bg-gray-100/50 dark:bg-gray-800/50 rounded-lg p-3">
                       <div className="text-[10px] text-gray-500">{t('network.activeNodes')}</div>
-                      <div className="text-lg font-bold mt-0.5 text-gray-900 dark:text-gray-100">{myStats.active_workers ?? 0}</div>
+                      <div className="text-lg font-bold mt-0.5 text-zinc-900 dark:text-zinc-100">{myStats.active_workers ?? 0}</div>
                     </div>
                     <div className="bg-gray-100/50 dark:bg-gray-800/50 rounded-lg p-3">
                       <div className="text-[10px] text-gray-500">{t('network.activeRequests')}</div>
-                      <div className="text-lg font-bold mt-0.5 text-gray-900 dark:text-gray-100">{myStats.active_requests ?? 0}</div>
+                      <div className="text-lg font-bold mt-0.5 text-zinc-900 dark:text-zinc-100">{myStats.active_requests ?? 0}</div>
                     </div>
                     <div className="bg-gray-100/50 dark:bg-gray-800/50 rounded-lg p-3 col-span-2">
                       <div className="text-[10px] text-gray-500">{t('network.contribRate')}</div>
@@ -286,7 +286,7 @@ export default function Network() {
             {network.workers.length > 0 && (
               <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
                 <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
-                  <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{t('network.workersTitle')}</h2>
+                  <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('network.workersTitle')}</h2>
                   <span className="text-[10px] text-gray-600">{t('network.workersCount', { n: network.workers.length })}</span>
                 </div>
                 <div className="divide-y divide-gray-200/50 dark:divide-gray-800/50 max-h-56 overflow-y-auto">
@@ -298,7 +298,7 @@ export default function Network() {
                         <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500" />
                       </span>
                       <div className="flex-1 min-w-0">
-                        <span className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate">{w.name}</span>
+                        <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300 truncate">{w.name}</span>
                         <div className="text-[10px] text-gray-600 truncate mt-0.5">
                           {(w.models || []).join(', ')}
                         </div>

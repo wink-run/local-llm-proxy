@@ -406,7 +406,7 @@ function StatsOnlyHint({ names }) {
   if (!names?.length) return null;
   const sep = lang === 'en' ? ', ' : '、';
   return (
-    <p className="text-xs text-gray-500 dark:text-gray-400">
+    <p className="text-xs text-zinc-500 dark:text-zinc-400">
       {t('providers.statsOnly', { names: names.join(sep) })}
     </p>
   );
@@ -595,14 +595,14 @@ function P2PNetworkCard({ provider, onUpdate }) {
   }
 
   return (
-    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
+    <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
       {/* Header */}
       <div className="flex items-start gap-3 p-4">
-        <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-base shrink-0">🌐</div>
+        <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-zinc-800 flex items-center justify-center text-base shrink-0">🌐</div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{t('providers.meta.tokenbank-p2p.label')}</span>
+              <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('providers.meta.tokenbank-p2p.label')}</span>
               {provider.enabled && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 border border-green-300 dark:border-green-800/50">
                   {t('providers.p2p.running')}
@@ -640,17 +640,17 @@ function P2PNetworkCard({ provider, onUpdate }) {
             <div className="grid grid-cols-2 gap-2">
               {(modelStats.length > 0 ? modelStats : Array(4).fill(null)).map((m, i) => (
                 m ? (
-                  <div key={m.name} className="bg-gray-100 dark:bg-gray-800 border border-gray-300/50 dark:border-gray-700/50 rounded-xl px-3 py-2.5 flex items-center gap-2.5">
+                  <div key={m.name} className="bg-gray-100 dark:bg-zinc-800 border border-gray-300/50 dark:border-zinc-700/50 rounded-xl px-3 py-2.5 flex items-center gap-2.5">
                     <ModelDot m={m} />
                     <div className="min-w-0">
-                      <div className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{m.name}</div>
+                      <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{m.name}</div>
                       <div className="text-[10px] text-gray-500 mt-0.5">
                         <ModelSub m={m} />
                       </div>
                     </div>
                   </div>
                 ) : (
-                  <div key={i} className="bg-gray-100/50 dark:bg-gray-800/50 border border-gray-300/30 dark:border-gray-700/30 rounded-xl px-3 py-2.5 h-14 animate-pulse" />
+                  <div key={i} className="bg-gray-100/50 dark:bg-zinc-800/50 border border-gray-300/30 dark:border-zinc-700/30 rounded-xl px-3 py-2.5 h-14 animate-pulse" />
                 )
               ))}
             </div>
@@ -659,7 +659,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
       )}
 
       {/* Gateway API Key config */}
-      <div className="border-t border-gray-100 dark:border-gray-800">
+      <div className="border-t border-gray-100 dark:border-zinc-800">
           <button
             onClick={() => setShowKeyConfig(v => !v)}
             className="w-full flex items-center justify-between px-4 py-2.5 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors"
@@ -684,18 +684,18 @@ function P2PNetworkCard({ provider, onUpdate }) {
                 <div className="space-y-2">
                   {/* Key list */}
                   {apiKeys.length === 0 ? (
-                    <p className="text-xs text-gray-400 dark:text-gray-500">{t('providers.p2p.noKeys')}</p>
+                    <p className="text-xs text-zinc-400 dark:text-zinc-500">{t('providers.p2p.noKeys')}</p>
                   ) : (
                     <div className="space-y-1.5">
                       {apiKeys.map(k => (
                         <div key={k.id} className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors cursor-pointer ${
                           selectedKey === k.key
                             ? 'border-blue-400 dark:border-blue-600 bg-blue-50 dark:bg-blue-900/20'
-                            : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 hover:border-gray-300 dark:hover:border-gray-600'
+                            : 'border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800/50 hover:border-gray-300 dark:hover:border-gray-600'
                         }`} onClick={() => { setSelectedKey(k.key); setKeySaved(false); }}>
                           <div className="flex-1 min-w-0">
-                            {k.note && <p className="text-xs text-gray-700 dark:text-gray-300 truncate">{k.note}</p>}
-                            <p className="text-[10px] font-mono text-gray-400 dark:text-gray-500">
+                            {k.note && <p className="text-xs text-zinc-700 dark:text-zinc-300 truncate">{k.note}</p>}
+                            <p className="text-[10px] font-mono text-zinc-400 dark:text-zinc-500">
                               {k.key.slice(0, 14)}…
                               {k.key === savedKey && <span className="ml-1.5 text-green-500">{t('providers.p2p.inUse')}</span>}
                             </p>
@@ -721,16 +721,16 @@ function P2PNetworkCard({ provider, onUpdate }) {
                   )}
 
                   {/* Create new key */}
-                  <div className="flex gap-2 pt-1 border-t border-gray-100 dark:border-gray-800">
+                  <div className="flex gap-2 pt-1 border-t border-gray-100 dark:border-zinc-800">
                     <input
                       value={newNote}
                       onChange={e => setNewNote(e.target.value)}
                       onKeyDown={e => e.key === 'Enter' && handleCreate()}
                       placeholder={t('providers.p2p.notePlaceholder')}
-                      className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
+                      className="flex-1 bg-gray-100 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
                     />
                     <button onClick={handleCreate} disabled={creating}
-                      className="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 text-xs text-gray-700 dark:text-gray-300 rounded-lg transition-colors whitespace-nowrap">
+                      className="px-3 py-1.5 bg-gray-100 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 text-xs text-zinc-700 dark:text-zinc-300 rounded-lg transition-colors whitespace-nowrap">
                       {creating ? t('providers.p2p.creating') : t('providers.p2p.newKey')}
                     </button>
                   </div>
@@ -751,7 +751,7 @@ function StatusBadge({ enabled, hasKey, keyless }) {
     <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${
       connected
         ? 'bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 border-green-300 dark:border-green-800/50'
-        : 'bg-gray-100 dark:bg-gray-800 text-gray-500 border-gray-300 dark:border-gray-700'
+        : 'bg-gray-100 dark:bg-zinc-800 text-gray-500 border-gray-300 dark:border-zinc-700'
     }`}>
       {connected ? t('providers.badge.enabled') : t('providers.badge.needsConfig')}
     </span>
@@ -871,7 +871,7 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
   const suggestionMenu = showSuggestions && menuStyle && createPortal(
     <ul
       style={{ position: 'fixed', left: menuStyle.left, top: menuStyle.top, width: menuStyle.width, maxHeight: menuStyle.maxHeight, zIndex: 9999 }}
-      className="overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg py-1"
+      className="overflow-y-auto rounded-lg border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg py-1"
       role="listbox"
     >
       {filteredSuggestions.map((name, i) => (
@@ -882,7 +882,7 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
             className={`w-full text-left px-3 py-1.5 text-xs font-mono transition-colors ${
               i === activeIdx
                 ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
-                : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800'
+                : 'text-zinc-700 dark:text-zinc-300 hover:bg-gray-50 dark:hover:bg-gray-800'
             }`}
           >
             {name}
@@ -900,19 +900,19 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
         <div className={scrollable ? 'max-h-36 overflow-y-auto pr-1' : ''}>
           <div className="flex flex-wrap gap-1.5">
             {normalized.map(m => (
-              <span key={m.name} className="inline-flex items-center gap-0 text-xs bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 rounded-lg overflow-hidden font-mono">
+              <span key={m.name} className="inline-flex items-center gap-0 text-xs bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 rounded-lg overflow-hidden font-mono">
                 <span className="px-2 py-0.5">{m.name}</span>
                 <button
                   onClick={() => toggleType(m.name)}
                   title={t('providers.models.toggleType')}
-                  className={`px-1.5 py-0.5 text-[10px] font-sans border-l border-gray-300 dark:border-gray-700 transition-colors ${
+                  className={`px-1.5 py-0.5 text-[10px] font-sans border-l border-gray-300 dark:border-zinc-700 transition-colors ${
                     m.type === 'image'
                       ? 'bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 hover:bg-purple-200 dark:hover:bg-purple-800/60'
                       : 'bg-blue-50 dark:bg-blue-900/20 text-blue-500 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40'
                   }`}>
                   {m.type === 'image' ? t('providers.models.typeImage') : t('providers.models.typeText')}
                 </button>
-                <button onClick={() => remove(m.name)} className="px-1.5 py-0.5 border-l border-gray-300 dark:border-gray-700 text-gray-400 hover:text-red-500 dark:hover:text-red-400 leading-none">×</button>
+                <button onClick={() => remove(m.name)} className="px-1.5 py-0.5 border-l border-gray-300 dark:border-zinc-700 text-gray-400 hover:text-red-500 dark:hover:text-red-400 leading-none">×</button>
               </span>
             ))}
           </div>
@@ -929,7 +929,7 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
             onBlur={() => setTimeout(() => setOpen(false), 120)}
             onKeyDown={handleInputKeyDown}
             placeholder={profileOnly ? t('providers.models.paygPickPlaceholder') : t('providers.models.placeholder')}
-            className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
+            className="w-full bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
             autoComplete="off"
             role="combobox"
             aria-expanded={showSuggestions}
@@ -937,13 +937,13 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
           />
           {suggestionMenu}
         </div>
-        <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600 shrink-0 text-[10px] font-medium">
+        <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-zinc-600 shrink-0 text-[10px] font-medium">
           {[['chat', t('providers.models.chat')], ['image', t('providers.models.image')]].map(([typeKey, label]) => (
             <button key={typeKey} type="button" onClick={() => setInputType(typeKey)}
               className={`px-2 py-1.5 transition-colors ${
                 inputType === typeKey
                   ? typeKey === 'chat' ? 'bg-blue-600 text-white' : 'bg-purple-600 text-white'
-                  : 'bg-white dark:bg-gray-800 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
+                  : 'bg-white dark:bg-zinc-800 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
               }`}>
               {label}
             </button>
@@ -952,7 +952,7 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
         <button
           onClick={() => add()}
           disabled={!canAdd()}
-          className="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 text-xs text-gray-700 dark:text-gray-300 rounded-lg transition-colors whitespace-nowrap"
+          className="px-3 py-1.5 bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 text-xs text-zinc-700 dark:text-zinc-300 rounded-lg transition-colors whitespace-nowrap"
         >
           {t('providers.models.add')}
         </button>
@@ -994,7 +994,7 @@ function ProviderModelSection({ provider, userPayg, onGoPayg, onUpdate, scrollab
   }
 
   return (
-    <div className="border-t border-gray-100 dark:border-gray-800 px-4 py-3 space-y-2">
+    <div className="border-t border-gray-100 dark:border-zinc-800 px-4 py-3 space-y-2">
       <div className="flex items-center gap-2">
         <span className="text-xs text-gray-500">{t('providers.models.list')}</span>
         {modelCount > 0
@@ -1010,7 +1010,7 @@ function ProviderModelSection({ provider, userPayg, onGoPayg, onUpdate, scrollab
         profileOnly={isPayg}
       />
       {isPayg && (
-        <p className="text-[11px] text-gray-500 dark:text-gray-400">
+        <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
           {t('providers.models.paygHint')}{' '}
           <button type="button" onClick={onGoPayg}
             className="text-emerald-600 dark:text-emerald-400 hover:underline">
@@ -1047,15 +1047,15 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
   }
 
   return (
-    <div className={`bg-white dark:bg-gray-900 border rounded-2xl overflow-hidden transition-opacity ${
-      provider.enabled ? 'border-gray-200 dark:border-gray-800' : 'border-gray-200 dark:border-gray-800 opacity-50'
+    <div className={`bg-white dark:bg-zinc-900 border rounded-2xl overflow-hidden transition-opacity ${
+      provider.enabled ? 'border-gray-200 dark:border-zinc-800' : 'border-gray-200 dark:border-zinc-800 opacity-50'
     }`}>
       <div className="flex items-start gap-3 p-4">
-        <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-base shrink-0">🔗</div>
+        <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-zinc-800 flex items-center justify-center text-base shrink-0">🔗</div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
-              <span className={`text-sm font-medium truncate ${provider.enabled ? 'text-gray-800 dark:text-gray-200' : 'text-gray-600 dark:text-gray-400'}`}>
+              <span className={`text-sm font-medium truncate ${provider.enabled ? 'text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400'}`}>
                 {displayLabel}
               </span>
               {provider.enabled && provider.base_url && (
@@ -1067,7 +1067,7 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
             <div className="flex items-center gap-2 shrink-0">
               {provider.enabled && provider.base_url && (
                 <button onClick={handleTest} disabled={testing}
-                  className="text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors">
+                  className="text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors">
                   {testing ? '…' : t('providers.common.test')}
                 </button>
               )}
@@ -1092,7 +1092,7 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
                 if (v !== e.target.value) onUpdate(provider.id, { base_url: v });
               }}
               placeholder={t('providers.custom.baseUrlPlaceholder')}
-              className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
+              className="w-full bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
             />
             <div className="flex gap-2">
               <input
@@ -1101,10 +1101,10 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
                 type={showKey ? 'text' : 'password'}
                 placeholder={t('providers.custom.apiKeyOptional')}
                 autoComplete="off"
-                className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
+                className="flex-1 bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
               />
               <button onClick={() => setShowKey(v => !v)}
-                className="shrink-0 px-2.5 text-xs rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+                className="shrink-0 px-2.5 text-xs rounded-lg border border-gray-300 dark:border-zinc-700 bg-gray-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
                 {showKey ? t('providers.common.hide') : t('providers.common.show')}
               </button>
             </div>
@@ -1235,19 +1235,19 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
   }
 
   return (
-    <div className={`bg-white dark:bg-gray-900 border rounded-2xl overflow-hidden transition-opacity ${
-      provider.enabled ? 'border-gray-200 dark:border-gray-800' : 'border-gray-200 dark:border-gray-800 opacity-50'
+    <div className={`bg-white dark:bg-zinc-900 border rounded-2xl overflow-hidden transition-opacity ${
+      provider.enabled ? 'border-gray-200 dark:border-zinc-800' : 'border-gray-200 dark:border-zinc-800 opacity-50'
     }`}>
       <div className="flex items-start gap-3 p-4">
         {/* Icon */}
-        <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-base shrink-0">
+        <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-zinc-800 flex items-center justify-center text-base shrink-0">
           {meta.icon}
         </div>
         {/* Body */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
-              <span className={`text-sm font-medium ${provider.enabled ? 'text-gray-800 dark:text-gray-200' : 'text-gray-600 dark:text-gray-400'}`}>
+              <span className={`text-sm font-medium ${provider.enabled ? 'text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400'}`}>
                 {meta.label}
               </span>
               <StatusBadge enabled={provider.enabled} hasKey={hasKey || hasOauth} keyless={meta.keyless && !oauthCap} />
@@ -1255,7 +1255,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
             <div className="flex items-center gap-2 shrink-0">
               {!isP2P && provider.enabled && (
                 <button onClick={handleTest} disabled={testing}
-                  className="text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors">
+                  className="text-xs px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors">
                   {testing ? '…' : t('providers.common.test')}
                 </button>
               )}
@@ -1285,11 +1285,11 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
                     {t('providers.card.loggedIn')}{provider.credentials?.email ? ' · ' + provider.credentials.email : ''}
                   </code>
                 ) : (
-                  <code className="text-xs text-gray-500 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded font-mono">
+                  <code className="text-xs text-gray-500 bg-gray-100 dark:bg-zinc-800 px-2 py-1 rounded font-mono">
                     {hasKey ? provider.token.slice(0, 4) + '•'.repeat(12) : t('providers.card.notConfigured')}
                   </code>
                 )}
-                <button onClick={() => { setExpanded(true); setMethod(isOauthCfg ? 'oauth' : 'api_key'); }} className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-300">{t('providers.common.edit')}</button>
+                <button onClick={() => { setExpanded(true); setMethod(isOauthCfg ? 'oauth' : 'api_key'); }} className="text-xs text-gray-500 hover:text-zinc-700 dark:text-zinc-300">{t('providers.common.edit')}</button>
               </div>
               {provider.base_url && (
                 <p className="text-[11px] text-gray-400 dark:text-gray-600 font-mono break-all">{provider.base_url}</p>
@@ -1303,12 +1303,12 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
               {/* 计费方式切换（仅非付费层强制模式时显示） */}
               {canApiKey && !forceOauth && !forceApiKey && (
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-gray-500 dark:text-gray-400 shrink-0">{t('providers.card.billingMode')}</span>
-                  <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-700 overflow-hidden text-xs">
+                  <span className="text-[11px] text-zinc-500 dark:text-zinc-400 shrink-0">{t('providers.card.billingMode')}</span>
+                  <div className="inline-flex rounded-lg border border-gray-300 dark:border-zinc-700 overflow-hidden text-xs">
                     <button onClick={() => onUpdate(provider.id, { billing_type: 'api-key' })}
-                      className={billingType === 'api-key' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>API Key</button>
+                      className={billingType === 'api-key' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'}>API Key</button>
                     <button onClick={() => onUpdate(provider.id, { billing_type: 'subscription' })}
-                      className={isSubscription ? 'px-3 py-1 bg-amber-500 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>{t('providers.card.subscription')}</button>
+                      className={isSubscription ? 'px-3 py-1 bg-amber-500 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'}>{t('providers.card.subscription')}</button>
                   </div>
                 </div>
               )}
@@ -1318,26 +1318,26 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
                 <div className="space-y-2 pl-1">
                   <div className="flex items-center gap-2">
                     <span className="text-[11px] text-gray-500 shrink-0">{t('providers.card.accessMode')}</span>
-                    <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-700 overflow-hidden text-xs">
+                    <div className="inline-flex rounded-lg border border-gray-300 dark:border-zinc-700 overflow-hidden text-xs">
                       <button onClick={() => onUpdate(provider.id, { sub_mode: 'accounting' })}
-                        className={subMode === 'accounting' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>{t('providers.card.accountingOnly')}</button>
+                        className={subMode === 'accounting' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'}>{t('providers.card.accountingOnly')}</button>
                       <button onClick={() => onUpdate(provider.id, { sub_mode: 'api-proxy' })}
-                        className={subMode === 'api-proxy' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>{t('providers.card.subToApi')}</button>
+                        className={subMode === 'api-proxy' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'}>{t('providers.card.subToApi')}</button>
                     </div>
                   </div>
                   {subMode === 'accounting' && (
-                    <p className="text-[11px] text-gray-400 dark:text-gray-500">{t('providers.card.accountingHint')}</p>
+                    <p className="text-[11px] text-zinc-400 dark:text-zinc-500">{t('providers.card.accountingHint')}</p>
                   )}
                 </div>
               )}
 
               {/* API Key / OAuth 切换（同时登记订阅与按量时） */}
               {!isSubscription && canApiKey && oauthCap && !forceOauth && !forceApiKey && (
-                <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-700 overflow-hidden text-xs">
+                <div className="inline-flex rounded-lg border border-gray-300 dark:border-zinc-700 overflow-hidden text-xs">
                   <button onClick={() => setMethod('api_key')}
-                    className={method === 'api_key' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>API Key</button>
+                    className={method === 'api_key' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'}>API Key</button>
                   <button onClick={() => setMethod('oauth')}
-                    className={method === 'oauth' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}>{oauthCap.label}</button>
+                    className={method === 'oauth' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-gray-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'}>{oauthCap.label}</button>
                 </div>
               )}
 
@@ -1351,10 +1351,10 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
                       type={showKey ? 'text' : 'password'}
                       placeholder={t('providers.card.pasteApiKey')}
                       autoComplete="off"
-                      className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
+                      className="flex-1 bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
                     />
                     <button onClick={() => setShowKey(v => !v)}
-                      className="shrink-0 px-2.5 text-xs rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+                      className="shrink-0 px-2.5 text-xs rounded-lg border border-gray-300 dark:border-zinc-700 bg-gray-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
                       {showKey ? t('providers.common.hide') : t('providers.common.show')}
                     </button>
                   </div>
@@ -1381,7 +1381,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
                   )}
                   {!oauth.started && (
                     <button onClick={startOauth} disabled={oauth.busy}
-                      className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-blue-600 dark:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50">
+                      className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 text-blue-600 dark:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50">
                       {oauth.busy ? '…' : (hasOauth ? t('providers.card.relogin') : t('providers.card.login', { label: oauthCap.label }))}
                     </button>
                   )}
@@ -1406,7 +1406,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
                     <div className="flex gap-2">
                       <input value={oauth.code} onChange={e => setOauth(o => ({ ...o, code: e.target.value }))}
                         placeholder={t('providers.card.codePlaceholder')}
-                        className="flex-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500" />
+                        className="flex-1 bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500" />
                       <button onClick={finishOauth} disabled={oauth.busy || !oauth.code.trim()}
                         className="shrink-0 px-3 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50">{t('providers.card.finishStep')}</button>
                     </div>
@@ -1417,7 +1417,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
                     <div className="space-y-2">
                       <textarea value={oauth.code} onChange={e => setOauth(o => ({ ...o, code: e.target.value }))}
                         placeholder={t('providers.card.pasteTokenPlaceholder')} rows={3}
-                        className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm font-mono focus:outline-none focus:border-blue-500" />
+                        className="w-full bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-sm font-mono focus:outline-none focus:border-blue-500" />
                       <button onClick={finishOauth} disabled={oauth.busy || !oauth.code.trim()}
                         className="px-3 py-1 text-xs rounded-lg bg-blue-600 text-white disabled:opacity-50">{t('providers.card.finish')}</button>
                     </div>
@@ -1429,19 +1429,19 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
 
               {/* Base URL override */}
               <div className="space-y-1">
-                <label className="text-[11px] text-gray-500 dark:text-gray-400">Base URL</label>
+                <label className="text-[11px] text-zinc-500 dark:text-zinc-400">Base URL</label>
                 <input
                   value={provider.base_url || ''}
                   onChange={e => onUpdate(provider.id, { base_url: e.target.value })}
                   type="text"
                   placeholder={t('providers.card.defaultBaseUrl')}
                   autoComplete="off"
-                  className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm font-mono text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
+                  className="w-full bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-sm font-mono text-zinc-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500"
                 />
               </div>
 
               {expanded && (
-                <button onClick={() => setExpanded(false)} className="text-xs text-gray-600 hover:text-gray-600 dark:text-gray-400">{t('providers.common.cancel')}</button>
+                <button onClick={() => setExpanded(false)} className="text-xs text-gray-600 hover:text-zinc-600 dark:text-zinc-400">{t('providers.common.cancel')}</button>
               )}
             </div>
           )}
@@ -1457,7 +1457,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
         {/* "立即启用" button for unconfigured providers needing a key or OAuth login */}
         {(canApiKey || oauthCap) && !isP2P && !configured && !expanded && (
           <button onClick={() => { setExpanded(true); onUpdate(provider.id, { enabled: true }); }}
-            className="shrink-0 text-xs px-3 py-1.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-blue-600 dark:text-blue-400 border border-gray-300 dark:border-gray-700 rounded-lg transition-colors">
+            className="shrink-0 text-xs px-3 py-1.5 bg-gray-100 dark:bg-zinc-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-blue-600 dark:text-blue-400 border border-gray-300 dark:border-zinc-700 rounded-lg transition-colors">
             {t('providers.card.enableNow')}
           </button>
         )}
@@ -1700,7 +1700,7 @@ export default function Providers() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('providers.title')}</h1>
+          <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">{t('providers.title')}</h1>
           <p className="text-sm text-gray-500 mt-0.5">{t('providers.subtitle')}</p>
         </div>
         {savedMsg && <span className="text-sm text-green-600 dark:text-green-400">{savedMsg}</span>}
@@ -1716,7 +1716,7 @@ export default function Providers() {
             <section key={tier} className="space-y-3">
               <div className="flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
-                <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{cfg.label}</h2>
+                <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{cfg.label}</h2>
                 <span className="text-xs text-gray-500">{cfg.hint}</span>
               </div>
               <div className={`grid ${cfg.cols} gap-3`}>
@@ -1765,7 +1765,7 @@ export default function Providers() {
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
                 sel
                   ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
-                  : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'
+                  : 'border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:border-gray-300 dark:hover:border-gray-600'
               }`}>
               <span>{entry.icon}</span>
               <span>{entry.label}</span>
@@ -1782,7 +1782,7 @@ export default function Providers() {
           <section key={tier} className="space-y-3">
             <div className="flex items-center gap-2">
               <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
-              <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{cfg.label}</h2>
+              <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{cfg.label}</h2>
               <span className="text-xs text-gray-500">{cfg.hint}</span>
             </div>
 
@@ -1801,7 +1801,7 @@ export default function Providers() {
                 className={`flex flex-col items-center justify-center gap-1.5 rounded-2xl border-2 border-dashed min-h-[90px] transition-colors ${
                   isOpen
                     ? 'border-blue-400 dark:border-blue-600 text-blue-500 dark:text-blue-400 bg-blue-50/50 dark:bg-blue-950/10'
-                    : 'border-gray-200 dark:border-gray-700 text-gray-400 hover:border-gray-300 dark:hover:border-gray-600 hover:text-gray-500'
+                    : 'border-gray-200 dark:border-zinc-700 text-gray-400 hover:border-gray-300 dark:hover:border-gray-600 hover:text-gray-500'
                 }`}>
                 <span className="text-xl leading-none">{isOpen ? '×' : '+'}</span>
                 <span className="text-xs font-medium">{isOpen ? t('providers.add.collapse') : t('providers.add.expand')}</span>
@@ -1816,7 +1816,7 @@ export default function Providers() {
 
             {/* Picker panel */}
             {isOpen && (
-              <div className="p-4 bg-gray-50 dark:bg-gray-800/40 rounded-2xl border border-gray-200 dark:border-gray-700 space-y-3">
+              <div className="p-4 bg-gray-50 dark:bg-zinc-800/40 rounded-2xl border border-gray-200 dark:border-zinc-700 space-y-3">
                 {tier === 'paid' && !paidAccountsLoaded && (
                   <p className="text-xs text-gray-400">{t('providers.add.loadingAccounts')}</p>
                 )}
@@ -1828,7 +1828,7 @@ export default function Providers() {
                 ) : (
                 <>
                 <StatsOnlyHint names={statsOnlyLabels} />
-                <p className="text-xs text-gray-500 dark:text-gray-400">
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
                   {tier === 'paid'
                     ? t('providers.add.paidHint')
                     : t('providers.add.freeHint')}
@@ -1863,7 +1863,7 @@ export default function Providers() {
                       <p className="text-xs text-gray-400">{t('providers.add.allAdded')}</p>
                     )}
                     <button type="button" onClick={() => { addCustomProvider(); setAddingTier(null); }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-gray-300 dark:border-gray-600 text-xs text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-500 transition-colors bg-white dark:bg-gray-900">
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-gray-300 dark:border-zinc-600 text-xs text-zinc-500 dark:text-zinc-400 hover:border-blue-400 hover:text-blue-500 transition-colors bg-white dark:bg-zinc-900">
                       <span>+</span> {t('providers.add.goProfile')}
                     </button>
                   </div>
@@ -1877,7 +1877,7 @@ export default function Providers() {
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
                           sel
                             ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
-                            : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'
+                            : 'border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:border-gray-300 dark:hover:border-gray-600'
                         }`}>
                         <span>{m.icon || '🔌'}</span>
                         <span>{m.label || p.id}</span>

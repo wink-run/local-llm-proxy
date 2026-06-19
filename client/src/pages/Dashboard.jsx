@@ -25,7 +25,7 @@ function SourceMixBar({ proxy, session, total, className = 'h-2', t }) {
   const pPct = Math.round((proxy / tot) * 100);
   const sPct = Math.max(0, 100 - pPct);
   if (!proxy && !session) {
-    return <div className={`flex-1 bg-gray-100 dark:bg-gray-800 rounded-full ${className}`} />;
+    return <div className={`flex-1 bg-gray-100 dark:bg-zinc-800 rounded-full ${className}`} />;
   }
   return (
     <div className={`flex-1 flex rounded-full overflow-hidden ${className}`} title={t('dashboard.sourceMixTitle', { proxy, session })}>
@@ -41,7 +41,7 @@ function AppShareStrip({ rows, metric = 'tokens' }) {
   const total = rows.reduce((s, r) => s + (r[metric] || 0), 0) || 1;
   return (
     <div className="space-y-2">
-      <div className="flex h-3 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-800">
+      <div className="flex h-3 rounded-full overflow-hidden bg-gray-100 dark:bg-zinc-800">
         {rows.map((r, i) => {
           const v = r[metric] || 0;
           if (!v) return null;
@@ -76,20 +76,20 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
     sortBy === 'tokens' ? (b.tokens - a.tokens) : (b.calls - a.calls));
 
   return (
-    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
-      <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800 space-y-3">
+    <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-200 dark:border-zinc-800 space-y-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
-            <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{t('dashboard.appUsage')}</h2>
+            <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('dashboard.appUsage')}</h2>
             <p className="text-xs text-gray-500 mt-0.5">{t('dashboard.appUsageHint')}</p>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-500">{rangeLabel}</span>
-            <div className="flex gap-0.5 bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5">
+            <div className="flex gap-0.5 bg-gray-100 dark:bg-zinc-800 rounded-lg p-0.5">
               {[['calls', t('common.sortCalls')], ['tokens', t('common.sortTokens')]].map(([k, label]) => (
                 <button key={k} type="button" onClick={() => onSortBy(k)}
                   className={`px-2 py-0.5 text-[10px] rounded-md transition-colors ${
-                    sortBy === k ? 'bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 shadow-sm' : 'text-gray-500'
+                    sortBy === k ? 'bg-white dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200 shadow-sm' : 'text-gray-500'
                   }`}>{label}</button>
               ))}
             </div>
@@ -109,7 +109,7 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
         </div>
       ) : (
         <>
-          <div className="hidden sm:grid grid-cols-[minmax(0,1.4fr)_4.5rem_4.5rem_4rem_minmax(0,1fr)] gap-3 px-5 py-2 text-[10px] font-medium text-gray-400 uppercase tracking-wide border-b border-gray-100 dark:border-gray-800">
+          <div className="hidden sm:grid grid-cols-[minmax(0,1.4fr)_4.5rem_4.5rem_4rem_minmax(0,1fr)] gap-3 px-5 py-2 text-[10px] font-medium text-gray-400 uppercase tracking-wide border-b border-gray-100 dark:border-zinc-800">
             <span>{t('dashboard.colApp')}</span>
             <span className="text-right">{t('dashboard.colRequests')}</span>
             <span className="text-right">{t('dashboard.colTokens')}</span>
@@ -124,7 +124,7 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
                     <span className={`w-1 h-8 rounded-full shrink-0 ${APP_USAGE_COLORS[i % APP_USAGE_COLORS.length]}`} />
                     <span className="text-base shrink-0">{r.icon}</span>
                     <div className="min-w-0">
-                      <div className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{r.name}</div>
+                      <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{r.name}</div>
                       <div className="text-[10px] text-gray-500 truncate">
                         {linkMethodLabel(r.link_method, t)}
                         {r.proxyCalls > 0 && r.sessionCalls > 0 ? t('common.mixedSource') : r.proxyCalls > 0 ? t('common.sourceGateway') : t('common.sourceSession')}
@@ -133,14 +133,14 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
                   </div>
                   <div className="sm:text-right">
                     <div className="text-sm font-semibold tabular-nums">{r.calls.toLocaleString()}</div>
-                    <div className="mt-1 h-1 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden hidden sm:block">
+                    <div className="mt-1 h-1 bg-gray-100 dark:bg-zinc-800 rounded-full overflow-hidden hidden sm:block">
                       <div className={`h-full rounded-full ${APP_USAGE_COLORS[i % APP_USAGE_COLORS.length]}`}
                         style={{ width: `${Math.round(r.calls / maxCalls * 100)}%` }} />
                     </div>
                   </div>
                   <div className="sm:text-right">
                     <div className="text-sm font-semibold tabular-nums text-purple-600 dark:text-purple-400">{fmtN(r.tokens)}</div>
-                    <div className="mt-1 h-1 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden hidden sm:block">
+                    <div className="mt-1 h-1 bg-gray-100 dark:bg-zinc-800 rounded-full overflow-hidden hidden sm:block">
                       <div className="h-full rounded-full bg-purple-500"
                         style={{ width: `${Math.round((r.tokens || 0) / maxTokens * 100)}%` }} />
                     </div>
@@ -215,10 +215,10 @@ function TierDonut({ byProvider = {}, t }) {
           <div key={row.label} className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className={`w-2.5 h-2.5 rounded-full ${row.color} shrink-0`}/>
-              <span className="text-xs text-gray-700 dark:text-gray-300">{row.label}</span>
+              <span className="text-xs text-zinc-700 dark:text-zinc-300">{row.label}</span>
             </div>
             <div className="text-right">
-              <div className="text-sm font-semibold text-gray-800 dark:text-gray-200">{row.count}</div>
+              <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{row.count}</div>
               <div className="text-[10px] text-gray-600">{total ? Math.round(row.count / total * 100) : 0}%</div>
             </div>
           </div>
@@ -244,12 +244,12 @@ function TrendBars({ data = [], t }) {
               onMouseLeave={() => setTip(null)}>
               {tip?.i === i && (
                 <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 z-10
-                  bg-gray-800 dark:bg-gray-700 text-white text-[10px] rounded px-1.5 py-0.5
+                  bg-gray-800 dark:bg-zinc-700 text-white text-[10px] rounded px-1.5 py-0.5
                   whitespace-nowrap pointer-events-none shadow">
                   {t('dashboard.trendTip', { h: i, v })}
                 </div>
               )}
-              <div className={`w-full rounded-sm transition-all duration-300 ${i === now ? 'bg-blue-500' : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-400 dark:hover:bg-gray-500'}`}
+              <div className={`w-full rounded-sm transition-all duration-300 ${i === now ? 'bg-blue-500' : 'bg-gray-200 dark:bg-zinc-700 hover:bg-gray-400 dark:hover:bg-gray-500'}`}
                 style={{ height: `${px}px` }} />
             </div>
           );
@@ -339,26 +339,26 @@ export default function Dashboard() {
   const rangeLabel = t(`profile.range.${range}`);
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-5 bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 min-h-screen">
+    <div className="flex-1 overflow-y-auto p-6 space-y-5 bg-gray-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 min-h-screen">
 
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('dashboard.title')}</h1>
+          <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">{t('dashboard.title')}</h1>
           <div className="flex items-center gap-2 mt-1">
             <p className="text-sm text-gray-500">{t('dashboard.subtitle')}</p>
-            <span className="flex items-center gap-1 text-xs text-gray-500 border border-gray-200 dark:border-gray-700 rounded-full px-2 py-0.5">
+            <span className="flex items-center gap-1 text-xs text-gray-500 border border-gray-200 dark:border-zinc-700 rounded-full px-2 py-0.5">
               <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${gwStatus?.running !== false ? 'bg-green-500' : 'bg-gray-400'}`}/>
               {window.electronAPI ? t('common.desktop') : t('common.cli')}
               {gwStatus?.port ? ` · :${gwStatus.port}` : ''}
             </span>
           </div>
         </div>
-        <div className="flex gap-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-1">
+        <div className="flex gap-1 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-xl p-1">
           {RANGE_KEYS.map(r => (
             <button key={r} onClick={() => setRange(r)}
               className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
-                range === r ? 'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 font-medium' : 'text-gray-500 hover:text-gray-700 dark:text-gray-300'
+                range === r ? 'bg-gray-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 font-medium' : 'text-gray-500 hover:text-zinc-700 dark:text-zinc-300'
               }`}>{t(`profile.range.${r}`)}</button>
           ))}
         </div>
@@ -366,27 +366,27 @@ export default function Dashboard() {
 
       {/* Summary cards — 5列 */}
       <div className="grid grid-cols-5 gap-3">
-        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+        <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-xl p-4">
           <div className="text-xs text-gray-500">{t('dashboard.totalRequests')}</div>
           <div className="text-2xl font-bold mt-1">{totalCalls}</div>
           <div className="text-[10px] text-gray-600 mt-0.5">{t('dashboard.totalRequestsHint', { range: rangeLabel })}</div>
         </div>
-        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+        <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-xl p-4">
           <div className="text-xs text-gray-500">{t('dashboard.freeHitRate')}</div>
           <div className="text-2xl font-bold text-green-600 dark:text-green-400 mt-1">{freeRatio}%</div>
           <div className="text-[10px] text-gray-600 mt-0.5">{t('dashboard.freeHitHint', { free: freeCalls, p2p: p2pCalls, paid: paidCalls })}</div>
         </div>
-        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+        <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-xl p-4">
           <div className="text-xs text-gray-500">{t('dashboard.tokenUsage')}</div>
           <div className="text-2xl font-bold text-purple-600 dark:text-purple-400 mt-1">{fmtN(totalTokens)}</div>
           <div className="text-[10px] text-gray-600 mt-0.5">{t('dashboard.tokenHint', { range: rangeLabel })}</div>
         </div>
-        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+        <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-xl p-4">
           <div className="text-xs text-gray-500">{t('dashboard.paidCalls')}</div>
           <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">{paidCalls + p2pCalls}</div>
           <div className="text-[10px] text-gray-600 mt-0.5">{t('dashboard.paidCallsHint', { paid: paidCalls, p2p: p2pCalls })}</div>
         </div>
-        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
+        <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-xl p-4">
           <div className="text-xs text-gray-500">{t('dashboard.estCost')}</div>
           <div className={`text-2xl font-bold mt-1 ${totalCost > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400'}`}>
             {fmtCost(totalCost)}
@@ -397,12 +397,12 @@ export default function Dashboard() {
 
       {/* Row: tier donut + trend bars */}
       <div className="grid grid-cols-5 gap-4">
-        <div className="col-span-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5 flex flex-col gap-4">
-          <div className="text-sm font-semibold text-gray-800 dark:text-gray-200">{t('dashboard.tierDist')}</div>
+        <div className="col-span-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-2xl p-5 flex flex-col gap-4">
+          <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('dashboard.tierDist')}</div>
           <TierDonut byProvider={byProvider} t={t} />
         </div>
-        <div className="col-span-3 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5">
-          <div className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-4">{t('dashboard.trend')}</div>
+        <div className="col-span-3 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-2xl p-5">
+          <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-4">{t('dashboard.trend')}</div>
           <TrendBars data={trendData} t={t} />
         </div>
       </div>
@@ -419,8 +419,8 @@ export default function Dashboard() {
       {/* Model rankings — 3 columns */}
       <div className="grid grid-cols-3 gap-4">
         {/* Call count */}
-        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5">
-          <div className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-4">{t('dashboard.modelRank')}</div>
+        <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-2xl p-5">
+          <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-4">{t('dashboard.modelRank')}</div>
           {modelStats.length === 0 ? (
             <p className="text-xs text-gray-600">{t('common.noData')}</p>
           ) : (
@@ -428,10 +428,10 @@ export default function Dashboard() {
               {modelStats.map(m => (
                 <div key={m.model}>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-mono text-gray-700 dark:text-gray-300 truncate max-w-[140px]" title={m.model}>{m.model}</span>
-                    <span className="text-xs text-gray-600 dark:text-gray-400 shrink-0 ml-2">{m.calls} {t('common.times')}</span>
+                    <span className="text-xs font-mono text-zinc-700 dark:text-zinc-300 truncate max-w-[140px]" title={m.model}>{m.model}</span>
+                    <span className="text-xs text-zinc-600 dark:text-zinc-400 shrink-0 ml-2">{m.calls} {t('common.times')}</span>
                   </div>
-                  <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                  <div className="h-1.5 bg-gray-100 dark:bg-zinc-800 rounded-full overflow-hidden">
                     <div className="h-full rounded-full transition-all duration-500 bg-green-500"
                       style={{ width: `${Math.round(m.calls / maxModel * 100)}%` }} />
                   </div>
@@ -442,8 +442,8 @@ export default function Dashboard() {
         </div>
 
         {/* Token consumption */}
-        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5">
-          <div className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-4">{t('dashboard.modelTokenRank')}</div>
+        <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-2xl p-5">
+          <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-4">{t('dashboard.modelTokenRank')}</div>
           {modelByTokens.length === 0 ? (
             <p className="text-xs text-gray-600">{t('common.noData')}</p>
           ) : (
@@ -451,10 +451,10 @@ export default function Dashboard() {
               {modelByTokens.map(m => (
                 <div key={m.model}>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-mono text-gray-700 dark:text-gray-300 truncate max-w-[140px]" title={m.model}>{m.model}</span>
+                    <span className="text-xs font-mono text-zinc-700 dark:text-zinc-300 truncate max-w-[140px]" title={m.model}>{m.model}</span>
                     <span className="text-xs text-purple-600 dark:text-purple-400 shrink-0 ml-2">{fmtN(m.tokens)} tok</span>
                   </div>
-                  <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                  <div className="h-1.5 bg-gray-100 dark:bg-zinc-800 rounded-full overflow-hidden">
                     <div className="h-full rounded-full transition-all duration-500 bg-purple-500"
                       style={{ width: `${Math.round((m.tokens||0) / maxModelTokens * 100)}%` }} />
                   </div>
@@ -465,8 +465,8 @@ export default function Dashboard() {
         </div>
 
         {/* Cost ranking */}
-        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-5">
-          <div className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-4">{t('dashboard.modelCostRank')}</div>
+        <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-2xl p-5">
+          <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-4">{t('dashboard.modelCostRank')}</div>
           {modelByCost.length === 0 ? (
             <p className="text-xs text-gray-600 dark:text-gray-500">{t('dashboard.modelCostEmpty')}</p>
           ) : (
@@ -474,10 +474,10 @@ export default function Dashboard() {
               {modelByCost.map(m => (
                 <div key={m.model}>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-mono text-gray-700 dark:text-gray-300 truncate max-w-[140px]" title={m.model}>{m.model}</span>
+                    <span className="text-xs font-mono text-zinc-700 dark:text-zinc-300 truncate max-w-[140px]" title={m.model}>{m.model}</span>
                     <span className="text-xs text-emerald-600 dark:text-emerald-400 shrink-0 ml-2">{fmtCost(m.cost_usd)}</span>
                   </div>
-                  <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                  <div className="h-1.5 bg-gray-100 dark:bg-zinc-800 rounded-full overflow-hidden">
                     <div className="h-full rounded-full transition-all duration-500 bg-emerald-500"
                       style={{ width: `${Math.round((m.cost_usd||0) / maxModelCost * 100)}%` }} />
                   </div>

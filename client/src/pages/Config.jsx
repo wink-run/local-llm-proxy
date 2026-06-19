@@ -21,13 +21,13 @@ function persistServerUrl(url) {
 function Field({ label, type = 'text', value, onChange, placeholder }) {
   return (
     <div>
-      <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">{label}</label>
+      <label className="block text-sm text-zinc-500 dark:text-zinc-400 mb-1">{label}</label>
       <input
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-500"
+        className="w-full bg-gray-100 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-500"
       />
     </div>
   );
@@ -42,7 +42,7 @@ function ThemeSelector() {
     { value: 'dark',   label: t('theme.dark') },
   ];
   return (
-    <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+    <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-zinc-700">
       {THEMES.map((th) => (
         <button
           key={th.value}
@@ -50,7 +50,7 @@ function ThemeSelector() {
           className={`flex-1 py-2 text-sm font-medium transition-colors ${
             theme === th.value
               ? 'bg-blue-600 text-white'
-              : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-200 dark:hover:bg-gray-700'
+              : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-gray-200 dark:hover:bg-gray-700'
           }`}
         >
           {th.label}
@@ -68,7 +68,7 @@ const LANGS = [
 function LangSelector() {
   const { lang, setLang, t } = useLang();
   return (
-    <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+    <div className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-zinc-700">
       {LANGS.map((l) => (
         <button
           key={l.value}
@@ -76,7 +76,7 @@ function LangSelector() {
           className={`flex-1 py-2 text-sm font-medium transition-colors ${
             lang === l.value
               ? 'bg-blue-600 text-white'
-              : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-200 dark:hover:bg-gray-700'
+              : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-gray-200 dark:hover:bg-gray-700'
           }`}
         >
           {t(l.labelKey)}
@@ -179,12 +179,12 @@ export default function Config() {
   // Not logged in: show only login form
   if (!user) {
     return (
-      <div className="flex h-full items-center justify-center bg-gray-50 dark:bg-gray-950">
+      <div className="flex h-full items-center justify-center bg-gray-50 dark:bg-zinc-950">
         <div className="w-full max-w-sm px-8 py-10 space-y-6">
           {/* Brand */}
           <div className="flex flex-col items-center gap-2 mb-2">
             <img src={logo} alt="Token Bank" className="w-16 h-16" />
-            <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Token Bank</h1>
+            <h1 className="text-xl font-bold text-zinc-900 dark:text-zinc-100">Token Bank</h1>
           </div>
 
           {firstRun && (
@@ -194,7 +194,7 @@ export default function Config() {
           )}
 
           <div className="space-y-2">
-            <label className="block text-sm text-gray-500 dark:text-gray-400">{t('config.serverUrl')}</label>
+            <label className="block text-sm text-zinc-500 dark:text-zinc-400">{t('config.serverUrl')}</label>
             <input
               type="text"
               value={serverUrl}
@@ -204,7 +204,7 @@ export default function Config() {
                 setServerUrl(v);
               }}
               placeholder={SERVER_URL_PLACEHOLDER}
-              className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-500"
+              className="w-full bg-gray-100 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-500"
             />
           </div>
 
@@ -246,7 +246,7 @@ export default function Config() {
           <p className="text-xs text-gray-600 dark:text-gray-600 text-center leading-relaxed pt-2">
             {t('config.footer.beforeLink')}
             <a href="https://github.com/wink-run/local-llm-proxy" target="_blank" rel="noreferrer"
-              className="underline hover:text-gray-600 dark:hover:text-gray-600 dark:text-gray-400 transition-colors">
+              className="underline hover:text-gray-600 dark:hover:text-zinc-600 dark:text-zinc-400 transition-colors">
               local-llm-proxy
             </a>
             {t('config.footer.afterLink')}
@@ -275,7 +275,7 @@ function Row({ label, hint, children }) {
   return (
     <div className="flex items-center justify-between px-5 py-4">
       <div>
-        <div className="text-sm text-gray-800 dark:text-gray-200">{label}</div>
+        <div className="text-sm text-zinc-800 dark:text-zinc-200">{label}</div>
         {hint && <div className="text-xs text-gray-500 mt-0.5">{hint}</div>}
       </div>
       <div className="shrink-0 ml-4">{children}</div>
@@ -287,7 +287,7 @@ function SelectRow({ label, hint, value, onChange, options }) {
   return (
     <Row label={label} hint={hint}>
       <select value={value} onChange={e => onChange(e.target.value)}
-        className="bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 focus:outline-none focus:border-blue-500">
+        className="bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-700 dark:text-zinc-300 focus:outline-none focus:border-blue-500">
         {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
     </Row>
@@ -380,14 +380,14 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
 
       {/* Header */}
       <div>
-        <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('settings.title')}</h1>
+        <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">{t('settings.title')}</h1>
         <p className="text-sm text-gray-500 mt-0.5">{t('settings.subtitle')}</p>
       </div>
 
       {/* Gateway section */}
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
-          <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{t('settings.gateway')}</h2>
+      <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-zinc-800">
+          <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.gateway')}</h2>
         </div>
         <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
           <Row label={t('settings.port')} hint={t('settings.portHint')}>
@@ -396,7 +396,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
                 type="number"
                 value={gatewayPort}
                 onChange={e => setGatewayPort(e.target.value)}
-                className="w-24 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-800 dark:text-gray-200 text-right font-mono focus:outline-none focus:border-blue-500"
+                className="w-24 bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-800 dark:text-zinc-200 text-right font-mono focus:outline-none focus:border-blue-500"
               />
               <span className="text-xs text-gray-600">{t('settings.restartNote')}</span>
             </div>
@@ -430,9 +430,9 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Routing section */}
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
-          <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{t('settings.routing')}</h2>
+      <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-zinc-800">
+          <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.routing')}</h2>
         </div>
         <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
           <SelectRow label={t('settings.retryCount')} hint={t('settings.retryCountHint')}
@@ -460,26 +460,26 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Appearance section */}
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
-          <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{t('settings.appearance')}</h2>
+      <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-zinc-800">
+          <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.appearance')}</h2>
         </div>
         <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
           <Row label={t('config.theme')} hint={t('settings.themeHint')}>
-            <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-gray-700 text-xs">
+            <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-zinc-700 text-xs">
               {THEME_OPTIONS.map(o => (
                 <button key={o.value} onClick={() => setTheme(o.value)}
-                  className={`px-3 py-1.5 font-medium transition-colors ${theme === o.value ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
+                  className={`px-3 py-1.5 font-medium transition-colors ${theme === o.value ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
                   {o.label}
                 </button>
               ))}
             </div>
           </Row>
           <Row label={t('config.lang')} hint={t('config.langHint')}>
-            <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-gray-700 text-xs">
+            <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-zinc-700 text-xs">
               {LANG_OPTIONS.map(o => (
                 <button key={o.value} onClick={() => setLang(o.value)}
-                  className={`px-3 py-1.5 font-medium transition-colors ${lang === o.value ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
+                  className={`px-3 py-1.5 font-medium transition-colors ${lang === o.value ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
                   {o.label}
                 </button>
               ))}
@@ -489,9 +489,9 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Server URL */}
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
-          <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{t('settings.server')}</h2>
+      <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-zinc-800">
+          <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.server')}</h2>
         </div>
         <div className="px-5 py-4">
           <div className="text-xs text-gray-500 mb-2">{t('settings.serverUrlHint')}</div>
@@ -505,19 +505,19 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
               await syncCloudConfigUrl(v);
             }}
             placeholder={SERVER_URL_PLACEHOLDER}
-            className="w-full bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500 font-mono"
+            className="w-full bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-blue-500 font-mono"
           />
         </div>
       </div>
 
       {/* Account section */}
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
-          <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">{t('settings.account')}</h2>
+      <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-200 dark:border-zinc-800">
+          <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.account')}</h2>
         </div>
         <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
           <Row label={t('config.email')} hint={user.email}>
-            <span className="text-xs text-gray-500 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 px-3 py-1.5 rounded-lg">
+            <span className="text-xs text-gray-500 bg-gray-100 dark:bg-zinc-800 border border-gray-300 dark:border-zinc-700 px-3 py-1.5 rounded-lg">
               {user.nickname || '—'}
             </span>
           </Row>
@@ -541,7 +541,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
           {saving ? t('settings.saving') : t('settings.save')}
         </button>
         <button onClick={handleReset}
-          className="px-4 py-2.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm rounded-xl border border-gray-300 dark:border-gray-700 transition-colors">
+          className="px-4 py-2.5 bg-gray-100 dark:bg-zinc-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-zinc-700 dark:text-zinc-300 text-sm rounded-xl border border-gray-300 dark:border-zinc-700 transition-colors">
           {t('settings.reset')}
         </button>
         {savedMsg && <span className="text-xs text-green-600 dark:text-green-400">✓ {savedMsg}</span>}
@@ -551,7 +551,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       <div className="text-[10px] text-gray-400 dark:text-gray-600 pb-2 flex items-center gap-2">
         <span>Token Bank</span>
         {window.electronAPI?.version && (
-          <span className="font-mono bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-gray-500 dark:text-gray-400">
+          <span className="font-mono bg-gray-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-500 dark:text-zinc-400">
             v{window.electronAPI.version}
           </span>
         )}
