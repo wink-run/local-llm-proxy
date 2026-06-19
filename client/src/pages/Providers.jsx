@@ -637,20 +637,18 @@ function P2PNetworkCard({ provider, onUpdate }) {
           {modelStats.length === 0 && !loading ? (
             <p className="text-xs text-zinc-600 py-2">{t('providers.p2p.noNodes')}</p>
           ) : (
-            <div className="grid grid-cols-2 gap-2">
-              {(modelStats.length > 0 ? modelStats : Array(4).fill(null)).map((m, i) => (
+            <div className="grid grid-cols-3 gap-2 max-h-[180px] overflow-y-auto">
+              {(modelStats.length > 0 ? modelStats : Array(3).fill(null)).map((m, i) => (
                 m ? (
-                  <div key={m.name} className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300/50 dark:border-zinc-700/50 rounded-xl px-3 py-2.5 flex items-center gap-2.5">
-                    <ModelDot m={m} />
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{m.name}</div>
-                      <div className="text-[10px] text-zinc-500 mt-0.5">
-                        <ModelSub m={m} />
-                      </div>
+                  <div key={m.name} className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300/50 dark:border-zinc-700/50 rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-1.5 min-w-0">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <ModelDot m={m} />
+                      <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">{m.name}</span>
                     </div>
+                    <span className="text-[10px] text-zinc-500 shrink-0"><ModelSub m={m} /></span>
                   </div>
                 ) : (
-                  <div key={i} className="bg-zinc-100/50 dark:bg-zinc-800/50 border border-zinc-300/30 dark:border-zinc-700/30 rounded-xl px-3 py-2.5 h-14 animate-pulse" />
+                  <div key={i} className="bg-zinc-100/50 dark:bg-zinc-800/50 border border-zinc-300/30 dark:border-zinc-700/30 rounded-lg py-1.5 h-7 animate-pulse" />
                 )
               ))}
             </div>
