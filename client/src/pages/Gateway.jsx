@@ -880,7 +880,6 @@ function SessionManager() {
   const [q, setQ]                 = useState('');
   const [agentFilter, setAgent]   = useState('all');
   const [favOnly, setFavOnly]     = useState(false);
-  const [showArchived, setShowA]  = useState(false);
   const [traceRow, setTraceRow]   = useState(null);
   const [contState, setContState] = useState(null);
   const [notice, setNotice]       = useState('');
@@ -889,10 +888,10 @@ function SessionManager() {
   const reload = useCallback(() => {
     if (!window.electronAPI?.sessions) { setLoading(false); return; }
     setLoading(true);
-    window.electronAPI.sessions.listAll({ showArchived })
+    window.electronAPI.sessions.listAll({})
       .then(r => { setRows(Array.isArray(r) ? r : []); setLoading(false); })
       .catch(() => setLoading(false));
-  }, [showArchived]);
+  }, []);
 
   useEffect(() => { reload(); }, [reload]);
 
@@ -923,7 +922,7 @@ function SessionManager() {
     if (agentFilter !== 'all' && r.agent_id !== agentFilter) return false;
     if (favOnly && !r.favorite) return false;
     if (q) {
-      const hay = `${r.project || ''} ${r.context || ''} ${(r.tags || []).join(' ')}`.toLowerCase();
+      const hay = `${r.project || ''} ${r.context || ''}`.toLowerCase();
       if (!hay.includes(q.toLowerCase())) return false;
     }
     return true;
@@ -965,10 +964,6 @@ function SessionManager() {
           className={`text-xs px-3 py-1.5 rounded-full ${favOnly ? 'bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400' : 'border border-zinc-200 dark:border-zinc-700 text-zinc-500'}`}>
           ★ {t('gateway.sessions.favOnly')}
         </button>
-        <label className="text-xs text-zinc-500 flex items-center gap-1 ml-1">
-          <input type="checkbox" checked={showArchived} onChange={e => setShowA(e.target.checked)} />
-          {t('gateway.sessions.showArchived')}
-        </label>
         <div className="ml-auto flex gap-3 text-xs text-zinc-400">
           <span><strong className="text-zinc-700 dark:text-zinc-200">{rows.length}</strong> {t('gateway.sessions.statSessions')}</span>
           <span><strong className="text-zinc-700 dark:text-zinc-200">{agents.length}</strong> {t('gateway.sessions.statAgents')}</span>
@@ -1003,7 +998,6 @@ const CONTINUE_TARGETS = [
 /** 单会话行 */
 function SessionRow({ row, fmtN, onTrace, onMeta, onExport, onContinue }) {
   const { t } = useLang();
-  const [editing, setEditing] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [contOpen, setContOpen] = useState(false);
   const targets = CONTINUE_TARGETS.filter(x => x.id !== row.agent_id);
@@ -1018,9 +1012,6 @@ function SessionRow({ row, fmtN, onTrace, onMeta, onExport, onContinue }) {
             <button onClick={e => { e.stopPropagation(); onMeta({ favorite: !row.favorite }); }}
               className={row.favorite ? 'text-amber-500' : 'text-zinc-300 hover:text-amber-400'}>★</button>
             <span className="truncate group-hover:text-blue-600 dark:group-hover:text-blue-400">{row.project || '—'}</span>
-            {(row.tags || []).map(tg => (
-              <span key={tg} className="text-xs font-normal px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500">{tg}</span>
-            ))}
           </div>
           <div className="text-zinc-400 truncate">{row.context || '—'}</div>
         </div>
@@ -1030,8 +1021,6 @@ function SessionRow({ row, fmtN, onTrace, onMeta, onExport, onContinue }) {
         <div className="flex gap-1.5 justify-end items-center relative">
           <button onClick={() => { setContOpen(v => !v); setExportOpen(false); }}
             className="px-2 py-1 rounded-md border border-blue-200 dark:border-blue-900/50 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 whitespace-nowrap">{t('gateway.sessions.continue')}</button>
-          <button onClick={() => { setEditing(v => !v); }}
-            className="px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 whitespace-nowrap">{t('gateway.sessions.tag')}</button>
           <button onClick={() => { setExportOpen(v => !v); setContOpen(false); }}
             className="px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 whitespace-nowrap">{t('gateway.sessions.export')}</button>
           {contOpen && (
@@ -1052,29 +1041,6 @@ function SessionRow({ row, fmtN, onTrace, onMeta, onExport, onContinue }) {
           )}
         </div>
       </div>
-      {editing && (
-        <SessionMetaPopover row={row} onSave={patch => { onMeta(patch); setEditing(false); }} onArchive={() => { onMeta({ archived: !row.archived }); setEditing(false); }} />
-      )}
-    </div>
-  );
-}
-
-/** 行内标签 + 备注编辑 */
-function SessionMetaPopover({ row, onSave, onArchive }) {
-  const { t } = useLang();
-  const [tags, setTags] = useState((row.tags || []).join(', '));
-  const [note, setNote] = useState(row.note || '');
-  return (
-    <div className="mt-2 ml-[6.5rem] flex items-center gap-2 flex-wrap">
-      <input value={tags} onChange={e => setTags(e.target.value)} placeholder={t('gateway.sessions.tag')}
-        className="text-xs px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 w-40" />
-      <input value={note} onChange={e => setNote(e.target.value)} placeholder={t('gateway.sessions.note')}
-        className="text-xs px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 flex-1 min-w-[120px]" />
-      <button onClick={() => onSave({ tags: tags.split(',').map(s => s.trim()).filter(Boolean), note })}
-        className="text-xs px-3 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white">{t('gateway.sessions.save')}</button>
-      <button onClick={onArchive} className="text-xs px-3 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500">
-        {row.archived ? t('gateway.sessions.unarchive') : t('gateway.sessions.archive')}
-      </button>
     </div>
   );
 }
