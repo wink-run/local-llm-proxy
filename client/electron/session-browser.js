@@ -1001,6 +1001,17 @@ function listActivity(agentId, opts = {}) {
   return h.list(opts);
 }
 
+/** 跨所有 agent 聚合会话原始行（含 agent_id，按 lastTs 倒序）。不读叠加层。 */
+function listAllSessions(opts = {}) {
+  const { mergeAgentRows } = require('./session-manager');
+  const resultsByAgent = {};
+  for (const agentId of Object.keys(HANDLERS)) {
+    try { resultsByAgent[agentId] = HANDLERS[agentId].list(opts) || []; }
+    catch { resultsByAgent[agentId] = []; }
+  }
+  return mergeAgentRows(resultsByAgent);
+}
+
 function getTrace(agentId, sessionId) {
   const h = HANDLERS[agentId];
   if (!h) return { error: 'unsupported_agent', steps: [] };
@@ -1176,4 +1187,5 @@ function enrichRecentDetail(agentId, recent, activity = []) {
 module.exports = {
   listActivity, getTrace, mergeActivityWithStats, enrichTraceWithDb,
   enrichRecentDetail, assistantLineLabel, extractContext, shortProjectName, normalizeActivityRow,
+  listAllSessions,
 };
