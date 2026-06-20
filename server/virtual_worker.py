@@ -64,6 +64,78 @@ def _anthropic_resp_to_openai(data: dict) -> dict:
     }
 
 
+def _to_gemini_body(payload: dict) -> dict:
+    """将 OpenAI 格式请求体转换为 Gemini generateContent 格式。"""
+    messages = payload.get("messages", [])
+    system_parts = []
+    contents = []
+    for m in messages:
+        role = m.get("role", "user")
+        content = m.get("content", "")
+        if role == "system":
+            text = content if isinstance(content, str) else " ".join(
+                p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"
+            )
+            system_parts.append({"text": text})
+        else:
+            gemini_role = "model" if role == "assistant" else "user"
+            if isinstance(content, str):
+                parts = [{"text": content}]
+            else:
+                parts = [{"text": p.get("text", "")} for p in (content or [])
+                         if isinstance(p, dict) and p.get("type") == "text"]
+            contents.append({"role": gemini_role, "parts": parts})
+
+    body: dict = {"contents": contents}
+    if system_parts:
+        body["systemInstruction"] = {"parts": system_parts}
+    max_tokens = payload.get("max_tokens")
+    temperature = payload.get("temperature")
+    gen_config: dict = {}
+    if max_tokens:
+        gen_config["maxOutputTokens"] = max_tokens
+    if temperature is not None:
+        gen_config["temperature"] = temperature
+    if gen_config:
+        body["generationConfig"] = gen_config
+    return body
+
+
+def _gemini_extract_text(data: dict) -> str:
+    """从 Gemini 响应（流式或非流式的单个候选）提取文本。"""
+    for candidate in data.get("candidates", []):
+        for part in candidate.get("content", {}).get("parts", []):
+            if "text" in part:
+                return part["text"]
+    return ""
+
+
+def _gemini_resp_to_openai(data: dict, model: str) -> dict:
+    """将 Gemini 非流式响应转换为 OpenAI chat completion 格式。"""
+    text = _gemini_extract_text(data)
+    usage_meta = data.get("usageMetadata", {})
+    prompt_t = int(usage_meta.get("promptTokenCount") or 0)
+    compl_t = int(usage_meta.get("candidatesTokenCount") or 0)
+    finish = "stop"
+    candidates = data.get("candidates", [])
+    if candidates:
+        reason = candidates[0].get("finishReason", "STOP")
+        finish = "stop" if reason in ("STOP", "END_TURN") else reason.lower()
+    return {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:8]}",
+        "object": "chat.completion",
+        "model": model,
+        "choices": [
+            {"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": finish}
+        ],
+        "usage": {
+            "prompt_tokens": prompt_t,
+            "completion_tokens": compl_t,
+            "total_tokens": prompt_t + compl_t,
+        },
+    }
+
+
 # ── VirtualWorkerConnection ───────────────────────────────────────────────────
 
 @dataclass
@@ -109,6 +181,8 @@ class VirtualWorkerConnection:
                 await self._dispatch_anthropic(entry, q, payload, stream, model)
             elif self.api_style == "claude_oauth":
                 await self._dispatch_claude_oauth(entry, q, payload, stream, model)
+            elif self.api_style == "gemini":
+                await self._dispatch_gemini(entry, q, payload, stream, model)
             else:
                 await self._dispatch_openai(entry, q, payload, stream, model)
         except Exception as e:
@@ -269,6 +343,69 @@ class VirtualWorkerConnection:
                 anthropic_data = resp.json()
                 openai_data = _anthropic_resp_to_openai(anthropic_data)
                 output_tokens = int(anthropic_data.get("usage", {}).get("output_tokens") or 0)
+                await q.put(("chunk", json.dumps(openai_data)))
+                await q.put(("done", None))
+                self.record_complete(model, output_tokens, True, entry.get("ttft_ms"))
+
+    async def _dispatch_gemini(self, entry: dict, q: asyncio.Queue,
+                               payload: dict, stream: bool, model: str) -> None:
+        """Gemini generateContent API: converts OpenAI chat format to Gemini and back."""
+        raw_base = (self.base_url or "https://generativelanguage.googleapis.com").rstrip("/")
+        # 如果用户已在 base_url 里带了 /v1beta，避免重复拼接
+        if "/v1beta" in raw_base:
+            base = raw_base
+        else:
+            base = raw_base + "/v1beta"
+        action = "streamGenerateContent?alt=sse" if stream else "generateContent"
+        url = f"{base}/models/{model}:{action}"
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
+        }
+        body = _to_gemini_body(payload)
+
+        async with httpx.AsyncClient(timeout=120) as client:
+            if stream:
+                async with client.stream("POST", url, json=body, headers=headers) as resp:
+                    if resp.status_code >= 400:
+                        raw = await resp.aread()
+                        await q.put(("error", f"HTTP {resp.status_code}: {raw.decode()}"))
+                        self.record_complete(model, 0, False, None)
+                        return
+                    buf = ""
+                    output_tokens = 0
+                    async for text in resp.aiter_text():
+                        if entry.get("ttft_ms") is None:
+                            entry["ttft_ms"] = (time.time() - entry["dispatch_time"]) * 1000
+                        buf += text
+                        lines = buf.split("\n")
+                        buf = lines[-1]
+                        for line in lines[:-1]:
+                            s = line.strip()
+                            if not s or not s.startswith("data: "):
+                                continue
+                            try:
+                                d = json.loads(s[6:])
+                                delta_text = _gemini_extract_text(d)
+                                if delta_text:
+                                    output_tokens += len(delta_text)
+                                    await q.put(("chunk", _openai_sse_chunk(delta_text, model)))
+                            except Exception:
+                                pass
+                    await q.put(("done", {"prompt_tokens": 0, "completion_tokens": output_tokens}))
+                    self.record_complete(model, output_tokens, True, entry.get("ttft_ms"))
+            else:
+                resp = await client.post(url, json=body, headers=headers)
+                if resp.status_code >= 400:
+                    await q.put(("error", f"HTTP {resp.status_code}: {resp.text}"))
+                    self.record_complete(model, 0, False, None)
+                    return
+                entry["ttft_ms"] = (time.time() - entry["dispatch_time"]) * 1000
+                gemini_data = resp.json()
+                openai_data = _gemini_resp_to_openai(gemini_data, model)
+                output_tokens = int(
+                    gemini_data.get("usageMetadata", {}).get("candidatesTokenCount") or 0
+                )
                 await q.put(("chunk", json.dumps(openai_data)))
                 await q.put(("done", None))
                 self.record_complete(model, output_tokens, True, entry.get("ttft_ms"))

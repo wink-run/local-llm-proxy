@@ -11,10 +11,45 @@ const reqRouter = require('./request-router');
 const oauth = require('./oauth');
 const { estimateCost } = require('./pricing');
 
+// 出站代理：境外供给源（如 Google Gemini）常需走本机代理才能连通。
+// 优先级：provider.proxy > 全局 cfg.network_proxy > 环境变量(HTTPS_PROXY/HTTP_PROXY，遵守 NO_PROXY)。
+let _HttpsProxyAgent = null, _getProxyForUrl = null;
+try { _HttpsProxyAgent = require('https-proxy-agent').HttpsProxyAgent; } catch {}
+try { _getProxyForUrl = require('proxy-from-env').getProxyForUrl; } catch {}
+function resolveProxyAgent(provider, urlStr) {
+  if (!_HttpsProxyAgent) return undefined;
+  let proxyUrl = provider && provider.proxy;
+  if (!proxyUrl && _getConfig) { try { proxyUrl = _getConfig().network_proxy; } catch {} }
+  if (!proxyUrl && _getProxyForUrl) { try { proxyUrl = _getProxyForUrl(urlStr); } catch {} }
+  return proxyUrl ? new _HttpsProxyAgent(proxyUrl) : undefined;
+}
+
 // ── In-memory state ───────────────────────────────────────────────────────────
 
 const LOG_MAX = 100;
 const log = []; // circular, newest last
+
+// 路由明细持久化：进程重启后 in-memory log 会清空，落盘后可恢复（与 stats DB 对齐）
+const ROUTE_LOG_FILE = path.join(os.homedir(), '.tokenbank', 'gateway-route-log.json');
+let _routeLogSaveTimer = null;
+function _loadRouteLog() {
+  try {
+    const arr = JSON.parse(fs.readFileSync(ROUTE_LOG_FILE, 'utf8'));
+    if (Array.isArray(arr)) for (const e of arr.slice(-LOG_MAX)) log.push(e);
+  } catch {}
+}
+function _saveRouteLog() {
+  // 节流：合并 1s 内的多次写入，避免每请求一次磁盘 IO
+  if (_routeLogSaveTimer) return;
+  _routeLogSaveTimer = setTimeout(() => {
+    _routeLogSaveTimer = null;
+    try {
+      fs.mkdirSync(path.dirname(ROUTE_LOG_FILE), { recursive: true });
+      fs.writeFileSync(ROUTE_LOG_FILE, JSON.stringify(log));
+    } catch {}
+  }, 1000);
+}
+_loadRouteLog();
 
 // 调试日志：把完整请求/响应写到文件，便于排查 Claude Desktop 等客户端实际发了什么
 const DEBUG_LOG_FILE = path.join(os.homedir(), 'tokenbank-gateway-debug.log');
@@ -632,6 +667,210 @@ function proxyAnthropicStream(provider, oaiBody, model, res) {
   });
 }
 
+// ── Gemini (generateContent) ⇄ OpenAI ───────────────────────────────────────
+// Google Gemini 用 generateContent / streamGenerateContent，认证头 x-goog-api-key，
+// 请求体/响应体与 OpenAI 完全不同。这里做 OpenAI ⇄ Gemini 双向转换（与 server/virtual_worker.py 对齐）。
+function isGeminiProvider(provider) {
+  return /generativelanguage\.googleapis\.com/i.test(provider.base_url || '')
+    || provider.api_format === 'gemini' || provider.api_style === 'gemini';
+}
+
+// gemini base：用户 base_url 已含 /v1beta 时不重复拼接
+function geminiBase(rawBaseUrl) {
+  const raw = (rawBaseUrl || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
+  return /\/v1beta/i.test(raw) ? raw : raw + '/v1beta';
+}
+
+// OpenAI chat body → Gemini generateContent body
+function oaiToGeminiBody(oai) {
+  const systemParts = [];
+  const contents = [];
+  const textOf = (content) => {
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) return content.filter(p => p && p.type === 'text').map(p => p.text || '').join('');
+    return '';
+  };
+  for (const m of (oai.messages || [])) {
+    const role = m.role || 'user';
+    if (role === 'system') { systemParts.push({ text: textOf(m.content) }); continue; }
+    const gRole = role === 'assistant' ? 'model' : 'user';
+    contents.push({ role: gRole, parts: [{ text: textOf(m.content) }] });
+  }
+  const body = { contents };
+  if (systemParts.length) body.systemInstruction = { parts: systemParts };
+  const gen = {};
+  if (oai.max_tokens != null) gen.maxOutputTokens = oai.max_tokens;
+  if (oai.temperature != null) gen.temperature = oai.temperature;
+  if (oai.top_p != null) gen.topP = oai.top_p;
+  if (Object.keys(gen).length) body.generationConfig = gen;
+  return body;
+}
+
+function geminiExtractText(data) {
+  for (const cand of (data.candidates || [])) {
+    for (const part of (cand.content?.parts || [])) {
+      if (typeof part.text === 'string') return part.text;
+    }
+  }
+  return '';
+}
+
+// Gemini 非流式：generateContent → OpenAI json / Anthropic json（按客户端协议）
+function proxyGeminiSync(provider, oaiBody, model, res, outAnthropic) {
+  return new Promise((resolve, reject) => {
+    const fullUrl = `${geminiBase(provider.base_url)}/models/${model}:generateContent`;
+    let u; try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
+    const mod = u.protocol === 'https:' ? https : http;
+    const bodyStr = JSON.stringify(oaiToGeminiBody(oaiBody));
+    const headers = {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(bodyStr),
+      'x-goog-api-key': provider.token || '',
+    };
+    const t0 = Date.now();
+    const proxyReq = mod.request({
+      hostname: u.hostname, port: u.port || 443, path: u.pathname + (u.search || ''),
+      method: 'POST', headers, timeout: 120_000, agent: resolveProxyAgent(provider, fullUrl),
+    }, (proxyRes) => {
+      const chunks = [];
+      proxyRes.on('data', c => chunks.push(c));
+      proxyRes.on('end', () => {
+        const raw = Buffer.concat(chunks).toString();
+        if (proxyRes.statusCode >= 400) {
+          debugLog('proxyGeminiSync 上游错误', { status: proxyRes.statusCode, body: raw.slice(0, 400) });
+          return reject(Object.assign(new Error(formatHttpError(proxyRes.statusCode, raw)), { status: proxyRes.statusCode, body: raw }));
+        }
+        let data; try { data = JSON.parse(raw); } catch (err) { return reject(err); }
+        const text = geminiExtractText(data);
+        const um = data.usageMetadata || {};
+        const inTok = um.promptTokenCount || 0, outTok = um.candidatesTokenCount || 0;
+        const latency = Date.now() - t0;
+        const oaiResp = {
+          id: 'chatcmpl-' + Math.random().toString(36).slice(2, 12),
+          object: 'chat.completion', created: Math.floor(Date.now() / 1000), model,
+          choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: inTok, completion_tokens: outTok, total_tokens: inTok + outTok },
+        };
+        const out = outAnthropic ? openaiToAnthropic(oaiResp, model) : oaiResp;
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify(out));
+        resolve({ provider: provider.id, latency, first_token_ms: latency,
+          input_tokens: inTok, output_tokens: outTok, message_id: oaiResp.id, status_code: 200 });
+      });
+      proxyRes.on('error', reject);
+    });
+    proxyReq.on('error', reject);
+    proxyReq.on('timeout', () => { proxyReq.destroy(); reject(new Error('timeout')); });
+    proxyReq.write(bodyStr);
+    proxyReq.end();
+  });
+}
+
+// Gemini 流式：streamGenerateContent?alt=sse → 客户端 SSE（OpenAI 或 Anthropic 格式）
+function proxyGeminiStream(provider, oaiBody, model, res, outAnthropic) {
+  return new Promise((resolve, reject) => {
+    const fullUrl = `${geminiBase(provider.base_url)}/models/${model}:streamGenerateContent?alt=sse`;
+    let u; try { u = new URL(fullUrl); } catch { return reject(new Error('invalid_url')); }
+    const mod = u.protocol === 'https:' ? https : http;
+    const bodyStr = JSON.stringify(oaiToGeminiBody(oaiBody));
+    const headers = {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(bodyStr),
+      'Accept': 'text/event-stream',
+      'x-goog-api-key': provider.token || '',
+    };
+    const t0 = Date.now();
+    let firstTokenMs = null;
+    const proxyReq = mod.request({
+      hostname: u.hostname, port: u.port || 443, path: u.pathname + (u.search || ''),
+      method: 'POST', headers, timeout: 120_000, agent: resolveProxyAgent(provider, fullUrl),
+    }, (proxyRes) => {
+      if (proxyRes.statusCode >= 400) {
+        const ec = [];
+        proxyRes.on('data', c => ec.push(c));
+        proxyRes.on('end', () => {
+          const errBody = Buffer.concat(ec).toString().slice(0, 400);
+          debugLog('proxyGeminiStream 上游错误', { status: proxyRes.statusCode, body: errBody });
+          reject(Object.assign(new Error(formatHttpError(proxyRes.statusCode, errBody)), { status: proxyRes.statusCode, body: errBody }));
+        });
+        proxyRes.on('error', () => reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode })));
+        return;
+      }
+      if (res.headersSent) { proxyRes.resume(); return reject(new Error('headers_already_sent')); }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no', 'Access-Control-Allow-Origin': '*' });
+
+      const chatId = 'chatcmpl-' + Math.random().toString(36).slice(2, 26);
+      const msgId  = 'msg_' + Math.random().toString(36).slice(2, 26);
+      const created = Math.floor(Date.now() / 1000);
+      let usageIn = 0, usageOut = 0, stopReason = 'end_turn';
+
+      // 开场事件
+      if (outAnthropic) {
+        res.write(`event: message_start\ndata: ${JSON.stringify({ type: 'message_start', message: {
+          id: msgId, type: 'message', role: 'assistant', content: [], model,
+          stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } } })}\n\n`);
+        res.write(`event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })}\n\n`);
+      } else {
+        res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] })}\n\n`);
+      }
+
+      const emitText = (text) => {
+        if (!text) return;
+        if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
+        if (outAnthropic) {
+          res.write(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } })}\n\n`);
+        } else {
+          res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { content: text }, finish_reason: null }] })}\n\n`);
+        }
+      };
+
+      let buf = '';
+      proxyRes.on('data', (chunk) => {
+        buf += chunk.toString();
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue;
+          const ds = line.slice(5).replace(/^ /, '').trim();
+          if (!ds || ds === '[DONE]') continue;
+          let obj; try { obj = JSON.parse(ds); } catch { continue; }
+          for (const cand of (obj.candidates || [])) {
+            for (const part of (cand.content?.parts || [])) {
+              if (typeof part.text === 'string') emitText(part.text);
+            }
+            if (cand.finishReason) stopReason = (cand.finishReason === 'STOP' || cand.finishReason === 'END_TURN') ? 'end_turn' : 'stop';
+          }
+          const um = obj.usageMetadata;
+          if (um) { usageIn = um.promptTokenCount || usageIn; usageOut = um.candidatesTokenCount || usageOut; }
+        }
+      });
+
+      const done = () => ({ provider: provider.id, latency: Date.now() - t0,
+        first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut,
+        message_id: outAnthropic ? msgId : chatId, status_code: 200 });
+
+      proxyRes.on('end', () => {
+        if (outAnthropic) {
+          res.write(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`);
+          res.write(`event: message_delta\ndata: ${JSON.stringify({ type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null }, usage: { output_tokens: usageOut } })}\n\n`);
+          res.write('event: message_stop\ndata: {"type":"message_stop"}\n\n');
+        } else {
+          res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
+          res.write('data: [DONE]\n\n');
+        }
+        res.end();
+        resolve(done());
+      });
+      proxyRes.on('error', (err) => { res.destroy(err); resolve(done()); });
+    });
+    proxyReq.on('error', reject);
+    proxyReq.on('timeout', () => { proxyReq.destroy(); reject(new Error('timeout')); });
+    proxyReq.write(bodyStr);
+    proxyReq.end();
+  });
+}
+
 // ── P2P: always stream from backend, buffer to sync response for non-streaming clients ──
 
 function proxyP2PSync(provider, oaiBody, model, res) {
@@ -949,6 +1188,8 @@ async function callProvider(provider, isAnthropic, streaming, reqPath, body, att
     reqPath,
     attemptModel,
   });
+  // 转发请求日志（控制台常驻）：看清每次请求实际转发到哪个 provider / 哪个模型
+  console.log(`[gateway] → forward model="${attemptModel}" via provider="${provider.id}" (${provider.type}) ${provider.base_url}`);
 
   // Codex Responses 请求：anthropic 供给源走 Responses→Anthropic 桥，否则走 Responses⇄Chat
   if (reqPath === '/v1/responses' || reqPath === '/responses') {
@@ -959,6 +1200,14 @@ async function callProvider(provider, isAnthropic, streaming, reqPath, body, att
       : await proxyResponsesViaChat(provider, rb, attemptModel, res);
   }
   const attemptBody = { ...body, model: attemptModel };
+
+  // Gemini provider（generateContent）：先把客户端请求归一成 OpenAI 体，再转 Gemini
+  if (isGeminiProvider(provider)) {
+    const oaiBody = isAnthropic ? anthropicToOpenai(attemptBody) : attemptBody;
+    return streaming
+      ? await proxyGeminiStream(provider, oaiBody, attemptModel, res, isAnthropic)
+      : await proxyGeminiSync(provider, oaiBody, attemptModel, res, isAnthropic);
+  }
 
   // Anthropic-compatible provider
   const isAnthropicProvider = /anthropic/i.test(provider.base_url || '') || provider.api_format === 'anthropic';
@@ -1168,16 +1417,18 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   // Claude 应用绑 route_id 后，keyScene[key] 把 claude-* 请求透明改写成绑定的真实模型/路由链。
   const boundScene = (callerKey && _keyScene[callerKey]) || null;
   const isLlmRouter = origModel.startsWith('llm-router-');
+  const interceptScene = !boundScene ? _routerModelMap[origModel] : null;
   debugLog(`route() 路由判定`, {
     requested_model: origModel,
     callerKey: callerKey?.slice(0, 20),
     has_boundScene: !!boundScene,
     boundScene_steps: boundScene?.steps,
     is_llm_router: isLlmRouter,
+    has_intercept: !!interceptScene,
   });
   const hasScene = (s) => !!(s && (s.steps?.length || s.rules?.length));
-  if (hasScene(boundScene) || isLlmRouter) {
-    const scene = hasScene(boundScene) ? boundScene : _routerModelMap[origModel];
+  if (hasScene(boundScene) || isLlmRouter || hasScene(interceptScene)) {
+    const scene = hasScene(boundScene) ? boundScene : (interceptScene || _routerModelMap[origModel]);
     if (!hasScene(scene)) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'scene_not_found', model }));
@@ -1315,6 +1566,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
 function pushLog(entry) {
   log.push(entry);
   if (log.length > LOG_MAX) log.shift();
+  _saveRouteLog();
 }
 
 // 把单次请求的真实用量（含输入/输出/缓存命中/缓存写入）推给 recorder（local-stats）。

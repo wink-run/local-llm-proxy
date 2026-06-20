@@ -21,7 +21,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ libsqlite3-dev \
   && npm config set fetch-retries 5 \
   && npm config set fetch-retry-mintimeout 20000 \
-  && npm install --omit=dev js-yaml@4.1.1 better-sqlite3@12.10.0 ws@8.20.0 \
+  && npm install --omit=dev js-yaml@4.1.1 better-sqlite3@12.10.0 ws@8.20.0 https-proxy-agent@7.0.6 proxy-from-env@2.1.0 \
   && rm -rf /var/lib/apt/lists/*
 
 # ── Stage 3: runtime（与 native-deps 同 Node 版本）────────────────────────────

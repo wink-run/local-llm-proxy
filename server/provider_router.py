@@ -16,7 +16,7 @@ from worker_pool import pool
 
 router = APIRouter()
 
-_VALID_API_STYLES = ("openai", "anthropic", "claude_oauth")
+_VALID_API_STYLES = ("openai", "anthropic", "claude_oauth", "gemini")
 
 
 async def _sync_pool() -> None:
@@ -106,8 +106,8 @@ async def create_provider(req: ProviderCreate, uid: int = Depends(get_current_us
         credentials = {"refresh_token": req.refresh_token.strip()}
         base_url, api_key = req.base_url.strip(), ""
     else:
-        if req.api_style not in ("openai", "anthropic"):
-            raise HTTPException(400, "api_style 必须是 openai 或 anthropic")
+        if req.api_style not in ("openai", "anthropic", "gemini"):
+            raise HTTPException(400, "api_style 必须是 openai、anthropic 或 gemini")
         api_style = req.api_style
         if not req.base_url.strip():
             raise HTTPException(400, "base_url 不能为空")

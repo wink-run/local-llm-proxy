@@ -299,12 +299,13 @@ function strategyLabel(key, t) {
 function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', onUpdate, onDelete, onRegenKey, onCancelManage, onWritten, onClose, onCancel }) {
   const { t } = useLang();
   const dismiss = onCancel || onClose;   // ✕/取消/点遮罩 → 取消（新应用未保存会被丢弃）
-  const [name,        setName]        = useState(app.name || '');
-  const [icon,        setIcon]        = useState(app.icon || '🔧');
-  const [desc,        setDesc]        = useState(app.description || '');
-  const [routeId,     setRouteId]     = useState(() => routeSelectValue(app.route_id, availableModels, routes));
-  const [busy,        setBusy]        = useState(false);
-  const [copied,      setCopied]      = useState(false);
+  const [name,           setName]           = useState(app.name || '');
+  const [icon,           setIcon]           = useState(app.icon || '🔧');
+  const [desc,           setDesc]           = useState(app.description || '');
+  const [routeId,        setRouteId]        = useState(() => routeSelectValue(app.route_id, availableModels, routes));
+  const [modelIntercept, setModelIntercept] = useState(app.model_intercept || '');
+  const [busy,           setBusy]           = useState(false);
+  const [copied,         setCopied]         = useState(false);
   const [claudeDevMode, setClaudeDevMode] = useState(null); // Claude Desktop 开发者模式状态
   // config-file 类 API Key 应用：两 Tab（0=配置文件写入和 API Key｜1=路由规则）
   const isCfg = app.link_method === 'api-key' && !!app.config_file;
@@ -353,6 +354,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     await onUpdate({
       id: app.id, name, icon, description: desc,
       route_id: routeId || null,
+      model_intercept: modelIntercept.trim() || null,
       ...(app.env && !app.config_file ? { env: parseEnvText(envText) } : {}),
     });
     setBusy(false);
@@ -509,30 +511,41 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   );
 
   const routeSection = (isKeyApp(app.link_method) || app.link_method === 'shim') && app.route_bindable !== false && (
-    <div>
-      <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.routeRules')}</div>
-      <select value={routeId} onChange={e => setRouteId(e.target.value)}
-        className="w-full text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none text-zinc-800 dark:text-zinc-200">
-        {/* manual（手工添加）无官方可直连 → 必须绑定，「直连」改为不可选占位 */}
-        {app.link_method === 'manual'
-          ? <option value="" disabled>{t('gateway.app.routeRequired')}</option>
-          : <option value="">{t('gateway.app.routeDirect')}</option>}
-        {(() => {
-          const avail = new Set(availableModels.map(m => m.id));
-          const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
-          return usable.length > 0 && (
-            <optgroup label={t('gateway.app.sceneRoutes')}>
-              {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
-            </optgroup>
-          );
-        })()}
-        {['free','p2p','paid'].map(tier => {
-          const tm = availableModels.filter(m => m.tier === tier);
-          if (!tm.length) return null;
-          const label = tierModelLabel(tier, t);
-          return <optgroup key={tier} label={label}>{tm.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}</optgroup>;
-        })}
-      </select>
+    <div className="space-y-3">
+      <div>
+        <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.routeRules')}</div>
+        <select value={routeId} onChange={e => setRouteId(e.target.value)}
+          className="w-full text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none text-zinc-800 dark:text-zinc-200">
+          {/* manual（手工添加）无官方可直连 → 必须绑定，「直连」改为不可选占位 */}
+          {app.link_method === 'manual'
+            ? <option value="" disabled>{t('gateway.app.routeRequired')}</option>
+            : <option value="">{t('gateway.app.routeDirect')}</option>}
+          {(() => {
+            const avail = new Set(availableModels.map(m => m.id));
+            const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
+            return usable.length > 0 && (
+              <optgroup label={t('gateway.app.sceneRoutes')}>
+                {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
+              </optgroup>
+            );
+          })()}
+          {['free','p2p','paid'].map(tier => {
+            const tm = availableModels.filter(m => m.tier === tier);
+            if (!tm.length) return null;
+            const label = tierModelLabel(tier, t);
+            return <optgroup key={tier} label={label}>{tm.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}</optgroup>;
+          })}
+        </select>
+      </div>
+      {app.link_method === 'manual' && (
+        <div>
+          <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-1">{t('gateway.app.modelIntercept')}</div>
+          <input value={modelIntercept} onChange={e => setModelIntercept(e.target.value)}
+            placeholder={t('gateway.app.modelInterceptPlaceholder')}
+            className="w-full text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-zinc-800 dark:text-zinc-200 font-mono" />
+          <div className="text-xs text-zinc-400 mt-1">{t('gateway.app.modelInterceptHint')}</div>
+        </div>
+      )}
     </div>
   );
 
@@ -602,12 +615,13 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
 // 与 AppSettingsPanel（弹窗，用于编辑/桌面应用托管）是两套独立组件。
 function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKey, onSave, onCancel }) {
   const { t } = useLang();
-  const [name,        setName]        = useState(app.name || '');
-  const [icon,        setIcon]        = useState(app.icon || '🔧');
-  const [desc,        setDesc]        = useState(app.description || '');
-  const [routeId,     setRouteId]     = useState(() => routeSelectValue(app.route_id, availableModels, routes));
-  const [busy,        setBusy]        = useState(false);
-  const [copied,      setCopied]      = useState(false);
+  const [name,           setName]           = useState(app.name || '');
+  const [icon,           setIcon]           = useState(app.icon || '🔧');
+  const [desc,           setDesc]           = useState(app.description || '');
+  const [routeId,        setRouteId]        = useState(() => routeSelectValue(app.route_id, availableModels, routes));
+  const [modelIntercept, setModelIntercept] = useState(app.model_intercept || '');
+  const [busy,           setBusy]           = useState(false);
+  const [copied,         setCopied]         = useState(false);
   const ICONS = ['🤖','✏️','🔧','💻','🎯','🌐','📱','🔑','⚡','🛠️','🎨','📊'];
 
   async function save() {
@@ -615,6 +629,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
     await onUpdate({
       id: app.id, name, icon, description: desc,
       route_id: routeId || null,
+      model_intercept: modelIntercept.trim() || null,
     });
     setBusy(false);
     onSave();
@@ -684,6 +699,14 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
               return <optgroup key={tier} label={label}>{tm.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}</optgroup>;
             })}
           </select>
+        </div>
+        {/* 模型拦截：工具发过来的真实模型名 → 转发到上面选的路由 */}
+        <div>
+          <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-1">{t('gateway.app.modelIntercept')}</div>
+          <input value={modelIntercept} onChange={e => setModelIntercept(e.target.value)}
+            placeholder={t('gateway.app.modelInterceptPlaceholder')}
+            className="w-full text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-zinc-800 dark:text-zinc-200 font-mono" />
+          <div className="text-xs text-zinc-400 mt-1">{t('gateway.app.modelInterceptHint')}</div>
         </div>
         {/* 接入配置：Key + base_url + 示例（用户自行把应用指向网关）*/}
         {app.api_key && (
@@ -1172,7 +1195,8 @@ function AppDetailModal({ app, onClose }) {
   );
 }
 
-function AppManager({ externalRoutes, availableModels = [] }) {
+function AppManager({ externalRoutes, availableModels = [], onActivity }) {
+  const refresh = typeof onActivity === 'function' ? onActivity : () => {};
   const { t } = useLang();
   const appsApi = getApps();
   const [apps,     setApps]     = useState([]);
@@ -1393,12 +1417,13 @@ function AppManager({ externalRoutes, availableModels = [] }) {
           }
         } else { latency = Date.now() - start; }
         setTestState(s => ({ ...s, [app.id]: { ok: true, latency } }));
-        // 网关已落账 → 刷新统计（总请求数 / 总token）
-        setTimeout(() => load(), 600);
+        // 网关已落账 → 刷新统计（总请求数 / 总token）+ 路由明细日志
+        setTimeout(() => { load(); refresh(); }, 600);
       }
     } catch (e) {
       const msg = e?.name === 'AbortError' ? t('gateway.common.timeout30s') : (e?.message || t('gateway.common.connectFailed'));
       setTestState(s => ({ ...s, [app.id]: { ok: false, error: msg, latency: Date.now() - start } }));
+      setTimeout(() => refresh(), 600);
     } finally {
       clearTimeout(timer);
     }
@@ -2789,7 +2814,7 @@ export default function Gateway() {
 
         {/* Tab0: 应用列表 & 托管 */}
         {mainTab === 0 && (
-          <AppManager externalRoutes={routes} availableModels={availableModels} />
+          <AppManager externalRoutes={routes} availableModels={availableModels} onActivity={refresh} />
         )}
 
         {/* Tab1: 场景路由 */}

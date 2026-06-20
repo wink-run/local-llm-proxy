@@ -1027,6 +1027,20 @@ function registerIPC() {
         routerMap[r.model_key] = { steps: r.steps || [], scene_name: r.scene_name, rules: r.rules || null, classifier: r.classifier || null };
       }
     }
+    // manual / api-key apps: if model_intercept is set, redirect that incoming model name to the configured route
+    const { parseRouteBinding } = require('../shared/route-binding');
+    for (const app of apps) {
+      if (app.model_intercept && app.route_id) {
+        const parsed = parseRouteBinding(app.route_id, routes);
+        if (parsed.isScene && parsed.scene) {
+          const s = parsed.scene;
+          routerMap[app.model_intercept] = { steps: s.steps || [], scene_name: s.scene_name, rules: s.rules || null, classifier: s.classifier || null };
+        } else {
+          const modelId = parsed.modelId || app.route_id;
+          routerMap[app.model_intercept] = { steps: [{ model: modelId, ...(parsed.tier ? { tier: parsed.tier } : {}) }], scene_name: app.name || modelId, rules: null, classifier: null };
+        }
+      }
+    }
     gateway.setRouterModelMap(routerMap);
     // api key → route（从 apps 生成，替代旧的 local_keys）
     // ── 请求控制：api-key 按 key 匹配，shim 按协议路径匹配 ──────────────────────
@@ -1543,12 +1557,14 @@ function registerIPC() {
     const { api_key: _drop, ...safePatch } = patch;
     apps[idx] = { ...apps[idx], ...safePatch };
     saveApps(apps);
+    try { syncGatewayFromConfig(readLocalConfig()); } catch {}
     return apps[idx];
   });
 
   ipcMain.handle('apps:delete', (_e, id) => {
     const apps = getApps().filter(a => a.id !== id);
     saveApps(apps);
+    try { syncGatewayFromConfig(readLocalConfig()); } catch {}
     return { ok: true };
   });
 
