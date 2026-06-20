@@ -1819,6 +1819,17 @@ function registerIPC() {
 
   ipcMain.handle('sessions:launch', (_e, { target_agent, cwd, handoffFile } = {}) => {
     try {
+      // Cursor 没有可注入 prompt 的 CLI：打开项目目录 + 交接文件，brief 已在剪贴板，用户粘进 Cursor 对话框。
+      if (target_agent === 'cursor') {
+        if (process.platform !== 'darwin') return { error: 'launch_unsupported_platform' };
+        const args = ['-a', 'Cursor'];
+        if (cwd) args.push(cwd);
+        if (handoffFile) args.push(handoffFile);
+        require('child_process').execFile('open', args, err => {
+          if (err) console.error('[sessions:launch] cursor open', err.message);
+        });
+        return { ok: true, mode: 'open' };
+      }
       const cli = _AGENT_CLI[target_agent];
       if (!cli) return { error: 'unsupported_target' };
       const cliPath = _resolveAgentCli(cli);

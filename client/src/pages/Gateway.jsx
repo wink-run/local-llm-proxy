@@ -989,10 +989,11 @@ function SessionManager() {
   );
 }
 
-// 可作为接续目标的 agent（具备可拉起的 CLI / 有意义的续聊目标）
+// 可作为接续目标的 agent。claude-code/codex 走终端 CLI；cursor 是 GUI，打开项目 + brief 入剪贴板。
 const CONTINUE_TARGETS = [
   { id: 'claude-code', label: 'Claude Code' },
   { id: 'codex', label: 'Codex' },
+  { id: 'cursor', label: 'Cursor' },
 ];
 
 /** 单会话行 */
@@ -1068,11 +1069,14 @@ function ContinueModal({ source, target, onClose }) {
     return () => { alive = false; };
   }, [source, target]);
 
+  const isCursor = target === 'cursor';
+  const launchLabel = `${isCursor ? t('gateway.sessions.openIn') : t('gateway.sessions.launchIn')} ${targetLabel}`;
+
   const doLaunch = async () => {
     const r = await window.electronAPI.sessions.launch({
       target_agent: target, cwd: res.cwd, handoffFile: res.handoffFile,
     });
-    if (r?.ok) setNotice(t('gateway.sessions.launched'));
+    if (r?.ok) setNotice(isCursor ? t('gateway.sessions.cursorOpened') : t('gateway.sessions.launched'));
     else if (r?.error === 'cli_not_found') setNotice(t('gateway.sessions.cliNotFound').replace('{cli}', r.cli || target));
     else setNotice(t('gateway.sessions.continueFailed'));
   };
@@ -1109,7 +1113,7 @@ function ContinueModal({ source, target, onClose }) {
                 <button onClick={() => { navigator.clipboard?.writeText(res.brief); setNotice(t('gateway.sessions.briefCopied')); }}
                   className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300">{t('gateway.sessions.copyMd')}</button>
                 <button onClick={doLaunch}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white">{t('gateway.sessions.launchIn')} {targetLabel}</button>
+                  className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white">{launchLabel}</button>
                 <button onClick={onClose} className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500">{t('gateway.sessions.close')}</button>
               </div>
             </div>
