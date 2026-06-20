@@ -1796,32 +1796,13 @@ function registerIPC() {
     catch (e) { console.error('[sessions:continue]', e.message); return { error: 'continue_failed' }; }
   });
 
-  // agent CLI 在不同安装下可能不在 Electron 的 PATH 里，补充常见路径再解析。
-  function _resolveAgentCli(cli) {
-    const { execSync } = require('child_process');
-    const home = require('os').homedir();
-    const extra = [`${home}/.local/bin`, '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin'].join(':');
-    try {
-      const out = execSync(`command -v ${cli}`, {
-        encoding: 'utf8', env: { ...process.env, PATH: `${extra}:${process.env.PATH || ''}` },
-      }).trim();
-      if (out) return out;
-    } catch {}
-    const fs = require('fs');
-    for (const dir of extra.split(':')) {
-      const p = `${dir}/${cli}`;
-      try { if (fs.existsSync(p)) return p; } catch {}
-    }
-    return null;
-  }
-
-  const _AGENT_CLI = { 'claude-code': 'claude', codex: 'codex' };
-
+  // 统一“打开工作区 + 粘贴”模式：不从 CLI 注入 prompt。
+  // Cursor → 打开 App + 交接文件；claude-code/codex → 在项目目录打开终端，用户自行启动 agent 并粘贴 brief。
   ipcMain.handle('sessions:launch', (_e, { target_agent, cwd, handoffFile } = {}) => {
     try {
-      // Cursor 没有可注入 prompt 的 CLI：打开项目目录 + 交接文件，brief 已在剪贴板，用户粘进 Cursor 对话框。
+      if (process.platform !== 'darwin') return { error: 'launch_unsupported_platform' };
+
       if (target_agent === 'cursor') {
-        if (process.platform !== 'darwin') return { error: 'launch_unsupported_platform' };
         const args = ['-a', 'Cursor'];
         if (cwd) args.push(cwd);
         if (handoffFile) args.push(handoffFile);
@@ -1830,19 +1811,16 @@ function registerIPC() {
         });
         return { ok: true, mode: 'open' };
       }
-      const cli = _AGENT_CLI[target_agent];
-      if (!cli) return { error: 'unsupported_target' };
-      const cliPath = _resolveAgentCli(cli);
-      if (!cliPath) return { error: 'cli_not_found', cli };
-      const lc = sessionManager.buildLaunchCommand({ target_agent, cwd, handoffFile, cliPath });
-      if (!lc.supported) return { error: lc.reason || 'unsupported', cli };
-      if (process.platform !== 'darwin') return { error: 'launch_unsupported_platform', shellCmd: lc.shellCmd };
+
+      // 终端类目标：仅在项目目录打开终端（cd），不运行任何 agent 命令。
+      if (!cwd) return { error: 'no_cwd' };
+      const q = s => `'${String(s).replace(/'/g, `'\\''`)}'`;
       const appleStr = s => '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
-      const osa = `tell application "Terminal"\n  activate\n  do script ${appleStr(lc.shellCmd)}\nend tell`;
+      const osa = `tell application "Terminal"\n  activate\n  do script ${appleStr(`cd ${q(cwd)}`)}\nend tell`;
       require('child_process').execFile('osascript', ['-e', osa], err => {
         if (err) console.error('[sessions:launch] osascript', err.message);
       });
-      return { ok: true, shellCmd: lc.shellCmd };
+      return { ok: true, mode: 'terminal' };
     } catch (e) {
       console.error('[sessions:launch]', e.message);
       return { error: 'launch_failed' };

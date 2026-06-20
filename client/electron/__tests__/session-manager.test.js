@@ -10,7 +10,6 @@ const {
   filePathFromInput,
   composeHandoffDoc,
   summarizeViaGateway,
-  buildLaunchCommand,
 } = require('../session-manager');
 
 test('mergeAgentRows tags agent_id and sorts by lastTs desc', () => {
@@ -141,13 +140,4 @@ test('summarizeViaGateway returns first successful model, skips failures', async
 test('summarizeViaGateway returns null when all models fail', async () => {
   const res = await summarizeViaGateway('digest', { fetchImpl: async () => ({ ok: false }) });
   assert.equal(res, null);
-});
-
-test('buildLaunchCommand builds a cd+cli command, flags unsupported targets', () => {
-  const ok = buildLaunchCommand({ target_agent: 'claude-code', cwd: '/x/demo', handoffFile: '/h/f.md', cliPath: '/bin/claude' });
-  assert.equal(ok.supported, true);
-  assert.match(ok.shellCmd, /cd '\/x\/demo' && \/bin\/claude '请阅读 \/h\/f\.md/);
-
-  assert.equal(buildLaunchCommand({ target_agent: 'cursor', cwd: '/x', handoffFile: '/f', cliPath: '/c' }).supported, false);
-  assert.equal(buildLaunchCommand({ target_agent: 'claude-code', cwd: '/x', handoffFile: '/f' }).reason, 'cli_not_found');
 });

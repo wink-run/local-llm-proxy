@@ -221,20 +221,6 @@ async function summarizeViaGateway(digest, {
   return null;
 }
 
-const AGENT_CLI = { 'claude-code': 'claude', codex: 'codex' };
-
-/** 目标 agent → 终端启动命令（纯函数，可单测）。cli 路径由调用方解析后传入。 */
-function buildLaunchCommand({ target_agent, cwd, handoffFile, cliPath } = {}) {
-  const supported = !!AGENT_CLI[target_agent];
-  if (!supported) return { supported: false, reason: 'unsupported_target' };
-  if (!cliPath) return { supported: false, reason: 'cli_not_found', cli: AGENT_CLI[target_agent] };
-  const bootstrap = `请阅读 ${handoffFile} 了解之前的工作并继续。`;
-  const q = s => `'${String(s).replace(/'/g, `'\\''`)}'`;
-  const cdPart = cwd ? `cd ${q(cwd)} && ` : '';
-  const shellCmd = `${cdPart}${cliPath} ${q(bootstrap)}`;
-  return { supported: true, bootstrap, shellCmd };
-}
-
 /** 生成交接：取 trace → digest → 模型 brief（失败兜底）→ 写文件 → 返回供 UI。 */
 async function continueSession(deps, { source_agent, session_id, target_agent } = {}) {
   const { sessionBrowser } = deps;
@@ -270,5 +256,5 @@ module.exports = {
   mergeAgentRows, joinSessionsWithMeta, buildSessionPackJSON, renderSessionPackMarkdown,
   getSessions, exportSession,
   buildSessionDigest, filePathFromInput, composeHandoffDoc, summarizeViaGateway,
-  buildLaunchCommand, continueSession,
+  continueSession,
 };
