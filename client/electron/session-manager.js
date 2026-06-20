@@ -94,6 +94,47 @@ function renderSessionPackMarkdown(pack = {}) {
   return lines.join('\n');
 }
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+/** 聚合会话 + 叠加层 + 过滤。返回供 UI 渲染的会话数组。 */
+function getSessions(deps, opts = {}) {
+  const { sessionBrowser, localStats } = deps;
+  const rows = sessionBrowser.listAllSessions(opts);
+  const meta = localStats.listSessionMeta();
+  return joinSessionsWithMeta(rows, meta, { showArchived: !!opts.showArchived });
+}
+
+/** 导出单会话为 JSON 包或 Markdown，写入默认目录，返回落盘信息。 */
+function exportSession(deps, { agent_id, session_id, format = 'json' } = {}) {
+  const { sessionBrowser } = deps;
+  if (!agent_id || !session_id) return { error: 'missing_params' };
+  const trace = sessionBrowser.getTrace(agent_id, session_id);
+  if (!trace || trace.error) return { error: 'trace_unavailable' };
+
+  const pack = buildSessionPackJSON({ trace, agent_id, session_id });
+  const dir = path.join(os.homedir(), '.tokenbank', 'session-packs');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+
+  const base = `${(pack.source.project || 'session')}-${session_id.slice(0, 8)}`.replace(/[^\w.-]+/g, '_');
+  if (format === 'copy') {
+    // 仅返回 Markdown 内容供渲染进程复制到剪贴板，不落盘。
+    return { ok: true, format, content: renderSessionPackMarkdown(pack) };
+  }
+  if (format === 'markdown') {
+    const content = renderSessionPackMarkdown(pack);
+    const file = path.join(dir, `${base}.md`);
+    fs.writeFileSync(file, content, 'utf8');
+    return { ok: true, file, format, content };
+  }
+  const content = JSON.stringify(pack, null, 2);
+  const file = path.join(dir, `${base}.json`);
+  fs.writeFileSync(file, content, 'utf8');
+  return { ok: true, file, format, content };
+}
+
 module.exports = {
   mergeAgentRows, joinSessionsWithMeta, buildSessionPackJSON, renderSessionPackMarkdown,
+  getSessions, exportSession,
 };
