@@ -1011,13 +1011,13 @@ function SessionRow({ row, fmtN, onTrace, onMeta, onExport, onContinue }) {
 
   return (
     <div className="px-5 py-2.5">
-      <div className="grid grid-cols-[6rem_minmax(0,1.4fr)_3.5rem_3.5rem_5rem_5.5rem] gap-2 items-center text-xs">
+      <div className="grid grid-cols-[6rem_minmax(0,1.4fr)_3.5rem_4rem_5rem_auto] gap-2 items-center text-xs">
         <span className="text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 text-center truncate">{row.agent_id}</span>
-        <div className="min-w-0">
+        <div className="min-w-0 cursor-pointer group" onClick={onTrace} title={t('gateway.detail.bySession')}>
           <div className="font-semibold text-zinc-700 dark:text-zinc-200 truncate flex items-center gap-1">
-            <button onClick={() => onMeta({ favorite: !row.favorite })}
+            <button onClick={e => { e.stopPropagation(); onMeta({ favorite: !row.favorite }); }}
               className={row.favorite ? 'text-amber-500' : 'text-zinc-300 hover:text-amber-400'}>★</button>
-            {row.project || '—'}
+            <span className="truncate group-hover:text-blue-600 dark:group-hover:text-blue-400">{row.project || '—'}</span>
             {(row.tags || []).map(tg => (
               <span key={tg} className="text-xs font-normal px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500">{tg}</span>
             ))}
@@ -1027,13 +1027,15 @@ function SessionRow({ row, fmtN, onTrace, onMeta, onExport, onContinue }) {
         <div className="text-right tabular-nums text-zinc-600 dark:text-zinc-300">{row.calls ?? 0}</div>
         <div className="text-right tabular-nums text-zinc-600 dark:text-zinc-300">{fmtN(row.tokens)}</div>
         <div className="text-right text-zinc-400">{fmtTime(row.lastTs)}</div>
-        <div className="flex gap-2 justify-end text-zinc-400 relative">
-          <button title={t('gateway.sessions.continue')} onClick={() => { setContOpen(v => !v); setExportOpen(false); }} className="hover:text-blue-600 text-blue-500">↗</button>
-          <button title={t('gateway.sessions.tag')} onClick={() => setEditing(v => !v)} className="hover:text-zinc-600">✎</button>
-          <button title={t('gateway.sessions.export')} onClick={() => { setExportOpen(v => !v); setContOpen(false); }} className="hover:text-zinc-600">⤓</button>
-          <button title="trace" onClick={onTrace} className="hover:text-zinc-600">▸</button>
+        <div className="flex gap-1.5 justify-end items-center relative">
+          <button onClick={() => { setContOpen(v => !v); setExportOpen(false); }}
+            className="px-2 py-1 rounded-md border border-blue-200 dark:border-blue-900/50 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 whitespace-nowrap">{t('gateway.sessions.continue')}</button>
+          <button onClick={() => { setEditing(v => !v); }}
+            className="px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 whitespace-nowrap">{t('gateway.sessions.tag')}</button>
+          <button onClick={() => { setExportOpen(v => !v); setContOpen(false); }}
+            className="px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 whitespace-nowrap">{t('gateway.sessions.export')}</button>
           {contOpen && (
-            <div className="absolute right-0 top-5 z-10 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg py-1 text-xs w-44">
+            <div className="absolute right-0 top-8 z-10 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg py-1 text-xs w-44">
               <div className="px-3 py-1 text-zinc-400">{t('gateway.sessions.continueTo')}</div>
               {targets.map(tg => (
                 <button key={tg.id} onClick={() => { onContinue(tg.id); setContOpen(false); }}
@@ -1042,7 +1044,7 @@ function SessionRow({ row, fmtN, onTrace, onMeta, onExport, onContinue }) {
             </div>
           )}
           {exportOpen && (
-            <div className="absolute right-0 top-5 z-10 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg py-1 text-xs w-40">
+            <div className="absolute right-0 top-8 z-10 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg py-1 text-xs w-40">
               <button onClick={() => { onExport('json'); setExportOpen(false); }} className="block w-full text-left px-3 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-700">{t('gateway.sessions.exportJson')}</button>
               <button onClick={() => { onExport('markdown'); setExportOpen(false); }} className="block w-full text-left px-3 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-700">{t('gateway.sessions.exportMd')}</button>
               <button onClick={() => { onExport('copy'); setExportOpen(false); }} className="block w-full text-left px-3 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-700">{t('gateway.sessions.copyMd')}</button>
