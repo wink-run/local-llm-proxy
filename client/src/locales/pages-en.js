@@ -50,6 +50,7 @@ export default {
   'gateway.sessions.continueFailed': 'Handoff generation failed',
   'gateway.sessions.briefCopied': 'Handoff brief copied to clipboard',
   'gateway.sessions.handoffFile': 'Handoff file',
+  'gateway.sessions.pasteHint': 'The handoff doc is copied to your clipboard — paste it into {target}’s chat to continue the previous work.',
   'gateway.sessions.close': 'Close',
 
   // ── Common buttons / status ──

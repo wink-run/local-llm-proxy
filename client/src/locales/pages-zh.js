@@ -50,6 +50,7 @@ export default {
   'gateway.sessions.continueFailed': '生成交接失败',
   'gateway.sessions.briefCopied': '交接 brief 已复制到剪贴板',
   'gateway.sessions.handoffFile': '交接文件',
+  'gateway.sessions.pasteHint': '接续文档已复制到剪贴板，把它粘贴到 {target} 的对话框即可继续之前的工作。',
   'gateway.sessions.close': '关闭',
 
   // ── 通用按钮/状态 ──

@@ -1104,7 +1104,11 @@ function ContinueModal({ source, target, onClose }) {
               </span>
               <span className="font-mono truncate max-w-md" title={res.handoffFile}>{t('gateway.sessions.handoffFile')}: {res.handoffFile}</span>
             </div>
-            <div className="flex-1 overflow-y-auto p-4">
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              <div className="text-xs text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-900/40 rounded-lg px-3 py-2 flex items-start gap-2">
+                <span>📋</span>
+                <span>{t('gateway.sessions.pasteHint').replace('{target}', targetLabel)}</span>
+              </div>
               <pre className="text-xs text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-3">{res.brief}</pre>
             </div>
             <div className="px-5 py-3 border-t border-zinc-100 dark:border-zinc-800 shrink-0 flex items-center gap-2">
