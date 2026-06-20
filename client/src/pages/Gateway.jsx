@@ -872,6 +872,188 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
   );
 }
 
+/** 会话管理面板：跨 agent 聚合 + 搜索/过滤 + 收藏/标签/归档 + 导出 */
+function SessionManager() {
+  const { t } = useLang();
+  const [rows, setRows]           = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [q, setQ]                 = useState('');
+  const [agentFilter, setAgent]   = useState('all');
+  const [favOnly, setFavOnly]     = useState(false);
+  const [showArchived, setShowA]  = useState(false);
+  const [traceRow, setTraceRow]   = useState(null);
+  const [notice, setNotice]       = useState('');
+  const fmtN = n => (n >= 1000 ? (n / 1000).toFixed(1) + 'K' : String(n ?? 0));
+
+  const reload = useCallback(() => {
+    if (!window.electronAPI?.sessions) { setLoading(false); return; }
+    setLoading(true);
+    window.electronAPI.sessions.listAll({ showArchived })
+      .then(r => { setRows(Array.isArray(r) ? r : []); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [showArchived]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const setMeta = async (row, patch) => {
+    await window.electronAPI.sessions.setMeta({
+      agent_id: row.agent_id, session_id: row.session_id, ...patch,
+    });
+    reload();
+  };
+
+  const flash = msg => { setNotice(msg); setTimeout(() => setNotice(''), 2500); };
+
+  const doExport = async (row, format) => {
+    const res = await window.electronAPI.sessions.export({
+      agent_id: row.agent_id, session_id: row.session_id, format,
+    });
+    if (res?.error || !res?.ok) { flash(t('gateway.sessions.exportFailed')); return; }
+    if (format === 'copy') {
+      try { await navigator.clipboard.writeText(res.content); flash(t('gateway.sessions.copied')); }
+      catch { flash(t('gateway.sessions.exportFailed')); }
+      return;
+    }
+    flash(t('gateway.sessions.exported').replace('{file}', res.file));
+  };
+
+  const agents = Array.from(new Set(rows.map(r => r.agent_id)));
+  const filtered = rows.filter(r => {
+    if (agentFilter !== 'all' && r.agent_id !== agentFilter) return false;
+    if (favOnly && !r.favorite) return false;
+    if (q) {
+      const hay = `${r.project || ''} ${r.context || ''} ${(r.tags || []).join(' ')}`.toLowerCase();
+      if (!hay.includes(q.toLowerCase())) return false;
+    }
+    return true;
+  });
+  const favCount = rows.filter(r => r.favorite).length;
+
+  if (!window.electronAPI?.sessions) {
+    return <div className="px-5 py-16 text-center text-xs text-zinc-400">{t('gateway.sessions.desktopOnly')}</div>;
+  }
+
+  return (
+    <div>
+      {traceRow && (
+        <SessionTraceModal app={null} sessionId={traceRow.session_id}
+          traceAgentId={traceRow.agent_id} onClose={() => setTraceRow(null)} />
+      )}
+
+      {/* 操作栏 */}
+      <div className="flex items-center gap-2 px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 flex-wrap">
+        <div className="relative flex-1 min-w-[180px]">
+          <input value={q} onChange={e => setQ(e.target.value)}
+            placeholder={t('gateway.sessions.search')}
+            className="w-full text-xs pl-3 pr-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800" />
+        </div>
+        <button onClick={() => setAgent('all')}
+          className={`text-xs px-3 py-1.5 rounded-full ${agentFilter === 'all' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : 'border border-zinc-200 dark:border-zinc-700 text-zinc-500'}`}>
+          {t('gateway.sessions.all')}
+        </button>
+        {agents.map(a => (
+          <button key={a} onClick={() => setAgent(a)}
+            className={`text-xs px-3 py-1.5 rounded-full ${agentFilter === a ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : 'border border-zinc-200 dark:border-zinc-700 text-zinc-500'}`}>
+            {a}
+          </button>
+        ))}
+        <button onClick={() => setFavOnly(v => !v)}
+          className={`text-xs px-3 py-1.5 rounded-full ${favOnly ? 'bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400' : 'border border-zinc-200 dark:border-zinc-700 text-zinc-500'}`}>
+          ★ {t('gateway.sessions.favOnly')}
+        </button>
+        <label className="text-xs text-zinc-500 flex items-center gap-1 ml-1">
+          <input type="checkbox" checked={showArchived} onChange={e => setShowA(e.target.checked)} />
+          {t('gateway.sessions.showArchived')}
+        </label>
+        <div className="ml-auto flex gap-3 text-xs text-zinc-400">
+          <span><strong className="text-zinc-700 dark:text-zinc-200">{rows.length}</strong> {t('gateway.sessions.statSessions')}</span>
+          <span><strong className="text-zinc-700 dark:text-zinc-200">{agents.length}</strong> {t('gateway.sessions.statAgents')}</span>
+          <span><strong className="text-zinc-700 dark:text-zinc-200">{favCount}</strong> {t('gateway.sessions.statFav')}</span>
+        </div>
+      </div>
+
+      {notice && <div className="px-5 py-1.5 text-xs text-green-600 dark:text-green-400">{notice}</div>}
+
+      {/* 列表 */}
+      <div className="max-h-[60vh] overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800/60">
+        {loading ? (
+          <div className="px-5 py-16 text-center text-xs text-zinc-400">…</div>
+        ) : filtered.length === 0 ? (
+          <div className="px-5 py-16 text-center text-xs text-zinc-400">{t('gateway.sessions.empty')}</div>
+        ) : filtered.map(row => (
+          <SessionRow key={`${row.agent_id}-${row.session_id}`} row={row} fmtN={fmtN}
+            onTrace={() => setTraceRow(row)} onMeta={patch => setMeta(row, patch)} onExport={fmt => doExport(row, fmt)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** 单会话行 */
+function SessionRow({ row, fmtN, onTrace, onMeta, onExport }) {
+  const { t } = useLang();
+  const [editing, setEditing] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const fmtTime = ts => ts ? new Date(ts * 1000).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+
+  return (
+    <div className="px-5 py-2.5">
+      <div className="grid grid-cols-[6rem_minmax(0,1.4fr)_3.5rem_3.5rem_5rem_5.5rem] gap-2 items-center text-xs">
+        <span className="text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 text-center truncate">{row.agent_id}</span>
+        <div className="min-w-0">
+          <div className="font-semibold text-zinc-700 dark:text-zinc-200 truncate flex items-center gap-1">
+            <button onClick={() => onMeta({ favorite: !row.favorite })}
+              className={row.favorite ? 'text-amber-500' : 'text-zinc-300 hover:text-amber-400'}>★</button>
+            {row.project || '—'}
+            {(row.tags || []).map(tg => (
+              <span key={tg} className="text-xs font-normal px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500">{tg}</span>
+            ))}
+          </div>
+          <div className="text-zinc-400 truncate">{row.context || '—'}</div>
+        </div>
+        <div className="text-right tabular-nums text-zinc-600 dark:text-zinc-300">{row.calls ?? 0}</div>
+        <div className="text-right tabular-nums text-zinc-600 dark:text-zinc-300">{fmtN(row.tokens)}</div>
+        <div className="text-right text-zinc-400">{fmtTime(row.lastTs)}</div>
+        <div className="flex gap-2 justify-end text-zinc-400 relative">
+          <button title={t('gateway.sessions.tag')} onClick={() => setEditing(v => !v)} className="hover:text-zinc-600">✎</button>
+          <button title={t('gateway.sessions.export')} onClick={() => setExportOpen(v => !v)} className="hover:text-zinc-600">⤓</button>
+          <button title="trace" onClick={onTrace} className="hover:text-zinc-600">▸</button>
+          {exportOpen && (
+            <div className="absolute right-0 top-5 z-10 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg py-1 text-xs w-40">
+              <button onClick={() => { onExport('json'); setExportOpen(false); }} className="block w-full text-left px-3 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-700">{t('gateway.sessions.exportJson')}</button>
+              <button onClick={() => { onExport('markdown'); setExportOpen(false); }} className="block w-full text-left px-3 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-700">{t('gateway.sessions.exportMd')}</button>
+              <button onClick={() => { onExport('copy'); setExportOpen(false); }} className="block w-full text-left px-3 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-700">{t('gateway.sessions.copyMd')}</button>
+            </div>
+          )}
+        </div>
+      </div>
+      {editing && (
+        <SessionMetaPopover row={row} onSave={patch => { onMeta(patch); setEditing(false); }} onArchive={() => { onMeta({ archived: !row.archived }); setEditing(false); }} />
+      )}
+    </div>
+  );
+}
+
+/** 行内标签 + 备注编辑 */
+function SessionMetaPopover({ row, onSave, onArchive }) {
+  const { t } = useLang();
+  const [tags, setTags] = useState((row.tags || []).join(', '));
+  const [note, setNote] = useState(row.note || '');
+  return (
+    <div className="mt-2 ml-[6.5rem] flex items-center gap-2 flex-wrap">
+      <input value={tags} onChange={e => setTags(e.target.value)} placeholder={t('gateway.sessions.tag')}
+        className="text-xs px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 w-40" />
+      <input value={note} onChange={e => setNote(e.target.value)} placeholder={t('gateway.sessions.note')}
+        className="text-xs px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 flex-1 min-w-[120px]" />
+      <button onClick={() => onSave({ tags: tags.split(',').map(s => s.trim()).filter(Boolean), note })}
+        className="text-xs px-3 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white">{t('gateway.sessions.save')}</button>
+      <button onClick={onArchive} className="text-xs px-3 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500">
+        {row.archived ? t('gateway.sessions.unarchive') : t('gateway.sessions.archive')}
+      </button>
+    </div>
+  );
+}
+
 /** 用量明细区块标题（1–5 结构化） */
 function DetailSection({ n, title, hint, children }) {
   return (
@@ -2790,7 +2972,7 @@ export default function Gateway() {
       <div className="bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800/80 rounded-2xl overflow-hidden shadow-sm">
         {/* Tab bar + Endpoint 合并一行 */}
         <div className="flex items-center border-b border-zinc-100 dark:border-zinc-800">
-          {[t('gateway.tab.apps'), t('gateway.tab.routes')].map((tabLabel, i) => (
+          {[t('gateway.tab.apps'), t('gateway.tab.routes'), t('gateway.tab.sessions')].map((tabLabel, i) => (
             <button key={i} onClick={() => setMainTab(i)}
               className={`px-4 py-2.5 text-xs font-semibold transition-colors ${mainTab === i
                 ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-500'
@@ -2939,6 +3121,9 @@ export default function Gateway() {
         </div>
         </div>
         )}
+
+        {/* Tab2: 会话管理 */}
+        {mainTab === 2 && <SessionManager />}
       </div>
 
       {/* 路由明细 — 仅在「场景路由」Tab 显示，应用列表 Tab 不显示 */}
