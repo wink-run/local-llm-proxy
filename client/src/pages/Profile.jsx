@@ -532,7 +532,7 @@ function DeviceStatBar({ calls, errors }) {
         <div className="bg-blue-400 h-full transition-all" style={{ width: `${okPct}%` }} />
         {errors > 0 && <div className="bg-red-400 h-full transition-all" style={{ width: `${errPct}%` }} />}
       </div>
-      <div className="flex items-center gap-2 text-[10px] text-gray-400">
+      <div className="flex items-center gap-2 text-xs text-gray-400">
         <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block"/>成功 {calls - errors}</span>
         {errors > 0 && <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-red-400 inline-block"/>错误 {errors}（{errorRate}%）</span>}
       </div>
@@ -613,7 +613,7 @@ function DevicesSection() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="text-sm font-semibold text-gray-800 dark:text-gray-100 truncate">{formatDeviceTitle(d)}</span>
-                        <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${
+                        <span className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full shrink-0 ${
                           d.online
                             ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400'
                             : 'bg-gray-100 dark:bg-gray-700 text-gray-500'}`}>
@@ -621,7 +621,7 @@ function DevicesSection() {
                           {d.online ? '在线' : '离线'}
                         </span>
                       </div>
-                      <div className="text-[11px] text-gray-400 mt-0.5 truncate">
+                      <div className="text-xs text-gray-400 mt-0.5 truncate">
                         {formatDeviceSubtitle(d, {
                           lastSeen: lastSeen
                             ? new Date(lastSeen).toLocaleString('zh-CN', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })
@@ -632,7 +632,7 @@ function DevicesSection() {
                   </div>
                   {!d.online && (
                     <button onClick={() => handleRemove(d.device_id)} disabled={removing === d.device_id}
-                      className="text-[11px] text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors disabled:opacity-50 shrink-0 mt-0.5">
+                      className="text-xs text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors disabled:opacity-50 shrink-0 mt-0.5">
                       {removing === d.device_id ? '移除中…' : '移除'}
                     </button>
                   )}
@@ -642,22 +642,22 @@ function DevicesSection() {
                 <div className="grid grid-cols-3 gap-3 text-center">
                   <div className="bg-gray-50 dark:bg-gray-900 rounded-lg py-2">
                     <div className="text-base font-bold text-gray-800 dark:text-gray-100">{calls}</div>
-                    <div className="text-[10px] text-gray-400 mt-0.5">今日调用</div>
+                    <div className="text-xs text-gray-400 mt-0.5">今日调用</div>
                   </div>
                   <div className="bg-gray-50 dark:bg-gray-900 rounded-lg py-2">
                     <div className={`text-base font-bold ${errors > 0 ? 'text-red-500' : 'text-gray-800 dark:text-gray-100'}`}>{errors}</div>
-                    <div className="text-[10px] text-gray-400 mt-0.5">错误次数</div>
+                    <div className="text-xs text-gray-400 mt-0.5">错误次数</div>
                   </div>
                   <div className="bg-gray-50 dark:bg-gray-900 rounded-lg py-2">
                     <div className="text-base font-bold text-gray-800 dark:text-gray-100">{providers || '—'}</div>
-                    <div className="text-[10px] text-gray-400 mt-0.5">活跃供应商</div>
+                    <div className="text-xs text-gray-400 mt-0.5">活跃供应商</div>
                   </div>
                 </div>
 
                 {/* Call share bar across devices */}
                 {calls > 0 && (
                   <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[10px] text-gray-400">
+                    <div className="flex items-center justify-between text-xs text-gray-400">
                       <span>今日占比</span>
                       <span>{sharePct}%</span>
                     </div>

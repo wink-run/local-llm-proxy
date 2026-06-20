@@ -275,7 +275,7 @@ function DeviceSharePies({ devices, rangeLabel }) {
         </ResponsiveContainer>
         <div className="space-y-1 mt-1">
           {data.map((d, i) => (
-            <div key={d.id} className="flex items-center justify-between gap-2 text-[10px] text-zinc-500 dark:text-zinc-400">
+            <div key={d.id} className="flex items-center justify-between gap-2 text-xs text-zinc-500 dark:text-zinc-400">
               <span className="flex items-center gap-1.5 min-w-0">
                 <span className="w-2 h-2 rounded-full shrink-0" style={{ background: DEVICE_PIE_COLORS[i % DEVICE_PIE_COLORS.length] }} />
                 <span className="truncate" title={d.name}>{d.name}</span>
@@ -608,7 +608,7 @@ export default function TokenDashboard() {
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-[17px] font-bold text-zinc-900 dark:text-zinc-100 tracking-tight leading-tight">{user.nickname}</p>
-          <p className="text-[11px] text-zinc-400 dark:text-zinc-500 truncate mt-0.5">{user.email}</p>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500 truncate mt-0.5">{user.email}</p>
         </div>
         {user.credits_balance != null && (
           <div className="shrink-0 flex items-center gap-1.5 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-full px-3 py-1.5">
@@ -616,7 +616,7 @@ export default function TokenDashboard() {
             <span className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200 tabular-nums">
               {Math.floor(user.credits_balance ?? 0).toLocaleString()}
             </span>
-            <span className="text-[10px] text-zinc-400 dark:text-zinc-500">{t('credits.unit')}</span>
+            <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('credits.unit')}</span>
           </div>
         )}
       </div>
@@ -650,7 +650,7 @@ export default function TokenDashboard() {
               </p>
             )}
             {deviceCount > 0 && (
-              <p className="text-[10px] text-blue-300/80 mt-1">
+              <p className="text-xs text-blue-300/80 mt-1">
                 {onlineCount > 0
                   ? t('profile.devicesOnline', { count: deviceCount, online: onlineCount })
                   : t('profile.devicesCount', { count: deviceCount })}
@@ -674,11 +674,11 @@ export default function TokenDashboard() {
                 : '—'}
             </p>
             {localData?.total_cost > 0 && (
-              <p className="text-[10px] text-blue-300/80 mt-2">
+              <p className="text-xs text-blue-300/80 mt-2">
                 {t('profile.costSub', { sub: subCostStr, payg: paygCostStr })}
               </p>
             )}
-            <p className="text-[10px] text-blue-300/60 mt-1">{t('profile.costEstimate')}</p>
+            <p className="text-xs text-blue-300/60 mt-1">{t('profile.costEstimate')}</p>
           </div>
         </div>
       </div>

@@ -89,7 +89,7 @@ function ContributionConfigCard() {
 
       {/* Fixed forwarding URL */}
       <div className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2">
-        <span className="text-[10px] text-zinc-400 shrink-0">{t('contribute.forwardUrl')}</span>
+        <span className="text-xs text-zinc-400 shrink-0">{t('contribute.forwardUrl')}</span>
         <code className="text-xs font-mono text-green-600 dark:text-green-400 truncate">{localGw}</code>
       </div>
 
@@ -98,7 +98,7 @@ function ContributionConfigCard() {
         <div className="flex items-center gap-2">
           <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('contribute.models')}</span>
           {selectedNames.size > 0 && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">
+            <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">
               {t('contribute.modelsSelected', { n: selectedNames.size })}
             </span>
           )}
@@ -121,7 +121,7 @@ function ContributionConfigCard() {
                       : 'bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-600 text-zinc-500 dark:text-zinc-400 hover:border-zinc-400 dark:hover:border-zinc-500'
                   }`}>
                   {m.name}
-                  <span className={`text-[9px] px-1 py-0.5 rounded font-medium ${
+                  <span className={`text-xs px-1 py-0.5 rounded font-medium ${
                     sel
                       ? isImage ? 'bg-purple-200 dark:bg-purple-800 text-purple-700 dark:text-purple-300' : 'bg-blue-200 dark:bg-blue-800 text-blue-700 dark:text-blue-300'
                       : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400'
@@ -137,7 +137,7 @@ function ContributionConfigCard() {
 
       {/* Node name */}
       <div>
-        <label className="block text-[10px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">{t('contribute.nodeName')}</label>
+        <label className="block text-xs font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">{t('contribute.nodeName')}</label>
         <input value={nodeName} onChange={e => setNodeName(e.target.value)} placeholder={t('contribute.nodeNamePh')}
           className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-600 focus:outline-none focus:border-blue-500" />
       </div>
@@ -280,16 +280,16 @@ export default function Contribute() {
       {stats && (
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
-            <p className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">{t('contribute.rate')}</p>
+            <p className="text-xs font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">{t('contribute.rate')}</p>
             <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{stats.contribute_req_per_min ?? 0}</p>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">req/min</p>
           </div>
           <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
-            <p className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">{t('contribute.activeReqs')}</p>
+            <p className="text-xs font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">{t('contribute.activeReqs')}</p>
             <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.active_requests ?? 0}</p>
           </div>
           <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
-            <p className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">{t('contribute.onlineNodes')}</p>
+            <p className="text-xs font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">{t('contribute.onlineNodes')}</p>
             <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.active_workers ?? 0}</p>
           </div>
         </div>

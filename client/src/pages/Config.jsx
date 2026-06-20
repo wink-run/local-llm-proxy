@@ -21,7 +21,7 @@ function persistServerUrl(url) {
 function Field({ label, type = 'text', value, onChange, placeholder }) {
   return (
     <div>
-      <label className="block text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mb-1.5 uppercase tracking-wider">{label}</label>
+      <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1.5 uppercase tracking-wider">{label}</label>
       <input
         type={type}
         value={value}
@@ -197,7 +197,7 @@ export default function Config() {
           )}
 
           <div className="space-y-2">
-            <label className="block text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mb-1.5 uppercase tracking-wider">{t('config.serverUrl')}</label>
+            <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1.5 uppercase tracking-wider">{t('config.serverUrl')}</label>
             <input
               type="text"
               value={serverUrl}
@@ -551,7 +551,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Version footer */}
-      <div className="text-[10px] text-gray-400 dark:text-gray-600 pb-2 flex items-center gap-2">
+      <div className="text-xs text-gray-400 dark:text-gray-600 pb-2 flex items-center gap-2">
         <span>Token Bank</span>
         {window.electronAPI?.version && (
           <span className="font-mono bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-500 dark:text-zinc-400">

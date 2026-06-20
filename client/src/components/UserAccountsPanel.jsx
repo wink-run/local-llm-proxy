@@ -578,7 +578,7 @@ export default function UserAccountsPanel({
                 : 'hover:bg-gray-50/50 dark:hover:bg-gray-700/30'
             }`}>
             <div className="text-sm font-semibold text-gray-800 dark:text-gray-200">{tabItem.label}</div>
-            <div className="text-[10px] text-gray-400 mt-0.5">{tabItem.sub}</div>
+            <div className="text-xs text-gray-400 mt-0.5">{tabItem.sub}</div>
           </button>
         ))}
       </div>
@@ -633,7 +633,7 @@ export default function UserAccountsPanel({
               {CheckinCard && <CheckinCard onSuccess={onRefreshUser} />}
               {SpinCard && <SpinCard onSuccess={onRefreshUser} />}
             </div>
-            <p className="text-[11px] text-gray-400">{t('accounts.p2pHint')}</p>
+            <p className="text-xs text-gray-400">{t('accounts.p2pHint')}</p>
           </>
         )}
 
@@ -722,7 +722,7 @@ export default function UserAccountsPanel({
                   )}
                   <div className="flex flex-wrap items-end gap-2">
                     <div className="w-full sm:w-auto min-w-[140px]">
-                      <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.subKind')}</label>
+                      <label className="text-xs text-gray-400 block mb-1">{t('accounts.subKind')}</label>
                       <select value={addSubKind} onChange={e => onSubKindChange(e.target.value)}
                         className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2">
                         <option value={SUB_KIND_APP}>{t('accounts.subKindApp')}</option>
@@ -733,7 +733,7 @@ export default function UserAccountsPanel({
                     {addSubKind === SUB_KIND_API ? (
                       <>
                         <div className="flex-1 min-w-[140px]">
-                          <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.apiSubscription')}</label>
+                          <label className="text-xs text-gray-400 block mb-1">{t('accounts.apiSubscription')}</label>
                           <select value={addApiSource} onChange={e => onApiSourceChange(e.target.value)}
                             className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2">
                             <option value="">{t('accounts.selectApiSubscription')}</option>
@@ -747,7 +747,7 @@ export default function UserAccountsPanel({
                         </div>
                         {!isCustomApi && (
                         <div className="flex-1 min-w-[120px]">
-                          <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.plan')}</label>
+                          <label className="text-xs text-gray-400 block mb-1">{t('accounts.plan')}</label>
                           <select value={addApiPlan} onChange={e => setAddApiPlan(e.target.value)} disabled={!addApiSource}
                             className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2 disabled:opacity-50">
                             <option value="">{t('accounts.selectPlan')}</option>
@@ -763,7 +763,7 @@ export default function UserAccountsPanel({
                     ) : (
                       <>
                     <div className="flex-1 min-w-[140px]">
-                      <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.app')}</label>
+                      <label className="text-xs text-gray-400 block mb-1">{t('accounts.app')}</label>
                       <select value={addSubSource} onChange={e => onSubSourceChange(e.target.value)}
                         className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2">
                         <option value="">{t('accounts.selectApp')}</option>
@@ -778,7 +778,7 @@ export default function UserAccountsPanel({
 
                     {!isCustomApp && (
                       <div className="flex-1 min-w-[120px]">
-                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.plan')}</label>
+                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.plan')}</label>
                         <select value={addSubPlan} onChange={e => setAddSubPlan(e.target.value)} disabled={!addSubSource}
                           className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2 disabled:opacity-50">
                           <option value="">{t('accounts.selectPlan')}</option>
@@ -793,7 +793,7 @@ export default function UserAccountsPanel({
                     )}
 
                     <div className="flex-1 min-w-[110px]">
-                      <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.appMode')}</label>
+                      <label className="text-xs text-gray-400 block mb-1">{t('accounts.appMode')}</label>
                       <select
                         value={addSubUseApi ? 'api' : 'stats'}
                         onChange={e => setAddSubUseApi(e.target.value === 'api')}
@@ -817,19 +817,19 @@ export default function UserAccountsPanel({
                   {addSubKind === SUB_KIND_API && isCustomApi && (
                     <div className="flex flex-wrap items-end gap-2 pl-1">
                       <div className="flex-1 min-w-[120px]">
-                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.apiProviderName')}</label>
+                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.apiProviderName')}</label>
                         <input value={customAppName} onChange={e => setCustomAppName(e.target.value)}
                           placeholder="如 DeepSeek、Moonshot…"
                           className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2" />
                       </div>
                       <div className="flex-1 min-w-[120px]">
-                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.planName')}</label>
+                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.planName')}</label>
                         <input value={customPlanLabel} onChange={e => setCustomPlanLabel(e.target.value)}
                           placeholder="如 Pro、Team…"
                           className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2" />
                       </div>
                       <div className="w-24">
-                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.monthlyUsd')}</label>
+                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.monthlyUsd')}</label>
                         <input type="number" min="0" step="0.01" value={customPlanUsd}
                           onChange={e => setCustomPlanUsd(e.target.value)} placeholder={t('accounts.optional')}
                           className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2 text-right" />
@@ -841,19 +841,19 @@ export default function UserAccountsPanel({
                   {addSubKind === SUB_KIND_APP && isCustomApp && (
                     <div className="flex flex-wrap items-end gap-2 pl-1">
                       <div className="flex-1 min-w-[120px]">
-                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.appName')}</label>
+                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.appName')}</label>
                         <input value={customAppName} onChange={e => setCustomAppName(e.target.value)}
                           placeholder="如 Cursor、Warp…"
                           className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2" />
                       </div>
                       <div className="flex-1 min-w-[120px]">
-                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.planName')}</label>
+                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.planName')}</label>
                         <input value={customPlanLabel} onChange={e => setCustomPlanLabel(e.target.value)}
                           placeholder="如 Pro、Business…"
                           className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2" />
                       </div>
                       <div className="w-24">
-                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.monthlyUsd')}</label>
+                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.monthlyUsd')}</label>
                         <input type="number" min="0" step="0.01" value={customPlanUsd}
                           onChange={e => setCustomPlanUsd(e.target.value)} placeholder={t('accounts.optional')}
                           className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2 text-right" />
@@ -865,13 +865,13 @@ export default function UserAccountsPanel({
                   {addSubKind === SUB_KIND_APP && !isCustomApp && isCustomPlan && (
                     <div className="flex flex-wrap items-end gap-2 pl-1">
                       <div className="flex-1 min-w-[120px]">
-                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.planName')}</label>
+                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.planName')}</label>
                         <input value={customPlanLabel} onChange={e => setCustomPlanLabel(e.target.value)}
                           placeholder={t('accounts.err.planPlaceholder')}
                           className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2" />
                       </div>
                       <div className="w-24">
-                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.monthlyUsd')}</label>
+                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.monthlyUsd')}</label>
                         <input type="number" min="0" step="0.01" value={customPlanUsd}
                           onChange={e => setCustomPlanUsd(e.target.value)} placeholder={t('accounts.optional')}
                           className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2 text-right" />
@@ -910,7 +910,7 @@ export default function UserAccountsPanel({
                           <span>{p.icon}</span>
                           <span className="text-sm font-medium text-gray-800 dark:text-gray-200 flex-1 min-w-0 truncate">
                             {p.label}
-                            {p.custom && <span className="ml-1 text-[10px] text-emerald-600/80">{t('accounts.custom')}</span>}
+                            {p.custom && <span className="ml-1 text-xs text-emerald-600/80">{t('accounts.custom')}</span>}
                           </span>
                           <span className="text-xs text-gray-400 shrink-0">{t('accounts.modelsCount', { n: (p.models || []).length })}</span>
                           <span className="text-gray-400 shrink-0">{paygExpanded === p.id ? '▲' : '▼'}</span>
@@ -993,7 +993,7 @@ export default function UserAccountsPanel({
                   )}
                   <div className="flex flex-wrap items-end gap-2">
                     <div className="flex-1 min-w-[140px]">
-                      <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.provider')}</label>
+                      <label className="text-xs text-gray-400 block mb-1">{t('accounts.provider')}</label>
                       <select value={addPaygId} onChange={e => onPaygSelectChange(e.target.value)}
                         className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2">
                         <option value="">{t('accounts.selectProvider')}</option>
@@ -1013,7 +1013,7 @@ export default function UserAccountsPanel({
                   {isCustomPayg && (
                     <div className="flex flex-wrap items-end gap-2 pl-1">
                       <div className="flex-1 min-w-[160px]">
-                        <label className="text-[10px] text-gray-400 block mb-1">{t('accounts.providerName')}</label>
+                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.providerName')}</label>
                         <input value={customPaygLabel} onChange={e => setCustomPaygLabel(e.target.value)}
                           placeholder="如 MiniMax、Moonshot…"
                           className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2"

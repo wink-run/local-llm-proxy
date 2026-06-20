@@ -391,13 +391,13 @@ export default function Debug() {
     <div className="flex flex-col h-screen">
 
       {/* ── Toolbar ── */}
-      <div className="shrink-0 border-b border-zinc-700 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 pt-3 pb-2 space-y-2">
+      <div className="shrink-0 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 pt-3 pb-2 space-y-2">
 
         {/* Row 1: provider + token */}
         <div className="flex gap-2 items-center flex-wrap">
           {/* Provider dropdown */}
           <select value={selectedId} onChange={e => setSelectedId(e.target.value)}
-            className="bg-zinc-800 dark:bg-zinc-800 border border-zinc-700 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500 shrink-0">
+            className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500 shrink-0">
             {provOpts.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
           </select>
 
@@ -405,7 +405,7 @@ export default function Debug() {
           {selectedId === '__custom__' ? (
             <input value={manualBaseUrl} onChange={e => setManualBaseUrl(e.target.value)}
               placeholder={t('debug.baseUrlPh')}
-              className="flex-1 min-w-[200px] bg-zinc-800 dark:bg-zinc-800 border border-zinc-700 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500" />
+              className="flex-1 min-w-[200px] bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500" />
           ) : (
             <code className="text-xs font-mono text-zinc-500 dark:text-zinc-400 truncate max-w-[260px]">{effectiveBase}</code>
           )}
@@ -413,13 +413,13 @@ export default function Debug() {
           {/* API Key/Token */}
           <div className="flex gap-1 items-center ml-auto">
             {anthropic && effectiveBase && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-800/40 shrink-0">Anthropic</span>
+              <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-800/40 shrink-0">Anthropic</span>
             )}
             <input value={token} onChange={e => setToken(e.target.value)}
               type={showToken ? 'text' : 'password'} placeholder={t('debug.apiKeyPh')} autoComplete="off"
-              className="w-36 bg-zinc-800 dark:bg-zinc-800 border border-zinc-700 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500" />
+              className="w-36 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500" />
             <button onClick={() => setShowToken(v => !v)}
-              className="text-[10px] px-2 py-1.5 rounded-lg border border-zinc-700 dark:border-zinc-700 bg-zinc-800 dark:bg-zinc-800 text-zinc-400 hover:bg-zinc-800 dark:hover:bg-zinc-800 transition-colors shrink-0">
+              className="text-xs px-2 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors shrink-0">
               {showToken ? t('debug.hide') : t('debug.show')}
             </button>
           </div>
@@ -435,7 +435,7 @@ export default function Debug() {
             </span>
           ) : !manualModel && filteredModels.length > 0 ? (
             <select value={model} onChange={e => setModel(e.target.value)}
-              className="bg-zinc-800 dark:bg-zinc-800 border border-zinc-700 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500 max-w-[220px]">
+              className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500 max-w-[220px]">
               {filteredModels.some(m => m.tier)
                 ? TIER_ORDER.map(tier => {
                     const tms = filteredModels.filter(m => m.tier === tier);
@@ -451,22 +451,22 @@ export default function Debug() {
           ) : (
             <input value={model} onChange={e => setModel(e.target.value)}
               placeholder={t('debug.modelPh')}
-              className="bg-zinc-800 dark:bg-zinc-800 border border-zinc-700 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 w-44" />
+              className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 w-44" />
           )}
           {/* Toggle dropdown ↔ manual */}
           {!loadingModels && models.length > 0 && (
             <button onClick={() => setManualModel(v => !v)}
-              className="text-[10px] text-zinc-400 hover:text-blue-500 transition-colors shrink-0">
+              className="text-xs text-zinc-400 hover:text-blue-500 transition-colors shrink-0">
               {manualModel ? t('debug.pickFromList') : t('debug.manualInput')}
             </button>
           )}
 
           {/* Mode toggle */}
-          <div className="flex rounded-lg overflow-hidden border border-zinc-700 dark:border-zinc-700 shrink-0">
+          <div className="flex rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-700 shrink-0">
             {[{ v: false, l: t('debug.modeChat') }, { v: true, l: t('debug.modeImage') }].map(({ v, l }) => (
               <button key={String(v)} onClick={() => setPanel({ imageMode: v })}
                 className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  imageMode === v ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-800 dark:hover:bg-zinc-800'
+                  imageMode === v ? 'bg-indigo-600 text-white' : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'
                 }`}>{l}</button>
             ))}
           </div>
@@ -475,12 +475,12 @@ export default function Debug() {
           {imageMode && (
             <>
               <select value={imageRatio} onChange={e => setPanel({ imageRatio: e.target.value })}
-                className="bg-zinc-800 dark:bg-zinc-800 border border-zinc-700 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none">
+                className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none">
                 <option value="">{t('debug.ratioDefault')}</option>
                 {['1:1','4:3','3:4','16:9','9:16','3:2','2:3','21:9'].map(r => <option key={r} value={r}>{r}</option>)}
               </select>
               <select value={imageResolution} onChange={e => setPanel({ imageResolution: e.target.value })}
-                className="bg-zinc-800 dark:bg-zinc-800 border border-zinc-700 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none">
+                className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none">
                 <option value="">{t('debug.resolutionDefault')}</option>
                 {['1k','2k','4k'].map(r => <option key={r} value={r}>{r}</option>)}
               </select>
@@ -495,7 +495,7 @@ export default function Debug() {
                 {t('debug.stream')}
               </label>
               <button onClick={() => setPanel({ showSystem: !showSystem })}
-                className={`text-xs px-2 py-1 rounded-md transition-colors ${showSystem ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300' : 'text-zinc-500 dark:text-zinc-400 hover:bg-zinc-800 dark:hover:bg-zinc-800'}`}>
+                className={`text-xs px-2 py-1 rounded-md transition-colors ${showSystem ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300' : 'text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}>
                 System
               </button>
             </>
@@ -513,7 +513,7 @@ export default function Debug() {
         {!imageMode && showSystem && (
           <textarea value={systemPrompt} onChange={e => setPanel({ systemPrompt: e.target.value })}
             rows={2} placeholder={t('debug.systemPh')}
-            className="w-full bg-zinc-800 dark:bg-zinc-800 border border-zinc-700 dark:border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 resize-none" />
+            className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 resize-none" />
         )}
       </div>
 
@@ -535,7 +535,7 @@ export default function Debug() {
               {msg.error ? (
                 <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-2xl px-4 py-2.5 text-sm text-red-600 dark:text-red-400">{msg.error}</div>
               ) : msg.role === 'assistant' && msg.images !== undefined ? (
-                <div className="rounded-2xl overflow-hidden bg-white dark:bg-zinc-800 border border-zinc-700 dark:border-transparent">
+                <div className="rounded-2xl overflow-hidden bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-transparent">
                   {msg.generating ? (
                     <div className="px-4 py-6 flex items-center gap-2 text-sm text-zinc-400 dark:text-zinc-500">
                       <span className="w-4 h-4 border-2 border-zinc-700 border-t-blue-500 rounded-full animate-spin" /> {t('debug.generating')}
@@ -565,7 +565,7 @@ export default function Debug() {
                 <div className={`rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap ${
                   msg.role === 'user'
                     ? 'bg-blue-600 text-white rounded-br-sm'
-                    : 'bg-white dark:bg-zinc-800 border border-zinc-700 dark:border-transparent text-zinc-900 dark:text-zinc-100 rounded-bl-sm'
+                    : 'bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-transparent text-zinc-900 dark:text-zinc-100 rounded-bl-sm'
                 }`}>
                   {msg.content}
                   {msg.streaming && <span className="animate-pulse text-blue-300 dark:text-blue-400 ml-0.5">▊</span>}
@@ -578,7 +578,7 @@ export default function Debug() {
               )}
             </div>
             {msg.role === 'user' && (
-              <div className="w-7 h-7 rounded-full bg-zinc-800 dark:bg-zinc-800 flex items-center justify-center text-zinc-400 dark:text-zinc-400 text-xs shrink-0 mt-0.5 ml-2">{t('debug.me')}</div>
+              <div className="w-7 h-7 rounded-full bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center text-zinc-500 dark:text-zinc-400 text-xs shrink-0 mt-0.5 ml-2">{t('debug.me')}</div>
             )}
           </div>
         ))}
@@ -586,12 +586,12 @@ export default function Debug() {
       </div>
 
       {/* ── Input bar ── */}
-      <div className="shrink-0 border-t border-zinc-700 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3">
+      <div className="shrink-0 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3">
         <div className="flex gap-2 items-end">
           <textarea ref={textareaRef} value={input} onChange={handleInputChange} onKeyDown={handleKeyDown}
             placeholder={imageMode ? t('debug.inputImagePh') : t('debug.inputChatPh')}
             rows={1} style={{ resize: 'none' }}
-            className="flex-1 bg-zinc-800 dark:bg-zinc-800 border border-zinc-700 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 overflow-hidden" />
+            className="flex-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 overflow-hidden" />
           <button onClick={handleSend} disabled={sending || !input.trim() || !model || !effectiveBase}
             className="shrink-0 w-9 h-9 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded-xl flex items-center justify-center transition-colors">
             {sending

@@ -396,7 +396,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   // ── 各区块（按布局组合：config-file 应用走两 Tab，其余走单页）──
   const baseInfoSection = (
     <div>
-      <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-2">{t('gateway.app.basicInfo')}</div>
+      <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.basicInfo')}</div>
       <div className="flex gap-2 mb-2">
         <input value={name} onChange={e => setName(e.target.value)} placeholder={t('gateway.app.namePlaceholder')}
           className="flex-1 text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-zinc-800 dark:text-zinc-200" />
@@ -416,9 +416,9 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
 
   const apiKeyRow = isKeyApp(app.link_method) && app.api_key && (
     <div>
-      <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-2">API Key</div>
+      <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">API Key</div>
       <div className="flex items-center gap-2">
-        <code className="flex-1 text-[11px] font-mono bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1.5 text-zinc-600 dark:text-zinc-400 truncate">{app.api_key}</code>
+        <code className="flex-1 text-xs font-mono bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1.5 text-zinc-600 dark:text-zinc-400 truncate">{app.api_key}</code>
         <button onClick={() => { navigator.clipboard.writeText(app.api_key); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
           className="text-xs px-2 py-1.5 rounded bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 text-zinc-600 dark:text-zinc-300 shrink-0">
           {copied ? t('gateway.common.copied') : t('gateway.common.copy')}
@@ -434,7 +434,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   const envSection = app.link_method === 'api-key' && app.env && !app.config_file && (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{t('gateway.app.envTitle')}</div>
+        <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300">{t('gateway.app.envTitle')}</div>
         <button onClick={writeEnv}
           className="text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white shrink-0">
           {t('gateway.app.writeConfig')}
@@ -442,10 +442,10 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
       </div>
       <textarea value={envText} onChange={e => setEnvText(e.target.value)} rows={Math.max(2, envText.split('\n').length)}
         spellCheck={false}
-        className="w-full font-mono text-[11px] bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2 outline-none focus:border-blue-400 text-zinc-700 dark:text-zinc-200 resize-y"
+        className="w-full font-mono text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2 outline-none focus:border-blue-400 text-zinc-700 dark:text-zinc-200 resize-y"
         placeholder={t('gateway.app.envPlaceholder')} />
-      {writeMsg && <div className={`text-[11px] mt-1 ${writeMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{writeMsg}</div>}
-      <div className="text-[10px] text-zinc-400 mt-1">
+      {writeMsg && <div className={`text-xs mt-1 ${writeMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{writeMsg}</div>}
+      <div className="text-xs text-zinc-400 mt-1">
         {t('gateway.app.envHint')}
       </div>
     </div>
@@ -467,11 +467,11 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
       </div>
       <div className="grid grid-cols-2 gap-2 mb-3">
         <div>
-          <div className="text-[10px] text-zinc-400 mb-1">{t('gateway.app.devModeImg1')}</div>
+          <div className="text-xs text-zinc-400 mb-1">{t('gateway.app.devModeImg1')}</div>
           <img src={claudeDevModeImg1} alt="Enable Developer Mode" className="rounded border border-zinc-200 dark:border-zinc-700 w-full" />
         </div>
         <div>
-          <div className="text-[10px] text-zinc-400 mb-1">{t('gateway.app.devModeImg2')}</div>
+          <div className="text-xs text-zinc-400 mb-1">{t('gateway.app.devModeImg2')}</div>
           <img src={claudeDevModeImg2} alt="Configure Gateway" className="rounded border border-zinc-200 dark:border-zinc-700 w-full" />
         </div>
       </div>
@@ -485,24 +485,24 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
         className="text-xs px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white transition-colors">
         {t('gateway.app.devModeRefresh')}
       </button>
-      {writeMsg && <div className={`text-[11px] mt-2 ${writeMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{writeMsg}</div>}
+      {writeMsg && <div className={`text-xs mt-2 ${writeMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{writeMsg}</div>}
     </div>
   );
 
   const configFileSection = app.config_file && (
     <div>
-      <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-2">{t('gateway.app.configFileTitle')}</div>
+      <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.configFileTitle')}</div>
       <div className="bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-2 space-y-1">
-        <div className="font-mono text-[11px] text-zinc-700 dark:text-zinc-300 break-all">{app.config_file}</div>
+        <div className="font-mono text-xs text-zinc-700 dark:text-zinc-300 break-all">{app.config_file}</div>
         {Object.entries(app.patch || {}).map(([k, v]) => (
-          <div key={k} className="font-mono text-[10px] text-zinc-500 break-all">{k} = {resolveEnv(v)}</div>
+          <div key={k} className="font-mono text-xs text-zinc-500 break-all">{k} = {resolveEnv(v)}</div>
         ))}
         {Object.keys(app.env || {}).length > 0 && (
-          <div className="font-mono text-[10px] text-zinc-400 pt-1">{t('gateway.app.envVars', { list: Object.keys(app.env).join(', ') })}</div>
+          <div className="font-mono text-xs text-zinc-400 pt-1">{t('gateway.app.envVars', { list: Object.keys(app.env).join(', ') })}</div>
         )}
       </div>
-      {writeMsg && <div className={`text-[11px] mt-1 ${writeMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{writeMsg}</div>}
-      <div className="text-[10px] text-zinc-400 mt-1">
+      {writeMsg && <div className={`text-xs mt-1 ${writeMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{writeMsg}</div>}
+      <div className="text-xs text-zinc-400 mt-1">
         {t('gateway.app.configFileHint')}
       </div>
     </div>
@@ -510,7 +510,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
 
   const routeSection = (isKeyApp(app.link_method) || app.link_method === 'shim') && app.route_bindable !== false && (
     <div>
-      <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-2">{t('gateway.app.routeRules')}</div>
+      <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.routeRules')}</div>
       <select value={routeId} onChange={e => setRouteId(e.target.value)}
         className="w-full text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none text-zinc-800 dark:text-zinc-200">
         {/* manual（手工添加）无官方可直连 → 必须绑定，「直连」改为不可选占位 */}
@@ -538,7 +538,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
 
   const accessSection = isKeyApp(app.link_method) && app.api_key && !app.env && !app.config_file && (
     <div>
-      <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-2">{t('gateway.app.accessConfig')}</div>
+      <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.accessConfig')}</div>
       <KeyConfigPanel apiKey={app.api_key} localBase="http://127.0.0.1:11430/v1"
         model={routeId ? (modelIdFromRoute(routeId, routes) || routeId) : undefined} hideAuto />
     </div>
@@ -630,7 +630,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
       <div className="p-5 space-y-4">
         {/* 基础信息 */}
         <div>
-          <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-2">{t('gateway.app.basicInfo')}</div>
+          <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.basicInfo')}</div>
           <input value={name} onChange={e => setName(e.target.value)} placeholder={t('gateway.app.namePlaceholder')}
             className="w-full text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-zinc-800 dark:text-zinc-200 mb-2" />
           <div className="flex flex-wrap gap-1.5 mb-2">
@@ -647,9 +647,9 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
         {/* API Key */}
         {app.api_key && (
           <div>
-            <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-2">API Key</div>
+            <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">API Key</div>
             <div className="flex items-center gap-2">
-              <code className="flex-1 text-[11px] font-mono bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1.5 text-zinc-600 dark:text-zinc-400 truncate">{app.api_key}</code>
+              <code className="flex-1 text-xs font-mono bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1.5 text-zinc-600 dark:text-zinc-400 truncate">{app.api_key}</code>
               <button onClick={() => { navigator.clipboard.writeText(app.api_key); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
                 className="text-xs px-2 py-1.5 rounded bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 text-zinc-600 dark:text-zinc-300 shrink-0">
                 {copied ? t('gateway.common.copied') : t('gateway.common.copy')}
@@ -663,7 +663,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
         )}
         {/* 路由规则 */}
         <div>
-          <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-2">{t('gateway.app.routeRules')}</div>
+          <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.routeRules')}</div>
           <select value={routeId} onChange={e => setRouteId(e.target.value)}
             className="w-full text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none text-zinc-800 dark:text-zinc-200">
             {/* 手工添加无官方可直连 → 必须绑定 */}
@@ -688,7 +688,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
         {/* 接入配置：Key + base_url + 示例（用户自行把应用指向网关）*/}
         {app.api_key && (
           <div>
-            <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-2">{t('gateway.app.accessConfigHint')}</div>
+            <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.accessConfigHint')}</div>
             <KeyConfigPanel apiKey={app.api_key} localBase="http://127.0.0.1:11430/v1"
               model={routeId ? (modelIdFromRoute(routeId, routes) || routeId) : undefined} hideAuto />
           </div>
@@ -718,8 +718,8 @@ function TraceStatPill({ label, value, tone }) {
     : 'text-zinc-800 dark:text-zinc-100';
   return (
     <div className="inline-flex items-center gap-1 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded-md px-2 h-7">
-      <span className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider">{label}</span>
-      <span className={`text-[11px] font-semibold tabular-nums ${toneCls}`}>{value}</span>
+      <span className="text-xs font-medium text-zinc-400">{label}</span>
+      <span className={`text-xs font-semibold tabular-nums ${toneCls}`}>{value}</span>
     </div>
   );
 }
@@ -757,8 +757,8 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
           <div className="flex items-center gap-3">
             <button onClick={onClose} className="text-zinc-400 hover:text-zinc-600 text-sm">{t('gateway.common.back')}</button>
             <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">Session Trace</h3>
-            <span className="text-[10px] px-2 py-0.5 rounded bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 uppercase">{agentId || 'agent'}</span>
-            <span className="font-mono text-[10px] text-zinc-400">{sessionId?.slice(0, 8)}…</span>
+            <span className="text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 uppercase">{agentId || 'agent'}</span>
+            <span className="font-mono text-xs text-zinc-400">{sessionId?.slice(0, 8)}…</span>
           </div>
           {!loading && !trace?.error && st.steps != null && (
             <div className="flex items-center gap-1.5 flex-wrap">
@@ -770,11 +770,11 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
               <TraceStatPill label="Dur" value={st.duration || '—'} />
               <TraceStatPill label="Err" value={st.errors ?? 0} tone={(st.errors ?? 0) > 0 ? 'red' : undefined} />
               <div className="hidden sm:flex items-center gap-2 ml-1 px-2 h-7 rounded-md border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/40">
-                <span className="text-[9px] text-zinc-400">INPUT <strong className="text-zinc-700 dark:text-zinc-200">{fmtN(tok.input)}</strong></span>
+                <span className="text-xs text-zinc-400">INPUT <strong className="text-zinc-700 dark:text-zinc-200">{fmtN(tok.input)}</strong></span>
                 <span className="text-zinc-300">|</span>
-                <span className="text-[9px] text-zinc-400">OUTPUT <strong className="text-zinc-700 dark:text-zinc-200">{fmtN(tok.output)}</strong></span>
+                <span className="text-xs text-zinc-400">OUTPUT <strong className="text-zinc-700 dark:text-zinc-200">{fmtN(tok.output)}</strong></span>
                 <span className="text-zinc-300">|</span>
-                <span className="text-[9px] text-zinc-400">CACHED <strong className="text-cyan-600 dark:text-cyan-400">{fmtN(tok.cached)}</strong></span>
+                <span className="text-xs text-zinc-400">CACHED <strong className="text-cyan-600 dark:text-cyan-400">{fmtN(tok.cached)}</strong></span>
               </div>
             </div>
           )}
@@ -787,7 +787,7 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
         ) : (
           <>
             {/* 会话元信息 */}
-            <div className="px-5 py-2 text-[11px] text-zinc-500 dark:text-zinc-400 border-b border-zinc-100 dark:border-zinc-800 shrink-0 flex flex-wrap gap-x-4 gap-y-1">
+            <div className="px-5 py-2 text-xs text-zinc-500 dark:text-zinc-400 border-b border-zinc-100 dark:border-zinc-800 shrink-0 flex flex-wrap gap-x-4 gap-y-1">
               <span>{t('gateway.detail.projectLabel')} <strong className="text-zinc-700 dark:text-zinc-300">{trace.project || '—'}</strong></span>
               {projectPathTooltip(trace) !== '—' && (
                 <span className="font-mono truncate max-w-xs" title={projectPathTooltip(trace)}>{projectPathTooltip(trace)}</span>
@@ -799,9 +799,9 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
               <div className="w-44 shrink-0 border-r border-zinc-100 dark:border-zinc-800 overflow-y-auto max-h-[55vh]">
                 {steps.map((s, i) => (
                   <button key={i} onClick={() => setStepIdx(i)}
-                    className={`w-full text-left px-3 py-1.5 text-[11px] border-b border-zinc-50 dark:border-zinc-800/50 hover:bg-zinc-50 dark:hover:bg-zinc-800/40 ${stepIdx === i ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300' : 'text-zinc-600 dark:text-zinc-400'}`}>
+                    className={`w-full text-left px-3 py-1.5 text-xs border-b border-zinc-50 dark:border-zinc-800/50 hover:bg-zinc-50 dark:hover:bg-zinc-800/40 ${stepIdx === i ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300' : 'text-zinc-600 dark:text-zinc-400'}`}>
                     <span className="text-zinc-400 mr-1">{String(i).padStart(3, '0')}</span>
-                    <span className={`px-1 rounded text-[9px] mr-1 ${s.kind === 'tool' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' : s.kind === 'user' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30' : s.reasoning ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/20' : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800'}`}>
+                    <span className={`px-1 rounded text-xs mr-1 ${s.kind === 'tool' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' : s.kind === 'user' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30' : s.reasoning ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/20' : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800'}`}>
                       {s.kind === 'tool' ? s.tool || s.label : s.kind === 'user' ? 'USER' : s.reasoning ? 'REASON' : 'AI'}
                     </span>
                     <span className="truncate block">{s.label}</span>
@@ -813,12 +813,12 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
               <div className="flex-1 p-4 overflow-y-auto max-h-[55vh]">
                 {cur ? (
                   <div className="space-y-2">
-                    <div className="text-[10px] text-zinc-400">{fmtTime(cur.ts)} · {cur.label}</div>
+                    <div className="text-xs text-zinc-400">{fmtTime(cur.ts)} · {cur.label}</div>
                     {cur.text && (
                       <pre className="text-xs text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-3 max-h-80 overflow-y-auto">{cur.text}</pre>
                     )}
                     {cur.input != null && (
-                      <pre className="text-[11px] font-mono text-zinc-600 dark:text-zinc-400 whitespace-pre-wrap break-all bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-3 max-h-60 overflow-y-auto">
+                      <pre className="text-xs font-mono text-zinc-600 dark:text-zinc-400 whitespace-pre-wrap break-all bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-3 max-h-60 overflow-y-auto">
                         {typeof cur.input === 'string' ? cur.input : JSON.stringify(cur.input, null, 2)}
                       </pre>
                     )}
@@ -832,7 +832,7 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
             {/* 步骤进度条 */}
             {steps.length > 1 && (
               <div className="px-5 py-3 border-t border-zinc-100 dark:border-zinc-800 shrink-0">
-                <div className="flex items-center gap-3 text-[10px] text-zinc-400 mb-1">
+                <div className="flex items-center gap-3 text-xs text-zinc-400 mb-1">
                   <span>Step {stepIdx + 1} / {steps.length}</span>
                   <span className="flex-1" />
                   <span>{cur?.label}</span>
@@ -854,9 +854,9 @@ function DetailSection({ n, title, hint, children }) {
   return (
     <section>
       <div className="flex items-baseline gap-2 mb-2">
-        <span className="w-4 h-4 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[10px] font-bold text-zinc-500 dark:text-zinc-400 flex items-center justify-center shrink-0">{n}</span>
+        <span className="w-4 h-4 rounded-full bg-zinc-100 dark:bg-zinc-800 text-xs font-bold text-zinc-500 dark:text-zinc-400 flex items-center justify-center shrink-0">{n}</span>
         <h4 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">{title}</h4>
-        {hint && <span className="text-[10px] text-zinc-400 font-normal ml-1">{hint}</span>}
+        {hint && <span className="text-xs text-zinc-400 font-normal ml-1">{hint}</span>}
       </div>
       {children}
     </section>
@@ -1024,12 +1024,12 @@ function AppDetailModal({ app, onClose }) {
               <div className="text-xs text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-800/40 rounded-lg px-3 py-2.5">
                 <span className="text-zinc-700 dark:text-zinc-300">{sourceSummary.summary}</span>
                 {sourceSummary.tags.length > 1 && (
-                  <span className="text-[10px] text-zinc-400 ml-2">{t('gateway.detail.deduped')}</span>
+                  <span className="text-xs text-zinc-400 ml-2">{t('gateway.detail.deduped')}</span>
                 )}
                 <div className="flex flex-wrap gap-2 mt-2">
                   {sourceSummary.tags.map(tag => (
                     <span key={tag.label}
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] ${
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
                         tag.tone === 'blue'
                           ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/25 dark:text-blue-400'
                           : 'bg-green-50 text-green-600 dark:bg-green-900/25 dark:text-green-400'
@@ -1052,12 +1052,12 @@ function AppDetailModal({ app, onClose }) {
                   [t('gateway.detail.estCost'),  fmtCost(data.total.totalCost) || '—'],
                 ].map(([l,v]) => (
                   <div key={l} className="bg-zinc-50 dark:bg-zinc-800/50 rounded-xl p-3">
-                    <div className="text-[10px] text-zinc-400 dark:text-zinc-500">{l}</div>
+                    <div className="text-xs text-zinc-400 dark:text-zinc-500">{l}</div>
                     <div className="text-lg font-bold text-zinc-800 dark:text-zinc-100 mt-0.5 truncate">{v}</div>
                   </div>
                 ))}
               </div>
-              <p className="text-[10px] text-zinc-400 mt-2">{t('gateway.detail.costHint')}</p>
+              <p className="text-xs text-zinc-400 mt-2">{t('gateway.detail.costHint')}</p>
             </DetailSection>
 
             {/* 3. 按模型统计（无 model 字段的应用不展示） */}
@@ -1076,7 +1076,7 @@ function AppDetailModal({ app, onClose }) {
               </div>
               {modelFilter && (
                 <button type="button" onClick={() => setModelFilter(null)}
-                  className="text-[10px] text-blue-600 dark:text-blue-400 mt-1.5">{t('gateway.detail.clearFilter')}</button>
+                  className="text-xs text-blue-600 dark:text-blue-400 mt-1.5">{t('gateway.detail.clearFilter')}</button>
               )}
             </DetailSection>
             )}
@@ -1087,7 +1087,7 @@ function AppDetailModal({ app, onClose }) {
                 <div className="text-xs text-zinc-400 px-1">{t('gateway.detail.noSessions')}</div>
               ) : (
                 <div className="border border-zinc-100 dark:border-zinc-800 rounded-lg overflow-hidden">
-                  <div className="grid grid-cols-[minmax(5.5rem,1.15fr)_minmax(0,2fr)_3.5rem_3.5rem_4.5rem_3.5rem] gap-2 px-3 py-1.5 text-[10px] font-medium text-zinc-400 bg-zinc-50 dark:bg-zinc-800/40 border-b border-zinc-100 dark:border-zinc-800">
+                  <div className="grid grid-cols-[minmax(5.5rem,1.15fr)_minmax(0,2fr)_3.5rem_3.5rem_4.5rem_3.5rem] gap-2 px-3 py-1.5 text-xs font-medium text-zinc-400 bg-zinc-50 dark:bg-zinc-800/40 border-b border-zinc-100 dark:border-zinc-800">
                     <span>{t('gateway.detail.colProject')}</span><span>{t('gateway.detail.colContext')}</span><span className="text-right">{t('gateway.detail.colRequests')}</span><span className="text-right">Token</span><span className="text-right">{t('gateway.detail.colTime')}</span><span className="text-right">{canTrace ? 'Trace' : t('gateway.detail.colDetail')}</span>
                   </div>
                   <div className="divide-y divide-zinc-100 dark:divide-zinc-800 max-h-64 overflow-y-auto">
@@ -1099,16 +1099,16 @@ function AppDetailModal({ app, onClose }) {
                           <span className="text-zinc-600 dark:text-zinc-400 truncate" title={row.context}>{row.context || '—'}</span>
                           <span className="text-zinc-500 text-right">{row.calls || 0}</span>
                           <span className="text-zinc-700 dark:text-zinc-300 text-right font-medium">{fmtN(row.tokens)}</span>
-                          <span className="text-zinc-400 text-right text-[10px]">{fmtTime(row.lastTs)}</span>
+                          <span className="text-zinc-400 text-right text-xs">{fmtTime(row.lastTs)}</span>
                           <span className="text-right">
                             {canTrace ? (
                               <button type="button" onClick={() => setTraceSid(row.session_id)}
-                                className="text-[10px] px-2 py-0.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400">
+                                className="text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400">
                                 Trace
                               </button>
                             ) : (
                               <button type="button" onClick={() => setSelectedSid(selectedSid === row.session_id ? null : row.session_id)}
-                                className="text-[10px] text-zinc-400 hover:text-zinc-600">
+                                className="text-xs text-zinc-400 hover:text-zinc-600">
                                 {selectedSid === row.session_id ? '▾' : '▸'}
                               </button>
                             )}
@@ -1117,7 +1117,7 @@ function AppDetailModal({ app, onClose }) {
                         {selectedSid === row.session_id && !canTrace && (
                           <div className="bg-zinc-50 dark:bg-zinc-800/30 divide-y divide-zinc-100 dark:divide-zinc-800/60 pl-4 pb-1">
                             {(data?.recent || []).filter(r => r.session_id === row.session_id).slice(0, 20).map((r, i) => (
-                              <div key={i} className="flex items-center gap-2 px-3 py-1 text-[11px]">
+                              <div key={i} className="flex items-center gap-2 px-3 py-1 text-xs">
                                 <span className="text-zinc-400 w-20 shrink-0">{fmtTime(r.ts)}</span>
                                 <span className="text-zinc-600 dark:text-zinc-400 flex-1 truncate">{r.label || r.model || '—'}</span>
                                 <span className="text-zinc-500 shrink-0">↑{fmtN(r.inTok)} ↓{fmtN(r.outTok)}</span>
@@ -1140,13 +1140,13 @@ function AppDetailModal({ app, onClose }) {
               ) : (
                 <div className="border border-zinc-100 dark:border-zinc-800 rounded-lg divide-y divide-zinc-100 dark:divide-zinc-800 max-h-80 overflow-y-auto">
                   {recentSorted.map((r, i) => (
-                    <div key={i} className="flex items-center gap-2 px-3 py-1.5 text-[11px] flex-wrap">
+                    <div key={i} className="flex items-center gap-2 px-3 py-1.5 text-xs flex-wrap">
                       <span className="text-zinc-400 w-24 shrink-0">{fmtTime(r.ts)}</span>
-                      <span className={`px-1 rounded text-[9px] shrink-0 ${r.source === 'proxy' ? 'bg-blue-50 text-blue-500 dark:bg-blue-900/20' : 'bg-green-50 text-green-600 dark:bg-green-900/20'}`}>
+                      <span className={`px-1 rounded text-xs shrink-0 ${r.source === 'proxy' ? 'bg-blue-50 text-blue-500 dark:bg-blue-900/20' : 'bg-green-50 text-green-600 dark:bg-green-900/20'}`}>
                         {r.source === 'proxy' ? t('gateway.detail.sourceProxy') : t('gateway.detail.sourceSess')}
                       </span>
                       {showModelStats && (
-                        <span className="font-mono text-[10px] text-zinc-600 dark:text-zinc-400 shrink-0 break-all" title={r.model}>{r.model || '—'}</span>
+                        <span className="font-mono text-xs text-zinc-600 dark:text-zinc-400 shrink-0 break-all" title={r.model}>{r.model || '—'}</span>
                       )}
                       {!showModelStats && (
                         <span className="text-zinc-600 dark:text-zinc-400 flex-1 truncate" title={r.label || r.context}>
@@ -1513,12 +1513,12 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                 className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white transition-colors font-medium">
                 {t('gateway.apps.new')}
               </button>
-              <span className="text-[11px] text-zinc-400 dark:text-zinc-500">{t('gateway.apps.newHint')}</span>
+              <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('gateway.apps.newHint')}</span>
               <div className="ml-auto"><ImportConfigButton onImported={load} /></div>
             </div>
 
             {/* 提醒：纳管后若未生效需重启应用 */}
-            <div className="mb-3 text-[10px] text-zinc-400 dark:text-zinc-500 px-1">
+            <div className="mb-3 text-xs text-zinc-400 dark:text-zinc-500 px-1">
               {t('gateway.apps.restartHint')}
             </div>
 
@@ -1542,7 +1542,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
             ) : (
               <div className={`flex flex-col divide-y divide-zinc-100 dark:divide-zinc-800/60 border border-zinc-200 dark:border-zinc-700/60 rounded-xl overflow-hidden ${visibleApps.length > 20 ? 'max-h-[min(75vh,900px)] overflow-y-auto' : ''}`}>
                 {/* 表头（超过 20 个时列表滚动，表头吸顶）*/}
-                <div className={`${APPS_TABLE_GRID} py-1.5 bg-zinc-50 dark:bg-zinc-800/50 text-[9px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest sticky top-0 z-10 border-b border-zinc-100 dark:border-zinc-800`}>
+                <div className={`${APPS_TABLE_GRID} py-1.5 bg-zinc-50 dark:bg-zinc-800/50 text-xs font-medium text-zinc-400 dark:text-zinc-500 sticky top-0 z-10 border-b border-zinc-100 dark:border-zinc-800`}>
                   <span className="text-base text-center shrink-0 invisible">🔧</span>
                   <div className="min-w-0">{t('gateway.apps.colApp')}</div>
                   <div className="min-w-0">{t('gateway.apps.colStatus')}</div>
@@ -1613,11 +1613,11 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       {/* 状态列：应用=已纳管/未纳管，API=在线 */}
                       <div className="min-w-0 flex items-center gap-1.5 overflow-hidden">
                         <span className={`w-2 h-2 rounded-full shrink-0 ${statusDot}`} />
-                        <span className={`text-[11px] font-medium truncate ${statusText}`}>{statusLabel}</span>
+                        <span className={`text-xs font-medium truncate ${statusText}`}>{statusLabel}</span>
                       </div>
 
                       {/* 接入方式列 */}
-                      <div className="min-w-0 text-[11px] text-zinc-400 truncate">
+                      <div className="min-w-0 text-xs text-zinc-400 truncate">
                         {linkMethodLabel(app.link_method, t)}
                       </div>
 
@@ -1625,7 +1625,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       <div className="contents cursor-pointer" title={t('gateway.apps.statsTitle')} onClick={() => setDetailApp(app)}>
                         <div className="text-center min-w-0 overflow-hidden tabular-nums text-xs font-semibold text-zinc-700 dark:text-zinc-200 rounded hover:bg-zinc-100/60 dark:hover:bg-zinc-700/30">{st.calls > 0 ? st.calls.toLocaleString() : '—'}</div>
                         <div className="text-center min-w-0 overflow-hidden tabular-nums text-xs font-semibold text-zinc-700 dark:text-zinc-200 rounded hover:bg-zinc-100/60 dark:hover:bg-zinc-700/30">{st.tokens > 0 ? fmtTokens(st.tokens) : '—'}</div>
-                        <div className="text-center min-w-0 overflow-hidden text-[10px] font-medium text-zinc-600 dark:text-zinc-300 rounded hover:bg-zinc-100/60 dark:hover:bg-zinc-700/30">{fmtTime(st.lastTs)}</div>
+                        <div className="text-center min-w-0 overflow-hidden text-xs font-medium text-zinc-600 dark:text-zinc-300 rounded hover:bg-zinc-100/60 dark:hover:bg-zinc-700/30">{fmtTime(st.lastTs)}</div>
                       </div>
 
                       {/* 路由下拉槽 */}
@@ -1664,7 +1664,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           setBusyId(null);
                           await load();
                         }}
-                        className="w-full text-[10px] bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-1.5 py-1 outline-none text-zinc-600 dark:text-zinc-400 disabled:opacity-40 disabled:cursor-not-allowed">
+                        className="w-full text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-1.5 py-1 outline-none text-zinc-600 dark:text-zinc-400 disabled:opacity-40 disabled:cursor-not-allowed">
                         {/* Cursor 等仅官方订阅应用：固定一项；manual 必须绑路由；其余可选官方订阅或走网关 */}
                         {isManual
                           ? <option value="" disabled>{t('gateway.app.routeRequired')}</option>
@@ -1700,12 +1700,12 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           <>
                             {ts && !ts.busy && (
                               <span title={ts.ok ? `${ts.latency}ms` : ts.error}
-                                className={`text-[10px] font-mono shrink-0 max-w-[120px] truncate ${ts.ok ? 'text-green-500 dark:text-green-400' : 'text-red-400'}`}>
+                                className={`text-xs font-mono shrink-0 max-w-[120px] truncate ${ts.ok ? 'text-green-500 dark:text-green-400' : 'text-red-400'}`}>
                                 {ts.ok ? `✓ ${ts.latency}ms` : `✗ ${ts.error}`}
                               </span>
                             )}
                             <button onClick={() => runAppTest(app)} disabled={ts?.busy || !isGatewayRouted}
-                              className={`text-[10px] px-2 py-1 rounded-lg border transition-colors shrink-0 ${ts?.busy
+                              className={`text-xs px-2 py-1 rounded-lg border transition-colors shrink-0 ${ts?.busy
                                 ? 'border-zinc-300 dark:border-zinc-600 text-zinc-400 opacity-60 cursor-wait'
                                 : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-blue-400 hover:text-blue-500'} disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-zinc-200 disabled:hover:text-zinc-500`}>
                               {ts?.busy ? t('gateway.common.testing') : t('gateway.common.test')}
@@ -1721,18 +1721,18 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         /* 仅官方订阅（cursor 等）：只读会话统计，设置/测试在走网关时可用，还原=取消纳管停统计 */
                         <>
                           <button onClick={() => setSettings(app)}
-                            className="text-[10px] px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0">
+                            className="text-xs px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0">
                             {t('gateway.common.settings')}
                           </button>
                           {tracked ? (
                             <button onClick={() => setTracked(app, false)} disabled={busyId === app.id}
                               title={t('gateway.apps.revertTitle')}
-                              className="text-[10px] px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
+                              className="text-xs px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
                               {busyId === app.id ? '…' : t('gateway.common.revert')}
                             </button>
                           ) : (
                             <button onClick={() => setTracked(app, true)} disabled={busyId === app.id}
-                              className="text-[10px] px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
+                              className="text-xs px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
                               {busyId === app.id ? '…' : t('gateway.common.manage')}
                             </button>
                           )}
@@ -1741,17 +1741,17 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         /* 透明托管：设置 + 纳管/还原 开关（按 tracked）*/
                         <>
                           <button onClick={() => setSettings(app)}
-                            className="text-[10px] px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0">
+                            className="text-xs px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0">
                             {t('gateway.common.settings')}
                           </button>
                           {tracked ? (
                             <button onClick={() => setTracked(app, false)} disabled={busyId === app.agent_id || busyId === app.id}
-                              className="text-[10px] px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
+                              className="text-xs px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
                               {(busyId === app.agent_id || busyId === app.id) ? '…' : t('gateway.common.revert')}
                             </button>
                           ) : (
                             <button onClick={() => setTracked(app, true)} disabled={busyId === app.agent_id || busyId === app.id}
-                              className="text-[10px] px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
+                              className="text-xs px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
                               {(busyId === app.agent_id || busyId === app.id) ? '…' : t('gateway.common.manage')}
                             </button>
                           )}
@@ -1759,24 +1759,24 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                       ) : app._virtual_apikey ? (
                         /* API Key 应用（未纳管虚拟行）：一键纳管（写配置文件指向网关），与透明托管一致 */
                         <button onClick={() => addApiKeyApp(app)} disabled={busyId === app.id}
-                          className="text-[10px] px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
+                          className="text-xs px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
                           {busyId === app.id ? '…' : t('gateway.common.manage')}
                         </button>
                       ) : app.host_method === 'config-file' ? (
                         /* config-file api-key 应用：设置 + 纳管/还原；纳管/还原默认官方订阅 */
                         <>
                           <button onClick={() => setSettings(app)}
-                            className="text-[10px] px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0">
+                            className="text-xs px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0">
                             {t('gateway.common.settings')}
                           </button>
                           {tracked ? (
                             <button onClick={() => setTracked(app, false)} disabled={busyId === app.id}
-                              className="text-[10px] px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
+                              className="text-xs px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
                               {busyId === app.id ? '…' : t('gateway.common.revert')}
                             </button>
                           ) : (
                             <button onClick={() => setTracked(app, true)} disabled={busyId === app.id}
-                              className="text-[10px] px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
+                              className="text-xs px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
                               {busyId === app.id ? '…' : t('gateway.common.manage')}
                             </button>
                           )}
@@ -1785,11 +1785,11 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         /* 普通 api-key 应用：设置 + 删除 */
                         <>
                           <button onClick={() => setSettings(app)}
-                            className="text-[10px] px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0">
+                            className="text-xs px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0">
                             {t('gateway.common.settings')}
                           </button>
                           <button onClick={() => handleDeleteApp(app.id)}
-                            className="text-[10px] px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors shrink-0">
+                            className="text-xs px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors shrink-0">
                             {t('gateway.common.delete')}
                           </button>
                         </>
@@ -1801,7 +1801,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                         if (!msg) return null;
                         const isWarn = msg.startsWith('⚠');
                         return (
-                          <span className={`text-[10px] shrink-0 font-medium ${isWarn ? 'text-amber-500 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}`}>
+                          <span className={`text-xs shrink-0 font-medium ${isWarn ? 'text-amber-500 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}`}>
                             {msg}
                           </span>
                         );
@@ -2029,7 +2029,7 @@ function ruleCondTypes(t) {
 function ruleOpLabel(t) {
   return { is: t('gateway.rule.op.is'), not: t('gateway.rule.op.not'), gt: '>', lt: '<', gte: '≥', lte: '≤', match: t('gateway.rule.op.match'), contains: t('gateway.rule.op.contains') };
 }
-const RULE_SEL = 'bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-1.5 py-1 text-[11px] text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-blue-500';
+const RULE_SEL = 'bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-1.5 py-1 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-blue-500';
 
 // 单条 when 条件编辑器：条件类型 + 算子 + 值（值控件随类型变化）。
 // categories：智能分类的类别集合（来自分类器配置），用于「智能分类」条件的值下拉。
@@ -2045,7 +2045,7 @@ function RuleConditionEditor({ when, onChange, categories = [] }) {
   };
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
-      <span className="text-[11px] text-zinc-500 shrink-0">{t('gateway.rule.when')}</span>
+      <span className="text-xs text-zinc-500 shrink-0">{t('gateway.rule.when')}</span>
       <select value={when.type} onChange={e => setType(e.target.value)} className={RULE_SEL}>
         {RULE_COND_TYPES.map(c => <option key={c.type} value={c.type}>{c.label}</option>)}
       </select>
@@ -2091,7 +2091,7 @@ function ChainEditor({ steps, setSteps, availableModels }) {
     <div className="space-y-1.5">
       {list.map((step, i) => (
         <div key={i} className="flex items-center gap-2 group">
-          <span className="text-[10px] text-zinc-400 w-4 text-right shrink-0">{i + 1}</span>
+          <span className="text-xs text-zinc-400 w-4 text-right shrink-0">{i + 1}</span>
           <select value={step.model && step.tier ? modelTierKey({ id: step.model, tier: step.tier }) : (step.model || '')} onChange={e => update(i, e.target.value)}
             className="flex-1 bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded-lg px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-blue-500">
             <option value="">{t('gateway.route.selectModel')}</option>
@@ -2100,7 +2100,7 @@ function ChainEditor({ steps, setSteps, availableModels }) {
             {paid.length > 0 && <optgroup label={t('gateway.app.tier.paidLayer')}>{paid.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}</optgroup>}
           </select>
           <button onClick={() => remove(i)}
-            className="text-[10px] text-zinc-400 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity px-1">✕</button>
+            className="text-xs text-zinc-400 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity px-1">✕</button>
         </div>
       ))}
       <button onClick={add} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">{t('gateway.route.addStep')}</button>
@@ -2154,10 +2154,10 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
           <div key={ri} className="border border-zinc-200 dark:border-zinc-700 rounded-lg p-2 space-y-1.5 bg-white/60 dark:bg-zinc-900/30">
             <div className="flex items-start justify-between gap-2">
               <RuleConditionEditor when={rule.when} onChange={w => setRuleAt(ri, { when: w })} categories={categories} />
-              <button onClick={() => removeRule(ri)} className="text-[10px] text-zinc-400 hover:text-red-500 shrink-0 px-1">{t('gateway.common.delete')}</button>
+              <button onClick={() => removeRule(ri)} className="text-xs text-zinc-400 hover:text-red-500 shrink-0 px-1">{t('gateway.common.delete')}</button>
             </div>
             <div className="pl-3 border-l-2 border-zinc-200 dark:border-zinc-700">
-              <div className="text-[10px] text-zinc-400 mb-1">{t('gateway.route.routeTo')}</div>
+              <div className="text-xs text-zinc-400 mb-1">{t('gateway.route.routeTo')}</div>
               <ChainEditor steps={rule.steps} setSteps={s => setRuleAt(ri, { steps: s })} availableModels={availableModels} />
             </div>
           </div>
@@ -2170,18 +2170,18 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
         <div className="border border-indigo-200 dark:border-indigo-800/40 rounded-lg p-2.5 space-y-2 bg-indigo-50/40 dark:bg-indigo-900/10">
           <div className="text-xs font-medium text-indigo-600 dark:text-indigo-400">{t('gateway.route.classifier')}</div>
           <div className="flex items-center gap-2">
-            <label className="text-[11px] text-zinc-500 w-12 shrink-0">{t('gateway.route.clsModel')}</label>
+            <label className="text-xs text-zinc-500 w-12 shrink-0">{t('gateway.route.clsModel')}</label>
             <select value={clsModel} onChange={e => setClsModel(e.target.value)} className={RULE_SEL + ' flex-1'}>
               <option value="">{t('gateway.route.clsModelPlaceholder')}</option>
               {availableModels.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}
             </select>
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-[11px] text-zinc-500 w-12 shrink-0">{t('gateway.route.clsCategories')}</label>
+            <label className="text-xs text-zinc-500 w-12 shrink-0">{t('gateway.route.clsCategories')}</label>
             <input value={clsCats} onChange={e => setClsCats(e.target.value)} placeholder={t('gateway.route.clsCategoriesPlaceholder')}
               className={RULE_SEL + ' flex-1'} />
           </div>
-          <div className="text-[10px] text-zinc-400">{t('gateway.route.clsHint')}</div>
+          <div className="text-xs text-zinc-400">{t('gateway.route.clsHint')}</div>
         </div>
       )}
 
@@ -2326,14 +2326,14 @@ function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
         {isCodeTab && (
           <>
             <div className="flex-1" />
-            <CopyButton text={code} label={t('gateway.common.copy')} className="mx-2 py-1 text-[10px]" />
+            <CopyButton text={code} label={t('gateway.common.copy')} className="mx-2 py-1 text-xs" />
           </>
         )}
       </div>
 
       {/* Code snippet */}
       {isCodeTab && (
-        <pre className="px-4 py-3 text-[11px] font-mono leading-relaxed text-zinc-700 dark:text-zinc-300 overflow-x-auto bg-zinc-50/30 dark:bg-zinc-900/30 whitespace-pre">
+        <pre className="px-4 py-3 text-xs font-mono leading-relaxed text-zinc-700 dark:text-zinc-300 overflow-x-auto bg-zinc-50/30 dark:bg-zinc-900/30 whitespace-pre">
           {code}
         </pre>
       )}
@@ -2344,13 +2344,13 @@ function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
           {/* Model name badge */}
           {model && (
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-zinc-500">{t('gateway.key.modelName')}</span>
-              <code className={`text-[11px] font-mono px-2 py-0.5 rounded border ${
+              <span className="text-xs text-zinc-500">{t('gateway.key.modelName')}</span>
+              <code className={`text-xs font-mono px-2 py-0.5 rounded border ${
                 isRouter
                   ? 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-800/40 text-purple-600 dark:text-purple-400'
                   : 'bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300'
               }`}>{model}</code>
-              <CopyButton text={model} label={t('gateway.common.copy')} className="py-0.5 text-[10px]" />
+              <CopyButton text={model} label={t('gateway.common.copy')} className="py-0.5 text-xs" />
             </div>
           )}
           <div className="grid grid-cols-4 gap-2">
@@ -2363,16 +2363,16 @@ function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
                 }`}>
                 <span className="text-xl">{t.icon}</span>
                 <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">{t.label}</span>
-                <span className={`text-[10px] ${tool === t.id ? 'text-blue-600 dark:text-blue-400' : 'text-zinc-400'}`}>{t.hint}</span>
+                <span className={`text-xs ${tool === t.id ? 'text-blue-600 dark:text-blue-400' : 'text-zinc-400'}`}>{t.hint}</span>
               </button>
             ))}
           </div>
           <div className="bg-zinc-50 dark:bg-zinc-800/40 border border-zinc-200 dark:border-zinc-700 rounded-lg overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-200 dark:border-zinc-700">
-              <span className="text-[10px] text-zinc-500 font-medium">{t('gateway.key.envVars')}</span>
-              <CopyButton text={envText} label={t('gateway.common.copyAll')} className="py-0.5 text-[10px]" />
+              <span className="text-xs text-zinc-500 font-medium">{t('gateway.key.envVars')}</span>
+              <CopyButton text={envText} label={t('gateway.common.copyAll')} className="py-0.5 text-xs" />
             </div>
-            <pre className="px-3 py-2.5 text-[11px] font-mono text-zinc-700 dark:text-zinc-300 leading-relaxed">
+            <pre className="px-3 py-2.5 text-xs font-mono text-zinc-700 dark:text-zinc-300 leading-relaxed">
               {envText}
             </pre>
           </div>
@@ -2441,7 +2441,7 @@ function InstanceList({ keysScene, onDelete, localBase, newKeyId, routeHealth })
     <div className="border-t border-zinc-200 dark:border-zinc-800">
       <div className="px-5 py-3 flex items-center justify-between">
         <span className="text-xs text-zinc-500 font-medium">{t('gateway.key.appList')}</span>
-        <span className="text-[10px] text-zinc-400">{t('gateway.key.appCount', { n: keysScene.length })}</span>
+        <span className="text-xs text-zinc-400">{t('gateway.key.appCount', { n: keysScene.length })}</span>
       </div>
       <div className="max-h-96 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800/60">
         {sorted.map(k => {
@@ -2479,18 +2479,18 @@ function InstanceList({ keysScene, onDelete, localBase, newKeyId, routeHealth })
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">{k.app_name || k.note || t('gateway.common.unnamed')}</span>
                     {k.scene_name && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40 shrink-0">
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40 shrink-0">
                         {k.icon} {k.scene_name}
                       </span>
                     )}
                   </div>
-                  <code className="text-[10px] font-mono text-zinc-400 mt-0.5 block">{k.key?.slice(0, 20)}…</code>
+                  <code className="text-xs font-mono text-zinc-400 mt-0.5 block">{k.key?.slice(0, 20)}…</code>
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
                   {/* Test result badge */}
                   {ts && !ts.busy && (
-                    <span className={`text-[10px] font-mono shrink-0 max-w-[120px] truncate ${ts.ok ? 'text-green-500 dark:text-green-400' : 'text-red-400'}`}
+                    <span className={`text-xs font-mono shrink-0 max-w-[120px] truncate ${ts.ok ? 'text-green-500 dark:text-green-400' : 'text-red-400'}`}
                       title={ts.ok ? `${ts.latency}ms` : ts.error}>
                       {ts.ok ? `✓ ${ts.latency}ms` : `✗ ${ts.error}`}
                     </span>
@@ -2498,18 +2498,18 @@ function InstanceList({ keysScene, onDelete, localBase, newKeyId, routeHealth })
                   <button
                     onClick={() => runTest(k)}
                     disabled={ts?.busy}
-                    className={`text-[10px] px-2 py-1 rounded border transition-colors shrink-0 ${
+                    className={`text-xs px-2 py-1 rounded border transition-colors shrink-0 ${
                       ts?.busy
                         ? 'border-zinc-300 dark:border-zinc-600 text-zinc-400 opacity-60 cursor-wait'
                         : 'border-zinc-300 dark:border-zinc-600 text-zinc-500 dark:text-zinc-400 hover:border-blue-400 hover:text-blue-500 dark:hover:text-blue-400'
                     }`}>
                     {ts?.busy ? t('gateway.common.testing') : t('gateway.common.test')}
                   </button>
-                  <CopyButton text={k.key} label={t('gateway.common.copy')} className="text-[10px] py-1 px-2 min-w-0" />
+                  <CopyButton text={k.key} label={t('gateway.common.copy')} className="text-xs py-1 px-2 min-w-0" />
                   <button onClick={() => onDelete(k.id)}
-                    className="text-[10px] text-zinc-400 hover:text-red-500 dark:hover:text-red-400 transition-colors">{t('gateway.common.delete')}</button>
+                    className="text-xs text-zinc-400 hover:text-red-500 dark:hover:text-red-400 transition-colors">{t('gateway.common.delete')}</button>
                 </div>
-                <span className="text-zinc-400 text-[10px] shrink-0">{expandedId === k.id ? '▲' : '▼'}</span>
+                <span className="text-zinc-400 text-xs shrink-0">{expandedId === k.id ? '▲' : '▼'}</span>
               </div>
               {expandedId === k.id && (
                 <div className="px-5 pb-4 pt-1">
@@ -2763,7 +2763,7 @@ export default function Gateway() {
           { label: t('gateway.stat.avgLatency'), value: avgLatency > 0 ? `${avgLatency}ms` : '—', color: 'text-zinc-500 dark:text-zinc-400' },
         ].map(({ label, value, color }) => (
           <div key={label} className="bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800/80 rounded-xl px-4 py-3.5 shadow-sm">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 mb-1.5">{label}</div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 mb-1.5">{label}</div>
             <div className={`text-[22px] font-bold leading-none tabular-nums tracking-tight ${color}`}>{value}</div>
           </div>
         ))}
@@ -2782,7 +2782,7 @@ export default function Gateway() {
             </button>
           ))}
           <div className="ml-auto flex items-center gap-2 px-3">
-            <span className="text-[10px] text-zinc-400 dark:text-zinc-500 font-mono">{localBase}</span>
+            <span className="text-xs text-zinc-400 dark:text-zinc-500 font-mono">{localBase}</span>
             <CopyButton text={localBase} label={t('gateway.common.copy')} />
           </div>
         </div>
@@ -2843,20 +2843,20 @@ export default function Gateway() {
                     <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{route.scene_name}</span>
                     {route.model_key && (
                       <>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 shrink-0">
+                        <span className="text-xs font-mono px-1.5 py-0.5 rounded-md bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 shrink-0">
                           {route.model_key}
                         </span>
                         <span onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(route.model_key); }}
-                          className="text-[10px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 cursor-pointer transition-colors shrink-0">{t('gateway.common.copy')}</span>
+                          className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 cursor-pointer transition-colors shrink-0">{t('gateway.common.copy')}</span>
                       </>
                     )}
                     {health.degraded && (
-                      <span className="text-[9px] px-1 py-0.5 rounded bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800/40 text-rose-600 dark:text-rose-400 shrink-0">
+                      <span className="text-xs px-1 py-0.5 rounded bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800/40 text-rose-600 dark:text-rose-400 shrink-0">
                         {t('gateway.route.degraded')}
                       </span>
                     )}
                     {route.rules?.length > 0 && (
-                      <span title={t('gateway.route.rulesTitle')} className="text-[9px] px-1 py-0.5 rounded bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/40 text-indigo-600 dark:text-indigo-400 shrink-0">
+                      <span title={t('gateway.route.rulesTitle')} className="text-xs px-1 py-0.5 rounded bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/40 text-indigo-600 dark:text-indigo-400 shrink-0">
                         {t('gateway.route.rulesCount', { n: route.rules.length })}
                       </span>
                     )}
@@ -2875,7 +2875,7 @@ export default function Gateway() {
                             <React.Fragment key={i}>
                               {i > 0 && <span className="text-zinc-300 dark:text-zinc-600 text-xs">→</span>}
                               <span title={missing ? t('gateway.route.missingModelTitle') : undefined}
-                                className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-md border transition-all ${
+                                className={`inline-flex items-center gap-1 text-xs font-mono px-2 py-0.5 rounded-md border transition-all ${
                                   isActive
                                     ? 'bg-green-100 dark:bg-green-900/40 border-green-400 dark:border-green-600 text-green-800 dark:text-green-200'
                                     : missing
@@ -2893,7 +2893,7 @@ export default function Gateway() {
                         })}
                         {!steps.length && <span className="text-xs text-zinc-400">{t('gateway.route.noStepsShort')}</span>}
                         {routeMissing && (
-                          <span className="text-[10px] text-red-500 dark:text-red-400 ml-1 shrink-0">{t('gateway.route.missingModelsWarn')}</span>
+                          <span className="text-xs text-red-500 dark:text-red-400 ml-1 shrink-0">{t('gateway.route.missingModelsWarn')}</span>
                         )}
                       </>);
                     })()}
@@ -2901,11 +2901,11 @@ export default function Gateway() {
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
                   <button onClick={() => setExpandedRoute(expandedRoute === route.id ? null : route.id)}
-                    className="text-[10px] px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
+                    className="text-xs px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
                     {expandedRoute === route.id ? t('gateway.common.collapse') : t('gateway.common.edit')}
                   </button>
                   <button onClick={() => removeRoute(route.id)}
-                    className="text-[10px] px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+                    className="text-xs px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
                     {t('gateway.common.delete')}
                   </button>
                 </div>
@@ -2954,7 +2954,7 @@ export default function Gateway() {
                     {/* Claude 透明映射标记：claude 名 → (改写成真实模型) */}
                     {e.claude_from && (
                       <>
-                        <span title={t('gateway.log.claudeMap')} className="font-mono text-[10px] px-1 py-0.5 rounded bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/40 text-indigo-600 dark:text-indigo-400 shrink-0">
+                        <span title={t('gateway.log.claudeMap')} className="font-mono text-xs px-1 py-0.5 rounded bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/40 text-indigo-600 dark:text-indigo-400 shrink-0">
                           🎭 {e.claude_from}
                         </span>
                         <span className="text-zinc-300 dark:text-zinc-600">→</span>
@@ -2972,14 +2972,14 @@ export default function Gateway() {
                     <span className="font-mono text-zinc-700 dark:text-zinc-300 truncate">
                       {e.model || '—'}
                       {e.tier && (
-                        <span className={`ml-0.5 text-[9px] not-italic ${
+                        <span className={`ml-0.5 text-xs not-italic ${
                           e.tier === 'p2p'  ? 'text-blue-500 dark:text-blue-400' :
                           e.tier === 'paid' ? 'text-amber-500 dark:text-amber-400' :
                                               'text-green-600 dark:text-green-500'
                         }`}>({e.tier})</span>
                       )}
                       {!e.claude_from && !isRouter && (
-                        <span title={t('gateway.log.directTitle')} className="ml-1 text-[9px] text-zinc-400">{t('gateway.log.direct')}</span>
+                        <span title={t('gateway.log.directTitle')} className="ml-1 text-xs text-zinc-400">{t('gateway.log.direct')}</span>
                       )}
                     </span>
                   </div>

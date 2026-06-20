@@ -604,7 +604,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('providers.meta.tokenbank-p2p.label')}</span>
               {provider.enabled && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 border border-green-300 dark:border-green-800/50">
+                <span className="text-xs px-1.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 border border-green-300 dark:border-green-800/50">
                   {t('providers.p2p.running')}
                 </span>
               )}
@@ -645,7 +645,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
                       <ModelDot m={m} />
                       <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">{m.name}</span>
                     </div>
-                    <span className="text-[10px] text-zinc-500 shrink-0"><ModelSub m={m} /></span>
+                    <span className="text-xs text-zinc-500 shrink-0"><ModelSub m={m} /></span>
                   </div>
                 ) : (
                   <div key={i} className="bg-zinc-100/50 dark:bg-zinc-800/50 border border-zinc-300/30 dark:border-zinc-700/30 rounded-lg py-1.5 h-7 animate-pulse" />
@@ -665,8 +665,8 @@ function P2PNetworkCard({ provider, onUpdate }) {
             <span className="flex items-center gap-2">
               <span>{t('providers.p2p.gatewayKey')}</span>
               {savedKey
-                ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-800/40">{t('providers.p2p.configured')}</span>
-                : <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/40">{t('providers.p2p.notConfigured')}</span>
+                ? <span className="text-xs px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-800/40">{t('providers.p2p.configured')}</span>
+                : <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/40">{t('providers.p2p.notConfigured')}</span>
               }
             </span>
             <span className="text-zinc-400">{showKeyConfig ? '▲' : '▼'}</span>
@@ -674,7 +674,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
 
           {showKeyConfig && (
             <div className="px-4 pb-4 space-y-3">
-              <p className="text-[11px] text-zinc-500">{t('providers.p2p.keyHint')}</p>
+              <p className="text-xs text-zinc-500">{t('providers.p2p.keyHint')}</p>
 
               {keysLoading ? (
                 <p className="text-xs text-zinc-400">{t('providers.common.loading')}</p>
@@ -693,7 +693,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
                         }`} onClick={() => { setSelectedKey(k.key); setKeySaved(false); }}>
                           <div className="flex-1 min-w-0">
                             {k.note && <p className="text-xs text-zinc-700 dark:text-zinc-300 truncate">{k.note}</p>}
-                            <p className="text-[10px] font-mono text-zinc-400 dark:text-zinc-500">
+                            <p className="text-xs font-mono text-zinc-400 dark:text-zinc-500">
                               {k.key.slice(0, 14)}…
                               {k.key === savedKey && <span className="ml-1.5 text-green-500">{t('providers.p2p.inUse')}</span>}
                             </p>
@@ -746,7 +746,7 @@ function StatusBadge({ enabled, hasKey, keyless }) {
   if (!enabled) return null;
   const connected = keyless || hasKey;
   return (
-    <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${
+    <span className={`text-xs px-1.5 py-0.5 rounded-full border ${
       connected
         ? 'bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 border-green-300 dark:border-green-800/50'
         : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 border-zinc-300 dark:border-zinc-700'
@@ -903,7 +903,7 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
                 <button
                   onClick={() => toggleType(m.name)}
                   title={t('providers.models.toggleType')}
-                  className={`px-1.5 py-0.5 text-[10px] font-sans border-l border-zinc-300 dark:border-zinc-700 transition-colors ${
+                  className={`px-1.5 py-0.5 text-xs font-sans border-l border-zinc-300 dark:border-zinc-700 transition-colors ${
                     m.type === 'image'
                       ? 'bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 hover:bg-purple-200 dark:hover:bg-purple-800/60'
                       : 'bg-blue-50 dark:bg-blue-900/20 text-blue-500 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40'
@@ -935,7 +935,7 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
           />
           {suggestionMenu}
         </div>
-        <div className="flex rounded-lg overflow-hidden border border-zinc-300 dark:border-zinc-600 shrink-0 text-[10px] font-medium">
+        <div className="flex rounded-lg overflow-hidden border border-zinc-300 dark:border-zinc-600 shrink-0 text-xs font-medium">
           {[['chat', t('providers.models.chat')], ['image', t('providers.models.image')]].map(([typeKey, label]) => (
             <button key={typeKey} type="button" onClick={() => setInputType(typeKey)}
               className={`px-2 py-1.5 transition-colors ${
@@ -956,10 +956,10 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
         </button>
       </div>
       {profileOnly && suggestions.length === 0 && (
-        <p className="text-[11px] text-zinc-400">{t('providers.models.paygNoProfileModels')}</p>
+        <p className="text-xs text-zinc-400">{t('providers.models.paygNoProfileModels')}</p>
       )}
       {normalized.length === 0 && !profileOnly && (
-        <p className="text-[11px] text-zinc-400">{t('providers.models.emptyHint')}</p>
+        <p className="text-xs text-zinc-400">{t('providers.models.emptyHint')}</p>
       )}
     </div>
   );
@@ -996,8 +996,8 @@ function ProviderModelSection({ provider, userPayg, onGoPayg, onUpdate, scrollab
       <div className="flex items-center gap-2">
         <span className="text-xs text-zinc-500">{t('providers.models.list')}</span>
         {modelCount > 0
-          ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">{t('providers.models.count', { n: modelCount })}</span>
-          : <span className="text-[10px] text-zinc-400">{t('providers.models.unlimited')}</span>
+          ? <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">{t('providers.models.count', { n: modelCount })}</span>
+          : <span className="text-xs text-zinc-400">{t('providers.models.unlimited')}</span>
         }
       </div>
       <ModelListEditor
@@ -1008,7 +1008,7 @@ function ProviderModelSection({ provider, userPayg, onGoPayg, onUpdate, scrollab
         profileOnly={isPayg}
       />
       {isPayg && (
-        <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
           {t('providers.models.paygHint')}{' '}
           <button type="button" onClick={onGoPayg}
             className="text-emerald-600 dark:text-emerald-400 hover:underline">
@@ -1057,7 +1057,7 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
                 {displayLabel}
               </span>
               {provider.enabled && provider.base_url && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 border border-green-300 dark:border-green-800/50 shrink-0">
+                <span className="text-xs px-1.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 border border-green-300 dark:border-green-800/50 shrink-0">
                   {t('providers.badge.enabled')}
                 </span>
               )}
@@ -1290,7 +1290,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
                 <button onClick={() => { setExpanded(true); setMethod(isOauthCfg ? 'oauth' : 'api_key'); }} className="text-xs text-zinc-500 hover:text-zinc-700 dark:text-zinc-300">{t('providers.common.edit')}</button>
               </div>
               {provider.base_url && (
-                <p className="text-[11px] text-zinc-400 dark:text-zinc-600 font-mono break-all">{provider.base_url}</p>
+                <p className="text-xs text-zinc-400 dark:text-zinc-600 font-mono break-all">{provider.base_url}</p>
               )}
             </div>
           )}
@@ -1301,7 +1301,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
               {/* 计费方式切换（仅非付费层强制模式时显示） */}
               {canApiKey && !forceOauth && !forceApiKey && (
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-zinc-500 dark:text-zinc-400 shrink-0">{t('providers.card.billingMode')}</span>
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">{t('providers.card.billingMode')}</span>
                   <div className="inline-flex rounded-lg border border-zinc-300 dark:border-zinc-700 overflow-hidden text-xs">
                     <button onClick={() => onUpdate(provider.id, { billing_type: 'api-key' })}
                       className={billingType === 'api-key' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'}>API Key</button>
@@ -1315,7 +1315,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
               {isSubscription && !forceApiKey && !forceOauth && oauthCap && (
                 <div className="space-y-2 pl-1">
                   <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-zinc-500 shrink-0">{t('providers.card.accessMode')}</span>
+                    <span className="text-xs text-zinc-500 shrink-0">{t('providers.card.accessMode')}</span>
                     <div className="inline-flex rounded-lg border border-zinc-300 dark:border-zinc-700 overflow-hidden text-xs">
                       <button onClick={() => onUpdate(provider.id, { sub_mode: 'accounting' })}
                         className={subMode === 'accounting' ? 'px-3 py-1 bg-blue-600 text-white' : 'px-3 py-1 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'}>{t('providers.card.accountingOnly')}</button>
@@ -1324,7 +1324,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
                     </div>
                   </div>
                   {subMode === 'accounting' && (
-                    <p className="text-[11px] text-zinc-400 dark:text-zinc-500">{t('providers.card.accountingHint')}</p>
+                    <p className="text-xs text-zinc-400 dark:text-zinc-500">{t('providers.card.accountingHint')}</p>
                   )}
                 </div>
               )}
@@ -1369,7 +1369,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
               {showOauthUi && (!canApiKey || method === 'oauth' || (isSubscription && subMode === 'api-proxy') || forceOauth) && (
                 <div className="space-y-2">
                   {forceOauth && !oauthCap && (
-                    <p className="text-[11px] text-amber-600 dark:text-amber-400">{t('providers.card.oauthUnsupported')}</p>
+                    <p className="text-xs text-amber-600 dark:text-amber-400">{t('providers.card.oauthUnsupported')}</p>
                   )}
                   {hasOauth && (
                     <p className="text-xs text-green-600 dark:text-green-400">
@@ -1427,7 +1427,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
 
               {/* Base URL override */}
               <div className="space-y-1">
-                <label className="text-[11px] text-zinc-500 dark:text-zinc-400">Base URL</label>
+                <label className="text-xs text-zinc-500 dark:text-zinc-400">Base URL</label>
                 <input
                   value={provider.base_url || ''}
                   onChange={e => onUpdate(provider.id, { base_url: e.target.value })}
@@ -1714,8 +1714,8 @@ export default function Providers() {
             <section key={tier} className="space-y-3">
               <div className="flex items-center gap-2">
                 <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
-                <h2 className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">{cfg.label}</h2>
-                <span className="text-[11px] text-zinc-400 dark:text-zinc-500">{cfg.hint}</span>
+                <h2 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">{cfg.label}</h2>
+                <span className="text-xs text-zinc-400 dark:text-zinc-500">{cfg.hint}</span>
               </div>
               <div className={`grid ${cfg.cols} gap-3`}>
                 {allItems.map(p => <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} />)}
@@ -1767,7 +1767,7 @@ export default function Providers() {
               }`}>
               <span>{entry.icon}</span>
               <span>{entry.label}</span>
-              <span className={`text-[10px] px-1 rounded ${
+              <span className={`text-xs px-1 rounded ${
                 entry.authMode === 'oauth'
                   ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
                   : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
@@ -1804,10 +1804,10 @@ export default function Providers() {
                 <span className="text-xl leading-none">{isOpen ? '×' : '+'}</span>
                 <span className="text-xs font-medium">{isOpen ? t('providers.add.collapse') : t('providers.add.expand')}</span>
                 {!isOpen && tier === 'paid' && paidAccountsLoaded && !hasGatewayPaid && (
-                  <span className="text-[10px] text-amber-500 dark:text-amber-400">{t('providers.add.needProfile')}</span>
+                  <span className="text-xs text-amber-500 dark:text-amber-400">{t('providers.add.needProfile')}</span>
                 )}
                 {!isOpen && disabledPickerEntries.length > 0 && (
-                  <span className="text-[10px] text-zinc-300 dark:text-zinc-600">{t('providers.add.availableCount', { n: disabledPickerEntries.length })}</span>
+                  <span className="text-xs text-zinc-300 dark:text-zinc-600">{t('providers.add.availableCount', { n: disabledPickerEntries.length })}</span>
                 )}
               </button>
             </div>
@@ -1835,7 +1835,7 @@ export default function Providers() {
                   <div className="space-y-3">
                     {disabledCatalogSubEntries.length > 0 && (
                       <div className="space-y-1.5">
-                        <p className="text-[10px] font-medium text-amber-700 dark:text-amber-300">{t('providers.add.catalogSub')}</p>
+                        <p className="text-xs font-medium text-amber-700 dark:text-amber-300">{t('providers.add.catalogSub')}</p>
                         <div className="flex flex-wrap gap-2">
                           {disabledCatalogSubEntries.map(renderPickerButton)}
                         </div>
@@ -1843,7 +1843,7 @@ export default function Providers() {
                     )}
                     {disabledCustomSubEntries.length > 0 && (
                       <div className="space-y-1.5">
-                        <p className="text-[10px] font-medium text-amber-700/80 dark:text-amber-300/80">{t('providers.add.customSub')}</p>
+                        <p className="text-xs font-medium text-amber-700/80 dark:text-amber-300/80">{t('providers.add.customSub')}</p>
                         <div className="flex flex-wrap gap-2">
                           {disabledCustomSubEntries.map(renderPickerButton)}
                         </div>
@@ -1851,7 +1851,7 @@ export default function Providers() {
                     )}
                     {disabledPaygEntries.length > 0 && (
                       <div className="space-y-1.5">
-                        <p className="text-[10px] font-medium text-emerald-700 dark:text-emerald-300">{t('providers.add.payg')}</p>
+                        <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">{t('providers.add.payg')}</p>
                         <div className="flex flex-wrap gap-2">
                           {disabledPaygEntries.map(renderPickerButton)}
                         </div>
@@ -1914,7 +1914,7 @@ export default function Providers() {
                   return (
                     <div className="mt-1">
                       {entry && (
-                        <p className="text-[10px] text-zinc-400 mb-2">
+                        <p className="text-xs text-zinc-400 mb-2">
                           {t('providers.add.configuring', {
                             label: entry.label,
                             auth: entry.authMode === 'oauth' ? t('providers.add.authOauth') : t('providers.add.authApiKey'),

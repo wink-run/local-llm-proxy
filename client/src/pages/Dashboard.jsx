@@ -58,7 +58,7 @@ function AppShareStrip({ rows, metric = 'tokens' }) {
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1">
         {rows.slice(0, 8).map((r, i) => (
-          <span key={r.id} className="inline-flex items-center gap-1.5 text-[10px] text-zinc-500">
+          <span key={r.id} className="inline-flex items-center gap-1.5 text-xs text-zinc-500">
             <span className={`w-2 h-2 rounded-full shrink-0 ${APP_USAGE_COLORS[i % APP_USAGE_COLORS.length]}`} />
             <span className="truncate max-w-[8rem]">{r.icon} {r.name}</span>
             <span className="text-zinc-400">{Math.round(((r[metric] || 0) / total) * 100)}%</span>
@@ -88,7 +88,7 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
             <div className="flex gap-0.5 bg-zinc-100 dark:bg-zinc-800 rounded-lg p-0.5">
               {[['calls', t('common.sortCalls')], ['tokens', t('common.sortTokens')]].map(([k, label]) => (
                 <button key={k} type="button" onClick={() => onSortBy(k)}
-                  className={`px-2 py-0.5 text-[10px] rounded-md transition-colors ${
+                  className={`px-2 py-0.5 text-xs rounded-md transition-colors ${
                     sortBy === k ? 'bg-white dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200 shadow-sm' : 'text-zinc-500'
                   }`}>{label}</button>
               ))}
@@ -96,7 +96,7 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
           </div>
         </div>
         {!loading && sorted.length > 0 && <AppShareStrip rows={sorted} metric={sortBy} />}
-        <div className="flex items-center gap-3 text-[10px] text-zinc-400">
+        <div className="flex items-center gap-3 text-xs text-zinc-400">
           <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" />{t('common.sourceProxy')}</span>
           <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-violet-400" />{t('common.sourceSessionImport')}</span>
         </div>
@@ -109,7 +109,7 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
         </div>
       ) : (
         <>
-          <div className="hidden sm:grid grid-cols-[minmax(0,1.4fr)_4.5rem_4.5rem_4rem_minmax(0,1fr)] gap-3 px-5 py-2 text-[10px] font-medium text-zinc-400 uppercase tracking-wide border-b border-zinc-100 dark:border-zinc-800">
+          <div className="hidden sm:grid grid-cols-[minmax(0,1.4fr)_4.5rem_4.5rem_4rem_minmax(0,1fr)] gap-3 px-5 py-2 text-xs font-medium text-zinc-400 uppercase tracking-wide border-b border-zinc-100 dark:border-zinc-800">
             <span>{t('dashboard.colApp')}</span>
             <span className="text-right">{t('dashboard.colRequests')}</span>
             <span className="text-right">{t('dashboard.colTokens')}</span>
@@ -125,7 +125,7 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
                     <span className="text-base shrink-0">{r.icon}</span>
                     <div className="min-w-0">
                       <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{r.name}</div>
-                      <div className="text-[10px] text-zinc-500 truncate">
+                      <div className="text-xs text-zinc-500 truncate">
                         {linkMethodLabel(r.link_method, t)}
                         {r.proxyCalls > 0 && r.sessionCalls > 0 ? t('common.mixedSource') : r.proxyCalls > 0 ? t('common.sourceGateway') : t('common.sourceSession')}
                       </div>
@@ -203,7 +203,7 @@ function TierDonut({ byProvider = {}, t }) {
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <div className="text-base font-bold text-green-600 dark:text-green-400">{Math.round(fPct * 100)}%</div>
-          <div className="text-[9px] text-zinc-600">{t('common.free')}</div>
+          <div className="text-xs text-zinc-600">{t('common.free')}</div>
         </div>
       </div>
       <div className="space-y-2.5 flex-1">
@@ -219,7 +219,7 @@ function TierDonut({ byProvider = {}, t }) {
             </div>
             <div className="text-right">
               <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{row.count}</div>
-              <div className="text-[10px] text-zinc-600">{total ? Math.round(row.count / total * 100) : 0}%</div>
+              <div className="text-xs text-zinc-600">{total ? Math.round(row.count / total * 100) : 0}%</div>
             </div>
           </div>
         ))}
@@ -244,7 +244,7 @@ function TrendBars({ data = [], t }) {
               onMouseLeave={() => setTip(null)}>
               {tip?.i === i && (
                 <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 z-10
-                  bg-zinc-800 dark:bg-zinc-700 text-white text-[10px] rounded px-1.5 py-0.5
+                  bg-zinc-800 dark:bg-zinc-700 text-white text-xs rounded px-1.5 py-0.5
                   whitespace-nowrap pointer-events-none shadow">
                   {t('dashboard.trendTip', { h: i, v })}
                 </div>
@@ -257,7 +257,7 @@ function TrendBars({ data = [], t }) {
       </div>
       <div className="flex justify-between px-0.5">
         {['0h','6h','12h','18h','24h'].map(l => (
-          <span key={l} className="text-[9px] text-zinc-700">{l}</span>
+          <span key={l} className="text-xs text-zinc-700">{l}</span>
         ))}
       </div>
     </div>
@@ -347,7 +347,7 @@ export default function Dashboard() {
           <h1 className="text-[17px] font-bold text-zinc-900 dark:text-zinc-100 tracking-tight">{t('dashboard.title')}</h1>
           <div className="flex items-center gap-2 mt-0.5">
             <p className="text-xs text-zinc-400 dark:text-zinc-500">{t('dashboard.subtitle')}</p>
-            <span className="flex items-center gap-1 text-[10px] text-zinc-400 border border-zinc-200 dark:border-zinc-700 rounded-full px-2 py-0.5">
+            <span className="flex items-center gap-1 text-xs text-zinc-400 border border-zinc-200 dark:border-zinc-700 rounded-full px-2 py-0.5">
               <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${gwStatus?.running !== false ? 'bg-green-500' : 'bg-zinc-400'}`}/>
               {window.electronAPI ? t('common.desktop') : t('common.cli')}
               {gwStatus?.port ? ` · :${gwStatus.port}` : ''}
@@ -357,7 +357,7 @@ export default function Dashboard() {
         <div className="flex gap-0.5 bg-zinc-100 dark:bg-zinc-800/60 rounded-lg p-0.5">
           {RANGE_KEYS.map(r => (
             <button key={r} onClick={() => setRange(r)}
-              className={`px-3 py-1.5 text-[11px] rounded-md transition-colors ${
+              className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
                 range === r ? 'bg-white dark:bg-zinc-700 text-zinc-800 dark:text-zinc-100 font-semibold shadow-sm' : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'
               }`}>{t(`profile.range.${r}`)}</button>
           ))}
@@ -367,31 +367,31 @@ export default function Dashboard() {
       {/* Summary cards — 5列 */}
       <div className="grid grid-cols-5 gap-3">
         <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
-          <div className="text-[11px] text-zinc-400 dark:text-zinc-500">{t('dashboard.totalRequests')}</div>
+          <div className="text-xs text-zinc-400 dark:text-zinc-500">{t('dashboard.totalRequests')}</div>
           <div className="text-2xl font-bold mt-1">{totalCalls}</div>
-          <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.totalRequestsHint', { range: rangeLabel })}</div>
+          <div className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.totalRequestsHint', { range: rangeLabel })}</div>
         </div>
         <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
-          <div className="text-[11px] text-zinc-400 dark:text-zinc-500">{t('dashboard.freeHitRate')}</div>
+          <div className="text-xs text-zinc-400 dark:text-zinc-500">{t('dashboard.freeHitRate')}</div>
           <div className="text-2xl font-bold text-green-600 dark:text-green-400 mt-1">{freeRatio}%</div>
-          <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.freeHitHint', { free: freeCalls, p2p: p2pCalls, paid: paidCalls })}</div>
+          <div className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.freeHitHint', { free: freeCalls, p2p: p2pCalls, paid: paidCalls })}</div>
         </div>
         <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
-          <div className="text-[11px] text-zinc-400 dark:text-zinc-500">{t('dashboard.tokenUsage')}</div>
+          <div className="text-xs text-zinc-400 dark:text-zinc-500">{t('dashboard.tokenUsage')}</div>
           <div className="text-2xl font-bold text-purple-600 dark:text-purple-400 mt-1">{fmtN(totalTokens)}</div>
-          <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.tokenHint', { range: rangeLabel })}</div>
+          <div className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.tokenHint', { range: rangeLabel })}</div>
         </div>
         <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
-          <div className="text-[11px] text-zinc-400 dark:text-zinc-500">{t('dashboard.paidCalls')}</div>
+          <div className="text-xs text-zinc-400 dark:text-zinc-500">{t('dashboard.paidCalls')}</div>
           <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">{paidCalls + p2pCalls}</div>
-          <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.paidCallsHint', { paid: paidCalls, p2p: p2pCalls })}</div>
+          <div className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.paidCallsHint', { paid: paidCalls, p2p: p2pCalls })}</div>
         </div>
         <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
-          <div className="text-[11px] text-zinc-400 dark:text-zinc-500">{t('dashboard.estCost')}</div>
+          <div className="text-xs text-zinc-400 dark:text-zinc-500">{t('dashboard.estCost')}</div>
           <div className={`text-2xl font-bold mt-1 ${totalCost > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400'}`}>
             {fmtCost(totalCost)}
           </div>
-          <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.estCostHint')}</div>
+          <div className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.estCostHint')}</div>
         </div>
       </div>
 
