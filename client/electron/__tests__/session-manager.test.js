@@ -6,6 +6,11 @@ const {
   joinSessionsWithMeta,
   buildSessionPackJSON,
   renderSessionPackMarkdown,
+  buildSessionDigest,
+  filePathFromInput,
+  composeHandoffDoc,
+  summarizeViaGateway,
+  buildLaunchCommand,
 } = require('../session-manager');
 
 test('mergeAgentRows tags agent_id and sorts by lastTs desc', () => {
@@ -83,4 +88,66 @@ test('renderSessionPackMarkdown renders headers and bodies', () => {
   assert.match(md, /hello/);
   assert.match(md, /## AI/);
   assert.match(md, /Read/);
+});
+
+test('filePathFromInput extracts paths from object and string inputs', () => {
+  assert.equal(filePathFromInput({ path: 'a/b.js' }), 'a/b.js');
+  assert.equal(filePathFromInput({ file_path: 'x/y.py' }), 'x/y.py');
+  assert.equal(filePathFromInput('edited src/main.ts now'), 'src/main.ts');
+  assert.equal(filePathFromInput(null), null);
+});
+
+test('buildSessionDigest includes header, files, and recent messages', () => {
+  const trace = {
+    project: 'demo', project_path: '/x/demo',
+    steps: [
+      { kind: 'user', text: 'add a feature', ts: 1 },
+      { kind: 'tool', tool: 'Write', input: { path: 'src/a.js' }, ts: 2 },
+      { kind: 'assistant', text: 'done', ts: 3 },
+    ],
+  };
+  const d = buildSessionDigest(trace);
+  assert.match(d, /项目: demo/);
+  assert.match(d, /src\/a\.js/);
+  assert.match(d, /USER: add a feature/);
+  assert.match(d, /TOOL Write/);
+});
+
+test('composeHandoffDoc wraps the brief with source + continuation instruction', () => {
+  const doc = composeHandoffDoc({ brief: 'BRIEF', project: 'demo', sourceAgent: 'codex' });
+  assert.match(doc, /# 接续工作 — demo/);
+  assert.match(doc, /来源：codex/);
+  assert.match(doc, /BRIEF/);
+  assert.match(doc, /请在当前项目继续/);
+});
+
+test('summarizeViaGateway returns first successful model, skips failures', async () => {
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    const body = JSON.parse(opts.body);
+    calls.push(body.model);
+    if (body.model === 'deepseek-v4-flash') return { ok: false };
+    if (body.model === 'glm-4.7') {
+      return { ok: true, json: async () => ({ choices: [{ message: { content: 'THE BRIEF' } }] }) };
+    }
+    return { ok: false };
+  };
+  const res = await summarizeViaGateway('digest', { fetchImpl });
+  assert.equal(res.brief, 'THE BRIEF');
+  assert.equal(res.model, 'glm-4.7');
+  assert.deepEqual(calls, ['deepseek-v4-flash', 'glm-4.7']);
+});
+
+test('summarizeViaGateway returns null when all models fail', async () => {
+  const res = await summarizeViaGateway('digest', { fetchImpl: async () => ({ ok: false }) });
+  assert.equal(res, null);
+});
+
+test('buildLaunchCommand builds a cd+cli command, flags unsupported targets', () => {
+  const ok = buildLaunchCommand({ target_agent: 'claude-code', cwd: '/x/demo', handoffFile: '/h/f.md', cliPath: '/bin/claude' });
+  assert.equal(ok.supported, true);
+  assert.match(ok.shellCmd, /cd '\/x\/demo' && \/bin\/claude '请阅读 \/h\/f\.md/);
+
+  assert.equal(buildLaunchCommand({ target_agent: 'cursor', cwd: '/x', handoffFile: '/f', cliPath: '/c' }).supported, false);
+  assert.equal(buildLaunchCommand({ target_agent: 'claude-code', cwd: '/x', handoffFile: '/f' }).reason, 'cli_not_found');
 });

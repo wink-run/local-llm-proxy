@@ -134,7 +134,141 @@ function exportSession(deps, { agent_id, session_id, format = 'json' } = {}) {
   return { ok: true, file, format, content };
 }
 
+// ── 跨智能体续聊（handoff）────────────────────────────────────────────────
+
+function _trunc(s, n) {
+  if (typeof s !== 'string') return '';
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+/** 从工具 input 里尽力提取文件路径。 */
+function filePathFromInput(input) {
+  if (!input) return null;
+  if (typeof input === 'object') {
+    return input.path || input.file || input.file_path || input.filename || null;
+  }
+  if (typeof input === 'string') {
+    const m = input.match(/[\w./-]+\.\w{1,8}/);
+    return m ? m[0] : null;
+  }
+  return null;
+}
+
+/** 把一段 trace 压成可喂给模型的纯文本摘要素材（纯函数，可单测）。 */
+function buildSessionDigest(trace = {}, { maxSteps = 24, maxChars = 6000 } = {}) {
+  const steps = Array.isArray(trace.steps) ? trace.steps : [];
+  const recent = steps.slice(-maxSteps);
+  const files = new Set();
+  const lines = [];
+  for (const s of recent) {
+    if (s.kind === 'user') {
+      lines.push(`USER: ${_trunc(s.text, 500)}`);
+    } else if (s.kind === 'tool') {
+      const f = filePathFromInput(s.input);
+      if (f) files.add(f);
+      lines.push(`TOOL ${s.tool || s.label || ''}${f ? ` (${f})` : ''}`.trim());
+    } else if (s.text) {
+      lines.push(`AI: ${_trunc(s.text, 500)}`);
+    }
+  }
+  let body = lines.join('\n');
+  if (body.length > maxChars) body = body.slice(-maxChars);
+  const header =
+    `项目: ${trace.project || '?'}\n` +
+    `路径: ${trace.project_path || trace.cwd || '?'}\n` +
+    `关键文件: ${[...files].slice(0, 20).join(', ') || '—'}\n\n`;
+  return header + body;
+}
+
+/** 组装最终交接文档（brief 已是模型产出或确定性兜底）。 */
+function composeHandoffDoc({ brief, project, sourceAgent } = {}) {
+  return [
+    `# 接续工作 — ${project || 'session'}`,
+    `> 来源：${sourceAgent || '?'} 会话`,
+    '',
+    brief || '',
+    '',
+    '---',
+    `以上是之前在 ${sourceAgent || '另一个 agent'} 上的工作交接。请在当前项目继续：先简述你的理解，再接着推进未完成的部分。`,
+  ].join('\n');
+}
+
+const HANDOFF_MODELS = ['deepseek-v4-flash', 'glm-4.7', 'claude-haiku-4-5'];
+
+/** 调用本地网关把 digest 总结成交接 brief；任一模型成功即返回，全失败返回 null。 */
+async function summarizeViaGateway(digest, {
+  base = 'http://127.0.0.1:11430', models = HANDOFF_MODELS, fetchImpl = globalThis.fetch,
+} = {}) {
+  if (typeof fetchImpl !== 'function') return null;
+  const system = '你是“会话交接”助手。基于以下某 AI 编码会话的记录，生成一份简洁的中文交接 brief，包含四节：' +
+    '【做了什么】【当前状态】【下一步】【关键文件】。只输出 brief 本身，不要寒暄。';
+  for (const model of models) {
+    try {
+      const resp = await fetchImpl(`${base}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model, max_tokens: 900,
+          messages: [{ role: 'system', content: system }, { role: 'user', content: digest }],
+        }),
+      });
+      if (!resp.ok) continue;
+      const data = await resp.json();
+      const text = data?.choices?.[0]?.message?.content;
+      if (text && text.trim()) return { brief: text.trim(), model };
+    } catch { /* 试下一个模型 */ }
+  }
+  return null;
+}
+
+const AGENT_CLI = { 'claude-code': 'claude', codex: 'codex' };
+
+/** 目标 agent → 终端启动命令（纯函数，可单测）。cli 路径由调用方解析后传入。 */
+function buildLaunchCommand({ target_agent, cwd, handoffFile, cliPath } = {}) {
+  const supported = !!AGENT_CLI[target_agent];
+  if (!supported) return { supported: false, reason: 'unsupported_target' };
+  if (!cliPath) return { supported: false, reason: 'cli_not_found', cli: AGENT_CLI[target_agent] };
+  const bootstrap = `请阅读 ${handoffFile} 了解之前的工作并继续。`;
+  const q = s => `'${String(s).replace(/'/g, `'\\''`)}'`;
+  const cdPart = cwd ? `cd ${q(cwd)} && ` : '';
+  const shellCmd = `${cdPart}${cliPath} ${q(bootstrap)}`;
+  return { supported: true, bootstrap, shellCmd };
+}
+
+/** 生成交接：取 trace → digest → 模型 brief（失败兜底）→ 写文件 → 返回供 UI。 */
+async function continueSession(deps, { source_agent, session_id, target_agent } = {}) {
+  const { sessionBrowser } = deps;
+  if (!source_agent || !session_id) return { error: 'missing_params' };
+  const trace = sessionBrowser.getTrace(source_agent, session_id);
+  if (!trace || trace.error) return { error: 'trace_unavailable' };
+
+  const digest = buildSessionDigest(trace);
+  const summary = await summarizeViaGateway(digest);
+  const aiGenerated = !!summary;
+  const brief = summary ? summary.brief : digest;
+  const doc = composeHandoffDoc({ brief, project: trace.project, sourceAgent: source_agent });
+
+  const dir = path.join(os.homedir(), '.tokenbank', 'handoffs');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+  const base = `${(trace.project || 'session')}-${session_id.slice(0, 8)}-${Date.now()}`.replace(/[^\w.-]+/g, '_');
+  const handoffFile = path.join(dir, `${base}.md`);
+  try { fs.writeFileSync(handoffFile, doc, 'utf8'); } catch {}
+
+  return {
+    ok: true,
+    target_agent,
+    source_agent,
+    cwd: trace.project_path || trace.cwd || null,
+    aiGenerated,
+    model: summary?.model || null,
+    brief: doc,
+    handoffFile,
+  };
+}
+
 module.exports = {
   mergeAgentRows, joinSessionsWithMeta, buildSessionPackJSON, renderSessionPackMarkdown,
   getSessions, exportSession,
+  buildSessionDigest, filePathFromInput, composeHandoffDoc, summarizeViaGateway,
+  buildLaunchCommand, continueSession,
 };

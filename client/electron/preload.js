@@ -152,9 +152,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
   sessions: {
-    listAll: (opts)    => ipcRenderer.invoke('sessions:listAll', opts),
-    setMeta: (payload) => ipcRenderer.invoke('sessions:setMeta', payload),
-    export:  (payload) => ipcRenderer.invoke('sessions:export', payload),
+    listAll:  (opts)    => ipcRenderer.invoke('sessions:listAll', opts),
+    setMeta:  (payload) => ipcRenderer.invoke('sessions:setMeta', payload),
+    export:   (payload) => ipcRenderer.invoke('sessions:export', payload),
+    continue: (payload) => ipcRenderer.invoke('sessions:continue', payload),
+    launch:   (payload) => ipcRenderer.invoke('sessions:launch', payload),
   },
   localConfig: {
     get:               ()  => ipcRenderer.invoke('localConfig:get'),

@@ -1791,6 +1791,53 @@ function registerIPC() {
     catch (e) { console.error('[sessions:export]', e.message); return { error: 'export_failed' }; }
   });
 
+  ipcMain.handle('sessions:continue', async (_e, payload = {}) => {
+    try { return await sessionManager.continueSession(_sessionDeps, payload); }
+    catch (e) { console.error('[sessions:continue]', e.message); return { error: 'continue_failed' }; }
+  });
+
+  // agent CLI 在不同安装下可能不在 Electron 的 PATH 里，补充常见路径再解析。
+  function _resolveAgentCli(cli) {
+    const { execSync } = require('child_process');
+    const home = require('os').homedir();
+    const extra = [`${home}/.local/bin`, '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin'].join(':');
+    try {
+      const out = execSync(`command -v ${cli}`, {
+        encoding: 'utf8', env: { ...process.env, PATH: `${extra}:${process.env.PATH || ''}` },
+      }).trim();
+      if (out) return out;
+    } catch {}
+    const fs = require('fs');
+    for (const dir of extra.split(':')) {
+      const p = `${dir}/${cli}`;
+      try { if (fs.existsSync(p)) return p; } catch {}
+    }
+    return null;
+  }
+
+  const _AGENT_CLI = { 'claude-code': 'claude', codex: 'codex' };
+
+  ipcMain.handle('sessions:launch', (_e, { target_agent, cwd, handoffFile } = {}) => {
+    try {
+      const cli = _AGENT_CLI[target_agent];
+      if (!cli) return { error: 'unsupported_target' };
+      const cliPath = _resolveAgentCli(cli);
+      if (!cliPath) return { error: 'cli_not_found', cli };
+      const lc = sessionManager.buildLaunchCommand({ target_agent, cwd, handoffFile, cliPath });
+      if (!lc.supported) return { error: lc.reason || 'unsupported', cli };
+      if (process.platform !== 'darwin') return { error: 'launch_unsupported_platform', shellCmd: lc.shellCmd };
+      const appleStr = s => '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+      const osa = `tell application "Terminal"\n  activate\n  do script ${appleStr(lc.shellCmd)}\nend tell`;
+      require('child_process').execFile('osascript', ['-e', osa], err => {
+        if (err) console.error('[sessions:launch] osascript', err.message);
+      });
+      return { ok: true, shellCmd: lc.shellCmd };
+    } catch (e) {
+      console.error('[sessions:launch]', e.message);
+      return { error: 'launch_failed' };
+    }
+  });
+
   // 批量查所有应用的统计（调一次，合并进 apps:list 或单独查询）
   /** 解析应用对应的会话补录 data_source（与 apps:detail / apps:stats 一致） */
   function appSessionDataSource(app) {

@@ -882,6 +882,7 @@ function SessionManager() {
   const [favOnly, setFavOnly]     = useState(false);
   const [showArchived, setShowA]  = useState(false);
   const [traceRow, setTraceRow]   = useState(null);
+  const [contState, setContState] = useState(null);
   const [notice, setNotice]       = useState('');
   const fmtN = n => (n >= 1000 ? (n / 1000).toFixed(1) + 'K' : String(n ?? 0));
 
@@ -939,6 +940,9 @@ function SessionManager() {
         <SessionTraceModal app={null} sessionId={traceRow.session_id}
           traceAgentId={traceRow.agent_id} onClose={() => setTraceRow(null)} />
       )}
+      {contState && (
+        <ContinueModal source={contState.row} target={contState.target} onClose={() => setContState(null)} />
+      )}
 
       {/* 操作栏 */}
       <div className="flex items-center gap-2 px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 flex-wrap">
@@ -982,18 +986,27 @@ function SessionManager() {
           <div className="px-5 py-16 text-center text-xs text-zinc-400">{t('gateway.sessions.empty')}</div>
         ) : filtered.map(row => (
           <SessionRow key={`${row.agent_id}-${row.session_id}`} row={row} fmtN={fmtN}
-            onTrace={() => setTraceRow(row)} onMeta={patch => setMeta(row, patch)} onExport={fmt => doExport(row, fmt)} />
+            onTrace={() => setTraceRow(row)} onMeta={patch => setMeta(row, patch)} onExport={fmt => doExport(row, fmt)}
+            onContinue={target => setContState({ row, target })} />
         ))}
       </div>
     </div>
   );
 }
 
+// 可作为接续目标的 agent（具备可拉起的 CLI / 有意义的续聊目标）
+const CONTINUE_TARGETS = [
+  { id: 'claude-code', label: 'Claude Code' },
+  { id: 'codex', label: 'Codex' },
+];
+
 /** 单会话行 */
-function SessionRow({ row, fmtN, onTrace, onMeta, onExport }) {
+function SessionRow({ row, fmtN, onTrace, onMeta, onExport, onContinue }) {
   const { t } = useLang();
   const [editing, setEditing] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [contOpen, setContOpen] = useState(false);
+  const targets = CONTINUE_TARGETS.filter(x => x.id !== row.agent_id);
   const fmtTime = ts => ts ? new Date(ts * 1000).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 
   return (
@@ -1015,9 +1028,19 @@ function SessionRow({ row, fmtN, onTrace, onMeta, onExport }) {
         <div className="text-right tabular-nums text-zinc-600 dark:text-zinc-300">{fmtN(row.tokens)}</div>
         <div className="text-right text-zinc-400">{fmtTime(row.lastTs)}</div>
         <div className="flex gap-2 justify-end text-zinc-400 relative">
+          <button title={t('gateway.sessions.continue')} onClick={() => { setContOpen(v => !v); setExportOpen(false); }} className="hover:text-blue-600 text-blue-500">↗</button>
           <button title={t('gateway.sessions.tag')} onClick={() => setEditing(v => !v)} className="hover:text-zinc-600">✎</button>
-          <button title={t('gateway.sessions.export')} onClick={() => setExportOpen(v => !v)} className="hover:text-zinc-600">⤓</button>
+          <button title={t('gateway.sessions.export')} onClick={() => { setExportOpen(v => !v); setContOpen(false); }} className="hover:text-zinc-600">⤓</button>
           <button title="trace" onClick={onTrace} className="hover:text-zinc-600">▸</button>
+          {contOpen && (
+            <div className="absolute right-0 top-5 z-10 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg py-1 text-xs w-44">
+              <div className="px-3 py-1 text-zinc-400">{t('gateway.sessions.continueTo')}</div>
+              {targets.map(tg => (
+                <button key={tg.id} onClick={() => { onContinue(tg.id); setContOpen(false); }}
+                  className="block w-full text-left px-3 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-700">{tg.label}</button>
+              ))}
+            </div>
+          )}
           {exportOpen && (
             <div className="absolute right-0 top-5 z-10 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg py-1 text-xs w-40">
               <button onClick={() => { onExport('json'); setExportOpen(false); }} className="block w-full text-left px-3 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-700">{t('gateway.sessions.exportJson')}</button>
@@ -1050,6 +1073,81 @@ function SessionMetaPopover({ row, onSave, onArchive }) {
       <button onClick={onArchive} className="text-xs px-3 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500">
         {row.archived ? t('gateway.sessions.unarchive') : t('gateway.sessions.archive')}
       </button>
+    </div>
+  );
+}
+
+/** 跨智能体接续：生成交接 brief → 复制 → 可在 Terminal 启动目标 agent */
+function ContinueModal({ source, target, onClose }) {
+  const { t } = useLang();
+  const [res, setRes]         = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [notice, setNotice]   = useState('');
+  const targetLabel = (CONTINUE_TARGETS.find(x => x.id === target) || {}).label || target;
+
+  useEffect(() => {
+    let alive = true;
+    window.electronAPI.sessions.continue({
+      source_agent: source.agent_id, session_id: source.session_id, target_agent: target,
+    }).then(r => {
+      if (!alive) return;
+      setRes(r); setLoading(false);
+      if (r?.ok && r.brief && navigator.clipboard) {
+        navigator.clipboard.writeText(r.brief)
+          .then(() => setNotice(t('gateway.sessions.briefCopied'))).catch(() => {});
+      }
+    }).catch(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [source, target]);
+
+  const doLaunch = async () => {
+    const r = await window.electronAPI.sessions.launch({
+      target_agent: target, cwd: res.cwd, handoffFile: res.handoffFile,
+    });
+    if (r?.ok) setNotice(t('gateway.sessions.launched'));
+    else if (r?.error === 'cli_not_found') setNotice(t('gateway.sessions.cliNotFound').replace('{cli}', r.cli || target));
+    else setNotice(t('gateway.sessions.continueFailed'));
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl mx-4 max-h-[88vh] overflow-hidden flex flex-col"
+        onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 flex items-center gap-3">
+          <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">{t('gateway.sessions.continueTitle')}</h3>
+          <span className="text-xs px-2 py-0.5 rounded bg-zinc-100 text-zinc-500 dark:bg-zinc-800">{source.agent_id}</span>
+          <span className="text-zinc-400">→</span>
+          <span className="text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">{targetLabel}</span>
+        </div>
+
+        {loading ? (
+          <div className="py-16 text-center text-xs text-zinc-400">{t('gateway.sessions.generating')}</div>
+        ) : !res?.ok ? (
+          <div className="py-16 text-center text-xs text-zinc-400">{t('gateway.sessions.continueFailed')}</div>
+        ) : (
+          <>
+            <div className="px-5 py-2 text-xs text-zinc-500 border-b border-zinc-100 dark:border-zinc-800 flex flex-wrap items-center gap-x-3 gap-y-1 shrink-0">
+              <span className={`px-2 py-0.5 rounded ${res.aiGenerated ? 'bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400' : 'bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400'}`}>
+                {res.aiGenerated ? `${t('gateway.sessions.aiBrief')}${res.model ? ` · ${res.model}` : ''}` : t('gateway.sessions.rawBrief')}
+              </span>
+              <span className="font-mono truncate max-w-md" title={res.handoffFile}>{t('gateway.sessions.handoffFile')}: {res.handoffFile}</span>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              <pre className="text-xs text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-3">{res.brief}</pre>
+            </div>
+            <div className="px-5 py-3 border-t border-zinc-100 dark:border-zinc-800 shrink-0 flex items-center gap-2">
+              {notice && <span className="text-xs text-green-600 dark:text-green-400">{notice}</span>}
+              <div className="ml-auto flex gap-2">
+                <button onClick={() => { navigator.clipboard?.writeText(res.brief); setNotice(t('gateway.sessions.briefCopied')); }}
+                  className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300">{t('gateway.sessions.copyMd')}</button>
+                <button onClick={doLaunch}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white">{t('gateway.sessions.launchIn')} {targetLabel}</button>
+                <button onClick={onClose} className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500">{t('gateway.sessions.close')}</button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
