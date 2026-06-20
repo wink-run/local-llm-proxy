@@ -154,7 +154,6 @@ export default {
   // ── App list ──
   'gateway.apps.new': '+ New app',
   'gateway.apps.newHint': 'Recognized apps are managed in the list below; use this to add unrecognized apps',
-  'gateway.apps.restartHint': '💡 After “Manage”, restart the app if needed (CLI tools: reopen terminal).',
   'gateway.apps.loading': 'Loading…',
   'gateway.apps.empty': 'No recognized apps detected. Install Claude Code / Codex / Gemini CLI to see them here, or use “+ New app” above.',
   'gateway.apps.colApp': 'App',
@@ -642,4 +641,5 @@ export default {
   'config.serverRequired': 'Enter the Token Bank server URL first',
   'profile.tier.gw': 'Gateway',
   'profile.tier.direct': 'Sub',
+  'profile.tier.mixed': 'Mixed',
 };

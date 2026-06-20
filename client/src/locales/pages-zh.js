@@ -154,7 +154,6 @@ export default {
   // ── AppManager 列表 ──
   'gateway.apps.new': '+ 新建应用',
   'gateway.apps.newHint': '已识别的应用在下方列表中纳管；此处新建未被识别的应用',
-  'gateway.apps.restartHint': '💡 点击「纳管」后若未生效，请重启对应应用（CLI 工具需重开终端）。',
   'gateway.apps.loading': '加载中…',
   'gateway.apps.empty': '未检测到已识别的应用。安装 Claude Code / Codex / Gemini CLI 后会显示在这里，点「纳管」即可接入；或用上方「+ 新建应用」添加未被识别的应用。',
   'gateway.apps.colApp': '应用',
@@ -648,4 +647,5 @@ export default {
   'config.serverRequired': '请先填写 Token Bank 服务地址',
   'profile.tier.gw': '网关',
   'profile.tier.direct': '订阅',
+  'profile.tier.mixed': '混合',
 };

@@ -111,9 +111,9 @@ function openExternalSafe(url) {
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 860,
-    height: 620,
+    height: 600,
     minWidth: 860,
-    minHeight: 620,
+    minHeight: 600,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -811,7 +811,29 @@ function registerIPC() {
   ipcMain.handle('gateway:restart',       () => gateway.restart());
   ipcMain.handle('localStats:query', (_e, days) => {
     const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
-    return localStats.queryDashboard(d);
+    const data = localStats.queryDashboard(d);
+    // 按应用聚合（合并网关实时 + 会话补录），供「应用用量分布」按应用分组、判定网关/订阅/混合徽章
+    try {
+      const apps = getApps().filter(a => !a.draft);
+      data.app_usage = apps.map(app => {
+        const st = localStats.queryAppStatsInPeriod({
+          appId: app.id,
+          apiKey: app.api_key,
+          dataSource: appSessionDataSource(app),
+          days: d,
+        });
+        return {
+          id: app.id,
+          name: app.name,
+          icon: app.icon || '🔧',
+          calls: st.calls,
+          tokens: st.tokens,
+          proxyCalls: st.proxyCalls,
+          sessionCalls: st.sessionCalls,
+        };
+      }).filter(a => a.calls > 0).sort((a, b) => b.calls - a.calls);
+    } catch { data.app_usage = []; }
+    return data;
   });
   // 手动触发会话文件补录（扫 ~/.claude、~/.codex、~/.gemini），返回各来源计数
   ipcMain.handle('sessionImport:run', () => sessionImport.run(localStats, { skip: computeImportSkip() }));

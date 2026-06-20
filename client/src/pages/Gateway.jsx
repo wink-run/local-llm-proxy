@@ -271,7 +271,7 @@ function linkMethodLabel(method, t) {
   return method === 'manual' ? t('gateway.link.api') : t('gateway.link.app');
 }
 // 应用列表统一栅格，保证表头与数据列对齐
-const APPS_TABLE_GRID = 'grid grid-cols-[1.5rem_minmax(4rem,6rem)_4rem_3rem_3.5rem_3.5rem_3.5rem_minmax(0,1fr)_3rem_auto] gap-x-2 items-center px-3';
+const APPS_TABLE_GRID = 'grid grid-cols-[1.5rem_minmax(4rem,6rem)_4rem_3rem_3.5rem_3.5rem_3.5rem_minmax(0,1fr)_9.5rem] gap-x-2 items-center px-3';
 // 按 API Key 路由的应用：自动写配置的 api-key，和用户自配的 manual（手工添加）
 const isKeyApp = (m) => m === 'api-key' || m === 'manual';
 
@@ -1114,8 +1114,8 @@ function AppDetailModal({ app, onClose }) {
                     <span>{t('gateway.detail.colProject')}</span><span>{t('gateway.detail.colContext')}</span><span className="text-right">{t('gateway.detail.colRequests')}</span><span className="text-right">Token</span><span className="text-right">{t('gateway.detail.colTime')}</span><span className="text-right">{canTrace ? 'Trace' : t('gateway.detail.colDetail')}</span>
                   </div>
                   <div className="divide-y divide-zinc-100 dark:divide-zinc-800 max-h-64 overflow-y-auto">
-                    {sessionHistoryRows.map(row => (
-                      <div key={row.session_id}>
+                    {sessionHistoryRows.map((row, ri) => (
+                      <div key={`${row.session_id || 'sess'}-${ri}`}>
                         <div
                           className={`grid grid-cols-[minmax(5.5rem,1.15fr)_minmax(0,2fr)_3.5rem_3.5rem_4.5rem_3.5rem] gap-2 px-3 py-2 text-xs items-center hover:bg-zinc-50 dark:hover:bg-zinc-800/40 ${selectedSid === row.session_id ? 'bg-blue-50/50 dark:bg-blue-900/10' : ''}`}>
                           <span className="font-medium text-zinc-700 dark:text-zinc-300 truncate min-w-0" title={projectPathTooltip(row)}>{row.project}</span>
@@ -1542,11 +1542,6 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
               <div className="ml-auto"><ImportConfigButton onImported={load} /></div>
             </div>
 
-            {/* 提醒：纳管后若未生效需重启应用 */}
-            <div className="mb-3 text-xs text-zinc-400 dark:text-zinc-500 px-1">
-              {t('gateway.apps.restartHint')}
-            </div>
-
             {/* 手工添加 → 内联面板（ManualAddPanel，独立组件）*/}
             {manualDraft && (
               <ManualAddPanel app={manualDraft} routes={routes} availableModels={availableModels}
@@ -1570,14 +1565,13 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                 <div className={`${APPS_TABLE_GRID} py-1.5 bg-zinc-50 dark:bg-zinc-800/50 text-xs font-medium text-zinc-400 dark:text-zinc-500 sticky top-0 z-10 border-b border-zinc-100 dark:border-zinc-800`}>
                   <span className="text-base text-center shrink-0 invisible">🔧</span>
                   <div className="min-w-0">{t('gateway.apps.colApp')}</div>
-                  <div className="min-w-0">{t('gateway.apps.colStatus')}</div>
-                  <div className="min-w-0">{t('gateway.apps.colLink')}</div>
+                  <div className="text-center min-w-0">{t('gateway.apps.colStatus')}</div>
+                  <div className="text-center min-w-0">{t('gateway.apps.colLink')}</div>
                   <div className="text-center min-w-0">{t('gateway.apps.colCalls')}</div>
                   <div className="text-center min-w-0">{t('gateway.apps.colTokens')}</div>
                   <div className="text-center min-w-0">{t('gateway.apps.colLastUsed')}</div>
-                  <div className="min-w-0">{t('gateway.apps.colRoute')}</div>
-                  <div className="min-w-0" />
-                  <div className="min-w-0">{t('gateway.apps.colActions')}</div>
+                  <div className="text-center min-w-0">{t('gateway.apps.colRoute')}</div>
+                  <div className="text-center min-w-0">{t('gateway.apps.colActions')}</div>
                 </div>
                 {visibleApps.map(app => {
                   const st = appStats[app.id] || { calls: 0, tokens: 0, lastTs: null };
@@ -1717,8 +1711,8 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                       )}
                       </div>
 
-                      {/* 转发测试槽 */}
-                      <div className="min-w-0 flex items-center justify-end gap-1.5">
+                      {/* 操作区：转发测试 + 操作按钮（同一列，便于表头居中）*/}
+                      <div className="flex items-center justify-end gap-2 flex-nowrap overflow-visible">
                       {(app.api_key || isDirectOnly) && (() => {
                         const ts = testState[app.id];
                         return (
@@ -1738,10 +1732,8 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                           </>
                         );
                       })()}
-                      </div>
 
                       {/* 操作按钮 */}
-                      <div className="flex items-center gap-2 shrink-0 flex-nowrap justify-end">
                       {isDirectOnly ? (
                         /* 仅官方订阅（cursor 等）：只读会话统计，设置/测试在走网关时可用，还原=取消纳管停统计 */
                         <>

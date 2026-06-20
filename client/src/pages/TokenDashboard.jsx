@@ -95,6 +95,7 @@ function pickDistData(localData, devices, filterId) {
   if (!filterId || filterId === 'all') {
     return {
       agent_sources: localData?.agent_sources || [],
+      app_usage: localData?.app_usage || [],
       providers: localData?.providers || [],
       models: localData?.models || [],
       total_calls: localData?.total_calls || 0,
@@ -104,10 +105,11 @@ function pickDistData(localData, devices, filterId) {
   }
   const dev = (devices || []).find(d => d.device_id === filterId);
   if (!dev) {
-    return { agent_sources: [], providers: [], models: [], total_calls: 0, scopeLabelKey: '', scopeName: '' };
+    return { agent_sources: [], app_usage: [], providers: [], models: [], total_calls: 0, scopeLabelKey: '', scopeName: '' };
   }
   return {
     agent_sources: dev.agent_sources || dev.top_sources || [],
+    app_usage: dev.app_usage || [],
     providers: dev.providers || dev.top_providers || [],
     models: dev.models || dev.top_models || [],
     total_calls: dev.calls || 0,
@@ -324,7 +326,7 @@ function DeviceSharePies({ devices, rangeLabel }) {
 function UsageDistributionPanel({ localData, devices, rangeLabel, filterId, onFilterChange }) {
   const { t } = useLang();
   const dist = pickDistData(localData, devices, filterId);
-  const { agent_sources, providers, models, total_calls, scopeLabelKey, scopeName } = dist;
+  const { agent_sources, app_usage, providers, models, total_calls, scopeLabelKey, scopeName } = dist;
   const scopeLabel = scopeLabelKey === 'all' ? t('profile.allDevicesTotal') : scopeName;
 
   const providerEntries = [...providers].sort((a, b) => b.calls - a.calls);
@@ -363,20 +365,28 @@ function UsageDistributionPanel({ localData, devices, rangeLabel, filterId, onFi
         <DeviceSharePies devices={devices} rangeLabel={rangeLabel} />
       )}
 
-      {/* 工具来源 */}
-      {agent_sources?.length > 0 && (
+      {/* 应用用量分布（按应用聚合：网关实时 + 会话补录合并，徽章区分 网关/订阅/混合）*/}
+      {(app_usage?.length > 0 || agent_sources?.length > 0) && (
         <section className="bg-white dark:bg-zinc-800 border border-zinc-100 dark:border-transparent rounded-2xl p-5 space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">{t('profile.appUsage')}</h2>
             <span className="text-xs text-zinc-400">{scopeLabel} · {rangeLabel}</span>
           </div>
           <DistBarList
-            items={agent_sources.map(s => ({
-              key: s.source,
-              label: sourceLabel(s.source, t),
-              title: s.source,
-              calls: s.calls,
-            }))}
+            items={(app_usage?.length > 0 ? app_usage : agent_sources).map(s => {
+              // app_usage：按应用聚合，含 proxy/session 拆分；agent_sources：按来源（旧/设备视图）回退
+              const isApp = s.id != null;
+              const proxy = isApp ? (s.proxyCalls || 0) : (s.source === 'proxy' ? s.calls : 0);
+              const session = isApp ? (s.sessionCalls || 0) : (s.source === 'proxy' ? 0 : s.calls);
+              const tier = proxy > 0 && session > 0 ? 'both' : proxy > 0 ? 'proxy' : 'direct';
+              return {
+                key: isApp ? s.id : s.source,
+                label: isApp ? `${s.icon || '🔧'} ${s.name}` : sourceLabel(s.source, t),
+                title: isApp ? s.name : s.source,
+                calls: s.calls,
+                tier,
+              };
+            })}
             total={total_calls}
             barClass="bg-emerald-400"
           />
@@ -437,7 +447,9 @@ function DistBarList({ items, total, barClass }) {
         const barPct = Math.round(item.calls / maxCalls * 100);
         const share  = total > 0 ? Math.round(item.calls / total * 100) : 0;
         const tier   = item.tier;
-        const tierBadge = tier === 'proxy'
+        const tierBadge = tier === 'both'
+          ? <span className="shrink-0 text-xs px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">{t('profile.tier.mixed')}</span>
+          : tier === 'proxy'
           ? <span className="shrink-0 text-xs px-1.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">{t('profile.tier.gw')}</span>
           : <span className="shrink-0 text-xs px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-700/50 text-zinc-500 dark:text-zinc-400">{t('profile.tier.direct')}</span>;
         return (
