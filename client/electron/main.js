@@ -1796,31 +1796,34 @@ function registerIPC() {
     catch (e) { console.error('[sessions:continue]', e.message); return { error: 'continue_failed' }; }
   });
 
-  // 统一“打开工作区 + 粘贴”模式：不从 CLI 注入 prompt。
-  // Cursor → 打开 App + 交接文件；claude-code/codex → 在项目目录打开终端，用户自行启动 agent 并粘贴 brief。
+  // 统一“打开对应应用 + 粘贴”模式：用 open -a 拉起目标 agent 的桌面应用，不注入 prompt。
+  // Cursor 等编辑器可带工作区/交接文件参数；Claude/Codex 等聊天应用只拉起 App，brief 已在剪贴板。
+  const _AGENT_APP = { 'claude-code': 'Claude', codex: 'Codex', cursor: 'Cursor' };
+  const _EDITOR_AGENTS = new Set(['cursor']);
+
+  function _appInstalled(appName) {
+    const fs = require('fs');
+    const home = require('os').homedir();
+    return [`/Applications/${appName}.app`, `${home}/Applications/${appName}.app`]
+      .some(p => { try { return fs.existsSync(p); } catch { return false; } });
+  }
+
   ipcMain.handle('sessions:launch', (_e, { target_agent, cwd, handoffFile } = {}) => {
     try {
       if (process.platform !== 'darwin') return { error: 'launch_unsupported_platform' };
+      const app = _AGENT_APP[target_agent];
+      if (!app) return { error: 'unsupported_target' };
+      if (!_appInstalled(app)) return { error: 'app_not_found', app };
 
-      if (target_agent === 'cursor') {
-        const args = ['-a', 'Cursor'];
+      const args = ['-a', app];
+      if (_EDITOR_AGENTS.has(target_agent)) {
         if (cwd) args.push(cwd);
         if (handoffFile) args.push(handoffFile);
-        require('child_process').execFile('open', args, err => {
-          if (err) console.error('[sessions:launch] cursor open', err.message);
-        });
-        return { ok: true, mode: 'open' };
       }
-
-      // 终端类目标：仅在项目目录打开终端（cd），不运行任何 agent 命令。
-      if (!cwd) return { error: 'no_cwd' };
-      const q = s => `'${String(s).replace(/'/g, `'\\''`)}'`;
-      const appleStr = s => '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
-      const osa = `tell application "Terminal"\n  activate\n  do script ${appleStr(`cd ${q(cwd)}`)}\nend tell`;
-      require('child_process').execFile('osascript', ['-e', osa], err => {
-        if (err) console.error('[sessions:launch] osascript', err.message);
+      require('child_process').execFile('open', args, err => {
+        if (err) console.error('[sessions:launch] open', err.message);
       });
-      return { ok: true, mode: 'terminal' };
+      return { ok: true, app };
     } catch (e) {
       console.error('[sessions:launch]', e.message);
       return { error: 'launch_failed' };

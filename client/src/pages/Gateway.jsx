@@ -1069,14 +1069,14 @@ function ContinueModal({ source, target, onClose }) {
     return () => { alive = false; };
   }, [source, target]);
 
-  const isCursor = target === 'cursor';
-  const launchLabel = isCursor ? `${t('gateway.sessions.openIn')} ${targetLabel}` : t('gateway.sessions.openTerminal');
+  const launchLabel = `${t('gateway.sessions.openIn')} ${targetLabel}`;
 
   const doLaunch = async () => {
     const r = await window.electronAPI.sessions.launch({
       target_agent: target, cwd: res.cwd, handoffFile: res.handoffFile,
     });
-    if (r?.ok) setNotice(isCursor ? t('gateway.sessions.cursorOpened') : t('gateway.sessions.terminalOpened'));
+    if (r?.ok) setNotice(t('gateway.sessions.appOpened').replace('{app}', targetLabel));
+    else if (r?.error === 'app_not_found') setNotice(t('gateway.sessions.appNotFound').replace('{app}', targetLabel));
     else setNotice(t('gateway.sessions.continueFailed'));
   };
 
