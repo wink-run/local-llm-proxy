@@ -108,7 +108,9 @@ test('buildSessionDigest includes header, files, and recent messages', () => {
   const d = buildSessionDigest(trace);
   assert.match(d, /项目: demo/);
   assert.match(d, /src\/a\.js/);
-  assert.match(d, /USER: add a feature/);
+  assert.match(d, /\[原始目标\]/);
+  assert.match(d, /USER\(原始请求\): add a feature/);
+  assert.match(d, /\[最近进展\]/);
   assert.match(d, /TOOL Write/);
 });
 

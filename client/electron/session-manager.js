@@ -154,18 +154,28 @@ function filePathFromInput(input) {
   return null;
 }
 
-/** 把一段 trace 压成可喂给模型的纯文本摘要素材（纯函数，可单测）。 */
-function buildSessionDigest(trace = {}, { maxSteps = 24, maxChars = 6000 } = {}) {
+/** 把一段 trace 压成可喂给模型的纯文本摘要素材（纯函数，可单测）。
+ *  同时保留「原始目标」（最早的 user 消息）与「最近进展」，避免只看结尾丢失用户意图。 */
+function buildSessionDigest(trace = {}, { maxSteps = 28, maxChars = 7000, headUserMsgs = 2 } = {}) {
   const steps = Array.isArray(trace.steps) ? trace.steps : [];
-  const recent = steps.slice(-maxSteps);
   const files = new Set();
+  for (const s of steps) {
+    if (s.kind === 'tool') { const f = filePathFromInput(s.input); if (f) files.add(f); }
+  }
+
+  // 原始目标：最早的若干条 user 消息（用户真正想达成什么通常在这里）
+  const head = steps.filter(s => s.kind === 'user')
+    .slice(0, headUserMsgs)
+    .map(s => `USER(原始请求): ${_trunc(s.text, 900)}`);
+
+  // 最近进展：末尾若干步
+  const recent = steps.slice(-maxSteps);
   const lines = [];
   for (const s of recent) {
     if (s.kind === 'user') {
       lines.push(`USER: ${_trunc(s.text, 500)}`);
     } else if (s.kind === 'tool') {
       const f = filePathFromInput(s.input);
-      if (f) files.add(f);
       lines.push(`TOOL ${s.tool || s.label || ''}${f ? ` (${f})` : ''}`.trim());
     } else if (s.text) {
       lines.push(`AI: ${_trunc(s.text, 500)}`);
@@ -173,11 +183,12 @@ function buildSessionDigest(trace = {}, { maxSteps = 24, maxChars = 6000 } = {})
   }
   let body = lines.join('\n');
   if (body.length > maxChars) body = body.slice(-maxChars);
+
   const header =
     `项目: ${trace.project || '?'}\n` +
     `路径: ${trace.project_path || trace.cwd || '?'}\n` +
-    `关键文件: ${[...files].slice(0, 20).join(', ') || '—'}\n\n`;
-  return header + body;
+    `关键文件: ${[...files].slice(0, 25).join(', ') || '—'}\n`;
+  return `${header}\n[原始目标]\n${head.join('\n') || '（无）'}\n\n[最近进展]\n${body}`;
 }
 
 /** 组装最终交接文档（brief 已是模型产出或确定性兜底）。 */
@@ -200,15 +211,26 @@ async function summarizeViaGateway(digest, {
   base = 'http://127.0.0.1:11430', models = HANDOFF_MODELS, fetchImpl = globalThis.fetch,
 } = {}) {
   if (typeof fetchImpl !== 'function') return null;
-  const system = '你是“会话交接”助手。基于以下某 AI 编码会话的记录，生成一份简洁的中文交接 brief，包含四节：' +
-    '【做了什么】【当前状态】【下一步】【关键文件】。只输出 brief 本身，不要寒暄。';
+  const system = [
+    '你是“会话交接”助手。下面是某 AI 编码会话的记录（含原始目标与最近进展）。',
+    '请生成一份结构清晰、可直接交给另一个 AI 接手的中文交接文档，必须包含以下 markdown 小节；',
+    '信息不足时基于上下文合理推断，并在该处标注「(推断)」：',
+    '## 用户目标 — 用户最终想达成什么（从原始请求提炼，不要只复述最近的动作）',
+    '## 验收标准 — 怎样算完成、用户期望的效果或行为（显式或推断）',
+    '## 完成状态 — 已完成 vs 未完成，并给出大致完成度（如 70%）',
+    '## 已完成的工作 — 关键改动、结论、已验证的事项',
+    '## 下一步待办 — 接手者应立即着手的具体事项（有序列表）',
+    '## 关键文件 — 涉及的文件及其作用',
+    '## 关键决策与注意事项 — 重要约定、约束、坑、用户偏好',
+    '只输出交接文档本身，不要寒暄或额外解释。',
+  ].join('\n');
   for (const model of models) {
     try {
       const resp = await fetchImpl(`${base}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model, max_tokens: 900,
+          model, max_tokens: 1600,
           messages: [{ role: 'system', content: system }, { role: 'user', content: digest }],
         }),
       });
