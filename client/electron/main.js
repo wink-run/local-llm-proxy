@@ -1772,6 +1772,25 @@ function registerIPC() {
     return sessionBrowser.enrichTraceWithDb(trace, dbRow);
   });
 
+  // ── 会话管理：跨 agent 聚合 + 叠加层 + 导出 ──────────────────────────────
+  const sessionManager = require('./session-manager');
+  const _sessionDeps = { sessionBrowser, localStats };
+
+  ipcMain.handle('sessions:listAll', (_e, opts = {}) => {
+    try { return sessionManager.getSessions(_sessionDeps, opts); }
+    catch (e) { console.error('[sessions:listAll]', e.message); return []; }
+  });
+
+  ipcMain.handle('sessions:setMeta', (_e, payload = {}) => {
+    try { return localStats.setSessionMeta(payload); }
+    catch (e) { console.error('[sessions:setMeta]', e.message); return null; }
+  });
+
+  ipcMain.handle('sessions:export', (_e, payload = {}) => {
+    try { return sessionManager.exportSession(_sessionDeps, payload); }
+    catch (e) { console.error('[sessions:export]', e.message); return { error: 'export_failed' }; }
+  });
+
   // 批量查所有应用的统计（调一次，合并进 apps:list 或单独查询）
   /** 解析应用对应的会话补录 data_source（与 apps:detail / apps:stats 一致） */
   function appSessionDataSource(app) {

@@ -151,6 +151,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener('apps:changed', h);
     },
   },
+  sessions: {
+    listAll: (opts)    => ipcRenderer.invoke('sessions:listAll', opts),
+    setMeta: (payload) => ipcRenderer.invoke('sessions:setMeta', payload),
+    export:  (payload) => ipcRenderer.invoke('sessions:export', payload),
+  },
   localConfig: {
     get:               ()  => ipcRenderer.invoke('localConfig:get'),
     createSceneRoute:  (d) => ipcRenderer.invoke('localConfig:createSceneRoute', d),
