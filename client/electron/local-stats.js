@@ -88,6 +88,18 @@ const SCHEMA = `
     mtime  INTEGER,
     size   INTEGER
   );
+
+  -- 会话管理叠加层：收藏 / 标签 / 备注 / 归档（不碰 agent 原始 JSONL）。
+  CREATE TABLE IF NOT EXISTS session_meta (
+    agent_id   TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    favorite   INTEGER DEFAULT 0,
+    tags       TEXT DEFAULT '',
+    note       TEXT DEFAULT '',
+    archived   INTEGER DEFAULT 0,
+    updated_at INTEGER,
+    PRIMARY KEY (agent_id, session_id)
+  );
 `;
 
 // 必须在列迁移之后执行：旧库执行 SCHEMA 时 request_id 列还不存在，
@@ -525,8 +537,60 @@ function resetSessionData(dataSources, pathLike) {
   } catch (e) { console.error('[local-stats] resetSessionData failed:', e.message); }
 }
 
+/** 列出所有会话叠加层元数据（供聚合 left-join）。 */
+function listSessionMeta() {
+  if (!db) return [];
+  try {
+    return db.prepare(
+      'SELECT agent_id, session_id, favorite, tags, note, archived FROM session_meta'
+    ).all();
+  } catch (e) {
+    console.error('[local-stats] listSessionMeta failed:', e.message);
+    return [];
+  }
+}
+
+/** 读取单条会话元数据。 */
+function getSessionMeta(agent_id, session_id) {
+  if (!db) return null;
+  try {
+    return db.prepare(
+      'SELECT agent_id, session_id, favorite, tags, note, archived FROM session_meta WHERE agent_id = ? AND session_id = ?'
+    ).get(agent_id, session_id) || null;
+  } catch (e) {
+    console.error('[local-stats] getSessionMeta failed:', e.message);
+    return null;
+  }
+}
+
+/** Upsert 会话元数据；仅写入传入的字段，其余沿用旧值。返回合并后的行。 */
+function setSessionMeta({ agent_id, session_id, favorite, tags, note, archived } = {}) {
+  if (!db || !agent_id || !session_id) return null;
+  try {
+    const prev = getSessionMeta(agent_id, session_id) || {};
+    const next = {
+      favorite: favorite != null ? (favorite ? 1 : 0) : (prev.favorite || 0),
+      tags:     tags != null ? (Array.isArray(tags) ? tags.join(',') : String(tags)) : (prev.tags || ''),
+      note:     note != null ? String(note) : (prev.note || ''),
+      archived: archived != null ? (archived ? 1 : 0) : (prev.archived || 0),
+    };
+    db.prepare(
+      'INSERT INTO session_meta (agent_id, session_id, favorite, tags, note, archived, updated_at) ' +
+      'VALUES (?,?,?,?,?,?,?) ' +
+      'ON CONFLICT(agent_id, session_id) DO UPDATE SET ' +
+      'favorite=excluded.favorite, tags=excluded.tags, note=excluded.note, ' +
+      'archived=excluded.archived, updated_at=excluded.updated_at'
+    ).run(agent_id, session_id, next.favorite, next.tags, next.note, next.archived, Date.now());
+    return getSessionMeta(agent_id, session_id);
+  } catch (e) {
+    console.error('[local-stats] setSessionMeta failed:', e.message);
+    return null;
+  }
+}
+
 module.exports = {
   init, record, queryDashboard, queryByApiKey, queryByApp, queryByDataSource,
   queryAppDetail, queryAppStatsInPeriod, querySessionDetail,
   getImportState, setImportState, resetSessionData, close,
+  listSessionMeta, getSessionMeta, setSessionMeta,
 };
