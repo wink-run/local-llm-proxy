@@ -207,13 +207,11 @@ payg_providers:
       gpt-4o:            { in: 3.00,  out: 12.00, cacheRead: 1.50 }
       claude-sonnet-4-5: { in: 3.50,  out: 16.00, cacheRead: 0.35 }
 
-  - id: groq
-    label: Groq
-    icon: "⚡"
-    models: [llama-3.3-70b, llama-3.1-8b]
-    pricing:
-      llama-3.3-70b: { in: 0.59, out: 0.79 }
-      llama-3.1-8b:  { in: 0.05, out: 0.08 }
+  - id: agnes-ai
+    label: Agnes AI
+    icon: "🤍"
+    models: []
+    pricing: {}
 
   - id: fireworks
     label: Fireworks

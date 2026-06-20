@@ -283,6 +283,11 @@ function queryDashboard(days = 1) {
   modelSql += ' GROUP BY model ORDER BY calls DESC';
   const models = db.prepare(modelSql).all(since, ...excludeModelDs);
 
+  // Models that have ANY proxy request → 网关; others → 直连
+  const modelGwSql =
+    "SELECT DISTINCT model FROM requests WHERE ts >= ? AND model IS NOT NULL AND data_source = 'proxy'";
+  const modelGwSet = new Set(db.prepare(modelGwSql).all(since).map(r => r.model));
+
   // 按量刊例价：仅 api-key + provider 有配置刊例价才计入
   let paygWhere = 'ts >= ?';
   const paygParams = { since };
@@ -320,6 +325,7 @@ function queryDashboard(days = 1) {
     models:    models.map(r => ({
       model: r.model, calls: r.calls, tokens: r.tokens || 0,
       cost_usd: paygModels.byModel[r.model] || 0,
+      tier: modelGwSet.has(r.model) ? 'proxy' : null,
     })),
     keys:      keys.map(r => ({ api_key: r.api_key, calls: r.calls, tokens: r.tokens || 0 })),
     providers: providers.map(r => ({

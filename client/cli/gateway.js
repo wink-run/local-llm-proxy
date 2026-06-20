@@ -135,13 +135,28 @@ async function cmdStart(port, adminPort) {
     token: cc.token || null,
   });
 
-  reporter.start(() => {
+  reporter.start(async () => {
     const s = gateway.getDailyStats();
-    return {
+    const base = {
       calls: s.calls || 0,
       errors: s.errors || 0,
       providers_active: Object.keys(s.by_provider || {}).length,
     };
+    // Include inventory snapshot for cloud dashboard (works without browser)
+    try {
+      const { localStats } = require('../shared/telemetry');
+      const [d1, d7, d30] = await Promise.all([
+        Promise.resolve(localStats.queryDashboard(1)).catch(() => null),
+        Promise.resolve(localStats.queryDashboard(7)).catch(() => null),
+        Promise.resolve(localStats.queryDashboard(30)).catch(() => null),
+      ]);
+      const inv = {};
+      if (d1)  inv['1']  = d1;
+      if (d7)  inv['7']  = d7;
+      if (d30) inv['30'] = d30;
+      if (Object.keys(inv).length) base.inventory = inv;
+    } catch (_) {}
+    return base;
   });
 
   console.log(`[gateway] Ready. Gateway :${port}  Admin :${adminPort}`);

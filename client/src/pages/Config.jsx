@@ -379,7 +379,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
   ];
 
   return (
-    <div className="p-6 space-y-5 max-w-2xl">
+    <div className="px-5 py-5 space-y-5 max-w-2xl">
 
       {/* Header */}
       <div>

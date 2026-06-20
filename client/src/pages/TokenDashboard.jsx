@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { useAuth } from '../store/index';
 import { useLang } from '../store/lang';
-import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getUserDevices, deleteDevice, getInventoryStats } from '../api/client';
+import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getUserDevices, deleteDevice, getInventoryStats, getProviderCatalog } from '../api/client';
 import UserAccountsPanel from '../components/UserAccountsPanel';
 import { enrichBillingCost } from '../utils/billing-cost';
 import { loadUserAccounts } from '../api/userAccounts';
@@ -43,14 +43,22 @@ async function fetchDashboardStats(days) {
   return enrichBillingCost(raw, subs, payg, days, catalog);
 }
 
-const PROVIDER_COLORS = {
-  ollama:         { bg: 'bg-green-500',  label: 'Ollama（本地）',   type: 'free' },
-  groq:           { bg: 'bg-emerald-500',label: 'Groq',             type: 'free' },
-  'github-models':{ bg: 'bg-teal-500',   label: 'GitHub Models',    type: 'free' },
-  'tokenbank-p2p':{ bg: 'bg-blue-500',   label: 'P2P 网络',         type: 'p2p'  },
-  openai:         { bg: 'bg-orange-500', label: 'OpenAI',           type: 'paid' },
-  'anthropic-paid':{ bg: 'bg-red-500',   label: 'Anthropic',        type: 'paid' },
-};
+// 颜色 palette，按 provider id hash 分配，避免写死 provider 列表
+const BAR_PALETTE = [
+  'bg-blue-500','bg-emerald-500','bg-violet-500','bg-orange-500','bg-rose-500',
+  'bg-teal-500','bg-amber-500','bg-cyan-500','bg-fuchsia-500','bg-lime-500',
+];
+function providerBarBg(id) {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return BAR_PALETTE[h % BAR_PALETTE.length];
+}
+// 运行时由 catalog 填充，避免写死
+let _catalogMeta = {};
+function getProviderMeta(id, t) {
+  const c = _catalogMeta[id];
+  return { bg: providerBarBg(id), label: c?.label || providerLabel(id, t), type: c?.type || 'paid' };
+}
 
 const ORDER_STATUS_KEYS = { pending: 'profile.order.pending', approved: 'profile.order.approved', rejected: 'profile.order.rejected' };
 
@@ -74,8 +82,7 @@ function providerLabel(id, t) {
   if (!id) return t('profile.unknown');
   const i18nKey = `profile.provider.${id}`;
   if (t(i18nKey) !== i18nKey) return t(i18nKey);
-  const known = PROVIDER_COLORS[id];
-  if (known?.label) return known.label;
+  if (_catalogMeta[id]?.label) return _catalogMeta[id].label;
   if (id === 'cursor') return 'Cursor';
   if (id === 'claude-cli') return 'Claude CLI';
   if (id === 'codex-cli') return 'Codex CLI';
@@ -111,27 +118,33 @@ function pickDistData(localData, devices, filterId) {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
+const SESSION_PROVIDERS = new Set([
+  'claude-cli', 'cursor', 'codex-cli', 'gemini-cli', 'opencode-cli',
+  'github-copilot', 'qwen-cli', 'antigravity', 'grok',
+]);
+
 function ProviderBar({ id, calls, totalCalls, tier }) {
   const { t } = useLang();
-  const meta  = PROVIDER_COLORS[id] || { bg: 'bg-zinc-400', label: providerLabel(id, t), type: tier || 'paid' };
+  const meta  = getProviderMeta(id, t);
   const pct   = totalCalls > 0 ? (calls / totalCalls) * 100 : 0;
-  const type  = tier || meta.type || 'paid';
+  const isDirect = SESSION_PROVIDERS.has(id);
+  const type  = isDirect ? 'direct' : (tier || meta.type || 'paid');
   return (
     <div className="flex items-center gap-3 text-sm">
       <div className="w-28 shrink-0 text-xs text-zinc-600 dark:text-zinc-400 truncate" title={id}>{meta.label}</div>
       <div className="flex-1 bg-zinc-100 dark:bg-zinc-700 rounded-full h-2 overflow-hidden">
         <div className={`h-2 rounded-full ${meta.bg}`} style={{ width: `${pct}%` }} />
       </div>
-      <div className="w-16 shrink-0 text-right">
-        <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">{calls} {t('profile.times')}</span>
-        <span className="text-xs text-zinc-400 dark:text-zinc-500 ml-1">{Math.round(pct)}%</span>
+      <div className="shrink-0 text-right whitespace-nowrap pl-2">
+        <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">{calls} {t('profile.times')} {Math.round(pct)}%</span>
       </div>
       <span className={`shrink-0 text-xs px-1.5 py-0.5 rounded-full ${
-        type === 'free' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
-        type === 'p2p'  ? 'bg-blue-100  dark:bg-blue-900/30  text-blue-700  dark:text-blue-400'  :
-                           'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400'
+        type === 'free'   ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
+        type === 'p2p'    ? 'bg-blue-100  dark:bg-blue-900/30  text-blue-700  dark:text-blue-400'  :
+        type === 'direct' ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400' :
+                            'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400'
       }`}>
-        {type === 'free' ? t('profile.tier.free') : type === 'p2p' ? t('profile.tier.p2p') : t('profile.tier.paid')}
+        {type === 'free' ? t('profile.tier.free') : type === 'p2p' ? t('profile.tier.p2p') : type === 'direct' ? t('profile.tier.direct') : t('profile.tier.paid')}
       </span>
     </div>
   );
@@ -403,6 +416,7 @@ function UsageDistributionPanel({ localData, devices, rangeLabel, filterId, onFi
               title: m.model,
               calls: m.calls,
               mono: true,
+              tier: m.tier,
             }))}
             total={total_calls}
             barClass="bg-blue-400"
@@ -415,16 +429,21 @@ function UsageDistributionPanel({ localData, devices, rangeLabel, filterId, onFi
 
 /** 通用横向分布条 */
 function DistBarList({ items, total, barClass }) {
+  const { t } = useLang();
   const maxCalls = Math.max(...items.map(i => i.calls), 1);
   return (
     <div className="space-y-2.5">
       {items.map(item => {
         const barPct = Math.round(item.calls / maxCalls * 100);
         const share  = total > 0 ? Math.round(item.calls / total * 100) : 0;
+        const tier   = item.tier;
+        const tierBadge = tier === 'proxy'
+          ? <span className="shrink-0 text-xs px-1.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">{t('profile.tier.gw')}</span>
+          : <span className="shrink-0 text-xs px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-700/50 text-zinc-500 dark:text-zinc-400">{t('profile.tier.direct')}</span>;
         return (
-          <div key={item.key} className="flex items-center gap-3 text-sm">
+          <div key={item.key} className="flex items-center gap-2 text-sm">
             <div
-              className={`w-36 shrink-0 text-xs text-zinc-600 dark:text-zinc-400 truncate ${item.mono ? 'font-mono' : ''}`}
+              className={`w-32 shrink-0 text-xs text-zinc-600 dark:text-zinc-400 truncate ${item.mono ? 'font-mono' : ''}`}
               title={item.title || item.label}
             >
               {item.label}
@@ -432,9 +451,10 @@ function DistBarList({ items, total, barClass }) {
             <div className="flex-1 bg-zinc-100 dark:bg-zinc-700 rounded-full h-2 overflow-hidden">
               <div className={`h-2 rounded-full ${barClass} transition-all duration-500`} style={{ width: `${barPct}%` }} />
             </div>
-            <span className="w-16 shrink-0 text-right text-xs text-zinc-500 dark:text-zinc-400">
-              {item.calls} <span className="text-zinc-400">({share}%)</span>
+            <span className="shrink-0 text-right text-xs text-zinc-500 dark:text-zinc-400 whitespace-nowrap pl-1">
+              {item.calls} <span className="text-zinc-400">{share}%</span>
             </span>
+            {tierBadge}
           </div>
         );
       })}
@@ -543,6 +563,11 @@ export default function TokenDashboard() {
     refreshUser();
     getTransactions().then(r => setTxs(r.data.transactions || [])).catch(() => {});
     getPurchaseOrders().then(r => { setOrders(r.data.orders || []); if (r.data.contact_info) setAdminInfo(String(r.data.contact_info)); }).catch(() => {});
+    getProviderCatalog().then(r => {
+      const map = {};
+      for (const p of r.data?.providers || []) map[p.id] = { label: p.label, type: p.type };
+      _catalogMeta = map;
+    }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -599,7 +624,7 @@ export default function TokenDashboard() {
     : ' —';
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="px-5 py-5 space-y-5">
 
       {/* Hero */}
       <div className="flex items-center gap-3">

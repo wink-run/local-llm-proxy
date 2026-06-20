@@ -271,7 +271,7 @@ function linkMethodLabel(method, t) {
   return method === 'manual' ? t('gateway.link.api') : t('gateway.link.app');
 }
 // 应用列表统一栅格，保证表头与数据列对齐
-const APPS_TABLE_GRID = 'grid grid-cols-[1.5rem_minmax(4rem,6rem)_4.5rem_3.5rem_3.5rem_3.5rem_3.5rem_minmax(0,1fr)_3rem_auto] gap-x-2 items-center px-3';
+const APPS_TABLE_GRID = 'grid grid-cols-[1.5rem_minmax(4rem,6rem)_4rem_3rem_3.5rem_3.5rem_3.5rem_minmax(0,1fr)_3rem_auto] gap-x-2 items-center px-3';
 // 按 API Key 路由的应用：自动写配置的 api-key，和用户自配的 manual（手工添加）
 const isKeyApp = (m) => m === 'api-key' || m === 'manual';
 
@@ -1664,7 +1664,7 @@ function AppManager({ externalRoutes, availableModels = [] }) {
                           setBusyId(null);
                           await load();
                         }}
-                        className="w-full text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-1.5 py-1 outline-none text-zinc-600 dark:text-zinc-400 disabled:opacity-40 disabled:cursor-not-allowed">
+                        className="w-full text-[11px] bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-1.5 py-1 outline-none text-zinc-600 dark:text-zinc-400 disabled:opacity-40 disabled:cursor-not-allowed">
                         {/* Cursor 等仅官方订阅应用：固定一项；manual 必须绑路由；其余可选官方订阅或走网关 */}
                         {isManual
                           ? <option value="" disabled>{t('gateway.app.routeRequired')}</option>
@@ -2715,7 +2715,7 @@ export default function Gateway() {
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="px-5 py-5 space-y-4">
 
       {/* Header */}
       <div className="flex items-center gap-3">

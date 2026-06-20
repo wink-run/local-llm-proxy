@@ -212,15 +212,15 @@ function TierDonut({ byProvider = {}, t }) {
           { color: 'bg-blue-500',  label: t('common.tier.p2p'),  count: p2p  },
           { color: 'bg-amber-500', label: t('common.tier.paid'), count: paid  },
         ].map(row => (
-          <div key={row.label} className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
+          <div key={row.label} className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
               <span className={`w-2.5 h-2.5 rounded-full ${row.color} shrink-0`}/>
-              <span className="text-xs text-zinc-700 dark:text-zinc-300">{row.label}</span>
+              <span className="text-xs text-zinc-700 dark:text-zinc-300 truncate">{row.label}</span>
             </div>
-            <div className="text-right">
-              <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{row.count}</div>
-              <div className="text-xs text-zinc-600">{total ? Math.round(row.count / total * 100) : 0}%</div>
-            </div>
+            <span className="text-xs whitespace-nowrap shrink-0 text-zinc-700 dark:text-zinc-200">
+              <span className="font-semibold">{row.count}</span>
+              <span className="text-zinc-400 ml-1">{total ? Math.round(row.count / total * 100) : 0}%</span>
+            </span>
           </div>
         ))}
       </div>

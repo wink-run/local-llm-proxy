@@ -41,12 +41,14 @@ export default function Sidebar() {
   ];
   const profileActive = location.pathname === '/account';
   return (
-    <aside className="w-40 flex flex-col pb-5 bg-zinc-50 dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 shrink-0">
+    <aside className="w-[148px] flex flex-col pb-5 bg-zinc-50 dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 shrink-0">
       {/* Logo — pt-9 避开 macOS 交通灯；electron-drag 允许拖动窗口 */}
-      <div className="electron-drag flex flex-col items-center pt-14 pb-5 px-4 select-none mb-3">
-        <img src={logoSvg} alt="Token Bank" className="w-10 h-10 shrink-0 mb-2.5" />
-        <p className="text-[13px] font-bold text-gray-900 dark:text-gray-100 leading-tight tracking-tight">Token Bank</p>
-        <p className="text-[10.5px] text-gray-400 dark:text-gray-500 leading-tight mt-0.5">{t('sidebar.tagline')}</p>
+      <div className="electron-drag flex items-center gap-2.5 pt-14 pb-5 px-4 select-none mb-3">
+        <img src={logoSvg} alt="Token Bank" className="w-10 h-10 shrink-0" />
+        <div className="min-w-0">
+          <p className="text-[13px] font-bold text-gray-900 dark:text-gray-100 leading-tight tracking-tight">Token Bank</p>
+          <p className="text-[10px] text-gray-400 dark:text-gray-500 leading-tight mt-0.5">{t('sidebar.tagline')}</p>
+        </div>
       </div>
 
       {/* Nav items */}

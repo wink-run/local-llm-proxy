@@ -41,51 +41,10 @@ function getOAuthById(t) {
   };
 }
 
-// 内置兜底目录：当后端 /api/catalog 不可达（离线 / VPS 宕机）时使用。
-// 正常情况下目录由后端下发，改源请改 server/catalog.py。
-const FALLBACK_PROVIDER_META = {
-  ollama:          { icon: '🦙', label: 'Ollama',        hint: '自动检测本地实例，无需配置',              keyless: true,  key_prefix: [],                      signup_url: 'https://ollama.com/download' },
-  groq:            { icon: '⚡', label: 'Groq',           hint: '免费申请：console.groq.com',              keyless: false, key_prefix: ['gsk_'],                signup_url: 'https://console.groq.com/keys' },
-  'github-models': { icon: '🐙', label: 'GitHub Models',  hint: '免费调用 GPT-4o、Llama，需 GitHub PAT',   keyless: false, key_prefix: ['ghp_', 'github_pat_'], signup_url: 'https://github.com/settings/tokens' },
-  // ── 整合自 gpt4free needs_auth（合法注册拿 key 的源） ──
-  cerebras:        { icon: '🌀', label: 'Cerebras',       hint: '免费档每日 1M tokens：cloud.cerebras.ai', keyless: false, key_prefix: ['csk-'],                signup_url: 'https://cloud.cerebras.ai' },
-  nvidia:          { icon: '🟢', label: 'NVIDIA NIM',     hint: '新用户免费额度：build.nvidia.com',        keyless: false, key_prefix: ['nvapi-'],              signup_url: 'https://build.nvidia.com' },
-  mistral:         { icon: '🌪', label: 'Mistral',        hint: '免费档：console.mistral.ai',              keyless: false, key_prefix: [],                      signup_url: 'https://console.mistral.ai/api-keys/' },
-  openrouter:      { icon: '🛣', label: 'OpenRouter',     hint: '含 :free 免费模型：openrouter.ai',        keyless: false, key_prefix: ['sk-or-'],              signup_url: 'https://openrouter.ai/keys' },
-  together:        { icon: '🔗', label: 'Together AI',    hint: '新用户赠额：api.together.ai',             keyless: false, key_prefix: ['tgp_v1_'],             signup_url: 'https://api.together.ai/settings/api-keys' },
-  siliconflow:     { icon: '🧪', label: 'SiliconFlow',    hint: '国内免费源，新人 ¥16：siliconflow.cn',    keyless: false, key_prefix: ['sk-'],                 signup_url: 'https://cloud.siliconflow.cn/account/ak' },
-  cohere:          { icon: '🐬', label: 'Cohere',         hint: 'Trial Key 免费：dashboard.cohere.com',    keyless: false, key_prefix: [],                      signup_url: 'https://dashboard.cohere.com/api-keys' },
-  'tokenbank-p2p': { icon: '🌐', label: 'P2P 分享网络',  hint: '消耗积分使用社区共享算力',                 keyless: true,  key_prefix: [],                      signup_url: '' },
-  openai:          { icon: '🤖', label: 'OpenAI',         hint: '付费 API，支持 GPT-4o / o3 等全系模型',   keyless: false, key_prefix: ['sk-proj-', 'sk-'],     signup_url: 'https://platform.openai.com/api-keys', oauth: { provider: 'codex', label: 'ChatGPT 订阅登录' } },
-  'anthropic-paid':{ icon: '🧬', label: 'Anthropic',      hint: '付费 API，Claude 3.5 / 3.7 等系列',       keyless: false, key_prefix: ['sk-ant-'],             signup_url: 'https://console.anthropic.com/settings/keys', oauth: { provider: 'claude', label: 'Claude 订阅登录' } },
-  gemini:          { icon: '💎', label: 'Google Gemini',  hint: 'AI Studio 免费领 API Key',                keyless: false, key_prefix: ['AIza'],                signup_url: 'https://aistudio.google.com/app/apikey' },
-  'github-copilot':{ icon: '🐱', label: 'GitHub Copilot', hint: '用 GitHub 账号登录（需 Copilot 订阅）',   keyless: true,  key_prefix: [],                      signup_url: 'https://github.com/features/copilot', oauth: { provider: 'copilot', label: 'GitHub 登录' } },
-  deepseek:        { icon: '🐋', label: 'DeepSeek',       hint: '官方付费：platform.deepseek.com',         keyless: false, key_prefix: ['sk-'],                 signup_url: 'https://platform.deepseek.com/api_keys' },
-  xai:             { icon: '✖️', label: 'xAI Grok',       hint: '付费 API：console.x.ai',                  keyless: false, key_prefix: ['xai-'],                signup_url: 'https://console.x.ai' },
-  fireworks:       { icon: '🎆', label: 'Fireworks',      hint: '低价高速：fireworks.ai',                  keyless: false, key_prefix: ['fw_'],                 signup_url: 'https://fireworks.ai/account/api-keys' },
-};
-
-const FALLBACK_PROVIDERS = [
-  { id: 'ollama',          type: 'free', enabled: true,  token: '', base_url: 'http://127.0.0.1:11434/v1', models: [] },
-  { id: 'groq',            type: 'free', enabled: false, token: '', base_url: 'https://api.groq.com/openai/v1', models: [] },
-  { id: 'github-models',   type: 'free', enabled: false, token: '', base_url: 'https://models.inference.ai.azure.com', models: [] },
-  // ── 整合自 gpt4free needs_auth（合法 key 源，OpenAI 兼容） ──
-  { id: 'cerebras',        type: 'free', enabled: false, token: '', base_url: 'https://api.cerebras.ai/v1', models: [] },
-  { id: 'nvidia',          type: 'free', enabled: false, token: '', base_url: 'https://integrate.api.nvidia.com/v1', models: [] },
-  { id: 'mistral',         type: 'free', enabled: false, token: '', base_url: 'https://api.mistral.ai/v1', models: [] },
-  { id: 'openrouter',      type: 'free', enabled: false, token: '', base_url: 'https://openrouter.ai/api/v1', models: [] },
-  { id: 'together',        type: 'free', enabled: false, token: '', base_url: 'https://api.together.xyz/v1', models: [] },
-  { id: 'siliconflow',     type: 'free', enabled: false, token: '', base_url: 'https://api.siliconflow.cn/v1', models: [] },
-  { id: 'cohere',          type: 'free', enabled: false, token: '', base_url: 'https://api.cohere.ai/compatibility/v1', models: [] },
-  { id: 'tokenbank-p2p',   type: 'p2p',  enabled: true,  token: '', base_url: '', models: [] },
-  { id: 'openai',          type: 'paid', enabled: false, token: '', base_url: 'https://api.openai.com/v1', models: [] },
-  { id: 'anthropic-paid',  type: 'paid', enabled: false, token: '', base_url: 'https://api.anthropic.com/v1', models: [] },
-  { id: 'gemini',          type: 'paid', enabled: false, token: '', base_url: 'https://generativelanguage.googleapis.com/v1beta/openai/', models: [] },
-  { id: 'github-copilot',  type: 'paid', enabled: false, token: '', base_url: 'https://api.githubcopilot.com', models: [] },
-  { id: 'deepseek',        type: 'paid', enabled: false, token: '', base_url: 'https://api.deepseek.com/v1', models: [] },
-  { id: 'xai',             type: 'paid', enabled: false, token: '', base_url: 'https://api.x.ai/v1', models: [] },
-  { id: 'fireworks',       type: 'paid', enabled: false, token: '', base_url: 'https://api.fireworks.ai/inference/v1', models: [] },
-];
+// 目录由后端 /api/catalog 下发（server/catalog.py），此处不再写死列表。
+// OAuth 能力仍由客户端声明（服务端不知道哪些 OAuth 模块已安装）。
+const FALLBACK_PROVIDER_META = {};
+const FALLBACK_PROVIDERS = [];
 
 // 把后端下发的 catalog 拆成展示 meta 映射 + 默认 provider 列表（与本地配置合并的种子）
 function catalogToState(catalog, oauthById) {
@@ -231,7 +190,7 @@ function buildModelSuggestions(providerId, userPayg = [], providerPricing = {}, 
 
 /**
  * 个人页登记的供给源 → 付费层可选列表。
- * 跨 free/paid 层匹配（如 groq 在目录为免费层，但个人页按量登记后应在付费层接入）。
+ * 跨 free/paid 层匹配（个人页按量登记的源优先在付费层接入）。
  */
 function buildPersonalPaidPool(allProviders, paidIds, userPayg = [], userSubs = []) {
   const pool = [];
@@ -403,13 +362,7 @@ function mergeCustomSubscriptionProviders(resolved, metaMap, userSubs, paidIds =
 
 function StatsOnlyHint({ names }) {
   const { t, lang } = useLang();
-  if (!names?.length) return null;
-  const sep = lang === 'en' ? ', ' : '、';
-  return (
-    <p className="text-xs text-zinc-500 dark:text-zinc-400">
-      {t('providers.statsOnly', { names: names.join(sep) })}
-    </p>
-  );
+  return null;
 }
 
 function PersonalPageHint({ onGo }) {
@@ -1124,7 +1077,7 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
   );
 }
 
-function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = false, gatewayAuthMode = null, userPayg = [], onGoPayg, providerPricing = {}, paygCatalog = [] }) {
+function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = false, gatewayAuthMode = null, userPayg = [], onGoPayg, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [] }) {
   const { t } = useLang();
   const [showKey,    setShowKey]    = useState(false);
   const [expanded,   setExpanded]   = useState(initialExpanded);
@@ -1151,6 +1104,8 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
   const canApiKey = !meta.keyless && !forceOauth;
   const showOauthUi = forceOauth ? !!oauthCap : (oauthCap && (!forceApiKey));
   const showApiKeyUi = forceApiKey || (canApiKey && !forceOauth);
+  // 是否支持订阅计费方式：yaml subscription_apps 中有 plan_provider_id 匹配且 subscription_to_api=true
+  const hasSubscriptionOption = subscriptionCatalog.some(c => c.plan_provider_id === provider.id && c.subscription_to_api === true);
 
   // 添加方式：api_key / oauth（按量可切换；订阅转 API 固定 OAuth）
   const [method, setMethod] = useState(forceOauth || isOauthCfg ? 'oauth' : 'api_key');
@@ -1298,8 +1253,8 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
           {/* Inline setup / edit panel */}
           {!isP2P && (showApiKeyUi || showOauthUi) && (!configured || expanded) && (
             <div className="mt-3 space-y-2">
-              {/* 计费方式切换（仅非付费层强制模式时显示） */}
-              {canApiKey && !forceOauth && !forceApiKey && (
+              {/* 计费方式切换：由 yaml subscription_apps 中有 plan_provider_id 匹配时显示 */}
+              {hasSubscriptionOption && canApiKey && !forceOauth && !forceApiKey && (
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">{t('providers.card.billingMode')}</span>
                   <div className="inline-flex rounded-lg border border-zinc-300 dark:border-zinc-700 overflow-hidden text-xs">
@@ -1693,7 +1648,7 @@ export default function Providers() {
   const tiers = ['free', 'p2p', 'paid'];
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-5 py-5 space-y-6">
 
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -1724,7 +1679,7 @@ export default function Providers() {
           );
         }
 
-        // 付费层：按个人页登记 id 构建池（含目录标为 free 的按量源，如 groq）
+        // 付费层：按个人页登记 id 构建池（含目录标为 free 的按量源）
         const personalPool = tier === 'paid'
           ? buildPersonalPaidPool(providers, paidAllowlist || [], userPayg, userSubscriptions)
           : [];
@@ -1790,7 +1745,7 @@ export default function Providers() {
                 const live = tier === 'paid' ? liveState(p) : p;
                 const useCustomCard = isCustomSubscriptionGatewayId(live.id, userSubscriptions) || !meta[live.id];
                 return !useCustomCard
-                  ? <ProviderCard key={live.id} provider={live} meta={meta[live.id]} onUpdate={updateProvider} onTest={testProvider} gatewayAuthMode={tier === 'paid' ? resolveCardAuthMode(live, providerGatewayAuth[live.id]) : null} userPayg={userPayg} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />
+                  ? <ProviderCard key={live.id} provider={live} meta={meta[live.id]} onUpdate={updateProvider} onTest={testProvider} gatewayAuthMode={tier === 'paid' ? resolveCardAuthMode(live, providerGatewayAuth[live.id]) : null} userPayg={userPayg} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} />
                   : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} userPayg={userPayg} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />;
               })}
 
@@ -1922,7 +1877,7 @@ export default function Providers() {
                         </p>
                       )}
                       {!useCustomCard
-                        ? <ProviderCard key={pid} provider={live} meta={meta[pid]} onUpdate={updateProvider} onTest={testProvider} initialExpanded gatewayAuthMode={cardAuth} userPayg={userPayg} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />
+                        ? <ProviderCard key={pid} provider={live} meta={meta[pid]} onUpdate={updateProvider} onTest={testProvider} initialExpanded gatewayAuthMode={cardAuth} userPayg={userPayg} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} />
                         : <CustomProviderCard key={pid} provider={live} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} userPayg={userPayg} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />
                       }
                     </div>

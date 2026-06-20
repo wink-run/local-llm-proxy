@@ -246,7 +246,7 @@ export default function Contribute() {
   }
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="px-5 py-5 space-y-5">
       <div>
         <h1 className="text-[17px] font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{t('contribute.title')}</h1>
         <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">{t('contribute.subtitle')}</p>

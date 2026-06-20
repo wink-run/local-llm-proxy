@@ -111,16 +111,20 @@ async function _sendHeartbeat(online = true) {
   try {
     if (typeof _getStats === 'function') {
       const result = await Promise.resolve(_getStats());
-      if (result && typeof result === 'object') stats = result;
+      if (result && typeof result === 'object') stats = { ...stats, ...result };
     }
   } catch (_) {
     // getStats failure is non-fatal
   }
 
+  // Extract inventory from stats if provided, keep stats clean for server
+  const inventory = stats.inventory || null;
+  const { inventory: _inv, ...statsClean } = stats;
+
   try {
     await _post(
       `${_config.serverUrl}/device/heartbeat`,
-      { device_id: _config.device_id, online, stats },
+      { device_id: _config.device_id, online, stats: { ...statsClean, inventory } },
       _config.token
     );
   } catch (_) {

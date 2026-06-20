@@ -87,7 +87,7 @@ export default function Network() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="px-5 py-5 space-y-5">
 
       {/* Header */}
       <div className="flex items-start justify-between">
