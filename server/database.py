@@ -1545,10 +1545,13 @@ async def get_user_devices(user_id: int) -> list[dict]:
         ) as cur:
             devices = [dict(r) for r in await cur.fetchall()]
         for dev in devices:
+            # 每次心跳上报的 calls 是“今日累计总数”（非增量），故取最近一条快照即可，
+            # 不能 SUM——否则把同一累计值重复相加，数字会随心跳次数无限膨胀。
             async with db.execute(
-                """SELECT SUM(calls) AS calls, SUM(errors) AS errors, SUM(providers) AS providers
+                """SELECT calls, errors, providers
                    FROM device_stats_snapshots
-                   WHERE device_id=? AND ts >= datetime('now', '-24 hours')""",
+                   WHERE device_id=? AND ts >= datetime('now', '-24 hours')
+                   ORDER BY ts DESC LIMIT 1""",
                 (dev["id"],),
             ) as cur:
                 snap = await cur.fetchone()

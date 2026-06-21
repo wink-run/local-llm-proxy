@@ -1654,8 +1654,11 @@ function _providerTier(provider) {
   const obj  = typeof provider === 'object' ? provider : null;
   // Explicit tier in provider config
   if (obj?.tier) return obj.tier;
-  // P2P
-  if (id === 'tokenbank-p2p' || obj?.type === 'p2p') return 'p2p';
+  // 显式配置的层级类型（free/paid/p2p）优先于任何启发式：例如免费供给源虽带 API
+  // key + 远程 URL，也应按配置记为 free，而非被下面的兜底误判为 paid。
+  if (obj?.type === 'p2p' || id === 'tokenbank-p2p') return 'p2p';
+  if (obj?.type === 'free') return 'free';
+  if (obj?.type === 'paid') return 'paid';
   // Known paid IDs (fallback for old persisted stats that only store id)
   const KNOWN_PAID = new Set(['openai','anthropic-paid','anthropic','openrouter','deepseek','xai','fireworks']);
   if (KNOWN_PAID.has(id)) return 'paid';
@@ -1962,5 +1965,5 @@ module.exports = {
   setStatsRecorder, setLocalStats, setLocalConfigReader, setAppControls,
   setClaudeModels,
   // 条件路由规则引擎（供单测/复用）
-  pickSteps, evalWhen, modalityOf, estimateInputTokens, extractText,
+  pickSteps, evalWhen, modalityOf, estimateInputTokens, extractText, _providerTier,
 };
