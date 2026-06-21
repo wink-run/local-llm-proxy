@@ -271,6 +271,7 @@ export default function Dashboard() {
   const [appsUsage, setAppsUsage] = useState([]);
   const [usageSort, setUsageSort] = useState('calls');
   const [gwStatus, setGwStatus]   = useState(null);
+  const [compStats, setCompStats] = useState(null);
   const [loading, setLoading]     = useState(true);
 
   const load = useCallback(async () => {
@@ -305,6 +306,12 @@ export default function Dashboard() {
         ? () => window.electronAPI.gateway.status().then(setGwStatus).catch(() => {})
         : () => fetch('/api/gateway/status').then(r => r.json()).then(setGwStatus).catch(() => {});
       fetchStatus();
+
+      // 压缩比统计（本机：无损 JSON 压缩省下的 token）
+      const cp = window.electronAPI?.localStats?.compression
+        ? window.electronAPI.localStats.compression(days)
+        : fetch(`/api/compression-stats?days=${days}`).then(r => (r.ok ? r.json() : null)).catch(() => null);
+      Promise.resolve(cp).then(s => setCompStats(s || null)).catch(() => setCompStats(null));
     } catch (e) {
       console.error('dashboard load', e);
     } finally {
@@ -415,6 +422,33 @@ export default function Dashboard() {
         onSortBy={setUsageSort}
         t={t}
       />
+
+      {/* 压缩节省（无损 JSON 压缩，本机实测） */}
+      {compStats && (
+        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
+          <div className="mb-3">
+            <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('profile.compression.title')}</div>
+          </div>
+          {compStats.count > 0 ? (
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <div className="text-xs text-zinc-400 dark:text-zinc-500 mb-1">{t('profile.compression.requests')}</div>
+                <div className="text-2xl font-bold text-zinc-800 dark:text-zinc-100">{compStats.count}</div>
+              </div>
+              <div className="border-l border-zinc-200/70 dark:border-zinc-700/70 pl-4">
+                <div className="text-xs text-zinc-400 dark:text-zinc-500 mb-1">{t('profile.compression.saved')}</div>
+                <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{fmtN(compStats.saved)}</div>
+              </div>
+              <div className="border-l border-zinc-200/70 dark:border-zinc-700/70 pl-4">
+                <div className="text-xs text-zinc-400 dark:text-zinc-500 mb-1">{t('profile.compression.ratio')}</div>
+                <div className="text-2xl font-bold text-zinc-800 dark:text-zinc-100">{(compStats.ratio * 100).toFixed(1)}%</div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-zinc-400 dark:text-zinc-500">{t('profile.compression.empty')}</p>
+          )}
+        </div>
+      )}
 
       {/* Model rankings — 3 columns */}
       <div className="grid grid-cols-3 gap-4">

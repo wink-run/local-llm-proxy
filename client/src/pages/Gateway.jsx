@@ -872,6 +872,97 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
   );
 }
 
+/** 知识提炼：后台异步任务。点「生成」后台跑，关掉再点也行；完成后展示可编辑结果 → 复制/保存。 */
+function PreferenceMiningModal({ onClose, flash, onJobStart }) {
+  const { t } = useLang();
+  const [job, setJob]         = useState({ status: 'idle', ok: false, model: null, scanned: 0, error: null });
+  const [content, setContent] = useState('');
+  const [dirty, setDirty]     = useState(false); // 用户编辑过就不再被轮询结果覆盖
+
+  const fetchResult = useCallback(async () => {
+    const r = await window.electronAPI.sessions.knowledgeResult().catch(() => null);
+    if (!r) return null;
+    setJob({ status: r.status, ok: !!r.ok, model: r.model || null, scanned: r.scanned || 0, error: r.error || null });
+    if (r.status === 'ready' && !dirty) setContent(r.content || '');
+    return r;
+  }, [dirty]);
+
+  useEffect(() => { fetchResult(); }, [fetchResult]);
+
+  // 生成中时轮询，完成自动刷新；用户可随时关闭弹窗，下次打开仍能拿到结果。
+  useEffect(() => {
+    if (job.status !== 'running') return;
+    const id = setInterval(fetchResult, 2500);
+    return () => clearInterval(id);
+  }, [job.status, fetchResult]);
+
+  const start = async () => {
+    setDirty(false); setContent('');
+    await window.electronAPI.sessions.knowledgeStart();
+    setJob(j => ({ ...j, status: 'running' }));
+    onJobStart?.();
+  };
+  const save = async () => {
+    const r = await window.electronAPI.sessions.saveAgentsMd({ content });
+    if (r?.ok) { flash(t('gateway.mine.saved').replace('{file}', r.file)); onClose(); }
+    else if (!r?.canceled) flash(t('gateway.mine.saveFailed'));
+  };
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(content); flash(t('gateway.sessions.copied')); } catch {}
+  };
+
+  const ready = job.status === 'ready' || job.status === 'error';
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl mx-4 max-h-[88vh] overflow-hidden flex flex-col"
+        onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 flex items-center gap-3">
+          <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">🧠 {t('gateway.mine.title')}</h3>
+          {ready && job.ok && (
+            <span className="text-xs text-zinc-400">{t('gateway.mine.stat').replace('{model}', job.model || '').replace('{sessions}', job.scanned)}</span>
+          )}
+        </div>
+
+        {job.status === 'idle' ? (
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 py-16 px-6 text-center">
+            <div className="text-xs text-zinc-400 max-w-sm">{t('gateway.mine.idleHint')}</div>
+            <button onClick={start} className="text-xs px-4 py-2 rounded-lg bg-violet-500 hover:bg-violet-600 text-white">🧠 {t('gateway.mine.generate')}</button>
+          </div>
+        ) : job.status === 'running' ? (
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 py-16 px-6 text-center">
+            <div className="animate-pulse text-2xl">🧠</div>
+            <div className="text-xs text-zinc-500">{t('gateway.mine.running')}</div>
+            <div className="text-[11px] text-zinc-400 max-w-sm">{t('gateway.mine.runningHint')}</div>
+            <button onClick={onClose} className="mt-2 text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500">{t('gateway.mine.closeKeep')}</button>
+          </div>
+        ) : (
+          <>
+            <div className="px-5 py-2 border-b border-zinc-100 dark:border-zinc-800 text-xs shrink-0">
+              {job.ok
+                ? <span className="text-zinc-400">{t('gateway.mine.previewHint')}</span>
+                : <span className="text-amber-600 dark:text-amber-400">{job.error === 'no_corpus' ? t('gateway.mine.empty') : t('gateway.mine.modelUnavailable')}</span>}
+            </div>
+            <div className="flex-1 overflow-y-auto p-3">
+              <textarea value={content} onChange={e => { setContent(e.target.value); setDirty(true); }} spellCheck={false}
+                placeholder={t('gateway.mine.empty')}
+                className="w-full h-full min-h-[320px] text-xs font-mono leading-relaxed text-zinc-700 dark:text-zinc-200 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-3 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:border-violet-400 resize-none" />
+            </div>
+            <div className="px-5 py-3 border-t border-zinc-100 dark:border-zinc-800 shrink-0 flex items-center gap-2">
+              <button onClick={start} className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500">↻ {t('gateway.mine.regenerate')}</button>
+              <div className="ml-auto flex gap-2">
+                <button onClick={copy} disabled={!content} className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 disabled:opacity-40">{t('gateway.mine.copy')}</button>
+                <button onClick={save} disabled={!content} className="text-xs px-3 py-1.5 rounded-lg bg-violet-500 hover:bg-violet-600 text-white disabled:opacity-40">{t('gateway.mine.save')}</button>
+                <button onClick={onClose} className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500">{t('gateway.sessions.close')}</button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** 会话管理面板：跨 agent 聚合 + 搜索/过滤 + 收藏/标签/归档 + 导出 */
 function SessionManager() {
   const { t } = useLang();
@@ -882,6 +973,8 @@ function SessionManager() {
   const [favOnly, setFavOnly]     = useState(false);
   const [traceRow, setTraceRow]   = useState(null);
   const [contState, setContState] = useState(null);
+  const [mining, setMining]       = useState(false);
+  const [kStatus, setKStatus]     = useState('idle'); // 知识提炼后台任务状态
   const [notice, setNotice]       = useState('');
   const fmtN = n => (n >= 1000 ? (n / 1000).toFixed(1) + 'K' : String(n ?? 0));
 
@@ -894,6 +987,17 @@ function SessionManager() {
   }, []);
 
   useEffect(() => { reload(); }, [reload]);
+
+  // 知识提炼后台任务：进页面拉一次状态；running 时轮询，让工具栏按钮显示 loading。
+  useEffect(() => {
+    if (!window.electronAPI?.sessions?.knowledgeResult) return;
+    let alive = true;
+    const tick = () => window.electronAPI.sessions.knowledgeResult()
+      .then(r => { if (alive && r) setKStatus(r.status); }).catch(() => {});
+    tick();
+    const id = setInterval(() => { if (kStatus === 'running') tick(); }, 2500);
+    return () => { alive = false; clearInterval(id); };
+  }, [kStatus]);
 
   const setMeta = async (row, patch) => {
     await window.electronAPI.sessions.setMeta({
@@ -942,6 +1046,9 @@ function SessionManager() {
       {contState && (
         <ContinueModal source={contState.row} target={contState.target} onClose={() => setContState(null)} />
       )}
+      {mining && (
+        <PreferenceMiningModal onClose={() => setMining(false)} flash={flash} onJobStart={() => setKStatus('running')} />
+      )}
 
       {/* 操作栏 */}
       <div className="flex items-center gap-2 px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 flex-wrap">
@@ -963,6 +1070,12 @@ function SessionManager() {
         <button onClick={() => setFavOnly(v => !v)}
           className={`text-xs px-3 py-1.5 rounded-full ${favOnly ? 'bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400' : 'border border-zinc-200 dark:border-zinc-700 text-zinc-500'}`}>
           ★ {t('gateway.sessions.favOnly')}
+        </button>
+        <button onClick={() => setMining(true)}
+          className="text-xs px-3 py-1.5 rounded-full border border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20 flex items-center gap-1.5">
+          {kStatus === 'running'
+            ? <><span className="inline-block w-3 h-3 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />{t('gateway.mine.busy')}</>
+            : <>🧠 {t('gateway.mine.button')}</>}
         </button>
         <div className="ml-auto flex gap-3 text-xs text-zinc-400">
           <span><strong className="text-zinc-700 dark:text-zinc-200">{rows.length}</strong> {t('gateway.sessions.statSessions')}</span>

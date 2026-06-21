@@ -568,6 +568,7 @@ export default function TokenDashboard() {
   const [range,       setRange]      = useState('today');
   const [rangeStats,  setRangeStats] = useState({ calls: 0, tokens: 0, free: 0, p2p: 0, paid: 0 });
   const [localData,   setLocalData]  = useState(null);
+  const [compStats,   setCompStats]  = useState(null);
   const [dataSource,  setDataSource]  = useState('cloud');
   const [deviceList,  setDeviceList]  = useState([]);
   const [distFilter,  setDistFilter]  = useState('all');
@@ -597,6 +598,16 @@ export default function TokenDashboard() {
       });
       setDeviceList(data.devices || []);
       setDistFilter('all');
+      // 压缩比：个人页优先用云端各端汇总（merge 后的 inventory 带 compression）；
+      // 云端不可用回退到本机日志。
+      if (data.compression) {
+        setCompStats(data.compression);
+      } else {
+        const cp = window.electronAPI?.localStats?.compression
+          ? window.electronAPI.localStats.compression(days)
+          : fetch(`/api/compression-stats?days=${days}`).then(r => (r.ok ? r.json() : null)).catch(() => null);
+        Promise.resolve(cp).then(s => setCompStats(s || null)).catch(() => setCompStats(null));
+      }
     }).catch(() => {});
   }, [range]);
 
@@ -760,6 +771,35 @@ export default function TokenDashboard() {
         filterId={distFilter}
         onFilterChange={setDistFilter}
       />
+
+      {/* 压缩节省（无损 JSON 压缩） */}
+      {compStats && (
+        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
+          <div className="mb-3">
+            <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('profile.compression.title')}</h2>
+          </div>
+          {compStats.count > 0 ? (
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <p className="text-xs text-zinc-400 dark:text-zinc-500 mb-1">{t('profile.compression.requests')}</p>
+                <p className="text-2xl font-bold text-zinc-800 dark:text-zinc-100">{compStats.count}</p>
+              </div>
+              <div className="border-l border-zinc-200/70 dark:border-zinc-700/70 pl-4">
+                <p className="text-xs text-zinc-400 dark:text-zinc-500 mb-1">{t('profile.compression.saved')}</p>
+                <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                  {compStats.saved >= 1000 ? `${(compStats.saved / 1000).toFixed(1)}K` : compStats.saved}
+                </p>
+              </div>
+              <div className="border-l border-zinc-200/70 dark:border-zinc-700/70 pl-4">
+                <p className="text-xs text-zinc-400 dark:text-zinc-500 mb-1">{t('profile.compression.ratio')}</p>
+                <p className="text-2xl font-bold text-zinc-800 dark:text-zinc-100">{(compStats.ratio * 100).toFixed(1)}%</p>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-zinc-400 dark:text-zinc-500">{t('profile.compression.empty')}</p>
+          )}
+        </div>
+      )}
 
 
     </div>

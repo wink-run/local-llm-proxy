@@ -2,6 +2,8 @@
 // 跨 agent 会话聚合 + 叠加层合并 + 会话包导出（纯逻辑可单测；IO 在 orchestration 段）。
 'use strict';
 
+const { isSignal, looksLikeNoise } = require('./learn-mine');
+
 /** 将 {agentId: rows[]} 展平为单数组，打上 agent_id，按 lastTs 倒序。 */
 function mergeAgentRows(resultsByAgent = {}) {
   const out = [];
@@ -206,41 +208,48 @@ function composeHandoffDoc({ brief, project, sourceAgent } = {}) {
 
 const HANDOFF_MODELS = ['deepseek-v4-flash', 'glm-4.7', 'claude-haiku-4-5'];
 
-/** 调用本地网关把 digest 总结成交接 brief；任一模型成功即返回，全失败返回 null。 */
-async function summarizeViaGateway(digest, {
-  base = 'http://127.0.0.1:11430', models = HANDOFF_MODELS, fetchImpl = globalThis.fetch,
+/** 调本地网关跑一次 system+user 补全；逐个模型 failover，全失败返回 null。 */
+async function _callModel(system, userText, {
+  base = 'http://127.0.0.1:11430', models = HANDOFF_MODELS, fetchImpl = globalThis.fetch, maxTokens = 1600,
 } = {}) {
   if (typeof fetchImpl !== 'function') return null;
-  const system = [
-    '你是“会话交接”助手。下面是某 AI 编码会话的记录（含原始目标与最近进展）。',
-    '请生成一份结构清晰、可直接交给另一个 AI 接手的中文交接文档，必须包含以下 markdown 小节；',
-    '信息不足时基于上下文合理推断，并在该处标注「(推断)」：',
-    '## 用户目标 — 用户最终想达成什么（从原始请求提炼，不要只复述最近的动作）',
-    '## 验收标准 — 怎样算完成、用户期望的效果或行为（显式或推断）',
-    '## 完成状态 — 已完成 vs 未完成，并给出大致完成度（如 70%）',
-    '## 已完成的工作 — 关键改动、结论、已验证的事项',
-    '## 下一步待办 — 接手者应立即着手的具体事项（有序列表）',
-    '## 关键文件 — 涉及的文件及其作用',
-    '## 关键决策与注意事项 — 重要约定、约束、坑、用户偏好',
-    '只输出交接文档本身，不要寒暄或额外解释。',
-  ].join('\n');
   for (const model of models) {
     try {
       const resp = await fetchImpl(`${base}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model, max_tokens: 1600,
-          messages: [{ role: 'system', content: system }, { role: 'user', content: digest }],
+          model, max_tokens: maxTokens,
+          messages: [{ role: 'system', content: system }, { role: 'user', content: userText }],
         }),
       });
       if (!resp.ok) continue;
       const data = await resp.json();
       const text = data?.choices?.[0]?.message?.content;
-      if (text && text.trim()) return { brief: text.trim(), model };
+      if (text && text.trim()) return { text: text.trim(), model };
     } catch { /* 试下一个模型 */ }
   }
   return null;
+}
+
+const HANDOFF_SYSTEM = [
+  '你是“会话交接”助手。下面是某 AI 编码会话的记录（含原始目标与最近进展）。',
+  '请生成一份结构清晰、可直接交给另一个 AI 接手的中文交接文档，必须包含以下 markdown 小节；',
+  '信息不足时基于上下文合理推断，并在该处标注「(推断)」：',
+  '## 用户目标 — 用户最终想达成什么（从原始请求提炼，不要只复述最近的动作）',
+  '## 验收标准 — 怎样算完成、用户期望的效果或行为（显式或推断）',
+  '## 完成状态 — 已完成 vs 未完成，并给出大致完成度（如 70%）',
+  '## 已完成的工作 — 关键改动、结论、已验证的事项',
+  '## 下一步待办 — 接手者应立即着手的具体事项（有序列表）',
+  '## 关键文件 — 涉及的文件及其作用',
+  '## 关键决策与注意事项 — 重要约定、约束、坑、用户偏好',
+  '只输出交接文档本身，不要寒暄或额外解释。',
+].join('\n');
+
+/** 调用本地网关把 digest 总结成交接 brief；成功返回 {brief, model}，全失败返回 null。 */
+async function summarizeViaGateway(digest, opts = {}) {
+  const r = await _callModel(HANDOFF_SYSTEM, digest, { maxTokens: 1600, ...opts });
+  return r ? { brief: r.text, model: r.model } : null;
 }
 
 /** 生成交接：取 trace → digest → 模型 brief（失败兜底）→ 写文件 → 返回供 UI。 */
@@ -274,9 +283,98 @@ async function continueSession(deps, { source_agent, session_id, target_agent } 
   };
 }
 
+// ── 知识提炼（LLM 合成）─────────────────────────────────────────────────────
+// 不按频次抽“偏好”，而是让本地模型从跨会话语料里提炼可【长期作上下文】的知识：
+// 开发规则 / 人格定义 / 最佳实践 / 避坑指南 / 概念与黑话；并标注项目级 vs 全局级。
+
+const KNOWLEDGE_MODELS = ['deepseek-v4-flash', 'glm-4.7', 'kimi-k2.6', 'claude-haiku-4-5'];
+
+const KNOWLEDGE_SYSTEM = [
+  '你是“项目知识提炼”助手。下面是来自多个项目的真实会话片段（每行前缀 [项目名]，多为用户的指示/纠正/讨论）。',
+  '请提炼可【长期作为 AI 编码助手上下文】的知识，只保留这几类，其它一律忽略：',
+  '1) 开发规则（约定、流程、工具链、命令）',
+  '2) 人格/角色定义（希望 AI 以什么角色、什么风格工作）',
+  '3) 最佳实践',
+  '4) 避坑指南（踩过的坑、易错点、注意事项）',
+  '5) 概念与黑话（项目特有术语、缩写、领域概念的含义）',
+  '忽略：一次性任务指令、bug 复现、具体数值/路径/文件名、寒暄。出现几次不重要，重要的是它是否属于上面五类。',
+  '为每条判断作用域：全局级（任何项目都适用，如通用编码习惯、沟通风格、人格）/ 项目级（某项目特有）。',
+  '用简洁的祈使句或定义句改写每条，不要照抄原文；同义合并去重。',
+  '输出 markdown，严格用以下结构，没有内容的小节直接省略：',
+  '# 全局级',
+  '## 开发规则 / ## 人格定义 / ## 最佳实践 / ## 避坑指南 / ## 概念与黑话',
+  '# 项目级',
+  '## <项目名>（其下同样分小类）',
+  '只输出文档本身，不要解释或寒暄。',
+].join('\n');
+
+/** 扫聚合会话 → 构建“知识语料”：清洗后的用户指示行，按项目标注，强信号优先，限长。 */
+function buildKnowledgeCorpus(deps, { limit = 300, maxChars = 9000 } = {}) {
+  const { sessionBrowser } = deps;
+  const rows = sessionBrowser.listAllSessions() || [];
+  const byProject = new Map(); // project -> { strong:[], weak:[] }
+  const seen = new Set();
+  let scanned = 0;
+  for (const r of rows.slice(0, limit)) {
+    let tr; try { tr = sessionBrowser.getTrace(r.agent_id, r.session_id); } catch { continue; }
+    scanned += 1;
+    if (!tr || !Array.isArray(tr.steps)) continue;
+    const project = tr.project || r.project || 'unknown';
+    let g = byProject.get(project); if (!g) { g = { strong: [], weak: [] }; byProject.set(project, g); }
+    for (const s of tr.steps) {
+      if (!s || s.kind !== 'user') continue;
+      const t = (s.text || '').replace(/\s+/g, ' ').trim();
+      if (t.length < 3 || t.length > 400) continue;
+      if (looksLikeNoise(t)) continue;
+      const strong = isSignal(t);            // 祈使型规则
+      if (!strong && t.length < 6) continue; // 非祈使的短句多为寒暄/碎语，丢弃
+      const dk = project + '|' + t.toLowerCase().slice(0, 80);
+      if (seen.has(dk)) continue;
+      seen.add(dk);
+      (strong ? g.strong : g.weak).push(t);
+    }
+  }
+  const lines = [];
+  let used = 0;
+  const projects = [...byProject.keys()];
+  const push = (project, t) => {
+    const line = `[${project}] ${t}`;
+    if (used + line.length + 1 > maxChars) return false;
+    lines.push(line); used += line.length + 1; return true;
+  };
+  outer: for (const pass of ['strong', 'weak']) {
+    for (const project of projects) {
+      for (const t of byProject.get(project)[pass]) if (!push(project, t)) break outer;
+    }
+  }
+  return { corpus: lines.join('\n'), projects, scanned, sessions: rows.length, lineCount: lines.length };
+}
+
+/** 兜底：模型不可用时，把原始候选行包成基础 markdown，至少让用户看到素材。 */
+function _fallbackMd(corpus) {
+  const date = new Date().toISOString().slice(0, 10);
+  return [
+    `<!-- ${date} 本地模型不可用，以下为未经提炼的原始候选；请确认网关已运行并配置了可用模型后重试。 -->`,
+    '', '# 原始候选（未提炼）', '',
+    ...corpus.split('\n').filter(Boolean).map(l => `- ${l}`),
+    '',
+  ].join('\n');
+}
+
+/** 构建语料 → 让本地模型合成知识文档（AGENTS.md 内容）。 */
+async function synthesizeKnowledge(deps, opts = {}) {
+  const { corpus, projects, scanned, sessions, lineCount } = buildKnowledgeCorpus(deps, opts);
+  if (!corpus.trim()) return { ok: false, error: 'no_corpus', content: '', scanned, sessions };
+  const r = await _callModel(KNOWLEDGE_SYSTEM, corpus, { models: KNOWLEDGE_MODELS, maxTokens: 2400, ...opts });
+  if (!r) return { ok: false, error: 'model_unavailable', content: _fallbackMd(corpus), projects, scanned, sessions, lineCount };
+  const date = new Date().toISOString().slice(0, 10);
+  const header = `<!-- 由 Token Bank 知识提炼生成于 ${date}（模型 ${r.model}，扫描 ${scanned} 会话）。可自由编辑。 -->\n\n`;
+  return { ok: true, content: header + r.text, model: r.model, projects, scanned, sessions, lineCount };
+}
+
 module.exports = {
   mergeAgentRows, joinSessionsWithMeta, buildSessionPackJSON, renderSessionPackMarkdown,
   getSessions, exportSession,
   buildSessionDigest, filePathFromInput, composeHandoffDoc, summarizeViaGateway,
-  continueSession,
+  continueSession, buildKnowledgeCorpus, synthesizeKnowledge,
 };

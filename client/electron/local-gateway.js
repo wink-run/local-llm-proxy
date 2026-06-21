@@ -10,6 +10,7 @@ const codexTransform = require('./codex-transform');
 const reqRouter = require('./request-router');
 const oauth = require('./oauth');
 const { estimateCost } = require('./pricing');
+const { compressBody, compressionRatio } = require('./compressor');
 
 // 出站代理：境外供给源（如 Google Gemini）常需走本机代理才能连通。
 // 优先级：provider.proxy > 全局 cfg.network_proxy > 环境变量(HTTPS_PROXY/HTTP_PROXY，遵守 NO_PROXY)。
@@ -50,6 +51,28 @@ function _saveRouteLog() {
   }, 1000);
 }
 _loadRouteLog();
+
+// ── 压缩比数据记录 ───────────────────────────────────────────────────────────
+// 每次无损压缩的 before/after/ratio 追加到 JSONL（best-effort，不阻塞热路径），
+// 并维护累计聚合，便于回看整体压缩效果。
+const COMPRESSION_LOG_FILE = path.join(os.homedir(), '.tokenbank', 'compression-log.jsonl');
+const _compAgg = { count: 0, before: 0, after: 0 };
+function _recordCompression(model, before, after) {
+  _compAgg.count += 1; _compAgg.before += before; _compAgg.after += after;
+  const rec = {
+    ts: new Date().toISOString(), model: model || null,
+    before, after, saved: before - after, ratio: +compressionRatio(before, after).toFixed(4),
+  };
+  try {
+    fs.mkdirSync(path.dirname(COMPRESSION_LOG_FILE), { recursive: true });
+    fs.appendFile(COMPRESSION_LOG_FILE, JSON.stringify(rec) + '\n', () => {});
+  } catch {}
+  return rec;
+}
+/** 累计压缩比（供调试/查看）。 */
+function compressionStats() {
+  return { ...(_compAgg), ratio: +compressionRatio(_compAgg.before, _compAgg.after).toFixed(4) };
+}
 
 // 调试日志：把完整请求/响应写到文件，便于排查 Claude Desktop 等客户端实际发了什么
 const DEBUG_LOG_FILE = path.join(os.homedir(), 'tokenbank-gateway-debug.log');
@@ -1728,6 +1751,17 @@ function handleRequest(req, res) {
     return;
   }
 
+  // 压缩比统计（盘点页用）
+  if (method === 'GET' && url.startsWith('/api/compression-stats')) {
+    const qs   = new URL('http://x' + url).searchParams;
+    const days = Math.max(1, Math.min(365, parseInt(qs.get('days'), 10) || 1));
+    let summary = { count: 0, before: 0, after: 0, saved: 0, ratio: 0, models: [] };
+    try { summary = require('./compression-report').readCompressionSummary(days); } catch {}
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(summary));
+    return;
+  }
+
   // Gateway status for CLI frontend
   if (method === 'GET' && cleanPath === '/api/gateway/status') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1775,6 +1809,25 @@ function handleRequest(req, res) {
     // ── 应用匹配（api-key 按 key、shim 按路径，用于统计归因）────────────────
     const ctrl = resolveAppControl(callerKey, cleanPath);
     debugLog(`匹配的 app control`, ctrl ? { app_name: ctrl.app_name, has_match_key: !!ctrl.match?.key } : 'null（未匹配任何应用，按默认策略路由）');
+
+    // ── 压缩 stage（默认关闭，opt-in）──────────────────────────────────────
+    // 转发前对 chat 请求做无损 JSON 压缩，减少发给上游的输入 token。
+    // 开关：cfg.compress.enabled 或环境变量 TOKENBANK_COMPRESS=1。
+    if (modalityOf(cleanPath) === 'chat') {
+      let compCfg = {};
+      try { compCfg = _getConfig?.()?.compress || {}; } catch {}
+      const enabled = process.env.TOKENBANK_COMPRESS === '1' || !!compCfg.enabled;
+      if (enabled) {
+        try {
+          const r = compressBody(body, { enabled: true });
+          if (r.saved > 0) {
+            body = r.body;
+            const rec = _recordCompression(model, r.before, r.after);
+            debugLog('压缩 stage（无损）', { ...rec, 累计: compressionStats() });
+          }
+        } catch (e) { debugLog('压缩 stage 失败（跳过）', e.message); }
+      }
+    }
 
     const skipP2P = !!req.headers['x-p2p-hop'];
     try {

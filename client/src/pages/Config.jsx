@@ -314,6 +314,9 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
   const [healthInterval, setHealthInterval] = useState('60');
   const [keepRouteLogs,  setKeepRouteLogs]  = useState(true);
 
+  // Compression settings（仅内置无损 JSON 压缩）
+  const [compressEnabled, setCompressEnabled] = useState(false);
+
   const [savedMsg, setSavedMsg] = useState('');
   const [saving,   setSaving]   = useState(false);
 
@@ -329,6 +332,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       if (cfg.retry_count != null) setRetryCount(String(cfg.retry_count));
       if (cfg.health_interval)   setHealthInterval(String(cfg.health_interval));
       if (cfg.keep_route_logs != null) setKeepRouteLogs(!!cfg.keep_route_logs);
+      if (cfg.compress) setCompressEnabled(!!cfg.compress.enabled);
     }).catch(() => {});
     // Read live gateway port from status
     getGateway().status().then(s => {
@@ -353,6 +357,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
         retry_count:     Number(retryCount),
         health_interval: Number(healthInterval),
         keep_route_logs: keepRouteLogs,
+        compress: { enabled: compressEnabled },
       });
       setSavedMsg(t('settings.saved'));
       setTimeout(() => setSavedMsg(''), 2000);
@@ -365,6 +370,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
     setGatewayPort(11430); setAutoLaunch(false); setReqTimeout('60');
     setMaxConcurrent('8'); setLogLevel('warn'); setRetryCount('1');
     setHealthInterval('60'); setKeepRouteLogs(true);
+    setCompressEnabled(false);
   }
 
   const THEME_OPTIONS = [
@@ -458,6 +464,18 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
           />
           <Row label={t('settings.keepRouteLogs')} hint={t('settings.keepRouteLogsHint')}>
             <Toggle enabled={keepRouteLogs} onChange={() => setKeepRouteLogs(v => !v)} />
+          </Row>
+        </div>
+      </div>
+
+      {/* Compression section */}
+      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
+          <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.compression')}</h2>
+        </div>
+        <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
+          <Row label={t('settings.compressEnabled')} hint={t('settings.compressEnabledHint')}>
+            <Toggle enabled={compressEnabled} onChange={() => setCompressEnabled(v => !v)} />
           </Row>
         </div>
       </div>

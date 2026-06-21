@@ -112,16 +112,23 @@ async function _doRegister() {
 /** 采集本机 1/7/30 天盘点快照，随心跳上报云端 */
 async function _collectInventory() {
   const query = window.electronAPI?.localStats?.query;
+  const comp  = window.electronAPI?.localStats?.compression;
   if (query) {
     const [d1, d7, d30] = await Promise.all([
       query(1).catch(() => null),
       query(7).catch(() => null),
       query(30).catch(() => null),
     ]);
+    // 压缩比 summary 一并随快照上报，供云端各端汇总
+    const [c1, c7, c30] = await Promise.all([
+      comp ? comp(1).catch(() => null) : Promise.resolve(null),
+      comp ? comp(7).catch(() => null) : Promise.resolve(null),
+      comp ? comp(30).catch(() => null) : Promise.resolve(null),
+    ]);
     const inv = {};
-    if (d1) inv['1'] = d1;
-    if (d7) inv['7'] = d7;
-    if (d30) inv['30'] = d30;
+    if (d1) { if (c1) d1.compression = c1; inv['1'] = d1; }
+    if (d7) { if (c7) d7.compression = c7; inv['7'] = d7; }
+    if (d30) { if (c30) d30.compression = c30; inv['30'] = d30; }
     return inv;
   }
   const d1 = await getGateway().getDailyStats().catch(() => ({}));

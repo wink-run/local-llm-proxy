@@ -809,6 +809,11 @@ function registerIPC() {
   ipcMain.handle('gateway:status',        () => gateway.getStatus());
   ipcMain.handle('gateway:getLog',        () => gateway.getLog());
   ipcMain.handle('gateway:restart',       () => gateway.restart());
+  ipcMain.handle('localStats:compression', (_e, days) => {
+    const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
+    try { return require('./compression-report').readCompressionSummary(d); }
+    catch (e) { console.error('[localStats:compression]', e.message); return { count: 0, before: 0, after: 0, saved: 0, ratio: 0, models: [] }; }
+  });
   ipcMain.handle('localStats:query', (_e, days) => {
     const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
     const data = localStats.queryDashboard(d);
@@ -1794,6 +1799,40 @@ function registerIPC() {
   ipcMain.handle('sessions:continue', async (_e, payload = {}) => {
     try { return await sessionManager.continueSession(_sessionDeps, payload); }
     catch (e) { console.error('[sessions:continue]', e.message); return { error: 'continue_failed' }; }
+  });
+  // 知识提炼：后台异步任务。点击 start 立即返回，合成在后台跑；result 拿当前状态/结果。
+  // 状态：idle（没跑过）/ running（生成中）/ ready（已完成，含成功或兜底）/ error（异常）。
+  let _knowledgeJob = { status: 'idle', ok: false, content: '', model: null, scanned: 0, error: null, finishedAt: 0 };
+  function _startKnowledgeJob() {
+    if (_knowledgeJob.status === 'running') return;
+    _knowledgeJob = { status: 'running', ok: false, content: '', model: null, scanned: 0, error: null, finishedAt: 0 };
+    sessionManager.synthesizeKnowledge(_sessionDeps, {})
+      .then(r => {
+        _knowledgeJob = {
+          status: 'ready', ok: !!r.ok, content: r.content || '', model: r.model || null,
+          scanned: r.scanned || 0, error: r.error || null, finishedAt: Date.now(),
+        };
+      })
+      .catch(e => {
+        console.error('[knowledgeJob]', e.message);
+        _knowledgeJob = { status: 'error', ok: false, content: '', model: null, scanned: 0, error: 'mine_failed', finishedAt: Date.now() };
+      });
+  }
+  ipcMain.handle('sessions:knowledgeStart', () => { _startKnowledgeJob(); return { status: _knowledgeJob.status }; });
+  ipcMain.handle('sessions:knowledgeResult', () => ({ ..._knowledgeJob }));
+  // 保存 AGENTS.md：弹保存对话框让用户自选位置。写入 UI 传来的（可能已编辑的）content。
+  ipcMain.handle('sessions:saveAgentsMd', async (_e, { content } = {}) => {
+    try {
+      const text = typeof content === 'string' ? content : '';
+      const res = await dialog.showSaveDialog(mainWindow, {
+        title: 'Save AGENTS.md',
+        defaultPath: require('path').join(require('os').homedir(), 'AGENTS.md'),
+        filters: [{ name: 'Markdown', extensions: ['md'] }],
+      });
+      if (res.canceled || !res.filePath) return { canceled: true };
+      require('fs').writeFileSync(res.filePath, text, 'utf8');
+      return { ok: true, file: res.filePath };
+    } catch (e) { console.error('[sessions:saveAgentsMd]', e.message); return { error: 'save_failed' }; }
   });
 
   // 统一“打开对应应用 + 粘贴”模式：用 open -a 拉起目标 agent 的桌面应用，不注入 prompt。

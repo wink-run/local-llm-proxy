@@ -1376,6 +1376,7 @@ def _empty_inventory() -> dict:
         "tiers": {"free": 0, "p2p": 0, "paid": 0},
         "hourly": [0] * 24,
         "models": [], "providers": [], "agent_sources": [], "devices": [],
+        "compression": {"count": 0, "before": 0, "after": 0, "saved": 0, "ratio": 0},
     }
 
 
@@ -1427,6 +1428,11 @@ def merge_device_inventories(device_rows: list, days: int) -> dict:
             for i, v in enumerate(snap["hourly"][:24]):
                 merged["hourly"][i] += int(v or 0)
 
+        comp = snap.get("compression") or {}
+        merged["compression"]["count"] += int(comp.get("count") or 0)
+        merged["compression"]["before"] += int(comp.get("before") or 0)
+        merged["compression"]["after"] += int(comp.get("after") or 0)
+
         provider_rows.append(snap.get("providers") or [])
         model_rows.append(snap.get("models") or [])
         agent_rows.append(snap.get("agent_sources") or [])
@@ -1464,6 +1470,9 @@ def merge_device_inventories(device_rows: list, days: int) -> dict:
     merged["providers"] = _merge_inventory_list(provider_rows, "id")
     merged["models"] = _merge_inventory_list(model_rows, "model")
     merged["agent_sources"] = _merge_inventory_list(agent_rows, "source")
+    _c = merged["compression"]
+    _c["saved"] = _c["before"] - _c["after"]
+    _c["ratio"] = round((_c["before"] - _c["after"]) / _c["before"], 4) if _c["before"] > 0 else 0
     return merged
 
 

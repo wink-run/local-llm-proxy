@@ -10,7 +10,77 @@ const {
   filePathFromInput,
   composeHandoffDoc,
   summarizeViaGateway,
+  buildKnowledgeCorpus,
+  synthesizeKnowledge,
 } = require('../session-manager');
+
+// Fake sessionBrowser for knowledge mining tests.
+function fakeBrowser(traces) {
+  const rows = traces.map((t, i) => ({ agent_id: t.agent_id || 'claude-code', session_id: `s${i}`, project: t.project }));
+  const byId = Object.fromEntries(traces.map((t, i) => [`s${i}`, t]));
+  return {
+    listAllSessions: () => rows,
+    getTrace: (_a, sid) => byId[sid],
+  };
+}
+
+test('buildKnowledgeCorpus cleans noise, labels by project, prioritizes strong signals', () => {
+  const deps = { sessionBrowser: fakeBrowser([
+    { project: 'proj-a', steps: [
+      { kind: 'user', text: '不要折行' },                       // strong signal
+      { kind: 'user', text: '网关是指本地转发层' },              // weak (concept) — kept
+      { kind: 'user', text: 'Caveat: The messages below were generated' }, // boilerplate — dropped
+      { kind: 'user', text: '路径错误 应该是/Users/x/y.js' },    // path — dropped
+      { kind: 'assistant', text: 'ignored' },
+    ] },
+  ]) };
+  const { corpus, projects, lineCount } = buildKnowledgeCorpus(deps);
+  assert.ok(corpus.includes('[proj-a] 不要折行'));
+  assert.ok(corpus.includes('网关是指本地转发层'));
+  assert.ok(!corpus.includes('Caveat'));
+  assert.ok(!corpus.includes('/Users/'));
+  assert.deepEqual(projects, ['proj-a']);
+  assert.equal(lineCount, 2);
+  // strong signal ordered before weak
+  assert.ok(corpus.indexOf('不要折行') < corpus.indexOf('网关是指本地转发层'));
+});
+
+test('synthesizeKnowledge sends corpus to the model and returns its content', async () => {
+  const deps = { sessionBrowser: fakeBrowser([
+    { project: 'p', steps: [{ kind: 'user', text: '总是用 pnpm 管理依赖' }] },
+  ]) };
+  let seenSystem = '', seenUser = '';
+  const fakeFetch = async (_url, opts) => {
+    const body = JSON.parse(opts.body);
+    seenSystem = body.messages[0].content; seenUser = body.messages[1].content;
+    return { ok: true, json: async () => ({ choices: [{ message: { content: '# 全局级\n## 开发规则\n- 用 pnpm' } }] }) };
+  };
+  const r = await synthesizeKnowledge(deps, { fetchImpl: fakeFetch });
+  assert.equal(r.ok, true);
+  assert.ok(r.content.includes('# 全局级'));
+  assert.ok(r.content.includes('知识提炼'), 'header comment present');
+  assert.ok(/项目级|全局级|概念/.test(seenSystem), 'system prompt asks for the knowledge structure');
+  assert.ok(seenUser.includes('总是用 pnpm'));
+});
+
+test('synthesizeKnowledge falls back to raw candidates when model unavailable', async () => {
+  const deps = { sessionBrowser: fakeBrowser([
+    { project: 'p', steps: [{ kind: 'user', text: '不要每次都打包' }] },
+  ]) };
+  const r = await synthesizeKnowledge(deps, { fetchImpl: async () => ({ ok: false }) });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'model_unavailable');
+  assert.ok(r.content.includes('不要每次都打包'), 'fallback shows raw candidate');
+});
+
+test('synthesizeKnowledge reports no_corpus when nothing minable', async () => {
+  const deps = { sessionBrowser: fakeBrowser([
+    { project: 'p', steps: [{ kind: 'user', text: 'ok' }, { kind: 'assistant', text: 'sure' }] },
+  ]) };
+  const r = await synthesizeKnowledge(deps, { fetchImpl: async () => ({ ok: true, json: async () => ({}) }) });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'no_corpus');
+});
 
 test('mergeAgentRows tags agent_id and sorts by lastTs desc', () => {
   const out = mergeAgentRows({

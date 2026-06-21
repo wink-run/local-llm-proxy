@@ -101,6 +101,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   localStats: {
     query: (days) => ipcRenderer.invoke('localStats:query', days),
+    compression: (days) => ipcRenderer.invoke('localStats:compression', days),
     appsUsage: (days) => ipcRenderer.invoke('localStats:appsUsage', days),
   },
   sessionImport: {
@@ -157,6 +158,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     export:   (payload) => ipcRenderer.invoke('sessions:export', payload),
     continue: (payload) => ipcRenderer.invoke('sessions:continue', payload),
     launch:   (payload) => ipcRenderer.invoke('sessions:launch', payload),
+    knowledgeStart:  ()        => ipcRenderer.invoke('sessions:knowledgeStart'),
+    knowledgeResult: ()        => ipcRenderer.invoke('sessions:knowledgeResult'),
+    saveAgentsMd:    (payload) => ipcRenderer.invoke('sessions:saveAgentsMd', payload),
   },
   localConfig: {
     get:               ()  => ipcRenderer.invoke('localConfig:get'),
