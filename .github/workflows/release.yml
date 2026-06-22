@@ -186,7 +186,7 @@ jobs:
 
             | 平台 | 文件 | 说明 |
             |---|---|---|
-            | macOS | `.dmg` | 双击安装，支持自动更新（见下方 macOS 说明） |
+            | macOS | `.dmg` | 双击安装，支持自动更新 |
             | Windows | `.exe` | NSIS 安装包，支持自动更新 |
             | Docker | 见下方 | 命令行/服务器无界面部署 |
 
@@ -210,19 +210,3 @@ jobs:
 
             Web UI: `http://localhost:11431`
             LLM 入口: `OPENAI_BASE_URL=http://localhost:11430/v1`
-
-            ### macOS 提示「已损坏，无法打开」
-
-            这是 Gatekeeper 对**未签名/未公证**安装包的常见拦截，并非文件损坏。
-
-            **临时解决（当前未配置 Apple 签名时）：**
-
-            ```bash
-            # 安装后执行（路径按实际安装位置调整）
-            xattr -cr "/Applications/Token Bank.app"
-            ```
-
-            或在「系统设置 → 隐私与安全性」中点击「仍要打开」。
-
-            **彻底修复：** 在仓库 GitHub Secrets 配置 `MACOS_CERTIFICATE`（Developer ID .p12 Base64）、
-            `MACOS_CERTIFICATE_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 后重新打 Release。

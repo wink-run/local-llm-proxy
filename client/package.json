@@ -65,6 +65,7 @@
       "target": "dmg",
       "category": "public.app-category.utilities",
       "hardenedRuntime": true,
+      "notarize": true,
       "gatekeeperAssess": false,
       "entitlements": "electron/entitlements.mac.plist",
       "entitlementsInherit": "electron/entitlements.mac.plist"
