@@ -183,7 +183,7 @@ function CheckinCard({ onSuccess }) {
       </p>
       {msg && <span className={`text-xs font-medium ${msg.startsWith('+') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{msg}</span>}
       <button onClick={handleCheckin} disabled={checking || done}
-        className={`py-1.5 rounded-lg text-sm font-medium transition-colors ${done ? 'bg-zinc-100 dark:bg-zinc-700 text-zinc-400 cursor-default' : 'bg-blue-600 hover:bg-blue-500 text-white'} disabled:opacity-60`}>
+        className={`py-1.5 rounded-lg text-sm font-medium transition-colors ${done ? 'bg-zinc-100 dark:bg-zinc-700 text-zinc-400 cursor-default' : 'bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white'} disabled:opacity-60`}>
         {checking ? t('profile.checkin.checking') : done ? t('profile.checkin.doneBtn') : t('profile.checkin.btn')}
       </button>
     </div>
@@ -222,7 +222,7 @@ function SpinCard({ onSuccess }) {
       </p>
       {msg && <span className={`text-xs font-medium ${msg.startsWith('+') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{msg}</span>}
       <button onClick={handleSpin} disabled={spinning || exhausted || !status}
-        className={`py-1.5 rounded-lg text-sm font-medium transition-colors ${exhausted ? 'bg-zinc-100 dark:bg-zinc-700 text-zinc-400 cursor-default' : 'bg-blue-600 hover:bg-blue-500 text-white'} disabled:opacity-60`}>
+        className={`py-1.5 rounded-lg text-sm font-medium transition-colors ${exhausted ? 'bg-zinc-100 dark:bg-zinc-700 text-zinc-400 cursor-default' : 'bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white'} disabled:opacity-60`}>
         {spinning ? t('profile.spin.spinning') : exhausted ? t('profile.spin.tomorrow') : t('profile.spin.btn')}
       </button>
     </div>
@@ -753,7 +753,7 @@ export default function TokenDashboard() {
               <input value={note} onChange={e => setNote(e.target.value)} placeholder={t('profile.purchase.note')}
                 className="w-full bg-zinc-100 dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400" />
               <button type="submit" disabled={submitting || !contact.trim()}
-                className="w-full py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white">
+                className="w-full py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-50 text-white">
                 {submitting ? t('profile.purchase.submitting') : t('profile.purchase.submit')}
               </button>
             </form>
@@ -774,7 +774,7 @@ export default function TokenDashboard() {
 
       {/* 压缩节省（无损 JSON 压缩） */}
       {compStats && (
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
+        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
           <div className="mb-3">
             <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('profile.compression.title')}</h2>
           </div>

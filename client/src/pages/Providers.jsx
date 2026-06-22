@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
+import { resolveBrandIcon } from '../lib/brandIcons';
 import { getNetwork, getProfile, listKeys, createKey, deleteKey, getProviderCatalog } from '../api/client';
 import { loadUserAccounts } from '../api/userAccounts';
 import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
@@ -548,7 +549,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
   }
 
   return (
-    <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+    <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
       {/* Header */}
       <div className="flex items-start gap-3 p-4">
         <div className="w-9 h-9 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-base shrink-0">🌐</div>
@@ -666,7 +667,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
                   {/* Save selected */}
                   {selectedKey && selectedKey !== savedKey && (
                     <button onClick={handleSaveKey} disabled={keySaving}
-                      className="w-full px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-colors">
+                      className="w-full px-3 py-1.5 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-colors">
                       {keySaving ? t('providers.p2p.saving') : keySaved ? t('providers.p2p.savedKey') : t('providers.p2p.setGatewayKey')}
                     </button>
                   )}
@@ -822,7 +823,7 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
   const suggestionMenu = showSuggestions && menuStyle && createPortal(
     <ul
       style={{ position: 'fixed', left: menuStyle.left, top: menuStyle.top, width: menuStyle.width, maxHeight: menuStyle.maxHeight, zIndex: 9999 }}
-      className="overflow-y-auto rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg py-1"
+      className="overflow-y-auto rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 shadow-lg py-1"
       role="listbox"
     >
       {filteredSuggestions.map((name, i) => (
@@ -998,7 +999,7 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
   }
 
   return (
-    <div className={`bg-white dark:bg-zinc-900 border rounded-2xl overflow-hidden transition-opacity ${
+    <div className={`bg-white dark:bg-zinc-800 border rounded-2xl overflow-hidden transition-opacity ${
       provider.enabled ? 'border-zinc-200 dark:border-zinc-800' : 'border-zinc-200/60 dark:border-zinc-800/60 opacity-60'
     }`}>
       <div className="flex items-start gap-3 p-4">
@@ -1295,13 +1296,18 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
   }
 
   return (
-    <div className={`bg-white dark:bg-zinc-900 border rounded-2xl overflow-hidden transition-opacity ${
+    <div className={`bg-white dark:bg-zinc-800 border rounded-2xl overflow-hidden transition-opacity ${
       provider.enabled ? 'border-zinc-200 dark:border-zinc-800' : 'border-zinc-200/60 dark:border-zinc-800/60 opacity-60'
     }`}>
       <div className="flex items-start gap-3 p-3.5">
-        {/* Icon */}
+        {/* Icon（命中品牌用 lobehub logo，否则回退预设 emoji）*/}
         <div className="w-8 h-8 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-[15px] shrink-0 mt-0.5">
-          {meta.icon}
+          {(() => {
+            const brand = resolveBrandIcon(`${provider.id || ''} ${meta.label || ''}`);
+            return brand
+              ? <img src={brand} alt="" className="w-5 h-5 object-contain" />
+              : meta.icon;
+          })()}
         </div>
         {/* Body */}
         <div className="flex-1 min-w-0">
@@ -1826,7 +1832,7 @@ export default function Providers() {
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
                 sel
                   ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
-                  : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600'
+                  : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600'
               }`}>
               <span>{entry.icon}</span>
               <span>{entry.label}</span>
@@ -1924,7 +1930,7 @@ export default function Providers() {
                       <p className="text-xs text-zinc-400">{t('providers.add.allAdded')}</p>
                     )}
                     <button type="button" onClick={() => { addCustomProvider(); setAddingTier(null); }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-600 text-xs text-zinc-500 dark:text-zinc-400 hover:border-blue-400 hover:text-blue-500 transition-colors bg-white dark:bg-zinc-900">
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-600 text-xs text-zinc-500 dark:text-zinc-400 hover:border-blue-400 hover:text-blue-500 transition-colors bg-white dark:bg-zinc-800">
                       <span>+</span> {t('providers.add.goProfile')}
                     </button>
                   </div>
@@ -1938,7 +1944,7 @@ export default function Providers() {
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
                           sel
                             ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
-                            : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600'
+                            : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600'
                         }`}>
                         <span>{m.icon || '🔌'}</span>
                         <span>{m.label || p.id}</span>

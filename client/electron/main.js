@@ -120,6 +120,10 @@ function createWindow() {
       nodeIntegration: false,
     },
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    // macOS 毛玻璃质感：窗口背景用系统材质，侧栏在 CSS 里透出（内容区保持实底）。
+    ...(process.platform === 'darwin'
+      ? { vibrancy: 'sidebar', visualEffectState: 'active', backgroundColor: '#00000000' }
+      : {}),
     show: false,
   });
 

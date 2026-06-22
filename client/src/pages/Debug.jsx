@@ -391,7 +391,7 @@ export default function Debug() {
     <div className="flex flex-col h-screen">
 
       {/* ── Toolbar ── */}
-      <div className="shrink-0 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 pt-3 pb-2 space-y-2">
+      <div className="shrink-0 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 px-4 pt-3 pb-2 space-y-2">
 
         {/* Row 1: provider + token */}
         <div className="flex gap-2 items-center flex-wrap">
@@ -586,14 +586,14 @@ export default function Debug() {
       </div>
 
       {/* ── Input bar ── */}
-      <div className="shrink-0 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3">
+      <div className="shrink-0 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 px-4 py-3">
         <div className="flex gap-2 items-end">
           <textarea ref={textareaRef} value={input} onChange={handleInputChange} onKeyDown={handleKeyDown}
             placeholder={imageMode ? t('debug.inputImagePh') : t('debug.inputChatPh')}
             rows={1} style={{ resize: 'none' }}
             className="flex-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 overflow-hidden" />
           <button onClick={handleSend} disabled={sending || !input.trim() || !model || !effectiveBase}
-            className="shrink-0 w-9 h-9 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded-xl flex items-center justify-center transition-colors">
+            className="shrink-0 w-9 h-9 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-40 rounded-xl flex items-center justify-center transition-colors">
             {sending
               ? <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
               : <span className="text-white text-sm">↑</span>}

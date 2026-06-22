@@ -140,7 +140,7 @@ export default function BillingConfigSection() {
             恢复刊例价默认
           </button>
           <button type="button" onClick={handleSave} disabled={saving || loading}
-            className="text-xs px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
+            className="text-xs px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white disabled:opacity-50">
             {saving ? '保存中…' : '保存'}
           </button>
         </div>

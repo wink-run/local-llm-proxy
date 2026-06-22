@@ -64,7 +64,7 @@ export default function UpdateNotification() {
             <div className="mt-3 flex gap-2">
               <button
                 onClick={() => window.electronAPI.updater.install()}
-                className="flex-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium py-1.5 transition-colors"
+                className="flex-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white text-sm font-medium py-1.5 transition-colors"
               >
                 立即重启
               </button>

@@ -12,9 +12,9 @@ export default {
   'gateway.stat.gatewayRatio': 'Via gateway',
   'gateway.stat.avgLatency': 'Avg latency',
   'gateway.endpoint': 'Endpoint',
-  'gateway.tab.apps': '📱 Apps',
-  'gateway.tab.routes': '🔀 Scene routes',
-  'gateway.tab.sessions': '💬 Sessions',
+  'gateway.tab.apps': 'Apps',
+  'gateway.tab.routes': 'Scene routes',
+  'gateway.tab.sessions': 'Sessions',
   'gateway.sessions.search': 'Search project / first prompt…',
   'gateway.sessions.all': 'All',
   'gateway.sessions.favOnly': 'Favorites',
@@ -134,7 +134,7 @@ export default {
   'gateway.strategy.directDesc': 'First provider only, no fallback',
 
   // ── Online sync ──
-  'gateway.sync.btn': '🔄 Sync online',
+  'gateway.sync.btn': 'Sync online',
   'gateway.sync.syncing': 'Syncing…',
   'gateway.sync.title': 'Pull latest config from Token Bank server',
   'gateway.sync.noServer': '✗ Server URL not configured — set Token Bank URL in Settings first',

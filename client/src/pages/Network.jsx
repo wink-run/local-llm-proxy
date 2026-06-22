@@ -107,31 +107,31 @@ export default function Network() {
           <p className="text-sm text-zinc-400 mt-0.5">{t('network.subtitle')}</p>
         </div>
         <button onClick={() => navigate('/contribute')}
-          className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2">
+          className="text-xs bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2">
           <span>💪</span> {t('network.join')}
         </button>
       </div>
 
       {/* Stats row */}
       <div className="grid grid-cols-4 gap-3">
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
           <div className="text-xs text-zinc-400">{t('network.globalNodes')}</div>
           <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1">{loading ? '—' : totalNodes}</div>
           <div className="text-xs text-zinc-400 mt-0.5">{t('network.onlineWorkers')}</div>
         </div>
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
           <div className="text-xs text-zinc-400">{t('network.availableModels')}</div>
           <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-1">{loading ? '—' : totalModels}</div>
           <div className="text-xs text-zinc-400 mt-0.5">{t('network.dedupModels')}</div>
         </div>
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
           <div className="text-xs text-zinc-400">{t('network.contribTokens')}</div>
           <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-1">
             {loading ? '—' : totalTokens > 999 ? (totalTokens / 1000).toFixed(1) + 'K' : totalTokens}
           </div>
           <div className="text-xs text-zinc-400 mt-0.5">{t('network.thisPeriod')}</div>
         </div>
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
           <div className="text-xs text-zinc-400">{t('network.activeUsers')}</div>
           <div className="text-2xl font-bold text-green-600 dark:text-green-400 mt-1">
             {loading ? '—' : network?.summary?.active_users ?? 0}
@@ -148,7 +148,7 @@ export default function Network() {
         <div className="grid grid-cols-2 gap-5">
 
           {/* Left: Model list */}
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+          <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
             <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('network.modelsTitle')}</h2>
               <span className="text-xs text-zinc-400">{t('network.sortByNodes')}</span>
@@ -206,7 +206,7 @@ export default function Network() {
           <div className="space-y-3">
 
             {/* Contributor ranking */}
-            <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+            <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
               <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('network.leaderboard')}</h2>
                 <span className="text-xs text-zinc-400">{t('network.leaderboardHint')}</span>
@@ -240,7 +240,7 @@ export default function Network() {
             </div>
 
             {/* My node status */}
-            <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 space-y-3">
+            <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('network.myNode')}</h2>
                 {myStats && myStats.active_workers > 0 ? (
@@ -284,7 +284,7 @@ export default function Network() {
 
             {/* All workers list */}
             {network.workers.length > 0 && (
-              <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+              <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
                 <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
                   <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('network.workersTitle')}</h2>
                   <span className="text-xs text-zinc-400">{t('network.workersCount', { n: network.workers.length })}</span>

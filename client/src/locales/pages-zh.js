@@ -12,9 +12,9 @@ export default {
   'gateway.stat.gatewayRatio': '网关占比',
   'gateway.stat.avgLatency': '平均延迟',
   'gateway.endpoint': '接入端点',
-  'gateway.tab.apps': '📱 应用列表',
-  'gateway.tab.routes': '🔀 场景路由',
-  'gateway.tab.sessions': '💬 会话管理',
+  'gateway.tab.apps': '应用列表',
+  'gateway.tab.routes': '场景路由',
+  'gateway.tab.sessions': '会话管理',
   'gateway.sessions.search': '搜索项目名 / 首条提问…',
   'gateway.sessions.all': '全部',
   'gateway.sessions.favOnly': '收藏',
@@ -134,7 +134,7 @@ export default {
   'gateway.strategy.directDesc': '只用第一个，不降级',
 
   // ── 在线同步 ImportConfigButton ──
-  'gateway.sync.btn': '🔄 在线同步',
+  'gateway.sync.btn': '在线同步',
   'gateway.sync.syncing': '同步中…',
   'gateway.sync.title': '从 Token Bank 服务器拉取最新配置',
   'gateway.sync.noServer': '✗ 未配置服务器地址，请先在设置页填写 Token Bank 服务地址',

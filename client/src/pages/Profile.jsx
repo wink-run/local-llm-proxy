@@ -215,7 +215,7 @@ function PurchaseSection() {
           <button
             type="submit"
             disabled={submitting || !contact.trim()}
-            className="w-full py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition-colors"
+            className="w-full py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-50 text-white transition-colors"
           >
             {submitting ? '提交中…' : '提交申领'}
           </button>
@@ -366,7 +366,7 @@ function CheckinCard({ onSuccess }) {
         className={`w-full py-1.5 rounded-lg text-sm font-medium transition-colors ${
           done
             ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-default'
-            : 'bg-blue-600 hover:bg-blue-500 text-white'
+            : 'bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white'
         } disabled:opacity-60`}
       >
         {checking ? '签到中…' : done ? '已签到 ✓' : '签到'}
@@ -462,7 +462,7 @@ function SpinCard({ onSuccess }) {
             ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-default'
             : spinning
             ? 'bg-blue-400 text-white cursor-wait'
-            : 'bg-blue-600 hover:bg-blue-500 text-white'
+            : 'bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white'
         } disabled:opacity-60`}
       >
         {spinning ? '抽奖中…' : exhausted ? '明日再来' : '抽奖'}

@@ -179,7 +179,7 @@ export default function Config() {
   // Not logged in: show only login form
   if (!user) {
     return (
-      <div className="flex h-full items-center justify-center bg-zinc-50 dark:bg-zinc-950">
+      <div className="flex h-full items-center justify-center bg-zinc-50 dark:bg-zinc-900">
         <div className="w-full max-w-[320px] px-8 py-10 space-y-5">
           {/* Brand */}
           <div className="flex flex-col items-center gap-3 mb-4">
@@ -217,7 +217,7 @@ export default function Config() {
               <Field label={t('config.password')} type="password" value={password} onChange={setPassword} placeholder="••••••" />
               {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
               <button type="submit" disabled={saving}
-                className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-50 rounded-lg text-[13px] font-semibold text-white transition-colors">
+                className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 disabled:opacity-50 rounded-lg text-[13px] font-semibold text-white transition-colors">
                 {saving ? t('config.loggingIn') : t('config.login')}
               </button>
               <p className="text-center text-sm text-zinc-600 dark:text-zinc-500">
@@ -234,7 +234,7 @@ export default function Config() {
               <Field label={t('config.referral')} type="text" value={referralCode} onChange={setReferralCode} placeholder={t('config.referralPh')} />
               {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
               <button type="submit" disabled={saving}
-                className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-50 rounded-lg text-[13px] font-semibold text-white transition-colors">
+                className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 disabled:opacity-50 rounded-lg text-[13px] font-semibold text-white transition-colors">
                 {saving ? t('config.registering') : t('config.registerBtn')}
               </button>
               <p className="text-center text-sm text-zinc-600 dark:text-zinc-500">
@@ -394,7 +394,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Gateway section */}
-      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
         <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.gateway')}</h2>
         </div>
@@ -439,7 +439,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Routing section */}
-      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
         <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.routing')}</h2>
         </div>
@@ -469,7 +469,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Compression section */}
-      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
         <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.compression')}</h2>
         </div>
@@ -481,7 +481,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Appearance section */}
-      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
         <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.appearance')}</h2>
         </div>
@@ -510,7 +510,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Server URL */}
-      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
         <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.server')}</h2>
         </div>
@@ -532,7 +532,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Account section */}
-      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
         <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.account')}</h2>
         </div>
@@ -558,7 +558,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       {/* Save row */}
       <div className="flex items-center gap-3">
         <button onClick={handleSave} disabled={saving}
-          className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors">
+          className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors">
           {saving ? t('settings.saving') : t('settings.save')}
         </button>
         <button onClick={handleReset}

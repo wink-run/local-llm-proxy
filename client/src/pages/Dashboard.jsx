@@ -76,7 +76,7 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
     sortBy === 'tokens' ? (b.tokens - a.tokens) : (b.calls - a.calls));
 
   return (
-    <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+    <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
       <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 space-y-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
@@ -346,7 +346,7 @@ export default function Dashboard() {
   const rangeLabel = t(`profile.range.${range}`);
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-5 bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 min-h-screen">
+    <div className="flex-1 overflow-y-auto p-6 space-y-5 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 min-h-screen">
 
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -373,27 +373,27 @@ export default function Dashboard() {
 
       {/* Summary cards — 5列 */}
       <div className="grid grid-cols-5 gap-3">
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
           <div className="text-xs text-zinc-400 dark:text-zinc-500">{t('dashboard.totalRequests')}</div>
           <div className="text-2xl font-bold mt-1">{totalCalls}</div>
           <div className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.totalRequestsHint', { range: rangeLabel })}</div>
         </div>
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
           <div className="text-xs text-zinc-400 dark:text-zinc-500">{t('dashboard.freeHitRate')}</div>
           <div className="text-2xl font-bold text-green-600 dark:text-green-400 mt-1">{freeRatio}%</div>
           <div className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.freeHitHint', { free: freeCalls, p2p: p2pCalls, paid: paidCalls })}</div>
         </div>
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
           <div className="text-xs text-zinc-400 dark:text-zinc-500">{t('dashboard.tokenUsage')}</div>
           <div className="text-2xl font-bold text-purple-600 dark:text-purple-400 mt-1">{fmtN(totalTokens)}</div>
           <div className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.tokenHint', { range: rangeLabel })}</div>
         </div>
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
           <div className="text-xs text-zinc-400 dark:text-zinc-500">{t('dashboard.paidCalls')}</div>
           <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">{paidCalls + p2pCalls}</div>
           <div className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.paidCallsHint', { paid: paidCalls, p2p: p2pCalls })}</div>
         </div>
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
           <div className="text-xs text-zinc-400 dark:text-zinc-500">{t('dashboard.estCost')}</div>
           <div className={`text-2xl font-bold mt-1 ${totalCost > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400'}`}>
             {fmtCost(totalCost)}
@@ -404,11 +404,11 @@ export default function Dashboard() {
 
       {/* Row: tier donut + trend bars */}
       <div className="grid grid-cols-5 gap-4">
-        <div className="col-span-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 flex flex-col gap-4">
+        <div className="col-span-2 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 flex flex-col gap-4">
           <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('dashboard.tierDist')}</div>
           <TierDonut byProvider={byProvider} t={t} />
         </div>
-        <div className="col-span-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
+        <div className="col-span-3 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
           <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-4">{t('dashboard.trend')}</div>
           <TrendBars data={trendData} t={t} />
         </div>
@@ -425,7 +425,7 @@ export default function Dashboard() {
 
       {/* 压缩节省（无损 JSON 压缩，本机实测） */}
       {compStats && (
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
+        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
           <div className="mb-3">
             <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('profile.compression.title')}</div>
           </div>
@@ -453,7 +453,7 @@ export default function Dashboard() {
       {/* Model rankings — 3 columns */}
       <div className="grid grid-cols-3 gap-4">
         {/* Call count */}
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
+        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
           <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-4">{t('dashboard.modelRank')}</div>
           {modelStats.length === 0 ? (
             <p className="text-xs text-zinc-600">{t('common.noData')}</p>
@@ -476,7 +476,7 @@ export default function Dashboard() {
         </div>
 
         {/* Token consumption */}
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
+        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
           <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-4">{t('dashboard.modelTokenRank')}</div>
           {modelByTokens.length === 0 ? (
             <p className="text-xs text-zinc-600">{t('common.noData')}</p>
@@ -499,7 +499,7 @@ export default function Dashboard() {
         </div>
 
         {/* Cost ranking */}
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
+        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
           <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-4">{t('dashboard.modelCostRank')}</div>
           {modelByCost.length === 0 ? (
             <p className="text-xs text-zinc-600 dark:text-zinc-500">{t('dashboard.modelCostEmpty')}</p>

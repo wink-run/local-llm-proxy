@@ -5,6 +5,7 @@ import { getGateway, getLocalConfig, getConfig, getApps } from '../api/adapter';
 import { listAgents, applyAgent, revertAgent } from '../api/agents';
 import claudeDevModeImg1 from '../assets/claude-devmode-1.webp';
 import claudeDevModeImg2 from '../assets/claude-devmode-2.webp';
+import { brandIconFor, resolveBrandIcon } from '../lib/brandIcons';
 import { useLang } from '../store/lang';
 import {
   encodeTierModelRoute,
@@ -93,13 +94,15 @@ function PolicyManager() {
   function moveUp(idx) { if (idx === 0) return; const a = [...formProviders]; [a[idx-1], a[idx]] = [a[idx], a[idx-1]]; setFormProviders(a); }
 
   return (
-    <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-4 mb-4">
+    <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-4 mb-4">
       <div className="flex items-center gap-2 mb-3">
-        <span className="text-base">⚖️</span>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px] shrink-0 text-zinc-400 dark:text-zinc-500">
+          <path d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
+        </svg>
         <h2 className="font-semibold text-zinc-800 dark:text-zinc-100 text-sm">{t('gateway.policy.title')}</h2>
         <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('gateway.policy.subtitle')}</span>
         <button onClick={openNew}
-          className="ml-auto text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors">
+          className="ml-auto text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white transition-colors">
           {t('gateway.policy.new')}
         </button>
       </div>
@@ -183,7 +186,7 @@ function PolicyManager() {
             {msg && <div className={`text-xs ml-16 ${msg.startsWith('✗') ? 'text-red-500' : 'text-green-600'}`}>{msg}</div>}
             <div className="flex gap-2 ml-16">
               <button onClick={save} disabled={busy}
-                className="text-xs px-3 py-1 rounded bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50">
+                className="text-xs px-3 py-1 rounded bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white disabled:opacity-50">
                 {busy ? t('gateway.common.saving') : t('gateway.common.save')}
               </button>
               <button onClick={cancelEdit}
@@ -257,7 +260,10 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
     <div className="flex flex-col items-end gap-0.5">
       <button type="button" disabled={busy} onClick={handleSync}
         title={t('gateway.sync.title')}
-        className="text-xs px-2.5 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-50 transition-colors">
+        className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-50 transition-colors">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className={`w-3.5 h-3.5 shrink-0 ${busy ? 'animate-spin' : ''}`}>
+          <path d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+        </svg>
         {busy ? t('gateway.sync.syncing') : t('gateway.sync.btn')}
       </button>
       {msg && <div className={`text-xs ${msg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{msg}</div>}
@@ -438,7 +444,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
       <div className="flex items-center justify-between mb-2">
         <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300">{t('gateway.app.envTitle')}</div>
         <button onClick={writeEnv}
-          className="text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white shrink-0">
+          className="text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white shrink-0">
           {t('gateway.app.writeConfig')}
         </button>
       </div>
@@ -458,7 +464,9 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   const devModeGuide = needDevMode && (
     <div className="rounded-lg border border-amber-300 dark:border-amber-700/50 bg-amber-50/60 dark:bg-amber-950/20 p-3">
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-base">⚠️</span>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px] shrink-0 text-amber-600 dark:text-amber-400">
+          <path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+        </svg>
         <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">{t('gateway.app.devModeTitle')}</span>
       </div>
       <div className="text-xs text-zinc-600 dark:text-zinc-300 space-y-1 mb-3">
@@ -559,7 +567,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
 
   const btnSave = (
     <button onClick={save} disabled={busy}
-      className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+      className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white disabled:opacity-50">
       {busy ? t('gateway.common.saving') : t('gateway.common.save')}
     </button>
   );
@@ -572,7 +580,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={dismiss}>
-      <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl mx-4 max-h-[92vh] overflow-y-auto flex flex-col"
+      <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl mx-4 max-h-[92vh] overflow-y-auto flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-3 px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
           <span className="text-xl">{icon}</span>
@@ -636,7 +644,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
   }
 
   return (
-    <div className="mb-3 bg-white dark:bg-zinc-900 rounded-2xl border border-blue-200 dark:border-blue-800/50 shadow-sm">
+    <div className="mb-3 bg-white dark:bg-zinc-800 rounded-2xl border border-blue-200 dark:border-blue-800/50 shadow-sm">
       <div className="flex items-center gap-3 px-5 py-3 border-b border-zinc-200 dark:border-zinc-800">
         <span className="text-xl">{icon}</span>
         <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">{t('gateway.app.newTitle')}</h3>
@@ -719,7 +727,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
       </div>
       <div className="flex gap-2 px-5 py-4 border-t border-zinc-200 dark:border-zinc-800">
         <button onClick={save} disabled={busy}
-          className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+          className="flex-1 py-2 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white disabled:opacity-50">
           {busy ? t('gateway.common.saving') : t('gateway.common.save')}
         </button>
         <button onClick={onCancel}
@@ -774,7 +782,7 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-4xl mx-4 max-h-[92vh] overflow-hidden flex flex-col"
+      <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-4xl mx-4 max-h-[92vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 space-y-2">
           <div className="flex items-center gap-3">
@@ -915,10 +923,15 @@ function PreferenceMiningModal({ onClose, flash, onJobStart }) {
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl mx-4 max-h-[88vh] overflow-hidden flex flex-col"
+      <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl mx-4 max-h-[88vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 flex items-center gap-3">
-          <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">🧠 {t('gateway.mine.title')}</h3>
+          <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1 flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px] shrink-0 text-violet-500">
+              <path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
+            </svg>
+            <span className="truncate">{t('gateway.mine.title')}</span>
+          </h3>
           {ready && job.ok && (
             <span className="text-xs text-zinc-400">{t('gateway.mine.stat').replace('{model}', job.model || '').replace('{sessions}', job.scanned)}</span>
           )}
@@ -927,11 +940,18 @@ function PreferenceMiningModal({ onClose, flash, onJobStart }) {
         {job.status === 'idle' ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 py-16 px-6 text-center">
             <div className="text-xs text-zinc-400 max-w-sm">{t('gateway.mine.idleHint')}</div>
-            <button onClick={start} className="text-xs px-4 py-2 rounded-lg bg-violet-500 hover:bg-violet-600 text-white">🧠 {t('gateway.mine.generate')}</button>
+            <button onClick={start} className="inline-flex items-center gap-1.5 text-xs px-4 py-2 rounded-lg bg-violet-500 hover:bg-violet-600 text-white">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 shrink-0">
+                <path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
+              </svg>
+              {t('gateway.mine.generate')}
+            </button>
           </div>
         ) : job.status === 'running' ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 py-16 px-6 text-center">
-            <div className="animate-pulse text-2xl">🧠</div>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8 text-violet-500 animate-pulse">
+              <path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
+            </svg>
             <div className="text-xs text-zinc-500">{t('gateway.mine.running')}</div>
             <div className="text-[11px] text-zinc-400 max-w-sm">{t('gateway.mine.runningHint')}</div>
             <button onClick={onClose} className="mt-2 text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500">{t('gateway.mine.closeKeep')}</button>
@@ -1075,7 +1095,12 @@ function SessionManager() {
           className="text-xs px-3 py-1.5 rounded-full border border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20 flex items-center gap-1.5">
           {kStatus === 'running'
             ? <><span className="inline-block w-3 h-3 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />{t('gateway.mine.busy')}</>
-            : <>🧠 {t('gateway.mine.button')}</>}
+            : <>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0">
+                  <path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
+                </svg>
+                {t('gateway.mine.button')}
+              </>}
         </button>
         <div className="ml-auto flex gap-3 text-xs text-zinc-400">
           <span><strong className="text-zinc-700 dark:text-zinc-200">{rows.length}</strong> {t('gateway.sessions.statSessions')}</span>
@@ -1119,8 +1144,16 @@ function SessionRow({ row, fmtN, onTrace, onMeta, onExport, onContinue }) {
 
   return (
     <div className="px-5 py-2.5">
-      <div className="grid grid-cols-[6rem_minmax(0,1.4fr)_3.5rem_4rem_5rem_auto] gap-2 items-center text-xs">
-        <span className="text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 text-center truncate">{row.agent_id}</span>
+      <div className="grid grid-cols-[7.25rem_minmax(0,1.4fr)_3.5rem_4rem_5rem_auto] gap-2 items-center text-xs">
+        {(() => {
+          const brand = resolveBrandIcon(row.agent_id);
+          return (
+            <span className="flex items-center gap-1.5 min-w-0" title={row.agent_id}>
+              {brand && <img src={brand} alt="" className="w-4 h-4 object-contain shrink-0" />}
+              <span className="truncate text-[11px] font-medium text-zinc-500 dark:text-zinc-400">{row.agent_id}</span>
+            </span>
+          );
+        })()}
         <div className="min-w-0 cursor-pointer group" onClick={onTrace} title={t('gateway.detail.bySession')}>
           <div className="font-semibold text-zinc-700 dark:text-zinc-200 truncate flex items-center gap-1">
             <button onClick={e => { e.stopPropagation(); onMeta({ favorite: !row.favorite }); }}
@@ -1195,7 +1228,7 @@ function ContinueModal({ source, target, onClose }) {
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl mx-4 max-h-[88vh] overflow-hidden flex flex-col"
+      <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl mx-4 max-h-[88vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 flex items-center gap-3">
           <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">{t('gateway.sessions.continueTitle')}</h3>
@@ -1229,7 +1262,7 @@ function ContinueModal({ source, target, onClose }) {
                 <button onClick={() => { navigator.clipboard?.writeText(res.brief); setNotice(t('gateway.sessions.briefCopied')); }}
                   className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300">{t('gateway.sessions.copyMd')}</button>
                 <button onClick={doLaunch}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white">{launchLabel}</button>
+                  className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white">{launchLabel}</button>
                 <button onClick={onClose} className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500">{t('gateway.sessions.close')}</button>
               </div>
             </div>
@@ -1389,9 +1422,9 @@ function AppDetailModal({ app, onClose }) {
         <SessionTraceModal app={app} sessionId={traceSid} traceAgentId={traceAgentId} onClose={() => setTraceSid(null)} />
       )}
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-3xl mx-4 max-h-[92vh] overflow-y-auto flex flex-col"
+      <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-3xl mx-4 max-h-[92vh] overflow-y-auto flex flex-col"
         onClick={e => e.stopPropagation()}>
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 sticky top-0 bg-white dark:bg-zinc-900 z-10">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 sticky top-0 bg-white dark:bg-zinc-800 z-10">
           <span className="text-xl">{app.icon}</span>
           <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">{t('gateway.detail.usageTitle', { name: app.name })}</h3>
           <select value={days} onChange={e => setDays(+e.target.value)}
@@ -1903,7 +1936,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
             {/* 操作栏 */}
             <div className="flex items-center gap-2 mb-3 flex-wrap">
               <button onClick={() => manualDraft ? cancelManualDraft() : addCustom()}
-                className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white transition-colors font-medium">
+                className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white transition-colors font-medium">
                 {t('gateway.apps.new')}
               </button>
               <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('gateway.apps.newHint')}</span>
@@ -1977,7 +2010,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                     ? 'bg-green-400 shadow-[0_0_6px] shadow-green-400/60'
                     : 'bg-zinc-300 dark:bg-zinc-600';
                   const rowBg = isManaged
-                    ? 'bg-white dark:bg-zinc-900/60 hover:bg-zinc-50/80 dark:hover:bg-zinc-800/30'
+                    ? 'bg-white dark:bg-zinc-800/60 hover:bg-zinc-50/80 dark:hover:bg-zinc-800/30'
                     : 'bg-zinc-50/40 dark:bg-zinc-800/10 hover:bg-zinc-50 dark:hover:bg-zinc-800/20';
                   const isApiLink = app.link_method === 'manual';
                   const statusLabel = !isManaged
@@ -1990,8 +2023,13 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                     // 离线不整行压暗（否则操作按钮看着像禁用）；离线感由灰底/灰点/「离线」标签/
                     // 图标灰度/灰名体现，操作按钮保持全亮可点（含「测试」）。
                     <div key={app.id} className={`${APPS_TABLE_GRID} py-2.5 transition-colors ${rowBg}`}>
-                      {/* 图标 + 名称 */}
-                      <span className={`text-base text-center shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`}>{app.icon}</span>
+                      {/* 图标 + 名称（命中品牌则用 lobehub logo，否则回退 emoji）*/}
+                      {(() => {
+                        const brand = brandIconFor(app);
+                        return brand
+                          ? <img src={brand} alt="" className={`w-[18px] h-[18px] mx-auto object-contain shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`} />
+                          : <span className={`text-base text-center shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`}>{app.icon}</span>;
+                      })()}
                       <div
                         className={`text-xs font-medium truncate min-w-0 ${isActive ? 'text-zinc-800 dark:text-zinc-100' : 'text-zinc-400 dark:text-zinc-500'}`}
                         title={app.name}
@@ -2117,7 +2155,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                             </button>
                           ) : (
                             <button onClick={() => setTracked(app, true)} disabled={busyId === app.id}
-                              className="text-xs px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
+                              className="text-xs px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
                               {busyId === app.id ? '…' : t('gateway.common.manage')}
                             </button>
                           )}
@@ -2136,7 +2174,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                             </button>
                           ) : (
                             <button onClick={() => setTracked(app, true)} disabled={busyId === app.agent_id || busyId === app.id}
-                              className="text-xs px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
+                              className="text-xs px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
                               {(busyId === app.agent_id || busyId === app.id) ? '…' : t('gateway.common.manage')}
                             </button>
                           )}
@@ -2144,7 +2182,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                       ) : app._virtual_apikey ? (
                         /* API Key 应用（未纳管虚拟行）：一键纳管（写配置文件指向网关），与透明托管一致 */
                         <button onClick={() => addApiKeyApp(app)} disabled={busyId === app.id}
-                          className="text-xs px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
+                          className="text-xs px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
                           {busyId === app.id ? '…' : t('gateway.common.manage')}
                         </button>
                       ) : app.host_method === 'config-file' ? (
@@ -2161,7 +2199,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                             </button>
                           ) : (
                             <button onClick={() => setTracked(app, true)} disabled={busyId === app.id}
-                              className="text-xs px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
+                              className="text-xs px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
                               {busyId === app.id ? '…' : t('gateway.common.manage')}
                             </button>
                           )}
@@ -2245,9 +2283,11 @@ function AgentLinker() {
   }
 
   return (
-    <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-4 mb-4">
+    <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-4 mb-4">
       <div className="flex items-center gap-2 mb-3">
-        <span className="text-base">🔌</span>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px] shrink-0 text-zinc-400 dark:text-zinc-500">
+          <path d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0 0 21 18V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v12a2.25 2.25 0 0 0 2.25 2.25Z" />
+        </svg>
         <h2 className="font-semibold text-zinc-800 dark:text-zinc-100 text-sm">{t('gateway.agent.title')}</h2>
         <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('gateway.agent.subtitle')}</span>
         <div className="ml-auto flex items-center gap-2">
@@ -2303,7 +2343,7 @@ function AgentLinker() {
                 <button
                   disabled={busy[a.id]}
                   onClick={() => handleApply(a.id)}
-                  className="shrink-0 text-xs px-3 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 transition-colors">
+                  className="shrink-0 text-xs px-3 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white disabled:opacity-50 transition-colors">
                   {busy[a.id] ? t('gateway.agent.applying') : t('gateway.agent.apply')}
                 </button>
               )}
@@ -2580,7 +2620,7 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
 
       <div className="flex gap-2 pt-1">
         <button onClick={save}
-          className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg font-medium transition-colors">
+          className="text-xs bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white px-4 py-1.5 rounded-lg font-medium transition-colors">
           {t('gateway.common.save')}
         </button>
         <button onClick={onCancel}
@@ -2746,7 +2786,12 @@ function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
                     ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
                     : 'border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/40 hover:border-zinc-400 dark:hover:border-zinc-600'
                 }`}>
-                <span className="text-xl">{t.icon}</span>
+                {(() => {
+                  const brand = resolveBrandIcon(`${t.id} ${t.label}`);
+                  return brand
+                    ? <img src={brand} alt="" className="w-5 h-5 object-contain" />
+                    : <span className="text-xl">{t.icon}</span>;
+                })()}
                 <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">{t.label}</span>
                 <span className={`text-xs ${tool === t.id ? 'text-blue-600 dark:text-blue-400' : 'text-zinc-400'}`}>{t.hint}</span>
               </button>
@@ -2763,7 +2808,7 @@ function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
           </div>
           {tool === 'claude-code' && window.electronAPI?.claude && (
             <button onClick={handleWrite} disabled={writeOk}
-              className="w-full py-2 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:bg-green-700 text-white">
+              className="w-full py-2 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:bg-green-700 text-white">
               {writeOk ? t('gateway.key.writtenClaude') : t('gateway.key.writeClaude')}
             </button>
           )}
@@ -3147,7 +3192,7 @@ export default function Gateway() {
           { label: t('gateway.stat.gatewayRatio'), value: gatewayRatio !== null ? `${gatewayRatio}%` : '—', color: 'text-violet-600 dark:text-violet-400' },
           { label: t('gateway.stat.avgLatency'), value: avgLatency > 0 ? `${avgLatency}ms` : '—', color: 'text-zinc-500 dark:text-zinc-400' },
         ].map(({ label, value, color }) => (
-          <div key={label} className="bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800/80 rounded-xl px-4 py-3.5 shadow-sm">
+          <div key={label} className="bg-white dark:bg-zinc-800 border border-zinc-100 dark:border-zinc-800/80 rounded-xl px-4 py-3.5 shadow-sm">
             <div className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 mb-1.5">{label}</div>
             <div className={`text-[22px] font-bold leading-none tabular-nums tracking-tight ${color}`}>{value}</div>
           </div>
@@ -3155,18 +3200,37 @@ export default function Gateway() {
       </div>
 
       {/* 应用列表 / 场景路由 Tab */}
-      <div className="bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800/80 rounded-2xl overflow-hidden shadow-sm">
-        {/* Tab bar + Endpoint 合并一行 */}
-        <div className="flex items-center border-b border-zinc-100 dark:border-zinc-800">
-          {[t('gateway.tab.apps'), t('gateway.tab.routes'), t('gateway.tab.sessions')].map((tabLabel, i) => (
+      <div className="bg-white dark:bg-zinc-800 border border-zinc-100 dark:border-zinc-800/80 rounded-2xl overflow-hidden shadow-sm">
+        {/* Tab bar（macOS 分段控件）+ Endpoint 合并一行 */}
+        <div className="flex items-center gap-3 px-3 py-2 border-b border-zinc-900/[0.06] dark:border-white/[0.08]">
+          <div className="inline-flex items-center gap-0.5 p-0.5 rounded-[10px] bg-zinc-100 dark:bg-zinc-800/70">
+          {[
+            { label: t('gateway.tab.apps'), icon: (
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-[15px] h-[15px] shrink-0">
+                <path d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z" />
+              </svg>
+            )},
+            { label: t('gateway.tab.routes'), icon: (
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-[15px] h-[15px] shrink-0">
+                <path d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+              </svg>
+            )},
+            { label: t('gateway.tab.sessions'), icon: (
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-[15px] h-[15px] shrink-0">
+                <path d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" />
+              </svg>
+            )},
+          ].map(({ label, icon }, i) => (
             <button key={i} onClick={() => setMainTab(i)}
-              className={`px-4 py-2.5 text-xs font-semibold transition-colors ${mainTab === i
-                ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-500'
-                : 'text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300'}`}>
-              {tabLabel}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-xs font-medium transition-all ${mainTab === i
+                ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-sm'
+                : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'}`}>
+              {icon}
+              {label}
             </button>
           ))}
-          <div className="ml-auto flex items-center gap-2 px-3">
+          </div>
+          <div className="ml-auto flex items-center gap-2">
             <span className="text-xs text-zinc-400 dark:text-zinc-500 font-mono">{localBase}</span>
             <CopyButton text={localBase} label={t('gateway.common.copy')} />
           </div>
@@ -3184,7 +3248,7 @@ export default function Gateway() {
         <div className="flex items-center gap-2 px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 flex-wrap">
           <button
             onClick={() => { if (newRoute) { setNewRoute(null); } else { setExpandedRoute(null); setNewRoute({ scene_name: '', icon: '🔀', steps: [] }); } }}
-            className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors"
+            className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white transition-colors"
           >{t('gateway.route.new')}</button>
           <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('gateway.route.hint')}</span>
           <div className="ml-auto">
@@ -3314,7 +3378,7 @@ export default function Gateway() {
 
       {/* 路由明细 — 仅在「场景路由」Tab 显示，应用列表 Tab 不显示 */}
       {mainTab === 1 && (
-      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
+      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
         <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-3">{t('gateway.log.title')}</h2>
         {logEntries.length === 0 ? (
           <p className="text-sm text-zinc-500">

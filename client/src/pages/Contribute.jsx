@@ -81,7 +81,7 @@ function ContributionConfigCard() {
   }
 
   return (
-    <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 space-y-4">
+    <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 space-y-4">
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('contribute.configTitle')}</span>
         {savedMsg && <span className="text-xs text-green-600 dark:text-green-400">{savedMsg}</span>}
@@ -152,7 +152,7 @@ function ContributionConfigCard() {
       </label>
 
       <button onClick={save} disabled={saving}
-        className="px-5 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium transition-colors">
+        className="px-5 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-50 text-white font-medium transition-colors">
         {saving ? t('common.saving') : t('contribute.saveConfig')}
       </button>
     </div>
@@ -253,7 +253,7 @@ export default function Contribute() {
       </div>
 
       {/* Start/Stop */}
-      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-5 py-4 flex items-center justify-between">
+      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-5 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="relative flex h-3 w-3">
             {running && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />}
@@ -279,23 +279,23 @@ export default function Contribute() {
 
       {stats && (
         <div className="grid grid-cols-3 gap-3">
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+          <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
             <p className="text-xs font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">{t('contribute.rate')}</p>
             <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{stats.contribute_req_per_min ?? 0}</p>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">req/min</p>
           </div>
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+          <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
             <p className="text-xs font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">{t('contribute.activeReqs')}</p>
             <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.active_requests ?? 0}</p>
           </div>
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
+          <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
             <p className="text-xs font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">{t('contribute.onlineNodes')}</p>
             <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.active_workers ?? 0}</p>
           </div>
         </div>
       )}
 
-      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4">
+      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4">
         <p className="text-xs text-zinc-400 dark:text-zinc-500 mb-3">{t('contribute.chartTitle')}</p>
         <RateChart data={chartData} />
       </div>
@@ -308,7 +308,7 @@ export default function Contribute() {
           <div className="space-y-2">
             {settlements.map(s => (
               <div key={s.id ?? s.period_end}
-                className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-3 grid grid-cols-5 gap-2 text-sm items-center">
+                className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-3 grid grid-cols-5 gap-2 text-sm items-center">
                 <span className="text-zinc-400 dark:text-zinc-500 text-xs">{s.period_end?.slice(0, 16)}</span>
                 <span className="text-zinc-700 dark:text-zinc-300">{(s.output_tokens ?? 0).toLocaleString()} tok</span>
                 <span className="text-yellow-500 text-xs">{multiplierToStars(s.multiplier ?? 1)}</span>

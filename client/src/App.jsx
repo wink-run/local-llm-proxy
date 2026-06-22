@@ -24,14 +24,14 @@ function Layout() {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-zinc-50 dark:bg-zinc-950 text-zinc-500 dark:text-zinc-400">
+      <div className="flex h-screen items-center justify-center bg-zinc-50 dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400">
         {t('common.loading')}
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen bg-zinc-100 dark:bg-zinc-950 text-zinc-700 dark:text-zinc-200">
+    <div className="flex h-screen text-zinc-700 dark:text-zinc-200">
       {isElectron && !user && (
         <div className="electron-drag fixed inset-x-0 top-0 h-11 z-50" aria-hidden />
       )}
@@ -39,7 +39,7 @@ function Layout() {
         <div className="electron-drag fixed top-0 left-44 right-0 h-9 z-40" aria-hidden />
       )}
       {user && <Sidebar />}
-      <main className="flex-1 overflow-y-auto min-w-0">
+      <main className="flex-1 overflow-y-auto min-w-0 bg-zinc-100 dark:bg-zinc-900">
         <Routes>
           <Route path="/"          element={<Navigate to={user ? '/gateway' : '/config'} replace />} />
           <Route path="/account"   element={user ? <TokenDashboard /> : <Navigate to="/config" replace />} />
