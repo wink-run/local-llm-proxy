@@ -603,27 +603,10 @@ function listClaudeActivity({ limit = 50, sinceDays = 30, entrypointMatch } = {}
   return out.slice(0, limit);
 }
 
-function getClaudeTrace(sessionId) {
-  const root = path.join(os.homedir(), '.claude/projects');
-  let file = null;
-  const find = (dir) => {
-    if (file) return;
-    let entries;
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const ent of entries) {
-      const full = path.join(dir, ent.name);
-      if (ent.isDirectory()) find(full);
-      else if (ent.name === `${sessionId}.jsonl`) file = full;
-    }
-  };
-  find(root);
-  if (!file) return { error: 'not_found', steps: [], stats: {} };
-
-  const rawLines = fs.readFileSync(file, 'utf8').split('\n').filter(l => l.trim());
-  const timeSpan = fileTimeSpan(file, rawLines.length);
+/** 把一组 Claude / Claude-Code 风格 jsonl 行解析为 trace steps（CLI 与 3p agent 沙箱共用）。 */
+function buildClaudeStyleSteps(rawLines, timeSpan) {
   const steps = [];
   let lineIdx = 0;
-
   for (const line of rawLines) {
     let data;
     try { data = JSON.parse(line); } catch { lineIdx++; continue; }
@@ -656,6 +639,28 @@ function getClaudeTrace(sessionId) {
     }
     lineIdx++;
   }
+  return steps;
+}
+
+function getClaudeTrace(sessionId) {
+  const root = path.join(os.homedir(), '.claude/projects');
+  let file = null;
+  const find = (dir) => {
+    if (file) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const ent of entries) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) find(full);
+      else if (ent.name === `${sessionId}.jsonl`) file = full;
+    }
+  };
+  find(root);
+  if (!file) return { error: 'not_found', steps: [], stats: {} };
+
+  const rawLines = fs.readFileSync(file, 'utf8').split('\n').filter(l => l.trim());
+  const timeSpan = fileTimeSpan(file, rawLines.length);
+  const steps = buildClaudeStyleSteps(rawLines, timeSpan);
 
   const { project, project_path } = resolveProjectName({
     projectPath: path.dirname(file),
@@ -987,12 +992,114 @@ function getCodexTrace(sessionId) {
   };
 }
 
+// ── Claude 3p（Cowork agent 沙箱）────────────────────────────────────────────
+// Token Bank 接管 Desktop(3p) 后的 Cowork agent 会话，隔离在 Claude-3p 内部沙箱：
+//   <root>/<account>/<group>/local_<uuid>.json   ← 索引（title / cliSessionId / lastActivityAt）
+//   <root>/<account>/<group>/local_<uuid>/.claude/projects/<enc>/<cliSessionId>.jsonl  ← transcript
+// transcript 是标准 Claude jsonl，解析复用 buildClaudeStyleSteps。
+
+// 原生 Desktop + 3p 接管后两个 Cowork 根（B：让 Token Bank 统一查看两边 Cowork 会话）。
+function coworkSessionRoots() {
+  const home = os.homedir();
+  if (process.platform === 'win32') return [
+    path.join(home, 'AppData', 'Roaming', 'Claude', 'local-agent-mode-sessions'),   // 原生 Desktop
+    path.join(home, 'AppData', 'Local', 'Claude-3p', 'local-agent-mode-sessions'),  // 3p 接管后
+  ];
+  if (process.platform === 'darwin') return [
+    path.join(home, 'Library', 'Application Support', 'Claude', 'local-agent-mode-sessions'),
+    path.join(home, 'Library', 'Application Support', 'Claude-3p', 'local-agent-mode-sessions'),
+  ];
+  return [
+    path.join(home, '.config', 'Claude', 'local-agent-mode-sessions'),
+    path.join(home, '.config', 'Claude-3p', 'local-agent-mode-sessions'),
+  ];
+}
+
+/** 扫原生 + 3p 沙箱索引（local_*.json），列出 Cowork agent 会话。 */
+function list3pAgentActivity({ limit = 50, sinceDays = 30 } = {}) {
+  const since = Date.now() / 1000 - (sinceDays || 30) * 86400;
+  const out = [];
+  const seen = new Set();
+  for (const root of coworkSessionRoots()) {
+    let accounts;
+    try { accounts = fs.readdirSync(root, { withFileTypes: true }); } catch { continue; }
+    for (const acc of accounts) {
+      if (!acc.isDirectory()) continue;
+      let groups;
+      try { groups = fs.readdirSync(path.join(root, acc.name), { withFileTypes: true }); } catch { continue; }
+      for (const grp of groups) {
+        if (!grp.isDirectory()) continue;
+        const grpDir = path.join(root, acc.name, grp.name);
+        let files;
+        try { files = fs.readdirSync(grpDir); } catch { continue; }
+        for (const f of files) {
+          if (!/^local_[\w-]+\.json$/.test(f)) continue; // 只取索引文件，跳过同名目录
+          let idx;
+          try { idx = JSON.parse(fs.readFileSync(path.join(grpDir, f), 'utf8')); } catch { continue; }
+          const sid = idx.cliSessionId || idx.sessionId; // 用 cliSessionId 才能定位 transcript
+          if (!sid || seen.has(sid)) continue;
+          seen.add(sid);
+          const lastTs = Math.floor((idx.lastActivityAt || idx.createdAt || 0) / 1000);
+          if (lastTs && lastTs < since) continue;
+          out.push({
+            session_id: sid,
+            project: idx.title || '(无标题)',
+            project_path: null,                       // 沙箱临时 cwd 无展示意义
+            context: extractContext(String(idx.initialMessage || idx.title || '')) || '(无用户消息)',
+            calls: 0, tokens: 0, inTok: 0, outTok: 0,
+            lastTs: lastTs || 0,
+            agent: 'claude-3p',
+          });
+        }
+      }
+    }
+  }
+  out.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
+  return out.slice(0, limit);
+}
+
+/** 在原生 + 3p 沙箱里按 cliSessionId 定位 transcript jsonl（有界递归）。 */
+function find3pTranscript(sessionId) {
+  let found = null;
+  const walk = (dir, depth) => {
+    if (found || depth > 7) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const ent of entries) {
+      if (found) return;
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) walk(full, depth + 1);
+      else if (ent.name === `${sessionId}.jsonl`) found = full;
+    }
+  };
+  for (const root of coworkSessionRoots()) { walk(root, 0); if (found) break; }
+  return found;
+}
+
+function get3pAgentTrace(sessionId) {
+  const file = find3pTranscript(sessionId);
+  if (!file) return { error: 'not_found', steps: [], stats: {} };
+  const rawLines = fs.readFileSync(file, 'utf8').split('\n').filter(l => l.trim());
+  const timeSpan = fileTimeSpan(file, rawLines.length);
+  const steps = buildClaudeStyleSteps(rawLines, timeSpan);
+  return {
+    session_id: sessionId,
+    agent: 'claude-3p',
+    project: null,
+    project_path: null,
+    cwd: null,
+    steps,
+    stats: buildTraceStats(steps, { filePath: file, rawLines }),
+  };
+}
+
 // ── 统一入口 ────────────────────────────────────────────────────────────────
 
 const HANDLERS = {
   cursor:       { list: listCursorActivity, trace: getCursorTrace },
   'claude-code': { list: listClaudeActivity, trace: getClaudeTrace },
   codex:        { list: listCodexActivity,   trace: getCodexTrace },
+  'claude-3p':  { list: list3pAgentActivity, trace: get3pAgentTrace },
 };
 
 function listActivity(agentId, opts = {}) {
@@ -1131,6 +1238,9 @@ function findSessionJsonl(agentId, sessionId) {
     };
     walk(root);
     return found;
+  }
+  if (agentId === 'claude-3p') {
+    return find3pTranscript(sessionId);
   }
   return null;
 }

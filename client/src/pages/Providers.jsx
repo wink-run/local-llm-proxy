@@ -1077,6 +1077,113 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
   );
 }
 
+// 订阅额度条：直接打供给方官方 usage 端点（复用 OAuth 凭证），展示剩余额度 + 重置倒计时。
+// 与网关的 token 统计互补；目前支持 Claude OAuth，其余 oauth_provider 后续在 electron/usage 注册。
+function fmtReset(iso) {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!isFinite(ms)) return null;
+  if (ms <= 0) return '即将重置';
+  const m = Math.floor(ms / 60000), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (d >= 1) return `${d}天${h % 24}小时后重置`;
+  if (h >= 1) return `${h}小时${m % 60}分后重置`;
+  return `${m}分钟后重置`;
+}
+function usageBarColor(p) {
+  if (p >= 90) return 'bg-red-500';
+  if (p >= 70) return 'bg-amber-500';
+  return 'bg-blue-500';
+}
+// 与 electron/usage 注册表 SUPPORTED_KEYS 同步：OAuth 类按 oauth_provider，其余按 id。
+const USAGE_SUPPORTED = new Set(['claude', 'codex', 'copilot', 'gemini', 'openrouter', 'deepseek', 'groq']);
+function usageKey(p) {
+  return p?.auth_type === 'oauth' && p?.oauth_provider ? p.oauth_provider : p?.id;
+}
+function fmtBalance(c) {
+  if (!c) return null;
+  const v = c.remaining != null ? c.remaining : c.total;
+  if (v == null) return null;
+  const sym = c.currency === 'USD' ? '$' : c.currency === 'CNY' ? '¥' : '';
+  return `${sym}${v.toFixed(2)}`;
+}
+function UsageMeter({ provider }) {
+  const api = typeof window !== 'undefined' ? window.electronAPI?.usage : null;
+  const supported = USAGE_SUPPORTED.has(usageKey(provider));
+  const [state, setState] = useState({ loading: false, data: null, error: '' });
+  const load = useCallback(() => {
+    if (!api || !supported) return;
+    setState(s => ({ ...s, loading: true, error: '' }));
+    api.fetch(provider.id)
+      .then(r => setState(r && r.error
+        ? { loading: false, data: null, error: r.error }
+        : { loading: false, data: r, error: '' }))
+      .catch(e => setState({ loading: false, data: null, error: e?.message || String(e) }));
+  }, [api, supported, provider?.id]);
+  useEffect(() => { load(); }, [load]);
+  if (!api || !supported) return null;
+  const d = state.data;
+  return (
+    <div className="mt-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-800/40 p-2.5 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">订阅额度</span>
+        <button onClick={load} disabled={state.loading}
+          className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 disabled:opacity-50">
+          {state.loading ? '…' : '刷新'}
+        </button>
+      </div>
+      {state.error ? (
+        <p className="text-xs text-red-500">{state.error}</p>
+      ) : !d ? (
+        <p className="text-xs text-zinc-400">{state.loading ? '加载中…' : '—'}</p>
+      ) : (
+        <div className="space-y-1.5">
+          {(d.windows || []).map(w => (
+            <div key={w.id}>
+              <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
+                <span>{w.title}</span>
+                <span className="tabular-nums">
+                  {w.usageKnown ? `${Math.round(w.usedPercent)}%` : '—'}
+                  {w.resetsAt ? <span className="ml-2 text-zinc-400 dark:text-zinc-600">{fmtReset(w.resetsAt)}</span> : null}
+                </span>
+              </div>
+              <div className="mt-0.5 h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-700 overflow-hidden">
+                <div className={`h-full ${usageBarColor(w.usedPercent)} transition-all`}
+                  style={{ width: `${Math.min(100, Math.max(0, w.usedPercent))}%` }} />
+              </div>
+            </div>
+          ))}
+          {d.credits && fmtBalance(d.credits) && (
+            <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
+              <span>余额</span>
+              <span className="tabular-nums">{fmtBalance(d.credits)}</span>
+            </div>
+          )}
+          {d.metrics && (
+            <div className="text-xs text-zinc-500 dark:text-zinc-400 space-y-0.5">
+              {d.metrics.requestsPerMin != null && (
+                <div className="flex justify-between"><span>请求/分</span><span className="tabular-nums">{d.metrics.requestsPerMin.toFixed(1)}</span></div>
+              )}
+              {d.metrics.tokensPerMin != null && (
+                <div className="flex justify-between"><span>Token/分</span><span className="tabular-nums">{Math.round(d.metrics.tokensPerMin)}</span></div>
+              )}
+              {d.metrics.cacheHitsPerMin != null && (
+                <div className="flex justify-between"><span>缓存命中/分</span><span className="tabular-nums">{d.metrics.cacheHitsPerMin.toFixed(1)}</span></div>
+              )}
+            </div>
+          )}
+          {d.extra && d.extra.enabled && (
+            <p className="text-xs text-zinc-400 dark:text-zinc-500 pt-0.5">
+              额外用量 {d.extra.usedPercent != null ? Math.round(d.extra.usedPercent) + '%' : ''}
+              {d.extra.monthlyLimit != null ? ` · 上限 $${d.extra.monthlyLimit}` : ''}
+            </p>
+          )}
+          {d.plan && <p className="text-[11px] text-zinc-400 dark:text-zinc-600">计划：{d.plan}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = false, gatewayAuthMode = null, userPayg = [], onGoPayg, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [] }) {
   const { t } = useLang();
   const [showKey,    setShowKey]    = useState(false);
@@ -1247,6 +1354,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
               {provider.base_url && (
                 <p className="text-xs text-zinc-400 dark:text-zinc-600 font-mono break-all">{provider.base_url}</p>
               )}
+              <UsageMeter provider={provider} />
             </div>
           )}
 

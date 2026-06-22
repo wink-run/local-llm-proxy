@@ -730,6 +730,19 @@ function registerIPC() {
   });
   ipcMain.handle('oauth:openExternal', (_e, { url } = {}) => { if (url) shell.openExternal(url); return { ok: true }; });
 
+  // 订阅用量额度抓取（复用 oauth 凭证；provider 条目存在 agent config ~/.llm-agent/config.json）
+  const usageMod = require('./usage');
+  const usageDeps = { getCfg: readAgentConfig, saveCfg: writeAgentConfig };
+  ipcMain.handle('usage:fetch', async (_e, { provider } = {}) => {
+    const cfg = readAgentConfig() || {};
+    const list = Array.isArray(cfg.providers) ? cfg.providers : [];
+    const entry = list.find(p => p && (p.id === provider
+      || (p.auth_type === 'oauth' && p.oauth_provider === provider)));
+    if (!entry) return { error: 'provider_not_found' };
+    return usageMod.fetchUsage(entry, usageDeps);
+  });
+  ipcMain.handle('usage:fetchAll', async () => usageMod.fetchAllUsage(usageDeps));
+
   // Write Claude Code config into ~/.claude/settings.local.json
   ipcMain.handle('claude:configure', async (_e, { baseUrl, apiKey, models = [] }) => {
     const settingsPath = path.join(os.homedir(), '.claude', 'settings.local.json');
@@ -1686,6 +1699,16 @@ function registerIPC() {
       }
       // 状态跟随操作：标记该应用已纳管
       setAppHosted(app_id, true);
+      // Claude Desktop 接管后：双向同步 Code + Cowork 会话（3p 看到代理前会话 + 代理期间会话回流原生）
+      if (String(app_id || '').includes('claude-desktop')) {
+        try {
+          const sync = require('./claude-3p-session-sync');
+          const code = sync.syncCodeSessionsBidirectional();
+          const cowork = sync.syncCoworkSessionsBidirectional();
+          console.log(`[3p-sync] takeover: code →3p ${(code.toP3 && code.toP3.copied) || 0}/→native ${(code.toNative && code.toNative.copied) || 0}`
+            + ` | cowork →3p ${cowork.toP3 || 0}/→native ${cowork.toNative || 0}`);
+        } catch (e) { console.warn('[3p-sync] takeover failed:', e && e.message); }
+      }
       return { ok: true, file, envCount };
     } catch (e) { return { ok: false, error: (e.stderr ? e.stderr.toString() : e.message).slice(0, 300) }; }
   });
@@ -2038,6 +2061,14 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   registerIPC();
+  // 启动时增量同步 Claude Desktop ↔ 3p 会话（Code：只搬索引、transcript 同源；Cowork：整沙箱搬 + 路径改写）
+  try {
+    const sync = require('./claude-3p-session-sync');
+    const code = sync.syncCodeSessionsBidirectional();
+    const cowork = sync.syncCoworkSessionsBidirectional();
+    console.log(`[3p-sync] startup: code →3p ${(code.toP3 && code.toP3.copied) || 0}/→native ${(code.toNative && code.toNative.copied) || 0}`
+      + ` | cowork →3p ${cowork.toP3 || 0}/→native ${cowork.toNative || 0}`);
+  } catch (e) { console.warn('[3p-sync] startup failed:', e && e.message); }
   // Init local SQLite stats DB（与 CLI 共用 ~/.tokenbank）
   localStats.init(STATS_DIR);
   gateway.setStatsRecorder(localStats.record);
