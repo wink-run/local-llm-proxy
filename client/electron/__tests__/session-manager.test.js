@@ -10,6 +10,7 @@ const {
   filePathFromInput,
   composeHandoffDoc,
   summarizeViaGateway,
+  collectGitContext,
   buildKnowledgeCorpus,
   synthesizeKnowledge,
 } = require('../session-manager');
@@ -212,4 +213,43 @@ test('summarizeViaGateway returns first successful model, skips failures', async
 test('summarizeViaGateway returns null when all models fail', async () => {
   const res = await summarizeViaGateway('digest', { fetchImpl: async () => ({ ok: false }) });
   assert.equal(res, null);
+});
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { execFileSync } = require('child_process');
+
+test('collectGitContext reports recent commits and uncommitted changes', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gitctx-'));
+  const git = (...args) => execFileSync('git', args, { cwd: dir, stdio: ['ignore', 'ignore', 'ignore'] });
+  git('init', '-q');
+  git('config', 'user.email', 'test@example.com');
+  git('config', 'user.name', 'Test');
+  git('config', 'commit.gpgsign', 'false');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
+  git('add', 'a.txt');
+  git('commit', '-q', '-m', 'initial commit');
+  // an unstaged modification + an untracked file
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'two\n');
+  fs.writeFileSync(path.join(dir, 'b.txt'), 'new\n');
+
+  const out = collectGitContext(dir);
+  assert.match(out, /\[Git 状态\]/);
+  assert.match(out, /initial commit/);     // recent commit title
+  assert.match(out, /^ M a\.txt$/m);       // unstaged modification
+  assert.match(out, /^\?\? b\.txt$/m);     // untracked file
+});
+
+test('collectGitContext returns empty string for a non-git directory', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nogit-'));
+  assert.equal(collectGitContext(dir), '');
+});
+
+test('collectGitContext never throws on missing cwd or git failure', () => {
+  assert.equal(collectGitContext(null), '');
+  assert.equal(collectGitContext('/no/such/path/xyz'), '');
+  // git binary unavailable → still returns '' instead of throwing
+  const boom = () => { throw new Error('ENOENT'); };
+  assert.equal(collectGitContext('/tmp', { execImpl: boom }), '');
 });

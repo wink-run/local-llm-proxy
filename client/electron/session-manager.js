@@ -99,6 +99,7 @@ function renderSessionPackMarkdown(pack = {}) {
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 /** 聚合会话 + 叠加层 + 过滤。返回供 UI 渲染的会话数组。 */
 function getSessions(deps, opts = {}) {
@@ -252,7 +253,33 @@ async function summarizeViaGateway(digest, opts = {}) {
   return r ? { brief: r.text, model: r.model } : null;
 }
 
-/** 生成交接：取 trace → digest → 模型 brief（失败兜底）→ 写文件 → 返回供 UI。 */
+/** 采集项目仓库的 git 上下文（未提交改动 + 最近提交）作为交接素材。
+ *  纯只读；任何失败（非 git 仓库 / git 不可用 / cwd 不存在）都静默返回 ''，
+ *  绝不抛出——交接流程不能因 git 失败而中断。 */
+function collectGitContext(cwd, { execImpl = execFileSync, maxStatusLines = 40, logN = 10 } = {}) {
+  if (!cwd) return '';
+  // 只去尾部空白：status --short 的首列空格（如 " M" 表示未暂存改动）有语义，不能 trim 行首。
+  const run = (args) => {
+    try {
+      return String(execImpl('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })).replace(/\s+$/, '');
+    } catch { return ''; }
+  };
+  const log = run(['log', `-${logN}`, '--pretty=format:%h %s']);
+  const status = run(['status', '--short']);
+  // 两条都为空（多半是非 git 仓库）→ 不提供 git 段。
+  if (!log && !status) return '';
+
+  const statusLines = status ? status.split('\n').slice(0, maxStatusLines).join('\n') : '';
+  return [
+    '[Git 状态]',
+    '未提交改动:',
+    statusLines || '（无未提交改动）',
+    '最近提交:',
+    log || '（无提交记录）',
+  ].join('\n');
+}
+
+/** 生成交接：取 trace → digest(+git) → 模型 brief（失败兜底）→ 写文件 → 返回供 UI。 */
 async function continueSession(deps, { source_agent, session_id, target_agent } = {}) {
   const { sessionBrowser } = deps;
   if (!source_agent || !session_id) return { error: 'missing_params' };
@@ -260,7 +287,9 @@ async function continueSession(deps, { source_agent, session_id, target_agent } 
   if (!trace || trace.error) return { error: 'trace_unavailable' };
 
   const digest = buildSessionDigest(trace);
-  const summary = await summarizeViaGateway(digest);
+  const gitCtx = collectGitContext(trace.project_path || trace.cwd || null);
+  const enrichedDigest = gitCtx ? `${digest}\n\n${gitCtx}` : digest;
+  const summary = await summarizeViaGateway(enrichedDigest);
   const aiGenerated = !!summary;
   const brief = summary ? summary.brief : digest;
   const doc = composeHandoffDoc({ brief, project: trace.project, sourceAgent: source_agent });
@@ -376,5 +405,5 @@ module.exports = {
   mergeAgentRows, joinSessionsWithMeta, buildSessionPackJSON, renderSessionPackMarkdown,
   getSessions, exportSession,
   buildSessionDigest, filePathFromInput, composeHandoffDoc, summarizeViaGateway,
-  continueSession, buildKnowledgeCorpus, synthesizeKnowledge,
+  collectGitContext, continueSession, buildKnowledgeCorpus, synthesizeKnowledge,
 };
