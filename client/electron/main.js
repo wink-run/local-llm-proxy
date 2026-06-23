@@ -1839,15 +1839,15 @@ function registerIPC() {
   });
   // 知识提炼：后台异步任务。点击 start 立即返回，合成在后台跑；result 拿当前状态/结果。
   // 状态：idle（没跑过）/ running（生成中）/ ready（已完成，含成功或兜底）/ error（异常）。
-  let _knowledgeJob = { status: 'idle', ok: false, content: '', model: null, scanned: 0, error: null, finishedAt: 0 };
+  let _knowledgeJob = { status: 'idle', ok: false, content: '', model: null, scanned: 0, error: null, projectPaths: {}, finishedAt: 0 };
   function _startKnowledgeJob() {
     if (_knowledgeJob.status === 'running') return;
-    _knowledgeJob = { status: 'running', ok: false, content: '', model: null, scanned: 0, error: null, finishedAt: 0 };
+    _knowledgeJob = { status: 'running', ok: false, content: '', model: null, scanned: 0, error: null, projectPaths: {}, finishedAt: 0 };
     sessionManager.synthesizeKnowledge(_sessionDeps, {})
       .then(r => {
         _knowledgeJob = {
           status: 'ready', ok: !!r.ok, content: r.content || '', model: r.model || null,
-          scanned: r.scanned || 0, error: r.error || null, finishedAt: Date.now(),
+          scanned: r.scanned || 0, error: r.error || null, projectPaths: r.projectPaths || {}, finishedAt: Date.now(),
         };
       })
       .catch(e => {
@@ -1858,12 +1858,15 @@ function registerIPC() {
   ipcMain.handle('sessions:knowledgeStart', () => { _startKnowledgeJob(); return { status: _knowledgeJob.status }; });
   ipcMain.handle('sessions:knowledgeResult', () => ({ ..._knowledgeJob }));
   // 保存 AGENTS.md：弹保存对话框让用户自选位置。写入 UI 传来的（可能已编辑的）content。
-  ipcMain.handle('sessions:saveAgentsMd', async (_e, { content } = {}) => {
+  ipcMain.handle('sessions:saveAgentsMd', async (_e, { content, defaultPath } = {}) => {
     try {
       const text = typeof content === 'string' ? content : '';
+      // 项目 tab 传来项目目录 → 默认定位到 <项目>/AGENTS.md；否则回退家目录。
+      const fallback = require('path').join(require('os').homedir(), 'AGENTS.md');
+      const def = typeof defaultPath === 'string' && defaultPath ? defaultPath : fallback;
       const res = await dialog.showSaveDialog(mainWindow, {
         title: 'Save AGENTS.md',
-        defaultPath: require('path').join(require('os').homedir(), 'AGENTS.md'),
+        defaultPath: def,
         filters: [{ name: 'Markdown', extensions: ['md'] }],
       });
       if (res.canceled || !res.filePath) return { canceled: true };
@@ -1920,18 +1923,26 @@ function registerIPC() {
   }
 
   ipcMain.handle('apps:stats', (_e, appList) => {
+    // 增量补录会话文件，保证当天直连官方的用量进库（与 apps:detail 一致）
+    try { sessionImport.run(localStats, { skip: computeImportSkip() }); } catch {}
     const stats = {};
     for (const app of (appList || [])) {
+      const ds = appSessionDataSource(app);
       let s;
       if (app.link_method === 'api-key' || app.link_method === 'manual') {
-        // 按稳定 app_id 记账（取消/重新纳管、key 变化都不清零）；旧数据按 api_key 兜底。
-        // 并入该应用的会话补录用量（如 Claude Desktop 的 Cowork/Code 本地用量），按 request_id 去重不重复。
-        s = localStats.queryByApp(app.id, app.api_key, appSessionDataSource(app));
+        // 列表展示当天用量（本地 0 点至今）；明细弹窗仍走 apps:detail 全量/区间
+        s = localStats.queryAppStatsToday({
+          appId: app.id,
+          apiKey: app.api_key,
+          dataSource: ds,
+        });
       } else if ((app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) {
-        // 会话文件用量是真实历史，始终展示（不随纳管/还原清零，与 api-key 应用一致）；
-        // 纳管/还原只控制是否走网关 / 注入 shim / 是否继续扫描，不影响已有统计可见性。
-        const ds = appSessionDataSource(app);
-        s = ds ? localStats.queryByDataSource(ds) : { calls: 0, tokens: 0, lastTs: null };
+        // shim 走网关记 app_id(proxy)，直连官方记 data_source(session-*)，需合并查询
+        s = localStats.queryAppStatsToday({
+          appId: app.id,
+          apiKey: app.api_key,
+          dataSource: ds,
+        });
       } else {
         s = { calls: 0, tokens: 0, lastTs: null };
       }

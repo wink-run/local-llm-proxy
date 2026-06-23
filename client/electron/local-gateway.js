@@ -1801,6 +1801,8 @@ function handleRequest(req, res) {
     try { body = JSON.parse(rawBody); } catch {}
     const model = body.model || '';
 
+    console.log(`[gw] ${method} ${cleanPath} model="${model}" stream=${!!body.stream} key=${callerKey.slice(0, 20) || 'none'}`);
+
     // 调试：记录入站请求关键信息（不 dump 完整 body，避免日志膨胀）
     debugLog(`>>> 入站请求 ${method} ${url}`, {
       model,

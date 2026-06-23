@@ -6,12 +6,12 @@ import { listAgents, applyAgent, revertAgent } from '../api/agents';
 import claudeDevModeImg1 from '../assets/claude-devmode-1.webp';
 import claudeDevModeImg2 from '../assets/claude-devmode-2.webp';
 import { brandIconFor, resolveBrandIcon } from '../lib/brandIcons';
+import { APP_ICONS, ROUTE_ICONS, isAppIcon, appIconSvg } from '../lib/appIcons';
 import { useLang } from '../store/lang';
 import {
   encodeTierModelRoute,
   modelIdFromRoute,
   routeSelectValue,
-  isKnownRouteSelectValue,
 } from '../lib/route-binding';
 
 // tier:id 作为下拉唯一 value，避免同模型跨层选中错位
@@ -288,8 +288,10 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
 function linkMethodLabel(method, t) {
   return method === 'manual' ? t('gateway.link.api') : t('gateway.link.app');
 }
-// 应用列表统一栅格，保证表头与数据列对齐
-const APPS_TABLE_GRID = 'grid grid-cols-[1.5rem_minmax(4rem,6rem)_4rem_3rem_3.5rem_3.5rem_3.5rem_minmax(0,1fr)_9.5rem] gap-x-2 items-center px-3';
+// 应用列表统一栅格：固定短列 + minmax(0,fr) 弹性列，避免内容撑开导致各行列宽不一致
+// 应用列保留 modest 最小宽；不设表格 min-width，避免常态出现横向滚动条
+// 应用列加大最小宽；固定短列与路由 min 适当压缩，空间让给应用名
+const APPS_TABLE_GRID = 'grid w-full grid-cols-[1.75rem_minmax(5rem,1.5fr)_3.75rem_1.75rem_3.75rem_3.5rem_3.75rem_minmax(4.5rem,2fr)_minmax(7.75rem,auto)] gap-x-3 items-center px-4 [&>*]:min-w-0';
 // 按 API Key 路由的应用：自动写配置的 api-key，和用户自配的 manual（手工添加）
 const isKeyApp = (m) => m === 'api-key' || m === 'manual';
 
@@ -318,7 +320,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   const { t } = useLang();
   const dismiss = onCancel || onClose;   // ✕/取消/点遮罩 → 取消（新应用未保存会被丢弃）
   const [name,           setName]           = useState(app.name || '');
-  const [icon,           setIcon]           = useState(app.icon || '🔧');
+  const [icon,           setIcon]           = useState(app.icon || 'icon:cube');
   const [desc,           setDesc]           = useState(app.description || '');
   const [routeId,        setRouteId]        = useState(() => routeSelectValue(app.route_id, availableModels, routes));
   const [modelIntercept, setModelIntercept] = useState(app.model_intercept || '');
@@ -411,7 +413,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     } else setWriteMsg('✗ ' + (r?.error || t('gateway.common.writeFailed')));
   }
 
-  const ICONS = ['🤖','✏️','🔧','💻','🎯','🌐','📱','🔑','⚡','🛠️','🎨','📊'];
+  const ICONS = APP_ICONS;
 
   // ── 各区块（按布局组合：config-file 应用走两 Tab，其余走单页）──
   const baseInfoSection = (
@@ -423,9 +425,9 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
       </div>
       <div className="flex flex-wrap gap-1.5 mb-2">
         {ICONS.map(e => (
-          <button key={e} onClick={() => setIcon(e)}
-            className={`text-lg p-1 rounded ${icon === e ? 'bg-blue-100 dark:bg-blue-900/40 ring-1 ring-blue-400' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}>
-            {e}
+          <button key={e} onClick={() => setIcon(e)} title={e.replace('icon:', '')}
+            className={`p-1.5 rounded ${icon === e ? 'bg-blue-100 dark:bg-blue-900/40 ring-1 ring-blue-400 text-blue-600 dark:text-blue-300' : 'text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}>
+            {appIconSvg(e, 'w-5 h-5')}
           </button>
         ))}
       </div>
@@ -536,16 +538,16 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
         <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.routeRules')}</div>
         <select value={routeId} onChange={e => setRouteId(e.target.value)}
           className="w-full text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none text-zinc-800 dark:text-zinc-200">
-          {/* manual（手工添加）无官方可直连 → 必须绑定，「直连」改为不可选占位 */}
+          {/* manual（手工添加）无官方可直连 → 必须绑定；其余与列表页一致：官方订阅（不走网关） */}
           {app.link_method === 'manual'
             ? <option value="" disabled>{t('gateway.app.routeRequired')}</option>
-            : <option value="">{t('gateway.app.routeDirect')}</option>}
+            : <option value="">{t('gateway.app.routeOfficial')}</option>}
           {(() => {
             const avail = new Set(availableModels.map(m => m.id));
             const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
             return usable.length > 0 && (
               <optgroup label={t('gateway.app.sceneRoutes')}>
-                {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
+                {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon && !r.icon.startsWith('icon:') ? r.icon + ' ' : ''}{r.scene_name}</option>)}
               </optgroup>
             );
           })()}
@@ -586,11 +588,15 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={dismiss}>
+    <div className="electron-no-drag fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={dismiss}>
       <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl mx-4 max-h-[92vh] overflow-y-auto flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-3 px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
-          <span className="text-xl">{icon}</span>
+          {(() => {
+            const brand = brandIconFor(app);
+            if (brand) return <img src={brand} alt="" className="w-6 h-6 object-contain" />;
+            return isAppIcon(icon) ? appIconSvg(icon, 'w-6 h-6') : <span className="text-xl">{icon}</span>;
+          })()}
           <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">{app.name || t('gateway.app.settingsTitle')}</h3>
           <button onClick={dismiss} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 text-lg">✕</button>
         </div>
@@ -631,13 +637,13 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
 function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKey, onSave, onCancel }) {
   const { t } = useLang();
   const [name,           setName]           = useState(app.name || '');
-  const [icon,           setIcon]           = useState(app.icon || '🔧');
+  const [icon,           setIcon]           = useState(app.icon || 'icon:cube');
   const [desc,           setDesc]           = useState(app.description || '');
   const [routeId,        setRouteId]        = useState(() => routeSelectValue(app.route_id, availableModels, routes));
   const [modelIntercept, setModelIntercept] = useState(app.model_intercept || '');
   const [busy,           setBusy]           = useState(false);
   const [copied,         setCopied]         = useState(false);
-  const ICONS = ['🤖','✏️','🔧','💻','🎯','🌐','📱','🔑','⚡','🛠️','🎨','📊'];
+  const ICONS = APP_ICONS;
 
   async function save() {
     setBusy(true);
@@ -653,7 +659,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
   return (
     <div className="mb-3 bg-white dark:bg-zinc-800 rounded-2xl border border-blue-200 dark:border-blue-800/50 shadow-sm">
       <div className="flex items-center gap-3 px-5 py-3 border-b border-zinc-200 dark:border-zinc-800">
-        <span className="text-xl">{icon}</span>
+        {isAppIcon(icon) ? appIconSvg(icon, 'w-6 h-6') : <span className="text-xl">{icon}</span>}
         <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">{t('gateway.app.newTitle')}</h3>
         <button onClick={onCancel} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 text-lg">✕</button>
       </div>
@@ -665,9 +671,9 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
             className="w-full text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-zinc-800 dark:text-zinc-200 mb-2" />
           <div className="flex flex-wrap gap-1.5 mb-2">
             {ICONS.map(e => (
-              <button key={e} onClick={() => setIcon(e)}
-                className={`text-lg p-1 rounded ${icon === e ? 'bg-blue-100 dark:bg-blue-900/40 ring-1 ring-blue-400' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}>
-                {e}
+              <button key={e} onClick={() => setIcon(e)} title={e.replace('icon:', '')}
+                className={`p-1.5 rounded ${icon === e ? 'bg-blue-100 dark:bg-blue-900/40 ring-1 ring-blue-400 text-blue-600 dark:text-blue-300' : 'text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}>
+                {appIconSvg(e, 'w-5 h-5')}
               </button>
             ))}
           </div>
@@ -703,7 +709,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
               const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
               return usable.length > 0 && (
                 <optgroup label={t('gateway.app.sceneRoutes')}>
-                  {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
+                  {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon && !r.icon.startsWith('icon:') ? r.icon + ' ' : ''}{r.scene_name}</option>)}
                 </optgroup>
               );
             })()}
@@ -763,6 +769,7 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
   const [trace, setTrace]     = useState(null);
   const [loading, setLoading] = useState(true);
   const [stepIdx, setStepIdx] = useState(0);
+  const [toolsOpen, setToolsOpen] = useState(false);   // 工具调用统计默认折叠
   const agentId = traceAgentId || app?.agent_id;
 
   useEffect(() => {
@@ -781,22 +788,24 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
   const tok   = st.tokens || {};
   const fmtN  = n => (n >= 1000 ? (n / 1000).toFixed(1) + 'K' : String(n ?? 0));
   const fmtTime = ts => ts ? new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+  const clientLabel = CLIENT_LABELS[trace?.client] || trace?.client || agentId || 'agent';
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
+    <div className="electron-no-drag fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-4xl mx-4 max-h-[92vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 space-y-2">
           <div className="flex items-center gap-3">
             <button onClick={onClose} className="text-zinc-400 hover:text-zinc-600 text-sm">{t('gateway.common.back')}</button>
-            <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">Session Trace</h3>
-            <span className="text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 uppercase">{agentId || 'agent'}</span>
-            <span className="font-mono text-xs text-zinc-400">{sessionId?.slice(0, 8)}…</span>
+            <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 shrink-0">Session Trace</h3>
+            <span className="text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 shrink-0" title={trace?.entrypoint ? `entrypoint: ${trace.entrypoint}` : undefined}>{clientLabel}</span>
+            <span className="font-mono text-xs text-zinc-400 flex-1 text-right truncate select-all cursor-text" title={sessionId}>{sessionId}</span>
           </div>
           {!loading && !trace?.error && st.steps != null && (
             <div className="flex items-center gap-1.5 flex-wrap">
               <TraceStatPill label="Steps" value={st.steps} />
               <TraceStatPill label="Tools" value={st.tools ?? 0} tone="blue" />
+              {(st.skills ?? 0) > 0 && <TraceStatPill label="Skill" value={st.skills} tone="emerald" />}
               {(st.artifacts ?? 0) > 0 && <TraceStatPill label="Arts" value={st.artifacts} tone="emerald" />}
               <TraceStatPill label="Reason" value={st.reasoning ?? 0} tone="amber" />
               <TraceStatPill label="Turns" value={st.turns ?? 0} />
@@ -827,6 +836,45 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
               )}
             </div>
 
+            {/* 工具调用统计（参考 tokentelemetry TOOL SUMMARY），默认折叠 */}
+            {(st.toolBreakdown?.length > 0 || st.skillNames?.length > 0) && (
+              <div className="px-5 py-2.5 border-b border-zinc-100 dark:border-zinc-800 shrink-0 space-y-2">
+                <button type="button" onClick={() => setToolsOpen(o => !o)}
+                  className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
+                  <span className={`transition-transform ${toolsOpen ? 'rotate-90' : ''}`}>▸</span>
+                  {t('gateway.trace.toolSummary')}
+                  <span className="text-zinc-300 dark:text-zinc-600 normal-case font-normal">
+                    {st.tools ?? 0}{(st.skills ?? 0) > 0 ? ` · ${st.skills} skill` : ''}
+                  </span>
+                </button>
+                {toolsOpen && (<>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5">
+                  {st.toolBreakdown.map(({ name, count }) => {
+                    const max = st.toolBreakdown[0]?.count || 1;
+                    const short = name.startsWith('mcp__') ? name.split('__').slice(-1)[0] : name;
+                    return (
+                      <div key={name} className="flex items-center gap-2 min-w-0" title={name}>
+                        <span className="text-xs text-zinc-600 dark:text-zinc-300 truncate flex-1">{short}</span>
+                        <span className="text-xs font-semibold tabular-nums text-zinc-400">×{count}</span>
+                        <div className="w-10 h-1 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden shrink-0">
+                          <div className="h-full bg-blue-500/70" style={{ width: `${(count / max) * 100}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {st.skillNames?.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                    <span className="text-[10px] uppercase tracking-wide text-zinc-400">Skills</span>
+                    {st.skillNames.map((s, i) => (
+                      <span key={i} className="text-xs px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 font-mono">{s}</span>
+                    ))}
+                  </div>
+                )}
+                </>)}
+              </div>
+            )}
+
             <div className="flex flex-1 min-h-0">
               {/* 步骤索引 */}
               <div className="w-44 shrink-0 border-r border-zinc-100 dark:border-zinc-800 overflow-y-auto max-h-[55vh]">
@@ -834,8 +882,16 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
                   <button key={i} onClick={() => setStepIdx(i)}
                     className={`w-full text-left px-3 py-1.5 text-xs border-b border-zinc-50 dark:border-zinc-800/50 hover:bg-zinc-50 dark:hover:bg-zinc-800/40 ${stepIdx === i ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300' : 'text-zinc-600 dark:text-zinc-400'}`}>
                     <span className="text-zinc-400 mr-1">{String(i).padStart(3, '0')}</span>
-                    <span className={`px-1 rounded text-xs mr-1 ${s.kind === 'tool' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' : s.kind === 'user' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30' : s.reasoning ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/20' : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800'}`}>
-                      {s.kind === 'tool' ? s.tool || s.label : s.kind === 'user' ? 'USER' : s.reasoning ? 'REASON' : 'AI'}
+                    <span className={`px-1 rounded text-xs mr-1 ${
+                      s.kind === 'tool' ? (s.skill ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400')
+                      : s.kind === 'tool_result' ? (s.is_error ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400')
+                      : s.kind === 'user' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30'
+                      : s.reasoning ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/20'
+                      : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800'}`}>
+                      {s.kind === 'tool' ? (s.skill ? 'SKILL' : s.tool || s.label)
+                        : s.kind === 'tool_result' ? 'OUT'
+                        : s.kind === 'user' ? 'USER'
+                        : s.reasoning ? 'REASON' : 'AI'}
                     </span>
                     <span className="truncate block">{s.label}</span>
                   </button>
@@ -846,9 +902,26 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
               <div className="flex-1 p-4 overflow-y-auto max-h-[55vh]">
                 {cur ? (
                   <div className="space-y-2">
-                    <div className="text-xs text-zinc-400">{fmtTime(cur.ts)} · {cur.label}</div>
+                    <div className="text-xs text-zinc-400 flex items-center gap-2">
+                      <span>{fmtTime(cur.ts)} · {cur.label}</span>
+                      {cur.kind === 'tool_result' && cur.is_error && (
+                        <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 text-[10px] font-semibold">ERROR</span>
+                      )}
+                      {cur.encrypted && (
+                        <span className="px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400 text-[10px] font-semibold">{t('gateway.trace.encrypted')}</span>
+                      )}
+                    </div>
                     {cur.text && (
-                      <pre className="text-xs text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-3 max-h-80 overflow-y-auto">{cur.text}</pre>
+                      <pre className={`text-xs whitespace-pre-wrap break-words rounded-lg p-3 max-h-80 overflow-y-auto ${cur.kind === 'tool_result' && cur.is_error ? 'text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/10' : 'text-zinc-700 dark:text-zinc-300 bg-zinc-50 dark:bg-zinc-800/50'}`}>{cur.text}</pre>
+                    )}
+                    {cur.encrypted && !cur.text && (
+                      <div className="text-xs bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-3 space-y-1.5">
+                        <p className="text-zinc-500 dark:text-zinc-400 italic">{t('gateway.trace.encryptedNote')}</p>
+                        {cur.signature && <p className="font-mono text-[10px] text-zinc-400 break-all">sig: {cur.signature}…</p>}
+                      </div>
+                    )}
+                    {cur.reasoning && !cur.text && !cur.encrypted && (
+                      <div className="text-xs text-zinc-400 italic">{t('gateway.trace.noReasoning')}</div>
                     )}
                     {cur.input != null && (
                       <pre className="text-xs font-mono text-zinc-600 dark:text-zinc-400 whitespace-pre-wrap break-all bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-3 max-h-60 overflow-y-auto">
@@ -882,18 +955,63 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
   );
 }
 
-/** 知识提炼：后台异步任务。点「生成」后台跑，关掉再点也行；完成后展示可编辑结果 → 复制/保存。 */
+const GLOBAL_KEY = '__global__';
+
+/** 把提炼出的 markdown 拆成「全局」+「每个项目」段。
+ *  顶级 # 全局级 → global；# 项目级 下的二级 ## <项目名> → 各为一个项目段。
+ *  首部说明注释（preamble）前缀到每段，使每个保存的文件都自带生成说明。 */
+function splitMemory(md = '') {
+  const text = String(md).trim();
+  const out = { preamble: '', global: '', projects: [] };
+  if (!text) return out;
+  const firstH = text.search(/^#\s+/m);
+  if (firstH === -1) { out.global = text; return out; }       // 无标题兜底 → 全归全局
+  out.preamble = firstH > 0 ? text.slice(0, firstH).trim() : '';
+  const l1 = text.slice(firstH).split(/(?=^#\s+)/m).filter(s => s.trim());
+  for (const sec of l1) {
+    const head = sec.match(/^#\s+(.*)$/m)?.[1] || '';
+    if (/项目|project/i.test(head)) {
+      const afterHeader = sec.replace(/^#\s+.*\n?/m, '');     // 去掉「# 项目级」行
+      const parts = afterHeader.split(/(?=^##\s+)/m).filter(s => s.trim());
+      for (const pp of parts) {
+        const name = pp.match(/^##\s+(.*)$/m)?.[1]?.trim() || '项目';
+        out.projects.push({ name, body: pp.trim() });
+      }
+    } else if (/全局|global/i.test(head)) {
+      out.global = out.global ? `${out.global}\n\n${sec.trim()}` : sec.trim();
+    } else {
+      out.global = out.global ? `${out.global}\n\n${sec.trim()}` : sec.trim();   // 未知顶级段归全局
+    }
+  }
+  return out;
+}
+
+/** 记忆提炼：后台异步任务。点「生成」后台跑，关掉再点也行；
+ *  完成后按「全局 + 每个项目」分 tab 展示，按需查看/编辑，保存各自的 AGENTS.md。 */
 function PreferenceMiningModal({ onClose, flash, onJobStart }) {
   const { t } = useLang();
-  const [job, setJob]         = useState({ status: 'idle', ok: false, model: null, scanned: 0, error: null });
-  const [content, setContent] = useState('');
-  const [dirty, setDirty]     = useState(false); // 用户编辑过就不再被轮询结果覆盖
+  const [job, setJob]     = useState({ status: 'idle', ok: false, model: null, scanned: 0, error: null });
+  const [parsed, setParsed]   = useState({ preamble: '', global: '', projects: [] });
+  const [paths, setPaths]     = useState({});      // 项目名 → 本机路径
+  const [edits, setEdits]     = useState({});      // tabKey → 可编辑文本
+  const [tabKey, setTabKey]   = useState(GLOBAL_KEY);
+  const [dirty, setDirty]     = useState(false);   // 用户编辑过就不再被轮询结果覆盖
 
   const fetchResult = useCallback(async () => {
     const r = await window.electronAPI.sessions.knowledgeResult().catch(() => null);
     if (!r) return null;
     setJob({ status: r.status, ok: !!r.ok, model: r.model || null, scanned: r.scanned || 0, error: r.error || null });
-    if (r.status === 'ready' && !dirty) setContent(r.content || '');
+    if (r.status === 'ready' && !dirty) {
+      const p = splitMemory(r.content || '');
+      const pre = p.preamble ? p.preamble + '\n\n' : '';
+      const map = { [GLOBAL_KEY]: p.global ? pre + p.global : '' };
+      for (const proj of p.projects) map[proj.name] = pre + proj.body;
+      setParsed(p);
+      setPaths(r.projectPaths || {});
+      setEdits(map);
+      // 默认 tab：全局有内容则全局，否则第一个项目。
+      setTabKey(p.global ? GLOBAL_KEY : (p.projects[0]?.name || GLOBAL_KEY));
+    }
     return r;
   }, [dirty]);
 
@@ -907,24 +1025,33 @@ function PreferenceMiningModal({ onClose, flash, onJobStart }) {
   }, [job.status, fetchResult]);
 
   const start = async () => {
-    setDirty(false); setContent('');
+    setDirty(false); setEdits({}); setParsed({ preamble: '', global: '', projects: [] }); setTabKey(GLOBAL_KEY);
     await window.electronAPI.sessions.knowledgeStart();
     setJob(j => ({ ...j, status: 'running' }));
     onJobStart?.();
   };
+
+  // tab 列表：全局（始终有）+ 每个项目。
+  const tabDefs = [{ key: GLOBAL_KEY, label: t('gateway.mine.tabGlobal'), dir: null }]
+    .concat(parsed.projects.map(p => ({ key: p.name, label: p.name, dir: paths[p.name] || null })));
+  const activeTab = tabDefs.find(d => d.key === tabKey) || tabDefs[0];
+  const activeText = edits[tabKey] || '';
+
   const save = async () => {
-    const r = await window.electronAPI.sessions.saveAgentsMd({ content });
-    if (r?.ok) { flash(t('gateway.mine.saved').replace('{file}', r.file)); onClose(); }
+    const dir = activeTab?.dir;
+    const defaultPath = dir ? `${dir.replace(/\/+$/, '')}/AGENTS.md` : undefined;
+    const r = await window.electronAPI.sessions.saveAgentsMd({ content: activeText, defaultPath });
+    if (r?.ok) flash(t('gateway.mine.saved').replace('{file}', r.file));
     else if (!r?.canceled) flash(t('gateway.mine.saveFailed'));
   };
   const copy = async () => {
-    try { await navigator.clipboard.writeText(content); flash(t('gateway.sessions.copied')); } catch {}
+    try { await navigator.clipboard.writeText(activeText); flash(t('gateway.sessions.copied')); } catch {}
   };
 
   const ready = job.status === 'ready' || job.status === 'error';
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
+    <div className="electron-no-drag fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl mx-4 max-h-[88vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 flex items-center gap-3">
@@ -965,16 +1092,30 @@ function PreferenceMiningModal({ onClose, flash, onJobStart }) {
                 ? <span className="text-zinc-400">{t('gateway.mine.previewHint')}</span>
                 : <span className="text-amber-600 dark:text-amber-400">{job.error === 'no_corpus' ? t('gateway.mine.empty') : t('gateway.mine.modelUnavailable')}</span>}
             </div>
+            {/* tab 条：全局 + 每个项目（项目多时横向滚动）*/}
+            {job.ok && (
+              <div className="px-3 pt-2 shrink-0 flex items-center gap-1 overflow-x-auto">
+                {tabDefs.map(d => (
+                  <button key={d.key} onClick={() => setTabKey(d.key)} title={d.dir || d.label}
+                    className={`text-xs px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
+                      tabKey === d.key
+                        ? 'bg-violet-500 text-white'
+                        : 'text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700/50'
+                    }`}>{d.label}</button>
+                ))}
+              </div>
+            )}
             <div className="flex-1 overflow-y-auto p-3">
-              <textarea value={content} onChange={e => { setContent(e.target.value); setDirty(true); }} spellCheck={false}
-                placeholder={t('gateway.mine.empty')}
+              <textarea value={activeText} onChange={e => { setEdits(prev => ({ ...prev, [tabKey]: e.target.value })); setDirty(true); }} spellCheck={false}
+                placeholder={t('gateway.mine.tabEmpty')}
                 className="w-full h-full min-h-[320px] text-xs font-mono leading-relaxed text-zinc-700 dark:text-zinc-200 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-3 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:border-violet-400 resize-none" />
             </div>
             <div className="px-5 py-3 border-t border-zinc-100 dark:border-zinc-800 shrink-0 flex items-center gap-2">
               <button onClick={start} className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500">↻ {t('gateway.mine.regenerate')}</button>
+              {activeTab?.dir && <span className="text-[11px] text-zinc-400 truncate max-w-[16rem]" title={activeTab.dir}>→ {activeTab.dir}/AGENTS.md</span>}
               <div className="ml-auto flex gap-2">
-                <button onClick={copy} disabled={!content} className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 disabled:opacity-40">{t('gateway.mine.copy')}</button>
-                <button onClick={save} disabled={!content} className="text-xs px-3 py-1.5 rounded-lg bg-violet-500 hover:bg-violet-600 text-white disabled:opacity-40">{t('gateway.mine.save')}</button>
+                <button onClick={copy} disabled={!activeText} className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 disabled:opacity-40">{t('gateway.mine.copy')}</button>
+                <button onClick={save} disabled={!activeText} className="text-xs px-3 py-1.5 rounded-lg bg-violet-500 hover:bg-violet-600 text-white disabled:opacity-40">{t('gateway.mine.save')}</button>
                 <button onClick={onClose} className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500">{t('gateway.sessions.close')}</button>
               </div>
             </div>
@@ -1043,9 +1184,11 @@ function SessionManager() {
     flash(t('gateway.sessions.exported').replace('{file}', res.file));
   };
 
-  const agents = Array.from(new Set(rows.map(r => r.agent_id)));
+  // 按展示客户端分组（Claude Desktop / Claude Code 等），与应用列表拆分保持一致
+  const rowClient = r => r.client || r.agent_id;
+  const agents = Array.from(new Set(rows.map(rowClient)));
   const filtered = rows.filter(r => {
-    if (agentFilter !== 'all' && r.agent_id !== agentFilter) return false;
+    if (agentFilter !== 'all' && rowClient(r) !== agentFilter) return false;
     if (favOnly && !r.favorite) return false;
     if (q) {
       const hay = `${r.project || ''} ${r.context || ''}`.toLowerCase();
@@ -1073,41 +1216,51 @@ function SessionManager() {
       )}
 
       {/* 操作栏 */}
-      <div className="flex items-center gap-2 px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 flex-wrap">
-        <div className="relative flex-1 min-w-[180px]">
-          <input value={q} onChange={e => setQ(e.target.value)}
-            placeholder={t('gateway.sessions.search')}
-            className="w-full text-xs pl-3 pr-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800" />
+      <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 space-y-2">
+        {/* 第一行：搜索 + 统计（两端对齐）*/}
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1 min-w-[180px]">
+            <input value={q} onChange={e => setQ(e.target.value)}
+              placeholder={t('gateway.sessions.search')}
+              className="w-full text-xs pl-3 pr-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800" />
+          </div>
+          <div className="flex gap-3 text-xs text-zinc-400 shrink-0">
+            <span><strong className="text-zinc-700 dark:text-zinc-200">{rows.length}</strong> {t('gateway.sessions.statSessions')}</span>
+            <span><strong className="text-zinc-700 dark:text-zinc-200">{agents.length}</strong> {t('gateway.sessions.statAgents')}</span>
+            <span><strong className="text-zinc-700 dark:text-zinc-200">{favCount}</strong> {t('gateway.sessions.statFav')}</span>
+          </div>
+          <button onClick={() => setMining(true)}
+            className="text-xs px-3 py-1.5 rounded-full border border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20 flex items-center gap-1.5 shrink-0">
+            {kStatus === 'running'
+              ? <><span className="inline-block w-3 h-3 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />{t('gateway.mine.busy')}</>
+              : <>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0">
+                    <path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
+                  </svg>
+                  {t('gateway.mine.button')}
+                </>}
+          </button>
         </div>
+        {/* 第二行：产品过滤芯片 */}
+        <div className="flex items-center gap-2 flex-wrap">
         <button onClick={() => setAgent('all')}
           className={`text-xs px-3 py-1.5 rounded-full ${agentFilter === 'all' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : 'border border-zinc-200 dark:border-zinc-700 text-zinc-500'}`}>
           {t('gateway.sessions.all')}
         </button>
-        {agents.map(a => (
-          <button key={a} onClick={() => setAgent(a)}
-            className={`text-xs px-3 py-1.5 rounded-full ${agentFilter === a ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : 'border border-zinc-200 dark:border-zinc-700 text-zinc-500'}`}>
-            {a}
-          </button>
-        ))}
         <button onClick={() => setFavOnly(v => !v)}
           className={`text-xs px-3 py-1.5 rounded-full ${favOnly ? 'bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400' : 'border border-zinc-200 dark:border-zinc-700 text-zinc-500'}`}>
           ★ {t('gateway.sessions.favOnly')}
         </button>
-        <button onClick={() => setMining(true)}
-          className="text-xs px-3 py-1.5 rounded-full border border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20 flex items-center gap-1.5">
-          {kStatus === 'running'
-            ? <><span className="inline-block w-3 h-3 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />{t('gateway.mine.busy')}</>
-            : <>
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0">
-                  <path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
-                </svg>
-                {t('gateway.mine.button')}
-              </>}
-        </button>
-        <div className="ml-auto flex gap-3 text-xs text-zinc-400">
-          <span><strong className="text-zinc-700 dark:text-zinc-200">{rows.length}</strong> {t('gateway.sessions.statSessions')}</span>
-          <span><strong className="text-zinc-700 dark:text-zinc-200">{agents.length}</strong> {t('gateway.sessions.statAgents')}</span>
-          <span><strong className="text-zinc-700 dark:text-zinc-200">{favCount}</strong> {t('gateway.sessions.statFav')}</span>
+        {agents.map(a => {
+          const brand = resolveBrandIcon(a);
+          return (
+            <button key={a} onClick={() => setAgent(a)}
+              className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full ${agentFilter === a ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : 'border border-zinc-200 dark:border-zinc-700 text-zinc-500'}`}>
+              {brand && <img src={brand} alt="" className="w-3.5 h-3.5 object-contain shrink-0" />}
+              {CLIENT_LABELS[a] || a}
+            </button>
+          );
+        })}
         </div>
       </div>
 
@@ -1129,12 +1282,18 @@ function SessionManager() {
   );
 }
 
-// 可作为接续目标的 agent。claude-code/codex 走终端 CLI；cursor 是 GUI，打开项目 + brief 入剪贴板。
+// 可作为交接目标的 agent。claude-code/codex 走终端 CLI；cursor 是 GUI，打开项目 + brief 入剪贴板。
 const CONTINUE_TARGETS = [
   { id: 'claude-code', label: 'Claude Code' },
   { id: 'codex', label: 'Codex' },
   { id: 'cursor', label: 'Cursor' },
 ];
+
+// 会话来源客户端展示名（按 jsonl entrypoint 区分，仅用于显示）
+const CLIENT_LABELS = {
+  'claude-code': 'Claude Code',
+  'claude-desktop': 'Claude Desktop',
+};
 
 /** 单会话行 */
 function SessionRow({ row, fmtN, onTrace, onMeta, onExport, onContinue }) {
@@ -1148,11 +1307,13 @@ function SessionRow({ row, fmtN, onTrace, onMeta, onExport, onContinue }) {
     <div className="px-5 py-2.5">
       <div className="grid grid-cols-[7.25rem_minmax(0,1.4fr)_3.5rem_4rem_5rem_auto] gap-2 items-center text-xs">
         {(() => {
-          const brand = resolveBrandIcon(row.agent_id);
+          const client = row.client || row.agent_id;
+          const brand = resolveBrandIcon(client);
+          const label = CLIENT_LABELS[client] || client;
           return (
-            <span className="flex items-center gap-1.5 min-w-0" title={row.agent_id}>
+            <span className="flex items-center gap-1.5 min-w-0" title={client === row.agent_id ? client : `${label} (${row.agent_id})`}>
               {brand && <img src={brand} alt="" className="w-4 h-4 object-contain shrink-0" />}
-              <span className="truncate text-[11px] font-medium text-zinc-500 dark:text-zinc-400">{row.agent_id}</span>
+              <span className="truncate text-[11px] font-medium text-zinc-500 dark:text-zinc-400">{label}</span>
             </span>
           );
         })()}
@@ -1194,7 +1355,7 @@ function SessionRow({ row, fmtN, onTrace, onMeta, onExport, onContinue }) {
   );
 }
 
-/** 跨智能体接续：生成交接 brief → 复制 → 可在 Terminal 启动目标 agent */
+/** 跨智能体交接：生成交接 brief → 复制 → 可在 Terminal 启动目标 agent */
 function ContinueModal({ source, target, onClose }) {
   const { t } = useLang();
   const [res, setRes]         = useState(null);
@@ -1229,7 +1390,7 @@ function ContinueModal({ source, target, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
+    <div className="electron-no-drag fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl mx-4 max-h-[88vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 flex items-center gap-3">
@@ -1427,7 +1588,11 @@ function AppDetailModal({ app, onClose }) {
       <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-3xl mx-4 max-h-[92vh] overflow-y-auto flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-3 px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 sticky top-0 bg-white dark:bg-zinc-800 z-10">
-          <span className="text-xl">{app.icon}</span>
+          {(() => {
+            const brand = brandIconFor(app);
+            if (brand) return <img src={brand} alt="" className="w-6 h-6 object-contain" />;
+            return isAppIcon(app.icon) ? appIconSvg(app.icon, 'w-6 h-6') : <span className="text-xl">{app.icon}</span>;
+          })()}
           <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">{t('gateway.detail.usageTitle', { name: app.name })}</h3>
           <select value={days} onChange={e => setDays(+e.target.value)}
             className="text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1 outline-none text-zinc-600 dark:text-zinc-300">
@@ -1611,7 +1776,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
   useEffect(() => { if (externalRoutes?.length) setRoutes(externalRoutes); }, [externalRoutes]);
   const [settings, setSettings] = useState(null);     // 设置弹窗对应的 app（编辑/桌面应用托管）
   const [manualDraft, setManualDraft] = useState(null); // 手工添加的内联面板对应的 app
-  const [appStats, setAppStats] = useState({});     // id → {calls,tokens,lastTs}
+  const [appStats, setAppStats] = useState({});     // id → {calls,tokens,lastTs}（当天用量）
   const [loading,  setLoading]  = useState(true);   // 首次加载中（应用检测较慢）→ 显示加载特效而非空状态
 
   const load = useCallback(async () => {
@@ -1710,7 +1875,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
   async function addCustom() {
     // draft:true → 列表不显示这条临时条目（只在内联面板里编辑），保存时清除草稿标记才出现。
     const created = await appsApi.create({
-      name: t('gateway.apps.newAppName'), icon: '🔧', link_method: 'manual',
+      name: t('gateway.apps.newAppName'), icon: 'icon:cube', link_method: 'manual',
       route_id: defaultRouteId() || null, draft: true,
     }).catch(() => null);
     if (created?.id) setManualDraft({ ...created, _isNew: true });
@@ -1727,9 +1892,14 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
 
   const [busyId, setBusyId] = useState(null);
   const [notice, setNotice] = useState({});   // id → 提示文字
-  function showNotice(id, msg, ms = 6000) {
+  const noticeTimers = useRef({});            // id → 自动隐藏定时器
+  function showNotice(id, msg, ms = 3000) {
+    if (noticeTimers.current[id]) clearTimeout(noticeTimers.current[id]);
     setNotice(n => ({ ...n, [id]: msg }));
-    setTimeout(() => setNotice(n => { const c = { ...n }; delete c[id]; return c; }), ms);
+    noticeTimers.current[id] = setTimeout(() => {
+      setNotice(n => { const c = { ...n }; delete c[id]; return c; });
+      delete noticeTimers.current[id];
+    }, ms);
   }
 
   // 纳管/还原：
@@ -1748,14 +1918,14 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
       await appsApi.update({ id: appId, hosted: true, route_id: null }).catch(() => {});
       if (app.host_method === 'config-file') {
         await appsApi.revertConfigFile({ app_id: appId, config_file: app.config_file }).catch(() => {});
-        showNotice(appId, t('gateway.apps.managedOfficial'));
+        showNotice(appId, t('gateway.apps.restartToApply'));
       } else if (app.link_method === 'shim' && app.agent_id) {
         await window.electronAPI.agents?.revert(app.agent_id).catch(() => {});
-        showNotice(appId, t('gateway.apps.managedOfficialShell'));
+        showNotice(appId, t('gateway.apps.restartToApply'));
       } else if (app.link_method === 'direct') {
-        showNotice(appId, t('gateway.apps.managedSession'));
+        showNotice(appId, t('gateway.apps.restartToApply'));
       } else {
-        showNotice(appId, t('gateway.apps.managedOfficialShort'));
+        showNotice(appId, t('gateway.apps.restartToApply'));
       }
     } else {
       const msg = app.link_method === 'direct'
@@ -1765,10 +1935,10 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
       setBusyId(appId);
       if (app.link_method === 'shim' && app.agent_id) {
         await window.electronAPI.agents?.revert(app.agent_id).catch(() => {});
-        showNotice(appId, t('gateway.apps.revertedShell'));
+        showNotice(appId, t('gateway.apps.restartToApply'));
       } else if (app.host_method === 'config-file') {
         await appsApi.revertConfigFile({ app_id: appId, config_file: app.config_file }).catch(() => {});
-        showNotice(appId, t('gateway.apps.revertedApp'));
+        showNotice(appId, t('gateway.apps.restartToApply'));
       } else if (app.link_method === 'direct') {
         showNotice(appId, t('gateway.apps.untracked'));
       }
@@ -1781,16 +1951,32 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
 
   // 转发测试：用该应用的 api_key 向网关发一个最小请求，验证转发是否成功
   const [testState, setTestState] = useState({});   // appId -> {busy|ok|error|latency}
-  async function runAppTest(app) {
+  const testHideTimers = useRef({});
+  function scheduleTestHide(appId, ms = 3000) {
+    if (testHideTimers.current[appId]) clearTimeout(testHideTimers.current[appId]);
+    testHideTimers.current[appId] = setTimeout(() => {
+      setTestState(s => { const n = { ...s }; delete n[appId]; return n; });
+      delete testHideTimers.current[appId];
+    }, ms);
+  }
+  async function runAppTest(app, routeValue) {
     const key = app.api_key;
     if (!key) return;   // 无 key（未托管/虚拟行）不能测
     setTestState(s => ({ ...s, [app.id]: { busy: true } }));
-    // 模型优先用绑定的路由；否则第一个可用真实模型；再否则一个占位
-    const model = app.route_id
-      ? (routes.some(r => r.model_key === app.route_id || r.id === app.route_id)
-          ? app.route_id
-          : (modelIdFromRoute(app.route_id, routes) || app.route_id))
+    // 测试用的模型必须与下拉框「实际显示值」一致：用 routeValue（受控 <select> 的当前值）
+    // 而非 app.route_id —— 绑定失效/不在选项内时下拉显示为空，测试也应按显示值走。
+    const routeVal = routeValue ?? app.route_id;
+    const model = routeVal
+      ? (routes.some(r => r.model_key === routeVal || r.id === routeVal)
+          ? routeVal
+          : (modelIdFromRoute(routeVal, routes) || routeVal))
       : (availableModels[0]?.id || 'gpt-4o');
+    // 关键：网关按 keyScene（应用绑定）改写真实模型，会覆盖请求体里的 model。切换路由后
+    // keyScene 可能滞后（持久化了 route_id、下拉已更新，但网关内存绑定还是上一次的模型），
+    // 导致测到上一次的模型。测试前把「下拉显示的绑定」写回并同步网关，确保 keyScene 与显示值一致。
+    if (routeVal && routeVal !== '') {
+      try { await appsApi.update({ id: app.id, route_id: routeVal }); } catch {}
+    }
     const base = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/$/, '');
     const start = Date.now();
     // 流式 + max_tokens:1：首块计延迟（首字），但把流读完整，让网关正常结束并落账
@@ -1830,7 +2016,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
     } finally {
       clearTimeout(timer);
     }
-    setTimeout(() => setTestState(s => ({ ...s, [app.id]: null })), 8000);
+    scheduleTestHide(app.id);
   }
   // 写入某 api-key 应用的配置文件指向网关（解析 {BASE}/{KEY}，处理冲突/失败）。
   // 返回 true=成功。onAbort：冲突取消/写入失败时的回滚回调（新建时删条目；重新纳管不删）。
@@ -1841,7 +2027,8 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
     const claudeName = (claudeModels && claudeModels[0]) || 'claude-sonnet-4-5';
     const route = routes.find(x => x.model_key === app.route_id || x.id === app.route_id);
     let label = null;
-    if (route) label = `${route.icon || '🔀'} ${route.scene_name}`;
+    // labelOverride 写入配置文件，只能是纯文本：图标集 id（icon:xxx）不拼进去，仅保留 emoji。
+    if (route) label = (route.icon && !route.icon.startsWith('icon:') ? `${route.icon} ` : '') + route.scene_name;
     else if (app.route_id) label = modelIdFromRoute(app.route_id, routes) || app.route_id;
     if (!label) return [];                          // 未绑路由（直连）→ 用默认
     return [{ name: claudeName, labelOverride: label }];
@@ -1893,7 +2080,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
     }).catch(() => null);
     if (created?.id) await appsApi.update({ id: created.id, hosted: true }).catch(() => {});
     setBusyId(null);
-    if (created?.id) showNotice(created.id, t('gateway.apps.managedDefault'));
+    if (created?.id) showNotice(created.id, t('gateway.apps.restartToApply'));
     await load();
   }
 
@@ -1963,9 +2150,10 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                 {t('gateway.apps.empty')}
               </div>
             ) : (
-              <div className={`flex flex-col divide-y divide-zinc-100 dark:divide-zinc-800/60 border border-zinc-200 dark:border-zinc-700/60 rounded-xl overflow-hidden ${visibleApps.length > 20 ? 'max-h-[min(75vh,900px)] overflow-y-auto' : ''}`}>
+              <div className={`border border-zinc-200/70 dark:border-white/[0.07] rounded-2xl overflow-hidden bg-white dark:bg-zinc-800/40 shadow-sm ${visibleApps.length > 20 ? 'max-h-[min(75vh,900px)] overflow-y-auto' : ''}`}>
+                <div className="overflow-x-auto">
                 {/* 表头（超过 20 个时列表滚动，表头吸顶）*/}
-                <div className={`${APPS_TABLE_GRID} py-1.5 bg-zinc-50 dark:bg-zinc-800/50 text-xs font-medium text-zinc-400 dark:text-zinc-500 sticky top-0 z-10 border-b border-zinc-100 dark:border-zinc-800`}>
+                <div className={`${APPS_TABLE_GRID} py-2.5 bg-zinc-50 dark:bg-zinc-800/80 text-[11px] font-semibold tracking-wide text-zinc-400 dark:text-zinc-500 sticky top-0 z-10 border-b border-zinc-200/70 dark:border-white/[0.06]`}>
                   <span className="text-base text-center shrink-0 invisible">🔧</span>
                   <div className="min-w-0">{t('gateway.apps.colApp')}</div>
                   <div className="text-center min-w-0">{t('gateway.apps.colStatus')}</div>
@@ -2002,7 +2190,14 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                   const currentRouteValue = (() => {
                     if (!app.route_id) return '';
                     const val = routeSelectValue(app.route_id, availableModels, routes);
-                    const known = isKnownRouteSelectValue(val, availableModels, routes);
+                    // known 必须与下方「实际渲染的 option 集合」完全一致，否则受控 <select>
+                    // 的 value 指向不存在的 option → 显示停留在旧选项、与实际 value 错位。
+                    // 渲染的 option = usable 场景路由(model_key/id) + tier∈{free,p2p,paid} 的模型(tier:id)。
+                    const avail = new Set(availableModels.map(m => m.id));
+                    const usableRoutes = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
+                    const known =
+                      usableRoutes.some(r => (r.model_key || r.id) === val)
+                      || availableModels.some(m => ['free', 'p2p', 'paid'].includes(m.tier) && modelTierKey(m) === val);
                     if (keyApp && !isDirectOnly) return known ? val : '';
                     if (!tracked) return '';
                     return known ? val : '';
@@ -2024,13 +2219,13 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                   return (
                     // 离线不整行压暗（否则操作按钮看着像禁用）；离线感由灰底/灰点/「离线」标签/
                     // 图标灰度/灰名体现，操作按钮保持全亮可点（含「测试」）。
-                    <div key={app.id} className={`${APPS_TABLE_GRID} py-2.5 transition-colors ${rowBg}`}>
+                    <div key={app.id} className={`${APPS_TABLE_GRID} py-3 transition-colors border-t border-zinc-100/80 dark:border-white/[0.05] ${rowBg}`}>
                       {/* 图标 + 名称（命中品牌则用 lobehub logo，否则回退 emoji）*/}
                       {(() => {
                         const brand = brandIconFor(app);
-                        return brand
-                          ? <img src={brand} alt="" className={`w-[18px] h-[18px] mx-auto object-contain shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`} />
-                          : <span className={`text-base text-center shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`}>{app.icon}</span>;
+                        if (brand) return <img src={brand} alt="" className={`w-[18px] h-[18px] mx-auto object-contain shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`} />;
+                        if (isAppIcon(app.icon)) return appIconSvg(app.icon, `w-[18px] h-[18px] mx-auto shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`);
+                        return <span className={`text-base text-center shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`}>{app.icon}</span>;
                       })()}
                       <div
                         className={`text-xs font-medium truncate min-w-0 ${isActive ? 'text-zinc-800 dark:text-zinc-100' : 'text-zinc-400 dark:text-zinc-500'}`}
@@ -2043,20 +2238,18 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                         <span className={`text-xs font-medium truncate ${statusText}`}>{statusLabel}</span>
                       </div>
 
-                      {/* 接入方式列 */}
-                      <div className="min-w-0 text-xs text-zinc-400 truncate">
+                      {/* 接入方式列（居中，与表头对齐）*/}
+                      <div className="min-w-0 text-xs text-zinc-400 truncate text-center">
                         {linkMethodLabel(app.link_method, t)}
                       </div>
 
                       {/* 统计：请求数 / token / 最后使用（点击打开用量明细）*/}
-                      <div className="contents cursor-pointer" title={t('gateway.apps.statsTitle')} onClick={() => setDetailApp(app)}>
-                        <div className="text-center min-w-0 overflow-hidden tabular-nums text-xs font-semibold text-zinc-700 dark:text-zinc-200 rounded hover:bg-zinc-100/60 dark:hover:bg-zinc-700/30">{st.calls > 0 ? st.calls.toLocaleString() : '—'}</div>
-                        <div className="text-center min-w-0 overflow-hidden tabular-nums text-xs font-semibold text-zinc-700 dark:text-zinc-200 rounded hover:bg-zinc-100/60 dark:hover:bg-zinc-700/30">{st.tokens > 0 ? fmtTokens(st.tokens) : '—'}</div>
-                        <div className="text-center min-w-0 overflow-hidden text-xs font-medium text-zinc-600 dark:text-zinc-300 rounded hover:bg-zinc-100/60 dark:hover:bg-zinc-700/30">{fmtTime(st.lastTs)}</div>
-                      </div>
+                      <div className="text-center overflow-hidden tabular-nums text-xs font-semibold text-zinc-700 dark:text-zinc-200 rounded hover:bg-zinc-100/60 dark:hover:bg-zinc-700/30 cursor-pointer" title={t('gateway.apps.statsTitle')} onClick={() => setDetailApp(app)}>{st.calls > 0 ? st.calls.toLocaleString() : '—'}</div>
+                      <div className="text-center overflow-hidden tabular-nums text-xs font-semibold text-zinc-700 dark:text-zinc-200 rounded hover:bg-zinc-100/60 dark:hover:bg-zinc-700/30 cursor-pointer" title={t('gateway.apps.statsTitle')} onClick={() => setDetailApp(app)}>{st.tokens > 0 ? fmtTokens(st.tokens) : '—'}</div>
+                      <div className="text-center overflow-hidden text-xs font-medium text-zinc-600 dark:text-zinc-300 rounded hover:bg-zinc-100/60 dark:hover:bg-zinc-700/30 cursor-pointer" title={t('gateway.apps.statsTitle')} onClick={() => setDetailApp(app)}>{fmtTime(st.lastTs)}</div>
 
                       {/* 路由下拉槽 */}
-                      <div className="min-w-0">
+                      <div className="min-w-0 overflow-hidden">
                       {(((keyApp || app.link_method === 'shim') && app.route_bindable !== false) || isDirectOnly) && !app._virtual_apikey && (
                       <select
                         value={currentRouteValue}
@@ -2070,8 +2263,8 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                           // 选模型/路由 = 纳管 + 走网关（hosted:true）；直连官方(空) = 还原配置/撤 shim，保持纳管
                           if (app.host_method === 'config-file') {        // Claude Desktop 等 config-file 应用
                             await appsApi.update({ id: app.id, route_id: val, ...(val ? { hosted: true } : {}) }).catch(() => {});
-                            if (val) { await writeApiKeyConfig({ ...app, route_id: val }); showNotice(app.id, t('gateway.apps.routeSwitchedApp')); }   // 写配置→网关
-                            else     { await appsApi.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {}); showNotice(app.id, t('gateway.apps.routeOfficialApp')); }
+                            if (val) { await writeApiKeyConfig({ ...app, route_id: val }); showNotice(app.id, t('gateway.apps.restartToApply')); }   // 写配置→网关
+                            else     { await appsApi.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {}); showNotice(app.id, t('gateway.apps.restartToApply')); }
                           } else if (app.link_method === 'shim' && app.agent_id) {  // CLI 透明托管
                             let appId = app.id;
                             if (app._virtual) {
@@ -2079,8 +2272,8 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                               if (created) appId = created.id;
                             }
                             await appsApi.update({ id: appId, route_id: val, ...(val ? { hosted: true } : {}) }).catch(() => {});
-                            if (val) { await window.electronAPI.agents?.apply(app.agent_id).catch(() => {}); showNotice(appId, t('gateway.apps.routeSwitchedShell')); }   // 注入 shim → 网关
-                            else     { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); showNotice(appId, t('gateway.apps.routeOfficialShell')); }
+                            if (val) { await window.electronAPI.agents?.apply(app.agent_id).catch(() => {}); showNotice(appId, t('gateway.apps.restartToApply')); }   // 注入 shim → 网关
+                            else     { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); showNotice(appId, t('gateway.apps.restartToApply')); }
                           } else {                                          // 纯 api-key / manual
                             await appsApi.update({
                               id: app.id,
@@ -2093,7 +2286,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                           setBusyId(null);
                           await load();
                         }}
-                        className="w-full text-[11px] bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-1.5 py-1 outline-none text-zinc-600 dark:text-zinc-400 disabled:opacity-40 disabled:cursor-not-allowed">
+                        className="w-full min-w-0 max-w-full text-[11px] bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-1.5 py-1 outline-none text-zinc-600 dark:text-zinc-400 disabled:opacity-40 disabled:cursor-not-allowed">
                         {/* Cursor 等仅官方订阅应用：固定一项；manual 必须绑路由；其余可选官方订阅或走网关 */}
                         {isManual
                           ? <option value="" disabled>{t('gateway.app.routeRequired')}</option>
@@ -2105,7 +2298,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                             <>
                               {usable.length > 0 && (
                                 <optgroup label={t('gateway.app.sceneRoutes')}>
-                                  {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
+                                  {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon && !r.icon.startsWith('icon:') ? r.icon + ' ' : ''}{r.scene_name}</option>)}
                                 </optgroup>
                               )}
                               {tierOptgroups(availableModels, t)}
@@ -2116,122 +2309,104 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                       )}
                       </div>
 
-                      {/* 操作区：转发测试 + 操作按钮（同一列，便于表头居中）*/}
-                      <div className="flex items-center justify-end gap-2 flex-nowrap overflow-visible">
+                      {/* 操作区：单列；测试/提示状态单独一行避免裁切 */}
+                      <div className="min-w-0 overflow-hidden">
+                        <div className="flex items-center justify-end gap-1.5 min-w-0 max-w-full overflow-hidden">
                       {(app.api_key || isDirectOnly) && (() => {
                         const ts = testState[app.id];
                         return (
-                          <>
-                            {ts && !ts.busy && (
-                              <span title={ts.ok ? `${ts.latency}ms` : ts.error}
-                                className={`text-xs font-mono shrink-0 max-w-[120px] truncate ${ts.ok ? 'text-green-500 dark:text-green-400' : 'text-red-400'}`}>
-                                {ts.ok ? `✓ ${ts.latency}ms` : `✗ ${ts.error}`}
-                              </span>
-                            )}
-                            <button onClick={() => runAppTest(app)} disabled={ts?.busy || !isGatewayRouted}
-                              className={`text-xs px-2 py-1 rounded-lg border transition-colors shrink-0 ${ts?.busy
-                                ? 'border-zinc-300 dark:border-zinc-600 text-zinc-400 opacity-60 cursor-wait'
-                                : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-blue-400 hover:text-blue-500'} disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-zinc-200 disabled:hover:text-zinc-500`}>
-                              {ts?.busy ? t('gateway.common.testing') : t('gateway.common.test')}
-                            </button>
-                          </>
+                          <button onClick={() => runAppTest(app, currentRouteValue)} disabled={ts?.busy || !isGatewayRouted}
+                            className={`text-xs px-1.5 py-1 rounded-lg border transition-colors shrink-0 ${ts?.busy
+                              ? 'border-zinc-300 dark:border-zinc-600 text-zinc-400 opacity-60 cursor-wait'
+                              : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-blue-400 hover:text-blue-500'} disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-zinc-200 disabled:hover:text-zinc-500`}>
+                            {ts?.busy ? t('gateway.common.testing') : t('gateway.common.test')}
+                          </button>
                         );
                       })()}
-
-                      {/* 操作按钮 */}
+                      {!app._virtual_apikey ? (
+                        <button onClick={() => setSettings(app)}
+                          className="text-xs px-1.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0">
+                          {t('gateway.common.settings')}
+                        </button>
+                      ) : null}
                       {isDirectOnly ? (
-                        /* 仅官方订阅（cursor 等）：只读会话统计，设置/测试在走网关时可用，还原=取消纳管停统计 */
-                        <>
-                          <button onClick={() => setSettings(app)}
-                            className="text-xs px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0">
-                            {t('gateway.common.settings')}
+                        tracked ? (
+                          <button onClick={() => setTracked(app, false)} disabled={busyId === app.id}
+                            title={t('gateway.apps.revertTitle')}
+                            className="text-xs px-1.5 py-1 rounded-lg border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
+                            {busyId === app.id ? '…' : t('gateway.common.revert')}
                           </button>
-                          {tracked ? (
-                            <button onClick={() => setTracked(app, false)} disabled={busyId === app.id}
-                              title={t('gateway.apps.revertTitle')}
-                              className="text-xs px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
-                              {busyId === app.id ? '…' : t('gateway.common.revert')}
-                            </button>
-                          ) : (
-                            <button onClick={() => setTracked(app, true)} disabled={busyId === app.id}
-                              className="text-xs px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
-                              {busyId === app.id ? '…' : t('gateway.common.manage')}
-                            </button>
-                          )}
-                        </>
+                        ) : (
+                          <button onClick={() => setTracked(app, true)} disabled={busyId === app.id}
+                            className="text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
+                            {busyId === app.id ? '…' : t('gateway.common.manage')}
+                          </button>
+                        )
                       ) : app.link_method === 'shim' ? (
-                        /* 透明托管：设置 + 纳管/还原 开关（按 tracked）*/
-                        <>
-                          <button onClick={() => setSettings(app)}
-                            className="text-xs px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0">
-                            {t('gateway.common.settings')}
+                        tracked ? (
+                          <button onClick={() => setTracked(app, false)} disabled={busyId === app.agent_id || busyId === app.id}
+                            className="text-xs px-1.5 py-1 rounded-lg border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
+                            {(busyId === app.agent_id || busyId === app.id) ? '…' : t('gateway.common.revert')}
                           </button>
-                          {tracked ? (
-                            <button onClick={() => setTracked(app, false)} disabled={busyId === app.agent_id || busyId === app.id}
-                              className="text-xs px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
-                              {(busyId === app.agent_id || busyId === app.id) ? '…' : t('gateway.common.revert')}
-                            </button>
-                          ) : (
-                            <button onClick={() => setTracked(app, true)} disabled={busyId === app.agent_id || busyId === app.id}
-                              className="text-xs px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
-                              {(busyId === app.agent_id || busyId === app.id) ? '…' : t('gateway.common.manage')}
-                            </button>
-                          )}
-                        </>
+                        ) : (
+                          <button onClick={() => setTracked(app, true)} disabled={busyId === app.agent_id || busyId === app.id}
+                            className="text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
+                            {(busyId === app.agent_id || busyId === app.id) ? '…' : t('gateway.common.manage')}
+                          </button>
+                        )
                       ) : app._virtual_apikey ? (
-                        /* API Key 应用（未纳管虚拟行）：一键纳管（写配置文件指向网关），与透明托管一致 */
                         <button onClick={() => addApiKeyApp(app)} disabled={busyId === app.id}
-                          className="text-xs px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
+                          className="text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
                           {busyId === app.id ? '…' : t('gateway.common.manage')}
                         </button>
                       ) : app.host_method === 'config-file' ? (
-                        /* config-file api-key 应用：设置 + 纳管/还原；纳管/还原默认官方订阅 */
-                        <>
-                          <button onClick={() => setSettings(app)}
-                            className="text-xs px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0">
-                            {t('gateway.common.settings')}
+                        tracked ? (
+                          <button onClick={() => setTracked(app, false)} disabled={busyId === app.id}
+                            className="text-xs px-1.5 py-1 rounded-lg border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
+                            {busyId === app.id ? '…' : t('gateway.common.revert')}
                           </button>
-                          {tracked ? (
-                            <button onClick={() => setTracked(app, false)} disabled={busyId === app.id}
-                              className="text-xs px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
-                              {busyId === app.id ? '…' : t('gateway.common.revert')}
-                            </button>
-                          ) : (
-                            <button onClick={() => setTracked(app, true)} disabled={busyId === app.id}
-                              className="text-xs px-2.5 py-1 rounded-md bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
-                              {busyId === app.id ? '…' : t('gateway.common.manage')}
-                            </button>
-                          )}
-                        </>
+                        ) : (
+                          <button onClick={() => setTracked(app, true)} disabled={busyId === app.id}
+                            className="text-xs px-2.5 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 text-white disabled:opacity-40 shrink-0 font-medium transition-colors">
+                            {busyId === app.id ? '…' : t('gateway.common.manage')}
+                          </button>
+                        )
                       ) : (
-                        /* 普通 api-key 应用：设置 + 删除 */
-                        <>
-                          <button onClick={() => setSettings(app)}
-                            className="text-xs px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0">
-                            {t('gateway.common.settings')}
-                          </button>
-                          <button onClick={() => handleDeleteApp(app.id)}
-                            className="text-xs px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors shrink-0">
-                            {t('gateway.common.delete')}
-                          </button>
-                        </>
+                        <button onClick={() => handleDeleteApp(app.id)}
+                          className="text-xs px-1.5 py-1 rounded-lg border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors shrink-0">
+                          {t('gateway.common.delete')}
+                        </button>
                       )}
-                      {/* 操作结果提示（重启提醒）*/}
+                        </div>
+                      {(app.api_key || isDirectOnly) && (() => {
+                        const ts = testState[app.id];
+                        if (!ts) return null;
+                        return (
+                          <div
+                            className={`mt-0.5 text-right text-[10px] leading-tight truncate max-w-full font-mono ${ts.busy ? 'text-zinc-400' : ts.ok ? 'text-green-500 dark:text-green-400' : 'text-red-400'}`}
+                            title={ts.busy ? t('gateway.common.testing') : ts.ok ? `${ts.latency}ms` : ts.error}
+                          >
+                            {ts.busy ? t('gateway.common.testing') : ts.ok ? `✓ ${ts.latency}ms` : `✗ ${ts.error}`}
+                          </div>
+                        );
+                      })()}
                       {(() => {
                         const key = app.agent_id || app.id;
                         const msg = notice[key];
                         if (!msg) return null;
                         const isWarn = msg.startsWith('⚠');
                         return (
-                          <span className={`text-xs shrink-0 font-medium ${isWarn ? 'text-amber-500 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}`}>
-                            {msg}
-                          </span>
+                          <div
+                            className={`mt-0.5 text-right text-[10px] leading-tight truncate max-w-full ${isWarn ? 'text-amber-500 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}`}
+                            title={msg}
+                          >{msg}</div>
                         );
                       })()}
                       </div>
                     </div>
                   );
                 })}
+                </div>
               </div>
             )}
           </div>
@@ -2406,7 +2581,7 @@ function CopyButton({ text, label: labelProp, className = '' }) {
   }
   return (
     <button onClick={copy}
-      className={`text-xs px-2.5 py-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors min-w-[48px] ${className}`}>
+      className={`text-xs px-2 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors ${className}`}>
       {copied ? t('gateway.common.copiedSpace') : label}
     </button>
   );
@@ -2537,7 +2712,7 @@ function ChainEditor({ steps, setSteps, availableModels }) {
 function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
   const { t } = useLang();
   const [name, setName]   = useState(route.scene_name || '');
-  const [icon, setIcon]   = useState(route.icon || '🔀');
+  const [icon, setIcon]   = useState(route.icon || 'icon:shuffle');
   const [steps, setSteps] = useState(route.steps || []);
   const [rules, setRules] = useState(route.rules || []);
   const [clsModel, setClsModel] = useState(route.classifier?.model || '');
@@ -2563,12 +2738,17 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
   return (
     <div className="border-t border-zinc-200/60 dark:border-zinc-800/60 bg-zinc-50/50 dark:bg-zinc-800/20 px-5 py-4 space-y-3">
       <div className="flex gap-2">
-        <input value={icon} onChange={e => setIcon(e.target.value)}
-          className="w-10 bg-zinc-200 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none"
-          maxLength={2} />
         <input value={name} onChange={e => setName(e.target.value)}
           placeholder={t('gateway.route.namePlaceholder')}
           className="flex-1 bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded-lg px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-blue-500" />
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {ROUTE_ICONS.map(e => (
+          <button key={e} type="button" onClick={() => setIcon(e)} title={e.replace('icon:', '')}
+            className={`p-1.5 rounded ${icon === e ? 'bg-blue-100 dark:bg-blue-900/40 ring-1 ring-blue-400' : 'hover:bg-zinc-100 dark:hover:bg-zinc-700'}`}>
+            {appIconSvg(e, 'w-5 h-5')}
+          </button>
+        ))}
       </div>
 
       {/* 条件规则（可选）：从上到下匹配，命中即用 */}
@@ -2911,7 +3091,7 @@ function InstanceList({ keysScene, onDelete, localBase, newKeyId, routeHealth })
                     <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">{k.app_name || k.note || t('gateway.common.unnamed')}</span>
                     {k.scene_name && (
                       <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40 shrink-0">
-                        {k.icon} {k.scene_name}
+                        {k.icon && !k.icon.startsWith('icon:') ? k.icon + ' ' : ''}{k.scene_name}
                       </span>
                     )}
                   </div>
@@ -2984,6 +3164,10 @@ export default function Gateway() {
   const [routes, setRoutes]               = useState([]);
   const [expandedRoute, setExpandedRoute] = useState(null);
   const [newRoute, setNewRoute]           = useState(null);
+  const [openChains, setOpenChains]       = useState(() => new Set());  // 哪些路由展开了链路明细（默认折叠）
+  const toggleChain = (id) => setOpenChains(prev => {
+    const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next;
+  });
   const [availableModels, setAvailableModels] = useState([]);
 
   // Keys list
@@ -3044,11 +3228,10 @@ export default function Gateway() {
     refresh();
     loadSceneData();
     loadAvailableModels();
-    const id = setInterval(() => {
-      refresh();
-      loadAvailableModels();
-    }, 5000);
-    return () => clearInterval(id);
+    // 状态/统计保持 5s 实时刷新；/v1/models（供给模型列表）变化很慢，单独用 60s 轮询降频。
+    const statsId  = setInterval(refresh, 5000);
+    const modelsId = setInterval(loadAvailableModels, 60000);
+    return () => { clearInterval(statsId); clearInterval(modelsId); };
   }, [refresh, loadSceneData, loadAvailableModels]);
 
   // ── Computed stats ──────────────────────────────────────────────────────────
@@ -3248,7 +3431,7 @@ export default function Gateway() {
         {/* 操作栏：新建（蓝色，最左）｜说明｜在线同步（最右）——布局与应用列表一致 */}
         <div className="flex items-center gap-2 px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 flex-wrap">
           <button
-            onClick={() => { if (newRoute) { setNewRoute(null); } else { setExpandedRoute(null); setNewRoute({ scene_name: '', icon: '🔀', steps: [] }); } }}
+            onClick={() => { if (newRoute) { setNewRoute(null); } else { setExpandedRoute(null); setNewRoute({ scene_name: '', icon: 'icon:shuffle', steps: [] }); } }}
             className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white transition-colors"
           >{t('gateway.route.new')}</button>
           <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('gateway.route.hint')}</span>
@@ -3266,7 +3449,8 @@ export default function Gateway() {
             const ftMs = health.first_token_ms;
             // 本地供给源是否缺少该路由用到的模型（缺则名称前的点也标红）
             const availSet = new Set(availableModels.map(m => m.id));
-            const routeMissing = (route.steps || []).some(s => !availSet.has(s.model || s.label));
+            const _allSteps = [...(route.steps || []), ...(route.rules || []).flatMap(r => r.steps || [])];
+            const routeMissing = _allSteps.some(s => !availSet.has(s.model || s.label));
             const healthDot =
               routeMissing ? 'bg-red-500' :
               health.status === 'error' ? 'bg-red-500' :
@@ -3280,25 +3464,75 @@ export default function Gateway() {
               health.status === 'ok'
                 ? [health.degraded ? t('gateway.route.degradedShort') : t('gateway.route.runningOk'), ftLabel].filter(Boolean).join(' · ')
                 : t('gateway.route.noRequests');
+            // 折叠行：把一条链渲染成 pill 序列（带 → 连接、tier 配色、缺失/激活态）。
+            const chainPills = (steps) => (steps || []).map((step, i) => {
+              const stepTier = resolveStepTier(step.model || step.label, step, availableModels);
+              const stepName = step.model || step.label;
+              const isActive = health.activeStep === stepName;
+              const isFailed = health.triedSteps?.includes(stepName);
+              const missing = !availSet.has(stepName);
+              return (
+                <React.Fragment key={i}>
+                  {i > 0 && <span className="text-zinc-300 dark:text-zinc-600 text-xs">→</span>}
+                  <span title={missing ? t('gateway.route.missingModelTitle') : undefined}
+                    className={`inline-flex items-center gap-1 text-xs font-mono px-2 py-0.5 rounded-md border transition-all ${
+                      isActive
+                        ? 'bg-green-100 dark:bg-green-900/40 border-green-400 dark:border-green-600 text-green-800 dark:text-green-200'
+                        : missing
+                          ? 'bg-red-50 dark:bg-red-900/20 border-red-300 dark:border-red-700 text-red-600 dark:text-red-300'
+                          : tierStyle(stepTier)
+                    }`}>
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                      isActive ? 'bg-green-500' : (missing || isFailed) ? 'bg-red-500' : tierDot(stepTier)
+                    }`} />
+                    {step.label || step.model}
+                    <span className="opacity-40">({tierShortLabel(stepTier, t)})</span>
+                  </span>
+                </React.Fragment>
+              );
+            });
+            // 规则 when → 人类可读条件（如「输入Token > 50000」）。
+            const _typeLabels = Object.fromEntries(ruleCondTypes(t).map(x => [x.type, x.label]));
+            const _opLabels = ruleOpLabel(t);
+            const conditionLabel = (when) => {
+              if (!when) return '';
+              return `${_typeLabels[when.type] || when.type} ${_opLabels[when.op] || when.op} ${when.value ?? ''}`.trim();
+            };
+            const hasRules = (route.rules || []).length > 0;
             return (
             <div key={route.id}>
               <div
                 className="flex items-center gap-3 px-5 py-3 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/30 transition-colors"
-                onClick={() => setExpandedRoute(expandedRoute === route.id ? null : route.id)}
+                onClick={() => toggleChain(route.id)}
+                title={t('gateway.route.toggleChain')}
               >
-                <span className="text-base shrink-0">{route.icon}</span>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
+                  className={`w-3.5 h-3.5 shrink-0 text-zinc-400 transition-transform ${openChains.has(route.id) ? 'rotate-90' : ''}`}>
+                  <path d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+                </svg>
+                {isAppIcon(route.icon)
+                  ? appIconSvg(route.icon, 'w-5 h-5 shrink-0')
+                  : <span className="text-base shrink-0">{route.icon}</span>}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span title={healthTitle} className={`w-2 h-2 rounded-full shrink-0 ${healthDot}`} />
                     <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{route.scene_name}</span>
                     {route.model_key && (
                       <>
-                        <span className="text-xs font-mono px-1.5 py-0.5 rounded-md bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 shrink-0">
+                        <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-zinc-100/70 dark:bg-zinc-800/60 text-zinc-400 dark:text-zinc-500 shrink-0">
                           {route.model_key}
                         </span>
                         <span onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(route.model_key); }}
                           className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 cursor-pointer transition-colors shrink-0">{t('gateway.common.copy')}</span>
                       </>
+                    )}
+                    {routeMissing && (
+                      <span title={t('gateway.route.missingModels')} className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 text-amber-600 dark:text-amber-400 shrink-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3 shrink-0">
+                          <path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                        </svg>
+                        {t('gateway.route.needReset')}
+                      </span>
                     )}
                     {health.degraded && (
                       <span className="text-xs px-1 py-0.5 rounded bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800/40 text-rose-600 dark:text-rose-400 shrink-0">
@@ -3311,51 +3545,31 @@ export default function Gateway() {
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                    {(() => {
-                      const steps = route.steps || [];
-                      return (<>
-                        {steps.map((step, i) => {
-                          const stepTier = resolveStepTier(step.model || step.label, step, availableModels);
-                          const stepName = step.model || step.label;
-                          const isActive = health.activeStep === stepName;
-                          const isFailed = health.triedSteps?.includes(stepName);
-                          const missing = !availSet.has(stepName);
-                          return (
-                            <React.Fragment key={i}>
-                              {i > 0 && <span className="text-zinc-300 dark:text-zinc-600 text-xs">→</span>}
-                              <span title={missing ? t('gateway.route.missingModelTitle') : undefined}
-                                className={`inline-flex items-center gap-1 text-xs font-mono px-2 py-0.5 rounded-md border transition-all ${
-                                  isActive
-                                    ? 'bg-green-100 dark:bg-green-900/40 border-green-400 dark:border-green-600 text-green-800 dark:text-green-200'
-                                    : missing
-                                      ? 'bg-red-50 dark:bg-red-900/20 border-red-300 dark:border-red-700 text-red-600 dark:text-red-300'
-                                      : tierStyle(stepTier)
-                                }`}>
-                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                                  isActive ? 'bg-green-500' : (missing || isFailed) ? 'bg-red-500' : tierDot(stepTier)
-                                }`} />
-                                {step.label || step.model}
-                                <span className="opacity-40">({tierShortLabel(stepTier, t)})</span>
-                              </span>
-                            </React.Fragment>
-                          );
-                        })}
-                        {!steps.length && <span className="text-xs text-zinc-400">{t('gateway.route.noStepsShort')}</span>}
-                        {routeMissing && (
-                          <span className="text-xs text-red-500 dark:text-red-400 ml-1 shrink-0">{t('gateway.route.missingModelsWarn')}</span>
-                        )}
-                      </>);
-                    })()}
+                  {openChains.has(route.id) && expandedRoute !== route.id && (
+                  <div className="mt-1.5 space-y-1">
+                    {/* 多规则：逐条「条件 → 链」*/}
+                    {(route.rules || []).map((rule, ri) => (
+                      <div key={ri} className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[11px] px-1.5 py-0.5 rounded bg-blue-50/70 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 shrink-0">{conditionLabel(rule.when)}</span>
+                        <span className="text-zinc-300 dark:text-zinc-600 text-xs">→</span>
+                        {rule.steps?.length ? chainPills(rule.steps) : <span className="text-xs text-zinc-400">{t('gateway.route.noStepsShort')}</span>}
+                      </div>
+                    ))}
+                    {/* 默认链（有规则时加「默认」前缀以区分）*/}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {hasRules && <span className="text-[11px] px-1.5 py-0.5 rounded bg-zinc-100/70 dark:bg-zinc-800/60 text-zinc-400 dark:text-zinc-500 shrink-0">{t('gateway.route.defaultChain')}</span>}
+                      {(route.steps || []).length ? chainPills(route.steps) : <span className="text-xs text-zinc-400">{t('gateway.route.noStepsShort')}</span>}
+                    </div>
                   </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
                   <button onClick={() => setExpandedRoute(expandedRoute === route.id ? null : route.id)}
-                    className="text-xs px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
+                    className="text-xs px-2 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
                     {expandedRoute === route.id ? t('gateway.common.collapse') : t('gateway.common.edit')}
                   </button>
                   <button onClick={() => removeRoute(route.id)}
-                    className="text-xs px-2 py-1 rounded-md border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+                    className="text-xs px-2 py-1 rounded-lg border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
                     {t('gateway.common.delete')}
                   </button>
                 </div>

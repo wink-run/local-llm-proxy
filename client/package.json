@@ -56,6 +56,7 @@
       "node_modules/better-sqlite3/**/*"
     ],
     "npmRebuild": true,
+    "artifactName": "Token-Bank-${version}-${arch}.${ext}",
     "publish": {
       "provider": "github",
       "owner": "wink-run",
@@ -73,7 +74,8 @@
     },
     "win": {
       "icon": "build/icon.ico",
-      "target": "nsis"
+      "target": "nsis",
+      "artifactName": "Token-Bank-Setup-${version}.${ext}"
     },
     "linux": {
       "target": "AppImage"
