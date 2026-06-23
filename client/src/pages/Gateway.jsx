@@ -2046,6 +2046,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
       const env   = {}; for (const [k, v] of Object.entries(app.env   || {})) env[k]   = resolveTpl(v);
       if (isGatewayConfig) {   // 显式 inferenceModels（不走 modelDiscovery，绕开 Anthropic 名校验）
         delete patch.modelDiscoveryEnabled;
+        patch.chatTabEnabled = true;              // 3P 网关模式下开启 Chat 标签
         patch.coworkEgressAllowedHosts = ['*'];
         patch.disableDeploymentModeChooser = true;
         const im = buildInferenceModels(app);

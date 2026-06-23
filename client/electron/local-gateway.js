@@ -104,20 +104,231 @@ let _getLocalConfig = null;
 
 // ── Format conversion (Anthropic ↔ OpenAI) ───────────────────────────────────
 
-function anthropicToOpenai(body) {
-  const messages = [...(body.messages || [])];
-  if (body.system) messages.unshift({ role: 'system', content: body.system });
+// 纯文本 Code 模型（火山 Coding Plan 等不支持 image_url 输入）
+const _TEXT_ONLY_MODELS = new Set([
+  'deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner',
+  'glm-4.7', 'glm-4.6', 'glm-5', 'glm-5.1', 'glm-4-flash', 'glm-4-air',
+  'doubao-seed-2.0-code', 'doubao-seed-code', 'doubao-seed-2.0-code-preview',
+  'ark-code-latest', 'minimax-m2', 'minimax-m2.1', 'minimax-m2.5',
+]);
+
+function providerModelType(model, provider) {
+  const list = provider?.models;
+  if (!Array.isArray(list)) return null;
+  for (const m of list) {
+    const id = typeof m === 'string' ? m : (m.name || m.id);
+    if (id === model) return typeof m === 'string' ? 'chat' : (m.type || 'chat');
+  }
+  return null;
+}
+
+function modelSupportsVision(model, provider) {
+  const t = providerModelType(model, provider);
+  if (t === 'image') return true;
+  if (t === 'chat') return false;
+  return !_TEXT_ONLY_MODELS.has(String(model || '').toLowerCase());
+}
+
+// Anthropic image.source → OpenAI image_url
+function anthropicImageSourceToUrl(source) {
+  if (!source || typeof source !== 'object') return null;
+  if (source.type === 'base64' && source.data) {
+    const mt = source.media_type || 'image/jpeg';
+    return `data:${mt};base64,${source.data}`;
+  }
+  if (source.type === 'url' && source.url) return source.url;
+  return null;
+}
+
+function anthropicBlockToOaiPart(block, opts = {}) {
+  if (!block || typeof block !== 'object') return null;
+  const includeImages = opts.includeImages !== false;
+  switch (block.type) {
+    case 'text':
+      return block.text != null ? { type: 'text', text: String(block.text) } : null;
+    case 'image': {
+      if (!includeImages) return { type: 'text', text: '[图片]' };
+      const url = anthropicImageSourceToUrl(block.source);
+      return url ? { type: 'image_url', image_url: { url } } : { type: 'text', text: '[图片]' };
+    }
+    // thinking 等 Anthropic 专有块：OAI 上游不识别，跳过
+    case 'thinking':
+    case 'redacted_thinking':
+      return null;
+    default:
+      return null;
+  }
+}
+
+function toolResultContentToString(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.map((b) => {
+      if (typeof b === 'string') return b;
+      if (b?.type === 'text') return b.text || '';
+      if (b?.type === 'image') return '[image]';
+      return '';
+    }).filter(Boolean).join('\n');
+  }
+  return content != null ? String(content) : '';
+}
+
+function anthropicSystemToOai(system) {
+  if (system == null) return null;
+  if (typeof system === 'string') return system;
+  if (Array.isArray(system)) {
+    return system.map((b) => {
+      if (typeof b === 'string') return b;
+      if (b?.type === 'text') return b.text || '';
+      return '';
+    }).filter(Boolean).join('\n');
+  }
+  return String(system);
+}
+
+function anthropicToolsToOai(tools) {
+  if (!Array.isArray(tools)) return undefined;
+  const out = tools.map((t) => {
+    if (!t || typeof t !== 'object') return null;
+    if (t.type === 'custom') return null;
+    return {
+      type: 'function',
+      function: {
+        name: t.name || '',
+        description: t.description || '',
+        parameters: t.input_schema || t.parameters || { type: 'object', properties: {} },
+      },
+    };
+  }).filter(Boolean);
+  return out.length ? out : undefined;
+}
+
+function anthropicToolChoiceToOai(toolChoice) {
+  if (toolChoice == null) return undefined;
+  if (typeof toolChoice === 'string') return toolChoice;
+  if (typeof toolChoice !== 'object') return undefined;
+  if (toolChoice.type === 'tool' && toolChoice.name) {
+    return { type: 'function', function: { name: toolChoice.name } };
+  }
+  if (toolChoice.type === 'any') return 'required';
+  if (toolChoice.type === 'auto' || toolChoice.type === 'none') return toolChoice.type;
+  return undefined;
+}
+
+// 将 Anthropic messages 转为 OpenAI chat.completions 消息列表
+function anthropicMessagesToOai(messages, opts = {}) {
+  const out = [];
+  for (const msg of messages || []) {
+    if (!msg || !msg.role) continue;
+    const { content, role } = msg;
+
+    if (typeof content === 'string') {
+      out.push({ role, content });
+      continue;
+    }
+    if (!Array.isArray(content)) {
+      out.push({ role, content: content != null ? content : '' });
+      continue;
+    }
+
+    if (role === 'assistant') {
+      const textParts = [];
+      const toolCalls = [];
+      for (const block of content) {
+        if (block?.type === 'text' && block.text) textParts.push(block.text);
+        else if (block?.type === 'tool_use') {
+          toolCalls.push({
+            id: block.id,
+            type: 'function',
+            function: {
+              name: block.name || '',
+              arguments: JSON.stringify(block.input != null ? block.input : {}),
+            },
+          });
+        }
+      }
+      const oaiMsg = { role: 'assistant' };
+      if (textParts.length) oaiMsg.content = textParts.join('');
+      else if (!toolCalls.length) oaiMsg.content = '';
+      if (toolCalls.length) oaiMsg.tool_calls = toolCalls;
+      out.push(oaiMsg);
+      continue;
+    }
+
+    if (role === 'user') {
+      const toolResults = [];
+      const parts = [];
+      for (const block of content) {
+        if (block?.type === 'tool_result') {
+          toolResults.push({
+            role: 'tool',
+            tool_call_id: block.tool_use_id,
+            content: toolResultContentToString(block.content),
+          });
+        } else {
+          const p = anthropicBlockToOaiPart(block, opts);
+          if (p) parts.push(p);
+        }
+      }
+      out.push(...toolResults);
+      if (parts.length === 1 && parts[0].type === 'text') out.push({ role: 'user', content: parts[0].text });
+      else if (parts.length) out.push({ role: 'user', content: parts });
+      continue;
+    }
+
+    if (role === 'system') {
+      const text = content.map((b) => anthropicBlockToOaiPart(b, opts)).filter(Boolean).map((p) => p.text).join('\n');
+      out.push({ role: 'system', content: text || '' });
+      continue;
+    }
+
+    const parts = content.map((b) => anthropicBlockToOaiPart(b, opts)).filter(Boolean);
+    if (parts.length === 1 && parts[0].type === 'text') out.push({ role, content: parts[0].text });
+    else if (parts.length) out.push({ role, content: parts });
+    else out.push({ role, content: '' });
+  }
+  return out;
+}
+
+// 兜底：把 OAI 消息里残留的 image_url 换成文本占位
+function stripImagesFromOaiMessages(messages) {
+  for (const msg of messages || []) {
+    if (!Array.isArray(msg.content)) continue;
+    const next = [];
+    for (const part of msg.content) {
+      if (part?.type === 'image_url') next.push({ type: 'text', text: '[图片]' });
+      else if (part) next.push(part);
+    }
+    if (!next.length) msg.content = '';
+    else if (next.length === 1 && next[0].type === 'text') msg.content = next[0].text;
+    else msg.content = next;
+  }
+}
+
+function anthropicToOpenai(body, opts = {}) {
+  const oaiMessages = anthropicMessagesToOai(body.messages || [], opts);
+  const sys = anthropicSystemToOai(body.system);
+  const messages = (sys != null && sys !== '')
+    ? [{ role: 'system', content: sys }, ...oaiMessages.filter((m) => m.role !== 'system')]
+    : oaiMessages;
+
   const oai = { model: body.model || '', messages, stream: !!body.stream };
   if (body.max_tokens  != null) oai.max_tokens  = body.max_tokens;
   if (body.temperature != null) oai.temperature = body.temperature;
   if (body.top_p       != null) oai.top_p       = body.top_p;
   if (body.stop_sequences)      oai.stop        = body.stop_sequences;
+  const tools = anthropicToolsToOai(body.tools);
+  if (tools) oai.tools = tools;
+  const toolChoice = anthropicToolChoiceToOai(body.tool_choice);
+  if (toolChoice != null) oai.tool_choice = toolChoice;
+  if (opts.includeImages === false) stripImagesFromOaiMessages(oai.messages);
   return oai;
 }
 
 function openaiToAnthropic(oai, model) {
   const choice = (oai.choices || [{}])[0];
-  const text   = ((choice.message || {}).content) || '';
+  const msg    = choice.message || {};
+  const text   = msg.content || msg.reasoning_content || '';
   const finish = choice.finish_reason || 'stop';
   const usage  = oai.usage || {};
   return {
@@ -462,8 +673,7 @@ function proxyConvertStream(provider, oaiBody, model, res) {
       method: 'POST', headers, timeout: 120_000,
     }, (proxyRes) => {
       if (proxyRes.statusCode >= 400) {
-        proxyRes.resume();
-        return reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode }));
+        return readProxyError(proxyRes, reject);
       }
       if (res.headersSent) { proxyRes.resume(); return reject(new Error('headers_already_sent')); }
 
@@ -498,7 +708,9 @@ function proxyConvertStream(provider, oaiBody, model, res) {
           try {
             const c      = JSON.parse(ds);
             const choice = (c.choices || [{}])[0];
-            const text   = (choice.delta || {}).content || '';
+            const delta  = choice.delta || {};
+            // kimi 等模型经火山 v3 转发时文本可能在 reasoning_content
+            const text   = delta.content || delta.reasoning_content || '';
             const finish = choice.finish_reason;
             if (text) {
               if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
@@ -1223,10 +1435,11 @@ async function callProvider(provider, isAnthropic, streaming, reqPath, body, att
       : await proxyResponsesViaChat(provider, rb, attemptModel, res);
   }
   const attemptBody = { ...body, model: attemptModel };
+  const oaiConvertOpts = { includeImages: modelSupportsVision(attemptModel, provider) };
 
   // Gemini provider（generateContent）：先把客户端请求归一成 OpenAI 体，再转 Gemini
   if (isGeminiProvider(provider)) {
-    const oaiBody = isAnthropic ? anthropicToOpenai(attemptBody) : attemptBody;
+    const oaiBody = isAnthropic ? anthropicToOpenai(attemptBody, oaiConvertOpts) : attemptBody;
     return streaming
       ? await proxyGeminiStream(provider, oaiBody, attemptModel, res, isAnthropic)
       : await proxyGeminiSync(provider, oaiBody, attemptModel, res, isAnthropic);
@@ -1246,7 +1459,7 @@ async function callProvider(provider, isAnthropic, streaming, reqPath, body, att
     }
   }
 
-  const oaiBody = isAnthropic ? anthropicToOpenai(attemptBody) : null;
+  const oaiBody = isAnthropic ? anthropicToOpenai(attemptBody, oaiConvertOpts) : null;
   if (isAnthropic) {
     return streaming
       ? await proxyConvertStream(provider, oaiBody, attemptModel, res)

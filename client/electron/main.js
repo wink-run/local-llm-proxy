@@ -32,6 +32,143 @@ const CLAUDE_3P_CONFIG_DIR = (() => {
   return path.join(home, '.config', 'Claude-3p', 'configLibrary');
 })();
 
+// Claude Desktop 数据目录（原生 1P + 3P 各一份 claude_desktop_config.json）
+function claudeDesktopDataDirs() {
+  const home = os.homedir();
+  if (process.platform === 'win32') {
+    const base = path.join(home, 'AppData', 'Local');
+    return [path.join(base, 'Claude'), path.join(base, 'Claude-3p')];
+  }
+  if (process.platform === 'darwin') {
+    const base = path.join(home, 'Library', 'Application Support');
+    return [path.join(base, 'Claude'), path.join(base, 'Claude-3p')];
+  }
+  const base = path.join(home, '.config');
+  return [path.join(base, 'Claude'), path.join(base, 'Claude-3p')];
+}
+
+// 还原 Claude Desktop 到官方 1P：除 configLibrary 外还需清 deploymentMode=3p、修补破损 _meta
+function revertClaudeDesktopOfficialExtras() {
+  for (const dir of claudeDesktopDataDirs()) {
+    const cfg = path.join(dir, 'claude_desktop_config.json');
+    try {
+      if (!fs.existsSync(cfg)) continue;
+      const obj = JSON.parse(fs.readFileSync(cfg, 'utf8'));
+      if (obj.deploymentMode !== '3p') continue;
+      delete obj.deploymentMode;
+      fs.writeFileSync(cfg, JSON.stringify(obj, null, 2), 'utf8');
+    } catch (e) { console.warn('[claude] clear deploymentMode', cfg, e.message); }
+  }
+  try {
+    if (!fs.existsSync(CLAUDE_3P_CONFIG_DIR)) return;
+    // 删除/还原仍残留的 gateway 配置
+    for (const f of fs.readdirSync(CLAUDE_3P_CONFIG_DIR)) {
+      if (!f.endsWith('.json') || f === '_meta.json') continue;
+      const p = path.join(CLAUDE_3P_CONFIG_DIR, f);
+      try {
+        const c = JSON.parse(fs.readFileSync(p, 'utf8'));
+        if (c.inferenceProvider !== 'gateway' && c._configManagedBy !== 'tokenbank') continue;
+        const bak = p + '.tokenbank-bak';
+        if (fs.existsSync(bak)) fs.copyFileSync(bak, p);
+        else fs.unlinkSync(p);
+      } catch {}
+    }
+    // _meta.appliedId 指向已删文件时 Claude 会卡在 3P 半残状态
+    const metaPath = path.join(CLAUDE_3P_CONFIG_DIR, '_meta.json');
+    if (!fs.existsSync(metaPath)) return;
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    const entries = (meta.entries || []).filter(e => fs.existsSync(path.join(CLAUDE_3P_CONFIG_DIR, e.id + '.json')));
+    if (!entries.length) {
+      try { fs.unlinkSync(metaPath); } catch {}
+    } else {
+      meta.entries = entries;
+      if (!entries.some(e => e.id === meta.appliedId)) meta.appliedId = entries[0].id;
+      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
+    }
+  } catch (e) { console.warn('[claude] revert configLibrary extras', e.message); }
+}
+
+function isClaude3pConfigLibraryFile(file) {
+  if (!file || typeof file !== 'string') return false;
+  try {
+    const base = path.basename(file);
+    return path.resolve(file).startsWith(path.resolve(CLAUDE_3P_CONFIG_DIR) + path.sep)
+      && base.endsWith('.json') && base !== '_meta.json';
+  } catch { return false; }
+}
+
+// 纳管写入前解析目标路径；configLibrary 无既有配置时生成新 UUID 文件
+function resolveClaude3pWriteTarget(file) {
+  fs.mkdirSync(CLAUDE_3P_CONFIG_DIR, { recursive: true });
+  if (isClaude3pConfigLibraryFile(file)) {
+    return { file, configId: path.basename(file, '.json') };
+  }
+  const configId = require('crypto').randomUUID();
+  return { file: path.join(CLAUDE_3P_CONFIG_DIR, configId + '.json'), configId };
+}
+
+// Claude 只读 _meta.appliedId 指向的配置；写入后必须确保 _meta 存在且 appliedId 对齐
+function ensureClaude3pMeta(configId, name = 'Token Bank') {
+  if (!configId || configId === '_meta') return;
+  fs.mkdirSync(CLAUDE_3P_CONFIG_DIR, { recursive: true });
+  const metaPath = path.join(CLAUDE_3P_CONFIG_DIR, '_meta.json');
+  let meta = { appliedId: configId, entries: [{ id: configId, name }] };
+  try {
+    if (fs.existsSync(metaPath)) {
+      const existing = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+      const entries = Array.isArray(existing.entries) ? existing.entries.filter(e => e && e.id) : [];
+      const idx = entries.findIndex(e => e.id === configId);
+      if (idx >= 0) entries[idx] = { ...entries[idx], name: entries[idx].name || name };
+      else entries.push({ id: configId, name });
+      meta = { ...existing, appliedId: configId, entries };
+    }
+  } catch {}
+  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
+}
+
+function isClaudeDesktopApp(app_id) {
+  if (String(app_id || '').includes('claude-desktop')) return true;
+  try {
+    const app = (readLocalConfig()?.apps || []).find(a => a.id === app_id);
+    return app?.preset_id === 'claude-desktop';
+  } catch { return false; }
+}
+
+function shouldUseClaude3pConfigWrite({ app_id, config_file, file }) {
+  if (isClaudeDesktopApp(app_id)) return true;
+  if (isClaude3pConfigLibraryFile(file)) return true;
+  const cf = String(config_file || '');
+  return cf.includes('CLAUDE_3P') || cf.includes('Claude-3p/configLibrary');
+}
+
+// 已有 gateway 配置但缺 _meta 时补齐（如历史写入未命中 app_id 判断）
+function repairClaude3pMetaIfNeeded() {
+  try {
+    if (!fs.existsSync(CLAUDE_3P_CONFIG_DIR)) return;
+    const configs = fs.readdirSync(CLAUDE_3P_CONFIG_DIR)
+      .filter(f => f.endsWith('.json') && f !== '_meta.json');
+    if (!configs.length) return;
+    const metaPath = path.join(CLAUDE_3P_CONFIG_DIR, '_meta.json');
+    if (fs.existsSync(metaPath)) {
+      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+      const id = meta.appliedId || (meta.entries && meta.entries[0] && meta.entries[0].id);
+      if (id && fs.existsSync(path.join(CLAUDE_3P_CONFIG_DIR, id + '.json'))) return;
+    }
+    for (const f of configs) {
+      try {
+        const c = JSON.parse(fs.readFileSync(path.join(CLAUDE_3P_CONFIG_DIR, f), 'utf8'));
+        if (c.inferenceProvider === 'gateway' || c._configManagedBy === 'tokenbank') {
+          ensureClaude3pMeta(path.basename(f, '.json'));
+          console.log('[claude] repaired _meta.json for', f);
+          return;
+        }
+      } catch {}
+    }
+    ensureClaude3pMeta(path.basename(configs[0], '.json'));
+    console.log('[claude] repaired _meta.json for', configs[0]);
+  } catch (e) { console.warn('[claude] repair _meta', e.message); }
+}
+
 // Claude Desktop 开发者模式状态：configLibrary 是否存在且非空
 // 空 = 用户还没在 Claude Desktop 启用 Developer Mode（Help → Troubleshooting → Enable Developer Mode）
 function claudeDevModeReady() {
@@ -1686,7 +1823,15 @@ function registerIPC() {
       const cl = require('./config-loader');
       let file = cl.resolvePlaceholders(String(config_file || ''), {});
       file = cl.expandHome(file);
-      if (!file) return { ok: false, error: 'no-config-file' };
+      const isClaudeDesktop = shouldUseClaude3pConfigWrite({ app_id, config_file, file });
+      let claudeConfigId = null;
+      if (isClaudeDesktop) {
+        const resolved = resolveClaude3pWriteTarget(file);
+        file = resolved.file;
+        claudeConfigId = resolved.configId;
+      } else if (!file) {
+        return { ok: false, error: 'no-config-file' };
+      }
       // 纳管 = 备份原配置文件（整份，仅首次），再写入我们的配置（整份替换）。
       // 不合并、不检测冲突、不预扫描内容——状态完全跟随用户操作。
       const bak = file + '.tokenbank-bak';
@@ -1721,8 +1866,12 @@ function registerIPC() {
       }
       // 状态跟随操作：标记该应用已纳管
       setAppHosted(app_id, true);
+      // Claude Desktop：写入后补齐 _meta.json，否则网关配置 Claude 读不到
+      if (isClaudeDesktop || isClaude3pConfigLibraryFile(file)) {
+        ensureClaude3pMeta(claudeConfigId || path.basename(file, '.json'));
+      }
       // Claude Desktop 接管后立即同步一次（定期同步另有 30s 兜底）
-      if (String(app_id || '').includes('claude-desktop')) runClaude3pSync('takeover');
+      if (isClaudeDesktop) runClaude3pSync('takeover');
       return { ok: true, file, envCount };
     } catch (e) { return { ok: false, error: (e.stderr ? e.stderr.toString() : e.message).slice(0, 300) }; }
   });
@@ -1740,6 +1889,8 @@ function registerIPC() {
           try { if (fs.existsSync(file)) fs.unlinkSync(file); } catch {}  // 原本无文件 → 删掉我们建的
         }
       }
+      // Claude Desktop：configLibrary 之外还有 deploymentMode=3p 与 _meta 残留
+      if (isClaudeDesktopApp(app_id)) revertClaudeDesktopOfficialExtras();
       // 注意：不在此改 hosted。直连(还原配置)仍保持纳管；「还原」按钮由渲染层显式置 hosted=false。
       return { ok: true };
     } catch (e) { return { ok: false, error: e.message }; }
@@ -2086,6 +2237,7 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   registerIPC();
+  repairClaude3pMetaIfNeeded();
   // Claude Desktop ↔ 3p 会话同步：启动一次 + 每 30s 一次（覆盖运行期间新建的会话，修复"新会话纳管后不同步"）
   runClaude3pSync('startup');
   setInterval(() => runClaude3pSync('interval'), 30000);
