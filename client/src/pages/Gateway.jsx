@@ -2086,6 +2086,8 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                               ...(val ? { hosted: true } : {}),
                             }).catch(() => {});
                           }
+                          // config-file 应用（Claude Desktop）切换路由 = 纳管/还原 → 顺带同步一次会话（不等 30s 定时）
+                          if (app.host_method === 'config-file') { try { await window.electronAPI.claude3p?.sync(); } catch {} }
                           setBusyId(null);
                           await load();
                         }}

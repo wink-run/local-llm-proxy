@@ -263,6 +263,22 @@ function setupAutoUpdater() {
 
 // ── Agent config helpers ──────────────────────────────────────────────────────
 
+// Claude Desktop ↔ 3p 会话同步（启动/接管/定期共用；增量去重，无新增时近乎零成本）
+function runClaude3pSync(reason) {
+  try {
+    const sync = require('./claude-3p-session-sync');
+    const code = sync.syncCodeSessionsBidirectional();
+    const cowork = sync.syncCoworkSessionsBidirectional();
+    const copied = ((code.toP3 && code.toP3.copied) || 0) + ((code.toNative && code.toNative.copied) || 0)
+      + (cowork.toP3 || 0) + (cowork.toNative || 0);
+    // 定期同步只在真有新增时打日志，避免刷屏
+    if (copied > 0 || reason !== 'interval') {
+      console.log(`[3p-sync] ${reason}: code →3p ${(code.toP3 && code.toP3.copied) || 0}/→native ${(code.toNative && code.toNative.copied) || 0}`
+        + ` | cowork →3p ${cowork.toP3 || 0}/→native ${cowork.toNative || 0}`);
+    }
+  } catch (e) { console.warn(`[3p-sync] ${reason} failed:`, e && e.message); }
+}
+
 function readAgentConfig() {
   try { return JSON.parse(fs.readFileSync(AGENT_CONFIG_PATH, 'utf-8')); }
   catch { return null; }
@@ -746,6 +762,8 @@ function registerIPC() {
     return usageMod.fetchUsage(entry, usageDeps);
   });
   ipcMain.handle('usage:fetchAll', async () => usageMod.fetchAllUsage(usageDeps));
+  // 应用列表切换路由（纳管/还原 Claude Desktop）时前端可主动触发一次会话同步（不等 30s 定时）
+  ipcMain.handle('claude3p:sync', () => { runClaude3pSync('app-switch'); return { ok: true }; });
 
   // Write Claude Code config into ~/.claude/settings.local.json
   ipcMain.handle('claude:configure', async (_e, { baseUrl, apiKey, models = [] }) => {
@@ -1703,16 +1721,8 @@ function registerIPC() {
       }
       // 状态跟随操作：标记该应用已纳管
       setAppHosted(app_id, true);
-      // Claude Desktop 接管后：双向同步 Code + Cowork 会话（3p 看到代理前会话 + 代理期间会话回流原生）
-      if (String(app_id || '').includes('claude-desktop')) {
-        try {
-          const sync = require('./claude-3p-session-sync');
-          const code = sync.syncCodeSessionsBidirectional();
-          const cowork = sync.syncCoworkSessionsBidirectional();
-          console.log(`[3p-sync] takeover: code →3p ${(code.toP3 && code.toP3.copied) || 0}/→native ${(code.toNative && code.toNative.copied) || 0}`
-            + ` | cowork →3p ${cowork.toP3 || 0}/→native ${cowork.toNative || 0}`);
-        } catch (e) { console.warn('[3p-sync] takeover failed:', e && e.message); }
-      }
+      // Claude Desktop 接管后立即同步一次（定期同步另有 30s 兜底）
+      if (String(app_id || '').includes('claude-desktop')) runClaude3pSync('takeover');
       return { ok: true, file, envCount };
     } catch (e) { return { ok: false, error: (e.stderr ? e.stderr.toString() : e.message).slice(0, 300) }; }
   });
@@ -2065,14 +2075,9 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   registerIPC();
-  // 启动时增量同步 Claude Desktop ↔ 3p 会话（Code：只搬索引、transcript 同源；Cowork：整沙箱搬 + 路径改写）
-  try {
-    const sync = require('./claude-3p-session-sync');
-    const code = sync.syncCodeSessionsBidirectional();
-    const cowork = sync.syncCoworkSessionsBidirectional();
-    console.log(`[3p-sync] startup: code →3p ${(code.toP3 && code.toP3.copied) || 0}/→native ${(code.toNative && code.toNative.copied) || 0}`
-      + ` | cowork →3p ${cowork.toP3 || 0}/→native ${cowork.toNative || 0}`);
-  } catch (e) { console.warn('[3p-sync] startup failed:', e && e.message); }
+  // Claude Desktop ↔ 3p 会话同步：启动一次 + 每 30s 一次（覆盖运行期间新建的会话，修复"新会话纳管后不同步"）
+  runClaude3pSync('startup');
+  setInterval(() => runClaude3pSync('interval'), 30000);
   // Init local SQLite stats DB（与 CLI 共用 ~/.tokenbank）
   localStats.init(STATS_DIR);
   gateway.setStatsRecorder(localStats.record);

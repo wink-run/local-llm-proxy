@@ -53,6 +53,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     fetch:    (provider) => ipcRenderer.invoke('usage:fetch', { provider }),
     fetchAll: ()         => ipcRenderer.invoke('usage:fetchAll'),
   },
+  claude3p: {
+    sync: () => ipcRenderer.invoke('claude3p:sync'),
+  },
   llm: {
     fetch: (url, options) => ipcRenderer.invoke('llm:fetch', { url, ...options }),
     stream: ({ url, method, headers, body }, onChunk, onDone, onError) => {
