@@ -64,7 +64,7 @@ function catalogToState(catalog, oauthById) {
     defaults.push({
       id: p.id,
       type: p.type,
-      enabled: !!p.enabled_default,
+      enabled: !!p.enabled_default || !!p.keyless, // 免 key 供给源默认启用（已存本地配置在合并时优先，不覆盖用户手动禁用）
       token: '',
       base_url: p.base_url || '',
       models: [],
@@ -225,6 +225,10 @@ function buildPersonalPaidPool(allProviders, paidIds, userPayg = [], userSubs = 
   }
   return pool;
 }
+
+// OAuth 订阅 source_id(=oauth provider) → catalog provider id。
+// catalog 缺 plan_provider_id 映射时回退，让已登记的 Claude/Codex/Copilot OAuth 订阅仍能进 picker 直接登录。
+const OAUTH_SUB_SOURCE_TO_PID = { claude: 'anthropic-paid', codex: 'openai', copilot: 'github-copilot' };
 
 /** 个人页登记项 → 供给源选择器条目（渲染端回退；Electron 优先用 billing-config 下发） */
 function buildGatewayPickerEntries(userSubs, userPayg, subscriptionCatalog) {
@@ -1317,6 +1321,11 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
                 {meta.label}
               </span>
               <StatusBadge enabled={provider.enabled} hasKey={hasKey || hasOauth} keyless={meta.keyless && !oauthCap} />
+              {(meta.keyless || provider.type === 'free') && (
+                <span className="text-xs px-1.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50 shrink-0">
+                  {t('providers.badge.freeQuota')}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2 shrink-0">
               {!isP2P && provider.enabled && (
@@ -1576,11 +1585,23 @@ export default function Providers() {
       setProviderGatewayAuth(r.provider_gateway_auth || {});
       setUserSubscriptions(r.user_subscriptions || []);
       setSubscriptionCatalog(r.subscription_catalog || []);
-      setGatewayPickerEntries(
-        r.gateway_picker_entries?.length
-          ? r.gateway_picker_entries
-          : buildGatewayPickerEntries(r.user_subscriptions, r.user_payg_providers, r.subscription_catalog),
-      );
+      const baseEntries = r.gateway_picker_entries?.length
+        ? r.gateway_picker_entries
+        : buildGatewayPickerEntries(r.user_subscriptions, r.user_payg_providers, r.subscription_catalog);
+      // catalog 缺 plan_provider_id 映射时，已登记的 OAuth 订阅(Claude/Codex/Copilot)仍补进 picker，可直接登录
+      const havePid = new Set(baseEntries.map(e => e.providerId));
+      const oauthFallback = (r.user_subscriptions || [])
+        .filter(s => s.subscription_to_api && s.subscription_kind !== 'api' && !s.custom
+          && OAUTH_SUB_SOURCE_TO_PID[s.source_id] && !havePid.has(OAUTH_SUB_SOURCE_TO_PID[s.source_id]))
+        .map(s => ({
+          providerId: OAUTH_SUB_SOURCE_TO_PID[s.source_id],
+          pickerKey: `sub:${s.source_id}`,
+          label: s.app_name || s.source_id,
+          icon: s.app_icon || '🔷',
+          authMode: 'oauth',
+          source: 'subscription',
+        }));
+      setGatewayPickerEntries([...baseEntries, ...oauthFallback]);
       setStatsOnlyIds(r.stats_only_provider_ids || []);
       setUserPayg(r.user_payg_providers || []);
       setProviderPricing(r.provider_pricing || {});
@@ -1728,7 +1749,7 @@ export default function Providers() {
   }, []);
 
   function addCustomProvider() {
-    navigate('/', { state: { accountsTab: 'payg' } });
+    navigate('/account', { state: { accountsTab: 'payg' } });
   }
 
   const goPersonalPage = () => navigate('/account', { state: { accountsTab: 'subscription' } });
@@ -1759,7 +1780,8 @@ export default function Providers() {
     }
   }, [providers, addingId]);
 
-  const tiers = ['free', 'p2p', 'paid'];
+  // 本地源(API=free / 订阅=paid) 相邻，远程源(p2p) 最后
+  const tiers = ['free', 'paid', 'p2p'];
 
   return (
     <div className="px-5 py-5 space-y-6">
@@ -1780,10 +1802,10 @@ export default function Providers() {
 
         if (tier === 'p2p') {
           return (
-            <section key={tier} className="space-y-3">
+            <section key={tier} className="space-y-3 pt-4 border-t border-zinc-100 dark:border-zinc-800/60">
               <div className="flex items-center gap-2">
-                <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
-                <h2 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">{cfg.label}</h2>
+                <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
+                <h2 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">{t('providers.group.remote')}</h2>
                 <span className="text-xs text-zinc-400 dark:text-zinc-500">{cfg.hint}</span>
               </div>
               <div className={`grid ${cfg.cols} gap-3`}>
@@ -1847,10 +1869,13 @@ export default function Providers() {
 
         return (
           <section key={tier} className="space-y-3">
-            <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
-              <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{cfg.label}</h2>
-              <span className="text-xs text-zinc-500">{cfg.hint}</span>
+            {tier === 'free' && (
+              <h2 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">{t('providers.group.local')}</h2>
+            )}
+            <div className="flex items-center gap-2 pl-0.5">
+              <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+              <h3 className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">{cfg.label}</h3>
+              <span className="text-xs text-zinc-400 dark:text-zinc-500">{cfg.hint}</span>
             </div>
 
             <div className={`grid ${cfg.cols} gap-3`}>
@@ -1863,7 +1888,8 @@ export default function Providers() {
                   : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} userPayg={userPayg} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />;
               })}
 
-              {/* 添加供给源：始终展示；付费层无个人页账户时点开显示引导 */}
+              {/* 本地源统一添加入口：只在 paid(本地源底部) 展示一个，picker 内含 免费API + 订阅 + 按量 */}
+              {tier === 'paid' && (
               <button onClick={togglePicker}
                 className={`flex flex-col items-center justify-center gap-1.5 rounded-2xl border-2 border-dashed min-h-[90px] transition-colors ${
                   isOpen
@@ -1872,13 +1898,11 @@ export default function Providers() {
                 }`}>
                 <span className="text-xl leading-none">{isOpen ? '×' : '+'}</span>
                 <span className="text-xs font-medium">{isOpen ? t('providers.add.collapse') : t('providers.add.expand')}</span>
-                {!isOpen && tier === 'paid' && paidAccountsLoaded && !hasGatewayPaid && (
-                  <span className="text-xs text-amber-500 dark:text-amber-400">{t('providers.add.needProfile')}</span>
-                )}
                 {!isOpen && disabledPickerEntries.length > 0 && (
                   <span className="text-xs text-zinc-300 dark:text-zinc-600">{t('providers.add.availableCount', { n: disabledPickerEntries.length })}</span>
                 )}
               </button>
+              )}
             </div>
 
             {/* Picker panel */}
@@ -1887,12 +1911,6 @@ export default function Providers() {
                 {tier === 'paid' && !paidAccountsLoaded && (
                   <p className="text-xs text-zinc-400">{t('providers.add.loadingAccounts')}</p>
                 )}
-                {tier === 'paid' && paidAccountsLoaded && !hasGatewayPaid ? (
-                  <>
-                    <PersonalPageHint onGo={goPersonalPage} />
-                    <StatsOnlyHint names={statsOnlyLabels} />
-                  </>
-                ) : (
                 <>
                 <StatsOnlyHint names={statsOnlyLabels} />
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">
@@ -1902,6 +1920,41 @@ export default function Providers() {
                 </p>
                 {tier === 'paid' ? (
                   <div className="space-y-3">
+                    {/* 免费 API 可添加（本地源统一入口的一部分）*/}
+                    {(() => {
+                      // 本地 API 区：所有 API 类源（免费 + 付费 API），排除 OAuth 订阅类(在订阅区) 和已登记的(在订阅/按量区)
+                      const oauthPids = new Set(Object.values(OAUTH_SUB_SOURCE_TO_PID));
+                      const entryPids = new Set(disabledPickerEntries.map(e => e.providerId));
+                      const freeDisabled = providers.filter(pr => !pr.enabled
+                        && (pr.type === 'free' || pr.type === 'paid')
+                        && !oauthPids.has(pr.id) && !entryPids.has(pr.id));
+                      return freeDisabled.length > 0 ? (
+                        <div className="space-y-1.5">
+                          <p className="text-xs font-medium text-green-700 dark:text-green-300">
+                            {t('providers.add.freeApi')}
+                            <span className="ml-1.5 font-normal text-zinc-400 dark:text-zinc-500">{t('providers.add.freeApiHint')}</span>
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {freeDisabled.map(pr => {
+                              const m = meta[pr.id] || {};
+                              const sel = addingId === pr.id;
+                              return (
+                                <button key={pr.id} type="button" title={m.hint || ''} onClick={() => setAddingId(sel ? null : pr.id)}
+                                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
+                                    sel
+                                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
+                                      : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600'
+                                  }`}>
+                                  <span>{m.icon || '🔌'}</span>
+                                  <span>{m.label || pr.id}</span>
+                                  {(m.keyless || pr.type === 'free') && <span className="text-[10px] text-emerald-600 dark:text-emerald-400">{t('providers.add.freeTag')}</span>}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : null;
+                    })()}
                     {disabledCatalogSubEntries.length > 0 && (
                       <div className="space-y-1.5">
                         <p className="text-xs font-medium text-amber-700 dark:text-amber-300">{t('providers.add.catalogSub')}</p>
@@ -1925,6 +1978,9 @@ export default function Providers() {
                           {disabledPaygEntries.map(renderPickerButton)}
                         </div>
                       </div>
+                    )}
+                    {paidAccountsLoaded && !hasGatewayPaid && (
+                      <PersonalPageHint onGo={goPersonalPage} />
                     )}
                     {disabledPickerEntries.length === 0 && hasGatewayPaid && (
                       <p className="text-xs text-zinc-400">{t('providers.add.allAdded')}</p>
@@ -1998,7 +2054,6 @@ export default function Providers() {
                   );
                 })()}
                 </>
-                )}
               </div>
             )}
           </section>

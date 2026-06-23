@@ -437,10 +437,10 @@ export default function Debug() {
             <select value={model} onChange={e => setModel(e.target.value)}
               className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500 max-w-[220px]">
               {filteredModels.some(m => m.tier)
-                ? TIER_ORDER.map(tier => {
-                    const tms = filteredModels.filter(m => m.tier === tier);
+                ? [{ key: 'local', tiers: ['free', 'paid'] }, { key: 'remote', tiers: ['p2p'] }].map(g => {
+                    const tms = filteredModels.filter(m => g.tiers.includes(m.tier));
                     return tms.length ? (
-                      <optgroup key={tier} label={t(`debug.tier.${tier}`)}>
+                      <optgroup key={g.key} label={t(`debug.tier.${g.key}`)}>
                         {tms.map(m => <option key={`${m.tier}:${m.name}`} value={m.name}>{m.name}</option>)}
                       </optgroup>
                     ) : null;

@@ -19,6 +19,18 @@ function modelTierKey(m) {
   return encodeTierModelRoute(m.tier, m.id);
 }
 
+// 路由下拉的层级分组：本地(free+paid 合并) / 远程(p2p)。各处下拉/路由链复用。
+function tierOptgroups(availableModels, t) {
+  const local  = (availableModels || []).filter(m => m.tier === 'free' || m.tier === 'paid');
+  const remote = (availableModels || []).filter(m => m.tier === 'p2p');
+  const grp = (key, models) => (models.length ? (
+    <optgroup key={key} label={t(`gateway.app.tier.${key}`)}>
+      {models.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}
+    </optgroup>
+  ) : null);
+  return [grp('local', local), grp('remote', remote)];
+}
+
 // ── PolicyManager：策略组管理 UI ──────────────────────────────────────────────
 function strategyOptions(t) {
   return [
@@ -537,12 +549,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
               </optgroup>
             );
           })()}
-          {['free','p2p','paid'].map(tier => {
-            const tm = availableModels.filter(m => m.tier === tier);
-            if (!tm.length) return null;
-            const label = tierModelLabel(tier, t);
-            return <optgroup key={tier} label={label}>{tm.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}</optgroup>;
-          })}
+          {tierOptgroups(availableModels, t)}
         </select>
       </div>
       {app.link_method === 'manual' && (
@@ -700,12 +707,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
                 </optgroup>
               );
             })()}
-            {['free','p2p','paid'].map(tier => {
-              const tm = availableModels.filter(m => m.tier === tier);
-              if (!tm.length) return null;
-              const label = tierModelLabel(tier, t);
-              return <optgroup key={tier} label={label}>{tm.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}</optgroup>;
-            })}
+            {tierOptgroups(availableModels, t)}
           </select>
         </div>
         {/* 模型拦截：工具发过来的真实模型名 → 转发到上面选的路由 */}
@@ -2106,12 +2108,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                                   {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon} {r.scene_name}</option>)}
                                 </optgroup>
                               )}
-                              {['free','p2p','paid'].map(tier => {
-                                const tm = availableModels.filter(m => m.tier === tier);
-                                if (!tm.length) return null;
-                                const label = tierModelLabel(tier, t);
-                                return <optgroup key={tier} label={label}>{tm.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}</optgroup>;
-                              })}
+                              {tierOptgroups(availableModels, t)}
                             </>
                           );
                         })()}
@@ -2381,8 +2378,12 @@ function tierDot(tier) {
   if (tier === 'paid') return 'bg-amber-500';
   return 'bg-emerald-500';
 }
-// Short tier label for inline display, e.g. "glm-5.1(p2p)"
-const TIER_SHORT = { p2p: 'p2p', free: 'free', paid: 'paid' };
+// 路由明细 inline 短标签：远程(p2p) / 本地(free/paid)
+function tierShortLabel(tier, t) {
+  if (tier === 'p2p') return t('gateway.app.tier.remoteShort');
+  if (tier === 'free' || tier === 'paid') return t('gateway.app.tier.localShort');
+  return tier;
+}
 
 // Resolve step tier: 优先 step 上记录的 tier（同 id 跨层时），再查 availableModels
 function resolveStepTier(stepModel, step, availableModels) {
@@ -2522,9 +2523,7 @@ function ChainEditor({ steps, setSteps, availableModels }) {
           <select value={step.model && step.tier ? modelTierKey({ id: step.model, tier: step.tier }) : (step.model || '')} onChange={e => update(i, e.target.value)}
             className="flex-1 bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded-lg px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-blue-500">
             <option value="">{t('gateway.route.selectModel')}</option>
-            {free.length > 0 && <optgroup label={t('gateway.app.tier.freeLayer')}>{free.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}</optgroup>}
-            {p2p.length  > 0 && <optgroup label={t('gateway.app.tier.p2pLayer')}>{p2p.map(m =>  <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}</optgroup>}
-            {paid.length > 0 && <optgroup label={t('gateway.app.tier.paidLayer')}>{paid.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}</optgroup>}
+            {tierOptgroups(availableModels, t)}
           </select>
           <button onClick={() => remove(i)}
             className="text-xs text-zinc-400 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity px-1">✕</button>
@@ -3337,7 +3336,7 @@ export default function Gateway() {
                                   isActive ? 'bg-green-500' : (missing || isFailed) ? 'bg-red-500' : tierDot(stepTier)
                                 }`} />
                                 {step.label || step.model}
-                                <span className="opacity-40">({TIER_SHORT[stepTier] || stepTier})</span>
+                                <span className="opacity-40">({tierShortLabel(stepTier, t)})</span>
                               </span>
                             </React.Fragment>
                           );
@@ -3430,7 +3429,7 @@ export default function Gateway() {
                           e.tier === 'p2p'  ? 'text-blue-500 dark:text-blue-400' :
                           e.tier === 'paid' ? 'text-amber-500 dark:text-amber-400' :
                                               'text-green-600 dark:text-green-500'
-                        }`}>({e.tier})</span>
+                        }`}>({tierShortLabel(e.tier, t)})</span>
                       )}
                       {!e.claude_from && !isRouter && (
                         <span title={t('gateway.log.directTitle')} className="ml-1 text-xs text-zinc-400">{t('gateway.log.direct')}</span>
