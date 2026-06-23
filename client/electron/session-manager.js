@@ -4,15 +4,21 @@
 
 const { isSignal, looksLikeNoise } = require('./learn-mine');
 
-/** 将 {agentId: rows[]} 展平为单数组，打上 agent_id，按 lastTs 倒序。 */
+/** 将 {agentId: rows[]} 展平为单数组，打上 agent_id，按 (agent_id, session_id) 去重
+ *  （同一会话可能被多次列出，如跨工作区/重复解析；去重保留 lastTs 最新一条），按 lastTs 倒序。
+ *  去重很关键：会话元数据（收藏/标签/归档）按 agent_id::session_id 存，重复行会让收藏“串味”到同 id 的另一行。 */
 function mergeAgentRows(resultsByAgent = {}) {
-  const out = [];
+  const byKey = new Map();
   for (const [agentId, rows] of Object.entries(resultsByAgent)) {
     if (!Array.isArray(rows)) continue;
     for (const r of rows) {
-      out.push({ ...r, agent_id: r.agent_id || r.agent || agentId });
+      const row = { ...r, agent_id: r.agent_id || r.agent || agentId };
+      const key = `${row.agent_id}::${row.session_id}`;
+      const prev = byKey.get(key);
+      if (!prev || (row.lastTs || 0) > (prev.lastTs || 0)) byKey.set(key, row);
     }
   }
+  const out = [...byKey.values()];
   out.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
   return out;
 }
@@ -197,7 +203,7 @@ function buildSessionDigest(trace = {}, { maxSteps = 28, maxChars = 7000, headUs
 /** 组装最终交接文档（brief 已是模型产出或确定性兜底）。 */
 function composeHandoffDoc({ brief, project, sourceAgent } = {}) {
   return [
-    `# 接续工作 — ${project || 'session'}`,
+    `# 交接工作 — ${project || 'session'}`,
     `> 来源：${sourceAgent || '?'} 会话`,
     '',
     brief || '',
@@ -342,6 +348,7 @@ function buildKnowledgeCorpus(deps, { limit = 300, maxChars = 9000 } = {}) {
   const { sessionBrowser } = deps;
   const rows = sessionBrowser.listAllSessions() || [];
   const byProject = new Map(); // project -> { strong:[], weak:[] }
+  const projectPaths = {};     // project -> 本机路径（供「保存到该项目 AGENTS.md」定位默认目录）
   const seen = new Set();
   let scanned = 0;
   for (const r of rows.slice(0, limit)) {
@@ -349,6 +356,8 @@ function buildKnowledgeCorpus(deps, { limit = 300, maxChars = 9000 } = {}) {
     scanned += 1;
     if (!tr || !Array.isArray(tr.steps)) continue;
     const project = tr.project || r.project || 'unknown';
+    const ppath = tr.project_path || tr.cwd || r.project_path || null;
+    if (ppath && !projectPaths[project]) projectPaths[project] = ppath;
     let g = byProject.get(project); if (!g) { g = { strong: [], weak: [] }; byProject.set(project, g); }
     for (const s of tr.steps) {
       if (!s || s.kind !== 'user') continue;
@@ -376,7 +385,7 @@ function buildKnowledgeCorpus(deps, { limit = 300, maxChars = 9000 } = {}) {
       for (const t of byProject.get(project)[pass]) if (!push(project, t)) break outer;
     }
   }
-  return { corpus: lines.join('\n'), projects, scanned, sessions: rows.length, lineCount: lines.length };
+  return { corpus: lines.join('\n'), projects, projectPaths, scanned, sessions: rows.length, lineCount: lines.length };
 }
 
 /** 兜底：模型不可用时，把原始候选行包成基础 markdown，至少让用户看到素材。 */
@@ -392,13 +401,13 @@ function _fallbackMd(corpus) {
 
 /** 构建语料 → 让本地模型合成知识文档（AGENTS.md 内容）。 */
 async function synthesizeKnowledge(deps, opts = {}) {
-  const { corpus, projects, scanned, sessions, lineCount } = buildKnowledgeCorpus(deps, opts);
+  const { corpus, projects, projectPaths, scanned, sessions, lineCount } = buildKnowledgeCorpus(deps, opts);
   if (!corpus.trim()) return { ok: false, error: 'no_corpus', content: '', scanned, sessions };
   const r = await _callModel(KNOWLEDGE_SYSTEM, corpus, { models: KNOWLEDGE_MODELS, maxTokens: 2400, ...opts });
-  if (!r) return { ok: false, error: 'model_unavailable', content: _fallbackMd(corpus), projects, scanned, sessions, lineCount };
+  if (!r) return { ok: false, error: 'model_unavailable', content: _fallbackMd(corpus), projects, projectPaths, scanned, sessions, lineCount };
   const date = new Date().toISOString().slice(0, 10);
-  const header = `<!-- 由 Token Bank 知识提炼生成于 ${date}（模型 ${r.model}，扫描 ${scanned} 会话）。可自由编辑。 -->\n\n`;
-  return { ok: true, content: header + r.text, model: r.model, projects, scanned, sessions, lineCount };
+  const header = `<!-- 由 Token Bank 记忆提炼生成于 ${date}（模型 ${r.model}，扫描 ${scanned} 会话）。可自由编辑。 -->\n\n`;
+  return { ok: true, content: header + r.text, model: r.model, projects, projectPaths, scanned, sessions, lineCount };
 }
 
 module.exports = {

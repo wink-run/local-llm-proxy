@@ -385,7 +385,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
   ];
 
   return (
-    <div className="px-5 py-5 space-y-5 max-w-2xl">
+    <div className="px-5 py-5 space-y-5 w-full max-w-4xl mx-auto">
 
       {/* Header */}
       <div>

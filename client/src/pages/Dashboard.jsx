@@ -3,6 +3,7 @@ import { enrichDashboardBilling } from '../utils/billing-cost';
 import { loadUserAccounts } from '../api/userAccounts';
 import { useLang } from '../store/lang';
 import { RANGE_KEYS, RANGE_DAYS } from '../utils/ranges';
+import { isAppIcon, appIconSvg } from '../lib/appIcons';
 
 const PAID_PROVIDERS = ['openai', 'anthropic-paid', 'openrouter', 'anthropic'];
 const P2P_PROVIDERS  = ['tokenbank-p2p'];
@@ -12,6 +13,12 @@ const fmtCost = n => (n != null && n > 0) ? ('$' + n.toFixed(n < 0.01 ? 4 : 3)) 
 
 function linkMethodLabel(method, t) {
   return method === 'manual' ? t('common.linkApi') : t('common.linkApp');
+}
+
+/** 应用图标：icon:xxx → SVG，否则回退 emoji/文本 */
+function AppIconDisplay({ icon, className = 'w-[18px] h-[18px]' }) {
+  if (isAppIcon(icon)) return appIconSvg(icon, `${className} shrink-0`);
+  return <span className="text-base shrink-0">{icon}</span>;
 }
 
 const APP_USAGE_COLORS = [
@@ -60,7 +67,10 @@ function AppShareStrip({ rows, metric = 'tokens' }) {
         {rows.slice(0, 8).map((r, i) => (
           <span key={r.id} className="inline-flex items-center gap-1.5 text-xs text-zinc-500">
             <span className={`w-2 h-2 rounded-full shrink-0 ${APP_USAGE_COLORS[i % APP_USAGE_COLORS.length]}`} />
-            <span className="truncate max-w-[8rem]">{r.icon} {r.name}</span>
+            <span className="truncate max-w-[8rem] inline-flex items-center gap-1">
+              <AppIconDisplay icon={r.icon} className="w-3.5 h-3.5" />
+              {r.name}
+            </span>
             <span className="text-zinc-400">{Math.round(((r[metric] || 0) / total) * 100)}%</span>
           </span>
         ))}
@@ -122,7 +132,7 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
                 <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1.4fr)_4.5rem_4.5rem_4rem_minmax(0,1fr)] gap-3 items-center">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className={`w-1 h-8 rounded-full shrink-0 ${APP_USAGE_COLORS[i % APP_USAGE_COLORS.length]}`} />
-                    <span className="text-base shrink-0">{r.icon}</span>
+                    <AppIconDisplay icon={r.icon} />
                     <div className="min-w-0">
                       <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{r.name}</div>
                       <div className="text-xs text-zinc-500 truncate">

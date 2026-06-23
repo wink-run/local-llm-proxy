@@ -59,7 +59,7 @@ test('synthesizeKnowledge sends corpus to the model and returns its content', as
   const r = await synthesizeKnowledge(deps, { fetchImpl: fakeFetch });
   assert.equal(r.ok, true);
   assert.ok(r.content.includes('# 全局级'));
-  assert.ok(r.content.includes('知识提炼'), 'header comment present');
+  assert.ok(r.content.includes('记忆提炼'), 'header comment present');
   assert.ok(/项目级|全局级|概念/.test(seenSystem), 'system prompt asks for the knowledge structure');
   assert.ok(seenUser.includes('总是用 pnpm'));
 });
@@ -96,6 +96,19 @@ test('mergeAgentRows tags agent_id and sorts by lastTs desc', () => {
 test('mergeAgentRows tolerates empty / missing arrays', () => {
   const out = mergeAgentRows({ cursor: [], codex: null });
   assert.deepEqual(out, []);
+});
+
+test('mergeAgentRows dedupes same (agent_id, session_id), keeping latest lastTs', () => {
+  const out = mergeAgentRows({
+    cursor: [
+      { session_id: 'x', lastTs: 100, project: 'old' },
+      { session_id: 'x', lastTs: 300, project: 'new' },
+      { session_id: 'y', lastTs: 200, project: 'other' },
+    ],
+  });
+  assert.equal(out.length, 2, 'duplicate session_id collapsed to one');
+  const x = out.find(r => r.session_id === 'x');
+  assert.equal(x.project, 'new', 'kept the row with the latest lastTs');
 });
 
 test('joinSessionsWithMeta attaches meta and filters archived by default', () => {
@@ -187,7 +200,7 @@ test('buildSessionDigest includes header, files, and recent messages', () => {
 
 test('composeHandoffDoc wraps the brief with source + continuation instruction', () => {
   const doc = composeHandoffDoc({ brief: 'BRIEF', project: 'demo', sourceAgent: 'codex' });
-  assert.match(doc, /# 接续工作 — demo/);
+  assert.match(doc, /# 交接工作 — demo/);
   assert.match(doc, /来源：codex/);
   assert.match(doc, /BRIEF/);
   assert.match(doc, /请在当前项目继续/);

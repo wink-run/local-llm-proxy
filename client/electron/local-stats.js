@@ -468,14 +468,21 @@ function queryByApp(appId, apiKey, dataSource) {
   } catch { return { calls: 0, tokens: 0, lastTs: null }; }
 }
 
+/** 本地时区当天 0 点（unix 秒） */
+function todaySinceTs() {
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  return Math.floor(midnight.getTime() / 1000);
+}
+
 /** 时间窗口内单个应用用量（与 queryAppDetail / apps:stats 归属规则一致） */
-function queryAppStatsInPeriod({ appId, apiKey, dataSource, days = 30 } = {}) {
+function queryAppStatsInPeriod({ appId, apiKey, dataSource, days = 30, since: sinceTs } = {}) {
   const empty = {
     calls: 0, tokens: 0, cost: 0, lastTs: null,
     proxyCalls: 0, sessionCalls: 0, proxyTokens: 0, sessionTokens: 0,
   };
   if (!db || (!appId && !apiKey && !dataSource)) return empty;
-  const since = Math.floor(Date.now() / 1000) - days * 86400;
+  const since = sinceTs != null ? sinceTs : Math.floor(Date.now() / 1000) - days * 86400;
   const where =
     '(' +
     '(@appId IS NOT NULL AND app_id = @appId) OR ' +
@@ -510,6 +517,26 @@ function queryAppStatsInPeriod({ appId, apiKey, dataSource, days = 30 } = {}) {
     console.error('[local-stats] queryAppStatsInPeriod failed:', e.message);
     return empty;
   }
+}
+
+/** 当天（本地 0 点至今）请求/Token；lastTs 为历史最近使用时间（不限当天） */
+function queryAppStatsToday({ appId, apiKey, dataSource } = {}) {
+  const today = queryAppStatsInPeriod({ appId, apiKey, dataSource, since: todaySinceTs() });
+  let lastTs = null;
+  if (db && (appId || apiKey || dataSource)) {
+    try {
+      const where =
+        '(' +
+        '(@appId IS NOT NULL AND app_id = @appId) OR ' +
+        '(@apiKey IS NOT NULL AND app_id IS NULL AND api_key = @apiKey) OR ' +
+        '(@dataSource IS NOT NULL AND data_source = @dataSource)' +
+        ')';
+      const p = { appId: appId || null, apiKey: apiKey || null, dataSource: dataSource || null };
+      const r = db.prepare(`SELECT MAX(ts) AS lastTs FROM requests WHERE ${where}`).get(p);
+      lastTs = r.lastTs || null;
+    } catch { /* ignore */ }
+  }
+  return { calls: today.calls, tokens: today.tokens, lastTs };
 }
 
 /** 按 data_source 查单个工具的统计（shim 类 app 用 session-claude / session-codex 等）。*/
@@ -590,7 +617,7 @@ function setSessionMeta({ agent_id, session_id, favorite, tags, note, archived }
 
 module.exports = {
   init, record, queryDashboard, queryByApiKey, queryByApp, queryByDataSource,
-  queryAppDetail, queryAppStatsInPeriod, querySessionDetail,
+  queryAppDetail, queryAppStatsInPeriod, queryAppStatsToday, querySessionDetail,
   getImportState, setImportState, resetSessionData, close,
   listSessionMeta, getSessionMeta, setSessionMeta,
 };

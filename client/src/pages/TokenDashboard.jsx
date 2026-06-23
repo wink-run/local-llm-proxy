@@ -8,6 +8,7 @@ import UserAccountsPanel from '../components/UserAccountsPanel';
 import { enrichBillingCost } from '../utils/billing-cost';
 import { loadUserAccounts } from '../api/userAccounts';
 import { formatDeviceTitle, formatLegacyPlatform } from '../lib/device-display';
+import { isAppIcon, appIconSvg } from '../lib/appIcons';
 
 /** 从云端拉取各设备聚合盘点；失败时回退本机数据，并合并订阅折算 + 按量费用 */
 async function fetchDashboardStats(days) {
@@ -381,7 +382,12 @@ function UsageDistributionPanel({ localData, devices, rangeLabel, filterId, onFi
               const tier = proxy > 0 && session > 0 ? 'both' : proxy > 0 ? 'proxy' : 'direct';
               return {
                 key: isApp ? s.id : s.source,
-                label: isApp ? `${s.icon || '🔧'} ${s.name}` : sourceLabel(s.source, t),
+                label: isApp ? (
+                  <span className="inline-flex items-center gap-1 min-w-0">
+                    {isAppIcon(s.icon) ? appIconSvg(s.icon, 'w-3.5 h-3.5 shrink-0') : <span className="shrink-0">{s.icon || '🔧'}</span>}
+                    <span className="truncate">{s.name}</span>
+                  </span>
+                ) : sourceLabel(s.source, t),
                 title: isApp ? s.name : s.source,
                 calls: s.calls,
                 tier,
