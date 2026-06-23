@@ -303,6 +303,10 @@ export default {
   'gateway.trace.loading': '加载 Trace…',
   'gateway.trace.notFound': '未找到会话文件',
   'gateway.trace.selectStep': '选择左侧步骤查看详情',
+  'gateway.trace.toolSummary': '工具调用统计',
+  'gateway.trace.encrypted': '已加密',
+  'gateway.trace.encryptedNote': '扩展思考由 API 加密封存，本地日志仅保存加密签名，不含思考明文。',
+  'gateway.trace.noReasoning': '本步骤无思考内容',
 
   // ── 场景路由 SceneRouteEditor ──
   'gateway.route.new': '+ 新建路由',

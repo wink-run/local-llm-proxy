@@ -303,6 +303,10 @@ export default {
   'gateway.trace.loading': 'Loading trace…',
   'gateway.trace.notFound': 'Session file not found',
   'gateway.trace.selectStep': 'Select a step on the left',
+  'gateway.trace.toolSummary': 'Tool Calls',
+  'gateway.trace.encrypted': 'Encrypted',
+  'gateway.trace.encryptedNote': 'Extended thinking is sealed by the API — the local log stores only the cryptographic signature, not the reasoning text.',
+  'gateway.trace.noReasoning': 'No thinking text for this step',
 
   // ── Scene routes ──
   'gateway.route.new': '+ New route',

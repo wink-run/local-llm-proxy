@@ -266,3 +266,24 @@ test('collectGitContext never throws on missing cwd or git failure', () => {
   const boom = () => { throw new Error('ENOENT'); };
   assert.equal(collectGitContext('/tmp', { execImpl: boom }), '');
 });
+
+test('tool_result steps are labeled as tool output in pack and digest', () => {
+  const trace = {
+    project: 'demo', project_path: '/x/demo',
+    steps: [
+      { kind: 'user', text: 'run it', ts: 1 },
+      { kind: 'tool', tool: 'Bash', input: { command: 'ls' }, ts: 2 },
+      { kind: 'tool_result', tool: 'Bash', text: 'a\nb', is_error: false, ts: 3 },
+      { kind: 'tool_result', tool: 'Bash', text: 'boom', is_error: true, ts: 4 },
+    ],
+  };
+  const pack = buildSessionPackJSON({ trace, agent_id: 'claude-code', session_id: 's1' });
+  const outputs = pack.messages.filter(m => m.output);
+  assert.equal(outputs.length, 2);
+  assert.equal(outputs[0].role, 'tool');
+  assert.equal(outputs[1].is_error, true);
+
+  const d = buildSessionDigest(trace);
+  assert.match(d, /OUT: a/);
+  assert.match(d, /OUT\(err\): boom/);
+});

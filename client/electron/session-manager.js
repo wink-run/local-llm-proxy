@@ -51,7 +51,7 @@ function joinSessionsWithMeta(rows = [], metaRows = [], { showArchived = false }
   return out;
 }
 
-const ROLE_BY_KIND = { user: 'user', tool: 'tool' };
+const ROLE_BY_KIND = { user: 'user', tool: 'tool', tool_result: 'tool' };
 
 /** trace.steps → 可移植会话包（JSON）。 */
 function buildSessionPackJSON({ trace = {}, agent_id, session_id } = {}) {
@@ -73,6 +73,10 @@ function buildSessionPackJSON({ trace = {}, agent_id, session_id } = {}) {
       if (s.kind === 'tool') {
         msg.tool = s.tool || s.label || null;
         if (s.input != null) msg.input = s.input;
+      } else if (s.kind === 'tool_result') {
+        msg.tool = s.tool || null;
+        msg.output = true;
+        if (s.is_error) msg.is_error = true;
       }
       return msg;
     }),
@@ -186,6 +190,8 @@ function buildSessionDigest(trace = {}, { maxSteps = 28, maxChars = 7000, headUs
     } else if (s.kind === 'tool') {
       const f = filePathFromInput(s.input);
       lines.push(`TOOL ${s.tool || s.label || ''}${f ? ` (${f})` : ''}`.trim());
+    } else if (s.kind === 'tool_result') {
+      if (s.text) lines.push(`OUT${s.is_error ? '(err)' : ''}: ${_trunc(s.text, 200)}`);
     } else if (s.text) {
       lines.push(`AI: ${_trunc(s.text, 500)}`);
     }

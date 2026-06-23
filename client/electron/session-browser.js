@@ -34,6 +34,25 @@ function msgText(msg) {
   return '';
 }
 
+/** 提取 tool_result / function_call_output 的可读文本（string | 数组块 | {output} 等） */
+function toolResultText(content) {
+  if (content == null) return '';
+  if (typeof content === 'string') return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .map(x => (typeof x === 'string' ? x : (x?.text || x?.content || '')))
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+  }
+  if (typeof content === 'object') {
+    if (typeof content.output === 'string') return content.output.trim();
+    if (typeof content.text === 'string') return content.text.trim();
+    try { return JSON.stringify(content, null, 2); } catch { return ''; }
+  }
+  return String(content);
+}
+
 function projectLabel(projectPath) {
   if (!projectPath) return 'unknown';
   const p = String(projectPath).replace(/\\/g, '/');
@@ -264,20 +283,30 @@ function pickUsage(obj) {
 
 /** 汇总 Trace 统计（参考 tokentelemetry Session Trace 顶栏） */
 function buildTraceStats(steps, { filePath, rawLines } = {}) {
-  let tools = 0, turns = 0, reasoning = 0, artifacts = 0;
+  let tools = 0, turns = 0, reasoning = 0, artifacts = 0, toolResults = 0, skills = 0;
   let inTok = 0, outTok = 0, cached = 0;
+  const toolCounts = {};
+  const skillNames = [];
 
   for (const s of steps) {
     if (s.kind === 'tool') {
       tools++;
+      const key = s.tool || s.label || 'tool';
+      toolCounts[key] = (toolCounts[key] || 0) + 1;
       if (ARTIFACT_TOOLS.has(s.tool)) artifacts++;
+      if (s.tool === 'Skill') { skills++; if (s.skill) skillNames.push(s.skill); }
     }
+    if (s.kind === 'tool_result') toolResults++;
     if (s.kind === 'user') turns++;
     if (s.reasoning) reasoning++;
     inTok  += s.inTok  || 0;
     outTok += s.outTok || 0;
     cached += s.cached || 0;
   }
+
+  const toolBreakdown = Object.entries(toolCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, count]) => ({ name, count }));
 
   let durationMs = 0;
   if (filePath) {
@@ -296,6 +325,10 @@ function buildTraceStats(steps, { filePath, rawLines } = {}) {
   return {
     steps: steps.length,
     tools,
+    toolResults,
+    skills,
+    skillNames,
+    toolBreakdown,
     artifacts,
     reasoning,
     turns,
@@ -535,6 +568,16 @@ function getCursorTrace(sessionId) {
 
 // ── Claude Code ─────────────────────────────────────────────────────────────
 
+/** jsonl entrypoint → 展示用客户端标识（仅用于显示，不改 agent/trace 路由）。
+ *  与应用侧 data_source 拆分保持一致：claude-desktop* 全部归 Claude Desktop，
+ *  cli / 未知归 Claude Code（见 tokenbank.default.yaml 的 data_source_map）。 */
+function clientFromEntrypoint(ep) {
+  if (!ep) return null;
+  if (String(ep).startsWith('claude-desktop')) return 'claude-desktop';
+  if (ep === 'cli') return 'claude-code';
+  return null;
+}
+
 function listClaudeActivity({ limit = 50, sinceDays = 30, entrypointMatch } = {}) {
   const root = path.join(os.homedir(), '.claude/projects');
   const since = Date.now() / 1000 - (sinceDays || 30) * 86400;
@@ -593,6 +636,8 @@ function listClaudeActivity({ limit = 50, sinceDays = 30, entrypointMatch } = {}
           context: context || '(无用户消息)',
           calls, tokens: inTok + outTok, inTok, outTok, lastTs,
           agent: 'claude-code',
+          entrypoint,
+          client: clientFromEntrypoint(entrypoint),
         });
       }
     }
@@ -604,8 +649,15 @@ function listClaudeActivity({ limit = 50, sinceDays = 30, entrypointMatch } = {}
 }
 
 /** 把一组 Claude / Claude-Code 风格 jsonl 行解析为 trace steps（CLI 与 3p agent 沙箱共用）。 */
+/** 从 Skill tool_use 的 input 解析技能名（superpowers:brainstorming 等） */
+function skillNameFromInput(input) {
+  if (!input || typeof input !== 'object') return null;
+  return input.skill || input.command || input.name || null;
+}
+
 function buildClaudeStyleSteps(rawLines, timeSpan) {
   const steps = [];
+  const toolNameById = {};   // tool_use_id → 工具名（用于给 tool_result 步骤命名）
   let lineIdx = 0;
   for (const line of rawLines) {
     let data;
@@ -614,28 +666,61 @@ function buildClaudeStyleSteps(rawLines, timeSpan) {
     const usage = pickUsage(data) || pickUsage(data.message);
 
     if (data.type === 'user') {
-      steps.push({ idx: steps.length, kind: 'user', label: 'User prompt', ts,
-        text: extractContext(msgText(data.message)), ...(usage || {}) });
+      const msg = data.message || {};
+      const content = msg.content;
+      if (Array.isArray(content)) {
+        // user 行可同时承载真实输入(text)与工具回执(tool_result)，需逐块拆分
+        for (const b of content) {
+          if (b?.type === 'tool_result') {
+            const tool = toolNameById[b.tool_use_id] || null;
+            steps.push({ idx: steps.length, kind: 'tool_result',
+              label: tool ? `${tool} 输出` : 'Tool output', ts,
+              tool, tool_use_id: b.tool_use_id, is_error: !!b.is_error,
+              text: toolResultText(b.content).slice(0, 4000) });
+          } else if (b?.type === 'text' && String(b.text || '').trim()) {
+            steps.push({ idx: steps.length, kind: 'user', label: 'User prompt', ts,
+              text: extractContext(b.text), ...(usage || {}) });
+          } else if (typeof b === 'string' && b.trim()) {
+            steps.push({ idx: steps.length, kind: 'user', label: 'User prompt', ts,
+              text: extractContext(b), ...(usage || {}) });
+          }
+          // image / 其它块视为附件，忽略
+        }
+      } else {
+        const text = extractContext(msgText(msg));
+        if (text) steps.push({ idx: steps.length, kind: 'user', label: 'User prompt', ts,
+          text, ...(usage || {}) });
+      }
     } else if (data.type === 'assistant') {
       const msg = data.message || {};
       const blocks = msg.content;
+      const before = steps.length;
       if (Array.isArray(blocks)) {
         for (const b of blocks) {
           if (b?.type === 'tool_use') {
-            steps.push({ idx: steps.length, kind: 'tool', label: b.name || 'tool', ts,
-              tool: b.name, input: b.input });
+            const skill = b.name === 'Skill' ? skillNameFromInput(b.input) : null;
+            if (b.id) toolNameById[b.id] = b.name;
+            steps.push({ idx: steps.length, kind: 'tool',
+              label: skill ? `Skill · ${skill}` : (b.name || 'tool'), ts,
+              tool: b.name, ...(skill ? { skill } : {}), input: b.input });
           } else if (b?.type === 'thinking' || b?.type === 'reasoning') {
+            const think = String(b.text || b.thinking || '').trim();
+            // 扩展思考被 API 加密：本地仅存 signature，无明文（参考 tokentelemetry）
+            const encrypted = !think && !!b.signature;
             steps.push({ idx: steps.length, kind: 'assistant', label: 'Reasoning', ts,
-              reasoning: true, text: String(b.text || b.thinking || '').slice(0, 500) });
+              reasoning: true, text: think.slice(0, 500),
+              ...(encrypted ? { encrypted: true, signature: String(b.signature).slice(0, 80) } : {}) });
           } else if (b?.type === 'text') {
             steps.push({ idx: steps.length, kind: 'assistant', label: 'Assistant', ts,
-              text: String(b.text || '').slice(0, 500), ...(usage || {}) });
+              text: String(b.text || '').slice(0, 500) });
           }
         }
       } else {
         steps.push({ idx: steps.length, kind: 'assistant', label: 'Assistant', ts,
-          text: msgText(msg).slice(0, 500), ...(usage || {}) });
+          text: msgText(msg).slice(0, 500) });
       }
+      // usage 属于整条 assistant 消息，附加到本轮首个步骤一次（避免按块重复计或漏计工具轮）
+      if (usage && steps.length > before) Object.assign(steps[before], usage);
     }
     lineIdx++;
   }
@@ -661,6 +746,7 @@ function getClaudeTrace(sessionId) {
   const rawLines = fs.readFileSync(file, 'utf8').split('\n').filter(l => l.trim());
   const timeSpan = fileTimeSpan(file, rawLines.length);
   const steps = buildClaudeStyleSteps(rawLines, timeSpan);
+  const entrypoint = dominantEntrypoint(rawLines);
 
   const { project, project_path } = resolveProjectName({
     projectPath: path.dirname(file),
@@ -671,12 +757,25 @@ function getClaudeTrace(sessionId) {
   return {
     session_id: sessionId,
     agent: 'claude-code',
+    entrypoint,
+    client: clientFromEntrypoint(entrypoint),
     project,
     project_path,
     cwd: project_path,
     steps,
     stats: buildTraceStats(steps, { filePath: file, rawLines }),
   };
+}
+
+/** 从原始行统计出现最多的 entrypoint（cli / claude-desktop / claude-desktop-3p） */
+function dominantEntrypoint(rawLines) {
+  const counts = {};
+  for (const line of rawLines || []) {
+    let d;
+    try { d = JSON.parse(line); } catch { continue; }
+    if (d && d.entrypoint) counts[d.entrypoint] = (counts[d.entrypoint] || 0) + 1;
+  }
+  return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
 }
 
 // ── Codex ───────────────────────────────────────────────────────────────────
@@ -952,6 +1051,12 @@ function getCodexTrace(sessionId) {
         steps.push({
           idx: steps.length, kind: 'tool', label: p.name || 'tool', ts,
           tool: p.name, input: p.arguments,
+        });
+      } else if (p.type === 'function_call_output' || p.type === 'tool_result') {
+        const out = toolResultText(p.output ?? p.content);
+        steps.push({
+          idx: steps.length, kind: 'tool_result', label: 'Tool output', ts,
+          is_error: /(\b|")error/i.test(out.slice(0, 80)), text: out.slice(0, 4000),
         });
       } else if (p.type === 'message' && p.role === 'user') {
         const t = codexUserText(data);
@@ -1297,5 +1402,5 @@ function enrichRecentDetail(agentId, recent, activity = []) {
 module.exports = {
   listActivity, getTrace, mergeActivityWithStats, enrichTraceWithDb,
   enrichRecentDetail, assistantLineLabel, extractContext, shortProjectName, normalizeActivityRow,
-  listAllSessions,
+  listAllSessions, buildClaudeStyleSteps, buildTraceStats, toolResultText,
 };

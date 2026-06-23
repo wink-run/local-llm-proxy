@@ -12,7 +12,6 @@ import {
   encodeTierModelRoute,
   modelIdFromRoute,
   routeSelectValue,
-  isKnownRouteSelectValue,
 } from '../lib/route-binding';
 
 // tier:id 作为下拉唯一 value，避免同模型跨层选中错位
@@ -582,7 +581,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={dismiss}>
+    <div className="electron-no-drag fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={dismiss}>
       <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl mx-4 max-h-[92vh] overflow-y-auto flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-3 px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
@@ -768,6 +767,7 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
   const [trace, setTrace]     = useState(null);
   const [loading, setLoading] = useState(true);
   const [stepIdx, setStepIdx] = useState(0);
+  const [toolsOpen, setToolsOpen] = useState(false);   // 工具调用统计默认折叠
   const agentId = traceAgentId || app?.agent_id;
 
   useEffect(() => {
@@ -786,22 +786,24 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
   const tok   = st.tokens || {};
   const fmtN  = n => (n >= 1000 ? (n / 1000).toFixed(1) + 'K' : String(n ?? 0));
   const fmtTime = ts => ts ? new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+  const clientLabel = CLIENT_LABELS[trace?.client] || trace?.client || agentId || 'agent';
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
+    <div className="electron-no-drag fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-4xl mx-4 max-h-[92vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 space-y-2">
           <div className="flex items-center gap-3">
             <button onClick={onClose} className="text-zinc-400 hover:text-zinc-600 text-sm">{t('gateway.common.back')}</button>
-            <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">Session Trace</h3>
-            <span className="text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 uppercase">{agentId || 'agent'}</span>
-            <span className="font-mono text-xs text-zinc-400">{sessionId?.slice(0, 8)}…</span>
+            <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 shrink-0">Session Trace</h3>
+            <span className="text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 shrink-0" title={trace?.entrypoint ? `entrypoint: ${trace.entrypoint}` : undefined}>{clientLabel}</span>
+            <span className="font-mono text-xs text-zinc-400 flex-1 text-right truncate select-all cursor-text" title={sessionId}>{sessionId}</span>
           </div>
           {!loading && !trace?.error && st.steps != null && (
             <div className="flex items-center gap-1.5 flex-wrap">
               <TraceStatPill label="Steps" value={st.steps} />
               <TraceStatPill label="Tools" value={st.tools ?? 0} tone="blue" />
+              {(st.skills ?? 0) > 0 && <TraceStatPill label="Skill" value={st.skills} tone="emerald" />}
               {(st.artifacts ?? 0) > 0 && <TraceStatPill label="Arts" value={st.artifacts} tone="emerald" />}
               <TraceStatPill label="Reason" value={st.reasoning ?? 0} tone="amber" />
               <TraceStatPill label="Turns" value={st.turns ?? 0} />
@@ -832,6 +834,45 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
               )}
             </div>
 
+            {/* 工具调用统计（参考 tokentelemetry TOOL SUMMARY），默认折叠 */}
+            {(st.toolBreakdown?.length > 0 || st.skillNames?.length > 0) && (
+              <div className="px-5 py-2.5 border-b border-zinc-100 dark:border-zinc-800 shrink-0 space-y-2">
+                <button type="button" onClick={() => setToolsOpen(o => !o)}
+                  className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
+                  <span className={`transition-transform ${toolsOpen ? 'rotate-90' : ''}`}>▸</span>
+                  {t('gateway.trace.toolSummary')}
+                  <span className="text-zinc-300 dark:text-zinc-600 normal-case font-normal">
+                    {st.tools ?? 0}{(st.skills ?? 0) > 0 ? ` · ${st.skills} skill` : ''}
+                  </span>
+                </button>
+                {toolsOpen && (<>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5">
+                  {st.toolBreakdown.map(({ name, count }) => {
+                    const max = st.toolBreakdown[0]?.count || 1;
+                    const short = name.startsWith('mcp__') ? name.split('__').slice(-1)[0] : name;
+                    return (
+                      <div key={name} className="flex items-center gap-2 min-w-0" title={name}>
+                        <span className="text-xs text-zinc-600 dark:text-zinc-300 truncate flex-1">{short}</span>
+                        <span className="text-xs font-semibold tabular-nums text-zinc-400">×{count}</span>
+                        <div className="w-10 h-1 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden shrink-0">
+                          <div className="h-full bg-blue-500/70" style={{ width: `${(count / max) * 100}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {st.skillNames?.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                    <span className="text-[10px] uppercase tracking-wide text-zinc-400">Skills</span>
+                    {st.skillNames.map((s, i) => (
+                      <span key={i} className="text-xs px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 font-mono">{s}</span>
+                    ))}
+                  </div>
+                )}
+                </>)}
+              </div>
+            )}
+
             <div className="flex flex-1 min-h-0">
               {/* 步骤索引 */}
               <div className="w-44 shrink-0 border-r border-zinc-100 dark:border-zinc-800 overflow-y-auto max-h-[55vh]">
@@ -839,8 +880,16 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
                   <button key={i} onClick={() => setStepIdx(i)}
                     className={`w-full text-left px-3 py-1.5 text-xs border-b border-zinc-50 dark:border-zinc-800/50 hover:bg-zinc-50 dark:hover:bg-zinc-800/40 ${stepIdx === i ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300' : 'text-zinc-600 dark:text-zinc-400'}`}>
                     <span className="text-zinc-400 mr-1">{String(i).padStart(3, '0')}</span>
-                    <span className={`px-1 rounded text-xs mr-1 ${s.kind === 'tool' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' : s.kind === 'user' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30' : s.reasoning ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/20' : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800'}`}>
-                      {s.kind === 'tool' ? s.tool || s.label : s.kind === 'user' ? 'USER' : s.reasoning ? 'REASON' : 'AI'}
+                    <span className={`px-1 rounded text-xs mr-1 ${
+                      s.kind === 'tool' ? (s.skill ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400')
+                      : s.kind === 'tool_result' ? (s.is_error ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400')
+                      : s.kind === 'user' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30'
+                      : s.reasoning ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/20'
+                      : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800'}`}>
+                      {s.kind === 'tool' ? (s.skill ? 'SKILL' : s.tool || s.label)
+                        : s.kind === 'tool_result' ? 'OUT'
+                        : s.kind === 'user' ? 'USER'
+                        : s.reasoning ? 'REASON' : 'AI'}
                     </span>
                     <span className="truncate block">{s.label}</span>
                   </button>
@@ -851,9 +900,26 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
               <div className="flex-1 p-4 overflow-y-auto max-h-[55vh]">
                 {cur ? (
                   <div className="space-y-2">
-                    <div className="text-xs text-zinc-400">{fmtTime(cur.ts)} · {cur.label}</div>
+                    <div className="text-xs text-zinc-400 flex items-center gap-2">
+                      <span>{fmtTime(cur.ts)} · {cur.label}</span>
+                      {cur.kind === 'tool_result' && cur.is_error && (
+                        <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 text-[10px] font-semibold">ERROR</span>
+                      )}
+                      {cur.encrypted && (
+                        <span className="px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400 text-[10px] font-semibold">{t('gateway.trace.encrypted')}</span>
+                      )}
+                    </div>
                     {cur.text && (
-                      <pre className="text-xs text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-3 max-h-80 overflow-y-auto">{cur.text}</pre>
+                      <pre className={`text-xs whitespace-pre-wrap break-words rounded-lg p-3 max-h-80 overflow-y-auto ${cur.kind === 'tool_result' && cur.is_error ? 'text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/10' : 'text-zinc-700 dark:text-zinc-300 bg-zinc-50 dark:bg-zinc-800/50'}`}>{cur.text}</pre>
+                    )}
+                    {cur.encrypted && !cur.text && (
+                      <div className="text-xs bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-3 space-y-1.5">
+                        <p className="text-zinc-500 dark:text-zinc-400 italic">{t('gateway.trace.encryptedNote')}</p>
+                        {cur.signature && <p className="font-mono text-[10px] text-zinc-400 break-all">sig: {cur.signature}…</p>}
+                      </div>
+                    )}
+                    {cur.reasoning && !cur.text && !cur.encrypted && (
+                      <div className="text-xs text-zinc-400 italic">{t('gateway.trace.noReasoning')}</div>
                     )}
                     {cur.input != null && (
                       <pre className="text-xs font-mono text-zinc-600 dark:text-zinc-400 whitespace-pre-wrap break-all bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-3 max-h-60 overflow-y-auto">
@@ -983,7 +1049,7 @@ function PreferenceMiningModal({ onClose, flash, onJobStart }) {
   const ready = job.status === 'ready' || job.status === 'error';
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
+    <div className="electron-no-drag fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl mx-4 max-h-[88vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 flex items-center gap-3">
@@ -1116,9 +1182,11 @@ function SessionManager() {
     flash(t('gateway.sessions.exported').replace('{file}', res.file));
   };
 
-  const agents = Array.from(new Set(rows.map(r => r.agent_id)));
+  // 按展示客户端分组（Claude Desktop / Claude Code 等），与应用列表拆分保持一致
+  const rowClient = r => r.client || r.agent_id;
+  const agents = Array.from(new Set(rows.map(rowClient)));
   const filtered = rows.filter(r => {
-    if (agentFilter !== 'all' && r.agent_id !== agentFilter) return false;
+    if (agentFilter !== 'all' && rowClient(r) !== agentFilter) return false;
     if (favOnly && !r.favorite) return false;
     if (q) {
       const hay = `${r.project || ''} ${r.context || ''}`.toLowerCase();
@@ -1159,10 +1227,20 @@ function SessionManager() {
             <span><strong className="text-zinc-700 dark:text-zinc-200">{agents.length}</strong> {t('gateway.sessions.statAgents')}</span>
             <span><strong className="text-zinc-700 dark:text-zinc-200">{favCount}</strong> {t('gateway.sessions.statFav')}</span>
           </div>
+          <button onClick={() => setMining(true)}
+            className="text-xs px-3 py-1.5 rounded-full border border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20 flex items-center gap-1.5 shrink-0">
+            {kStatus === 'running'
+              ? <><span className="inline-block w-3 h-3 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />{t('gateway.mine.busy')}</>
+              : <>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0">
+                    <path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
+                  </svg>
+                  {t('gateway.mine.button')}
+                </>}
+          </button>
         </div>
-        {/* 第二行：产品过滤（左） ↔ 功能（右），两端对齐 */}
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex items-center gap-2 flex-wrap">
+        {/* 第二行：产品过滤芯片 */}
+        <div className="flex items-center gap-2 flex-wrap">
         <button onClick={() => setAgent('all')}
           className={`text-xs px-3 py-1.5 rounded-full ${agentFilter === 'all' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : 'border border-zinc-200 dark:border-zinc-700 text-zinc-500'}`}>
           {t('gateway.sessions.all')}
@@ -1177,24 +1255,10 @@ function SessionManager() {
             <button key={a} onClick={() => setAgent(a)}
               className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full ${agentFilter === a ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : 'border border-zinc-200 dark:border-zinc-700 text-zinc-500'}`}>
               {brand && <img src={brand} alt="" className="w-3.5 h-3.5 object-contain shrink-0" />}
-              {a}
+              {CLIENT_LABELS[a] || a}
             </button>
           );
         })}
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-        <button onClick={() => setMining(true)}
-          className="text-xs px-3 py-1.5 rounded-full border border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20 flex items-center gap-1.5">
-          {kStatus === 'running'
-            ? <><span className="inline-block w-3 h-3 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />{t('gateway.mine.busy')}</>
-            : <>
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0">
-                  <path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
-                </svg>
-                {t('gateway.mine.button')}
-              </>}
-        </button>
-          </div>
         </div>
       </div>
 
@@ -1223,6 +1287,12 @@ const CONTINUE_TARGETS = [
   { id: 'cursor', label: 'Cursor' },
 ];
 
+// 会话来源客户端展示名（按 jsonl entrypoint 区分，仅用于显示）
+const CLIENT_LABELS = {
+  'claude-code': 'Claude Code',
+  'claude-desktop': 'Claude Desktop',
+};
+
 /** 单会话行 */
 function SessionRow({ row, fmtN, onTrace, onMeta, onExport, onContinue }) {
   const { t } = useLang();
@@ -1235,11 +1305,13 @@ function SessionRow({ row, fmtN, onTrace, onMeta, onExport, onContinue }) {
     <div className="px-5 py-2.5">
       <div className="grid grid-cols-[7.25rem_minmax(0,1.4fr)_3.5rem_4rem_5rem_auto] gap-2 items-center text-xs">
         {(() => {
-          const brand = resolveBrandIcon(row.agent_id);
+          const client = row.client || row.agent_id;
+          const brand = resolveBrandIcon(client);
+          const label = CLIENT_LABELS[client] || client;
           return (
-            <span className="flex items-center gap-1.5 min-w-0" title={row.agent_id}>
+            <span className="flex items-center gap-1.5 min-w-0" title={client === row.agent_id ? client : `${label} (${row.agent_id})`}>
               {brand && <img src={brand} alt="" className="w-4 h-4 object-contain shrink-0" />}
-              <span className="truncate text-[11px] font-medium text-zinc-500 dark:text-zinc-400">{row.agent_id}</span>
+              <span className="truncate text-[11px] font-medium text-zinc-500 dark:text-zinc-400">{label}</span>
             </span>
           );
         })()}
@@ -1316,7 +1388,7 @@ function ContinueModal({ source, target, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
+    <div className="electron-no-drag fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-2xl mx-4 max-h-[88vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 flex items-center gap-3">
@@ -1885,16 +1957,24 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
       delete testHideTimers.current[appId];
     }, ms);
   }
-  async function runAppTest(app) {
+  async function runAppTest(app, routeValue) {
     const key = app.api_key;
     if (!key) return;   // 无 key（未托管/虚拟行）不能测
     setTestState(s => ({ ...s, [app.id]: { busy: true } }));
-    // 模型优先用绑定的路由；否则第一个可用真实模型；再否则一个占位
-    const model = app.route_id
-      ? (routes.some(r => r.model_key === app.route_id || r.id === app.route_id)
-          ? app.route_id
-          : (modelIdFromRoute(app.route_id, routes) || app.route_id))
+    // 测试用的模型必须与下拉框「实际显示值」一致：用 routeValue（受控 <select> 的当前值）
+    // 而非 app.route_id —— 绑定失效/不在选项内时下拉显示为空，测试也应按显示值走。
+    const routeVal = routeValue ?? app.route_id;
+    const model = routeVal
+      ? (routes.some(r => r.model_key === routeVal || r.id === routeVal)
+          ? routeVal
+          : (modelIdFromRoute(routeVal, routes) || routeVal))
       : (availableModels[0]?.id || 'gpt-4o');
+    // 关键：网关按 keyScene（应用绑定）改写真实模型，会覆盖请求体里的 model。切换路由后
+    // keyScene 可能滞后（持久化了 route_id、下拉已更新，但网关内存绑定还是上一次的模型），
+    // 导致测到上一次的模型。测试前把「下拉显示的绑定」写回并同步网关，确保 keyScene 与显示值一致。
+    if (routeVal && routeVal !== '') {
+      try { await appsApi.update({ id: app.id, route_id: routeVal }); } catch {}
+    }
     const base = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/$/, '');
     const start = Date.now();
     // 流式 + max_tokens:1：首块计延迟（首字），但把流读完整，让网关正常结束并落账
@@ -2108,7 +2188,14 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                   const currentRouteValue = (() => {
                     if (!app.route_id) return '';
                     const val = routeSelectValue(app.route_id, availableModels, routes);
-                    const known = isKnownRouteSelectValue(val, availableModels, routes);
+                    // known 必须与下方「实际渲染的 option 集合」完全一致，否则受控 <select>
+                    // 的 value 指向不存在的 option → 显示停留在旧选项、与实际 value 错位。
+                    // 渲染的 option = usable 场景路由(model_key/id) + tier∈{free,p2p,paid} 的模型(tier:id)。
+                    const avail = new Set(availableModels.map(m => m.id));
+                    const usableRoutes = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
+                    const known =
+                      usableRoutes.some(r => (r.model_key || r.id) === val)
+                      || availableModels.some(m => ['free', 'p2p', 'paid'].includes(m.tier) && modelTierKey(m) === val);
                     if (keyApp && !isDirectOnly) return known ? val : '';
                     if (!tracked) return '';
                     return known ? val : '';
@@ -2231,7 +2318,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
                       {(app.api_key || isDirectOnly) && (() => {
                         const ts = testState[app.id];
                         return (
-                          <button onClick={() => runAppTest(app)} disabled={ts?.busy || !isGatewayRouted}
+                          <button onClick={() => runAppTest(app, currentRouteValue)} disabled={ts?.busy || !isGatewayRouted}
                             className={`text-xs px-1.5 py-1 rounded-lg border transition-colors shrink-0 ${ts?.busy
                               ? 'border-zinc-300 dark:border-zinc-600 text-zinc-400 opacity-60 cursor-wait'
                               : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-blue-400 hover:text-blue-500'} disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-zinc-200 disabled:hover:text-zinc-500`}>
@@ -3142,11 +3229,10 @@ export default function Gateway() {
     refresh();
     loadSceneData();
     loadAvailableModels();
-    const id = setInterval(() => {
-      refresh();
-      loadAvailableModels();
-    }, 5000);
-    return () => clearInterval(id);
+    // 状态/统计保持 5s 实时刷新；/v1/models（供给模型列表）变化很慢，单独用 60s 轮询降频。
+    const statsId  = setInterval(refresh, 5000);
+    const modelsId = setInterval(loadAvailableModels, 60000);
+    return () => { clearInterval(statsId); clearInterval(modelsId); };
   }, [refresh, loadSceneData, loadAvailableModels]);
 
   // ── Computed stats ──────────────────────────────────────────────────────────
