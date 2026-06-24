@@ -554,15 +554,11 @@
             <div class="flow-group">
               <div class="flow-node">
                 <div class="fn-label" data-i18n="flow.provider">服务商</div>
-                <div class="fn-name" data-i18n-html="flow.free">免费 <span class="flow-badge badge-free">free</span></div>
+                <div class="fn-name" data-i18n-html="flow.personal">个人算力 <span class="flow-badge badge-free">personal</span></div>
               </div>
               <div class="flow-node">
                 <div class="fn-label" data-i18n="flow.provider">服务商</div>
-                <div class="fn-name" data-i18n-html="flow.p2p">P2P 共享 <span class="flow-badge badge-p2p">p2p</span></div>
-              </div>
-              <div class="flow-node">
-                <div class="fn-label" data-i18n="flow.provider">服务商</div>
-                <div class="fn-name" data-i18n-html="flow.paid">付费 <span class="flow-badge badge-paid">paid</span></div>
+                <div class="fn-name" data-i18n-html="flow.community">社区算力 <span class="flow-badge badge-p2p">community</span></div>
               </div>
             </div>
           </div>
@@ -606,7 +602,7 @@
             <div class="card-num" data-i18n="hub.c3.num">03 / 分析</div>
             <div class="card-icon">📊</div>
             <h3 data-i18n="hub.c3.title">多维度统计分析</h3>
-            <p data-i18n="hub.c3.body">盘点页按应用、供给源、模型、路由层（免费/P2P/付费）、费用、设备与时间范围切片。订阅折算与按量估算同屏展示，一眼看清钱花在哪。</p>
+            <p data-i18n="hub.c3.body">盘点页按应用、供给源、模型、路由层（免费/社区/付费）、费用、设备与时间范围切片。订阅折算与按量估算同屏展示，一眼看清钱花在哪。</p>
             <div class="tier-badge-row" style="margin-top:12px;">
               <span class="tbadge tbadge-r">应用占比</span>
               <span class="tbadge tbadge-r">模型排行</span>
@@ -706,7 +702,7 @@
             <div class="opt-icon">🔄</div>
             <div class="opt-body">
               <h4 data-i18n="opt.s2.title">Provider 优先级</h4>
-              <p data-i18n="opt.s2.body">配置免费 → P2P → 付费的优先梯队，有更低成本的 Provider 可用时自动优先，付费调用降至最少。</p>
+              <p data-i18n="opt.s2.body">优先使用个人算力（免费额度 / 付费订阅 / 按量付费），不足时自动补充社区算力，整体成本与等待降至最低。</p>
             </div>
           </div>
           <div class="opt-row">
@@ -841,45 +837,33 @@
     <section class="section" id="providers">
       <div class="wrap">
         <div class="reveal">
-          <div class="sec-label" data-i18n="sec.providers">Provider 层级</div>
-          <h2 class="sec-h2" data-i18n-html="prov.h2">三层 Provider，<em>自动择优</em></h2>
-          <p class="sec-sub" data-i18n="prov.sub">路由按成本优先级自动选择，能用免费的绝不走付费，P2P 共享也能进一步降低成本。</p>
+          <div class="sec-label" data-i18n="sec.providers">算力来源</div>
+          <h2 class="sec-h2" data-i18n-html="prov.h2">个人算力 + 社区算力，<em>自动择优</em></h2>
+          <p class="sec-sub" data-i18n="prov.sub">本地网关统一接入你的个人算力（免费额度、付费订阅、按量付费）与社区共享算力，按成本与可用性自动择优。</p>
         </div>
 
         <div class="card reveal" style="margin-top:32px;padding:8px 8px;">
           <div class="tier-row" style="padding:20px 16px;">
             <div class="tier-num">01</div>
             <div class="tier-body">
-              <div class="tier-name">免费 Provider <span class="tbadge tbadge-g">free</span></div>
-              <div class="tier-desc" data-i18n="prov.t1.desc">公益节点、开源推理服务、厂商免费额度。成本最低，优先路由。</div>
+              <div class="tier-name">个人算力 <span class="tbadge tbadge-g">personal</span></div>
+              <div class="tier-desc" data-i18n="prov.t1.desc">你自己的资源：厂商免费额度、付费订阅、按量付费 API Key。本地网关统一接入，按成本优先使用。</div>
               <div class="tier-badge-row">
-                <span class="tbadge tbadge-g">Ollama 本地</span>
-                <span class="tbadge tbadge-g">公益 API</span>
-                <span class="tbadge tbadge-g">厂商免费层</span>
+                <span class="tbadge tbadge-g">免费额度</span>
+                <span class="tbadge tbadge-g">付费订阅</span>
+                <span class="tbadge tbadge-g">按量付费</span>
               </div>
             </div>
           </div>
           <div class="tier-row" style="padding:20px 16px;">
             <div class="tier-num">02</div>
             <div class="tier-body">
-              <div class="tier-name">P2P 共享 Provider <span class="tbadge tbadge-y">p2p</span></div>
-              <div class="tier-desc" data-i18n="prov.t2.desc">社区成员贡献闲置算力，消费者用积分兑换调用额度，往往比官方更实惠。</div>
+              <div class="tier-name">社区算力 <span class="tbadge tbadge-y">community</span></div>
+              <div class="tier-desc" data-i18n="prov.t2.desc">社区成员贡献的闲置算力，用积分兑换调用额度，往往比官方更实惠。</div>
               <div class="tier-badge-row">
-                <span class="tbadge tbadge-y">积分体系</span>
+                <span class="tbadge tbadge-y">积分兑换</span>
                 <span class="tbadge tbadge-y">闲置算力共享</span>
                 <span class="tbadge tbadge-y">多节点负载均衡</span>
-              </div>
-            </div>
-          </div>
-          <div class="tier-row" style="padding:20px 16px;">
-            <div class="tier-num">03</div>
-            <div class="tier-body">
-              <div class="tier-name">付费 Provider <span class="tbadge tbadge-r">paid</span></div>
-              <div class="tier-desc" data-i18n="prov.t3.desc">OpenAI、Anthropic、国内厂商等官方 API，免费和 P2P 资源耗尽时兜底。</div>
-              <div class="tier-badge-row">
-                <span class="tbadge tbadge-r">OpenAI</span>
-                <span class="tbadge tbadge-r">Anthropic</span>
-                <span class="tbadge tbadge-r">国内大模型</span>
               </div>
             </div>
           </div>
@@ -1141,12 +1125,11 @@
       "nav.portal": "用户中心", "nav.wall": "运营大屏", "nav.hub": "三大能力", "footer.admin": "管理后台",
       "flow.label": "请求链路", "flow.app": "应用", "flow.anyapp": "任意 AI 应用",
       "flow.gateway": "本地网关", "flow.provider": "服务商",
-      "flow.free": "免费 <span class='flow-badge badge-free'>free</span>",
-      "flow.p2p":  "P2P 共享 <span class='flow-badge badge-p2p'>p2p</span>",
-      "flow.paid": "付费 <span class='flow-badge badge-paid'>paid</span>",
+      "flow.personal": "个人算力 <span class='flow-badge badge-free'>personal</span>",
+      "flow.community": "社区算力 <span class='flow-badge badge-p2p'>community</span>",
       "sec.gateway": "本地网关", "sec.optimize": "Token 优化", "sec.stats": "用量统计",
       "sec.hub": "v0.4 · 三大能力",
-      "sec.providers": "Provider 层级", "sec.p2p": "P2P 共享 · 本项目特色",
+      "sec.providers": "算力来源", "sec.p2p": "P2P 共享 · 本项目特色",
       "sec.download": "下载", "sec.quickstart": "快速接入",
       "gw.num1": "01 / 代理", "gw.num2": "02 / 路由", "gw.num3": "03 / 管理",
       "p2p.earn.label": "贡献赚积分", "p2p.spend.label": "调用花积分",
@@ -1164,7 +1147,7 @@
       "hub.c2.num": "02 / 订阅", "hub.c2.title": "个人订阅管理",
       "hub.c2.body": "APP 订阅（仅统计或可转 API）、API 订阅（如火山引擎）、按量付费（模型 + 刊例价）分栏维护。供给源页接入 Key，个人页决定计费口径与按量可用模型。",
       "hub.c3.num": "03 / 分析", "hub.c3.title": "多维度统计分析",
-      "hub.c3.body": "盘点页按应用、供给源、模型、路由层（免费/P2P/付费）、费用、设备与时间范围切片。订阅折算与按量估算同屏展示，一眼看清钱花在哪。",
+      "hub.c3.body": "盘点页按应用、供给源、模型、路由层（免费/社区/付费）、费用、设备与时间范围切片。订阅折算与按量估算同屏展示，一眼看清钱花在哪。",
       "hub.dim.app": "应用 / Agent", "hub.dim.provider": "供给源 / 路由层",
       "hub.dim.model": "模型", "hub.dim.billing": "订阅 + 按量",
       "cta.download": "下载客户端", "cta.howworks": "了解原理",
@@ -1179,18 +1162,17 @@
       "opt.h2": "路由里内置<em>降本策略</em>",
       "opt.sub": "网关不只是转发，它在路由层内置 Token 优化策略，主动减少不必要的开销。",
       "opt.s1.title": "任务分级路由", "opt.s1.body": "按场景规则自动把简单请求分流到低成本模型，复杂任务路由至高性能模型，效果与成本双优。",
-      "opt.s2.title": "Provider 优先级", "opt.s2.body": "配置免费 → P2P → 付费的优先梯队，有更低成本的 Provider 可用时自动优先，付费调用降至最少。",
+      "opt.s2.title": "Provider 优先级", "opt.s2.body": "优先使用个人算力（免费额度 / 付费订阅 / 按量付费），不足时自动补充社区算力，整体成本与等待降至最低。",
       "opt.s3.title": "多 Key 轮询", "opt.s3.body": "同一 Provider 绑定多个 API Key，自动轮询使用，均摊速率限制，避免单 Key 触发限流。",
       "opt.s4.title": "用量感知调度", "opt.s4.body": "实时感知各 Provider 当日用量，接近限额时自动切换，保持服务连续性。",
       "stats.h2": "所有 AI 消耗<br><em>一屏看清</em>",
       "stats.sub": "类比 <strong>iOS 电量统计</strong>——从<strong>应用、供给源、模型、费用、设备</strong>多个维度拆解。走网关的、会话补录的、Claude Code 的、Codex 的，全部汇聚到同一个盘点页。",
       "stats.sp1": "应用·源·模型·层·费·设备", "stats.sp2": "网关实时 + 会话补录", "stats.sp3": "订阅折算 + 按量估算",
       "stats.mock.title": "AI 用量 · 本月",
-      "prov.h2": "三层 Provider，<em>自动择优</em>",
-      "prov.sub": "路由按成本优先级自动选择，能用免费的绝不走付费，P2P 共享也能进一步降低成本。",
-      "prov.t1.desc": "公益节点、开源推理服务、厂商免费额度。成本最低，优先路由。",
-      "prov.t2.desc": "社区成员贡献闲置算力，消费者用积分兑换调用额度，往往比官方更实惠。",
-      "prov.t3.desc": "OpenAI、Anthropic、国内厂商等官方 API，免费和 P2P 资源耗尽时兜底。",
+      "prov.h2": "个人算力 + 社区算力，<em>自动择优</em>",
+      "prov.sub": "本地网关统一接入你的个人算力（免费额度、付费订阅、按量付费）与社区共享算力，按成本与可用性自动择优。",
+      "prov.t1.desc": "你自己的资源：厂商免费额度、付费订阅、按量付费 API Key。本地网关统一接入，按成本优先使用。",
+      "prov.t2.desc": "社区成员贡献的闲置算力，用积分兑换调用额度，往往比官方更实惠。",
       "credit.title": "P2P 积分体系",
       "p2p.h2": "闲置算力变积分，<em style='color:var(--warn)'>跨模型自由流通</em>",
       "p2p.sub": "P2P 共享网络是本项目独有的特色——社区成员互相贡献闲置额度，积分在模型之间、时段之间自由兑换，让你的 AI 算力不再浪费，也让高级模型唾手可得。",
@@ -1236,12 +1218,11 @@
       "nav.portal": "User Portal", "nav.wall": "Live Dashboard", "nav.hub": "Three pillars", "footer.admin": "Admin",
       "flow.label": "REQUEST FLOW", "flow.app": "APP", "flow.anyapp": "Any AI App",
       "flow.gateway": "LOCAL GATEWAY", "flow.provider": "PROVIDER",
-      "flow.free": "Free <span class='flow-badge badge-free'>free</span>",
-      "flow.p2p":  "P2P Shared <span class='flow-badge badge-p2p'>p2p</span>",
-      "flow.paid": "Paid <span class='flow-badge badge-paid'>paid</span>",
+      "flow.personal": "Personal <span class='flow-badge badge-free'>personal</span>",
+      "flow.community": "Community <span class='flow-badge badge-p2p'>community</span>",
       "sec.gateway": "LOCAL GATEWAY", "sec.optimize": "TOKEN OPTIMIZATION", "sec.stats": "USAGE ANALYTICS",
       "sec.hub": "v0.4 · THREE PILLARS",
-      "sec.providers": "PROVIDER TIERS", "sec.p2p": "P2P SHARING · KEY FEATURE",
+      "sec.providers": "COMPUTE SOURCES", "sec.p2p": "P2P SHARING · KEY FEATURE",
       "sec.download": "DOWNLOAD", "sec.quickstart": "QUICKSTART",
       "gw.num1": "01 / PROXY", "gw.num2": "02 / ROUTE", "gw.num3": "03 / ADMIN",
       "p2p.earn.label": "EARN · Contribute for Credits", "p2p.spend.label": "SPEND · Pay with Credits",
@@ -1274,18 +1255,17 @@
       "opt.h2": "Built-in <em>cost optimization</em>",
       "opt.sub": "The gateway isn't just a forwarder — it has cost optimization strategies baked into the routing layer.",
       "opt.s1.title": "Task-grade routing", "opt.s1.body": "Auto-routes simple requests to low-cost models and complex tasks to high-performance ones based on scene rules.",
-      "opt.s2.title": "Provider priority", "opt.s2.body": "Configure free → P2P → paid fallback. Always prefers cheaper Providers when available, minimizing paid API calls.",
+      "opt.s2.title": "Provider priority", "opt.s2.body": "Prefer your personal compute (free / subscription / pay-as-you-go); automatically supplement with community compute when needed, minimizing overall cost and latency.",
       "opt.s3.title": "Multi-key rotation", "opt.s3.body": "Bind multiple API keys to one Provider and auto-rotate, spreading rate limits to avoid single-key throttling.",
       "opt.s4.title": "Usage-aware dispatch", "opt.s4.body": "Monitors daily quota in real time and auto-switches Providers as limits approach, keeping service continuous.",
       "stats.h2": "All AI spend,<br><em>one screen</em>",
       "stats.sub": "Like <strong>iOS battery stats</strong> — broken down by <strong>app, provider, model, cost, and device</strong>. Gateway proxy, session import, Claude Code, Codex — all in one Dashboard.",
       "stats.sp1": "App · source · model · tier · cost · device", "stats.sp2": "Live proxy + session import", "stats.sp3": "Sub amortization + PAYG est.",
       "stats.mock.title": "AI Usage · This Month",
-      "prov.h2": "Three Provider tiers,<br><em>auto-selected</em>",
-      "prov.sub": "Routes by cost priority — free first, never paid when free is available. P2P sharing further reduces costs.",
-      "prov.t1.desc": "Public nodes, open inference, and vendor free tiers. Lowest cost, highest priority.",
-      "prov.t2.desc": "Community members contribute idle quota; consumers spend credits — often cheaper than official APIs.",
-      "prov.t3.desc": "OpenAI, Anthropic, and domestic vendors. Used as fallback when free and P2P capacity runs out.",
+      "prov.h2": "Personal + Community compute,<br><em>auto-selected</em>",
+      "prov.sub": "The local gateway unifies your personal compute (free quota, paid subscriptions, pay-as-you-go) with community-shared compute, auto-selecting by cost and availability.",
+      "prov.t1.desc": "Your own resources: vendor free tiers, paid subscriptions, and pay-as-you-go API keys. Unified through the local gateway and used first by cost.",
+      "prov.t2.desc": "Idle compute contributed by community members; spend credits to call — often cheaper than official APIs.",
       "credit.title": "P2P Credit Economy",
       "p2p.h2": "Idle compute becomes credits, <em style='color:var(--warn)'>freely exchangeable across models</em>",
       "p2p.sub": "The P2P sharing network is a unique feature of this project — community members contribute idle quota; credits flow freely across models and time, so your AI compute is never wasted.",

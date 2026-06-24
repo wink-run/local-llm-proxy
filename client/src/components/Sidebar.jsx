@@ -5,7 +5,7 @@ import { useLang } from '../store/lang';
 import logoSvg from '../assets/logo.svg';
 
 export default function Sidebar() {
-  const { user } = useAuth();
+  const { user, guest } = useAuth();
   const { t } = useLang();
   const navigate = useNavigate();
   const location = useLocation();
@@ -54,9 +54,9 @@ export default function Sidebar() {
         </div>
       </div>
 
-      {/* Nav items */}
+      {/* Nav items —— 游客隐藏「贡献」(p2p 需登录) */}
       <nav className="electron-no-drag flex-1 flex flex-col gap-0.5 px-2">
-        {NAV.map(({ to, icon, labelKey }) => (
+        {NAV.filter(({ to }) => to !== '/contribute' || user).map(({ to, icon, labelKey }) => (
           <NavLink
             key={to}
             to={to}
@@ -112,6 +112,29 @@ export default function Sidebar() {
               </svg>
             </button>
           </div>
+        </div>
+      )}
+      {/* 游客底栏：个人源统计入口 + 登录解锁 */}
+      {guest && !user && (
+        <div className="electron-no-drag px-3 space-y-1.5">
+          <button
+            onClick={() => navigate('/account')}
+            className={`w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left transition-colors ${
+              profileActive ? 'bg-zinc-200/80 dark:bg-white/10' : 'hover:bg-zinc-200/60 dark:hover:bg-white/5'
+            }`}
+          >
+            <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-xs bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300">👤</div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[11.5px] font-semibold leading-tight truncate text-zinc-700 dark:text-zinc-200">{t('sidebar.guest')}</p>
+              <p className="text-xs leading-tight truncate mt-0.5 text-zinc-400 dark:text-zinc-500">{t('sidebar.guestStats')}</p>
+            </div>
+          </button>
+          <button
+            onClick={() => navigate('/config')}
+            className="w-full flex items-center justify-center px-2 py-2 rounded-lg text-xs font-medium bg-blue-600/90 hover:bg-blue-600 text-white transition-colors"
+          >
+            {t('sidebar.guestLogin')}
+          </button>
         </div>
       )}
     </aside>

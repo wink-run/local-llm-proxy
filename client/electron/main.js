@@ -246,11 +246,14 @@ function openExternalSafe(url) {
 }
 
 function createWindow() {
+  // 屏蔽默认应用菜单栏（File / Edit / View / Window / Help）
+  Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
     width: 860,
     height: 600,
     minWidth: 860,
     minHeight: 600,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

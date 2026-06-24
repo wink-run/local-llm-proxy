@@ -325,18 +325,132 @@ function anthropicToOpenai(body, opts = {}) {
   return oai;
 }
 
+// ── 反向 tool 转换 helper（OpenAI ⇄ Anthropic，响应/反向请求用）──────────────
+function _toolId(prefix) { return prefix + Math.random().toString(36).slice(2, 14); }
+
+// OpenAI finish_reason → Anthropic stop_reason
+function oaiFinishToAnthStop(finish, hadTool) {
+  if (finish === 'tool_calls' || hadTool) return 'tool_use';
+  if (finish === 'length') return 'max_tokens';
+  if (finish === 'stop' || finish == null) return 'end_turn';
+  return finish;
+}
+// Anthropic stop_reason → OpenAI finish_reason
+function anthStopToOaiFinish(stop, hadTool) {
+  if (stop === 'tool_use' || hadTool) return 'tool_calls';
+  if (stop === 'max_tokens') return 'length';
+  if (stop === 'end_turn' || stop == null) return 'stop';
+  return stop;
+}
+
+// OpenAI message.tool_calls（+ legacy function_call）→ Anthropic tool_use content blocks
+function oaiToolCallsToAnthBlocks(msg) {
+  const blocks = [];
+  const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls
+    : (msg.function_call ? [{ id: _toolId('call_'), function: msg.function_call }] : []);
+  for (const tc of toolCalls) {
+    const fn = tc.function || {};
+    let input = {};
+    try { input = fn.arguments ? JSON.parse(fn.arguments) : {}; } catch { input = {}; }
+    blocks.push({ type: 'tool_use', id: tc.id || _toolId('toolu_'), name: fn.name || '', input });
+  }
+  return blocks;
+}
+
+// OpenAI tools → Anthropic tools
+function oaiToolsToAnthropic(tools) {
+  if (!Array.isArray(tools)) return undefined;
+  const out = [];
+  for (const t of tools) {
+    const fn = (t && t.function) ? t.function : t;
+    if (!fn || !fn.name) continue;
+    out.push({ name: fn.name, description: fn.description || '',
+      input_schema: fn.parameters || { type: 'object', properties: {} } });
+  }
+  return out.length ? out : undefined;
+}
+// OpenAI tool_choice → Anthropic tool_choice
+function oaiToolChoiceToAnthropic(tc) {
+  if (tc == null) return undefined;
+  if (typeof tc === 'string') {
+    if (tc === 'auto')     return { type: 'auto' };
+    if (tc === 'required') return { type: 'any' };
+    if (tc === 'none')     return { type: 'none' };
+    return undefined;
+  }
+  if (tc.type === 'function' && tc.function?.name) return { type: 'tool', name: tc.function.name };
+  return undefined;
+}
+
+// OpenAI image_url part → Anthropic image block
+function oaiImagePartToAnth(part) {
+  const url = part.image_url?.url || '';
+  const mm = /^data:([^;]+);base64,(.*)$/s.exec(url);
+  if (mm) return { type: 'image', source: { type: 'base64', media_type: mm[1], data: mm[2] } };
+  if (url) return { type: 'image', source: { type: 'url', url } };
+  return null;
+}
+
+// OpenAI messages（tool_calls / role:tool / 多模态）→ Anthropic messages
+function oaiMessagesToAnthropic(messages) {
+  const out = [];
+  // tool_result 必须落在 user turn；连续 tool 结果合并进同一条 user message（保证 role 交替）
+  const pushUserBlocks = (blocks) => {
+    if (!blocks.length) return;
+    const last = out[out.length - 1];
+    if (last && last.role === 'user' && Array.isArray(last.content)) last.content.push(...blocks);
+    else out.push({ role: 'user', content: blocks });
+  };
+  for (const m of (messages || [])) {
+    if (!m || m.role === 'system') continue; // system 单独抽到顶层 anth.system
+    if (m.role === 'tool') {
+      pushUserBlocks([{ type: 'tool_result', tool_use_id: m.tool_call_id,
+        content: typeof m.content === 'string' ? m.content : toolResultContentToString(m.content) }]);
+      continue;
+    }
+    if (m.role === 'assistant') {
+      const blocks = [];
+      const text = typeof m.content === 'string' ? m.content : '';
+      if (text) blocks.push({ type: 'text', text });
+      blocks.push(...oaiToolCallsToAnthBlocks(m));
+      out.push({ role: 'assistant', content: blocks.length ? blocks : (text || '') });
+      continue;
+    }
+    // user
+    if (typeof m.content === 'string') {
+      const last = out[out.length - 1];
+      if (last && last.role === 'user' && Array.isArray(last.content)) last.content.push({ type: 'text', text: m.content });
+      else out.push({ role: 'user', content: m.content });
+    } else if (Array.isArray(m.content)) {
+      const blocks = [];
+      for (const p of m.content) {
+        if (!p) continue;
+        if (p.type === 'text') blocks.push({ type: 'text', text: p.text || '' });
+        else if (p.type === 'image_url') { const im = oaiImagePartToAnth(p); if (im) blocks.push(im); }
+      }
+      pushUserBlocks(blocks);
+    }
+  }
+  return out;
+}
+
 function openaiToAnthropic(oai, model) {
   const choice = (oai.choices || [{}])[0];
   const msg    = choice.message || {};
-  const text   = msg.content || msg.reasoning_content || '';
   const finish = choice.finish_reason || 'stop';
   const usage  = oai.usage || {};
+  const content = [];
+  const text = (typeof msg.content === 'string' ? msg.content : '') || msg.reasoning_content || '';
+  if (text) content.push({ type: 'text', text });
+  const toolBlocks = oaiToolCallsToAnthBlocks(msg);
+  content.push(...toolBlocks);
+  if (!content.length) content.push({ type: 'text', text: '' });
   return {
     id: oai.id || ('msg_' + Math.random().toString(36).slice(2, 26)),
     type: 'message', role: 'assistant',
-    content: [{ type: 'text', text }],
+    content,
     model,
-    stop_reason: (finish === 'stop' || finish == null) ? 'end_turn' : finish,
+    stop_reason: oaiFinishToAnthStop(finish, toolBlocks.length > 0),
     stop_sequence: null,
     usage: { input_tokens: usage.prompt_tokens || 0, output_tokens: usage.completion_tokens || 0 },
   };
@@ -344,27 +458,39 @@ function openaiToAnthropic(oai, model) {
 
 // Convert OpenAI request body → Anthropic request body
 function oaiRequestToAnthropic(oai) {
-  const msgs = (oai.messages || []).filter(m => m.role !== 'system');
   const sys  = (oai.messages || []).find(m => m.role === 'system');
-  const anth = { model: oai.model, max_tokens: oai.max_tokens || 4096, messages: msgs };
+  const anth = { model: oai.model, max_tokens: oai.max_tokens || 4096,
+    messages: oaiMessagesToAnthropic(oai.messages || []) };
   if (sys) anth.system = typeof sys.content === 'string' ? sys.content : (sys.content?.[0]?.text || '');
   if (oai.temperature != null) anth.temperature = oai.temperature;
   if (oai.top_p       != null) anth.top_p       = oai.top_p;
   if (oai.stop) anth.stop_sequences = Array.isArray(oai.stop) ? oai.stop : [oai.stop];
   if (oai.stream) anth.stream = true;
+  const tools = oaiToolsToAnthropic(oai.tools);
+  if (tools) anth.tools = tools;
+  const toolChoice = oaiToolChoiceToAnthropic(oai.tool_choice);
+  if (toolChoice != null) anth.tool_choice = toolChoice;
   return anth;
 }
 
 // Convert Anthropic response body → OpenAI response body
 function anthropicRespToOai(anth) {
-  const text   = (anth.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-  const finish = anth.stop_reason === 'end_turn' ? 'stop' : (anth.stop_reason || 'stop');
+  const blocks   = anth.content || [];
+  const text     = blocks.filter(b => b.type === 'text').map(b => b.text).join('');
+  const toolUses = blocks.filter(b => b.type === 'tool_use');
+  const toolCalls = toolUses.map(b => ({
+    id: b.id || _toolId('call_'), type: 'function',
+    function: { name: b.name || '', arguments: JSON.stringify(b.input != null ? b.input : {}) },
+  }));
+  const message = { role: 'assistant', content: text || (toolCalls.length ? null : '') };
+  if (toolCalls.length) message.tool_calls = toolCalls;
   const inTok  = anth.usage?.input_tokens  || 0;
   const outTok = anth.usage?.output_tokens || 0;
   return {
     id: anth.id || ('chatcmpl-' + Math.random().toString(36).slice(2)),
     object: 'chat.completion', created: Math.floor(Date.now() / 1000), model: anth.model || '',
-    choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: finish, logprobs: null }],
+    choices: [{ index: 0, message,
+      finish_reason: anthStopToOaiFinish(anth.stop_reason, toolCalls.length > 0), logprobs: null }],
     usage: { prompt_tokens: inTok, completion_tokens: outTok, total_tokens: inTok + outTok },
   };
 }
@@ -687,15 +813,41 @@ function proxyConvertStream(provider, oaiBody, model, res) {
         id: msgId, type: 'message', role: 'assistant', content: [], model,
         stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 },
       }})}\n\n`);
-      res.write(`event: content_block_start\ndata: ${JSON.stringify({
-        type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' },
-      })}\n\n`);
       res.write('event: ping\ndata: {"type":"ping"}\n\n');
 
       let buf = '', outputTokens = 0, stopReason = 'end_turn', firstTokenMs = null;
       let usageIn = 0, usageOut = 0; // from actual usage field in SSE, if present
+      let hadToolCall = false;
       // dedup 用客户端实际收到的 id：本路径把上游 OpenAI 流重新包成 Anthropic SSE，
       // 客户端（如 Claude Code）写进 transcript 的是上面这个合成的 msgId，所以 dedup 键用它。
+
+      // ── content block 状态机：Anthropic SSE 要求块顺序开/关，同一时刻仅一个块打开 ──
+      // text → {type:text}+text_delta；tool_calls → {type:tool_use}+input_json_delta（增量 partial_json）。
+      // 文本/工具块按出现顺序分配 index；切换块前先 content_block_stop 上一个。
+      let nextBlockIndex = 0;
+      let cur = null; // { kind:'text'|'tool', index, oaiIndex }
+      const closeCur = () => {
+        if (!cur) return;
+        res.write(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: cur.index })}\n\n`);
+        cur = null;
+      };
+      const openText = () => {
+        closeCur();
+        const index = nextBlockIndex++;
+        cur = { kind: 'text', index };
+        res.write(`event: content_block_start\ndata: ${JSON.stringify({
+          type: 'content_block_start', index, content_block: { type: 'text', text: '' },
+        })}\n\n`);
+      };
+      const openTool = (oaiIndex, id, name) => {
+        closeCur();
+        const index = nextBlockIndex++;
+        cur = { kind: 'tool', index, oaiIndex };
+        res.write(`event: content_block_start\ndata: ${JSON.stringify({
+          type: 'content_block_start', index,
+          content_block: { type: 'tool_use', id: id || _toolId('toolu_'), name: name || '', input: {} },
+        })}\n\n`);
+      };
 
       proxyRes.on('data', (chunk) => {
         buf += chunk.toString();
@@ -715,12 +867,35 @@ function proxyConvertStream(provider, oaiBody, model, res) {
             if (text) {
               if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
               outputTokens++;
+              if (!cur || cur.kind !== 'text') openText();
               res.write(`event: content_block_delta\ndata: ${JSON.stringify({
-                type: 'content_block_delta', index: 0,
+                type: 'content_block_delta', index: cur.index,
                 delta: { type: 'text_delta', text },
               })}\n\n`);
             }
-            if (finish) stopReason = finish === 'stop' ? 'end_turn' : finish;
+            // 工具调用增量：OpenAI delta.tool_calls[] 带 index/id/function.{name,arguments}
+            if (Array.isArray(delta.tool_calls)) {
+              for (const tc of delta.tool_calls) {
+                hadToolCall = true;
+                if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
+                const oaiIndex = (tc.index != null) ? tc.index : 0;
+                if (!cur || cur.kind !== 'tool' || cur.oaiIndex !== oaiIndex) {
+                  openTool(oaiIndex, tc.id, tc.function?.name);
+                }
+                const args = tc.function?.arguments;
+                if (args) {
+                  res.write(`event: content_block_delta\ndata: ${JSON.stringify({
+                    type: 'content_block_delta', index: cur.index,
+                    delta: { type: 'input_json_delta', partial_json: args },
+                  })}\n\n`);
+                }
+              }
+            }
+            if (finish) {
+              stopReason = finish === 'tool_calls' ? 'tool_use'
+                : finish === 'stop' ? 'end_turn'
+                : finish === 'length' ? 'max_tokens' : finish;
+            }
             // Capture actual usage if provider includes it (e.g. final chunk with usage)
             if (c.usage) {
               usageIn  = c.usage.prompt_tokens     || c.usage.input_tokens     || usageIn;
@@ -733,7 +908,8 @@ function proxyConvertStream(provider, oaiBody, model, res) {
       proxyRes.on('end', () => {
         // Prefer actual usage from provider; fall back to manual output token count
         const finalOut = usageOut || outputTokens;
-        res.write(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`);
+        if (hadToolCall && stopReason === 'end_turn') stopReason = 'tool_use';
+        closeCur();
         res.write(`event: message_delta\ndata: ${JSON.stringify({
           type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null },
           usage: { output_tokens: finalOut },
@@ -854,6 +1030,10 @@ function proxyAnthropicStream(provider, oaiBody, model, res) {
       res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] })}\n\n`);
 
       let buf = '', usageIn = 0, usageOut = 0, cacheCreate = 0, cacheRead = 0, firstTokenMs = null, msgId = null;
+      let stopReason = 'stop';
+      // Anthropic content block index → OpenAI tool_calls index（仅工具块计数，文本块不占）
+      const toolIndexByBlock = new Map();
+      let toolCounter = 0;
 
       proxyRes.on('data', (chunk) => {
         buf += chunk.toString();
@@ -865,15 +1045,28 @@ function proxyAnthropicStream(provider, oaiBody, model, res) {
           if (!ds || ds === '[DONE]') continue;
           try {
             const evt = JSON.parse(ds);
-            if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta' && evt.delta.text) {
+            if (evt.type === 'content_block_start' && evt.content_block?.type === 'tool_use') {
+              // 工具块起始：分配 OpenAI tool index，先发带 id+name 的 tool_calls 帧
+              if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
+              const oaiIndex = toolCounter++;
+              toolIndexByBlock.set(evt.index, oaiIndex);
+              res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { tool_calls: [{ index: oaiIndex, id: evt.content_block.id, type: 'function', function: { name: evt.content_block.name || '', arguments: '' } }] }, finish_reason: null }] })}\n\n`);
+            } else if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta' && evt.delta.text) {
               if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
               res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { content: evt.delta.text }, finish_reason: null }] })}\n\n`);
+            } else if (evt.type === 'content_block_delta' && evt.delta?.type === 'input_json_delta') {
+              // 工具参数增量：partial_json → OpenAI tool_calls[].function.arguments 增量
+              const oaiIndex = toolIndexByBlock.has(evt.index) ? toolIndexByBlock.get(evt.index) : 0;
+              const pj = evt.delta.partial_json || '';
+              if (pj) res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { tool_calls: [{ index: oaiIndex, function: { arguments: pj } }] }, finish_reason: null }] })}\n\n`);
             } else if (evt.type === 'message_start') {
               msgId       = evt.message?.id                                 || msgId;
               usageIn     = evt.message?.usage?.input_tokens                || 0;
               cacheCreate = evt.message?.usage?.cache_creation_input_tokens || 0;
               cacheRead   = evt.message?.usage?.cache_read_input_tokens     || 0;
             } else if (evt.type === 'message_delta') {
+              const sr = evt.delta?.stop_reason;
+              if (sr) stopReason = sr === 'tool_use' ? 'tool_calls' : sr === 'end_turn' ? 'stop' : sr === 'max_tokens' ? 'length' : sr;
               if (evt.usage?.output_tokens               != null) usageOut    = evt.usage.output_tokens;
               if (evt.usage?.cache_creation_input_tokens != null) cacheCreate = evt.usage.cache_creation_input_tokens;
               if (evt.usage?.cache_read_input_tokens     != null) cacheRead   = evt.usage.cache_read_input_tokens;
@@ -883,7 +1076,7 @@ function proxyAnthropicStream(provider, oaiBody, model, res) {
       });
 
       proxyRes.on('end', () => {
-        res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
+        res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: stopReason }] })}\n\n`);
         res.write('data: [DONE]\n\n');
         res.end();
         resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0,
@@ -916,38 +1109,150 @@ function geminiBase(rawBaseUrl) {
   return /\/v1beta/i.test(raw) ? raw : raw + '/v1beta';
 }
 
-// OpenAI chat body → Gemini generateContent body
+// Gemini thought_signature 校验绕过常量（thoughtSignature 位于 part 层级，与 functionCall 同级）
+const GEMINI_DUMMY_SIG = 'skip_thought_signature_validator';
+
+// Gemini 不支持部分 JSON Schema 元字段，递归清洗（否则 functionDeclarations 会被上游 400）。
+// 移植自 ccx types/gemini.go sanitizeGeminiSchemaNode：删元字段、const→enum、
+// properties 的直接子键是用户参数名（不剥离 schema 关键字）。
+function sanitizeGeminiSchema(v, insideProperties = false) {
+  if (Array.isArray(v)) return v.map(x => sanitizeGeminiSchema(x, false));
+  if (v && typeof v === 'object') {
+    const out = {};
+    let constValue, hasConst = false;
+    for (const [k, val] of Object.entries(v)) {
+      if (insideProperties) { out[k] = sanitizeGeminiSchema(val, false); continue; }
+      switch (k) {
+        case '$schema': case 'title': case 'examples': case 'additionalProperties':
+        case 'propertyNames': case 'exclusiveMinimum': case 'exclusiveMaximum':
+          continue;
+        case 'const': constValue = val; hasConst = true; continue;
+        default: out[k] = sanitizeGeminiSchema(val, k === 'properties');
+      }
+    }
+    if (hasConst && out.enum === undefined) out.enum = [sanitizeGeminiSchema(constValue, false)];
+    return out;
+  }
+  return v;
+}
+
+// OpenAI tools → Gemini functionDeclarations
+function oaiToolsToGemini(tools) {
+  if (!Array.isArray(tools)) return undefined;
+  const decls = [];
+  for (const t of tools) {
+    const fn = (t && t.function) ? t.function : t;
+    if (!fn || !fn.name) continue;
+    decls.push({ name: fn.name, description: fn.description || '',
+      parameters: sanitizeGeminiSchema(fn.parameters || { type: 'object', properties: {} }) });
+  }
+  return decls.length ? [{ functionDeclarations: decls }] : undefined;
+}
+
+// OpenAI tool_choice → Gemini toolConfig.functionCallingConfig
+function oaiToolChoiceToGemini(tc) {
+  if (tc == null) return undefined;
+  if (typeof tc === 'string') {
+    if (tc === 'auto')     return { functionCallingConfig: { mode: 'AUTO' } };
+    if (tc === 'required') return { functionCallingConfig: { mode: 'ANY' } };
+    if (tc === 'none')     return { functionCallingConfig: { mode: 'NONE' } };
+    return undefined;
+  }
+  if (tc.type === 'function' && tc.function?.name) {
+    return { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: [tc.function.name] } };
+  }
+  return undefined;
+}
+
+// Gemini functionResponse.response 必须是对象：字符串包成 {result}
+function geminiFnResponsePayload(content) {
+  if (content == null) return { result: '' };
+  if (typeof content === 'string') return { result: content };
+  if (typeof content === 'object') return content;
+  return { result: String(content) };
+}
+
+// OpenAI message content（string | parts[]）→ Gemini parts（text + inlineData 图片）
+function oaiContentToGeminiParts(content) {
+  if (typeof content === 'string') return content ? [{ text: content }] : [];
+  if (!Array.isArray(content)) return [];
+  const parts = [];
+  for (const p of content) {
+    if (!p) continue;
+    if (p.type === 'text') { if (p.text) parts.push({ text: p.text }); }
+    else if (p.type === 'image_url') {
+      const url = p.image_url?.url || '';
+      const mm = /^data:([^;]+);base64,(.*)$/s.exec(url);
+      if (mm) parts.push({ inlineData: { mimeType: mm[1], data: mm[2] } });
+    }
+  }
+  return parts;
+}
+
+// OpenAI chat body → Gemini generateContent body（含 tool calling + 多模态）
 function oaiToGeminiBody(oai) {
   const systemParts = [];
   const contents = [];
-  const textOf = (content) => {
-    if (typeof content === 'string') return content;
-    if (Array.isArray(content)) return content.filter(p => p && p.type === 'text').map(p => p.text || '').join('');
-    return '';
-  };
   for (const m of (oai.messages || [])) {
     const role = m.role || 'user';
-    if (role === 'system') { systemParts.push({ text: textOf(m.content) }); continue; }
-    const gRole = role === 'assistant' ? 'model' : 'user';
-    contents.push({ role: gRole, parts: [{ text: textOf(m.content) }] });
+    if (role === 'system') {
+      for (const p of oaiContentToGeminiParts(m.content)) if (p.text) systemParts.push({ text: p.text });
+      continue;
+    }
+    if (role === 'tool') {
+      // 工具结果 → functionResponse（user 角色；name 用 tool_call_id 做关联键）
+      contents.push({ role: 'user', parts: [{ functionResponse: {
+        name: m.tool_call_id, response: geminiFnResponsePayload(m.content) } }] });
+      continue;
+    }
+    if (role === 'assistant') {
+      const parts = oaiContentToGeminiParts(m.content);
+      const tcs = m.tool_calls || (m.function_call ? [{ function: m.function_call }] : []);
+      for (const tc of tcs) {
+        const fn = tc.function || {};
+        let args = {};
+        try { args = fn.arguments ? JSON.parse(fn.arguments) : {}; } catch { args = {}; }
+        // thoughtSignature 与 functionCall 同级（part 层级）
+        parts.push({ functionCall: { name: fn.name, args }, thoughtSignature: GEMINI_DUMMY_SIG });
+      }
+      contents.push({ role: 'model', parts: parts.length ? parts : [{ text: '' }] });
+      continue;
+    }
+    const parts = oaiContentToGeminiParts(m.content);
+    contents.push({ role: 'user', parts: parts.length ? parts : [{ text: '' }] });
   }
   const body = { contents };
   if (systemParts.length) body.systemInstruction = { parts: systemParts };
+  const tools = oaiToolsToGemini(oai.tools);
+  if (tools) body.tools = tools;
+  const toolCfg = oaiToolChoiceToGemini(oai.tool_choice);
+  if (toolCfg) body.toolConfig = toolCfg;
   const gen = {};
   if (oai.max_tokens != null) gen.maxOutputTokens = oai.max_tokens;
   if (oai.temperature != null) gen.temperature = oai.temperature;
   if (oai.top_p != null) gen.topP = oai.top_p;
+  if (oai.stop) gen.stopSequences = Array.isArray(oai.stop) ? oai.stop : [oai.stop];
   if (Object.keys(gen).length) body.generationConfig = gen;
   return body;
 }
 
-function geminiExtractText(data) {
+// 提取 Gemini 响应的 text + functionCall（→ OpenAI tool_calls）。
+// Gemini 用 functionCall.name 当关联键（无独立 call_id），args 是对象（需 JSON.stringify）。
+function geminiExtractParts(data) {
+  let text = '';
+  const toolCalls = [];
   for (const cand of (data.candidates || [])) {
     for (const part of (cand.content?.parts || [])) {
-      if (typeof part.text === 'string') return part.text;
+      if (part.thought) continue; // 跳过 thinking part
+      if (typeof part.text === 'string') text += part.text;
+      if (part.functionCall) {
+        const fc = part.functionCall;
+        toolCalls.push({ id: fc.name, type: 'function',
+          function: { name: fc.name, arguments: JSON.stringify(fc.args || {}) } });
+      }
     }
   }
-  return '';
+  return { text, toolCalls };
 }
 
 // Gemini 非流式：generateContent → OpenAI json / Anthropic json（按客户端协议）
@@ -976,14 +1281,16 @@ function proxyGeminiSync(provider, oaiBody, model, res, outAnthropic) {
           return reject(Object.assign(new Error(formatHttpError(proxyRes.statusCode, raw)), { status: proxyRes.statusCode, body: raw }));
         }
         let data; try { data = JSON.parse(raw); } catch (err) { return reject(err); }
-        const text = geminiExtractText(data);
+        const { text, toolCalls } = geminiExtractParts(data);
         const um = data.usageMetadata || {};
         const inTok = um.promptTokenCount || 0, outTok = um.candidatesTokenCount || 0;
         const latency = Date.now() - t0;
+        const message = { role: 'assistant', content: text || (toolCalls.length ? null : '') };
+        if (toolCalls.length) message.tool_calls = toolCalls;
         const oaiResp = {
           id: 'chatcmpl-' + Math.random().toString(36).slice(2, 12),
           object: 'chat.completion', created: Math.floor(Date.now() / 1000), model,
-          choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+          choices: [{ index: 0, message, finish_reason: toolCalls.length ? 'tool_calls' : 'stop' }],
           usage: { prompt_tokens: inTok, completion_tokens: outTok, total_tokens: inTok + outTok },
         };
         const out = outAnthropic ? openaiToAnthropic(oaiResp, model) : oaiResp;
@@ -1061,6 +1368,8 @@ function proxyGeminiStream(provider, oaiBody, model, res, outAnthropic) {
       };
 
       let buf = '';
+      // Gemini 流式里 functionCall 一次性完整出现（非增量），先缓存，流末统一发工具帧。
+      const pendingTools = [];
       proxyRes.on('data', (chunk) => {
         buf += chunk.toString();
         const lines = buf.split('\n');
@@ -1072,7 +1381,12 @@ function proxyGeminiStream(provider, oaiBody, model, res, outAnthropic) {
           let obj; try { obj = JSON.parse(ds); } catch { continue; }
           for (const cand of (obj.candidates || [])) {
             for (const part of (cand.content?.parts || [])) {
+              if (part.thought) continue;
               if (typeof part.text === 'string') emitText(part.text);
+              if (part.functionCall) {
+                if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
+                pendingTools.push({ name: part.functionCall.name, args: part.functionCall.args || {} });
+              }
             }
             if (cand.finishReason) stopReason = (cand.finishReason === 'STOP' || cand.finishReason === 'END_TURN') ? 'end_turn' : 'stop';
           }
@@ -1087,11 +1401,25 @@ function proxyGeminiStream(provider, oaiBody, model, res, outAnthropic) {
 
       proxyRes.on('end', () => {
         if (outAnthropic) {
+          // 文本块（index 0）收尾；工具块从 index 1 起，逐个 start→input_json_delta→stop
           res.write(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`);
-          res.write(`event: message_delta\ndata: ${JSON.stringify({ type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null }, usage: { output_tokens: usageOut } })}\n\n`);
+          let bi = 1;
+          for (const tcall of pendingTools) {
+            res.write(`event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: bi, content_block: { type: 'tool_use', id: tcall.name, name: tcall.name, input: {} } })}\n\n`);
+            res.write(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: bi, delta: { type: 'input_json_delta', partial_json: JSON.stringify(tcall.args || {}) } })}\n\n`);
+            res.write(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: bi })}\n\n`);
+            bi++;
+          }
+          const sr = pendingTools.length ? 'tool_use' : stopReason;
+          res.write(`event: message_delta\ndata: ${JSON.stringify({ type: 'message_delta', delta: { stop_reason: sr, stop_sequence: null }, usage: { output_tokens: usageOut } })}\n\n`);
           res.write('event: message_stop\ndata: {"type":"message_stop"}\n\n');
         } else {
-          res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
+          let ti = 0;
+          for (const tcall of pendingTools) {
+            res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: { tool_calls: [{ index: ti, id: tcall.name, type: 'function', function: { name: tcall.name, arguments: JSON.stringify(tcall.args || {}) } }] }, finish_reason: null }] })}\n\n`);
+            ti++;
+          }
+          res.write(`data: ${JSON.stringify({ id: chatId, object: 'chat.completion.chunk', created, model, choices: [{ index: 0, delta: {}, finish_reason: pendingTools.length ? 'tool_calls' : 'stop' }] })}\n\n`);
           res.write('data: [DONE]\n\n');
         }
         res.end();
@@ -1835,7 +2163,9 @@ function recordStats(providerId, model, usage, tier, apiKey, streaming, billingT
     is_streaming:         !!streaming,
     latency_ms:           (usage?.latency        != null) ? usage.latency        : null,
     first_token_ms:       (usage?.first_token_ms != null) ? usage.first_token_ms : null,
-    cost_usd:             estimateCost(model, inTok, outTok, cCreate, cRead, providerId),
+    // 免费源真实 USD 成本为 0；P2P 在服务端按积分结算（非 USD）。仅付费源用刊例价估算，
+    // 否则免费/P2P 流量会按 Claude/GPT 刊例价虚增 dashboard 的 total_cost。
+    cost_usd:             (tier === 'free' || tier === 'p2p') ? 0 : estimateCost(model, inTok, outTok, cCreate, cRead, providerId),
     billing_type:         billingType || null,
   });
 }
@@ -2181,4 +2511,8 @@ module.exports = {
   setClaudeModels,
   // 条件路由规则引擎（供单测/复用）
   pickSteps, evalWhen, modalityOf, estimateInputTokens, extractText, _providerTier,
+  // 格式转换（供单测/复用）：Anthropic ⇄ OpenAI（含 tool-calling）
+  anthropicToOpenai, openaiToAnthropic, oaiRequestToAnthropic, anthropicRespToOai,
+  // Gemini 转换（供单测/复用，含 tool-calling）
+  oaiToGeminiBody, geminiExtractParts, sanitizeGeminiSchema,
 };

@@ -59,6 +59,7 @@ async function syncUserBilling() {
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [guest, setGuest] = useState(false);  // 游客模式：不登录浏览（记忆在 localStorage，直到主动登录）
   const timerRef = useRef(null);
 
   function startPolling() {
@@ -77,8 +78,9 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const token = localStorage.getItem('token');
+    const rememberedGuest = localStorage.getItem('guest') === '1';
     bootstrapServerUrl().then(() => {
-      if (!token) { setLoading(false); return; }
+      if (!token) { if (rememberedGuest) setGuest(true); setLoading(false); return; }
       getProfile()
         .then((r) => {
           setUser(r.data);
@@ -91,11 +93,18 @@ export function AuthProvider({ children }) {
         })
         .catch(() => { localStorage.removeItem('token'); })
         .finally(() => setLoading(false));
+    }).catch(() => {
+      // bootstrapServerUrl 失败（如 electronAPI 同步抛错）也必须解除 loading，
+      // 否则 App 会永远卡在「加载中…」spinner、登录框无法出现。
+      if (rememberedGuest) setGuest(true);
+      setLoading(false);
     });
     return () => stopPolling();
   }, []);
 
   function loginSuccess(token, userData) {
+    localStorage.removeItem('guest');   // 登录后退出游客模式
+    setGuest(false);
     localStorage.setItem('token', token);
     setUser(userData);
     startPolling();
@@ -104,6 +113,11 @@ export function AuthProvider({ children }) {
     syncCloudConfigUrl();
     syncRemoteConfig();
     syncUserBilling();
+  }
+
+  function enterGuest() {
+    localStorage.setItem('guest', '1');
+    setGuest(true);
   }
 
   function logout() {
@@ -118,7 +132,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, loginSuccess, logout, refreshUser }}>
+    <AuthContext.Provider value={{ user, loading, guest, enterGuest, loginSuccess, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );
@@ -127,6 +141,8 @@ export function AuthProvider({ children }) {
 const defaultAuth = {
   user: null,
   loading: false,
+  guest: false,
+  enterGuest: () => {},
   loginSuccess: () => {},
   logout: () => {},
   refreshUser: () => Promise.resolve(),

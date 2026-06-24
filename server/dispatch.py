@@ -114,7 +114,7 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                                 yield "data: [DONE]\n\n"
                                 return
                             if kind == "error":
-                                yield f'data: {{"error":"{data}"}}\n\n'
+                                yield f'data: {json.dumps({"error": str(data)})}\n\n'
                                 return
                             yield data
                     except asyncio.TimeoutError:

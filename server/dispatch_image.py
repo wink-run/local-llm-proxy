@@ -32,9 +32,13 @@ async def handle_image(body: dict, consumer_user_id: int | None = None):
         if not user or user["credits_balance"] <= 0:
             raise HTTPException(402, "Insufficient credits")
 
-    worker = pool.pick(model)
-    if not worker:
-        raise HTTPException(503, f"No worker available for model '{model}'")
+    # 图像请求只路由到声明了 image 类型的 worker；虚拟 worker 是 chat 端点转发器、
+    # 未实现图像生成，若被选中会把图像请求误发到 /chat/completions 并泄漏 active_requests，
+    # 故在自增计数前直接排除（真实图像 worker 注册时已声明 type="image"，不受影响）。
+    from virtual_worker import VirtualWorkerConnection
+    worker = pool.pick(model, model_type="image")
+    if not worker or isinstance(worker, VirtualWorkerConnection):
+        raise HTTPException(503, f"No image-capable worker available for model '{model}'")
 
     req_id = str(uuid.uuid4())
     q: asyncio.Queue = asyncio.Queue()

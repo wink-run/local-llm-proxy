@@ -208,7 +208,7 @@ async def set_config(req: ConfigRequest):
 
 # ── 虚拟 Agent ────────────────────────────────────────────────────────────────
 
-_VALID_API_STYLES = ("openai", "anthropic", "claude_oauth")
+_VALID_API_STYLES = ("openai", "anthropic", "claude_oauth", "gemini")
 
 
 def _redact_credentials(creds: dict) -> dict:

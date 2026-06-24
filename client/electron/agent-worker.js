@@ -111,7 +111,8 @@ function parseAnthropicSSE(buf, model) {
         choices: [{ index: 0, delta: { content: data.delta.text }, finish_reason: null }],
       }));
     } else if (eventType === 'message_delta') {
-      if (data.usage) usage = { prompt_tokens: 0, completion_tokens: data.usage.output_tokens, total_tokens: data.usage.output_tokens };
+      // 保留 message_start 已拿到的 input_tokens，不要用 0 覆盖（否则输入 token 漏记账）
+      if (data.usage) { const inTok = (usage && usage.prompt_tokens) || 0; const outTok = data.usage.output_tokens || 0; usage = { prompt_tokens: inTok, completion_tokens: outTok, total_tokens: inTok + outTok }; }
       lines.push('data: ' + JSON.stringify({
         id: 'chatcmpl-0', object: 'chat.completion.chunk',
         created: Math.floor(Date.now() / 1000), model,

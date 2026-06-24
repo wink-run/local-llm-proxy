@@ -87,7 +87,7 @@ function LangSelector() {
 }
 
 export default function Config() {
-  const { user, loginSuccess, logout } = useAuth();
+  const { user, loginSuccess, logout, enterGuest } = useAuth();
   const { t } = useLang();
   const navigate = useNavigate();
 
@@ -176,6 +176,11 @@ export default function Config() {
     navigate('/config');
   }
 
+  function handleGuest() {
+    enterGuest();          // 记忆游客模式，进入「中心」（个人源 + 本地用量；社区源/积分需登录）
+    navigate('/gateway');
+  }
+
   // Not logged in: show only login form
   if (!user) {
     return (
@@ -244,6 +249,12 @@ export default function Config() {
               </p>
             </form>
           )}
+
+          {/* 不登录，先逛逛（游客模式） */}
+          <button type="button" onClick={handleGuest}
+            className="w-full text-center text-xs text-zinc-500 dark:text-zinc-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors">
+            {t('config.guestEnter')}
+          </button>
 
           {/* Disclaimer */}
           <p className="text-xs text-gray-600 dark:text-gray-600 text-center leading-relaxed pt-2">

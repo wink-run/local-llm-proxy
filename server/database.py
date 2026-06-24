@@ -465,9 +465,11 @@ async def adjust_user_credits(user_id: int, delta: float, note: str = "") -> flo
             if not row:
                 raise ValueError("User not found")
             new_balance = row[0] + delta
+        # credits_earned 只在充值（delta>=0）时增长，max(delta,0) 已守卫；
+        # 不能把 ?>=0 放进 WHERE，否则扣分时整条 UPDATE 被跳过 → 余额没扣但流水照记，账实不符。
         await db.execute(
-            "UPDATE users SET credits_balance=?, credits_earned=credits_earned+? WHERE id=? AND ?>=0",
-            (new_balance, max(delta, 0), user_id, delta),
+            "UPDATE users SET credits_balance=?, credits_earned=credits_earned+? WHERE id=?",
+            (new_balance, max(delta, 0), user_id),
         )
         if delta < 0:
             await db.execute(
@@ -760,12 +762,18 @@ async def approve_purchase_order(order_id: int, admin_note: str) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM purchase_orders WHERE id=?", (order_id,)) as cur:
-            order = dict(await cur.fetchone())
-        await db.execute(
-            "UPDATE purchase_orders SET status='approved', admin_note=? WHERE id=?",
+            row = await cur.fetchone()
+        if row is None:
+            raise ValueError("Order not found")
+        order = dict(row)
+        # 幂等：仅 pending → approved 这一次转换才发积分，防止重复批准重复发分（并发/重复点击）
+        cur = await db.execute(
+            "UPDATE purchase_orders SET status='approved', admin_note=? WHERE id=? AND status='pending'",
             (admin_note, order_id),
         )
         await db.commit()
+        if cur.rowcount == 0:
+            return  # 已被批准/拒绝，跳过发分
     await award_credits(
         order["user_id"], order["amount_credits"],
         type_="purchase", note=f"order_id={order_id} {admin_note}",

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { useAuth } from '../store/index';
 import { useLang } from '../store/lang';
@@ -558,9 +558,10 @@ function DevicesSection() {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function TokenDashboard() {
-  const { user, refreshUser } = useAuth();
+  const { user, guest, refreshUser } = useAuth();
   const { t } = useLang();
   const location = useLocation();
+  const navigate = useNavigate();
   const accountsTab = location.state?.accountsTab;
   const [txs,      setTxs]      = useState([]);
   const [orders,   setOrders]   = useState([]);
@@ -579,9 +580,11 @@ export default function TokenDashboard() {
   const [deviceList,  setDeviceList]  = useState([]);
   const [distFilter,  setDistFilter]  = useState('all');
   useEffect(() => {
-    refreshUser();
-    getTransactions().then(r => setTxs(r.data.transactions || [])).catch(() => {});
-    getPurchaseOrders().then(r => { setOrders(r.data.orders || []); if (r.data.contact_info) setAdminInfo(String(r.data.contact_info)); }).catch(() => {});
+    if (user) {   // 账号相关数据仅登录时拉取；游客跳过（统计走本地 fetchDashboardStats）
+      refreshUser();
+      getTransactions().then(r => setTxs(r.data.transactions || [])).catch(() => {});
+      getPurchaseOrders().then(r => { setOrders(r.data.orders || []); if (r.data.contact_info) setAdminInfo(String(r.data.contact_info)); }).catch(() => {});
+    }
     getProviderCatalog().then(r => {
       const map = {};
       for (const p of r.data?.providers || []) map[p.id] = { label: p.label, type: p.type };
@@ -617,7 +620,7 @@ export default function TokenDashboard() {
     }).catch(() => {});
   }, [range]);
 
-  if (!user) return null;
+  if (!user && !guest) return null;
 
   const heroTotal   = rangeStats.calls;
   const heroFree    = rangeStats.free;
@@ -656,6 +659,7 @@ export default function TokenDashboard() {
     <div className="px-5 py-5 space-y-5">
 
       {/* Hero */}
+      {user ? (
       <div className="flex items-center gap-3">
         <div className="w-9 h-9 rounded-full bg-zinc-800 dark:bg-zinc-600 flex items-center justify-center text-sm font-bold text-white shrink-0">
           {(user.nickname || user.email || '?')[0].toUpperCase()}
@@ -674,6 +678,16 @@ export default function TokenDashboard() {
           </div>
         )}
       </div>
+      ) : (
+      <div className="flex items-center gap-3">
+        <div className="w-9 h-9 rounded-full bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center text-sm shrink-0">👤</div>
+        <div className="flex-1 min-w-0">
+          <p className="text-[17px] font-bold text-zinc-900 dark:text-zinc-100 tracking-tight leading-tight">{t('profile.guestTitle')}</p>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500 truncate mt-0.5">{t('profile.guestSub')}</p>
+        </div>
+        <button onClick={() => navigate('/config')} className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors">{t('profile.guestLogin')}</button>
+      </div>
+      )}
 
       {/* Usage card with range selector */}
       <div className="bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-900 rounded-2xl p-6 shadow-lg">
@@ -737,10 +751,11 @@ export default function TokenDashboard() {
         </div>
       </div>
 
-      {/* 我的设备 */}
-      <DevicesSection />
+      {/* 我的设备（仅登录） */}
+      {user && <DevicesSection />}
 
-      {/* 三类账户：积分 / 订阅 / 按量付费 */}
+      {/* 三类账户：积分 / 订阅 / 按量付费（仅登录） */}
+      {user && (
       <UserAccountsPanel
         initialTab={accountsTab === 'subscription' || accountsTab === 'payg' ? accountsTab : 'p2p'}
         user={user}
@@ -768,6 +783,7 @@ export default function TokenDashboard() {
           </div>
         )}
       />
+      )}
 
       {/* 用量分布：工具 / 供给 / 模型（可按端筛选） */}
       <UsageDistributionPanel

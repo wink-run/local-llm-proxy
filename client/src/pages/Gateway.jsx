@@ -295,17 +295,6 @@ const APPS_TABLE_GRID = 'grid w-full grid-cols-[1.75rem_minmax(5rem,1.5fr)_3.75r
 // 按 API Key 路由的应用：自动写配置的 api-key，和用户自配的 manual（手工添加）
 const isKeyApp = (m) => m === 'api-key' || m === 'manual';
 
-function tierModelLabel(tier, t) {
-  if (tier === 'free') return t('gateway.app.tier.free');
-  if (tier === 'p2p') return t('gateway.app.tier.p2p');
-  return t('gateway.app.tier.paid');
-}
-function tierLayerLabel(tier, t) {
-  if (tier === 'free') return t('gateway.app.tier.freeLayer');
-  if (tier === 'p2p') return t('gateway.app.tier.p2pLayer');
-  return t('gateway.app.tier.paidLayer');
-}
-
 function strategyLabel(key, t) {
   const map = {
     'base_url-env': t('gateway.strategyLabel.baseUrlEnv'),

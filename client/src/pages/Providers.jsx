@@ -7,6 +7,7 @@ import { loadUserAccounts } from '../api/userAccounts';
 import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
 import { getGateway, getLocalConfig, getConfig, getOauth } from '../api/adapter';
 import { useLang } from '../store/lang';
+import { useAuth } from '../store/index';
 
 /** 按当前语言覆盖 meta 中的 label / hint / oauth.label */
 function localizeProviderMeta(metaMap, t) {
@@ -323,6 +324,17 @@ function resolveCardAuthMode(provider, gatewayAuth) {
   return null;
 }
 
+/** 个人源 API/订阅 分类：OAuth 接入 / 订阅计费 → 订阅；其余 api-key 接入（免费 + 按量付费）→ API。
+ *  说明：oauth-capable 源若已以 api-key 方式配置（按量付费），归 API 而非订阅。 */
+function isSubscriptionProvider(provider, metaMap = {}) {
+  if (!provider) return false;
+  if (provider.billing_type === 'subscription') return true;
+  if (provider.auth_type === 'oauth') return true;
+  if (provider.credentials?.refresh_token) return true;
+  if (metaMap[provider.id]?.oauth && provider.auth_type !== 'api_key' && !provider.token) return true;
+  return false;
+}
+
 /** 合并个人页 API 订阅 / 自定义订阅到 providers 列表 */
 function mergeCustomSubscriptionProviders(resolved, metaMap, userSubs, paidIds = [], t) {
   const providers = [...resolved];
@@ -363,11 +375,6 @@ function mergeCustomSubscriptionProviders(resolved, metaMap, userSubs, paidIds =
     }
   }
   return { providers, meta };
-}
-
-function StatsOnlyHint({ names }) {
-  const { t, lang } = useLang();
-  return null;
 }
 
 function PersonalPageHint({ onGo }) {
@@ -1558,6 +1565,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
 
 export default function Providers() {
   const { t } = useLang();
+  const { user, guest } = useAuth();
   const navigate = useNavigate();
   const tierConfig = useMemo(() => getTierConfig(t), [t]);
   const oauthById = useMemo(() => getOAuthById(t), [t]);
@@ -1757,7 +1765,6 @@ export default function Providers() {
   const paidAccountsLoaded = paidAllowlist !== null;
   const hasPersonalPaid = paidAccountsLoaded && (paidAllowlist.length > 0 || statsOnlyIds.length > 0);
   const hasGatewayPaid = paidAccountsLoaded && paidAllowlist.length > 0;
-  const statsOnlyLabels = statsOnlyIds.map(id => meta[id]?.label || FALLBACK_PROVIDER_META[id]?.label || id);
 
   async function testProvider(p) {
     return getGateway().testProvider({
@@ -1781,7 +1788,21 @@ export default function Providers() {
   }, [providers, addingId]);
 
   // 本地源(API=free / 订阅=paid) 相邻，远程源(p2p) 最后
-  const tiers = ['free', 'paid', 'p2p'];
+  // 游客（未登录）隐藏社区源(p2p)：社区源需账号 + 积分
+  const tiers = user ? ['free', 'paid', 'p2p'] : ['free', 'paid'];
+
+  // ── 个人源统一池 + API/订阅 分类（按接入方式，而非 free/paid 层）──
+  // API（free 段渲染）= api-key 接入：免费 API + 按量付费 API。
+  // 订阅（paid 段渲染）= OAuth 接入：Claude / ChatGPT / Copilot 等。
+  const liveStateOf = (p) => withProviderDisplayName(providers.find(x => x.id === p.id) || p, userPayg, userSubscriptions, meta);
+  const personalPaidPool = buildPersonalPaidPool(providers, paidAllowlist || [], userPayg, userSubscriptions);
+  const personalPoolAll = (() => {
+    const seen = new Set(personalPaidPool.map(p => p.id));
+    return [...providers.filter(p => p.type === 'free' && !seen.has(p.id)), ...personalPaidPool];
+  })();
+  const isSubItem = (p) => isSubscriptionProvider(liveStateOf(p), meta);
+  const personalApiEnabled = personalPoolAll.filter(p => liveStateOf(p).enabled && !isSubItem(p));
+  const personalSubEnabled = personalPoolAll.filter(p => liveStateOf(p).enabled && isSubItem(p));
 
   return (
     <div className="px-5 py-5 space-y-6">
@@ -1815,17 +1836,15 @@ export default function Providers() {
           );
         }
 
-        // 付费层：按个人页登记 id 构建池（含目录标为 free 的按量源）
-        const personalPool = tier === 'paid'
-          ? buildPersonalPaidPool(providers, paidAllowlist || [], userPayg, userSubscriptions)
-          : [];
-        const liveState = (p) => withProviderDisplayName(providers.find(x => x.id === p.id) || p, userPayg, userSubscriptions, meta);
-        const enabledItems  = tier === 'paid'
-          ? personalPool.filter(p => liveState(p).enabled)
-          : allItems.filter(p => p.enabled);
+        // 个人源按接入方式分类：free 段=API（api-key），paid 段=订阅（oauth）；池统一为 personalPoolAll。
+        const personalPool = tier === 'paid' ? personalPoolAll : [];
+        const liveState = liveStateOf;
+        const enabledItems  = tier === 'paid' ? personalSubEnabled
+                            : tier === 'free' ? personalApiEnabled
+                            : [];
         const disabledItems = tier === 'paid'
-          ? personalPool.filter(p => !liveState(p).enabled)
-          : allItems.filter(p => !p.enabled);
+          ? personalPoolAll.filter(p => !liveStateOf(p).enabled)
+          : [];
         const disabledPickerEntries = tier === 'paid'
           ? gatewayPickerEntries.filter(e => !liveState({ id: e.providerId }).enabled)
           : [];
@@ -1881,10 +1900,10 @@ export default function Providers() {
             <div className={`grid ${cfg.cols} gap-3`}>
               {/* Enabled providers */}
               {enabledItems.map(p => {
-                const live = tier === 'paid' ? liveState(p) : p;
+                const live = liveState(p);
                 const useCustomCard = isCustomSubscriptionGatewayId(live.id, userSubscriptions) || !meta[live.id];
                 return !useCustomCard
-                  ? <ProviderCard key={live.id} provider={live} meta={meta[live.id]} onUpdate={updateProvider} onTest={testProvider} gatewayAuthMode={tier === 'paid' ? resolveCardAuthMode(live, providerGatewayAuth[live.id]) : null} userPayg={userPayg} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} />
+                  ? <ProviderCard key={live.id} provider={live} meta={meta[live.id]} onUpdate={updateProvider} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id])} userPayg={userPayg} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} />
                   : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} userPayg={userPayg} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />;
               })}
 
@@ -1912,7 +1931,6 @@ export default function Providers() {
                   <p className="text-xs text-zinc-400">{t('providers.add.loadingAccounts')}</p>
                 )}
                 <>
-                <StatsOnlyHint names={statsOnlyLabels} />
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">
                   {tier === 'paid'
                     ? t('providers.add.paidHint')
