@@ -151,6 +151,13 @@ export default function UserAccountsPanel({
     if (pricingSaveTimer.current) clearTimeout(pricingSaveTimer.current);
   }, []);
 
+  // API tab(原按量付费）= API 订阅 + 按量付费；切到该 tab 时新增表单默认 API 订阅类型，订阅 tab 默认 App。
+  useEffect(() => {
+    if (tab === 'subscription') onSubKindChange(SUB_KIND_APP);
+    else if (tab === 'payg') onSubKindChange(SUB_KIND_API);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
   async function saveAccounts(patch, { quiet = false, successMsg } = {}) {
     setSaving(true);
     setMsg('');
@@ -191,6 +198,8 @@ export default function UserAccountsPanel({
   const subs = data?.user_subscriptions || [];
   const payg = data?.user_payg_providers || [];
   const paygOptions = data?.payg_provider_catalog || [];
+  // 与「供给源」一致：按接入方式分。OAuth 订阅（app 类，如 Claude/ChatGPT）→ 订阅 tab；
+  // API-key 订阅（kind=api，如火山 API 订阅）→ API tab。应用订阅即使"转API"仍属 OAuth，不挪到 API。
   const appSubs = subs.filter(s => subscriptionKind(s) === SUB_KIND_APP);
   const apiSubs = subs.filter(s => subscriptionKind(s) === SUB_KIND_API);
 
@@ -562,8 +571,8 @@ export default function UserAccountsPanel({
 
   const tabs = [
     { id: 'p2p', label: t('accounts.tab.p2p'), sub: t('accounts.tab.p2pSub'), color: 'blue' },
-    { id: 'subscription', label: t('accounts.tab.subscription'), sub: t('accounts.count', { n: subs.length }), color: 'amber' },
-    { id: 'payg', label: t('accounts.tab.payg'), sub: t('accounts.count', { n: payg.length }), color: 'emerald' },
+    { id: 'subscription', label: t('accounts.tab.subscription'), sub: t('accounts.count', { n: appSubs.length }), color: 'amber' },
+    { id: 'payg', label: t('accounts.tab.payg'), sub: t('accounts.count', { n: payg.length + apiSubs.length }), color: 'emerald' },
   ];
 
   return (
@@ -684,36 +693,7 @@ export default function UserAccountsPanel({
                   )}
                 </div>
 
-                {/* API 订阅 */}
-                <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-gray-700">
-                  <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-300">{t('accounts.sectionApiSubs')}</h4>
-                  {apiSubs.length === 0 ? (
-                    <p className="text-sm text-gray-400 py-2 text-center">{t('accounts.noApiSubscriptions')}</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {apiSubs.map(s => (
-                        <div key={s.id}
-                          className="flex items-center gap-3 px-4 py-3 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900">
-                          <span className="text-lg shrink-0">{s.app_icon}</span>
-                          <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate max-w-[8rem] shrink-0">
-                            {s.app_name}
-                          </span>
-                          <span className="text-xs text-gray-500 truncate flex-1 min-w-0">
-                            {s.plan_label || s.plan_id}
-                            {s.monthly_usd != null ? ` · $${s.monthly_usd}${t('accounts.perMonth')}` : ''}
-                            {s.custom && (
-                              <span className="ml-1 text-gray-400">{t('accounts.custom')}</span>
-                            )}
-                          </span>
-                          <button type="button" onClick={() => removeSubscription(s.id)}
-                            className="text-xs text-red-400 hover:text-red-500 shrink-0">{t('accounts.remove')}</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* 添加 */}
+                {/* 添加（仅 App/OAuth 订阅；API 订阅已移至 API tab） */}
                 <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-gray-700">
                   {subMsg && (
                     <p className={`text-xs ${isAccountOkMsg(subMsg, t) ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
@@ -721,15 +701,6 @@ export default function UserAccountsPanel({
                     </p>
                   )}
                   <div className="flex flex-wrap items-end gap-2">
-                    <div className="w-full sm:w-auto min-w-[140px]">
-                      <label className="text-xs text-gray-400 block mb-1">{t('accounts.subKind')}</label>
-                      <select value={addSubKind} onChange={e => onSubKindChange(e.target.value)}
-                        className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2">
-                        <option value={SUB_KIND_APP}>{t('accounts.subKindApp')}</option>
-                        <option value={SUB_KIND_API}>{t('accounts.subKindApi')}</option>
-                      </select>
-                    </div>
-
                     {addSubKind === SUB_KIND_API ? (
                       <>
                         <div className="flex-1 min-w-[140px]">
@@ -892,6 +863,84 @@ export default function UserAccountsPanel({
             ) : (
               <>
                 <p className="text-xs text-gray-500">{t('accounts.paygHint')}</p>
+
+                {/* ── API 订阅 ── */}
+                <div className="space-y-2">
+                  <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-300">{t('accounts.sectionApiSubs')}</h4>
+                  {subMsg && (
+                    <p className={`text-xs ${isAccountOkMsg(subMsg, t) ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{subMsg}</p>
+                  )}
+                  {apiSubs.length === 0 ? (
+                    <p className="text-sm text-gray-400 py-2 text-center">{t('accounts.noApiSubscriptions')}</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {apiSubs.map(s => (
+                        <div key={s.id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900">
+                          <span className="text-lg shrink-0">{s.app_icon}</span>
+                          <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate max-w-[8rem] shrink-0">{s.app_name}</span>
+                          <span className="text-xs text-gray-500 truncate flex-1 min-w-0">
+                            {s.plan_label || s.plan_id}
+                            {s.monthly_usd != null ? ` · $${s.monthly_usd}${t('accounts.perMonth')}` : ''}
+                            {s.custom && (<span className="ml-1 text-gray-400">{t('accounts.custom')}</span>)}
+                          </span>
+                          <button type="button" onClick={() => removeSubscription(s.id)} className="text-xs text-red-400 hover:text-red-500 shrink-0">{t('accounts.remove')}</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {/* 添加 API 订阅 */}
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="flex-1 min-w-[140px]">
+                      <label className="text-xs text-gray-400 block mb-1">{t('accounts.apiSubscription')}</label>
+                      <select value={addApiSource} onChange={e => onApiSourceChange(e.target.value)}
+                        className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2">
+                        <option value="">{t('accounts.selectApiSubscription')}</option>
+                        {apiCatalog.filter(c => !apiSubs.some(s => !s.custom && s.source_id === c.source_id)).map(c => (
+                          <option key={c.source_id} value={c.source_id}>{c.app_icon} {c.app_name}</option>
+                        ))}
+                        <option value={CUSTOM_API}>{t('accounts.customApi')}</option>
+                      </select>
+                    </div>
+                    {!isCustomApi && (
+                      <div className="flex-1 min-w-[120px]">
+                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.plan')}</label>
+                        <select value={addApiPlan} onChange={e => setAddApiPlan(e.target.value)} disabled={!addApiSource}
+                          className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2 disabled:opacity-50">
+                          <option value="">{t('accounts.selectPlan')}</option>
+                          {apiPlanOptions.map(p => (
+                            <option key={p.id} value={p.id}>{p.label}{p.monthly_usd != null ? ` ($${p.monthly_usd}${t('accounts.perMonth')})` : ''}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <button type="button" onClick={addSubscription} disabled={!canAddSubscription || saving}
+                      className="text-xs px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50">
+                      {saving ? t('accounts.saving') : t('accounts.addSubscription')}
+                    </button>
+                  </div>
+                  {isCustomApi && (
+                    <div className="flex flex-wrap items-end gap-2 pl-1">
+                      <div className="flex-1 min-w-[120px]">
+                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.apiProviderName')}</label>
+                        <input value={customAppName} onChange={e => setCustomAppName(e.target.value)} placeholder="如 DeepSeek、Moonshot…"
+                          className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2" />
+                      </div>
+                      <div className="flex-1 min-w-[120px]">
+                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.planName')}</label>
+                        <input value={customPlanLabel} onChange={e => setCustomPlanLabel(e.target.value)} placeholder="如 Pro、Team…"
+                          className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2" />
+                      </div>
+                      <div className="w-24">
+                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.monthlyUsd')}</label>
+                        <input type="number" min="0" step="0.01" value={customPlanUsd} onChange={e => setCustomPlanUsd(e.target.value)} placeholder={t('accounts.optional')}
+                          className="w-full text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-2 text-right" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── 按量付费 ── */}
+                <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-300 pt-3 border-t border-gray-100 dark:border-gray-700">{t('accounts.sectionPayg')}</h4>
                 {paygMsg && (
                   <p className={`text-xs ${isAccountOkMsg(paygMsg, t) ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
                     {paygMsg}

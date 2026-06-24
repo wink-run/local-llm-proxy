@@ -905,9 +905,10 @@ function registerIPC() {
   // 应用列表切换路由（纳管/还原 Claude Desktop）时前端可主动触发一次会话同步（不等 30s 定时）
   ipcMain.handle('claude3p:sync', () => { runClaude3pSync('app-switch'); return { ok: true }; });
 
-  // Write Claude Code config into ~/.claude/settings.local.json
+  // Write Claude Code config into ~/.claude/settings.json（用户级设置；Claude Code 实际读取的就是这个，
+  // settings.local.json 是「项目级」约定，写在 ~/.claude 下不会被读取）
   ipcMain.handle('claude:configure', async (_e, { baseUrl, apiKey, models = [] }) => {
-    const settingsPath = path.join(os.homedir(), '.claude', 'settings.local.json');
+    const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
     let settings = {};
     try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')); } catch {}
     settings.env = settings.env || {};
@@ -934,7 +935,7 @@ function registerIPC() {
 
   // Read current Claude Code config status
   ipcMain.handle('claude:status', () => {
-    const settingsPath = path.join(os.homedir(), '.claude', 'settings.local.json');
+    const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
     try {
       const s = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
       return { configured: !!(s.env?.ANTHROPIC_BASE_URL && s.env?.ANTHROPIC_AUTH_TOKEN) };
