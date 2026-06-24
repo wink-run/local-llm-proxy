@@ -1257,7 +1257,10 @@ function fmtBalance(c) {
 }
 function UsageMeter({ provider }) {
   const api = typeof window !== 'undefined' ? window.electronAPI?.usage : null;
-  const supported = USAGE_SUPPORTED.has(usageKey(provider));
+  // Gemini 的「订阅额度」需 Google OAuth access_token；纯 API Key 账户拿不到，不显示该块
+  // （否则会一直报「缺少 Google access_token」）。其余源（含 api-key 的 openrouter/deepseek/groq）照常。
+  const k = usageKey(provider);
+  const supported = USAGE_SUPPORTED.has(k) && !(k === 'gemini' && !provider?.credentials?.access_token);
   const [state, setState] = useState({ loading: false, data: null, error: '' });
   const load = useCallback(() => {
     if (!api || !supported) return;
