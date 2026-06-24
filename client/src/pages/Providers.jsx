@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { resolveBrandIcon } from '../lib/brandIcons';
 import { getNetwork, getProfile, listKeys, createKey, deleteKey, getProviderCatalog } from '../api/client';
 import { loadUserAccounts } from '../api/userAccounts';
+import UserAccountsPanel from '../components/UserAccountsPanel';
 import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
 import { getGateway, getLocalConfig, getConfig, getOauth } from '../api/adapter';
 import { useLang } from '../store/lang';
@@ -252,6 +253,7 @@ function buildGatewayPickerEntries(userSubs, userPayg, subscriptionCatalog) {
         authMode: 'api_key',
         source: 'subscription',
         custom: true,
+        personalTag: sub.subscription_kind === 'api' ? 'api_sub' : 'sub_to_api',
       });
       continue;
     }
@@ -267,6 +269,7 @@ function buildGatewayPickerEntries(userSubs, userPayg, subscriptionCatalog) {
         authMode: 'api_key',
         source: 'subscription',
         custom: true,
+        personalTag: 'api_sub',
       });
       continue;
     }
@@ -286,6 +289,7 @@ function buildGatewayPickerEntries(userSubs, userPayg, subscriptionCatalog) {
       icon: sub.app_icon || cat?.app_icon || '🔷',
       authMode: 'oauth',
       source: 'subscription',
+      personalTag: 'sub_to_api',
     });
   }
 
@@ -299,6 +303,7 @@ function buildGatewayPickerEntries(userSubs, userPayg, subscriptionCatalog) {
       icon: payg.icon || '🔧',
       authMode: 'api_key',
       source: 'payg',
+      personalTag: 'payg',
     });
   }
   return entries;
@@ -377,18 +382,142 @@ function mergeCustomSubscriptionProviders(resolved, metaMap, userSubs, paidIds =
   return { providers, meta };
 }
 
-function PersonalPageHint({ onGo }) {
+/** 是否为 API 类订阅供给源 */
+function isApiSubscriptionProviderId(id, userSubs = []) {
+  return (userSubs || []).some(s =>
+    s.subscription_kind === 'api'
+    && (s.plan_provider_id === id || s.source_id === id),
+  );
+}
+
+/** 已启用供给源的分类 */
+function getPersonalSourceTag(provider, metaMap, userPayg, userSubs) {
+  const id = provider?.id;
+  if (!id) return 'free';
+  if (isPaygManagedProvider(id, userPayg)) return 'payg';
+  if (isApiSubscriptionProviderId(id, userSubs)) return 'api_sub';
+  if (isCustomSubscriptionGatewayId(id, userSubs)) return 'sub_to_api';
+  if (isSubscriptionProvider(provider, metaMap)) return 'sub_to_api';
+  if (provider.type === 'free' || metaMap[id]?.keyless) return 'free';
+  return 'payg';
+}
+
+function getPickerEntryTag(entry) {
+  if (entry.personalTag) return entry.personalTag;
+  if (entry.source === 'payg') return 'payg';
+  if (entry.source === 'subscription') return 'sub_to_api';
+  return 'free';
+}
+
+function tagMatchesFilter(tag, filter) {
+  return filter === 'all' || tag === filter;
+}
+
+/** 供给源类型图标与配色（卡片 icon / 筛选按钮共用） */
+const PERSONAL_TYPE_BADGE = {
+  free: {
+    filterKey: 'free',
+    className: 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/50',
+  },
+  api_sub: {
+    filterKey: 'apiSub',
+    className: 'bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 border-violet-200 dark:border-violet-800/50',
+  },
+  sub_to_api: {
+    filterKey: 'subToApi',
+    className: 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800/50',
+  },
+  payg: {
+    filterKey: 'payg',
+    className: 'bg-sky-50 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400 border-sky-200 dark:border-sky-800/50',
+  },
+};
+
+function PersonalTypeIcon({ tag, className = 'w-3 h-3 shrink-0' }) {
+  const props = { className, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, 'aria-hidden': true };
+  switch (tag) {
+    case 'free':
+      return (
+        <svg {...props}>
+          <path d="M8 2v12M4.5 5.5h7M4.5 5.5a2 2 0 0 1-2-2c0-1.1.9-2 2-2 .7 0 1.3.4 1.7 1M11.5 5.5a2 2 0 0 0 2-2c0-1.1-.9-2-2-2-.7 0-1.3.4-1.7 1" strokeLinecap="round" />
+        </svg>
+      );
+    case 'api_sub':
+      return (
+        <svg {...props}>
+          <circle cx="5.5" cy="10.5" r="2.5" />
+          <path d="M7.5 8.5L11 5M11 5h-2.5M11 5v2.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
+    case 'sub_to_api':
+      return (
+        <svg {...props}>
+          <path d="M2 5h8M8 5l-2-2M8 5l-2 2M14 11H6M6 11l2-2M6 11l2 2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
+    default:
+      return (
+        <svg {...props}>
+          <rect x="2" y="4" width="12" height="8" rx="1.5" />
+          <path d="M2 7h12" strokeLinecap="round" />
+        </svg>
+      );
+  }
+}
+
+/** 卡片上仅展示类型 icon（hover 显示完整类型名） */
+function PersonalSourceTypeBadge({ tag, t }) {
+  const cfg = PERSONAL_TYPE_BADGE[tag] || PERSONAL_TYPE_BADGE.payg;
+  const label = t(`providers.filter.${cfg.filterKey}`);
+  return (
+    <span
+      className={`inline-flex items-center justify-center w-5 h-5 rounded-md border shrink-0 ${cfg.className}`}
+      title={label}
+      aria-label={label}
+    >
+      <PersonalTypeIcon tag={tag} />
+    </span>
+  );
+}
+
+/** 顶部筛选标签栏（类型项：icon + 文案） */
+function PersonalFilterBar({ value, onChange, t }) {
+  const items = [
+    { id: 'all', label: t('providers.filter.all') },
+    { id: 'free', label: t('providers.filter.free') },
+    { id: 'api_sub', label: t('providers.filter.apiSub') },
+    { id: 'sub_to_api', label: t('providers.filter.subToApi') },
+    { id: 'payg', label: t('providers.filter.payg') },
+  ];
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {items.map(item => (
+        <button
+          key={item.id}
+          type="button"
+          onClick={() => onChange(item.id)}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-full border transition-colors ${
+            value === item.id
+              ? 'bg-blue-600 text-white border-blue-600 font-medium'
+              : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-600'
+          }`}
+        >
+          {item.id !== 'all' && <PersonalTypeIcon tag={item.id} />}
+          {item.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PersonalPageHint({ onOpenConfig }) {
   const { t } = useLang();
   return (
     <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/80 dark:bg-amber-950/20 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
-      <p>
-        {t('providers.personalPage.before')}
-        <strong className="mx-1">{t('providers.personalPage.profile')}</strong>
-        {t('providers.personalPage.after')}
-      </p>
-      <button type="button" onClick={onGo}
+      <p>{t('providers.personalAccounts.emptyHint')}</p>
+      <button type="button" onClick={onOpenConfig}
         className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline">
-        {t('providers.personalPage.go')}
+        {t('providers.personalAccounts.open')}
       </button>
     </div>
   );
@@ -706,9 +835,8 @@ function P2PNetworkCard({ provider, onUpdate }) {
   );
 }
 
-function StatusBadge({ enabled, hasKey, keyless }) {
+function StatusBadge({ hasKey, keyless }) {
   const { t } = useLang();
-  if (!enabled) return null;
   const connected = keyless || hasKey;
   return (
     <span className={`text-xs px-1.5 py-0.5 rounded-full border ${
@@ -930,9 +1058,10 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
   );
 }
 
-/** 供给源卡片内模型区；按量供给源可独立编辑，新增供给源引导去个人页 */
+/** 供给源卡片内模型区；按量供给源可独立编辑，新增供给源引导去个人页；默认折叠 */
 function ProviderModelSection({ provider, userPayg, onGoPayg, onUpdate, scrollable = false, providerPricing = {}, paygCatalog = [] }) {
   const { t } = useLang();
+  const [modelsOpen, setModelsOpen] = useState(false);
   const isPayg = isPaygManagedProvider(provider.id, userPayg);
   const models = provider.models || [];
   const modelCount = models.length;
@@ -958,34 +1087,48 @@ function ProviderModelSection({ provider, userPayg, onGoPayg, onUpdate, scrollab
 
   return (
     <div className="border-t border-zinc-100 dark:border-zinc-800 px-4 py-3 space-y-2">
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-zinc-500">{t('providers.models.list')}</span>
-        {modelCount > 0
-          ? <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">{t('providers.models.count', { n: modelCount })}</span>
-          : <span className="text-xs text-zinc-400">{t('providers.models.unlimited')}</span>
-        }
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-xs text-zinc-500">{t('providers.models.list')}</span>
+          {modelCount > 0
+            ? <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">{t('providers.models.count', { n: modelCount })}</span>
+            : <span className="text-xs text-zinc-400">{t('providers.models.unlimited')}</span>
+          }
+        </div>
+        <button
+          type="button"
+          onClick={() => setModelsOpen(v => !v)}
+          aria-expanded={modelsOpen}
+          className="shrink-0 text-xs px-2.5 py-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+        >
+          {modelsOpen ? t('providers.models.collapse') : t('providers.models.expand')}
+        </button>
       </div>
-      <ModelListEditor
-        models={models}
-        onChange={handleModelsChange}
-        scrollable={scrollable}
-        suggestions={suggestions}
-        profileOnly={isPayg}
-      />
-      {isPayg && (
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">
-          {t('providers.models.paygHint')}{' '}
-          <button type="button" onClick={onGoPayg}
-            className="text-emerald-600 dark:text-emerald-400 hover:underline">
-            {t('providers.models.goPaygProfile')}
-          </button>
-        </p>
+      {modelsOpen && (
+        <>
+          <ModelListEditor
+            models={models}
+            onChange={handleModelsChange}
+            scrollable={scrollable}
+            suggestions={suggestions}
+            profileOnly={isPayg}
+          />
+          {isPayg && (
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              {t('providers.models.paygHint')}{' '}
+              <button type="button" onClick={onGoPayg}
+                className="text-emerald-600 dark:text-emerald-400 hover:underline">
+                {t('providers.models.goPaygProfile')}
+              </button>
+            </p>
+          )}
+        </>
       )}
     </div>
   );
 }
 
-function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [], onGoPayg, providerPricing = {}, paygCatalog = [] }) {
+function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [], userSubscriptions = [], onGoPayg, providerPricing = {}, paygCatalog = [] }) {
   const { t } = useLang();
   const [showKey, setShowKey] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -994,6 +1137,7 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
   const displayLabel = provider.displayName || provider.label || (() => {
     try { const h = new URL(provider.base_url || '').hostname; return h || t('providers.custom.defaultName'); } catch { return t('providers.custom.defaultName'); }
   })();
+  const personalTag = getPersonalSourceTag(provider, {}, userPayg, userSubscriptions);
 
   async function handleTest() {
     if (!provider.base_url) { setTestMsg(t('providers.test.needBaseUrl')); return; }
@@ -1010,31 +1154,24 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
   }
 
   return (
-    <div className={`bg-white dark:bg-zinc-800 border rounded-2xl overflow-hidden transition-opacity ${
-      provider.enabled ? 'border-zinc-200 dark:border-zinc-800' : 'border-zinc-200/60 dark:border-zinc-800/60 opacity-60'
-    }`}>
+    <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
       <div className="flex items-start gap-3 p-4">
         <div className="w-9 h-9 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-base shrink-0">🔗</div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
-              <span className={`text-sm font-medium truncate ${provider.enabled ? 'text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400'}`}>
+              <span className="text-sm font-medium truncate text-zinc-800 dark:text-zinc-200">
                 {displayLabel}
               </span>
-              {provider.enabled && provider.base_url && (
-                <span className="text-xs px-1.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 border border-green-300 dark:border-green-800/50 shrink-0">
-                  {t('providers.badge.enabled')}
-                </span>
-              )}
+              <PersonalSourceTypeBadge tag={personalTag} t={t} />
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              {provider.enabled && provider.base_url && (
+              {provider.base_url && (
                 <button onClick={handleTest} disabled={testing}
                   className="text-xs px-2.5 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-50 transition-colors">
                   {testing ? '…' : t('providers.common.test')}
                 </button>
               )}
-              <Toggle enabled={provider.enabled} onChange={() => onUpdate(provider.id, { enabled: !provider.enabled })} />
               <button onClick={() => onRemove(provider.id)}
                 title={t('providers.custom.removeTitle')}
                 className="text-zinc-400 hover:text-red-500 dark:hover:text-red-400 text-lg leading-none transition-colors">×</button>
@@ -1196,7 +1333,7 @@ function UsageMeter({ provider }) {
   );
 }
 
-function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = false, gatewayAuthMode = null, userPayg = [], onGoPayg, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [] }) {
+function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpanded = false, gatewayAuthMode = null, userPayg = [], userSubscriptions = [], onGoPayg, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [] }) {
   const { t } = useLang();
   const [showKey,    setShowKey]    = useState(false);
   const [expanded,   setExpanded]   = useState(initialExpanded);
@@ -1225,6 +1362,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
   const showApiKeyUi = forceApiKey || (canApiKey && !forceOauth);
   // 是否支持订阅计费方式：yaml subscription_apps 中有 plan_provider_id 匹配且 subscription_to_api=true
   const hasSubscriptionOption = subscriptionCatalog.some(c => c.plan_provider_id === provider.id && c.subscription_to_api === true);
+  const personalTag = getPersonalSourceTag(provider, { [provider.id]: meta }, userPayg, userSubscriptions);
 
   // 添加方式：api_key / oauth（按量可切换；订阅转 API 固定 OAuth）
   const [method, setMethod] = useState(forceOauth || isOauthCfg ? 'oauth' : 'api_key');
@@ -1307,9 +1445,7 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
   }
 
   return (
-    <div className={`bg-white dark:bg-zinc-800 border rounded-2xl overflow-hidden transition-opacity ${
-      provider.enabled ? 'border-zinc-200 dark:border-zinc-800' : 'border-zinc-200/60 dark:border-zinc-800/60 opacity-60'
-    }`}>
+    <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
       <div className="flex items-start gap-3 p-3.5">
         {/* Icon（命中品牌用 lobehub logo，否则回退预设 emoji）*/}
         <div className="w-8 h-8 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-[15px] shrink-0 mt-0.5">
@@ -1324,24 +1460,24 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
-              <span className={`text-sm font-medium ${provider.enabled ? 'text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400'}`}>
+              <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
                 {meta.label}
               </span>
-              <StatusBadge enabled={provider.enabled} hasKey={hasKey || hasOauth} keyless={meta.keyless && !oauthCap} />
-              {(meta.keyless || provider.type === 'free') && (
-                <span className="text-xs px-1.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50 shrink-0">
-                  {t('providers.badge.freeQuota')}
-                </span>
-              )}
+              <StatusBadge hasKey={hasKey || hasOauth} keyless={meta.keyless && !oauthCap} />
+              <PersonalSourceTypeBadge tag={personalTag} t={t} />
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              {!isP2P && provider.enabled && (
+              {!isP2P && (
                 <button onClick={handleTest} disabled={testing}
                   className="text-xs px-2.5 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-50 transition-colors">
                   {testing ? '…' : t('providers.common.test')}
                 </button>
               )}
-              <Toggle enabled={provider.enabled} onChange={() => onUpdate(provider.id, { enabled: !provider.enabled })} />
+              {!isP2P && onRemove && (
+                <button onClick={() => onRemove(provider.id)}
+                  title={t('providers.custom.removeTitle')}
+                  className="text-zinc-400 hover:text-red-500 dark:hover:text-red-400 text-lg leading-none transition-colors">×</button>
+              )}
             </div>
           </div>
 
@@ -1536,14 +1672,6 @@ function ProviderCard({ provider, meta, onUpdate, onTest, initialExpanded = fals
             </p>
           )}
         </div>
-
-        {/* "立即启用" button for unconfigured providers needing a key or OAuth login */}
-        {(canApiKey || oauthCap) && !isP2P && !configured && !expanded && (
-          <button onClick={() => { setExpanded(true); onUpdate(provider.id, { enabled: true }); }}
-            className="shrink-0 text-xs px-3 py-1.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-blue-600 dark:text-blue-400 border border-zinc-300 dark:border-zinc-700 rounded-lg transition-colors">
-            {t('providers.card.enableNow')}
-          </button>
-        )}
       </div>
 
       {/* Model list section — 按量供给源模型来自个人页 */}
@@ -1585,6 +1713,9 @@ export default function Providers() {
   const [addingPickerKey, setAddingPickerKey] = useState(null);
   const [addingAuthMode, setAddingAuthMode] = useState(null);
   const [gatewayPickerEntries, setGatewayPickerEntries] = useState([]);
+  const [billingOpen, setBillingOpen] = useState(false);
+  const [billingTab, setBillingTab] = useState('subscription');
+  const billingRef = useRef(null);
 
   const loadUserPaidAccounts = useCallback(async () => {
     try {
@@ -1728,7 +1859,7 @@ export default function Providers() {
     const base = {
       id: entry.providerId,
       type: 'paid',
-      enabled: false,
+      enabled: true,
       token: '',
       base_url: '',
       models: [],
@@ -1752,16 +1883,29 @@ export default function Providers() {
     }
   }, [addingPickerKey, updateProvider]);
 
-  const removeProvider = useCallback((id) => {
-    setProviders(prev => prev.filter(p => p.id !== id));
-  }, []);
+  /** 从个人源列表移除：预设源标记为未添加，自定义源直接删除 */
+  const removePersonalProvider = useCallback((id) => {
+    if (isCustomSubscriptionGatewayId(id, userSubscriptions) || !meta[id]) {
+      setProviders(prev => prev.filter(p => p.id !== id));
+    } else {
+      setProviders(prev => prev.map(p => (p.id === id ? { ...p, enabled: false } : p)));
+    }
+  }, [userSubscriptions, meta]);
 
-  function addCustomProvider() {
-    navigate('/account', { state: { accountsTab: 'payg' } });
+  function openBillingConfig(tab = 'subscription') {
+    setBillingTab(tab === 'payg' ? 'payg' : 'subscription');
+    setBillingOpen(true);
+    requestAnimationFrame(() => {
+      billingRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   }
 
-  const goPersonalPage = () => navigate('/account', { state: { accountsTab: 'subscription' } });
-  const goPaygProfile = () => navigate('/account', { state: { accountsTab: 'payg' } });
+  function addCustomProvider() {
+    openBillingConfig('payg');
+  }
+
+  const goPersonalPage = () => openBillingConfig('subscription');
+  const goPaygProfile = () => openBillingConfig('payg');
   const paidAccountsLoaded = paidAllowlist !== null;
   const hasPersonalPaid = paidAccountsLoaded && (paidAllowlist.length > 0 || statsOnlyIds.length > 0);
   const hasGatewayPaid = paidAccountsLoaded && paidAllowlist.length > 0;
@@ -1773,7 +1917,8 @@ export default function Providers() {
     });
   }
 
-  const [addingTier, setAddingTier] = useState(null);  // 'free' | 'paid' | null
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [personalFilter, setPersonalFilter] = useState('all');
   const [addingId,   setAddingId]   = useState(null);  // providerId being configured in picker
 
   // When a provider gets enabled from the picker, deselect it
@@ -1787,22 +1932,72 @@ export default function Providers() {
     }
   }, [providers, addingId]);
 
-  // 本地源(API=free / 订阅=paid) 相邻，远程源(p2p) 最后
-  // 游客（未登录）隐藏社区源(p2p)：社区源需账号 + 积分
-  const tiers = user ? ['free', 'paid', 'p2p'] : ['free', 'paid'];
-
-  // ── 个人源统一池 + API/订阅 分类（按接入方式，而非 free/paid 层）──
-  // API（free 段渲染）= api-key 接入：免费 API + 按量付费 API。
-  // 订阅（paid 段渲染）= OAuth 接入：Claude / ChatGPT / Copilot 等。
+  // 个人源统一列表（不再分 API / 订阅两段）
   const liveStateOf = (p) => withProviderDisplayName(providers.find(x => x.id === p.id) || p, userPayg, userSubscriptions, meta);
   const personalPaidPool = buildPersonalPaidPool(providers, paidAllowlist || [], userPayg, userSubscriptions);
   const personalPoolAll = (() => {
     const seen = new Set(personalPaidPool.map(p => p.id));
     return [...providers.filter(p => p.type === 'free' && !seen.has(p.id)), ...personalPaidPool];
   })();
-  const isSubItem = (p) => isSubscriptionProvider(liveStateOf(p), meta);
-  const personalApiEnabled = personalPoolAll.filter(p => liveStateOf(p).enabled && !isSubItem(p));
-  const personalSubEnabled = personalPoolAll.filter(p => liveStateOf(p).enabled && isSubItem(p));
+  const personalEnabledAll = personalPoolAll.filter(p => liveStateOf(p).enabled);
+  const personalEnabledFiltered = personalFilter === 'all'
+    ? personalEnabledAll
+    : personalEnabledAll.filter(p => tagMatchesFilter(
+        getPersonalSourceTag(liveStateOf(p), meta, userPayg, userSubscriptions),
+        personalFilter,
+      ));
+
+  const disabledPickerEntries = gatewayPickerEntries.filter(e => !liveStateOf({ id: e.providerId }).enabled);
+  const freeAddableProviders = (() => {
+    const oauthPids = new Set(Object.values(OAUTH_SUB_SOURCE_TO_PID));
+    const entryPids = new Set(disabledPickerEntries.map(e => e.providerId));
+    return providers.filter(pr => !pr.enabled
+      && (pr.type === 'free' || pr.type === 'paid')
+      && !oauthPids.has(pr.id) && !entryPids.has(pr.id));
+  })();
+  const pickerItems = [
+    ...disabledPickerEntries.map(entry => ({
+      kind: 'entry', tag: getPickerEntryTag(entry), entry, key: entry.pickerKey,
+    })),
+    ...freeAddableProviders.map(pr => ({
+      kind: 'free', tag: 'free', provider: pr, key: `free:${pr.id}`,
+    })),
+  ];
+  const pickerItemsFiltered = personalFilter === 'all'
+    ? pickerItems
+    : pickerItems.filter(item => item.tag === personalFilter);
+
+  function togglePicker() {
+    if (pickerOpen) {
+      setPickerOpen(false);
+      setAddingId(null);
+      setAddingPickerKey(null);
+      setAddingAuthMode(null);
+    } else {
+      setPickerOpen(true);
+    }
+  }
+
+  function renderPickerButton(entry) {
+    const sel = addingPickerKey === entry.pickerKey;
+    const authTag = entry.authMode === 'oauth' ? 'OAuth' : 'Key';
+    return (
+      <button key={entry.pickerKey} type="button" onClick={() => selectPickerEntry(entry)}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
+          sel
+            ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
+            : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600'
+        }`}>
+        <span>{entry.icon}</span>
+        <span>{entry.label}</span>
+        <span className={`text-xs px-1 rounded ${
+          entry.authMode === 'oauth'
+            ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+            : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+        }`}>{authTag}</span>
+      </button>
+    );
+  }
 
   return (
     <div className="px-5 py-5 space-y-6">
@@ -1816,267 +2011,178 @@ export default function Providers() {
         {savedMsg && <span className="text-xs font-medium text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-2.5 py-1 rounded-full">{savedMsg}</span>}
       </div>
 
-      {/* Tier sections */}
-      {tiers.map(tier => {
-        const cfg      = tierConfig[tier];
-        const allItems = providers.filter(p => p.type === tier);
+      {/* 个人源账户：订阅 / 按量（与个人页同逻辑，未登录也可配置） */}
+      <section ref={billingRef} className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setBillingOpen(v => !v)}
+          className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
+          aria-expanded={billingOpen}
+        >
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('providers.personalAccounts.title')}</h2>
+            <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">{t('providers.personalAccounts.hint')}</p>
+          </div>
+          <span className="shrink-0 text-xs px-2.5 py-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">
+            {billingOpen ? t('providers.personalAccounts.collapse') : t('providers.personalAccounts.expand')}
+          </span>
+        </button>
+        {billingOpen && (
+          <div className="border-t border-zinc-100 dark:border-zinc-800 px-1 pb-1">
+            <UserAccountsPanel
+              key={billingTab}
+              scope="billing"
+              initialTab={billingTab}
+              onAccountsChanged={loadUserPaidAccounts}
+            />
+          </div>
+        )}
+      </section>
 
-        if (tier === 'p2p') {
-          return (
-            <section key={tier} className="space-y-3 pt-4 border-t border-zinc-100 dark:border-zinc-800/60">
-              <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
-                <h2 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">{t('providers.group.remote')}</h2>
-                <span className="text-xs text-zinc-400 dark:text-zinc-500">{cfg.hint}</span>
-              </div>
-              <div className={`grid ${cfg.cols} gap-3`}>
-                {allItems.map(p => <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} />)}
-              </div>
-            </section>
-          );
-        }
+      {/* 个人源：统一列表 + 顶部标签筛选 */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">{t('providers.group.local')}</h2>
+            <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">{t('providers.group.localHint')}</p>
+          </div>
+          <PersonalFilterBar value={personalFilter} onChange={setPersonalFilter} t={t} />
+        </div>
 
-        // 个人源按接入方式分类：free 段=API（api-key），paid 段=订阅（oauth）；池统一为 personalPoolAll。
-        const personalPool = tier === 'paid' ? personalPoolAll : [];
-        const liveState = liveStateOf;
-        const enabledItems  = tier === 'paid' ? personalSubEnabled
-                            : tier === 'free' ? personalApiEnabled
-                            : [];
-        const disabledItems = tier === 'paid'
-          ? personalPoolAll.filter(p => !liveStateOf(p).enabled)
-          : [];
-        const disabledPickerEntries = tier === 'paid'
-          ? gatewayPickerEntries.filter(e => !liveState({ id: e.providerId }).enabled)
-          : [];
-        const disabledSubEntries = disabledPickerEntries.filter(e => e.source === 'subscription');
-        const disabledPaygEntries = disabledPickerEntries.filter(e => e.source === 'payg');
-        const disabledCustomSubEntries = disabledSubEntries.filter(e => e.custom);
-        const disabledCatalogSubEntries = disabledSubEntries.filter(e => !e.custom);
-        const isOpen        = addingTier === tier;
+        <div className="grid grid-cols-2 gap-3">
+          {personalEnabledFiltered.map(p => {
+            const live = liveStateOf(p);
+            const useCustomCard = isCustomSubscriptionGatewayId(live.id, userSubscriptions) || !meta[live.id];
+            return !useCustomCard
+              ? <ProviderCard key={live.id} provider={live} meta={meta[live.id]} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id])} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} />
+              : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />;
+          })}
+          {personalEnabledFiltered.length === 0 && (
+            <p className="col-span-2 text-xs text-zinc-400 text-center py-6">{t('providers.filter.empty')}</p>
+          )}
+        </div>
 
-        function togglePicker() {
-          if (isOpen) {
-            setAddingTier(null);
-            setAddingId(null);
-            setAddingPickerKey(null);
-            setAddingAuthMode(null);
-          } else {
-            setAddingTier(tier);
-          }
-        }
+        <button type="button" onClick={togglePicker}
+          className={`w-full flex flex-col items-center justify-center gap-1.5 rounded-2xl border-2 border-dashed py-4 transition-colors ${
+            pickerOpen
+              ? 'border-blue-400 dark:border-blue-600 text-blue-500 dark:text-blue-400 bg-blue-50/50 dark:bg-blue-950/10'
+              : 'border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600 hover:text-zinc-500'
+          }`}>
+          <span className="text-xl leading-none">{pickerOpen ? '×' : '+'}</span>
+          <span className="text-xs font-medium">{pickerOpen ? t('providers.add.collapse') : t('providers.add.expand')}</span>
+          {!pickerOpen && (
+            <span className="text-xs text-zinc-300 dark:text-zinc-600">
+              {pickerItems.length > 0
+                ? t('providers.add.availableCount', { n: pickerItems.length })
+                : t('providers.add.allTypesHint')}
+            </span>
+          )}
+        </button>
 
-        function renderPickerButton(entry) {
-          const sel = addingPickerKey === entry.pickerKey;
-          const authTag = entry.authMode === 'oauth' ? 'OAuth' : 'Key';
-          return (
-            <button key={entry.pickerKey} type="button" onClick={() => selectPickerEntry(entry)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
-                sel
-                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
-                  : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600'
-              }`}>
-              <span>{entry.icon}</span>
-              <span>{entry.label}</span>
-              <span className={`text-xs px-1 rounded ${
-                entry.authMode === 'oauth'
-                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-                  : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-              }`}>{authTag}</span>
-            </button>
-          );
-        }
-
-        return (
-          <section key={tier} className="space-y-3">
-            {tier === 'free' && (
-              <h2 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">{t('providers.group.local')}</h2>
+        {pickerOpen && (
+          <div className="p-4 bg-zinc-50 dark:bg-zinc-800/40 rounded-2xl border border-zinc-200 dark:border-zinc-700 space-y-3">
+            {!paidAccountsLoaded && (
+              <p className="text-xs text-zinc-400">{t('providers.add.loadingAccounts')}</p>
             )}
-            <div className="flex items-center gap-2 pl-0.5">
-              <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
-              <h3 className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">{cfg.label}</h3>
-              <span className="text-xs text-zinc-400 dark:text-zinc-500">{cfg.hint}</span>
-            </div>
-
-            <div className={`grid ${cfg.cols} gap-3`}>
-              {/* Enabled providers */}
-              {enabledItems.map(p => {
-                const live = liveState(p);
-                const useCustomCard = isCustomSubscriptionGatewayId(live.id, userSubscriptions) || !meta[live.id];
-                return !useCustomCard
-                  ? <ProviderCard key={live.id} provider={live} meta={meta[live.id]} onUpdate={updateProvider} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id])} userPayg={userPayg} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} />
-                  : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} userPayg={userPayg} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />;
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('providers.add.unifiedHint')}</p>
+            <div className="flex flex-wrap gap-2">
+              {pickerItemsFiltered.map(item => {
+                if (item.kind === 'entry') return renderPickerButton(item.entry);
+                const pr = item.provider;
+                const m = meta[pr.id] || {};
+                const sel = addingId === pr.id;
+                return (
+                  <button key={item.key} type="button" title={m.hint || ''} onClick={() => {
+                    if (sel) setAddingId(null);
+                    else {
+                      setAddingId(pr.id);
+                      updateProvider(pr.id, { enabled: true });
+                    }
+                  }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
+                      sel
+                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
+                        : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600'
+                    }`}>
+                    <span>{m.icon || '🔌'}</span>
+                    <span>{m.label || pr.id}</span>
+                    {(m.keyless || pr.type === 'free') && (
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400">{t('providers.add.freeTag')}</span>
+                    )}
+                  </button>
+                );
               })}
-
-              {/* 本地源统一添加入口：只在 paid(本地源底部) 展示一个，picker 内含 免费API + 订阅 + 按量 */}
-              {tier === 'paid' && (
-              <button onClick={togglePicker}
-                className={`flex flex-col items-center justify-center gap-1.5 rounded-2xl border-2 border-dashed min-h-[90px] transition-colors ${
-                  isOpen
-                    ? 'border-blue-400 dark:border-blue-600 text-blue-500 dark:text-blue-400 bg-blue-50/50 dark:bg-blue-950/10'
-                    : 'border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600 hover:text-zinc-500'
-                }`}>
-                <span className="text-xl leading-none">{isOpen ? '×' : '+'}</span>
-                <span className="text-xs font-medium">{isOpen ? t('providers.add.collapse') : t('providers.add.expand')}</span>
-                {!isOpen && disabledPickerEntries.length > 0 && (
-                  <span className="text-xs text-zinc-300 dark:text-zinc-600">{t('providers.add.availableCount', { n: disabledPickerEntries.length })}</span>
-                )}
-              </button>
+              {pickerItemsFiltered.length === 0 && paidAccountsLoaded && (
+                <p className="text-xs text-zinc-400">{t('providers.filter.pickerEmpty')}</p>
               )}
             </div>
-
-            {/* Picker panel */}
-            {isOpen && (
-              <div className="p-4 bg-zinc-50 dark:bg-zinc-800/40 rounded-2xl border border-zinc-200 dark:border-zinc-700 space-y-3">
-                {tier === 'paid' && !paidAccountsLoaded && (
-                  <p className="text-xs text-zinc-400">{t('providers.add.loadingAccounts')}</p>
-                )}
-                <>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                  {tier === 'paid'
-                    ? t('providers.add.paidHint')
-                    : t('providers.add.freeHint')}
-                </p>
-                {tier === 'paid' ? (
-                  <div className="space-y-3">
-                    {/* 免费 API 可添加（本地源统一入口的一部分）*/}
-                    {(() => {
-                      // 本地 API 区：所有 API 类源（免费 + 付费 API），排除 OAuth 订阅类(在订阅区) 和已登记的(在订阅/按量区)
-                      const oauthPids = new Set(Object.values(OAUTH_SUB_SOURCE_TO_PID));
-                      const entryPids = new Set(disabledPickerEntries.map(e => e.providerId));
-                      const freeDisabled = providers.filter(pr => !pr.enabled
-                        && (pr.type === 'free' || pr.type === 'paid')
-                        && !oauthPids.has(pr.id) && !entryPids.has(pr.id));
-                      return freeDisabled.length > 0 ? (
-                        <div className="space-y-1.5">
-                          <p className="text-xs font-medium text-green-700 dark:text-green-300">
-                            {t('providers.add.freeApi')}
-                            <span className="ml-1.5 font-normal text-zinc-400 dark:text-zinc-500">{t('providers.add.freeApiHint')}</span>
-                          </p>
-                          <div className="flex flex-wrap gap-2">
-                            {freeDisabled.map(pr => {
-                              const m = meta[pr.id] || {};
-                              const sel = addingId === pr.id;
-                              return (
-                                <button key={pr.id} type="button" title={m.hint || ''} onClick={() => setAddingId(sel ? null : pr.id)}
-                                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
-                                    sel
-                                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
-                                      : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600'
-                                  }`}>
-                                  <span>{m.icon || '🔌'}</span>
-                                  <span>{m.label || pr.id}</span>
-                                  {(m.keyless || pr.type === 'free') && <span className="text-[10px] text-emerald-600 dark:text-emerald-400">{t('providers.add.freeTag')}</span>}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ) : null;
-                    })()}
-                    {disabledCatalogSubEntries.length > 0 && (
-                      <div className="space-y-1.5">
-                        <p className="text-xs font-medium text-amber-700 dark:text-amber-300">{t('providers.add.catalogSub')}</p>
-                        <div className="flex flex-wrap gap-2">
-                          {disabledCatalogSubEntries.map(renderPickerButton)}
-                        </div>
-                      </div>
-                    )}
-                    {disabledCustomSubEntries.length > 0 && (
-                      <div className="space-y-1.5">
-                        <p className="text-xs font-medium text-amber-700/80 dark:text-amber-300/80">{t('providers.add.customSub')}</p>
-                        <div className="flex flex-wrap gap-2">
-                          {disabledCustomSubEntries.map(renderPickerButton)}
-                        </div>
-                      </div>
-                    )}
-                    {disabledPaygEntries.length > 0 && (
-                      <div className="space-y-1.5">
-                        <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">{t('providers.add.payg')}</p>
-                        <div className="flex flex-wrap gap-2">
-                          {disabledPaygEntries.map(renderPickerButton)}
-                        </div>
-                      </div>
-                    )}
-                    {paidAccountsLoaded && !hasGatewayPaid && (
-                      <PersonalPageHint onGo={goPersonalPage} />
-                    )}
-                    {disabledPickerEntries.length === 0 && hasGatewayPaid && (
-                      <p className="text-xs text-zinc-400">{t('providers.add.allAdded')}</p>
-                    )}
-                    <button type="button" onClick={() => { addCustomProvider(); setAddingTier(null); }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-600 text-xs text-zinc-500 dark:text-zinc-400 hover:border-blue-400 hover:text-blue-500 transition-colors bg-white dark:bg-zinc-800">
-                      <span>+</span> {t('providers.add.goProfile')}
-                    </button>
-                  </div>
-                ) : (
-                <div className="flex flex-wrap gap-2">
-                  {disabledItems.map(p => {
-                    const m = meta[p.id] || {};
-                    const sel = addingId === p.id;
-                    return (
-                      <button key={p.id} type="button" onClick={() => setAddingId(sel ? null : p.id)}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
-                          sel
-                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
-                            : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600'
-                        }`}>
-                        <span>{m.icon || '🔌'}</span>
-                        <span>{m.label || p.id}</span>
-                      </button>
-                    );
-                  })}
-                  {disabledItems.length === 0 && (
-                    <p className="text-xs text-zinc-400">{t('providers.add.noneAvailable')}</p>
-                  )}
-                </div>
-                )}
-
-                {/* Config card for selected provider */}
-                {addingId && (() => {
-                  const entry = gatewayPickerEntries.find(e => e.pickerKey === addingPickerKey)
-                    || gatewayPickerEntries.find(e => e.providerId === addingId);
-                  const pid = addingId;
-                  const stubFromEntry = entry ? {
-                    id: pid,
-                    type: 'paid',
-                    enabled: false,
-                    token: '',
-                    base_url: '',
-                    models: [],
-                    displayName: entry.label,
-                  } : null;
-                  const p = tier === 'paid'
-                    ? (personalPool.find(pr => pr.id === pid) || providers.find(pr => pr.id === pid) || stubFromEntry)
-                    : disabledItems.find(pr => pr.id === pid);
-                  if (!p) return null;
-                  const live = tier === 'paid' ? liveState(p) : p;
-                  const cardAuth = tier === 'paid'
-                    ? (addingAuthMode || resolveCardAuthMode(live, providerGatewayAuth[pid]))
-                    : null;
-                  const useCustomCard = entry?.custom || isCustomSubscriptionGatewayId(pid, userSubscriptions) || !meta[pid];
-                  return (
-                    <div className="mt-1">
-                      {entry && (
-                        <p className="text-xs text-zinc-400 mb-2">
-                          {t('providers.add.configuring', {
-                            label: entry.label,
-                            auth: entry.authMode === 'oauth' ? t('providers.add.authOauth') : t('providers.add.authApiKey'),
-                          })}
-                        </p>
-                      )}
-                      {!useCustomCard
-                        ? <ProviderCard key={pid} provider={live} meta={meta[pid]} onUpdate={updateProvider} onTest={testProvider} initialExpanded gatewayAuthMode={cardAuth} userPayg={userPayg} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} />
-                        : <CustomProviderCard key={pid} provider={live} onUpdate={updateProvider} onRemove={removeProvider} onTest={testProvider} userPayg={userPayg} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />
-                      }
-                    </div>
-                  );
-                })()}
-                </>
-              </div>
+            {paidAccountsLoaded && !hasGatewayPaid && (
+              <PersonalPageHint onOpenConfig={goPersonalPage} />
             )}
-          </section>
-        );
-      })}
+            {pickerItems.length === 0 && hasGatewayPaid && (
+              <p className="text-xs text-zinc-400">{t('providers.add.allAdded')}</p>
+            )}
+            <button type="button" onClick={() => { openBillingConfig('subscription'); setPickerOpen(false); }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-600 text-xs text-zinc-500 dark:text-zinc-400 hover:border-blue-400 hover:text-blue-500 transition-colors bg-white dark:bg-zinc-800">
+              <span>+</span> {t('providers.add.openAccounts')}
+            </button>
+
+            {addingId && (() => {
+              const entry = gatewayPickerEntries.find(e => e.pickerKey === addingPickerKey)
+                || gatewayPickerEntries.find(e => e.providerId === addingId);
+              const pid = addingId;
+              const stubFromEntry = entry ? {
+                id: pid,
+                type: 'paid',
+                enabled: true,
+                token: '',
+                base_url: '',
+                models: [],
+                displayName: entry.label,
+              } : null;
+              const p = personalPoolAll.find(pr => pr.id === pid)
+                || providers.find(pr => pr.id === pid)
+                || stubFromEntry;
+              if (!p) return null;
+              const live = liveStateOf(p);
+              const cardAuth = addingAuthMode || resolveCardAuthMode(live, providerGatewayAuth[pid]);
+              const useCustomCard = entry?.custom || isCustomSubscriptionGatewayId(pid, userSubscriptions) || !meta[pid];
+              return (
+                <div className="mt-1">
+                  {entry && (
+                    <p className="text-xs text-zinc-400 mb-2">
+                      {t('providers.add.configuring', {
+                        label: entry.label,
+                        auth: entry.authMode === 'oauth' ? t('providers.add.authOauth') : t('providers.add.authApiKey'),
+                      })}
+                    </p>
+                  )}
+                  {!useCustomCard
+                    ? <ProviderCard key={pid} provider={live} meta={meta[pid]} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} initialExpanded gatewayAuthMode={cardAuth} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} />
+                    : <CustomProviderCard key={pid} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />
+                  }
+                </div>
+              );
+            })()}
+          </div>
+        )}
+      </section>
+
+      {/* 社区源 */}
+      {user && (
+        <section className="space-y-3 pt-4 border-t border-zinc-100 dark:border-zinc-800/60">
+          <div className="flex items-center gap-2">
+            <span className={`w-2 h-2 rounded-full ${tierConfig.p2p.dot}`} />
+            <h2 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">{t('providers.group.remote')}</h2>
+            <span className="text-xs text-zinc-400 dark:text-zinc-500">{tierConfig.p2p.hint}</span>
+          </div>
+          <div className={`grid ${tierConfig.p2p.cols} gap-3`}>
+            {providers.filter(p => p.type === 'p2p').map(p => (
+              <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

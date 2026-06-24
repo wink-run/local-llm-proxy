@@ -321,6 +321,7 @@ function buildGatewayPickerEntries(cfg = {}) {
         authMode: 'api_key',
         source: 'subscription',
         custom: true,
+        personalTag: sub.subscription_kind === 'api' ? 'api_sub' : 'sub_to_api',
       });
       continue;
     }
@@ -335,6 +336,7 @@ function buildGatewayPickerEntries(cfg = {}) {
         authMode: 'api_key',
         source: 'subscription',
         custom: true,
+        personalTag: 'api_sub',
       });
       continue;
     }
@@ -348,6 +350,7 @@ function buildGatewayPickerEntries(cfg = {}) {
       icon: sub.app_icon || cat?.app_icon || '🔷',
       authMode: 'oauth',
       source: 'subscription',
+      personalTag: 'sub_to_api',
     });
   }
 
@@ -361,6 +364,7 @@ function buildGatewayPickerEntries(cfg = {}) {
       icon: payg.icon || '🔧',
       authMode: 'api_key',
       source: 'payg',
+      personalTag: 'payg',
     });
   }
   return entries;

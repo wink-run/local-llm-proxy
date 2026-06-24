@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { login, register, getProfile, formatApiError } from '../api/client';
 import { useAuth } from '../store/index';
 import { useTheme } from '../store/theme';
 import { getConfig, getGateway } from '../api/adapter';
-import logo from '../assets/logo.svg';
 import { useLang } from '../store/lang';
+import { useCurrency } from '../store/currency';
+import { defaultCurrencyForLang, DEFAULT_USD_CNY_RATE } from '../utils/currency';
 import { SERVER_URL_PLACEHOLDER, normalizeServerBase, syncCloudConfigUrl, bootstrapServerUrl } from '../config';
 
 /** 切换服务器时清除旧 token，避免跨服鉴权失败 */
@@ -18,259 +18,23 @@ function persistServerUrl(url) {
   return next;
 }
 
-function Field({ label, type = 'text', value, onChange, placeholder }) {
-  return (
-    <div>
-      <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1.5 uppercase tracking-wider">{label}</label>
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2.5 text-[13px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:border-blue-400 focus:bg-white dark:focus:bg-zinc-700/50 transition-colors"
-      />
-    </div>
-  );
-}
-
-function ThemeSelector() {
-  const { theme, setTheme } = useTheme();
-  const { t } = useLang();
-  const THEMES = [
-    { value: 'light',  label: t('theme.light') },
-    { value: 'system', label: t('theme.system') },
-    { value: 'dark',   label: t('theme.dark') },
-  ];
-  return (
-    <div className="flex rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-700">
-      {THEMES.map((th) => (
-        <button
-          key={th.value}
-          onClick={() => setTheme(th.value)}
-          className={`flex-1 py-2 text-sm font-medium transition-colors ${
-            theme === th.value
-              ? 'bg-blue-600 text-white'
-              : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-gray-200 dark:hover:bg-gray-700'
-          }`}
-        >
-          {th.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-const LANGS = [
-  { value: 'zh', labelKey: 'lang.zh' },
-  { value: 'en', labelKey: 'lang.en' },
-];
-
-function LangSelector() {
-  const { lang, setLang, t } = useLang();
-  return (
-    <div className="flex rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-700">
-      {LANGS.map((l) => (
-        <button
-          key={l.value}
-          onClick={() => setLang(l.value)}
-          className={`flex-1 py-2 text-sm font-medium transition-colors ${
-            lang === l.value
-              ? 'bg-blue-600 text-white'
-              : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-gray-200 dark:hover:bg-gray-700'
-          }`}
-        >
-          {t(l.labelKey)}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 export default function Config() {
-  const { user, loginSuccess, logout, enterGuest } = useAuth();
-  const { t } = useLang();
-  const navigate = useNavigate();
+  const { user, logout } = useAuth();
 
   const [serverUrl, setServerUrl] = useState(
     () => normalizeServerBase(localStorage.getItem('serverUrl') || '')
   );
-  const [mode, setMode] = useState('login'); // 'login' | 'register'
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [nickname, setNickname] = useState('');
-  const [referralCode, setReferralCode] = useState('');
-  const [error, setError] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const [firstRun, setFirstRun] = useState(false);
 
   useEffect(() => {
-    if (!window.electronAPI) return;
-    window.electronAPI.config.read().then((cfg) => { if (!cfg) setFirstRun(true); });
     bootstrapServerUrl().then((url) => { if (url) setServerUrl(url); });
   }, []);
 
-  async function afterAuth(token) {
-    localStorage.setItem('token', token);
-    const base = normalizeServerBase(localStorage.getItem('serverUrl') || '');
-    await syncCloudConfigUrl(base);
-    const profileRes = await getProfile();
-    loginSuccess(token, profileRes.data);
-    if (window.electronAPI) {
-      const current = (await window.electronAPI.config.read()) || {};
-      const wsUrl = serverUrl.replace(/^https?/, (m) => (m === 'https' ? 'wss' : 'ws')) + '/ws/worker';
-      await window.electronAPI.config.write({ ...current, server_url: wsUrl, worker_key: profileRes.data.worker_key || '' });
-    }
-    navigate('/');
-  }
-
-  async function handleLogin(e) {
-    e.preventDefault();
-    setError('');
-    const base = persistServerUrl(serverUrl);
-    if (!base) {
-      setError(t('config.serverRequired'));
-      return;
-    }
-    setSaving(true);
-    try {
-      setServerUrl(base);
-      const res = await login(email, password);
-      await afterAuth(res.data.token);
-    } catch (err) {
-      localStorage.removeItem('token');
-      setError(formatApiError(err, t('config.loginFailed')));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleRegister(e) {
-    e.preventDefault();
-    setError('');
-    const base = persistServerUrl(serverUrl);
-    if (!base) {
-      setError(t('config.serverRequired'));
-      return;
-    }
-    setSaving(true);
-    try {
-      setServerUrl(base);
-      const res = await register(email, password, nickname, referralCode);
-      await afterAuth(res.data.token);
-    } catch (err) {
-      localStorage.removeItem('token');
-      setError(formatApiError(err, t('config.registerFailed')));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function switchMode(m) {
-    setMode(m);
-    setError('');
-  }
-
   function handleLogout() {
     logout();
-    navigate('/config');
+    // 留在当前页，侧栏自动切换为「未登录」
   }
 
-  function handleGuest() {
-    enterGuest();          // 记忆游客模式，进入「中心」（个人源 + 本地用量；社区源/积分需登录）
-    navigate('/gateway');
-  }
-
-  // Not logged in: show only login form
-  if (!user) {
-    return (
-      <div className="flex h-full items-center justify-center bg-zinc-50 dark:bg-zinc-900">
-        <div className="w-full max-w-[320px] px-8 py-10 space-y-5">
-          {/* Brand */}
-          <div className="flex flex-col items-center gap-3 mb-4">
-            <img src={logo} alt="Token Bank" className="w-14 h-14" />
-            <div className="text-center">
-              <h1 className="text-[17px] font-bold text-zinc-900 dark:text-zinc-100 tracking-tight">Token Bank</h1>
-              <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">个人 AI 中枢</p>
-            </div>
-          </div>
-
-          {firstRun && (
-            <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-xl px-4 py-3 text-sm text-blue-700 dark:text-blue-300">
-              {t('config.firstRun')}
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1.5 uppercase tracking-wider">{t('config.serverUrl')}</label>
-            <input
-              type="text"
-              value={serverUrl}
-              onChange={(e) => setServerUrl(e.target.value)}
-              onBlur={(e) => {
-                const v = persistServerUrl(e.target.value);
-                setServerUrl(v);
-              }}
-              placeholder={SERVER_URL_PLACEHOLDER}
-              className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2.5 text-[13px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:border-blue-400 focus:bg-white dark:focus:bg-zinc-700/50 transition-colors"
-            />
-          </div>
-
-          {mode === 'login' ? (
-            <form onSubmit={handleLogin} className="space-y-3">
-              <Field label={t('config.email')} type="email" value={email} onChange={setEmail} placeholder="you@example.com" />
-              <Field label={t('config.password')} type="password" value={password} onChange={setPassword} placeholder="••••••" />
-              {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
-              <button type="submit" disabled={saving}
-                className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 disabled:opacity-50 rounded-lg text-[13px] font-semibold text-white transition-colors">
-                {saving ? t('config.loggingIn') : t('config.login')}
-              </button>
-              <p className="text-center text-sm text-zinc-600 dark:text-zinc-500">
-                {t('config.noAccount')}
-                <button type="button" onClick={() => switchMode('register')}
-                  className="text-blue-500 hover:underline ml-1">{t('config.register')}</button>
-              </p>
-            </form>
-          ) : (
-            <form onSubmit={handleRegister} className="space-y-3">
-              <Field label={t('config.email')} type="email" value={email} onChange={setEmail} placeholder="you@example.com" />
-              <Field label={t('config.nickname')} type="text" value={nickname} onChange={setNickname} placeholder={t('config.nicknamePh')} />
-              <Field label={t('config.password')} type="password" value={password} onChange={setPassword} placeholder={t('config.passwordMin')} />
-              <Field label={t('config.referral')} type="text" value={referralCode} onChange={setReferralCode} placeholder={t('config.referralPh')} />
-              {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
-              <button type="submit" disabled={saving}
-                className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 disabled:opacity-50 rounded-lg text-[13px] font-semibold text-white transition-colors">
-                {saving ? t('config.registering') : t('config.registerBtn')}
-              </button>
-              <p className="text-center text-sm text-zinc-600 dark:text-zinc-500">
-                {t('config.hasAccount')}
-                <button type="button" onClick={() => switchMode('login')}
-                  className="text-blue-500 hover:underline ml-1">{t('config.goLogin')}</button>
-              </p>
-            </form>
-          )}
-
-          {/* 不登录，先逛逛（游客模式） */}
-          <button type="button" onClick={handleGuest}
-            className="w-full text-center text-xs text-zinc-500 dark:text-zinc-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors">
-            {t('config.guestEnter')}
-          </button>
-
-          {/* Disclaimer */}
-          <p className="text-xs text-gray-600 dark:text-gray-600 text-center leading-relaxed pt-2">
-            {t('config.footer.beforeLink')}
-            <a href="https://github.com/wink-run/local-llm-proxy" target="_blank" rel="noreferrer"
-              className="underline hover:text-gray-600 dark:hover:text-zinc-600 dark:text-zinc-400 transition-colors">
-              local-llm-proxy
-            </a>
-            {t('config.footer.afterLink')}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // Logged in: show full settings
+  // 设置页：登录与否均可访问
   return <Settings user={user} onLogout={handleLogout} serverUrl={serverUrl} setServerUrl={setServerUrl} />;
 }
 
@@ -308,10 +72,16 @@ function SelectRow({ label, hint, value, onChange, options }) {
   );
 }
 
-// ── Settings (logged-in view) ─────────────────────────────────────────────────
+// ── Settings（登录与否均可访问）──────────────────────────────────────────────
 function Settings({ user, onLogout, serverUrl, setServerUrl }) {
   const { theme, setTheme } = useTheme();
   const { lang, setLang, t } = useLang();
+  const { currency, usdCnyRate, applySettings } = useCurrency();
+  const navigate = useNavigate();
+
+  // 货币展示（内部仍以 USD 结算）
+  const [displayCurrency, setDisplayCurrency] = useState(currency);
+  const [usdCnyRateInput, setUsdCnyRateInput] = useState(String(usdCnyRate));
 
   // Gateway settings
   const [gatewayPort,    setGatewayPort]    = useState(11430);
@@ -331,6 +101,12 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
   const [savedMsg, setSavedMsg] = useState('');
   const [saving,   setSaving]   = useState(false);
 
+  // 同步全局货币设置到表单
+  useEffect(() => {
+    setDisplayCurrency(currency);
+    setUsdCnyRateInput(String(usdCnyRate));
+  }, [currency, usdCnyRate]);
+
   // Load saved config on mount
   useEffect(() => {
     getConfig().read().then(cfg => {
@@ -344,6 +120,8 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       if (cfg.health_interval)   setHealthInterval(String(cfg.health_interval));
       if (cfg.keep_route_logs != null) setKeepRouteLogs(!!cfg.keep_route_logs);
       if (cfg.compress) setCompressEnabled(!!cfg.compress.enabled);
+      if (cfg.currency) setDisplayCurrency(cfg.currency === 'USD' ? 'USD' : 'CNY');
+      if (cfg.usd_cny_rate != null) setUsdCnyRateInput(String(cfg.usd_cny_rate));
     }).catch(() => {});
     // Read live gateway port from status
     getGateway().status().then(s => {
@@ -358,6 +136,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       setServerUrl(base);
       await syncCloudConfigUrl(base);
       const current = (await getConfig().read().catch(() => null)) || {};
+      const rate = Math.max(0.01, Number(usdCnyRateInput) || DEFAULT_USD_CNY_RATE);
       await getConfig().write({
         ...current,
         gateway_port:    Number(gatewayPort),
@@ -369,7 +148,10 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
         health_interval: Number(healthInterval),
         keep_route_logs: keepRouteLogs,
         compress: { enabled: compressEnabled },
+        currency: displayCurrency,
+        usd_cny_rate: rate,
       });
+      applySettings({ currency: displayCurrency, usdCnyRate: rate });
       setSavedMsg(t('settings.saved'));
       setTimeout(() => setSavedMsg(''), 2000);
     } finally {
@@ -382,6 +164,25 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
     setMaxConcurrent('8'); setLogLevel('warn'); setRetryCount('1');
     setHealthInterval('60'); setKeepRouteLogs(true);
     setCompressEnabled(false);
+    const defCur = defaultCurrencyForLang(lang);
+    setDisplayCurrency(defCur);
+    setUsdCnyRateInput(String(DEFAULT_USD_CNY_RATE));
+    applySettings({ currency: defCur, usdCnyRate: DEFAULT_USD_CNY_RATE });
+  }
+
+  /** 货币/汇率切换后立即全局生效（与主题、语言一致，无需等保存） */
+  function handleCurrencyChange(c) {
+    setDisplayCurrency(c);
+    applySettings({
+      currency: c,
+      usdCnyRate: Math.max(0.01, Number(usdCnyRateInput) || DEFAULT_USD_CNY_RATE),
+    });
+  }
+
+  function handleRateChange(raw) {
+    setUsdCnyRateInput(raw);
+    const rate = Math.max(0.01, Number(raw) || DEFAULT_USD_CNY_RATE);
+    applySettings({ currency: displayCurrency, usdCnyRate: rate });
   }
 
   const THEME_OPTIONS = [
@@ -393,6 +194,11 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
   const LANG_OPTIONS = [
     { value: 'zh', label: t('lang.zh') },
     { value: 'en', label: t('lang.en') },
+  ];
+
+  const CURRENCY_OPTIONS = [
+    { value: 'CNY', label: t('settings.currencyCNY') },
+    { value: 'USD', label: t('settings.currencyUSD') },
   ];
 
   return (
@@ -517,6 +323,24 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
               ))}
             </div>
           </Row>
+          <SelectRow label={t('settings.currency')} hint={t('settings.currencyHint')}
+            value={displayCurrency} onChange={handleCurrencyChange}
+            options={CURRENCY_OPTIONS}
+          />
+          <Row label={t('settings.usdCnyRate')} hint={t('settings.usdCnyRateHint')}>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-zinc-500">1 USD =</span>
+              <input
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={usdCnyRateInput}
+                onChange={e => handleRateChange(e.target.value)}
+                className="w-20 bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-800 dark:text-zinc-200 text-right font-mono focus:outline-none focus:border-blue-500"
+              />
+              <span className="text-xs text-zinc-500">CNY</span>
+            </div>
+          </Row>
         </div>
       </div>
 
@@ -548,21 +372,39 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.account')}</h2>
         </div>
         <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
-          <Row label={t('config.email')} hint={user.email}>
-            <span className="text-xs text-gray-500 bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 rounded-lg">
-              {user.nickname || '—'}
-            </span>
-          </Row>
-          <div className="flex items-center justify-between px-5 py-4">
-            <div>
-              <div className="text-sm text-red-600 dark:text-red-400">{t('settings.logout')}</div>
-              <div className="text-xs text-gray-500 mt-0.5">{t('settings.logoutHint')}</div>
+          {user ? (
+            <>
+              <Row label={t('config.email')} hint={user.email}>
+                <span className="text-xs text-gray-500 bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 rounded-lg">
+                  {user.nickname || '—'}
+                </span>
+              </Row>
+              <div className="flex items-center justify-between px-5 py-4">
+                <div>
+                  <div className="text-sm text-red-600 dark:text-red-400">{t('settings.logout')}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{t('settings.logoutHint')}</div>
+                </div>
+                <button onClick={onLogout}
+                  className="text-xs text-red-600 dark:text-red-400 hover:text-red-300 bg-red-100 dark:bg-red-900/20 border border-red-300 dark:border-red-800/50 px-3 py-1.5 rounded-lg transition-colors">
+                  {t('settings.signOut')}
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="px-5 py-4 flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="text-sm text-zinc-800 dark:text-zinc-200">{t('sidebar.guest')}</div>
+                <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 leading-relaxed">{t('settings.loginHint')}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate('/login')}
+                className="shrink-0 text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg transition-colors"
+              >
+                {t('config.login')}
+              </button>
             </div>
-            <button onClick={onLogout}
-              className="text-xs text-red-600 dark:text-red-400 hover:text-red-300 bg-red-100 dark:bg-red-900/20 border border-red-300 dark:border-red-800/50 px-3 py-1.5 rounded-lg transition-colors">
-              {t('settings.signOut')}
-            </button>
-          </div>
+          )}
         </div>
       </div>
 

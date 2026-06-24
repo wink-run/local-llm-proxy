@@ -3,6 +3,7 @@ import { MemoryRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './store/index';
 import { ThemeProvider } from './store/theme';
 import { LangProvider, useLang } from './store/lang';
+import { CurrencyProvider } from './store/currency';
 import Sidebar from './components/Sidebar';
 import TokenDashboard from './pages/TokenDashboard';
 import Gateway    from './pages/Gateway';
@@ -11,11 +12,19 @@ import Contribute from './pages/Contribute';
 import Dashboard  from './pages/Dashboard';
 import Network    from './pages/Network';
 import Config     from './pages/Config';
+import Login      from './pages/Login';
 import Debug      from './pages/Debug';
 import UpdateNotification from './components/UpdateNotification';
 import { useDeviceReporter } from './hooks/useDeviceReporter';
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
+
+/** 个人页：仅登录用户可访问；未登录直接跳转登录页 */
+function AccountRoute() {
+  const { user } = useAuth();
+  if (user) return <TokenDashboard />;
+  return <Navigate to="/login" replace />;
+}
 
 function Layout() {
   const { user, guest, loading } = useAuth();
@@ -42,16 +51,17 @@ function Layout() {
       {authed && <Sidebar />}
       <main className="flex-1 overflow-y-auto min-w-0 bg-zinc-100 dark:bg-zinc-900">
         <Routes>
-          <Route path="/"          element={<Navigate to={authed ? '/gateway' : '/config'} replace />} />
-          <Route path="/account"   element={authed ? <TokenDashboard /> : <Navigate to="/config" replace />} />
-          <Route path="/gateway"   element={authed ? <Gateway />        : <Navigate to="/config" replace />} />
-          <Route path="/providers" element={authed ? <Providers />      : <Navigate to="/config" replace />} />
-          <Route path="/contribute"element={user   ? <Contribute />     : <Navigate to="/config" replace />} />
-          <Route path="/dashboard" element={authed ? <Dashboard />      : <Navigate to="/config" replace />} />
+          <Route path="/"          element={<Navigate to={authed ? '/gateway' : '/login'} replace />} />
+          <Route path="/account"   element={<AccountRoute />} />
+          <Route path="/login"     element={<Login />} />
+          <Route path="/gateway"   element={authed ? <Gateway />        : <Navigate to="/login" replace />} />
+          <Route path="/providers" element={authed ? <Providers />      : <Navigate to="/login" replace />} />
+          <Route path="/contribute"element={user   ? <Contribute />     : <Navigate to="/login" replace />} />
+          <Route path="/dashboard" element={authed ? <Dashboard />      : <Navigate to="/login" replace />} />
           <Route path="/network"   element={<Network />} />
           <Route path="/config"    element={<Config />} />
           <Route path="/debug"     element={<Debug />} />
-          <Route path="*"          element={<Navigate to={authed ? '/gateway' : '/config'} replace />} />
+          <Route path="*"          element={<Navigate to={authed ? '/gateway' : '/login'} replace />} />
         </Routes>
       </main>
       <UpdateNotification />
@@ -64,9 +74,11 @@ export default function App() {
     <MemoryRouter>
       <ThemeProvider>
         <LangProvider>
-          <AuthProvider>
-            <Layout />
-          </AuthProvider>
+          <CurrencyProvider>
+            <AuthProvider>
+              <Layout />
+            </AuthProvider>
+          </CurrencyProvider>
         </LangProvider>
       </ThemeProvider>
     </MemoryRouter>

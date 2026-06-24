@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { enrichDashboardBilling } from '../utils/billing-cost';
 import { loadUserAccounts } from '../api/userAccounts';
 import { useLang } from '../store/lang';
+import { useCurrency } from '../store/currency';
 import { RANGE_KEYS, RANGE_DAYS } from '../utils/ranges';
 import { isAppIcon, appIconSvg } from '../lib/appIcons';
 
@@ -9,7 +10,6 @@ const PAID_PROVIDERS = ['openai', 'anthropic-paid', 'openrouter', 'anthropic'];
 const P2P_PROVIDERS  = ['tokenbank-p2p'];
 
 const fmtN    = n => n >= 1_000_000 ? (n/1e6).toFixed(2)+'M' : n >= 1000 ? (n/1000).toFixed(1)+'K' : String(n||0);
-const fmtCost = n => (n != null && n > 0) ? ('$' + n.toFixed(n < 0.01 ? 4 : 3)) : '—';
 
 function linkMethodLabel(method, t) {
   return method === 'manual' ? t('common.linkApi') : t('common.linkApp');
@@ -80,6 +80,7 @@ function AppShareStrip({ rows, metric = 'tokens' }) {
 }
 
 function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
+  const { fmtCost } = useCurrency();
   const maxCalls = Math.max(...(rows || []).map(r => r.calls), 1);
   const maxTokens = Math.max(...(rows || []).map(r => r.tokens), 1);
   const sorted = [...(rows || [])].sort((a, b) =>
@@ -276,6 +277,7 @@ function TrendBars({ data = [], t }) {
 
 export default function Dashboard() {
   const { t } = useLang();
+  const { fmtCost } = useCurrency();
   const [range, setRange]         = useState('today');
   const [localData, setLocalData] = useState(null);
   const [appsUsage, setAppsUsage] = useState([]);

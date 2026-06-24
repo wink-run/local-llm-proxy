@@ -124,6 +124,9 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('token');
     setUser(null);
     stopPolling();
+    // 退出后恢复为未登录浏览态，可继续使用网关/设置等，无需跳转登录页
+    localStorage.setItem('guest', '1');
+    setGuest(true);
     getLocalConfig().setCloudConfig({ url: null, token: null }).catch(() => {});
   }
 

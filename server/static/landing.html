@@ -6,469 +6,492 @@
   <title>Token Bank — 个人 AI 用量中枢</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <!-- Gleap 字体替代：Inter + Playfair Display -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@400&display=swap" rel="stylesheet">
   <style>
+    /* ── Gleap Design Tokens ── */
     :root {
-      --bg:        #080909;
-      --bg-raised: #0e1010;
-      --bg-card:   #111414;
-      --border:    #1e2424;
-      --border-hi: #2a3535;
-      --text:      #c8d0cf;
-      --muted:     #6a7877;
-      --faint:     #3a4443;
-      --accent:    #00d4aa;
-      --accent2:   #00b896;
-      --warn:      #f5a623;
-      --red:       #e05555;
-      --glow:      rgba(0,212,170,.18);
-      --glow-sm:   rgba(0,212,170,.10);
+      --color-obsidian: #000000;
+      --color-graphite: #333333;
+      --color-slate: #7b7b7b;
+      --color-mist: #bcbcbc;
+      --color-silver: #d6d6d6;
+      --color-bone: #f5f2f0;
+      --color-paper: #ffffff;
+      --color-warm-yellow: #ffe08a;
+      --color-warm-yellow-deep: #f5c842;
+      --color-warm-cream: #fff6d6;
+      --color-warm-amber: #fcd977;
+      /* 主题色别名，便于沿用现有 class */
+      --color-lilac-bloom: var(--color-warm-yellow);
+      --color-sky-veil: var(--color-warm-cream);
+      --gradient-lilac: linear-gradient(135deg, #ffe08a, #f5c842);
+      --gradient-preview: linear-gradient(135deg, #ffe08a 0%, #fcd977 50%, #f5c842 100%);
+      --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+      --font-editorial: 'Playfair Display', ui-serif, Georgia, serif;
+      --text-caption: 13px;
+      --text-body: 16px;
+      --text-subheading: 20px;
+      --text-heading-sm: 32px;
+      --text-display: clamp(2.25rem, 5vw, 48px);
+      --text-display-lg: clamp(2.75rem, 6vw, 62px);
+      --page-max-width: 1200px;
+      --section-gap: 100px;
+      --card-padding: 32px;
+      --radius-btn: 10px;
+      --radius-card: 24px;
+      --radius-card-lg: 42px;
+      --radius-pill: 32px;
+      --shadow-md: rgba(0,0,0,.04) 0 8px 16px 0;
+      --shadow-subtle: rgba(16,24,40,.05) 0 1px 2px 0;
     }
+
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html { scroll-behavior: smooth; font-size: 16px; }
     body {
-      font-family: "Geist", system-ui, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.65;
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-obsidian);
+      line-height: 1.44;
       overflow-x: hidden;
     }
 
-    /* ── Noise grain overlay ── */
-    body::before {
-      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
-      opacity: .028;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-      background-size: 200px 200px;
+    .wrap { max-width: var(--page-max-width); margin: 0 auto; padding: 0 24px; }
+
+    /* 排版：Editorial 仅用于大标题 */
+    .editorial {
+      font-family: var(--font-editorial); font-weight: 400;
+      line-height: 1.2; letter-spacing: normal;
+    }
+    .sans { font-family: var(--font-sans); }
+    .text-graphite { color: var(--color-graphite); }
+    .text-slate { color: var(--color-slate); }
+    .text-center { text-align: center; }
+
+    /* ── 按钮：Lilac 主 CTA + Obsidian 次 CTA ── */
+    .btn-lilac {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 14px 20px; border-radius: var(--radius-btn);
+      background: var(--color-lilac-bloom); color: var(--color-obsidian);
+      font-family: var(--font-sans); font-size: var(--text-body); font-weight: 500;
+      text-decoration: none; border: none; cursor: pointer;
+      box-shadow: var(--shadow-subtle);
+      transition: filter .15s;
+    }
+    .btn-lilac:hover { filter: brightness(.96); }
+
+    .btn-dark {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 14px 20px; border-radius: var(--radius-btn);
+      background: var(--color-obsidian); color: var(--color-paper);
+      font-family: var(--font-sans); font-size: var(--text-body); font-weight: 500;
+      text-decoration: none; border: none; cursor: pointer;
+      box-shadow: var(--shadow-subtle);
+      transition: opacity .15s;
+    }
+    .btn-dark:hover { opacity: .88; }
+
+    .btn-ghost {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 10px 20px; border-radius: var(--radius-btn);
+      background: transparent; color: var(--color-obsidian);
+      font-family: var(--font-sans); font-size: 14px; font-weight: 500;
+      text-decoration: none; border: 1px solid var(--color-silver);
+      transition: border-color .15s, background .15s;
+    }
+    .btn-ghost:hover { border-color: var(--color-graphite); background: var(--color-bone); }
+
+    .btn-sm { padding: 10px 20px; font-size: 14px; }
+
+    /* ── Tag Pill（区块标签） ── */
+    .tag-pill {
+      display: inline-block;
+      padding: 5px 12px; border-radius: var(--radius-btn);
+      background: var(--color-lilac-bloom); color: var(--color-obsidian);
+      font-size: 14px; font-weight: 500;
+    }
+    .tag-pill.bone { background: var(--color-bone); }
+
+    /* ── 公告条 ── */
+    .announce-bar {
+      background: var(--color-bone); color: var(--color-graphite);
+      height: 44px; display: flex; align-items: center; justify-content: center;
+      font-size: 13px; position: relative; padding: 0 48px;
+      border-bottom: 1px solid var(--color-silver);
+    }
+    .announce-bar.hidden { display: none; }
+    .announce-bar a {
+      margin-left: 12px; padding: 4px 12px;
+      background: var(--color-lilac-bloom); color: var(--color-obsidian);
+      border-radius: var(--radius-btn); text-decoration: none;
+      font-size: 13px; font-weight: 500;
+    }
+    .announce-close {
+      position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+      background: none; border: none; color: var(--color-slate);
+      cursor: pointer; font-size: 18px; line-height: 1;
     }
 
-    /* ── Ambient glow ── */
-    .ambient {
-      position: fixed; pointer-events: none; z-index: 0; border-radius: 50%;
-      filter: blur(120px); opacity: .35;
-    }
-    .ambient-1 { width: 600px; height: 400px; top: -100px; left: 50%; transform: translateX(-50%); background: radial-gradient(ellipse, rgba(0,212,170,.12), transparent 70%); }
-    .ambient-2 { width: 400px; height: 400px; bottom: 20%; right: -100px; background: radial-gradient(ellipse, rgba(245,166,35,.07), transparent 70%); }
-
-    .wrap { max-width: 1080px; margin: 0 auto; padding: 0 28px; position: relative; z-index: 1; }
-
-    /* ── Nav ── */
+    /* ── 导航 ── */
     header {
       position: sticky; top: 0; z-index: 100;
-      border-bottom: 1px solid var(--border);
-      background: rgba(8,9,9,.9);
-      backdrop-filter: blur(16px) saturate(1.4);
+      background: rgba(255,255,255,.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--color-silver);
     }
     .nav-inner {
-      display: flex; align-items: center; height: 56px;
-      max-width: 1080px; margin: 0 auto; padding: 0 28px; gap: 0;
+      display: flex; align-items: center; height: 64px;
+      max-width: var(--page-max-width); margin: 0 auto; padding: 0 24px; gap: 16px;
     }
     .logo {
-      font-family: "Instrument Serif", Georgia, serif;
-      font-size: 1.1rem; letter-spacing: .01em;
-      color: #fff; text-decoration: none; flex-shrink: 0;
-      margin-right: 36px; display: flex; align-items: center; gap: 9px;
+      font-family: var(--font-sans); font-size: 16px; font-weight: 600;
+      color: var(--color-obsidian); text-decoration: none; flex-shrink: 0;
+      display: flex; align-items: center; gap: 10px;
     }
     .logo-mark {
-      width: 22px; height: 22px; border-radius: 6px;
-      background: linear-gradient(135deg, var(--accent), #008f72);
+      width: 28px; height: 28px; border-radius: var(--radius-btn);
+      background: var(--color-lilac-bloom);
       display: inline-flex; align-items: center; justify-content: center;
-      font-family: "DM Mono", monospace; font-size: .62rem; color: #000; font-weight: 500;
-      letter-spacing: -.02em; flex-shrink: 0;
+      font-size: 11px; font-weight: 600;
     }
-    .nav-links { display: flex; align-items: center; gap: 2px; flex: 1; }
+    .nav-links {
+      display: flex; align-items: center; gap: 4px; flex: 1; justify-content: center;
+    }
     .nav-links a {
-      color: var(--muted); text-decoration: none;
-      font-size: .82rem; padding: 5px 10px; border-radius: 5px;
-      transition: color .14s, background .14s; white-space: nowrap; font-weight: 400;
+      color: var(--color-graphite); text-decoration: none;
+      font-size: 14px; font-weight: 500; padding: 8px 12px;
+      transition: color .14s;
     }
-    .nav-links a:hover { color: var(--text); background: rgba(255,255,255,.04); }
-    @media (max-width: 740px) { .nav-links .tl { display: none; } }
-    .nav-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-left: auto; }
-    .btn-sm {
-      display: inline-flex; align-items: center; padding: 6px 14px;
-      border-radius: 6px; font-size: .8rem; font-weight: 500;
-      text-decoration: none; border: 1px solid var(--border);
-      color: var(--muted); background: transparent;
-      transition: border-color .14s, color .14s;
+    .nav-links a:hover { color: var(--color-obsidian); }
+    @media (max-width: 768px) { .nav-links .tl { display: none; } }
+    .nav-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .btn-lang {
+      background: none; border: 1px solid var(--color-silver);
+      color: var(--color-graphite); padding: 8px 12px;
+      border-radius: var(--radius-btn); font-size: 13px;
+      cursor: pointer; font-family: var(--font-sans);
     }
-    .btn-sm:hover { border-color: var(--border-hi); color: var(--text); }
-    .btn-sm.accent {
-      background: var(--accent); color: #001a14; border-color: transparent;
-      font-weight: 600; box-shadow: 0 0 20px var(--glow-sm);
-    }
-    .btn-sm.accent:hover { background: #00c49c; box-shadow: 0 0 28px var(--glow); }
-    button.btn-lang {
-      background: none; border: 1px solid var(--border); color: var(--muted);
-      padding: 5px 10px; border-radius: 5px; font-size: .75rem; cursor: pointer;
-      font-family: inherit; transition: color .14s, border-color .14s;
-    }
-    button.btn-lang:hover { color: var(--accent); border-color: var(--accent); }
 
     /* ── Hero ── */
-    .hero { padding: 88px 0 96px; }
-    .hero-eyebrow {
-      font-family: "DM Mono", monospace; font-size: .72rem; letter-spacing: .14em;
-      text-transform: uppercase; color: var(--accent);
-      margin-bottom: 28px; opacity: 0;
-      animation: rise .6s .05s ease forwards;
-    }
+    .hero { padding: 88px 0 60px; text-align: center; }
+    .hero .tag-pill { margin-bottom: 24px; }
     .hero-h1 {
-      font-family: "Instrument Serif", Georgia, serif;
-      font-size: clamp(2.2rem, 4.5vw, 3.6rem);
-      line-height: 1.1; letter-spacing: -.02em;
-      color: #fff; white-space: nowrap;
-      opacity: 0; animation: rise .65s .12s ease forwards;
-    }
-    @media (max-width: 560px) { .hero-h1 { white-space: normal; font-size: 2rem; } }
-    .hero-h1 em {
-      font-style: italic; color: var(--accent);
+      font-size: var(--text-display-lg);
+      max-width: 14ch; margin: 0 auto;
     }
     .hero-sub {
-      margin-top: 22px; font-size: 1.05rem; color: var(--muted);
-      max-width: 50ch; font-weight: 300; line-height: 1.7;
-      opacity: 0; animation: rise .65s .2s ease forwards;
+      margin-top: 24px; font-size: var(--text-body);
+      color: var(--color-graphite); max-width: 640px;
+      margin-left: auto; margin-right: auto; line-height: 1.44;
     }
-    .hero-sub strong { color: var(--text); font-weight: 500; }
+    .hero-sub strong { color: var(--color-obsidian); font-weight: 600; }
+    .hero-pills {
+      margin-top: 28px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+    }
+    .pill-tag {
+      padding: 5px 12px; border-radius: var(--radius-btn);
+      background: var(--color-bone); color: var(--color-graphite);
+      font-size: 13px; font-weight: 500;
+      border: 1px solid var(--color-silver);
+    }
     .hero-cta {
-      margin-top: 36px; display: flex; flex-wrap: wrap; gap: 10px;
-      opacity: 0; animation: rise .65s .28s ease forwards;
-    }
-    .btn-cta {
-      display: inline-flex; align-items: center; gap: 7px;
-      padding: 11px 22px; border-radius: 8px; font-size: .9rem; font-weight: 600;
-      text-decoration: none; border: none; cursor: pointer;
-      transition: transform .15s, box-shadow .2s, filter .15s;
-    }
-    .btn-cta:active { transform: scale(.98); }
-    .btn-cta.primary {
-      background: var(--accent); color: #001a14;
-      box-shadow: 0 0 28px var(--glow);
-    }
-    .btn-cta.primary:hover { filter: brightness(1.06); box-shadow: 0 0 36px rgba(0,212,170,.28); }
-    .btn-cta.ghost {
-      background: transparent; color: var(--text);
-      border: 1px solid var(--border);
-    }
-    .btn-cta.ghost:hover { border-color: var(--border-hi); background: rgba(255,255,255,.03); }
-
-    .hero-pill {
-      font-family: "DM Mono", monospace; font-size: .68rem; letter-spacing: .04em;
-      padding: 6px 12px; border-radius: 999px;
-      border: 1px solid rgba(0,212,170,.25); background: rgba(0,212,170,.06); color: var(--accent);
+      margin-top: 36px; display: flex; flex-wrap: wrap; gap: 12px; justify-content: center;
     }
 
-    @keyframes rise {
-      from { opacity: 0; transform: translateY(14px); }
-      to   { opacity: 1; transform: translateY(0); }
+    /* ── 产品预览卡片（数据流图容器） ── */
+    .preview-frame {
+      margin-top: 60px; padding: 16px;
+      border-radius: var(--radius-card-lg);
+      background: var(--gradient-preview);
+      box-shadow: var(--shadow-md);
     }
-
-    /* ── Flow diagram (hero visual) ── */
-    .hero-flow {
-      margin-top: 64px;
-      opacity: 0; animation: rise .7s .38s ease forwards;
+    .preview-inner {
+      background: var(--color-paper); border-radius: var(--radius-card);
+      padding: 32px 24px; overflow-x: auto;
+      border: 1px solid rgba(255,255,255,.6);
     }
-    .flow-wrap {
-      background: var(--bg-raised); border: 1px solid var(--border);
-      border-radius: 16px; padding: 28px 32px; overflow-x: auto;
+    .flow-grid {
+      display: grid; grid-template-columns: 1fr auto 1fr;
+      gap: 0; align-items: center; min-width: 680px;
     }
-    .flow-row {
-      display: flex; align-items: center; gap: 0;
-      min-width: 560px;
+    .flow-col { display: flex; flex-direction: column; gap: 10px; }
+    .flow-col.right { align-items: flex-end; }
+    .flow-col.left { align-items: flex-start; }
+    .source-tag {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 12px; border-radius: var(--radius-btn);
+      border: 1px solid var(--color-silver); background: var(--color-paper);
+      font-size: 13px; font-weight: 500; white-space: nowrap;
     }
+    .source-tag.sky { background: var(--color-warm-cream); border-color: transparent; }
+    .source-tag.lilac { background: var(--color-warm-yellow); border-color: transparent; }
+    .flow-center { position: relative; padding: 0 28px; min-width: 180px; }
     .flow-node {
-      flex-shrink: 0; background: var(--bg-card);
-      border: 1px solid var(--border); border-radius: 10px;
-      padding: 10px 16px; text-align: center; min-width: 90px;
+      padding: 24px; border-radius: var(--radius-card);
+      border: 1px solid var(--color-silver); background: var(--color-bone);
+      text-align: center; box-shadow: var(--shadow-subtle);
     }
-    .flow-node .fn-label {
-      font-family: "DM Mono", monospace; font-size: .66rem;
-      color: var(--muted); letter-spacing: .06em; margin-bottom: 4px;
+    .flow-node .fn-title { font-family: var(--font-editorial); font-size: var(--text-subheading); }
+    .flow-node .fn-sub { font-size: 13px; color: var(--color-slate); margin-top: 4px; }
+    .status-badges { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 14px; }
+    .status-badge {
+      padding: 4px 10px; border-radius: var(--radius-btn);
+      border: 1px solid var(--color-mist); font-size: 11px; font-weight: 500;
+      background: var(--color-paper); color: var(--color-graphite);
     }
-    .flow-node .fn-name {
-      font-size: .82rem; color: var(--text); font-weight: 500; white-space: nowrap;
+    .flow-line-h {
+      height: 1px; background: var(--color-silver);
+      position: absolute; top: 50%; width: 28px;
     }
-    .flow-node.hi { border-color: rgba(0,212,170,.35); background: rgba(0,212,170,.04); }
-    .flow-node.hi .fn-name { color: var(--accent); }
-    .flow-arrow {
-      flex: 1; display: flex; align-items: center; justify-content: center;
-      padding: 0 4px; position: relative;
-    }
-    .flow-arrow::before {
-      content: ""; display: block; height: 1px; width: 100%;
-      background: linear-gradient(90deg, var(--border), var(--border-hi), var(--border));
-    }
-    .flow-arrow::after {
-      content: "▶"; position: absolute; right: 2px;
-      font-size: .55rem; color: var(--faint);
-    }
-    .flow-arrow .fa-label {
-      position: absolute; top: -16px; left: 50%; transform: translateX(-50%);
-      font-family: "DM Mono", monospace; font-size: .6rem; color: var(--faint);
-      white-space: nowrap;
-    }
-    .flow-group {
-      display: flex; flex-direction: column; gap: 6px;
-    }
-    .flow-group .flow-node { min-width: 112px; }
-    .flow-vline {
-      width: 1px; background: var(--border); align-self: stretch; margin: 0 -1px;
-    }
-
-    .flow-badge {
-      font-family: "DM Mono", monospace; font-size: .62rem;
-      padding: 2px 7px; border-radius: 4px; display: inline-block; margin-top: 3px;
-    }
-    .badge-free { background: rgba(0,212,170,.12); color: var(--accent); }
-    .badge-p2p  { background: rgba(245,166,35,.12); color: var(--warn); }
-    .badge-paid { background: rgba(224,85,85,.12);  color: var(--red); }
-    .badge-fmt  { background: rgba(150,150,255,.12); color: #a0a0ff; }
+    .flow-line-h.left { left: 0; }
+    .flow-line-h.right { right: 0; }
 
     /* ── Section ── */
-    .section { padding: 80px 0; }
-    .section + .section { border-top: 1px solid var(--border); }
+    .section { padding: var(--section-gap) 0; }
+    .section.bone { background: var(--color-bone); }
     .sec-label {
-      font-family: "DM Mono", monospace; font-size: .68rem; letter-spacing: .14em;
-      text-transform: uppercase; color: var(--accent); margin-bottom: 14px;
+      font-size: 14px; font-weight: 500; color: var(--color-obsidian);
+      margin-bottom: 12px;
     }
-    .sec-h2 {
-      font-family: "Instrument Serif", Georgia, serif;
-      font-size: clamp(1.65rem, 3vw, 2.3rem);
-      font-weight: 400; color: #fff; letter-spacing: -.02em; line-height: 1.15;
+    .sec-header.center .sec-label { text-align: center; }
+    .sec-h2 { font-size: var(--text-display); max-width: 18ch; line-height: 1.25; }
+    .sec-h2.center { margin: 0 auto; max-width: 22ch; }
+    .sec-sub {
+      margin-top: 16px; font-size: var(--text-body); color: var(--color-slate);
+      max-width: 640px; line-height: 1.44;
     }
-    .sec-h2 em { font-style: italic; color: var(--accent); }
-    .sec-sub { margin-top: 14px; color: var(--muted); max-width: 54ch; font-weight: 300; font-size: .98rem; }
-    .sec-sub strong { color: var(--text); font-weight: 500; }
+    .sec-sub.center { margin-left: auto; margin-right: auto; }
+    .sec-header { margin-bottom: 48px; }
+    .sec-header.center { text-align: center; }
 
-    /* ── Grid ── */
-    .grid-3 { display: grid; gap: 16px; grid-template-columns: repeat(3,1fr); }
-    .grid-2 { display: grid; gap: 16px; grid-template-columns: repeat(2,1fr); }
-    @media (max-width: 720px) { .grid-3, .grid-2 { grid-template-columns: 1fr; } }
+    /* ── 卡片 ── */
+    .grid-3 { display: grid; gap: 24px; grid-template-columns: repeat(3,1fr); }
+    .grid-2 { display: grid; gap: 24px; grid-template-columns: repeat(2,1fr); }
+    @media (max-width: 900px) { .grid-3 { grid-template-columns: 1fr; } }
+    @media (max-width: 720px) { .grid-2 { grid-template-columns: 1fr; } }
 
-    /* ── Card ── */
-    .card {
-      background: var(--bg-card); border: 1px solid var(--border);
-      border-radius: 12px; padding: 24px;
-      transition: border-color .2s, box-shadow .25s;
+    .card-lite {
+      padding: var(--card-padding); border-radius: var(--radius-card);
+      border: 1px solid var(--color-silver); background: var(--color-paper);
+      box-shadow: var(--shadow-subtle);
     }
-    .card:hover { border-color: var(--border-hi); box-shadow: 0 8px 32px rgba(0,0,0,.3); }
-    .card.accent-card { border-color: rgba(0,212,170,.2); background: linear-gradient(135deg, rgba(0,212,170,.03), var(--bg-card)); }
-    .card-num {
-      font-family: "DM Mono", monospace; font-size: .68rem; color: var(--faint);
-      letter-spacing: .08em; margin-bottom: 14px;
+    .card-lite h3 {
+      font-size: var(--text-subheading); font-weight: 500;
+      margin-bottom: 10px; letter-spacing: -.01em;
     }
-    .card-icon { font-size: 1.5rem; margin-bottom: 12px; line-height: 1; }
-    .card h3 { font-size: .98rem; font-weight: 600; color: #fff; margin-bottom: 8px; }
-    .card p  { font-size: .88rem; color: var(--muted); line-height: 1.65; }
+    .card-lite p { font-size: var(--text-body); color: var(--color-slate); line-height: 1.44; }
+    .card-num { font-size: 13px; color: var(--color-slate); margin-bottom: 16px; font-weight: 500; }
+    .card-icon {
+      width: 40px; height: 40px; margin-bottom: 16px;
+      border: 1px solid var(--color-silver); border-radius: var(--radius-btn);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; color: var(--color-graphite);
+    }
 
-    /* ── iOS stats analogy ── */
+    /* ── 高亮渐变卡片 ── */
+    .highlight-card {
+      border-radius: var(--radius-card-lg); padding: 40px;
+      background: var(--gradient-lilac);
+      display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: center;
+      box-shadow: var(--shadow-md);
+    }
+    @media (max-width: 768px) { .highlight-card { grid-template-columns: 1fr; } }
+    .highlight-card h3 {
+      font-family: var(--font-editorial); font-size: var(--text-heading-sm);
+      margin-bottom: 12px; color: var(--color-obsidian);
+    }
+    .highlight-card p { font-size: var(--text-body); color: var(--color-graphite); line-height: 1.44; }
+
+    .feature-card {
+      border-radius: var(--radius-card-lg); padding: 40px;
+      border: 1px solid var(--color-silver); background: var(--color-paper);
+      box-shadow: var(--shadow-md);
+      display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: center;
+    }
+    @media (max-width: 768px) { .feature-card { grid-template-columns: 1fr; } }
+    .feature-card h3 {
+      font-family: var(--font-editorial); font-size: var(--text-heading-sm);
+      margin-bottom: 12px;
+    }
+    .feature-card p { font-size: var(--text-body); color: var(--color-slate); line-height: 1.44; }
+
+    .ui-preview {
+      border-radius: var(--radius-card); min-height: 220px;
+      background: var(--color-bone); border: 1px solid var(--color-silver);
+      padding: 20px; display: flex; flex-direction: column; gap: 10px;
+    }
+    .chat-bubble {
+      max-width: 75%; padding: 10px 14px; border-radius: 16px;
+      font-size: 14px; line-height: 1.4;
+    }
+    .chat-bubble.user {
+      align-self: flex-end; background: var(--color-warm-yellow); color: var(--color-obsidian);
+    }
+    .chat-bubble.agent {
+      align-self: flex-start; background: var(--color-paper);
+      border: 1px solid var(--color-silver); color: var(--color-graphite);
+    }
+
+    .dim-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+    .dim-chip {
+      padding: 6px 12px; border-radius: var(--radius-btn);
+      background: var(--color-bone); border: 1px solid var(--color-silver);
+      font-size: 13px; font-weight: 500;
+    }
+    .highlight-card .dim-chip {
+      background: rgba(255,255,255,.7); border-color: rgba(0,0,0,.08);
+    }
+    .dim-chip .path { color: var(--color-slate); font-size: 12px; margin-top: 2px; font-weight: 400; }
+
+    /* ── FAQ ── */
+    .faq-list { border-top: 1px solid var(--color-silver); }
+    .faq-item { border-bottom: 1px solid var(--color-silver); }
+    .faq-q {
+      width: 100%; display: flex; align-items: center; justify-content: space-between;
+      padding: 24px 0; background: none; border: none; cursor: pointer;
+      font-family: var(--font-sans); font-size: var(--text-body); font-weight: 500;
+      color: var(--color-obsidian); text-align: left;
+    }
+    .faq-q .icon { font-size: 20px; font-weight: 400; color: var(--color-slate); margin-left: 16px; }
+    .faq-a {
+      max-height: 0; overflow: hidden; transition: max-height .3s ease;
+      font-size: var(--text-body); color: var(--color-slate); line-height: 1.44;
+    }
+    .faq-item.open .faq-a { max-height: 200px; padding-bottom: 24px; }
+
+    /* ── 用量 mockup ── */
     .ios-mockup {
-      background: var(--bg-card); border: 1px solid var(--border);
-      border-radius: 14px; padding: 0; overflow: hidden;
+      border: 1px solid var(--color-silver); border-radius: var(--radius-card-lg);
+      overflow: hidden; background: var(--color-paper); box-shadow: var(--shadow-md);
     }
     .ios-header {
-      padding: 16px 20px 14px; border-bottom: 1px solid var(--border);
-      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 24px; border-bottom: 1px solid var(--color-silver);
+      display: flex; justify-content: space-between; font-size: 14px; font-weight: 500;
     }
-    .ios-header .title { font-size: .82rem; font-weight: 600; color: var(--text); }
-    .ios-header .period {
-      font-family: "DM Mono", monospace; font-size: .68rem; color: var(--muted);
-    }
-    .ios-bar {
-      margin: 16px 20px; height: 8px; border-radius: 4px;
-      background: var(--bg-raised); overflow: hidden; display: flex;
-    }
-    .ios-bar-seg { height: 100%; transition: width .4s ease; }
-    .ios-bar-seg.s1 { background: var(--accent); }
-    .ios-bar-seg.s2 { background: var(--warn); }
-    .ios-bar-seg.s3 { background: #6c8fff; }
-    .ios-bar-seg.s4 { background: var(--red); }
-    .ios-bar-seg.s5 { background: #a77bff; }
+    .ios-bar { margin: 16px 24px; height: 8px; border-radius: var(--radius-pill); display: flex; overflow: hidden; background: var(--color-bone); }
     .ios-row {
-      display: flex; align-items: center; padding: 10px 20px;
-      border-bottom: 1px solid rgba(30,36,36,.7); gap: 12px;
+      display: flex; align-items: center; padding: 12px 24px; gap: 12px;
+      border-bottom: 1px solid var(--color-silver); font-size: 14px;
     }
     .ios-row:last-child { border-bottom: none; }
-    .ios-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+    .ios-dot { width: 8px; height: 8px; border-radius: 3px; flex-shrink: 0; }
     .ios-app { flex: 1; }
-    .ios-app .name { font-size: .83rem; color: var(--text); font-weight: 500; }
-    .ios-app .sub  { font-size: .72rem; color: var(--muted); font-family: "DM Mono", monospace; margin-top: 1px; }
-    .ios-pct { font-family: "DM Mono", monospace; font-size: .8rem; color: var(--muted); }
+    .ios-app .sub { font-size: 12px; color: var(--color-slate); margin-top: 2px; }
+    .ios-pct { font-size: 14px; color: var(--color-graphite); font-weight: 500; }
 
-    /* ── Provider tiers ── */
-    .tier-row {
-      display: flex; align-items: flex-start; gap: 20px; padding: 20px 0;
-      border-bottom: 1px solid var(--border);
+    .tier-num { font-size: 13px; color: var(--color-slate); font-weight: 500; }
+    .tier-name { font-size: var(--text-subheading); font-weight: 500; margin-bottom: 8px; }
+    .tier-desc { font-size: var(--text-body); color: var(--color-slate); line-height: 1.44; }
+    .badge-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+    .mini-badge {
+      font-size: 12px; font-weight: 500; padding: 4px 10px;
+      border-radius: var(--radius-btn); background: var(--color-bone);
+      border: 1px solid var(--color-silver); color: var(--color-graphite);
     }
-    .tier-row:last-child { border-bottom: none; }
-    .tier-num {
-      font-family: "DM Mono", monospace; font-size: .75rem;
-      color: var(--faint); flex-shrink: 0; padding-top: 2px; width: 20px;
-    }
-    .tier-body { flex: 1; }
-    .tier-name { font-size: .95rem; font-weight: 600; color: #fff; display: flex; align-items: center; gap: 10px; }
-    .tier-desc { margin-top: 6px; font-size: .86rem; color: var(--muted); }
-    .tier-badge-row { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
-    .tbadge {
-      font-family: "DM Mono", monospace; font-size: .65rem; padding: 2px 8px;
-      border-radius: 4px; border: 1px solid; white-space: nowrap;
-    }
-    .tbadge-g { color: var(--accent); border-color: rgba(0,212,170,.25); background: rgba(0,212,170,.07); }
-    .tbadge-y { color: var(--warn);  border-color: rgba(245,166,35,.25); background: rgba(245,166,35,.07); }
-    .tbadge-r { color: var(--red);   border-color: rgba(224,85,85,.25);  background: rgba(224,85,85,.07); }
+    .mini-badge.lilac { background: var(--color-warm-yellow); border-color: transparent; }
+    .mini-badge.sky { background: var(--color-warm-cream); border-color: transparent; }
 
-    /* ── Optimization strategies ── */
-    .opt-grid { display: grid; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
-    .opt-row {
-      background: var(--bg-card); padding: 18px 22px;
-      display: flex; align-items: flex-start; gap: 16px;
-    }
-    .opt-row:hover { background: var(--bg-raised); }
-    .opt-icon { font-size: 1.1rem; flex-shrink: 0; margin-top: 1px; }
-    .opt-body h4 { font-size: .9rem; font-weight: 600; color: #fff; margin-bottom: 4px; }
-    .opt-body p  { font-size: .83rem; color: var(--muted); }
-
-    /* ── Stat pill ── */
-    .stat-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 36px; }
-    .stat-pill {
-      background: var(--bg-raised); border: 1px solid var(--border);
-      border-radius: 8px; padding: 14px 20px; min-width: 130px;
-    }
-    .stat-pill .sp-val {
-      font-family: "Instrument Serif", Georgia, serif;
-      font-size: 1.8rem; color: #fff; line-height: 1; letter-spacing: -.02em;
-    }
-    .stat-pill .sp-val em { font-style: normal; color: var(--accent); font-size: 1.2rem; }
-    .stat-pill .sp-label { font-size: .75rem; color: var(--muted); margin-top: 5px; }
-
-    /* ── Format chips ── */
-    .fmt-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 32px; }
-    .fmt-chip {
-      background: var(--bg-card); border: 1px solid var(--border);
-      border-radius: 8px; padding: 12px 18px; display: flex; align-items: center; gap: 10px;
-      transition: border-color .2s;
-    }
-    .fmt-chip:hover { border-color: var(--border-hi); }
-    .fmt-chip .fc-dot { width: 7px; height: 7px; border-radius: 50%; }
-    .fmt-chip .fc-name { font-size: .85rem; color: var(--text); font-weight: 500; }
-    .fmt-chip .fc-path {
-      font-family: "DM Mono", monospace; font-size: .68rem; color: var(--muted);
-    }
-
-    /* ── Credit economy compact ── */
-    .credit-split { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
-    @media (max-width: 600px) { .credit-split { grid-template-columns: 1fr; } }
-    .credit-box {
-      background: var(--bg-card); border: 1px solid var(--border);
-      border-radius: 12px; padding: 22px;
-    }
-    .credit-box .cb-label {
-      font-family: "DM Mono", monospace; font-size: .68rem; color: var(--muted);
-      letter-spacing: .08em; margin-bottom: 12px;
-    }
-    .credit-formula {
-      font-family: "DM Mono", monospace; font-size: .8rem;
-      line-height: 1.9; color: #8fa5a0;
-    }
-    .credit-formula .hl-g { color: var(--accent); }
-    .credit-formula .hl-y { color: var(--warn); }
-    .credit-formula .hl-p { color: #a78bfa; }
-
-    /* ── Multi-device illustration ── */
-    .device-row {
-      display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 32px;
-    }
-    .device-chip {
-      background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
-      padding: 10px 16px; display: flex; align-items: center; gap: 8px;
-    }
-    .device-chip .dc-icon { font-size: 1rem; }
-    .device-chip .dc-label { font-size: .8rem; color: var(--text); font-weight: 500; }
-    .device-chip .dc-sub { font-size: .68rem; color: var(--muted); font-family: "DM Mono", monospace; }
-    .device-arrow {
-      color: var(--faint); font-size: .75rem;
-      font-family: "DM Mono", monospace;
-    }
-    .device-hub {
-      background: linear-gradient(135deg, rgba(0,212,170,.08), var(--bg-card));
-      border: 1px solid rgba(0,212,170,.3); border-radius: 10px;
-      padding: 12px 20px; text-align: center;
-    }
-    .device-hub .dh-label {
-      font-family: "Instrument Serif", Georgia, serif;
-      font-size: 1rem; color: var(--accent);
-    }
-    .device-hub .dh-sub {
-      font-family: "DM Mono", monospace; font-size: .66rem; color: var(--muted); margin-top: 3px;
-    }
-
-    /* ── Download ── */
-    .dl-cards { display: grid; gap: 14px; grid-template-columns: 1fr 1fr 1fr; }
-    @media (max-width: 720px) { .dl-cards { grid-template-columns: 1fr 1fr; } }
-    @media (max-width: 480px) { .dl-cards { grid-template-columns: 1fr; } }
+    /* ── 下载 ── */
+    .dl-cards { display: grid; gap: 20px; grid-template-columns: repeat(3,1fr); }
+    @media (max-width: 720px) { .dl-cards { grid-template-columns: 1fr; } }
     .dl-card {
-      background: var(--bg-card); border: 1px solid var(--border);
-      border-radius: 12px; padding: 22px; position: relative;
-      transition: border-color .2s, box-shadow .2s;
+      padding: var(--card-padding); border-radius: var(--radius-card);
+      border: 1px solid var(--color-silver); background: var(--color-paper);
+      box-shadow: var(--shadow-subtle);
     }
-    .dl-card:hover { border-color: var(--border-hi); box-shadow: 0 8px 32px rgba(0,0,0,.3); }
-    .dl-card.current { border-color: rgba(0,212,170,.3); }
-    .dl-os { font-size: 2rem; line-height: 1; margin-bottom: 10px; }
-    .dl-name { font-size: .98rem; font-weight: 600; color: #fff; margin-bottom: 4px; }
-    .dl-meta { font-family: "DM Mono", monospace; font-size: .68rem; color: var(--muted); margin-bottom: 14px; }
+    .dl-card.current { border-color: var(--color-lilac-bloom); box-shadow: var(--shadow-md); }
+    .dl-os { font-size: 2rem; margin-bottom: 12px; }
+    .dl-name { font-family: var(--font-editorial); font-size: var(--text-subheading); margin-bottom: 6px; }
+    .dl-meta { font-size: 13px; color: var(--color-slate); margin-bottom: 20px; }
     .dl-btn {
       display: block; width: 100%; text-align: center;
-      padding: 9px 0; border-radius: 7px; font-size: .85rem; font-weight: 600;
-      text-decoration: none; transition: filter .15s;
+      padding: 12px; border-radius: var(--radius-btn);
+      font-size: 14px; font-weight: 500; text-decoration: none;
     }
-    .dl-btn.available {
-      background: var(--accent); color: #001a14;
-      box-shadow: 0 0 16px var(--glow-sm);
-    }
-    .dl-btn.available:hover { filter: brightness(1.07); }
-    .dl-btn.unavailable {
-      background: var(--bg-raised); color: var(--faint);
-      border: 1px solid var(--border); cursor: default;
-    }
+    .dl-btn.available { background: var(--color-lilac-bloom); color: var(--color-obsidian); box-shadow: var(--shadow-subtle); }
+    .dl-btn.unavailable { background: var(--color-bone); color: var(--color-slate); border: 1px solid var(--color-silver); cursor: default; }
 
-    /* ── Quickstart ── */
-    .qs-grid { display: grid; gap: 24px; grid-template-columns: 1fr 1fr; }
-    @media (max-width: 720px) { .qs-grid { grid-template-columns: 1fr; } }
-    .qs-label { font-size: .78rem; font-weight: 600; color: var(--warn); font-family: "DM Mono", monospace; margin-bottom: 8px; }
     .code-block {
-      background: #060808; border: 1px solid var(--border);
-      border-radius: 9px; padding: 16px 18px; overflow-x: auto; margin-top: 10px;
+      background: var(--color-bone); border: 1px solid var(--color-silver);
+      border-radius: var(--radius-btn); padding: 16px 18px; overflow-x: auto; margin-top: 12px;
     }
     .code-block pre {
-      font-family: "DM Mono", monospace; font-size: .76rem;
-      line-height: 1.65; color: #8fa5a0;
+      font-family: ui-monospace, monospace; font-size: 13px;
+      line-height: 1.5; color: var(--color-graphite);
     }
-    .code-block .c  { color: var(--accent); }
-    .code-block .s  { color: #6e8a85; }
-    .code-block .cm { color: #3d5550; }
+    .code-block .c { color: var(--color-obsidian); font-weight: 500; }
+    .code-block .s { color: var(--color-slate); }
+    .code-block .cm { color: var(--color-mist); }
 
     /* ── Footer ── */
     footer {
-      border-top: 1px solid var(--border); padding: 40px 28px 56px;
-      text-align: center; color: var(--muted); font-size: .82rem;
+      border-top: 1px solid var(--color-silver); padding: 64px 24px 48px;
+      background: var(--color-bone);
     }
-    footer a { color: var(--accent); text-decoration: none; }
-    footer a:hover { text-decoration: underline; }
-    .footer-links { display: flex; justify-content: center; gap: 24px; flex-wrap: wrap; margin-top: 10px; }
-
-    /* ── Disclaimer strip ── */
-    .disclaimer {
-      padding: 28px 0 0; font-size: .8rem; color: var(--faint); line-height: 1.6; max-width: 68ch;
+    .footer-grid {
+      max-width: var(--page-max-width); margin: 0 auto;
+      display: grid; grid-template-columns: 2fr repeat(3,1fr); gap: 40px;
+    }
+    @media (max-width: 768px) { .footer-grid { grid-template-columns: 1fr 1fr; } }
+    .footer-brand p { font-size: 14px; color: var(--color-slate); max-width: 28ch; margin-top: 12px; }
+    .footer-col h4 {
+      font-size: 13px; font-weight: 600; letter-spacing: .02em;
+      text-transform: uppercase; margin-bottom: 16px; color: var(--color-graphite);
+    }
+    .footer-col a {
+      display: block; font-size: 14px; color: var(--color-slate);
+      text-decoration: none; margin-bottom: 12px;
+    }
+    .footer-col a:hover { color: var(--color-obsidian); }
+    .footer-bottom {
+      max-width: var(--page-max-width); margin: 48px auto 0;
+      padding-top: 24px; border-top: 1px solid var(--color-silver);
+      font-size: 13px; color: var(--color-slate); text-align: center;
     }
 
-    /* ── Scroll reveal ── */
-    .reveal { opacity: 0; transform: translateY(20px); transition: opacity .55s ease, transform .55s ease; }
+    .reveal { opacity: 0; transform: translateY(12px); transition: opacity .5s, transform .5s; }
     .reveal.visible { opacity: 1; transform: none; }
+
+    .stat-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+    .stat-pill {
+      padding: 16px 20px; border-radius: var(--radius-card);
+      border: 1px solid var(--color-silver); background: var(--color-paper);
+      box-shadow: var(--shadow-subtle);
+    }
+    .stat-pill .val { font-family: var(--font-editorial); font-size: var(--text-heading-sm); }
+    .stat-pill .lbl { font-size: 13px; color: var(--color-slate); margin-top: 4px; }
+
+    .opt-row { padding: 16px 0; border-bottom: 1px solid var(--color-silver); }
+    .opt-row:last-child { border-bottom: none; }
+    .opt-row h4 { font-size: var(--text-body); font-weight: 600; margin-bottom: 4px; }
+    .opt-row p { font-size: 14px; color: var(--color-slate); line-height: 1.44; }
+
+    .stats-grid { display: grid; gap: 48px; grid-template-columns: 1fr 1fr; align-items: start; }
+    @media (max-width: 768px) { .stats-grid { grid-template-columns: 1fr; } }
+
+    .disclaimer { font-size: 14px; color: var(--color-slate); line-height: 1.5; max-width: 68ch; }
+
+    /* 旧 class 别名 */
+    .btn-filled, .btn-sm-filled {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 14px 20px; border-radius: var(--radius-btn);
+      background: var(--color-lilac-bloom); color: var(--color-obsidian);
+      font-family: var(--font-sans); font-size: var(--text-body); font-weight: 500;
+      text-decoration: none; border: none; cursor: pointer;
+      box-shadow: var(--shadow-subtle);
+    }
+    .btn-sm-filled { padding: 10px 20px; font-size: 14px; }
+    .btn-sm-ghost { padding: 10px 20px; font-size: 14px; }
+    .editorial, .serif { font-family: var(--font-editorial); font-weight: 400; }
   </style>
 </head>
 <body>
-  <div class="ambient ambient-1"></div>
-  <div class="ambient ambient-2"></div>
+  <!-- 顶部公告条 -->
+  <div class="announce-bar" id="announce-bar">
+    <span data-i18n="announce.text">v0.4 已发布 — Agent 纳管 · 订阅管理 · 多维统计</span>
+    <a href="#download" data-i18n="announce.cta">立即下载</a>
+    <button class="announce-close" onclick="document.getElementById('announce-bar').classList.add('hidden')" aria-label="Close">×</button>
+  </div>
 
   <header>
     <nav class="nav-inner">
@@ -477,932 +500,588 @@
         Token Bank
       </a>
       <div class="nav-links">
-        <a class="tl" href="#gateway">网关</a>
         <a class="tl" href="#hub" data-i18n="nav.hub">三大能力</a>
+        <a class="tl" href="#gateway">网关</a>
         <a class="tl" href="#stats">用量统计</a>
-        <a class="tl" href="#providers">Provider</a>
+        <a class="tl" href="#providers" data-i18n="nav.compute">算力来源</a>
+        <a class="tl" href="#faq">FAQ</a>
         <a class="tl" href="#download">下载</a>
       </div>
       <div class="nav-right">
         <button class="btn-lang" onclick="toggleLang()">EN</button>
-        <a href="/app"  class="btn-sm" data-i18n="nav.portal">用户中心</a>
-        <a href="/wall" class="btn-sm accent" data-i18n="nav.wall">运营大屏</a>
+        <a href="/app" class="btn-ghost btn-sm" data-i18n="nav.portal">用户中心</a>
+        <a href="#download" class="btn-dark btn-sm" data-i18n="cta.download">下载</a>
       </div>
     </nav>
   </header>
 
   <main>
-
-    <!-- ── Hero ── -->
+    <!-- Hero -->
     <section class="hero wrap">
-      <p class="hero-eyebrow" data-i18n="hero.eyebrow">Personal AI Hub · Local Gateway · Multi-device</p>
-      <h1 class="hero-h1" data-i18n-html="hero.h1">你的<em>个人 AI 中枢</em>，统一接入智能路由</h1>
+      <span class="tag-pill" data-i18n="hero.eyebrow">个人 AI 中枢 · Agent 纳管 · 订阅与按量</span>
+      <h1 class="hero-h1 editorial" data-i18n-html="hero.h1">你的个人 AI 中枢，统一接入智能路由</h1>
       <p class="hero-sub" data-i18n-html="hero.sub">
-        本地网关透明代理所有 AI 请求，<strong>纳管常见 Agent 并追溯 Trace</strong>，<strong>个人页统一管理订阅与按量</strong>，<strong>多维度统计分析</strong>——就像 iOS 电量统计，所有 AI 应用自然纳入。
+        本地网关透明代理所有 AI 请求，<strong>纳管常见 Agent 并追溯 Trace</strong>，<strong>个人页统一管理订阅与按量</strong>，<strong>多维度统计分析</strong>。
       </p>
-      <div class="hero-pills" style="margin-top:24px;display:flex;flex-wrap:wrap;gap:8px;opacity:0;animation:rise .65s .24s ease forwards;">
-        <span class="hero-pill" data-i18n="hero.pill1">Agent 纳管 · Trace</span>
-        <span class="hero-pill" data-i18n="hero.pill2">订阅 / 按量管理</span>
-        <span class="hero-pill" data-i18n="hero.pill3">多维统计分析</span>
+      <div class="hero-pills">
+        <span class="pill-tag" data-i18n="hero.pill1">Agent 纳管 · Trace</span>
+        <span class="pill-tag" data-i18n="hero.pill2">订阅 / 按量管理</span>
+        <span class="pill-tag" data-i18n="hero.pill3">多维统计分析</span>
       </div>
       <div class="hero-cta">
-        <a href="#download"    class="btn-cta primary" data-i18n="cta.download">下载客户端</a>
-        <a href="#gateway"     class="btn-cta ghost"   data-i18n="cta.howworks">了解原理</a>
-        <a href="/app"         class="btn-cta ghost"   data-i18n="nav.portal">用户中心</a>
+        <a href="#download" class="btn-lilac" data-i18n="cta.download">下载客户端</a>
+        <a href="#gateway" class="btn-dark" data-i18n="cta.howworks">了解原理</a>
       </div>
 
-      <!-- Flow diagram -->
-      <div class="hero-flow">
-        <div class="flow-wrap">
-          <div style="font-family:'DM Mono',monospace;font-size:.65rem;color:var(--muted);margin-bottom:16px;letter-spacing:.08em;" data-i18n="flow.label">请求链路</div>
-          <div class="flow-row">
-            <!-- Sources -->
-            <div class="flow-group">
+      <!-- 产品预览：数据流图 -->
+      <div class="preview-frame">
+        <div class="preview-inner">
+          <div class="flow-grid">
+            <div class="flow-col left">
+              <div class="source-tag">Cursor</div>
+              <div class="source-tag">Claude Code</div>
+              <div class="source-tag">Codex CLI</div>
+              <div class="source-tag" data-i18n="flow.anyapp">任意 AI 应用</div>
+            </div>
+            <div class="flow-center">
+              <div class="flow-line-h left"></div>
+              <div class="flow-line-h right"></div>
               <div class="flow-node">
-                <div class="fn-label" data-i18n="flow.app">应用</div>
-                <div class="fn-name">Cursor</div>
-              </div>
-              <div class="flow-node">
-                <div class="fn-label" data-i18n="flow.app">应用</div>
-                <div class="fn-name">Claude Desktop</div>
-              </div>
-              <div class="flow-node">
-                <div class="fn-label" data-i18n="flow.app">应用</div>
-                <div class="fn-name" data-i18n="flow.anyapp">任意 AI 应用</div>
+                <div class="fn-title">Token Bank</div>
+                <div class="fn-sub" data-i18n="flow.gateway">本地网关</div>
+                <div class="status-badges">
+                  <span class="status-badge">ROUTE</span>
+                  <span class="status-badge">TRACE</span>
+                  <span class="status-badge">FORMAT</span>
+                </div>
               </div>
             </div>
-
-            <div class="flow-arrow">
-              <span class="fa-label">OpenAI / Anthropic / ...</span>
-            </div>
-
-            <!-- Gateway -->
-            <div class="flow-node hi" style="min-width:130px;padding:16px 18px;">
-              <div class="fn-label" data-i18n="flow.gateway">本地网关</div>
-              <div class="fn-name" style="font-size:.9rem;">Token Bank</div>
-              <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px;justify-content:center;">
-                <span class="flow-badge badge-fmt">格式桥接</span>
-                <span class="flow-badge badge-fmt">Token 优化</span>
-              </div>
-            </div>
-
-            <div class="flow-arrow">
-              <span class="fa-label">智能路由</span>
-            </div>
-
-            <!-- Providers -->
-            <div class="flow-group">
-              <div class="flow-node">
-                <div class="fn-label" data-i18n="flow.provider">服务商</div>
-                <div class="fn-name" data-i18n-html="flow.personal">个人算力 <span class="flow-badge badge-free">personal</span></div>
-              </div>
-              <div class="flow-node">
-                <div class="fn-label" data-i18n="flow.provider">服务商</div>
-                <div class="fn-name" data-i18n-html="flow.community">社区算力 <span class="flow-badge badge-p2p">community</span></div>
-              </div>
+            <div class="flow-col right">
+              <div class="source-tag lilac" data-i18n="flow.personal-free">免费额度</div>
+              <div class="source-tag lilac" data-i18n="flow.personal-sub">付费订阅</div>
+              <div class="source-tag lilac" data-i18n="flow.personal-payg">按量付费</div>
+              <div class="source-tag sky" data-i18n="flow.community">社区算力</div>
             </div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- ── Three pillars ── -->
-    <section class="section" id="hub">
+    <!-- 三大能力 -->
+    <section class="section bone" id="hub">
       <div class="wrap">
-        <div class="reveal">
-          <div class="sec-label" data-i18n="sec.hub">v0.4 · 三大能力</div>
-          <h2 class="sec-h2" data-i18n-html="hub.h2">纳管 Agent、<em>管理订阅</em>、看懂每一分钱</h2>
-          <p class="sec-sub" data-i18n="hub.sub">不只是转发请求——Token Bank 把常见 AI Agent 纳入统一 Trace，在个人页维护订阅与按量账户，再在盘点页从多个维度拆解用量与费用。</p>
+        <div class="sec-header center reveal">
+          <span class="tag-pill bone" data-i18n="sec.hub">v0.4 · 三大能力</span>
+          <h2 class="sec-h2 editorial center" data-i18n-html="hub.h2" style="margin-top:16px;">纳管 Agent、管理订阅、看懂每一分钱</h2>
+          <p class="sec-sub center" data-i18n="hub.sub">Token Bank 把常见 AI Agent 纳入统一 Trace，在个人页维护订阅与按量账户，再在盘点页从多个维度拆解用量与费用。</p>
         </div>
 
-        <div class="grid-3 reveal" style="margin-top:32px;">
-          <article class="card accent-card">
+        <div class="grid-3 reveal" style="margin-bottom:24px;">
+          <article class="card-lite">
+            <div class="card-icon">◎</div>
             <div class="card-num" data-i18n="hub.c1.num">01 / Agent</div>
-            <div class="card-icon">🧭</div>
             <h3 data-i18n="hub.c1.title">常见 Agent 纳管 · Trace</h3>
-            <p data-i18n="hub.c1.body">在网关登记 Cursor、Claude Code、Codex CLI、Cherry Studio 等应用。走网关的请求实时记录；直连官方的会话可补录导入——同一套应用维度统计。</p>
-            <div class="tier-badge-row" style="margin-top:12px;">
-              <span class="tbadge tbadge-g">网关实时</span>
-              <span class="tbadge tbadge-g">会话补录</span>
-              <span class="tbadge tbadge-g">按应用聚合</span>
-            </div>
+            <p data-i18n="hub.c1.body">在网关登记 Cursor、Claude Code、Codex CLI 等应用。走网关实时记录；直连官方会话可补录导入。</p>
           </article>
-          <article class="card accent-card">
+          <article class="card-lite">
+            <div class="card-icon">◈</div>
             <div class="card-num" data-i18n="hub.c2.num">02 / 订阅</div>
-            <div class="card-icon">📋</div>
             <h3 data-i18n="hub.c2.title">个人订阅管理</h3>
-            <p data-i18n="hub.c2.body">APP 订阅（仅统计或可转 API）、API 订阅（如火山引擎）、按量付费（模型 + 刊例价）分栏维护。供给源页接入 Key，个人页决定计费口径与按量可用模型。</p>
-            <div class="tier-badge-row" style="margin-top:12px;">
-              <span class="tbadge tbadge-y">APP / API</span>
-              <span class="tbadge tbadge-y">按量刊例价</span>
-              <span class="tbadge tbadge-y">OAuth / Key</span>
-            </div>
+            <p data-i18n="hub.c2.body">APP / API / 按量付费分栏维护。供给源页接入 Key，个人页决定计费口径与按量可用模型。</p>
           </article>
-          <article class="card accent-card">
+          <article class="card-lite">
+            <div class="card-icon">◫</div>
             <div class="card-num" data-i18n="hub.c3.num">03 / 分析</div>
-            <div class="card-icon">📊</div>
             <h3 data-i18n="hub.c3.title">多维度统计分析</h3>
-            <p data-i18n="hub.c3.body">盘点页按应用、供给源、模型、路由层（免费/社区/付费）、费用、设备与时间范围切片。订阅折算与按量估算同屏展示，一眼看清钱花在哪。</p>
-            <div class="tier-badge-row" style="margin-top:12px;">
-              <span class="tbadge tbadge-r">应用占比</span>
-              <span class="tbadge tbadge-r">模型排行</span>
-              <span class="tbadge tbadge-r">费用估算</span>
-            </div>
+            <p data-i18n="hub.c3.body">盘点页按应用、算力来源（个人 / 社区）、模型、费用、设备与时间范围切片。</p>
           </article>
         </div>
 
-        <!-- dimension chips -->
-        <div class="fmt-grid reveal" style="margin-top:24px;">
-          <div class="fmt-chip"><div class="fc-dot" style="background:#00d4aa;"></div><div><div class="fc-name" data-i18n="hub.dim.app">应用 / Agent</div><div class="fc-path">Cursor · Claude Code · Codex</div></div></div>
-          <div class="fmt-chip"><div class="fc-dot" style="background:#f5a623;"></div><div><div class="fc-name" data-i18n="hub.dim.provider">供给源 / 路由层</div><div class="fc-path">free · p2p · paid</div></div></div>
-          <div class="fmt-chip"><div class="fc-dot" style="background:#6c8fff;"></div><div><div class="fc-name" data-i18n="hub.dim.model">模型</div><div class="fc-path">calls · tokens · cost</div></div></div>
-          <div class="fmt-chip"><div class="fc-dot" style="background:#a77bff;"></div><div><div class="fc-name" data-i18n="hub.dim.billing">订阅 + 按量</div><div class="fc-path">amortized · list price</div></div></div>
-        </div>
+        <article class="highlight-card reveal">
+          <div>
+            <h3 data-i18n="hub.feature.title">统一 Trace，像 iOS 电量统计一样清晰</h3>
+            <p data-i18n="hub.feature.body">无论 Agent 是否走网关，用量都能被完整追溯。网关实时代理与会话补录汇聚到同一盘点页。</p>
+            <div class="dim-chips">
+              <div class="dim-chip"><div data-i18n="hub.dim.app">应用 / Agent</div><div class="path">Cursor · Claude Code</div></div>
+              <div class="dim-chip"><div data-i18n="hub.dim.model">模型</div><div class="path">calls · tokens · cost</div></div>
+            </div>
+          </div>
+          <div class="ui-preview">
+            <div class="chat-bubble user">claude-sonnet → groq llama</div>
+            <div class="chat-bubble agent">ROUTE · TRACE · 1.2K tokens</div>
+            <div class="chat-bubble user">session-import · codex-cli</div>
+            <div class="chat-bubble agent">34% · Claude Code · 本月</div>
+          </div>
+        </article>
       </div>
     </section>
 
-    <!-- ── Gateway & Format ── -->
+    <!-- 本地网关 -->
     <section class="section" id="gateway">
       <div class="wrap">
-        <div class="reveal">
-          <div class="sec-label" data-i18n="sec.gateway">本地网关</div>
-          <h2 class="sec-h2" data-i18n-html="gw.h2">多格式接入，<em>无感代理</em></h2>
-          <p class="sec-sub" data-i18n-html="gw.sub">本地网关同时兼容主流 AI 接口格式，AI 应用无需任何改造，只需把 Base URL 指向 <strong>127.0.0.1:11430</strong>，请求自动流入并被路由到最优 Provider。</p>
+        <div class="sec-header reveal">
+          <span class="tag-pill" data-i18n="sec.gateway">本地网关</span>
+          <h2 class="sec-h2 editorial" data-i18n-html="gw.h2" style="margin-top:16px;">多格式接入，无感代理</h2>
+          <p class="sec-sub" data-i18n-html="gw.sub">本地网关兼容主流 AI 接口格式，只需把 Base URL 指向 <strong>127.0.0.1:11430</strong>。</p>
         </div>
-
-        <div class="fmt-grid reveal" style="margin-top:32px;">
-          <div class="fmt-chip">
-            <div class="fc-dot" style="background:#00d4aa;"></div>
-            <div>
-              <div class="fc-name">OpenAI 格式</div>
-              <div class="fc-path">/v1/chat/completions</div>
-            </div>
-          </div>
-          <div class="fmt-chip">
-            <div class="fc-dot" style="background:#a0a0ff;"></div>
-            <div>
-              <div class="fc-name">Anthropic 格式</div>
-              <div class="fc-path">/v1/messages</div>
-            </div>
-          </div>
-          <div class="fmt-chip">
-            <div class="fc-dot" style="background:#f5a623;"></div>
-            <div>
-              <div class="fc-name">本地模型 · Ollama</div>
-              <div class="fc-path">localhost:11434</div>
-            </div>
-          </div>
-          <div class="fmt-chip" style="border-style:dashed;">
-            <div class="fc-dot" style="background:var(--faint);"></div>
-            <div>
-              <div class="fc-name" style="color:var(--muted);">更多格式</div>
-              <div class="fc-path">持续接入中…</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="grid-3 reveal" style="margin-top:24px;">
-          <article class="card">
+        <div class="grid-3 reveal">
+          <article class="card-lite">
             <div class="card-num" data-i18n="gw.num1">01 / 代理</div>
             <h3 data-i18n="gw.c1.title">密钥不离本机</h3>
-            <p data-i18n="gw.c1.body">上游 API Key 仅保存在本机，不经过任何云端服务器。网关直连上游，全程本地处理。</p>
+            <p data-i18n="gw.c1.body">上游 API Key 仅保存在本机，网关直连上游，全程本地处理。</p>
           </article>
-          <article class="card">
+          <article class="card-lite">
             <div class="card-num" data-i18n="gw.num2">02 / 路由</div>
-            <h3 data-i18n="gw.c2.title">智能 Provider 路由</h3>
-            <p data-i18n="gw.c2.body">按模型、成本策略自动选择最优 Provider。免费额度用尽时，平滑切换 P2P 或付费 Provider。</p>
+            <h3 data-i18n="gw.c2.title">个人与社区算力路由</h3>
+            <p data-i18n="gw.c2.body">按模型与成本策略，在个人算力（免费、订阅、按量）与社区算力之间智能选用。</p>
           </article>
-          <article class="card">
+          <article class="card-lite">
             <div class="card-num" data-i18n="gw.num3">03 / 管理</div>
             <h3 data-i18n="gw.c3.title">可视化管理</h3>
-            <p data-i18n="gw.c3.body">图形界面配置 Provider、查看路由日志、实时调试模型接口，告别手动 curl。</p>
+            <p data-i18n="gw.c3.body">图形界面配置 Provider、查看路由日志、实时调试模型接口。</p>
           </article>
         </div>
+        <div class="dim-chips reveal" style="margin-top:32px;">
+          <div class="dim-chip"><div>OpenAI</div><div class="path">/v1/chat/completions</div></div>
+          <div class="dim-chip"><div>Anthropic</div><div class="path">/v1/messages</div></div>
+          <div class="dim-chip"><div>Ollama</div><div class="path">localhost:11434</div></div>
+        </div>
       </div>
     </section>
 
-    <!-- ── Token Optimization ── -->
-    <section class="section" id="optimize">
+    <!-- Token 优化 -->
+    <section class="section bone" id="optimize">
       <div class="wrap">
-        <div class="reveal">
-          <div class="sec-label" data-i18n="sec.optimize">Token 优化</div>
-          <h2 class="sec-h2" data-i18n-html="opt.h2">路由里内置<em>降本策略</em></h2>
-          <p class="sec-sub" data-i18n="opt.sub">网关不只是转发，它在路由层内置 Token 优化策略，主动减少不必要的开销。</p>
-        </div>
-
-        <div class="opt-grid reveal" style="margin-top:32px;">
-          <div class="opt-row">
-            <div class="opt-icon">⚖️</div>
-            <div class="opt-body">
-              <h4 data-i18n="opt.s1.title">任务分级路由</h4>
-              <p data-i18n="opt.s1.body">按场景规则自动把简单请求分流到低成本模型，复杂任务路由至高性能模型，效果与成本双优。</p>
-            </div>
+        <article class="feature-card reveal">
+          <div class="ui-preview">
+            <div class="chat-bubble agent">简单任务 → 低成本模型</div>
+            <div class="chat-bubble user">复杂任务 → 高性能模型</div>
+            <div class="chat-bubble agent">个人额度优先 · 社区算力兜底</div>
           </div>
-          <div class="opt-row">
-            <div class="opt-icon">🔄</div>
-            <div class="opt-body">
-              <h4 data-i18n="opt.s2.title">Provider 优先级</h4>
-              <p data-i18n="opt.s2.body">优先使用个人算力（免费额度 / 付费订阅 / 按量付费），不足时自动补充社区算力，整体成本与等待降至最低。</p>
-            </div>
+          <div>
+            <span class="tag-pill bone" data-i18n="sec.optimize">Token 优化</span>
+            <h3 class="editorial" style="font-size:var(--text-heading-sm);margin:16px 0 12px;" data-i18n-html="opt.h2">路由里内置降本策略</h3>
+            <p class="text-slate" data-i18n="opt.sub" style="margin-bottom:20px;">网关不只是转发，它在路由层内置 Token 优化策略。</p>
+            <div class="opt-row"><h4 data-i18n="opt.s1.title">任务分级路由</h4><p data-i18n="opt.s1.body">简单请求分流到低成本模型，复杂任务路由至高性能模型。</p></div>
+            <div class="opt-row"><h4 data-i18n="opt.s2.title">算力来源优先级</h4><p data-i18n="opt.s2.body">优先消耗个人免费额度与订阅，必要时接入社区算力或按量付费。</p></div>
+            <div class="opt-row"><h4 data-i18n="opt.s3.title">多 Key 轮询</h4><p data-i18n="opt.s3.body">同一 Provider 绑定多个 API Key，自动轮询均摊速率限制。</p></div>
           </div>
-          <div class="opt-row">
-            <div class="opt-icon">🗝️</div>
-            <div class="opt-body">
-              <h4 data-i18n="opt.s3.title">多 Key 轮询</h4>
-              <p data-i18n="opt.s3.body">同一 Provider 绑定多个 API Key，自动轮询使用，均摊速率限制，避免单 Key 触发限流。</p>
-            </div>
-          </div>
-          <div class="opt-row">
-            <div class="opt-icon">📊</div>
-            <div class="opt-body">
-              <h4 data-i18n="opt.s4.title">用量感知调度</h4>
-              <p data-i18n="opt.s4.body">实时感知各 Provider 当日用量，接近限额时自动切换，保持服务连续性。</p>
-            </div>
-          </div>
-        </div>
+        </article>
       </div>
     </section>
 
-    <!-- ── Usage Stats ── -->
+    <!-- 用量统计 -->
     <section class="section" id="stats">
       <div class="wrap">
-        <div class="reveal" style="display:grid;gap:48px;grid-template-columns:1fr 1fr;align-items:start;">
-
+        <div class="stats-grid reveal">
           <div>
-            <div class="sec-label" data-i18n="sec.stats">用量统计</div>
-            <h2 class="sec-h2" data-i18n-html="stats.h2">所有 AI 消耗<br><em>一屏看清</em></h2>
-            <p class="sec-sub" data-i18n-html="stats.sub">
-              类比 <strong>iOS 电量统计</strong>——从<strong>应用、供给源、模型、费用、设备</strong>多个维度拆解。走网关的、会话补录的、Claude Code 的、Codex 的，全部汇聚到同一个盘点页。
-            </p>
-
-            <div class="device-row">
-              <div class="device-chip">
-                <div class="dc-icon">💻</div>
-                <div>
-                  <div class="dc-label">MacBook</div>
-                  <div class="dc-sub">设备 1</div>
-                </div>
-              </div>
-              <div class="device-arrow">→</div>
-              <div class="device-chip">
-                <div class="dc-icon">🖥</div>
-                <div>
-                  <div class="dc-label">台式机</div>
-                  <div class="dc-sub">设备 2</div>
-                </div>
-              </div>
-              <div class="device-arrow">→</div>
-              <div class="device-hub">
-                <div class="dh-label">Token Bank</div>
-                <div class="dh-sub">统一归集</div>
-              </div>
-            </div>
-
+            <span class="tag-pill" data-i18n="sec.stats">用量统计</span>
+            <h2 class="sec-h2 editorial" data-i18n-html="stats.h2" style="margin-top:16px;">所有 AI 消耗，一屏看清</h2>
+            <p class="sec-sub" data-i18n-html="stats.sub">类比 iOS 电量统计——从应用、供给源、模型、费用、设备多个维度拆解。</p>
             <div class="stat-row">
-              <div class="stat-pill">
-                <div class="sp-val">6<em>维</em></div>
-                <div class="sp-label" data-i18n="stats.sp1">应用·源·模型·层·费·设备</div>
-              </div>
-              <div class="stat-pill">
-                <div class="sp-val">2<em>源</em></div>
-                <div class="sp-label" data-i18n="stats.sp2">网关实时 + 会话补录</div>
-              </div>
-              <div class="stat-pill">
-                <div class="sp-val">1<em>屏</em></div>
-                <div class="sp-label" data-i18n="stats.sp3">订阅折算 + 按量估算</div>
-              </div>
+              <div class="stat-pill"><div class="val editorial">6</div><div class="lbl" data-i18n="stats.sp1">应用·算力·模型·费·设备·时间</div></div>
+              <div class="stat-pill"><div class="val editorial">2</div><div class="lbl" data-i18n="stats.sp2">网关实时 + 会话补录</div></div>
             </div>
           </div>
-
-          <!-- iOS mockup -->
           <div class="ios-mockup">
-            <div class="ios-header">
-              <span class="title" data-i18n="stats.mock.title">AI 用量 · 本月</span>
-              <span class="period">2026-06</span>
-            </div>
+            <div class="ios-header"><span data-i18n="stats.mock.title">AI 用量 · 本月</span><span>2026-06</span></div>
             <div class="ios-bar">
-              <div class="ios-bar-seg s1" style="width:34%"></div>
-              <div class="ios-bar-seg s2" style="width:22%"></div>
-              <div class="ios-bar-seg s3" style="width:18%"></div>
-              <div class="ios-bar-seg s4" style="width:14%"></div>
-              <div class="ios-bar-seg s5" style="width:12%"></div>
+              <div class="ios-bar-seg" style="width:34%;background:#000;"></div>
+              <div class="ios-bar-seg" style="width:22%;background:#333;"></div>
+              <div class="ios-bar-seg" style="width:18%;background:#7b7b7b;"></div>
+              <div class="ios-bar-seg" style="width:14%;background:#ffe08a;"></div>
+              <div class="ios-bar-seg" style="width:12%;background:#fff6d6;"></div>
             </div>
-            <div class="ios-row">
-              <div class="ios-dot" style="background:#00d4aa;border-radius:2px;"></div>
-              <div class="ios-app">
-                <div class="name">Claude Code</div>
-                <div class="sub">session-import · claude-cli</div>
-              </div>
-              <div class="ios-pct">34%</div>
-            </div>
-            <div class="ios-row">
-              <div class="ios-dot" style="background:#f5a623;border-radius:2px;"></div>
-              <div class="ios-app">
-                <div class="name">Cursor</div>
-                <div class="sub">via gateway · gpt-4o</div>
-              </div>
-              <div class="ios-pct">22%</div>
-            </div>
-            <div class="ios-row">
-              <div class="ios-dot" style="background:#6c8fff;border-radius:2px;"></div>
-              <div class="ios-app">
-                <div class="name">Claude Desktop</div>
-                <div class="sub">via gateway · claude-3-5</div>
-              </div>
-              <div class="ios-pct">18%</div>
-            </div>
-            <div class="ios-row">
-              <div class="ios-dot" style="background:#e05555;border-radius:2px;"></div>
-              <div class="ios-app">
-                <div class="name">Cherry Studio</div>
-                <div class="sub">via gateway · deepseek-v3</div>
-              </div>
-              <div class="ios-pct">14%</div>
-            </div>
-            <div class="ios-row">
-              <div class="ios-dot" style="background:#a77bff;border-radius:2px;"></div>
-              <div class="ios-app">
-                <div class="name">Codex CLI</div>
-                <div class="sub">session-import · codex-cli</div>
-              </div>
-              <div class="ios-pct">12%</div>
-            </div>
+            <div class="ios-row"><div class="ios-dot" style="background:#000;"></div><div class="ios-app"><div>Claude Code</div><div class="sub">session-import</div></div><div class="ios-pct">34%</div></div>
+            <div class="ios-row"><div class="ios-dot" style="background:#333;"></div><div class="ios-app"><div>Cursor</div><div class="sub">via gateway</div></div><div class="ios-pct">22%</div></div>
+            <div class="ios-row"><div class="ios-dot" style="background:#fcd977;"></div><div class="ios-app"><div>Codex CLI</div><div class="sub">session-import</div></div><div class="ios-pct">12%</div></div>
           </div>
-
         </div>
       </div>
     </section>
 
-    <!-- ── Provider Tiers ── -->
-    <section class="section" id="providers">
+    <!-- 算力来源 -->
+    <section class="section bone" id="providers">
       <div class="wrap">
-        <div class="reveal">
-          <div class="sec-label" data-i18n="sec.providers">算力来源</div>
-          <h2 class="sec-h2" data-i18n-html="prov.h2">个人算力 + 社区算力，<em>自动择优</em></h2>
-          <p class="sec-sub" data-i18n="prov.sub">本地网关统一接入你的个人算力（免费额度、付费订阅、按量付费）与社区共享算力，按成本与可用性自动择优。</p>
+        <div class="sec-header reveal">
+          <span class="tag-pill bone" data-i18n="sec.providers">算力来源</span>
+          <h2 class="sec-h2 editorial" data-i18n-html="prov.h2" style="margin-top:16px;">个人算力与社区算力，统一调度</h2>
+          <p class="sec-sub" data-i18n="prov.sub">先用自己的免费额度、订阅和按量账户；需要时再接入社区共享算力，两类来源在同一网关里透明切换。</p>
         </div>
-
-        <div class="card reveal" style="margin-top:32px;padding:8px 8px;">
-          <div class="tier-row" style="padding:20px 16px;">
-            <div class="tier-num">01</div>
-            <div class="tier-body">
-              <div class="tier-name">个人算力 <span class="tbadge tbadge-g">personal</span></div>
-              <div class="tier-desc" data-i18n="prov.t1.desc">你自己的资源：厂商免费额度、付费订阅、按量付费 API Key。本地网关统一接入，按成本优先使用。</div>
-              <div class="tier-badge-row">
-                <span class="tbadge tbadge-g">免费额度</span>
-                <span class="tbadge tbadge-g">付费订阅</span>
-                <span class="tbadge tbadge-g">按量付费</span>
-              </div>
+        <div class="grid-2 reveal">
+          <article class="card-lite">
+            <div class="tier-num" style="margin-bottom:12px;">01</div>
+            <div class="tier-name editorial" style="font-size:var(--text-subheading);" data-i18n="prov.personal.title">个人算力</div>
+            <div class="tier-desc" data-i18n="prov.personal.desc">属于你名下的供给：本地 Ollama、厂商免费层、APP/API 订阅，以及按模型刊例价计费的按量账户。</div>
+            <div class="badge-row">
+              <span class="mini-badge lilac" data-i18n="prov.personal.b1">免费额度</span>
+              <span class="mini-badge lilac" data-i18n="prov.personal.b2">付费订阅</span>
+              <span class="mini-badge lilac" data-i18n="prov.personal.b3">按量付费</span>
             </div>
-          </div>
-          <div class="tier-row" style="padding:20px 16px;">
-            <div class="tier-num">02</div>
-            <div class="tier-body">
-              <div class="tier-name">社区算力 <span class="tbadge tbadge-y">community</span></div>
-              <div class="tier-desc" data-i18n="prov.t2.desc">社区成员贡献的闲置算力，用积分兑换调用额度，往往比官方更实惠。</div>
-              <div class="tier-badge-row">
-                <span class="tbadge tbadge-y">积分兑换</span>
-                <span class="tbadge tbadge-y">闲置算力共享</span>
-                <span class="tbadge tbadge-y">多节点负载均衡</span>
-              </div>
+          </article>
+          <article class="card-lite">
+            <div class="tier-num" style="margin-bottom:12px;">02</div>
+            <div class="tier-name editorial" style="font-size:var(--text-subheading);" data-i18n="prov.community.title">社区算力</div>
+            <div class="tier-desc" data-i18n="prov.community.desc">社区成员贡献闲置额度，通过积分网络共享。消费积分即可调用他人供给的模型。</div>
+            <div class="badge-row">
+              <span class="mini-badge sky" data-i18n="prov.community.b1">积分兑换</span>
+              <span class="mini-badge sky" data-i18n="prov.community.b2">跨模型流通</span>
+              <span class="mini-badge sky" data-i18n="prov.community.b3">闲置共享</span>
             </div>
-          </div>
+          </article>
         </div>
-
       </div>
     </section>
 
-    <!-- ── P2P Spotlight ── -->
-    <section class="section" id="p2p" style="background:linear-gradient(180deg,rgba(245,166,35,.03) 0%,transparent 100%);">
+    <!-- 社区算力 -->
+    <section class="section" id="p2p">
       <div class="wrap">
-        <div class="reveal">
-          <div class="sec-label" style="color:var(--warn);" data-i18n="sec.p2p">P2P 共享 · 本项目特色</div>
-          <h2 class="sec-h2" data-i18n-html="p2p.h2">闲置算力变积分，<em style="color:var(--warn)">跨模型自由流通</em></h2>
-          <p class="sec-sub" data-i18n="p2p.sub">P2P 共享网络是本项目独有的特色——社区成员互相贡献闲置额度，积分在模型之间、时段之间自由兑换，让你的 AI 算力不再浪费，也让高级模型唾手可得。</p>
+        <div class="sec-header center reveal">
+          <span class="tag-pill" data-i18n="sec.p2p">社区算力</span>
+          <h2 class="sec-h2 editorial center" data-i18n-html="p2p.h2" style="margin-top:16px;">贡献闲置额度，兑换所需模型</h2>
+          <p class="sec-sub center" data-i18n="p2p.sub">社区算力与个人算力并列——贡献你有的，消费你没有的；积分在模型与时段之间自由流转。</p>
         </div>
-
-        <!-- Three value props -->
-        <div class="grid-3 reveal" style="margin-top:36px;">
-          <article class="card" style="border-color:rgba(245,166,35,.2);background:linear-gradient(135deg,rgba(245,166,35,.04),var(--bg-card));">
-            <div class="card-icon">⇄</div>
-            <h3 data-i18n="p2p.v1.title">跨模型兑换</h3>
-            <p data-i18n="p2p.v1.body">贡献你有的模型额度，赚积分，消费你没有的模型。国内模型换境外高级模型，开源额度换 Claude / GPT-4o。</p>
-            <div style="margin-top:14px;display:flex;flex-direction:column;gap:6px;">
-              <div style="font-size:.78rem;color:var(--muted);padding:5px 10px;background:rgba(0,0,0,.25);border-radius:5px;border-left:2px solid var(--warn);" data-i18n-html="p2p.v1.ex1">贡献 DeepSeek → 积分 → <span style="color:var(--text)">Claude Sonnet</span></div>
-              <div style="font-size:.78rem;color:var(--muted);padding:5px 10px;background:rgba(0,0,0,.25);border-radius:5px;border-left:2px solid var(--warn);" data-i18n-html="p2p.v1.ex2">Ollama 本地模型 → 积分 → <span style="color:var(--text)">GPT-4o</span></div>
-            </div>
-          </article>
-          <article class="card" style="border-color:rgba(245,166,35,.2);background:linear-gradient(135deg,rgba(245,166,35,.04),var(--bg-card));">
-            <div class="card-icon">◷</div>
-            <h3 data-i18n="p2p.v2.title">跨时段储值</h3>
-            <p data-i18n="p2p.v2.body">现在闲置的额度变成积分存起来，以后随时取用。电脑开着没人用、API 套餐月底剩余，都能转化成未来的算力储备。</p>
-            <div style="margin-top:14px;display:flex;flex-direction:column;gap:6px;">
-              <div style="font-size:.78rem;color:var(--muted);padding:5px 10px;background:rgba(0,0,0,.25);border-radius:5px;border-left:2px solid var(--warn);" data-i18n-html="p2p.v2.ex1">白天挂机贡献 → <span style="color:var(--text)">晚上关机后继续调用</span></div>
-              <div style="font-size:.78rem;color:var(--muted);padding:5px 10px;background:rgba(0,0,0,.25);border-radius:5px;border-left:2px solid var(--warn);" data-i18n-html="p2p.v2.ex2">月底剩余额度 → <span style="color:var(--text)">下月按需取用</span></div>
-            </div>
-          </article>
-          <article class="card" style="border-color:rgba(245,166,35,.2);background:linear-gradient(135deg,rgba(245,166,35,.04),var(--bg-card));">
-            <div class="card-icon">🤝</div>
-            <h3 data-i18n="p2p.v3.title">透明互助网络</h3>
-            <p data-i18n="p2p.v3.body">规则公开、代码开源、多方博弈。贡献率 &gt; 消费率，激励持续在线；质量越高倍率越高，节点越稳赚越多。</p>
-            <div style="margin-top:14px;display:flex;flex-direction:column;gap:6px;">
-              <div style="font-size:.78rem;color:var(--muted);padding:5px 10px;background:rgba(0,0,0,.25);border-radius:5px;border-left:2px solid var(--warn);" data-i18n="p2p.v3.ex1">密钥不离本机，上游 Key 不上云</div>
-              <div style="font-size:.78rem;color:var(--muted);padding:5px 10px;background:rgba(0,0,0,.25);border-radius:5px;border-left:2px solid var(--warn);" data-i18n="p2p.v3.ex2">Ctrl+C 即下线，无需解绑</div>
-            </div>
-          </article>
+        <div class="grid-3 reveal">
+          <article class="card-lite"><h3 data-i18n="p2p.v1.title">跨模型兑换</h3><p data-i18n="p2p.v1.body">贡献你有的模型额度，赚积分，消费你没有的模型。</p></article>
+          <article class="card-lite"><h3 data-i18n="p2p.v2.title">跨时段储值</h3><p data-i18n="p2p.v2.body">闲置额度变成积分存起来，以后随时取用。</p></article>
+          <article class="card-lite"><h3 data-i18n="p2p.v3.title">透明互助网络</h3><p data-i18n="p2p.v3.body">规则公开、代码开源。贡献率 &gt; 消费率，质量越高倍率越高。</p></article>
         </div>
-
-        <!-- Earn / Spend formula -->
-        <div class="reveal" style="margin-top:24px;display:grid;gap:16px;grid-template-columns:1fr 1fr;">
-          <div style="background:var(--bg-card);border:1px solid rgba(245,166,35,.2);border-radius:12px;padding:22px;">
-            <div style="font-family:'DM Mono',monospace;font-size:.66rem;color:var(--warn);letter-spacing:.1em;margin-bottom:14px;" data-i18n="p2p.earn.label">贡献赚积分</div>
-            <div class="credit-formula">
-<span class="hl-g">积分</span> = (output_tokens / 1K)
-     × <span class="hl-p">模型贡献率</span>
-     × <span style="color:var(--warn)">质量系数 (0.5–1.5×)</span>
-            </div>
-            <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">
-              <div style="flex:1;background:var(--bg-raised);border:1px solid var(--border);border-radius:7px;padding:8px 12px;text-align:center;min-width:80px;">
-                <div style="font-size:.68rem;color:var(--muted);margin-bottom:3px;" data-i18n="p2p.q1">在线时长</div>
-                <div style="font-family:'DM Mono',monospace;font-size:.8rem;color:var(--warn);">0.5–1.3×</div>
-              </div>
-              <div style="flex:1;background:var(--bg-raised);border:1px solid var(--border);border-radius:7px;padding:8px 12px;text-align:center;min-width:80px;">
-                <div style="font-size:.68rem;color:var(--muted);margin-bottom:3px;" data-i18n="p2p.q2">首 Token 延迟</div>
-                <div style="font-family:'DM Mono',monospace;font-size:.8rem;color:var(--warn);">0.6–1.5×</div>
-              </div>
-              <div style="flex:1;background:var(--bg-raised);border:1px solid var(--border);border-radius:7px;padding:8px 12px;text-align:center;min-width:80px;">
-                <div style="font-size:.68rem;color:var(--muted);margin-bottom:3px;" data-i18n="p2p.q3">请求成功率</div>
-                <div style="font-family:'DM Mono',monospace;font-size:.8rem;color:var(--warn);">0.5–1.2×</div>
-              </div>
-            </div>
-          </div>
-          <div style="background:var(--bg-card);border:1px solid rgba(245,166,35,.2);border-radius:12px;padding:22px;">
-            <div style="font-family:'DM Mono',monospace;font-size:.66rem;color:var(--warn);letter-spacing:.1em;margin-bottom:14px;" data-i18n="p2p.spend.label">调用花积分</div>
-            <div class="credit-formula">
-<span class="hl-y">花费</span> = (total_tokens / 1K)
-     × <span class="hl-p">模型消费率</span>
-            </div>
-            <div style="margin-top:14px;padding:12px 14px;background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;">
-              <div style="font-size:.78rem;color:var(--muted);line-height:1.7;" data-i18n-html="p2p.spend.note">
-                贡献率 &gt; 消费率——<span style="color:var(--text)">多贡献多获益</span>，剩余积分可随时消费高级模型调用。汇率公开，规则透明。
-              </div>
-            </div>
-            <div style="margin-top:12px;">
-              <a href="/app" style="display:inline-block;padding:8px 18px;background:rgba(245,166,35,.12);border:1px solid rgba(245,166,35,.3);border-radius:7px;font-size:.82rem;font-weight:600;color:var(--warn);text-decoration:none;" data-i18n="p2p.cta">查看当前积分汇率 →</a>
-            </div>
-          </div>
-        </div>
-
       </div>
     </section>
 
-    <!-- ── Download ── -->
-    <section class="section" id="download">
+    <!-- 下载 -->
+    <section class="section bone" id="download">
       <div class="wrap">
-        <div class="reveal">
-          <div class="sec-label" data-i18n="sec.download">下载</div>
-          <h2 class="sec-h2" data-i18n="dl.h2">下载 Token Bank</h2>
-          <p class="sec-sub" data-i18n="dl.sub">图形界面桌面客户端，一键启动本地网关，管理 Provider 与积分账户。支持 macOS 和 Windows。</p>
+        <div class="sec-header center reveal">
+          <span class="tag-pill bone" data-i18n="sec.download">下载</span>
+          <h2 class="sec-h2 editorial center" data-i18n="dl.h2" style="margin-top:16px;">下载 Token Bank</h2>
+          <p class="sec-sub center" data-i18n="dl.sub">图形界面桌面客户端，一键启动本地网关。支持 macOS 和 Windows。</p>
         </div>
-
-        <div class="dl-cards reveal" style="margin-top:32px;">
+        <div class="dl-cards reveal">
           <div class="dl-card" id="card-mac">
             <div class="dl-os">🍎</div>
-            <div class="dl-name">Token Bank for Mac</div>
-            <div class="dl-meta" id="meta-mac">Apple Silicon &amp; Intel · .dmg · 自动更新</div>
+            <div class="dl-name editorial">Token Bank for Mac</div>
+            <div class="dl-meta" id="meta-mac">Apple Silicon &amp; Intel · .dmg</div>
             <a class="dl-btn unavailable" id="btn-mac" href="#" data-i18n="dl.loading">加载中…</a>
           </div>
           <div class="dl-card" id="card-win">
             <div class="dl-os">🪟</div>
-            <div class="dl-name">Token Bank for Windows</div>
-            <div class="dl-meta" id="meta-win">x86_64 · .exe · 自动更新</div>
+            <div class="dl-name editorial">Token Bank for Windows</div>
+            <div class="dl-meta" id="meta-win">x86_64 · .exe</div>
             <a class="dl-btn unavailable" id="btn-win" href="#" data-i18n="dl.loading">加载中…</a>
           </div>
           <div class="dl-card" id="card-docker">
             <div class="dl-os">🐳</div>
-            <div class="dl-name">Token Bank for Docker</div>
-            <div class="dl-meta">命令行 / 服务器无界面部署</div>
-            <a class="dl-btn available" id="btn-docker"
-               href="https://github.com/wink-run/local-llm-proxy/pkgs/container/local-llm-proxy%2Fgateway"
-               target="_blank" rel="noopener" data-i18n="dl.docker.btn">查看镜像</a>
+            <div class="dl-name editorial">Token Bank for Docker</div>
+            <div class="dl-meta">命令行 / 服务器部署</div>
+            <a class="dl-btn available" id="btn-docker" href="https://github.com/wink-run/local-llm-proxy/pkgs/container/local-llm-proxy%2Fgateway" target="_blank" rel="noopener" data-i18n="dl.docker.btn">查看镜像</a>
           </div>
         </div>
-
-        <!-- Docker quickstart -->
-        <div style="margin-top:16px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:16px 20px;" class="reveal">
-          <div style="font-family:'DM Mono',monospace;font-size:.65rem;color:var(--muted);letter-spacing:.08em;margin-bottom:10px;" data-i18n="dl.docker.qs">Docker 快速启动</div>
-          <div class="code-block" style="margin-top:0;">
-<pre><span class="c">docker run</span> -d \
-  -p <span class="s">11430:11430</span> -p <span class="s">11431:11431</span> \
+        <div class="code-block reveal" style="margin-top:24px;">
+          <pre><span class="cm"># Docker 快速启动</span>
+<span class="c">docker run</span> -d -p <span class="s">11430:11430</span> -p <span class="s">11431:11431</span> \
   -v ./data:<span class="s">/data/.llm-agent</span> \
-  ghcr.io/wink-run/local-llm-proxy/gateway:<span class="s">latest</span>
-<span class="cm"># LLM 入口: http://localhost:11430/v1</span>
-<span class="cm"># Web UI:  http://localhost:11431</span></pre>
-          </div>
+  ghcr.io/wink-run/local-llm-proxy/gateway:<span class="s">latest</span></pre>
         </div>
-
         <div id="agent-download-list" style="display:none;"></div>
       </div>
     </section>
 
-    <!-- ── Quickstart ── -->
+    <!-- 快速接入 -->
     <section class="section" id="quickstart">
       <div class="wrap">
-        <div class="reveal">
-          <div class="sec-label" data-i18n="sec.quickstart">快速接入</div>
-          <h2 class="sec-h2" data-i18n="qs.h2">快速上手</h2>
+        <div class="sec-header reveal">
+          <span class="tag-pill" data-i18n="sec.quickstart">快速接入</span>
+          <h2 class="sec-h2 editorial" data-i18n="qs.h2" style="margin-top:16px;">快速上手</h2>
         </div>
-
-        <!-- ── 接入使用 ── -->
-        <div class="reveal" style="margin:32px 0 14px;">
-          <div style="display:inline-flex;align-items:center;gap:8px;font-family:'DM Mono',monospace;font-size:.68rem;letter-spacing:.12em;color:var(--accent);border-left:2px solid var(--accent);padding-left:10px;" data-i18n="qs.part1">接入使用</div>
-          <p style="margin-top:6px;font-size:.85rem;color:var(--muted);" data-i18n-html="qs.sub">客户端安装后自动启动本地网关，把 AI 应用的 <strong>Base URL</strong> 改为以下地址即可。</p>
-        </div>
-        <div class="qs-grid reveal" style="margin-bottom:44px;">
+        <div class="grid-2 reveal">
           <div>
-            <div class="qs-label" data-i18n="qs.openai.label">OpenAI 兼容应用</div>
-            <p style="font-size:.85rem;color:var(--muted);" data-i18n="qs.openai.desc">Cursor、Copilot、Cherry Studio、Open WebUI 等：</p>
-            <div class="code-block">
-<pre><span class="c">OPENAI_BASE_URL</span>=<span class="s">http://127.0.0.1:11430/v1</span>
-<span class="c">OPENAI_API_KEY</span>=<span class="s">你的 Token Bank Key</span></pre>
-            </div>
+            <div class="text-slate" style="font-size:13px;font-weight:500;margin-bottom:8px;" data-i18n="qs.openai.label">OpenAI 兼容应用</div>
+            <div class="code-block"><pre><span class="c">OPENAI_BASE_URL</span>=<span class="s">http://127.0.0.1:11430/v1</span>
+<span class="c">OPENAI_API_KEY</span>=<span class="s">你的 Token Bank Key</span></pre></div>
           </div>
           <div>
-            <div class="qs-label" data-i18n="qs.anthropic.label">Anthropic 格式应用</div>
-            <p style="font-size:.85rem;color:var(--muted);" data-i18n="qs.anthropic.desc">Claude Desktop、Claude Code 等：</p>
-            <div class="code-block">
-<pre><span class="c">ANTHROPIC_BASE_URL</span>=<span class="s">http://127.0.0.1:11430</span>
-<span class="cm"># API Key 填写 Token Bank Key</span></pre>
-            </div>
-          </div>
-        </div>
-
-        <!-- ── 加入 P2P 贡献 ── -->
-        <div class="reveal" style="margin-bottom:14px;">
-          <div style="display:inline-flex;align-items:center;gap:8px;font-family:'DM Mono',monospace;font-size:.68rem;letter-spacing:.12em;color:var(--warn);border-left:2px solid var(--warn);padding-left:10px;" data-i18n="qs.part2">加入 P2P 贡献</div>
-          <p style="margin-top:6px;font-size:.85rem;color:var(--muted);" data-i18n="qs.p2p.intro">把闲置 API 额度贡献给社区，赚积分换其他模型：</p>
-        </div>
-        <div class="qs-grid reveal" style="margin-bottom:44px;">
-          <div>
-            <div class="qs-label" style="color:var(--warn);" data-i18n="qs.p2p.label">桌面端贡献 · 最简单</div>
-            <p style="font-size:.85rem;color:var(--muted);" data-i18n="qs.p2p.desc">已安装客户端后，三步开启贡献：</p>
-            <div class="code-block" style="border-color:rgba(245,166,35,.2);">
-<pre><span class="cm"># ① 打开 Token Bank → 设置 → P2P 共享</span>
-<span class="cm"># ② 添加 API Key（OpenAI / Claude / 国内模型均可）</span>
-<span class="cm"># ③ 开启贡献开关，即刻开始赚积分</span>
-
-<span class="s">密钥仅在本机运行，Ctrl+C 即下线</span></pre>
-            </div>
-            <div style="margin-top:10px;padding:8px 12px;background:rgba(245,166,35,.06);border:1px solid rgba(245,166,35,.15);border-radius:7px;font-size:.78rem;color:var(--muted);line-height:1.6;" data-i18n-html="qs.p2p.earn">
-              每 1K token 贡献 → 积分 × 质量倍率（0.8×–1.5×）<br>积分可兑换任意模型额度
-            </div>
-          </div>
-          <div>
-            <div class="qs-label" style="color:var(--warn);" data-i18n="qs.p2p.docker.label">Docker 贡献 · 无界面 / 服务器</div>
-            <p style="font-size:.85rem;color:var(--muted);" data-i18n="qs.p2p.docker.desc">在服务器或无界面机器上运行，Web UI 配置 P2P：</p>
-            <div class="code-block" style="border-color:rgba(245,166,35,.2);">
-<pre><span class="c">docker run</span> -d \
-  -p <span class="s">11430:11430</span> -p <span class="s">11431:11431</span> \
-  -v ./data:<span class="s">/data/.llm-agent</span> \
-  ghcr.io/wink-run/local-llm-proxy/gateway:<span class="s">latest</span>
-
-<span class="cm"># 访问 http://&lt;host&gt;:11431 → 设置 → P2P 共享</span>
-<span class="cm"># 添加 API Key，开启贡献开关</span></pre>
-            </div>
-            <div style="margin-top:10px;padding:8px 12px;background:rgba(245,166,35,.06);border:1px solid rgba(245,166,35,.15);border-radius:7px;font-size:.78rem;color:var(--muted);line-height:1.6;" data-i18n="qs.p2p.docker.note">
-              适合 24h 在线服务器，持续贡献积分更高
-            </div>
-          </div>
-        </div>
-
-        <!-- ── 私有化部署 ── -->
-        <div class="reveal" style="margin-bottom:14px;">
-          <div style="display:inline-flex;align-items:center;gap:8px;font-family:'DM Mono',monospace;font-size:.68rem;letter-spacing:.12em;color:var(--faint);border-left:2px solid rgba(255,255,255,.15);padding-left:10px;" data-i18n="qs.part3">私有化部署</div>
-          <p style="margin-top:6px;font-size:.85rem;color:var(--muted);" data-i18n="qs.ops.intro">运营者在 VPS 上搭建独立后台，管理用户体系、Provider 接入与积分账本：</p>
-        </div>
-        <div class="reveal" style="max-width:640px;">
-          <div>
-            <div class="qs-label" data-i18n="qs.ops.label">搭建运营服务后台</div>
-            <p style="font-size:.85rem;color:var(--muted);" data-i18n="qs.ops.desc">完整 FastAPI 后端：用户管理、P2P 协调、Provider 账本：</p>
-            <div class="code-block">
-<pre><span class="c">git clone</span> github.com/wink-run/local-llm-proxy
-<span class="cm">cd</span> server
-<span class="cm">cp</span> .env.example .env
-<span class="cm"># 填写 ADMIN_KEY、SECRET_KEY、数据库连接等</span>
-<span class="c">docker compose up -d --build</span>
-<span class="cm"># 管理后台：https://&lt;your-vps&gt;/admin/ui</span></pre>
-            </div>
+            <div class="text-slate" style="font-size:13px;font-weight:500;margin-bottom:8px;" data-i18n="qs.anthropic.label">Anthropic 格式应用</div>
+            <div class="code-block"><pre><span class="c">ANTHROPIC_BASE_URL</span>=<span class="s">http://127.0.0.1:11430</span>
+<span class="cm"># API Key 填写 Token Bank Key</span></pre></div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- ── Disclaimer ── -->
-    <section class="section" style="padding:48px 0 32px;">
-      <div class="wrap">
-        <p class="disclaimer" data-i18n-html="disclaimer">
-          本项目仅供学习与研究使用。部署、共享 token 或转发请求须自行遵守法律法规及上游服务条款；由此产生的任何后果由使用者自行承担。
-        </p>
+    <!-- FAQ -->
+    <section class="section bone" id="faq">
+      <div class="wrap" style="max-width:720px;">
+        <div class="sec-header center reveal">
+          <span class="tag-pill bone">FAQ</span>
+          <h2 class="sec-h2 editorial center" style="margin-top:16px;">常见问题</h2>
+        </div>
+        <div class="faq-list reveal">
+          <div class="faq-item">
+            <button class="faq-q" onclick="toggleFaq(this)"><span data-i18n="faq.q1">Token Bank 和直接调用 API 有什么区别？</span><span class="icon">+</span></button>
+            <div class="faq-a" data-i18n="faq.a1">Token Bank 是本地网关，统一代理所有 AI 请求并记录 Trace。你可以在不改 Agent 的前提下切换 Provider、优化 Token 消耗，并在一屏看清所有用量。</div>
+          </div>
+          <div class="faq-item">
+            <button class="faq-q" onclick="toggleFaq(this)"><span data-i18n="faq.q2">API Key 会上传到云端吗？</span><span class="icon">+</span></button>
+            <div class="faq-a" data-i18n="faq.a2">不会。上游 API Key 仅保存在本机，网关直连上游 Provider，全程本地处理。</div>
+          </div>
+          <div class="faq-item">
+            <button class="faq-q" onclick="toggleFaq(this)"><span data-i18n="faq.q3">社区算力安全吗？</span><span class="icon">+</span></button>
+            <div class="faq-a" data-i18n="faq.a3">密钥不离本机，上游 Key 不上云。Ctrl+C 即下线。社区算力规则公开、代码开源。</div>
+          </div>
+          <div class="faq-item">
+            <button class="faq-q" onclick="toggleFaq(this)"><span data-i18n="faq.q4">支持哪些操作系统？</span><span class="icon">+</span></button>
+            <div class="faq-a" data-i18n="faq.a4">桌面客户端支持 macOS 和 Windows。也可通过 Docker 在 Linux 服务器上部署无界面网关。</div>
+          </div>
+        </div>
       </div>
     </section>
 
+    <!-- 免责声明 -->
+    <section class="section" style="padding-top:0;">
+      <div class="wrap"><p class="disclaimer reveal" data-i18n="disclaimer">本项目仅供学习与研究使用。部署、共享 token 或转发请求须自行遵守法律法规及上游服务条款。</p></div>
+    </section>
   </main>
 
   <footer>
-    <p>Token Bank · Personal AI Hub</p>
-    <div class="footer-links">
-      <a href="/app"      data-i18n="nav.portal">用户中心</a>
-      <a href="/wall"     data-i18n="nav.wall">运营大屏</a>
-      <a href="/admin/ui" data-i18n="footer.admin">管理后台</a>
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <a class="logo" href="#"><span class="logo-mark">TB</span> Token Bank</a>
+        <p>个人 AI 中枢 · Token 管家</p>
+      </div>
+      <div class="footer-col">
+        <h4>Product</h4>
+        <a href="#hub" data-i18n="nav.hub">三大能力</a>
+        <a href="#gateway">网关</a>
+        <a href="#providers" data-i18n="nav.compute">算力来源</a>
+        <a href="#download">下载</a>
+      </div>
+      <div class="footer-col">
+        <h4>Resources</h4>
+        <a href="/app" data-i18n="nav.portal">用户中心</a>
+        <a href="/wall" data-i18n="nav.wall">运营大屏</a>
+        <a href="https://github.com/wink-run/local-llm-proxy" target="_blank" rel="noopener">GitHub</a>
+      </div>
+      <div class="footer-col">
+        <h4>Admin</h4>
+        <a href="/admin/ui" data-i18n="footer.admin">管理后台</a>
+      </div>
     </div>
-    <p style="margin-top:14px;font-size:.72rem;color:var(--faint);" data-i18n="disclaimer.short">仅供学习与研究；使用后果自负。</p>
+    <div class="footer-bottom" data-i18n="disclaimer.short">仅供学习与研究；使用后果自负。</div>
   </footer>
 
   <script>
-  /* ── i18n ── */
-  var LANGS = {
-    zh: {
-      "nav.portal": "用户中心", "nav.wall": "运营大屏", "nav.hub": "三大能力", "footer.admin": "管理后台",
-      "flow.label": "请求链路", "flow.app": "应用", "flow.anyapp": "任意 AI 应用",
-      "flow.gateway": "本地网关", "flow.provider": "服务商",
-      "flow.personal": "个人算力 <span class='flow-badge badge-free'>personal</span>",
-      "flow.community": "社区算力 <span class='flow-badge badge-p2p'>community</span>",
-      "sec.gateway": "本地网关", "sec.optimize": "Token 优化", "sec.stats": "用量统计",
-      "sec.hub": "v0.4 · 三大能力",
-      "sec.providers": "算力来源", "sec.p2p": "P2P 共享 · 本项目特色",
-      "sec.download": "下载", "sec.quickstart": "快速接入",
-      "gw.num1": "01 / 代理", "gw.num2": "02 / 路由", "gw.num3": "03 / 管理",
-      "p2p.earn.label": "贡献赚积分", "p2p.spend.label": "调用花积分",
-      "dl.docker.qs": "Docker 快速启动",
-      "hero.eyebrow": "个人 AI 中枢 · Agent 纳管 · 订阅与按量 · 多维统计",
-      "hero.h1": "你的<em>个人 AI 中枢</em>，统一接入智能路由",
-      "hero.sub": "本地网关透明代理所有 AI 请求，<strong>纳管常见 Agent 并追溯 Trace</strong>，<strong>个人页统一管理订阅与按量</strong>，<strong>多维度统计分析</strong>——就像 iOS 电量统计，所有 AI 应用自然纳入。",
-      "hero.pill1": "Agent 纳管 · Trace",
-      "hero.pill2": "订阅 / 按量管理",
-      "hero.pill3": "多维统计分析",
-      "hub.h2": "纳管 Agent、<em>管理订阅</em>、看懂每一分钱",
-      "hub.sub": "不只是转发请求——Token Bank 把常见 AI Agent 纳入统一 Trace，在个人页维护订阅与按量账户，再在盘点页从多个维度拆解用量与费用。",
-      "hub.c1.num": "01 / Agent", "hub.c1.title": "常见 Agent 纳管 · Trace",
-      "hub.c1.body": "在网关登记 Cursor、Claude Code、Codex CLI、Cherry Studio 等应用。走网关的请求实时记录；直连官方的会话可补录导入——同一套应用维度统计。",
-      "hub.c2.num": "02 / 订阅", "hub.c2.title": "个人订阅管理",
-      "hub.c2.body": "APP 订阅（仅统计或可转 API）、API 订阅（如火山引擎）、按量付费（模型 + 刊例价）分栏维护。供给源页接入 Key，个人页决定计费口径与按量可用模型。",
-      "hub.c3.num": "03 / 分析", "hub.c3.title": "多维度统计分析",
-      "hub.c3.body": "盘点页按应用、供给源、模型、路由层（免费/社区/付费）、费用、设备与时间范围切片。订阅折算与按量估算同屏展示，一眼看清钱花在哪。",
-      "hub.dim.app": "应用 / Agent", "hub.dim.provider": "供给源 / 路由层",
-      "hub.dim.model": "模型", "hub.dim.billing": "订阅 + 按量",
-      "cta.download": "下载客户端", "cta.howworks": "了解原理",
-      "gw.h2": "多格式接入，<em>无感代理</em>",
-      "gw.sub": "本地网关同时兼容主流 AI 接口格式，AI 应用无需任何改造，只需把 Base URL 指向 <strong>127.0.0.1:11430</strong>，请求自动流入并被路由到最优 Provider。",
-      "gw.c1.title": "密钥不离本机",
-      "gw.c1.body": "上游 API Key 仅保存在本机，不经过任何云端服务器。网关直连上游，全程本地处理。",
-      "gw.c2.title": "智能 Provider 路由",
-      "gw.c2.body": "按模型、成本策略自动选择最优 Provider。免费额度用尽时，平滑切换 P2P 或付费 Provider。",
-      "gw.c3.title": "可视化管理",
-      "gw.c3.body": "图形界面配置 Provider、查看路由日志、实时调试模型接口，告别手动 curl。",
-      "opt.h2": "路由里内置<em>降本策略</em>",
-      "opt.sub": "网关不只是转发，它在路由层内置 Token 优化策略，主动减少不必要的开销。",
-      "opt.s1.title": "任务分级路由", "opt.s1.body": "按场景规则自动把简单请求分流到低成本模型，复杂任务路由至高性能模型，效果与成本双优。",
-      "opt.s2.title": "Provider 优先级", "opt.s2.body": "优先使用个人算力（免费额度 / 付费订阅 / 按量付费），不足时自动补充社区算力，整体成本与等待降至最低。",
-      "opt.s3.title": "多 Key 轮询", "opt.s3.body": "同一 Provider 绑定多个 API Key，自动轮询使用，均摊速率限制，避免单 Key 触发限流。",
-      "opt.s4.title": "用量感知调度", "opt.s4.body": "实时感知各 Provider 当日用量，接近限额时自动切换，保持服务连续性。",
-      "stats.h2": "所有 AI 消耗<br><em>一屏看清</em>",
-      "stats.sub": "类比 <strong>iOS 电量统计</strong>——从<strong>应用、供给源、模型、费用、设备</strong>多个维度拆解。走网关的、会话补录的、Claude Code 的、Codex 的，全部汇聚到同一个盘点页。",
-      "stats.sp1": "应用·源·模型·层·费·设备", "stats.sp2": "网关实时 + 会话补录", "stats.sp3": "订阅折算 + 按量估算",
-      "stats.mock.title": "AI 用量 · 本月",
-      "prov.h2": "个人算力 + 社区算力，<em>自动择优</em>",
-      "prov.sub": "本地网关统一接入你的个人算力（免费额度、付费订阅、按量付费）与社区共享算力，按成本与可用性自动择优。",
-      "prov.t1.desc": "你自己的资源：厂商免费额度、付费订阅、按量付费 API Key。本地网关统一接入，按成本优先使用。",
-      "prov.t2.desc": "社区成员贡献的闲置算力，用积分兑换调用额度，往往比官方更实惠。",
-      "credit.title": "P2P 积分体系",
-      "p2p.h2": "闲置算力变积分，<em style='color:var(--warn)'>跨模型自由流通</em>",
-      "p2p.sub": "P2P 共享网络是本项目独有的特色——社区成员互相贡献闲置额度，积分在模型之间、时段之间自由兑换，让你的 AI 算力不再浪费，也让高级模型唾手可得。",
-      "p2p.v1.title": "跨模型兑换", "p2p.v1.body": "贡献你有的模型额度，赚积分，消费你没有的模型。国内模型换境外高级模型，开源额度换 Claude / GPT-4o。",
-      "p2p.v1.ex1": "贡献 DeepSeek → 积分 → <span style='color:var(--text)'>Claude Sonnet</span>",
-      "p2p.v1.ex2": "Ollama 本地模型 → 积分 → <span style='color:var(--text)'>GPT-4o</span>",
-      "p2p.v2.title": "跨时段储值", "p2p.v2.body": "现在闲置的额度变成积分存起来，以后随时取用。电脑开着没人用、API 套餐月底剩余，都能转化成未来的算力储备。",
-      "p2p.v2.ex1": "白天挂机贡献 → <span style='color:var(--text)'>晚上关机后继续调用</span>",
-      "p2p.v2.ex2": "月底剩余额度 → <span style='color:var(--text)'>下月按需取用</span>",
-      "p2p.v3.title": "透明互助网络", "p2p.v3.body": "规则公开、代码开源、多方博弈。贡献率 > 消费率，激励持续在线；质量越高倍率越高，节点越稳赚越多。",
-      "p2p.v3.ex1": "密钥不离本机，上游 Key 不上云",
-      "p2p.v3.ex2": "Ctrl+C 即下线，无需解绑",
-      "p2p.q1": "在线时长", "p2p.q2": "首 Token 延迟", "p2p.q3": "请求成功率",
-      "p2p.spend.note": "贡献率 &gt; 消费率——<span style='color:var(--text)'>多贡献多获益</span>，剩余积分可随时消费高级模型调用。汇率公开，规则透明。",
-      "p2p.cta": "查看当前积分汇率 →",
-      "dl.h2": "下载 Token Bank",
-      "dl.sub": "图形界面桌面客户端，一键启动本地网关，管理 Provider 与积分账户。支持 macOS 和 Windows。",
-      "dl.loading": "加载中…", "dl.btn": "立即下载", "dl.soon": "即将发布",
-      "dl.docker.btn": "查看镜像",
-      "qs.h2": "快速上手",
-      "qs.part1": "接入使用",
-      "qs.sub": "客户端安装后自动启动本地网关，把 AI 应用的 <strong>Base URL</strong> 改为以下地址即可。",
-      "qs.openai.label": "OpenAI 兼容应用",
-      "qs.openai.desc": "Cursor、Copilot、Cherry Studio、Open WebUI 等：",
-      "qs.anthropic.label": "Anthropic 格式应用",
-      "qs.anthropic.desc": "Claude Desktop、Claude Code 等：",
-      "qs.part2": "加入 P2P 贡献",
-      "qs.p2p.intro": "把闲置 API 额度贡献给社区，赚积分换其他模型。有两种参与方式：",
-      "qs.p2p.label": "桌面端贡献 · 最简单",
-      "qs.p2p.desc": "已安装客户端后，三步开启贡献：",
-      "qs.p2p.earn": "每 1K token 贡献 → 积分 × 质量倍率（0.8×–1.5×）<br>积分可兑换任意模型额度",
-      "qs.p2p.docker.label": "Docker 贡献 · 无界面 / 服务器",
-      "qs.p2p.docker.desc": "在服务器或无界面机器上运行，Web UI 配置 P2P：",
-      "qs.p2p.docker.note": "适合 24h 在线服务器，持续贡献积分更高",
-      "qs.part3": "私有化部署",
-      "qs.ops.intro": "运营者在 VPS 上搭建独立后台，管理用户体系、Provider 接入与积分账本：",
-      "qs.ops.label": "搭建运营服务后台",
-      "qs.ops.desc": "完整 FastAPI 后端：用户管理、P2P 协调、Provider 账本：",
-      "disclaimer": "本项目仅供学习与研究使用。部署、共享 token 或转发请求须自行遵守法律法规及上游服务条款；由此产生的任何后果由使用者自行承担。",
-      "disclaimer.short": "仅供学习与研究；使用后果自负。",
-    },
-    en: {
-      "nav.portal": "User Portal", "nav.wall": "Live Dashboard", "nav.hub": "Three pillars", "footer.admin": "Admin",
-      "flow.label": "REQUEST FLOW", "flow.app": "APP", "flow.anyapp": "Any AI App",
-      "flow.gateway": "LOCAL GATEWAY", "flow.provider": "PROVIDER",
-      "flow.personal": "Personal <span class='flow-badge badge-free'>personal</span>",
-      "flow.community": "Community <span class='flow-badge badge-p2p'>community</span>",
-      "sec.gateway": "LOCAL GATEWAY", "sec.optimize": "TOKEN OPTIMIZATION", "sec.stats": "USAGE ANALYTICS",
-      "sec.hub": "v0.4 · THREE PILLARS",
-      "sec.providers": "COMPUTE SOURCES", "sec.p2p": "P2P SHARING · KEY FEATURE",
-      "sec.download": "DOWNLOAD", "sec.quickstart": "QUICKSTART",
-      "gw.num1": "01 / PROXY", "gw.num2": "02 / ROUTE", "gw.num3": "03 / ADMIN",
-      "p2p.earn.label": "EARN · Contribute for Credits", "p2p.spend.label": "SPEND · Pay with Credits",
-      "dl.docker.qs": "DOCKER QUICKSTART",
-      "hero.eyebrow": "Personal AI Hub · Agent trace · Subscriptions · Analytics",
-      "hero.h1": "Your <em>Personal AI Hub</em> — Unified Access, Smart Routing",
-      "hero.sub": "The local gateway proxies all AI traffic, <strong>onboards common agents with full trace</strong>, <strong>manages subscriptions and PAYG on your profile</strong>, and delivers <strong>multi-dimensional analytics</strong> — like iOS battery stats for every AI app.",
-      "hero.pill1": "Agent onboarding · Trace",
-      "hero.pill2": "Subscriptions · PAYG",
-      "hero.pill3": "Multi-dimensional stats",
-      "hub.h2": "Onboard agents, <em>manage subscriptions</em>, see every dollar",
-      "hub.sub": "More than a proxy — Token Bank traces common AI agents, maintains subscription and pay-as-you-go accounts on your profile, and breaks usage down across multiple dimensions on the Dashboard.",
-      "hub.c1.num": "01 / AGENTS", "hub.c1.title": "Common agent onboarding · Trace",
-      "hub.c1.body": "Register Cursor, Claude Code, Codex CLI, Cherry Studio, and more in the Gateway. Proxy traffic is logged in real time; direct API sessions can be imported — one app-level view for all.",
-      "hub.c2.num": "02 / BILLING", "hub.c2.title": "Personal subscription hub",
-      "hub.c2.body": "APP subscriptions (stats-only or API gateway), API subscriptions (e.g. Volcengine), and pay-as-you-go (models + list prices). Providers page holds keys; Profile defines billing scope and PAYG model allowlists.",
-      "hub.c3.num": "03 / ANALYTICS", "hub.c3.title": "Multi-dimensional analytics",
-      "hub.c3.body": "Dashboard slices by app, provider, model, tier (free/P2P/paid), cost, device, and time range. Subscription amortization and PAYG estimates on one screen.",
-      "hub.dim.app": "App / Agent", "hub.dim.provider": "Provider / Tier",
-      "hub.dim.model": "Model", "hub.dim.billing": "Sub + PAYG",
-      "cta.download": "Download", "cta.howworks": "How it works",
-      "gw.h2": "Multi-format access,<br><em>zero-config proxy</em>",
-      "gw.sub": "The local gateway supports all major AI API formats. No app changes needed — just point your <strong>Base URL</strong> to <strong>127.0.0.1:11430</strong> and requests are automatically routed to the best Provider.",
-      "gw.c1.title": "Keys stay local",
-      "gw.c1.body": "Upstream API keys are stored only on your machine, never sent to any cloud server. The gateway connects directly to upstream providers.",
-      "gw.c2.title": "Smart Provider routing",
-      "gw.c2.body": "Automatically selects the best Provider by model and cost policy. Falls back gracefully from free to P2P to paid as quota runs out.",
-      "gw.c3.title": "Visual management",
-      "gw.c3.body": "GUI to configure Providers, inspect routing logs, and debug model APIs in real time — no more manual curl.",
-      "opt.h2": "Built-in <em>cost optimization</em>",
-      "opt.sub": "The gateway isn't just a forwarder — it has cost optimization strategies baked into the routing layer.",
-      "opt.s1.title": "Task-grade routing", "opt.s1.body": "Auto-routes simple requests to low-cost models and complex tasks to high-performance ones based on scene rules.",
-      "opt.s2.title": "Provider priority", "opt.s2.body": "Prefer your personal compute (free / subscription / pay-as-you-go); automatically supplement with community compute when needed, minimizing overall cost and latency.",
-      "opt.s3.title": "Multi-key rotation", "opt.s3.body": "Bind multiple API keys to one Provider and auto-rotate, spreading rate limits to avoid single-key throttling.",
-      "opt.s4.title": "Usage-aware dispatch", "opt.s4.body": "Monitors daily quota in real time and auto-switches Providers as limits approach, keeping service continuous.",
-      "stats.h2": "All AI spend,<br><em>one screen</em>",
-      "stats.sub": "Like <strong>iOS battery stats</strong> — broken down by <strong>app, provider, model, cost, and device</strong>. Gateway proxy, session import, Claude Code, Codex — all in one Dashboard.",
-      "stats.sp1": "App · source · model · tier · cost · device", "stats.sp2": "Live proxy + session import", "stats.sp3": "Sub amortization + PAYG est.",
-      "stats.mock.title": "AI Usage · This Month",
-      "prov.h2": "Personal + Community compute,<br><em>auto-selected</em>",
-      "prov.sub": "The local gateway unifies your personal compute (free quota, paid subscriptions, pay-as-you-go) with community-shared compute, auto-selecting by cost and availability.",
-      "prov.t1.desc": "Your own resources: vendor free tiers, paid subscriptions, and pay-as-you-go API keys. Unified through the local gateway and used first by cost.",
-      "prov.t2.desc": "Idle compute contributed by community members; spend credits to call — often cheaper than official APIs.",
-      "credit.title": "P2P Credit Economy",
-      "p2p.h2": "Idle compute becomes credits, <em style='color:var(--warn)'>freely exchangeable across models</em>",
-      "p2p.sub": "The P2P sharing network is a unique feature of this project — community members contribute idle quota; credits flow freely across models and time, so your AI compute is never wasted.",
-      "p2p.v1.title": "Cross-model exchange", "p2p.v1.body": "Contribute quota from models you have, earn credits, spend on models you don't. Swap domestic open models for overseas premium ones.",
-      "p2p.v1.ex1": "Contribute DeepSeek → credits → <span style='color:var(--text)'>Claude Sonnet</span>",
-      "p2p.v1.ex2": "Local Ollama → credits → <span style='color:var(--text)'>GPT-4o</span>",
-      "p2p.v2.title": "Time banking", "p2p.v2.body": "Convert today's surplus quota into credits you can use later. Whether leftover API capacity or an idle machine — all becomes on-demand compute reserves.",
-      "p2p.v2.ex1": "Idle during the day → <span style='color:var(--text)'>keep calling after it's off at night</span>",
-      "p2p.v2.ex2": "Unused quota at month-end → <span style='color:var(--text)'>draw down next month</span>",
-      "p2p.v3.title": "Transparent mutual aid", "p2p.v3.body": "Published rules, open source, multi-party dynamics. Earn rate > spend rate by design. Higher quality nodes earn more.",
-      "p2p.v3.ex1": "Keys stay local — upstream key never leaves your machine",
-      "p2p.v3.ex2": "Ctrl+C to disconnect — no server-side unbinding needed",
-      "p2p.q1": "Uptime", "p2p.q2": "Time to first token", "p2p.q3": "Success rate",
-      "p2p.spend.note": "Earn rate &gt; spend rate — <span style='color:var(--text)'>contribute more, earn more</span>. Leftover credits can be spent on premium model calls anytime. Rates are public and transparent.",
-      "p2p.cta": "View current credit rates →",
-      "dl.h2": "Download Token Bank",
-      "dl.sub": "Desktop GUI client — start your local gateway, manage Providers and credits. Available for macOS and Windows.",
-      "dl.loading": "Loading…", "dl.btn": "Download", "dl.soon": "Coming soon",
-      "dl.docker.btn": "View image",
-      "qs.h2": "Quick start",
-      "qs.part1": "Connect your apps",
-      "qs.sub": "After installing, the gateway starts automatically. Just update the <strong>Base URL</strong> in your AI app.",
-      "qs.openai.label": "OpenAI-compatible apps",
-      "qs.openai.desc": "Cursor, Copilot, Cherry Studio, Open WebUI, etc.:",
-      "qs.anthropic.label": "Anthropic-format apps",
-      "qs.anthropic.desc": "Claude Desktop, Claude Code, etc.:",
-      "qs.part2": "Join P2P contribution",
-      "qs.p2p.intro": "Contribute idle API quota to the community, earn credits, spend on other models. Two ways to participate:",
-      "qs.p2p.label": "Desktop contribution · easiest",
-      "qs.p2p.desc": "With the client installed, enable in 3 steps:",
-      "qs.p2p.earn": "Every 1K tokens contributed → credits × quality multiplier (0.8×–1.5×)<br>Credits redeemable for any model",
-      "qs.p2p.docker.label": "Docker contribution · headless / server",
-      "qs.p2p.docker.desc": "Run on a server or headless machine, configure P2P via Web UI:",
-      "qs.p2p.docker.note": "Ideal for 24h online servers — sustained uptime earns higher credits",
-      "qs.part3": "Self-hosted deployment",
-      "qs.ops.intro": "Operators deploy an independent backend on a VPS to manage users, Providers, and the credit ledger:",
-      "qs.ops.label": "Deploy operator backend",
-      "qs.ops.desc": "Full FastAPI backend: user management, P2P coordination, Provider ledger:",
-      "disclaimer": "This project is for educational and research purposes only. Deploying, sharing tokens, or forwarding requests must comply with applicable laws and upstream service terms. All consequences are the user's sole responsibility.",
-      "disclaimer.short": "For educational and research use only. Use at your own risk.",
+  /* FAQ 手风琴 */
+  function toggleFaq(btn) {
+    var item = btn.parentElement;
+    var open = item.classList.contains('open');
+    document.querySelectorAll('.faq-item').forEach(function(el) {
+      el.classList.remove('open');
+      el.querySelector('.icon').textContent = '+';
+    });
+    if (!open) {
+      item.classList.add('open');
+      btn.querySelector('.icon').textContent = '−';
     }
   }
 
-  var lang = localStorage.getItem('lang') || 'zh'
+  /* i18n */
+  var LANGS = {
+    zh: {
+      "announce.text": "v0.4 已发布 — Agent 纳管 · 订阅管理 · 多维统计",
+      "announce.cta": "立即下载",
+      "nav.portal": "用户中心", "nav.wall": "运营大屏", "nav.hub": "三大能力", "nav.compute": "算力来源", "footer.admin": "管理后台",
+      "flow.anyapp": "任意 AI 应用", "flow.gateway": "本地网关",
+      "flow.personal-free": "免费额度", "flow.personal-sub": "付费订阅", "flow.personal-payg": "按量付费", "flow.community": "社区算力",
+      "sec.gateway": "本地网关", "sec.optimize": "Token 优化", "sec.stats": "用量统计",
+      "sec.hub": "v0.4 · 三大能力", "sec.providers": "算力来源",
+      "sec.p2p": "社区算力", "sec.download": "下载", "sec.quickstart": "快速接入",
+      "gw.num1": "01 / 代理", "gw.num2": "02 / 路由", "gw.num3": "03 / 管理",
+      "hero.eyebrow": "个人 AI 中枢 · Agent 纳管 · 订阅与按量 · 多维统计",
+      "hero.h1": "你的个人 AI 中枢，统一接入智能路由",
+      "hero.sub": "本地网关透明代理所有 AI 请求，<strong>纳管常见 Agent 并追溯 Trace</strong>，<strong>个人页统一管理订阅与按量</strong>，<strong>多维度统计分析</strong>。",
+      "hero.pill1": "Agent 纳管 · Trace", "hero.pill2": "订阅 / 按量管理", "hero.pill3": "多维统计分析",
+      "hub.h2": "纳管 Agent、管理订阅、看懂每一分钱",
+      "hub.sub": "Token Bank 把常见 AI Agent 纳入统一 Trace，在个人页维护订阅与按量账户，再在盘点页从多个维度拆解用量与费用。",
+      "hub.c1.num": "01 / Agent", "hub.c1.title": "常见 Agent 纳管 · Trace",
+      "hub.c1.body": "在网关登记 Cursor、Claude Code、Codex CLI 等应用。走网关实时记录；直连官方会话可补录导入。",
+      "hub.c2.num": "02 / 订阅", "hub.c2.title": "个人订阅管理",
+      "hub.c2.body": "APP / API / 按量付费分栏维护。供给源页接入 Key，个人页决定计费口径。",
+      "hub.c3.num": "03 / 分析", "hub.c3.title": "多维度统计分析",
+      "hub.c3.body": "盘点页按应用、算力来源（个人 / 社区）、模型、费用、设备与时间范围切片。",
+      "hub.feature.title": "统一 Trace，像 iOS 电量统计一样清晰",
+      "hub.feature.body": "无论 Agent 是否走网关，用量都能被完整追溯。网关实时代理与会话补录汇聚到同一盘点页。",
+      "hub.dim.app": "应用 / Agent", "hub.dim.model": "模型",
+      "cta.download": "下载客户端", "cta.howworks": "了解原理",
+      "gw.h2": "多格式接入，无感代理",
+      "gw.sub": "本地网关兼容主流 AI 接口格式，只需把 Base URL 指向 <strong>127.0.0.1:11430</strong>。",
+      "gw.c1.title": "密钥不离本机", "gw.c1.body": "上游 API Key 仅保存在本机，网关直连上游，全程本地处理。",
+      "gw.c2.title": "个人与社区算力路由", "gw.c2.body": "按模型与成本策略，在个人算力（免费、订阅、按量）与社区算力之间智能选用。",
+      "gw.c3.title": "可视化管理", "gw.c3.body": "图形界面配置 Provider、查看路由日志、实时调试模型接口。",
+      "opt.h2": "路由里内置降本策略", "opt.sub": "网关不只是转发，它在路由层内置 Token 优化策略。",
+      "opt.s1.title": "任务分级路由", "opt.s1.body": "简单请求分流到低成本模型，复杂任务路由至高性能模型。",
+      "opt.s2.title": "算力来源优先级", "opt.s2.body": "优先消耗个人免费额度与订阅，必要时接入社区算力或按量付费，把成本压到最低。",
+      "opt.s3.title": "多 Key 轮询", "opt.s3.body": "同一 Provider 绑定多个 API Key，自动轮询均摊速率限制。",
+      "stats.h2": "所有 AI 消耗，一屏看清",
+      "stats.sub": "类比 <strong>iOS 电量统计</strong>——从应用、供给源、模型、费用、设备多个维度拆解。",
+      "stats.sp1": "应用·算力·模型·费·设备·时间", "stats.sp2": "网关实时 + 会话补录",
+      "stats.mock.title": "AI 用量 · 本月",
+      "prov.h2": "个人算力与社区算力，统一调度", "prov.sub": "先用自己的免费额度、订阅和按量账户；需要时再接入社区共享算力，两类来源在同一网关里透明切换。",
+      "prov.personal.title": "个人算力",
+      "prov.personal.desc": "属于你名下的供给：本地 Ollama、厂商免费层、APP/API 订阅，以及按模型刊例价计费的按量账户。",
+      "prov.personal.b1": "免费额度", "prov.personal.b2": "付费订阅", "prov.personal.b3": "按量付费",
+      "prov.community.title": "社区算力",
+      "prov.community.desc": "社区成员贡献闲置额度，通过积分网络共享。消费积分即可调用他人供给的模型，往往比官方更实惠。",
+      "prov.community.b1": "积分兑换", "prov.community.b2": "跨模型流通", "prov.community.b3": "闲置共享",
+      "p2p.h2": "贡献闲置额度，兑换所需模型",
+      "p2p.sub": "社区算力与个人算力并列——贡献你有的，消费你没有的；积分在模型与时段之间自由流转。",
+      "p2p.v1.title": "跨模型兑换", "p2p.v1.body": "贡献你有的模型额度，赚积分，消费你没有的模型。",
+      "p2p.v2.title": "跨时段储值", "p2p.v2.body": "闲置额度变成积分存起来，以后随时取用。",
+      "p2p.v3.title": "透明互助网络", "p2p.v3.body": "规则公开、代码开源。贡献率 > 消费率，质量越高倍率越高。",
+      "dl.h2": "下载 Token Bank", "dl.sub": "图形界面桌面客户端，一键启动本地网关。支持 macOS 和 Windows。",
+      "dl.loading": "加载中…", "dl.btn": "立即下载", "dl.docker.btn": "查看镜像",
+      "qs.h2": "快速上手", "qs.openai.label": "OpenAI 兼容应用", "qs.anthropic.label": "Anthropic 格式应用",
+      "faq.q1": "Token Bank 和直接调用 API 有什么区别？",
+      "faq.a1": "Token Bank 是本地网关，统一代理所有 AI 请求并记录 Trace。你可以在不改 Agent 的前提下切换 Provider、优化 Token 消耗，并在一屏看清所有用量。",
+      "faq.q2": "API Key 会上传到云端吗？",
+      "faq.a2": "不会。上游 API Key 仅保存在本机，网关直连上游 Provider，全程本地处理。",
+      "faq.q3": "社区算力安全吗？",
+      "faq.a3": "密钥不离本机，上游 Key 不上云。Ctrl+C 即下线。社区算力规则公开、代码开源。",
+      "faq.q4": "支持哪些操作系统？",
+      "faq.a4": "桌面客户端支持 macOS 和 Windows。也可通过 Docker 在 Linux 服务器上部署无界面网关。",
+      "disclaimer": "本项目仅供学习与研究使用。部署、共享 token 或转发请求须自行遵守法律法规及上游服务条款。",
+      "disclaimer.short": "仅供学习与研究；使用后果自负。"
+    },
+    en: {
+      "announce.text": "v0.4 released — Agent trace · Subscriptions · Analytics",
+      "announce.cta": "Download now",
+      "nav.portal": "User Portal", "nav.wall": "Live Dashboard", "nav.hub": "Three pillars", "nav.compute": "Compute", "footer.admin": "Admin",
+      "flow.anyapp": "Any AI App", "flow.gateway": "Local Gateway",
+      "flow.personal-free": "Free quota", "flow.personal-sub": "Paid subscription", "flow.personal-payg": "Pay-as-you-go", "flow.community": "Community compute",
+      "sec.gateway": "Local Gateway", "sec.optimize": "Token Optimization", "sec.stats": "Usage Analytics",
+      "sec.hub": "v0.4 · Three Pillars", "sec.providers": "Compute sources",
+      "sec.p2p": "Community compute", "sec.download": "Download", "sec.quickstart": "Quickstart",
+      "gw.num1": "01 / Proxy", "gw.num2": "02 / Route", "gw.num3": "03 / Admin",
+      "hero.eyebrow": "Personal AI Hub · Agent trace · Subscriptions · Analytics",
+      "hero.h1": "Your Personal AI Hub — Unified Access, Smart Routing",
+      "hero.sub": "The local gateway proxies all AI traffic, <strong>onboards common agents with full trace</strong>, <strong>manages subscriptions and PAYG</strong>, and delivers <strong>multi-dimensional analytics</strong>.",
+      "hero.pill1": "Agent onboarding · Trace", "hero.pill2": "Subscriptions · PAYG", "hero.pill3": "Multi-dimensional stats",
+      "hub.h2": "Onboard agents, manage subscriptions, see every dollar",
+      "hub.sub": "Token Bank traces common AI agents, maintains subscription accounts, and breaks usage down across multiple dimensions.",
+      "hub.c1.num": "01 / Agents", "hub.c1.title": "Common agent onboarding · Trace",
+      "hub.c1.body": "Register Cursor, Claude Code, Codex CLI in the Gateway. Proxy traffic logged in real time; direct sessions can be imported.",
+      "hub.c2.num": "02 / Billing", "hub.c2.title": "Personal subscription hub",
+      "hub.c2.body": "APP / API / pay-as-you-go in one place. Providers page holds keys; Profile defines billing scope.",
+      "hub.c3.num": "03 / Analytics", "hub.c3.title": "Multi-dimensional analytics",
+      "hub.c3.body": "Dashboard slices by app, compute source (personal / community), model, cost, device, and time range.",
+      "hub.feature.title": "Unified trace — clear as iOS battery stats",
+      "hub.feature.body": "Whether agents use the gateway or not, usage is fully traced. Live proxy and session import converge on one Dashboard.",
+      "hub.dim.app": "App / Agent", "hub.dim.model": "Model",
+      "cta.download": "Download", "cta.howworks": "How it works",
+      "gw.h2": "Multi-format access, zero-config proxy",
+      "gw.sub": "Supports all major AI API formats — point your Base URL to <strong>127.0.0.1:11430</strong>.",
+      "gw.c1.title": "Keys stay local", "gw.c1.body": "Upstream API keys stored only on your machine. Gateway connects directly to providers.",
+      "gw.c2.title": "Personal & community routing", "gw.c2.body": "Routes intelligently across personal compute (free, subscription, PAYG) and community-shared capacity.",
+      "gw.c3.title": "Visual management", "gw.c3.body": "GUI to configure Providers, inspect routing logs, and debug APIs in real time.",
+      "opt.h2": "Built-in cost optimization", "opt.sub": "The gateway has cost optimization strategies baked into the routing layer.",
+      "opt.s1.title": "Task-grade routing", "opt.s1.body": "Routes simple requests to low-cost models, complex tasks to high-performance ones.",
+      "opt.s2.title": "Compute source priority", "opt.s2.body": "Use personal free quota and subscriptions first; fall back to community compute or pay-as-you-go when needed.",
+      "opt.s3.title": "Multi-key rotation", "opt.s3.body": "Bind multiple API keys and auto-rotate to spread rate limits.",
+      "stats.h2": "All AI spend, one screen",
+      "stats.sub": "Like <strong>iOS battery stats</strong> — broken down by app, provider, model, cost, and device.",
+      "stats.sp1": "App · compute · model · cost · device · time", "stats.sp2": "Live proxy + session import",
+      "stats.mock.title": "AI Usage · This Month",
+      "prov.h2": "Personal and community compute, unified", "prov.sub": "Start with your own free quota, subscriptions, and PAYG accounts; tap community-shared capacity when you need more — both transparent in one gateway.",
+      "prov.personal.title": "Personal compute",
+      "prov.personal.desc": "Capacity under your account: local Ollama, vendor free tiers, APP/API subscriptions, and pay-as-you-go billed at list price.",
+      "prov.personal.b1": "Free quota", "prov.personal.b2": "Paid subscription", "prov.personal.b3": "Pay-as-you-go",
+      "prov.community.title": "Community compute",
+      "prov.community.desc": "Members contribute idle quota via a credit network. Spend credits to call models others supply — often cheaper than official APIs.",
+      "prov.community.b1": "Credit exchange", "prov.community.b2": "Cross-model flow", "prov.community.b3": "Idle sharing",
+      "p2p.h2": "Contribute idle quota, redeem the models you need",
+      "p2p.sub": "Community compute sits alongside personal compute — contribute what you have, consume what you don't; credits flow across models and time.",
+      "p2p.v1.title": "Cross-model exchange", "p2p.v1.body": "Contribute quota from models you have, earn credits, spend on models you don't.",
+      "p2p.v2.title": "Time banking", "p2p.v2.body": "Convert surplus quota into credits you can use later.",
+      "p2p.v3.title": "Transparent mutual aid", "p2p.v3.body": "Published rules, open source. Earn rate > spend rate by design.",
+      "dl.h2": "Download Token Bank", "dl.sub": "Desktop GUI — start your local gateway. macOS and Windows.",
+      "dl.loading": "Loading…", "dl.btn": "Download", "dl.docker.btn": "View image",
+      "qs.h2": "Quick start", "qs.openai.label": "OpenAI-compatible apps", "qs.anthropic.label": "Anthropic-format apps",
+      "faq.q1": "How is Token Bank different from calling APIs directly?",
+      "faq.a1": "Token Bank is a local gateway that proxies all AI requests and records trace. Switch Providers and optimize tokens without changing your agents.",
+      "faq.q2": "Are API keys uploaded to the cloud?",
+      "faq.a2": "No. Upstream API keys stay on your machine. The gateway connects directly to providers.",
+      "faq.q3": "Is community compute safe?",
+      "faq.a3": "Keys stay local — never leave your machine. Ctrl+C to disconnect. Community rules are public and code is open source.",
+      "faq.q4": "Which operating systems are supported?",
+      "faq.a4": "Desktop client for macOS and Windows. Docker deployment for headless Linux servers.",
+      "disclaimer": "This project is for educational and research purposes only. All consequences are the user's sole responsibility.",
+      "disclaimer.short": "For educational and research use only."
+    }
+  };
 
+  var lang = localStorage.getItem('lang') || 'zh';
   function applyLang(l) {
-    var d = LANGS[l]
+    var d = LANGS[l];
     document.querySelectorAll('[data-i18n]').forEach(function(el) {
-      var k = el.getAttribute('data-i18n'); if (d[k] !== undefined) el.textContent = d[k]
-    })
+      var k = el.getAttribute('data-i18n'); if (d[k] !== undefined) el.textContent = d[k];
+    });
     document.querySelectorAll('[data-i18n-html]').forEach(function(el) {
-      var k = el.getAttribute('data-i18n-html'); if (d[k] !== undefined) el.innerHTML = d[k]
-    })
-    document.querySelector('.btn-lang').textContent = l === 'zh' ? 'EN' : '中'
-    document.documentElement.lang = l === 'zh' ? 'zh-CN' : 'en'
+      var k = el.getAttribute('data-i18n-html'); if (d[k] !== undefined) el.innerHTML = d[k];
+    });
+    document.querySelector('.btn-lang').textContent = l === 'zh' ? 'EN' : '中';
+    document.documentElement.lang = l === 'zh' ? 'zh-CN' : 'en';
   }
   function toggleLang() {
-    lang = lang === 'zh' ? 'en' : 'zh'
-    localStorage.setItem('lang', lang)
-    applyLang(lang)
+    lang = lang === 'zh' ? 'en' : 'zh';
+    localStorage.setItem('lang', lang);
+    applyLang(lang);
   }
 
-  /* ── Scroll reveal ── */
   var observer = new IntersectionObserver(function(entries) {
-    entries.forEach(function(e) { if (e.isIntersecting) { e.target.classList.add('visible'); observer.unobserve(e.target); } })
-  }, { threshold: 0.08 })
-  document.querySelectorAll('.reveal').forEach(function(el) { observer.observe(el) })
+    entries.forEach(function(e) { if (e.isIntersecting) { e.target.classList.add('visible'); observer.unobserve(e.target); } });
+  }, { threshold: 0.08 });
+  document.querySelectorAll('.reveal').forEach(function(el) { observer.observe(el); });
 
-  /* ── Downloads ── */
-  var RELEASES_URL = 'https://github.com/wink-run/local-llm-proxy/releases'
-  var ua = navigator.userAgent || ''
-  var isMac = /Macintosh|Mac OS X/.test(ua)
-  var isWin = /Windows/.test(ua)
+  var RELEASES_URL = 'https://github.com/wink-run/local-llm-proxy/releases';
+  var ua = navigator.userAgent || '';
+  var isMac = /Macintosh|Mac OS X/.test(ua);
+  var isWin = /Windows/.test(ua);
 
   function fmtBytes(n) {
-    if (typeof n !== 'number' || n < 0) return ''
-    if (n < 1048576) return (n / 1024).toFixed(0) + ' KB'
-    return (n / 1048576).toFixed(1) + ' MB'
+    if (typeof n !== 'number' || n < 0) return '';
+    if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
   }
 
   function loadDownloads() {
-    // Set GitHub releases as default first, then override with direct links if available
-    ;['mac','win'].forEach(function(p) {
-      var btn = document.getElementById('btn-' + p)
-      if (btn) { btn.href = RELEASES_URL; btn.textContent = LANGS[lang]['dl.btn'] || '立即下载'; btn.className = 'dl-btn available'; btn.target = '_blank'; btn.rel = 'noopener' }
-    })
-    var el = document.getElementById('agent-download-list')
-    if (el) el.innerHTML = '<p style="color:var(--muted);font-size:.85rem;">前往 <a href="' + RELEASES_URL + '" target="_blank" rel="noopener" style="color:var(--accent)">GitHub Releases</a> 查看所有版本</p>'
-
-    fetch('/api/agent-downloads')
-      .then(function(r) { return r.json() })
-      .then(function(data) {
-        var items = data.items || []
-        var L = LANGS[lang]
-        var dmg = items.find(function(it) { return /\.dmg$/i.test(it.filename) })
-        var exe = items.find(function(it) { return /\.exe$/i.test(it.filename) })
-
-        function setupCard(cardId, btnId, metaId, item, meta) {
-          var btn = document.getElementById(btnId)
-          var metaEl = document.getElementById(metaId)
-          var card = document.getElementById(cardId)
-          if (!btn) return
-          if (item) {
-            btn.href = item.url; btn.textContent = L['dl.btn'] || '立即下载'
-            btn.className = 'dl-btn available'; btn.target = '_blank'; btn.rel = 'noopener'
-            if (metaEl) metaEl.textContent = meta + (item.bytes ? ' · ' + fmtBytes(item.bytes) : '')
-          }
-          if (card && ((cardId === 'card-mac' && isMac) || (cardId === 'card-win' && isWin))) {
-            card.classList.add('current')
-          }
+    ['mac','win'].forEach(function(p) {
+      var btn = document.getElementById('btn-' + p);
+      if (btn) { btn.href = RELEASES_URL; btn.textContent = LANGS[lang]['dl.btn']; btn.className = 'dl-btn available'; btn.target = '_blank'; btn.rel = 'noopener'; }
+    });
+    fetch('/api/agent-downloads').then(function(r) { return r.json(); }).then(function(data) {
+      var items = data.items || [];
+      var L = LANGS[lang];
+      var dmg = items.find(function(it) { return /\.dmg$/i.test(it.filename); });
+      var exe = items.find(function(it) { return /\.exe$/i.test(it.filename); });
+      function setup(cardId, btnId, metaId, item, meta) {
+        var btn = document.getElementById(btnId);
+        var metaEl = document.getElementById(metaId);
+        var card = document.getElementById(cardId);
+        if (!btn) return;
+        if (item) {
+          btn.href = item.url; btn.textContent = L['dl.btn'];
+          if (metaEl) metaEl.textContent = meta + (item.bytes ? ' · ' + fmtBytes(item.bytes) : '');
         }
-        setupCard('card-mac','btn-mac','meta-mac', dmg, 'Apple Silicon & Intel · .dmg')
-        setupCard('card-win','btn-win','meta-win', exe, 'x86_64 · .exe')
-
-        var cliItems = items.filter(function(it) { return !/\.(dmg|exe)$/i.test(it.filename) })
-        var cliEl = document.getElementById('agent-download-list')
-        if (!cliEl || !cliItems.length) return
-        var CLI_LABELS = {
-          "llm-agent-linux-amd64":"Linux · x86_64","llm-agent-linux-arm64":"Linux · ARM64",
-          "llm-agent-darwin-arm64":"macOS · Apple Silicon","llm-agent-darwin-amd64":"macOS · Intel",
-          "llm-agent-windows-amd64.exe":"Windows · x86_64"
-        }
-        cliEl.innerHTML = cliItems.map(function(it) {
-          var label = CLI_LABELS[it.filename] || it.filename
-          return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">'
-            + '<div><div style="font-size:.85rem;color:var(--text);font-weight:500;">' + label + '</div>'
-            + '<div style="font-family:\'DM Mono\',monospace;font-size:.68rem;color:var(--muted);margin-top:2px;">' + it.filename + (it.bytes ? ' · ' + fmtBytes(it.bytes) : '') + '</div></div>'
-            + '<a href="' + it.url + '" target="_blank" rel="noopener" style="background:var(--accent);color:#001a14;padding:6px 16px;border-radius:6px;font-size:.8rem;font-weight:600;text-decoration:none;">↓</a>'
-            + '</div>'
-        }).join('')
-      })
-      .catch(function() { /* GitHub releases fallback already set above */ })
+        if (card && ((cardId === 'card-mac' && isMac) || (cardId === 'card-win' && isWin))) card.classList.add('current');
+      }
+      setup('card-mac','btn-mac','meta-mac', dmg, 'Apple Silicon & Intel · .dmg');
+      setup('card-win','btn-win','meta-win', exe, 'x86_64 · .exe');
+    }).catch(function() {});
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() { applyLang(lang); loadDownloads() })
-  } else { applyLang(lang); loadDownloads() }
+    document.addEventListener('DOMContentLoaded', function() { applyLang(lang); loadDownloads(); });
+  } else { applyLang(lang); loadDownloads(); }
   </script>
 </body>
 </html>

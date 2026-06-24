@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { getConfig } from '../api/adapter';
 import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
 import { useLang } from '../store/lang';
+import { useCurrency } from '../store/currency';
 import { isAccountOkMsg } from '../i18n';
 
 const CUSTOM_APP = '__custom_app__';
@@ -35,20 +36,29 @@ function pricingRowsForProvider(providerId, models, merged, overrides) {
   }));
 }
 
-/** 个人页：积分 / 订阅 / 按量付费 三类账户 */
+/** 个人页：积分 / 订阅 / 按量付费 三类账户
+ * @param {'full'|'billing'} scope — billing 仅订阅+按量（供给页未登录可用）
+ */
 export default function UserAccountsPanel({
   user,
+  scope = 'full',
   txs = [],
   creditsOpen,
   onCreditsToggle,
   onRefreshUser,
+  onAccountsChanged,
   CheckinCard,
   SpinCard,
   purchaseForm,
   initialTab = 'p2p',
 }) {
   const { t } = useLang();
-  const [tab, setTab] = useState(initialTab);
+  const { fmtCost } = useCurrency();
+  const billingOnly = scope === 'billing';
+  const [tab, setTab] = useState(() => {
+    if (billingOnly) return initialTab === 'payg' ? 'payg' : 'subscription';
+    return initialTab;
+  });
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -174,6 +184,7 @@ export default function UserAccountsPanel({
         }
         setTimeout(() => { setMsg(''); setSubMsg(''); setPaygMsg(''); }, 2000);
       }
+      onAccountsChanged?.(r);
       return true;
     } catch {
       const tip = t('accounts.saveFailed');
@@ -560,14 +571,19 @@ export default function UserAccountsPanel({
     });
   }
 
-  const tabs = [
-    { id: 'p2p', label: t('accounts.tab.p2p'), sub: t('accounts.tab.p2pSub'), color: 'blue' },
-    { id: 'subscription', label: t('accounts.tab.subscription'), sub: t('accounts.count', { n: subs.length }), color: 'amber' },
-    { id: 'payg', label: t('accounts.tab.payg'), sub: t('accounts.count', { n: payg.length }), color: 'emerald' },
-  ];
+  const tabs = billingOnly
+    ? [
+        { id: 'subscription', label: t('accounts.tab.subscription'), sub: t('accounts.count', { n: subs.length }), color: 'amber' },
+        { id: 'payg', label: t('accounts.tab.payg'), sub: t('accounts.count', { n: payg.length }), color: 'emerald' },
+      ]
+    : [
+        { id: 'p2p', label: t('accounts.tab.p2p'), sub: t('accounts.tab.p2pSub'), color: 'blue' },
+        { id: 'subscription', label: t('accounts.tab.subscription'), sub: t('accounts.count', { n: subs.length }), color: 'amber' },
+        { id: 'payg', label: t('accounts.tab.payg'), sub: t('accounts.count', { n: payg.length }), color: 'emerald' },
+      ];
 
   return (
-    <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl overflow-hidden">
+    <section className={billingOnly ? '' : 'bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-2xl overflow-hidden'}>
       {/* 账户类型切换 */}
       <div className="flex border-b border-gray-100 dark:border-gray-700">
         {tabs.map(tabItem => (
@@ -586,8 +602,8 @@ export default function UserAccountsPanel({
       <div className="p-5 space-y-4">
         {msg && <p className="text-xs text-green-600 dark:text-green-400">{msg}</p>}
 
-        {/* ── 积分账户 P2P ── */}
-        {tab === 'p2p' && (
+        {/* ── 积分账户 P2P（仅完整个人页）── */}
+        {!billingOnly && tab === 'p2p' && (
           <>
             <div className="flex items-center justify-between">
               <div>
@@ -662,7 +678,7 @@ export default function UserAccountsPanel({
                           </span>
                           <span className="text-xs text-gray-500 truncate flex-1 min-w-0">
                             {s.plan_label || s.plan_id}
-                            {s.monthly_usd != null ? ` · $${s.monthly_usd}${t('accounts.perMonth')}` : ''}
+                            {s.monthly_usd != null ? ` · ${fmtCost(s.monthly_usd)}${t('accounts.perMonth')}` : ''}
                             {(s.custom || s.plan_id === 'custom') && (
                               <span className="ml-1 text-gray-400">{t('accounts.custom')}</span>
                             )}
@@ -700,7 +716,7 @@ export default function UserAccountsPanel({
                           </span>
                           <span className="text-xs text-gray-500 truncate flex-1 min-w-0">
                             {s.plan_label || s.plan_id}
-                            {s.monthly_usd != null ? ` · $${s.monthly_usd}${t('accounts.perMonth')}` : ''}
+                            {s.monthly_usd != null ? ` · ${fmtCost(s.monthly_usd)}${t('accounts.perMonth')}` : ''}
                             {s.custom && (
                               <span className="ml-1 text-gray-400">{t('accounts.custom')}</span>
                             )}
@@ -753,7 +769,7 @@ export default function UserAccountsPanel({
                             <option value="">{t('accounts.selectPlan')}</option>
                             {apiPlanOptions.map(p => (
                               <option key={p.id} value={p.id}>
-                                {p.label}{p.monthly_usd != null ? ` ($${p.monthly_usd}${t('accounts.perMonth')})` : ''}
+                                {p.label}{p.monthly_usd != null ? ` (${fmtCost(p.monthly_usd)}${t('accounts.perMonth')})` : ''}
                               </option>
                             ))}
                           </select>
@@ -784,7 +800,7 @@ export default function UserAccountsPanel({
                           <option value="">{t('accounts.selectPlan')}</option>
                           {planOptions.map(p => (
                             <option key={p.id} value={p.id}>
-                              {p.label}{p.monthly_usd != null ? ` ($${p.monthly_usd}${t('accounts.perMonth')})` : ''}
+                              {p.label}{p.monthly_usd != null ? ` (${fmtCost(p.monthly_usd)}${t('accounts.perMonth')})` : ''}
                             </option>
                           ))}
                           <option value={CUSTOM_PLAN}>{t('accounts.customPlan')}</option>

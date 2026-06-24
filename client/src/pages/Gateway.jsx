@@ -13,6 +13,7 @@ import {
   modelIdFromRoute,
   routeSelectValue,
 } from '../lib/route-binding';
+import { useCurrency } from '../store/currency';
 
 // tier:id 作为下拉唯一 value，避免同模型跨层选中错位
 function modelTierKey(m) {
@@ -1287,14 +1288,17 @@ const CLIENT_LABELS = {
 /** 单会话行 */
 function SessionRow({ row, fmtN, onTrace, onMeta, onExport, onContinue }) {
   const { t } = useLang();
+  const { fmtCost } = useCurrency();
   const [exportOpen, setExportOpen] = useState(false);
   const [contOpen, setContOpen] = useState(false);
   const targets = CONTINUE_TARGETS.filter(x => x.id !== row.agent_id);
   const fmtTime = ts => ts ? new Date(ts * 1000).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 
+  const costUsd = Number(row.cost_usd) || 0;
+
   return (
     <div className="px-5 py-2.5">
-      <div className="grid grid-cols-[7.25rem_minmax(0,1.4fr)_3.5rem_4rem_5rem_auto] gap-2 items-center text-xs">
+      <div className="grid grid-cols-[7.25rem_minmax(0,1.4fr)_3.5rem_4rem_4.5rem_5rem_auto] gap-2 items-center text-xs">
         {(() => {
           const client = row.client || row.agent_id;
           const brand = resolveBrandIcon(client);
@@ -1316,6 +1320,12 @@ function SessionRow({ row, fmtN, onTrace, onMeta, onExport, onContinue }) {
         </div>
         <div className="text-right tabular-nums text-zinc-600 dark:text-zinc-300">{row.calls ?? 0}</div>
         <div className="text-right tabular-nums text-zinc-600 dark:text-zinc-300">{fmtN(row.tokens)}</div>
+        <div
+          className={`text-right tabular-nums ${costUsd > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-zinc-400'}`}
+          title={t('gateway.sessions.costHint')}
+        >
+          {fmtCost(costUsd)}
+        </div>
         <div className="text-right text-zinc-400">{fmtTime(row.lastTs)}</div>
         <div className="flex gap-1.5 justify-end items-center relative">
           <button onClick={() => { setContOpen(v => !v); setExportOpen(false); }}
@@ -1518,6 +1528,7 @@ function shortProjectName(row) {
 // 单个应用的用量明细弹窗
 function AppDetailModal({ app, onClose }) {
   const { t } = useLang();
+  const { fmtCost, fmtCostOptional } = useCurrency();
   const [days, setDays]           = useState(30);
   const [data, setData]           = useState(null);
   const [loading, setLoading]     = useState(true);
@@ -1538,7 +1549,6 @@ function AppDetailModal({ app, onClose }) {
   }, [app, days]);
 
   const fmtN    = n => n >= 1_000_000 ? (n/1e6).toFixed(2)+'M' : n >= 1000 ? (n/1000).toFixed(1)+'K' : String(n||0);
-  const fmtCost = n => (n != null && n > 0) ? ('$' + n.toFixed(n < 0.01 ? 4 : 3)) : null;
   const fmtMs   = n => (n != null) ? (n >= 1000 ? (n/1000).toFixed(1)+'s' : n+'ms') : null;
   const fmtTime = ts => ts ? new Date(ts*1000).toLocaleString('zh-CN',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
   const shortId = id => id ? (String(id).length > 12 ? String(id).slice(0,8)+'…'+String(id).slice(-4) : String(id)) : '—';
@@ -1735,7 +1745,7 @@ function AppDetailModal({ app, onClose }) {
                       )}
                       <span className="text-zinc-500 shrink-0 tabular-nums ml-auto">↑{fmtN(r.inTok)} ↓{fmtN(r.outTok)}</span>
                       {fmtMs(r.latency_ms) && <span className="text-zinc-400 shrink-0">{fmtMs(r.latency_ms)}</span>}
-                      {fmtCost(r.cost_usd) && <span className="text-emerald-600 dark:text-emerald-400 shrink-0">{fmtCost(r.cost_usd)}</span>}
+                      {fmtCostOptional(r.cost_usd) && <span className="text-emerald-600 dark:text-emerald-400 shrink-0">{fmtCostOptional(r.cost_usd)}</span>}
                       {r.status_code != null && r.status_code >= 400 && <span className="text-red-500 shrink-0">{r.status_code}</span>}
                     </div>
                   ))}
@@ -3228,11 +3238,9 @@ export default function Gateway() {
 
   const totalCalls   = stats?.total_calls ?? 0;
   const totalTokens  = stats?.total_tokens ?? 0;
-  const totalCost    = stats?.total_cost ?? 0;
   const proxyCalls   = (stats?.agent_sources ?? []).find(s => s.source === 'proxy')?.calls ?? 0;
   const gatewayRatio = totalCalls > 0 ? Math.round((proxyCalls / totalCalls) * 100) : null;
   const fmtTokens    = n => n >= 1_000_000 ? (n / 1e6).toFixed(2) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'K' : String(n || 0);
-  const fmtCost      = n => n > 0 ? '$' + n.toFixed(n < 0.01 ? 4 : 3) : '—';
   const okLogs       = logEntries.filter(e => e.status === 'ok');
   const avgLatency   = okLogs.length > 0
     ? Math.round(okLogs.reduce((s, e) => s + e.latency_ms, 0) / okLogs.length) : 0;

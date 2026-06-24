@@ -9,7 +9,7 @@ let _getImportStateStmt = null;
 let _setImportStateStmt = null;
 
 // 盘点费用口径：仅 api-key 计费 + provider 刊例价（无刊例价则为 0）
-const { estimatePaygCost } = require('./pricing');
+const { estimatePaygCost, estimateCost } = require('./pricing');
 const { resolvePricingProviderId } = require('./billing-config');
 
 /** 按 provider/model 聚合 token 后重算按量刊例价（不读库内 cost_usd，避免全局兜底价） */
@@ -411,19 +411,80 @@ function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50 } = {
   } catch (e) { console.error('[local-stats] queryAppDetail failed:', e.message); return empty; }
 }
 
-/** 单会话 DB 汇总（Trace 顶栏 Token / 持续时间补全） */
+/** 单会话 DB 汇总（Trace 顶栏 Token / 持续时间 / 费用补全） */
 function querySessionDetail(sessionId) {
   if (!db || !sessionId) return null;
   try {
     const row = db.prepare(
       `SELECT COUNT(*) AS calls, SUM(input_tokens) AS inTok, SUM(output_tokens) AS outTok, ` +
-      `SUM(cache_read_tokens) AS cached, MIN(ts) AS firstTs, MAX(ts) AS lastTs, SUM(cost_usd) AS cost_usd ` +
+      `SUM(cache_read_tokens) AS cached, MIN(ts) AS firstTs, MAX(ts) AS lastTs ` +
       `FROM requests WHERE session_id = @sid`
     ).get({ sid: sessionId });
-    return row || null;
+    if (!row) return null;
+    const costRows = db.prepare(
+      `SELECT model, provider_id, SUM(input_tokens) AS inTok, SUM(output_tokens) AS outTok, ` +
+      `SUM(cache_create_tokens) AS cCreate, SUM(cache_read_tokens) AS cRead, SUM(cost_usd) AS storedCost ` +
+      `FROM requests WHERE session_id = @sid GROUP BY model, provider_id`
+    ).all({ sid: sessionId });
+    let cost_usd = 0;
+    for (const r of costRows) cost_usd += _sessionCostPart(r);
+    return { ...row, cost_usd };
   } catch (e) {
     console.error('[local-stats] querySessionDetail failed:', e.message);
     return null;
+  }
+}
+
+/** 按 session_id + model 聚合 token 估算费用（库内 cost_usd 为 0 时用刊例价重算） */
+function _sessionCostPart(row) {
+  const stored = row.storedCost || 0;
+  if (stored > 0) return stored;
+  return estimateCost(
+    row.model,
+    row.inTok || 0,
+    row.outTok || 0,
+    row.cCreate || 0,
+    row.cRead || 0,
+    resolvePricingProviderId(row.provider_id),
+  );
+}
+
+/** 全库按 session_id 聚合用量与费用（供会话列表合并 DB 统计） */
+function querySessionStatsMap() {
+  if (!db) return {};
+  try {
+    const agg = db.prepare(
+      `SELECT session_id, COUNT(*) AS calls, ` +
+      `SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, ` +
+      `MAX(ts) AS lastTs FROM requests WHERE session_id IS NOT NULL GROUP BY session_id`
+    ).all();
+    const costRows = db.prepare(
+      `SELECT session_id, model, provider_id, ` +
+      `SUM(input_tokens) AS inTok, SUM(output_tokens) AS outTok, ` +
+      `SUM(cache_create_tokens) AS cCreate, SUM(cache_read_tokens) AS cRead, ` +
+      `SUM(cost_usd) AS storedCost ` +
+      `FROM requests WHERE session_id IS NOT NULL ` +
+      `GROUP BY session_id, model, provider_id`
+    ).all();
+    const costBySid = {};
+    for (const r of costRows) {
+      if (!r.session_id) continue;
+      costBySid[r.session_id] = (costBySid[r.session_id] || 0) + _sessionCostPart(r);
+    }
+    const out = {};
+    for (const r of agg) {
+      if (!r.session_id) continue;
+      out[r.session_id] = {
+        calls: r.calls || 0,
+        tokens: r.tokens || 0,
+        lastTs: r.lastTs || null,
+        cost_usd: costBySid[r.session_id] || 0,
+      };
+    }
+    return out;
+  } catch (e) {
+    console.error('[local-stats] querySessionStatsMap failed:', e.message);
+    return {};
   }
 }
 
@@ -617,7 +678,7 @@ function setSessionMeta({ agent_id, session_id, favorite, tags, note, archived }
 
 module.exports = {
   init, record, queryDashboard, queryByApiKey, queryByApp, queryByDataSource,
-  queryAppDetail, queryAppStatsInPeriod, queryAppStatsToday, querySessionDetail,
+  queryAppDetail, queryAppStatsInPeriod, queryAppStatsToday, querySessionDetail, querySessionStatsMap,
   getImportState, setImportState, resetSessionData, close,
   listSessionMeta, getSessionMeta, setSessionMeta,
 };

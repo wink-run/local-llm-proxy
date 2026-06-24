@@ -1246,11 +1246,14 @@ function mergeActivityWithStats(activity, dbSessions = []) {
   return activity.map(a => {
     const db = byId[a.session_id];
     if (!db) return a;
+    const dbCost = Number(db.cost_usd) || 0;
     return {
       ...a,
       calls:  db.calls  || a.calls,
       tokens: db.tokens || a.tokens,
       lastTs: db.lastTs || a.lastTs,
+      // DB 有费用则用 DB；否则保留行上已有估算
+      cost_usd: dbCost > 0 ? dbCost : (Number(a.cost_usd) || 0),
     };
   });
 }

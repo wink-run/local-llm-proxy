@@ -3,6 +3,8 @@
 > **Local LLM Gateway · Token Manager**
 >
 > Know what you're spending · Spend less · Earn from what's idle
+>
+> One-click agent onboarding · Seamless model swap · Full trace · Smart routing · Gateway compression · Multi-device sync · Local sources / community P2P
 
 [中文文档](./README.zh-CN.md) · [Download Latest](https://github.com/wink-run/local-llm-proxy/releases/latest) · [Architecture](./DESIGN.md)
 
@@ -24,8 +26,141 @@ You've probably run into these problems:
 | Pillar | What you get |
 |---|---|
 | **Agent trace & onboarding** | Register Cursor, Claude Code, Codex CLI, Cherry Studio, and other agents in one gateway — proxy traffic in real time or import session logs so usage is traced even when apps bypass the gateway |
-| **Personal subscription hub** | Manage APP subscriptions (stats-only or API gateway), API subscriptions (e.g. Volcengine), and pay-as-you-go providers with per-model list prices — gateway picks models from your profile |
-| **Multi-dimensional analytics** | Dashboard slices usage by **app · provider · model · tier · cost · device · time range**, with subscription amortization and PAYG estimates in one view |
+| **Personal subscription hub** | APP / API / pay-as-you-go subscriptions in one place; cloud sync across devices; stats-only or OAuth-to-API gateway |
+| **Multi-dimensional analytics** | Dashboard slices by **app · provider · model · supply type (local / community P2P) · cost · device · time**; multi-device usage aggregated in the cloud |
+| **Dynamic supply delivery** | Tool lists, scene routes, and online community P2P models synced on login; local source catalog maintained server-side |
+
+---
+
+## Core capabilities: one-click onboarding · seamless model swap · full trace
+
+Token Bank is more than an API proxy — it brings **Claude Code, Codex, Gemini CLI, Cursor, Copilot**, and other mainstream agents under one local gateway. **No agent-side changes required** for usage tracing, third-party model switching, and smart routing.
+
+### One-click agent onboarding
+
+Open the **Gateway** tab — installed tools appear automatically (desktop apps can be added manually):
+
+| Agent | How it connects |
+|---|---|
+| Claude Code / Codex CLI / Gemini CLI / OpenCode / … | CLI shim: injects `BASE_URL` env vars transparently — no command changes |
+| Claude Desktop / Codex Desktop / OpenClaw | Config-file patch: one click to point at the local gateway |
+| Cursor and other OpenAI-compatible clients | Set `OPENAI_BASE_URL`, or create a dedicated key in Gateway |
+
+**Onboarding flow:**
+
+1. Click **Track** → start counting that app's token usage (even on the official subscription)
+2. Pick a **model or scene route** in the dropdown → config is rewritten automatically; traffic goes through the gateway
+3. Click **Revert** → restore the official config and stop tracking
+
+Three states, clearly separated: **stats only** (official sub + session import), **via gateway** (route bound + live proxy), **reverted** (original config restored).
+
+### Seamless third-party model switching
+
+Agents keep their native model names (`claude-sonnet-4-6`, `gpt-5`, …). **The client never needs to change:**
+
+```
+Claude Code requests claude-sonnet-4-6
+        ↓  gateway keyScene transparent rewrite
+Actually routed → Groq llama-3.3-70b / local Ollama / DeepSeek / …
+        ↓  protocol adapter
+Anthropic Messages ↔ OpenAI Chat ↔ Codex Responses
+```
+
+- **Model names unchanged** — Claude client validation and UI stay the same
+- **Automatic protocol conversion** — `/v1/messages`, `/v1/chat/completions`, `/v1/responses` each handled
+- **Per-app bindings** — Claude Code on free Groq, Codex on local Ollama, independently
+- **Switch back anytime** — choose "Direct (official)" in the route dropdown; config is restored cleanly
+
+### Session trace (live proxy + session import)
+
+Usage is traced whether or not traffic goes through the gateway:
+
+| Mode | What it does |
+|---|---|
+| **Live proxy** | Requests via `localhost:11430` — logs route chain, resolved model, tokens, latency, cost |
+| **Session import** | Tracked apps that still hit the official API — local session logs (`~/.claude`, `~/.codex`, …) are scanned and imported |
+| **Dedup** | Same call recorded by both gateway and session file → counted once |
+
+Trace data appears on the **Dashboard** sliced by **app · provider · model · supply type · device · time**; the call log shows route result and latency per request.
+
+### Smart routing
+
+Supply is organized into **local sources** and **community P2P sources**. Each app can bind its own route; a global supply chain acts as fallback:
+
+```
+Per-app binding (keyScene / scene routes)
+    ↓ unbound or llm-router-* model
+Smart supply chain
+    Local: Ollama → free API (Groq / GitHub Models) → subscription / PAYG API
+    ↓ local unavailable or need extra compute
+    Community P2P (spend credits on shared community compute)
+    ↓ policy groups
+fallback · round-robin · weighted · latency · direct
+```
+
+| Supply type | Includes | Notes |
+|---|---|---|
+| **Local sources** | Ollama, free API, APP/API subscriptions, pay-as-you-go | Forwarded by your local gateway; keys never leave the machine |
+| **Community P2P** | Shared community compute network | Spend credits on remote nodes; model list synced dynamically |
+
+- **Scene routes** — daily chat, code completion, long-doc analysis each get their own chain
+- **Policy groups** — pick provider order from task features (tool calls, context length, …)
+- **Failover** — local source down? try community P2P automatically; fully transparent to the agent
+
+### Gateway lossless compression
+
+Optional **lossless JSON compression** before forwarding — fewer input tokens upstream, **semantics unchanged**:
+
+- Minifies pretty-printed JSON in messages (tool results, embedded data); strips whitespace only
+- Non-JSON content is left byte-for-byte untouched — answers stay the same
+- Enable in **Config**, or set `TOKENBANK_COMPRESS=1`
+- **Dashboard** shows compression count, tokens saved, and ratio; cloud merge across devices when signed in
+
+### Multi-device usage aggregation
+
+Desktop, CLI, and server gateways each register as a device — **usage is reported and merged in the cloud** when signed in:
+
+| Capability | What it does |
+|---|---|
+| **Device registration** | Each machine gets a persistent device_id; 60s heartbeat tracks online status |
+| **Inventory snapshots** | Reports calls, tokens, cost, local / community P2P mix, top models/apps for 1 / 7 / 30 day windows |
+| **Cloud merge** | **Profile** and **Dashboard** show per-device share, online status, detail vs aggregate views |
+| **Cross-device sync** | Subscriptions, PAYG config, and tool lists sync on login — no re-setup when switching machines |
+
+### Unified subscription management
+
+The **Profile** tab is the single hub for all billing accounts; **Providers** handles keys and routing:
+
+| Type | How it's managed | Typical use |
+|---|---|---|
+| **APP subscription** | Register ChatGPT / Claude / Gemini / Cursor plans and monthly cost | Stats-only on official sub, or OAuth → API gateway |
+| **API subscription** | Separate catalog for vendor API plans (e.g. Volcengine Coding Plan) | API Key gateway, billed separately from APP subs |
+| **Pay-as-you-go** | Register providers, model lists, and USD/M-token list prices | Providers page only exposes models configured here; cost estimates use these rates |
+
+- **Cloud sync** — subscriptions and PAYG config download on login; Mac / Windows / Linux stay in sync
+- **Billing overlay** — daily subscription amortization + PAYG estimates alongside raw token stats
+- **Supply linkage** — Profile defines *what you use and what it costs*; Providers defines *how to connect and route*
+
+### Dynamic supply delivery
+
+Local source catalogs and tool lists don't require manual version bumps — **sync on login, refresh when online**:
+
+```
+Server-maintained
+    ├── Local source catalog (Ollama / Groq / GitHub Models / SiliconFlow …)
+    ├── Tool list config.apps (agent onboarding rules, protocol adapters)
+    └── Scene routes config.scenes (preset routing chains)
+         ↓  auto-fetched on login / startup
+Local gateway
+    ├── Merged into ~/.tokenbank/tokenbank.yaml
+    ├── Community P2P online models refreshed periodically (/v1/models → route candidates)
+    └── One-click env scan — import existing free keys with round-robin
+```
+
+- **Local catalog delivery** — Groq, Cerebras, GitHub Models, NVIDIA NIM, etc. listed under **Local sources**; admins hot-update via YAML upload
+- **Community P2P models** — online contributor models pulled live; no manual local registration
+- **Env scan** — one-click import of existing Groq / GitHub Models / Anthropic keys; multi-key round-robin
+- **Offline fallback** — built-in defaults when offline; server deltas merged automatically when back online
 
 ---
 
@@ -36,7 +171,7 @@ You've probably run into these problems:
 Token Bank logs every request: which route it took, which model answered, how many tokens it used, and how long it took.
 
 - **Agent-aware inventory**: onboard common agents in the Gateway tab; see per-app calls, tokens, cost, and proxy vs session-import mix
-- **Daily dashboard**: total calls, free tier hit rate, provider breakdown, model distribution (by calls / tokens / cost)
+- **Daily dashboard**: total calls, local-source hit rate, provider breakdown, model distribution (by calls / tokens / cost)
 - **Call log**: route result, status, and latency for every request
 - **Multi-device view**: today's usage per device (desktop + CLI + server), aggregated in the cloud when signed in
 - **Billing overlay**: subscription plans amortized by day + pay-as-you-go list-price estimates alongside raw token stats
@@ -63,13 +198,10 @@ The **Providers** page wires keys and routes; the **Profile → Subscriptions / 
 Token Bank runs a **smart routing chain** locally. Each request works down the chain until one source succeeds:
 
 ```
-Local models (Ollama)
-    ↓ no matching model
-Free tier (Groq / GitHub Models / ...)
-    ↓ rate-limited or unavailable
-P2P network (pay with credits)
-    ↓ insufficient credits
-Paid API (OpenAI / Anthropic / ...)
+Local sources
+    Ollama / free API (Groq / GitHub Models) / subscriptions / pay-as-you-go API
+    ↓ unavailable or need extra compute
+Community P2P (spend credits on shared community compute)
 ```
 
 **Your AI tools point at one local address.** Routing is completely transparent to them.
@@ -80,19 +212,19 @@ Different use cases can be mapped to different supply chains:
 
 | Scene | Strategy |
 |---|---|
-| Daily chat | Groq free tier first, P2P network as fallback |
+| Daily chat | Local free API first, community P2P as fallback |
 | Code completion | Local Ollama — zero latency, zero cost |
-| Long document analysis | Paid API — quality guaranteed |
+| Long document analysis | Local PAYG API — quality guaranteed |
 
-#### Auto-import existing keys
+#### Quick local source setup
 
-One-click scan of your environment variables and tool configs. Existing LLM keys (Groq, GitHub Models, Anthropic, etc.) are imported automatically. Multiple keys are round-robined to fully use each provider's free quota.
+One-click scan of your environment variables and tool configs. Existing LLM keys (Groq, GitHub Models, Anthropic, etc.) are imported as local sources. Multiple keys are round-robined to fully use each provider's free quota.
 
 ---
 
 ### 3 — Earn from what's idle
 
-Contribute your unused compute or API quota to the P2P network. Earn credits. Spend those credits on models you don't have access to.
+Contribute your unused compute or API quota to the **community P2P network**. Earn credits. Spend those credits on shared community models.
 
 **What you can contribute:**
 
@@ -187,11 +319,12 @@ The `gateway-data/` volume is mounted automatically; **`local-config.json` is cr
 
 | Page | What you can do |
 |---|---|
-| **Dashboard** | Multi-dimensional stats: app/agent share, provider tier mix, model rankings (calls · tokens · cost), hourly trend, estimated PAYG + subscription cost |
-| **Gateway** | Onboard agents (Cursor, Claude Code, Codex, …), supply chain config, scene routes, gateway status and logs |
-| **Providers** | Free / P2P / paid tiers; APP-sub OAuth vs API-sub Key vs PAYG Key; model allowlists synced from Profile PAYG |
-| **Profile** | P2P credits · **Subscriptions** (APP + API) · **Pay-as-you-go** (providers, models, list prices) · per-device inventory |
-| **Network** | Global node map, online contributors, available models |
+| **Dashboard** | Multi-dimensional stats: app/agent share, **local / community P2P** mix, model rankings, hourly trend, **compression savings**, PAYG + subscription cost estimates |
+| **Gateway** | **One-click onboarding** for Claude Code / Codex / Gemini CLI / …; per-app route binding; scene routes & supply chain; gateway status & call log (trace) |
+| **Providers** | **Local sources** (Ollama / free API / subscriptions / PAYG) and **community P2P**; dynamic catalog delivery; one-click env key import |
+| **Profile** | P2P credits · **Subscriptions** (APP + API + PAYG, cloud-synced) · **Multi-device inventory** (per-device share & detail) · list prices & cost estimates |
+| **Config** | Gateway port, timeout, concurrency · **lossless compression toggle** · log level · cloud account URL |
+| **Network** | Global node map, online contributors, community P2P model supply |
 | **Contribute** | Node status, settlement history, quality multiplier trend |
 
 ---
@@ -199,8 +332,11 @@ The `gateway-data/` volume is mounted automatically; **`local-config.json` is cr
 ## Connecting any OpenAI-compatible client
 
 ```bash
-# Claude Code
+# Claude Code (or one-click onboard in Gateway — auto-injects ANTHROPIC_BASE_URL)
 export ANTHROPIC_BASE_URL=http://localhost:11430
+
+# Codex CLI (Gateway onboarding auto-injects OPENAI_BASE_URL)
+export OPENAI_BASE_URL=http://localhost:11430/v1
 
 # Cursor / any OpenAI-compatible tool
 OPENAI_BASE_URL=http://localhost:11430/v1
@@ -212,6 +348,8 @@ curl http://localhost:11430/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
+
+> Prefer **Gateway → Track** for one-click onboarding — no manual env vars. Pick a route and the agent keeps its native model names while the gateway transparently forwards to your chosen provider.
 
 ---
 

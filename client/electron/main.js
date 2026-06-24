@@ -1973,7 +1973,11 @@ function registerIPC() {
   const _sessionDeps = { sessionBrowser, localStats };
 
   ipcMain.handle('sessions:listAll', (_e, opts = {}) => {
-    try { return sessionManager.getSessions(_sessionDeps, opts); }
+    try {
+      // 与 apps:detail 一致：列表前先增量补录会话文件，否则 DB 无 session_id / cost 可对账
+      try { sessionImport.run(localStats, { skip: computeImportSkip() }); } catch {}
+      return sessionManager.getSessions(_sessionDeps, opts);
+    }
     catch (e) { console.error('[sessions:listAll]', e.message); return []; }
   });
 

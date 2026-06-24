@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { useAuth } from '../store/index';
 import { useLang } from '../store/lang';
+import { useCurrency } from '../store/currency';
 import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getUserDevices, deleteDevice, getInventoryStats, getProviderCatalog } from '../api/client';
 import UserAccountsPanel from '../components/UserAccountsPanel';
 import { enrichBillingCost } from '../utils/billing-cost';
@@ -241,6 +242,7 @@ function fmtNum(n) {
 /** 全部设备：各端调用 / Token / 费用占比饼图 */
 function DeviceSharePies({ devices, rangeLabel }) {
   const { t } = useLang();
+  const { fmtCost } = useCurrency();
   const list = devices || [];
   const hasAny = list.some(d => (d.calls || 0) > 0 || (d.tokens || 0) > 0 || (d.cost || 0) > 0);
   if (!hasAny) return null;
@@ -316,7 +318,7 @@ function DeviceSharePies({ devices, rangeLabel }) {
         <PieBlock
           title={t('profile.costShare')}
           dataKey="cost"
-          formatValue={v => `$${Number(v).toFixed(v < 0.01 ? 4 : 3)}`}
+          formatValue={fmtCost}
         />
       </div>
     </section>
@@ -560,6 +562,7 @@ function DevicesSection() {
 export default function TokenDashboard() {
   const { user, guest, refreshUser } = useAuth();
   const { t } = useLang();
+  const { fmtCost } = useCurrency();
   const location = useLocation();
   const navigate = useNavigate();
   const accountsTab = location.state?.accountsTab;
@@ -649,10 +652,10 @@ export default function TokenDashboard() {
   }
 
   const subCostStr = localData?.subscription_cost > 0
-    ? `$${localData.subscription_cost.toFixed(2)}`
+    ? fmtCost(localData.subscription_cost)
     : ' —';
   const paygCostStr = localData?.payg_cost > 0
-    ? `$${localData.payg_cost.toFixed(localData.payg_cost < 0.01 ? 4 : 2)}`
+    ? fmtCost(localData.payg_cost)
     : ' —';
 
   return (
@@ -685,7 +688,7 @@ export default function TokenDashboard() {
           <p className="text-[17px] font-bold text-zinc-900 dark:text-zinc-100 tracking-tight leading-tight">{t('profile.guestTitle')}</p>
           <p className="text-xs text-zinc-400 dark:text-zinc-500 truncate mt-0.5">{t('profile.guestSub')}</p>
         </div>
-        <button onClick={() => navigate('/config')} className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors">{t('profile.guestLogin')}</button>
+        <button onClick={() => navigate('/login')} className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors">{t('profile.guestLogin')}</button>
       </div>
       )}
 
@@ -738,7 +741,7 @@ export default function TokenDashboard() {
             <p className="text-xs text-blue-300 mb-1">{t('profile.cost')}</p>
             <p className="text-3xl sm:text-4xl font-bold text-white font-mono">
               {localData?.total_cost > 0
-                ? `$${localData.total_cost.toFixed(localData.total_cost < 0.01 ? 4 : 2)}`
+                ? fmtCost(localData.total_cost)
                 : '—'}
             </p>
             {localData?.total_cost > 0 && (

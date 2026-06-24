@@ -110,13 +110,46 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { estimateCost } = require('./pricing');
+const { resolvePricingProviderId } = require('./billing-config');
+
+/** agent → 刊例价 provider（jsonl 有 token 但 DB 未落账时的费用兜底） */
+const AGENT_PRICING_ID = {
+  'claude-code': 'anthropic',
+  'claude-3p': 'anthropic',
+  cursor: 'cursor',
+  codex: 'openai',
+};
+
+/** DB 无费用时，用 jsonl 扫到的 inTok/outTok 按 agent 刊例价估算 */
+function enrichSessionCosts(rows = []) {
+  return rows.map(r => {
+    const existing = Number(r.cost_usd) || 0;
+    if (existing > 0) return r;
+    const inTok = r.inTok || 0;
+    const outTok = r.outTok || 0;
+    if (!inTok && !outTok) return r;
+    const agent = r.agent_id || r.agent;
+    const cost = estimateCost(
+      null, inTok, outTok, 0, 0,
+      resolvePricingProviderId(AGENT_PRICING_ID[agent]),
+    );
+    return cost > 0 ? { ...r, cost_usd: cost } : r;
+  });
+}
 
 /** 聚合会话 + 叠加层 + 过滤。返回供 UI 渲染的会话数组。 */
 function getSessions(deps, opts = {}) {
   const { sessionBrowser, localStats } = deps;
-  const rows = sessionBrowser.listAllSessions(opts);
+  const raw = sessionBrowser.listAllSessions(opts);
+  // 合并本地网关记录的用量/费用（经代理的请求才有 cost_usd）
+  const dbMap = typeof localStats.querySessionStatsMap === 'function'
+    ? localStats.querySessionStatsMap()
+    : {};
+  const dbSessions = Object.entries(dbMap).map(([session_id, s]) => ({ session_id, ...s }));
+  const rows = sessionBrowser.mergeActivityWithStats(raw, dbSessions);
   const meta = localStats.listSessionMeta();
-  return joinSessionsWithMeta(rows, meta, { showArchived: !!opts.showArchived });
+  return enrichSessionCosts(joinSessionsWithMeta(rows, meta, { showArchived: !!opts.showArchived }));
 }
 
 /** 导出单会话为 JSON 包或 Markdown，写入默认目录，返回落盘信息。 */
