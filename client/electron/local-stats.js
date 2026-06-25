@@ -536,6 +536,29 @@ function todaySinceTs() {
   return Math.floor(midnight.getTime() / 1000);
 }
 
+/** 今日 Token 汇总（上行 input / 下行 output），供托盘与状态栏轻量查询 */
+function queryTodaySummary() {
+  const empty = { inTok: 0, outTok: 0, totalTokens: 0, calls: 0 };
+  if (!db) return empty;
+  try {
+    const since = todaySinceTs();
+    const r = db.prepare(
+      'SELECT COUNT(*) AS calls, SUM(input_tokens) AS inTok, SUM(output_tokens) AS outTok, ' +
+      'SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS totalTokens ' +
+      'FROM requests WHERE ts >= ?'
+    ).get(since);
+    return {
+      inTok: r.inTok || 0,
+      outTok: r.outTok || 0,
+      totalTokens: r.totalTokens || 0,
+      calls: r.calls || 0,
+    };
+  } catch (e) {
+    console.error('[local-stats] queryTodaySummary failed:', e.message);
+    return empty;
+  }
+}
+
 /** 时间窗口内单个应用用量（与 queryAppDetail / apps:stats 归属规则一致） */
 function queryAppStatsInPeriod({ appId, apiKey, dataSource, days = 30, since: sinceTs } = {}) {
   const empty = {
@@ -677,7 +700,7 @@ function setSessionMeta({ agent_id, session_id, favorite, tags, note, archived }
 }
 
 module.exports = {
-  init, record, queryDashboard, queryByApiKey, queryByApp, queryByDataSource,
+  init, record, queryDashboard, queryTodaySummary, queryByApiKey, queryByApp, queryByDataSource,
   queryAppDetail, queryAppStatsInPeriod, queryAppStatsToday, querySessionDetail, querySessionStatsMap,
   getImportState, setImportState, resetSessionData, close,
   listSessionMeta, getSessionMeta, setSessionMeta,

@@ -108,6 +108,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   localStats: {
     query: (days) => ipcRenderer.invoke('localStats:query', days),
+    todaySummary: () => ipcRenderer.invoke('localStats:todaySummary'),
     compression: (days) => ipcRenderer.invoke('localStats:compression', days),
     appsUsage: (days) => ipcRenderer.invoke('localStats:appsUsage', days),
   },

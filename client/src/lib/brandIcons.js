@@ -13,7 +13,7 @@ import deepseek from '@lobehub/icons-static-svg/icons/deepseek-color.svg';
 import kimi from '@lobehub/icons-static-svg/icons/kimi-color.svg';
 import glm from '@lobehub/icons-static-svg/icons/glmv-color.svg';
 import qwen from '@lobehub/icons-static-svg/icons/qwen-color.svg';
-import copilot from '@lobehub/icons-static-svg/icons/copilot-color.svg';
+import volcengine from '@lobehub/icons-static-svg/icons/volcengine-color.svg';
 
 // 顺序敏感：更具体的规则在前（claude code 先于 claude；gemini cli 先于 gemini）。
 const RULES = [
@@ -30,6 +30,7 @@ const RULES = [
   [/glm|zhipu|chatglm|智谱/i, glm],
   [/qwen|通义|tongyi/i, qwen],
   [/copilot/i, copilot],
+  [/volcengine|火山|volc/i, volcengine],
 ];
 
 /** 依据任意文本（应用名/模型名/供给源名）推断品牌 logo URL，无匹配返回 null。 */

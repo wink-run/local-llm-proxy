@@ -3,124 +3,148 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LLM Proxy Admin</title>
+<title>Token Bank Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <script src="/static/vue.global.prod.js"></script>
 <style>
+/* 与 landing / 用户门户一致的浅色设计系统 */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0f1117;color:#e2e8f0;font-size:14px;min-height:100vh}
-.login-overlay{position:fixed;inset:0;background:#0f1117;display:flex;align-items:center;justify-content:center}
-.login-box{background:#1a1d27;border:1px solid #2d3148;border-radius:12px;padding:40px;width:360px;text-align:center}
-.login-box h2{font-size:22px;margin-bottom:8px;color:#fff}
-.login-box p{color:#64748b;margin-bottom:24px;font-size:13px}
-.login-box input{width:100%;padding:10px 14px;background:#0f1117;border:1px solid #2d3148;border-radius:8px;color:#e2e8f0;font-size:14px;margin-bottom:12px;outline:none}
-.login-box input:focus{border-color:#6366f1}
-.btn-primary{width:100%;padding:10px;background:#6366f1;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px}
-.btn-primary:hover{background:#5254cc}
-.error-msg{color:#f87171;margin-top:10px;font-size:13px}
-.app{display:flex;flex-direction:column;height:100vh}
-header{display:flex;align-items:center;justify-content:space-between;padding:0 24px;height:56px;background:#1a1d27;border-bottom:1px solid #2d3148;flex-shrink:0}
-.header-title{font-size:16px;font-weight:600;color:#fff}
-.header-title span{color:#6366f1}
+:root{
+  --bg:#fff;--bg-muted:#f5f2f0;--bg-subtle:#faf9f5;
+  --text:#000;--text-secondary:#333;--text-muted:#7b7b7b;--text-faint:#bcbcbc;
+  --border:#e7e4e1;--border-light:#f0eeec;
+  --accent:#f1ccff;--primary:#000;--primary-fg:#fff;
+  --success:#16a34a;--danger:#dc2626;
+  --radius:10px;--radius-lg:18px;
+  --font:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
+  --mono:'Space Mono',ui-monospace,monospace;
+}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px;min-height:100vh;-webkit-font-smoothing:antialiased}
+.login-overlay{position:fixed;inset:0;background:var(--bg-subtle);display:flex;align-items:center;justify-content:center;padding:24px}
+.login-box{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:40px;width:380px;max-width:100%;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,.04)}
+.login-box h2{font-size:22px;margin-bottom:8px;color:var(--text);font-weight:700;letter-spacing:-.02em}
+.login-box p{color:var(--text-muted);margin-bottom:24px;font-size:13px}
+.login-box input{width:100%;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:14px;margin-bottom:12px;outline:none;font-family:inherit}
+.login-box input:focus{border-color:var(--text)}
+.btn-primary{width:100%;padding:10px 20px;background:var(--primary);color:var(--primary-fg);border:none;border-radius:var(--radius);cursor:pointer;font-size:14px;font-family:inherit;font-weight:500}
+.btn-primary:hover{opacity:.88}
+.error-msg{color:var(--danger);margin-top:10px;font-size:13px}
+.app{display:flex;flex-direction:column;height:100vh;background:var(--bg)}
+header{display:flex;align-items:center;justify-content:space-between;padding:0 24px;height:56px;background:rgba(255,255,255,.82);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--border-light);flex-shrink:0;position:sticky;top:0;z-index:40}
+.header-title{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:600;color:var(--text);letter-spacing:-.01em}
+.header-title span{color:var(--text-muted);font-weight:500}
+.brand-mark{width:28px;height:28px;border-radius:9px;background:#fff;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.brand-mark::after{content:'';width:11px;height:11px;background:var(--accent);border-radius:3px;transform:rotate(45deg)}
 .header-right{display:flex;align-items:center;gap:8px}
-nav{display:flex;gap:4px;padding:12px 24px 0;background:#1a1d27;border-bottom:1px solid #2d3148;flex-shrink:0;overflow-x:auto}
-nav button{padding:8px 18px;background:transparent;border:none;border-radius:6px 6px 0 0;color:#94a3b8;cursor:pointer;font-size:14px;transition:all .15s;border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap}
-nav button:hover{color:#e2e8f0}
-nav button.active{color:#6366f1;border-bottom-color:#6366f1;background:#0f1117}
+nav{display:flex;gap:6px;padding:12px 24px;background:var(--bg);border-bottom:1px solid var(--border-light);flex-shrink:0;overflow-x:auto}
+nav button{padding:8px 14px;white-space:nowrap;background:transparent;border:none;border-radius:8px;color:var(--text-muted);cursor:pointer;font-size:14px;transition:all .15s;font-family:inherit}
+nav button:hover{color:var(--text)}
+nav button.active{color:var(--text);font-weight:500;background:var(--bg-muted)}
 .tab-content{flex:1;overflow:auto;padding:24px}
+.panel{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;margin-bottom:20px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
 .toolbar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
 .toolbar-right{margin-left:auto}
-.btn{padding:7px 14px;border-radius:6px;border:none;cursor:pointer;font-size:13px;transition:background .15s}
-.btn-indigo{background:#6366f1;color:#fff}
-.btn-indigo:hover{background:#5254cc}
-.btn-sm{padding:5px 12px;border-radius:6px;border:1px solid #2d3148;background:#1a1d27;color:#94a3b8;cursor:pointer;font-size:12px}
-.btn-sm:hover{color:#e2e8f0;border-color:#4a4f6a}
-.btn-xs{padding:3px 8px;border-radius:4px;border:1px solid #2d3148;background:transparent;color:#94a3b8;cursor:pointer;font-size:11px;margin-left:4px}
-.btn-xs:hover{color:#e2e8f0}
-.btn-danger{border-color:#7f1d1d;color:#f87171}
-.btn-danger:hover{background:#450a0a;color:#fca5a5}
-.btn-lang{padding:5px 10px;border-radius:6px;border:1px solid #2d3148;background:transparent;color:#64748b;cursor:pointer;font-size:12px;font-weight:600}
-.btn-lang:hover{color:#6366f1;border-color:#6366f1}
+.btn{padding:7px 14px;border-radius:var(--radius);border:none;cursor:pointer;font-size:13px;transition:opacity .15s;font-family:inherit;font-weight:500}
+.btn-indigo{background:var(--primary);color:var(--primary-fg)}
+.btn-indigo:hover{opacity:.88}
+.btn-sm{padding:5px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text-secondary);cursor:pointer;font-size:12px;font-family:inherit}
+.btn-sm:hover{color:var(--text);border-color:var(--text-muted)}
+.btn-xs{padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer;font-size:11px;margin-left:4px;font-family:inherit}
+.btn-xs:hover{color:var(--text)}
+.btn-danger{border-color:#fecaca;color:var(--danger)}
+.btn-danger:hover{background:#fef2f2}
+.btn-lang{padding:5px 10px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer;font-size:12px;font-weight:600;font-family:inherit}
+.btn-lang:hover{border-color:var(--text)}
 table{width:100%;border-collapse:collapse}
-thead th{text-align:left;padding:10px 12px;color:#64748b;font-weight:500;font-size:12px;border-bottom:1px solid #2d3148;white-space:nowrap}
-tbody tr{border-bottom:1px solid #1e2235;transition:background .1s}
-tbody tr:hover{background:#1a1d27}
+thead th{text-align:left;padding:10px 12px;color:var(--text-muted);font-weight:500;font-size:12px;border-bottom:1px solid var(--border-light);white-space:nowrap;text-transform:uppercase;letter-spacing:.03em}
+tbody tr{border-bottom:1px solid var(--border-light);transition:background .1s}
+tbody tr:hover{background:var(--bg-muted)}
 tbody tr.inactive{opacity:.5}
 td{padding:11px 12px;vertical-align:middle}
-.empty-row td{text-align:center;color:#4a5568;padding:40px}
+.empty-row td{text-align:center;color:var(--text-faint);padding:40px}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px}
-.dot-online{background:#22c55e;box-shadow:0 0 6px #22c55e88}
-.tag{display:inline-block;padding:2px 8px;background:#1e2a4a;color:#93c5fd;border-radius:4px;font-size:11px;margin:2px}
-.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px}
-.badge-on{background:#14532d;color:#86efac}
-.badge-off{background:#1c1917;color:#78716c}
-.badge-green{background:#14532d;color:#86efac}
-.badge-red{background:#450a0a;color:#fca5a5}
-.badge-blue{background:#1e2a4a;color:#93c5fd}
-.badge-yellow{background:#422006;color:#fcd34d}
-.mono{font-family:"SFMono-Regular",Consolas,monospace;font-size:12px}
-.key-val{color:#94a3b8}
-.note-input{padding:7px 12px;background:#1a1d27;border:1px solid #2d3148;border-radius:6px;color:#e2e8f0;font-size:13px;width:220px;outline:none}
-.note-input:focus{border-color:#6366f1}
-.debug-layout{display:flex;flex-direction:column;height:calc(100vh - 130px)}
+.dot-online{background:#22c55e;box-shadow:0 0 6px #22c55e66}
+.tag{display:inline-block;padding:2px 8px;background:var(--bg-muted);color:var(--text-secondary);border-radius:6px;font-size:11px;margin:2px;border:1px solid var(--border-light)}
+.badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:500}
+.badge-on,.badge-green{background:#dcfce7;color:#166534}
+.badge-off{background:var(--bg-muted);color:var(--text-muted)}
+.badge-red{background:#fee2e2;color:#991b1b}
+.badge-blue{background:#e0f2fe;color:#075985}
+.badge-yellow{background:#fef3c7;color:#92400e}
+.mono{font-family:var(--mono);font-size:12px}
+.key-val{color:var(--text-muted)}
+.note-input{padding:7px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;width:220px;outline:none;font-family:inherit}
+.note-input:focus{border-color:var(--text)}
+/* 调试区（保留完整功能，浅色样式） */
+.debug-layout{display:flex;flex-direction:column;height:calc(100vh - 130px);min-height:320px}
 .debug-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-shrink:0;flex-wrap:wrap}
-.debug-mode-btn{padding:5px 14px;border-radius:6px;font-size:12px;font-weight:500;border:1px solid #2d3148;cursor:pointer;transition:background .15s,color .15s}
-.debug-mode-btn.active{background:#6366f1;color:#fff;border-color:#6366f1}
-.debug-mode-btn:not(.active){background:#1a1d27;color:#94a3b8}
-.debug-mode-btn:not(.active):hover{background:#2d3148}
+.debug-mode-btn{padding:5px 14px;border-radius:8px;font-size:12px;font-weight:500;border:1px solid var(--border);cursor:pointer;transition:all .15s;font-family:inherit}
+.debug-mode-btn.active{background:var(--primary);color:var(--primary-fg);border-color:var(--primary)}
+.debug-mode-btn:not(.active){background:var(--bg);color:var(--text-muted)}
+.debug-mode-btn:not(.active):hover{background:var(--bg-muted);color:var(--text)}
 .img-result-wrap{position:relative;display:inline-block}
-.img-result-wrap img{border-radius:8px;max-width:100%;cursor:zoom-in;display:block}
+.img-result-wrap img{border-radius:8px;max-width:100%;cursor:zoom-in;display:block;border:1px solid var(--border)}
 .img-actions{position:absolute;bottom:8px;right:8px;display:flex;gap:4px;opacity:0;transition:opacity .15s}
 .img-result-wrap:hover .img-actions{opacity:1}
 .img-action-btn{padding:3px 10px;font-size:11px;background:rgba(0,0,0,.65);color:#fff;border:none;border-radius:6px;cursor:pointer;backdrop-filter:blur(4px)}
-.img-action-btn:hover{background:rgba(0,0,0,.85)}
 .lightbox{position:fixed;inset:0;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;z-index:1000;cursor:zoom-out}
 .lightbox img{max-width:95vw;max-height:95vh;object-fit:contain;border-radius:6px;cursor:default}
 .lightbox-close{position:absolute;top:16px;right:20px;color:rgba(255,255,255,.7);font-size:24px;cursor:pointer;line-height:1}
-.lightbox-close:hover{color:#fff}
-.model-select{padding:7px 12px;background:#1a1d27;border:1px solid #2d3148;border-radius:6px;color:#e2e8f0;font-size:13px;min-width:200px;outline:none}
-.model-select:focus{border-color:#6366f1}
-.chat-area{flex:1;overflow-y:auto;padding:16px;background:#13151f;border:1px solid #2d3148;border-radius:8px;margin-bottom:12px;display:flex;flex-direction:column;gap:12px}
-.chat-placeholder{text-align:center;color:#4a5568;margin:auto}
+.model-select{padding:7px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;min-width:200px;outline:none;font-family:inherit}
+.model-select:focus{border-color:var(--text)}
+.chat-area{flex:1;overflow-y:auto;padding:16px;background:var(--bg-muted);border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:12px;display:flex;flex-direction:column;gap:12px}
+.chat-placeholder{text-align:center;color:var(--text-faint);margin:auto}
 .chat-msg{display:flex;flex-direction:column;max-width:80%}
 .chat-msg.user{align-self:flex-end;align-items:flex-end}
 .chat-msg.assistant{align-self:flex-start;align-items:flex-start}
-.msg-label{font-size:11px;color:#4a5568;margin-bottom:4px;padding:0 4px}
-.msg-bubble{padding:10px 14px;border-radius:10px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
-.chat-msg.user .msg-bubble{background:#3730a3;color:#e0e7ff;border-radius:10px 2px 10px 10px}
-.chat-msg.assistant .msg-bubble{background:#1a1d27;color:#e2e8f0;border-radius:2px 10px 10px 10px;border:1px solid #2d3148}
+.msg-label{font-size:11px;color:var(--text-faint);margin-bottom:4px;padding:0 4px}
+.msg-bubble{padding:10px 14px;border-radius:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.chat-msg.user .msg-bubble{background:var(--primary);color:var(--primary-fg);border-radius:12px 4px 12px 12px}
+.chat-msg.assistant .msg-bubble{background:var(--bg);color:var(--text);border-radius:4px 12px 12px 12px;border:1px solid var(--border)}
 .cursor::after{content:"▋";animation:blink .7s step-end infinite}
 @keyframes blink{50%{opacity:0}}
 .chat-input-area{display:flex;gap:8px;flex-shrink:0}
-.chat-input-area textarea{flex:1;padding:10px 14px;resize:none;height:70px;background:#1a1d27;border:1px solid #2d3148;border-radius:8px;color:#e2e8f0;font-size:14px;font-family:inherit;outline:none;line-height:1.5}
-.chat-input-area textarea:focus{border-color:#6366f1}
-.chat-input-area textarea:disabled{opacity:.5}
-.send-btn{padding:0 20px;background:#6366f1;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;white-space:nowrap}
-.send-btn:hover:not(:disabled){background:#5254cc}
+.chat-input-area textarea{flex:1;padding:10px 14px;resize:none;height:70px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:14px;font-family:inherit;outline:none;line-height:1.5}
+.chat-input-area textarea:focus{border-color:var(--text)}
+.send-btn{padding:0 20px;background:var(--primary);color:var(--primary-fg);border:none;border-radius:var(--radius);cursor:pointer;font-size:14px;white-space:nowrap;font-family:inherit;font-weight:500}
+.send-btn:hover:not(:disabled){opacity:.88}
 .send-btn:disabled{opacity:.4;cursor:not-allowed}
 .form-row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px}
 .form-group{display:flex;flex-direction:column;gap:6px}
-.form-group label{font-size:12px;color:#94a3b8}
-.form-input{padding:8px 12px;background:#0f1117;border:1px solid #2d3148;border-radius:6px;color:#e2e8f0;font-size:13px;outline:none}
-.form-input:focus{border-color:#6366f1}
+.form-group label{font-size:12px;color:var(--text-muted)}
+.form-input{padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;font-family:inherit}
+.form-input:focus{border-color:var(--text)}
 select.form-input{cursor:pointer}
 .form-input-sm{width:120px}.form-input-md{width:200px}.form-input-lg{width:280px}
-.toggle-row{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #1e2235}
+.toggle-row{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border-light)}
 .toggle-row:last-child{border-bottom:none}
 .toggle-label{flex:1;font-size:13px}
-.toggle-sub{font-size:12px;color:#64748b}
-/* exchange preview */
-.exchange-box{background:#0f1117;border:1px solid #2d3148;border-radius:8px;padding:14px 16px;margin-top:12px;font-size:12px}
-.exchange-box h4{font-size:12px;color:#64748b;margin-bottom:10px;font-weight:500}
-.exchange-row{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #1e2235;line-height:1.4}
+.toggle-sub{font-size:12px;color:var(--text-muted)}
+.exchange-box{background:var(--bg-muted);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin-top:12px;font-size:12px}
+.exchange-box h4{font-size:12px;color:var(--text-muted);margin-bottom:10px;font-weight:500}
+.exchange-row{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border-light);line-height:1.4}
 .exchange-row:last-child{border-bottom:none}
-.ex-from{min-width:110px;font-family:monospace;font-size:11px}
-.ex-arrow{color:#4a5568}
-.ex-to{flex:1;color:#94a3b8}
-.ex-to b{color:#e2e8f0}
-.hint-tip{font-size:11px;color:#f59e0b;margin-top:6px;padding:4px 0}
+.ex-from{min-width:110px;font-family:var(--mono);font-size:11px}
+.ex-arrow{color:var(--text-faint)}
+.ex-to{flex:1;color:var(--text-muted)}
+.ex-to b{color:var(--text)}
+.hint-tip{font-size:11px;color:#d97706;margin-top:6px;padding:4px 0}
+.code-area{flex:1;min-height:400px;padding:10px 12px;background:var(--bg-muted);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:12px;line-height:1.6;resize:vertical;outline:none;width:100%}
+.code-area:focus{border-color:var(--text)}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:100}
+.modal-box{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px;width:480px;max-width:95vw;max-height:90vh;overflow:auto;box-shadow:0 12px 40px rgba(0,0,0,.08)}
+.modal-title{font-size:14px;font-weight:600;color:var(--text);margin-bottom:18px}
+.oauth-box{background:var(--bg-muted);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:12px}
+.type-toggle{display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;flex-shrink:0}
+.type-toggle button{padding:4px 10px;font-size:12px;border:none;cursor:pointer;font-family:inherit}
+.type-toggle button.on{background:var(--primary);color:var(--primary-fg)}
+.type-toggle button.off{background:var(--bg-muted);color:var(--text-muted)}
+.btn-approve{background:#dcfce7;color:#166534;border:none;cursor:pointer}
 ::-webkit-scrollbar{width:6px}
 ::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:#2d3148;border-radius:3px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 </style>
 </head>
 <body>
@@ -129,7 +153,8 @@ select.form-input{cursor:pointer}
   <!-- Login -->
   <div v-if="!loggedIn" class="login-overlay">
     <div class="login-box">
-      <h2>LLM Proxy</h2>
+      <div style="display:flex;justify-content:center;margin-bottom:10px"><span class="brand-mark" style="width:32px;height:32px"></span></div>
+      <h2>Token Bank</h2>
       <p>{{ T.loginHint }}</p>
       <input v-model="loginKey" type="password" :placeholder="T.adminKey" @keyup.enter="login" autofocus />
       <button class="btn-primary" @click="login">{{ T.loginBtn }}</button>
@@ -143,7 +168,7 @@ select.form-input{cursor:pointer}
   <!-- Main -->
   <div v-else class="app">
     <header>
-      <div class="header-title">LLM Proxy <span>{{ T.adminTitle }}</span></div>
+      <div class="header-title"><span class="brand-mark"></span> Token Bank <span>{{ T.adminTitle }}</span></div>
       <div class="header-right">
         <button class="btn-lang" @click="toggleLang">{{ lang === 'zh' ? 'EN' : '中' }}</button>
         <button class="btn-sm" @click="logout">{{ T.logout }}</button>
@@ -159,7 +184,7 @@ select.form-input{cursor:pointer}
     <!-- Workers -->
     <div v-show="activeTab === 'workers'" class="tab-content">
       <div class="toolbar">
-        <span style="color:#64748b;font-size:13px">{{ T.autoRefresh }}</span>
+        <span style="color:#7b7b7b;font-size:13px">{{ T.autoRefresh }}</span>
         <button class="btn-sm toolbar-right" @click="fetchWorkers">{{ T.refresh }}</button>
       </div>
       <table>
@@ -169,8 +194,8 @@ select.form-input{cursor:pointer}
           <tr v-for="w in workers" :key="w.worker_id">
             <td><span class="dot dot-online"></span>{{ w.name }}</td>
             <td class="mono">{{ w.worker_id }}</td>
-            <td><span v-for="m in w.models" :key="m" class="tag">{{ m }}<span v-if="(w.model_types||{})[m]==='image'" style="margin-left:3px;color:#a78bfa;font-size:10px">图</span></span></td>
-            <td style="color:#64748b">{{ fmtTime(w.connected_at) }}</td>
+            <td><span v-for="m in w.models" :key="m" class="tag">{{ m }}<span v-if="(w.model_types||{})[m]==='image'" style="margin-left:3px;color:#9333ea;font-size:10px">图</span></span></td>
+            <td style="color:#7b7b7b">{{ fmtTime(w.connected_at) }}</td>
             <td>{{ w.active_requests }}</td>
           </tr>
         </tbody>
@@ -188,11 +213,11 @@ select.form-input{cursor:pointer}
         <tbody>
           <tr v-if="keys.length === 0" class="empty-row"><td colspan="6">{{ T.noKeys }}</td></tr>
           <tr v-for="k in keys" :key="k.id" :class="{ inactive: !k.is_active }">
-            <td style="color:#64748b">{{ k.id }}</td>
+            <td style="color:#7b7b7b">{{ k.id }}</td>
             <td><span class="mono key-val">{{ maskKey(k.key) }}</span><button class="btn-xs" @click="copyKey(k.key)" title="Copy">{{ T.copy }}</button></td>
-            <td style="color:#94a3b8">{{ k.note || '—' }}</td>
+            <td style="color:#7b7b7b">{{ k.note || '—' }}</td>
             <td><span :class="k.is_active ? 'badge badge-on' : 'badge badge-off'">{{ k.is_active ? T.enabled : T.disabled }}</span></td>
-            <td style="color:#64748b">{{ fmtTime(k.created_at) }}</td>
+            <td style="color:#7b7b7b">{{ fmtTime(k.created_at) }}</td>
             <td>
               <button class="btn-xs" @click="toggleKey(k)">{{ k.is_active ? T.disable : T.enable }}</button>
               <button class="btn-xs btn-danger" @click="removeKey(k.id)">{{ T.delete }}</button>
@@ -204,8 +229,8 @@ select.form-input{cursor:pointer}
 
     <!-- Models -->
     <div v-show="activeTab === 'models'" class="tab-content">
-      <div style="background:#1a1d27;border:1px solid #2d3148;border-radius:10px;padding:20px;margin-bottom:20px">
-        <div style="font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #2d3148">{{ T.addEditModel }}</div>
+      <div class="panel">
+        <div style="font-size:13px;font-weight:600;color:#000;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #e7e4e1">{{ T.addEditModel }}</div>
         <div class="form-row">
           <div class="form-group"><label>{{ T.modelName }} *</label><input v-model="modelForm.name" class="form-input form-input-md" placeholder="qwen3-32b" /></div>
           <div class="form-group"><label>{{ T.displayName }}</label><input v-model="modelForm.display_name" class="form-input form-input-md" placeholder="Qwen3-32B" /></div>
@@ -217,11 +242,11 @@ select.form-input{cursor:pointer}
             </select>
           </div>
           <div class="form-group">
-            <label>{{ T.contributeRate }} <span style="color:#2dd4bf;font-size:11px">↑ {{ T.earnLabel }}</span></label>
+            <label>{{ T.contributeRate }} <span style="color:#0d9488;font-size:11px">↑ {{ T.earnLabel }}</span></label>
             <input v-model.number="modelForm.contribute_rate" class="form-input form-input-sm" type="number" min="0" step="0.1" />
           </div>
           <div class="form-group">
-            <label>{{ T.consumeRate }} <span style="color:#fbbf24;font-size:11px">↓ {{ T.spendLabel }}</span></label>
+            <label>{{ T.consumeRate }} <span style="color:#d97706;font-size:11px">↓ {{ T.spendLabel }}</span></label>
             <input v-model.number="modelForm.consume_rate" class="form-input form-input-sm" type="number" min="0" step="0.1" />
           </div>
           <div class="form-group">
@@ -243,11 +268,11 @@ select.form-input{cursor:pointer}
         <div class="exchange-box">
           <h4>{{ T.exchangePreview }}</h4>
           <div class="exchange-row">
-            <span class="ex-from" :style="modelForm.tier==='premium'?'color:#a5b4fc':'color:#4ade80'">
+            <span class="ex-from" :style="modelForm.tier==='premium'?'color:#6366f1':'color:#16a34a'">
               {{ T.contribute1K }} ({{ modelForm.tier }})
             </span>
             <span class="ex-arrow">→</span>
-            <span style="color:#2dd4bf;font-weight:700;min-width:60px">{{ modelForm.contribute_rate }} {{ T.credits }}</span>
+            <span style="color:#0d9488;font-weight:700;min-width:60px">{{ modelForm.contribute_rate }} {{ T.credits }}</span>
             <span class="ex-arrow">→</span>
             <span class="ex-to">
               <template v-if="modelForm.consume_rate > 0">
@@ -258,17 +283,17 @@ select.form-input{cursor:pointer}
                   <span v-for="cp in crossPreview" :key="cp.name">
                     {{ T.or }}
                     <b>{{ cp.ratio }}K</b>
-                    <span :style="cp.tier==='premium'?'color:#a5b4fc':'color:#4ade80'">[{{ cp.tier }}]</span>
+                    <span :style="cp.tier==='premium'?'color:#6366f1':'color:#16a34a'">[{{ cp.tier }}]</span>
                     {{ cp.display_name || cp.name }}
                   </span>
                 </template>
               </template>
             </span>
           </div>
-          <div style="margin-top:8px;font-size:11px;color:#4a5568">{{ T.exchangeNote }}</div>
+          <div style="margin-top:8px;font-size:11px;color:#bcbcbc">{{ T.exchangeNote }}</div>
         </div>
 
-        <div v-if="modelMsg" style="color:#4ade80;font-size:13px;margin-top:8px">{{ modelMsg }}</div>
+        <div v-if="modelMsg" style="color:#16a34a;font-size:13px;margin-top:8px">{{ modelMsg }}</div>
       </div>
       <table>
         <thead><tr><th>{{ T.modelName }}</th><th>{{ T.displayName }}</th><th>{{ T.tier }}</th><th>{{ T.contributeRate }}</th><th>{{ T.consumeRate }}</th><th>{{ T.status }}</th><th>{{ T.actions }}</th></tr></thead>
@@ -276,7 +301,7 @@ select.form-input{cursor:pointer}
           <tr v-if="models.length === 0" class="empty-row"><td colspan="7">{{ T.noModels }}</td></tr>
           <tr v-for="m in models" :key="m.name">
             <td class="mono">{{ m.name }}</td>
-            <td style="color:#94a3b8">{{ m.display_name || '—' }}</td>
+            <td style="color:#7b7b7b">{{ m.display_name || '—' }}</td>
             <td><span :class="m.tier === 'premium' ? 'badge badge-blue' : 'badge badge-on'">{{ m.tier }}</span></td>
             <td>{{ m.contribute_rate }}</td>
             <td>{{ m.consume_rate }}</td>
@@ -293,7 +318,7 @@ select.form-input{cursor:pointer}
     <!-- Users -->
     <div v-show="activeTab === 'users'" class="tab-content">
       <div class="toolbar">
-        <span style="color:#64748b;font-size:13px">{{ T.totalUsers(users.length) }}</span>
+        <span style="color:#7b7b7b;font-size:13px">{{ T.totalUsers(users.length) }}</span>
         <button class="btn-sm toolbar-right" @click="fetchUsers">{{ T.refresh }}</button>
       </div>
       <table>
@@ -301,11 +326,11 @@ select.form-input{cursor:pointer}
         <tbody>
           <tr v-if="users.length === 0" class="empty-row"><td colspan="7">{{ T.noUsers }}</td></tr>
           <tr v-for="u in users" :key="u.id">
-            <td style="color:#64748b">{{ u.id }}</td>
+            <td style="color:#7b7b7b">{{ u.id }}</td>
             <td>{{ u.email }}</td>
-            <td style="color:#94a3b8">{{ u.nickname }}</td>
+            <td style="color:#7b7b7b">{{ u.nickname }}</td>
             <td style="font-weight:600">{{ Number(u.credits_balance).toFixed(1) }}</td>
-            <td style="color:#64748b">{{ Number(u.credits_earned).toFixed(1) }}</td>
+            <td style="color:#7b7b7b">{{ Number(u.credits_earned).toFixed(1) }}</td>
             <td>
               <span :class="u.can_create_apikey ? 'badge badge-on' : 'badge badge-off'" style="cursor:pointer" @click="toggleApikey(u)">
                 {{ u.can_create_apikey ? T.granted : T.notGranted }}
@@ -331,23 +356,23 @@ select.form-input{cursor:pointer}
         <tbody>
           <tr v-if="orders.length === 0" class="empty-row"><td colspan="8">{{ T.noOrders }}</td></tr>
           <tr v-for="o in orders" :key="o.id">
-            <td style="color:#64748b">{{ o.id }}</td>
-            <td style="color:#64748b">{{ o.user_id }}</td>
+            <td style="color:#7b7b7b">{{ o.id }}</td>
+            <td style="color:#7b7b7b">{{ o.user_id }}</td>
             <td style="font-weight:600">{{ o.amount_credits }}</td>
             <td><span :class="{ 'badge badge-yellow': o.status==='pending', 'badge badge-on': o.status==='approved', 'badge badge-red': o.status==='rejected' }">{{ T.orderLabels[o.status] || o.status }}</span></td>
-            <td style="color:#64748b">{{ fmtTime(o.created_at) }}</td>
-            <td style="color:#94a3b8">{{ o.note || '—' }}</td>
-            <td style="color:#64748b">{{ o.admin_note || '—' }}</td>
+            <td style="color:#7b7b7b">{{ fmtTime(o.created_at) }}</td>
+            <td style="color:#7b7b7b">{{ o.note || '—' }}</td>
+            <td style="color:#7b7b7b">{{ o.admin_note || '—' }}</td>
             <td>
               <template v-if="o.status === 'pending'">
                 <input v-model="orderNote[o.id]" class="form-input" type="text" style="width:100px;margin-right:4px" :placeholder="T.note" />
-                <label style="font-size:12px;color:#94a3b8;margin-right:6px;cursor:pointer">
+                <label style="font-size:12px;color:#7b7b7b;margin-right:6px;cursor:pointer">
                   <input type="checkbox" v-model="orderGrantApikey[o.id]" style="margin-right:3px" />{{ T.grantApikey }}
                 </label>
-                <button class="btn-xs" style="background:#14532d;color:#86efac;border:none;cursor:pointer;margin-right:4px" @click="approveOrder(o)">{{ T.approve }}</button>
+                <button class="btn-xs btn-approve" style="margin-right:4px" @click="approveOrder(o)">{{ T.approve }}</button>
                 <button class="btn-xs btn-danger" @click="rejectOrder(o)">{{ T.reject }}</button>
               </template>
-              <span v-else style="color:#4a5568">—</span>
+              <span v-else style="color:#bcbcbc">—</span>
             </td>
           </tr>
         </tbody>
@@ -356,8 +381,8 @@ select.form-input{cursor:pointer}
 
     <!-- System Config -->
     <div v-show="activeTab === 'config'" class="tab-content">
-      <div style="background:#1a1d27;border:1px solid #2d3148;border-radius:10px;padding:20px;max-width:600px">
-        <div style="font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid #2d3148">{{ T.sysConfig }}</div>
+      <div class="panel" style="max-width:600px">
+        <div style="font-size:13px;font-weight:600;color:#000;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid #e7e4e1">{{ T.sysConfig }}</div>
         <div v-for="(val, key) in sysConfig" :key="key" class="toggle-row">
           <div class="toggle-label">
             <div>{{ T.configLabels[key] || key }}</div>
@@ -366,7 +391,7 @@ select.form-input{cursor:pointer}
           <input v-model="sysConfig[key]" class="form-input form-input-md" :type="key.includes('reward') ? 'number' : 'text'" />
           <button class="btn-xs" :disabled="configSaving[key]" @click="saveConfig(key)">{{ configSaving[key] ? T.saving : T.save }}</button>
         </div>
-        <div v-if="Object.keys(sysConfig).length === 0" style="color:#4a5568;font-size:13px">{{ T.loading }}</div>
+        <div v-if="Object.keys(sysConfig).length === 0" style="color:#bcbcbc;font-size:13px">{{ T.loading }}</div>
       </div>
     </div>
 
@@ -402,8 +427,8 @@ select.form-input{cursor:pointer}
             <div class="msg-label">{{ m.role === 'user' ? T.you : 'AI' }}</div>
             <!-- Image result -->
             <template v-if="m.images !== undefined">
-              <div v-if="m.generating" class="msg-bubble" style="color:#64748b">生成中…</div>
-              <div v-else-if="m.error" class="msg-bubble" style="color:#f87171;background:#2d1515;border-color:#7f1d1d;white-space:pre-wrap;word-break:break-all">{{ m.error }}</div>
+              <div v-if="m.generating" class="msg-bubble" style="color:#7b7b7b">生成中…</div>
+              <div v-else-if="m.error" class="msg-bubble" style="color:#dc2626;background:#fef2f2;border:1px solid #fecaca;white-space:pre-wrap;word-break:break-all">{{ m.error }}</div>
               <div v-else-if="m.images && m.images.length" style="display:flex;flex-wrap:wrap;gap:8px">
                 <div v-for="(src,j) in m.images" :key="j" class="img-result-wrap">
                   <img :src="src" @click="lightboxSrc=src" />
@@ -413,7 +438,7 @@ select.form-input{cursor:pointer}
                   </div>
                 </div>
               </div>
-              <div v-else class="msg-bubble" style="color:#64748b">无图像返回</div>
+              <div v-else class="msg-bubble" style="color:#7b7b7b">无图像返回</div>
             </template>
             <!-- Chat result -->
             <div v-else :class="['msg-bubble', m.streaming ? 'cursor' : '']">{{ m.content }}</div>
@@ -434,7 +459,7 @@ select.form-input{cursor:pointer}
     <!-- Virtual Agents -->
     <div v-show="activeTab === 'virtual'" class="tab-content">
       <div class="toolbar">
-        <span style="color:#64748b;font-size:13px">{{ T.vaList }}</span>
+        <span style="color:#7b7b7b;font-size:13px">{{ T.vaList }}</span>
         <button class="btn btn-indigo toolbar-right" @click="openVaModal(null)">＋ {{ T.vaAdd }}</button>
       </div>
       <table>
@@ -443,15 +468,15 @@ select.form-input{cursor:pointer}
           <tr v-if="virtualAgents.length === 0" class="empty-row"><td colspan="6">{{ T.noVirtualAgents }}</td></tr>
           <tr v-for="a in virtualAgents" :key="a.id" :class="{ inactive: !a.enabled }">
             <td>{{ a.name }}</td>
-            <td class="mono" style="font-size:12px;color:#94a3b8">
-              <span v-if="a.api_style==='claude_oauth'" :style="(a.credentials && a.credentials.has_refresh_token) ? 'color:#a78bfa' : 'color:#f87171'">
+            <td class="mono" style="font-size:12px;color:#7b7b7b">
+              <span v-if="a.api_style==='claude_oauth'" :style="(a.credentials && a.credentials.has_refresh_token) ? 'color:#9333ea' : 'color:#dc2626'">
                 🔑 {{ (a.credentials && a.credentials.has_refresh_token) ? (lang==='zh'?'已登录':'linked') : (lang==='zh'?'未登录':'no token') }}
-                <span v-if="a.credentials && a.credentials.email" style="color:#64748b"> · {{ a.credentials.email }}</span>
+                <span v-if="a.credentials && a.credentials.email" style="color:#7b7b7b"> · {{ a.credentials.email }}</span>
               </span>
               <span v-else>{{ a.base_url }}</span>
             </td>
             <td><span class="tag">{{ a.api_style }}</span></td>
-            <td><span v-for="m in a.models" :key="vaModelName(m)" class="tag">{{ vaModelName(m) }}<span v-if="vaModelType(m)==='image'" style="margin-left:3px;color:#a78bfa;font-size:10px">图</span></span></td>
+            <td><span v-for="m in a.models" :key="vaModelName(m)" class="tag">{{ vaModelName(m) }}<span v-if="vaModelType(m)==='image'" style="margin-left:3px;color:#9333ea;font-size:10px">图</span></span></td>
             <td><span :class="a.enabled ? 'badge badge-on' : 'badge badge-off'">{{ a.enabled ? T.enabled : T.disabled }}</span></td>
             <td>
               <button class="btn-xs" @click="openVaModal(a)">{{ T.edit }}</button>
@@ -462,9 +487,9 @@ select.form-input{cursor:pointer}
       </table>
 
       <!-- Modal -->
-      <div v-if="vaModalOpen" style="position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100" @click.self="closeVaModal">
-        <div style="background:#1a1d27;border:1px solid #2d3148;border-radius:12px;padding:28px;width:480px;max-width:95vw">
-          <div style="font-size:14px;font-weight:600;color:#e2e8f0;margin-bottom:18px">{{ vaEditId ? T.vaEdit : T.vaAdd }}</div>
+      <div v-if="vaModalOpen" class="modal-overlay" @click.self="closeVaModal">
+        <div class="modal-box">
+          <div class="modal-title">{{ vaEditId ? T.vaEdit : T.vaAdd }}</div>
           <div class="form-group" style="margin-bottom:12px">
             <label>{{ T.vaName }} *</label>
             <input v-model="vaForm.name" class="form-input" style="width:100%" placeholder="My LLM Service" />
@@ -503,13 +528,13 @@ select.form-input{cursor:pointer}
               <label>{{ lang==='zh'?'上游地址（留空=官方 api.anthropic.com）':'Base URL (blank = official api.anthropic.com)' }}</label>
               <input v-model="vaForm.base_url" class="form-input" style="width:100%" placeholder="https://api.anthropic.com" />
             </div>
-            <div style="background:#161922;border:1px solid #2d3148;border-radius:8px;padding:14px;margin-bottom:12px">
-              <div style="font-size:12px;color:#94a3b8;margin-bottom:10px">{{ lang==='zh'?'Claude 订阅登录（OAuth）':'Claude subscription login (OAuth)' }}</div>
-              <div v-if="vaOAuth.refresh_token" style="color:#4ade80;font-size:13px;margin-bottom:8px">
+            <div class="oauth-box">
+              <div style="font-size:12px;color:#7b7b7b;margin-bottom:10px">{{ lang==='zh'?'Claude 订阅登录（OAuth）':'Claude subscription login (OAuth)' }}</div>
+              <div v-if="vaOAuth.refresh_token" style="color:#16a34a;font-size:13px;margin-bottom:8px">
                 ✓ {{ lang==='zh'?'已获取登录凭证':'Credential obtained' }}<span v-if="vaOAuth.email"> · {{ vaOAuth.email }}</span>
               </div>
-              <div v-else-if="vaEditId" style="color:#64748b;font-size:12px;margin-bottom:8px">{{ lang==='zh'?'已绑定订阅账号；如需更换可重新登录':'Already linked; re-login to replace' }}</div>
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#94a3b8;margin-bottom:10px;cursor:pointer">
+              <div v-else-if="vaEditId" style="color:#7b7b7b;font-size:12px;margin-bottom:8px">{{ lang==='zh'?'已绑定订阅账号；如需更换可重新登录':'Already linked; re-login to replace' }}</div>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#7b7b7b;margin-bottom:10px;cursor:pointer">
                 <input type="checkbox" v-model="vaOAuth.setupToken" /> {{ lang==='zh'?'Setup Token（仅推理，约 1 年有效）':'Setup token (inference only, ~1y)' }}
               </label>
               <button type="button" class="btn-sm" @click="vaStartOAuth" :disabled="vaOAuth.busy">{{ lang==='zh'?'① 打开授权页':'① Open auth page' }}</button>
@@ -524,24 +549,18 @@ select.form-input{cursor:pointer}
             <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px">
               <div v-for="(m, i) in vaForm.models" :key="i" style="display:flex;align-items:center;gap:6px">
                 <input v-model="vaForm.models[i].name" class="form-input" style="flex:1;min-width:0" placeholder="模型 ID" />
-                <div style="display:flex;border:1px solid #2d3148;border-radius:6px;overflow:hidden;flex-shrink:0">
-                  <button type="button"
-                    :style="m.type==='chat' ? 'background:#4f46e5;color:#fff' : 'background:#1e2130;color:#94a3b8'"
-                    style="padding:4px 10px;font-size:12px;border:none;cursor:pointer"
-                    @click="vaSetModelType(i,'chat')">对话</button>
-                  <button type="button"
-                    :style="m.type==='image' ? 'background:#4f46e5;color:#fff' : 'background:#1e2130;color:#94a3b8'"
-                    style="padding:4px 10px;font-size:12px;border:none;cursor:pointer"
-                    @click="vaSetModelType(i,'image')">图像</button>
+                <div class="type-toggle">
+                  <button type="button" :class="m.type==='chat' ? 'on' : 'off'" @click="vaSetModelType(i,'chat')">对话</button>
+                  <button type="button" :class="m.type==='image' ? 'on' : 'off'" @click="vaSetModelType(i,'image')">图像</button>
                 </div>
                 <button type="button" @click="vaRemoveModel(i)"
-                  style="background:none;border:none;color:#64748b;cursor:pointer;font-size:18px;line-height:1;padding:0 4px">×</button>
+                  style="background:none;border:none;color:#7b7b7b;cursor:pointer;font-size:18px;line-height:1;padding:0 4px">×</button>
               </div>
             </div>
             <button type="button" @click="vaAddModel"
-              style="background:none;border:none;color:#818cf8;font-size:12px;cursor:pointer;padding:0">＋ 添加模型</button>
+              style="background:none;border:none;color:#9333ea;font-size:12px;cursor:pointer;padding:0">＋ 添加模型</button>
           </div>
-          <div v-if="vaMsg" style="color:#f87171;font-size:13px;margin-bottom:10px">{{ vaMsg }}</div>
+          <div v-if="vaMsg" style="color:#dc2626;font-size:13px;margin-bottom:10px">{{ vaMsg }}</div>
           <div style="display:flex;gap:8px;justify-content:flex-end">
             <button class="btn-sm" @click="closeVaModal">{{ T.vaCancel }}</button>
             <button class="btn btn-indigo" @click="saveVirtualAgent">{{ T.vaSave }}</button>
@@ -555,33 +574,33 @@ select.form-input{cursor:pointer}
       <!-- 状态概览 -->
       <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap">
         <div v-for="type in ['apps','scenes']" :key="type"
-          style="background:#1a1d27;border:1px solid #2d3148;border-radius:10px;padding:14px 20px;min-width:200px;display:flex;align-items:center;gap:12px">
+          style="background:#fff;border:1px solid #e7e4e1;border-radius:10px;padding:14px 20px;min-width:200px;display:flex;align-items:center;gap:12px">
           <span style="font-size:22px">{{ type==='apps' ? '🔧' : '🔀' }}</span>
           <div>
-            <div style="font-size:13px;font-weight:600;color:#e2e8f0">{{ type==='apps' ? (lang==='zh'?'应用配置':'Apps Config') : (lang==='zh'?'场景路由':'Routes Config') }}</div>
-            <div style="font-size:12px;margin-top:2px" :style="distribInfo[type].uploaded ? 'color:#4ade80' : 'color:#64748b'">
+            <div style="font-size:13px;font-weight:600;color:#000">{{ type==='apps' ? (lang==='zh'?'应用配置':'Apps Config') : (lang==='zh'?'场景路由':'Routes Config') }}</div>
+            <div style="font-size:12px;margin-top:2px" :style="distribInfo[type].uploaded ? 'color:#16a34a' : 'color:#7b7b7b'">
               {{ distribInfo[type].uploaded
                 ? (lang==='zh' ? `已上传 · ${distribInfo[type].bytes} 字节` : `Uploaded · ${distribInfo[type].bytes} bytes`)
                 : (lang==='zh' ? '未上传' : 'Not uploaded') }}
             </div>
           </div>
         </div>
-        <div style="background:#1a1d27;border:1px solid #2d3148;border-radius:10px;padding:14px 20px;flex:1;min-width:260px">
-          <div style="font-size:12px;color:#64748b;margin-bottom:6px">{{ lang==='zh' ? '客户端下载地址' : 'Client Download URL' }}</div>
-          <div style="font-family:monospace;font-size:11px;color:#94a3b8;line-height:1.8">
+        <div style="background:#fff;border:1px solid #e7e4e1;border-radius:10px;padding:14px 20px;flex:1;min-width:260px">
+          <div style="font-size:12px;color:#7b7b7b;margin-bottom:6px">{{ lang==='zh' ? '客户端下载地址' : 'Client Download URL' }}</div>
+          <div style="font-family:monospace;font-size:11px;color:#7b7b7b;line-height:1.8">
             GET /api/config/apps<br>GET /api/config/scenes
           </div>
-          <div style="font-size:11px;color:#4a5568;margin-top:6px">{{ lang==='zh' ? '需要用户 JWT 认证' : 'Requires user JWT' }}</div>
+          <div style="font-size:11px;color:#bcbcbc;margin-top:6px">{{ lang==='zh' ? '需要用户 JWT 认证' : 'Requires user JWT' }}</div>
         </div>
       </div>
 
       <!-- 两列编辑区 -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
         <div v-for="type in ['apps','scenes']" :key="type"
-          style="background:#1a1d27;border:1px solid #2d3148;border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:10px">
+          style="background:#fff;border:1px solid #e7e4e1;border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:10px">
           <div style="display:flex;align-items:center;gap:8px">
             <span style="font-size:15px">{{ type==='apps' ? '🔧' : '🔀' }}</span>
-            <span style="font-size:13px;font-weight:600;color:#e2e8f0">
+            <span style="font-size:13px;font-weight:600;color:#000">
               {{ type==='apps'
                 ? (lang==='zh' ? '应用配置 (tokenbank.tools.yaml)' : 'Apps Config (tokenbank.tools.yaml)')
                 : (lang==='zh' ? '场景路由配置 (tokenbank.routes.yaml)' : 'Routes Config (tokenbank.routes.yaml)') }}
@@ -603,7 +622,7 @@ select.form-input{cursor:pointer}
           <textarea
             v-model="distribText[type]"
             spellcheck="false"
-            style="flex:1;min-height:400px;padding:10px 12px;background:#0f1117;border:1px solid #2d3148;border-radius:6px;color:#e2e8f0;font-family:'SFMono-Regular',Consolas,monospace;font-size:12px;line-height:1.6;resize:vertical;outline:none"
+            class="code-area"
             :placeholder="type==='apps'
               ? 'version: 1\n\ntools:\n  - id: claude-code\n    ...'
               : 'version: 1\n\nscene_routes:\n  - id: route-code\n    scene_name: 代码助手\n    ...'">
@@ -614,14 +633,14 @@ select.form-input{cursor:pointer}
             </button>
             <span v-if="distribMsg[type]"
               :style="distribMsg[type].startsWith('✓')||distribMsg[type].includes('已')||distribMsg[type].includes('Uploaded')||distribMsg[type].includes('Loaded')
-                ? 'color:#4ade80;font-size:12px' : 'color:#f87171;font-size:12px'">
+                ? 'color:#16a34a;font-size:12px' : 'color:#dc2626;font-size:12px'">
               {{ distribMsg[type] }}
             </span>
           </div>
         </div>
       </div>
 
-      <div style="margin-top:12px;font-size:12px;color:#4a5568;line-height:1.6">
+      <div style="margin-top:12px;font-size:12px;color:#bcbcbc;line-height:1.6">
         {{ lang==='zh'
           ? '管理员在此上传 YAML 配置后，已登录的客户端点击「导入配置 → 🔗 服务器」即可下载并应用。两个文件格式相同（统一 schema），应用配置含 tools/protocols/routing 段，路由配置含 scene_routes 段。'
           : 'After uploading YAML here, logged-in clients can pull it via Import Config → 🔗 Server. Both files share the same schema: tools config has tools/protocols/routing sections; routes config has scene_routes section.' }}

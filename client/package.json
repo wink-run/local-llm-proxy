@@ -4,7 +4,7 @@
   "private": true,
   "main": "electron/main.js",
   "scripts": {
-    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "dev": "node scripts/gen-icons.js && concurrently \"vite\" \"wait-on http://localhost:5173 && npx electron .\"",
     "prebuild": "node scripts/gen-icons.js",
     "build": "vite build && electron-builder",
     "gen-icons": "node scripts/gen-icons.js",
@@ -31,7 +31,7 @@
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.20",
     "concurrently": "^8.2.2",
-    "electron": "^33.4.11",
+    "electron": "^38.2.0",
     "electron-builder": "^25.0.5",
     "electron-rebuild": "^3.2.9",
     "png2icons": "^2.0.1",

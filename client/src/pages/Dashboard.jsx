@@ -5,6 +5,7 @@ import { useLang } from '../store/lang';
 import { useCurrency } from '../store/currency';
 import { RANGE_KEYS, RANGE_DAYS } from '../utils/ranges';
 import { isAppIcon, appIconSvg } from '../lib/appIcons';
+import { brandIconFor } from '../lib/brandIcons';
 
 const PAID_PROVIDERS = ['openai', 'anthropic-paid', 'openrouter', 'anthropic'];
 const P2P_PROVIDERS  = ['tokenbank-p2p'];
@@ -15,10 +16,14 @@ function linkMethodLabel(method, t) {
   return method === 'manual' ? t('common.linkApi') : t('common.linkApp');
 }
 
-/** 应用图标：icon:xxx → SVG，否则回退 emoji/文本 */
-function AppIconDisplay({ icon, className = 'w-[18px] h-[18px]' }) {
-  if (isAppIcon(icon)) return appIconSvg(icon, `${className} shrink-0`);
-  return <span className="text-base shrink-0">{icon}</span>;
+/** 应用图标：与网关页一致 — 品牌 logo → icon:xxx SVG → emoji */
+function AppIconDisplay({ app, icon, className = 'w-[18px] h-[18px]' }) {
+  const row = app || {};
+  const brand = brandIconFor(row);
+  if (brand) return <img src={brand} alt="" className={`${className} object-contain shrink-0`} />;
+  const ic = icon ?? row.icon;
+  if (isAppIcon(ic)) return appIconSvg(ic, `${className} shrink-0`);
+  return <span className="text-base shrink-0">{ic || '🔧'}</span>;
 }
 
 const APP_USAGE_COLORS = [
@@ -68,7 +73,7 @@ function AppShareStrip({ rows, metric = 'tokens' }) {
           <span key={r.id} className="inline-flex items-center gap-1.5 text-xs text-zinc-500">
             <span className={`w-2 h-2 rounded-full shrink-0 ${APP_USAGE_COLORS[i % APP_USAGE_COLORS.length]}`} />
             <span className="truncate max-w-[8rem] inline-flex items-center gap-1">
-              <AppIconDisplay icon={r.icon} className="w-3.5 h-3.5" />
+              <AppIconDisplay app={r} className="w-3.5 h-3.5" />
               {r.name}
             </span>
             <span className="text-zinc-400">{Math.round(((r[metric] || 0) / total) * 100)}%</span>
@@ -133,7 +138,7 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
                 <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1.4fr)_4.5rem_4.5rem_4rem_minmax(0,1fr)] gap-3 items-center">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className={`w-1 h-8 rounded-full shrink-0 ${APP_USAGE_COLORS[i % APP_USAGE_COLORS.length]}`} />
-                    <AppIconDisplay icon={r.icon} />
+                    <AppIconDisplay app={r} />
                     <div className="min-w-0">
                       <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{r.name}</div>
                       <div className="text-xs text-zinc-500 truncate">
@@ -360,27 +365,27 @@ export default function Dashboard() {
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-5 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 min-h-screen">
 
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-[17px] font-bold text-zinc-900 dark:text-zinc-100 tracking-tight">{t('dashboard.title')}</h1>
-          <div className="flex items-center gap-2 mt-0.5">
-            <p className="text-xs text-zinc-400 dark:text-zinc-500">{t('dashboard.subtitle')}</p>
-            <span className="flex items-center gap-1 text-xs text-zinc-400 border border-zinc-200 dark:border-zinc-700 rounded-full px-2 py-0.5">
+      {/* Header：标题行放 Desktop 标签与日期选择，副标题单独一行 */}
+      <div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <h1 className="text-[17px] font-bold text-zinc-900 dark:text-zinc-100 tracking-tight shrink-0">{t('dashboard.title')}</h1>
+            <span className="flex items-center gap-1 text-xs text-zinc-400 border border-zinc-200 dark:border-zinc-700 rounded-full px-2 py-0.5 shrink-0">
               <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${gwStatus?.running !== false ? 'bg-green-500' : 'bg-zinc-400'}`}/>
               {window.electronAPI ? t('common.desktop') : t('common.cli')}
               {gwStatus?.port ? ` · :${gwStatus.port}` : ''}
             </span>
           </div>
+          <div className="flex gap-0.5 bg-zinc-100 dark:bg-zinc-800/60 rounded-lg p-0.5 shrink-0">
+            {RANGE_KEYS.map(r => (
+              <button key={r} onClick={() => setRange(r)}
+                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                  range === r ? 'bg-white dark:bg-zinc-700 text-zinc-800 dark:text-zinc-100 font-semibold shadow-sm' : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'
+                }`}>{t(`profile.range.${r}`)}</button>
+            ))}
+          </div>
         </div>
-        <div className="flex gap-0.5 bg-zinc-100 dark:bg-zinc-800/60 rounded-lg p-0.5">
-          {RANGE_KEYS.map(r => (
-            <button key={r} onClick={() => setRange(r)}
-              className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
-                range === r ? 'bg-white dark:bg-zinc-700 text-zinc-800 dark:text-zinc-100 font-semibold shadow-sm' : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'
-              }`}>{t(`profile.range.${r}`)}</button>
-          ))}
-        </div>
+        <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">{t('dashboard.subtitle')}</p>
       </div>
 
       {/* Summary cards — 5列 */}

@@ -376,8 +376,8 @@ const locales = {
     'settings.healthOff': 'Off',
     // ── Profile page ──
     'profile.range.today': 'Today',
-    'profile.range.7d': '7 days',
-    'profile.range.30d': '30 days',
+    'profile.range.7d': '7d',
+    'profile.range.30d': '30d',
     'profile.overview': '{range} overview',
     'profile.calls': 'Requests',
     'profile.tokens': 'Token usage',

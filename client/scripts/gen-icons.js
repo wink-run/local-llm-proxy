@@ -21,10 +21,18 @@ function makeCirclePNG(r, g, b, size = 16) {
   return PNG.sync.write(png);
 }
 
+/** macOS Template 图标：纯黑 + 透明（文件名须含 Template，系统菜单栏才正确渲染） */
+function makeTemplateCirclePNG(size = 16) {
+  return makeCirclePNG(0, 0, 0, size);
+}
+
 const assetsDir = path.join(__dirname, '..', 'assets');
 fs.mkdirSync(assetsDir, { recursive: true });
 fs.writeFileSync(path.join(assetsDir, 'tray-green.png'), makeCirclePNG(34, 197, 94));
 fs.writeFileSync(path.join(assetsDir, 'tray-gray.png'), makeCirclePNG(107, 114, 128));
+// macOS 菜单栏：16@1x + 32@2x Template（Electron 文档要求）
+fs.writeFileSync(path.join(assetsDir, 'trayTemplate.png'), makeTemplateCirclePNG(16));
+fs.writeFileSync(path.join(assetsDir, 'trayTemplate@2x.png'), makeTemplateCirclePNG(32));
 console.log('Tray icons generated in assets/');
 
 // ── App icons from SVG logo ───────────────────────────────────────────────────

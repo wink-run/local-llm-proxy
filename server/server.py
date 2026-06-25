@@ -54,6 +54,13 @@ async def lifespan(app: FastAPI):
     task.cancel()
 
 
+# landing 页产品截图，需长期保留
+_LANDING_SCREENSHOTS = frozenset({
+    "dashboard.png", "gateway.png", "provider.png",
+    "dashboard_en.png", "gateway_en.png", "provider_en.png",
+})
+
+
 def _cleanup_img_cache() -> None:
     """Delete img_cache files older than 1 hour on startup."""
     from dispatch_image import IMG_CACHE_DIR
@@ -61,6 +68,8 @@ def _cleanup_img_cache() -> None:
         return
     cutoff = time.time() - 3600
     for p in IMG_CACHE_DIR.iterdir():
+        if p.name in _LANDING_SCREENSHOTS:
+            continue
         if p.is_file() and p.stat().st_mtime < cutoff:
             try:
                 p.unlink()
@@ -92,6 +101,13 @@ app.include_router(device_router, tags=["device"])
 
 
 # ── 静态文件 & 落地页 ─────────────────────────────────────────────────────────
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """避免浏览器默认请求 favicon 触发 404。"""
+    from fastapi.responses import Response
+    return Response(status_code=204)
+
 
 @app.get("/")
 async def landing():

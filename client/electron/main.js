@@ -20,6 +20,8 @@ const agentLinker = require('./agent-linker');
 
 const isDev = !app.isPackaged;
 const VITE_URL = 'http://localhost:5173';
+// macOS 菜单栏显示名（dev 下系统设置里通常显示 Electron）
+if (process.platform === 'darwin') app.setName('Token Bank');
 const AGENT_CONFIG_PATH = path.join(os.homedir(), '.llm-agent', 'config.json');
 // Claude Desktop 3p 配置目录（按平台）：
 //   Windows → %LOCALAPPDATA%\Claude-3p\configLibrary
@@ -221,12 +223,47 @@ let isQuitting = false;
 
 // ── Icons ──────────────────────────────────────────────────────────────────────
 
+/** 内置托盘图标（assets/ 未生成时的兜底） */
+const TRAY_ICON_B64 = {
+  running: 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAe0lEQVR4AbXBSREDMQxFwfcNRTTEReDMRTRMRZmDD1OpWeNKN39nGcUFccAyihPDu9gRXyyjuDG8i0nsWEbx0PAuNmKyjOKl4V2NRY1FYmMZxY/EZBnFS8O7Gosai8SOZRQPDe9iI75YRnFjeBeTOGAZxYnhXbxhGcWFDxeUJt5X+1QaAAAAAElFTkSuQmCC',
+  stopped: 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAd0lEQVR4AbXBuxHDMAxEwXdsFxkquAqYsV5YAQONxvqZ413+LtLFBfFFpIsTo1vsiINIFzdGt5jETqSLh0a32Igp0sVLo1uNRY1FYhPp4kdiinTx0uhWY1FjkdiJdPHQ6BYbcRDp4sboFpP4ItLFidEt3oh0ceEDwVknJpkY6XgAAAAASUVORK5CYII=',
+};
+
+/** macOS 26 (Tahoe) 需 Electron ≥36.9.2 修复菜单栏/WindowServer；见 electron#48401 */
+function logMacOSCompat() {
+  if (process.platform !== 'darwin') return;
+  try {
+    const { execSync } = require('child_process');
+    const ver = execSync('sw_vers -productVersion', { encoding: 'utf8' }).trim();
+    const major = parseInt(ver.split('.')[0], 10);
+    console.log(`[tray] macOS ${ver}, Electron ${process.versions.electron}`);
+    if (major >= 26 && parseFloat(process.versions.electron) < 36.9) {
+      console.warn('[tray] macOS 26+ 需 Electron ≥38.2.0，否则菜单栏托盘可能不可见');
+    }
+  } catch { /* ignore */ }
+}
+
 function getTrayIcon(state) {
-  const name = state === 'running' ? 'tray-green.png' : 'tray-gray.png';
+  // macOS：Template 图标（trayTemplate.png + @2x，文件名含 Template 系统自动识别）
+  if (process.platform === 'darwin') {
+    const tpl = path.join(__dirname, '..', 'assets', 'trayTemplate.png');
+    if (fs.existsSync(tpl)) return nativeImage.createFromPath(tpl);
+    const img = nativeImage.createFromBuffer(Buffer.from(TRAY_ICON_B64.stopped, 'base64'));
+    img.setTemplateImage(true);
+    return img;
+  }
+  const running = state === 'running';
+  const name = running ? 'tray-green.png' : 'tray-gray.png';
   const iconPath = path.join(__dirname, '..', 'assets', name);
-  if (!fs.existsSync(iconPath)) return nativeImage.createEmpty();
-  const img = nativeImage.createFromPath(iconPath);
-  img.setTemplateImage(false);
+  let img;
+  if (fs.existsSync(iconPath)) {
+    img = nativeImage.createFromPath(iconPath);
+  } else {
+    img = nativeImage.createFromBuffer(Buffer.from(TRAY_ICON_B64[running ? 'running' : 'stopped'], 'base64'));
+  }
+  if (img.isEmpty()) {
+    img = nativeImage.createFromBuffer(Buffer.from(TRAY_ICON_B64.stopped, 'base64'));
+  }
   return img;
 }
 
@@ -291,8 +328,15 @@ function createWindow() {
     if (isDev) mainWindow.webContents.openDevTools({ mode: 'detach' });
   });
 
+  // 关闭 / 最小化 → 隐藏到托盘（全平台；仅「退出」才真正结束进程）
   mainWindow.on('close', (e) => {
-    if (process.platform === 'darwin' && !isQuitting) {
+    if (!isQuitting) {
+      e.preventDefault();
+      mainWindow.hide();
+    }
+  });
+  mainWindow.on('minimize', (e) => {
+    if (!isQuitting) {
       e.preventDefault();
       mainWindow.hide();
     }
@@ -303,41 +347,276 @@ function createWindow() {
 
 let trayStatsTimer = null;
 
-function updateTrayTitle() {
-  if (!tray) return;
-  if (process.platform !== 'darwin') return;
-  const { running: r, activeRequests, tokensPerMin } = agent.getStats();
-  if (!r) { tray.setTitle(''); return; }
-  const parts = [];
-  if (activeRequests > 0) parts.push(`${activeRequests}req`);
-  if (tokensPerMin > 0) parts.push(`${tokensPerMin}tok/m`);
-  tray.setTitle(parts.length ? parts.join(' ') : '●');
+/** macOS 26 Tahoe：菜单栏白名单设置页（Allow in the Menu Bar） */
+const MENU_BAR_SETTINGS_URL = 'x-apple.systempreferences:com.apple.MenuBarSettings';
+const TAHOE_HINT_PATH = path.join(os.homedir(), '.tokenbank', 'tahoe-menu-bar-hint.json');
+const TAHOE_HINT_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+function getMacOSMajorVersion() {
+  try {
+    const { execSync } = require('child_process');
+    return parseInt(execSync('sw_vers -productVersion', { encoding: 'utf8' }).trim().split('.')[0], 10);
+  } catch { return 0; }
 }
 
-function createTray() {
-  tray = new Tray(getTrayIcon('stopped'));
-  tray.setToolTip('LLM Proxy');
-  updateTrayMenu();
-  tray.on('double-click', () => { mainWindow?.show(); mainWindow?.focus(); });
-  if (process.platform === 'darwin') {
-    trayStatsTimer = setInterval(updateTrayTitle, 2000);
+/** dev 模式在系统设置里叫 Electron，打包后叫 Token Bank */
+function menuBarSettingsAppName() {
+  return isDev ? 'Electron' : 'Token Bank';
+}
+
+function readTahoeHintState() {
+  try {
+    if (fs.existsSync(TAHOE_HINT_PATH)) return JSON.parse(fs.readFileSync(TAHOE_HINT_PATH, 'utf8'));
+  } catch { /* ignore */ }
+  return { lastShown: 0 };
+}
+
+function writeTahoeHintShown() {
+  try {
+    fs.mkdirSync(path.dirname(TAHOE_HINT_PATH), { recursive: true });
+    fs.writeFileSync(TAHOE_HINT_PATH, JSON.stringify({ lastShown: Date.now() }));
+  } catch { /* ignore */ }
+}
+
+/** macOS 26 可能拦截菜单栏图标，引导用户到系统设置开启 */
+function showTahoeMenuBarGuidance(reason) {
+  if (process.platform !== 'darwin' || getMacOSMajorVersion() < 26) return;
+  const state = readTahoeHintState();
+  if (Date.now() - (state.lastShown || 0) < TAHOE_HINT_INTERVAL_MS) return;
+
+  const appName = menuBarSettingsAppName();
+  writeTahoeHintShown();
+  dialog.showMessageBox({
+    type: 'warning',
+    title: '菜单栏 Token 未显示',
+    message: 'macOS Tahoe 可能阻止了菜单栏图标',
+    detail: [
+      '请到：系统设置 → 菜单栏 → 允许在菜单栏中显示',
+      `开启「${appName}」后重启应用。`,
+      isDev ? '（开发模式请在列表中找到 Electron）' : '',
+      reason || '',
+    ].filter(Boolean).join('\n'),
+    buttons: ['打开菜单栏设置', '知道了'],
+    defaultId: 0,
+    cancelId: 1,
+  }).then(({ response }) => {
+    if (response === 0) shell.openExternal(MENU_BAR_SETTINGS_URL);
+  }).catch(() => {});
+}
+
+/** 检测托盘是否被系统放到屏外（Tahoe 26.5 已知 y=-17） */
+function isTrayLikelyHidden() {
+  if (!tray || tray.isDestroyed?.()) return true;
+  try {
+    const bounds = tray.getBounds();
+    console.log('[tray] getBounds=', bounds);
+    if (!bounds || bounds.width <= 0 || bounds.height <= 0) return true;
+    if (bounds.y < 0) return true;
+  } catch (e) {
+    console.warn('[tray] getBounds failed:', e.message);
+  }
+  return false;
+}
+
+function checkTrayVisibilityAndHint() {
+  if (process.platform !== 'darwin' || getMacOSMajorVersion() < 26) return;
+  if (isTrayLikelyHidden()) {
+    showTahoeMenuBarGuidance('菜单栏项位置异常或被系统隐藏');
   }
 }
 
-function updateTrayMenu() {
+function destroyTray() {
+  if (trayStatsTimer) { clearInterval(trayStatsTimer); trayStatsTimer = null; }
+  if (tray && !tray.isDestroyed?.()) {
+    tray.removeAllListeners();
+    tray.destroy();
+  }
+  tray = null;
+}
+
+/** 紧凑格式化 Token 数（托盘/状态栏共用） */
+function fmtTrayTokens(n) {
+  n = n || 0;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+  return String(n);
+}
+
+function getTodayTokenSummary() {
+  try { return localStats.queryTodaySummary(); }
+  catch { return { inTok: 0, outTok: 0, calls: 0 }; }
+}
+
+function showMainWindow() {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+/** 构建托盘右键菜单（每次弹出时现建，避免 setContextMenu 清掉 macOS 标题） */
+function buildTrayContextMenu() {
   const running = agent.isRunning();
-  const menu = Menu.buildFromTemplate([
+  const gw = gateway.getStatus?.() || {};
+  const { inTok, outTok, calls } = getTodayTokenSummary();
+  return Menu.buildFromTemplate([
+    { label: gw.running ? `网关运行中 :${gw.port}` : '网关已停止', enabled: false },
+    { label: `今日 Token  ↑${fmtTrayTokens(inTok)}  ↓${fmtTrayTokens(outTok)}  (${calls}次)`, enabled: false },
     { label: running ? 'Agent 运行中' : 'Agent 已停止', enabled: false },
+    { type: 'separator' },
+    { label: '显示主窗口', click: showMainWindow },
     { type: 'separator' },
     { label: '启动 Agent', enabled: !running, click: startAgent },
     { label: '停止 Agent', enabled: running, click: stopAgent },
     { type: 'separator' },
-    { label: '打开主窗口', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
-    { type: 'separator' },
     { label: '退出', click: () => { isQuitting = true; app.quit(); } },
   ]);
-  tray.setContextMenu(menu);
-  tray.setImage(getTrayIcon(running ? 'running' : 'stopped'));
+}
+
+function showTrayMenu() {
+  if (!tray) return;
+  tray.popUpContextMenu(buildTrayContextMenu());
+  applyMacOSTrayTitle();
+}
+
+/** macOS 菜单栏 Token 文字（setImage/setContextMenu 会清标题，故 macOS 不再频繁换图标） */
+function applyMacOSTrayTitle() {
+  if (process.platform !== 'darwin' || !tray) return;
+  const title = buildTrayTitle();
+  const tip = `Token Bank · ${title}`;
+  try {
+    tray.setTitle(title, { fontType: 'monospacedDigit' });
+  } catch (e) { console.warn('[tray] setTitle failed:', e.message); }
+  tray.setToolTip(tip);
+}
+
+/** 非 macOS：刷新托盘图标；macOS 仅用 Template 图标，避免 setImage 清掉标题 */
+function refreshTrayIconOnly() {
+  if (!tray || process.platform === 'darwin') return;
+  const gw = gateway.getStatus?.() || {};
+  const active = agent.isRunning() || gw.running;
+  tray.setImage(getTrayIcon(active ? 'running' : 'stopped'));
+}
+
+/** 构建 macOS 系统菜单栏 Token 标题 */
+function buildTrayTitle() {
+  const { inTok, outTok } = getTodayTokenSummary();
+  let activeRequests = 0;
+  let tokensPerMin = 0;
+  try {
+    const s = agent.getStats();
+    activeRequests = s.activeRequests || 0;
+    tokensPerMin = s.tokensPerMin || 0;
+  } catch { /* agent 未就绪 */ }
+  const tokenPart = `\u2191${fmtTrayTokens(inTok)} \u2193${fmtTrayTokens(outTok)}`;
+  const extras = [];
+  if (activeRequests > 0) extras.push(`${activeRequests}req`);
+  else if (tokensPerMin > 0) extras.push(`${tokensPerMin}/m`);
+  return extras.length ? `${tokenPart} · ${extras.join(' ')}` : tokenPart;
+}
+
+/** 非 macOS：刷新托盘图标 + tooltip */
+function refreshTrayAppearance() {
+  if (!tray || process.platform === 'darwin') return;
+  const running = agent.isRunning();
+  const gw = gateway.getStatus?.() || {};
+  const active = running || gw.running;
+  const { inTok, outTok } = getTodayTokenSummary();
+  const tokenPart = `\u2191${fmtTrayTokens(inTok)} \u2193${fmtTrayTokens(outTok)}`;
+  const gwHint = gw.running ? `网关 :${gw.port}` : '网关已停止';
+  tray.setImage(getTrayIcon(active ? 'running' : 'stopped'));
+  tray.setToolTip(`Token Bank · ${gwHint} · 今日 ${tokenPart}`);
+}
+
+function createTray() {
+  // 已创建则只刷新标题，避免重复注册 NSStatusItem
+  if (process.platform === 'darwin' && tray && !tray.isDestroyed?.()) {
+    applyMacOSTrayTitle();
+    return;
+  }
+  destroyTray();
+  logMacOSCompat();
+  try {
+    if (process.platform === 'darwin') {
+      // macOS：纯文字状态项（↑↓ Token），避免图标被 Tahoe ControlCenter 挤出
+      tray = new Tray(nativeImage.createEmpty());
+      tray.setIgnoreDoubleClickEvents(true);
+    } else {
+      const gw = gateway.getStatus?.() || {};
+      const active = agent.isRunning() || gw.running;
+      tray = new Tray(getTrayIcon(active ? 'running' : 'stopped'));
+      tray.setContextMenu(buildTrayContextMenu());
+    }
+  } catch (e) {
+    console.error('[tray] create failed:', e.message);
+    try {
+      tray = new Tray(getTrayIcon('stopped'));
+    } catch (e2) {
+      console.error('[tray] fallback create failed:', e2.message);
+      return;
+    }
+  }
+
+  if (process.platform === 'darwin') {
+    applyMacOSTrayTitle();
+    const got = tray.getTitle?.() ?? '(no getTitle)';
+    try { console.log('[tray] getBounds=', tray.getBounds()); } catch { /* ignore */ }
+    console.log('[tray] macOS menu bar title=', buildTrayTitle(), 'getTitle=', got);
+    setTimeout(() => applyMacOSTrayTitle(), 500);
+    setTimeout(() => applyMacOSTrayTitle(), 2000);
+  } else {
+    refreshTrayAppearance();
+  }
+
+  tray.on('double-click', showMainWindow);
+  if (process.platform === 'darwin') {
+    tray.on('click', showTrayMenu);
+    tray.on('right-click', showTrayMenu);
+  } else {
+    tray.on('click', showMainWindow);
+  }
+
+  trayStatsTimer = setInterval(() => {
+    if (process.platform === 'darwin') applyMacOSTrayTitle();
+    else refreshTrayAppearance();
+  }, 2000);
+}
+
+/** 窗口就绪后再建托盘（Tahoe 上过早创建易被 ControlCenter 放到屏外） */
+function scheduleCreateTray() {
+  const run = () => {
+    createTray();
+    setTimeout(checkTrayVisibilityAndHint, 2500);
+    // Tahoe 26.5：首次 NSStatusItem 可能在 y=-17，延迟销毁重建一次
+    if (process.platform === 'darwin' && getMacOSMajorVersion() >= 26) {
+      setTimeout(() => {
+        if (isTrayLikelyHidden()) {
+          console.log('[tray] Tahoe off-screen, recreating tray…');
+          destroyTray();
+          createTray();
+          setTimeout(checkTrayVisibilityAndHint, 1500);
+        }
+      }, 4000);
+    }
+  };
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isVisible()) setTimeout(run, 800);
+    else mainWindow.once('ready-to-show', () => setTimeout(run, 800));
+  } else {
+    setTimeout(run, 800);
+  }
+}
+
+/** 兼容旧调用 */
+function updateTrayMenu() {
+  if (!tray) return;
+  if (process.platform === 'darwin') {
+    applyMacOSTrayTitle();
+    refreshTrayIconOnly();
+  } else {
+    tray.setContextMenu(buildTrayContextMenu());
+    refreshTrayAppearance();
+  }
 }
 
 // ── Agent ─────────────────────────────────────────────────────────────────────
@@ -989,6 +1268,10 @@ function registerIPC() {
     const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
     try { return require('./compression-report').readCompressionSummary(d); }
     catch (e) { console.error('[localStats:compression]', e.message); return { count: 0, before: 0, after: 0, saved: 0, ratio: 0, models: [] }; }
+  });
+  ipcMain.handle('localStats:todaySummary', () => {
+    try { return localStats.queryTodaySummary(); }
+    catch (e) { console.error('[localStats:todaySummary]', e.message); return { inTok: 0, outTok: 0, totalTokens: 0, calls: 0 }; }
   });
   ipcMain.handle('localStats:query', (_e, days) => {
     const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
@@ -2243,7 +2526,6 @@ function registerIPC() {
 
 app.whenReady().then(() => {
   createWindow();
-  createTray();
   registerIPC();
   repairClaude3pMetaIfNeeded();
   // Claude Desktop ↔ 3p 会话同步：启动一次 + 每 30s 一次（覆盖运行期间新建的会话，修复"新会话纳管后不同步"）
@@ -2251,7 +2533,10 @@ app.whenReady().then(() => {
   setInterval(() => runClaude3pSync('interval'), 30000);
   // Init local SQLite stats DB（与 CLI 共用 ~/.tokenbank）
   localStats.init(STATS_DIR);
-  gateway.setStatsRecorder(localStats.record);
+  gateway.setStatsRecorder((...args) => {
+    localStats.record(...args);
+    applyMacOSTrayTitle();
+  });
   gateway.setLocalStats(localStats);
   gateway.setLocalConfigReader(readLocalConfig);   // 供策略组调度查 policies[]
   // 清理旧版付费供给源预填数据（须在 gateway 启动前）
@@ -2275,6 +2560,9 @@ app.whenReady().then(() => {
     return a ? a.api_key : null;
   });
   gateway.start(11430, readAgentConfig, writeAgentConfig);
+
+  // 托盘依赖 localStats / gateway，须在二者就绪后创建（窗口显示后再注册，避免 Tahoe 屏外）
+  scheduleCreateTray();
 
   // 注入 Claude 客户端模型名（内部透明逻辑，来自 yaml config-loader）
   try { gateway.setClaudeModels(require('./config-loader').claudeModels()); } catch {}
@@ -2333,12 +2621,12 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
+// 关闭窗口后驻留托盘，不退出进程
+app.on('window-all-closed', () => {});
 
 app.on('before-quit', () => {
   isQuitting = true;
+  if (trayStatsTimer) clearInterval(trayStatsTimer);
   agent.stop(); gateway.stop(); localStats.close();
   // 退出即还原所有接入：删 shim / 还原 PATH / 还原配置文件 / 停 MITM，绝不残留
   try { agentLinker.revertEverythingOnExit(); } catch (e) { console.error('[agent-linker] revert on exit failed:', e.message); }
