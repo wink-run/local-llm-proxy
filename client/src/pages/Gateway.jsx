@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { loadGatewayAvailableModels } from '../api/gatewayModels';
+import { loadGatewayAvailableModels, resolveLocalGatewayHost } from '../api/gatewayModels';
 import { getSyncServerBase } from '../config';
 import { getGateway, getLocalConfig, getConfig, getApps } from '../api/adapter';
 import { listAgents, applyAgent, revertAgent } from '../api/agents';
@@ -1810,8 +1810,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
       const list = Array.isArray(appList) ? appList : [];
       setApps(list);
       if (gw?.port) {
-        const host = typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1';
-        setLocalBase(`http://${host}:${gw.port}/v1`);
+        setLocalBase(`http://${resolveLocalGatewayHost()}:${gw.port}/v1`);
       }
       if (list.length && appsApi.stats) {
         appsApi.stats(list).then(s => setAppStats(s || {})).catch(() => {});

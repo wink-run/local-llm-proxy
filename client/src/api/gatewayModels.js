@@ -13,11 +13,11 @@ function addAvailableModel(models, seen, id, tier) {
 
 const modelId = (m) => (typeof m === 'string' ? m : (m?.name || m?.id || ''));
 
-/** 本地 gateway HTTP 地址：Electron / Vite dev 固定 127.0.0.1，避免 localhost→::1 被拒 */
-function resolveLocalGatewayHost() {
+/** 本地 gateway HTTP 地址：Electron / Vite dev 固定 127.0.0.1，避免 file:// 或 localhost→::1 导致无效 URL */
+export function resolveLocalGatewayHost() {
   if (isElectron()) return '127.0.0.1';
   const h = typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1';
-  if (h === 'localhost' || h === '127.0.0.1') return '127.0.0.1';
+  if (!h || h === 'localhost' || h === '127.0.0.1') return '127.0.0.1';
   return h;
 }
 
