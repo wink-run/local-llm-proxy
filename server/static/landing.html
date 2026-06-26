@@ -79,6 +79,7 @@
         <a href="#onboarding" data-i18n="nav.connect" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">Connect</a>
         <a href="#routing" data-i18n="nav.routing" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">Routing</a>
         <a href="#network" data-i18n="nav.network" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">Network</a>
+        <a href="#circles" data-i18n="nav.circles" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">Circles</a>
         <a href="#faq" data-i18n="nav.faq" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">FAQ</a>
       </nav>
       <div style="display:flex;gap:10px;align-items:center;">
@@ -604,6 +605,91 @@
     </div>
   </section>
 
+  <!-- ============ CIRCLES ============ -->
+  <section id="circles" style="padding:80px 0;scroll-margin-top:80px;">
+    <div style="max-width:1200px;margin:0 auto;padding:0 24px;">
+      <div style="display:grid;grid-template-columns:1.05fr 0.95fr;gap:56px;align-items:center;">
+        <div>
+          <div data-reveal data-i18n="cr.kicker" style="display:inline-block;background:#FFD055;color:#000;border-radius:10px;padding:6px 14px;font-size:13px;font-weight:500;letter-spacing:0.04em;margin-bottom:22px;">Circles · share with peers</div>
+          <h2 data-reveal data-reveal-delay="60" data-i18n-html="cr.title" style="margin:0 0 18px;font-family:'Playfair Display','Noto Serif SC',serif;font-weight:400;font-size:42px;line-height:1.2;letter-spacing:-0.01em;color:#000;">Find your people,<br>share models and credits.</h2>
+          <p data-reveal data-reveal-delay="120" data-i18n="cr.sub" style="margin:0 0 28px;font-size:16px;line-height:1.55;color:#333;max-width:440px;">Create or join circles of like-minded AI users. Share contributed models inside the group, invite friends for mutual credit rewards, and contribute to multiple circles at once.</p>
+          <div data-reveal data-reveal-delay="160" style="display:grid;grid-template-columns:1fr;gap:0;">
+            <div style="display:flex;gap:18px;padding:18px 0;border-top:1px solid #ececec;">
+              <span style="font-family:'Space Mono',monospace;font-size:13px;color:#7b7b7b;flex:0 0 auto;width:24px;">01</span>
+              <div>
+                <div data-i18n="cr.s1.h" style="font-size:16px;font-weight:600;color:#000;">Create or join</div>
+                <div data-i18n="cr.s1.b" style="font-size:14px;color:#7b7b7b;line-height:1.5;margin-top:3px;">Start your own circle or join via invite code or link — owner and member roles, member list at a glance.</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:18px;padding:18px 0;border-top:1px solid #ececec;">
+              <span style="font-family:'Space Mono',monospace;font-size:13px;color:#7b7b7b;flex:0 0 auto;width:24px;">02</span>
+              <div>
+                <div data-i18n="cr.s2.h" style="font-size:16px;font-weight:600;color:#000;">Circle-scoped model sharing</div>
+                <div data-i18n="cr.s2.b" style="font-size:14px;color:#7b7b7b;line-height:1.5;margin-top:3px;">When you contribute compute, pick which circles receive it. Members call shared models through the same gateway — routing stays transparent.</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:18px;padding:18px 0;border-top:1px solid #ececec;border-bottom:1px solid #ececec;">
+              <span style="font-family:'Space Mono',monospace;font-size:13px;color:#7b7b7b;flex:0 0 auto;width:24px;">03</span>
+              <div>
+                <div data-i18n="cr.s3.h" style="font-size:16px;font-weight:600;color:#000;">Invite peers, earn together</div>
+                <div data-i18n="cr.s3.b" style="font-size:14px;color:#7b7b7b;line-height:1.5;margin-top:3px;">Share an invite link — when a friend joins, both earn credits. Post messages and replies to coordinate with circle mates.</div>
+              </div>
+            </div>
+          </div>
+          <a href="/app" data-reveal data-reveal-delay="200" data-i18n="cr.cta" style="display:inline-flex;margin-top:28px;text-decoration:none;background:#000;color:#fff;font-size:14px;font-weight:500;padding:12px 22px;border-radius:10px;transition:transform .2s ease;" style-hover="transform:translateY(-2px);">Sign in to explore circles →</a>
+        </div>
+
+        <!-- 圈子预览卡片（纯 CSS 示意） -->
+        <div data-reveal data-reveal-delay="120" style="background:#fff;border:1px solid #e7e4e1;border-radius:24px;padding:28px;box-shadow:rgba(0,0,0,0.04) 0px 8px 16px 0px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+            <div>
+              <div data-i18n="cr.card.name" style="font-size:16px;font-weight:600;color:#000;">AI Builders</div>
+              <div data-i18n="cr.card.meta" style="font-size:12px;color:#7b7b7b;margin-top:2px;">12 members · you are owner</div>
+            </div>
+            <span data-i18n="cr.card.invite" style="background:#FFD055;color:#000;font-size:12px;font-weight:500;padding:6px 12px;border-radius:8px;">Invite peers</span>
+          </div>
+
+          <div style="margin-bottom:22px;">
+            <div data-i18n="cr.card.members" style="font-size:12px;font-weight:500;color:#7b7b7b;letter-spacing:0.03em;margin-bottom:10px;">Members</div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="width:32px;height:32px;border-radius:50%;background:#91e0ff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:#000;">U</span>
+              <span style="width:32px;height:32px;border-radius:50%;background:#FFD055;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:#000;">A</span>
+              <span style="width:32px;height:32px;border-radius:50%;background:#e6e2df;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:#555;">K</span>
+              <span style="width:32px;height:32px;border-radius:50%;background:#f5f2f0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:#555;">M</span>
+              <span style="width:32px;height:32px;border-radius:50%;background:#f5f2f0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:#555;">+8</span>
+            </div>
+          </div>
+
+          <div style="margin-bottom:22px;">
+            <div data-i18n="cr.card.models" style="font-size:12px;font-weight:500;color:#7b7b7b;letter-spacing:0.03em;margin-bottom:10px;">Shared models</div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;background:#f5f2f0;border-radius:10px;padding:10px 12px;">
+                <span style="font-family:'Space Mono',monospace;font-size:12px;color:#333;">claude-sonnet-4</span>
+                <span data-i18n="cr.card.online" style="font-size:11px;color:#059669;font-weight:500;">● online</span>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;background:#f5f2f0;border-radius:10px;padding:10px 12px;">
+                <span style="font-family:'Space Mono',monospace;font-size:12px;color:#333;">gpt-4o</span>
+                <span data-i18n="cr.card.online" style="font-size:11px;color:#059669;font-weight:500;">● online</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="border-top:1px solid #f0eeec;padding-top:18px;">
+            <div data-i18n="cr.card.feed" style="font-size:12px;font-weight:500;color:#7b7b7b;letter-spacing:0.03em;margin-bottom:12px;">Messages</div>
+            <div style="background:#faf9f8;border-radius:12px;padding:12px 14px;margin-bottom:8px;">
+              <div style="font-size:12px;font-weight:600;color:#000;margin-bottom:4px;">Alex</div>
+              <div data-i18n="cr.card.msg1" style="font-size:13px;color:#333;line-height:1.45;">Anyone free to share a Claude route this week?</div>
+            </div>
+            <div style="background:#fff;border:1px solid #ececec;border-radius:12px;padding:10px 14px;margin-left:16px;">
+              <div style="font-size:11px;font-weight:600;color:#555;margin-bottom:3px;">You</div>
+              <div data-i18n="cr.card.msg2" style="font-size:12.5px;color:#333;line-height:1.45;">Added mine to this circle — try claude-sonnet-4.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ============ FINAL CTA ============ -->
   <section id="download" style="padding:100px 0 96px;text-align:center;scroll-margin-top:80px;">
     <div style="max-width:1200px;margin:0 auto;padding:0 24px;">
@@ -667,6 +753,14 @@
           <p data-i18n="faq.a5" style="margin:0;padding:0 4px 26px;font-size:15px;line-height:1.6;color:#555;max-width:680px;">Yes — Token Bank is Apache-2.0 licensed and free to download for macOS, Windows, and Linux / Docker. Community credits are earned by contributing, not bought.</p>
         </details>
 
+        <details class="tb-faq" style="border-bottom:1px solid #ececec;">
+          <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:24px 4px;font-size:18px;font-weight:600;color:#000;">
+            <span data-i18n="faq.q6">What are Circles?</span>
+            <span class="tb-faq-mark" style="flex:0 0 auto;width:26px;height:26px;border-radius:8px;background:#f5f2f0;display:flex;align-items:center;justify-content:center;font-size:17px;color:#333;transition:transform .25s ease,background .25s ease;">+</span>
+          </summary>
+          <p data-i18n="faq.a6" style="margin:0;padding:0 4px 26px;font-size:15px;line-height:1.6;color:#555;max-width:680px;">Circles are small communities inside Token Bank. Create or join via invite link, share models scoped to your circle, post messages to coordinate, and earn mutual credit rewards when friends join. You can contribute to multiple circles at once from the Contribute settings.</p>
+        </details>
+
       </div>
     </div>
   </section>
@@ -689,6 +783,7 @@
             <a href="#onboarding" data-i18n="ft.l2" style="text-decoration:none;color:#9a9a9a;font-size:14px;">One-click connect</a>
             <a href="#routing" data-i18n="ft.l3" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Smart routing</a>
             <a href="#network" data-i18n="ft.l4" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Community P2P</a>
+            <a href="#circles" data-i18n="ft.l5" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Circles</a>
           </div>
         </div>
         <div>
@@ -722,7 +817,7 @@ class Component extends DCLogic {
 
   dict = {
     'nav.features': '能力', 'nav.connect': '接入', 'nav.routing': '路由', 'nav.network': '社区',
-    'nav.langLabel': 'EN', 'nav.signin': '登录', 'nav.download': '免费下载', 'nav.faq': '常见问题',
+    'nav.circles': '圈子', 'nav.langLabel': 'EN', 'nav.signin': '登录', 'nav.download': '免费下载', 'nav.faq': '常见问题',
     'hero.badge': '你的个人 AI 中枢 · 不止是本地 LLM 网关',
     'hero.title': '看清每个 Token 的去向，<br>花得更少，<br><span style="background:linear-gradient(90deg,#FFD055 0%,#FFF0A0 45%,#FFE07A 55%,#FFD055 100%);background-size:220% 100%;animation:tbShimmer 4.5s ease-in-out infinite;padding:0 0.14em;border-radius:6px;">闲置也生息</span>。',
     'hero.sub': '一个本地网关接管全部 AI 应用——追踪每个 token，智能路由省更多，把闲置额度变成积分。你的工具只指向一个本地地址，路由全程透明。',
@@ -787,12 +882,24 @@ class Component extends DCLogic {
     'nw.s1': '质量系数', 'nw.s2': '结算一次', 'nw.s3v': '贡献>消耗', 'nw.s3': '费率设计',
     'nw.card.label': '积分如何计算',
     'nw.card.note': '在线越稳、响应越快、成功率越高，质量系数越高 — 长期贡献者更划算。',
+    'cr.kicker': '圈子 · 同好共享',
+    'cr.title': '找到同好，<br>共享模型与积分。',
+    'cr.sub': '创建或加入志同道合的 AI 圈子。在圈内共享贡献的模型，邀请好友双方得积分，还可同时向多个圈子贡献算力。',
+    'cr.s1.h': '创建或加入', 'cr.s1.b': '自建圈子，或通过邀请码 / 链接加入 — 圈主与成员角色清晰，圈友列表一目了然。',
+    'cr.s2.h': '圈内共享模型', 'cr.s2.b': '贡献算力时可指定面向哪些圈子。圈友经同一网关调用共享模型，路由全程透明。',
+    'cr.s3.h': '邀请同好，积分互得', 'cr.s3.b': '分享邀请链接 — 好友加入后双方获得积分奖励。圈内可发帖、回复，与圈友交流协作。',
+    'cr.cta': '登录体验圈子 →',
+    'cr.card.name': 'AI 同好圈', 'cr.card.meta': '12 位圈友 · 你是圈主',
+    'cr.card.invite': '邀请同好', 'cr.card.members': '圈友', 'cr.card.models': '共享模型',
+    'cr.card.online': '● 在线', 'cr.card.feed': '消息',
+    'cr.card.msg1': '这周有人能共享 Claude 路由吗？',
+    'cr.card.msg2': '我把自己的加到本圈了，试试 claude-sonnet-4。',
     'cta.kicker': '开始使用 · GET STARTED',
     'cta.title': '把 Token 花在刀刃上。',
     'cta.sub': '一个本地地址接管全部 AI 应用，下载即用。macOS / Windows 双击安装，Linux 命令行启动。',
     'cta.primary': '免费下载', 'cta.secondary': '在 GitHub 查看',
     'ft.tag': '你的个人 AI 中枢——集本地 LLM 网关与 Token 管家于一身。看清花费，花得更少，闲置也能生息。',
-    'ft.col1': '产品', 'ft.l1': '核心能力', 'ft.l2': '一键接入', 'ft.l3': '智能路由', 'ft.l4': '社区 P2P',
+    'ft.col1': '产品', 'ft.l1': '核心能力', 'ft.l2': '一键接入', 'ft.l3': '智能路由', 'ft.l4': '社区 P2P', 'ft.l5': '圈子',
     'ft.col3': '平台',
     'ft.col4': 'Wink Studio 出品', 'ft.friends.pings': 'Pings', 'ft.friends.memwink': 'Memwink',
     'faq.kicker': '常见问题',
@@ -807,6 +914,8 @@ class Component extends DCLogic {
     'faq.a4': 'Anthropic、OpenAI、Codex 协议自动转换，另含 Ollama、Groq、GitHub Models 以及任意 OpenAI 兼容端点。可按应用更换第三方模型，客户端零改动。',
     'faq.q5': '是免费且开源的吗？',
     'faq.a5': '是。Token Bank 采用 Apache-2.0 许可，macOS、Windows、Linux / Docker 均可免费下载使用。社区积分靠贡献获得，而非购买，仅少量云端托管功能收费。',
+    'faq.q6': '什么是圈子？',
+    'faq.a6': '圈子是 Token Bank 内的小型社区：通过邀请链接创建或加入，向指定圈子共享模型，发帖与圈友交流协作，好友加入时双方获得积分奖励。在贡献设置中可同时向多个圈子共享算力。',
   };
 
   renderVals() {
