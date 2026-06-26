@@ -17,6 +17,7 @@ class WorkerConnection:
     name: str
     model_types: dict = field(default_factory=dict)
     user_id: Optional[int] = None
+    circle_id: Optional[int] = None
     connected_at: datetime = field(default_factory=datetime.now)
     active_requests: int = 0
     # req_id -> {queue, model, dispatch_time}
@@ -125,6 +126,7 @@ class WorkerPool:
                 credentials=a.get("credentials") or {},
                 agent_id=a.get("id"),
                 owner_user_id=a.get("owner_user_id"),
+                circle_id=a.get("circle_id"),
             ))
 
     def pick(self, model: str, model_type: Optional[str] = None) -> Optional[WorkerConnection]:
@@ -159,37 +161,52 @@ class WorkerPool:
 
     def candidates(self, model: str, model_type: Optional[str] = None,
                    session_key: Optional[str] = None,
-                   owner_user_id: Optional[int] = None) -> list:
-        """返回可服务该模型的 worker 有序列表，用于账号级 failover。
+                   owner_user_id: Optional[int] = None,
+                   user_circle_ids: Optional[set] = None) -> list:
+        """返回可服务该模型的 worker 有序列表。
 
-        可见性：真实 worker（P2P 公共）始终可见；虚拟 worker 仅当其 owner_user_id 为空（全局）
-        或等于 owner_user_id（请求者本人）。即看不到别人的个人供给源。
-        排序（个人优先）：本人个人源 → 公共真实 worker → 全局虚拟源；组内按 active_requests 升序。
-        若 session_key 已绑定且命中候选，则置顶（粘性会话）。
+        可见性：
+          真实 worker：circle_id is None → 公开；否则仅圈内用户可见。
+          虚拟 worker：owner == uid → 私有（本人可见）；owner is None & circle is None → 全局公开；
+                       owner is None & circle_id in user_circle_ids → 圈内可见。
+        排序：本人私有源 → 公共/圈子真实 worker + 圈子虚拟 worker → 全局公开虚拟源。
+        圈子 worker 与公共 P2P 等权竞争（不做额外排序分层）。
         """
+        circles = user_circle_ids or set()
+
         def _matches(w) -> bool:
             return model in w.models and (
                 model_type is None or w.model_types.get(model, "chat") == model_type
             )
 
-        def _visible_virtual(v) -> bool:
+        def _real_visible(w) -> bool:
+            cid = getattr(w, "circle_id", None)
+            return cid is None or cid in circles
+
+        def _virtual_visible(v) -> bool:
             owner = getattr(v, "owner_user_id", None)
-            return owner is None or owner == owner_user_id
+            cid = getattr(v, "circle_id", None)
+            if owner == owner_user_id:
+                return True   # private to self
+            if owner is not None:
+                return False  # someone else's private
+            # owner is None: global public or circle-scoped
+            return cid is None or cid in circles
 
         owned = sorted(
             (v for v in self._virtual
-             if _matches(v) and getattr(v, "owner_user_id", None) is not None
-             and v.owner_user_id == owner_user_id),
+             if _matches(v) and getattr(v, "owner_user_id", None) == owner_user_id),
             key=lambda v: v.active_requests,
         )
-        real = sorted((w for w in self._workers if _matches(w)),
-                      key=lambda w: w.active_requests)
-        virt_pub = sorted(
-            (v for v in self._virtual
-             if _matches(v) and getattr(v, "owner_user_id", None) is None),
-            key=lambda v: v.active_requests,
+        shared = sorted(
+            [w for w in self._workers if _matches(w) and _real_visible(w)]
+            + [v for v in self._virtual
+               if _matches(v) and getattr(v, "owner_user_id", None) != owner_user_id
+               and _virtual_visible(v)],
+            key=lambda w: w.active_requests,
         )
-        ordered = owned + real + virt_pub
+        ordered = owned + shared
+
         if session_key:
             bound = self._sticky_lookup(session_key)
             if bound:
@@ -209,15 +226,26 @@ class WorkerPool:
                 return True
         return False
 
-    def models_for_user(self, owner_user_id: Optional[int]) -> dict:
-        """该用户可见的 {model: type}：公共（真实 + 全局虚拟）+ 本人个人源。"""
+    def models_for_user(self, owner_user_id: Optional[int] = None,
+                        user_circle_ids: Optional[set] = None) -> dict:
+        """该用户可见的 {model: type}：公共 + 本人私有 + 所属圈子内的模型。"""
+        circles = user_circle_ids or set()
         result: dict[str, str] = {}
         for w in self._workers:
-            for m in w.models:
-                result[m] = w.model_types.get(m, "chat")
+            cid = getattr(w, "circle_id", None)
+            if cid is None or cid in circles:
+                for m in w.models:
+                    result[m] = w.model_types.get(m, "chat")
         for v in self._virtual:
             owner = getattr(v, "owner_user_id", None)
-            if owner is None or owner == owner_user_id:
+            cid = getattr(v, "circle_id", None)
+            if owner == owner_user_id:
+                visible = True
+            elif owner is not None:
+                visible = False
+            else:
+                visible = cid is None or cid in circles
+            if visible:
                 for m in v.models:
                     result[m] = v.model_types.get(m, "chat")
         return result
