@@ -1,6 +1,6 @@
 // client/src/pages/Contribute.jsx
 import React, { useEffect, useState, useRef } from 'react';
-import { getStats, getSettlements } from '../api/client';
+import { getStats, getSettlements, listJoinedCircles } from '../api/client';
 import { getConfig, getGateway } from '../api/adapter';
 import {
   getAgentStatus, startAgent, stopAgent, getAgentLogs,
@@ -22,8 +22,12 @@ function ContributionConfigCard() {
   const [saving,          setSaving]          = useState(false);
   const [savedMsg,        setSavedMsg]        = useState('');
   const [localGw,         setLocalGw]         = useState('http://127.0.0.1:11430/v1');
+  const [circles,         setCircles]         = useState([]);         // joined circles
+  const [circleScope,     setCircleScope]     = useState('public');   // 'public' | 'circle'
+  const [selectedCircleId, setSelectedCircleId] = useState(null);
 
   useEffect(() => {
+    listJoinedCircles().then(r => setCircles(r.circles || [])).catch(() => {});
     Promise.all([
       getConfig().read().catch(() => null),
       getGateway().status().catch(() => null),
@@ -57,6 +61,10 @@ function ContributionConfigCard() {
       setSelectedNames(prevNames);
       setNodeName(saved?.name || '');
       setAutoStart(!!saved?.auto_start);
+      if (saved?.contribute_circle_id) {
+        setCircleScope('circle');
+        setSelectedCircleId(saved.contribute_circle_id);
+      }
     });
   }, []);
 
@@ -75,7 +83,7 @@ function ContributionConfigCard() {
       const model_groups = [{ base_url: localGw, token: '', models }];
       const current      = (await getConfig().read().catch(() => null)) || {};
       const updated      = { ...current, model_groups, llm_base_url: localGw, llm_token: '', models, name: nodeName, auto_start: autoStart };
-      await getConfig().write(updated);
+      await getConfig().write({ ...updated, contribute_circle_id: circleScope === 'circle' ? selectedCircleId : null });
       setSavedMsg(t('common.saved')); setTimeout(() => setSavedMsg(''), 2000);
     } finally { setSaving(false); }
   }
@@ -150,6 +158,46 @@ function ContributionConfigCard() {
         </div>
         <span className="text-sm text-zinc-700 dark:text-zinc-300">{t('contribute.autoStart')}</span>
       </label>
+
+      {/* TODO: agent binary must read contribute_circle_id from config and include circle_id in WS register msg */}
+      {/* Contribution scope */}
+      <div className="mt-4">
+        <p className="text-sm font-medium mb-2">{t('contribute.scope')}</p>
+        <div className="flex flex-col gap-2">
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="radio" name="scope" value="public"
+              checked={circleScope === 'public'}
+              onChange={() => setCircleScope('public')} />
+            {t('contribute.scopePublic')}
+          </label>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="radio" name="scope" value="circle"
+              checked={circleScope === 'circle'}
+              onChange={() => setCircleScope('circle')} />
+            {t('contribute.scopeCircle')}
+          </label>
+        </div>
+        {circleScope === 'circle' && (
+          <div className="mt-2">
+            {circles.length === 0
+              ? <p className="text-xs text-gray-400">{t('contribute.noCircle')}</p>
+              : (
+                <select
+                  className="border rounded px-2 py-1 text-sm w-full"
+                  value={selectedCircleId || ''}
+                  onChange={e => setSelectedCircleId(Number(e.target.value) || null)}
+                >
+                  <option value="">— 请选择圈子 —</option>
+                  {circles.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              )
+            }
+            <p className="text-xs text-gray-400 mt-1">{t('contribute.scopeHint')}</p>
+          </div>
+        )}
+      </div>
 
       <button onClick={save} disabled={saving}
         className="px-5 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-50 text-white font-medium transition-colors">

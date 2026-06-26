@@ -663,6 +663,11 @@ export default {
   'contribute.nodeName': '节点名称',
   'contribute.nodeNamePh': '留空使用主机名',
   'contribute.autoStart': '启动应用时自动运行贡献节点',
+  'contribute.scope': '贡献范围',
+  'contribute.scopePublic': '公开（所有人可用）',
+  'contribute.scopeCircle': '指定圈子',
+  'contribute.noCircle': '暂无圈子，请先创建或加入圈子',
+  'contribute.scopeHint': '圈子内算力仅圈子成员可用，积分结算与公开相同',
   'contribute.saveConfig': '保存配置',
 
   // ── 网络 ──
