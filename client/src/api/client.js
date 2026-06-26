@@ -60,8 +60,8 @@ export function login(email, password) {
   return authRequest('POST', '/user/login', { body: { email, password } });
 }
 
-export function register(email, password, nickname = '', referral_code = '') {
-  return authRequest('POST', '/user/register', { body: { email, password, nickname, referral_code } });
+export function register(email, password, nickname = '', referral_code = '', circle_code = '') {
+  return authRequest('POST', '/user/register', { body: { email, password, nickname, referral_code, circle_code } });
 }
 
 export function getProfile() {
@@ -227,4 +227,38 @@ export function registerDevice(info) {
 
 export function heartbeatDevice(deviceId, stats) {
   return http.post('/device/heartbeat', { device_id: deviceId, online: true, stats });
+}
+
+// ── Circles ───────────────────────────────────────────────────────────────────
+
+export function createCircle(name, description = '') {
+  return http.post('/user/circles', { name, description });
+}
+
+export function listMyCircles() {
+  return http.get('/user/circles');
+}
+
+export function listJoinedCircles() {
+  return http.get('/user/circles/joined');
+}
+
+export function dissolveCircle(circleId) {
+  return http.delete(`/user/circles/${circleId}`);
+}
+
+export function leaveCircle(circleId) {
+  return http.post(`/user/circles/${circleId}/leave`);
+}
+
+export function kickCircleMember(circleId, memberUid) {
+  return http.delete(`/user/circles/${circleId}/members/${memberUid}`);
+}
+
+export function previewCircle(code) {
+  return http.get(`/user/circles/join/${code}`);
+}
+
+export function joinCircle(code) {
+  return http.post(`/user/circles/join/${code}`);
 }
