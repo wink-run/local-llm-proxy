@@ -34,6 +34,17 @@ function msgText(msg) {
   return '';
 }
 
+/** Cursor transcript 中 tool 正文常被 [REDACTED] 占位，保留可见摘要 */
+function sanitizeCursorText(text) {
+  if (!text || typeof text !== 'string') return '';
+  let s = text
+    .replace(/\n*\[REDACTED\]\s*(\n|$)/gi, '\n')
+    .replace(/^\[REDACTED\]\s*$/i, '')
+    .trim();
+  if (!s || s === '[REDACTED]') return '';
+  return s;
+}
+
 /** 提取 tool_result / function_call_output 的可读文本（string | 数组块 | {output} 等） */
 function toolResultText(content) {
   if (content == null) return '';
@@ -502,10 +513,18 @@ function getCursorTrace(sessionId) {
 
   const steps = [];
   let lineIdx = 0;
+  let agentTurns = 0;
   try {
     for (const line of rawLines) {
       let data;
       try { data = JSON.parse(line); } catch { lineIdx++; continue; }
+
+      // Cursor 新版 jsonl：turn 结束标记（仅统计，不占用步骤列表）
+      if (data.type === 'turn_ended') {
+        lineIdx++;
+        continue;
+      }
+
       const role = data.role;
       const msg = data.message || {};
       const ts = stepTs(timeSpan, lineIdx);
@@ -518,6 +537,7 @@ function getCursorTrace(sessionId) {
           ...(usage || {}),
         });
       } else if (role === 'assistant') {
+        agentTurns++;
         const content = msg.content;
         if (Array.isArray(content)) {
           for (const item of content) {
@@ -528,25 +548,34 @@ function getCursorTrace(sessionId) {
                 tool: item.name, input: item.input || item.arguments,
               });
             } else if (t === 'thinking' || t === 'reasoning') {
-              steps.push({
-                idx: steps.length, kind: 'assistant', label: 'Reasoning', ts,
-                reasoning: true,
-                text: String(item.text || item.thinking || '').slice(0, 500),
-              });
+              const think = sanitizeCursorText(String(item.text || item.thinking || ''));
+              if (think) {
+                steps.push({
+                  idx: steps.length, kind: 'assistant', label: 'Reasoning', ts,
+                  reasoning: true,
+                  text: think.slice(0, 500),
+                });
+              }
             } else if (t === 'text' && item.text) {
-              steps.push({
-                idx: steps.length, kind: 'assistant', label: 'Assistant', ts,
-                text: String(item.text).slice(0, 500),
-                ...(usage || {}),
-              });
+              const text = sanitizeCursorText(String(item.text));
+              if (text) {
+                steps.push({
+                  idx: steps.length, kind: 'assistant', label: 'Assistant', ts,
+                  text: text.slice(0, 500),
+                  ...(usage || {}),
+                });
+              }
             }
           }
         } else {
-          steps.push({
-            idx: steps.length, kind: 'assistant', label: 'Assistant', ts,
-            text: msgText(msg).slice(0, 500),
-            ...(usage || {}),
-          });
+          const text = sanitizeCursorText(msgText(msg));
+          if (text) {
+            steps.push({
+              idx: steps.length, kind: 'assistant', label: 'Assistant', ts,
+              text: text.slice(0, 500),
+              ...(usage || {}),
+            });
+          }
         }
       }
       lineIdx++;
@@ -555,14 +584,18 @@ function getCursorTrace(sessionId) {
     return { error: e.message, steps: [], stats: {} };
   }
 
+  const stats = buildTraceStats(steps, { filePath: cf, rawLines });
+  if (agentTurns > 0) stats.turns = agentTurns;
+
   return {
     session_id: sessionId,
     agent: 'cursor',
     project: projectName,
     project_path: projectPath,
     cwd: projectPath,
+    session_file: cf,
     steps,
-    stats: buildTraceStats(steps, { filePath: cf, rawLines }),
+    stats,
   };
 }
 
@@ -1279,7 +1312,7 @@ function assistantLineLabel(data) {
     }
     const text = content.find(x => x?.type === 'text')?.text;
     if (text) {
-      const t = extractContext(String(text));
+      const t = extractContext(sanitizeCursorText(String(text)));
       if (t) return t.slice(0, 60);
     }
   }
@@ -1404,6 +1437,6 @@ function enrichRecentDetail(agentId, recent, activity = []) {
 
 module.exports = {
   listActivity, getTrace, mergeActivityWithStats, enrichTraceWithDb,
-  enrichRecentDetail, assistantLineLabel, extractContext, shortProjectName, normalizeActivityRow,
-  listAllSessions, buildClaudeStyleSteps, buildTraceStats, toolResultText,
+  enrichRecentDetail, assistantLineLabel, extractContext, sanitizeCursorText, shortProjectName, normalizeActivityRow,
+  listAllSessions, buildClaudeStyleSteps, buildTraceStats, toolResultText, findSessionJsonl,
 };

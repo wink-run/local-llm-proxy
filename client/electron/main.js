@@ -2344,7 +2344,8 @@ function registerIPC() {
   ipcMain.handle('apps:sessionTrace', (_e, { agent_id, session_id } = {}) => {
     if (!agent_id || !session_id) return { error: 'missing_params', steps: [] };
     const trace = sessionBrowser.getTrace(agent_id, session_id);
-    const dbRow = localStats.querySessionDetail(session_id);
+    const hookOnly = agent_id === 'cursor';
+    const dbRow = localStats.querySessionDetail(session_id, { hookOnly });
     return sessionBrowser.enrichTraceWithDb(trace, dbRow);
   });
 

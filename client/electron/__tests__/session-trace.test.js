@@ -5,6 +5,7 @@ const {
   buildClaudeStyleSteps,
   buildTraceStats,
   toolResultText,
+  sanitizeCursorText,
 } = require('../session-browser');
 
 const span = { t0: 0, span: 1000, lineCount: 10 };
@@ -88,4 +89,13 @@ test('toolResultText handles string, array and object shapes', () => {
   assert.equal(toolResultText([{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }]), 'a\nb');
   assert.equal(toolResultText({ output: 'cmd out' }), 'cmd out');
   assert.equal(toolResultText(null), '');
+});
+
+test('sanitizeCursorText strips [REDACTED] placeholders', () => {
+  assert.equal(sanitizeCursorText('[REDACTED]'), '');
+  assert.equal(
+    sanitizeCursorText('正在排查 AVG LATENCY 无数据的原因。\n\n[REDACTED]'),
+    '正在排查 AVG LATENCY 无数据的原因。',
+  );
+  assert.equal(sanitizeCursorText('plain text'), 'plain text');
 });

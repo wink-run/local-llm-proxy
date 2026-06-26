@@ -419,19 +419,20 @@ function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50 } = {
 }
 
 /** 单会话 DB 汇总（Trace 顶栏 Token / 持续时间 / 费用补全） */
-function querySessionDetail(sessionId) {
+function querySessionDetail(sessionId, { hookOnly = false } = {}) {
   if (!db || !sessionId) return null;
   try {
+    const hookClause = hookOnly ? " AND request_id LIKE 'cursor-hook:%'" : '';
     const row = db.prepare(
       `SELECT COUNT(*) AS calls, SUM(input_tokens) AS inTok, SUM(output_tokens) AS outTok, ` +
       `SUM(cache_read_tokens) AS cached, MIN(ts) AS firstTs, MAX(ts) AS lastTs ` +
-      `FROM requests WHERE session_id = @sid`
+      `FROM requests WHERE session_id = @sid${hookClause}`
     ).get({ sid: sessionId });
     if (!row) return null;
     const costRows = db.prepare(
       `SELECT model, provider_id, SUM(input_tokens) AS inTok, SUM(output_tokens) AS outTok, ` +
       `SUM(cache_create_tokens) AS cCreate, SUM(cache_read_tokens) AS cRead, SUM(cost_usd) AS storedCost ` +
-      `FROM requests WHERE session_id = @sid GROUP BY model, provider_id`
+      `FROM requests WHERE session_id = @sid${hookClause} GROUP BY model, provider_id`
     ).all({ sid: sessionId });
     let cost_usd = 0;
     for (const r of costRows) cost_usd += _sessionCostPart(r);
