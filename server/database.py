@@ -148,6 +148,29 @@ async def init_db() -> None:
             )
         """)
 
+        # circles
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS circles (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                code        TEXT UNIQUE NOT NULL,
+                owner_id    INTEGER NOT NULL REFERENCES users(id),
+                max_members INTEGER DEFAULT 100,
+                created_at  TEXT DEFAULT (datetime('now'))
+            )
+        """)
+
+        # circle_members — owner is also inserted here on circle creation
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS circle_members (
+                circle_id   INTEGER NOT NULL REFERENCES circles(id) ON DELETE CASCADE,
+                user_id     INTEGER NOT NULL REFERENCES users(id),
+                joined_at   TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY (circle_id, user_id)
+            )
+        """)
+
         # scene_routes
         await db.execute("""
             CREATE TABLE IF NOT EXISTS scene_routes (
@@ -197,6 +220,7 @@ async def init_db() -> None:
             ("checkin_reward", "5"),
             ("spin_daily_limit", "3"),
             ("spin_max_credits", "50"),
+            ("circle_invite_reward", "50"),
         ]:
             await db.execute(
                 "INSERT OR IGNORE INTO system_config(key,value) VALUES(?,?)", (k, v)
@@ -214,6 +238,7 @@ async def init_db() -> None:
     await _migrate_devices()
     await _migrate_device_inventory()
     await _migrate_user_billing()
+    await _migrate_circles()
 
 
 async def _migrate() -> None:
@@ -1700,5 +1725,192 @@ async def get_wall_users(limit: int = 50) -> list[dict]:
             (limit,),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
+
+
+async def _migrate_circles() -> None:
+    """Add circle_id to virtual_agents; create circles/circle_members if not present (for old DBs)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS circles (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                code        TEXT UNIQUE NOT NULL,
+                owner_id    INTEGER NOT NULL REFERENCES users(id),
+                max_members INTEGER DEFAULT 100,
+                created_at  TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS circle_members (
+                circle_id   INTEGER NOT NULL REFERENCES circles(id) ON DELETE CASCADE,
+                user_id     INTEGER NOT NULL REFERENCES users(id),
+                joined_at   TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY (circle_id, user_id)
+            )
+        """)
+        # Enable FK support for cascade to work at migration time
+        await db.execute("PRAGMA foreign_keys = ON")
+        async with db.execute("PRAGMA table_info(virtual_agents)") as cur:
+            cols = {row[1] async for row in cur}
+        if "circle_id" not in cols:
+            await db.execute("ALTER TABLE virtual_agents ADD COLUMN circle_id INTEGER REFERENCES circles(id)")
+        await db.execute(
+            "INSERT OR IGNORE INTO system_config(key,value) VALUES('circle_invite_reward','50')"
+        )
+        await db.commit()
+
+
+# ── circles ───────────────────────────────────────────────────────────────────
+
+def _gen_circle_code() -> str:
+    import string
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(8))
+
+
+async def create_circle(owner_id: int, name: str, description: str = "") -> dict:
+    code = _gen_circle_code()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute("PRAGMA foreign_keys = ON")
+        # Retry on code collision (astronomically unlikely)
+        for _ in range(5):
+            try:
+                async with db.execute(
+                    "INSERT INTO circles(name,description,code,owner_id) VALUES(?,?,?,?)",
+                    (name, description, code, owner_id),
+                ) as cur:
+                    circle_id = cur.lastrowid
+                break
+            except Exception:
+                code = _gen_circle_code()
+        else:
+            raise RuntimeError("Failed to generate unique circle code")
+        # Owner is also a member
+        await db.execute(
+            "INSERT OR IGNORE INTO circle_members(circle_id,user_id) VALUES(?,?)",
+            (circle_id, owner_id),
+        )
+        await db.commit()
+        async with db.execute("SELECT * FROM circles WHERE id=?", (circle_id,)) as cur:
+            row = await cur.fetchone()
+            return dict(row)
+
+
+async def get_circle_by_code(code: str) -> Optional[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM circles WHERE code=?", (code,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def get_circle_by_id(circle_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM circles WHERE id=?", (circle_id,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def list_circles_owned(owner_id: int) -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM circles WHERE owner_id=? ORDER BY created_at DESC", (owner_id,)
+        ) as cur:
+            return [dict(r) async for r in cur]
+
+
+async def list_circles_joined(user_id: int) -> list:
+    """All circles the user belongs to (including owned)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT c.* FROM circles c
+               JOIN circle_members m ON m.circle_id=c.id
+               WHERE m.user_id=?
+               ORDER BY m.joined_at DESC""",
+            (user_id,),
+        ) as cur:
+            return [dict(r) async for r in cur]
+
+
+async def get_user_circle_ids(user_id: int) -> list[int]:
+    """Return list of circle IDs the user belongs to (for dispatch visibility)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT circle_id FROM circle_members WHERE user_id=?", (user_id,)
+        ) as cur:
+            return [row[0] async for row in cur]
+
+
+async def circle_member_count(circle_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM circle_members WHERE circle_id=?", (circle_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else 0
+
+
+async def is_circle_member(circle_id: int, user_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT 1 FROM circle_members WHERE circle_id=? AND user_id=?", (circle_id, user_id)
+        ) as cur:
+            return (await cur.fetchone()) is not None
+
+
+async def add_circle_member(circle_id: int, user_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO circle_members(circle_id,user_id) VALUES(?,?)",
+            (circle_id, user_id),
+        )
+        await db.commit()
+
+
+async def remove_circle_member(circle_id: int, user_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM circle_members WHERE circle_id=? AND user_id=?", (circle_id, user_id)
+        )
+        await db.commit()
+
+
+async def delete_circle(circle_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA foreign_keys = ON")
+        # Detach virtual_agents from this circle first
+        await db.execute(
+            "UPDATE virtual_agents SET circle_id=NULL WHERE circle_id=?", (circle_id,)
+        )
+        # Delete cascade handles circle_members via FK
+        await db.execute("DELETE FROM circles WHERE id=?", (circle_id,))
+        await db.commit()
+
+
+async def count_circles_owned(owner_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM circles WHERE owner_id=?", (owner_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else 0
+
+
+async def count_circles_joined_only(user_id: int) -> int:
+    """Circles user is a member of but does NOT own."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT COUNT(*) FROM circle_members m
+               JOIN circles c ON c.id=m.circle_id
+               WHERE m.user_id=? AND c.owner_id!=?""",
+            (user_id, user_id),
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else 0
 
 
