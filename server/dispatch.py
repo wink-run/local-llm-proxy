@@ -93,6 +93,7 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
             dispatch_body = dict(body)
             dispatch_body["model"] = attempt_model
             if caveman_level and caveman_level in CAVEMAN_VALID_LEVELS:
+                dispatch_body["messages"] = list(dispatch_body.get("messages") or [])
                 inject_caveman(dispatch_body, caveman_level)
 
             try:
