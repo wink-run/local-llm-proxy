@@ -6,16 +6,28 @@ import {
 } from '../api/client';
 import { getServerUrl } from '../config';
 
+const AVATAR_COLORS = [
+  'bg-blue-600', 'bg-violet-600', 'bg-emerald-600',
+  'bg-orange-500', 'bg-pink-600', 'bg-teal-600',
+  'bg-indigo-600', 'bg-rose-600',
+];
+
+function circleColor(name = '') {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
 export default function Circles() {
   const { t } = useLang();
-  const [owned, setOwned]       = useState([]);
-  const [joined, setJoined]     = useState([]);
+  const [owned, setOwned]           = useState([]);
+  const [joined, setJoined]         = useState([]);
   const [showCreate, setShowCreate] = useState(false);
-  const [name, setName]         = useState('');
-  const [desc, setDesc]         = useState('');
-  const [creating, setCreating] = useState(false);
-  const [error, setError]       = useState('');
-  const [copiedId, setCopiedId] = useState(null);
+  const [name, setName]             = useState('');
+  const [desc, setDesc]             = useState('');
+  const [creating, setCreating]     = useState(false);
+  const [error, setError]           = useState('');
+  const [copiedId, setCopiedId]     = useState(null);
 
   async function load() {
     const [o, j] = await Promise.all([listMyCircles(), listJoinedCircles()]);
@@ -64,7 +76,7 @@ export default function Circles() {
   }
 
   return (
-    <div className="p-6 max-w-2xl mx-auto space-y-6">
+    <div className="px-5 py-5 space-y-5">
       {/* 页头 */}
       <div className="flex items-center justify-between">
         <div>
@@ -81,7 +93,7 @@ export default function Circles() {
 
       {/* 创建表单 */}
       {showCreate && (
-        <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4 space-y-3">
+        <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 space-y-3">
           <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">{t('circles.createTitle')}</h2>
           <form onSubmit={handleCreate} className="space-y-3">
             <input
@@ -157,8 +169,17 @@ export default function Circles() {
 }
 
 function CircleCard({ circle, isOwner, onCopy, copied, onAction, actionLabel, t }) {
+  const initial = (circle.name || '?')[0].toUpperCase();
+  const color   = circleColor(circle.name);
+
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 flex items-start justify-between gap-3">
+    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 flex items-center gap-4">
+      {/* 头像 */}
+      <div className={`w-11 h-11 rounded-full ${color} flex items-center justify-center text-lg font-bold text-white shrink-0`}>
+        {initial}
+      </div>
+
+      {/* 信息 */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="font-semibold text-gray-900 dark:text-gray-100 truncate">{circle.name}</span>
@@ -169,13 +190,15 @@ function CircleCard({ circle, isOwner, onCopy, copied, onAction, actionLabel, t 
           )}
         </div>
         {circle.description && (
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5 truncate">{circle.description}</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400 truncate mt-0.5">{circle.description}</p>
         )}
-        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+        <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
           {t('circles.members').replace('{n}', circle.member_count)}
         </p>
       </div>
-      <div className="flex gap-2 shrink-0 items-center">
+
+      {/* 操作 */}
+      <div className="flex gap-2 shrink-0">
         <button onClick={onCopy}
           className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
           {copied ? t('circles.linkCopied') + ' ✓' : t('circles.inviteLink')}
