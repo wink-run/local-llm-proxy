@@ -663,11 +663,6 @@ export default {
   'contribute.nodeName': '节点名称',
   'contribute.nodeNamePh': '留空使用主机名',
   'contribute.autoStart': '启动应用时自动运行贡献节点',
-  'contribute.scope': '贡献范围',
-  'contribute.scopePublic': '公开（所有人可用）',
-  'contribute.scopeCircle': '指定圈子',
-  'contribute.noCircle': '暂无圈子，请先创建或加入圈子',
-  'contribute.scopeHint': '圈子内算力仅圈子成员可用，积分结算与公开相同',
   'contribute.saveConfig': '保存配置',
 
   // ── 网络 ──
@@ -762,7 +757,15 @@ export default {
   'profile.tier.gw': '网关',
   'profile.tier.direct': '订阅',
   'profile.tier.mixed': '混合',
-  // Circles
+
+  // ── 贡献范围 ──
+  'contribute.scope': '贡献范围',
+  'contribute.scopePublic': '公开（所有人可用）',
+  'contribute.scopeCircle': '指定圈子',
+  'contribute.noCircle': '暂无圈子，请先创建或加入圈子',
+  'contribute.scopeHint': '圈子内算力仅圈子成员可用，积分结算与公开相同',
+
+  // ── 圈子 ──
   'circles.title': '我的圈子',
   'circles.subtitle': '创建或加入圈子，与圈友共享算力',
   'circles.createBtn': '创建圈子',
@@ -782,6 +785,5 @@ export default {
   'circles.descPh': '简介（可选）',
   'circles.createSubmit': '创建',
   'circles.creating': '创建中…',
-  'circles.maxOwned': '最多创建 5 个圈子',
   'circles.isOwner': '圈主',
 };

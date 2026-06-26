@@ -660,11 +660,6 @@ export default {
   'contribute.nodeName': 'Node name',
   'contribute.nodeNamePh': 'Leave blank for hostname',
   'contribute.autoStart': 'Auto-start contributor when app launches',
-  'contribute.scope': 'Contribution Scope',
-  'contribute.scopePublic': 'Public (visible to all)',
-  'contribute.scopeCircle': 'Circle only',
-  'contribute.noCircle': 'No circles yet — create or join one first',
-  'contribute.scopeHint': 'Circle compute is only visible to circle members. Credits are settled the same way.',
   'contribute.saveConfig': 'Save config',
 
   'network.backProviders': '← Providers',
@@ -756,7 +751,15 @@ export default {
   'profile.tier.gw': 'Gateway',
   'profile.tier.direct': 'Sub',
   'profile.tier.mixed': 'Mixed',
-  // Circles
+
+  // ── Contribute scope ──
+  'contribute.scope': 'Contribution Scope',
+  'contribute.scopePublic': 'Public (visible to all)',
+  'contribute.scopeCircle': 'Circle only',
+  'contribute.noCircle': 'No circles yet — create or join one first',
+  'contribute.scopeHint': 'Circle compute is only visible to circle members. Credits are settled the same way.',
+
+  // ── Circles ──
   'circles.title': 'My Circles',
   'circles.subtitle': 'Create or join circles to share compute with friends',
   'circles.createBtn': 'Create Circle',
@@ -776,6 +779,5 @@ export default {
   'circles.descPh': 'Description (optional)',
   'circles.createSubmit': 'Create',
   'circles.creating': 'Creating…',
-  'circles.maxOwned': 'Maximum 5 circles',
   'circles.isOwner': 'Owner',
 };
