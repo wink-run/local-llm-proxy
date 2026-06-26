@@ -5,6 +5,7 @@
   "main": "electron/main.js",
   "scripts": {
     "dev": "node scripts/gen-icons.js && concurrently \"vite\" \"wait-on http://localhost:5173 && npx electron .\"",
+    "dev:vite": "vite",
     "prebuild": "node scripts/gen-icons.js",
     "build": "vite build && electron-builder",
     "gen-icons": "node scripts/gen-icons.js",
