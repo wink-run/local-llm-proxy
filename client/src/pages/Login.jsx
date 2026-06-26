@@ -45,6 +45,13 @@ export default function Login() {
   const location = useLocation();
   const returnTo = safeReturnPath(location.state?.from);
 
+  // Read invite link params from URL (works for both web and Electron app opened via link)
+  const urlParams = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search)
+    : new URLSearchParams();
+  const inviteCircleCode = urlParams.get('c') || '';
+  const inviteRefCode    = urlParams.get('ref') || '';
+
   const [serverUrl, setServerUrl] = useState(
     () => normalizeServerBase(localStorage.getItem('serverUrl') || '')
   );
@@ -52,7 +59,9 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [nickname, setNickname] = useState('');
-  const [referralCode, setReferralCode] = useState('');
+  const [referralCode, setReferralCode] = useState(inviteRefCode);
+  const [circleCode]   = useState(inviteCircleCode);   // read-only, from URL
+  const [circleMsg, setCircleMsg] = useState('');       // post-registration circle status
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [firstRun, setFirstRun] = useState(false);
@@ -114,7 +123,14 @@ export default function Login() {
     setSaving(true);
     try {
       setServerUrl(base);
-      const res = await register(email, password, nickname, referralCode);
+      const res = await register(email, password, nickname, referralCode, circleCode);
+      if (circleCode) {
+        if (res.data.circle_joined) {
+          setCircleMsg('已成功加入圈子！');
+        } else if (res.data.circle_full) {
+          setCircleMsg('圈子已满，注册成功但未加入圈子。');
+        }
+      }
       await afterAuth(res.data.token);
     } catch (err) {
       localStorage.removeItem('token');
@@ -195,6 +211,14 @@ export default function Login() {
             <Field label={t('config.password')} type="password" value={password} onChange={setPassword} placeholder={t('config.passwordMin')} />
             <Field label={t('config.referral')} type="text" value={referralCode} onChange={setReferralCode} placeholder={t('config.referralPh')} />
             {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
+            {circleMsg && (
+              <div className="text-sm text-blue-600 bg-blue-50 rounded p-2">{circleMsg}</div>
+            )}
+            {circleCode && !circleMsg && (
+              <div className="text-xs text-gray-500">
+                注册后将自动加入邀请圈子
+              </div>
+            )}
             <button type="submit" disabled={saving}
               className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 disabled:opacity-50 rounded-lg text-[13px] font-semibold text-white transition-colors">
               {saving ? t('config.registering') : t('config.registerBtn')}
