@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 import database as db
+from caveman import inject_caveman, VALID_LEVELS as CAVEMAN_VALID_LEVELS
 from worker_pool import pool
 
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "120"))
@@ -34,12 +35,14 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
 
     # Build ordered list of models to try: scene route steps, then the requested model
     models_to_try: list[str] = []
+    caveman_level: str | None = None
     if key_id is not None:
         scene = await db.get_scene_route_by_key(key_id)
         if scene:
             raw_steps = scene.get("steps", "[]")
             steps = json.loads(raw_steps) if isinstance(raw_steps, str) else raw_steps
             models_to_try = [s["model"] for s in steps if s.get("model")]
+            caveman_level = scene.get("caveman_level")
     if not models_to_try:
         models_to_try = [model]
 
@@ -89,6 +92,8 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
 
             dispatch_body = dict(body)
             dispatch_body["model"] = attempt_model
+            if caveman_level and caveman_level in CAVEMAN_VALID_LEVELS:
+                inject_caveman(dispatch_body, caveman_level)
 
             try:
                 await worker.send({"type": "request", "req_id": req_id, "payload": dispatch_body})
