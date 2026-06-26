@@ -1,20 +1,30 @@
 """Scene routes CRUD + key binding endpoints."""
 import json
+from typing import Optional, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, field_validator
 
 import database as db
 from auth import get_current_user_id
 
 router = APIRouter()
 
+_CAVEMAN_LEVELS = {None, 'lite', 'full', 'ultra'}
+
 
 class SceneRouteBody(BaseModel):
     scene_name: str
     icon: str = "🔀"
     steps: list
+    caveman_level: Optional[str] = None
+
+    @field_validator('caveman_level')
+    @classmethod
+    def validate_caveman(cls, v):
+        if v not in _CAVEMAN_LEVELS:
+            raise ValueError(f"caveman_level must be one of {sorted(str(x) for x in _CAVEMAN_LEVELS if x)!r} or null")
+        return v
 
 
 class BindKeyBody(BaseModel):
@@ -33,7 +43,8 @@ async def list_routes(uid: int = Depends(get_current_user_id)):
 
 @router.post("/scene-routes")
 async def create_route(body: SceneRouteBody, uid: int = Depends(get_current_user_id)):
-    route = await db.create_scene_route(uid, body.scene_name, body.icon, body.steps)
+    route = await db.create_scene_route(uid, body.scene_name, body.icon, body.steps,
+                                        caveman_level=body.caveman_level)
     if isinstance(route.get("steps"), str):
         route["steps"] = json.loads(route["steps"])
     return route
@@ -41,7 +52,8 @@ async def create_route(body: SceneRouteBody, uid: int = Depends(get_current_user
 
 @router.put("/scene-routes/{route_id}")
 async def update_route(route_id: int, body: SceneRouteBody, uid: int = Depends(get_current_user_id)):
-    ok = await db.update_scene_route(route_id, uid, body.scene_name, body.icon, body.steps)
+    ok = await db.update_scene_route(route_id, uid, body.scene_name, body.icon, body.steps,
+                                     caveman_level=body.caveman_level)
     if not ok:
         raise HTTPException(404, "Route not found")
     return {"ok": True}

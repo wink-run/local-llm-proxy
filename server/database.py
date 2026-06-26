@@ -1137,6 +1137,11 @@ async def _migrate_scene_routes() -> None:
                 await db.execute(
                     "UPDATE scene_routes SET model_key=? WHERE id=?", (mkey, rid)
                 )
+        # scene_routes.caveman_level
+        if "caveman_level" not in sr_cols:
+            await db.execute(
+                "ALTER TABLE scene_routes ADD COLUMN caveman_level TEXT"
+            )
         await db.commit()
 
 
@@ -1152,15 +1157,16 @@ async def list_scene_routes(user_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-async def create_scene_route(user_id: int, scene_name: str, icon: str, steps: list) -> dict:
+async def create_scene_route(user_id: int, scene_name: str, icon: str, steps: list,
+                              caveman_level: str | None = None) -> dict:
     import json as _json
     import uuid as _uuid
     steps_json = _json.dumps(steps, ensure_ascii=False)
     model_key  = "llm-router-" + _uuid.uuid4().hex[:12]
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
-            "INSERT INTO scene_routes(user_id, scene_name, icon, steps, model_key) VALUES(?,?,?,?,?)",
-            (user_id, scene_name, icon, steps_json, model_key),
+            "INSERT INTO scene_routes(user_id, scene_name, icon, steps, model_key, caveman_level) VALUES(?,?,?,?,?,?)",
+            (user_id, scene_name, icon, steps_json, model_key, caveman_level or None),
         )
         row_id = cur.lastrowid
         await db.commit()
@@ -1170,13 +1176,14 @@ async def create_scene_route(user_id: int, scene_name: str, icon: str, steps: li
     return dict(row)
 
 
-async def update_scene_route(route_id: int, user_id: int, scene_name: str, icon: str, steps: list) -> bool:
+async def update_scene_route(route_id: int, user_id: int, scene_name: str, icon: str, steps: list,
+                              caveman_level: str | None = None) -> bool:
     import json as _json
     steps_json = _json.dumps(steps, ensure_ascii=False)
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
-            "UPDATE scene_routes SET scene_name=?, icon=?, steps=? WHERE id=? AND user_id=?",
-            (scene_name, icon, steps_json, route_id, user_id),
+            "UPDATE scene_routes SET scene_name=?, icon=?, steps=?, caveman_level=? WHERE id=? AND user_id=?",
+            (scene_name, icon, steps_json, caveman_level or None, route_id, user_id),
         )
         await db.commit()
     return cur.rowcount > 0
