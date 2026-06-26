@@ -56,8 +56,8 @@ async def lifespan(app: FastAPI):
 
 # landing 页产品截图，需长期保留
 _LANDING_SCREENSHOTS = frozenset({
-    "dashboard.png", "gateway.png", "provider.png",
-    "dashboard_en.png", "gateway_en.png", "provider_en.png",
+    "dashboard.webp", "gateway.webp", "provider.webp",
+    "dashboard_en.webp", "gateway_en.webp", "provider_en.webp",
 })
 
 
