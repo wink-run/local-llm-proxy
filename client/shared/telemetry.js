@@ -7,6 +7,7 @@ const os   = require('os');
 
 const localStats    = require('../electron/local-stats');
 const sessionImport = require('../electron/session-import');
+const cursorHooks   = require('../electron/cursor-hooks');
 const { readLocalConfig } = require('./config-loader');
 
 /** 与 Electron 统一的数据目录（local-stats.db） */
@@ -55,6 +56,11 @@ function computeImportSkip() {
       if (app.hosted === false) { skip.add(ds); continue; }
       if (app.hosted && app.route_id && !PROXY_DEDUP_DS.has(ds)) skip.add(ds);
     }
+    // Cursor 纳管且 stop hook 已装：transcript 无 usage，改由 hook 落账
+    const cursor = ((readLocalConfig() || {}).apps || []).find(
+      a => a.link_method === 'direct' && a.agent_id === 'cursor',
+    );
+    if (cursor?.hosted && cursorHooks.isInstalled()) skip.add('session-cursor');
   } catch {}
   return skip;
 }
@@ -69,8 +75,10 @@ function initGatewayTelemetry(gateway) {
   gateway.setLocalStats(localStats);
 
   const runImport = () => {
-    try { sessionImport.run(localStats, { skip: computeImportSkip() }); }
-    catch (e) { console.error('[session-import]', e.message); }
+    try {
+      cursorHooks.importEvents(localStats);
+      sessionImport.run(localStats, { skip: computeImportSkip() });
+    } catch (e) { console.error('[session-import]', e.message); }
   };
   runImport();
   const timer = setInterval(runImport, 30_000);

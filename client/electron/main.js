@@ -15,6 +15,8 @@ const { defaultServerUrlFromEnv } = require('../shared/default-server-url');
 const deviceIdentity = require('../shared/device-identity');
 const detectTools = require('./detect-tools');
 const agentLinker = require('./agent-linker');
+const cursorHooks = require('./cursor-hooks');
+const { syncSessionTelemetry } = require('./session-telemetry-sync');
 // device-reporter is used by the CLI only; desktop registration is handled
 // by useDeviceReporter in the renderer (which has access to the JWT).
 
@@ -628,7 +630,7 @@ function refreshTray() {
   // 同步 session import，保证与 modal 数据一致；每 60s 最多跑一次
   const now = Date.now();
   if (now - _lastTrayImportTs > 60000) {
-    try { sessionImport.run(localStats, { skip: computeImportSkip() }); } catch {}
+    try { syncSessionTelemetry(localStats); } catch {}
     _lastTrayImportTs = now;
   }
   const gw = gateway.getStatus?.() || {};
@@ -1372,7 +1374,7 @@ function registerIPC() {
     return data;
   });
   // 手动触发会话文件补录（扫 ~/.claude、~/.codex、~/.gemini），返回各来源计数
-  ipcMain.handle('sessionImport:run', () => sessionImport.run(localStats, { skip: computeImportSkip() }));
+  ipcMain.handle('sessionImport:run', () => syncSessionTelemetry(localStats));
   // 探测本机 AI 工具/本地服务，返回是否已接入网关的清单
   ipcMain.handle('detectTools:scan', async () => {
     const r = await detectTools.scan();
@@ -1890,6 +1892,21 @@ function registerIPC() {
     syncGatewayFromConfig(cfg);
   }
   // 应用「纳管」状态完全跟随用户操作（持久化在条目里，不靠扫描/匹配配置文件内容）
+  function syncCursorHookState(apps) {
+    try {
+      const appsList = apps || getApps();
+      cursorHooks.syncForApps(appsList, process.execPath);
+      const cursor = appsList.find(a => a.link_method === 'direct' && a.agent_id === 'cursor');
+      // hook 纳管后：清掉 transcript 0 token 脏数据并立即导入已有 hook 事件
+      if (cursor?.hosted && cursorHooks.isInstalled()) {
+        cursorHooks.purgeTranscriptZeroTokens(localStats);
+        const n = cursorHooks.importEvents(localStats);
+        if (n > 0) { try { mainWindow?.webContents?.send('apps:changed'); } catch {} }
+      }
+    } catch (e) {
+      console.error('[cursor-hooks] sync failed:', e.message);
+    }
+  }
   function setAppHosted(appId, hosted) {
     if (!appId) return;
     const apps = getApps();
@@ -1897,6 +1914,9 @@ function registerIPC() {
     if (idx === -1) return;
     apps[idx] = { ...apps[idx], hosted: !!hosted };
     saveApps(apps);
+    if (apps[idx].agent_id === 'cursor' && apps[idx].link_method === 'direct') {
+      syncCursorHookState(apps);
+    }
   }
 
   ipcMain.handle('apps:list', () => {
@@ -2116,7 +2136,11 @@ function registerIPC() {
     apps[idx] = { ...apps[idx], ...safePatch };
     saveApps(apps);
     try { syncGatewayFromConfig(readLocalConfig()); } catch {}
-    return apps[idx];
+    const updated = apps[idx];
+    if (updated.agent_id === 'cursor' && updated.link_method === 'direct' && Object.prototype.hasOwnProperty.call(patch, 'hosted')) {
+      syncCursorHookState(apps);
+    }
+    return updated;
   });
 
   ipcMain.handle('apps:delete', (_e, id) => {
@@ -2283,7 +2307,7 @@ function registerIPC() {
   // 单个应用的用量明细（合并网关实时 + 会话补录）。查询前先增量补录一次会话文件，
   // 保证 Claude/Codex/Gemini 直连官方的用量也并进来。
   ipcMain.handle('apps:detail', (_e, { app, days } = {}) => {
-    try { sessionImport.run(localStats, { skip: computeImportSkip() }); } catch {}
+    try { syncSessionTelemetry(localStats); } catch {}
     // api-key 应用并入会话补录数据源（如 Claude Desktop 的 Cowork/Code）；shim/direct 始终读其会话用量（真实历史，不随纳管/还原增删）。
     const dataSource = (app && (app.link_method === 'api-key' || app.link_method === 'manual')) ? (SESSION_DS_BY_PRESET[app.preset_id] || null)
       : (app && (app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) ? AGENT_DATA_SOURCE[app.agent_id] : null;
@@ -2331,7 +2355,7 @@ function registerIPC() {
   ipcMain.handle('sessions:listAll', (_e, opts = {}) => {
     try {
       // 与 apps:detail 一致：列表前先增量补录会话文件，否则 DB 无 session_id / cost 可对账
-      try { sessionImport.run(localStats, { skip: computeImportSkip() }); } catch {}
+      try { syncSessionTelemetry(localStats); } catch {}
       return sessionManager.getSessions(_sessionDeps, opts);
     }
     catch (e) { console.error('[sessions:listAll]', e.message); return []; }
@@ -2437,8 +2461,7 @@ function registerIPC() {
   }
 
   ipcMain.handle('apps:stats', (_e, appList) => {
-    // 增量补录会话文件，保证当天直连官方的用量进库（与 apps:detail 一致）
-    try { sessionImport.run(localStats, { skip: computeImportSkip() }); } catch {}
+    try { syncSessionTelemetry(localStats); } catch {}
     const stats = {};
     for (const app of (appList || [])) {
       const ds = appSessionDataSource(app);
@@ -2468,7 +2491,7 @@ function registerIPC() {
   // 盘点页：按网关应用聚合用量（合并原「工具来源 + 场景应用」）
   ipcMain.handle('localStats:appsUsage', (_e, days) => {
     const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
-    try { sessionImport.run(localStats, { skip: computeImportSkip() }); } catch {}
+    try { syncSessionTelemetry(localStats); } catch {}
     const apps = getApps().filter(a => !a.draft);
     return apps.map(app => {
       const dataSource = appSessionDataSource(app);
@@ -2608,6 +2631,18 @@ app.whenReady().then(() => {
   setInterval(() => runClaude3pSync('interval'), 30000);
   // Init local SQLite stats DB（与 CLI 共用 ~/.tokenbank）
   localStats.init(STATS_DIR);
+  try { cursorHooks.syncForApps(readLocalConfig().apps || [], process.execPath); } catch (e) {
+    console.warn('[cursor-hooks] startup sync skipped:', e.message);
+  }
+  // 一次性迁移：hook 已装时清掉历史 transcript 0 token 行并导入 hook 事件
+  try {
+    const MIG = '__migrate_cursor_hook_purge_v1__';
+    if (!localStats.getImportState(MIG) && cursorHooks.isInstalled()) {
+      cursorHooks.purgeTranscriptZeroTokens(localStats);
+      cursorHooks.importEvents(localStats);
+      localStats.setImportState(MIG, 1, 0);
+    }
+  } catch (e) { console.error('[cursor-hooks] migrate purge', e.message); }
   gateway.setStatsRecorder((...args) => {
     localStats.record(...args);
     // 托盘 Token 文字由 2s 定时器统一刷新，这里不再每条请求都更新
@@ -2646,8 +2681,10 @@ app.whenReady().then(() => {
   // 有新增就通知前端刷新——否则直连用量要等重启重新挂载才显示，不像网关那样"实时"。
   const runSessionImport = () => {
     try {
-      const r = sessionImport.run(localStats, { skip: computeImportSkip() });
-      if (r && r.imported > 0) { try { mainWindow?.webContents?.send('apps:changed'); } catch {} }
+      const { hookImported, sessionImported } = syncSessionTelemetry(localStats);
+      if (hookImported > 0 || sessionImported > 0) {
+        try { mainWindow?.webContents?.send('apps:changed'); } catch {}
+      }
     } catch (e) { console.error('[session-import]', e.message); }
   };
   // 一次性迁移：历史 Claude 会话用量都存成 session-claude（混了 cli / claude-desktop）。

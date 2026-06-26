@@ -681,6 +681,21 @@ function getSessionMeta(agent_id, session_id) {
   }
 }
 
+/** 删除 transcript 补录产生的 0 token 行（hook 纳管后清理历史脏数据） */
+function deleteZeroTokenSessionRows({ dataSource, requestIdLike } = {}) {
+  if (!db || !dataSource || !requestIdLike) return 0;
+  try {
+    const r = db.prepare(
+      'DELETE FROM requests WHERE data_source = ? AND request_id LIKE ? ' +
+      'AND input_tokens = 0 AND output_tokens = 0 AND cache_read_tokens = 0 AND cache_create_tokens = 0'
+    ).run(dataSource, requestIdLike);
+    return r.changes || 0;
+  } catch (e) {
+    console.error('[local-stats] deleteZeroTokenSessionRows failed:', e.message);
+    return 0;
+  }
+}
+
 /** Upsert 会话元数据；仅写入传入的字段，其余沿用旧值。返回合并后的行。 */
 function setSessionMeta({ agent_id, session_id, favorite, tags, note, archived } = {}) {
   if (!db || !agent_id || !session_id) return null;
@@ -709,6 +724,6 @@ function setSessionMeta({ agent_id, session_id, favorite, tags, note, archived }
 module.exports = {
   init, record, queryDashboard, queryTodaySummary, queryByApiKey, queryByApp, queryByDataSource,
   queryAppDetail, queryAppStatsInPeriod, queryAppStatsToday, querySessionDetail, querySessionStatsMap,
-  getImportState, setImportState, resetSessionData, close,
+  getImportState, setImportState, resetSessionData, deleteZeroTokenSessionRows, close,
   listSessionMeta, getSessionMeta, setSessionMeta,
 };

@@ -139,9 +139,8 @@ session_sources:
     format: jsonl
     session_id_from: filename                  # 会话 id = 文件名(=<sid>)
     record_filter: { field: role, equals: assistant }
-    # 注意：当前版本 Cursor 的 transcript 不记 usage/model（实测整库无 usage 字段）→
-    # 只能按 assistant 消息计「请求数」，token 计 0；故不强制 require usage、也不 skip_if_zero。
-    # 若将来 Cursor 版本开始写 message.usage，下面字段会自动取到、token 即有值。
+    # transcript 通常无 usage；纳管后由 Cursor stop hook 写入 token（见 electron/cursor-hooks.js）。
+    # 未纳管时仍按 assistant 消息计请求数，token 为 0。
     request_id: "cursor:{session_id}:{index}"  # 同文件未变不重扫；跨扫描 INSERT OR IGNORE 去重
     record_label: assistant_tools               # 无 model 时从工具名/文本生成标签
     model_stats: false                          # 用量明细不展示「按模型统计 / 调用明细」
