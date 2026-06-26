@@ -67,6 +67,13 @@ const ORDER_STATUS_KEYS = { pending: 'profile.order.pending', approved: 'profile
 const RANGE_KEYS = ['today', '7d', '30d'];
 const RANGE_DAYS = { today: 1, '7d': 7, '30d': 30 };
 
+/** 个人页统一卡片与分段控件（与 Dashboard zinc 体系一致） */
+const PROFILE_CARD = 'bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl';
+const RANGE_PILL_WRAP = 'flex gap-0.5 bg-zinc-100 dark:bg-zinc-800 rounded-lg p-0.5 shrink-0';
+const rangePillClass = (active) => active
+  ? 'px-2.5 py-1 text-xs rounded-md bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 font-semibold shadow-sm transition-colors'
+  : 'px-2.5 py-1 text-xs rounded-md text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors';
+
 /** 工具来源展示名 */
 function sourceLabel(source, t) {
   if (!source) return t('profile.unknown');
@@ -175,7 +182,7 @@ function CheckinCard({ onSuccess }) {
 
   const done = status?.checked_in_today;
   return (
-    <div className="bg-white dark:bg-zinc-800 border border-zinc-100 dark:border-transparent rounded-2xl px-4 py-4 flex flex-col gap-3">
+    <div className="bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800/80 rounded-xl px-4 py-4 flex flex-col gap-3">
       <div className="flex items-center gap-2">
         <span className="text-xl select-none">📅</span>
         <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">{t('profile.checkin.title')}</p>
@@ -185,7 +192,7 @@ function CheckinCard({ onSuccess }) {
       </p>
       {msg && <span className={`text-xs font-medium ${msg.startsWith('+') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{msg}</span>}
       <button onClick={handleCheckin} disabled={checking || done}
-        className={`py-1.5 rounded-lg text-sm font-medium transition-colors ${done ? 'bg-zinc-100 dark:bg-zinc-700 text-zinc-400 cursor-default' : 'bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white'} disabled:opacity-60`}>
+        className={`py-1.5 rounded-lg text-sm font-medium transition-colors ${done ? 'bg-zinc-100 dark:bg-zinc-700 text-zinc-400 cursor-default' : 'bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-white dark:text-zinc-900 text-white'} disabled:opacity-60`}>
         {checking ? t('profile.checkin.checking') : done ? t('profile.checkin.doneBtn') : t('profile.checkin.btn')}
       </button>
     </div>
@@ -214,7 +221,7 @@ function SpinCard({ onSuccess }) {
 
   const exhausted = status?.spins_left === 0;
   return (
-    <div className="bg-white dark:bg-zinc-800 border border-zinc-100 dark:border-transparent rounded-2xl px-4 py-4 flex flex-col gap-3">
+    <div className="bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800/80 rounded-xl px-4 py-4 flex flex-col gap-3">
       <div className="flex items-center gap-2">
         <span className="text-xl select-none">🎡</span>
         <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">{t('profile.spin.title')}</p>
@@ -224,7 +231,7 @@ function SpinCard({ onSuccess }) {
       </p>
       {msg && <span className={`text-xs font-medium ${msg.startsWith('+') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{msg}</span>}
       <button onClick={handleSpin} disabled={spinning || exhausted || !status}
-        className={`py-1.5 rounded-lg text-sm font-medium transition-colors ${exhausted ? 'bg-zinc-100 dark:bg-zinc-700 text-zinc-400 cursor-default' : 'bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white'} disabled:opacity-60`}>
+        className={`py-1.5 rounded-lg text-sm font-medium transition-colors ${exhausted ? 'bg-zinc-100 dark:bg-zinc-700 text-zinc-400 cursor-default' : 'bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-white dark:text-zinc-900 text-white'} disabled:opacity-60`}>
         {spinning ? t('profile.spin.spinning') : exhausted ? t('profile.spin.tomorrow') : t('profile.spin.btn')}
       </button>
     </div>
@@ -307,7 +314,7 @@ function DeviceSharePies({ devices, rangeLabel }) {
   }
 
   return (
-    <section className="bg-white dark:bg-zinc-800 border border-zinc-100 dark:border-transparent rounded-2xl p-5 space-y-4">
+    <section className={`${PROFILE_CARD} p-5 space-y-4`}>
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">{t('profile.deviceShare')}</h2>
         <span className="text-xs text-zinc-400">{t('profile.allDevicesTotal')} · {rangeLabel}</span>
@@ -344,8 +351,8 @@ function UsageDistributionPanel({ localData, devices, rangeLabel, filterId, onFi
           <button type="button" onClick={() => onFilterChange('all')}
             className={`px-2.5 py-1 text-xs rounded-lg transition-colors ${
               filterId === 'all'
-                ? 'bg-blue-600 text-white font-medium'
-                : 'bg-zinc-100 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-600'
+                ? 'bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-medium'
+                : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
             }`}>
             {t('profile.allDevices')}
           </button>
@@ -353,8 +360,8 @@ function UsageDistributionPanel({ localData, devices, rangeLabel, filterId, onFi
             <button key={d.device_id} type="button" onClick={() => onFilterChange(d.device_id)}
               className={`px-2.5 py-1 text-xs rounded-lg transition-colors truncate max-w-[140px] ${
                 filterId === d.device_id
-                  ? 'bg-blue-600 text-white font-medium'
-                  : 'bg-zinc-100 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-600'
+                  ? 'bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-medium'
+                  : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
               }`}
               title={d.name}>
               {DEVICE_ICON[d.type] || '🖥'} {d.name}
@@ -370,7 +377,7 @@ function UsageDistributionPanel({ localData, devices, rangeLabel, filterId, onFi
 
       {/* 应用用量分布（按应用聚合：网关实时 + 会话补录合并，徽章区分 网关/订阅/混合）*/}
       {(app_usage?.length > 0 || agent_sources?.length > 0) && (
-        <section className="bg-white dark:bg-zinc-800 border border-zinc-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+        <section className={`${PROFILE_CARD} p-5 space-y-3`}>
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">{t('profile.appUsage')}</h2>
             <span className="text-xs text-zinc-400">{scopeLabel} · {rangeLabel}</span>
@@ -402,7 +409,7 @@ function UsageDistributionPanel({ localData, devices, rangeLabel, filterId, onFi
       )}
 
       {/* 供给来源 */}
-      <section className="bg-white dark:bg-zinc-800 border border-zinc-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+      <section className={`${PROFILE_CARD} p-5 space-y-3`}>
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">{t('profile.providerUsage')}</h2>
           <span className="text-xs text-zinc-400">{scopeLabel} · {rangeLabel}</span>
@@ -419,7 +426,7 @@ function UsageDistributionPanel({ localData, devices, rangeLabel, filterId, onFi
       </section>
 
       {/* 模型使用 */}
-      <section className="bg-white dark:bg-zinc-800 border border-zinc-100 dark:border-transparent rounded-2xl p-5 space-y-3">
+      <section className={`${PROFILE_CARD} p-5 space-y-3`}>
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">{t('profile.modelUsage')}</h2>
           <span className="text-xs text-zinc-400">{scopeLabel} · {rangeLabel}</span>
@@ -437,7 +444,7 @@ function UsageDistributionPanel({ localData, devices, rangeLabel, filterId, onFi
               tier: m.tier,
             }))}
             total={total_calls}
-            barClass="bg-blue-400"
+            barClass="bg-zinc-500 dark:bg-zinc-400"
           />
         )}
       </section>
@@ -514,12 +521,12 @@ function DevicesSection() {
   if (devices.length === 0) return null;
 
   return (
-    <section className="bg-white dark:bg-zinc-800 border border-zinc-100 dark:border-transparent rounded-2xl p-5 space-y-3">
-      <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">{t('profile.devicesTitle')}</h2>
+    <section className={`${PROFILE_CARD} p-5 space-y-3`}>
+      <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('profile.devicesTitle')}</h2>
       <div className="space-y-2">
         {devices.map((d, i) => (
           <div key={`${d.device_id ?? ''}-${i}`}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-900">
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800/80">
             <span className="text-base select-none shrink-0">{DEVICE_ICON[d.type] || '🖥'}</span>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5">
@@ -688,30 +695,28 @@ export default function TokenDashboard() {
           <p className="text-[17px] font-bold text-zinc-900 dark:text-zinc-100 tracking-tight leading-tight">{t('profile.guestTitle')}</p>
           <p className="text-xs text-zinc-400 dark:text-zinc-500 truncate mt-0.5">{t('profile.guestSub')}</p>
         </div>
-        <button onClick={() => navigate('/login')} className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors">{t('profile.guestLogin')}</button>
+        <button onClick={() => navigate('/login')} className="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-white dark:text-zinc-900 text-white transition-colors">{t('profile.guestLogin')}</button>
       </div>
       )}
 
-      {/* Usage card with range selector */}
-      <div className="bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-900 rounded-2xl p-6 shadow-lg">
-        {/* Header row */}
-        <div className="flex items-center justify-between mb-4">
-          <p className="text-sm text-blue-300">{t('profile.overview', { range: rangeLabel })}</p>
-          <div className="flex gap-1 bg-blue-800/50 rounded-lg p-0.5">
+      {/* 用量总览 */}
+      <div className={`${PROFILE_CARD} p-6`}>
+        <div className="flex items-center justify-between mb-4 gap-3">
+          <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">{t('profile.overview', { range: rangeLabel })}</p>
+          <div className={RANGE_PILL_WRAP}>
             {RANGE_KEYS.map(r => (
-              <button key={r} onClick={() => setRange(r)}
-                className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
-                  range === r ? 'bg-white/20 text-white font-medium' : 'text-blue-300 hover:text-white'
-                }`}>{t(`profile.range.${r}`)}</button>
+              <button key={r} type="button" onClick={() => setRange(r)} className={rangePillClass(range === r)}>
+                {t(`profile.range.${r}`)}
+              </button>
             ))}
           </div>
         </div>
         <div className="grid grid-cols-3 gap-4">
           <div>
-            <p className="text-xs text-blue-300 mb-1">{t('profile.calls')}</p>
-            <p className="text-3xl sm:text-4xl font-bold text-white">{fmtRangeCalls}</p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">{t('profile.calls')}</p>
+            <p className="text-3xl sm:text-4xl font-bold text-zinc-900 dark:text-zinc-100 tabular-nums">{fmtRangeCalls}</p>
             {heroTotal > 0 && (
-              <p className="text-xs text-blue-300 mt-2">
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
                 {t('profile.freeBreakdown', {
                   free: heroFree,
                   pct: Math.round(heroFree / heroTotal * 100),
@@ -721,35 +726,35 @@ export default function TokenDashboard() {
               </p>
             )}
             {deviceCount > 0 && (
-              <p className="text-xs text-blue-300/80 mt-1">
+              <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
                 {onlineCount > 0
                   ? t('profile.devicesOnline', { count: deviceCount, online: onlineCount })
                   : t('profile.devicesCount', { count: deviceCount })}
               </p>
             )}
           </div>
-          <div className="border-l border-blue-500/40 pl-4">
-            <p className="text-xs text-blue-300 mb-1">{t('profile.tokens')}</p>
-            <p className="text-3xl sm:text-4xl font-bold text-white">{fmtRangeTokens}</p>
-            <p className="text-xs text-blue-300 mt-2">
+          <div className="border-l border-zinc-200 dark:border-zinc-800 pl-4">
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">{t('profile.tokens')}</p>
+            <p className="text-3xl sm:text-4xl font-bold text-zinc-900 dark:text-zinc-100 tabular-nums">{fmtRangeTokens}</p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
               {dataSource === 'cloud'
                 ? t('profile.cloudTotal', { range: rangeLabel })
                 : t('profile.localTotal', { range: rangeLabel })}
             </p>
           </div>
-          <div className="border-l border-blue-500/40 pl-4">
-            <p className="text-xs text-blue-300 mb-1">{t('profile.cost')}</p>
-            <p className="text-3xl sm:text-4xl font-bold text-white font-mono">
+          <div className="border-l border-zinc-200 dark:border-zinc-800 pl-4">
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">{t('profile.cost')}</p>
+            <p className="text-3xl sm:text-4xl font-bold text-zinc-900 dark:text-zinc-100 font-mono tabular-nums">
               {localData?.total_cost > 0
                 ? fmtCost(localData.total_cost)
                 : '—'}
             </p>
             {localData?.total_cost > 0 && (
-              <p className="text-xs text-blue-300/80 mt-2">
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
                 {t('profile.costSub', { sub: subCostStr, payg: paygCostStr })}
               </p>
             )}
-            <p className="text-xs text-blue-300/60 mt-1">{t('profile.costEstimate')}</p>
+            <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">{t('profile.costEstimate')}</p>
           </div>
         </div>
       </div>
@@ -773,11 +778,11 @@ export default function TokenDashboard() {
             <h3 className="text-sm font-medium text-zinc-600 dark:text-zinc-300">{t('profile.purchase.title')}</h3>
             <form onSubmit={handleOrder} className="space-y-2">
               <input value={contact} onChange={e => setContact(e.target.value)} placeholder={t('profile.purchase.contact')} required
-                className="w-full bg-zinc-100 dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400" />
+                className="w-full bg-zinc-100 dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-zinc-900 dark:focus:border-zinc-100 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400" />
               <input value={note} onChange={e => setNote(e.target.value)} placeholder={t('profile.purchase.note')}
-                className="w-full bg-zinc-100 dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400" />
+                className="w-full bg-zinc-100 dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-zinc-900 dark:focus:border-zinc-100 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400" />
               <button type="submit" disabled={submitting || !contact.trim()}
-                className="w-full py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-50 text-white">
+                className="w-full py-2 rounded-lg text-sm font-medium bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-white dark:text-zinc-900 disabled:opacity-50 text-white">
                 {submitting ? t('profile.purchase.submitting') : t('profile.purchase.submit')}
               </button>
             </form>
@@ -799,7 +804,7 @@ export default function TokenDashboard() {
 
       {/* 压缩节省（无损 JSON 压缩） */}
       {compStats && (
-        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
+        <div className={`${PROFILE_CARD} p-5`}>
           <div className="mb-3">
             <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('profile.compression.title')}</h2>
           </div>

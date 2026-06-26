@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- 菜单栏图标：黑底白字（实心黑币 + 白色 T）。
+       注意：这是「彩色」图标，不能当 Template 用（Template 只认 alpha 会变全黑块）。 -->
+  <circle cx="16" cy="16" r="15" fill="#000"/>
+  <path d="M8.5 11.5 H23.5" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+  <path d="M16 11.5 V23" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+</svg>

@@ -21,18 +21,20 @@ function makeCirclePNG(r, g, b, size = 16) {
   return PNG.sync.write(png);
 }
 
-/** macOS Template 图标：纯黑 + 透明（文件名须含 Template，系统菜单栏才正确渲染） */
-function makeTemplateCirclePNG(size = 16) {
-  return makeCirclePNG(0, 0, 0, size);
+/** macOS 菜单栏图标：黑底白字（彩色，非 Template）。文件名不含 Template，Electron 才保留颜色。 */
+function makeTrayGlyphPNG(size) {
+  const svg = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'tray-glyph.svg'), 'utf-8');
+  const out = new Resvg(svg, { fitTo: { mode: 'width', value: size } });
+  return Buffer.from(out.render().asPng());
 }
 
 const assetsDir = path.join(__dirname, '..', 'assets');
 fs.mkdirSync(assetsDir, { recursive: true });
 fs.writeFileSync(path.join(assetsDir, 'tray-green.png'), makeCirclePNG(34, 197, 94));
 fs.writeFileSync(path.join(assetsDir, 'tray-gray.png'), makeCirclePNG(107, 114, 128));
-// macOS 菜单栏：16@1x + 32@2x Template（Electron 文档要求）
-fs.writeFileSync(path.join(assetsDir, 'trayTemplate.png'), makeTemplateCirclePNG(16));
-fs.writeFileSync(path.join(assetsDir, 'trayTemplate@2x.png'), makeTemplateCirclePNG(32));
+// macOS 菜单栏：20@1x + 40@2x，黑底白字彩色图标（点尺寸=20pt，比默认 16 更大更醒目）
+fs.writeFileSync(path.join(assetsDir, 'tray-mac.png'), makeTrayGlyphPNG(20));
+fs.writeFileSync(path.join(assetsDir, 'tray-mac@2x.png'), makeTrayGlyphPNG(40));
 console.log('Tray icons generated in assets/');
 
 // ── App icons from SVG logo ───────────────────────────────────────────────────

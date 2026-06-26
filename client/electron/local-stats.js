@@ -247,11 +247,9 @@ function queryDashboard(days = 1) {
   if (!db) return _empty();
 
   const DAY_S = 86400;
-  const since = Math.floor(Date.now() / 1000) - days * DAY_S;
-
-  // Today's midnight (local time) for hourly trend
-  const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
-  const todaySince = Math.floor(midnight.getTime() / 1000);
+  const todaySince = todaySinceTs();
+  // days=1 对齐「今日」口径（本地 0 点至今），与应用列表 apps:stats 一致；多日仍用滚动窗口
+  const since = days === 1 ? todaySince : Math.floor(Date.now() / 1000) - days * DAY_S;
 
   // Total calls + tokens
   const tot = db.prepare(

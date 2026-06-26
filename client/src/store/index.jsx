@@ -78,9 +78,13 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const token = localStorage.getItem('token');
-    const rememberedGuest = localStorage.getItem('guest') === '1';
+    // 无 token 时默认游客模式，打开 app 无需登录
+    const enterGuestMode = () => {
+      localStorage.setItem('guest', '1');
+      setGuest(true);
+    };
     bootstrapServerUrl().then(() => {
-      if (!token) { if (rememberedGuest) setGuest(true); setLoading(false); return; }
+      if (!token) { enterGuestMode(); setLoading(false); return; }
       getProfile()
         .then((r) => {
           setUser(r.data);
@@ -91,12 +95,15 @@ export function AuthProvider({ children }) {
           syncRemoteConfig();
           syncUserBilling();
         })
-        .catch(() => { localStorage.removeItem('token'); })
+        .catch(() => {
+          localStorage.removeItem('token');
+          enterGuestMode();  // token 失效时也回退到游客模式
+        })
         .finally(() => setLoading(false));
     }).catch(() => {
       // bootstrapServerUrl 失败（如 electronAPI 同步抛错）也必须解除 loading，
       // 否则 App 会永远卡在「加载中…」spinner、登录框无法出现。
-      if (rememberedGuest) setGuest(true);
+      enterGuestMode();
       setLoading(false);
     });
     return () => stopPolling();

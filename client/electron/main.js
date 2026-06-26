@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell, clipboard, dialog } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell, clipboard, dialog, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -218,6 +218,8 @@ function getClaudeCloudConfig() {
 
 let mainWindow = null;
 let tray = null;
+/** 菜单栏是否显示 ↑↓Token 两行文字（仅 macOS）。持久化在 localConfig.tray_show_tokens，默认开 */
+let showTrayTokens = true;
 /** macOS 点关闭仅隐藏窗口；托盘/Cmd+Q 退出时设为 true，避免 close 拦截 quit */
 let isQuitting = false;
 
@@ -229,28 +231,18 @@ const TRAY_ICON_B64 = {
   stopped: 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAd0lEQVR4AbXBuxHDMAxEwXdsFxkquAqYsV5YAQONxvqZ413+LtLFBfFFpIsTo1vsiINIFzdGt5jETqSLh0a32Igp0sVLo1uNRY1FYhPp4kdiinTx0uhWY1FjkdiJdPHQ6BYbcRDp4sboFpP4ItLFidEt3oh0ceEDwVknJpkY6XgAAAAASUVORK5CYII=',
 };
 
-/** macOS 26 (Tahoe) 需 Electron ≥36.9.2 修复菜单栏/WindowServer；见 electron#48401 */
-function logMacOSCompat() {
-  if (process.platform !== 'darwin') return;
-  try {
-    const { execSync } = require('child_process');
-    const ver = execSync('sw_vers -productVersion', { encoding: 'utf8' }).trim();
-    const major = parseInt(ver.split('.')[0], 10);
-    console.log(`[tray] macOS ${ver}, Electron ${process.versions.electron}`);
-    if (major >= 26 && parseFloat(process.versions.electron) < 36.9) {
-      console.warn('[tray] macOS 26+ 需 Electron ≥38.2.0，否则菜单栏托盘可能不可见');
-    }
-  } catch { /* ignore */ }
-}
 
 function getTrayIcon(state) {
-  // macOS：Template 图标（trayTemplate.png + @2x，文件名含 Template 系统自动识别）
+  // macOS：黑底白字彩色图标（tray-mac.png + @2x）。不是 Template，颜色按设计保留，
+  // 不随深/浅菜单栏重着色——这是「黑底白字」诉求的必然代价。
   if (process.platform === 'darwin') {
-    const tpl = path.join(__dirname, '..', 'assets', 'trayTemplate.png');
-    if (fs.existsSync(tpl)) return nativeImage.createFromPath(tpl);
-    const img = nativeImage.createFromBuffer(Buffer.from(TRAY_ICON_B64.stopped, 'base64'));
-    img.setTemplateImage(true);
-    return img;
+    const macIcon = path.join(__dirname, '..', 'assets', 'tray-mac.png');
+    if (fs.existsSync(macIcon)) {
+      const img = nativeImage.createFromPath(macIcon);
+      img.setTemplateImage(false);
+      if (!img.isEmpty()) return img;
+    }
+    return nativeImage.createFromBuffer(Buffer.from(TRAY_ICON_B64.stopped, 'base64'));
   }
   const running = state === 'running';
   const name = running ? 'tray-green.png' : 'tray-gray.png';
@@ -389,11 +381,13 @@ function showTahoeMenuBarGuidance(reason) {
   dialog.showMessageBox({
     type: 'warning',
     title: '菜单栏 Token 未显示',
-    message: 'macOS Tahoe 可能阻止了菜单栏图标',
+    message: 'macOS Tahoe 没能在菜单栏给图标分配位置',
     detail: [
-      '请到：系统设置 → 菜单栏 → 允许在菜单栏中显示',
-      `开启「${appName}」后重启应用。`,
-      isDev ? '（开发模式请在列表中找到 Electron）' : '',
+      '常见原因（按可能性排序）：',
+      '1) 菜单栏图标太多——刘海屏放不下时，macOS 会直接丢弃放不下的项，',
+      '   且没有溢出入口。请减少其它菜单栏图标，或安装 Ice / Bartender 做溢出收纳。',
+      '2) 系统设置 → 菜单栏 → 允许在菜单栏中显示，确认已开启对应 App。',
+      isDev ? '（开发模式下名字是 Electron）' : `（名字是「${appName}」）`,
       reason || '',
     ].filter(Boolean).join('\n'),
     buttons: ['打开菜单栏设置', '知道了'],
@@ -404,7 +398,13 @@ function showTahoeMenuBarGuidance(reason) {
   }).catch(() => {});
 }
 
-/** 检测托盘是否被系统放到屏外（Tahoe 26.5 已知 y=-17） */
+/**
+ * 检测托盘是否被系统隐藏/未真正落位。Tahoe 上有两种已知情况：
+ *  1) y<0（26.5 已知 y=-17，被放到屏外）；
+ *  2) 幻影项：状态项必然在屏幕右侧（刘海右侧的状态区），若 getBounds 报的 x
+ *     落在屏幕左半区，说明系统没给它真正的菜单栏槽位（菜单栏已满放不下），
+ *     此时图标其实没被画出来——但 y/宽高都正常，老逻辑会误判为"可见"。
+ */
 function isTrayLikelyHidden() {
   if (!tray || tray.isDestroyed?.()) return true;
   try {
@@ -412,6 +412,11 @@ function isTrayLikelyHidden() {
     console.log('[tray] getBounds=', bounds);
     if (!bounds || bounds.width <= 0 || bounds.height <= 0) return true;
     if (bounds.y < 0) return true;
+    if (process.platform === 'darwin') {
+      const disp = require('electron').screen.getPrimaryDisplay();
+      // 状态项落在左半区 = 没拿到右侧真实槽位（幻影），视为隐藏
+      if (bounds.x < disp.workArea.width / 2) return true;
+    }
   } catch (e) {
     console.warn('[tray] getBounds failed:', e.message);
   }
@@ -432,6 +437,8 @@ function destroyTray() {
     tray.destroy();
   }
   tray = null;
+  if (trayRenderWin && !trayRenderWin.isDestroyed()) trayRenderWin.destroy();
+  trayRenderWin = null; trayRenderReady = null;
 }
 
 /** 紧凑格式化 Token 数（托盘/状态栏共用） */
@@ -465,6 +472,16 @@ function buildTrayContextMenu() {
     { label: running ? 'Agent 运行中' : 'Agent 已停止', enabled: false },
     { type: 'separator' },
     { label: '显示主窗口', click: showMainWindow },
+    ...(process.platform === 'darwin' ? [{
+      label: '菜单栏显示 Token 上下行',
+      type: 'checkbox',
+      checked: showTrayTokens,
+      click: (mi) => {
+        showTrayTokens = mi.checked;
+        try { const c = readLocalConfig(); c.tray_show_tokens = mi.checked; writeLocalConfig(c); } catch {}
+        refreshTray();
+      },
+    }] : []),
     { type: 'separator' },
     { label: '启动 Agent', enabled: !running, click: startAgent },
     { label: '停止 Agent', enabled: running, click: stopAgent },
@@ -473,151 +490,124 @@ function buildTrayContextMenu() {
   ]);
 }
 
-function showTrayMenu() {
-  if (!tray) return;
-  tray.popUpContextMenu(buildTrayContextMenu());
-  applyMacOSTrayTitle();
+
+// ── macOS 菜单栏：离屏 canvas 把「黑底白字 T 徽标 + 两行小字」画成彩色图 ──────────────
+// setTitle 不能调字号，所以自己画成图。徽标固定黑底白 T；两行数字按系统深/浅色切换颜色
+// （深色菜单栏白字、浅色黑字），两种菜单栏下都清楚。用隐藏窗口的 Chromium canvas 渲染，零额外依赖。
+let trayRenderWin = null;
+let trayRenderReady = null;
+function ensureTrayRenderWin() {
+  if (trayRenderWin && !trayRenderWin.isDestroyed()) return trayRenderReady;
+  trayRenderWin = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
+  trayRenderReady = trayRenderWin.webContents.loadURL('about:blank').then(() => trayRenderWin);
+  return trayRenderReady;
 }
 
-/** macOS 菜单栏 Token 文字（setImage/setContextMenu 会清标题，故 macOS 不再频繁换图标） */
-function applyMacOSTrayTitle() {
-  if (process.platform !== 'darwin' || !tray) return;
-  const title = buildTrayTitle();
-  const tip = `Token Bank · ${title}`;
-  try {
-    tray.setTitle(title, { fontType: 'monospacedDigit' });
-  } catch (e) { console.warn('[tray] setTitle failed:', e.message); }
-  tray.setToolTip(tip);
+/** 画出托盘彩色图：黑底白 T 徽标 +（showText 时）↑in / ↓out 两行小字。返回 nativeImage（@2x）。 */
+async function renderTrayImage(line1, line2, showText, dark) {
+  const win = await ensureTrayRenderWin();
+  const js = `(() => {
+    const S = 2;                              // retina：2x 像素，createFromBuffer 再按 2x 缩回
+    const H = 22 * S, padX = 1 * S, gap = 4 * S;
+    const r = 9 * S, txtFs = 8.5 * S;         // ← 徽标半径 / 两行字号在这里调
+    const show = ${showText ? 'true' : 'false'};
+    const txtColor = ${dark ? "'#fff'" : "'#000'"};
+    const L1 = ${JSON.stringify(line1)}, L2 = ${JSON.stringify(line2)};
+    let c = document.createElement('canvas'), x = c.getContext('2d');
+    x.font = '600 ' + txtFs + 'px ui-monospace,Menlo,monospace';
+    const tW = show ? Math.ceil(Math.max(x.measureText(L1).width, x.measureText(L2).width)) : 0;
+    c.width = padX + 2 * r + (show ? gap + tW : 0) + padX;
+    c.height = H;
+    x = c.getContext('2d');
+    x.textBaseline = 'middle';
+    // 黑底圆徽标
+    const cx = padX + r, cy = H / 2;
+    x.fillStyle = '#000';
+    x.beginPath(); x.arc(cx, cy, r, 0, Math.PI * 2); x.fill();
+    // 白色 T
+    x.strokeStyle = '#fff'; x.lineCap = 'round'; x.lineWidth = 1.8 * S;
+    const tw = 4.5 * S;
+    x.beginPath(); x.moveTo(cx - tw, cy - 3.2 * S); x.lineTo(cx + tw, cy - 3.2 * S); x.stroke();
+    x.beginPath(); x.moveTo(cx, cy - 3.2 * S); x.lineTo(cx, cy + 4.6 * S); x.stroke();
+    // 两行数字（颜色随深/浅色菜单栏）
+    if (show) {
+      x.fillStyle = txtColor;
+      x.font = '600 ' + txtFs + 'px ui-monospace,Menlo,monospace';
+      x.textAlign = 'left';
+      const tx = padX + 2 * r + gap;
+      x.fillText(L1, tx, H * 0.32);
+      x.fillText(L2, tx, H * 0.72);
+    }
+    return c.toDataURL('image/png');
+  })()`;
+  const dataURL = await win.webContents.executeJavaScript(js);
+  const buf = Buffer.from(dataURL.split(',')[1], 'base64');
+  const img = nativeImage.createFromBuffer(buf, { scaleFactor: 2 });
+  img.setTemplateImage(false);   // 彩色图：保留黑底白字，不让系统重着色
+  return img;
 }
 
-/** 非 macOS：刷新托盘图标；macOS 仅用 Template 图标，避免 setImage 清掉标题 */
-function refreshTrayIconOnly() {
-  if (!tray || process.platform === 'darwin') return;
+/**
+ * 统一刷新托盘外观。
+ * macOS：图标+两行小字渲染成单色模板图（字号自定、深浅色自适应），开关关掉时只画 T。
+ * 其它平台：绿/灰图标 + tooltip。
+ */
+function refreshTray() {
+  if (!tray || tray.isDestroyed?.()) return;
   const gw = gateway.getStatus?.() || {};
   const active = agent.isRunning() || gw.running;
-  tray.setImage(getTrayIcon(active ? 'running' : 'stopped'));
-}
-
-/** 构建 macOS 系统菜单栏 Token 标题 */
-function buildTrayTitle() {
-  const { inTok, outTok } = getTodayTokenSummary();
-  let activeRequests = 0;
-  let tokensPerMin = 0;
-  try {
-    const s = agent.getStats();
-    activeRequests = s.activeRequests || 0;
-    tokensPerMin = s.tokensPerMin || 0;
-  } catch { /* agent 未就绪 */ }
-  const tokenPart = `\u2191${fmtTrayTokens(inTok)} \u2193${fmtTrayTokens(outTok)}`;
-  const extras = [];
-  if (activeRequests > 0) extras.push(`${activeRequests}req`);
-  else if (tokensPerMin > 0) extras.push(`${tokensPerMin}/m`);
-  return extras.length ? `${tokenPart} · ${extras.join(' ')}` : tokenPart;
-}
-
-/** 非 macOS：刷新托盘图标 + tooltip */
-function refreshTrayAppearance() {
-  if (!tray || process.platform === 'darwin') return;
-  const running = agent.isRunning();
-  const gw = gateway.getStatus?.() || {};
-  const active = running || gw.running;
-  const { inTok, outTok } = getTodayTokenSummary();
-  const tokenPart = `\u2191${fmtTrayTokens(inTok)} \u2193${fmtTrayTokens(outTok)}`;
-  const gwHint = gw.running ? `网关 :${gw.port}` : '网关已停止';
-  tray.setImage(getTrayIcon(active ? 'running' : 'stopped'));
-  tray.setToolTip(`Token Bank · ${gwHint} · 今日 ${tokenPart}`);
-}
-
-function createTray() {
-  // 已创建则只刷新标题，避免重复注册 NSStatusItem
-  if (process.platform === 'darwin' && tray && !tray.isDestroyed?.()) {
-    applyMacOSTrayTitle();
-    return;
+  tray.setContextMenu(buildTrayContextMenu());
+  if (process.platform === 'darwin') {
+    const { inTok, outTok } = getTodayTokenSummary();
+    const k = (n) => { n = n || 0; return n >= 1e6 ? `${Math.round(n / 1e6)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : `${n}`; };
+    const l1 = `↑${k(inTok)}`, l2 = `↓${k(outTok)}`;
+    tray.setToolTip(`Token Bank · 今日 ${l1} ${l2}`);
+    renderTrayImage(l1, l2, showTrayTokens, nativeTheme.shouldUseDarkColors)
+      .then((img) => { if (tray && !tray.isDestroyed?.()) { tray.setImage(img); tray.setTitle(''); } })
+      .catch((e) => {
+        // 渲染失败兜底：退回系统字号 setTitle
+        console.warn('[tray] render image failed, fallback to setTitle:', e.message);
+        if (tray && !tray.isDestroyed?.()) tray.setTitle(showTrayTokens ? `${l1}\n${l2}` : '', { fontType: 'monospacedDigit' });
+      });
+  } else {
+    const { inTok, outTok } = getTodayTokenSummary();
+    const gwHint = gw.running ? `网关 :${gw.port}` : '网关已停止';
+    tray.setImage(getTrayIcon(active ? 'running' : 'stopped'));
+    tray.setToolTip(`Token Bank · ${gwHint} · 今日 ↑${fmtTrayTokens(inTok)} ↓${fmtTrayTokens(outTok)}`);
   }
-  destroyTray();
-  logMacOSCompat();
+}
+
+/**
+ * 极简托盘（参考 clawd-on-desk）：用 Template 图标创建一次 + setContextMenu，定时刷新。
+ * 不再做延迟创建 / destroy-重建 / 屏外重试——实测那些对 Tahoe「菜单栏满了放不下」
+ * 无效，只增加噪音。放不下时由 checkTrayVisibilityAndHint 一次性提示用户去腾位/装 Ice。
+ */
+function createTray() {
+  if (tray && !tray.isDestroyed?.()) { refreshTray(); return; }
+  try { showTrayTokens = readLocalConfig().tray_show_tokens !== false; } catch {}
   try {
-    if (process.platform === 'darwin') {
-      // macOS：纯文字状态项（↑↓ Token），避免图标被 Tahoe ControlCenter 挤出
-      tray = new Tray(nativeImage.createEmpty());
-      tray.setIgnoreDoubleClickEvents(true);
-    } else {
-      const gw = gateway.getStatus?.() || {};
-      const active = agent.isRunning() || gw.running;
-      tray = new Tray(getTrayIcon(active ? 'running' : 'stopped'));
-      tray.setContextMenu(buildTrayContextMenu());
-    }
+    // macOS：黑底白字 T 图标（左）+ 两行 Token 文字（右，可由菜单开关关掉）；其它平台：绿/灰圆点
+    const icon = getTrayIcon(agent.isRunning() ? 'running' : 'stopped');
+    tray = new Tray(icon && !icon.isEmpty() ? icon : nativeImage.createEmpty());
   } catch (e) {
     console.error('[tray] create failed:', e.message);
-    try {
-      tray = new Tray(getTrayIcon('stopped'));
-    } catch (e2) {
-      console.error('[tray] fallback create failed:', e2.message);
-      return;
-    }
+    return;
   }
-
-  if (process.platform === 'darwin') {
-    applyMacOSTrayTitle();
-    const got = tray.getTitle?.() ?? '(no getTitle)';
-    try { console.log('[tray] getBounds=', tray.getBounds()); } catch { /* ignore */ }
-    console.log('[tray] macOS menu bar title=', buildTrayTitle(), 'getTitle=', got);
-    setTimeout(() => applyMacOSTrayTitle(), 500);
-    setTimeout(() => applyMacOSTrayTitle(), 2000);
-  } else {
-    refreshTrayAppearance();
-  }
-
+  if (process.platform === 'darwin') tray.setIgnoreDoubleClickEvents(true);
   tray.on('double-click', showMainWindow);
+  if (process.platform !== 'darwin') tray.on('click', showMainWindow);
+  refreshTray();
+  trayStatsTimer = setInterval(refreshTray, 2000);
+  // 系统深/浅色切换时重画（数字颜色要跟着变）
   if (process.platform === 'darwin') {
-    tray.on('click', showTrayMenu);
-    tray.on('right-click', showTrayMenu);
-  } else {
-    tray.on('click', showMainWindow);
-  }
-
-  trayStatsTimer = setInterval(() => {
-    if (process.platform === 'darwin') applyMacOSTrayTitle();
-    else refreshTrayAppearance();
-  }, 2000);
-}
-
-/** 窗口就绪后再建托盘（Tahoe 上过早创建易被 ControlCenter 放到屏外） */
-function scheduleCreateTray() {
-  const run = () => {
-    createTray();
+    nativeTheme.removeAllListeners('updated');
+    nativeTheme.on('updated', refreshTray);
     setTimeout(checkTrayVisibilityAndHint, 2500);
-    // Tahoe 26.5：首次 NSStatusItem 可能在 y=-17，延迟销毁重建一次
-    if (process.platform === 'darwin' && getMacOSMajorVersion() >= 26) {
-      setTimeout(() => {
-        if (isTrayLikelyHidden()) {
-          console.log('[tray] Tahoe off-screen, recreating tray…');
-          destroyTray();
-          createTray();
-          setTimeout(checkTrayVisibilityAndHint, 1500);
-        }
-      }, 4000);
-    }
-  };
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isVisible()) setTimeout(run, 800);
-    else mainWindow.once('ready-to-show', () => setTimeout(run, 800));
-  } else {
-    setTimeout(run, 800);
   }
 }
 
-/** 兼容旧调用 */
-function updateTrayMenu() {
-  if (!tray) return;
-  if (process.platform === 'darwin') {
-    applyMacOSTrayTitle();
-    refreshTrayIconOnly();
-  } else {
-    tray.setContextMenu(buildTrayContextMenu());
-    refreshTrayAppearance();
-  }
-}
+/** 兼容旧调用：状态/用量变化时刷新托盘 */
+function updateTrayMenu() { refreshTray(); }
 
 // ── Agent ─────────────────────────────────────────────────────────────────────
 
@@ -2525,6 +2515,9 @@ function registerIPC() {
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 
 app.whenReady().then(() => {
+  // 尽早注册菜单栏托盘：macOS 把新状态项插在已有第三方项的「左侧」（刘海侧，最先被挤掉），
+  // 越早创建越靠右、越不容易在菜单栏满时被遮挡。数据读取已做空安全，2s 定时器随后补真实值。
+  createTray();
   createWindow();
   registerIPC();
   repairClaude3pMetaIfNeeded();
@@ -2535,7 +2528,7 @@ app.whenReady().then(() => {
   localStats.init(STATS_DIR);
   gateway.setStatsRecorder((...args) => {
     localStats.record(...args);
-    applyMacOSTrayTitle();
+    // 托盘 Token 文字由 2s 定时器统一刷新，这里不再每条请求都更新
   });
   gateway.setLocalStats(localStats);
   gateway.setLocalConfigReader(readLocalConfig);   // 供策略组调度查 policies[]
@@ -2560,9 +2553,6 @@ app.whenReady().then(() => {
     return a ? a.api_key : null;
   });
   gateway.start(11430, readAgentConfig, writeAgentConfig);
-
-  // 托盘依赖 localStats / gateway，须在二者就绪后创建（窗口显示后再注册，避免 Tahoe 屏外）
-  scheduleCreateTray();
 
   // 注入 Claude 客户端模型名（内部透明逻辑，来自 yaml config-loader）
   try { gateway.setClaudeModels(require('./config-loader').claudeModels()); } catch {}
@@ -2626,7 +2616,7 @@ app.on('window-all-closed', () => {});
 
 app.on('before-quit', () => {
   isQuitting = true;
-  if (trayStatsTimer) clearInterval(trayStatsTimer);
+  destroyTray();
   agent.stop(); gateway.stop(); localStats.close();
   // 退出即还原所有接入：删 shim / 还原 PATH / 还原配置文件 / 停 MITM，绝不残留
   try { agentLinker.revertEverythingOnExit(); } catch (e) { console.error('[agent-linker] revert on exit failed:', e.message); }

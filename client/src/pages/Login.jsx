@@ -33,7 +33,7 @@ function Field({ label, type = 'text', value, onChange, placeholder }) {
 
 /** 登录 / 注册页（与设置页分离，未登录也可从侧栏进入） */
 export default function Login() {
-  const { user, loginSuccess } = useAuth();
+  const { user, loginSuccess, enterGuest } = useAuth();
   const { t } = useLang();
   const navigate = useNavigate();
 
@@ -121,6 +121,12 @@ export default function Login() {
     setError('');
   }
 
+  /** 跳过登录，以游客身份进入主界面 */
+  function handleGuest() {
+    enterGuest();
+    navigate('/gateway', { replace: true });
+  }
+
   if (user) return null;
 
   return (
@@ -192,6 +198,14 @@ export default function Login() {
             </p>
           </form>
         )}
+
+        <button
+          type="button"
+          onClick={handleGuest}
+          className="w-full py-2 text-[13px] text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
+        >
+          {t('config.guestEnter')}
+        </button>
 
         <p className="text-xs text-gray-600 dark:text-gray-600 text-center leading-relaxed pt-2">
           {t('config.footer.beforeLink')}

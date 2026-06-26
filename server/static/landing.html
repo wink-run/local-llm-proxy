@@ -11,11 +11,12 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@400;500;600&family=Noto+Serif+SC:wght@400;500;600&family=Noto+Sans+SC:wght@400;500&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="icon" href="/static/logo.svg" type="image/svg+xml">
 <style>
   html { scroll-behavior: smooth; }
   body { margin: 0; background: #ffffff; color: #000000; font-family: 'Inter','Noto Sans SC',ui-sans-serif,system-ui,sans-serif; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
   * { box-sizing: border-box; }
-  ::selection { background: #f1ccff; color: #000; }
+  ::selection { background: #FFD055; color: #000; }
   @keyframes tbFlowV { 0% { background-position: 0 0; } 100% { background-position: 0 -200%; } }
   @keyframes tbDrift { 0% { transform: translate(0,0) scale(1); } 50% { transform: translate(20px,-16px) scale(1.06); } 100% { transform: translate(0,0) scale(1); } }
   @keyframes tbFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-12px); } }
@@ -37,13 +38,13 @@
     .tb-app-row { animation: none !important; }
   }
   .tb-faq summary::-webkit-details-marker { display: none; }
-  .tb-faq[open] .tb-faq-mark { transform: rotate(45deg); background: #f1ccff; }
+  .tb-faq[open] .tb-faq-mark { transform: rotate(45deg); background: #FFD055; }
   @keyframes tbPacket { 0% { top: -6px; opacity: 0; } 12% { opacity: 1; } 88% { opacity: 1; } 100% { top: 44px; opacity: 0; } }
-  @keyframes tbPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(193,107,224,0); } 50% { box-shadow: 0 0 0 8px rgba(193,107,224,0.10); } }
+  @keyframes tbPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(224,138,0,0); } 50% { box-shadow: 0 0 0 8px rgba(224,138,0,0.10); } }
   @keyframes tbChip { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
   @keyframes tbShimmer { 0% { background-position: -120% 0; } 60%,100% { background-position: 220% 0; } }
-  .tb-conn { position: relative; width: 2px; height: 42px; background: linear-gradient(180deg,#e0ddda,#e7c8f3,#e0ddda); }
-  .tb-conn::after { content: ""; position: absolute; left: 50%; width: 7px; height: 7px; margin-left: -3.5px; border-radius: 50%; background: #c16be0; box-shadow: 0 0 8px 1px rgba(193,107,224,0.6); animation: tbPacket 1.8s cubic-bezier(.5,0,.5,1) infinite; }
+  .tb-conn { position: relative; width: 2px; height: 42px; background: linear-gradient(180deg,#e0ddda,#FFE07A,#e0ddda); }
+  .tb-conn::after { content: ""; position: absolute; left: 50%; width: 7px; height: 7px; margin-left: -3.5px; border-radius: 50%; background: #E08A00; box-shadow: 0 0 8px 1px rgba(224,138,0,0.6); animation: tbPacket 1.8s cubic-bezier(.5,0,.5,1) infinite; }
   .tb-conn.tb-conn-2::after { animation-delay: .9s; }
   .tb-gw-chip { animation: tbChip .5s ease both; }
   .tb-gw-chip:nth-child(1) { animation-delay: .05s; }
@@ -59,7 +60,7 @@
 
 <template id="__bundler_thumbnail">
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%">
-    <rect width="100" height="100" fill="#f1ccff"/>
+    <rect width="100" height="100" fill="#FFD055"/>
     <rect x="42" y="42" width="16" height="16" rx="4" fill="#000" transform="rotate(45 50 50)"/>
   </svg>
 </template>
@@ -70,9 +71,7 @@
   <header style="position:sticky;top:0;z-index:60;background:rgba(255,255,255,0.82);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid #f0eeec;">
     <div style="max-width:1200px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:24px;">
       <a href="#top" style="display:flex;align-items:center;gap:11px;text-decoration:none;color:#000;">
-        <span style="width:30px;height:30px;border-radius:9px;background:#000;display:flex;align-items:center;justify-content:center;flex:0 0 auto;">
-          <span style="width:13px;height:13px;background:#f1ccff;border-radius:3px;transform:rotate(45deg);"></span>
-        </span>
+        <img src="/static/logo.svg" alt="Token Bank" width="30" height="30" style="display:block;width:30px;height:30px;flex:0 0 auto;border-radius:7px;">
         <span style="font-weight:600;font-size:18px;letter-spacing:-0.01em;">Token Bank</span>
       </a>
       <nav style="display:flex;gap:30px;align-items:center;">
@@ -84,10 +83,10 @@
       </nav>
       <div style="display:flex;gap:10px;align-items:center;">
         <button onClick="{{ toggleLang }}" aria-label="Switch language" style="cursor:pointer;background:#fff;border:1px solid #e3e0dd;border-radius:9px;padding:7px 12px;font-size:13px;font-weight:600;color:#000;font-family:inherit;display:inline-flex;align-items:center;gap:6px;transition:border-color .2s ease;" style-hover="border-color:#000;">
-          <span style="width:6px;height:6px;border-radius:50%;background:#f1ccff;"></span>
+          <span style="width:6px;height:6px;border-radius:50%;background:#FFD055;"></span>
           <span data-i18n="nav.langLabel">中文</span>
         </button>
-        <a href="#download" data-i18n="nav.signin" style="text-decoration:none;color:#000;font-size:14px;font-weight:500;padding:9px 14px;">Sign in</a>
+        <a href="/app" data-i18n="nav.signin" style="text-decoration:none;color:#000;font-size:14px;font-weight:500;padding:9px 14px;">Sign in</a>
         <a href="#download" data-i18n="nav.download" style="text-decoration:none;background:#000;color:#fff;font-size:14px;font-weight:500;padding:10px 20px;border-radius:10px;box-shadow:rgba(16,24,40,0.05) 0px 1px 2px 0px;">Free download</a>
       </div>
     </div>
@@ -97,20 +96,20 @@
 
   <!-- ============ HERO ============ -->
   <section style="padding:92px 0 56px;text-align:center;position:relative;">
-    <div style="position:absolute;top:-40px;left:50%;transform:translateX(-50%);width:720px;height:420px;background:radial-gradient(closest-side, rgba(241,204,255,0.55), rgba(241,204,255,0) 70%);filter:blur(8px);pointer-events:none;z-index:0;animation:tbGlow 7s ease-in-out infinite;"></div>
+    <div style="position:absolute;top:-40px;left:50%;transform:translateX(-50%);width:720px;height:420px;background:radial-gradient(closest-side, rgba(255,208,85,0.55), rgba(255,208,85,0) 70%);filter:blur(8px);pointer-events:none;z-index:0;animation:tbGlow 7s ease-in-out infinite;"></div>
     <div style="max-width:1200px;margin:0 auto;padding:0 24px;position:relative;z-index:1;">
-      <div data-reveal style="display:inline-flex;align-items:center;gap:8px;background:#f1ccff;color:#000;border-radius:10px;padding:6px 14px;font-size:13px;font-weight:500;letter-spacing:0.01em;margin-bottom:30px;">
+      <div data-reveal style="display:inline-flex;align-items:center;gap:8px;background:#FFD055;color:#000;border-radius:10px;padding:6px 14px;font-size:13px;font-weight:500;letter-spacing:0.01em;margin-bottom:30px;">
         <span style="width:6px;height:6px;border-radius:50%;background:#000;"></span>
         <span data-i18n="hero.badge">Your personal AI hub · not just a local LLM gateway</span>
       </div>
       <h1 data-reveal data-reveal-delay="60" data-i18n-html="hero.title" style="margin:0 auto;max-width:920px;font-family:'Playfair Display','Noto Serif SC',Georgia,serif;font-weight:400;font-size:64px;line-height:1.18;letter-spacing:-0.01em;color:#000;">
-        See where every token goes,<br>spend less,<br><span style="background:linear-gradient(90deg,#f1ccff 0%,#f7d9ff 45%,#d7b3ee 55%,#f1ccff 100%);background-size:220% 100%;animation:tbShimmer 4.5s ease-in-out infinite;padding:0 0.14em;border-radius:6px;">and earn while idle</span>.
+        See where every token goes,<br>spend less,<br><span style="background:linear-gradient(90deg,#FFD055 0%,#FFF0A0 45%,#FFE07A 55%,#FFD055 100%);background-size:220% 100%;animation:tbShimmer 4.5s ease-in-out infinite;padding:0 0.14em;border-radius:6px;">and earn while idle</span>.
       </h1>
       <p data-reveal data-reveal-delay="140" data-i18n="hero.sub" style="margin:26px auto 0;max-width:660px;font-size:18px;line-height:1.55;color:#333;font-weight:400;">
         One local gateway for every AI tool — trace every token, route to spend less, and turn idle quota into credits. Your tools point at a single local address; routing stays fully transparent.
       </p>
       <div data-reveal data-reveal-delay="220" style="display:flex;gap:12px;justify-content:center;align-items:center;margin-top:34px;flex-wrap:wrap;">
-        <a href="#download" style="text-decoration:none;background:#f1ccff;color:#000;font-size:16px;font-weight:500;padding:14px 24px;border-radius:10px;display:inline-flex;align-items:center;gap:9px;box-shadow:rgba(16,24,40,0.05) 0px 1px 2px 0px;transition:transform .2s ease;" style-hover="transform:translateY(-2px);">
+        <a href="#download" style="text-decoration:none;background:#FFD055;color:#000;font-size:16px;font-weight:500;padding:14px 24px;border-radius:10px;display:inline-flex;align-items:center;gap:9px;box-shadow:rgba(16,24,40,0.05) 0px 1px 2px 0px;transition:transform .2s ease;" style-hover="transform:translateY(-2px);">
           <span data-i18n="hero.ctaPrimary">Free download</span>
           <span style="font-size:15px;">↓</span>
         </a>
@@ -125,7 +124,7 @@
 
     <!-- product preview card -->
     <div data-reveal data-reveal-delay="160" style="max-width:1100px;margin:64px auto 0;padding:0 24px;">
-      <div style="background:linear-gradient(135deg,#f1ccff 0%,#c89cd9 55%,#a7c8ec 100%);border-radius:42px;padding:14px;box-shadow:rgba(0,0,0,0.04) 0px 8px 16px 0px;animation:tbFloat 6s ease-in-out infinite;">
+      <div style="background:linear-gradient(135deg,#FFD055 0%,#E08A00 55%,#C07800 100%);border-radius:42px;padding:14px;box-shadow:rgba(0,0,0,0.04) 0px 8px 16px 0px;animation:tbFloat 6s ease-in-out infinite;">
         <div style="background:#fff;border-radius:30px;overflow:hidden;border:1px solid rgba(0,0,0,0.04);">
           <div style="display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid #f0eeec;background:#fff;">
             <div style="display:flex;gap:7px;">
@@ -241,7 +240,7 @@
         <div data-reveal data-reveal-delay="100" style="background:#fff;border:1px solid #e7e4e1;border-radius:24px;padding:32px;transition:transform .25s ease,border-color .25s ease;" style-hover="transform:translateY(-5px);border-color:#bcbcbc;">
           <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:22px;">
             <span style="font-family:'Space Mono',monospace;font-size:13px;color:#7b7b7b;">02</span>
-            <span style="width:38px;height:38px;border-radius:11px;background:#f1ccff;display:flex;align-items:center;justify-content:center;font-size:18px;">⇄</span>
+            <span style="width:38px;height:38px;border-radius:11px;background:#FFD055;display:flex;align-items:center;justify-content:center;font-size:18px;">⇄</span>
           </div>
           <h3 data-i18n="pillars.2.h" style="margin:0;font-size:22px;font-weight:600;color:#000;letter-spacing:-0.01em;">Spend less</h3>
           <p data-i18n="pillars.2.k" style="margin:4px 0 14px;font-size:13px;font-weight:500;color:#7b7b7b;letter-spacing:0.02em;">SMART ROUTING</p>
@@ -272,7 +271,7 @@
             <h2 data-reveal data-reveal-delay="60" data-i18n-html="onb.title" style="margin:0 0 16px;font-family:'Playfair Display','Noto Serif SC',serif;font-weight:400;font-size:40px;line-height:1.2;letter-spacing:-0.01em;color:#000;">Native model names unchanged,<br>zero client edits.</h2>
             <p data-reveal data-reveal-delay="120" data-i18n="onb.sub" style="margin:0 0 18px;font-size:16px;line-height:1.55;color:#333;max-width:440px;">In the Gateway tab, installed tools appear automatically. Three clean states: track only · via gateway · reverted.</p>
 
-            <p data-reveal data-reveal-delay="150" data-i18n-html="onb.swap" style="margin:0 0 34px;font-size:16px;line-height:1.55;color:#333;max-width:440px;">Swap to <span style="background:#f1ccff;padding:0 0.16em;border-radius:4px;">any third-party model</span> in a click — no client changes.</p>
+            <p data-reveal data-reveal-delay="150" data-i18n-html="onb.swap" style="margin:0 0 34px;font-size:16px;line-height:1.55;color:#333;max-width:440px;">Swap to <span style="background:#FFD055;padding:0 0.16em;border-radius:4px;">any third-party model</span> in a click — no client changes.</p>
 
             <div data-reveal data-reveal-delay="160" style="display:flex;flex-direction:column;gap:0;">
               <div style="display:flex;gap:18px;padding:18px 0;border-top:1px solid #e3e0dd;">
@@ -311,12 +310,12 @@
                 <div data-i18n="onb.m2.b" style="font-size:13px;color:#7b7b7b;line-height:1.5;">Claude Desktop · Codex Desktop · OpenClaw — point them at the local gateway in one click</div>
               </div>
               <div style="border:1px solid #e7e4e1;border-radius:14px;padding:16px;">
-                <div data-i18n="onb.m3.h" style="font-size:15px;font-weight:600;color:#000;margin-bottom:4px;">OpenAI-compatible</div>
-                <div data-i18n-html="onb.m3.b" style="font-size:13px;color:#7b7b7b;line-height:1.5;">Cursor and others — set <span style="font-family:'Space Mono',monospace;color:#333;">OPENAI_BASE_URL</span> or a dedicated key</div>
+                <div data-i18n="onb.m3.h" style="font-size:15px;font-weight:600;color:#000;margin-bottom:4px;">OpenAI · Anthropic · Gemini</div>
+                <div data-i18n-html="onb.m3.b" style="font-size:13px;color:#7b7b7b;line-height:1.5;">Text, image &amp; video APIs adapted — Cursor and others via <span style="font-family:'Space Mono',monospace;color:#333;">OPENAI_BASE_URL</span> or a dedicated key</div>
               </div>
             </div>
             <div style="margin-top:18px;background:#000;border-radius:12px;padding:16px 18px;font-family:'Space Mono',monospace;font-size:12.5px;line-height:1.7;color:#e9e9e9;overflow-x:auto;">
-              <span style="color:#7b7b7b;">$</span> export OPENAI_BASE_URL=<br><span style="color:#f1ccff;">&nbsp;&nbsp;http://localhost:11430/v1</span>
+              <span style="color:#7b7b7b;">$</span> export OPENAI_BASE_URL=<br><span style="color:#FFD055;">&nbsp;&nbsp;http://localhost:11430/v1</span>
             </div>
           </div>
 
@@ -329,7 +328,7 @@
   <section id="routing" style="padding:80px 0;scroll-margin-top:80px;">
     <div style="max-width:1200px;margin:0 auto;padding:0 24px;">
       <div style="text-align:center;margin-bottom:52px;">
-        <div data-reveal data-i18n="rt.kicker" style="display:inline-block;background:#f1ccff;color:#000;border-radius:10px;padding:6px 14px;font-size:13px;font-weight:500;letter-spacing:0.04em;margin-bottom:22px;">Smart routing</div>
+        <div data-reveal data-i18n="rt.kicker" style="display:inline-block;background:#FFD055;color:#000;border-radius:10px;padding:6px 14px;font-size:13px;font-weight:500;letter-spacing:0.04em;margin-bottom:22px;">Smart routing</div>
         <h2 data-reveal data-reveal-delay="60" data-i18n="rt.title" style="margin:0 auto 14px;max-width:760px;font-family:'Playfair Display','Noto Serif SC',serif;font-weight:400;font-size:46px;line-height:1.22;letter-spacing:-0.01em;color:#000;">One local routing chain, stepping down until it hits.</h2>
         <p data-reveal data-reveal-delay="120" data-i18n="rt.sub" style="margin:0 auto;max-width:580px;font-size:16px;line-height:1.55;color:#333;">Each app can bind its own scenario route; the global supply chain is the fallback. When local is unavailable it switches to community P2P — transparent to the agent throughout.</p>
       </div>
@@ -343,13 +342,13 @@
 
         <div class="tb-conn"></div>
 
-        <div style="width:100%;background:linear-gradient(135deg,#fbf2ff,#f3e6fb);border:1px solid #e7c8f3;border-radius:18px;padding:22px 24px;text-align:center;animation:tbPulse 3s ease-in-out infinite;">
+        <div style="width:100%;background:linear-gradient(135deg,#FFF8E6,#FFF0C8);border:1px solid #FFE07A;border-radius:18px;padding:22px 24px;text-align:center;animation:tbPulse 3s ease-in-out infinite;">
           <div data-i18n="rt.gw" style="font-size:18px;font-weight:600;color:#000;">Token Bank gateway</div>
           <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:12px;">
-            <span class="tb-gw-chip" data-i18n="rt.t1" style="background:#fff;border:1px solid #e7c8f3;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Transparent rewrite</span>
-            <span class="tb-gw-chip" data-i18n="rt.t2" style="background:#fff;border:1px solid #e7c8f3;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Protocol convert</span>
-            <span class="tb-gw-chip" data-i18n="rt.t3" style="background:#fff;border:1px solid #e7c8f3;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Lossless compress</span>
-            <span class="tb-gw-chip" data-i18n="rt.t4" style="background:#fff;border:1px solid #e7c8f3;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Usage tracking</span>
+            <span class="tb-gw-chip" data-i18n="rt.t1" style="background:#fff;border:1px solid #FFE07A;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Transparent rewrite</span>
+            <span class="tb-gw-chip" data-i18n="rt.t2" style="background:#fff;border:1px solid #FFE07A;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Protocol convert</span>
+            <span class="tb-gw-chip" data-i18n="rt.t3" style="background:#fff;border:1px solid #FFE07A;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Lossless compress</span>
+            <span class="tb-gw-chip" data-i18n="rt.t4" style="background:#fff;border:1px solid #FFE07A;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Usage tracking</span>
           </div>
         </div>
 
@@ -370,7 +369,7 @@
           </div>
           <div style="background:#fff;border:1px solid #e7e4e1;border-radius:18px;padding:22px;">
             <div style="display:flex;align-items:center;gap:9px;margin-bottom:12px;">
-              <span style="width:10px;height:10px;border-radius:3px;background:#f1ccff;"></span>
+              <span style="width:10px;height:10px;border-radius:3px;background:#FFD055;"></span>
               <span data-i18n="rt.p2p.h" style="font-size:15px;font-weight:600;color:#000;">Community P2P</span>
             </div>
             <div style="display:flex;flex-direction:column;gap:8px;font-size:13.5px;color:#333;">
@@ -425,7 +424,7 @@
             </div>
             <div style="display:flex;flex-direction:column;gap:11px;">
               <div style="display:flex;align-items:center;gap:9px;"><span style="width:10px;height:10px;border-radius:3px;background:#91e0ff;"></span><span data-i18n="an.leg1" style="font-size:13px;color:#333;">Local sources</span><span style="margin-left:auto;font-size:13px;font-weight:600;color:#000;"><span data-count-to="62" data-count-plain>0</span>%</span></div>
-              <div style="display:flex;align-items:center;gap:9px;"><span style="width:10px;height:10px;border-radius:3px;background:#f1ccff;"></span><span data-i18n="an.leg2" style="font-size:13px;color:#333;">Community P2P</span><span style="margin-left:auto;font-size:13px;font-weight:600;color:#000;"><span data-count-to="22" data-count-plain>0</span>%</span></div>
+              <div style="display:flex;align-items:center;gap:9px;"><span style="width:10px;height:10px;border-radius:3px;background:#FFD055;"></span><span data-i18n="an.leg2" style="font-size:13px;color:#333;">Community P2P</span><span style="margin-left:auto;font-size:13px;font-weight:600;color:#000;"><span data-count-to="22" data-count-plain>0</span>%</span></div>
               <div style="display:flex;align-items:center;gap:9px;"><span style="width:10px;height:10px;border-radius:3px;background:#e6e2df;"></span><span data-i18n="an.leg3" style="font-size:13px;color:#333;">Official subscription</span><span style="margin-left:auto;font-size:13px;font-weight:600;color:#000;"><span data-count-to="16" data-count-plain>0</span>%</span></div>
             </div>
           </div>
@@ -452,14 +451,14 @@
 
               <div class="tb-app-row" style="display:flex;align-items:center;gap:12px;">
                 <span style="width:92px;flex:0 0 auto;font-size:12.5px;color:#333;">Codex CLI</span>
-                <div style="flex:1;height:9px;background:#f3f0ee;border-radius:5px;overflow:hidden;"><div style="width:49%;height:100%;background:#f1ccff;border-radius:5px;transform-origin:left;animation:tbGrowW 1.1s ease both;"></div></div>
+                <div style="flex:1;height:9px;background:#f3f0ee;border-radius:5px;overflow:hidden;"><div style="width:49%;height:100%;background:#FFD055;border-radius:5px;transform-origin:left;animation:tbGrowW 1.1s ease both;"></div></div>
                 <span style="width:50px;flex:0 0 auto;text-align:right;font-size:12px;color:#7b7b7b;font-family:'Space Mono',monospace;"><span data-count-to="610" data-count-plain data-count-suffix="K">0</span></span>
                 <span style="width:54px;flex:0 0 auto;text-align:right;font-size:13px;color:#000;font-weight:600;"><span data-count-to="6.10" data-count-dec="2" data-count-prefix="$">0</span></span>
               </div>
 
               <div class="tb-app-row" style="display:flex;align-items:center;gap:12px;">
                 <span style="width:92px;flex:0 0 auto;font-size:12.5px;color:#333;">Gemini CLI</span>
-                <div style="flex:1;height:9px;background:#f3f0ee;border-radius:5px;overflow:hidden;"><div style="width:33%;height:100%;background:#f1ccff;border-radius:5px;transform-origin:left;animation:tbGrowW 1.2s ease both;"></div></div>
+                <div style="flex:1;height:9px;background:#f3f0ee;border-radius:5px;overflow:hidden;"><div style="width:33%;height:100%;background:#FFD055;border-radius:5px;transform-origin:left;animation:tbGrowW 1.2s ease both;"></div></div>
                 <span style="width:50px;flex:0 0 auto;text-align:right;font-size:12px;color:#7b7b7b;font-family:'Space Mono',monospace;"><span data-count-to="410" data-count-plain data-count-suffix="K">0</span></span>
                 <span style="width:54px;flex:0 0 auto;text-align:right;font-size:13px;color:#000;font-weight:600;"><span data-count-to="2.05" data-count-dec="2" data-count-prefix="$">0</span></span>
               </div>
@@ -469,6 +468,44 @@
                 <div style="flex:1;height:9px;background:#f3f0ee;border-radius:5px;overflow:hidden;"><div style="width:23%;height:100%;background:#d6d6d6;border-radius:5px;transform-origin:left;animation:tbGrowW 1.3s ease both;"></div></div>
                 <span style="width:50px;flex:0 0 auto;text-align:right;font-size:12px;color:#7b7b7b;font-family:'Space Mono',monospace;"><span data-count-to="286" data-count-plain data-count-suffix="K">0</span></span>
                 <span style="width:54px;flex:0 0 auto;text-align:right;font-size:13px;color:#000;font-weight:600;"><span data-count-to="1.40" data-count-dec="2" data-count-prefix="$">0</span></span>
+              </div>
+
+            </div>
+          </div>
+          <!-- 按设备用量 -->
+          <div style="border-top:1px solid #f0eeec;padding-top:22px;margin-top:22px;">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:18px;">
+              <div data-i18n="an.dev.h" style="font-size:14px;font-weight:600;color:#000;">By device · tokens & spend</div>
+              <div data-i18n="an.bars.hint" style="font-size:11px;color:#bcbcbc;letter-spacing:0.02em;">tokens · spend</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:15px;">
+
+              <div class="tb-dev-row" style="display:flex;align-items:center;gap:12px;">
+                <span data-i18n="an.dev1" style="width:110px;flex:0 0 auto;font-size:12.5px;color:#333;">MacBook Pro</span>
+                <div style="flex:1;height:9px;background:#f3f0ee;border-radius:5px;overflow:hidden;"><div style="width:100%;height:100%;background:#91e0ff;border-radius:5px;transform-origin:left;animation:tbGrowW .9s ease both;"></div></div>
+                <span style="width:50px;flex:0 0 auto;text-align:right;font-size:12px;color:#7b7b7b;font-family:'Space Mono',monospace;"><span data-count-to="1.52" data-count-dec="2" data-count-suffix="M">0</span></span>
+                <span style="width:54px;flex:0 0 auto;text-align:right;font-size:13px;color:#000;font-weight:600;"><span data-count-to="19.80" data-count-dec="2" data-count-prefix="$">0</span></span>
+              </div>
+
+              <div class="tb-dev-row" style="display:flex;align-items:center;gap:12px;">
+                <span data-i18n="an.dev2" style="width:110px;flex:0 0 auto;font-size:12.5px;color:#333;">Linux Gateway</span>
+                <div style="flex:1;height:9px;background:#f3f0ee;border-radius:5px;overflow:hidden;"><div style="width:65%;height:100%;background:#91e0ff;border-radius:5px;transform-origin:left;animation:tbGrowW 1s ease both;"></div></div>
+                <span style="width:50px;flex:0 0 auto;text-align:right;font-size:12px;color:#7b7b7b;font-family:'Space Mono',monospace;"><span data-count-to="986" data-count-plain data-count-suffix="K">0</span></span>
+                <span style="width:54px;flex:0 0 auto;text-align:right;font-size:13px;color:#000;font-weight:600;"><span data-count-to="10.20" data-count-dec="2" data-count-prefix="$">0</span></span>
+              </div>
+
+              <div class="tb-dev-row" style="display:flex;align-items:center;gap:12px;">
+                <span data-i18n="an.dev3" style="width:110px;flex:0 0 auto;font-size:12.5px;color:#333;">Windows PC</span>
+                <div style="flex:1;height:9px;background:#f3f0ee;border-radius:5px;overflow:hidden;"><div style="width:40%;height:100%;background:#FFD055;border-radius:5px;transform-origin:left;animation:tbGrowW 1.1s ease both;"></div></div>
+                <span style="width:50px;flex:0 0 auto;text-align:right;font-size:12px;color:#7b7b7b;font-family:'Space Mono',monospace;"><span data-count-to="612" data-count-plain data-count-suffix="K">0</span></span>
+                <span style="width:54px;flex:0 0 auto;text-align:right;font-size:13px;color:#000;font-weight:600;"><span data-count-to="5.25" data-count-dec="2" data-count-prefix="$">0</span></span>
+              </div>
+
+              <div class="tb-dev-row" style="display:flex;align-items:center;gap:12px;">
+                <span data-i18n="an.dev4" style="width:110px;flex:0 0 auto;font-size:12.5px;color:#333;">WSL CLI</span>
+                <div style="flex:1;height:9px;background:#f3f0ee;border-radius:5px;overflow:hidden;"><div style="width:18%;height:100%;background:#FFD055;border-radius:5px;transform-origin:left;animation:tbGrowW 1.2s ease both;"></div></div>
+                <span style="width:50px;flex:0 0 auto;text-align:right;font-size:12px;color:#7b7b7b;font-family:'Space Mono',monospace;"><span data-count-to="268" data-count-plain data-count-suffix="K">0</span></span>
+                <span style="width:54px;flex:0 0 auto;text-align:right;font-size:13px;color:#000;font-weight:600;"><span data-count-to="2.20" data-count-dec="2" data-count-prefix="$">0</span></span>
               </div>
 
             </div>
@@ -483,7 +520,7 @@
   <section id="network" style="padding:80px 0;scroll-margin-top:80px;">
     <div style="max-width:1200px;margin:0 auto;padding:0 24px;">
       <div style="text-align:center;margin-bottom:48px;">
-        <div data-reveal data-i18n="nw.kicker" style="display:inline-block;background:#f1ccff;color:#000;border-radius:10px;padding:6px 14px;font-size:13px;font-weight:500;letter-spacing:0.04em;margin-bottom:22px;">Community compute · share & exchange · earn from idle</div>
+        <div data-reveal data-i18n="nw.kicker" style="display:inline-block;background:#FFD055;color:#000;border-radius:10px;padding:6px 14px;font-size:13px;font-weight:500;letter-spacing:0.04em;margin-bottom:22px;">Community compute · share & exchange · earn from idle</div>
         <h2 data-reveal data-reveal-delay="60" data-i18n="nw.title" style="margin:0 auto 14px;max-width:780px;font-family:'Playfair Display','Noto Serif SC',serif;font-weight:400;font-size:46px;line-height:1.22;letter-spacing:-0.01em;color:#000;">Personal and community compute, scheduled as one.</h2>
         <p data-reveal data-reveal-delay="120" data-i18n="nw.sub" style="margin:0 auto;max-width:600px;font-size:16px;line-height:1.55;color:#333;">Use your own free tiers, subscriptions and metered accounts first; tap community shared compute only when needed — both switch transparently inside one gateway.</p>
       </div>
@@ -503,17 +540,17 @@
             <span data-i18n="nw.p1.t3" style="background:#f5f2f0;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Pay-as-you-go</span>
           </div>
         </div>
-        <div data-reveal data-reveal-delay="100" style="background:#fff;border:1px solid #e7c8f3;border-radius:24px;padding:32px;">
+        <div data-reveal data-reveal-delay="100" style="background:#fff;border:1px solid #FFE07A;border-radius:24px;padding:32px;">
           <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:16px;">
             <span style="font-family:'Space Mono',monospace;font-size:13px;color:#7b7b7b;">02</span>
-            <span style="width:38px;height:38px;border-radius:11px;background:#f1ccff;display:flex;align-items:center;justify-content:center;font-size:18px;">◆</span>
+            <span style="width:38px;height:38px;border-radius:11px;background:#FFD055;display:flex;align-items:center;justify-content:center;font-size:18px;">◆</span>
           </div>
           <h3 data-i18n="nw.p2.h" style="margin:0 0 10px;font-size:22px;font-weight:600;color:#000;letter-spacing:-0.01em;">Community compute</h3>
           <p data-i18n="nw.p2.b" style="margin:0 0 18px;font-size:15px;line-height:1.55;color:#333;">Members contribute idle quota, shared through a credits network. Spend credits to call models others supply — often cheaper than official.</p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <span data-i18n="nw.p2.t1" style="background:#fbf2ff;border:1px solid #f0ddfa;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Credit swap</span>
-            <span data-i18n="nw.p2.t2" style="background:#fbf2ff;border:1px solid #f0ddfa;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Cross-model flow</span>
-            <span data-i18n="nw.p2.t3" style="background:#fbf2ff;border:1px solid #f0ddfa;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Idle sharing</span>
+            <span data-i18n="nw.p2.t1" style="background:#FFF8E6;border:1px solid #FFF0C8;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Credit swap</span>
+            <span data-i18n="nw.p2.t2" style="background:#FFF8E6;border:1px solid #FFF0C8;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Cross-model flow</span>
+            <span data-i18n="nw.p2.t3" style="background:#FFF8E6;border:1px solid #FFF0C8;border-radius:8px;padding:5px 12px;font-size:12.5px;color:#333;font-weight:500;">Idle sharing</span>
           </div>
         </div>
       </div>
@@ -521,7 +558,7 @@
       <!-- value pillars -->
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-bottom:24px;">
         <div data-reveal style="background:#fff;border:1px solid #e7e4e1;border-radius:24px;padding:28px;transition:transform .25s ease,border-color .25s ease;" style-hover="transform:translateY(-5px);border-color:#bcbcbc;">
-          <span style="display:inline-flex;width:34px;height:34px;border-radius:10px;background:#f1ccff;align-items:center;justify-content:center;font-size:16px;margin-bottom:16px;">⇄</span>
+          <span style="display:inline-flex;width:34px;height:34px;border-radius:10px;background:#FFD055;align-items:center;justify-content:center;font-size:16px;margin-bottom:16px;">⇄</span>
           <h4 data-i18n="nw.v1.h" style="margin:0 0 8px;font-size:18px;font-weight:600;color:#000;letter-spacing:-0.01em;">Cross-model exchange</h4>
           <p data-i18n="nw.v1.b" style="margin:0;font-size:14px;line-height:1.55;color:#333;">Contribute quota for models you have, earn credits, and spend them on models you don't.</p>
         </div>
@@ -538,7 +575,7 @@
       </div>
 
       <!-- earn mechanics highlight -->
-      <div data-reveal style="position:relative;overflow:hidden;background:linear-gradient(135deg,#f1ccff 0%,#c89cd9 60%,#9d7bc4 100%);border-radius:42px;padding:56px;">
+      <div data-reveal style="position:relative;overflow:hidden;background:linear-gradient(135deg,#FFD055 0%,#E08A00 60%,#C07800 100%);border-radius:42px;padding:56px;">
         <div style="position:absolute;top:-80px;right:-60px;width:320px;height:320px;border-radius:50%;background:rgba(255,255,255,0.16);animation:tbDrift 9s ease-in-out infinite;pointer-events:none;"></div>
         <div style="position:relative;z-index:1;display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;">
           <div>
@@ -554,7 +591,7 @@
           <div style="background:rgba(255,255,255,0.92);border-radius:24px;padding:28px;backdrop-filter:blur(4px);">
             <div data-i18n="nw.card.label" style="font-size:13px;font-weight:500;color:#7b7b7b;letter-spacing:0.03em;margin-bottom:14px;">How credits are calculated</div>
             <div style="background:#000;border-radius:14px;padding:20px;font-family:'Space Mono',monospace;font-size:13px;line-height:1.8;color:#e9e9e9;">
-              <div><span style="color:#f1ccff;">credits</span> = (output_tokens / 1000)</div>
+              <div><span style="color:#FFD055;">credits</span> = (output_tokens / 1000)</div>
               <div style="padding-left:64px;">× contribute_rate</div>
               <div style="padding-left:64px;">× quality<span style="color:#91e0ff;">(0.5–1.5)</span></div>
               <div style="margin-top:14px;border-top:1px solid #333;padding-top:14px;"><span style="color:#91e0ff;">cost</span> = (prompt+completion / 1000)</div>
@@ -570,11 +607,11 @@
   <!-- ============ FINAL CTA ============ -->
   <section id="download" style="padding:100px 0 96px;text-align:center;scroll-margin-top:80px;">
     <div style="max-width:1200px;margin:0 auto;padding:0 24px;">
-      <div data-reveal data-i18n="cta.kicker" style="display:inline-block;background:#f1ccff;color:#000;border-radius:10px;padding:6px 14px;font-size:13px;font-weight:500;letter-spacing:0.04em;margin-bottom:26px;">Get started</div>
+      <div data-reveal data-i18n="cta.kicker" style="display:inline-block;background:#FFD055;color:#000;border-radius:10px;padding:6px 14px;font-size:13px;font-weight:500;letter-spacing:0.04em;margin-bottom:26px;">Get started</div>
       <h2 data-reveal data-reveal-delay="60" data-i18n="cta.title" style="margin:0 auto;max-width:760px;font-family:'Playfair Display','Noto Serif SC',serif;font-weight:400;font-size:56px;line-height:1.16;letter-spacing:-0.01em;color:#000;">Spend your tokens where they count.</h2>
       <p data-reveal data-reveal-delay="120" data-i18n="cta.sub" style="margin:24px auto 0;max-width:560px;font-size:17px;line-height:1.55;color:#333;">One local address fronts every AI tool — download and go. Double-click to install on macOS / Windows, run from the CLI on Linux.</p>
       <div data-reveal data-reveal-delay="180" style="display:flex;gap:12px;justify-content:center;margin-top:36px;flex-wrap:wrap;">
-        <a href="#download" style="text-decoration:none;background:#f1ccff;color:#000;font-size:16px;font-weight:500;padding:15px 28px;border-radius:10px;display:inline-flex;align-items:center;gap:9px;box-shadow:rgba(16,24,40,0.05) 0px 1px 2px 0px;transition:transform .2s ease;" style-hover="transform:translateY(-2px);"><span data-i18n="cta.primary">Free download</span> <span>↓</span></a>
+        <a href="#download" style="text-decoration:none;background:#FFD055;color:#000;font-size:16px;font-weight:500;padding:15px 28px;border-radius:10px;display:inline-flex;align-items:center;gap:9px;box-shadow:rgba(16,24,40,0.05) 0px 1px 2px 0px;transition:transform .2s ease;" style-hover="transform:translateY(-2px);"><span data-i18n="cta.primary">Free download</span> <span>↓</span></a>
         <a href="#top" data-i18n="cta.secondary" style="text-decoration:none;background:#000;color:#fff;font-size:16px;font-weight:500;padding:15px 28px;border-radius:10px;display:inline-flex;align-items:center;gap:9px;transition:transform .2s ease;" style-hover="transform:translateY(-2px);">View on GitHub</a>
       </div>
     </div>
@@ -637,12 +674,10 @@
   <!-- ============ FOOTER ============ -->
   <footer style="background:#000;color:#fff;padding:64px 0 40px;">
     <div style="max-width:1200px;margin:0 auto;padding:0 24px;">
-      <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:40px;">
+      <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:40px;">
         <div>
           <div style="display:flex;align-items:center;gap:11px;margin-bottom:16px;">
-            <span style="width:30px;height:30px;border-radius:9px;background:#fff;display:flex;align-items:center;justify-content:center;">
-              <span style="width:13px;height:13px;background:#f1ccff;border-radius:3px;transform:rotate(45deg);"></span>
-            </span>
+            <img src="/static/logo.svg" alt="Token Bank" width="30" height="30" style="display:block;width:30px;height:30px;flex:0 0 auto;border-radius:7px;">
             <span style="font-weight:600;font-size:18px;color:#fff;">Token Bank</span>
           </div>
           <p data-i18n="ft.tag" style="margin:0;max-width:300px;font-size:14px;line-height:1.6;color:#9a9a9a;">Your personal AI hub — a local LLM gateway and token manager in one. Know your spend, spend less, earn while idle.</p>
@@ -654,15 +689,6 @@
             <a href="#onboarding" data-i18n="ft.l2" style="text-decoration:none;color:#9a9a9a;font-size:14px;">One-click connect</a>
             <a href="#routing" data-i18n="ft.l3" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Smart routing</a>
             <a href="#network" data-i18n="ft.l4" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Community P2P</a>
-          </div>
-        </div>
-        <div>
-          <div data-i18n="ft.col2" style="font-size:13px;font-weight:600;color:#fff;margin-bottom:14px;letter-spacing:0.03em;">Resources</div>
-          <div style="display:flex;flex-direction:column;gap:10px;">
-            <a href="#download" data-i18n="ft.l5" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Download</a>
-            <a href="#download" data-i18n="ft.l6" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Docs</a>
-            <a href="#download" data-i18n="ft.l7" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Architecture</a>
-            <a href="#download" data-i18n="ft.l8" style="text-decoration:none;color:#9a9a9a;font-size:14px;">中文文档</a>
           </div>
         </div>
         <div>
@@ -691,7 +717,7 @@ class Component extends DCLogic {
     'nav.features': '能力', 'nav.connect': '接入', 'nav.routing': '路由', 'nav.network': '社区',
     'nav.langLabel': 'EN', 'nav.signin': '登录', 'nav.download': '免费下载', 'nav.faq': '常见问题',
     'hero.badge': '你的个人 AI 中枢 · 不止是本地 LLM 网关',
-    'hero.title': '看清每个 Token 的去向，<br>花得更少，<br><span style="background:linear-gradient(90deg,#f1ccff 0%,#f7d9ff 45%,#d7b3ee 55%,#f1ccff 100%);background-size:220% 100%;animation:tbShimmer 4.5s ease-in-out infinite;padding:0 0.14em;border-radius:6px;">闲置也生息</span>。',
+    'hero.title': '看清每个 Token 的去向，<br>花得更少，<br><span style="background:linear-gradient(90deg,#FFD055 0%,#FFF0A0 45%,#FFE07A 55%,#FFD055 100%);background-size:220% 100%;animation:tbShimmer 4.5s ease-in-out infinite;padding:0 0.14em;border-radius:6px;">闲置也生息</span>。',
     'hero.sub': '一个本地网关接管全部 AI 应用——追踪每个 token，智能路由省更多，把闲置额度变成积分。你的工具只指向一个本地地址，路由全程透明。',
     'hero.ctaPrimary': '免费下载', 'hero.ctaSecondary': '在 GitHub 查看',
     'hero.meta': 'macOS · Windows · Linux　·　Apache-2.0 开源',
@@ -711,14 +737,14 @@ class Component extends DCLogic {
     'onb.kicker': '一次接入 · ONBOARDING',
     'onb.title': '原生模型名不变，<br>客户端零改动。',
     'onb.sub': '在 Gateway 标签里，已安装的工具自动出现。三种状态清晰分离：仅统计 · 经网关 · 已还原。',
-    'onb.swap': '一键<span style="background:#f1ccff;padding:0 0.16em;border-radius:4px;">更换任意第三方模型</span>，客户端零改动。',
+    'onb.swap': '一键<span style="background:#FFD055;padding:0 0.16em;border-radius:4px;">更换任意第三方模型</span>，客户端零改动。',
     'onb.s1.h': 'Track — 开始计数', 'onb.s1.b': '即使仍走官方订阅，也能追踪该应用的用量',
     'onb.s2.h': '选择 模型 / 场景路由', 'onb.s2.b': '配置自动改写，流量经网关透明转发',
     'onb.s3.h': 'Revert — 一键还原', 'onb.s3.b': '恢复官方配置，停止追踪，干净利落',
     'onb.card.label': '三种连接方式 · 零命令改动',
     'onb.m1.h': 'CLI shim', 'onb.m1.b': 'Claude Code · Codex · Gemini CLI · OpenCode — 透明注入 <span style="font-family:\u0027Space Mono\u0027,monospace;color:#333;">BASE_URL</span>',
     'onb.m2.h': '配置文件补丁', 'onb.m2.b': 'Claude Desktop · Codex Desktop · OpenClaw — 一键指向本地网关',
-    'onb.m3.h': 'OpenAI 兼容', 'onb.m3.b': 'Cursor 等 — 设置 <span style="font-family:\u0027Space Mono\u0027,monospace;color:#333;">OPENAI_BASE_URL</span> 或专用 key',
+    'onb.m3.h': 'OpenAI · Anthropic · Gemini', 'onb.m3.b': '文本、图片、视频接口适配 — Cursor 等通过 <span style="font-family:\u0027Space Mono\u0027,monospace;color:#333;">OPENAI_BASE_URL</span> 或专用 key 接入',
     'rt.kicker': '智能路由 · ROUTING',
     'rt.title': '一条本地路由链，逐级直到命中。',
     'rt.sub': '每个应用可绑定自己的场景路由；全局供应链作为兜底。本地不可用，自动切到社区 P2P，对 agent 全程透明。',
@@ -737,6 +763,7 @@ class Component extends DCLogic {
     'an.b4': '<b style="color:#000;font-weight:600;">调用日志</b> 记录每次路由结果、状态与延迟',
     'an.card.h': '供应来源占比', 'an.card.range': '最近 7 天', 'an.donut.center': '本地命中',
     'an.leg1': '本地来源', 'an.leg2': '社区 P2P', 'an.leg3': '官方订阅', 'an.bars.h': '按应用 · token 与花费', 'an.bars.hint': 'token · 花费',
+    'an.dev.h': '按设备 · token 与花费', 'an.dev1': 'MacBook Pro', 'an.dev2': 'Linux 网关', 'an.dev3': 'Windows 电脑', 'an.dev4': 'WSL 命令行',
     'nw.kicker': '社区算力 · 交流分享 · 闲置生息',
     'nw.title': '个人算力与社区算力，统一调度。',
     'nw.sub': '优先用你自己的免费额度、订阅与按量账户；需要时再调用社区共享算力——二者在同一网关内透明切换。',
@@ -759,7 +786,6 @@ class Component extends DCLogic {
     'cta.primary': '免费下载', 'cta.secondary': '在 GitHub 查看',
     'ft.tag': '你的个人 AI 中枢——集本地 LLM 网关与 Token 管家于一身。看清花费，花得更少，闲置也能生息。',
     'ft.col1': '产品', 'ft.l1': '核心能力', 'ft.l2': '一键接入', 'ft.l3': '智能路由', 'ft.l4': '社区 P2P',
-    'ft.col2': '资源', 'ft.l5': '下载', 'ft.l6': '文档', 'ft.l7': '架构设计', 'ft.l8': '中文文档',
     'ft.col3': '平台',
     'faq.kicker': '常见问题',
     'faq.title': '常见问题',
@@ -889,7 +915,7 @@ class Component extends DCLogic {
     const drawDonut = (el) => {
       if (!el || el.dataset.drawn) return;
       el.dataset.drawn = '1';
-      const segs = [[0x91e0ff, 62], [0xf1ccff, 22], [0xe6e2df, 16]];
+      const segs = [[0x91e0ff, 62], [0xFFD055, 22], [0xe6e2df, 16]];
       const hex = (n) => '#' + n.toString(16).padStart(6, '0');
       const dur = 1400;
       const t0 = performance.now();

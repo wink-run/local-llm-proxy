@@ -1762,7 +1762,7 @@ function AppDetailModal({ app, onClose }) {
   );
 }
 
-function AppManager({ externalRoutes, availableModels = [], onActivity }) {
+function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTotals }) {
   const refresh = typeof onActivity === 'function' ? onActivity : () => {};
   const { t } = useLang();
   const appsApi = getApps();
@@ -1802,6 +1802,21 @@ function AppManager({ externalRoutes, availableModels = [], onActivity }) {
   }, [appsApi]);
 
   useEffect(() => { load(); }, [load]);
+
+  // 汇总各应用「今日」用量，供顶部卡片与表格列对齐（仅非 draft 行，与 visibleApps 一致）
+  useEffect(() => {
+    if (loading || !onAppTotals) return;
+    const totals = apps
+      .filter(a => !a.draft)
+      .reduce(
+        (acc, app) => {
+          const s = appStats[app.id] || {};
+          return { calls: acc.calls + (s.calls || 0), tokens: acc.tokens + (s.tokens || 0) };
+        },
+        { calls: 0, tokens: 0 },
+      );
+    onAppTotals(totals);
+  }, [apps, appStats, loading, onAppTotals]);
 
   // Claude 名（Claude Desktop inferenceModels 的 name 只能用 Anthropic 名）
   useEffect(() => { appsApi.claudeModels?.().then(m => setClaudeModels(Array.isArray(m) ? m : [])).catch(() => {}); }, [appsApi]);
@@ -3169,6 +3184,8 @@ export default function Gateway() {
     const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next;
   });
   const [availableModels, setAvailableModels] = useState([]);
+  // 应用列表汇总（与表格「今日请求/Token」列求和一致）
+  const [appTotals, setAppTotals] = useState(null);
 
   // Keys list
   const [keysScene, setKeysScene] = useState([]);
@@ -3238,6 +3255,9 @@ export default function Gateway() {
 
   const totalCalls   = stats?.total_calls ?? 0;
   const totalTokens  = stats?.total_tokens ?? 0;
+  // 顶部「今日」优先用应用列表求和（与表格一致）；加载前回退全量统计
+  const headerCalls  = appTotals != null ? appTotals.calls : totalCalls;
+  const headerTokens = appTotals != null ? appTotals.tokens : totalTokens;
   const proxyCalls   = (stats?.agent_sources ?? []).find(s => s.source === 'proxy')?.calls ?? 0;
   const gatewayRatio = totalCalls > 0 ? Math.round((proxyCalls / totalCalls) * 100) : null;
   const fmtTokens    = n => n >= 1_000_000 ? (n / 1e6).toFixed(2) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'K' : String(n || 0);
@@ -3369,8 +3389,8 @@ export default function Gateway() {
       {/* Stats */}
       <div className="grid grid-cols-4 gap-2.5">
         {[
-          { label: t('gateway.stat.todayCalls'), value: totalCalls > 0 ? totalCalls.toLocaleString() : '—', color: 'text-zinc-900 dark:text-zinc-100' },
-          { label: t('gateway.stat.todayTokens'), value: fmtTokens(totalTokens), color: 'text-blue-600 dark:text-blue-400' },
+          { label: t('gateway.stat.todayCalls'), value: headerCalls > 0 ? headerCalls.toLocaleString() : '—', color: 'text-zinc-900 dark:text-zinc-100' },
+          { label: t('gateway.stat.todayTokens'), value: fmtTokens(headerTokens), color: 'text-blue-600 dark:text-blue-400' },
           { label: t('gateway.stat.gatewayRatio'), value: gatewayRatio !== null ? `${gatewayRatio}%` : '—', color: 'text-violet-600 dark:text-violet-400' },
           { label: t('gateway.stat.avgLatency'), value: avgLatency > 0 ? `${avgLatency}ms` : '—', color: 'text-zinc-500 dark:text-zinc-400' },
         ].map(({ label, value, color }) => (
@@ -3420,7 +3440,7 @@ export default function Gateway() {
 
         {/* Tab0: 应用列表 & 托管 */}
         {mainTab === 0 && (
-          <AppManager externalRoutes={routes} availableModels={availableModels} onActivity={refresh} />
+          <AppManager externalRoutes={routes} availableModels={availableModels} onActivity={refresh} onAppTotals={setAppTotals} />
         )}
 
         {/* Tab1: 场景路由 */}
