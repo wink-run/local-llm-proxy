@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getNetwork, getStats } from '../api/client';
+import { getNetwork, getStats, getModelsForCurrentUser } from '../api/client';
 import { useLang } from '../store/lang';
 
 // Extract param size from model name, e.g. "llama-3.3-70b" → "70B"
@@ -34,18 +34,26 @@ function PingDot({ color = 'green' }) {
 export default function Network() {
   const { t } = useLang();
   const navigate  = useNavigate();
-  const [network, setNetwork] = useState(null);
-  const [myStats, setMyStats] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [network,        setNetwork]        = useState(null);
+  const [myStats,        setMyStats]        = useState(null);
+  const [loading,        setLoading]        = useState(true);
+  const [circleModelMap, setCircleModelMap] = useState({});
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        const [netRes, statsRes] = await Promise.allSettled([getNetwork(), getStats()]);
+        const [netRes, statsRes, modelsRes] = await Promise.allSettled([getNetwork(), getStats(), getModelsForCurrentUser()]);
         if (cancelled) return;
         if (netRes.status === 'fulfilled')   setNetwork(netRes.value.data);
         if (statsRes.status === 'fulfilled') setMyStats(statsRes.value.data);
+        if (modelsRes.status === 'fulfilled') {
+          const map = {};
+          for (const m of (modelsRes.value.data?.data || [])) {
+            if (m.circle_id) map[m.id] = { circle_id: m.circle_id, circle_name: m.circle_name || '' };
+          }
+          setCircleModelMap(map);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -175,6 +183,12 @@ export default function Network() {
                         </span>
                         {size && (
                           <span className="text-xs text-zinc-400 bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded">{size}</span>
+                        )}
+                        {circleModelMap[m.name] && (
+                          <span
+                            title={circleModelMap[m.name].circle_name || '圈子'}
+                            className="text-[10px] leading-none px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 cursor-default"
+                          >⊙</span>
                         )}
                       </div>
                       {m.nodes > 0 && !avgS && (

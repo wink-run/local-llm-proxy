@@ -351,23 +351,27 @@ async def worker_ws(ws: WebSocket):
                 auto_models,
             )
 
-        # Optional circle scope: worker can declare which circle it contributes to
-        circle_id_raw = msg.get("circle_id")
-        worker_circle_id: Optional[int] = None
-        if circle_id_raw is not None:
+        # Optional circle scope: worker can declare which circle(s) it contributes to
+        circle_ids_raw = msg.get("circle_ids") or []
+        if not circle_ids_raw and msg.get("circle_id") is not None:
+            circle_ids_raw = [msg.get("circle_id")]
+        worker_circle_ids_list: list[int] = []
+        for cid_raw in circle_ids_raw:
             try:
-                cid = int(circle_id_raw)
-                # Validate circle exists and worker owner is a member
+                cid = int(cid_raw)
                 if await db.is_circle_member(cid, user_id):
-                    worker_circle_id = cid
+                    worker_circle_ids_list.append(cid)
             except (ValueError, TypeError):
                 pass
+        # 去重并保持顺序
+        worker_circle_ids_list = list(dict.fromkeys(worker_circle_ids_list))
 
         worker = WorkerConnection(
             ws=ws, models=models, worker_id=worker_id,
             name=name, user_id=user_id,
             model_types=model_types,
-            circle_id=worker_circle_id,
+            circle_id=worker_circle_ids_list[0] if len(worker_circle_ids_list) == 1 else None,
+            circle_ids=worker_circle_ids_list,
         )
         pool.add(worker)
         await ws.send_text(json.dumps({"type": "registered", "worker_id": worker_id}))
@@ -501,19 +505,35 @@ async def auth_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bea
 
 
 @app.get("/v1/models")
-async def list_models(key_info: dict = Depends(auth_user)):
-    # 列出当前用户可见的模型：公共（真实 + 全局虚拟）+ 本人个人供给源；个人源对他人隐藏
-    uid = key_info.get("user_id")
-    circles = set(await db.get_user_circle_ids(uid)) if uid else set()
-    model_types = pool.models_for_user(owner_user_id=uid, user_circle_ids=circles)
-    return {
-        "object": "list",
-        "data": [
-            {"id": m, "object": "model", "created": 0, "owned_by": "local",
-             "model_type": model_types.get(m, "chat")}
-            for m in sorted(model_types)
-        ],
-    }
+async def list_models(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer)):
+    # 支持 API Key 或 JWT 两种鉴权方式
+    uid: Optional[int] = None
+    if creds:
+        info = await db.verify_key(creds.credentials)
+        if info:
+            uid = info.get("user_id")
+        else:
+            from auth import decode_token
+            uid = decode_token(creds.credentials)
+    circle_ids = set(await db.get_user_circle_ids(uid)) if uid else set()
+    model_types = pool.models_for_user(owner_user_id=uid, user_circle_ids=circle_ids)
+    circle_model_map = pool.circle_model_ids_for_user(owner_user_id=uid, user_circle_ids=circle_ids)
+    # Build circle_id -> circle_name lookup
+    circle_names: dict[int, str] = {}
+    for cid in set(circle_model_map.values()):
+        c = await db.get_circle_by_id(cid)
+        if c:
+            circle_names[cid] = c["name"]
+    data = []
+    for m in sorted(model_types):
+        entry = {"id": m, "object": "model", "created": 0, "owned_by": "local",
+                 "model_type": model_types.get(m, "chat")}
+        cid = circle_model_map.get(m)
+        if cid is not None:
+            entry["circle_id"]   = cid
+            entry["circle_name"] = circle_names.get(cid, "")
+        data.append(entry)
+    return {"object": "list", "data": data}
 
 
 @app.post("/v1/chat/completions")

@@ -124,7 +124,14 @@ async function _sendHeartbeat(online = true) {
   try {
     await _post(
       `${_config.serverUrl}/device/heartbeat`,
-      { device_id: _config.device_id, online, stats: { ...statsClean, inventory } },
+      {
+        device_id: _config.device_id,
+        online,
+        version  : _config.version || '',
+        name     : _config.name || '',
+        platform : _config.platform || '',
+        stats    : { ...statsClean, inventory },
+      },
       _config.token
     );
   } catch (_) {

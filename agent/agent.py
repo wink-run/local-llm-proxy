@@ -296,12 +296,18 @@ async def run_session(cfg: dict) -> None:
         ping_timeout=10,
     ) as ws:
         # Register: worker_key is the sole credential (matches DB users.worker_key)
-        await ws.send(json.dumps({
+        reg_msg = {
             "type":       "register",
             "name":       cfg["name"],
             "models":     cfg["models"],
             "worker_key": cfg["worker_key"],
-        }))
+        }
+        circle_ids = cfg.get("contribute_circle_ids") or []
+        if not circle_ids and cfg.get("contribute_circle_id"):
+            circle_ids = [cfg["contribute_circle_id"]]
+        if circle_ids:
+            reg_msg["circle_ids"] = circle_ids
+        await ws.send(json.dumps(reg_msg))
 
         # Server closes with 4001 if worker_key missing or unknown — recv raises ConnectionClosed
         try:

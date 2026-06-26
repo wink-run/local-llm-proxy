@@ -225,8 +225,16 @@ export function registerDevice(info) {
   return http.post('/device/register', info);
 }
 
-export function heartbeatDevice(deviceId, stats) {
-  return http.post('/device/heartbeat', { device_id: deviceId, online: true, stats });
+export function heartbeatDevice(deviceId, payload = {}) {
+  const { version, name, platform, ...stats } = payload;
+  return http.post('/device/heartbeat', {
+    device_id: deviceId,
+    online: true,
+    version: version || '',
+    name: name || '',
+    platform: platform || '',
+    stats,
+  });
 }
 
 // ── Circles ───────────────────────────────────────────────────────────────────
@@ -263,6 +271,38 @@ export function joinCircle(code) {
   return http.post(`/user/circles/join/${code}`);
 }
 
+export function getModelsForCurrentUser() {
+  return http.get('/v1/models');
+}
+
 export function listCircleMembers(circleId) {
   return http.get(`/user/circles/${circleId}/members`);
+}
+
+export function getCircleDetail(circleId) {
+  return http.get(`/user/circles/${circleId}`);
+}
+
+export function createCirclePost(circleId, content) {
+  return http.post(`/user/circles/${circleId}/posts`, { content });
+}
+
+export function updateCirclePost(circleId, postId, content) {
+  return http.put(`/user/circles/${circleId}/posts/${postId}`, { content });
+}
+
+export function deleteCirclePost(circleId, postId) {
+  return http.delete(`/user/circles/${circleId}/posts/${postId}`);
+}
+
+export function createCirclePostReply(circleId, postId, content) {
+  return http.post(`/user/circles/${circleId}/posts/${postId}/replies`, { content });
+}
+
+export function updateCirclePostReply(circleId, postId, replyId, content) {
+  return http.put(`/user/circles/${circleId}/posts/${postId}/replies/${replyId}`, { content });
+}
+
+export function deleteCirclePostReply(circleId, postId, replyId) {
+  return http.delete(`/user/circles/${circleId}/posts/${postId}/replies/${replyId}`);
 }

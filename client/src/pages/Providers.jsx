@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { resolveBrandIcon } from '../lib/brandIcons';
 import ServiceIcon from '../components/ServiceIcon';
-import { getNetwork, getProfile, listKeys, createKey, deleteKey, getProviderCatalog } from '../api/client';
+import { getNetwork, getProfile, listKeys, createKey, deleteKey, getProviderCatalog, getModelsForCurrentUser } from '../api/client';
 import { loadUserAccounts } from '../api/userAccounts';
 import UserAccountsPanel from '../components/UserAccountsPanel';
 import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
@@ -643,9 +643,10 @@ function P2PNetworkCard({ provider, onUpdate }) {
   const { user } = useAuth();
   const needsLogin = !user;
   const navigate   = useNavigate();
-  const [network,  setNetwork]  = useState(null);
-  const [balance,  setBalance]  = useState(null);
-  const [loading,  setLoading]  = useState(true);
+  const [network,        setNetwork]        = useState(null);
+  const [balance,        setBalance]        = useState(null);
+  const [loading,        setLoading]        = useState(true);
+  const [circleModelMap, setCircleModelMap] = useState({});  // {modelName: {circle_id, circle_name}}
 
   // P2P gateway API key config
   const [showKeyConfig, setShowKeyConfig] = useState(false);
@@ -744,10 +745,17 @@ function P2PNetworkCard({ provider, onUpdate }) {
     async function load() {
       setLoading(true);
       try {
-        const [netRes, profRes] = await Promise.allSettled([getNetwork(), getProfile()]);
+        const [netRes, profRes, modelsRes] = await Promise.allSettled([getNetwork(), getProfile(), getModelsForCurrentUser()]);
         if (cancelled) return;
         if (netRes.status === 'fulfilled') setNetwork(netRes.value.data);
         if (profRes.status === 'fulfilled') setBalance(profRes.value.data?.credits_balance ?? null);
+        if (modelsRes.status === 'fulfilled') {
+          const map = {};
+          for (const m of (modelsRes.value.data?.data || [])) {
+            if (m.circle_id) map[m.id] = { circle_id: m.circle_id, circle_name: m.circle_name || '' };
+          }
+          setCircleModelMap(map);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -848,6 +856,14 @@ function P2PNetworkCard({ provider, onUpdate }) {
                   <div className="flex items-center gap-1.5 min-w-0">
                     <ModelDot m={m} />
                     <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">{m.name}</span>
+                    {circleModelMap[m.name] && (
+                      <span
+                        title={circleModelMap[m.name].circle_name || '圈子'}
+                        className="shrink-0 text-[10px] leading-none px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 cursor-default"
+                      >
+                        ⊙
+                      </span>
+                    )}
                   </div>
                   <span className="text-xs text-zinc-500 shrink-0"><ModelSub m={m} /></span>
                 </div>

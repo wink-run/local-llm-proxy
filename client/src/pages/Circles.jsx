@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useLang } from '../store/lang';
 import {
   createCircle, listMyCircles, listJoinedCircles,
@@ -23,6 +23,7 @@ function circleColor(name = '') {
 export default function Circles() {
   const { t } = useLang();
   const location = useLocation();
+  const navigate = useNavigate();
   const [owned, setOwned]           = useState([]);
   const [joined, setJoined]         = useState([]);
   const [showCreate, setShowCreate] = useState(false);
@@ -30,7 +31,8 @@ export default function Circles() {
   const [desc, setDesc]             = useState('');
   const [creating, setCreating]     = useState(false);
   const [error, setError]           = useState('');
-  const [copiedId, setCopiedId]     = useState(null);
+  const [copiedInModal, setCopiedInModal] = useState(false);
+  const [inviteModal, setInviteModal]       = useState(null); // { circle, url }
   const [joinInput, setJoinInput]   = useState('');
   const [joinPreview, setJoinPreview] = useState(null);  // { circle, already_member, full }
   const [joinLoading, setJoinLoading] = useState(false);
@@ -108,9 +110,10 @@ export default function Circles() {
     setJoinLoading(true); setJoinError(''); setJoinPreview(null);
     try {
       const r = await previewCircle(code);
-      setJoinPreview({ ...r.data, code });
+      setJoinPreview({ ...r.data, code });  // opens modal
     } catch (err) {
-      setJoinError(err?.response?.data?.detail || '邀请链接无效');
+      setJoinError(err?.response?.data?.detail || '圈子不存在或邀请码错误');
+      setTimeout(() => setJoinError(''), 3000);
     } finally {
       setJoinLoading(false);
     }
@@ -138,29 +141,30 @@ export default function Circles() {
     }
   }
 
-  function copyInvite(circle) {
+  function buildInviteUrl(circle) {
     const base = getServerUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
-    const url = `${base}/app?c=${circle.code}`;
-    navigator.clipboard.writeText(url).then(() => {
-      setCopiedId(circle.id);
-      setTimeout(() => setCopiedId(null), 2000);
+    return `${base}/app?c=${circle.code}`;
+  }
+
+  function openInvite(circle) {
+    setCopiedInModal(false);
+    setInviteModal({ circle, url: buildInviteUrl(circle) });
+  }
+
+  function copyInviteFromModal() {
+    if (!inviteModal?.url) return;
+    navigator.clipboard.writeText(inviteModal.url).then(() => {
+      setCopiedInModal(true);
+      setTimeout(() => setCopiedInModal(false), 2000);
     });
   }
 
   return (
     <div className="px-5 py-5 space-y-5">
       {/* 页头 */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('circles.title')}</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{t('circles.subtitle')}</p>
-        </div>
-        <button
-          onClick={() => setShowCreate(s => !s)}
-          className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          {t('circles.createBtn')}
-        </button>
+      <div>
+        <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('circles.title')}</h1>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{t('circles.subtitle')}</p>
       </div>
 
       {/* 入圈结果横幅 */}
@@ -173,54 +177,6 @@ export default function Circles() {
           <button onClick={() => setJoinBanner(null)} className="ml-3 opacity-60 hover:opacity-100 text-lg leading-none">×</button>
         </div>
       )}
-
-      {/* 加入圈子 */}
-      <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 space-y-3">
-        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">加入圈子</h2>
-        <form onSubmit={handleJoinPreview} className="flex gap-2">
-          <input
-            className="flex-1 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="粘贴邀请链接或输入邀请码"
-            value={joinInput}
-            onChange={e => { setJoinInput(e.target.value); setJoinPreview(null); setJoinError(''); }}
-          />
-          <button type="submit" disabled={joinLoading || !joinInput.trim()}
-            className="px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors shrink-0">
-            查询
-          </button>
-        </form>
-
-        {joinError && <p className="text-red-500 text-xs">{joinError}</p>}
-
-        {joinPreview && (
-          <div className="border border-gray-100 dark:border-gray-700 rounded-lg px-4 py-3 space-y-2">
-            <div className="flex items-center gap-3">
-              <div className={`w-10 h-10 rounded-full ${circleColor(joinPreview.circle.name)} flex items-center justify-center text-base font-bold text-white shrink-0`}>
-                {joinPreview.circle.name[0].toUpperCase()}
-              </div>
-              <div>
-                <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">{joinPreview.circle.name}</p>
-                {joinPreview.circle.description && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400">{joinPreview.circle.description}</p>
-                )}
-                <p className="text-xs text-gray-400 dark:text-gray-500">
-                  {joinPreview.circle.member_count} / {joinPreview.circle.max_members} 人
-                </p>
-              </div>
-            </div>
-            {joinPreview.already_member ? (
-              <p className="text-xs text-blue-600 dark:text-blue-400">你已经是该圈子的成员</p>
-            ) : joinPreview.full ? (
-              <p className="text-xs text-yellow-600 dark:text-yellow-400">圈子已满</p>
-            ) : (
-              <button onClick={handleJoinConfirm} disabled={joinLoading}
-                className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
-                {joinLoading ? '加入中…' : '确认加入'}
-              </button>
-            )}
-          </div>
-        )}
-      </div>
 
       {/* 创建表单 */}
       {showCreate && (
@@ -256,7 +212,15 @@ export default function Circles() {
 
       {/* 我创建的圈子 */}
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">{t('circles.myCircles')}</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">{t('circles.myCircles')}</h2>
+          <button
+            onClick={() => setShowCreate(s => !s)}
+            className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            {t('circles.createBtn')}
+          </button>
+        </div>
         {owned.length === 0
           ? (
             <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-6 text-center">
@@ -265,8 +229,8 @@ export default function Circles() {
           )
           : owned.map(c => (
             <CircleCard key={c.id} circle={c} isOwner
-              onCopy={() => copyInvite(c)}
-              copied={copiedId === c.id}
+              onOpen={() => navigate(`/circles/${c.id}`)}
+              onInvite={() => openInvite(c)}
               onAction={() => handleDissolve(c)}
               actionLabel={t('circles.dissolve')}
               t={t}
@@ -277,7 +241,23 @@ export default function Circles() {
 
       {/* 我加入的圈子 */}
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">{t('circles.joinedCircles')}</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300 shrink-0">{t('circles.joinedCircles')}</h2>
+          <form onSubmit={handleJoinPreview} className="flex gap-2">
+            <input
+              className="w-48 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="邀请链接或邀请码"
+              value={joinInput}
+              onChange={e => { setJoinInput(e.target.value); setJoinPreview(null); setJoinError(''); }}
+            />
+            <button type="submit" disabled={joinLoading || !joinInput.trim()}
+              className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors shrink-0">
+              加入
+            </button>
+          </form>
+        </div>
+        {joinError && <p className="text-red-500 text-xs">{joinError}</p>}
+
         {joined.length === 0
           ? (
             <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-6 text-center">
@@ -286,8 +266,8 @@ export default function Circles() {
           )
           : joined.map(c => (
             <CircleCard key={c.id} circle={c} isOwner={false}
-              onCopy={() => copyInvite(c)}
-              copied={copiedId === c.id}
+              onOpen={() => navigate(`/circles/${c.id}`)}
+              onInvite={() => openInvite(c)}
               onAction={() => handleLeave(c)}
               actionLabel={t('circles.leave')}
               t={t}
@@ -295,6 +275,74 @@ export default function Circles() {
           ))
         }
       </section>
+      {/* 邀请同好弹框 */}
+      {inviteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setInviteModal(null)}>
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-80 p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">{t('circles.inviteTitle')}</h3>
+            <div className="flex items-center gap-3">
+              <div className={`w-12 h-12 rounded-full ${circleColor(inviteModal.circle.name)} flex items-center justify-center text-xl font-bold text-white shrink-0`}>
+                {inviteModal.circle.name[0].toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <p className="font-semibold text-gray-900 dark:text-gray-100 truncate">{inviteModal.circle.name}</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">{t('circles.inviteDesc')}</p>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700/50 rounded-lg px-3 py-2.5 leading-relaxed">
+              {t('circles.inviteHint')}
+            </p>
+            <div className="flex gap-2 pt-1">
+              <button type="button" onClick={copyInviteFromModal}
+                className="flex-1 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+                {copiedInModal ? t('circles.linkCopied') + ' ✓' : t('circles.copyInviteLink')}
+              </button>
+              <button type="button" onClick={() => setInviteModal(null)}
+                className="flex-1 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                {t('circles.inviteClose')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 加入圈子弹框 */}
+      {joinPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setJoinPreview(null)}>
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-80 p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">加入圈子</h3>
+            <div className="flex items-center gap-3">
+              <div className={`w-12 h-12 rounded-full ${circleColor(joinPreview.circle.name)} flex items-center justify-center text-xl font-bold text-white shrink-0`}>
+                {joinPreview.circle.name[0].toUpperCase()}
+              </div>
+              <div>
+                <p className="font-semibold text-gray-900 dark:text-gray-100">{joinPreview.circle.name}</p>
+                {joinPreview.circle.description && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{joinPreview.circle.description}</p>
+                )}
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{joinPreview.circle.member_count} / {joinPreview.circle.max_members} 人</p>
+              </div>
+            </div>
+            {joinError && <p className="text-red-500 text-xs">{joinError}</p>}
+            <div className="flex gap-2 pt-1">
+              {joinPreview.already_member ? (
+                <p className="text-sm text-blue-600 dark:text-blue-400 flex-1">你已经是该圈子的成员</p>
+              ) : joinPreview.full ? (
+                <p className="text-sm text-yellow-600 dark:text-yellow-400 flex-1">圈子已满，无法加入</p>
+              ) : (
+                <button onClick={handleJoinConfirm} disabled={joinLoading}
+                  className="flex-1 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                  {joinLoading ? '加入中…' : '确认加入'}
+                </button>
+              )}
+              <button onClick={() => setJoinPreview(null)}
+                className="flex-1 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -315,24 +363,23 @@ function MemberAvatar({ user }) {
   );
 }
 
-function CircleCard({ circle, isOwner, onCopy, copied, onAction, actionLabel, t }) {
+function CircleCard({ circle, isOwner, onOpen, onInvite, onAction, actionLabel, t }) {
   const initial  = (circle.name || '?')[0].toUpperCase();
   const color    = circleColor(circle.name);
   const members  = circle.members || [];
-  const SHOW_MAX = 8;
+  const SHOW_MAX = 5;
   const extra    = members.length > SHOW_MAX ? members.length - SHOW_MAX : 0;
 
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 space-y-3">
-      {/* 主行 */}
+      {/* 主行：点击标题区进入详情 */}
       <div className="flex items-center gap-4">
-        {/* 圈子头像 */}
-        <div className={`w-11 h-11 rounded-full ${color} flex items-center justify-center text-lg font-bold text-white shrink-0`}>
+        <button type="button" onClick={onOpen}
+          className={`w-11 h-11 rounded-full ${color} flex items-center justify-center text-lg font-bold text-white shrink-0 hover:opacity-90 transition-opacity`}>
           {initial}
-        </div>
+        </button>
 
-        {/* 信息 */}
-        <div className="flex-1 min-w-0">
+        <button type="button" onClick={onOpen} className="flex-1 min-w-0 text-left hover:opacity-80 transition-opacity">
           <div className="flex items-center gap-2">
             <span className="font-semibold text-gray-900 dark:text-gray-100 truncate">{circle.name}</span>
             {isOwner && (
@@ -347,15 +394,15 @@ function CircleCard({ circle, isOwner, onCopy, copied, onAction, actionLabel, t 
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
             {t('circles.members').replace('{n}', circle.member_count)}
           </p>
-        </div>
+        </button>
 
         {/* 操作 */}
         <div className="flex gap-2 shrink-0">
-          <button onClick={onCopy}
+          <button onClick={e => { e.stopPropagation(); onInvite(); }}
             className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
-            {copied ? t('circles.linkCopied') + ' ✓' : t('circles.inviteLink')}
+            {t('circles.inviteBtn')}
           </button>
-          <button onClick={onAction}
+          <button onClick={e => { e.stopPropagation(); onAction(); }}
             className="text-xs px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
             {actionLabel}
           </button>
@@ -371,7 +418,12 @@ function CircleCard({ circle, isOwner, onCopy, copied, onAction, actionLabel, t 
             ))}
           </div>
           {extra > 0 && (
-            <span className="text-xs text-gray-400 dark:text-gray-500 ml-2">+{extra}</span>
+            <div className="flex flex-col items-center gap-1 w-10 shrink-0 ml-1">
+              <div className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-xs font-medium text-gray-500 dark:text-gray-400">
+                +{extra}
+              </div>
+              <span className="text-[10px] text-gray-400 dark:text-gray-500">…</span>
+            </div>
           )}
         </div>
       )}

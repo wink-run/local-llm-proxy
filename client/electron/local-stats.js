@@ -232,11 +232,11 @@ function setImportState(filePath, mtime, size) {
   catch (e) { console.error('[local-stats] setImportState failed:', e.message); }
 }
 
-/** 不参与「模型排行」的 data_source（Cursor 等无真实 model，只有工具标签） */
+/** 不参与「模型排行」的 data_source（显式关闭 model_stats 的源） */
 function dataSourcesWithoutModelStats() {
   try {
     return (require('./config-loader').sessionSources() || [])
-      .filter(s => s.model_stats === false || s.record_label === 'assistant_tools')
+      .filter(s => s.model_stats === false)
       .map(s => s.data_source)
       .filter(Boolean);
   } catch { return []; }
@@ -396,7 +396,9 @@ function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50 } = {
     ).all(p);
     const byModel = db.prepare(
       `SELECT model, COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens FROM requests ` +
-      `WHERE ${where} AND model IS NOT NULL GROUP BY model ORDER BY calls DESC`
+      `WHERE ${where} AND model IS NOT NULL AND model != '' ` +
+      `AND (input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) > 0 ` +
+      `GROUP BY model ORDER BY calls DESC`
     ).all(p);
     const sessions = db.prepare(
       `SELECT session_id, COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, ` +

@@ -1,6 +1,6 @@
 // client/src/pages/Contribute.jsx
 import React, { useEffect, useState, useRef } from 'react';
-import { getStats, getSettlements, listJoinedCircles } from '../api/client';
+import { getStats, getSettlements, listJoinedCircles, listMyCircles } from '../api/client';
 import { getConfig, getGateway } from '../api/adapter';
 import {
   getAgentStatus, startAgent, stopAgent, getAgentLogs,
@@ -13,6 +13,21 @@ function multiplierToStars(m) {
   return '★'.repeat(n) + '☆'.repeat(5 - n);
 }
 
+/** 按圈子 id 去重（统一为 number，避免 owned/joined 合并重复） */
+function uniqueCircles(list) {
+  const map = new Map();
+  for (const c of list || []) {
+    const id = Number(c.id);
+    if (!id || map.has(id)) continue;
+    map.set(id, { ...c, id });
+  }
+  return [...map.values()];
+}
+
+function uniqueCircleIds(ids) {
+  return [...new Set((ids || []).map(id => Number(id)).filter(Boolean))];
+}
+
 function ContributionConfigCard() {
   const { t } = useLang();
   const [selectedNames,   setSelectedNames]   = useState(new Set()); // Set<string>
@@ -22,12 +37,18 @@ function ContributionConfigCard() {
   const [saving,          setSaving]          = useState(false);
   const [savedMsg,        setSavedMsg]        = useState('');
   const [localGw,         setLocalGw]         = useState('http://127.0.0.1:11430/v1');
-  const [circles,         setCircles]         = useState([]);         // joined circles
+  const [circles,         setCircles]         = useState([]);         // 可分享的圈子
   const [circleScope,     setCircleScope]     = useState('public');   // 'public' | 'circle'
-  const [selectedCircleId, setSelectedCircleId] = useState(null);
+  const [selectedCircleIds, setSelectedCircleIds] = useState(new Set());
 
   useEffect(() => {
-    listJoinedCircles().then(r => setCircles(r.circles || [])).catch(() => {});
+    Promise.all([listMyCircles(), listJoinedCircles()])
+      .then(([ownedRes, joinedRes]) => {
+        const owned = ownedRes.data?.circles || [];
+        const joined = joinedRes.data?.circles || [];
+        setCircles(uniqueCircles([...owned, ...joined]));
+      })
+      .catch(() => {});
     Promise.all([
       getConfig().read().catch(() => null),
       getGateway().status().catch(() => null),
@@ -61,9 +82,12 @@ function ContributionConfigCard() {
       setSelectedNames(prevNames);
       setNodeName(saved?.name || '');
       setAutoStart(!!saved?.auto_start);
-      if (saved?.contribute_circle_id) {
+      if (saved?.contribute_circle_ids?.length) {
         setCircleScope('circle');
-        setSelectedCircleId(saved.contribute_circle_id);
+        setSelectedCircleIds(new Set(uniqueCircleIds(saved.contribute_circle_ids)));
+      } else if (saved?.contribute_circle_id) {
+        setCircleScope('circle');
+        setSelectedCircleIds(new Set(uniqueCircleIds([saved.contribute_circle_id])));
       }
     });
   }, []);
@@ -76,6 +100,16 @@ function ContributionConfigCard() {
     });
   }
 
+  function toggleCircle(id) {
+    const nid = Number(id);
+    if (!nid) return;
+    setSelectedCircleIds(prev => {
+      const next = new Set(prev);
+      if (next.has(nid)) next.delete(nid); else next.add(nid);
+      return next;
+    });
+  }
+
   async function save() {
     setSaving(true);
     try {
@@ -83,7 +117,12 @@ function ContributionConfigCard() {
       const model_groups = [{ base_url: localGw, token: '', models }];
       const current      = (await getConfig().read().catch(() => null)) || {};
       const updated      = { ...current, model_groups, llm_base_url: localGw, llm_token: '', models, name: nodeName, auto_start: autoStart };
-      await getConfig().write({ ...updated, contribute_circle_id: circleScope === 'circle' ? selectedCircleId : null });
+      const circleIds = circleScope === 'circle' ? uniqueCircleIds([...selectedCircleIds]) : [];
+      await getConfig().write({
+        ...updated,
+        contribute_circle_ids: circleIds,
+        contribute_circle_id: circleIds[0] ?? null,
+      });
       setSavedMsg(t('common.saved')); setTimeout(() => setSavedMsg(''), 2000);
     } finally { setSaving(false); }
   }
@@ -159,7 +198,6 @@ function ContributionConfigCard() {
         <span className="text-sm text-zinc-700 dark:text-zinc-300">{t('contribute.autoStart')}</span>
       </label>
 
-      {/* TODO: agent binary must read contribute_circle_id from config and include circle_id in WS register msg */}
       {/* Contribution scope */}
       <div className="mt-4">
         <p className="text-sm font-medium mb-2">{t('contribute.scope')}</p>
@@ -178,20 +216,32 @@ function ContributionConfigCard() {
           </label>
         </div>
         {circleScope === 'circle' && (
-          <div className="mt-2">
+          <div className="mt-2 space-y-2">
             {circles.length === 0
               ? <p className="text-xs text-gray-400">{t('contribute.noCircle')}</p>
               : (
-                <select
-                  className="border rounded px-2 py-1 text-sm w-full"
-                  value={selectedCircleId || ''}
-                  onChange={e => setSelectedCircleId(Number(e.target.value) || null)}
-                >
-                  <option value="">— 请选择圈子 —</option>
-                  {circles.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
+                <>
+                  <div className="flex flex-wrap gap-1.5">
+                    {circles.map(c => {
+                      const sel = selectedCircleIds.has(c.id);
+                      return (
+                        <button key={c.id} type="button" onClick={() => toggleCircle(c.id)}
+                          className={`px-2.5 py-1 rounded-lg border text-xs transition-colors ${
+                            sel
+                              ? 'bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-700 text-blue-700 dark:text-blue-300'
+                              : 'bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-600 text-zinc-500 dark:text-zinc-400 hover:border-zinc-400'
+                          }`}>
+                          {c.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {selectedCircleIds.size > 0 && (
+                    <p className="text-xs text-blue-600 dark:text-blue-400">
+                      {t('contribute.circlesSelected', { n: selectedCircleIds.size })}
+                    </p>
+                  )}
+                </>
               )
             }
             <p className="text-xs text-gray-400 mt-1">{t('contribute.scopeHint')}</p>

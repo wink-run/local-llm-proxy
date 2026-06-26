@@ -171,6 +171,34 @@ async def init_db() -> None:
             )
         """)
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS circle_announcements (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                circle_id   INTEGER NOT NULL REFERENCES circles(id) ON DELETE CASCADE,
+                author_id   INTEGER NOT NULL REFERENCES users(id),
+                content     TEXT NOT NULL,
+                created_at  TEXT DEFAULT (datetime('now')),
+                updated_at  TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS circle_announcement_likes (
+                announcement_id INTEGER NOT NULL REFERENCES circle_announcements(id) ON DELETE CASCADE,
+                user_id         INTEGER NOT NULL REFERENCES users(id),
+                created_at      TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY (announcement_id, user_id)
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS circle_post_replies (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id     INTEGER NOT NULL REFERENCES circle_announcements(id) ON DELETE CASCADE,
+                author_id   INTEGER NOT NULL REFERENCES users(id),
+                content     TEXT NOT NULL,
+                created_at  TEXT DEFAULT (datetime('now'))
+            )
+        """)
+
         # scene_routes
         await db.execute("""
             CREATE TABLE IF NOT EXISTS scene_routes (
@@ -1561,11 +1589,25 @@ async def get_user_inventory_stats(user_id: int, days: int = 1) -> dict:
 
 async def record_device_heartbeat(device_id: str, user_id: int, online: bool,
                                    calls: int, errors: int, providers: int,
-                                   inventory: dict | None = None) -> None:
+                                   inventory: dict | None = None,
+                                   version: str = "", name: str = "",
+                                   platform: str = "") -> None:
     async with aiosqlite.connect(DB_PATH) as db:
+        updates = ["online=?", "last_seen=datetime('now')"]
+        params: list = [1 if online else 0]
+        if version:
+            updates.append("version=?")
+            params.append(version)
+        if name:
+            updates.append("name=?")
+            params.append(name)
+        if platform:
+            updates.append("platform=?")
+            params.append(platform)
+        params.append(device_id)
         await db.execute(
-            "UPDATE devices SET online=?, last_seen=datetime('now') WHERE id=?",
-            (1 if online else 0, device_id),
+            f"UPDATE devices SET {', '.join(updates)} WHERE id=?",
+            params,
         )
         await db.execute(
             """INSERT INTO device_stats_snapshots (device_id, user_id, calls, errors, providers)
@@ -1758,6 +1800,33 @@ async def _migrate_circles() -> None:
         await db.execute(
             "INSERT OR IGNORE INTO system_config(key,value) VALUES('circle_invite_reward','50')"
         )
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS circle_announcements (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                circle_id   INTEGER NOT NULL REFERENCES circles(id) ON DELETE CASCADE,
+                author_id   INTEGER NOT NULL REFERENCES users(id),
+                content     TEXT NOT NULL,
+                created_at  TEXT DEFAULT (datetime('now')),
+                updated_at  TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS circle_announcement_likes (
+                announcement_id INTEGER NOT NULL REFERENCES circle_announcements(id) ON DELETE CASCADE,
+                user_id         INTEGER NOT NULL REFERENCES users(id),
+                created_at      TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY (announcement_id, user_id)
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS circle_post_replies (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id     INTEGER NOT NULL REFERENCES circle_announcements(id) ON DELETE CASCADE,
+                author_id   INTEGER NOT NULL REFERENCES users(id),
+                content     TEXT NOT NULL,
+                created_at  TEXT DEFAULT (datetime('now'))
+            )
+        """)
         await db.commit()
 
 
@@ -1927,5 +1996,245 @@ async def list_circle_members(circle_id: int) -> list:
             (circle_id,),
         ) as cur:
             return [dict(r) async for r in cur]
+
+
+async def list_circle_announcements(circle_id: int, viewer_id: int) -> list:
+    """圈子公告列表（含作者、点赞数、当前用户是否已赞）。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT a.id, a.circle_id, a.author_id, a.content, a.created_at, a.updated_at,
+                      u.nickname, u.email,
+                      (SELECT COUNT(*) FROM circle_announcement_likes l
+                       WHERE l.announcement_id = a.id) AS like_count,
+                      EXISTS(SELECT 1 FROM circle_announcement_likes l
+                             WHERE l.announcement_id = a.id AND l.user_id = ?) AS liked_by_me
+               FROM circle_announcements a
+               JOIN users u ON u.id = a.author_id
+               WHERE a.circle_id = ?
+               ORDER BY a.updated_at DESC""",
+            (viewer_id, circle_id),
+        ) as cur:
+            rows = [dict(r) async for r in cur]
+            for r in rows:
+                r["liked_by_me"] = bool(r.get("liked_by_me"))
+                r["like_count"] = int(r.get("like_count") or 0)
+            return rows
+
+
+async def get_circle_announcement(announcement_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM circle_announcements WHERE id=?", (announcement_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def create_circle_announcement(circle_id: int, author_id: int, content: str) -> dict:
+    text = (content or "").strip()
+    if not text:
+        raise ValueError("empty content")
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "INSERT INTO circle_announcements(circle_id, author_id, content) VALUES(?,?,?)",
+            (circle_id, author_id, text),
+        ) as cur:
+            aid = cur.lastrowid
+        await db.commit()
+        async with db.execute(
+            """SELECT a.*, u.nickname, u.email FROM circle_announcements a
+               JOIN users u ON u.id = a.author_id WHERE a.id=?""",
+            (aid,),
+        ) as cur:
+            row = await cur.fetchone()
+            d = dict(row)
+            d["like_count"] = 0
+            d["liked_by_me"] = False
+            return d
+
+
+async def set_circle_announcement_content(announcement_id: int, content: str) -> bool:
+    """更新公告正文（调用方已校验成员权限）。"""
+    text = (content or "").strip()
+    if not text:
+        raise ValueError("empty content")
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "UPDATE circle_announcements SET content=?, updated_at=datetime('now') WHERE id=?",
+            (text, announcement_id),
+        ) as cur:
+            return cur.rowcount > 0
+
+
+async def update_circle_announcement(announcement_id: int, author_id: int, content: str) -> Optional[dict]:
+    text = (content or "").strip()
+    if not text:
+        raise ValueError("empty content")
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT author_id, circle_id FROM circle_announcements WHERE id=?",
+            (announcement_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            if not row:
+                return None
+            if row["author_id"] != author_id:
+                return None
+        await db.execute(
+            "UPDATE circle_announcements SET content=?, updated_at=datetime('now') WHERE id=?",
+            (text, announcement_id),
+        )
+        await db.commit()
+        return await get_circle_announcement(announcement_id)
+
+
+async def toggle_announcement_like(announcement_id: int, user_id: int) -> dict:
+    """切换点赞；返回 {liked, like_count}。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT 1 FROM circle_announcement_likes WHERE announcement_id=? AND user_id=?",
+            (announcement_id, user_id),
+        ) as cur:
+            exists = await cur.fetchone()
+        if exists:
+            await db.execute(
+                "DELETE FROM circle_announcement_likes WHERE announcement_id=? AND user_id=?",
+                (announcement_id, user_id),
+            )
+            liked = False
+        else:
+            await db.execute(
+                "INSERT INTO circle_announcement_likes(announcement_id, user_id) VALUES(?,?)",
+                (announcement_id, user_id),
+            )
+            liked = True
+        await db.commit()
+        async with db.execute(
+            "SELECT COUNT(*) FROM circle_announcement_likes WHERE announcement_id=?",
+            (announcement_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            count = int(row[0]) if row else 0
+        return {"liked": liked, "like_count": count}
+
+
+async def delete_circle_announcement(announcement_id: int, author_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "DELETE FROM circle_announcements WHERE id=? AND author_id=?",
+            (announcement_id, author_id),
+        ) as cur:
+            ok = cur.rowcount > 0
+        await db.commit()
+        return ok
+
+
+async def get_circle_post_reply(reply_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM circle_post_replies WHERE id=?", (reply_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def update_circle_post_reply(reply_id: int, author_id: int, content: str) -> Optional[dict]:
+    text = (content or "").strip()
+    if not text:
+        raise ValueError("empty content")
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        reply = await get_circle_post_reply(reply_id)
+        if not reply or reply["author_id"] != author_id:
+            return None
+        await db.execute(
+            "UPDATE circle_post_replies SET content=? WHERE id=? AND author_id=?",
+            (text, reply_id, author_id),
+        )
+        await db.commit()
+        async with db.execute(
+            """SELECT r.id, r.post_id, r.author_id, r.content, r.created_at,
+                      u.nickname, u.email
+               FROM circle_post_replies r
+               JOIN users u ON u.id = r.author_id
+               WHERE r.id=?""",
+            (reply_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def delete_circle_post_reply(reply_id: int, author_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "DELETE FROM circle_post_replies WHERE id=? AND author_id=?",
+            (reply_id, author_id),
+        ) as cur:
+            ok = cur.rowcount > 0
+        await db.commit()
+        return ok
+
+
+async def list_circle_post_replies(post_ids: list) -> dict:
+    """批量获取帖子回复，按 post_id 分组。"""
+    if not post_ids:
+        return {}
+    placeholders = ",".join("?" * len(post_ids))
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            f"""SELECT r.id, r.post_id, r.author_id, r.content, r.created_at,
+                       u.nickname, u.email
+                FROM circle_post_replies r
+                JOIN users u ON u.id = r.author_id
+                WHERE r.post_id IN ({placeholders})
+                ORDER BY r.created_at ASC""",
+            post_ids,
+        ) as cur:
+            rows = [dict(r) async for r in cur]
+    grouped: dict = {}
+    for row in rows:
+        grouped.setdefault(row["post_id"], []).append(row)
+    return grouped
+
+
+async def list_circle_posts(circle_id: int, viewer_id: int) -> list:
+    """圈子帖子列表（含点赞、回复）。"""
+    posts = await list_circle_announcements(circle_id, viewer_id)
+    if not posts:
+        return posts
+    replies_map = await list_circle_post_replies([p["id"] for p in posts])
+    for p in posts:
+        p["replies"] = replies_map.get(p["id"], [])
+    return posts
+
+
+async def create_circle_post_reply(post_id: int, author_id: int, content: str) -> dict:
+    text = (content or "").strip()
+    if not text:
+        raise ValueError("empty content")
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "INSERT INTO circle_post_replies(post_id, author_id, content) VALUES(?,?,?)",
+            (post_id, author_id, text),
+        ) as cur:
+            rid = cur.lastrowid
+        await db.commit()
+        async with db.execute(
+            """SELECT r.id, r.post_id, r.author_id, r.content, r.created_at,
+                      u.nickname, u.email
+               FROM circle_post_replies r
+               JOIN users u ON u.id = r.author_id
+               WHERE r.id=?""",
+            (rid,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row)
 
 

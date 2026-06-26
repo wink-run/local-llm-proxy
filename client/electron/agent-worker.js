@@ -359,12 +359,18 @@ function connect(cfg) {
     const models = cfg.model_groups?.length
       ? cfg.model_groups.flatMap(g => g.models || [])
       : (cfg.models || []);
-    ws.send(JSON.stringify({
+    const regMsg = {
       type: 'register',
       worker_key: cfg.worker_key,
       models,
       name: cfg.name || os.hostname(),
-    }));
+    };
+    if (cfg.contribute_circle_ids?.length) {
+      regMsg.circle_ids = cfg.contribute_circle_ids;
+    } else if (cfg.contribute_circle_id) {
+      regMsg.circle_ids = [cfg.contribute_circle_id];
+    }
+    ws.send(JSON.stringify(regMsg));
   });
 
   ws.on('message', async (raw) => {

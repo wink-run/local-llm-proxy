@@ -226,15 +226,17 @@ function subscriptionPlansDefaults() {
   return plans && typeof plans === 'object' && !Array.isArray(plans) ? plans : {};
 }
 
-/** 该 Agent 是否会话补录真实 model（Cursor 等只有工具标签 → false） */
+/** 该 Agent 是否会话补录真实 model（Cursor hook / transcript 有 model 字段 → true） */
 function agentHasModelStats(agentId) {
   if (!agentId) return true;
   const src = sessionSources().find(s => s.agent_id === agentId);
   if (!src) return true;
   if (src.model_stats === false) return false;
-  if (src.record_label === 'assistant_tools') return false;
+  // 配置了 model 字段映射的源（含 Cursor）可按模型统计
   if (src.fields && src.fields.model) return true;
   if (Array.isArray(src.meta) && src.meta.some(m => m.set && m.set.model)) return true;
+  // 仅工具标签、无 model 字段的源不展示按模型统计
+  if (src.record_label === 'assistant_tools') return false;
   return false;
 }
 function caRef()     { return (get().mitm || {}).ca_ref || ['auto']; }

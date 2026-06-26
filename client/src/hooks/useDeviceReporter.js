@@ -14,6 +14,7 @@ const MAX_FAILURES_BEFORE_RECONNECT = 2;       // failures before trying re-regi
 let _registeredForUserId = null;
 let _registrationPromise = null;
 let _deviceId            = null;
+let _deviceMeta          = { name: '', platform: '', version: '' }; // 心跳同步用
 let _heartbeatTimer      = null;
 let _consecutiveFailures = 0;
 let _reregistering       = false; // guard against concurrent re-register attempts
@@ -53,6 +54,48 @@ function _browserPlatform() {
   return navigator.userAgentData?.platform || navigator.platform || 'Web';
 }
 
+/** 解析应用版本：优先 Electron preload 注入的 package.json 版本，勿用 agent 配置里的 version */
+function _resolveAppVersion(identityVersion) {
+  if (isElectron() && window.electronAPI?.version) {
+    return window.electronAPI.version;
+  }
+  if (identityVersion) return identityVersion;
+  return '0.0.0';
+}
+
+/** 采集设备名称 / 平台 / 版本（注册与心跳共用） */
+async function _collectDeviceMeta(port, cfg) {
+  const type = isElectron() ? 'desktop' : 'cli';
+  let name;
+  let platform;
+  let version;
+
+  if (isElectron() && window.electronAPI?.app?.getDeviceIdentity) {
+    const identity = window.electronAPI.app.getDeviceIdentity({ customName: cfg?.name || '' });
+    name     = identity?.name || cfg?.name || '桌面设备';
+    platform = identity?.platform || _browserPlatform();
+    version  = _resolveAppVersion(identity?.version);
+  } else {
+    let identity = null;
+    try {
+      const r = await fetch('/api/device-identity');
+      if (r.ok) identity = await r.json();
+    } catch {}
+    if (identity?.name) {
+      name     = identity.name;
+      platform = identity.platform || _browserPlatform();
+      version  = _resolveAppVersion(identity.version);
+    } else {
+      const host = (cfg?.name || 'CLI').replace(/\.local$/i, '');
+      name     = `${host} · CLI :${port}`;
+      platform = _browserPlatform();
+      version  = _resolveAppVersion(null);
+    }
+  }
+
+  return { type, name, platform, version };
+}
+
 async function _doRegister() {
   try {
     // Fetch actual gateway port — each CLI instance runs on a different port,
@@ -63,35 +106,8 @@ async function _doRegister() {
     const cfg = await getConfig().read().catch(() => ({}));
     const { id: storedId, storageKey } = await _resolveDeviceId(port, cfg);
 
-    const type = isElectron() ? 'desktop' : 'cli';
-    let name;
-    let platform;
-    let version;
-
-    if (isElectron() && window.electronAPI?.app?.getDeviceIdentity) {
-      // 桌面版：使用主进程采集的系统电脑名与 OS 版本
-      const identity = window.electronAPI.app.getDeviceIdentity({ customName: cfg?.name || '' });
-      name     = identity?.name || cfg?.name || '桌面设备';
-      platform = identity?.platform || _browserPlatform();
-      version  = identity?.version || window.electronAPI?.version || cfg?.version || '0.0.0';
-    } else {
-      // Docker Web / CLI：经 admin API 获取 IP 等设备标识
-      let identity = null;
-      try {
-        const r = await fetch('/api/device-identity');
-        if (r.ok) identity = await r.json();
-      } catch {}
-      if (identity?.name) {
-        name     = identity.name;
-        platform = identity.platform || _browserPlatform();
-        version  = identity.version || cfg?.version || '1.0.0';
-      } else {
-        const host = (cfg?.name || 'CLI').replace(/\.local$/i, '');
-        name     = `${host} · CLI :${port}`;
-        platform = _browserPlatform();
-        version  = cfg?.version || '1.0.0';
-      }
-    }
+    const { type, name, platform, version } = await _collectDeviceMeta(port, cfg);
+    _deviceMeta = { name, platform, version };
 
     const res   = await registerDevice({ device_id: storedId, type, name, platform, version, gateway_port: port });
     // Backend returns the devices table row: primary key column is "id", not "device_id"
@@ -141,6 +157,9 @@ async function _sendHeartbeat() {
     const inv = await _collectInventory();
     const d1 = inv['1'] || {};
     await heartbeatDevice(_deviceId, {
+      version          : _deviceMeta.version,
+      name             : _deviceMeta.name,
+      platform         : _deviceMeta.platform,
       calls            : d1?.total_calls  || 0,
       errors           : 0,  // not tracked in local stats
       providers_active : (d1?.providers || []).length,
@@ -171,14 +190,13 @@ export function useDeviceReporter(user) {
 
     const uid = user.id;
 
-    // Only one registration per user per module lifetime; concurrent callers
-    // wait on the same promise and share the resulting _deviceId.
+    // 用户切换时重置；每次挂载都重新 register，确保版本号等与 package.json 同步
     if (_registeredForUserId !== uid) {
       _registeredForUserId = uid;
       _deviceId            = null;
       _consecutiveFailures = 0;
-      _registrationPromise = _doRegister();
     }
+    _registrationPromise = _doRegister();
 
     let active = true;
 

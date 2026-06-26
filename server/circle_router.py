@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 import database as db
 from auth import get_current_user_id
+from worker_pool import pool as _pool
 
 router = APIRouter()
 
@@ -48,6 +49,60 @@ async def list_joined_circles(uid: int = Depends(get_current_user_id)):
         c["member_count"] = await db.circle_member_count(c["id"])
         c["is_owner"] = c["owner_id"] == uid
     return {"circles": circles}
+
+
+# ── 入圈预览 / 入圈（须在 /circles/{circle_id} 之前注册） ─────────────────────
+
+@router.get("/circles/join/{code}")
+async def preview_circle(code: str, uid: int = Depends(get_current_user_id)):
+    circle = await db.get_circle_by_code(code)
+    if not circle:
+        raise HTTPException(404, "邀请链接无效")
+    member_count = await db.circle_member_count(circle["id"])
+    already = await db.is_circle_member(circle["id"], uid)
+    full = member_count >= circle["max_members"]
+    return {
+        "circle": {
+            "id": circle["id"],
+            "name": circle["name"],
+            "description": circle["description"],
+            "member_count": member_count,
+            "max_members": circle["max_members"],
+        },
+        "already_member": already,
+        "full": full,
+    }
+
+
+@router.post("/circles/join/{code}")
+async def join_circle(code: str, uid: int = Depends(get_current_user_id)):
+    circle = await db.get_circle_by_code(code)
+    if not circle:
+        raise HTTPException(404, "邀请链接无效")
+
+    if await db.is_circle_member(circle["id"], uid):
+        return {"ok": True, "already_member": True, "full": False}
+
+    member_count = await db.circle_member_count(circle["id"])
+    if member_count >= circle["max_members"]:
+        return {"ok": False, "already_member": False, "full": True, "message": "圈子已满，无法加入"}
+
+    joined_only = await db.count_circles_joined_only(uid)
+    if circle["owner_id"] != uid and joined_only >= MAX_JOINED:
+        raise HTTPException(400, f"最多加入 {MAX_JOINED} 个圈子")
+
+    await db.add_circle_member(circle["id"], uid)
+
+    invite_reward = float(await db.get_config("circle_invite_reward", "50"))
+    if invite_reward > 0:
+        owner_id = circle["owner_id"]
+        if owner_id != uid:
+            await db.award_credits(
+                owner_id, invite_reward, type_="referral",
+                note=f"邀请用户入圈 {circle['name']}"
+            )
+
+    return {"ok": True, "already_member": False, "full": False}
 
 
 # ── 解散圈子 ──────────────────────────────────────────────────────────────────
@@ -108,60 +163,157 @@ async def list_circle_members(circle_id: int, uid: int = Depends(get_current_use
     return {"members": members}
 
 
-# ── 入圈预览 ──────────────────────────────────────────────────────────────────
+# ── 圈子详情（共享模型 + 帖子） ───────────────────────────────────────────────
 
-@router.get("/circles/join/{code}")
-async def preview_circle(code: str, uid: int = Depends(get_current_user_id)):
-    circle = await db.get_circle_by_code(code)
+async def _require_member(circle_id: int, uid: int) -> dict:
+    circle = await db.get_circle_by_id(circle_id)
     if not circle:
-        raise HTTPException(404, "邀请链接无效")
-    member_count = await db.circle_member_count(circle["id"])
-    already = await db.is_circle_member(circle["id"], uid)
-    full = member_count >= circle["max_members"]
+        raise HTTPException(404, "圈子不存在")
+    if not await db.is_circle_member(circle_id, uid):
+        raise HTTPException(403, "仅圈子成员可访问")
+    return circle
+
+
+@router.get("/circles/{circle_id}")
+async def get_circle_detail(circle_id: int, uid: int = Depends(get_current_user_id)):
+    circle = await _require_member(circle_id, uid)
+    member_count = await db.circle_member_count(circle_id)
+    posts = await db.list_circle_posts(circle_id, uid)
+    models = _pool.models_for_circle(circle_id)
     return {
         "circle": {
             "id": circle["id"],
             "name": circle["name"],
             "description": circle["description"],
-            "member_count": member_count,
+            "code": circle["code"],
+            "owner_id": circle["owner_id"],
             "max_members": circle["max_members"],
+            "member_count": member_count,
+            "is_owner": circle["owner_id"] == uid,
+            "created_at": circle.get("created_at"),
         },
-        "already_member": already,
-        "full": full,
+        "models": models,
+        "posts": posts,
     }
 
 
-# ── 入圈（已登录用户） ────────────────────────────────────────────────────────
+class PostBody(BaseModel):
+    content: str
 
-@router.post("/circles/join/{code}")
-async def join_circle(code: str, uid: int = Depends(get_current_user_id)):
-    circle = await db.get_circle_by_code(code)
-    if not circle:
-        raise HTTPException(404, "邀请链接无效")
 
-    if await db.is_circle_member(circle["id"], uid):
-        return {"ok": True, "already_member": True, "full": False}
+@router.post("/circles/{circle_id}/posts")
+async def create_post(circle_id: int, req: PostBody, uid: int = Depends(get_current_user_id)):
+    await _require_member(circle_id, uid)
+    text = (req.content or "").strip()
+    if not text:
+        raise HTTPException(400, "消息内容不能为空")
+    if len(text) > 2000:
+        raise HTTPException(400, "消息内容过长")
+    try:
+        post = await db.create_circle_announcement(circle_id, uid, text)
+    except ValueError:
+        raise HTTPException(400, "消息内容不能为空")
+    post["replies"] = []
+    return {"post": post}
 
-    member_count = await db.circle_member_count(circle["id"])
-    if member_count >= circle["max_members"]:
-        return {"ok": False, "already_member": False, "full": True, "message": "圈子已满，无法加入"}
 
-    # Check join limit (non-owned circles)
-    joined_only = await db.count_circles_joined_only(uid)
-    # Only block when joining a circle they don't own
-    if circle["owner_id"] != uid and joined_only >= MAX_JOINED:
-        raise HTTPException(400, f"最多加入 {MAX_JOINED} 个圈子")
+@router.put("/circles/{circle_id}/posts/{post_id}")
+async def update_post(
+    circle_id: int, post_id: int, req: PostBody, uid: int = Depends(get_current_user_id)
+):
+    await _require_member(circle_id, uid)
+    post = await db.get_circle_announcement(post_id)
+    if not post or post["circle_id"] != circle_id:
+        raise HTTPException(404, "消息不存在")
+    if post["author_id"] != uid:
+        raise HTTPException(403, "仅作者可编辑")
+    text = (req.content or "").strip()
+    if not text:
+        raise HTTPException(400, "消息内容不能为空")
+    if len(text) > 2000:
+        raise HTTPException(400, "消息内容过长")
+    updated = await db.update_circle_announcement(post_id, uid, text)
+    if not updated:
+        raise HTTPException(404, "消息不存在")
+    full = await db.list_circle_posts(circle_id, uid)
+    row = next((p for p in full if p["id"] == post_id), None)
+    return {"post": row}
 
-    await db.add_circle_member(circle["id"], uid)
 
-    # Award the circle owner as default inviter
-    invite_reward = float(await db.get_config("circle_invite_reward", "50"))
-    if invite_reward > 0:
-        owner_id = circle["owner_id"]
-        if owner_id != uid:
-            await db.award_credits(
-                owner_id, invite_reward, type_="referral",
-                note=f"邀请用户入圈 {circle['name']}"
-            )
+@router.delete("/circles/{circle_id}/posts/{post_id}")
+async def delete_post(
+    circle_id: int, post_id: int, uid: int = Depends(get_current_user_id)
+):
+    await _require_member(circle_id, uid)
+    post = await db.get_circle_announcement(post_id)
+    if not post or post["circle_id"] != circle_id:
+        raise HTTPException(404, "消息不存在")
+    if post["author_id"] != uid:
+        raise HTTPException(403, "仅作者可删除")
+    ok = await db.delete_circle_announcement(post_id, uid)
+    if not ok:
+        raise HTTPException(404, "消息不存在")
+    return {"ok": True}
 
-    return {"ok": True, "already_member": False, "full": False}
+
+@router.post("/circles/{circle_id}/posts/{post_id}/replies")
+async def create_post_reply(
+    circle_id: int, post_id: int, req: PostBody, uid: int = Depends(get_current_user_id)
+):
+    await _require_member(circle_id, uid)
+    post = await db.get_circle_announcement(post_id)
+    if not post or post["circle_id"] != circle_id:
+        raise HTTPException(404, "消息不存在")
+    text = (req.content or "").strip()
+    if not text:
+        raise HTTPException(400, "回复内容不能为空")
+    if len(text) > 1000:
+        raise HTTPException(400, "回复内容过长")
+    try:
+        reply = await db.create_circle_post_reply(post_id, uid, text)
+    except ValueError:
+        raise HTTPException(400, "回复内容不能为空")
+    return {"reply": reply}
+
+
+@router.put("/circles/{circle_id}/posts/{post_id}/replies/{reply_id}")
+async def update_post_reply(
+    circle_id: int, post_id: int, reply_id: int, req: PostBody, uid: int = Depends(get_current_user_id)
+):
+    await _require_member(circle_id, uid)
+    post = await db.get_circle_announcement(post_id)
+    if not post or post["circle_id"] != circle_id:
+        raise HTTPException(404, "消息不存在")
+    reply = await db.get_circle_post_reply(reply_id)
+    if not reply or reply["post_id"] != post_id:
+        raise HTTPException(404, "回复不存在")
+    if reply["author_id"] != uid:
+        raise HTTPException(403, "仅作者可编辑")
+    text = (req.content or "").strip()
+    if not text:
+        raise HTTPException(400, "回复内容不能为空")
+    if len(text) > 1000:
+        raise HTTPException(400, "回复内容过长")
+    updated = await db.update_circle_post_reply(reply_id, uid, text)
+    if not updated:
+        raise HTTPException(404, "回复不存在")
+    return {"reply": updated}
+
+
+@router.delete("/circles/{circle_id}/posts/{post_id}/replies/{reply_id}")
+async def delete_post_reply(
+    circle_id: int, post_id: int, reply_id: int, uid: int = Depends(get_current_user_id)
+):
+    await _require_member(circle_id, uid)
+    post = await db.get_circle_announcement(post_id)
+    if not post or post["circle_id"] != circle_id:
+        raise HTTPException(404, "消息不存在")
+    reply = await db.get_circle_post_reply(reply_id)
+    if not reply or reply["post_id"] != post_id:
+        raise HTTPException(404, "回复不存在")
+    if reply["author_id"] != uid:
+        raise HTTPException(403, "仅作者可删除")
+    ok = await db.delete_circle_post_reply(reply_id, uid)
+    if not ok:
+        raise HTTPException(404, "回复不存在")
+    return {"ok": True}

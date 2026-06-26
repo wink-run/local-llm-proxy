@@ -1585,7 +1585,7 @@ function AppDetailModal({ app, onClose }) {
   }));
   const traceAgentId = traceAgentIdForApp(app);
   const canTrace = !!traceAgentId;
-  // Cursor 等无真实 model 的应用：不展示「按模型统计」与「调用明细」
+  // Cursor 等无真实 model 的应用：不展示「按模型统计」；有 model 配置则展示调用明细
   const showModelStats = data?.hasModelStats !== false && (data?.byModel?.length ?? 0) > 0;
   const showCallDetails = data?.hasModelStats !== false;
   const secSession = showModelStats ? 4 : 3;

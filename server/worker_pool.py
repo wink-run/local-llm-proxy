@@ -17,7 +17,8 @@ class WorkerConnection:
     name: str
     model_types: dict = field(default_factory=dict)
     user_id: Optional[int] = None
-    circle_id: Optional[int] = None
+    circle_id: Optional[int] = None          # 兼容旧逻辑（单圈子）
+    circle_ids: list = field(default_factory=list)  # 多圈子共享
     connected_at: datetime = field(default_factory=datetime.now)
     active_requests: int = 0
     # req_id -> {queue, model, dispatch_time}
@@ -180,8 +181,8 @@ class WorkerPool:
             )
 
         def _real_visible(w) -> bool:
-            cid = getattr(w, "circle_id", None)
-            return cid is None or cid in circles
+            wids = worker_circle_ids(w)
+            return not wids or bool(wids & circles)
 
         def _virtual_visible(v) -> bool:
             owner = getattr(v, "owner_user_id", None)
@@ -233,8 +234,8 @@ class WorkerPool:
         circles = user_circle_ids or set()
         result: dict[str, str] = {}
         for w in self._workers:
-            cid = getattr(w, "circle_id", None)
-            if cid is None or cid in circles:
+            wids = worker_circle_ids(w)
+            if not wids or wids & circles:
                 for m in w.models:
                     result[m] = w.model_types.get(m, "chat")
         for v in self._virtual:
@@ -250,6 +251,60 @@ class WorkerPool:
                 for m in v.models:
                     result[m] = v.model_types.get(m, "chat")
         return result
+
+    def circle_model_ids_for_user(self, owner_user_id: Optional[int] = None,
+                                   user_circle_ids: Optional[set] = None) -> dict:
+        """返回 {model: circle_id}，仅包含圈子内可见的 worker 模型（circle_id 非空）。"""
+        circles = user_circle_ids or set()
+        result: dict[str, int] = {}
+        for w in self._workers:
+            wids = worker_circle_ids(w)
+            if not wids:
+                continue
+            for cid in wids:
+                if cid in circles:
+                    for m in w.models:
+                        result[m] = cid
+        for v in self._virtual:
+            owner = getattr(v, "owner_user_id", None)
+            cid = getattr(v, "circle_id", None)
+            if cid is not None and owner is None and cid in circles:
+                for m in v.models:
+                    result[m] = cid
+        return result
+
+    def models_for_circle(self, circle_id: int) -> list:
+        """指定圈子内共享的模型（worker / 公开虚拟源，circle_id 匹配）。"""
+        seen: set[str] = set()
+        out: list[dict] = []
+        for w in self._workers:
+            if circle_id not in worker_circle_ids(w):
+                continue
+            if getattr(w, "owner_user_id", None) is not None:
+                continue
+            for m in w.models:
+                if m in seen:
+                    continue
+                seen.add(m)
+                out.append({
+                    "id": m,
+                    "model_type": w.model_types.get(m, "chat"),
+                })
+        for v in self._virtual:
+            cid = getattr(v, "circle_id", None)
+            if cid != circle_id:
+                continue
+            if getattr(v, "owner_user_id", None) is not None:
+                continue
+            for m in v.models:
+                if m in seen:
+                    continue
+                seen.add(m)
+                out.append({
+                    "id": m,
+                    "model_type": v.model_types.get(m, "chat"),
+                })
+        return sorted(out, key=lambda x: x["id"])
 
     def all_models(self) -> list[str]:
         return sorted({m for w in self._workers + self._virtual for m in w.models})
@@ -270,3 +325,12 @@ class WorkerPool:
 
 
 pool = WorkerPool()
+
+
+def worker_circle_ids(w) -> set[int]:
+    """Worker 贡献到的圈子 ID 集合；空集表示公开。"""
+    ids = getattr(w, "circle_ids", None) or []
+    if ids:
+        return set(ids)
+    cid = getattr(w, "circle_id", None)
+    return {cid} if cid is not None else set()
