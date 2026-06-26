@@ -79,3 +79,48 @@ test('estimateTokens is ~chars/4', () => {
   assert.equal(estimateTokens('x'.repeat(40)), 10);
   assert.equal(estimateTokens(''), 0);
 });
+
+const GIT_DIFF_SAMPLE = `diff --git a/src/auth.js b/src/auth.js
+index abc..def 100644
+--- a/src/auth.js
++++ b/src/auth.js
+@@ -1,3 +1,4 @@
+ function check() {
++  if (!token) return false;
+-  return true;
+ }`;
+
+test('compressBody applies RTK to Claude tool_result block', async () => {
+  const body = {
+    model: 'claude-3-5',
+    messages: [{
+      role: 'user',
+      content: [{ type: 'tool_result', content: GIT_DIFF_SAMPLE + '\n'.repeat(400) }],
+    }],
+  };
+  const r = await compressBody(body, { enabled: true });
+  const block = r.body.messages[0].content[0];
+  const inputLen = (GIT_DIFF_SAMPLE + '\n'.repeat(400)).length;
+  assert.ok(r.rtkHits && r.rtkHits.length > 0, 'should have rtk hits');
+  assert.ok(block.content.length < inputLen, 'diff should be compressed');
+});
+
+test('compressBody applies RTK to OpenAI role:tool message', async () => {
+  // Must be long enough (> MIN_COMPRESS_SIZE=500 chars) to trigger RTK
+  const longDiff = GIT_DIFF_SAMPLE + '\n+line\n-line'.repeat(30);
+  const body = {
+    model: 'gpt-4',
+    messages: [{ role: 'tool', content: longDiff }],
+  };
+  const r = await compressBody(body, { enabled: true });
+  assert.ok(r.rtkHits && r.rtkHits.length > 0, 'should have rtk hits');
+});
+
+test('compressBody does not apply RTK to regular user messages', async () => {
+  const body = {
+    model: 'gpt-4',
+    messages: [{ role: 'user', content: 'Hello\n'.repeat(300) }],
+  };
+  const r = await compressBody(body, { enabled: true });
+  assert.equal((r.rtkHits || []).length, 0, 'plain user content should not trigger RTK');
+});

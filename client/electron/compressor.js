@@ -1,48 +1,84 @@
 // client/electron/compressor.js
-// Optional, opt-in prompt-compression stage for the local gateway.
-//
-// Lossless only: minifies pretty-printed JSON found in message content (tool
-// results, embedded data). JSON whitespace is non-semantic, so the model sees
-// identical information with fewer tokens. Anything that isn't valid JSON is
-// left byte-for-byte untouched — never changes the model's answers.
 'use strict';
 
-// ~4 chars/token — matches the gateway's existing estimateInputTokens heuristic
-// so before/after deltas are consistent with the rest of the stats.
-function estimateTokens(str) {
-  return Math.ceil((typeof str === 'string' ? str.length : 0) / 4);
-}
+// ~4 chars/token
+function estimateTokens(str) { return Math.ceil((typeof str === 'string' ? str.length : 0) / 4); }
 
-// Minify a string IFF it is a pretty-printed JSON object/array and the compact
-// form is actually shorter. Returns the original string otherwise (lossless).
 function minifyJsonString(s) {
   if (typeof s !== 'string') return s;
   const t = s.trimStart();
-  if (t.length === 0 || (t[0] !== '{' && t[0] !== '[')) return s;
+  if (!t.length || (t[0] !== '{' && t[0] !== '[')) return s;
   try {
     const parsed = JSON.parse(s);
     if (parsed === null || typeof parsed !== 'object') return s;
     const compact = JSON.stringify(parsed);
     return compact.length < s.length ? compact : s;
-  } catch {
-    return s; // not valid JSON — leave untouched
+  } catch { return s; }
+}
+
+// RTK: apply structural compression to tool output text (> 500 chars)
+const RTK_MIN = 500;
+let _rtkLoaded = false;
+let _autoDetect = null;
+let _safeApply = null;
+function _loadRtk() {
+  if (_rtkLoaded) return;
+  _rtkLoaded = true;
+  try {
+    _autoDetect = require('./rtk/autodetect').autoDetectFilter;
+    _safeApply  = require('./rtk/applyFilter').safeApply;
+  } catch (e) {
+    console.warn('[rtk] failed to load RTK modules:', e && e.message);
   }
 }
 
-// Compress one message's `content`, which may be a string or an array of
-// content blocks (OpenAI/Anthropic). Returns the new content (same shape).
-function compressContent(content) {
-  if (typeof content === 'string') return minifyJsonString(content);
+// Compress tool output text with RTK; returns { text, hit } where hit is filterName or null
+function rtkCompressText(text) {
+  if (!text || text.length < RTK_MIN || !_autoDetect) return { text, hit: null };
+  const fn = _autoDetect(text);
+  if (!fn) return { text, hit: null };
+  const out = _safeApply(fn, text);
+  if (out === text) return { text, hit: null };
+  return { text: out, hit: fn.filterName || fn.name || 'rtk' };
+}
+
+function compressContent(content, isToolRole) {
+  if (typeof content === 'string') {
+    const s = minifyJsonString(content);
+    if (!isToolRole) return { content: s, rtkHits: [] };
+    const { text, hit } = rtkCompressText(s);
+    return { content: text, rtkHits: hit ? [hit] : [] };
+  }
   if (Array.isArray(content)) {
-    return content.map((block) => {
-      if (block && typeof block === 'object') {
-        if (typeof block.text === 'string') return { ...block, text: minifyJsonString(block.text) };
-        if (typeof block.content === 'string') return { ...block, content: minifyJsonString(block.content) };
+    const rtkHits = [];
+    const blocks = content.map((block) => {
+      if (!block || typeof block !== 'object') return block;
+      const isTR = block.type === 'tool_result';
+      if (typeof block.text === 'string') {
+        const s = minifyJsonString(block.text);
+        if (isTR) { const r = rtkCompressText(s); if (r.hit) rtkHits.push(r.hit); return { ...block, text: r.text }; }
+        return { ...block, text: s };
+      }
+      if (typeof block.content === 'string') {
+        const s = minifyJsonString(block.content);
+        if (isTR) { const r = rtkCompressText(s); if (r.hit) rtkHits.push(r.hit); return { ...block, content: r.text }; }
+        return { ...block, content: s };
+      }
+      if (isTR && Array.isArray(block.content)) {
+        const parts = block.content.map(part => {
+          if (!part || typeof part.text !== 'string') return part;
+          const s = minifyJsonString(part.text);
+          const r = rtkCompressText(s);
+          if (r.hit) rtkHits.push(r.hit);
+          return { ...part, text: r.text };
+        });
+        return { ...block, content: parts };
       }
       return block;
     });
+    return { content: blocks, rtkHits };
   }
-  return content;
+  return { content, rtkHits: [] };
 }
 
 function _contentChars(content) {
@@ -59,21 +95,6 @@ function _contentChars(content) {
   return 0;
 }
 
-// Compress an array of chat messages. Returns { messages, before, after } in
-// tokens. `messages` is a new array; inputs are not mutated.
-function compressMessages(messages) {
-  let beforeChars = 0, afterChars = 0;
-  const out = (Array.isArray(messages) ? messages : []).map((m) => {
-    if (!m || typeof m !== 'object' || m.content == null) return m;
-    beforeChars += _contentChars(m.content);
-    const content = compressContent(m.content);
-    afterChars += _contentChars(content);
-    return content === m.content ? m : { ...m, content };
-  });
-  return { messages: out, before: estimateTokens('x'.repeat(beforeChars)), after: estimateTokens('x'.repeat(afterChars)) };
-}
-
-// Concatenated text of all message content, for a stable token estimate.
 function _messagesText(messages) {
   const parts = [];
   for (const m of (Array.isArray(messages) ? messages : [])) {
@@ -92,34 +113,53 @@ function _messagesText(messages) {
 
 function messagesTokens(messages) { return estimateTokens(_messagesText(messages)); }
 
-// 压缩比 = 省下占原始的比例（0..1）。before<=0 时返回 0。
 function compressionRatio(before, after) {
   if (!before || before <= 0) return 0;
   return Math.max(0, Math.min(1, (before - after) / before));
 }
 
+function compressMessages(messages) {
+  let beforeChars = 0, afterChars = 0;
+  const out = (Array.isArray(messages) ? messages : []).map((m) => {
+    if (!m || typeof m !== 'object' || m.content == null) return m;
+    beforeChars += _contentChars(m.content);
+    const isToolRole = m.role === 'tool';
+    const { content } = compressContent(m.content, isToolRole);
+    afterChars += _contentChars(content);
+    return content === m.content ? m : { ...m, content };
+  });
+  return { messages: out, before: estimateTokens('x'.repeat(beforeChars)), after: estimateTokens('x'.repeat(afterChars)) };
+}
+
 /**
- * Compress a chat request body — built-in lossless JSON minify only.
- * @param {object} body  parsed request body (OpenAI or Anthropic shape)
- * @param {object} opts  { enabled }
- * @returns {{ body, before, after, saved }} tokens; saved = before-after
+ * Compress a chat request body.
+ * @returns {{ body, before, after, saved, rtkHits: string[] }}
  */
 function compressBody(body, opts = {}) {
+  _loadRtk();
   if (!opts.enabled || !body || typeof body !== 'object' || !Array.isArray(body.messages)) {
-    return { body, before: 0, after: 0, saved: 0 };
+    return { body, before: 0, after: 0, saved: 0, rtkHits: [] };
   }
   const sysStr = typeof body.system === 'string' ? body.system : '';
   const before = messagesTokens(body.messages) + estimateTokens(sysStr);
+  const allRtkHits = [];
 
-  const outMessages = compressMessages(body.messages).messages;
+  const outMessages = (body.messages).map((m) => {
+    if (!m || typeof m !== 'object' || m.content == null) return m;
+    const isToolRole = m.role === 'tool';
+    const { content, rtkHits } = compressContent(m.content, isToolRole);
+    if (rtkHits && rtkHits.length) allRtkHits.push(...rtkHits);
+    return content === m.content ? m : { ...m, content };
+  });
+
   const system = sysStr ? minifyJsonString(sysStr) : body.system;
   const after = messagesTokens(outMessages) + estimateTokens(typeof system === 'string' ? system : '');
   const saved = Math.max(0, before - after);
 
-  if (saved <= 0) return { body, before, after, saved: 0 };
+  if (saved <= 0 && !allRtkHits.length) return { body, before, after, saved: 0, rtkHits: [] };
   const next = { ...body, messages: outMessages };
   if (system !== body.system) next.system = system;
-  return { body: next, before, after, saved };
+  return { body: next, before, after, saved, rtkHits: allRtkHits };
 }
 
 module.exports = {
