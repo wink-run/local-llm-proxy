@@ -351,10 +351,23 @@ async def worker_ws(ws: WebSocket):
                 auto_models,
             )
 
+        # Optional circle scope: worker can declare which circle it contributes to
+        circle_id_raw = msg.get("circle_id")
+        worker_circle_id: Optional[int] = None
+        if circle_id_raw is not None:
+            try:
+                cid = int(circle_id_raw)
+                # Validate circle exists and worker owner is a member
+                if await db.is_circle_member(cid, user_id):
+                    worker_circle_id = cid
+            except (ValueError, TypeError):
+                pass
+
         worker = WorkerConnection(
             ws=ws, models=models, worker_id=worker_id,
             name=name, user_id=user_id,
             model_types=model_types,
+            circle_id=worker_circle_id,
         )
         pool.add(worker)
         await ws.send_text(json.dumps({"type": "registered", "worker_id": worker_id}))
@@ -490,7 +503,9 @@ async def auth_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bea
 @app.get("/v1/models")
 async def list_models(key_info: dict = Depends(auth_user)):
     # 列出当前用户可见的模型：公共（真实 + 全局虚拟）+ 本人个人供给源；个人源对他人隐藏
-    model_types = pool.models_for_user(key_info.get("user_id"))
+    uid = key_info.get("user_id")
+    circles = set(await db.get_user_circle_ids(uid)) if uid else set()
+    model_types = pool.models_for_user(owner_user_id=uid, user_circle_ids=circles)
     return {
         "object": "list",
         "data": [

@@ -67,11 +67,17 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
 
     session_key = _session_key(body, consumer_user_id)
 
+    # Look up user's circle memberships for worker visibility
+    user_circles: set[int] = set()
+    if consumer_user_id is not None:
+        user_circles = set(await db.get_user_circle_ids(consumer_user_id))
+
     last_error: str = "No worker available"
     for attempt_model in models_to_try:
         # 该模型下的候选账号（个人源优先 + 粘性 + 负载感知），逐个 failover
         cands = pool.candidates(attempt_model, model_type="chat",
-                                session_key=session_key, owner_user_id=consumer_user_id)
+                                session_key=session_key, owner_user_id=consumer_user_id,
+                                user_circle_ids=user_circles)
         if not cands:
             last_error = f"No worker available for model '{attempt_model}'"
             continue
