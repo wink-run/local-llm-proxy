@@ -255,11 +255,25 @@ function composeHandoffDoc({ brief, project, sourceAgent } = {}) {
 const HANDOFF_MODELS = ['deepseek-v4-flash', 'glm-4.7', 'claude-haiku-4-5'];
 
 /** 调本地网关跑一次 system+user 补全；逐个模型 failover，全失败返回 null。 */
+async function _listGatewayModels(base, fetchImpl) {
+  try {
+    const resp = await fetchImpl(`${base}/v1/models`, { method: 'GET' });
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    return (data?.data || []).map(m => m.id).filter(Boolean);
+  } catch { return []; }
+}
+
 async function _callModel(system, userText, {
   base = 'http://127.0.0.1:11430', models = HANDOFF_MODELS, fetchImpl = globalThis.fetch, maxTokens = 1600,
 } = {}) {
   if (typeof fetchImpl !== 'function') return null;
-  for (const model of models) {
+  // 先查询网关实际可用模型，把它们加在首位，再 fallback 到调用方传入的列表
+  const available = await _listGatewayModels(base, fetchImpl);
+  const candidates = available.length
+    ? [...available, ...models.filter(m => !available.includes(m))]
+    : models;
+  for (const model of candidates) {
     try {
       const resp = await fetchImpl(`${base}/v1/chat/completions`, {
         method: 'POST',
@@ -273,7 +287,7 @@ async function _callModel(system, userText, {
       const data = await resp.json();
       const text = data?.choices?.[0]?.message?.content;
       if (text && text.trim()) return { text: text.trim(), model };
-    } catch { /* 试下一个模型 */ }
+    } catch { /* 试下一个 */ }
   }
   return null;
 }
@@ -442,7 +456,9 @@ function _fallbackMd(corpus) {
 async function synthesizeKnowledge(deps, opts = {}) {
   const { corpus, projects, projectPaths, scanned, sessions, lineCount } = buildKnowledgeCorpus(deps, opts);
   if (!corpus.trim()) return { ok: false, error: 'no_corpus', content: '', scanned, sessions };
-  const r = await _callModel(KNOWLEDGE_SYSTEM, corpus, { models: KNOWLEDGE_MODELS, maxTokens: 2400, ...opts });
+  // 若调用方指定了 model，优先使用；否则按 KNOWLEDGE_MODELS 顺序尝试
+  const models = opts.model ? [opts.model, ...KNOWLEDGE_MODELS.filter(m => m !== opts.model)] : KNOWLEDGE_MODELS;
+  const r = await _callModel(KNOWLEDGE_SYSTEM, corpus, { models, maxTokens: 2400, ...opts });
   if (!r) return { ok: false, error: 'model_unavailable', content: _fallbackMd(corpus), projects, projectPaths, scanned, sessions, lineCount };
   const date = new Date().toISOString().slice(0, 10);
   const header = `<!-- 由 Token Bank 记忆提炼生成于 ${date}（模型 ${r.model}，扫描 ${scanned} 会话）。可自由编辑。 -->\n\n`;

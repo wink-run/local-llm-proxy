@@ -622,16 +622,22 @@ async function renderTrayImage(line1, line2, showText, dark) {
  * macOS：图标+两行小字渲染成单色模板图（字号自定、深浅色自适应），开关关掉时只画 T。
  * 其它平台：绿/灰图标 + tooltip。
  */
+let _lastTrayImportTs = 0;
 function refreshTray() {
   if (!tray || tray.isDestroyed?.()) return;
+  // 同步 session import，保证与 modal 数据一致；每 60s 最多跑一次
+  const now = Date.now();
+  if (now - _lastTrayImportTs > 60000) {
+    try { sessionImport.run(localStats, { skip: computeImportSkip() }); } catch {}
+    _lastTrayImportTs = now;
+  }
   const gw = gateway.getStatus?.() || {};
   const active = agent.isRunning() || gw.running;
   tray.setContextMenu(buildTrayContextMenu());
   if (process.platform === 'darwin') {
-    const { inTok, outTok, totalTokens } = getTodayTokenSummary();
+    const { inTok, outTok } = getTodayTokenSummary();
     const k = (n) => { n = n || 0; return n >= 1e6 ? `${Math.round(n / 1e6)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : `${n}`; };
-    // ↑ = totalTokens - outTok（input + cache），与应用 total_tokens 口径对齐（↑+↓ = totalTokens）
-    const l1 = `↑${k(totalTokens - outTok)}`, l2 = `↓${k(outTok)}`;
+    const l1 = `↑${k(inTok)}`, l2 = `↓${k(outTok)}`;
     tray.setToolTip(`Token Bank · 今日 ${l1} ${l2}`);
     renderTrayImage(l1, l2, showTrayTokens, nativeTheme.shouldUseDarkColors)
       .then((img) => { if (tray && !tray.isDestroyed?.()) { tray.setImage(img); tray.setTitle(''); } })
@@ -668,8 +674,10 @@ function createTray() {
   if (process.platform === 'darwin') tray.setIgnoreDoubleClickEvents(true);
   tray.on('double-click', showMainWindow);
   if (process.platform !== 'darwin') tray.on('click', showMainWindow);
+  // macOS 点击 tray 弹出菜单前立即刷新数据，确保 token 数字是最新的
+  if (process.platform === 'darwin') tray.on('click', () => { tray.setContextMenu(buildTrayContextMenu()); });
   refreshTray();
-  trayStatsTimer = setInterval(refreshTray, 2000);
+  trayStatsTimer = setInterval(refreshTray, 30000);
   // 系统深/浅色切换时重画（数字颜色要跟着变）
   if (process.platform === 'darwin') {
     nativeTheme.removeAllListeners('updated');
@@ -2346,10 +2354,10 @@ function registerIPC() {
   // 知识提炼：后台异步任务。点击 start 立即返回，合成在后台跑；result 拿当前状态/结果。
   // 状态：idle（没跑过）/ running（生成中）/ ready（已完成，含成功或兜底）/ error（异常）。
   let _knowledgeJob = { status: 'idle', ok: false, content: '', model: null, scanned: 0, error: null, projectPaths: {}, finishedAt: 0 };
-  function _startKnowledgeJob() {
+  function _startKnowledgeJob(model) {
     if (_knowledgeJob.status === 'running') return;
     _knowledgeJob = { status: 'running', ok: false, content: '', model: null, scanned: 0, error: null, projectPaths: {}, finishedAt: 0 };
-    sessionManager.synthesizeKnowledge(_sessionDeps, {})
+    sessionManager.synthesizeKnowledge(_sessionDeps, model ? { model } : {})
       .then(r => {
         _knowledgeJob = {
           status: 'ready', ok: !!r.ok, content: r.content || '', model: r.model || null,
@@ -2361,7 +2369,7 @@ function registerIPC() {
         _knowledgeJob = { status: 'error', ok: false, content: '', model: null, scanned: 0, error: 'mine_failed', finishedAt: Date.now() };
       });
   }
-  ipcMain.handle('sessions:knowledgeStart', () => { _startKnowledgeJob(); return { status: _knowledgeJob.status }; });
+  ipcMain.handle('sessions:knowledgeStart', (_e, { model } = {}) => { _startKnowledgeJob(model); return { status: _knowledgeJob.status }; });
   ipcMain.handle('sessions:knowledgeResult', () => ({ ..._knowledgeJob }));
   // 保存 AGENTS.md：弹保存对话框让用户自选位置。写入 UI 传来的（可能已编辑的）content。
   ipcMain.handle('sessions:saveAgentsMd', async (_e, { content, defaultPath } = {}) => {

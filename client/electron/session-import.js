@@ -45,6 +45,40 @@ function recordExtras(src, model, inTok, outTok, cCreate, cRead) {
   };
 }
 
+/**
+ * 从会话记录解析延迟（毫秒）。来源因 Agent 而异：
+ * - OpenCode：time.completed - time.created（YAML latency_from）
+ * - Codex：jsonl 扫描在 ctx 注入 task_complete 的 duration_ms / time_to_first_token_ms
+ * - Claude/Gemini/Cursor 等：会话文件通常不含 API 延迟，返回空
+ */
+function resolveTiming(rec, src, ctx) {
+  if (ctx.latency_ms != null || ctx.first_token_ms != null) {
+    return {
+      latency_ms:     ctx.latency_ms     != null ? num(ctx.latency_ms)     : null,
+      first_token_ms: ctx.first_token_ms != null ? num(ctx.first_token_ms) : null,
+    };
+  }
+  const lf = src.latency_from;
+  if (lf) {
+    const start = getPath(rec, lf.start);
+    const end   = getPath(rec, lf.end);
+    if (Number.isFinite(+start) && Number.isFinite(+end) && +end >= +start) {
+      const ms = Math.round(+end - +start);
+      return { latency_ms: ms, first_token_ms: lf.first_token ? ms : null };
+    }
+  }
+  const f = src.fields || {};
+  const latency_ms     = f.latency_ms     ? num(getPath(rec, f.latency_ms))     : null;
+  const first_token_ms = f.first_token_ms ? num(getPath(rec, f.first_token_ms)) : null;
+  if (latency_ms || first_token_ms) {
+    return {
+      latency_ms:     latency_ms     || null,
+      first_token_ms: first_token_ms || null,
+    };
+  }
+  return {};
+}
+
 // ── 通用辅助 ────────────────────────────────────────────────────────────────
 
 function expandHome(p) {
@@ -255,6 +289,7 @@ function emitRecord(localStats, src, rec, ctx, doc) {
     dataSource = resolveDataSourceFromMap(dsm, ev, src.data_source);
   }
 
+  const timing = resolveTiming(rec, src, ctx);
   const ok = localStats.record({
     ts:                  tsSeconds(tsv),
     api_key:             null,
@@ -270,6 +305,8 @@ function emitRecord(localStats, src, rec, ctx, doc) {
     session_id:          session_id != null ? session_id : null,
     status_code:         200,
     is_streaming:        false,
+    latency_ms:          timing.latency_ms     ?? null,
+    first_token_ms:      timing.first_token_ms ?? null,
     ...recordExtras(src, model, inTok, outTok, cCreate, cRead),
   });
   if (ok) ctx.seq++;   // 仅写入成功才推进 seq（与旧逻辑一致）
@@ -515,8 +552,32 @@ function importSource(localStats, src) {
           }
         }
         if (consumed) continue;
+        // Codex：token_count 在 task_complete 之前，延迟需等 turn 结束再写入
+        if (src.id === 'codex') {
+          const pl = e.payload || {};
+          if (e.type === 'event_msg' && pl.type === 'task_complete') {
+            ctx.latency_ms     = pl.duration_ms != null ? num(pl.duration_ms) : null;
+            ctx.first_token_ms = pl.time_to_first_token_ms != null ? num(pl.time_to_first_token_ms) : null;
+            if (ctx._codexDefer) {
+              if (emitRecord(localStats, src, ctx._codexDefer, ctx, null)) imported++;
+              ctx._codexDefer = null;
+            }
+            ctx.latency_ms = undefined;
+            ctx.first_token_ms = undefined;
+            continue;
+          }
+        }
         if (!matchFilter(e, src.record_filter)) continue;
+        if (src.id === 'codex') {
+          ctx._codexDefer = e;
+          continue;
+        }
         if (emitRecord(localStats, src, e, ctx, null)) imported++;
+      }
+      // 文件末尾无 task_complete 时仍落账（无延迟）
+      if (src.id === 'codex' && ctx._codexDefer) {
+        if (emitRecord(localStats, src, ctx._codexDefer, ctx, null)) imported++;
+        ctx._codexDefer = null;
       }
     }
 
@@ -548,4 +609,4 @@ function run(localStats, opts = {}) {
   return { ok: true, imported, sources };
 }
 
-module.exports = { run, importSource, emitRecord, matchFilter, getPath, recordExtras, resolveBillingType, resolveDataSourceFromMap, claudeDataSourceForEntrypoint };
+module.exports = { run, importSource, emitRecord, matchFilter, getPath, recordExtras, resolveTiming, resolveBillingType, resolveDataSourceFromMap, claudeDataSourceForEntrypoint };

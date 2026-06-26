@@ -168,6 +168,11 @@ session_sources:
     require_fields: [tokens, time.completed]   # 必须有 token 且消息已完成（未完成只有半截 token）
     skip_if_zero: true
     request_id: "opencode_session:{session_id}:{message_id}"
+    # 整轮耗时 = time.completed - time.created（毫秒）
+    latency_from:
+      start: time.created
+      end: time.completed
+      first_token: true
     fields:
       ts: time.created                         # 毫秒时间戳（解释器按毫秒处理）
       model: modelID

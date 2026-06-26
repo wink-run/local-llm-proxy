@@ -31,7 +31,8 @@ const RULES = [
   [/glm|zhipu|chatglm|智谱/i, glm],
   [/qwen|通义|tongyi/i, qwen],
   [/copilot/i, copilot],
-  [/volcengine|火山|volc/i, volcengine],
+  [/antigravity/i, gemini],
+  [/volcengine|火山|volc|doubao|豆包|api-volcengine/i, volcengine],
 ];
 
 /** 依据任意文本（应用名/模型名/供给源名）推断品牌 logo URL，无匹配返回 null。 */

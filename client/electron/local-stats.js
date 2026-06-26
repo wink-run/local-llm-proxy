@@ -317,6 +317,12 @@ function queryDashboard(days = 1) {
     'WHERE ts >= ? AND api_key IS NOT NULL GROUP BY api_key ORDER BY calls DESC'
   ).all(since);
 
+  // 平均延迟（首 Token 优先）：含 proxy 实时 + session 补录
+  const latRow = db.prepare(
+    'SELECT AVG(COALESCE(first_token_ms, latency_ms)) AS avg_ms FROM requests ' +
+    'WHERE ts >= ? AND COALESCE(first_token_ms, latency_ms) IS NOT NULL AND COALESCE(first_token_ms, latency_ms) > 0'
+  ).get(since);
+
   // Per-provider with tier + 按量费用（仅 provider 刊例价）
   const providers = db.prepare(
     'SELECT provider_id, tier, COUNT(*) AS calls, ' +
@@ -343,6 +349,7 @@ function queryDashboard(days = 1) {
       cost_usd: paygAll.byProviderTier[`${r.provider_id}|${r.tier || ''}`] || 0,
     })),
     payg_usage_cost: paygAll.total,
+    avg_latency_ms: latRow?.avg_ms ? Math.round(latRow.avg_ms) : null,
   };
 }
 
@@ -353,6 +360,7 @@ function _empty() {
     hourly: Array(24).fill(0),
     models: [], keys: [], providers: [], agent_sources: [],
     payg_usage_cost: 0,
+    avg_latency_ms: null,
   };
 }
 
@@ -367,7 +375,8 @@ function _empty() {
 function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50 } = {}) {
   const empty = { total: { calls: 0, tokens: 0, inTok: 0, outTok: 0, lastTs: null, totalCost: 0 }, bySource: [], byModel: [], sessions: [], recent: [] };
   if (!db) return empty;
-  const since = Math.floor(Date.now() / 1000) - days * 86400;
+  // days=1 对齐本地 0 点（与 queryTodaySummary / queryDashboard 一致），其余用滚动窗口
+  const since = days === 1 ? todaySinceTs() : Math.floor(Date.now() / 1000) - days * 86400;
   const where =
     '(' +
     '(@appId IS NOT NULL AND app_id = @appId) OR ' +

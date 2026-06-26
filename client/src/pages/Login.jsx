@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { login, register, getProfile, formatApiError } from '../api/client';
 import { useAuth } from '../store/index';
 import logo from '../assets/logo.svg';
@@ -31,11 +31,19 @@ function Field({ label, type = 'text', value, onChange, placeholder }) {
   );
 }
 
+/** 仅允许站内相对路径，避免 open redirect */
+function safeReturnPath(from) {
+  if (typeof from !== 'string' || !from.startsWith('/') || from.startsWith('//')) return '/';
+  return from;
+}
+
 /** 登录 / 注册页（与设置页分离，未登录也可从侧栏进入） */
 export default function Login() {
   const { user, loginSuccess, enterGuest } = useAuth();
   const { t } = useLang();
   const navigate = useNavigate();
+  const location = useLocation();
+  const returnTo = safeReturnPath(location.state?.from);
 
   const [serverUrl, setServerUrl] = useState(
     () => normalizeServerBase(localStorage.getItem('serverUrl') || '')
@@ -51,8 +59,8 @@ export default function Login() {
 
   // 已登录则无需停留登录页
   useEffect(() => {
-    if (user) navigate('/gateway', { replace: true });
-  }, [user, navigate]);
+    if (user) navigate(returnTo, { replace: true });
+  }, [user, navigate, returnTo]);
 
   useEffect(() => {
     if (!window.electronAPI) return;
@@ -71,7 +79,7 @@ export default function Login() {
       const wsUrl = serverUrl.replace(/^https?/, (m) => (m === 'https' ? 'wss' : 'ws')) + '/ws/worker';
       await window.electronAPI.config.write({ ...current, server_url: wsUrl, worker_key: profileRes.data.worker_key || '' });
     }
-    navigate('/');
+    navigate(returnTo);
   }
 
   async function handleLogin(e) {

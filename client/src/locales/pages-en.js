@@ -270,6 +270,7 @@ export default {
 
   // ── Usage detail modal ──
   'gateway.detail.usageTitle': '{name} · Usage',
+  'gateway.detail.days1': 'Today',
   'gateway.detail.days7': 'Last 7 days',
   'gateway.detail.days30': 'Last 30 days',
   'gateway.detail.days90': 'Last 90 days',
@@ -461,6 +462,10 @@ export default {
   'providers.personalAccounts.collapse': 'Collapse',
   'providers.personalAccounts.open': 'Open account setup →',
   'providers.personalAccounts.emptyHint': 'Configure subscriptions or pay-as-you-go providers first, then add keys or OAuth below.',
+  'providers.personalAccounts.count': '{n} account(s) added',
+  'providers.personalAccounts.emptyCount': 'No accounts yet — expand to add',
+  'providers.personalAccounts.loading': 'Loading accounts…',
+  'providers.personalAccounts.addMore': 'Add account',
   'providers.p2p.running': '● Running',
   'providers.p2p.balance': 'Balance {n} credits',
   'providers.p2p.nodes': '{n} network nodes',
@@ -486,6 +491,8 @@ export default {
   'providers.p2p.creating': 'Creating…',
   'providers.p2p.newKey': '+ New key',
   'providers.p2p.creditsHint': 'Spend credits for community compute — skipped when balance is low.',
+  'providers.p2p.loginBadge': 'Sign in required',
+  'providers.p2p.loginRequired': 'Sign in to enable community compute, view credit balance, and configure the gateway relay key.',
   'providers.badge.enabled': '● Enabled',
   'providers.badge.needsConfig': '● Setup required',
   'providers.badge.freeQuota': 'Free quota',

@@ -4,6 +4,7 @@ import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
 import { useLang } from '../store/lang';
 import { useCurrency } from '../store/currency';
 import { isAccountOkMsg } from '../i18n';
+import ServiceIcon from './ServiceIcon';
 
 const CUSTOM_APP = '__custom_app__';
 const CUSTOM_PLAN = '__custom_plan__';
@@ -674,7 +675,7 @@ export default function UserAccountsPanel({
                       {appSubs.map(s => (
                         <div key={s.id}
                           className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
-                          <span className="text-lg shrink-0">{s.app_icon}</span>
+                          <ServiceIcon id={s.plan_provider_id || s.source_id} name={s.app_name} icon={s.app_icon} />
                           <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate max-w-[7rem] shrink-0">
                             {s.app_name}
                           </span>
@@ -711,7 +712,7 @@ export default function UserAccountsPanel({
                     <div className="space-y-2">
                       {apiSubs.map(s => (
                         <div key={s.id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
-                          <span className="text-lg shrink-0">{s.app_icon}</span>
+                          <ServiceIcon id={s.plan_provider_id || s.source_id} name={s.app_name} icon={s.app_icon} />
                           <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate max-w-[8rem] shrink-0">{s.app_name}</span>
                           <span className="text-xs text-zinc-500 truncate flex-1 min-w-0">
                             {s.plan_label || s.plan_id}
@@ -921,7 +922,7 @@ export default function UserAccountsPanel({
                       <div key={p.id} className="rounded-xl border border-gray-100 dark:border-gray-700 overflow-hidden">
                         <button type="button" onClick={() => setPaygExpanded(paygExpanded === p.id ? null : p.id)}
                           className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700/30">
-                          <span>{p.icon}</span>
+                          <ServiceIcon id={p.provider_id} name={p.label} icon={p.icon} />
                           <span className="text-sm font-medium text-gray-800 dark:text-gray-200 flex-1 min-w-0 truncate">
                             {p.label}
                             {p.custom && <span className="ml-1 text-xs text-emerald-600/80">{t('accounts.custom')}</span>}

@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { resolveBrandIcon } from '../lib/brandIcons';
+import ServiceIcon from '../components/ServiceIcon';
 import { getNetwork, getProfile, listKeys, createKey, deleteKey, getProviderCatalog } from '../api/client';
 import { loadUserAccounts } from '../api/userAccounts';
 import UserAccountsPanel from '../components/UserAccountsPanel';
@@ -523,10 +524,113 @@ function PersonalPageHint({ onOpenConfig }) {
   );
 }
 
-function Toggle({ enabled, onChange }) {
+/** 合并订阅 + 按量账户为去重后的 logo 列表 */
+function buildPersonalAccountTiles(userSubs = [], userPayg = [], meta = {}) {
+  const tiles = [];
+  const seen = new Set();
+  const push = (id, label, icon) => {
+    const key = String(id || label || '').trim();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    tiles.push({
+      id: key,
+      label: label || key,
+      icon: icon || meta[key]?.icon || '🔧',
+    });
+  };
+  for (const s of userSubs) {
+    push(s.plan_provider_id || s.source_id || s.id, s.app_name || s.source_id, s.app_icon);
+  }
+  for (const p of userPayg) {
+    push(p.provider_id || p.id, p.label || p.provider_id, p.icon || meta[p.provider_id]?.icon);
+  }
+  return tiles;
+}
+
+/** 未添加的目录项，用于空状态吸引用户 */
+function buildAccountCatalogSuggestions(subCatalog, paygCatalog, tiles, max = 5) {
+  const have = new Set(tiles.map(t => t.id));
+  const out = [];
+  for (const c of subCatalog || []) {
+    if (out.length >= max) break;
+    const id = c.source_id;
+    if (id && !have.has(id)) {
+      out.push({ id, label: c.app_name || id, icon: c.app_icon || '🔷', ghost: true });
+      have.add(id);
+    }
+  }
+  for (const c of paygCatalog || []) {
+    if (out.length >= max) break;
+    const id = c.provider_id || c.id;
+    if (id && !have.has(id)) {
+      out.push({ id, label: c.label || id, icon: c.icon || '🔧', ghost: true });
+      have.add(id);
+    }
+  }
+  return out;
+}
+
+function AccountLogoTile({ tile, ghost = false }) {
+  if (ghost) {
+    return (
+      <ServiceIcon
+        id={tile.id}
+        name={tile.label}
+        icon={tile.icon}
+      title={tile.label}
+        boxClass="w-9 h-9 rounded-xl border border-dashed border-zinc-200 dark:border-zinc-700 bg-zinc-50/80 dark:bg-zinc-800/40 opacity-55"
+        imgClass="w-5 h-5"
+        className="!rounded-xl !bg-zinc-50/80 dark:!bg-zinc-800/40"
+      />
+    );
+  }
   return (
-    <div onClick={onChange}
-      className={`relative w-9 h-5 rounded-full cursor-pointer transition-colors shrink-0 ${enabled ? 'bg-blue-600' : 'bg-zinc-600'}`}>
+    <ServiceIcon
+      id={tile.id}
+      name={tile.label}
+      icon={tile.icon}
+      title={tile.label}
+      boxClass="w-9 h-9 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 shadow-sm"
+      imgClass="w-5 h-5"
+      className="!rounded-xl"
+    />
+  );
+}
+
+/** 折叠态：logo 平铺，引导展开添加（数量由标题行展示） */
+function PersonalAccountsPreview({ tiles, suggestions, loaded, t }) {
+  const showSuggestions = loaded && tiles.length === 0 && suggestions.length > 0;
+
+  return (
+    <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+      {tiles.map(tile => (
+        <AccountLogoTile key={tile.id} tile={tile} />
+      ))}
+      {showSuggestions && suggestions.map(tile => (
+        <AccountLogoTile key={`s-${tile.id}`} tile={tile} ghost />
+      ))}
+      <div
+        className="w-9 h-9 rounded-xl border-2 border-dashed border-zinc-200 dark:border-zinc-600 flex items-center justify-center text-zinc-400 dark:text-zinc-500 text-lg leading-none shrink-0"
+        title={t('providers.personalAccounts.addMore')}
+      >
+        +
+      </div>
+    </div>
+  );
+}
+
+function personalAccountsCountLabel(loaded, count, t) {
+  if (!loaded) return t('providers.personalAccounts.loading');
+  if (count > 0) return t('providers.personalAccounts.count', { n: count });
+  return t('providers.personalAccounts.emptyCount');
+}
+
+function Toggle({ enabled, onChange, disabled = false }) {
+  return (
+    <div onClick={disabled ? undefined : onChange}
+      className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
+        disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
+      } ${enabled ? 'bg-blue-600' : 'bg-zinc-600'}`}>
       <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
     </div>
   );
@@ -536,6 +640,8 @@ function Toggle({ enabled, onChange }) {
 
 function P2PNetworkCard({ provider, onUpdate }) {
   const { t } = useLang();
+  const { user } = useAuth();
+  const needsLogin = !user;
   const navigate   = useNavigate();
   const [network,  setNetwork]  = useState(null);
   const [balance,  setBalance]  = useState(null);
@@ -580,11 +686,12 @@ function P2PNetworkCard({ provider, onUpdate }) {
   }
 
   useEffect(() => {
-    if (!showKeyConfig) return;
+    if (!showKeyConfig || needsLogin) return;
     reloadKeys();
-  }, [showKeyConfig]);
+  }, [showKeyConfig, needsLogin]);
 
   async function handleCreate() {
+    if (needsLogin) return;
     setCreating(true);
     try {
       const r = await createKey(newNote.trim() || undefined);
@@ -614,7 +721,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
   }
 
   async function handleSaveKey() {
-    if (!selectedKey) return;
+    if (needsLogin || !selectedKey) return;
     setKeySaving(true);
     try {
       await getLocalConfig().setCloudConfig({
@@ -697,18 +804,22 @@ function P2PNetworkCard({ provider, onUpdate }) {
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('providers.meta.tokenbank-p2p.label')}</span>
-              {provider.enabled && (
+              {!needsLogin && provider.enabled && (
                 <span className="text-xs px-1.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 border border-green-300 dark:border-green-800/50">
                   {t('providers.p2p.running')}
                 </span>
               )}
             </div>
-            <Toggle enabled={provider.enabled} onChange={() => onUpdate('tokenbank-p2p', { enabled: !provider.enabled })} />
+            <Toggle
+              enabled={provider.enabled}
+              disabled={needsLogin}
+              onChange={() => onUpdate('tokenbank-p2p', { enabled: !provider.enabled })}
+            />
           </div>
           {!loading && (
             <p className="text-xs text-zinc-500 mt-1">
-              {balance !== null ? t('providers.p2p.balance', { n: Math.round(balance) }) : ''}
-              {balance !== null && totalNodes > 0 ? ' · ' : ''}
+              {!needsLogin && balance !== null ? t('providers.p2p.balance', { n: Math.round(balance) }) : ''}
+              {!needsLogin && balance !== null && totalNodes > 0 ? ' · ' : ''}
               {totalNodes > 0 ? t('providers.p2p.nodes', { n: totalNodes }) : t('providers.p2p.fetchingNodes')}
             </p>
           )}
@@ -716,42 +827,55 @@ function P2PNetworkCard({ provider, onUpdate }) {
         </div>
       </div>
 
-      {/* Model grid */}
-      {provider.enabled && (
-        <div className="px-4 pb-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-zinc-500">
-              {t('providers.p2p.modelsTitle')} <span className="text-zinc-700">{t('providers.p2p.modelsSub')}</span>
-            </span>
-            <button onClick={() => navigate('/network')}
-              className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 flex items-center gap-1">
-              {t('providers.p2p.globalNetwork')}
-            </button>
-          </div>
-          {modelStats.length === 0 && !loading ? (
-            <p className="text-xs text-zinc-600 py-2">{t('providers.p2p.noNodes')}</p>
-          ) : (
-            <div className="grid grid-cols-3 gap-2 max-h-[180px] overflow-y-auto">
-              {(modelStats.length > 0 ? modelStats : Array(3).fill(null)).map((m, i) => (
-                m ? (
-                  <div key={m.name} className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300/50 dark:border-zinc-700/50 rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-1.5 min-w-0">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <ModelDot m={m} />
-                      <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">{m.name}</span>
-                    </div>
-                    <span className="text-xs text-zinc-500 shrink-0"><ModelSub m={m} /></span>
-                  </div>
-                ) : (
-                  <div key={i} className="bg-zinc-100/50 dark:bg-zinc-800/50 border border-zinc-300/30 dark:border-zinc-700/30 rounded-lg py-1.5 h-7 animate-pulse" />
-                )
-              ))}
-            </div>
-          )}
+      {/* Model grid：未登录也可浏览社区节点模型；启用转发需登录 */}
+      <div className="px-4 pb-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-zinc-500">
+            {t('providers.p2p.modelsTitle')} <span className="text-zinc-700">{t('providers.p2p.modelsSub')}</span>
+          </span>
+          <button onClick={() => navigate('/network')}
+            className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 flex items-center gap-1">
+            {t('providers.p2p.globalNetwork')}
+          </button>
         </div>
-      )}
+        {modelStats.length === 0 && !loading ? (
+          <p className="text-xs text-zinc-600 py-2">{t('providers.p2p.noNodes')}</p>
+        ) : (
+          <div className="grid grid-cols-3 gap-2 max-h-[180px] overflow-y-auto">
+            {(modelStats.length > 0 ? modelStats : Array(3).fill(null)).map((m, i) => (
+              m ? (
+                <div key={m.name} className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300/50 dark:border-zinc-700/50 rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-1.5 min-w-0">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <ModelDot m={m} />
+                    <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">{m.name}</span>
+                  </div>
+                  <span className="text-xs text-zinc-500 shrink-0"><ModelSub m={m} /></span>
+                </div>
+              ) : (
+                <div key={i} className="bg-zinc-100/50 dark:bg-zinc-800/50 border border-zinc-300/30 dark:border-zinc-700/30 rounded-lg py-1.5 h-7 animate-pulse" />
+              )
+            ))}
+          </div>
+        )}
+      </div>
 
-      {/* Gateway API Key config */}
+      {/* Gateway API Key config（需登录） */}
       <div className="border-t border-zinc-100 dark:border-zinc-800">
+          {needsLogin ? (
+            <div className="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-xs text-zinc-500">
+              <span className="flex items-center gap-2 min-w-0">
+                <span>{t('providers.p2p.gatewayKey')}</span>
+                <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/40 shrink-0">
+                  {t('providers.p2p.loginBadge')}
+                </span>
+              </span>
+              <button type="button" onClick={() => navigate('/login', { state: { from: '/providers' } })}
+                className="shrink-0 text-xs font-medium px-2.5 py-1 rounded-lg border border-zinc-300 dark:border-zinc-600 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors">
+                {t('profile.guestLogin')}
+              </button>
+            </div>
+          ) : (
+          <>
           <button
             onClick={() => setShowKeyConfig(v => !v)}
             className="w-full flex items-center justify-between px-4 py-2.5 text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/30 transition-colors"
@@ -829,6 +953,8 @@ function P2PNetworkCard({ provider, onUpdate }) {
                 </div>
               )}
             </div>
+          )}
+          </>
           )}
         </div>
       </div>
@@ -1696,7 +1822,6 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
 
 export default function Providers() {
   const { t } = useLang();
-  const { user, guest } = useAuth();
   const navigate = useNavigate();
   const tierConfig = useMemo(() => getTierConfig(t), [t]);
   const oauthById = useMemo(() => getOAuthById(t), [t]);
@@ -2002,6 +2127,15 @@ export default function Providers() {
     );
   }
 
+  const personalAccountTiles = useMemo(
+    () => buildPersonalAccountTiles(userSubscriptions, userPayg, meta),
+    [userSubscriptions, userPayg, meta],
+  );
+  const accountCatalogSuggestions = useMemo(
+    () => buildAccountCatalogSuggestions(subscriptionCatalog, paygCatalog, personalAccountTiles),
+    [subscriptionCatalog, paygCatalog, personalAccountTiles],
+  );
+
   return (
     <div className="px-5 py-5 space-y-6">
 
@@ -2019,14 +2153,31 @@ export default function Providers() {
         <button
           type="button"
           onClick={() => setBillingOpen(v => !v)}
-          className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
+          className="w-full flex items-start justify-between gap-3 px-5 py-4 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
           aria-expanded={billingOpen}
         >
-          <div>
-            <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('providers.personalAccounts.title')}</h2>
-            <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">{t('providers.personalAccounts.hint')}</p>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5">
+              <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('providers.personalAccounts.title')}</h2>
+              {!billingOpen && (
+                <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                  {personalAccountsCountLabel(paidAccountsLoaded, personalAccountTiles.length, t)}
+                </span>
+              )}
+            </div>
+            {!billingOpen && (
+              <PersonalAccountsPreview
+                tiles={personalAccountTiles}
+                suggestions={accountCatalogSuggestions}
+                loaded={paidAccountsLoaded}
+                t={t}
+              />
+            )}
+            {billingOpen && (
+              <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">{t('providers.personalAccounts.hint')}</p>
+            )}
           </div>
-          <span className="shrink-0 text-xs px-2.5 py-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">
+          <span className="shrink-0 text-xs px-2.5 py-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 mt-0.5">
             {billingOpen ? t('providers.personalAccounts.collapse') : t('providers.personalAccounts.expand')}
           </span>
         </button>
@@ -2171,21 +2322,19 @@ export default function Providers() {
         )}
       </section>
 
-      {/* 社区源 */}
-      {user && (
-        <section className="space-y-3 pt-4 border-t border-zinc-100 dark:border-zinc-800/60">
-          <div className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${tierConfig.p2p.dot}`} />
-            <h2 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">{t('providers.group.remote')}</h2>
-            <span className="text-xs text-zinc-400 dark:text-zinc-500">{tierConfig.p2p.hint}</span>
-          </div>
-          <div className={`grid ${tierConfig.p2p.cols} gap-3`}>
-            {providers.filter(p => p.type === 'p2p').map(p => (
-              <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} />
-            ))}
-          </div>
-        </section>
-      )}
+      {/* 社区源：未登录可浏览，启用/配置 Key 需登录 */}
+      <section className="space-y-3 pt-4 border-t border-zinc-100 dark:border-zinc-800/60">
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${tierConfig.p2p.dot}`} />
+          <h2 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">{t('providers.group.remote')}</h2>
+          <span className="text-xs text-zinc-400 dark:text-zinc-500">{tierConfig.p2p.hint}</span>
+        </div>
+        <div className={`grid ${tierConfig.p2p.cols} gap-3`}>
+          {providers.filter(p => p.type === 'p2p').map(p => (
+            <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} />
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

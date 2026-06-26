@@ -166,7 +166,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     export:   (payload) => ipcRenderer.invoke('sessions:export', payload),
     continue: (payload) => ipcRenderer.invoke('sessions:continue', payload),
     launch:   (payload) => ipcRenderer.invoke('sessions:launch', payload),
-    knowledgeStart:  ()        => ipcRenderer.invoke('sessions:knowledgeStart'),
+    knowledgeStart:  (opts)    => ipcRenderer.invoke('sessions:knowledgeStart', opts || {}),
     knowledgeResult: ()        => ipcRenderer.invoke('sessions:knowledgeResult'),
     saveAgentsMd:    (payload) => ipcRenderer.invoke('sessions:saveAgentsMd', payload),
   },

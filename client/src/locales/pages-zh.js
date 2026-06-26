@@ -270,6 +270,7 @@ export default {
 
   // ── 用量明细 AppDetailModal ──
   'gateway.detail.usageTitle': '{name} · 用量明细',
+  'gateway.detail.days1': '今天',
   'gateway.detail.days7': '近 7 天',
   'gateway.detail.days30': '近 30 天',
   'gateway.detail.days90': '近 90 天',
@@ -461,6 +462,10 @@ export default {
   'providers.personalAccounts.collapse': '收起',
   'providers.personalAccounts.open': '打开账户配置 →',
   'providers.personalAccounts.emptyHint': '请先配置订阅账户或按量付费供给源，再添加 Key / OAuth。',
+  'providers.personalAccounts.count': '已添加 {n} 个账户',
+  'providers.personalAccounts.emptyCount': '尚未添加账户，点击展开添加',
+  'providers.personalAccounts.loading': '加载账户…',
+  'providers.personalAccounts.addMore': '添加账户',
   'providers.p2p.running': '● 运行中',
   'providers.p2p.balance': '余额 {n} 积分',
   'providers.p2p.nodes': '网络节点 {n}',
@@ -486,6 +491,8 @@ export default {
   'providers.p2p.creating': '创建…',
   'providers.p2p.newKey': '+ 新建 Key',
   'providers.p2p.creditsHint': '消耗积分调用社区共享算力，积分不足时自动跳过此层。',
+  'providers.p2p.loginBadge': '需登录',
+  'providers.p2p.loginRequired': '登录后可启用社区算力、查看积分余额并配置网关转发 Key。',
   'providers.badge.enabled': '● 已启用',
   'providers.badge.needsConfig': '● 需配置',
   'providers.badge.freeQuota': '免费额度',
