@@ -5,6 +5,7 @@ const locales = {
   zh: {
     'nav.gateway':    '网关',
     'nav.providers':  '供给源',
+    'nav.circles':    '圈子',
     'nav.contribute': '贡献',
     'nav.dashboard':  '盘点',
     'nav.network':    '网络',
@@ -286,6 +287,7 @@ const locales = {
   en: {
     'nav.gateway':    'Gateway',
     'nav.providers':  'Providers',
+    'nav.circles':    'Circles',
     'nav.contribute': 'Contribute',
     'nav.dashboard':  'Usage',
     'nav.network':    'Network',

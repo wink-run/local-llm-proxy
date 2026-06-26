@@ -14,6 +14,7 @@ import Network    from './pages/Network';
 import Config     from './pages/Config';
 import Login      from './pages/Login';
 import Debug      from './pages/Debug';
+import Circles    from './pages/Circles';
 import UpdateNotification from './components/UpdateNotification';
 import { useDeviceReporter } from './hooks/useDeviceReporter';
 
@@ -63,6 +64,7 @@ function Layout() {
           <Route path="/gateway"   element={authed ? <Gateway />        : <Navigate to="/login" replace />} />
           <Route path="/providers" element={authed ? <Providers />      : <Navigate to="/login" replace />} />
           <Route path="/contribute"element={user   ? <Contribute />     : <Navigate to="/login" replace />} />
+          <Route path="/circles"   element={authed ? <Circles />        : <Navigate to="/login" replace />} />
           <Route path="/dashboard" element={authed ? <Dashboard />      : <Navigate to="/login" replace />} />
           <Route path="/network"   element={<Network />} />
           <Route path="/config"    element={<Config />} />
