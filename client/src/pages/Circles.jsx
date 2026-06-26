@@ -4,6 +4,7 @@ import { useLang } from '../store/lang';
 import {
   createCircle, listMyCircles, listJoinedCircles,
   dissolveCircle, leaveCircle, listCircleMembers,
+  previewCircle, joinCircle,
 } from '../api/client';
 import { getServerUrl } from '../config';
 
@@ -30,6 +31,10 @@ export default function Circles() {
   const [creating, setCreating]     = useState(false);
   const [error, setError]           = useState('');
   const [copiedId, setCopiedId]     = useState(null);
+  const [joinInput, setJoinInput]   = useState('');
+  const [joinPreview, setJoinPreview] = useState(null);  // { circle, already_member, full }
+  const [joinLoading, setJoinLoading] = useState(false);
+  const [joinError, setJoinError]   = useState('');
   const [joinBanner, setJoinBanner] = useState(() => {
     const r = location.state?.circleResult;
     if (!r) return null;
@@ -90,6 +95,49 @@ export default function Circles() {
     await load();
   }
 
+  function extractCode(input) {
+    const s = input.trim();
+    // support full URL like http://host/app?c=XXXX or just the code
+    try { return new URL(s).searchParams.get('c') || s; } catch { return s; }
+  }
+
+  async function handleJoinPreview(e) {
+    e.preventDefault();
+    const code = extractCode(joinInput);
+    if (!code) return;
+    setJoinLoading(true); setJoinError(''); setJoinPreview(null);
+    try {
+      const r = await previewCircle(code);
+      setJoinPreview({ ...r.data, code });
+    } catch (err) {
+      setJoinError(err?.response?.data?.detail || '邀请链接无效');
+    } finally {
+      setJoinLoading(false);
+    }
+  }
+
+  async function handleJoinConfirm() {
+    if (!joinPreview) return;
+    setJoinLoading(true); setJoinError('');
+    try {
+      const r = await joinCircle(joinPreview.code);
+      const d = r.data;
+      if (d.already_member) {
+        setJoinBanner({ type: 'info', text: '你已经是该圈子的成员了' });
+      } else if (d.full) {
+        setJoinBanner({ type: 'warning', text: '圈子已满，无法加入' });
+      } else {
+        setJoinBanner({ type: 'success', text: `已成功加入「${joinPreview.circle.name}」🎉` });
+      }
+      setJoinInput(''); setJoinPreview(null);
+      await load();
+    } catch (err) {
+      setJoinError(err?.response?.data?.detail || '加入失败');
+    } finally {
+      setJoinLoading(false);
+    }
+  }
+
   function copyInvite(circle) {
     const base = getServerUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
     const url = `${base}/app?c=${circle.code}`;
@@ -125,6 +173,54 @@ export default function Circles() {
           <button onClick={() => setJoinBanner(null)} className="ml-3 opacity-60 hover:opacity-100 text-lg leading-none">×</button>
         </div>
       )}
+
+      {/* 加入圈子 */}
+      <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 space-y-3">
+        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">加入圈子</h2>
+        <form onSubmit={handleJoinPreview} className="flex gap-2">
+          <input
+            className="flex-1 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="粘贴邀请链接或输入邀请码"
+            value={joinInput}
+            onChange={e => { setJoinInput(e.target.value); setJoinPreview(null); setJoinError(''); }}
+          />
+          <button type="submit" disabled={joinLoading || !joinInput.trim()}
+            className="px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors shrink-0">
+            查询
+          </button>
+        </form>
+
+        {joinError && <p className="text-red-500 text-xs">{joinError}</p>}
+
+        {joinPreview && (
+          <div className="border border-gray-100 dark:border-gray-700 rounded-lg px-4 py-3 space-y-2">
+            <div className="flex items-center gap-3">
+              <div className={`w-10 h-10 rounded-full ${circleColor(joinPreview.circle.name)} flex items-center justify-center text-base font-bold text-white shrink-0`}>
+                {joinPreview.circle.name[0].toUpperCase()}
+              </div>
+              <div>
+                <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">{joinPreview.circle.name}</p>
+                {joinPreview.circle.description && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400">{joinPreview.circle.description}</p>
+                )}
+                <p className="text-xs text-gray-400 dark:text-gray-500">
+                  {joinPreview.circle.member_count} / {joinPreview.circle.max_members} 人
+                </p>
+              </div>
+            </div>
+            {joinPreview.already_member ? (
+              <p className="text-xs text-blue-600 dark:text-blue-400">你已经是该圈子的成员</p>
+            ) : joinPreview.full ? (
+              <p className="text-xs text-yellow-600 dark:text-yellow-400">圈子已满</p>
+            ) : (
+              <button onClick={handleJoinConfirm} disabled={joinLoading}
+                className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                {joinLoading ? '加入中…' : '确认加入'}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* 创建表单 */}
       {showCreate && (
