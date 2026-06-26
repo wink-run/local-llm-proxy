@@ -1,3 +1,1 @@
-static/img_cache/*.png
-static/img_cache/*.jpg
-static/img_cache/*.webp
+# img_cache 产品截图已纳入版本管理（landing 页 hero 等）
