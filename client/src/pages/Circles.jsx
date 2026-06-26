@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useLang } from '../store/lang';
 import {
   createCircle, listMyCircles, listJoinedCircles,
@@ -20,6 +21,7 @@ function circleColor(name = '') {
 
 export default function Circles() {
   const { t } = useLang();
+  const location = useLocation();
   const [owned, setOwned]           = useState([]);
   const [joined, setJoined]         = useState([]);
   const [showCreate, setShowCreate] = useState(false);
@@ -28,6 +30,14 @@ export default function Circles() {
   const [creating, setCreating]     = useState(false);
   const [error, setError]           = useState('');
   const [copiedId, setCopiedId]     = useState(null);
+  const [joinBanner, setJoinBanner] = useState(() => {
+    const r = location.state?.circleResult;
+    if (!r) return null;
+    if (r.already_member) return { type: 'info',    text: '你已经是该圈子的成员了' };
+    if (r.full)           return { type: 'warning', text: '圈子已满，未能自动加入' };
+    if (r.ok)             return { type: 'success', text: '已成功加入圈子 🎉' };
+    return null;
+  });
 
   async function load() {
     const [o, j] = await Promise.all([listMyCircles(), listJoinedCircles()]);
@@ -90,6 +100,17 @@ export default function Circles() {
           {t('circles.createBtn')}
         </button>
       </div>
+
+      {/* 入圈结果横幅 */}
+      {joinBanner && (
+        <div className={`flex items-center justify-between rounded-xl px-4 py-3 text-sm
+          ${joinBanner.type === 'success' ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300' :
+            joinBanner.type === 'warning' ? 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-300' :
+            'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'}`}>
+          <span>{joinBanner.text}</span>
+          <button onClick={() => setJoinBanner(null)} className="ml-3 opacity-60 hover:opacity-100 text-lg leading-none">×</button>
+        </div>
+      )}
 
       {/* 创建表单 */}
       {showCreate && (

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { login, register, getProfile, formatApiError } from '../api/client';
+import { login, register, getProfile, joinCircle, formatApiError } from '../api/client';
 import { useAuth } from '../store/index';
 import logo from '../assets/logo.svg';
 import { useLang } from '../store/lang';
@@ -45,10 +45,8 @@ export default function Login() {
   const location = useLocation();
   const returnTo = safeReturnPath(location.state?.from);
 
-  // Read invite link params from URL (works for both web and Electron app opened via link)
-  const urlParams = typeof window !== 'undefined'
-    ? new URLSearchParams(window.location.search)
-    : new URLSearchParams();
+  // 从邀请链接读取圈子码和推荐码
+  const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const inviteCircleCode = urlParams.get('c') || '';
   const inviteRefCode    = urlParams.get('ref') || '';
 
@@ -60,8 +58,6 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [nickname, setNickname] = useState('');
   const [referralCode, setReferralCode] = useState(inviteRefCode);
-  const [circleCode]   = useState(inviteCircleCode);   // read-only, from URL
-  const [circleMsg, setCircleMsg] = useState('');       // post-registration circle status
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [firstRun, setFirstRun] = useState(false);
@@ -77,7 +73,7 @@ export default function Login() {
     bootstrapServerUrl().then((url) => { if (url) setServerUrl(url); });
   }, []);
 
-  async function afterAuth(token) {
+  async function afterAuth(token, circleResult = null) {
     localStorage.setItem('token', token);
     const base = normalizeServerBase(localStorage.getItem('serverUrl') || '');
     await syncCloudConfigUrl(base);
@@ -88,22 +84,32 @@ export default function Login() {
       const wsUrl = serverUrl.replace(/^https?/, (m) => (m === 'https' ? 'wss' : 'ws')) + '/ws/worker';
       await window.electronAPI.config.write({ ...current, server_url: wsUrl, worker_key: profileRes.data.worker_key || '' });
     }
-    navigate(returnTo);
+    // 有邀请圈子结果时跳转到圈子页并传递提示
+    if (circleResult) {
+      navigate('/circles', { replace: true, state: { circleResult } });
+    } else {
+      navigate(returnTo, { replace: true });
+    }
   }
 
   async function handleLogin(e) {
     e.preventDefault();
     setError('');
     const base = persistServerUrl(serverUrl);
-    if (!base) {
-      setError(t('config.serverRequired'));
-      return;
-    }
+    if (!base) { setError(t('config.serverRequired')); return; }
     setSaving(true);
     try {
       setServerUrl(base);
       const res = await login(email, password);
-      await afterAuth(res.data.token);
+      // 已注册用户通过邀请链接登录时，登录后手动调入圈接口
+      let circleResult = null;
+      if (inviteCircleCode) {
+        try {
+          const jr = await joinCircle(inviteCircleCode);
+          circleResult = jr.data;
+        } catch (_) {}
+      }
+      await afterAuth(res.data.token, circleResult);
     } catch (err) {
       localStorage.removeItem('token');
       setError(formatApiError(err, t('config.loginFailed')));
@@ -116,24 +122,18 @@ export default function Login() {
     e.preventDefault();
     setError('');
     const base = persistServerUrl(serverUrl);
-    if (!base) {
-      setError(t('config.serverRequired'));
-      return;
-    }
+    if (!base) { setError(t('config.serverRequired')); return; }
     setSaving(true);
     try {
       setServerUrl(base);
-      const res = await register(email, password, nickname, referralCode, circleCode);
-      let joinMsg = '';
-      if (circleCode) {
-        if (res.data.circle_joined) joinMsg = '已成功加入圈子！';
-        else if (res.data.circle_full) joinMsg = '圈子已满，注册成功但未加入圈子。';
-      }
-      if (joinMsg) {
-        setCircleMsg(joinMsg);
-        await new Promise(r => setTimeout(r, 1800));
-      }
-      await afterAuth(res.data.token);
+      // 注册时服务端自动入圈，circle_code 传给后端
+      const res = await register(email, password, nickname, referralCode, inviteCircleCode);
+      const circleResult = inviteCircleCode ? {
+        ok: res.data.circle_joined || false,
+        already_member: false,
+        full: res.data.circle_full || false,
+      } : null;
+      await afterAuth(res.data.token, circleResult);
     } catch (err) {
       localStorage.removeItem('token');
       setError(formatApiError(err, t('config.registerFailed')));
@@ -212,15 +212,12 @@ export default function Login() {
             <Field label={t('config.nickname')} type="text" value={nickname} onChange={setNickname} placeholder={t('config.nicknamePh')} />
             <Field label={t('config.password')} type="password" value={password} onChange={setPassword} placeholder={t('config.passwordMin')} />
             <Field label={t('config.referral')} type="text" value={referralCode} onChange={setReferralCode} placeholder={t('config.referralPh')} />
+            {inviteCircleCode && (
+              <p className="text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 rounded-lg px-3 py-2">
+                注册后将自动加入邀请圈子 🎉
+              </p>
+            )}
             {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
-            {circleMsg && (
-              <div className="text-sm text-blue-600 bg-blue-50 rounded p-2">{circleMsg}</div>
-            )}
-            {circleCode && !circleMsg && (
-              <div className="text-xs text-gray-500">
-                注册后将自动加入邀请圈子
-              </div>
-            )}
             <button type="submit" disabled={saving}
               className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 disabled:opacity-50 rounded-lg text-[13px] font-semibold text-white transition-colors">
               {saving ? t('config.registering') : t('config.registerBtn')}
