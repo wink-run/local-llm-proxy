@@ -37,7 +37,7 @@
     .tb-marquee-track { animation: none !important; }
     .tb-app-row { animation: none !important; }
   }
-  .tb-faq summary::-webkit-details-marker { display: none; }
+  #tb-hero-dashboard { transition: opacity .35s ease; }
   .tb-faq[open] .tb-faq-mark { transform: rotate(45deg); background: #FFD055; }
   @keyframes tbPacket { 0% { top: -6px; opacity: 0; } 12% { opacity: 1; } 88% { opacity: 1; } 100% { top: 44px; opacity: 0; } }
   @keyframes tbPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(224,138,0,0); } 50% { box-shadow: 0 0 0 8px rgba(224,138,0,0.10); } }
@@ -124,7 +124,7 @@
 
     <!-- product preview card -->
     <div data-reveal data-reveal-delay="160" style="max-width:1100px;margin:64px auto 0;padding:0 24px;">
-      <div style="background:linear-gradient(135deg,#FFD055 0%,#E08A00 55%,#C07800 100%);border-radius:42px;padding:14px;box-shadow:rgba(0,0,0,0.04) 0px 8px 16px 0px;animation:tbFloat 6s ease-in-out infinite;">
+      <div id="tb-hero-preview" style="background:linear-gradient(135deg,#FFD055 0%,#E08A00 55%,#C07800 100%);border-radius:42px;padding:14px;box-shadow:rgba(0,0,0,0.04) 0px 8px 16px 0px;animation:tbFloat 6s ease-in-out infinite;">
         <div style="background:#fff;border-radius:30px;overflow:hidden;border:1px solid rgba(0,0,0,0.04);">
           <div style="display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid #f0eeec;background:#fff;">
             <div style="display:flex;gap:7px;">
@@ -859,29 +859,65 @@ class Component extends DCLogic {
       kids.forEach((k) => { const c = k.cloneNode(true); c.setAttribute('aria-hidden', 'true'); track.appendChild(c); });
     }
 
-    // hero tab switching
+    // hero tab switching（含自动轮播）
     const tabs = root.querySelector('#tb-tabs');
+    const TAB_KEYS = ['dashboard', 'gateway', 'provider'];
+    const switchHeroTab = (key) => {
+      if (!tabs) return;
+      const lang = this.state.lang || 'en';
+      const img = root.querySelector('#tb-hero-dashboard');
+      if (img) {
+        const srcEn = `/static/img_cache/${key}_en.webp`;
+        const srcZh = `/static/img_cache/${key}.webp`;
+        img.dataset.srcEn = srcEn;
+        img.dataset.srcZh = srcZh;
+        const nextSrc = lang === 'zh' ? srcZh : srcEn;
+        img.style.opacity = '0.35';
+        const onLoad = () => { img.style.opacity = '1'; img.removeEventListener('load', onLoad); };
+        img.addEventListener('load', onLoad);
+        img.src = nextSrc;
+        if (img.complete) onLoad();
+      }
+      tabs.querySelectorAll('[data-tab]').forEach((t) => {
+        const active = t.dataset.tab === key;
+        t.style.fontWeight = active ? '500' : '400';
+        t.style.color = active ? '#000' : '#7b7b7b';
+        t.style.background = active ? '#f5f2f0' : 'transparent';
+      });
+    };
+
+    let heroTabIdx = 0;
+    const stopHeroCarousel = () => {
+      if (this._heroCarouselTimer) {
+        clearInterval(this._heroCarouselTimer);
+        this._heroCarouselTimer = null;
+      }
+    };
+    const startHeroCarousel = () => {
+      stopHeroCarousel();
+      if (!tabs) return;
+      this._heroCarouselTimer = setInterval(() => {
+        heroTabIdx = (heroTabIdx + 1) % TAB_KEYS.length;
+        switchHeroTab(TAB_KEYS[heroTabIdx]);
+      }, 4500);
+    };
+    const resetHeroCarousel = (key) => {
+      heroTabIdx = Math.max(0, TAB_KEYS.indexOf(key));
+      startHeroCarousel();
+    };
+
     if (tabs) {
       tabs.addEventListener('click', (e) => {
         const tab = e.target.closest('[data-tab]');
         if (!tab) return;
-        const key = tab.dataset.tab;
-        const lang = this.state.lang || 'en';
-        const img = root.querySelector('#tb-hero-dashboard');
-        if (img) {
-          const srcEn = `/static/img_cache/${key}_en.webp`;
-          const srcZh = `/static/img_cache/${key}.webp`;
-          img.dataset.srcEn = srcEn;
-          img.dataset.srcZh = srcZh;
-          img.src = lang === 'zh' ? srcZh : srcEn;
-        }
-        tabs.querySelectorAll('[data-tab]').forEach((t) => {
-          const active = t === tab;
-          t.style.fontWeight = active ? '500' : '400';
-          t.style.color = active ? '#000' : '#7b7b7b';
-          t.style.background = active ? '#f5f2f0' : 'transparent';
-        });
+        switchHeroTab(tab.dataset.tab);
+        resetHeroCarousel(tab.dataset.tab);
       });
+      const heroPreview = root.querySelector('#tb-hero-preview');
+      if (heroPreview) {
+        heroPreview.addEventListener('mouseenter', stopHeroCarousel);
+        heroPreview.addEventListener('mouseleave', startHeroCarousel);
+      }
     }
 
     // language: default EN, restore saved
@@ -892,6 +928,7 @@ class Component extends DCLogic {
 
     const mq = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
     const reduce = mq.matches;
+    if (tabs && !reduce) startHeroCarousel();
 
     const fmt = (n, dec, plain) => {
       const v = Number(n.toFixed(dec));

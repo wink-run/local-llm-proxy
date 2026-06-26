@@ -94,6 +94,7 @@ export function AuthProvider({ children }) {
           syncCloudConfigUrl();
           syncRemoteConfig();
           syncUserBilling();
+          window.electronAPI?.tray?.setAuthState?.(true);
         })
         .catch(() => {
           localStorage.removeItem('token');
@@ -114,6 +115,7 @@ export function AuthProvider({ children }) {
     setGuest(false);
     localStorage.setItem('token', token);
     setUser(userData);
+    window.electronAPI?.tray?.setAuthState?.(true);
     startPolling();
     syncAgentCredentials(userData);
     syncCloudKey();
@@ -131,6 +133,7 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('token');
     setUser(null);
     stopPolling();
+    window.electronAPI?.tray?.setAuthState?.(false);
     // 退出后恢复为未登录浏览态，可继续使用网关/设置等，无需跳转登录页
     localStorage.setItem('guest', '1');
     setGuest(true);

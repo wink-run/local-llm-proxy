@@ -18,10 +18,12 @@ export function LangProvider({ children }) {
   function setLang(l) {
     localStorage.setItem('lang', l);
     setLangState(l);
+    window.electronAPI?.tray?.setLang?.(l);
   }
 
   useEffect(() => {
     document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN';
+    window.electronAPI?.tray?.setLang?.(lang);
   }, [lang]);
 
   const t = makeT(lang);

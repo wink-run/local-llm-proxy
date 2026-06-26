@@ -191,4 +191,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener('billing:changed', h);
     },
   },
+  tray: {
+    setLang:      (lang)     => ipcRenderer.send('tray:lang', lang),
+    setAuthState: (loggedIn) => ipcRenderer.send('tray:auth', loggedIn),
+  },
+  app: {
+    onNavigate: (cb) => {
+      const h = (_e, path) => cb(path);
+      ipcRenderer.on('app:navigate', h);
+      return () => ipcRenderer.removeListener('app:navigate', h);
+    },
+  },
 });

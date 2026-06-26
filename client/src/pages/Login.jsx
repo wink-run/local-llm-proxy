@@ -199,22 +199,6 @@ export default function Login() {
           </form>
         )}
 
-        <button
-          type="button"
-          onClick={handleGuest}
-          className="w-full py-2 text-[13px] text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
-        >
-          {t('config.guestEnter')}
-        </button>
-
-        <p className="text-xs text-gray-600 dark:text-gray-600 text-center leading-relaxed pt-2">
-          {t('config.footer.beforeLink')}
-          <a href="https://github.com/wink-run/local-llm-proxy" target="_blank" rel="noreferrer"
-            className="underline hover:text-gray-600 dark:hover:text-zinc-600 dark:text-zinc-400 transition-colors">
-            local-llm-proxy
-          </a>
-          {t('config.footer.afterLink')}
-        </p>
       </div>
     </div>
   );

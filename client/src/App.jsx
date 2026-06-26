@@ -1,5 +1,5 @@
-import React from 'react';
-import { MemoryRouter, Routes, Route, Navigate } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { MemoryRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './store/index';
 import { ThemeProvider } from './store/theme';
 import { LangProvider, useLang } from './store/lang';
@@ -30,7 +30,13 @@ function Layout() {
   const { user, guest, loading } = useAuth();
   const { t } = useLang();
   const authed = user || guest;   // 登录用户 或 游客模式：可进入「中心」
+  const navigate = useNavigate();
   useDeviceReporter(user);
+
+  useEffect(() => {
+    if (!isElectron || !window.electronAPI?.app?.onNavigate) return;
+    return window.electronAPI.app.onNavigate((path) => navigate(path));
+  }, [navigate]);
 
   if (loading) {
     return (

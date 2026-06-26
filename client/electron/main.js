@@ -222,6 +222,39 @@ let tray = null;
 let showTrayTokens = true;
 /** macOS 点关闭仅隐藏窗口；托盘/Cmd+Q 退出时设为 true，避免 close 拦截 quit */
 let isQuitting = false;
+/** 菜单栏语言（由渲染层通过 tray:lang IPC 同步，默认 zh） */
+let _trayLang = 'zh';
+/** 用户是否已登录（由渲染层通过 tray:auth IPC 同步，初始从 cloud_config.token 推断） */
+let _trayUserLoggedIn = false;
+
+const TRAY_LABELS = {
+  zh: {
+    gatewayRunning:   (port) => `网关运行中 :${port}`,
+    gatewayStopped:   '网关已停止',
+    todayToken:       (l1, l2, n) => `今日 Token  ${l1}  ${l2}  (${n}次)`,
+    agentRunning:     '贡献 Agent 运行中',
+    agentStopped:     '贡献 Agent 已停止',
+    showWindow:       '显示主窗口',
+    showTokens:       '菜单栏显示 Token 上下行',
+    startAgent:       '开启贡献 Agent',
+    stopAgent:        '停止贡献 Agent',
+    notLoggedIn:      '（需登录后使用）',
+    quit:             '退出',
+  },
+  en: {
+    gatewayRunning:   (port) => `Gateway running :${port}`,
+    gatewayStopped:   'Gateway stopped',
+    todayToken:       (l1, l2, n) => `Today  ${l1}  ${l2}  (${n} calls)`,
+    agentRunning:     'Contribute Agent running',
+    agentStopped:     'Contribute Agent stopped',
+    showWindow:       'Show main window',
+    showTokens:       'Show token usage in menu bar',
+    startAgent:       'Start Contribute Agent',
+    stopAgent:        'Stop Contribute Agent',
+    notLoggedIn:      '(login required)',
+    quit:             'Quit',
+  },
+};
 
 // ── Icons ──────────────────────────────────────────────────────────────────────
 
@@ -233,13 +266,12 @@ const TRAY_ICON_B64 = {
 
 
 function getTrayIcon(state) {
-  // macOS：黑底白字彩色图标（tray-mac.png + @2x）。不是 Template，颜色按设计保留，
-  // 不随深/浅菜单栏重着色——这是「黑底白字」诉求的必然代价。
+  // macOS：黑白 Template 图标（tray-mac.png + @2x）。Template 模式下系统自动适配深/浅菜单栏。
   if (process.platform === 'darwin') {
     const macIcon = path.join(__dirname, '..', 'assets', 'tray-mac.png');
     if (fs.existsSync(macIcon)) {
       const img = nativeImage.createFromPath(macIcon);
-      img.setTemplateImage(false);
+      img.setTemplateImage(true);
       if (!img.isEmpty()) return img;
     }
     return nativeImage.createFromBuffer(Buffer.from(TRAY_ICON_B64.stopped, 'base64'));
@@ -466,14 +498,15 @@ function buildTrayContextMenu() {
   const running = agent.isRunning();
   const gw = gateway.getStatus?.() || {};
   const { inTok, outTok, calls } = getTodayTokenSummary();
+  const L = TRAY_LABELS[_trayLang] || TRAY_LABELS.zh;
   return Menu.buildFromTemplate([
-    { label: gw.running ? `网关运行中 :${gw.port}` : '网关已停止', enabled: false },
-    { label: `今日 Token  ↑${fmtTrayTokens(inTok)}  ↓${fmtTrayTokens(outTok)}  (${calls}次)`, enabled: false },
-    { label: running ? 'Agent 运行中' : 'Agent 已停止', enabled: false },
+    { label: gw.running ? L.gatewayRunning(gw.port) : L.gatewayStopped, enabled: false },
+    { label: L.todayToken(`↑${fmtTrayTokens(inTok)}`, `↓${fmtTrayTokens(outTok)}`, calls), enabled: false },
+    { label: running ? L.agentRunning : L.agentStopped, enabled: false },
     { type: 'separator' },
-    { label: '显示主窗口', click: showMainWindow },
+    { label: L.showWindow, click: showMainWindow },
     ...(process.platform === 'darwin' ? [{
-      label: '菜单栏显示 Token 上下行',
+      label: L.showTokens,
       type: 'checkbox',
       checked: showTrayTokens,
       click: (mi) => {
@@ -483,10 +516,21 @@ function buildTrayContextMenu() {
       },
     }] : []),
     { type: 'separator' },
-    { label: '启动 Agent', enabled: !running, click: startAgent },
-    { label: '停止 Agent', enabled: running, click: stopAgent },
+    {
+      label: L.startAgent,
+      enabled: !running,
+      click: () => {
+        if (!_trayUserLoggedIn) {
+          showMainWindow();
+          mainWindow?.webContents?.send('app:navigate', '/login');
+        } else {
+          startAgent();
+        }
+      },
+    },
+    { label: L.stopAgent, enabled: running, click: stopAgent },
     { type: 'separator' },
-    { label: '退出', click: () => { isQuitting = true; app.quit(); } },
+    { label: L.quit, click: () => { isQuitting = true; app.quit(); } },
   ]);
 }
 
@@ -507,11 +551,11 @@ function ensureTrayRenderWin() {
 async function renderTrayImage(line1, line2, showText, dark) {
   const win = await ensureTrayRenderWin();
   const js = `(() => {
-    const S = 2;                              // retina：2x 像素，createFromBuffer 再按 2x 缩回
+    const S = 2;
     const H = 22 * S, padX = 1 * S, gap = 4 * S;
-    const r = 9 * S, txtFs = 8.5 * S;         // ← 徽标半径 / 两行字号在这里调
+    const r = 9 * S, txtFs = 8.5 * S;
     const show = ${showText ? 'true' : 'false'};
-    const txtColor = ${dark ? "'#fff'" : "'#000'"};
+    const fg = ${dark ? "'#fff'" : "'#000'"};
     const L1 = ${JSON.stringify(line1)}, L2 = ${JSON.stringify(line2)};
     let c = document.createElement('canvas'), x = c.getContext('2d');
     x.font = '600 ' + txtFs + 'px ui-monospace,Menlo,monospace';
@@ -520,20 +564,46 @@ async function renderTrayImage(line1, line2, showText, dark) {
     c.height = H;
     x = c.getContext('2d');
     x.textBaseline = 'middle';
-    // 黑底圆徽标
     const cx = padX + r, cy = H / 2;
-    x.fillStyle = '#000';
-    x.beginPath(); x.arc(cx, cy, r, 0, Math.PI * 2); x.fill();
-    // 白色 T
-    x.strokeStyle = '#fff'; x.lineCap = 'round'; x.lineWidth = 1.8 * S;
-    const tw = 4.5 * S;
-    x.beginPath(); x.moveTo(cx - tw, cy - 3.2 * S); x.lineTo(cx + tw, cy - 3.2 * S); x.stroke();
-    x.beginPath(); x.moveTo(cx, cy - 3.2 * S); x.lineTo(cx, cy + 4.6 * S); x.stroke();
-    // 两行数字（颜色随深/浅色菜单栏）
+    // SVG 设计基准：viewBox 32×32，圆心(16,16)，外圈 r=14.5
+    // 映射比例：canvas r=9*S → SVG r=14.5，scale = (r-1)/14.5
+    const sc = (r - 1) / 14.5;
+    // 粗圈
+    x.strokeStyle = fg; x.lineWidth = 2.2 * S;
+    x.beginPath(); x.arc(cx, cy, r - 1.5, 0, Math.PI * 2); x.stroke();
+    // 三节点位置：与 SVG 一致（顶1底2）
+    // SVG: top(16,4) bl(5.5,22) br(26.5,22)，相对中心(16,16)
+    const nodes = [
+      [cx + (16 - 16) * sc, cy + (4  - 16) * sc],  // top
+      [cx + (5.5 - 16) * sc, cy + (22 - 16) * sc], // bottom-left
+      [cx + (26.5- 16) * sc, cy + (22 - 16) * sc], // bottom-right
+    ];
+    // 连线（节点间 + 节点→中心）
+    x.strokeStyle = fg; x.lineWidth = 0.65 * S; x.globalAlpha = 0.65; x.lineCap = 'round';
+    [[0,1],[0,2],[1,2]].forEach(([a,b]) => {
+      x.beginPath(); x.moveTo(nodes[a][0], nodes[a][1]); x.lineTo(nodes[b][0], nodes[b][1]); x.stroke();
+    });
+    nodes.forEach(([nx, ny]) => {
+      x.beginPath(); x.moveTo(nx, ny); x.lineTo(cx, cy); x.stroke();
+    });
+    x.globalAlpha = 1;
+    // 外节点实心点
+    x.fillStyle = fg;
+    nodes.forEach(([nx, ny]) => { x.beginPath(); x.arc(nx, ny, 1.4 * S, 0, Math.PI * 2); x.fill(); });
+    // 中心圆
+    x.beginPath(); x.arc(cx, cy, 7.5 * sc, 0, Math.PI * 2); x.fill();
+    // 中心 T（镂空）
+    x.globalCompositeOperation = 'destination-out';
+    x.strokeStyle = 'rgba(0,0,0,1)'; x.lineCap = 'round'; x.lineWidth = 1.5 * S;
+    const tw = 2.4 * S;
+    x.beginPath(); x.moveTo(cx - tw, cy - 2.0 * S); x.lineTo(cx + tw, cy - 2.0 * S); x.stroke();
+    x.beginPath(); x.moveTo(cx, cy - 2.0 * S); x.lineTo(cx, cy + 2.8 * S); x.stroke();
+    x.globalCompositeOperation = 'source-over';
+    // 两行数字
     if (show) {
-      x.fillStyle = txtColor;
+      x.fillStyle = fg;
       x.font = '600 ' + txtFs + 'px ui-monospace,Menlo,monospace';
-      x.textAlign = 'left';
+      x.textAlign = 'left'; x.textBaseline = 'middle';
       const tx = padX + 2 * r + gap;
       x.fillText(L1, tx, H * 0.32);
       x.fillText(L2, tx, H * 0.72);
@@ -543,7 +613,7 @@ async function renderTrayImage(line1, line2, showText, dark) {
   const dataURL = await win.webContents.executeJavaScript(js);
   const buf = Buffer.from(dataURL.split(',')[1], 'base64');
   const img = nativeImage.createFromBuffer(buf, { scaleFactor: 2 });
-  img.setTemplateImage(false);   // 彩色图：保留黑底白字，不让系统重着色
+  img.setTemplateImage(false);
   return img;
 }
 
@@ -558,9 +628,10 @@ function refreshTray() {
   const active = agent.isRunning() || gw.running;
   tray.setContextMenu(buildTrayContextMenu());
   if (process.platform === 'darwin') {
-    const { inTok, outTok } = getTodayTokenSummary();
+    const { inTok, outTok, totalTokens } = getTodayTokenSummary();
     const k = (n) => { n = n || 0; return n >= 1e6 ? `${Math.round(n / 1e6)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : `${n}`; };
-    const l1 = `↑${k(inTok)}`, l2 = `↓${k(outTok)}`;
+    // ↑ = totalTokens - outTok（input + cache），与应用 total_tokens 口径对齐（↑+↓ = totalTokens）
+    const l1 = `↑${k(totalTokens - outTok)}`, l2 = `↓${k(outTok)}`;
     tray.setToolTip(`Token Bank · 今日 ${l1} ${l2}`);
     renderTrayImage(l1, l2, showTrayTokens, nativeTheme.shouldUseDarkColors)
       .then((img) => { if (tray && !tray.isDestroyed?.()) { tray.setImage(img); tray.setTitle(''); } })
@@ -585,6 +656,7 @@ function refreshTray() {
 function createTray() {
   if (tray && !tray.isDestroyed?.()) { refreshTray(); return; }
   try { showTrayTokens = readLocalConfig().tray_show_tokens !== false; } catch {}
+  try { _trayUserLoggedIn = !!readLocalConfig().cloud_config?.token; } catch {}
   try {
     // macOS：黑底白字 T 图标（左）+ 两行 Token 文字（右，可由菜单开关关掉）；其它平台：绿/灰圆点
     const icon = getTrayIcon(agent.isRunning() ? 'running' : 'stopped');
@@ -1098,6 +1170,8 @@ function nodeRequest(url, method, headers, body) {
 // ── IPC handlers ──────────────────────────────────────────────────────────────
 
 function registerIPC() {
+  ipcMain.on('tray:lang',  (_e, lang)      => { _trayLang = lang === 'en' ? 'en' : 'zh'; refreshTray(); });
+  ipcMain.on('tray:auth',  (_e, loggedIn)  => { _trayUserLoggedIn = !!loggedIn; refreshTray(); });
   ipcMain.on('app:version', (e) => { e.returnValue = app.getVersion(); });
   ipcMain.on('app:defaultServerUrl', (e) => { e.returnValue = defaultServerUrlFromEnv(); });
   // 设备注册用：系统电脑名 + macOS/Windows 版本说明
