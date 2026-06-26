@@ -1,6 +1,6 @@
 """Scene routes CRUD + key binding endpoints."""
 import json
-from typing import Optional, Literal
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
