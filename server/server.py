@@ -27,6 +27,7 @@ from user_router import router as user_router
 from scene_router import router as scene_router
 from provider_router import router as provider_router
 from config_router import router as config_router
+from circle_router import router as circle_router
 from worker_pool import pool, WorkerConnection
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -96,6 +97,7 @@ app.include_router(user_router, prefix="/user")
 app.include_router(scene_router, prefix="/user")
 app.include_router(provider_router, prefix="/user")   # 个人供给源 /user/providers + /user/oauth/claude/*
 app.include_router(config_router, prefix="/api")   # GET /api/config/tools|routes (user JWT)
+app.include_router(circle_router, prefix="/user")
                                                     # PUT/DELETE /api/config/tools|routes (admin)
 app.include_router(device_router, tags=["device"])
 
