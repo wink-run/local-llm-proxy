@@ -986,6 +986,16 @@ function PreferenceMiningModal({ onClose, flash, onJobStart }) {
   const [edits, setEdits]     = useState({});      // tabKey → 可编辑文本
   const [tabKey, setTabKey]   = useState(GLOBAL_KEY);
   const [dirty, setDirty]     = useState(false);   // 用户编辑过就不再被轮询结果覆盖
+  const [availModels, setAvailModels] = useState([]);
+  const [selectedModel, setSelectedModel] = useState('');
+
+  useEffect(() => {
+    loadGatewayAvailableModels().then(all => {
+      // 只展示 Personal 模型（free/paid），与 Scene routes 保持一致
+      const ids = all.filter(m => m.tier === 'free' || m.tier === 'paid').map(m => m.id);
+      if (ids.length) { setAvailModels(ids); setSelectedModel(ids[0]); }
+    }).catch(() => {});
+  }, []);
 
   const fetchResult = useCallback(async () => {
     const r = await window.electronAPI.sessions.knowledgeResult().catch(() => null);
@@ -1016,7 +1026,7 @@ function PreferenceMiningModal({ onClose, flash, onJobStart }) {
 
   const start = async () => {
     setDirty(false); setEdits({}); setParsed({ preamble: '', global: '', projects: [] }); setTabKey(GLOBAL_KEY);
-    await window.electronAPI.sessions.knowledgeStart();
+    await window.electronAPI.sessions.knowledgeStart(selectedModel ? { model: selectedModel } : {});
     setJob(j => ({ ...j, status: 'running' }));
     onJobStart?.();
   };
@@ -1051,6 +1061,16 @@ function PreferenceMiningModal({ onClose, flash, onJobStart }) {
             </svg>
             <span className="truncate">{t('gateway.mine.title')}</span>
           </h3>
+          {availModels.length > 0 && (
+            <select
+              value={selectedModel}
+              onChange={e => setSelectedModel(e.target.value)}
+              disabled={job.status === 'running'}
+              className="text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 px-2 py-1 max-w-[180px] truncate disabled:opacity-50"
+            >
+              {availModels.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          )}
           {ready && job.ok && (
             <span className="text-xs text-zinc-400">{t('gateway.mine.stat').replace('{model}', job.model || '').replace('{sessions}', job.scanned)}</span>
           )}
@@ -1529,7 +1549,7 @@ function shortProjectName(row) {
 function AppDetailModal({ app, onClose }) {
   const { t } = useLang();
   const { fmtCost, fmtCostOptional } = useCurrency();
-  const [days, setDays]           = useState(30);
+  const [days, setDays]           = useState(1);
   const [data, setData]           = useState(null);
   const [loading, setLoading]     = useState(true);
   const [selectedSid, setSelectedSid] = useState(null);
@@ -1595,7 +1615,7 @@ function AppDetailModal({ app, onClose }) {
           <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">{t('gateway.detail.usageTitle', { name: app.name })}</h3>
           <select value={days} onChange={e => setDays(+e.target.value)}
             className="text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1 outline-none text-zinc-600 dark:text-zinc-300">
-            <option value={7}>{t('gateway.detail.days7')}</option><option value={30}>{t('gateway.detail.days30')}</option><option value={90}>{t('gateway.detail.days90')}</option>
+            <option value={1}>{t('gateway.detail.days1')}</option><option value={7}>{t('gateway.detail.days7')}</option><option value={30}>{t('gateway.detail.days30')}</option><option value={90}>{t('gateway.detail.days90')}</option>
           </select>
           <button onClick={onClose} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 text-lg">✕</button>
         </div>
@@ -2732,6 +2752,7 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
   const [rules, setRules] = useState(route.rules || []);
   const [clsModel, setClsModel] = useState(route.classifier?.model || '');
   const [clsCats,  setClsCats]  = useState((route.classifier?.categories || t('gateway.rule.defaultCategories').split(/[,、]/).map(s => s.trim()).filter(Boolean)).join('、'));
+  const [cavemanLevel, setCavemanLevel] = useState(route.caveman_level || null);
 
   const setRuleAt  = (i, patch) => setRules(rules.map((r, idx) => idx === i ? { ...r, ...patch } : r));
   const removeRule = (i) => setRules(rules.filter((_, idx) => idx !== i));
@@ -2747,7 +2768,7 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
       .filter(r => r.when && r.when.type && r.steps.length);
     const classifier = (usesClassifier && clsModel && categories.length)
       ? { model: clsModel, categories } : undefined;
-    onSave({ ...route, scene_name: name, icon, rules: cleanRules.length ? cleanRules : undefined, steps: clean(steps), classifier });
+    onSave({ ...route, scene_name: name, icon, rules: cleanRules.length ? cleanRules : undefined, steps: clean(steps), classifier, caveman_level: cavemanLevel || null });
   }
 
   return (
@@ -2805,6 +2826,21 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
           <div className="text-xs text-zinc-400">{t('gateway.route.clsHint')}</div>
         </div>
       )}
+
+      {/* Output style: Caveman verbosity injection */}
+      <div className="flex items-center gap-3 pt-1">
+        <span className="text-xs text-zinc-500 shrink-0">{t('gateway.route.outputStyle')}</span>
+        <select
+          value={cavemanLevel || ''}
+          onChange={e => setCavemanLevel(e.target.value || null)}
+          className="text-xs bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-2 py-1 text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-blue-500"
+        >
+          <option value="">{t('gateway.route.outputStyleDefault')}</option>
+          <option value="lite">{t('gateway.route.outputStyleLite')}</option>
+          <option value="full">{t('gateway.route.outputStyleFull')}</option>
+          <option value="ultra">{t('gateway.route.outputStyleUltra')}</option>
+        </select>
+      </div>
 
       {/* 默认链（else）：规则都不命中时用 */}
       <div className="text-xs text-zinc-500 font-medium pt-1">
@@ -3262,8 +3298,17 @@ export default function Gateway() {
   const gatewayRatio = totalCalls > 0 ? Math.round((proxyCalls / totalCalls) * 100) : null;
   const fmtTokens    = n => n >= 1_000_000 ? (n / 1e6).toFixed(2) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'K' : String(n || 0);
   const okLogs       = logEntries.filter(e => e.status === 'ok');
-  const avgLatency   = okLogs.length > 0
-    ? Math.round(okLogs.reduce((s, e) => s + e.latency_ms, 0) / okLogs.length) : 0;
+  const recentOkLogs = okLogs.filter(e => e.ts >= Date.now() - 5 * 60 * 1000);
+  // 优先近 5 分钟；无近期成功请求时回退到内存日志全部 ok，避免刷新后显示 —
+  const logsForLatency = recentOkLogs.length > 0 ? recentOkLogs : okLogs;
+  const routeAvgLatency = logsForLatency.length > 0
+    ? Math.round(logsForLatency.reduce((s, e) => s + (e.first_token_ms ?? e.latency_ms ?? 0), 0) / logsForLatency.length)
+    : 0;
+  const dbAvgLatency = stats?.avg_latency_ms ?? 0;
+  // 网关实时日志（近 5 分钟）优先；否则用 DB 均值（含 session 补录的 OpenCode/Codex 等）
+  const avgLatency = (recentOkLogs.length > 0 && routeAvgLatency > 0)
+    ? routeAvgLatency
+    : (dbAvgLatency > 0 ? dbAvgLatency : routeAvgLatency);
 
   // ── Route / model health: derived from recent log entries ─────────────────
   // Covers both scene-route keys (llm-router-xxx) and direct model keys
