@@ -17,6 +17,7 @@ class RegisterRequest(BaseModel):
     nickname: str = ""
     password: str
     referral_code: str = ""
+    circle_code: str = ""   # Optional: auto-join circle after registration
 
     @field_validator("password")
     @classmethod
@@ -54,8 +55,31 @@ async def register(req: RegisterRequest):
             await db.award_credits(referrer["id"], referral_reward, type_="referral",
                                    note=f"推荐新用户 {req.email}")
 
+    # Auto-join circle if circle_code provided
+    circle_joined = False
+    circle_full = False
+    if req.circle_code:
+        circle = await db.get_circle_by_code(req.circle_code)
+        if circle:
+            member_count = await db.circle_member_count(circle["id"])
+            if member_count < circle["max_members"]:
+                await db.add_circle_member(circle["id"], user["id"])
+                circle_joined = True
+                # Award circle owner for bringing in a new user (on top of referral)
+                invite_reward = float(await db.get_config("circle_invite_reward", "50"))
+                if invite_reward > 0 and circle["owner_id"] != user["id"]:
+                    await db.award_credits(
+                        circle["owner_id"], invite_reward, type_="referral",
+                        note=f"邀请新用户入圈 {circle['name']}"
+                    )
+            else:
+                circle_full = True
+
     token = create_token(user["id"])
-    return {"token": token, "user_id": user["id"], "email": req.email}
+    return {
+        "token": token, "user_id": user["id"], "email": req.email,
+        "circle_joined": circle_joined, "circle_full": circle_full,
+    }
 
 
 class LoginRequest(BaseModel):
