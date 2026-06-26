@@ -89,6 +89,8 @@ async def kick_member(circle_id: int, member_uid: int, uid: int = Depends(get_cu
         raise HTTPException(403, "仅圈主可移除成员")
     if member_uid == uid:
         raise HTTPException(400, "不能踢出自己")
+    if not await db.is_circle_member(circle_id, member_uid):
+        raise HTTPException(404, "该用户不在圈子中")
     await db.remove_circle_member(circle_id, member_uid)
     return {"ok": True}
 

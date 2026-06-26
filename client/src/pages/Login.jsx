@@ -124,12 +124,14 @@ export default function Login() {
     try {
       setServerUrl(base);
       const res = await register(email, password, nickname, referralCode, circleCode);
+      let joinMsg = '';
       if (circleCode) {
-        if (res.data.circle_joined) {
-          setCircleMsg('已成功加入圈子！');
-        } else if (res.data.circle_full) {
-          setCircleMsg('圈子已满，注册成功但未加入圈子。');
-        }
+        if (res.data.circle_joined) joinMsg = '已成功加入圈子！';
+        else if (res.data.circle_full) joinMsg = '圈子已满，注册成功但未加入圈子。';
+      }
+      if (joinMsg) {
+        setCircleMsg(joinMsg);
+        await new Promise(r => setTimeout(r, 1800));
       }
       await afterAuth(res.data.token);
     } catch (err) {

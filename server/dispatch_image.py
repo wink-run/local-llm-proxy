@@ -36,7 +36,10 @@ async def handle_image(body: dict, consumer_user_id: int | None = None):
     # 未实现图像生成，若被选中会把图像请求误发到 /chat/completions 并泄漏 active_requests，
     # 故在自增计数前直接排除（真实图像 worker 注册时已声明 type="image"，不受影响）。
     from virtual_worker import VirtualWorkerConnection
-    worker = pool.pick(model, model_type="image")
+    cands = pool.candidates(model, model_type="image",
+                            owner_user_id=consumer_user_id,
+                            user_circle_ids=set())
+    worker = cands[0] if cands else None
     if not worker or isinstance(worker, VirtualWorkerConnection):
         raise HTTPException(503, f"No image-capable worker available for model '{model}'")
 

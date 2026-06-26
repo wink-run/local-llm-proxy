@@ -1730,6 +1730,8 @@ async def get_wall_users(limit: int = 50) -> list[dict]:
 async def _migrate_circles() -> None:
     """Add circle_id to virtual_agents; create circles/circle_members if not present (for old DBs)."""
     async with aiosqlite.connect(DB_PATH) as db:
+        # Enable FK support for cascade to work at migration time
+        await db.execute("PRAGMA foreign_keys = ON")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS circles (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1749,8 +1751,6 @@ async def _migrate_circles() -> None:
                 PRIMARY KEY (circle_id, user_id)
             )
         """)
-        # Enable FK support for cascade to work at migration time
-        await db.execute("PRAGMA foreign_keys = ON")
         async with db.execute("PRAGMA table_info(virtual_agents)") as cur:
             cols = {row[1] async for row in cur}
         if "circle_id" not in cols:

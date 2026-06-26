@@ -195,7 +195,8 @@ class WorkerPool:
 
         owned = sorted(
             (v for v in self._virtual
-             if _matches(v) and getattr(v, "owner_user_id", None) == owner_user_id),
+             if _matches(v) and owner_user_id is not None
+             and getattr(v, "owner_user_id", None) == owner_user_id),
             key=lambda v: v.active_requests,
         )
         shared = sorted(
