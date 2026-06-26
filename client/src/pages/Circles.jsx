@@ -4,31 +4,25 @@ import {
   createCircle, listMyCircles, listJoinedCircles,
   dissolveCircle, leaveCircle,
 } from '../api/client';
-
-function getBaseUrl() {
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    return window.location.origin;
-  }
-  return '';
-}
+import { getServerUrl } from '../config';
 
 export default function Circles() {
   const { t } = useLang();
-  const [owned, setOwned] = useState([]);
-  const [joined, setJoined] = useState([]);
+  const [owned, setOwned]       = useState([]);
+  const [joined, setJoined]     = useState([]);
   const [showCreate, setShowCreate] = useState(false);
-  const [name, setName] = useState('');
-  const [desc, setDesc] = useState('');
+  const [name, setName]         = useState('');
+  const [desc, setDesc]         = useState('');
   const [creating, setCreating] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError]       = useState('');
   const [copiedId, setCopiedId] = useState(null);
 
   async function load() {
     const [o, j] = await Promise.all([listMyCircles(), listJoinedCircles()]);
-    setOwned(o.circles || []);
-    // Exclude owned circles from joined list to avoid duplication
-    const ownedIds = new Set((o.circles || []).map(c => c.id));
-    setJoined((j.circles || []).filter(c => !ownedIds.has(c.id)));
+    const ownedList = o.data?.circles || [];
+    setOwned(ownedList);
+    const ownedIds = new Set(ownedList.map(c => c.id));
+    setJoined((j.data?.circles || []).filter(c => !ownedIds.has(c.id)));
   }
 
   useEffect(() => { load(); }, []);
@@ -61,8 +55,8 @@ export default function Circles() {
   }
 
   function copyInvite(circle) {
-    const base = getBaseUrl();
-    const url = `${base}/?c=${circle.code}`;
+    const base = getServerUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
+    const url = `${base}/app?c=${circle.code}`;
     navigator.clipboard.writeText(url).then(() => {
       setCopiedId(circle.id);
       setTimeout(() => setCopiedId(null), 2000);
@@ -71,52 +65,61 @@ export default function Circles() {
 
   return (
     <div className="p-6 max-w-2xl mx-auto space-y-6">
+      {/* 页头 */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">{t('circles.title')}</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{t('circles.subtitle')}</p>
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('circles.title')}</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{t('circles.subtitle')}</p>
         </div>
         <button
           onClick={() => setShowCreate(s => !s)}
-          className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
         >
           {t('circles.createBtn')}
         </button>
       </div>
 
+      {/* 创建表单 */}
       {showCreate && (
-        <form onSubmit={handleCreate} className="border rounded-lg p-4 space-y-3 bg-gray-50 dark:bg-gray-800">
-          <h2 className="font-medium">{t('circles.createTitle')}</h2>
-          <input
-            className="w-full border rounded px-3 py-1.5 text-sm"
-            placeholder={t('circles.namePh')}
-            value={name} onChange={e => setName(e.target.value)}
-            maxLength={40} required
-          />
-          <input
-            className="w-full border rounded px-3 py-1.5 text-sm"
-            placeholder={t('circles.descPh')}
-            value={desc} onChange={e => setDesc(e.target.value)}
-            maxLength={120}
-          />
-          {error && <p className="text-red-500 text-xs">{error}</p>}
-          <div className="flex gap-2">
-            <button type="submit" disabled={creating}
-              className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
-              {creating ? t('circles.creating') : t('circles.createSubmit')}
-            </button>
-            <button type="button" onClick={() => setShowCreate(false)}
-              className="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700">
-              取消
-            </button>
-          </div>
-        </form>
+        <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl p-4 space-y-3">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">{t('circles.createTitle')}</h2>
+          <form onSubmit={handleCreate} className="space-y-3">
+            <input
+              className="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder={t('circles.namePh')}
+              value={name} onChange={e => setName(e.target.value)}
+              maxLength={40} required
+            />
+            <input
+              className="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder={t('circles.descPh')}
+              value={desc} onChange={e => setDesc(e.target.value)}
+              maxLength={120}
+            />
+            {error && <p className="text-red-500 text-xs">{error}</p>}
+            <div className="flex gap-2">
+              <button type="submit" disabled={creating}
+                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                {creating ? t('circles.creating') : t('circles.createSubmit')}
+              </button>
+              <button type="button" onClick={() => { setShowCreate(false); setError(''); }}
+                className="px-3 py-1.5 text-sm border border-gray-200 dark:border-gray-600 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                取消
+              </button>
+            </div>
+          </form>
+        </div>
       )}
 
-      <section>
-        <h2 className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">{t('circles.myCircles')}</h2>
+      {/* 我创建的圈子 */}
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">{t('circles.myCircles')}</h2>
         {owned.length === 0
-          ? <p className="text-sm text-gray-400">{t('circles.noOwned')}</p>
+          ? (
+            <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-6 text-center">
+              <p className="text-sm text-gray-400 dark:text-gray-500">{t('circles.noOwned')}</p>
+            </div>
+          )
           : owned.map(c => (
             <CircleCard key={c.id} circle={c} isOwner
               onCopy={() => copyInvite(c)}
@@ -129,10 +132,15 @@ export default function Circles() {
         }
       </section>
 
-      <section>
-        <h2 className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">{t('circles.joinedCircles')}</h2>
+      {/* 我加入的圈子 */}
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-300">{t('circles.joinedCircles')}</h2>
         {joined.length === 0
-          ? <p className="text-sm text-gray-400">{t('circles.noJoined')}</p>
+          ? (
+            <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-6 text-center">
+              <p className="text-sm text-gray-400 dark:text-gray-500">{t('circles.noJoined')}</p>
+            </div>
+          )
           : joined.map(c => (
             <CircleCard key={c.id} circle={c} isOwner={false}
               onCopy={() => copyInvite(c)}
@@ -150,28 +158,30 @@ export default function Circles() {
 
 function CircleCard({ circle, isOwner, onCopy, copied, onAction, actionLabel, t }) {
   return (
-    <div className="border rounded-lg p-4 mb-3 flex items-start justify-between gap-3">
+    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 flex items-start justify-between gap-3">
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="font-medium truncate">{circle.name}</span>
+          <span className="font-semibold text-gray-900 dark:text-gray-100 truncate">{circle.name}</span>
           {isOwner && (
-            <span className="text-xs px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded dark:bg-blue-900 dark:text-blue-300">
+            <span className="shrink-0 text-xs px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 rounded-md">
               {t('circles.isOwner')}
             </span>
           )}
         </div>
-        {circle.description && <p className="text-sm text-gray-500 mt-0.5 truncate">{circle.description}</p>}
-        <p className="text-xs text-gray-400 mt-1">
+        {circle.description && (
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5 truncate">{circle.description}</p>
+        )}
+        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
           {t('circles.members').replace('{n}', circle.member_count)}
         </p>
       </div>
-      <div className="flex gap-2 shrink-0">
+      <div className="flex gap-2 shrink-0 items-center">
         <button onClick={onCopy}
-          className="text-xs px-2 py-1 border rounded hover:bg-gray-50 dark:hover:bg-gray-800">
-          {copied ? t('circles.linkCopied') : t('circles.inviteLink')}
+          className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
+          {copied ? t('circles.linkCopied') + ' ✓' : t('circles.inviteLink')}
         </button>
         <button onClick={onAction}
-          className="text-xs px-2 py-1 border border-red-300 text-red-600 rounded hover:bg-red-50 dark:hover:bg-red-900/20">
+          className="text-xs px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
           {actionLabel}
         </button>
       </div>
