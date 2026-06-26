@@ -1,0 +1,17 @@
+'use strict';
+const RAW_CAP = 10 * 1024 * 1024;
+const MIN_COMPRESS_SIZE = 500;
+const DETECT_WINDOW = 1024;
+const GIT_DIFF_HUNK_MAX_LINES = 100;
+const GREP_PER_FILE_MAX = 10;
+const FIND_PER_DIR_MAX = 10;
+const FIND_TOTAL_DIR_MAX = 20;
+const STATUS_MAX_FILES = 10;
+const STATUS_MAX_UNTRACKED = 10;
+const LS_EXT_SUMMARY_TOP = 5;
+const LS_NOISE_DIRS = ['node_modules','.git','target','__pycache__','.next','dist','build','.cache','.turbo','.vercel','.pytest_cache','.mypy_cache','.tox','.venv','venv','env','coverage','.nyc_output'];
+const TREE_MAX_LINES = 200;
+const SMART_TRUNCATE_HEAD = 120;
+const SMART_TRUNCATE_TAIL = 60;
+const SMART_TRUNCATE_MIN_LINES = 250;
+module.exports = { RAW_CAP, MIN_COMPRESS_SIZE, DETECT_WINDOW, GIT_DIFF_HUNK_MAX_LINES, GREP_PER_FILE_MAX, FIND_PER_DIR_MAX, FIND_TOTAL_DIR_MAX, STATUS_MAX_FILES, STATUS_MAX_UNTRACKED, LS_EXT_SUMMARY_TOP, LS_NOISE_DIRS, TREE_MAX_LINES, SMART_TRUNCATE_HEAD, SMART_TRUNCATE_TAIL, SMART_TRUNCATE_MIN_LINES };
