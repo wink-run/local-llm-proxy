@@ -95,6 +95,19 @@ async def kick_member(circle_id: int, member_uid: int, uid: int = Depends(get_cu
     return {"ok": True}
 
 
+# ── 成员列表 ──────────────────────────────────────────────────────────────────
+
+@router.get("/circles/{circle_id}/members")
+async def list_circle_members(circle_id: int, uid: int = Depends(get_current_user_id)):
+    circle = await db.get_circle_by_id(circle_id)
+    if not circle:
+        raise HTTPException(404, "圈子不存在")
+    if not await db.is_circle_member(circle_id, uid):
+        raise HTTPException(403, "仅圈子成员可查看")
+    members = await db.list_circle_members(circle_id)
+    return {"members": members}
+
+
 # ── 入圈预览 ──────────────────────────────────────────────────────────────────
 
 @router.get("/circles/join/{code}")

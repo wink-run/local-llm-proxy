@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { useLang } from '../store/lang';
 import {
   createCircle, listMyCircles, listJoinedCircles,
-  dissolveCircle, leaveCircle,
+  dissolveCircle, leaveCircle, listCircleMembers,
 } from '../api/client';
 import { getServerUrl } from '../config';
 
@@ -42,9 +42,23 @@ export default function Circles() {
   async function load() {
     const [o, j] = await Promise.all([listMyCircles(), listJoinedCircles()]);
     const ownedList = o.data?.circles || [];
-    setOwned(ownedList);
-    const ownedIds = new Set(ownedList.map(c => c.id));
-    setJoined((j.data?.circles || []).filter(c => !ownedIds.has(c.id)));
+    const ownedIds  = new Set(ownedList.map(c => c.id));
+    const joinedList = (j.data?.circles || []).filter(c => !ownedIds.has(c.id));
+    const allCircles = [...ownedList, ...joinedList];
+
+    // Fetch members for all circles in parallel
+    const memberMap = {};
+    await Promise.all(allCircles.map(async c => {
+      try {
+        const r = await listCircleMembers(c.id);
+        memberMap[c.id] = r.data?.members || [];
+      } catch (_) {
+        memberMap[c.id] = [];
+      }
+    }));
+
+    setOwned(ownedList.map(c => ({ ...c, members: memberMap[c.id] || [] })));
+    setJoined(joinedList.map(c => ({ ...c, members: memberMap[c.id] || [] })));
   }
 
   useEffect(() => { load(); }, []);
@@ -189,46 +203,82 @@ export default function Circles() {
   );
 }
 
-function CircleCard({ circle, isOwner, onCopy, copied, onAction, actionLabel, t }) {
-  const initial = (circle.name || '?')[0].toUpperCase();
-  const color   = circleColor(circle.name);
-
+function MemberAvatar({ user }) {
+  const name    = user.nickname || user.email || '?';
+  const initial = name[0].toUpperCase();
+  const color   = circleColor(name);
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 flex items-center gap-4">
-      {/* 头像 */}
-      <div className={`w-11 h-11 rounded-full ${color} flex items-center justify-center text-lg font-bold text-white shrink-0`}>
+    <div className="flex flex-col items-center gap-1 w-10">
+      <div className={`w-8 h-8 rounded-full ${color} flex items-center justify-center text-xs font-bold text-white shrink-0`}>
         {initial}
       </div>
+      <span className="text-[10px] text-gray-500 dark:text-gray-400 truncate w-full text-center leading-tight">
+        {name}
+      </span>
+    </div>
+  );
+}
 
-      {/* 信息 */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="font-semibold text-gray-900 dark:text-gray-100 truncate">{circle.name}</span>
-          {isOwner && (
-            <span className="shrink-0 text-xs px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 rounded-md">
-              {t('circles.isOwner')}
-            </span>
+function CircleCard({ circle, isOwner, onCopy, copied, onAction, actionLabel, t }) {
+  const initial  = (circle.name || '?')[0].toUpperCase();
+  const color    = circleColor(circle.name);
+  const members  = circle.members || [];
+  const SHOW_MAX = 8;
+  const extra    = members.length > SHOW_MAX ? members.length - SHOW_MAX : 0;
+
+  return (
+    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 space-y-3">
+      {/* 主行 */}
+      <div className="flex items-center gap-4">
+        {/* 圈子头像 */}
+        <div className={`w-11 h-11 rounded-full ${color} flex items-center justify-center text-lg font-bold text-white shrink-0`}>
+          {initial}
+        </div>
+
+        {/* 信息 */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-gray-900 dark:text-gray-100 truncate">{circle.name}</span>
+            {isOwner && (
+              <span className="shrink-0 text-xs px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 rounded-md">
+                {t('circles.isOwner')}
+              </span>
+            )}
+          </div>
+          {circle.description && (
+            <p className="text-sm text-gray-500 dark:text-gray-400 truncate mt-0.5">{circle.description}</p>
+          )}
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+            {t('circles.members').replace('{n}', circle.member_count)}
+          </p>
+        </div>
+
+        {/* 操作 */}
+        <div className="flex gap-2 shrink-0">
+          <button onClick={onCopy}
+            className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
+            {copied ? t('circles.linkCopied') + ' ✓' : t('circles.inviteLink')}
+          </button>
+          <button onClick={onAction}
+            className="text-xs px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+            {actionLabel}
+          </button>
+        </div>
+      </div>
+
+      {/* 成员头像行 */}
+      {members.length > 0 && (
+        <div className="flex items-center gap-1 pl-0.5">
+          <div className="flex gap-1 flex-wrap">
+            {members.slice(0, SHOW_MAX).map(m => (
+              <MemberAvatar key={m.id} user={m} />
+            ))}
+          </div>
+          {extra > 0 && (
+            <span className="text-xs text-gray-400 dark:text-gray-500 ml-2">+{extra}</span>
           )}
         </div>
-        {circle.description && (
-          <p className="text-sm text-gray-500 dark:text-gray-400 truncate mt-0.5">{circle.description}</p>
-        )}
-        <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
-          {t('circles.members').replace('{n}', circle.member_count)}
-        </p>
-      </div>
-
-      {/* 操作 */}
-      <div className="flex gap-2 shrink-0">
-        <button onClick={onCopy}
-          className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
-          {copied ? t('circles.linkCopied') + ' ✓' : t('circles.inviteLink')}
-        </button>
-        <button onClick={onAction}
-          className="text-xs px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
-          {actionLabel}
-        </button>
-      </div>
+      )}
     </div>
   );
 }

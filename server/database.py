@@ -1914,3 +1914,18 @@ async def count_circles_joined_only(user_id: int) -> int:
             return row[0] if row else 0
 
 
+async def list_circle_members(circle_id: int) -> list:
+    """Return basic info of all circle members (id, nickname, email, joined_at)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT u.id, u.nickname, u.email, m.joined_at
+               FROM circle_members m
+               JOIN users u ON u.id = m.user_id
+               WHERE m.circle_id = ?
+               ORDER BY m.joined_at ASC""",
+            (circle_id,),
+        ) as cur:
+            return [dict(r) async for r in cur]
+
+

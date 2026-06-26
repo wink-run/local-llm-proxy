@@ -105,6 +105,7 @@ export default function Login() {
       let circleResult = null;
       if (inviteCircleCode) {
         try {
+          localStorage.setItem('token', res.data.token);
           const jr = await joinCircle(inviteCircleCode);
           circleResult = jr.data;
         } catch (_) {}

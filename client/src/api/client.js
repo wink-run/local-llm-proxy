@@ -262,3 +262,7 @@ export function previewCircle(code) {
 export function joinCircle(code) {
   return http.post(`/user/circles/join/${code}`);
 }
+
+export function listCircleMembers(circleId) {
+  return http.get(`/user/circles/${circleId}/members`);
+}
