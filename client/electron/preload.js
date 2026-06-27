@@ -92,7 +92,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener('update:downloaded', h);
     },
     onError: (cb) => {
-      const h = () => cb();
+      const h = (_e, d) => cb(d || {});
       ipcRenderer.on('update:error', h);
       return () => ipcRenderer.removeListener('update:error', h);
     },

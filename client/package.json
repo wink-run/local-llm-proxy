@@ -65,7 +65,10 @@
     },
     "mac": {
       "icon": "build/icon.icns",
-      "target": "dmg",
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.utilities",
       "hardenedRuntime": true,
       "notarize": true,

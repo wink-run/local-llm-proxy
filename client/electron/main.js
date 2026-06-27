@@ -724,32 +724,77 @@ function stopAgent() {
 function setupAutoUpdater() {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = console;
+
+  // renderer 未就绪时缓存 IPC 事件，避免 update:available 等消息丢失
+  let rendererReady = false;
+  const pendingUpdateEvents = [];
+
+  function pushUpdateEvent(channel, data) {
+    if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(channel, data);
+      return;
+    }
+    pendingUpdateEvents.push({ channel, data });
+  }
+
+  function markRendererReady() {
+    rendererReady = true;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    for (const { channel, data } of pendingUpdateEvents) {
+      mainWindow.webContents.send(channel, data);
+    }
+    pendingUpdateEvents.length = 0;
+  }
 
   autoUpdater.on('update-available', (info) => {
-    mainWindow?.webContents.send('update:available', {
+    console.info('[updater] update available:', info.version);
+    pushUpdateEvent('update:available', {
       version: info.version,
       releaseNotes: info.releaseNotes ?? null,
     });
   });
 
   autoUpdater.on('download-progress', (progress) => {
-    mainWindow?.webContents.send('update:progress', {
+    pushUpdateEvent('update:progress', {
       percent: Math.round(progress.percent),
     });
   });
 
   autoUpdater.on('update-downloaded', (info) => {
-    mainWindow?.webContents.send('update:downloaded', { version: info.version });
+    console.info('[updater] update downloaded:', info.version);
+    pushUpdateEvent('update:downloaded', { version: info.version });
+  });
+
+  autoUpdater.on('update-not-available', (info) => {
+    console.info('[updater] already on latest:', info.version);
   });
 
   autoUpdater.on('error', (err) => {
     console.error('[updater] error:', err.message);
-    mainWindow?.webContents.send('update:error');
+    pushUpdateEvent('update:error', { message: err.message });
   });
 
-  setTimeout(() => autoUpdater.checkForUpdates().catch((err) => {
-    console.error('[updater] checkForUpdates error:', err.message);
-  }), 5000);
+  const CHECK_DELAY_MS = 3000;
+  const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
+
+  function checkForUpdates() {
+    autoUpdater.checkForUpdates().catch((err) => {
+      console.error('[updater] checkForUpdates error:', err.message);
+    });
+  }
+
+  // 等页面加载 + React 挂载 listener 后再检查，并定期重试
+  if (mainWindow) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        markRendererReady();
+        checkForUpdates();
+      }, CHECK_DELAY_MS);
+    });
+  }
+
+  setInterval(checkForUpdates, CHECK_INTERVAL_MS);
 }
 
 // ── Agent config helpers ──────────────────────────────────────────────────────
