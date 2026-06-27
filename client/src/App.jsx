@@ -17,6 +17,7 @@ import Debug      from './pages/Debug';
 import Circles    from './pages/Circles';
 import CircleDetail from './pages/CircleDetail';
 import UpdateNotification from './components/UpdateNotification';
+import { UpdaterProvider } from './store/updater';
 import { useDeviceReporter } from './hooks/useDeviceReporter';
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
@@ -86,7 +87,9 @@ export default function App() {
         <LangProvider>
           <CurrencyProvider>
             <AuthProvider>
-              <Layout />
+              <UpdaterProvider>
+                <Layout />
+              </UpdaterProvider>
             </AuthProvider>
           </CurrencyProvider>
         </LangProvider>

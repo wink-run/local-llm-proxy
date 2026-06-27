@@ -721,6 +721,9 @@ function stopAgent() {
 
 // ── Auto updater ──────────────────────────────────────────────────────────────
 
+/** 已下载、待用户重启安装的版本（侧栏标识用） */
+let pendingUpdateReady = null;
+
 function setupAutoUpdater() {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
@@ -763,6 +766,7 @@ function setupAutoUpdater() {
 
   autoUpdater.on('update-downloaded', (info) => {
     console.info('[updater] update downloaded:', info.version);
+    pendingUpdateReady = { version: info.version };
     pushUpdateEvent('update:downloaded', { version: info.version });
   });
 
@@ -772,7 +776,10 @@ function setupAutoUpdater() {
 
   autoUpdater.on('error', (err) => {
     console.error('[updater] error:', err.message);
-    pushUpdateEvent('update:error', { message: err.message });
+    // 下载失败才清除；已下载待安装时不应因后续检查失败而丢失状态
+    if (!pendingUpdateReady) {
+      pushUpdateEvent('update:error', { message: err.message });
+    }
   });
 
   const CHECK_DELAY_MS = 3000;
@@ -1377,8 +1384,14 @@ function registerIPC() {
   });
 
   ipcMain.handle('update:install', () => {
+    pendingUpdateReady = null;
     autoUpdater.quitAndInstall();
   });
+
+  ipcMain.handle('updater:status', () => ({
+    ready: !!pendingUpdateReady,
+    version: pendingUpdateReady?.version ?? null,
+  }));
 
   ipcMain.handle('gateway:status',        () => gateway.getStatus());
   ipcMain.handle('gateway:getLog',        () => gateway.getLog());

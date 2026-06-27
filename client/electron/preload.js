@@ -97,6 +97,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener('update:error', h);
     },
     install: () => ipcRenderer.invoke('update:install'),
+    getStatus: () => ipcRenderer.invoke('updater:status'),
   },
   gateway: {
     status:          () => ipcRenderer.invoke('gateway:status'),

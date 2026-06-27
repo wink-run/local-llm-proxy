@@ -17,7 +17,8 @@ from fastapi.staticfiles import StaticFiles
 
 import database as db
 from admin_router import router as admin_router
-from catalog import PROVIDER_CATALOG, TIERS
+from billing_sources_router import router as billing_sources_router
+from catalog import TIERS, catalog_providers
 from device_router import router as device_router
 from auth import get_current_user_id
 from dispatch import handle_chat
@@ -93,6 +94,7 @@ app.add_middleware(
     expose_headers=["*"],
 )
 app.include_router(admin_router, prefix="/admin")
+app.include_router(billing_sources_router, prefix="/admin")
 app.include_router(user_router, prefix="/user")
 app.include_router(scene_router, prefix="/user")
 app.include_router(provider_router, prefix="/user")   # 个人供给源 /user/providers + /user/oauth/claude/*
@@ -129,7 +131,7 @@ async def wall_page():
 @app.get("/api/catalog")
 async def public_catalog():
     """公开接口：供给源目录（客户端启动时拉取，离线则用内置兜底）"""
-    return {"tiers": TIERS, "providers": PROVIDER_CATALOG}
+    return {"tiers": list(TIERS), "providers": await catalog_providers()}
 
 
 @app.get("/api/rates")

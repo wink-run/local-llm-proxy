@@ -1,0 +1,316 @@
+# providers.registry.yaml — 供给源唯一配置表（server + client 同步）
+# 改此文件后同步到 server/static/defaults/providers.registry.yaml
+
+version: 1
+
+providers:
+  # ── 免费层 ──
+  - id: ollama
+    label: Ollama
+    icon: "🦙"
+    tier: free
+    hint: 自动检测本地实例，无需配置
+    base_url: http://127.0.0.1:11434/v1
+    modalities: { language: true }
+    models: []
+    pricing: {}
+    handler: local
+    enabled_default: true
+    keyless: true
+    key_prefix: []
+    signup_url: https://ollama.com/download
+
+  - id: nvidia
+    label: NVIDIA NIM
+    icon: "🟢"
+    tier: free
+    hint: 新用户免费额度：build.nvidia.com
+    base_url: https://integrate.api.nvidia.com/v1
+    modalities: { language: true }
+    models: []
+    pricing: {}
+    handler: openai
+    enabled_default: false
+    key_prefix: [nvapi-]
+    signup_url: https://build.nvidia.com
+
+  - id: openrouter
+    label: OpenRouter
+    icon: "🛣"
+    tier: free
+    hint: 含 :free 免费模型：openrouter.ai
+    base_url: https://openrouter.ai/api/v1
+    modalities: { language: true }
+    models: [gpt-4o, claude-sonnet-4-5]
+    pricing:
+      gpt-4o:            { in: 3.00, out: 12.00, cacheRead: 1.50 }
+      claude-sonnet-4-5: { in: 3.50, out: 16.00, cacheRead: 0.35 }
+    handler: openai
+    payg: true
+    enabled_default: false
+    key_prefix: [sk-or-]
+    signup_url: https://openrouter.ai/keys
+
+  - id: siliconflow
+    label: SiliconFlow
+    icon: "🧪"
+    tier: free
+    hint: 国内免费源，新人 ¥16：siliconflow.cn
+    base_url: https://api.siliconflow.cn/v1
+    modalities: { language: true, embedding: true }
+    models: []
+    pricing: {}
+    handler: openai
+    enabled_default: false
+    key_prefix: [sk-]
+    signup_url: https://cloud.siliconflow.cn/account/ak
+
+  - id: agnes-ai
+    label: Agnes AI
+    icon: "🤍"
+    tier: free
+    hint: OpenAI 兼容接口：agnes-ai.com
+    base_url: https://apihub.agnes-ai.com/v1
+    modalities: { language: true, image: true }
+    models:
+      - { name: agnes-image-2.0-flash, type: image }
+    pricing: {}
+    handler: agnes-image
+    payg: true
+    enabled_default: false
+    key_prefix: [sk-]
+    signup_url: https://platform.agnes-ai.com/settings/apiKeys
+
+  - id: groq
+    label: Groq
+    icon: "⚡"
+    tier: free
+    hint: 免费额度大、超快推理：console.groq.com
+    base_url: https://api.groq.com/openai/v1
+    modalities: { language: true }
+    models: [llama-3.3-70b, llama-3.1-8b]
+    pricing:
+      llama-3.3-70b: { in: 0.59, out: 0.79 }
+      llama-3.1-8b:  { in: 0.05, out: 0.08 }
+    handler: openai
+    enabled_default: false
+    key_prefix: [gsk_]
+    signup_url: https://console.groq.com/keys
+
+  - id: cerebras
+    label: Cerebras
+    icon: "🧠"
+    tier: free
+    hint: 免费额度、极速推理：cloud.cerebras.ai
+    base_url: https://api.cerebras.ai/v1
+    modalities: { language: true }
+    models: []
+    pricing: {}
+    handler: openai
+    enabled_default: false
+    key_prefix: [csk-]
+    signup_url: https://cloud.cerebras.ai/platform
+
+  - id: github-models
+    label: GitHub Models
+    icon: "🐙"
+    tier: free
+    hint: GitHub 账号免费额度（用 PAT）
+    base_url: https://models.github.ai/inference
+    modalities: { language: true }
+    models: []
+    pricing: {}
+    handler: openai
+    enabled_default: false
+    key_prefix: [ghp_, github_pat_]
+    signup_url: https://github.com/settings/tokens
+
+  # ── P2P ──
+  - id: tokenbank-p2p
+    label: P2P 分享网络
+    icon: "🌐"
+    tier: p2p
+    hint: 消耗积分使用社区共享算力
+    base_url: ""
+    modalities: { language: true }
+    models: []
+    pricing: {}
+    handler: p2p
+    enabled_default: true
+    keyless: true
+    key_prefix: []
+    signup_url: ""
+
+  # ── 付费层 ──
+  - id: openai
+    label: OpenAI
+    icon: "🤖"
+    tier: paid
+    hint: 付费 API，支持 GPT-4o / o3 等全系模型
+    base_url: https://api.openai.com/v1
+    modalities: { language: true, embedding: true, image: true }
+    models: [gpt-4o, gpt-4o-mini, gpt-4.1, gpt-5, gpt-5-mini, dall-e-3]
+    pricing:
+      gpt-4o:      { in: 2.50, out: 10.00, cacheRead: 1.25, cacheWrite: 3.13 }
+      gpt-4o-mini: { in: 0.15, out: 0.60,  cacheRead: 0.075, cacheWrite: 0.19 }
+      gpt-4.1:     { in: 2.50, out: 10.00, cacheRead: 1.25, cacheWrite: 3.13 }
+      gpt-5:       { in: 1.25, out: 10.00, cacheRead: 0.125, cacheWrite: 1.56 }
+      gpt-5-mini:  { in: 0.15, out: 0.60,  cacheRead: 0.015, cacheWrite: 0.19 }
+    handler: openai
+    payg: true
+    enabled_default: false
+    key_prefix: [sk-proj-, sk-]
+    signup_url: https://platform.openai.com/api-keys
+    oauth: { provider: codex, label: ChatGPT 订阅登录 }
+    aliases: [codex-cli]
+
+  - id: anthropic-paid
+    label: Anthropic
+    icon: "🧬"
+    tier: paid
+    hint: 付费 API，Claude 3.5 / 3.7 等系列
+    base_url: https://api.anthropic.com/v1
+    modalities: { language: true }
+    models: [claude-sonnet-4-6, claude-sonnet-4-5, claude-sonnet-4, claude-haiku-4-5, claude-opus-4-6]
+    pricing:
+      claude-opus-4-6:   { in: 5.00, out: 25.00, cacheRead: 0.50, cacheWrite: 6.25 }
+      claude-sonnet-4-6: { in: 3.00, out: 15.00, cacheRead: 0.30, cacheWrite: 3.75 }
+      claude-sonnet-4-5: { in: 3.00, out: 15.00, cacheRead: 0.30, cacheWrite: 3.75 }
+      claude-sonnet-4:   { in: 3.00, out: 15.00, cacheRead: 0.30, cacheWrite: 3.75 }
+      claude-haiku-4-5:  { in: 1.00, out: 5.00,  cacheRead: 0.10, cacheWrite: 1.25 }
+    handler: anthropic
+    api_format: anthropic
+    payg: true
+    enabled_default: false
+    key_prefix: [sk-ant-]
+    signup_url: https://console.anthropic.com/settings/keys
+    oauth: { provider: claude, label: Claude 订阅登录 }
+    aliases: [claude-cli]
+
+  - id: gemini
+    label: Google Gemini
+    icon: "💎"
+    tier: paid
+    hint: AI Studio 免费领 API Key
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    modalities: { language: true, embedding: true }
+    models: [gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash]
+    pricing:
+      gemini-2.5-pro:   { in: 1.25, out: 10.00, cacheRead: 0.125, cacheWrite: 1.56 }
+      gemini-2.5-flash: { in: 0.30, out: 2.50,  cacheRead: 0.03,  cacheWrite: 0.38 }
+      gemini-2.0-flash: { in: 0.075, out: 0.30, cacheRead: 0.0075, cacheWrite: 0.094 }
+    handler: gemini
+    api_format: gemini
+    payg: true
+    enabled_default: false
+    key_prefix: [AIza]
+    signup_url: https://aistudio.google.com/app/apikey
+    aliases: [gemini-cli]
+
+  - id: github-copilot
+    label: GitHub Copilot
+    icon: "🐱"
+    tier: paid
+    hint: 用 GitHub 账号登录（需 Copilot 订阅）
+    base_url: https://api.githubcopilot.com
+    modalities: { language: true }
+    models: []
+    pricing: {}
+    handler: openai
+    enabled_default: false
+    keyless: true
+    key_prefix: []
+    signup_url: https://github.com/features/copilot
+    oauth: { provider: copilot, label: GitHub 登录 }
+
+  - id: deepseek
+    label: DeepSeek
+    icon: "🐋"
+    tier: paid
+    hint: 官方付费：platform.deepseek.com
+    base_url: https://api.deepseek.com/v1
+    modalities: { language: true }
+    models: [deepseek-chat, deepseek-reasoner]
+    pricing:
+      deepseek-chat:     { in: 0.14, out: 0.28, cacheRead: 0.003, cacheWrite: 0.18 }
+      deepseek-reasoner: { in: 0.14, out: 0.28, cacheRead: 0.003, cacheWrite: 0.18 }
+    handler: openai
+    payg: true
+    enabled_default: false
+    key_prefix: [sk-]
+    signup_url: https://platform.deepseek.com/api_keys
+
+  - id: xai
+    label: xAI Grok
+    icon: "✖️"
+    tier: paid
+    hint: 付费 API：console.x.ai
+    base_url: https://api.x.ai/v1
+    modalities: { language: true }
+    models: [grok-4, grok-3-mini]
+    pricing:
+      grok-4:      { in: 3.00, out: 15.00 }
+      grok-3-mini: { in: 0.30, out: 0.50 }
+    handler: openai
+    payg: true
+    enabled_default: false
+    key_prefix: [xai-]
+    signup_url: https://console.x.ai
+    aliases: [grok]
+
+  - id: fireworks
+    label: Fireworks
+    icon: "🎆"
+    tier: paid
+    hint: 低价高速：fireworks.ai
+    base_url: https://api.fireworks.ai/inference/v1
+    modalities: { language: true }
+    models: []
+    pricing: {}
+    handler: openai
+    payg: true
+    enabled_default: false
+    key_prefix: [fw_]
+    signup_url: https://fireworks.ai/account/api-keys
+
+  - id: mistral
+    label: Mistral
+    icon: "🌬"
+    tier: paid
+    hint: 官方付费 API：console.mistral.ai
+    base_url: https://api.mistral.ai/v1
+    modalities: { language: true }
+    models: []
+    pricing: {}
+    handler: openai
+    enabled_default: false
+    key_prefix: []
+    signup_url: https://console.mistral.ai/api-keys
+
+  - id: together
+    label: Together AI
+    icon: "🔗"
+    tier: paid
+    hint: 开源模型托管：together.ai
+    base_url: https://api.together.xyz/v1
+    modalities: { language: true }
+    models: []
+    pricing: {}
+    handler: openai
+    enabled_default: false
+    key_prefix: []
+    signup_url: https://api.together.xyz/settings/api-keys
+
+  - id: cohere
+    label: Cohere
+    icon: "🔵"
+    tier: paid
+    hint: 付费 API、有免费试用：cohere.com
+    base_url: https://api.cohere.ai/compatibility/v1
+    modalities: { language: true, embedding: true }
+    models: []
+    pricing: {}
+    handler: openai
+    enabled_default: false
+    key_prefix: []
+    signup_url: https://dashboard.cohere.com/api-keys

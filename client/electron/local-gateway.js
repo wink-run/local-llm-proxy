@@ -11,6 +11,9 @@ const reqRouter = require('./request-router');
 const oauth = require('./oauth');
 const { estimateCost } = require('./pricing');
 const { compressBody, compressionRatio } = require('./compressor');
+const { handleTts }             = require('./handlers/ttsHandler');
+const { handleImageGeneration } = require('./handlers/imageHandler');
+const { handleEmbedding }       = require('./handlers/embeddingHandler');
 
 // 出站代理：境外供给源（如 Google Gemini）常需走本机代理才能连通。
 // 优先级：provider.proxy > 全局 cfg.network_proxy > 环境变量(HTTPS_PROXY/HTTP_PROXY，遵守 NO_PROXY)。
@@ -603,7 +606,7 @@ function proxyRequest(provider, reqPath, body, res) {
       const ap = provider._oauth.applyAuth({ headers, body: sendBody, credentials: provider.credentials });
       headers = ap.headers; sendBody = ap.body;
     } else if (provider.token) {
-      if (/anthropic/i.test(provider.base_url || '') || provider.api_format === 'anthropic') {
+      if (providerApiFormat(provider) === 'anthropic') {
         headers['x-api-key'] = provider.token;
         headers['anthropic-version'] = '2023-06-01';
       } else {
@@ -1095,12 +1098,21 @@ function proxyAnthropicStream(provider, oaiBody, model, res) {
   });
 }
 
+// ── Provider API format detection ────────────────────────────────────────────
+// Single source of truth: explicit api_format field wins; URL heuristics are
+// only a fallback for providers created before the field was exposed in UI.
+function providerApiFormat(provider) {
+  if (provider.api_format) return provider.api_format;
+  if (/anthropic/i.test(provider.base_url || '')) return 'anthropic';
+  if (/generativelanguage\.googleapis\.com/i.test(provider.base_url || '')) return 'gemini';
+  return 'openai';
+}
+
 // ── Gemini (generateContent) ⇄ OpenAI ───────────────────────────────────────
 // Google Gemini 用 generateContent / streamGenerateContent，认证头 x-goog-api-key，
 // 请求体/响应体与 OpenAI 完全不同。这里做 OpenAI ⇄ Gemini 双向转换（与 server/virtual_worker.py 对齐）。
 function isGeminiProvider(provider) {
-  return /generativelanguage\.googleapis\.com/i.test(provider.base_url || '')
-    || provider.api_format === 'gemini' || provider.api_style === 'gemini';
+  return providerApiFormat(provider) === 'gemini' || provider.api_style === 'gemini';
 }
 
 // gemini base：用户 base_url 已含 /v1beta 时不重复拼接
@@ -1756,7 +1768,7 @@ async function callProvider(provider, isAnthropic, streaming, reqPath, body, att
 
   // Codex Responses 请求：anthropic 供给源走 Responses→Anthropic 桥，否则走 Responses⇄Chat
   if (reqPath === '/v1/responses' || reqPath === '/responses') {
-    const toAnthropic = /anthropic/i.test(provider.base_url || '') || provider.api_format === 'anthropic';
+    const toAnthropic = providerApiFormat(provider) === 'anthropic';
     const rb = { ...body, model: attemptModel };
     return toAnthropic
       ? await proxyResponsesViaAnthropic(provider, rb, attemptModel, res)
@@ -1774,7 +1786,7 @@ async function callProvider(provider, isAnthropic, streaming, reqPath, body, att
   }
 
   // Anthropic-compatible provider
-  const isAnthropicProvider = /anthropic/i.test(provider.base_url || '') || provider.api_format === 'anthropic';
+  const isAnthropicProvider = providerApiFormat(provider) === 'anthropic';
   if (isAnthropicProvider) {
     if (isAnthropic) {
       // Anthropic client → Anthropic provider: direct proxy to /v1/messages
@@ -1867,7 +1879,7 @@ function pickSteps(scene, ctx) {
 // 内部「调一次模型拿纯文本」，不写 res。支持 OpenAI / Anthropic 两种上游格式。
 function internalComplete(provider, model, prompt, maxTokens = 8) {
   return new Promise((resolve, reject) => {
-    const isAnthropic = /anthropic/i.test(provider.base_url || '') || provider.api_format === 'anthropic';
+    const isAnthropic = providerApiFormat(provider) === 'anthropic';
     const _ver = apiVer(provider.base_url);
     let u; try { u = new URL(normBase(provider.base_url) + (isAnthropic ? `/${_ver}/messages` : `/${_ver}/chat/completions`)); }
     catch { return reject(new Error('invalid_url')); }
@@ -2312,6 +2324,39 @@ function handleRequest(req, res) {
   if (method === 'GET' && cleanPath === '/api/gateway/status') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(getStatus()));
+    return;
+  }
+
+  // TTS
+  if (method === 'POST' && cleanPath === '/v1/audio/speech') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try { handleTts(JSON.parse(body), res, enabledProviders); }
+      catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); }
+    });
+    return;
+  }
+
+  // Embeddings
+  if (method === 'POST' && cleanPath === '/v1/embeddings') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try { handleEmbedding(JSON.parse(body), res, enabledProviders); }
+      catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); }
+    });
+    return;
+  }
+
+  // Image generation
+  if (method === 'POST' && (cleanPath === '/v1/images/generations' || cleanPath === '/v1/images/generate')) {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try { handleImageGeneration(JSON.parse(body), res, enabledProviders); }
+      catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); }
+    });
     return;
   }
 

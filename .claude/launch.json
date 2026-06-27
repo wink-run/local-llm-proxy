@@ -2,6 +2,14 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "client-vite",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:vite"],
+      "cwd": "/Users/ully/githubprojects/local-llm-proxy/client",
+      "port": 5173,
+      "autoPort": false
+    },
+    {
       "name": "server",
       "runtimeExecutable": "/Users/ully/githubprojects/local-llm-proxy/server/.venv/bin/uvicorn",
       "runtimeArgs": ["server:app", "--port", "8000"],

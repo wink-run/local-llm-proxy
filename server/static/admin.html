@@ -570,6 +570,154 @@ select.form-input{cursor:pointer}
     </div>
 
     <!-- Config Distribution -->
+    <div v-show="activeTab === 'billing'" class="tab-content">
+      <div class="toolbar">
+        <span style="font-size:15px;font-weight:600">{{ lang==='zh' ? '个人源目录（表单）' : 'Personal Source Catalog' }}</span>
+        <div class="toolbar-right" style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn-sm" :class="{ active: bsFilter==='all' }" @click="bsFilter='all'">{{ lang==='zh'?'全部':'All' }}</button>
+          <button class="btn-sm" :class="{ active: bsFilter==='payg' }" @click="bsFilter='payg'">{{ lang==='zh'?'按量付费':'PAYG' }}</button>
+          <button class="btn-sm" :class="{ active: bsFilter==='app_sub' }" @click="bsFilter='app_sub'">{{ lang==='zh'?'APP 订阅':'App Sub' }}</button>
+          <button class="btn-sm" :class="{ active: bsFilter==='api_sub' }" @click="bsFilter='api_sub'">{{ lang==='zh'?'API 订阅':'API Sub' }}</button>
+          <button class="btn-sm" @click="importBsLegacy">{{ lang==='zh'?'从默认导入':'Import defaults' }}</button>
+          <button class="btn btn-indigo" @click="openBsModal(null)">＋ {{ lang==='zh'?'新增':'Add' }}</button>
+          <button class="btn btn-indigo" :disabled="bsSaving" @click="publishBsSources">{{ lang==='zh'?'保存并发布':'Publish' }}</button>
+        </div>
+      </div>
+      <p style="font-size:12px;color:#7b7b7b;margin-bottom:12px;line-height:1.6">
+        {{ lang==='zh'
+          ? '在此配置个人页可选的按量/订阅供给源：图标、模型（ID·模态·价格）、层级、Base URL、验证方式、API 风格。发布后自动编译写入 config.apps 与 providers.registry，客户端拉取即可生效。'
+          : 'Configure PAYG/subscription sources for the profile page. Publish compiles to config.apps + providers.registry.' }}
+      </p>
+      <div v-if="bsMsg" style="font-size:12px;margin-bottom:10px" :style="bsMsg.startsWith('✓')?'color:#16a34a':'color:#dc2626'">{{ bsMsg }}</div>
+      <div class="panel" style="padding:0;overflow:hidden">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ lang==='zh'?'分类':'Category' }}</th>
+              <th>ID</th>
+              <th>{{ lang==='zh'?'名称':'Label' }}</th>
+              <th>{{ lang==='zh'?'层级':'Tier' }}</th>
+              <th>{{ lang==='zh'?'验证':'Auth' }}</th>
+              <th>API</th>
+              <th>{{ lang==='zh'?'模型':'Models' }}</th>
+              <th>{{ lang==='zh'?'操作':'Actions' }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in bsFiltered()" :key="s.id">
+              <td><span class="badge badge-blue">{{ catLabel(s.category) }}</span></td>
+              <td class="mono">{{ s.id }}</td>
+              <td>{{ s.icon }} {{ s.label }}</td>
+              <td>{{ s.tier }}</td>
+              <td>{{ s.auth }}</td>
+              <td>{{ s.api_format }}</td>
+              <td>{{ (s.models||[]).length }}</td>
+              <td>
+                <button class="btn-xs" @click="openBsModal(s)">{{ lang==='zh'?'编辑':'Edit' }}</button>
+                <button class="btn-xs btn-danger" @click="deleteBsSource(s)">{{ lang==='zh'?'删':'Del' }}</button>
+              </td>
+            </tr>
+            <tr v-if="!bsFiltered().length" class="empty-row"><td colspan="8">{{ lang==='zh'?'暂无条目，可「从默认导入」或新增':'No entries yet' }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 编辑弹窗 -->
+      <div v-if="bsModalOpen" style="position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px" @click.self="closeBsModal">
+        <div style="background:#fff;border-radius:14px;padding:20px;width:640px;max-width:100%;max-height:90vh;overflow-y:auto;border:1px solid #e7e4e1">
+          <h3 style="font-size:16px;font-weight:600;margin-bottom:14px">{{ bsEditId ? (lang==='zh'?'编辑个人源':'Edit Source') : (lang==='zh'?'新增个人源':'Add Source') }}</h3>
+          <div class="form-row">
+            <div class="form-group"><label>ID *</label><input v-model="bsForm.id" class="form-input form-input-md" :disabled="!!bsEditId" /></div>
+            <div class="form-group"><label>{{ lang==='zh'?'分类':'Category' }}</label>
+              <select v-model="bsForm.category" class="form-input form-input-md">
+                <option value="payg">{{ lang==='zh'?'按量付费':'PAYG' }}</option>
+                <option value="app_sub">{{ lang==='zh'?'APP 订阅':'App Subscription' }}</option>
+                <option value="api_sub">{{ lang==='zh'?'API 订阅':'API Subscription' }}</option>
+              </select>
+            </div>
+            <div class="form-group"><label>{{ lang==='zh'?'名称':'Label' }}</label><input v-model="bsForm.label" class="form-input form-input-md" /></div>
+            <div class="form-group"><label>{{ lang==='zh'?'图标':'Icon' }}</label><input v-model="bsForm.icon" class="form-input" style="width:64px" /></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label>{{ lang==='zh'?'付费层次':'Tier' }}</label>
+              <select v-model="bsForm.tier" class="form-input form-input-sm">
+                <option value="free">free</option><option value="paid">paid</option><option value="p2p">p2p</option>
+              </select>
+            </div>
+            <div class="form-group"><label>{{ lang==='zh'?'验证方式':'Auth' }}</label>
+              <select v-model="bsForm.auth" class="form-input form-input-sm">
+                <option value="api_key">API Key</option><option value="oauth">OAuth</option>
+              </select>
+            </div>
+            <div class="form-group"><label>API {{ lang==='zh'?'风格':'Format' }}</label>
+              <select v-model="bsForm.api_format" class="form-input form-input-sm">
+                <option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option>
+              </select>
+            </div>
+            <div class="form-group"><label>Handler</label>
+              <select v-model="bsForm.handler" class="form-input form-input-sm">
+                <option value="openai">openai</option><option value="anthropic">anthropic</option>
+                <option value="gemini">gemini</option><option value="local">local</option>
+                <option value="p2p">p2p</option><option value="agnes-image">agnes-image</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom:12px"><label>Base URL</label>
+            <input v-model="bsForm.base_url" class="form-input" style="width:100%" placeholder="https://api.example.com/v1" />
+          </div>
+          <div class="form-row" v-if="bsForm.category==='app_sub'">
+            <div class="form-group"><label>agent_id</label><input v-model="bsForm.agent_id" class="form-input form-input-md" /></div>
+            <div class="form-group"><label>plan_provider_id</label><input v-model="bsForm.plan_provider_id" class="form-input form-input-md" /></div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#7b7b7b;padding-bottom:8px">
+              <input type="checkbox" v-model="bsForm.subscription_to_api" /> {{ lang==='zh'?'可转 API 供给源':'Can convert to API' }}
+            </label>
+          </div>
+          <div class="form-row" v-if="bsForm.category==='api_sub'">
+            <div class="form-group"><label>plan_provider_id</label><input v-model="bsForm.plan_provider_id" class="form-input form-input-md" /></div>
+          </div>
+          <div class="form-row" v-if="bsForm.auth==='oauth' || bsForm.oauth_provider">
+            <div class="form-group"><label>OAuth provider</label><input v-model="bsForm.oauth_provider" class="form-input form-input-md" placeholder="claude / codex / copilot" /></div>
+            <div class="form-group"><label>OAuth {{ lang==='zh'?'按钮文案':'Label' }}</label><input v-model="bsForm.oauth_label" class="form-input form-input-lg" /></div>
+          </div>
+          <!-- 模型列表 -->
+          <div style="margin:14px 0">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <span style="font-size:13px;font-weight:600">{{ lang==='zh'?'可用模型':'Models' }}</span>
+              <button type="button" class="btn-xs" @click="bsAddModel">＋ {{ lang==='zh'?'添加模型':'Add' }}</button>
+            </div>
+            <div v-for="(m, mi) in bsForm.models" :key="mi" style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;align-items:center">
+              <input v-model="m.id" class="form-input form-input-md" :placeholder="lang==='zh'?'模型 ID':'Model ID'" />
+              <select v-model="m.modality" class="form-input form-input-sm">
+                <option value="chat">{{ lang==='zh'?'对话':'Chat' }}</option>
+                <option value="image">{{ lang==='zh'?'图像':'Image' }}</option>
+                <option value="embedding">Embedding</option>
+              </select>
+              <input v-model="m.in" class="form-input form-input-sm" placeholder="in $/M" />
+              <input v-model="m.out" class="form-input form-input-sm" placeholder="out $/M" />
+              <button type="button" class="btn-xs btn-danger" @click="bsRemoveModel(mi)">×</button>
+            </div>
+          </div>
+          <!-- 套餐（订阅类） -->
+          <div v-if="bsForm.category==='api_sub' || bsForm.category==='app_sub'" style="margin:14px 0">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <span style="font-size:13px;font-weight:600">{{ lang==='zh'?'订阅套餐':'Plans' }}</span>
+              <button type="button" class="btn-xs" @click="bsAddPlan">＋</button>
+            </div>
+            <div v-for="(pl, pi) in bsForm.plans" :key="pi" style="display:flex;gap:6px;margin-bottom:6px">
+              <input v-model="pl.id" class="form-input form-input-sm" placeholder="id" />
+              <input v-model="pl.label" class="form-input form-input-md" placeholder="label" />
+              <input v-model="pl.monthly_usd" class="form-input form-input-sm" placeholder="USD/mo" />
+              <button type="button" class="btn-xs btn-danger" @click="bsRemovePlan(pi)">×</button>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+            <button class="btn-sm" @click="closeBsModal">{{ lang==='zh'?'取消':'Cancel' }}</button>
+            <button class="btn btn-indigo" :disabled="bsSaving" @click="saveBsSource">{{ lang==='zh'?'保存':'Save' }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div v-show="activeTab === 'distrib'" class="tab-content">
       <!-- 状态概览 -->
       <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap">
@@ -650,6 +798,7 @@ select.form-input{cursor:pointer}
   </div>
 </div>
 
+<script src="/static/admin-billing-sources.js"></script>
 <script>
 const { createApp, ref, computed, onMounted, onUnmounted, nextTick, reactive } = Vue
 
@@ -662,7 +811,7 @@ const LANGS = {
     notePlaceholder: '备注（可选）', newKey: '新建 Key', note: '备注', status: '状态',
     createdAt: '创建时间', actions: '操作', noKeys: '暂无 API Key',
     copy: '复制', enabled: '启用', disabled: '禁用', enable: '启用', disable: '禁用', delete: '删除',
-    tabs: { workers:'在线 PC', keys:'API Keys', models:'模型配置', users:'用户管理', orders:'购买审批', config:'系统配置', debug:'调试', virtual:'虚拟 Agent', distrib:'配置下发' },
+    tabs: { workers:'在线 PC', keys:'API Keys', models:'模型配置', users:'用户管理', orders:'购买审批', config:'系统配置', debug:'调试', virtual:'虚拟 Agent', billing:'个人源', distrib:'配置下发' },
     addEditModel: '新增 / 编辑模型', modelName: '模型名称', displayName: '显示名称', tier: '类型',
     contributeRate: '贡献率（积分/千token）', consumeRate: '消费率（积分/千token）',
     yes: '是', no: '否', save: '保存', saving: '保存中', edit: '编辑',
@@ -705,7 +854,7 @@ const LANGS = {
     notePlaceholder: 'Note (optional)', newKey: 'New Key', note: 'Note', status: 'Status',
     createdAt: 'Created', actions: 'Actions', noKeys: 'No API keys yet',
     copy: 'Copy', enabled: 'Active', disabled: 'Disabled', enable: 'Enable', disable: 'Disable', delete: 'Delete',
-    tabs: { workers:'Workers', keys:'API Keys', models:'Models', users:'Users', orders:'Orders', config:'Config', debug:'Debug', virtual:'Virtual Agents', distrib:'Config Distrib' },
+    tabs: { workers:'Workers', keys:'API Keys', models:'Models', users:'Users', orders:'Orders', config:'Config', debug:'Debug', virtual:'Virtual Agents', billing:'Sources', distrib:'Config Distrib' },
     addEditModel: 'Add / Edit Model', modelName: 'Model Name', displayName: 'Display Name', tier: 'Tier',
     contributeRate: 'Contribute Rate (credits/K tokens)', consumeRate: 'Consume Rate (credits/K tokens)',
     yes: 'Yes', no: 'No', save: 'Save', saving: 'Saving…', edit: 'Edit',
@@ -763,6 +912,7 @@ createApp({
         { key:'config',  label: tl.config },
         { key:'debug',   label: tl.debug },
         { key:'virtual', label: tl.virtual },
+        { key:'billing', label: tl.billing },
         { key:'distrib', label: tl.distrib },
       ]
     })
@@ -792,6 +942,7 @@ createApp({
       if (k === 'orders') fetchOrders()
       if (k === 'config') fetchConfig()
       if (k === 'virtual') fetchVirtualAgents()
+      if (k === 'billing') fetchBillingSources()
       if (k === 'distrib') fetchDistribInfo()
     }
     async function api(path, opts = {}) {
@@ -1137,6 +1288,9 @@ createApp({
         await fetchDistribInfo()
       } catch (e) { distribMsg.value[type] = e.message }
     }
+    /* ── Billing Sources (个人源表单) ── */
+    const billingAdmin = initBillingSourcesAdmin(api, lang, ref)
+
     /* ── Utils ── */
     function fmtTime(iso) { if (!iso) return '—'; return new Date(iso).toLocaleString(lang.value==='zh'?'zh-CN':'en-US',{hour12:false}) }
 
@@ -1162,6 +1316,7 @@ createApp({
       vaAddModel, vaRemoveModel, vaSetModelType, vaModelName, vaModelType,
       distribInfo, distribText, distribMsg, distribSaving,
       fetchDistribInfo, uploadDistrib, deleteDistrib, loadLocalFile, reloadDistribSource,
+      ...billingAdmin,
       fmtTime,
     }
   }

@@ -1487,13 +1487,13 @@ function traceAgentIdForApp(app) {
 
 /** 数据来源摘要：网关 / 会话补录（或二者皆有） */
 function buildDataSourceSummary(app, proxy, session, fmtN, t) {
-  const hasGateway = app.link_method === 'api-key' || app.link_method === 'shim';
   const hasSession = appHasSessionImport(app);
   const tags = [];
-  if (hasGateway && proxy.calls > 0) {
+  // 有 proxy 记录即展示网关来源（manual/api-key/shim 均可能产生）
+  if (proxy.calls > 0) {
     tags.push({ icon: '🛰️', label: t('gateway.detail.sourceGateway'), calls: proxy.calls, tokens: proxy.tokens, tone: 'blue' });
   }
-  if (hasSession) {
+  if (hasSession || session.calls > 0) {
     tags.push({ icon: '📄', label: t('gateway.detail.sourceSession'), calls: session.calls, tokens: session.tokens, tone: 'green' });
   }
   const summary = tags.length === 2

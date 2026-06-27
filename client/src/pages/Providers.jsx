@@ -1079,7 +1079,8 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
 
   function remove(name)     { onChange(normalized.filter(m => m.name !== name)); }
   function toggleType(name) {
-    onChange(normalized.map(m => m.name === name ? { ...m, type: m.type === 'chat' ? 'image' : 'chat' } : m));
+    const cycle = { chat: 'image', image: 'embedding', embedding: 'chat' };
+    onChange(normalized.map(m => m.name === name ? { ...m, type: cycle[m.type] || 'chat' } : m));
   }
 
   function handleInputKeyDown(e) {
@@ -1141,9 +1142,11 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
                   className={`px-1.5 py-0.5 text-xs font-sans border-l border-zinc-300 dark:border-zinc-700 transition-colors ${
                     m.type === 'image'
                       ? 'bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 hover:bg-purple-200 dark:hover:bg-purple-800/60'
-                      : 'bg-blue-50 dark:bg-blue-900/20 text-blue-500 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40'
+                      : m.type === 'embedding'
+                        ? 'bg-teal-50 dark:bg-teal-900/20 text-teal-600 dark:text-teal-400 hover:bg-teal-100 dark:hover:bg-teal-900/40'
+                        : 'bg-blue-50 dark:bg-blue-900/20 text-blue-500 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40'
                   }`}>
-                  {m.type === 'image' ? t('providers.models.typeImage') : t('providers.models.typeText')}
+                  {m.type === 'image' ? t('providers.models.typeImage') : m.type === 'embedding' ? t('providers.models.typeEmbedding') : t('providers.models.typeText')}
                 </button>
                 <button onClick={() => remove(m.name)} className="px-1.5 py-0.5 border-l border-zinc-300 dark:border-zinc-700 text-zinc-400 hover:text-red-500 dark:hover:text-red-400 leading-none">×</button>
               </span>
@@ -1170,18 +1173,12 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
           />
           {suggestionMenu}
         </div>
-        <div className="flex rounded-lg overflow-hidden border border-zinc-300 dark:border-zinc-600 shrink-0 text-xs font-medium">
-          {[['chat', t('providers.models.chat')], ['image', t('providers.models.image')]].map(([typeKey, label]) => (
-            <button key={typeKey} type="button" onClick={() => setInputType(typeKey)}
-              className={`px-2 py-1.5 transition-colors ${
-                inputType === typeKey
-                  ? typeKey === 'chat' ? 'bg-blue-600 text-white' : 'bg-purple-600 text-white'
-                  : 'bg-white dark:bg-zinc-800 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300'
-              }`}>
-              {label}
-            </button>
-          ))}
-        </div>
+        <select value={inputType} onChange={e => setInputType(e.target.value)}
+          className="shrink-0 bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:border-blue-500">
+          <option value="chat">{t('providers.models.chat')}</option>
+          <option value="image">{t('providers.models.image')}</option>
+          <option value="embedding">{t('providers.models.embedding')}</option>
+        </select>
         <button
           onClick={() => add()}
           disabled={!canAdd()}
@@ -1336,6 +1333,20 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
               placeholder={t('providers.custom.baseUrlPlaceholder')}
               className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-600 focus:outline-none focus:border-blue-500"
             />
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">{t('providers.card.apiFormat')}</span>
+              <div className="inline-flex rounded-lg border border-zinc-300 dark:border-zinc-700 overflow-hidden text-xs">
+                {['openai', 'anthropic', 'gemini'].map(fmt => (
+                  <button key={fmt}
+                    onClick={() => onUpdate(provider.id, { api_format: fmt })}
+                    className={(provider.api_format || 'openai') === fmt
+                      ? 'px-2.5 py-1 bg-blue-600 text-white'
+                      : 'px-2.5 py-1 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'}>
+                    {t(`providers.card.apiFormat${fmt.charAt(0).toUpperCase() + fmt.slice(1)}`)}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="flex gap-2">
               <input
                 value={provider.token || ''}
@@ -1802,6 +1813,22 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
                   autoComplete="off"
                   className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-sm font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-600 focus:outline-none focus:border-blue-500"
                 />
+                {provider.base_url && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">{t('providers.card.apiFormat')}</span>
+                    <div className="inline-flex rounded-lg border border-zinc-300 dark:border-zinc-700 overflow-hidden text-xs">
+                      {['openai', 'anthropic', 'gemini'].map(fmt => (
+                        <button key={fmt}
+                          onClick={() => onUpdate(provider.id, { api_format: fmt })}
+                          className={(provider.api_format || 'openai') === fmt
+                            ? 'px-2.5 py-1 bg-blue-600 text-white'
+                            : 'px-2.5 py-1 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'}>
+                          {t(`providers.card.apiFormat${fmt.charAt(0).toUpperCase() + fmt.slice(1)}`)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {expanded && (

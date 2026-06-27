@@ -67,13 +67,6 @@ subscription_apps:
     plan_provider_id: github-copilot
     subscription_to_api: false
 
-  - source_id: qwen
-    agent_id: qwen-code
-    app_name: Qwen Code
-    app_icon: "🐉"
-    plan_provider_id: null
-    subscription_to_api: false
-
   - source_id: antigravity
     agent_id: antigravity
     app_name: Antigravity

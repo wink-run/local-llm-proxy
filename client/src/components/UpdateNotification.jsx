@@ -1,40 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
+import { useUpdater } from '../store/updater';
 
-// State machine: idle → downloading → ready → dismissed
+/** 底部弹窗：下载进度 + 立即重启；点「稍后」后由侧栏标识承接 */
 export default function UpdateNotification() {
-  const [phase, setPhase] = useState('idle');   // idle | downloading | ready | dismissed
-  const [version, setVersion] = useState('');
-  const [percent, setPercent] = useState(0);
+  const updater = useUpdater();
+  if (!updater) return null;
 
-  useEffect(() => {
-    if (!window.electronAPI?.updater) return;
-
-    const offAvailable = window.electronAPI.updater.onAvailable(({ version: v }) => {
-      setVersion(v);
-      setPhase('downloading');
-    });
-
-    const offProgress = window.electronAPI.updater.onProgress(({ percent: p }) => {
-      setPercent(p);
-    });
-
-    const offDownloaded = window.electronAPI.updater.onDownloaded(({ version: v }) => {
-      setVersion(v);
-      setPhase('ready');
-    });
-
-    const offError = window.electronAPI.updater.onError(() => {
-      setPhase('idle');
-    });
-
-    return () => {
-      offAvailable();
-      offProgress();
-      offDownloaded();
-      offError();
-    };
-  }, []);
-
+  const { phase, version, percent, install, dismissToast } = updater;
   if (phase === 'idle' || phase === 'dismissed') return null;
 
   return (
@@ -63,13 +35,13 @@ export default function UpdateNotification() {
             <p className="mt-0.5 text-xs text-gray-500">重启后即可完成更新</p>
             <div className="mt-3 flex gap-2">
               <button
-                onClick={() => window.electronAPI.updater.install()}
+                onClick={install}
                 className="flex-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white text-sm font-medium py-1.5 transition-colors"
               >
                 立即重启
               </button>
               <button
-                onClick={() => setPhase('dismissed')}
+                onClick={dismissToast}
                 className="flex-1 rounded-lg border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 text-sm font-medium py-1.5 transition-colors"
               >
                 稍后
