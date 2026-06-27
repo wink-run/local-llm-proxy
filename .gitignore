@@ -47,6 +47,11 @@ Thumbs.db
 
 # Claude Code 本地设置（含权限历史/可能含密钥，勿提交）
 .claude/settings.local.json
+# Claude Code agent worktrees（临时工作区，勿提交）
+.claude/worktrees/
+
+# Playwright MCP 测试产物（控制台日志 / 页面快照，勿提交）
+.playwright-mcp/
 
 # 头脑风暴产物（mockup HTML，勿提交）
 .superpowers/
