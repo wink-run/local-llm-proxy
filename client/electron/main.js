@@ -1401,7 +1401,11 @@ function registerIPC() {
 
   ipcMain.handle('update:install', () => {
     pendingUpdateReady = null;
-    autoUpdater.quitAndInstall();
+    // 关闭窗口默认隐藏到托盘；安装更新须真正退出进程
+    isQuitting = true;
+    setImmediate(() => {
+      autoUpdater.quitAndInstall(false, true);
+    });
   });
 
   ipcMain.handle('updater:status', () => ({

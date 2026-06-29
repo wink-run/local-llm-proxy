@@ -422,7 +422,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       </div>
 
       {/* Version footer */}
-      <div className="text-xs text-gray-400 dark:text-gray-600 pb-2 flex items-center gap-2">
+      <div className="text-xs text-gray-400 dark:text-gray-600 pb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
         <span>Token Bank</span>
         {window.electronAPI?.version && (
           <span className="font-mono bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-500 dark:text-zinc-400">
@@ -434,6 +434,8 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
           className="hover:text-gray-500 dark:hover:text-gray-400 transition-colors underline">
           GitHub
         </a>
+        <span>·</span>
+        <span>{t('settings.contact')}</span>
       </div>
     </div>
   );

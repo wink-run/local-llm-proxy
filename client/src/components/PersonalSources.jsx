@@ -414,7 +414,7 @@ export function UnenrolledInstanceCard({ instance, onRemove, t }) {
 }
 
 // ── 第3块：按模型视图（仿社区源 P2P 网格：一行两列，左模型、右供给源 logo）────────
-export function PersonalSourceModelView({ instances, t }) {
+export function PersonalSourceModelView({ instances, t, trailing = null }) {
   const byModel = useMemo(() => {
     const m = {};
     for (const inst of instances) {
@@ -428,12 +428,54 @@ export function PersonalSourceModelView({ instances, t }) {
     }
     return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0]));
   }, [instances]);
-  if (byModel.length === 0) return <p className="text-xs text-zinc-400 py-4 text-center">{t('psrc.model.empty')}</p>;
+
+  // 参与供给的账户（去重），用于顶部 logo 条
+  const uniqueSources = useMemo(() => {
+    const seen = new Set();
+    const list = [];
+    for (const inst of instances) {
+      const modelList = (inst.models || []).map(modelEntryName).filter(Boolean);
+      if (!modelList.length) continue;
+      const uid = inst.id || inst.agent_id || inst.source_id;
+      if (seen.has(uid)) continue;
+      seen.add(uid);
+      list.push(inst);
+    }
+    return list;
+  }, [instances]);
+
+  if (byModel.length === 0) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-2 min-w-0">
+          <p className="text-xs text-zinc-400">{t('psrc.model.empty')}</p>
+          {trailing}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="space-y-3">
-      <span className="text-xs text-zinc-500">
-        {t('psrc.modelView.title')} <span className="text-zinc-700 dark:text-zinc-300">{t('psrc.modelView.sub')}</span>
-      </span>
+      <div className="flex items-start justify-between gap-2 min-w-0">
+        <div className="flex flex-col gap-1 min-w-0 flex-1">
+          {uniqueSources.length > 0 && (
+            <div className="flex items-center -space-x-1 shrink-0">
+              {uniqueSources.map((s, i) => (
+                <span
+                  key={(s.id || s.agent_id || s.source_id) + ':' + i}
+                  className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-zinc-50 dark:bg-zinc-900 ring-1 ring-zinc-200 dark:ring-zinc-700"
+                >
+                  <SourceProviderLogo inst={s} />
+                </span>
+              ))}
+            </div>
+          )}
+          <span className="text-xs text-zinc-500 truncate">
+            {t('psrc.modelView.summary', { accounts: uniqueSources.length, models: byModel.length })}
+          </span>
+        </div>
+        {trailing}
+      </div>
       <div className="grid grid-cols-2 gap-2">
         {byModel.map(([model, srcs]) => (
           <div

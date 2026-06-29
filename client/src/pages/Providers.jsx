@@ -31,10 +31,23 @@ function localizeProviderMeta(metaMap, t) {
 
 function getTierConfig(t) {
   return {
+    local: { dot: 'bg-emerald-500', label: t('providers.group.local'), hint: t('providers.group.localHint') },
     free: { dot: 'bg-green-500', label: t('providers.tier.free.label'), hint: t('providers.tier.free.hint'), cols: 'grid-cols-2' },
     p2p:  { dot: 'bg-blue-500',  label: t('providers.tier.p2p.label'),  hint: t('providers.tier.p2p.hint'),  cols: 'grid-cols-1' },
     paid: { dot: 'bg-amber-400', label: t('providers.tier.paid.label'), hint: t('providers.tier.paid.hint'), cols: 'grid-cols-2' },
   };
+}
+
+/** 供给源分区标题：圆点 + 名称 + 说明，独立于下方 panel */
+function SourceSectionHeader({ dot, title, hint, trailing, className = '' }) {
+  return (
+    <div className={`relative flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0 ${className}`}>
+      <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} aria-hidden />
+      <h2 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">{title}</h2>
+      {hint && <span className="text-xs text-zinc-400 dark:text-zinc-500">{hint}</span>}
+      {trailing}
+    </div>
+  );
 }
 
 function getOAuthById(t) {
@@ -3055,6 +3068,17 @@ export default function Providers() {
     );
   }
 
+  function renderSourcesViewTabs() {
+    return (
+      <div className="inline-flex rounded-lg border border-zinc-300 dark:border-zinc-700 overflow-hidden text-xs shrink-0">
+        <button type="button" onClick={() => setSourcesView('model')}
+          className={`px-2.5 py-1 ${sourcesView === 'model' ? 'bg-zinc-100 dark:bg-zinc-700 font-medium' : 'text-zinc-400'}`}>{t('psrc.view.model')}</button>
+        <button type="button" onClick={() => setSourcesView('list')}
+          className={`px-2.5 py-1 ${sourcesView === 'list' ? 'bg-zinc-100 dark:bg-zinc-700 font-medium' : 'text-zinc-400'}`}>{t('psrc.view.list')}</button>
+      </div>
+    );
+  }
+
   return (
     <div className="px-5 py-5 space-y-6">
 
@@ -3067,28 +3091,21 @@ export default function Providers() {
         {savedMsg && <span className="text-xs font-medium text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-2.5 py-1 rounded-full">{savedMsg}</span>}
       </div>
 
-      {/* 个人源：统计 + 已添加卡片 + 添加源（默认定价一键添加，需改价在卡片内编辑） */}
-      <section className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 space-y-4">
-        <div className="space-y-3">
-          <div className="relative">
-            <div className="min-w-0 pr-[5.5rem]">
-              <h2 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">{t('providers.group.local')}</h2>
-              <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">{t('providers.group.localHint')}</p>
-            </div>
-            {/* Tab 固定卡片右上角，切换视图时不跳动 */}
-            <div className="absolute top-0 right-0">
-              <div className="inline-flex rounded-lg border border-zinc-300 dark:border-zinc-700 overflow-hidden text-xs shrink-0">
-                <button type="button" onClick={() => setSourcesView('model')}
-                  className={`px-2.5 py-1 ${sourcesView === 'model' ? 'bg-zinc-100 dark:bg-zinc-700 font-medium' : 'text-zinc-400'}`}>{t('psrc.view.model')}</button>
-                <button type="button" onClick={() => setSourcesView('list')}
-                  className={`px-2.5 py-1 ${sourcesView === 'list' ? 'bg-zinc-100 dark:bg-zinc-700 font-medium' : 'text-zinc-400'}`}>{t('psrc.view.list')}</button>
-              </div>
-            </div>
-          </div>
-          {sourcesView !== 'model' && (
+      {/* 个人源：标题独立于 panel；统计 + 已添加卡片 + 添加源 */}
+      <section className="space-y-3">
+        <SourceSectionHeader
+          dot={tierConfig.local.dot}
+          title={tierConfig.local.label}
+          hint={tierConfig.local.hint}
+        />
+
+        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 space-y-4">
+        {sourcesView !== 'model' && (
+          <div className="flex items-center justify-between gap-x-3 gap-y-2 min-w-0 flex-wrap">
             <PersonalFilterBar value={personalFilter} onChange={setPersonalFilter} t={t} />
-          )}
-        </div>
+            {renderSourcesViewTabs()}
+          </div>
+        )}
 
         {accountsData && (
           <SyncDiffBanner syncDiff={accountsData.sync_diff} t={t}
@@ -3096,7 +3113,7 @@ export default function Providers() {
         )}
 
         {sourcesView === 'model' ? (
-          <PersonalSourceModelView instances={modelViewInstances} t={t} />
+          <PersonalSourceModelView instances={modelViewInstances} t={t} trailing={renderSourcesViewTabs()} />
         ) : (
         <>
         <div className="grid grid-cols-2 gap-3">
@@ -3141,15 +3158,16 @@ export default function Providers() {
         {renderAddSourcePicker()}
         </>
         )}
+        </div>
       </section>
 
       {/* 社区源：未登录可浏览，启用/配置 Key 需登录 */}
       <section className="space-y-3 pt-4 border-t border-zinc-100 dark:border-zinc-800/60">
-        <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${tierConfig.p2p.dot}`} />
-          <h2 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">{t('providers.group.remote')}</h2>
-          <span className="text-xs text-zinc-400 dark:text-zinc-500">{tierConfig.p2p.hint}</span>
-        </div>
+        <SourceSectionHeader
+          dot={tierConfig.p2p.dot}
+          title={t('providers.group.remote')}
+          hint={tierConfig.p2p.hint}
+        />
         <div className={`grid ${tierConfig.p2p.cols} gap-3`}>
           {providers.filter(p => p.type === 'p2p').map(p => (
             <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} />

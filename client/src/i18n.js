@@ -106,6 +106,7 @@ const locales = {
     'settings.health60': '1 分钟',
     'settings.health300': '5 分钟',
     'settings.healthOff': '关闭',
+    'settings.contact': '产品交流 · 微信 winkrun',
     // ── 个人页 ──
     'profile.range.today': '今日',
     'profile.range.7d': '7 天',
@@ -214,6 +215,8 @@ const locales = {
     'psrc.model.empty': '暂无模型',
     'psrc.modelView.title': '当前可用模型',
     'psrc.modelView.sub': '· 个人供给源提供',
+    'psrc.modelView.onlineCount': '{n} 个模型在线',
+    'psrc.modelView.summary': '共 {accounts} 个账户 · {models} 个模型',
     'psrc.kind.payg': '按量', 'psrc.kind.apiSub': 'API 订阅', 'psrc.kind.appSub': 'App 订阅',
     'psrc.tpl.hint': '点击任意源编辑其模板（计费 / 能否转 API / 支持模型）；彩色=已添加，灰色=未添加。',
     'psrc.tpl.hintBilling': '点击账户类型编辑定价与计费方式；彩色=已配置，灰色=默认。供给源请在下方「个人源」添加。',
@@ -444,6 +447,7 @@ const locales = {
     'settings.health60': '1 min',
     'settings.health300': '5 min',
     'settings.healthOff': 'Off',
+    'settings.contact': 'Feedback · WeChat winkrun',
     // ── Profile page ──
     'profile.range.today': 'Today',
     'profile.range.7d': '7d',
@@ -552,6 +556,8 @@ const locales = {
     'psrc.model.empty': 'No models',
     'psrc.modelView.title': 'Available models',
     'psrc.modelView.sub': '· from your sources',
+    'psrc.modelView.onlineCount': '{n} models online',
+    'psrc.modelView.summary': '{accounts} accounts · {models} models',
     'psrc.kind.payg': 'PAYG', 'psrc.kind.apiSub': 'API sub', 'psrc.kind.appSub': 'App sub',
     'psrc.tpl.hint': 'Click any source to edit its template (pricing / convert-to-API / models). Colored = added, gray = not added.',
     'psrc.tpl.hintBilling': 'Click an account type to edit pricing and billing. Colored = configured, gray = default. Add supply sources in Personal sources below.',
