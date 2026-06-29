@@ -2,6 +2,7 @@
 import { getConfig, getGateway, getLocalConfig, isElectron } from './adapter';
 import { getServerUrl, normalizeServerBase } from '../config';
 import { loadUserAccounts } from './userAccounts';
+import { collectPersonalAvailableModels } from '../lib/personalAvailableModels';
 
 function addAvailableModel(models, seen, id, tier) {
   if (!id || !tier) return;
@@ -74,18 +75,27 @@ export async function loadGatewayAvailableModels() {
   const seen = new Set();
   const add = (id, tier) => addAvailableModel(models, seen, id, tier);
 
-  let gatewayAllow = null;
+  let cfg = null;
+  let acc = null;
   try {
-    const acc = await loadUserAccounts();
-    if (acc?.gateway_provider_ids) gatewayAllow = new Set(acc.gateway_provider_ids);
+    [cfg, acc] = await Promise.all([
+      getConfig().read().catch(() => null),
+      loadUserAccounts().catch(() => null),
+    ]);
   } catch {}
 
+  // 个人层：与供给源页「按模型视图」同源（账户登记 + 刊例价覆盖 + provider 配置）
   try {
-    const cfg = await getConfig().read();
+    for (const { id, tier } of collectPersonalAvailableModels(cfg || {}, acc || {})) {
+      add(id, tier);
+    }
+  } catch {}
+
+  // 补充：已启用但未纳入账户实例的免费源（如独立 Ollama）
+  try {
     for (const p of (cfg?.providers || [])) {
-      if (!p.enabled || p.type === 'p2p') continue;
-      if (p.type === 'paid' && gatewayAllow && !gatewayAllow.has(p.id)) continue;
-      for (const m of (p.models || [])) add(modelId(m), p.type);
+      if (!p.enabled || p.type !== 'free') continue;
+      for (const m of (p.models || [])) add(modelId(m), 'free');
     }
   } catch {}
 
@@ -107,8 +117,7 @@ export async function loadGatewayAvailableModels() {
         const lr = await fetch(`http://${host}:${gwPort}/v1/models`);
         if (lr.ok) {
           const lj = await lr.json();
-          const cfgForTier = (await getConfig().read().catch(() => null)) || {};
-          const provById = Object.fromEntries((cfgForTier.providers || []).map(p => [p.id, p]));
+          const provById = Object.fromEntries((cfg?.providers || []).map(p => [p.id, p]));
           for (const m of (lj.data || [])) {
             const id = m.id;
             if (!id) continue;
