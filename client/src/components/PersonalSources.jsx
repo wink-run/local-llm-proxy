@@ -307,17 +307,28 @@ export function SourcePickerModal({ templates, onPick, onNewSource, onClose, t }
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-md p-5 space-y-3 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('psrc.tpl.pickSource')}</h3>
+        <p className="text-[11px] text-zinc-400">{t('psrc.tpl.pickHint')}</p>
         <div className="grid grid-cols-2 gap-2">
-          {templates.map(tpl => (
-            <button key={tpl.key} type="button" onClick={() => onPick(tpl)}
-              className="flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/60 text-left hover:border-blue-300 dark:hover:border-blue-700">
-              <ServiceIcon id={tpl.key} name={tpl.label} icon={tpl.icon} />
-              <span className="min-w-0 flex-1">
-                <span className="block text-xs font-medium truncate text-zinc-800 dark:text-zinc-200">{tpl.label}</span>
-                <span className="block text-[10px] text-zinc-400">{templateKindLabel(tpl, t)}</span>
-              </span>
-            </button>
-          ))}
+          {templates.map(tpl => {
+            const ready = templateReadyForInstance(tpl);   // 没配模型的(灰)点击去配置
+            return (
+              <button key={tpl.key} type="button" onClick={() => onPick(tpl)}
+                title={ready ? '' : t('psrc.tpl.needConfig')}
+                className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition
+                  ${ready ? 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/60 hover:border-blue-300 dark:hover:border-blue-700'
+                          : 'border-dashed border-zinc-200 dark:border-zinc-700 bg-zinc-50/40 dark:bg-zinc-800/20'}`}>
+                <span className={ready ? '' : 'grayscale opacity-50'}>
+                  <ServiceIcon id={tpl.key} name={tpl.label} icon={tpl.icon} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className={`block text-xs font-medium truncate ${ready ? 'text-zinc-800 dark:text-zinc-200' : 'text-zinc-400'}`}>{tpl.label}</span>
+                  <span className="block text-[10px] text-zinc-400">
+                    {templateKindLabel(tpl, t)}{ready ? '' : ' · ' + t('psrc.tpl.needConfigTag')}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
         </div>
         <div className="flex justify-between items-center pt-1">
           <button type="button" onClick={onNewSource}

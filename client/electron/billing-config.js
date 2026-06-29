@@ -470,22 +470,34 @@ function stableHash(obj) {
 /** 服务端原始模板（未应用本地覆盖），按 templateKey 索引：payg→provider_id；app_sub/api_sub→source_id */
 function baseTemplatesByKey(cfg = {}) {
   const m = {};
+  const paygByKey = {};
   for (const p of paygProviderCatalog()) {
     const k = p.provider_id || p.id;
-    if (k) m[k] = { kind: 'payg', key: k, label: p.label || k, icon: p.icon || '🔧',
-                    models: p.models || [], pricing: p.pricing || {} };
+    if (k) { m[k] = { kind: 'payg', key: k, label: p.label || k, icon: p.icon || '🔧',
+                      models: p.models || [], pricing: p.pricing || {} };
+             paygByKey[k] = m[k]; }
   }
+  // 订阅模板没配模型时，从 plan_provider_id 对应的 payg 预填「支持的模型 + 计费」（订阅转 API 后用这些）
+  const fillSub = (models, pricing, planPid) => {
+    if ((Array.isArray(models) && models.length) || Object.keys(pricing || {}).length) {
+      return { models: models || [], pricing: pricing || {} };
+    }
+    const pp = planPid && paygByKey[planPid];
+    return pp ? { models: pp.models || [], pricing: pp.pricing || {} } : { models: models || [], pricing: pricing || {} };
+  };
   for (const a of subscriptionAppCatalog(cfg)) {
     const k = a.source_id;
-    if (k) m[k] = { kind: 'app_sub', key: k, label: a.app_name, icon: a.app_icon, agent_id: a.agent_id,
-                    subscription_to_api: a.subscription_to_api === true, plans: a.plans || [],
-                    models: a.models || [], pricing: a.pricing || {} };
+    if (k) { const f = fillSub(a.models, a.pricing, a.plan_provider_id);
+      m[k] = { kind: 'app_sub', key: k, label: a.app_name, icon: a.app_icon, agent_id: a.agent_id,
+               subscription_to_api: a.subscription_to_api === true, plans: a.plans || [],
+               plan_provider_id: a.plan_provider_id, models: f.models, pricing: f.pricing }; }
   }
   for (const a of apiSubscriptionCatalog(cfg)) {
     const k = a.source_id;
-    if (k) m[k] = { kind: 'api_sub', key: k, label: a.app_name, icon: a.app_icon,
-                    plan_provider_id: a.plan_provider_id, plans: a.plans || [],
-                    models: a.models || [], pricing: a.pricing || {} };
+    if (k) { const f = fillSub(a.models, a.pricing, a.plan_provider_id);
+      m[k] = { kind: 'api_sub', key: k, label: a.app_name, icon: a.app_icon,
+               plan_provider_id: a.plan_provider_id, plans: a.plans || [],
+               models: f.models, pricing: f.pricing }; }
   }
   // 自定义源模板（用户新建的源类型，纯本地，独立于实例）
   const ct = (cfg.custom_source_templates && typeof cfg.custom_source_templates === 'object') ? cfg.custom_source_templates : {};
