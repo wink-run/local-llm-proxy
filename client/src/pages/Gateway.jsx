@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { loadGatewayAvailableModels, resolveLocalGatewayHost } from '../api/gatewayModels';
 import { getSyncServerBase } from '../config';
-import { getGateway, getLocalConfig, getConfig, getApps } from '../api/adapter';
+import { getGateway, getLocalConfig, getConfig, getApps, getOauth } from '../api/adapter';
 import { listAgents, applyAgent, revertAgent } from '../api/agents';
 import claudeDevModeImg1 from '../assets/claude-devmode-1.webp';
 import claudeDevModeImg2 from '../assets/claude-devmode-2.webp';
@@ -280,6 +280,57 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
         {busy ? t('gateway.sync.syncing') : t('gateway.sync.btn')}
       </button>
       {msg && <div className={`text-xs ${msg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>{msg}</div>}
+    </div>
+  );
+}
+
+// ── 支持的应用图标行 ───────────────────────────────────────────────────────
+// 展示我们支持纳管的全部应用：本机已安装 → 彩色；未安装 → 灰色，且有官方安装链接时可点击跳转。
+// 数据来自 IPC apps:supported（桌面端检测安装状态）；Web/Docker 返回空数组 → 整行不渲染。
+//
+// 安装链接来自配置（config-loader 的 app_install_urls：内置默认兜底 + 服务端可下发覆盖），
+// 经 apps:supported 的 install_url 字段下发到前端，不在前端/主进程硬编码。
+function SupportedAppsBar() {
+  const { t } = useLang();
+  const [items, setItems] = useState([]);
+  const [failed, setFailed] = useState({});   // 品牌 logo 加载失败的 id → 回退 emoji
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve(getApps().supported?.() ?? [])
+      .then(r => { if (alive) setItems(Array.isArray(r) ? r : []); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  if (!items.length) return null;
+  const openInstall = (url) => { if (url) getOauth().openExternal?.(url); };
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap mb-3">
+      <span className="text-[11px] text-zinc-400 dark:text-zinc-500 mr-0.5 shrink-0">{t('gateway.supported.title')}</span>
+      {items.map(a => {
+        const url = a.install_url || null;   // 来自配置（app_install_urls），经 supported 下发
+        const clickable = !a.installed && !!url;
+        const title = a.installed
+          ? `${a.name} · ${t('gateway.supported.installed')}`
+          : url ? `${a.name} · ${t('gateway.supported.clickInstall')}`
+          : `${a.name} · ${t('gateway.supported.notInstalled')}`;
+        const brand = resolveBrandIcon(`${a.id} ${a.name}`);   // 官方品牌 logo（@lobehub/icons），无则回退 emoji
+        // 与应用列表行图标同款：18px · object-contain · 命中品牌→logo，否则 isAppIcon→SVG，再否则 emoji；
+        // 未安装用灰度+半透明表达（裸图标无底色，仅可点击时 hover 微高亮并恢复彩色）。
+        const dim = a.installed ? '' : `grayscale opacity-50 ${clickable ? 'group-hover:grayscale-0 group-hover:opacity-100' : ''}`;
+        return (
+          <button key={a.id} type="button" title={title} aria-label={title} aria-disabled={!clickable}
+            onClick={clickable ? () => openInstall(url) : undefined}
+            className={`group w-7 h-7 flex items-center justify-center rounded-lg transition select-none
+              ${clickable ? 'cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-700/40' : 'cursor-default'}`}>
+            {brand && !failed[a.id]
+              ? <img src={brand} alt="" aria-hidden onError={() => setFailed(f => ({ ...f, [a.id]: true }))}
+                  className={`w-[18px] h-[18px] object-contain ${dim}`} />
+              : isAppIcon(a.icon)
+                ? appIconSvg(a.icon, `w-[18px] h-[18px] ${dim}`)
+                : <span aria-hidden className={`text-base leading-none ${dim}`}>{a.icon}</span>}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -2156,6 +2207,8 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
       {/* 用量明细弹窗（点击统计区打开）*/}
       {detailApp && <AppDetailModal app={detailApp} onClose={() => setDetailApp(null)} />}
       <div className="p-4">
+            {/* 支持的应用一行：已装彩色 / 未装灰色可跳转安装 */}
+            <SupportedAppsBar />
             {/* 操作栏 */}
             <div className="flex items-center gap-2 mb-3 flex-wrap">
               <button onClick={() => manualDraft ? cancelManualDraft() : addCustom()}

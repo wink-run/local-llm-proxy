@@ -109,6 +109,7 @@ const httpAdapter = {
   },
   apps: {
     list:           ()        => adminFetch('/api/apps'),
+    supported:      ()        => Promise.resolve([]),   // 支持应用图标行：安装检测仅桌面端，Web/Docker 不展示
     create:         (d)       => adminFetch('/api/apps', { method: 'POST', body: JSON.stringify(d) }),
     update:         ({ id, ...d }) => adminFetch(`/api/apps/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(d) }),
     delete:         (id)      => adminFetch(`/api/apps/${encodeURIComponent(id)}`, { method: 'DELETE' }),

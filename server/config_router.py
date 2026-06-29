@@ -4,7 +4,8 @@ Admin uploads tool/route config YAML → stored in system_config table.
 Authenticated users GET the config YAML → client applies it locally.
 
 Keys in system_config:
-  config.apps   → tokenbank.tools.yaml content (tools/protocols/routing/billing)
+  config.apps    → tokenbank.yaml content (tools / api_key_apps，应用清单)
+  config.sources → tokenbank.tools.yaml content (订阅 / 按量 / 套餐 源目录，独立于应用)
   config.scenes  → tokenbank.routes.yaml content (scene_routes)
 """
 
@@ -18,7 +19,7 @@ from typing import Optional
 import database as db
 from auth import get_current_user_id
 from admin_router import auth_admin   # reuse existing admin bearer auth
-from config_merge import merge_apps_yaml_text
+from config_merge import merge_apps_yaml_text, merge_sources_yaml_text
 
 router = APIRouter()
 
@@ -162,6 +163,15 @@ async def get_tools_config(uid: int = Depends(get_current_user_id)):
         raise HTTPException(404, "Tools config not uploaded yet")
     # 与内置默认合并，确保客户端拉取到 subscription_to_api 等新字段
     content = merge_apps_yaml_text(content)
+    return PlainTextResponse(_normalize_yaml(content), media_type="text/yaml; charset=utf-8")
+
+
+@router.get("/config/sources")
+async def get_sources_config(uid: int = Depends(get_current_user_id)):
+    """Authenticated user downloads the billing-sources config YAML（订阅/按量/套餐源目录，独立于 apps）。"""
+    content = await db.get_config("config.sources", "")
+    # config.sources 为空也回退内置默认全集（merge_sources_yaml_text 对空文本返回 sources.default.yaml）
+    content = merge_sources_yaml_text(content)
     return PlainTextResponse(_normalize_yaml(content), media_type="text/yaml; charset=utf-8")
 
 

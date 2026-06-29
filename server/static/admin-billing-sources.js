@@ -183,8 +183,8 @@ window.initBillingSourcesAdmin = function (api, lang, ref) {
     try {
       const d = await (await api('/admin/billing/sources/publish', { method: 'POST' })).json()
       bsMsg.value = lang.value === 'zh'
-        ? `✓ 已发布：${d.sources_count} 源 → apps ${d.apps_bytes}B / registry ${d.registry_count}`
-        : `✓ Published: ${d.sources_count} sources`
+        ? `✓ 已发布：${d.sources_count} 源 → 源配置 ${d.sources_bytes ?? d.apps_bytes}B / 供给源 ${d.registry_count}（独立于应用配置）`
+        : `✓ Published: ${d.sources_count} sources → sources config ${d.sources_bytes ?? d.apps_bytes}B / ${d.registry_count} providers (separate from apps config)`
     } catch (e) { bsMsg.value = e.message }
     finally { bsSaving.value = false }
   }

@@ -4,12 +4,21 @@
 const http = require('http');
 const https = require('https');
 
+// 跨终端同步字段。注意：以下三类是「纯本地」数据，不进此列表、不上云：
+//   · direct_source_billing   直连应用计费（本机安装的应用，计费是本机估算）
+//   · source_template_overrides 本地模板覆盖
+//   · user_*[].custom===true   自定义源实例（不在官方目录里，机器本地的）
+// custom 实例混在 user_subscriptions / user_payg_providers 里，上传时拆出、下载时与云端官方实例合并。
 const BILLING_FIELDS = [
   'user_subscriptions',
   'user_payg_providers',
   'provider_pricing_overrides',
   'subscription_plans',
 ];
+
+const isCustom = (x) => !!(x && x.custom);
+const nonCustom = (list) => (Array.isArray(list) ? list.filter(x => !isCustom(x)) : []);
+const customOnly = (list) => (Array.isArray(list) ? list.filter(isCustom) : []);
 
 /** 归一化服务器根地址（无配置时返回空，不写死默认 IP） */
 function normalizeBase(url) {
@@ -55,13 +64,12 @@ function requestJson(method, serverUrl, path, token, body) {
 
 /** 从 local-config 提取可同步字段 */
 function pickBilling(obj = {}) {
+  const objOf = (v) => (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
   return {
     user_subscriptions: Array.isArray(obj.user_subscriptions) ? obj.user_subscriptions : [],
     user_payg_providers: Array.isArray(obj.user_payg_providers) ? obj.user_payg_providers : [],
-    provider_pricing_overrides: obj.provider_pricing_overrides && typeof obj.provider_pricing_overrides === 'object'
-      ? obj.provider_pricing_overrides : {},
-    subscription_plans: obj.subscription_plans && typeof obj.subscription_plans === 'object'
-      ? obj.subscription_plans : {},
+    provider_pricing_overrides: objOf(obj.provider_pricing_overrides),
+    subscription_plans: objOf(obj.subscription_plans),
   };
 }
 
@@ -75,10 +83,12 @@ function isEmptyBilling(b) {
 /** 写入 local-config（本地缓存，供网关离线估价） */
 function applyToCfg(cfg, billing) {
   const b = pickBilling(billing);
-  cfg.user_subscriptions = b.user_subscriptions;
-  cfg.user_payg_providers = b.user_payg_providers;
   cfg.provider_pricing_overrides = b.provider_pricing_overrides;
   cfg.subscription_plans = b.subscription_plans;
+  // 自定义实例(custom:true)纯本地：保留本地 custom，叠加云端官方实例
+  cfg.user_subscriptions = [...customOnly(cfg.user_subscriptions), ...nonCustom(b.user_subscriptions)];
+  cfg.user_payg_providers = [...customOnly(cfg.user_payg_providers), ...nonCustom(b.user_payg_providers)];
+  // direct_source_billing / source_template_overrides 纯本地，不被云端覆盖（保留 cfg 现值）
   return cfg;
 }
 
@@ -91,6 +101,9 @@ async function saveUserBilling(token, serverUrl, patch) {
   for (const k of BILLING_FIELDS) {
     if (patch[k] !== undefined) body[k] = patch[k];
   }
+  // 自定义实例(custom:true)不上云，只上传官方实例
+  if (Array.isArray(body.user_subscriptions)) body.user_subscriptions = nonCustom(body.user_subscriptions);
+  if (Array.isArray(body.user_payg_providers)) body.user_payg_providers = nonCustom(body.user_payg_providers);
   return pickBilling(await requestJson('PUT', serverUrl, '/user/accounts', token, body));
 }
 

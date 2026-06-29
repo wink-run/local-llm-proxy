@@ -8,12 +8,22 @@ import yaml
 
 _DEFAULTS_DIR = Path(__file__).resolve().parent / "static" / "defaults"
 _APPS_DEFAULT = _DEFAULTS_DIR / "apps.default.yaml"
+_SOURCES_DEFAULT = _DEFAULTS_DIR / "sources.default.yaml"
+
+# 「源」目录段（已从 apps.default.yaml 迁出至 sources.default.yaml，独立下发 config.sources）
+_BILLING_KEYS = ("subscription_apps", "api_subscription_apps", "subscription_plans", "payg_providers")
 
 
 def _default_apps_doc() -> dict:
     if not _APPS_DEFAULT.is_file():
         return {}
     return yaml.safe_load(_APPS_DEFAULT.read_text(encoding="utf-8")) or {}
+
+
+def _default_sources_doc() -> dict:
+    if not _SOURCES_DEFAULT.is_file():
+        return {}
+    return yaml.safe_load(_SOURCES_DEFAULT.read_text(encoding="utf-8")) or {}
 
 
 def merge_subscription_apps(current: list | None, defaults: list | None) -> list:
@@ -52,22 +62,11 @@ def merge_subscription_apps(current: list | None, defaults: list | None) -> list
 
 
 def merge_apps_doc(current: dict | None) -> dict:
-    """合并计费目录段（当前以 subscription_apps 为主）。"""
+    """应用清单（tools / api_key_apps）。计费/源段已迁出至 sources.default.yaml，
+    这里主动剥离，确保应用下发文件（config.apps）不再含任何源目录段。"""
     if not isinstance(current, dict):
         return {}
-    defaults = _default_apps_doc()
-    out = dict(current)
-    if defaults.get("subscription_apps") or out.get("subscription_apps"):
-        out["subscription_apps"] = merge_subscription_apps(
-            out.get("subscription_apps"),
-            defaults.get("subscription_apps"),
-        )
-    if defaults.get("api_subscription_apps") or out.get("api_subscription_apps"):
-        out["api_subscription_apps"] = merge_api_subscription_apps(
-            out.get("api_subscription_apps"),
-            defaults.get("api_subscription_apps"),
-        )
-    return out
+    return {k: v for k, v in current.items() if k not in _BILLING_KEYS}
 
 
 def merge_api_subscription_apps(current: list | None, defaults: list | None) -> list:
@@ -101,6 +100,45 @@ def merge_apps_yaml_text(content: str) -> str:
         return text
     parsed = yaml.safe_load(text) or {}
     merged = merge_apps_doc(parsed)
+    return yaml.dump(
+        merged,
+        allow_unicode=True,
+        sort_keys=False,
+        default_flow_style=False,
+    ).rstrip()
+
+
+def merge_sources_doc(current: dict | None) -> dict:
+    """合并「源」目录段与内置默认（sources.default.yaml）。
+    subscription_apps / api_subscription_apps 按 source_id 合并补全；
+    subscription_plans / payg_providers 当前优先、空则回退默认。"""
+    if not isinstance(current, dict):
+        current = {}
+    defaults = _default_sources_doc()
+    out = dict(current)
+    if defaults.get("subscription_apps") or out.get("subscription_apps"):
+        out["subscription_apps"] = merge_subscription_apps(
+            out.get("subscription_apps"),
+            defaults.get("subscription_apps"),
+        )
+    if defaults.get("api_subscription_apps") or out.get("api_subscription_apps"):
+        out["api_subscription_apps"] = merge_api_subscription_apps(
+            out.get("api_subscription_apps"),
+            defaults.get("api_subscription_apps"),
+        )
+    for key in ("subscription_plans", "payg_providers"):
+        if not out.get(key) and defaults.get(key):
+            out[key] = defaults[key]
+    return out
+
+
+def merge_sources_yaml_text(content: str) -> str:
+    """源 YAML 文本与内置默认合并后序列化。空文本回退为内置默认全集。"""
+    text = (content or "").strip()
+    parsed = yaml.safe_load(text) if text else {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+    merged = merge_sources_doc(parsed)
     return yaml.dump(
         merged,
         allow_unicode=True,

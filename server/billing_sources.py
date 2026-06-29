@@ -1,16 +1,15 @@
-"""个人源目录 — 统一表单 schema，编译为 legacy config.apps / providers.registry 下发。"""
+"""个人源目录 — 统一表单 schema，编译为 config.sources / providers.registry 下发（与应用清单分离）。"""
 
 from __future__ import annotations
 
 import json
-from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 import database as db
-from config_merge import _default_apps_doc
+from config_merge import _default_sources_doc
 from provider_registry import serialize_registry_doc
 
 CONFIG_KEY = "config.billing_sources"
@@ -335,7 +334,7 @@ def compile_registry_providers(sources: list[dict]) -> list[dict]:
 
 def import_from_legacy(apps_doc: dict | None = None, registry_doc: dict | None = None) -> list[dict]:
     """从 legacy apps + registry 导入为统一 sources。"""
-    apps = apps_doc if isinstance(apps_doc, dict) else _default_apps_doc()
+    apps = apps_doc if isinstance(apps_doc, dict) else _default_sources_doc()
     registry = registry_doc if isinstance(registry_doc, dict) else _registry_default_doc()
     reg_by_id = {p["id"]: p for p in (registry.get("providers") or []) if p.get("id")}
     payg_by_id = {p["id"]: p for p in (apps.get("payg_providers") or []) if p.get("id")}
@@ -485,34 +484,29 @@ async def save_sources_doc(doc: dict) -> None:
 
 
 async def publish_sources(doc: dict | None = None) -> dict:
-    """编译并写入 config.apps（保留 tools 段）+ config.providers。"""
+    """编译并写入独立的 config.sources（仅 4 计费段）+ config.providers。
+    不再触碰 config.apps —— 应用清单（tools/api_key_apps）与源彻底分离。"""
     if doc is None:
         doc = await load_sources_doc()
     sources = doc.get("sources") or []
     billing = compile_billing_sections(sources)
     registry_providers = compile_registry_providers(sources)
 
-    # 合并进现有 config.apps
-    apps_text = await db.get_config("config.apps", "")
-    apps_doc = yaml.safe_load(apps_text) if apps_text.strip() else {}
-    if not isinstance(apps_doc, dict):
-        apps_doc = {}
-    if not apps_doc and _default_apps_doc():
-        apps_doc = deepcopy(_default_apps_doc())
-
+    # 写入独立源下发文件 config.sources（应用清单 config.apps 不受影响）
+    sources_doc: dict = {"version": 1}
     for key in ("subscription_apps", "api_subscription_apps", "subscription_plans", "payg_providers"):
-        apps_doc[key] = billing[key]
-
-    apps_yaml = yaml.dump(
-        apps_doc, allow_unicode=True, sort_keys=False, default_flow_style=False,
+        sources_doc[key] = billing[key]
+    sources_yaml = yaml.dump(
+        sources_doc, allow_unicode=True, sort_keys=False, default_flow_style=False,
     ).rstrip()
-    await db.set_config("config.apps", apps_yaml)
+    await db.set_config("config.sources", sources_yaml)
 
     reg_doc = {"version": 1, "providers": registry_providers}
     await db.set_config("config.providers", serialize_registry_doc(reg_doc))
 
     return {
-        "apps_bytes": len(apps_yaml),
+        "sources_bytes": len(sources_yaml),
+        "apps_bytes": len(sources_yaml),   # 向后兼容旧 admin 前端字段名
         "registry_count": len(registry_providers),
         "sources_count": len(sources),
     }

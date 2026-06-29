@@ -1474,11 +1474,10 @@ function registerIPC() {
   // scene_routes 段               → local-config.scene_routes
   const configLoader = require('./config-loader');
   const TB_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.yaml');
-  const TOOLS_SECTIONS = new Set([
-    'version', 'tools', 'mitm', 'gateway', 'app_presets', 'api_key_apps',
-    // 个人页计费目录（与 tools 同文件下发）
-    'subscription_plans', 'subscription_apps', 'api_subscription_apps', 'payg_providers',
-  ]);
+  const TB_TOOLS_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.tools.yaml');
+  // 应用段 → tokenbank.yaml；源/计费段 → tokenbank.tools.yaml（两文件分离下发）
+  const APP_SECTIONS = new Set(['version', 'tools', 'mitm', 'gateway', 'app_presets', 'api_key_apps']);
+  const SOURCE_SECTIONS = new Set(['subscription_plans', 'subscription_apps', 'api_subscription_apps', 'payg_providers']);
   const ROUTES_SECTIONS = new Set(['scene_routes']);
 
   function applyConfigDoc(parsed, source) {
@@ -1487,9 +1486,10 @@ function registerIPC() {
     const applied = { tools: false, routes: false };
     const addedApps = [];   // 本次同步「新增」的工具/应用（id 之前没有、现在有）
 
-    // 有 tools 相关段 → 写 tokenbank.yaml + reload config-loader
-    const hasToolsSection = Object.keys(parsed).some(k => TOOLS_SECTIONS.has(k) && k !== 'version');
-    if (hasToolsSection) {
+    // 应用段 → tokenbank.yaml；源段 → tokenbank.tools.yaml（分流写入 + reload config-loader）
+    const hasAppSection = Object.keys(parsed).some(k => APP_SECTIONS.has(k) && k !== 'version');
+    const hasSourceSection = Object.keys(parsed).some(k => SOURCE_SECTIONS.has(k));
+    if (hasAppSection || hasSourceSection) {
       const tbDir = path.join(os.homedir(), '.tokenbank');
       if (!fs.existsSync(tbDir)) fs.mkdirSync(tbDir, { recursive: true });
       // 应用前：记录现有工具 + api-key 应用的 id 集合（用于算新增）
@@ -1498,18 +1498,18 @@ function registerIPC() {
         for (const t of configLoader.tools()) beforeIds.add('tool:' + t.id);
         for (const a of (configLoader.apiKeyApps() || [])) beforeIds.add('app:' + a.id);
       } catch {}
-      // 合并已有 tokenbank.yaml，避免部分下发抹掉其它段
-      let existing = {};
-      try {
-        if (fs.existsSync(TB_YAML)) {
-          existing = yamlLib.load(fs.readFileSync(TB_YAML, 'utf8')) || {};
+      // 各自合并已有文件再写，避免部分下发抹掉其它段
+      const writeMerged = (file, sectionSet) => {
+        let existing = {};
+        try { if (fs.existsSync(file)) existing = yamlLib.load(fs.readFileSync(file, 'utf8')) || {}; } catch {}
+        const doc = { ...existing };
+        for (const k of Object.keys(parsed)) {
+          if (sectionSet.has(k) || k === 'version') doc[k] = parsed[k];
         }
-      } catch {}
-      const toolsDoc = { ...existing };
-      for (const k of Object.keys(parsed)) {
-        if (TOOLS_SECTIONS.has(k) || k === 'version') toolsDoc[k] = parsed[k];
-      }
-      fs.writeFileSync(TB_YAML, yamlLib.dump(toolsDoc, { lineWidth: 120 }), 'utf8');
+        fs.writeFileSync(file, yamlLib.dump(doc, { lineWidth: 120 }), 'utf8');
+      };
+      if (hasAppSection) writeMerged(TB_YAML, APP_SECTIONS);
+      if (hasSourceSection) writeMerged(TB_TOOLS_YAML, SOURCE_SECTIONS);
       configLoader.load();
       applied.tools = true;
 
@@ -1519,8 +1519,6 @@ function registerIPC() {
         for (const a of (configLoader.apiKeyApps() || [])) if (!beforeIds.has('app:' + a.id)) addedApps.push(a.name || a.id);
       } catch {}
 
-      // 下发新配置后：新定义的工具/应用若已安装 → apps:list 会列出，
-      // 由用户在列表里手动托管（不再自动托管）。
       // 通知渲染进程刷新应用列表（让新的可配置行 / 托管状态立即显示）
       try { mainWindow?.webContents?.send('apps:changed'); } catch {}
     }
@@ -1768,6 +1766,15 @@ function registerIPC() {
     if (patch.provider_pricing_overrides && typeof patch.provider_pricing_overrides === 'object') {
       cfg.provider_pricing_overrides = patch.provider_pricing_overrides;
     }
+    if (patch.source_template_overrides && typeof patch.source_template_overrides === 'object') {
+      cfg.source_template_overrides = patch.source_template_overrides;   // 本地模板覆盖
+    }
+    if (patch.custom_source_templates && typeof patch.custom_source_templates === 'object') {
+      cfg.custom_source_templates = patch.custom_source_templates;       // 自定义源模板（纯本地）
+    }
+    if (patch.direct_source_billing && typeof patch.direct_source_billing === 'object') {
+      cfg.direct_source_billing = patch.direct_source_billing;           // 直连应用计费
+    }
     // 先写本地，再尝试同步云端（未登录也可保存）
     applyUserBillingCfg(cfg);
     if (!token) return cfg;
@@ -1801,17 +1808,26 @@ function registerIPC() {
     if (scope === 'pricing' || scope === 'all') patch.provider_pricing_overrides = {};
     if (scope === 'plans' || scope === 'all') patch.subscription_plans = {};
     const cfg = await pushUserBilling({ token, serverUrl, ...patch });
-    return billingConfigMod.getUserAccounts(cfg);
+    return billingConfigMod.getUserAccounts(cfg, { boundDirectAgentIds: boundDirectAgentIds() });
   });
 
   // 个人页：积分 / 订阅 / 按量付费账户
+  // 已绑路由（走网关）的直连应用 agent_id —— 这些从「直连源」里移除（已变成路由源）；
+  // 其余 direct_only 源默认都展示，可在「个人源」里设计费。
+  function boundDirectAgentIds() {
+    try {
+      return getApps()
+        .filter(a => a && a.link_method === 'direct' && a.route_id)
+        .map(a => a.agent_id).filter(Boolean);
+    } catch { return []; }
+  }
   ipcMain.handle('localConfig:getUserAccounts', async (_e, auth = {}) => {
     const cfg = await pullUserBilling(auth);
-    return billingConfigMod.getUserAccounts(cfg);
+    return billingConfigMod.getUserAccounts(cfg, { boundDirectAgentIds: boundDirectAgentIds() });
   });
   ipcMain.handle('localConfig:setUserAccounts', async (_e, payload = {}) => {
     const cfg = await pushUserBilling(payload);
-    return billingConfigMod.getUserAccounts(cfg);
+    return billingConfigMod.getUserAccounts(cfg, { boundDirectAgentIds: boundDirectAgentIds() });
   });
 
   ipcMain.handle('localConfig:createSceneRoute', (_e, { scene_name, icon, steps, rules, classifier }) => {
@@ -1976,6 +1992,44 @@ function registerIPC() {
       syncCursorHookState(apps);
     }
   }
+
+  // 「支持的应用」总览：列出我们支持纳管的全部应用 + 本机是否已安装 + 未装时的官方安装链接。
+  // 数据驱动：CLI 工具(tools) / 桌面应用(api_key_apps) / 仅统计(direct_only 会话源) 三类清单并集，
+  // 各自复用既有检测逻辑判定 installed；install_url 集中维护官方下载页（无把握的留 null → 前端灰显不可点）。
+  ipcMain.handle('apps:supported', () => {
+    const configLoader = require('./config-loader');
+    // 安装链接来自配置（app_install_urls：内置默认兜底 + 服务端下发可覆盖），不硬编码
+    const INSTALL_URLS = configLoader.appInstallUrls();
+    // tools 段 yaml 无 icon 字段 → 给 CLI 工具一组兜底图标（与 apps:list 的 TOOL_ICONS 同源）
+    const TOOL_ICON = { 'claude-code': '🤖', 'codex': '💻', 'gemini-cli': '🔮', 'opencode': '📝', 'hermes': '🧠' };
+    const out = [];
+    const seen = new Set();
+    const add = (o) => { if (o && o.id && !seen.has(o.id)) { seen.add(o.id); out.push(o); } };
+    try {
+      // ① CLI 工具（shim 注入）：agentLinker.list() 已带 installed
+      for (const tool of agentLinker.list()) {
+        add({ id: tool.id, name: tool.name || tool.id, icon: TOOL_ICON[tool.id] || '🤖',
+              installed: !!tool.installed, install_url: INSTALL_URLS[tool.id] || null, kind: 'cli' });
+      }
+      // ② 桌面应用（写配置文件）：被管理员禁用(enable_3p:false)的不展示
+      for (const d of (configLoader.apiKeyApps() || [])) {
+        if (d.enable_3p === false) continue;
+        add({ id: d.id, name: d.name || d.id, icon: d.icon || '🖥️',
+              installed: apiKeyAppDetected(d), install_url: INSTALL_URLS[d.id] || null, kind: 'desktop' });
+      }
+      // ③ 仅统计（direct_only 会话源，如 Cursor）：会话目录存在即视为已安装
+      for (const s of (configLoader.sessionSources() || [])) {
+        if (!s || !s.direct_only || !s.agent_id) continue;
+        let installed = false;
+        try { installed = !!s.root && fs.existsSync(configLoader.expandHome(s.root)); } catch {}
+        add({ id: s.agent_id, name: s.app_name || s.agent_id, icon: s.app_icon || '🖱',
+              installed, install_url: INSTALL_URLS[s.agent_id] || null, kind: 'direct' });
+      }
+    } catch (e) { console.error('[apps:supported] failed:', e.message); }
+    // 已安装靠前（彩色在左），其次有安装链接的，最后无链接的小众工具
+    out.sort((a, b) => (Number(b.installed) - Number(a.installed)) || ((b.install_url ? 1 : 0) - (a.install_url ? 1 : 0)));
+    return out;
+  });
 
   ipcMain.handle('apps:list', () => {
     // 检测到的 api-key 应用 → 自动建立「离线」持久条目（生成 key、不写配置文件），

@@ -44,7 +44,7 @@ async function syncRemoteConfig() {
   if (!token) return;
   const base = await getSyncServerBase();
   if (!base) return;
-  for (const ep of ['/api/config/apps', '/api/config/scenes']) {
+  for (const ep of ['/api/config/apps', '/api/config/sources', '/api/config/scenes']) {
     try { await window.electronAPI.toolsConfig.importUrl(base + ep, token); } catch {}
   }
 }

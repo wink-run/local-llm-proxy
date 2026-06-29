@@ -1,10 +1,14 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getConfig } from '../api/adapter';
 import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
 import { useLang } from '../store/lang';
 import { useCurrency } from '../store/currency';
 import { isAccountOkMsg } from '../i18n';
 import ServiceIcon from './ServiceIcon';
+import {
+  AccountStatsView, SourceTemplateGrid, TemplateEditModal,
+  SyncDiffBanner, CustomSourceWizard, SourcePickerModal,
+} from './PersonalSources';
 
 const CUSTOM_APP = '__custom_app__';
 const CUSTOM_PLAN = '__custom_plan__';
@@ -19,6 +23,12 @@ function subscriptionKind(s) {
 
 function uid() {
   return `ua-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** 同模板已有 N 个实例 → 默认名「label_(N+1)」；首个用 label */
+function instanceName(label, list, keyField, keyVal) {
+  const n = (list || []).filter(x => x[keyField] === keyVal).length;
+  return n > 0 ? `${label}_${n + 1}` : label;
 }
 
 /** 用户手动添加模型时的默认刊例价（USD / 百万 Token） */
@@ -48,6 +58,7 @@ export default function UserAccountsPanel({
   onCreditsToggle,
   onRefreshUser,
   onAccountsChanged,
+  onInstanceAdded,
   CheckinCard,
   SpinCard,
   purchaseForm,
@@ -57,10 +68,13 @@ export default function UserAccountsPanel({
   const { fmtCost } = useCurrency();
   const billingOnly = scope === 'billing';
   const [tab, setTab] = useState(() => {
-    if (billingOnly) return initialTab === 'payg' ? 'payg' : 'subscription';
+    if (billingOnly) return 'templates';   // 供给源页：账户区只剩模板库（订阅/API/统计已并入别处）
     return initialTab;
   });
   const [data, setData] = useState(null);
+  const [templateEditing, setTemplateEditing] = useState(null);   // 当前编辑的源模板
+  const [wizardOpen, setWizardOpen] = useState(false);             // 自定义源向导
+  const [instancePickerOpen, setInstancePickerOpen] = useState(false);  // 「添加账户实例」选源弹窗
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
@@ -207,6 +221,19 @@ export default function UserAccountsPanel({
   // OAuth 订阅（app 类）与 API-key 订阅（kind=api）均在订阅 tab；按量 provider 在 payg tab。
   const appSubs = subs.filter(s => subscriptionKind(s) === SUB_KIND_APP);
   const apiSubs = subs.filter(s => subscriptionKind(s) === SUB_KIND_API);
+  const addedTemplateKeys = useMemo(() => {
+    const keys = new Set();
+    for (const s of subs) keys.add(s.source_id);
+    for (const p of payg) keys.add(p.provider_id);
+    return keys;
+  }, [subs, payg]);
+  // 网格模板 = 官方目录 + 自定义源模板（均由 billing-config 的 source_templates 下发，含 custom 标记）
+  const mergedTemplates = data?.source_templates || [];
+  function adoptServerTemplate(key) {
+    const next = { ...(data?.source_template_overrides || {}) };
+    delete next[key];
+    saveAccounts({ source_template_overrides: next }, { quiet: true });
+  }
 
   const isCustomApp = addSubSource === CUSTOM_APP;
   const isCustomPlan = addSubPlan === CUSTOM_PLAN;
@@ -271,10 +298,6 @@ export default function UserAccountsPanel({
         setSubMsg(t('accounts.err.selectPlan'));
         return;
       }
-      if (apiSubs.some(s => !s.custom && s.source_id === addApiSource)) {
-        setSubMsg(t('accounts.err.apiSubscriptionAdded'));
-        return;
-      }
       const plan = apiPlanOptions.find(p => p.id === addApiPlan);
       if (!plan) {
         setSubMsg(t('accounts.err.invalidPlan'));
@@ -335,11 +358,6 @@ export default function UserAccountsPanel({
       setSubMsg(t('accounts.err.selectApp'));
       return;
     }
-    if (subs.some(s => s.source_id === addSubSource)) {
-      setSubMsg(t('accounts.err.appAdded'));
-      return;
-    }
-
     let plan_id, plan_label, monthly_usd;
     if (isCustomPlan) {
       const planLabel = customPlanLabel.trim();
@@ -370,6 +388,7 @@ export default function UserAccountsPanel({
       id: uid(),
       subscription_kind: SUB_KIND_APP,
       source_id: addSubSource,
+      name: instanceName(catalogItem.app_name, appSubs, 'source_id', addSubSource),
       agent_id: catalogItem.agent_id,
       app_name: catalogItem.app_name,
       app_icon: catalogItem.app_icon,
@@ -454,16 +473,13 @@ export default function UserAccountsPanel({
       setPaygMsg(t('accounts.err.selectProvider'));
       return;
     }
-    if (payg.some(p => p.provider_id === addPaygId)) {
-      setPaygMsg(t('accounts.err.providerExists'));
-      return;
-    }
     const meta = paygOptions.find(p => p.id === addPaygId || p.provider_id === addPaygId)
       || { label: addPaygId, icon: '🔧', models: [] };
     const next = [...payg, {
       id: uid(),
       provider_id: addPaygId,
       label: meta.label,
+      name: instanceName(meta.label, payg, 'provider_id', addPaygId),
       icon: meta.icon,
       models: [...(meta.models || [])],
       enabled: true,
@@ -574,33 +590,37 @@ export default function UserAccountsPanel({
     });
   }
 
+  const statsTab = { id: 'accounts', label: t('psrc.tab.stats'), sub: t('accounts.count', { n: data?.account_stats?.total ?? 0 }), color: 'zinc' };
+  const templatesTab = { id: 'templates', label: t('psrc.tab.sourceList'), sub: t('accounts.count', { n: (data?.source_templates || []).length }), color: 'violet' };
   const tabs = billingOnly
-    ? [
-        { id: 'subscription', label: t('accounts.tab.subscription'), sub: t('accounts.count', { n: appSubs.length + apiSubs.length }), color: 'amber' },
-        { id: 'payg', label: t('accounts.tab.payg'), sub: t('accounts.count', { n: payg.length }), color: 'emerald' },
-      ]
+    // 供给源页：统计移到下面「个人源」、订阅/API 已并入模板（点模板加实例），账户区只剩模板库
+    ? [templatesTab]
     : [
         { id: 'p2p', label: t('accounts.tab.p2p'), sub: t('accounts.tab.p2pSub'), color: 'blue' },
+        statsTab,
         { id: 'subscription', label: t('accounts.tab.subscription'), sub: t('accounts.count', { n: appSubs.length + apiSubs.length }), color: 'amber' },
         { id: 'payg', label: t('accounts.tab.payg'), sub: t('accounts.count', { n: payg.length }), color: 'emerald' },
+        templatesTab,
       ];
 
   return (
     <section className={billingOnly ? '' : 'bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden'}>
-      {/* 账户类型切换 */}
-      <div className="flex border-b border-zinc-100 dark:border-zinc-800">
-        {tabs.map(tabItem => (
-          <button key={tabItem.id} type="button" onClick={() => setTab(tabItem.id)}
-            className={`flex-1 px-4 py-3 text-left transition-colors ${
-              tab === tabItem.id
-                ? 'bg-zinc-50 dark:bg-zinc-800/80 border-b-2 border-zinc-900 dark:border-zinc-100'
-                : 'hover:bg-zinc-50/50 dark:hover:bg-zinc-800/40'
-            }`}>
-            <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{tabItem.label}</div>
-            <div className="text-xs text-zinc-400 mt-0.5">{tabItem.sub}</div>
-          </button>
-        ))}
-      </div>
+      {/* 账户类型切换（只剩一个 tab 时隐藏标题栏，直接展示内容）*/}
+      {tabs.length > 1 && (
+        <div className="flex border-b border-zinc-100 dark:border-zinc-800">
+          {tabs.map(tabItem => (
+            <button key={tabItem.id} type="button" onClick={() => setTab(tabItem.id)}
+              className={`flex-1 px-4 py-3 text-left transition-colors ${
+                tab === tabItem.id
+                  ? 'bg-zinc-50 dark:bg-zinc-800/80 border-b-2 border-zinc-900 dark:border-zinc-100'
+                  : 'hover:bg-zinc-50/50 dark:hover:bg-zinc-800/40'
+              }`}>
+              <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{tabItem.label}</div>
+              <div className="text-xs text-zinc-400 mt-0.5">{tabItem.sub}</div>
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="p-5 space-y-4">
         {msg && <p className="text-xs text-green-600 dark:text-green-400">{msg}</p>}
@@ -654,6 +674,48 @@ export default function UserAccountsPanel({
             </div>
             <p className="text-xs text-gray-400">{t('accounts.p2pHint')}</p>
           </>
+        )}
+
+        {/* ── 统计 tab：账户统计 + 同步差异 ── */}
+        {tab === 'accounts' && (
+          loading ? <p className="text-sm text-gray-400">{t('accounts.loading')}</p> : (
+            <div className="space-y-3">
+              <SyncDiffBanner syncDiff={data?.sync_diff} t={t}
+                onAdoptServer={adoptServerTemplate} onDismissDrift={adoptServerTemplate} />
+              <AccountStatsView data={data} t={t} />
+            </div>
+          )
+        )}
+
+        {/* ── 源模板库（账户源列表）── */}
+        {tab === 'templates' && (
+          loading ? <p className="text-sm text-gray-400">{t('accounts.loading')}</p> : (
+            <SourceTemplateGrid templates={mergedTemplates}
+              addedKeys={addedTemplateKeys} onEdit={setTemplateEditing}
+              onAdd={() => setInstancePickerOpen(true)} t={t} />
+          )
+        )}
+
+        {templateEditing && (
+          <TemplateEditModal template={templateEditing}
+            overrides={data?.source_template_overrides || {}}
+            payg={payg} subs={subs}
+            customTemplates={data?.custom_source_templates || {}}
+            paygCatalog={data?.payg_provider_catalog || []}
+            onSave={(patch) => saveAccounts(patch, { quiet: true })}
+            onInstanceAdded={onInstanceAdded}
+            onClose={() => setTemplateEditing(null)} t={t} />
+        )}
+        {wizardOpen && (
+          <CustomSourceWizard payg={payg} subs={subs} customTemplates={data?.custom_source_templates || {}} t={t}
+            onSave={(patch) => saveAccounts(patch)}
+            onClose={() => setWizardOpen(false)} />
+        )}
+        {instancePickerOpen && (
+          <SourcePickerModal templates={mergedTemplates} t={t}
+            onPick={(tpl) => { setInstancePickerOpen(false); setTemplateEditing(tpl); }}
+            onNewSource={() => { setInstancePickerOpen(false); setWizardOpen(true); }}
+            onClose={() => setInstancePickerOpen(false)} />
         )}
 
         {/* ── 订阅账户 ── */}
@@ -749,7 +811,7 @@ export default function UserAccountsPanel({
                           <select value={addApiSource} onChange={e => onApiSourceChange(e.target.value)}
                             className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2">
                             <option value="">{t('accounts.selectApiSubscription')}</option>
-                            {apiCatalog.filter(c => !apiSubs.some(s => !s.custom && s.source_id === c.source_id)).map(c => (
+                            {apiCatalog.map(c => (
                               <option key={c.source_id} value={c.source_id}>
                                 {c.app_icon} {c.app_name}
                               </option>
@@ -779,7 +841,7 @@ export default function UserAccountsPanel({
                       <select value={addSubSource} onChange={e => onSubSourceChange(e.target.value)}
                         className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2">
                         <option value="">{t('accounts.selectApp')}</option>
-                        {catalog.filter(c => !subs.some(s => s.source_id === c.source_id)).map(c => (
+                        {catalog.map(c => (
                           <option key={c.source_id} value={c.source_id}>
                             {c.app_icon} {c.app_name}
                           </option>
@@ -1012,7 +1074,7 @@ export default function UserAccountsPanel({
                       <select value={addPaygId} onChange={e => onPaygSelectChange(e.target.value)}
                         className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2">
                         <option value="">{t('accounts.selectProvider')}</option>
-                        {paygOptions.filter(o => !payg.some(p => p.provider_id === (o.id || o.provider_id))).map(o => (
+                        {paygOptions.map(o => (
                           <option key={o.id || o.provider_id} value={o.id || o.provider_id}>{o.icon} {o.label}</option>
                         ))}
                         <option value={CUSTOM_PAYG}>{t('accounts.customProvider')}</option>

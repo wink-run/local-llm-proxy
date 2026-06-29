@@ -516,9 +516,19 @@ function importSource(localStats, src) {
       const ctx = { model: undefined, session_id, seq: 0, index: 0, prev: { input: 0, output: 0, cached: 0 } };
       items.forEach((item, idx) => {
         if (!matchFilter(item, src.record_filter)) return;
+        let rec = item;
+        // item_json_field：某字段本身是 JSON 字符串（如 WorkBuddy span.toolOutput = [OpenAI 响应]），解析后并入；
+        // 解析结果若是数组（响应包在单元素数组里），取第一个对象元素。
+        if (src.item_json_field) {
+          try {
+            let parsed = JSON.parse(getPath(item, src.item_json_field) || 'null');
+            if (Array.isArray(parsed)) parsed = parsed.find(x => x && typeof x === 'object') || null;
+            if (parsed && typeof parsed === 'object') rec = { ...item, ...parsed };
+          } catch { /* 解析失败保持原 item */ }
+        }
         ctx.index = idx;
         ctx.session_id = session_id;   // json 每条都用整文件级 session
-        if (emitRecord(localStats, src, item, ctx, doc)) imported++;
+        if (emitRecord(localStats, src, rec, ctx, doc)) imported++;
       });
     } else {
       // jsonl：逐行；维护运行上下文（meta 行更新 model/session_id；accumulate 累计 prev）

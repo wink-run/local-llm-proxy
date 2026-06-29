@@ -34,6 +34,25 @@ claude_models:
   - claude-sonnet-4
   - claude-haiku-4-5
 
+# ════════ 应用官方安装/下载页（内置，不随同步留空）════════
+# 图标行「未安装」的应用点击此链接跳转安装。纯展示数据；服务端如下发同名段则按 id 覆盖
+# （config-loader.appInstallUrls 以内置默认兜底，再叠加当前配置）。
+app_install_urls:
+  claude-code:    https://claude.com/claude-code
+  codex:          https://developers.openai.com/codex/cli
+  gemini-cli:     https://github.com/google-gemini/gemini-cli
+  opencode:       https://opencode.ai
+  hermes:         https://hermes-agent.nousresearch.com
+  claude-desktop: https://claude.ai/download
+  codex-desktop:  https://developers.openai.com/codex/app
+  openclaw:       https://openclaw.ai
+  cursor:         https://cursor.com
+  copilot:        https://github.com/features/copilot
+  qwen-code:      https://github.com/QwenLM/qwen-code
+  antigravity:    https://antigravity.google/download
+  grok:           https://x.ai/cli
+  workbuddy:      https://www.codebuddy.ai
+
 # ════════ 会话用量解析（内置，YAML 驱动的解释器）════════
 # 补录「不走本网关、直连官方」的用量：扫各工具的会话文件(JSONL/JSON)解析 token，
 # 写库带 request_id → 与网关实时记录(proxy)按 request_id 去重，同一次调用只记一次。
@@ -134,6 +153,7 @@ session_sources:
     direct_only: true                          # 标记：main.js 据此物化为「仅直连·只统计」应用（不绑路由/不走网关）
     app_name: Cursor
     app_icon: "🖱"
+    models: [claude-opus-4-8, claude-sonnet-4-6, gpt-5.4, gemini-2.5-pro, gemini-2.5-flash]  # 直连默认支持的模型（展示用）
     root: "~/.cursor/projects"
     glob: "**/agent-transcripts/**/*.jsonl"    # <slug>/agent-transcripts/<sid>/<sid>.jsonl
     format: jsonl
@@ -190,6 +210,7 @@ session_sources:
     direct_only: true                            # 不走网关，仅补录统计
     app_name: GitHub Copilot
     app_icon: "🤖"
+    models: [gpt-5.4, gpt-5-mini, claude-opus-4-8, claude-sonnet-4-6, gemini-2.5-pro]  # 直连默认支持的模型（展示用）
     format: copilot-events                       # 自定义格式：一目录=一会话，events.jsonl
     root: "~/.copilot/session-state"
     glob: "*/events.jsonl"                       # <sessId>/events.jsonl
@@ -203,6 +224,7 @@ session_sources:
     direct_only: true
     app_name: Qwen Code
     app_icon: "🐉"
+    models: [qwen3-coder-plus, qwen3-coder-next, qwen3-max]  # 直连默认支持的模型（展示用）
     root: "~/.qwen/projects"
     glob: "*/chats/*.jsonl"
     format: jsonl
@@ -228,6 +250,7 @@ session_sources:
     direct_only: true
     app_name: Antigravity
     app_icon: "🚀"
+    models: [gemini-3-pro, gemini-2.5-pro, gemini-2.5-flash, claude-sonnet-4-6]  # 直连默认支持的模型（展示用）
     root: "~/.gemini/tmp"
     glob: "**/chats/*.json"
     format: json
@@ -254,9 +277,36 @@ session_sources:
     direct_only: true
     app_name: Grok
     app_icon: "𝕏"
+    models: [grok-build-0.1, grok-4.3]  # 直连默认支持的模型（展示用）
     format: grok-session
     root: "~/.grok/sessions"
     skip_if_zero: true
+
+  - id: workbuddy                                # WorkBuddy(腾讯 CodeBuddy)：走腾讯云账户、无本地 base_url 配置 → 仅直连统计
+    data_source: session-workbuddy
+    agent_id: workbuddy
+    provider_id: workbuddy
+    tier: paid
+    billing_type: api-key
+    direct_only: true
+    app_name: WorkBuddy
+    app_icon: "🤝"
+    models: [auto, gpt-5, deepseek-v4-pro, deepseek-v4-flash]  # auto=自动选模型；其余为常用底层模型
+    root: "~/.workbuddy/traces"                  # 安装判断 + 扫描根目录
+    glob: "**/trace_*.json"
+    format: json
+    iterate: spans                               # 遍历 trace.spans
+    record_filter: { field: type, equals: generation }   # 只取 LLM 调用 span
+    item_json_field: toolOutput                  # span.toolOutput 是 OpenAI 响应 JSON 字符串，解析后取 model/usage
+    doc_session_id: [trace.traceId]
+    skip_if_zero: true
+    request_id: "workbuddy:{session_id}:{index}"
+    fields:
+      model: model                               # OpenAI 响应的 model（"auto" 等）
+      input_tokens: usage.prompt_tokens
+      output_tokens: usage.completion_tokens
+      cache_read_tokens: usage.prompt_tokens_details.cached_tokens
+      ts: startedAt                              # span 的 ISO 时间
 
 # ════════ 客户端接入（内置留空，从服务器同步）════════
 tools: []

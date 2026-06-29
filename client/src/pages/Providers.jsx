@@ -4,7 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { resolveBrandIcon } from '../lib/brandIcons';
 import ServiceIcon from '../components/ServiceIcon';
 import { getNetwork, getProfile, listKeys, createKey, deleteKey, getProviderCatalog, getModelsForCurrentUser } from '../api/client';
-import { loadUserAccounts } from '../api/userAccounts';
+import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
+import { DirectSourceCard, PersonalSourceModelView, AccountStatsView } from '../components/PersonalSources';
 import UserAccountsPanel from '../components/UserAccountsPanel';
 import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
 import { getGateway, getLocalConfig, getConfig, getOauth } from '../api/adapter';
@@ -420,6 +421,10 @@ const PERSONAL_TYPE_BADGE = {
     filterKey: 'free',
     className: 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/50',
   },
+  app_sub: {
+    filterKey: 'appSub',
+    className: 'bg-rose-50 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800/50',
+  },
   api_sub: {
     filterKey: 'apiSub',
     className: 'bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 border-violet-200 dark:border-violet-800/50',
@@ -441,6 +446,13 @@ function PersonalTypeIcon({ tag, className = 'w-3 h-3 shrink-0' }) {
       return (
         <svg {...props}>
           <path d="M8 2v12M4.5 5.5h7M4.5 5.5a2 2 0 0 1-2-2c0-1.1.9-2 2-2 .7 0 1.3.4 1.7 1M11.5 5.5a2 2 0 0 0 2-2c0-1.1-.9-2-2-2-.7 0-1.3.4-1.7 1" strokeLinecap="round" />
+        </svg>
+      );
+    case 'app_sub':
+      return (
+        <svg {...props}>
+          <rect x="2.5" y="2.5" width="11" height="11" rx="2.5" />
+          <circle cx="8" cy="8" r="2" />
         </svg>
       );
     case 'api_sub':
@@ -485,7 +497,7 @@ function PersonalSourceTypeBadge({ tag, t }) {
 function PersonalFilterBar({ value, onChange, t }) {
   const items = [
     { id: 'all', label: t('providers.filter.all') },
-    { id: 'free', label: t('providers.filter.free') },
+    { id: 'app_sub', label: t('providers.filter.appSub') },
     { id: 'api_sub', label: t('providers.filter.apiSub') },
     { id: 'sub_to_api', label: t('providers.filter.subToApi') },
     { id: 'payg', label: t('providers.filter.payg') },
@@ -1198,7 +1210,7 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
 }
 
 /** 供给源卡片内模型区；按量供给源可独立编辑，新增供给源引导去个人页；默认折叠 */
-function ProviderModelSection({ provider, userPayg, onGoPayg, onUpdate, scrollable = false, providerPricing = {}, paygCatalog = [] }) {
+function ProviderModelSection({ provider, userPayg, onGoPayg, onUpdate, scrollable = false, providerPricing = {}, paygCatalog = [], readOnly = false }) {
   const { t } = useLang();
   const [modelsOpen, setModelsOpen] = useState(false);
   const isPayg = isPaygManagedProvider(provider.id, userPayg);
@@ -1244,24 +1256,37 @@ function ProviderModelSection({ provider, userPayg, onGoPayg, onUpdate, scrollab
         </button>
       </div>
       {modelsOpen && (
-        <>
-          <ModelListEditor
-            models={models}
-            onChange={handleModelsChange}
-            scrollable={scrollable}
-            suggestions={suggestions}
-            profileOnly={isPayg}
-          />
-          {isPayg && (
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              {t('providers.models.paygHint')}{' '}
-              <button type="button" onClick={onGoPayg}
-                className="text-emerald-600 dark:text-emerald-400 hover:underline">
-                {t('providers.models.goPaygProfile')}
-              </button>
-            </p>
-          )}
-        </>
+        readOnly ? (
+          // 实例卡：模型只读（从模板同步），不能在实例上增删
+          <div className="flex flex-wrap gap-1">
+            {models.length === 0
+              ? <span className="text-xs text-zinc-400">{t('providers.models.unlimited')}</span>
+              : models.map((m, i) => (
+                <span key={i} className="text-xs px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 font-mono text-zinc-600 dark:text-zinc-300">
+                  {typeof m === 'string' ? m : (m?.name || '')}
+                </span>
+              ))}
+          </div>
+        ) : (
+          <>
+            <ModelListEditor
+              models={models}
+              onChange={handleModelsChange}
+              scrollable={scrollable}
+              suggestions={suggestions}
+              profileOnly={isPayg}
+            />
+            {isPayg && (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                {t('providers.models.paygHint')}{' '}
+                <button type="button" onClick={onGoPayg}
+                  className="text-emerald-600 dark:text-emerald-400 hover:underline">
+                  {t('providers.models.goPaygProfile')}
+                </button>
+              </p>
+            )}
+          </>
+        )
       )}
     </div>
   );
@@ -1397,7 +1422,9 @@ function usageBarColor(p) {
   return 'bg-blue-500';
 }
 // 与 electron/usage 注册表 SUPPORTED_KEYS 同步：OAuth 类按 oauth_provider，其余按 id。
-const USAGE_SUPPORTED = new Set(['claude', 'codex', 'copilot', 'gemini', 'openrouter', 'deepseek', 'groq']);
+// 「订阅额度」主要面向订阅账户（额度窗口）；groq 不在内 —— 它只有吞吐速率指标（无额度/余额概念），
+// 且 metrics 端点多数账户返回 404，这个块对它既报错又无可展示数据。
+const USAGE_SUPPORTED = new Set(['claude', 'codex', 'copilot', 'gemini', 'openrouter', 'deepseek']);
 function usageKey(p) {
   return p?.auth_type === 'oauth' && p?.oauth_provider ? p.oauth_provider : p?.id;
 }
@@ -1489,7 +1516,7 @@ function UsageMeter({ provider }) {
   );
 }
 
-function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpanded = false, gatewayAuthMode = null, userPayg = [], userSubscriptions = [], onGoPayg, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [] }) {
+function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpanded = false, gatewayAuthMode = null, userPayg = [], userSubscriptions = [], onGoPayg, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [], displayName = null, displayIcon = null, lockTemplate = false }) {
   const { t } = useLang();
   const [showKey,    setShowKey]    = useState(false);
   const [expanded,   setExpanded]   = useState(initialExpanded);
@@ -1606,10 +1633,11 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
         {/* Icon（命中品牌用 lobehub logo，否则回退预设 emoji）*/}
         <div className="w-8 h-8 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-[15px] shrink-0 mt-0.5">
           {(() => {
-            const brand = resolveBrandIcon(`${provider.id || ''} ${meta.label || ''}`);
+            // 名称/图标对齐账户实例（与统计一致）：实例名优先，品牌 logo 按实例名解析，回退实例 emoji
+            const brand = resolveBrandIcon(`${provider.id || ''} ${displayName || meta.label || ''}`);
             return brand
               ? <img src={brand} alt="" className="w-5 h-5 object-contain" />
-              : meta.icon;
+              : (displayIcon || meta.icon);
           })()}
         </div>
         {/* Body */}
@@ -1617,7 +1645,7 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
               <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                {meta.label}
+                {displayName || meta.label}
               </span>
               <StatusBadge hasKey={hasKey || hasOauth} keyless={meta.keyless && !oauthCap} />
               <PersonalSourceTypeBadge tag={personalTag} t={t} />
@@ -1675,8 +1703,8 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
           {/* Inline setup / edit panel */}
           {!isP2P && (showApiKeyUi || showOauthUi) && (!configured || expanded) && (
             <div className="mt-3 space-y-2">
-              {/* 计费方式切换：由 yaml subscription_apps 中有 plan_provider_id 匹配时显示 */}
-              {hasSubscriptionOption && canApiKey && !forceOauth && !forceApiKey && (
+              {/* 计费方式切换（转API）：模板锁定时只读，由模板的「能否转API」决定 */}
+              {hasSubscriptionOption && canApiKey && !forceOauth && !forceApiKey && !lockTemplate && (
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">{t('providers.card.billingMode')}</span>
                   <div className="inline-flex rounded-lg border border-zinc-300 dark:border-zinc-700 overflow-hidden text-xs">
@@ -1688,8 +1716,8 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
                 </div>
               )}
 
-              {/* 订阅接入方式（非付费层强制 OAuth 时可选） */}
-              {isSubscription && !forceApiKey && !forceOauth && oauthCap && (
+              {/* 订阅接入方式（转API/仅记账）：模板锁定时只读 */}
+              {isSubscription && !forceApiKey && !forceOauth && oauthCap && !lockTemplate && (
                 <div className="space-y-2 pl-1">
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-zinc-500 shrink-0">{t('providers.card.accessMode')}</span>
@@ -1856,6 +1884,7 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
           scrollable
           providerPricing={providerPricing}
           paygCatalog={paygCatalog}
+          readOnly={lockTemplate}
         />
       )}
     </div>
@@ -1878,6 +1907,11 @@ export default function Providers() {
   const [userPayg, setUserPayg] = useState([]);
   const [providerPricing, setProviderPricing] = useState({});
   const [paygCatalog, setPaygCatalog] = useState([]);
+  const [directInstances, setDirectInstances] = useState([]);   // 直连源实例（仅统计的应用）
+  const [directBilling, setDirectBilling] = useState({});        // 直连源计费（按 agent_id）
+  const [accountsData, setAccountsData] = useState(null);        // 完整账户快照（统计视图用）
+  const [sourcesView, setSourcesView] = useState('list');        // 个人源视图：list | model
+  const [credModalKey, setCredModalKey] = useState(null);        // 添加实例后弹出的凭证配置弹窗（source key）
   const [savedMsg,  setSavedMsg]  = useState('');
   // Track the last value written/loaded so we skip the initial load trigger
   const lastSaved = useRef(null);
@@ -1916,6 +1950,9 @@ export default function Providers() {
       setUserPayg(r.user_payg_providers || []);
       setProviderPricing(r.provider_pricing || {});
       setPaygCatalog(r.payg_provider_catalog || []);
+      setDirectInstances(r.direct_source_instances || []);
+      setDirectBilling(r.direct_source_billing || {});
+      setAccountsData(r);
     } catch {
       setPaidAllowlist([]);
       setUserPayg([]);
@@ -2117,6 +2154,90 @@ export default function Providers() {
         getPersonalSourceTag(liveStateOf(p), meta, userPayg, userSubscriptions),
         personalFilter,
       ));
+  // 源的官方模型（payg catalog 优先，回退运行时 pricing 的模型名）
+  const paygModelsOf = (pid) => {
+    const c = (paygCatalog || []).find(x => (x.provider_id || x.id) === pid);
+    if (c && Array.isArray(c.models) && c.models.length) return c.models;
+    const pr = providerPricing && providerPricing[pid];
+    return pr ? Object.keys(pr) : [];
+  };
+  // 统一的「账户实例」集：订阅 + 按量 + 直连。图标/名称字段与统计(AccountStatsView)保持一致，
+  // models 用源的官方模型。统计、列表、按模型视图都基于它，数目与图标名称对齐。
+  const accountInstances = [
+    ...userSubscriptions.map(s => {
+      const pid = s.plan_provider_id || s.source_id;
+      // 网关 provider id：自定义订阅用 source_id；OAuth 订阅(claude/codex/copilot)映射到 catalog pid
+      const gw = s.custom ? s.source_id : (OAUTH_SUB_SOURCE_TO_PID[s.source_id] || s.plan_provider_id || s.source_id);
+      // 类型 tag：api订阅 / 订阅转API / app订阅
+      const tag = s.subscription_kind === 'api' ? 'api_sub' : (s.subscription_to_api ? 'sub_to_api' : 'app_sub');
+      return {
+        kind: 'sub', billing_type: 'subscription', tag,
+        id: s.id, source_id: s.source_id, gateway_id: gw,
+        name: s.name || s.app_name, label: s.app_name, icon: s.app_icon,
+        models: paygModelsOf(pid), plan_label: s.plan_label, monthly_usd: s.monthly_usd ?? null,
+      };
+    }),
+    ...userPayg.map(p => ({
+      kind: 'payg', billing_type: 'api', tag: 'payg',
+      id: p.id, source_id: p.provider_id, gateway_id: p.provider_id,
+      name: p.name || p.label, label: p.label, icon: p.icon,
+      models: (p.models && p.models.length) ? p.models : paygModelsOf(p.provider_id),
+    })),
+    ...directInstances.map(d => ({
+      kind: 'direct', billing_type: d.mode === 'api' ? 'api' : 'subscription',
+      tag: d.mode === 'api' ? 'payg' : 'app_sub',   // 直连：API→按量，订阅→app订阅
+      id: d.agent_id, source_id: d.source_id,
+      name: d.name, label: d.label, icon: d.icon,
+      models: d.models || [],
+    })),
+  ];
+  const allSourceInstances = accountInstances;   // 按模型视图沿用统一集
+  // 「已接入网关」= 对应 provider 真正 enabled（不是 gateway_provider_ids 那种「已登记可接入」）。
+  // 接入的由上面 ProviderCard 展示；未接入的在这里补充展示，使列表数目与统计一致。
+  // 顶部筛选：按账户实例的类型 tag（app订阅 / api订阅 / 订阅转API / API）；
+  // 统计方块点击用粗粒度组：'subscription'=三种订阅，'api'=按量
+  const SUB_TAGS = ['app_sub', 'api_sub', 'sub_to_api'];
+  const matchFilter = (tag) => {
+    if (personalFilter === 'all') return true;
+    if (personalFilter === 'subscription') return SUB_TAGS.includes(tag);
+    if (personalFilter === 'api') return tag === 'payg';
+    return tag === personalFilter;
+  };
+  const directFiltered = directInstances.filter(d => matchFilter(d.mode === 'api' ? 'payg' : 'app_sub'));
+  const hasAcct = (id) => accountInstances.some(i => i.gateway_id === id);
+  const acctTagOf = (id) => { const a = accountInstances.find(i => i.gateway_id === id); return a ? a.tag : null; };
+  // 账户实例对应的供给源 → 用 ProviderCard（保留 key/oauth/计费/测试等完整配置入口），按账户 tag 筛选
+  const accountSources = personalPaidPool.filter(p => {
+    const tag = acctTagOf(p.id);
+    return tag && matchFilter(tag);
+  });
+  // 其他已启用但不对应账户实例的供给源（如历史配的 Groq）→ 也用 ProviderCard，可改 key/删除；不计入统计、不受筛选
+  const otherSources = personalEnabledAll.filter(p => p.type !== 'p2p' && !hasAcct(p.id));
+
+  // 删除账户实例卡：删该源对应的账户实例（user_payg/subs）+ 停用网关 provider。
+  // 自定义源：删实例前把模板固化到 custom_source_templates，避免兼容推断丢失整个源。
+  const removeAccountSource = async (providerId) => {
+    const insts = accountInstances.filter(i => i.gateway_id === providerId);
+    if (!insts.length) { removePersonalProvider(providerId); return; }
+    let nextPayg = userPayg, nextSubs = userSubscriptions;
+    for (const inst of insts) {
+      if (inst.kind === 'payg') nextPayg = nextPayg.filter(p => p.id !== inst.id);
+      else if (inst.kind === 'sub') nextSubs = nextSubs.filter(s => s.id !== inst.id);
+    }
+    const patch = { user_payg_providers: nextPayg, user_subscriptions: nextSubs };
+    const tpl = (accountsData?.source_templates || []).find(x => x.key === providerId && x.custom);
+    const ct = accountsData?.custom_source_templates || {};
+    if (tpl && !ct[providerId]) {
+      patch.custom_source_templates = { ...ct, [providerId]: {
+        kind: tpl.kind, label: tpl.label, icon: tpl.icon,
+        models: tpl.models || [], pricing: tpl.pricing || {}, plans: tpl.plans || [],
+        subscription_to_api: tpl.subscription_to_api === true,
+      } };
+    }
+    await saveUserAccounts(patch);
+    removePersonalProvider(providerId);
+    loadUserPaidAccounts();
+  };
 
   const disabledPickerEntries = gatewayPickerEntries.filter(e => !liveStateOf({ id: e.providerId }).enabled);
   const freeAddableProviders = (() => {
@@ -2147,6 +2268,115 @@ export default function Providers() {
     } else {
       setPickerOpen(true);
     }
+  }
+
+  // 「添加供给源」（把已添加账户接入网关）—— 入口放在上面「个人源账户」区，
+  // 下面「个人源」只展示/编辑、不提供添加入口。
+  function renderAddSourcePicker() {
+    return (
+      <div className="space-y-3">
+        <button type="button" onClick={togglePicker}
+          className={`w-full flex flex-col items-center justify-center gap-1.5 rounded-2xl border-2 border-dashed py-4 transition-colors ${
+            pickerOpen
+              ? 'border-blue-400 dark:border-blue-600 text-blue-500 dark:text-blue-400 bg-blue-50/50 dark:bg-blue-950/10'
+              : 'border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600 hover:text-zinc-500'
+          }`}>
+          <span className="text-xl leading-none">{pickerOpen ? '×' : '+'}</span>
+          <span className="text-xs font-medium">{pickerOpen ? t('providers.add.collapse') : t('providers.add.expand')}</span>
+          {!pickerOpen && (
+            <span className="text-xs text-zinc-300 dark:text-zinc-600">
+              {pickerItems.length > 0
+                ? t('providers.add.availableCount', { n: pickerItems.length })
+                : t('providers.add.allTypesHint')}
+            </span>
+          )}
+        </button>
+
+        {pickerOpen && (
+          <div className="p-4 bg-zinc-50 dark:bg-zinc-800/40 rounded-2xl border border-zinc-200 dark:border-zinc-700 space-y-3">
+            {!paidAccountsLoaded && (
+              <p className="text-xs text-zinc-400">{t('providers.add.loadingAccounts')}</p>
+            )}
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('providers.add.unifiedHint')}</p>
+            <div className="flex flex-wrap gap-2">
+              {pickerItemsFiltered.map(item => {
+                if (item.kind === 'entry') return renderPickerButton(item.entry);
+                const pr = item.provider;
+                const m = meta[pr.id] || {};
+                const sel = addingId === pr.id;
+                return (
+                  <button key={item.key} type="button" title={m.hint || ''} onClick={() => {
+                    if (sel) setAddingId(null);
+                    else {
+                      setAddingId(pr.id);
+                      updateProvider(pr.id, { enabled: true });
+                    }
+                  }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
+                      sel
+                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
+                        : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600'
+                    }`}>
+                    <span>{m.icon || '🔌'}</span>
+                    <span>{m.label || pr.id}</span>
+                    {(m.keyless || pr.type === 'free') && (
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400">{t('providers.add.freeTag')}</span>
+                    )}
+                  </button>
+                );
+              })}
+              {pickerItemsFiltered.length === 0 && paidAccountsLoaded && (
+                <p className="text-xs text-zinc-400">{t('providers.filter.pickerEmpty')}</p>
+              )}
+            </div>
+            {paidAccountsLoaded && !hasGatewayPaid && (
+              <PersonalPageHint onOpenConfig={goPersonalPage} />
+            )}
+            {pickerItems.length === 0 && hasGatewayPaid && (
+              <p className="text-xs text-zinc-400">{t('providers.add.allAdded')}</p>
+            )}
+
+            {addingId && (() => {
+              const entry = gatewayPickerEntries.find(e => e.pickerKey === addingPickerKey)
+                || gatewayPickerEntries.find(e => e.providerId === addingId);
+              const pid = addingId;
+              const stubFromEntry = entry ? {
+                id: pid,
+                type: 'paid',
+                enabled: true,
+                token: '',
+                base_url: '',
+                models: [],
+                displayName: entry.label,
+              } : null;
+              const p = personalPoolAll.find(pr => pr.id === pid)
+                || providers.find(pr => pr.id === pid)
+                || stubFromEntry;
+              if (!p) return null;
+              const live = liveStateOf(p);
+              const cardAuth = addingAuthMode || resolveCardAuthMode(live, providerGatewayAuth[pid]);
+              const useCustomCard = entry?.custom || isCustomSubscriptionGatewayId(pid, userSubscriptions) || !meta[pid];
+              return (
+                <div className="mt-1">
+                  {entry && (
+                    <p className="text-xs text-zinc-400 mb-2">
+                      {t('providers.add.configuring', {
+                        label: entry.label,
+                        auth: entry.authMode === 'oauth' ? t('providers.add.authOauth') : t('providers.add.authApiKey'),
+                      })}
+                    </p>
+                  )}
+                  {!useCustomCard
+                    ? <ProviderCard key={pid} provider={live} meta={meta[pid]} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} initialExpanded gatewayAuthMode={cardAuth} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} />
+                    : <CustomProviderCard key={pid} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />
+                  }
+                </div>
+              );
+            })()}
+          </div>
+        )}
+      </div>
+    );
   }
 
   function renderPickerButton(entry) {
@@ -2225,143 +2455,84 @@ export default function Providers() {
           </span>
         </button>
         {billingOpen && (
-          <div className="border-t border-zinc-100 dark:border-zinc-800 px-1 pb-1">
+          <div className="border-t border-zinc-100 dark:border-zinc-800 px-1 pb-1 space-y-3">
             <UserAccountsPanel
               key={billingTab}
               scope="billing"
               initialTab={billingTab}
               onAccountsChanged={loadUserPaidAccounts}
+              onInstanceAdded={(key) => setCredModalKey(key)}
             />
           </div>
         )}
       </section>
 
-      {/* 个人源：统一列表 + 顶部标签筛选 */}
-      <section className="space-y-3">
+      {/* 个人源：统一卡片容器（统计 + 列表 + 直连框到一起）*/}
+      <section className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 space-y-4">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
             <h2 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">{t('providers.group.local')}</h2>
             <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">{t('providers.group.localHint')}</p>
           </div>
-          <PersonalFilterBar value={personalFilter} onChange={setPersonalFilter} t={t} />
+          <div className="flex items-center gap-2">
+            <div className="inline-flex rounded-lg border border-zinc-300 dark:border-zinc-700 overflow-hidden text-xs">
+              <button type="button" onClick={() => setSourcesView('list')}
+                className={`px-2.5 py-1 ${sourcesView === 'list' ? 'bg-zinc-100 dark:bg-zinc-700 font-medium' : 'text-zinc-400'}`}>{t('psrc.view.list')}</button>
+              <button type="button" onClick={() => setSourcesView('model')}
+                className={`px-2.5 py-1 ${sourcesView === 'model' ? 'bg-zinc-100 dark:bg-zinc-700 font-medium' : 'text-zinc-400'}`}>{t('psrc.view.model')}</button>
+            </div>
+            {sourcesView !== 'model' && <PersonalFilterBar value={personalFilter} onChange={setPersonalFilter} t={t} />}
+          </div>
         </div>
 
+        {accountsData && (
+          <div className="pb-3 border-b border-zinc-100 dark:border-zinc-800">
+            <AccountStatsView data={accountsData} t={t} filter={personalFilter} onFilter={setPersonalFilter} />
+          </div>
+        )}
+
+        {sourcesView === 'model' ? (
+          <PersonalSourceModelView instances={allSourceInstances} t={t} />
+        ) : (
+        <>
         <div className="grid grid-cols-2 gap-3">
-          {personalEnabledFiltered.map(p => {
+          {accountSources.map(p => {
             const live = liveStateOf(p);
             const useCustomCard = isCustomSubscriptionGatewayId(live.id, userSubscriptions) || !meta[live.id];
+            const acct = accountInstances.find(i => i.gateway_id === live.id);   // 对齐统计的图标/名称
             return !useCustomCard
-              ? <ProviderCard key={live.id} provider={live} meta={meta[live.id]} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id])} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} />
-              : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />;
+              ? <ProviderCard key={live.id} provider={live} meta={meta[live.id]} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id])} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={acct?.name} displayIcon={acct?.icon} lockTemplate />
+              : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />;
           })}
-          {personalEnabledFiltered.length === 0 && (
+          {accountSources.length === 0 && directFiltered.length === 0 && otherSources.length === 0 && (
             <p className="col-span-2 text-xs text-zinc-400 text-center py-6">{t('providers.filter.empty')}</p>
           )}
         </div>
-
-        <button type="button" onClick={togglePicker}
-          className={`w-full flex flex-col items-center justify-center gap-1.5 rounded-2xl border-2 border-dashed py-4 transition-colors ${
-            pickerOpen
-              ? 'border-blue-400 dark:border-blue-600 text-blue-500 dark:text-blue-400 bg-blue-50/50 dark:bg-blue-950/10'
-              : 'border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600 hover:text-zinc-500'
-          }`}>
-          <span className="text-xl leading-none">{pickerOpen ? '×' : '+'}</span>
-          <span className="text-xs font-medium">{pickerOpen ? t('providers.add.collapse') : t('providers.add.expand')}</span>
-          {!pickerOpen && (
-            <span className="text-xs text-zinc-300 dark:text-zinc-600">
-              {pickerItems.length > 0
-                ? t('providers.add.availableCount', { n: pickerItems.length })
-                : t('providers.add.allTypesHint')}
-            </span>
-          )}
-        </button>
-
-        {pickerOpen && (
-          <div className="p-4 bg-zinc-50 dark:bg-zinc-800/40 rounded-2xl border border-zinc-200 dark:border-zinc-700 space-y-3">
-            {!paidAccountsLoaded && (
-              <p className="text-xs text-zinc-400">{t('providers.add.loadingAccounts')}</p>
-            )}
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('providers.add.unifiedHint')}</p>
-            <div className="flex flex-wrap gap-2">
-              {pickerItemsFiltered.map(item => {
-                if (item.kind === 'entry') return renderPickerButton(item.entry);
-                const pr = item.provider;
-                const m = meta[pr.id] || {};
-                const sel = addingId === pr.id;
-                return (
-                  <button key={item.key} type="button" title={m.hint || ''} onClick={() => {
-                    if (sel) setAddingId(null);
-                    else {
-                      setAddingId(pr.id);
-                      updateProvider(pr.id, { enabled: true });
-                    }
-                  }}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
-                      sel
-                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
-                        : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600'
-                    }`}>
-                    <span>{m.icon || '🔌'}</span>
-                    <span>{m.label || pr.id}</span>
-                    {(m.keyless || pr.type === 'free') && (
-                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400">{t('providers.add.freeTag')}</span>
-                    )}
-                  </button>
-                );
-              })}
-              {pickerItemsFiltered.length === 0 && paidAccountsLoaded && (
-                <p className="text-xs text-zinc-400">{t('providers.filter.pickerEmpty')}</p>
-              )}
-            </div>
-            {paidAccountsLoaded && !hasGatewayPaid && (
-              <PersonalPageHint onOpenConfig={goPersonalPage} />
-            )}
-            {pickerItems.length === 0 && hasGatewayPaid && (
-              <p className="text-xs text-zinc-400">{t('providers.add.allAdded')}</p>
-            )}
-            <button type="button" onClick={() => { openBillingConfig('subscription'); setPickerOpen(false); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-600 text-xs text-zinc-500 dark:text-zinc-400 hover:border-blue-400 hover:text-blue-500 transition-colors bg-white dark:bg-zinc-800">
-              <span>+</span> {t('providers.add.openAccounts')}
-            </button>
-
-            {addingId && (() => {
-              const entry = gatewayPickerEntries.find(e => e.pickerKey === addingPickerKey)
-                || gatewayPickerEntries.find(e => e.providerId === addingId);
-              const pid = addingId;
-              const stubFromEntry = entry ? {
-                id: pid,
-                type: 'paid',
-                enabled: true,
-                token: '',
-                base_url: '',
-                models: [],
-                displayName: entry.label,
-              } : null;
-              const p = personalPoolAll.find(pr => pr.id === pid)
-                || providers.find(pr => pr.id === pid)
-                || stubFromEntry;
-              if (!p) return null;
-              const live = liveStateOf(p);
-              const cardAuth = addingAuthMode || resolveCardAuthMode(live, providerGatewayAuth[pid]);
-              const useCustomCard = entry?.custom || isCustomSubscriptionGatewayId(pid, userSubscriptions) || !meta[pid];
-              return (
-                <div className="mt-1">
-                  {entry && (
-                    <p className="text-xs text-zinc-400 mb-2">
-                      {t('providers.add.configuring', {
-                        label: entry.label,
-                        auth: entry.authMode === 'oauth' ? t('providers.add.authOauth') : t('providers.add.authApiKey'),
-                      })}
-                    </p>
-                  )}
-                  {!useCustomCard
-                    ? <ProviderCard key={pid} provider={live} meta={meta[pid]} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} initialExpanded gatewayAuthMode={cardAuth} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} />
-                    : <CustomProviderCard key={pid} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />
-                  }
-                </div>
-              );
-            })()}
+        {directFiltered.length > 0 && (
+          <div className="space-y-2 pt-3 border-t border-zinc-100 dark:border-zinc-800">
+            <h3 className="text-xs font-semibold text-zinc-500">{t('psrc.direct.section')}</h3>
+            {directFiltered.map(d => (
+              <DirectSourceCard key={d.agent_id} instance={{ ...d, _allBilling: directBilling }} t={t}
+                onSave={async (patch) => { await saveUserAccounts(patch); loadUserPaidAccounts(); }} />
+            ))}
           </div>
+        )}
+        {otherSources.length > 0 && (
+          <div className="space-y-2 pt-3 border-t border-zinc-100 dark:border-zinc-800">
+            <h3 className="text-xs font-semibold text-zinc-500">{t('psrc.other.section')}</h3>
+            <p className="text-[11px] text-zinc-400">{t('psrc.other.hint')}</p>
+            <div className="grid grid-cols-2 gap-3">
+              {otherSources.map(p => {
+                const live = liveStateOf(p);
+                const useCustomCard = isCustomSubscriptionGatewayId(live.id, userSubscriptions) || !meta[live.id];
+                return !useCustomCard
+                  ? <ProviderCard key={live.id} provider={live} meta={meta[live.id]} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id])} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} />
+                  : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />;
+              })}
+            </div>
+          </div>
+        )}
+        </>
         )}
       </section>
 
@@ -2378,6 +2549,33 @@ export default function Providers() {
           ))}
         </div>
       </section>
+
+      {/* 添加实例后：凭证配置弹窗（复用 ProviderCard 的 API key / OAuth 配置，含 Claude 粘 code）*/}
+      {credModalKey && (() => {
+        const gwId = OAUTH_SUB_SOURCE_TO_PID[credModalKey] || credModalKey;
+        const p = personalPoolAll.find(pr => pr.id === gwId) || providers.find(pr => pr.id === gwId);
+        const live = p ? liveStateOf(p) : null;
+        const useCustomCard = live && (isCustomSubscriptionGatewayId(live.id, userSubscriptions) || !meta[live.id]);
+        const acct = live && accountInstances.find(i => i.gateway_id === live.id);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setCredModalKey(null)}>
+            <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-lg p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+              <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('providers.cred.title')}</h3>
+              <p className="text-xs text-zinc-400">{t('providers.cred.hint')}</p>
+              {!live ? (
+                <p className="text-xs text-zinc-400 py-6 text-center">{t('providers.add.loadingAccounts')}</p>
+              ) : !useCustomCard ? (
+                <ProviderCard provider={live} meta={meta[gwId]} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} initialExpanded lockTemplate gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId])} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={acct?.name} displayIcon={acct?.icon} />
+              ) : (
+                <CustomProviderCard provider={live} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />
+              )}
+              <div className="flex justify-end pt-1">
+                <button type="button" onClick={() => setCredModalKey(null)} className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 text-white">{t('providers.cred.done')}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

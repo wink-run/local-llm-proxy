@@ -140,6 +140,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   apps: {
     list:          ()       => ipcRenderer.invoke('apps:list'),
+    supported:     ()       => ipcRenderer.invoke('apps:supported'),
     stats:         (list)   => ipcRenderer.invoke('apps:stats', list),
     detail:        (app, days) => ipcRenderer.invoke('apps:detail', { app, days }),
     sessionTrace:  (agent_id, session_id) => ipcRenderer.invoke('apps:sessionTrace', { agent_id, session_id }),

@@ -105,14 +105,19 @@ function getYamlProviderPricing() {
   return out;
 }
 
-/** 合并 yaml 下发 + 用户 provider_pricing_overrides */
+/** 三层合并刊例价：服务端 catalog < 模板覆盖 pricing < 运行时 provider_pricing_overrides */
 function getProviderPricing(cfg = {}) {
   const yaml = getYamlProviderPricing();
-  const overrides = cfg.provider_pricing_overrides || {};
-  const ids = new Set([...Object.keys(yaml), ...Object.keys(overrides)]);
+  const tplOv = cfg.source_template_overrides || {};        // 模板覆盖（中间层）
+  const overrides = cfg.provider_pricing_overrides || {};   // 运行时覆盖（最高优先级）
+  const tplPricingOf = (pid) => (tplOv[pid] && typeof tplOv[pid].pricing === 'object' ? tplOv[pid].pricing : {});
+  const ids = new Set([...Object.keys(yaml), ...Object.keys(tplOv), ...Object.keys(overrides)]);
   const merged = {};
   for (const pid of ids) {
     merged[pid] = { ...(yaml[pid] || {}) };
+    for (const [model, rates] of Object.entries(tplPricingOf(pid))) {
+      merged[pid][model] = { ...(merged[pid][model] || {}), ...rates };
+    }
     for (const [model, rates] of Object.entries(overrides[pid] || {})) {
       merged[pid][model] = { ...(merged[pid][model] || {}), ...rates };
     }
@@ -181,6 +186,8 @@ function subscriptionAppCatalog(cfg = {}) {
       app_name: a.app_name || a.name || a.agent_id,
       app_icon: a.app_icon || a.icon || '🔧',
       plans: appPlans,
+      models: Array.isArray(a.models) ? a.models : [],
+      pricing: (a.pricing && typeof a.pricing === 'object') ? a.pricing : {},
     };
   });
 }
@@ -199,6 +206,8 @@ function apiSubscriptionCatalog(cfg = {}) {
       app_name: a.app_name || a.name || a.source_id,
       app_icon: a.app_icon || a.icon || '🔑',
       plans: appPlans,
+      models: Array.isArray(a.models) ? a.models : [],
+      pricing: (a.pricing && typeof a.pricing === 'object') ? a.pricing : {},
     };
   });
 }
@@ -439,11 +448,225 @@ function migrateAgentProviders(cfg = {}) {
   return { cfg, changed };
 }
 
-function getUserAccounts(cfg = {}) {
+// ── 源模板（catalog + 本地模板覆盖）/ 直连源 / 同步差异 / 账户统计 ────────────────
+
+/** 稳定序列化（键排序），供模板快照哈希 */
+function stableStringify(obj) {
+  if (obj == null) return 'null';
+  if (typeof obj !== 'object') return JSON.stringify(obj);
+  if (Array.isArray(obj)) return '[' + obj.map(stableStringify).join(',') + ']';
+  return '{' + Object.keys(obj).sort()
+    .map(k => JSON.stringify(k) + ':' + stableStringify(obj[k])).join(',') + '}';
+}
+
+/** djb2 短哈希（非加密，仅用于「服务端模板是否变过」比对） */
+function stableHash(obj) {
+  const s = stableStringify(obj);
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+/** 服务端原始模板（未应用本地覆盖），按 templateKey 索引：payg→provider_id；app_sub/api_sub→source_id */
+function baseTemplatesByKey(cfg = {}) {
+  const m = {};
+  for (const p of paygProviderCatalog()) {
+    const k = p.provider_id || p.id;
+    if (k) m[k] = { kind: 'payg', key: k, label: p.label || k, icon: p.icon || '🔧',
+                    models: p.models || [], pricing: p.pricing || {} };
+  }
+  for (const a of subscriptionAppCatalog(cfg)) {
+    const k = a.source_id;
+    if (k) m[k] = { kind: 'app_sub', key: k, label: a.app_name, icon: a.app_icon, agent_id: a.agent_id,
+                    subscription_to_api: a.subscription_to_api === true, plans: a.plans || [],
+                    models: a.models || [], pricing: a.pricing || {} };
+  }
+  for (const a of apiSubscriptionCatalog(cfg)) {
+    const k = a.source_id;
+    if (k) m[k] = { kind: 'api_sub', key: k, label: a.app_name, icon: a.app_icon,
+                    plan_provider_id: a.plan_provider_id, plans: a.plans || [],
+                    models: a.models || [], pricing: a.pricing || {} };
+  }
+  // 自定义源模板（用户新建的源类型，纯本地，独立于实例）
+  const ct = (cfg.custom_source_templates && typeof cfg.custom_source_templates === 'object') ? cfg.custom_source_templates : {};
+  for (const key of Object.keys(ct)) {
+    const c = ct[key] || {};
+    m[key] = {
+      kind: c.kind || 'payg', key, label: c.label || key, icon: c.icon || '🔧',
+      models: Array.isArray(c.models) ? c.models : [],
+      pricing: (c.pricing && typeof c.pricing === 'object') ? c.pricing : {},
+      plans: Array.isArray(c.plans) ? c.plans : [],
+      subscription_to_api: c.subscription_to_api === true,
+      custom: true,
+    };
+  }
+  // 兼容旧数据：custom 实例但没有独立模板 → 从实例补一个模板项（保证网格能显示）
+  for (const p of (cfg.user_payg_providers || [])) {
+    if (p && p.custom && p.provider_id && !m[p.provider_id]) {
+      m[p.provider_id] = { kind: 'payg', key: p.provider_id, label: p.label || p.provider_id,
+                           icon: p.icon || '🔧', models: p.models || [], pricing: {}, custom: true };
+    }
+  }
+  for (const s of (cfg.user_subscriptions || [])) {
+    if (s && s.custom && s.source_id && !m[s.source_id]) {
+      m[s.source_id] = { kind: s.subscription_kind === 'api' ? 'api_sub' : 'app_sub', key: s.source_id,
+                         label: s.app_name || s.source_id, icon: s.app_icon || '🔧',
+                         plans: s.plan_label ? [{ id: s.plan_id || 'custom', label: s.plan_label, monthly_usd: s.monthly_usd ?? null }] : [],
+                         subscription_to_api: s.subscription_to_api === true, custom: true };
+    }
+  }
+  return m;
+}
+
+/** 模板「可覆盖字段」快照（diff/hash 基准） */
+function templateSnapshot(base) {
+  return {
+    label: base.label, icon: base.icon,
+    subscription_to_api: base.subscription_to_api,
+    models: base.models, pricing: base.pricing, plans: base.plans,
+  };
+}
+
+/** 在服务端模板上叠加本地覆盖，标 _override / _serverHash */
+function applyTemplateOverride(base, override) {
+  const serverHash = stableHash(templateSnapshot(base));
+  if (!override || typeof override !== 'object') {
+    return { ...base, _override: false, _serverHash: serverHash };
+  }
+  const merged = { ...base };
+  if (override.label != null) merged.label = override.label;
+  if (override.icon != null) merged.icon = override.icon;
+  if (override.subscription_to_api != null) merged.subscription_to_api = override.subscription_to_api === true;
+  if (Array.isArray(override.models)) merged.models = override.models;
+  if (Array.isArray(override.plans)) merged.plans = override.plans;
+  if (override.pricing && typeof override.pricing === 'object') {
+    merged.pricing = { ...(base.pricing || {}), ...override.pricing };
+  }
+  return { ...merged, _override: true, _serverHash: serverHash, _baseHash: override._baseHash || null };
+}
+
+/** 源模板库：服务端 catalog + 本地模板覆盖（含 _override 标记），供「源模板库」网格/编辑 */
+function getSourceTemplates(cfg = {}) {
+  const ov = cfg.source_template_overrides || {};
+  const bases = baseTemplatesByKey(cfg);
+  return Object.keys(bases).map(key => applyTemplateOverride(bases[key], ov[key]));
+}
+
+/** 直连源实例（session_sources 里 direct_only + 用户为其设的 direct_source_billing）。
+ *  activeAgentIds：仅保留这些 agent_id（main 进程按 apps 过滤「仍直连、未绑路由」的）；null=不过滤 */
+function directSourceInstances(cfg = {}, excludeAgentIds = []) {
+  const fs = require('fs');
+  const billing = cfg.direct_source_billing || {};
+  const exclude = new Set(excludeAgentIds || []);
+  const out = [];
+  for (const s of (configLoader.sessionSources() || [])) {
+    if (!s || !s.direct_only || !s.agent_id) continue;
+    if (exclude.has(s.agent_id)) continue;   // 已绑路由（走网关）的不再算「直连源」
+    // 仅显示本机已安装的直连应用（会话数据目录存在）
+    let installed = false;
+    try { installed = !!s.root && fs.existsSync(configLoader.expandHome(s.root)); } catch {}
+    if (!installed) continue;
+    const b = billing[s.agent_id] || {};
+    const pricing = (b.pricing && typeof b.pricing === 'object') ? b.pricing : {};
+    // 计费类型与上面账户一致：订阅(月费) / API(按模型)。显式 mode 优先，否则按已填内容推断（兼容旧数据）。
+    const mode = (b.mode === 'subscription' || b.mode === 'api')
+      ? b.mode
+      : (Object.keys(pricing).length > 0 && b.monthly_usd == null ? 'api' : 'subscription');
+    const hasPricing = mode === 'api'
+      ? Object.keys(pricing).length > 0
+      : (b.monthly_usd != null);
+    out.push({
+      kind: 'direct',
+      agent_id: s.agent_id,
+      source_id: s.provider_id || s.agent_id,
+      name: b.name || s.app_name || s.agent_id,
+      label: s.app_name || s.agent_id,
+      icon: s.app_icon || '🖱',
+      mode,                                           // 'subscription' | 'api'
+      monthly_usd: b.monthly_usd ?? null,             // 订阅型直连（如 Cursor）按月费估算
+      // 模型：用户配了价就用配的，否则回退到应用默认支持的模型（yaml session_sources.models）
+      models: Object.keys(pricing).length ? Object.keys(pricing) : (Array.isArray(s.models) ? s.models : []),
+      pricing,
+      has_pricing: hasPricing,                        // 对应类型没设价 → 红警告
+    });
+  }
+  return out;
+}
+
+/** 逐字段比较「本地覆盖值」vs「服务端原始模板」，返回具体差异 */
+function diffTemplateFields(override, base) {
+  const changed = [];
+  const cmp = (field, mine, server) => {
+    if (mine === undefined) return;
+    if (stableStringify(mine) !== stableStringify(server)) changed.push({ field, mine, server });
+  };
+  cmp('subscription_to_api', override.subscription_to_api, base.subscription_to_api);
+  cmp('label', override.label, base.label);
+  cmp('models', Array.isArray(override.models) ? override.models : undefined, base.models);
+  cmp('plans', Array.isArray(override.plans) ? override.plans : undefined, base.plans);
+  if (override.pricing && typeof override.pricing === 'object') {
+    for (const [model, rates] of Object.entries(override.pricing)) {
+      const serverRates = (base.pricing || {})[model];
+      if (stableStringify(rates) !== stableStringify(serverRates)) {
+        changed.push({ field: 'pricing', model, mine: rates, server: serverRates || null });
+      }
+    }
+  }
+  return changed;
+}
+
+/** 同步差异：① 自定义源同名→服务端已官方支持（迁移建议）；② 模板覆盖 vs 当前服务端模板（字段差异） */
+function computeSyncDiff(cfg = {}) {
+  const ov = cfg.source_template_overrides || {};
+  const bases = baseTemplatesByKey(cfg);
+
+  const officialByLabel = {};
+  for (const [key, b] of Object.entries(bases)) {
+    if (String(key).startsWith('custom-')) continue;
+    const lbl = String(b.label || '').toLowerCase().trim();
+    if (lbl) officialByLabel[lbl] = key;
+  }
+  const migrations = [];
+  const pushMig = (kind, id, label, curKey) => {
+    const hit = officialByLabel[String(label || '').toLowerCase().trim()];
+    if (hit && hit !== curKey) migrations.push({ instanceKind: kind, instanceId: id, label, toTemplateKey: hit });
+  };
+  for (const s of (cfg.user_subscriptions || [])) if (s.custom) pushMig('subscription', s.id, s.app_name || s.name, s.source_id);
+  for (const p of (cfg.user_payg_providers || [])) if (p.custom) pushMig('payg', p.id, p.label || p.name, p.provider_id);
+
+  const overrideDrifts = [];
+  for (const [key, o] of Object.entries(ov)) {
+    if (!o || typeof o !== 'object') continue;
+    const base = bases[key];
+    if (!base) continue;            // 模板已下线
+    const changed = diffTemplateFields(o, base);
+    const serverChanged = !!(o._baseHash && o._baseHash !== stableHash(templateSnapshot(base)));
+    if (changed.length) overrideDrifts.push({ templateKey: key, label: base.label, serverChanged, changedFields: changed });
+  }
+
+  return { migrations, overrideDrifts };
+}
+
+/** 账户统计：订阅（App+API 订阅）/ API（按量 + 直连） */
+function accountStats(cfg = {}, directInstances = []) {
+  const subs = Array.isArray(cfg.user_subscriptions) ? cfg.user_subscriptions : [];
+  const payg = Array.isArray(cfg.user_payg_providers) ? cfg.user_payg_providers : [];
+  // 直连源按各自计费类型计入订阅 / API，与上面账户两类规则一致
+  let dSub = 0, dApi = 0;
+  for (const d of (directInstances || [])) {
+    if (d && d.mode === 'api') dApi++; else dSub++;
+  }
+  const subscription = subs.length + dSub;
+  const api = payg.length + dApi;
+  return { subscription, api, total: subscription + api };
+}
+
+function getUserAccounts(cfg = {}, opts = {}) {
   const billing = getBillingSettings(cfg);
   const paidIds = resolveUserPaidProviderIds(cfg);
   const gatewaySubIds = resolveSubscriptionGatewayProviderIds(cfg);
   const gatewayPaygIds = resolveGatewayPaygProviderIds(cfg);
+  const directInstances = directSourceInstances(cfg, opts.boundDirectAgentIds || []);
   return {
     subscription_catalog: subscriptionAppCatalog(cfg),
     api_subscription_catalog: apiSubscriptionCatalog(cfg),
@@ -457,6 +680,14 @@ function getUserAccounts(cfg = {}) {
     provider_gateway_auth: resolveProviderGatewayAuthMap(cfg),
     gateway_picker_entries: buildGatewayPickerEntries(cfg),
     stats_only_provider_ids: resolveStatsOnlyProviderIds(cfg),
+    // ── 个人源体系重构新增 ──
+    source_templates: getSourceTemplates(cfg),
+    source_template_overrides: cfg.source_template_overrides || {},
+    custom_source_templates: cfg.custom_source_templates || {},
+    direct_source_instances: directInstances,
+    direct_source_billing: cfg.direct_source_billing || {},
+    sync_diff: computeSyncDiff(cfg),
+    account_stats: accountStats(cfg, directInstances),
     ...billing,
   };
 }
@@ -485,4 +716,12 @@ module.exports = {
   applyPricingOverrides,
   normPlan,
   normPaygEntry,
+  // 个人源体系重构
+  getSourceTemplates,
+  baseTemplatesByKey,
+  directSourceInstances,
+  computeSyncDiff,
+  accountStats,
+  stableHash,
+  templateSnapshot,
 };

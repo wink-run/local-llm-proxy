@@ -1,43 +1,21 @@
-# tokenbank.tools.default.yaml
-# 客户端离线回退：未从服务器同步前，个人页订阅/按量目录读此文件。
-# 计费段须与 server/static/defaults/apps.default.yaml 保持同步。
-# tools / api_key_apps 留空，等 GET /config/apps 下发。
+# sources.default.yaml（服务端 canonical · 个人页「源」目录）
+# 订阅账户 / 按量付费 / 套餐模板 —— 由管理后台 Billing Sources 表单维护，publish 编译进 config.sources，
+# 与应用清单 apps.default.yaml（tools / api_key_apps）彻底分离。
+# 客户端经 GET /api/config/sources 同步，写入 ~/.tokenbank/tokenbank.tools.yaml；
+# 与 client/electron/config/tokenbank.tools.default.yaml 同 schema。
+# subscription_to_api: 订阅是否可转为 API 供给源（供给源页可选）；默认 false。
+# 铁律：真 key / 真证书永不进此文件。
 
 version: 1
 
-gateway:
-  host: 127.0.0.1
-  reverse_port: 11430
-  mitm_port: 8888
-
-mitm:
-  ca_ref:
-    - file://{TOKENBANK_CA|}
-    - auto
-
-claude_models:
-  - claude-opus-4-8
-  - claude-opus-4-6
-  - claude-opus-4-5
-  - claude-opus-4
-  - claude-sonnet-4-6
-  - claude-sonnet-4-5
-  - claude-sonnet-4
-  - claude-haiku-4-5
-
-tools: []
-
-api_key_apps: []
-
-# ════════ 个人页：订阅账户可选应用 ════════
-# source_id 建议与 tokenbank.yaml session_sources.id 对齐，便于用量关联。
+# ── App 订阅源（订阅维度：source_id/plan_provider_id/subscription_to_api；agent_id 为对应用目录的外键引用）──
 subscription_apps:
   - source_id: claude
     agent_id: claude-code
     app_name: Claude Code
     app_icon: "🔷"
     plan_provider_id: anthropic-paid
-    subscription_to_api: true   # 订阅可转为 API 供给源（OAuth），可在供给源页接入
+    subscription_to_api: true
 
   - source_id: codex
     agent_id: codex
@@ -90,8 +68,7 @@ subscription_apps:
     plan_provider_id: gemini
     subscription_to_api: false
 
-# ════════ 个人页：预置 API 订阅目录（与 APP 订阅、按量供给源分离）════════
-# 仅登记「API 厂商订阅产品」（如火山引擎 Coding Plan），不含 ChatGPT/Claude 等 APP 订阅。
+# 预置 API 订阅（仅 API 厂商订阅产品，不含 APP 订阅）
 api_subscription_apps:
   - source_id: api-volcengine
     app_name: 火山引擎
@@ -106,63 +83,28 @@ api_subscription_apps:
       deepseek-v3.2:         { in: 0.14, out: 0.28 }
       kimi-k2.6:             { in: 0.15, out: 2.50 }
 
-# ════════ 个人页：订阅套餐模板（按 plan_provider_id 索引）════════
 subscription_plans:
   anthropic-paid:
-    - id: claude-pro
-      label: Claude Pro
-      monthly_usd: 20
-    - id: max5x
-      label: Claude Max (5×)
-      monthly_usd: 100
-    - id: max20x
-      label: Claude Max (20×)
-      monthly_usd: 200
-
+    - { id: claude-pro, label: Claude Pro, monthly_usd: 20 }
+    - { id: max5x, label: Claude Max (5×), monthly_usd: 100 }
+    - { id: max20x, label: Claude Max (20×), monthly_usd: 200 }
   openai:
-    - id: chatgpt-plus
-      label: ChatGPT Plus
-      monthly_usd: 20
-    - id: chatgpt-team
-      label: ChatGPT Team
-      monthly_usd: 25
-    - id: chatgpt-pro
-      label: ChatGPT Pro
-      monthly_usd: 200
-
+    - { id: chatgpt-plus, label: ChatGPT Plus, monthly_usd: 20 }
+    - { id: chatgpt-team, label: ChatGPT Team, monthly_usd: 25 }
+    - { id: chatgpt-pro, label: ChatGPT Pro, monthly_usd: 200 }
   gemini:
-    - id: gemini-advanced
-      label: Gemini Advanced
-      monthly_usd: 20
-    - id: google-one-ai
-      label: Google One AI
-      monthly_usd: 20
-
+    - { id: gemini-advanced, label: Gemini Advanced, monthly_usd: 20 }
+    - { id: google-one-ai, label: Google One AI, monthly_usd: 20 }
   github-copilot:
-    - id: copilot-pro
-      label: GitHub Copilot Pro
-      monthly_usd: 10
-    - id: copilot-business
-      label: Copilot Business
-      monthly_usd: 19
-
+    - { id: copilot-pro, label: GitHub Copilot Pro, monthly_usd: 10 }
+    - { id: copilot-business, label: Copilot Business, monthly_usd: 19 }
   cursor:
-    - id: cursor-pro
-      label: Cursor Pro
-      monthly_usd: 20
-    - id: cursor-ultra
-      label: Cursor Ultra
-      monthly_usd: 200
-
+    - { id: cursor-pro, label: Cursor Pro, monthly_usd: 20 }
+    - { id: cursor-ultra, label: Cursor Ultra, monthly_usd: 200 }
   volcengine:
-    - id: coding-lite
-      label: Coding Plan Lite · 40元/月
-      monthly_usd: 5.71
-    - id: coding-pro
-      label: Coding Plan Pro · 200元/月
-      monthly_usd: 28.57
+    - { id: coding-lite, label: Coding Plan Lite · 40元/月, monthly_usd: 5.71 }
+    - { id: coding-pro, label: Coding Plan Pro · 200元/月, monthly_usd: 28.57 }
 
-# ════════ 个人页：按量付费供给源（各 provider 独立 pricing）════════
 payg_providers:
   - id: openai
     label: OpenAI
@@ -170,34 +112,31 @@ payg_providers:
     aliases: [codex-cli]
     models: [gpt-4o, gpt-4o-mini, gpt-4.1, gpt-5, gpt-5-mini]
     pricing:
-      gpt-4o:      { in: 2.50,  out: 10.00, cacheRead: 1.25,  cacheWrite: 3.13 }
-      gpt-4o-mini: { in: 0.15,  out: 0.60,  cacheRead: 0.075, cacheWrite: 0.19 }
-      gpt-4.1:     { in: 2.50,  out: 10.00, cacheRead: 1.25,  cacheWrite: 3.13 }
-      gpt-5:       { in: 1.25,  out: 10.00, cacheRead: 0.125, cacheWrite: 1.56 }
-      gpt-5-mini:  { in: 0.15,  out: 0.60,  cacheRead: 0.015, cacheWrite: 0.19 }
-
+      gpt-4o:      { in: 2.50, out: 10.00, cacheRead: 1.25, cacheWrite: 3.13 }
+      gpt-4o-mini: { in: 0.15, out: 0.60,  cacheRead: 0.075, cacheWrite: 0.19 }
+      gpt-4.1:     { in: 2.50, out: 10.00, cacheRead: 1.25, cacheWrite: 3.13 }
+      gpt-5:       { in: 1.25, out: 10.00, cacheRead: 0.125, cacheWrite: 1.56 }
+      gpt-5-mini:  { in: 0.15, out: 0.60,  cacheRead: 0.015, cacheWrite: 0.19 }
   - id: anthropic-paid
     label: Anthropic
     icon: "🧬"
     aliases: [claude-cli]
     models: [claude-sonnet-4-6, claude-sonnet-4-5, claude-sonnet-4, claude-haiku-4-5, claude-opus-4-6]
     pricing:
-      claude-opus-4-6:   { in: 5.00,  out: 25.00, cacheRead: 0.50,  cacheWrite: 6.25 }
-      claude-sonnet-4-6: { in: 3.00,  out: 15.00, cacheRead: 0.30,  cacheWrite: 3.75 }
-      claude-sonnet-4-5: { in: 3.00,  out: 15.00, cacheRead: 0.30,  cacheWrite: 3.75 }
-      claude-sonnet-4:   { in: 3.00,  out: 15.00, cacheRead: 0.30,  cacheWrite: 3.75 }
-      claude-haiku-4-5:  { in: 1.00,  out: 5.00,  cacheRead: 0.10,  cacheWrite: 1.25 }
-
+      claude-opus-4-6:   { in: 5.00, out: 25.00, cacheRead: 0.50, cacheWrite: 6.25 }
+      claude-sonnet-4-6: { in: 3.00, out: 15.00, cacheRead: 0.30, cacheWrite: 3.75 }
+      claude-sonnet-4-5: { in: 3.00, out: 15.00, cacheRead: 0.30, cacheWrite: 3.75 }
+      claude-sonnet-4:   { in: 3.00, out: 15.00, cacheRead: 0.30, cacheWrite: 3.75 }
+      claude-haiku-4-5:  { in: 1.00, out: 5.00,  cacheRead: 0.10, cacheWrite: 1.25 }
   - id: gemini
     label: Google Gemini
     icon: "💎"
     aliases: [gemini-cli]
     models: [gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash]
     pricing:
-      gemini-2.5-pro:   { in: 1.25,  out: 10.00, cacheRead: 0.125, cacheWrite: 1.56 }
-      gemini-2.5-flash: { in: 0.30,  out: 2.50,  cacheRead: 0.03,  cacheWrite: 0.38 }
-      gemini-2.0-flash: { in: 0.075, out: 0.30,  cacheRead: 0.0075, cacheWrite: 0.094 }
-
+      gemini-2.5-pro:   { in: 1.25, out: 10.00, cacheRead: 0.125, cacheWrite: 1.56 }
+      gemini-2.5-flash: { in: 0.30, out: 2.50,  cacheRead: 0.03,  cacheWrite: 0.38 }
+      gemini-2.0-flash: { in: 0.075, out: 0.30, cacheRead: 0.0075, cacheWrite: 0.094 }
   - id: deepseek
     label: DeepSeek
     icon: "🐋"
@@ -205,7 +144,6 @@ payg_providers:
     pricing:
       deepseek-chat:     { in: 0.14, out: 0.28, cacheRead: 0.003, cacheWrite: 0.18 }
       deepseek-reasoner: { in: 0.14, out: 0.28, cacheRead: 0.003, cacheWrite: 0.18 }
-
   - id: xai
     label: xAI Grok
     icon: "✖️"
@@ -214,16 +152,13 @@ payg_providers:
     pricing:
       grok-4:      { in: 3.00, out: 15.00 }
       grok-3-mini: { in: 0.30, out: 0.50 }
-
   - id: openrouter
     label: OpenRouter
     icon: "🛣"
     models: [gpt-4o, claude-sonnet-4-5]
     pricing:
-      # 同模型经聚合路由，价格与官方直连接入不同
-      gpt-4o:            { in: 3.00,  out: 12.00, cacheRead: 1.50 }
-      claude-sonnet-4-5: { in: 3.50,  out: 16.00, cacheRead: 0.35 }
-
+      gpt-4o:            { in: 3.00, out: 12.00, cacheRead: 1.50 }
+      claude-sonnet-4-5: { in: 3.50, out: 16.00, cacheRead: 0.35 }
   - id: agnes-ai
     label: Agnes AI
     icon: "🤍"
@@ -231,7 +166,6 @@ payg_providers:
     models: [agnes-2.0-flash]
     pricing:
       agnes-2.0-flash: { in: 0, out: 0 }
-
   - id: fireworks
     label: Fireworks
     icon: "🎆"
@@ -243,4 +177,3 @@ payg_providers:
       llama-v3p1-405b-instruct: { in: 3.00, out: 3.00, cacheRead: 1.50 }
       deepseek-v3:              { in: 0.90, out: 0.90, cacheRead: 0.45 }
       qwen2p5-72b-instruct:     { in: 0.90, out: 0.90, cacheRead: 0.45 }
-

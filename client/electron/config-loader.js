@@ -14,9 +14,29 @@ const DEFAULT_YAML = path.join(__dirname, 'config', 'tokenbank.default.yaml');
 const TOOLS_DEFAULT_YAML = path.join(__dirname, 'config', 'tokenbank.tools.default.yaml');
 // 用户导入/服务器下发的配置覆盖文件（main.js 的 applyConfigDoc 写这里）。存在则优先于内置默认。
 const USER_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.yaml');
+// 「源」目录下发文件（GET /api/config/sources 写这里），与应用文件 tokenbank.yaml 分离。
+const USER_TOOLS_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.tools.yaml');
 
-let _config = null;        // 解析后的原始 yaml 对象
+let _config = null;        // 解析后的原始 yaml 对象（应用：tools / api_key_apps / 基础设施）
+let _sources = null;       // 源目录文件（tokenbank.tools.yaml）解析结果
 let _caPath = null;        // 运行时由 ca-manager 注入的实际 CA 路径（解析 {CA_PATH}）
+
+// 加载源目录文件（tokenbank.tools.yaml）；不存在则空（billingSection 再回退内置默认）。
+function loadSources() {
+  try {
+    if (fs.existsSync(USER_TOOLS_YAML)) {
+      _sources = yaml.load(fs.readFileSync(USER_TOOLS_YAML, 'utf8')) || {};
+      return _sources;
+    }
+  } catch (e) { console.error('[config-loader] 加载 tokenbank.tools.yaml 失败:', e.message); }
+  _sources = {};
+  return _sources;
+}
+
+function getSources() {
+  if (_sources === null) loadSources();
+  return _sources;
+}
 
 // ── 占位符 / 路径解析 ────────────────────────────────────────────────────────
 
@@ -58,6 +78,7 @@ function load() {
   try {
     const text = fs.readFileSync(file, 'utf8');
     _config = yaml.load(text) || {};
+    _sources = null;          // 同步后强制下次重读源文件 tokenbank.tools.yaml
   } catch (e) {
     console.error('[config-loader] 加载 yaml 失败:', e.message, '(', file, ')');
     // 用户覆盖文件损坏时回退内置默认
@@ -149,18 +170,30 @@ function sessionSources() {
   try { return ((yaml.load(fs.readFileSync(DEFAULT_YAML, 'utf8')) || {}).session_sources || []); } catch { return []; }
 }
 
+// 各应用官方安装/下载页（图标行「未安装」点击跳转）。内置默认始终兜底（即使 USER_YAML
+// 覆盖了其它配置也不丢失），当前配置 / 服务端下发的同名段按 id 叠加覆盖。
+function appInstallUrls() {
+  let builtin = {};
+  try { builtin = (yaml.load(fs.readFileSync(DEFAULT_YAML, 'utf8')) || {}).app_install_urls || {}; } catch {}
+  const cur = get().app_install_urls;
+  const curMap = (cur && typeof cur === 'object' && !Array.isArray(cur)) ? cur : {};
+  return { ...builtin, ...curMap };
+}
+
 /** 读取 tools 默认 yaml（计费目录回退源） */
 function toolsDefaultDoc() {
   try { return yaml.load(fs.readFileSync(TOOLS_DEFAULT_YAML, 'utf8')) || {}; } catch { return {}; }
 }
 
-/** 计费段：当前下发配置优先，空则回退 tokenbank.tools.default.yaml */
+/** 源/计费段：优先独立源文件 tokenbank.tools.yaml（GET /api/config/sources 下发），
+ * 其次 tokenbank.yaml（兼容旧版混装），再回退内置默认 tokenbank.tools.default.yaml。 */
 function billingSection(key) {
-  const cur = get()[key];
-  const empty = cur == null
-    || (Array.isArray(cur) && !cur.length)
-    || (typeof cur === 'object' && !Array.isArray(cur) && !Object.keys(cur).length);
-  if (!empty) return cur;
+  const isEmpty = (v) => v == null
+    || (Array.isArray(v) && !v.length)
+    || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length);
+  let cur = getSources()[key];
+  if (isEmpty(cur)) cur = get()[key];
+  if (!isEmpty(cur)) return cur;
   const fb = toolsDefaultDoc()[key];
   if (fb != null) return fb;
   return Array.isArray(cur) ? [] : {};
@@ -271,7 +304,7 @@ module.exports = {
   load, get, setCaPath, getCaPath,
   gatewayCtx, mitmDomains, shouldMitm, tools, appPresets, apiKeyApps,
   routing, caRef,
-  claudeModels, isClaudeModel, sessionSources, agentHasModelStats,
+  claudeModels, isClaudeModel, sessionSources, agentHasModelStats, appInstallUrls,
   subscriptionApps, apiSubscriptionApps, paygProviders, subscriptionPlansDefaults,
   resolveRef, resolvePlaceholders, expandHome,
 };

@@ -15,12 +15,17 @@ import glm from '@lobehub/icons-static-svg/icons/glmv-color.svg';
 import qwen from '@lobehub/icons-static-svg/icons/qwen-color.svg';
 import copilot from '@lobehub/icons-static-svg/icons/copilot-color.svg';
 import volcengine from '@lobehub/icons-static-svg/icons/volcengine-color.svg';
+import opencode from '@lobehub/icons-static-svg/icons/opencode.svg';
+import antigravity from '@lobehub/icons-static-svg/icons/antigravity-color.svg';
+import grok from '@lobehub/icons-static-svg/icons/grok.svg';
+import hermes from '@lobehub/icons-static-svg/icons/hermesagent.svg';
 
 // 顺序敏感：更具体的规则在前（claude code 先于 claude；gemini cli 先于 gemini）。
 const RULES = [
   [/claude[\s_-]*code/i, claudecode],
   [/claude|anthropic/i, claude],
   [/codex/i, codex],
+  [/opencode/i, opencode],
   [/openai|gpt|o[34]-|o1-/i, openai],
   [/cursor/i, cursor],
   [/openclaw/i, openclaw],
@@ -31,7 +36,9 @@ const RULES = [
   [/glm|zhipu|chatglm|智谱/i, glm],
   [/qwen|通义|tongyi/i, qwen],
   [/copilot/i, copilot],
-  [/antigravity/i, gemini],
+  [/antigravity/i, antigravity],
+  [/hermes/i, hermes],
+  [/grok/i, grok],
   [/volcengine|火山|volc|doubao|豆包|api-volcengine/i, volcengine],
 ];
 
