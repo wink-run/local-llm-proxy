@@ -331,6 +331,43 @@ export function SourcePickerModal({ templates, onPick, onNewSource, onClose, t }
   );
 }
 
+// 基于模板建一个实例（字段与 add* 一致）。供模板编辑弹窗 + 选源弹窗（直接添加）共用。
+export function buildInstancePatch(tpl, { payg = [], subs = [], planId } = {}) {
+  const key = tpl.key;
+  const isPayg = tpl.kind === 'payg';
+  const isApiSub = tpl.kind === 'api_sub';
+  const uid = () => (Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+  const nextName = (list, kf) => {
+    const n = (list || []).filter(x => x[kf] === key).length;
+    return n > 0 ? `${tpl.label}_${n + 1}` : tpl.label;
+  };
+  const tplModels = Object.keys(tpl.pricing || {}).length ? Object.keys(tpl.pricing) : (tpl.models || []);
+  if (isPayg) {
+    const inst = { id: uid(), provider_id: key, label: tpl.label, name: nextName(payg, 'provider_id'),
+      icon: tpl.icon, models: [...tplModels], enabled: true };
+    return { user_payg_providers: [...payg, inst] };
+  }
+  const tplPlans = tpl.plans || [];
+  const plan = tplPlans.find(p => p.id === planId) || tplPlans[0] || {};
+  const inst = {
+    id: uid(), subscription_kind: isApiSub ? 'api' : 'app', source_id: key,
+    name: nextName(subs, 'source_id'), agent_id: isApiSub ? null : (tpl.agent_id || null),
+    app_name: tpl.label, app_icon: tpl.icon,
+    plan_id: plan.id || 'custom', plan_label: plan.label || plan.id || tpl.label,
+    monthly_usd: plan.monthly_usd ?? null,
+    subscription_to_api: isApiSub ? true : (tpl.subscription_to_api === true),
+    ...(isApiSub ? { plan_provider_id: tpl.plan_provider_id || key } : {}),
+  };
+  return { user_subscriptions: [...subs, inst] };
+}
+
+/** 模板是否已配好「支持的模型」（可直接加实例）：payg 看 pricing，订阅看 pricing 或 plan_provider_id */
+export function templateReadyForInstance(tpl) {
+  if (Object.keys(tpl.pricing || {}).length > 0) return true;
+  if (tpl.kind !== 'payg' && tpl.plan_provider_id) return true;
+  return (tpl.models || []).length > 0;
+}
+
 // ── 第2块：模板编辑弹窗（写 source_template_overrides）──────────────────────────
 export function TemplateEditModal({ template, overrides, payg = [], subs = [], customTemplates = {}, paygCatalog = [], onSave, onClose, onInstanceAdded, t }) {
   const key = template.key;
@@ -358,36 +395,11 @@ export function TemplateEditModal({ template, overrides, payg = [], subs = [], c
   // 所有模板（含订阅）都必须有支持的模型，才能添加实例
   const tplReady = Object.keys(pricing).length > 0;
   const myInstances = isPayg ? payg.filter(p => p.provider_id === key) : subs.filter(s => s.source_id === key);
-  const newUid = () => (Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
-  const nextName = (list, kf) => {
-    const n = (list || []).filter(x => x[kf] === key).length;
-    return n > 0 ? `${template.label}_${n + 1}` : template.label;
-  };
   function addInstance() {
-    const tplModels = Object.keys(pricing);
-    if (isPayg) {
-      const inst = { id: newUid(), provider_id: key, label: template.label,
-        name: nextName(payg, 'provider_id'), icon: template.icon,
-        models: [...tplModels], enabled: true };
-      onSave({ user_payg_providers: [...payg, inst] });
-      onInstanceAdded?.(key);   // 通知父级弹出凭证配置（API key / OAuth）
-    } else {
-      const plan = tplPlans.find(p => p.id === planId) || {};
-      const inst = {
-        id: newUid(),
-        subscription_kind: isApiSub ? 'api' : 'app',
-        source_id: key,
-        name: nextName(subs, 'source_id'),
-        agent_id: isApiSub ? null : (template.agent_id || null),
-        app_name: template.label, app_icon: template.icon,
-        plan_id: plan.id || 'custom', plan_label: plan.label || plan.id || template.label,
-        monthly_usd: plan.monthly_usd ?? null,
-        subscription_to_api: isApiSub ? true : subToApi,
-        ...(isApiSub ? { plan_provider_id: template.plan_provider_id || key } : {}),
-      };
-      onSave({ user_subscriptions: [...subs, inst] });
-      onInstanceAdded?.(key);   // 通知父级弹出凭证配置（API key / OAuth）
-    }
+    // 用编辑中的 pricing / subToApi 作为「有效模板」，复用统一的建实例逻辑
+    const effectiveTpl = { ...template, pricing, subscription_to_api: subToApi };
+    onSave(buildInstancePatch(effectiveTpl, { payg, subs, planId }));
+    onInstanceAdded?.(key);   // 通知父级弹出凭证配置（API key / OAuth）
   }
   function removeInstance(id) {
     if (isPayg) onSave({ user_payg_providers: payg.filter(p => p.id !== id) });

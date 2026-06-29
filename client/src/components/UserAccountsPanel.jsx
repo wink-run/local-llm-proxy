@@ -8,6 +8,7 @@ import ServiceIcon from './ServiceIcon';
 import {
   AccountStatsView, SourceTemplateGrid, TemplateEditModal,
   SyncDiffBanner, CustomSourceWizard, SourcePickerModal,
+  buildInstancePatch, templateReadyForInstance,
 } from './PersonalSources';
 
 const CUSTOM_APP = '__custom_app__';
@@ -713,7 +714,13 @@ export default function UserAccountsPanel({
         )}
         {instancePickerOpen && (
           <SourcePickerModal templates={mergedTemplates} t={t}
-            onPick={(tpl) => { setInstancePickerOpen(false); setTemplateEditing(tpl); }}
+            onPick={async (tpl) => {
+              setInstancePickerOpen(false);
+              // 配好的源 → 直接建实例 + 弹凭证配置（一步）；没配好的 → 进模板编辑去配
+              if (!templateReadyForInstance(tpl)) { setTemplateEditing(tpl); return; }
+              await saveAccounts(buildInstancePatch(tpl, { payg, subs }), { quiet: true });
+              onInstanceAdded?.(tpl.key);
+            }}
             onNewSource={() => { setInstancePickerOpen(false); setWizardOpen(true); }}
             onClose={() => setInstancePickerOpen(false)} />
         )}
