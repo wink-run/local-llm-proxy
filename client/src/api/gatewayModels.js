@@ -2,7 +2,7 @@
 import { getConfig, getGateway, getLocalConfig, isElectron } from './adapter';
 import { getServerUrl, normalizeServerBase } from '../config';
 import { loadUserAccounts } from './userAccounts';
-import { collectPersonalAvailableModels } from '../lib/personalAvailableModels';
+import { collectPersonalAvailableModels, enrichProvidersForRouting, filterRoutablePersonalModels } from '../lib/personalAvailableModels';
 
 function addAvailableModel(models, seen, id, tier) {
   if (!id || !tier) return;
@@ -84,11 +84,24 @@ export async function loadGatewayAvailableModels() {
     ]);
   } catch {}
 
-  // 个人层：与供给源页「按模型视图」同源（账户登记 + 刊例价覆盖 + provider 配置）
+  // 个人层：与供给源页一致，且须已启用供给源可路由
   try {
-    for (const { id, tier } of collectPersonalAvailableModels(cfg || {}, acc || {})) {
-      add(id, tier);
-    }
+    const localMerged = {
+      ...(acc || {}),
+      provider_pricing_overrides: cfg?.provider_pricing_overrides || acc?.provider_pricing_overrides || {},
+    };
+    const enrichedProviders = enrichProvidersForRouting(cfg?.providers || [], localMerged);
+    const gwIds = new Set([
+      ...(acc?.gateway_provider_ids || []),
+      ...(acc?.user_payg_providers || []).map(p => p.gateway_id || p.provider_id).filter(Boolean),
+      ...(acc?.user_subscriptions || []).map(s => s.gateway_id).filter(Boolean),
+    ]);
+    const personal = filterRoutablePersonalModels(
+      collectPersonalAvailableModels(cfg || {}, acc || {}),
+      enrichedProviders,
+      gwIds,
+    );
+    for (const { id, tier } of personal) add(id, tier);
   } catch {}
 
   // 补充：已启用但未纳入账户实例的免费源（如独立 Ollama）

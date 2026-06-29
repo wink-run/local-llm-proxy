@@ -132,7 +132,7 @@ function mergeUserPaygIntoProviders(resolved, metaMap, userPayg = [], t) {
     providers.push({
       id,
       type: 'paid',
-      enabled: false,
+      enabled: true,
       token: '',
       base_url: '',
       models: [...(p.models || [])],
@@ -234,10 +234,10 @@ function buildPersonalPaidPool(allProviders, paidIds, userPayg = [], userSubs = 
     const fb = FALLBACK_PROVIDERS.find(p => p.id === id);
     if (payg || sub || id.startsWith('custom-') || fb) {
       pool.push({
-        ...(fb || { id, type: 'paid', enabled: false, token: '', base_url: '', models: [] }),
+        ...(fb || { id, type: 'paid', enabled: true, token: '', base_url: '', models: [] }),
         id,
         type: 'paid',
-        enabled: fb?.enabled ?? false,
+        enabled: true,
         models: [...(payg?.models || fb?.models || [])],
         displayName,
       });
@@ -388,7 +388,7 @@ function mergeCustomSubscriptionProviders(resolved, metaMap, userSubs, paidIds =
       providers.push({
         id,
         type: 'paid',
-        enabled: false,
+        enabled: true,
         token: '',
         base_url: '',
         models: [],
@@ -1180,13 +1180,11 @@ function P2PNetworkCard({ provider, onUpdate }) {
 function StatusBadge({ hasKey, keyless }) {
   const { t } = useLang();
   const connected = keyless || hasKey;
+  // 已配置/免 Key 源不再展示「已启用」；仅缺凭证时提示需配置
+  if (connected) return null;
   return (
-    <span className={`text-xs px-1.5 py-0.5 rounded-full border ${
-      connected
-        ? 'bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 border-green-300 dark:border-green-800/50'
-        : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 border-zinc-300 dark:border-zinc-700'
-    }`}>
-      {connected ? t('providers.badge.enabled') : t('providers.badge.needsConfig')}
+    <span className="text-xs px-1.5 py-0.5 rounded-full border bg-zinc-100 dark:bg-zinc-800 text-zinc-500 border-zinc-300 dark:border-zinc-700">
+      {t('providers.badge.needsConfig')}
     </span>
   );
 }
@@ -2472,12 +2470,18 @@ export default function Providers() {
     return () => { cancelled = true; unsub?.(); };
   }, [loadUserPaidAccounts]);
 
-  // 为每个 gateway_id 确保存在 provider stub（多实例 acct-* 从 catalog 克隆）
+  // 为每个 gateway_id 确保存在 provider stub（多实例 acct-* 从 catalog 克隆）；已登记即启用
   useEffect(() => {
     if (!paidAllowlist?.length) return;
     setProviders(prev => {
       let changed = false;
-      const next = [...prev];
+      const next = prev.map(p => {
+        if (paidAllowlist.includes(p.id) && !p.enabled) {
+          changed = true;
+          return { ...p, enabled: true };
+        }
+        return p;
+      });
       for (const gid of paidAllowlist) {
         if (next.some(p => p.id === gid)) continue;
         const payg = userPayg.find(p => paygInstGatewayId(p) === gid);
@@ -2486,12 +2490,12 @@ export default function Providers() {
         const fb = FALLBACK_PROVIDERS.find(p => p.id === gid) || FALLBACK_PROVIDERS.find(p => p.id === catalogId);
         const sibling = next.find(p => p.id === catalogId);
         next.push({
-          ...(fb || sibling || { type: 'paid', enabled: false, token: '', base_url: '', models: [] }),
+          ...(fb || sibling || { type: 'paid', enabled: true, token: '', base_url: '', models: [] }),
           id: gid,
-          type: 'paid',
-          enabled: false,
-          token: '',
-          models: [],
+          type: sibling?.type || fb?.type || 'paid',
+          enabled: true,
+          token: sibling?.token || fb?.token || '',
+          models: sibling?.models?.length ? sibling.models : (fb?.models || []),
           base_url: sibling?.base_url || fb?.base_url || '',
         });
         changed = true;
@@ -2621,7 +2625,7 @@ export default function Providers() {
     setProviders(prev => {
       const i = prev.findIndex(p => p.id === id);
       if (i < 0) {
-        return [...prev, { id, type: 'paid', enabled: false, token: '', base_url: '', models: [], ...patch }];
+        return [...prev, { id, type: 'paid', enabled: true, token: '', base_url: '', models: [], ...patch }];
       }
       return prev.map(p => (p.id === id ? { ...p, ...patch } : p));
     });
@@ -2637,7 +2641,7 @@ export default function Providers() {
       if (i >= 0) {
         list[i] = { ...list[i], models: normalized };
       } else {
-        list.push({ id, type: 'paid', enabled: false, token: '', base_url: '', models: normalized });
+        list.push({ id, type: 'paid', enabled: true, token: '', base_url: '', models: normalized });
       }
       await getConfig().write({ ...cfg, providers: list });
     } catch { /* 离线时仍保留内存态 */ }

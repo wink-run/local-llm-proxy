@@ -425,6 +425,97 @@ function modelEntryId(m) {
   return '';
 }
 
+/** 某网关 provider 在账户/刊例价中登记的全部模型名（与供给源页按模型视图一致） */
+function collectModelsForGatewayProvider(gatewayId, localCfg = {}) {
+  const names = new Set();
+  const addName = (m) => {
+    const n = modelEntryId(m);
+    if (n) names.add(n);
+  };
+  if (!gatewayId) return names;
+
+  const userPayg = localCfg.user_payg_providers || [];
+  const userSubs = localCfg.user_subscriptions || [];
+  const pricingOvr = localCfg.provider_pricing_overrides || {};
+  const catalogBySource = Object.fromEntries(
+    subscriptionAppCatalog(localCfg).map(c => [c.source_id, c]),
+  );
+
+  for (const p of userPayg) {
+    if (paygGatewayId(p) !== gatewayId) continue;
+    for (const m of p.models || []) addName(m);
+    for (const k of Object.keys(pricingOvr[p.provider_id] || {})) if (k) names.add(k);
+  }
+  for (const s of userSubs) {
+    if (subscriptionGatewayId(s, catalogBySource) !== gatewayId) continue;
+    const isApi = s.subscription_kind === 'api' || resolveSubUseApi(s, catalogBySource);
+    if (!isApi) continue;
+    const pid = s.plan_provider_id
+      || subscriptionGatewayProviderId(s, catalogBySource)
+      || s.source_id;
+    for (const k of Object.keys(pricingOvr[pid] || {})) if (k) names.add(k);
+  }
+  for (const k of Object.keys(pricingOvr[gatewayId] || {})) if (k) names.add(k);
+  return names;
+}
+
+function mergeProviderModelEntries(existingModels, extraNames) {
+  const names = new Set((existingModels || []).map(modelEntryId).filter(Boolean));
+  for (const n of extraNames) if (n) names.add(n);
+  return [...names].sort().map(name => {
+    const prev = (existingModels || []).find(m => modelEntryId(m) === name);
+    return prev && typeof prev === 'object' ? prev : { name, type: 'chat' };
+  });
+}
+
+/** 运行时合并账户登记模型到 provider.models（网关路由 /v1/models 用） */
+function enrichProvidersFromAccounts(providers, localCfg) {
+  if (!localCfg || !Array.isArray(providers)) return providers || [];
+  return providers.map(p => {
+    const extra = collectModelsForGatewayProvider(p.id, localCfg);
+    if (!extra.size) return p;
+    const merged = mergeProviderModelEntries(p.models, extra);
+    const before = (p.models || []).map(modelEntryId).filter(Boolean).sort().join('\0');
+    const after = merged.map(modelEntryId).filter(Boolean).sort().join('\0');
+    if (before === after) return p;
+    return { ...p, models: merged };
+  });
+}
+
+/** 将账户/刊例价模型写回 agent config，并启用已登记网关供给源 */
+function syncGatewayProvidersFromAccounts(agentCfg, localCfg) {
+  if (!agentCfg || !Array.isArray(agentCfg.providers)) return { cfg: agentCfg, changed: false };
+  const gatewayIds = new Set(resolveUserGatewayProviderIds(localCfg));
+  let changed = false;
+  const providers = agentCfg.providers.map(p => {
+    let next = { ...p };
+    if (gatewayIds.has(p.id)) {
+      if (!next.enabled) {
+        next.enabled = true;
+        changed = true;
+      }
+      const extra = collectModelsForGatewayProvider(p.id, localCfg);
+      if (extra.size) {
+        const merged = mergeProviderModelEntries(next.models, extra);
+        const before = (next.models || []).map(modelEntryId).filter(Boolean).sort().join('\0');
+        const after = merged.map(modelEntryId).filter(Boolean).sort().join('\0');
+        if (before !== after) {
+          next = { ...next, models: merged };
+          changed = true;
+        }
+      }
+    }
+    return next;
+  });
+  if (!changed) return { cfg: agentCfg, changed: false };
+  return { cfg: { ...agentCfg, providers }, changed: true };
+}
+
+/** @deprecated 使用 syncGatewayProvidersFromAccounts */
+function syncProviderModelsFromAccounts(agentCfg, localCfg) {
+  return syncGatewayProvidersFromAccounts(agentCfg, localCfg);
+}
+
 /**
  * 清理旧逻辑遗留的供给源配置：
  * - 移除未在个人页登记的 custom-* 供给源
@@ -801,6 +892,10 @@ module.exports = {
   resolveSubUseApi,
   migrateAgentProviders,
   modelEntryId,
+  collectModelsForGatewayProvider,
+  enrichProvidersFromAccounts,
+  syncGatewayProvidersFromAccounts,
+  syncProviderModelsFromAccounts,
   resolveStatsOnlyProviderIds,
   resolvePricingProviderId,
   applyPricingOverrides,

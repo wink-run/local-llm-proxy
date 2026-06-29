@@ -521,21 +521,36 @@ function withUsageOption(body) {
 
 // All enabled providers, each with an effective models list.
 // P2P providers: base_url/token come from backend config; models come from live _peerModels.
-// Other providers: models from their configured models array (empty = serves any model).
+// 个人源：合并账户登记 + 刊例价覆盖的模型（与供给源页按模型视图一致）。
 function enabledProviders() {
   if (!_getConfig) return [];
   const cfg = _getConfig();
-  return (cfg.providers || [])
+  let providers = cfg.providers || [];
+  try {
+    const localCfg = _getLocalConfig?.() || null;
+    if (localCfg) {
+      providers = require('./billing-config').enrichProvidersFromAccounts(providers, localCfg);
+    }
+  } catch {}
+  let gatewayIds = null;
+  try {
+    const localCfg = _getLocalConfig?.() || null;
+    if (localCfg) {
+      gatewayIds = new Set(require('./billing-config').resolveUserGatewayProviderIds(localCfg));
+    }
+  } catch {}
+  return providers
     .filter(p => {
-      if (!p.enabled) return false;
+      const active = p.enabled || (gatewayIds && gatewayIds.has(p.id));
+      if (!active) return false;
       if (p.type === 'p2p') return !!_backendUrl;
       return !!p.base_url;
     })
     .map(p => {
       if (p.type === 'p2p') {
-        return { ...p, base_url: _backendUrl, token: _cloudToken || p.token, models: [..._peerModels] };
+        return { ...p, enabled: true, base_url: _backendUrl, token: _cloudToken || p.token, models: [..._peerModels] };
       }
-      return p;
+      return { ...p, enabled: true };
     });
 }
 
@@ -2111,6 +2126,12 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     candidate_count: sorted.length,
     candidates: sorted.map(p => ({ id: p.id, type: p.type, models: p.models })),
   });
+
+  if (!sorted.length) {
+    lastErr = new Error(`no_enabled_provider_for_model: ${model}`);
+    fail(null, null);
+    return;
+  }
 
   const routeErrors = [];
   for (const provider of sorted) {

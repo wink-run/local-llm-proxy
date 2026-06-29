@@ -832,6 +832,22 @@ function writeAgentConfig(cfg) {
   fs.writeFileSync(AGENT_CONFIG_PATH, JSON.stringify(cfg, null, 2), 'utf-8');
 }
 
+/** 账户/刊例价模型 → agent config provider.models（启动与保存账户时调用） */
+function syncAgentProviderModelsFromAccounts() {
+  try {
+    const billingConfig = require('./billing-config');
+    const localCfg = readLocalConfig();
+    const agentCfg = readAgentConfig() || { providers: [] };
+    const { cfg, changed } = billingConfig.syncGatewayProvidersFromAccounts(agentCfg, localCfg);
+    if (changed) {
+      writeAgentConfig(cfg);
+      console.log('[main] synced provider.models from personal accounts');
+    }
+  } catch (e) {
+    console.warn('[main] sync provider models skipped:', e.message);
+  }
+}
+
 // ── Local Config helpers (stored in userData) ────────────────────────────────
 
 function localConfigPath() {
@@ -1795,6 +1811,7 @@ function registerIPC() {
   function applyUserBillingCfg(cfg, overrides) {
     billingConfigMod.applyPricingOverrides(overrides || cfg.provider_pricing_overrides || {});
     writeLocalConfig(cfg);
+    syncAgentProviderModelsFromAccounts();
   }
 
   async function pullUserBilling({ token, serverUrl } = {}) {
@@ -2847,6 +2864,7 @@ app.whenReady().then(() => {
       writeAgentConfig({ ...agentCfg, providers: migrated.providers });
       console.log('[main] migrated agent providers: removed stale paid/custom entries');
     }
+    syncAgentProviderModelsFromAccounts();
   } catch (e) { console.warn('[main] provider migration skipped:', e.message); }
   // shim 写脚本时按 toolId 取该 shim 应用的 api_key（解析 inject.env 的 {KEY}）
   agentLinker.setKeyResolver((toolId) => {
