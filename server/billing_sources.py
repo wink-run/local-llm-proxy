@@ -92,6 +92,37 @@ def _norm_plan(p: Any) -> dict | None:
     }
 
 
+def _sort_key(s: dict) -> int:
+    """仅按序号排序；同序号保持稳定顺序（即 JSON 中的自然顺序）。"""
+    try:
+        return int(s.get("sort_order") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def sort_sources(sources: list[dict]) -> list[dict]:
+    return sorted(sources, key=_sort_key)
+
+
+def renumber_sources(sources: list[dict]) -> list[dict]:
+    """排序后重排为连续自然序号 1, 2, 3…"""
+    out: list[dict] = []
+    for i, raw in enumerate(sort_sources(sources), 1):
+        s = normalize_source(raw)
+        s["sort_order"] = i
+        out.append(s)
+    return out
+
+
+def _parse_sort_order(raw: Any) -> int:
+    if raw is None or raw == "":
+        return 0
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+
 def normalize_source(raw: dict) -> dict:
     """表单 → 规范化个人源条目。"""
     p = raw if isinstance(raw, dict) else {}
@@ -151,6 +182,7 @@ def normalize_source(raw: dict) -> dict:
 
     out: dict[str, Any] = {
         "id": sid,
+        "sort_order": _parse_sort_order(p.get("sort_order")),
         "category": cat,
         "source_id": source_id,
         "label": str(p.get("label") or sid),
@@ -180,6 +212,12 @@ def normalize_source(raw: dict) -> dict:
             "label": str(oauth.get("label") or oauth["provider"]),
         }
         out["auth"] = "oauth"
+    # 订阅类源不下发/不持久化模型刊例（套餐 + agent 关联即可）
+    if cat in ("app_sub", "api_sub"):
+        out["models"] = []
+        out["pricing"] = {}
+    if cat == "app_sub" and not out["agent_id"]:
+        out["agent_id"] = sid
     return out
 
 
@@ -226,7 +264,7 @@ def compile_billing_sections(sources: list[dict]) -> dict:
     subscription_plans: dict[str, list] = {}
     payg_providers: list[dict] = []
 
-    for raw in sources:
+    for raw in sort_sources(sources):
         s = normalize_source(raw)
         cat = s["category"]
         if cat == "app_sub":
@@ -239,8 +277,9 @@ def compile_billing_sections(sources: list[dict]) -> dict:
                 "subscription_to_api": s.get("subscription_to_api") is True,
             })
             ppid = s.get("plan_provider_id")
-            if ppid and s.get("plans"):
-                subscription_plans[ppid] = [
+            plan_key = ppid or s.get("source_id") or s["id"]
+            if plan_key and s.get("plans"):
+                subscription_plans[plan_key] = [
                     {"id": pl["id"], "label": pl["label"], "monthly_usd": pl.get("monthly_usd")}
                     for pl in s["plans"]
                 ]
@@ -252,8 +291,9 @@ def compile_billing_sections(sources: list[dict]) -> dict:
                 "app_icon": s["icon"],
                 "plan_provider_id": pid,
             })
-            if s.get("plans"):
-                subscription_plans[pid] = [
+            plan_key = s.get("plan_provider_id") or s.get("source_id") or s["id"]
+            if plan_key and s.get("plans"):
+                subscription_plans[plan_key] = [
                     {"id": pl["id"], "label": pl["label"], "monthly_usd": pl.get("monthly_usd")}
                     for pl in s["plans"]
                 ]
@@ -287,7 +327,7 @@ def compile_registry_providers(sources: list[dict]) -> list[dict]:
     providers: list[dict] = []
     seen: set[str] = set()
 
-    for raw in sources:
+    for raw in sort_sources(sources):
         s = normalize_source(raw)
         if s["category"] == "app_sub":
             continue  # APP 订阅无独立 base_url，不走 registry
@@ -342,6 +382,9 @@ def import_from_legacy(apps_doc: dict | None = None, registry_doc: dict | None =
     sources: list[dict] = []
     seen: set[str] = set()
 
+    def _next_order() -> int:
+        return len(sources) + 1
+
     def _models_from_reg_and_payg(rid: str) -> list[dict]:
         reg = reg_by_id.get(rid) or {}
         payg = payg_by_id.get(rid) or {}
@@ -368,6 +411,7 @@ def import_from_legacy(apps_doc: dict | None = None, registry_doc: dict | None =
         reg = reg_by_id.get(ppid) if ppid else {}
         reg = reg or {}
         sources.append(normalize_source({
+            "sort_order": _next_order(),
             "id": sid,
             "category": "app_sub",
             "source_id": sid,
@@ -394,6 +438,7 @@ def import_from_legacy(apps_doc: dict | None = None, registry_doc: dict | None =
         seen.add(sid)
         ppid = app.get("plan_provider_id") or sid
         sources.append(normalize_source({
+            "sort_order": _next_order(),
             "id": sid,
             "category": "api_sub",
             "source_id": sid,
@@ -414,6 +459,7 @@ def import_from_legacy(apps_doc: dict | None = None, registry_doc: dict | None =
         seen.add(pid)
         reg = reg_by_id.get(pid) or {}
         sources.append(normalize_source({
+            "sort_order": _next_order(),
             "id": pid,
             "category": "payg",
             "label": payg.get("label") or reg.get("label") or pid,
@@ -441,6 +487,7 @@ def import_from_legacy(apps_doc: dict | None = None, registry_doc: dict | None =
             continue
         if reg.get("tier") == "p2p":
             sources.append(normalize_source({
+                "sort_order": _next_order(),
                 **reg,
                 "category": "payg",
                 "auth": "api_key",
@@ -450,6 +497,7 @@ def import_from_legacy(apps_doc: dict | None = None, registry_doc: dict | None =
             continue
         if not reg.get("payg") and reg.get("tier") == "free":
             sources.append(normalize_source({
+                "sort_order": _next_order(),
                 **reg,
                 "category": "payg",
                 "auth": "oauth" if reg.get("oauth") else "api_key",
@@ -461,24 +509,39 @@ def import_from_legacy(apps_doc: dict | None = None, registry_doc: dict | None =
 
 
 async def load_sources_doc() -> dict:
+    """从 DB 读取个人源目录；未导入前返回空列表（不自动填充默认）。"""
     raw = await db.get_config(CONFIG_KEY, "")
     if raw.strip():
         doc = _parse_json_or_yaml(raw)
-        if doc.get("sources"):
-            return {"version": doc.get("version") or 1, "sources": doc["sources"]}
-    # 首次：从 legacy 默认导入
-    sources = import_from_legacy()
-    return {"version": 1, "sources": sources}
+        if "sources" in doc:
+            return {"version": doc.get("version") or 1, "sources": doc.get("sources") or []}
+    return {"version": 1, "sources": []}
 
 
 def load_sources_doc_sync() -> dict:
-    return {"version": 1, "sources": import_from_legacy()}
+    """同步读取 DB（list_sources_normalized 无 doc 时的兜底）。"""
+    import sqlite3
+    from database import DB_PATH
+
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute(
+                "SELECT value FROM system_config WHERE key=?", (CONFIG_KEY,),
+            ).fetchone()
+        if row and row[0] and str(row[0]).strip():
+            doc = _parse_json_or_yaml(str(row[0]))
+            if "sources" in doc:
+                return {"version": doc.get("version") or 1, "sources": doc.get("sources") or []}
+    except Exception:
+        pass
+    return {"version": 1, "sources": []}
 
 
 async def save_sources_doc(doc: dict) -> None:
+    items = [normalize_source(s) for s in (doc.get("sources") or []) if s.get("id")]
     payload = {
         "version": doc.get("version") or 1,
-        "sources": [normalize_source(s) for s in (doc.get("sources") or []) if s.get("id")],
+        "sources": renumber_sources(items),
     }
     await db.set_config(CONFIG_KEY, json.dumps(payload, ensure_ascii=False, indent=2))
 
@@ -515,4 +578,5 @@ async def publish_sources(doc: dict | None = None) -> dict:
 def list_sources_normalized(doc: dict | None = None) -> list[dict]:
     if doc is None:
         doc = load_sources_doc_sync()
-    return [normalize_source(s) for s in (doc.get("sources") or []) if s.get("id")]
+    items = [normalize_source(s) for s in (doc.get("sources") or []) if s.get("id")]
+    return sort_sources(items)

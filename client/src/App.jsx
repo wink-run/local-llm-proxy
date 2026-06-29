@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { MemoryRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './store/index';
 import { ThemeProvider } from './store/theme';
 import { LangProvider, useLang } from './store/lang';
@@ -27,6 +27,14 @@ function AccountRoute() {
   const { user } = useAuth();
   if (user) return <TokenDashboard />;
   return <Navigate to="/login" replace />;
+}
+
+/** 需登录的页面：未登录跳转登录页，登录后回到原路径 */
+function RequireLogin({ children }) {
+  const { user } = useAuth();
+  const location = useLocation();
+  if (user) return children;
+  return <Navigate to="/login" replace state={{ from: location.pathname }} />;
 }
 
 function Layout() {
@@ -65,9 +73,9 @@ function Layout() {
           <Route path="/login"     element={<Login />} />
           <Route path="/gateway"   element={authed ? <Gateway />        : <Navigate to="/login" replace />} />
           <Route path="/providers" element={authed ? <Providers />      : <Navigate to="/login" replace />} />
-          <Route path="/contribute"element={user   ? <Contribute />     : <Navigate to="/login" replace />} />
-          <Route path="/circles"   element={authed ? <Circles />        : <Navigate to="/login" replace />} />
-          <Route path="/circles/:circleId" element={authed ? <CircleDetail /> : <Navigate to="/login" replace />} />
+          <Route path="/contribute" element={<RequireLogin><Contribute /></RequireLogin>} />
+          <Route path="/circles"   element={<RequireLogin><Circles /></RequireLogin>} />
+          <Route path="/circles/:circleId" element={<RequireLogin><CircleDetail /></RequireLogin>} />
           <Route path="/dashboard" element={authed ? <Dashboard />      : <Navigate to="/login" replace />} />
           <Route path="/network"   element={<Network />} />
           <Route path="/config"    element={<Config />} />

@@ -33,6 +33,27 @@ async def list_billing_sources():
     }
 
 
+@router.post("/billing/sources/import-legacy", dependencies=[Depends(auth_admin)])
+async def import_legacy_sources():
+    """首次从默认配置导入并持久化到 DB；返回完整列表供前端直接使用。"""
+    sources = bs.import_from_legacy()
+    doc = {"version": 1, "sources": sources}
+    await bs.save_sources_doc(doc)
+    # 写后读回，确保持久化成功
+    saved = await bs.load_sources_doc()
+    normalized = bs.list_sources_normalized(saved)
+    if not normalized:
+        raise HTTPException(500, "导入失败：未能写入数据库")
+    return {"ok": True, "count": len(normalized), "sources": normalized}
+
+
+@router.post("/billing/sources/publish", dependencies=[Depends(auth_admin)])
+async def publish_billing_sources():
+    doc = await bs.load_sources_doc()
+    stats = await bs.publish_sources(doc)
+    return {"ok": True, **stats}
+
+
 @router.get("/billing/sources/{source_id}", dependencies=[Depends(auth_admin)])
 async def get_billing_source(source_id: str):
     doc = await bs.load_sources_doc()
@@ -91,16 +112,3 @@ async def replace_billing_sources(body: SourcesDocBody):
     return {"ok": True, "count": len(doc["sources"])}
 
 
-@router.post("/billing/sources/import-legacy", dependencies=[Depends(auth_admin)])
-async def import_legacy_sources():
-    sources = bs.import_from_legacy()
-    doc = {"version": 1, "sources": sources}
-    await bs.save_sources_doc(doc)
-    return {"ok": True, "count": len(sources)}
-
-
-@router.post("/billing/sources/publish", dependencies=[Depends(auth_admin)])
-async def publish_billing_sources():
-    doc = await bs.load_sources_doc()
-    stats = await bs.publish_sources(doc)
-    return {"ok": True, **stats}

@@ -1,14 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getConfig } from '../api/adapter';
 import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
+import { getInventoryStats } from '../api/client';
+import { formatDeviceTitle } from '../lib/device-display';
 import { useLang } from '../store/lang';
 import { useCurrency } from '../store/currency';
 import { isAccountOkMsg } from '../i18n';
 import ServiceIcon from './ServiceIcon';
 import {
-  AccountStatsView, SourceTemplateGrid, TemplateEditModal,
-  SyncDiffBanner, CustomSourceWizard, SourcePickerModal,
-  buildInstancePatch, templateReadyForInstance,
+  SourceTemplateGrid, TemplateEditModal,
+  SyncDiffBanner,
 } from './PersonalSources';
 
 const CUSTOM_APP = '__custom_app__';
@@ -48,6 +49,46 @@ function pricingRowsForProvider(providerId, models, merged, overrides) {
   }));
 }
 
+function subModeLabel(s, t) {
+  if (subscriptionKind(s) === SUB_KIND_API) return t('accounts.subKindApi');
+  if (s.subscription_to_api) return t('accounts.convertApi');
+  return t('accounts.statsOnly');
+}
+
+/** 个人页：各设备登记的订阅/供给源摘要（只读，无凭证） */
+function DeviceAccountsBreakdown({ devices, t }) {
+  const rows = (devices || []).filter(d => {
+    const a = d.accounts_summary || {};
+    return (a.subscriptions?.length || a.payg?.length || a.direct?.length);
+  });
+  if (!rows.length) return null;
+  return (
+    <div className="space-y-2 pt-3 border-t border-zinc-100 dark:border-zinc-800">
+      <h4 className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">{t('accounts.deviceBreakdown')}</h4>
+      <div className="space-y-1.5">
+        {rows.map(d => {
+          const a = d.accounts_summary || {};
+          const nSub = (a.subscriptions || []).length;
+          const nPayg = (a.payg || []).length;
+          const nDirect = (a.direct || []).length;
+          return (
+            <div key={d.device_id} className="flex items-center justify-between gap-2 text-xs px-3 py-2 rounded-lg bg-zinc-50 dark:bg-zinc-800/60">
+              <span className="font-medium text-zinc-700 dark:text-zinc-300 truncate">{formatDeviceTitle(d)}</span>
+              <span className="text-zinc-400 shrink-0 tabular-nums">
+                {nSub > 0 && t('accounts.deviceSubCount', { n: nSub })}
+                {nSub > 0 && (nPayg > 0 || nDirect > 0) && ' · '}
+                {nPayg > 0 && t('accounts.devicePaygCount', { n: nPayg })}
+                {nPayg > 0 && nDirect > 0 && ' · '}
+                {nDirect > 0 && t('accounts.deviceDirectCount', { n: nDirect })}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /** 个人页：积分 / 订阅 / 按量付费 三类账户
  * @param {'full'|'billing'} scope — billing 仅订阅+按量（供给页未登录可用）
  */
@@ -69,13 +110,11 @@ export default function UserAccountsPanel({
   const { fmtCost } = useCurrency();
   const billingOnly = scope === 'billing';
   const [tab, setTab] = useState(() => {
-    if (billingOnly) return 'templates';   // 供给源页：账户区只剩模板库（订阅/API/统计已并入别处）
+    if (billingOnly) return initialTab === 'payg' ? 'payg' : 'subscription';
     return initialTab;
   });
   const [data, setData] = useState(null);
-  const [templateEditing, setTemplateEditing] = useState(null);   // 当前编辑的源模板
-  const [wizardOpen, setWizardOpen] = useState(false);             // 自定义源向导
-  const [instancePickerOpen, setInstancePickerOpen] = useState(false);  // 「添加账户实例」选源弹窗
+  const [templateEditing, setTemplateEditing] = useState(null);   // 当前编辑的源模板（供给页）
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
@@ -148,6 +187,9 @@ export default function UserAccountsPanel({
   const [paygMsg, setPaygMsg] = useState('');
   const pricingSaveTimer = useRef(null);
 
+  const [deviceInv, setDeviceInv] = useState([]);
+
+
   function onPaygSelectChange(value) {
     setAddPaygId(value);
     if (value !== CUSTOM_PAYG) setCustomPaygLabel('');
@@ -166,6 +208,23 @@ export default function UserAccountsPanel({
   }, []);
 
   useEffect(() => { load(); }, [load, user?.id]);
+
+  // 个人页订阅/按量 Tab：拉各端上报的登记摘要（无凭证）
+  useEffect(() => {
+    if (billingOnly || !user) return;
+    if (tab !== 'subscription' && tab !== 'payg') return;
+    getInventoryStats(1)
+      .then(r => setDeviceInv(r.data?.devices || []))
+      .catch(() => setDeviceInv([]));
+  }, [billingOnly, user, tab]);
+
+
+  // 供给页从卡片跳转时切换 tab（如按量配置）
+  useEffect(() => {
+    if (billingOnly && (initialTab === 'subscription' || initialTab === 'payg')) {
+      setTab(initialTab);
+    }
+  }, [billingOnly, initialTab]);
 
   // 服务端下发新报价后自动刷新
   useEffect(() => {
@@ -222,14 +281,60 @@ export default function UserAccountsPanel({
   // OAuth 订阅（app 类）与 API-key 订阅（kind=api）均在订阅 tab；按量 provider 在 payg tab。
   const appSubs = subs.filter(s => subscriptionKind(s) === SUB_KIND_APP);
   const apiSubs = subs.filter(s => subscriptionKind(s) === SUB_KIND_API);
+  // APP 直连订阅（Cursor/Codex 等）：登记在 direct_source_billing，不在 user_subscriptions
+  const directAppSubs = useMemo(() => {
+    const instances = (data?.direct_source_instances || []).filter(d => d.mode !== 'api');
+    const seenAgent = new Set(instances.map(d => d.agent_id));
+    const seenSource = new Set(
+      appSubs.flatMap(s => [s.source_id, s.agent_id].filter(Boolean)),
+    );
+    const templates = data?.source_templates || [];
+    const tplIcon = (agentId, sid) =>
+      templates.find(t => t.agent_id === agentId || t.key === sid)?.icon || '🖱';
+    const extras = [];
+    for (const [agentId, b] of Object.entries(data?.direct_source_billing || {})) {
+      if (!b || typeof b !== 'object' || seenAgent.has(agentId)) continue;
+      if (b.mode === 'api') continue;
+      const sid = b.source_id || agentId;
+      if (seenSource.has(sid) || seenSource.has(agentId)) continue;
+      extras.push({
+        agent_id: agentId,
+        source_id: sid,
+        name: b.name || agentId,
+        label: b.name || agentId,
+        icon: tplIcon(agentId, sid),
+        mode: 'subscription',
+        monthly_usd: b.monthly_usd ?? null,
+        plan_label: b.plan_label || null,
+      });
+    }
+    return [...instances, ...extras];
+  }, [data?.direct_source_instances, data?.direct_source_billing, data?.source_templates, appSubs]);
+  const subscriptionTabCount = appSubs.length + directAppSubs.length + apiSubs.length;
+  // 网格模板 = 官方目录 + 自定义源模板（均由 billing-config 的 source_templates 下发，含 custom 标记）
+  const mergedTemplates = data?.source_templates || [];
   const addedTemplateKeys = useMemo(() => {
     const keys = new Set();
     for (const s of subs) keys.add(s.source_id);
     for (const p of payg) keys.add(p.provider_id);
     return keys;
   }, [subs, payg]);
-  // 网格模板 = 官方目录 + 自定义源模板（均由 billing-config 的 source_templates 下发，含 custom 标记）
-  const mergedTemplates = data?.source_templates || [];
+  // billing 模式：彩色=已配置（有覆盖 / 自定义 / 已有登记）
+  const configuredTemplateKeys = useMemo(() => {
+    const keys = new Set(addedTemplateKeys);
+    for (const tpl of mergedTemplates) {
+      if (tpl._override || tpl.custom) keys.add(tpl.key);
+    }
+    return keys;
+  }, [addedTemplateKeys, mergedTemplates]);
+  const subTemplates = useMemo(
+    () => mergedTemplates.filter(tpl => tpl.kind === 'app_sub' || tpl.kind === 'api_sub'),
+    [mergedTemplates],
+  );
+  const paygTemplates = useMemo(
+    () => mergedTemplates.filter(tpl => tpl.kind === 'payg'),
+    [mergedTemplates],
+  );
   function adoptServerTemplate(key) {
     const next = { ...(data?.source_template_overrides || {}) };
     delete next[key];
@@ -396,7 +501,7 @@ export default function UserAccountsPanel({
       plan_id,
       plan_label,
       monthly_usd,
-      subscription_to_api: addSubUseApi,
+      subscription_to_api: catalogItem.subscription_to_api === true ? addSubUseApi : false,
     }];
     setData(d => ({ ...(d || {}), user_subscriptions: next }));
     const ok = await saveAccounts({ user_subscriptions: next });
@@ -411,15 +516,25 @@ export default function UserAccountsPanel({
       ? customAppName.trim() && customPlanLabel.trim()
       : addSubSource && (isCustomPlan ? customPlanLabel.trim() : addSubPlan);
 
-  /** 是否启用「订阅转 API」（API 类固定 true；APP 类用户设置优先，否则目录默认） */
+  /** 目录是否允许「订阅转 API」（由服务端 subscription_to_api 控制） */
+  function catalogAllowsSubToApi(s) {
+    if (s?.custom) return true;
+    const cat = catalog.find(c => c.source_id === s.source_id);
+    return cat?.subscription_to_api === true;
+  }
+
+  /** 是否启用「订阅转 API」（API 类固定 true；APP 类须目录允许且用户开启） */
   function subUseApi(s) {
     if (subscriptionKind(s) === SUB_KIND_API) return true;
-    const cat = catalog.find(c => c.source_id === s.source_id);
+    if (!catalogAllowsSubToApi(s)) return false;
     if (s.subscription_to_api != null) return s.subscription_to_api === true;
+    const cat = catalog.find(c => c.source_id === s.source_id);
     return cat?.subscription_to_api === true;
   }
 
   function updateSubApiFlag(id, useApi) {
+    const cur = subs.find(s => s.id === id);
+    if (useApi && cur && !catalogAllowsSubToApi(cur)) return;
     const next = subs.map(s => (
       s.id === id && subscriptionKind(s) === SUB_KIND_APP
         ? { ...s, subscription_to_api: useApi }
@@ -591,17 +706,25 @@ export default function UserAccountsPanel({
     });
   }
 
-  const statsTab = { id: 'accounts', label: t('psrc.tab.stats'), sub: t('accounts.count', { n: data?.account_stats?.total ?? 0 }), color: 'zinc' };
-  const templatesTab = { id: 'templates', label: t('psrc.tab.sourceList'), sub: t('accounts.count', { n: (data?.source_templates || []).length }), color: 'violet' };
+  const billingSubTab = {
+    id: 'subscription',
+    label: t('accounts.tab.billingSub'),
+    sub: t('accounts.tab.billingSubSub'),
+    color: 'amber',
+  };
+  const billingPaygTab = {
+    id: 'payg',
+    label: t('accounts.tab.billingPayg'),
+    sub: t('accounts.billingTplCount', { n: paygTemplates.length }),
+    color: 'emerald',
+  };
   const tabs = billingOnly
-    // 供给源页：统计移到下面「个人源」、订阅/API 已并入模板（点模板加实例），账户区只剩模板库
-    ? [templatesTab]
+    // 供给源页：按订阅 / 按量分 tab 展示账户类型模板，不在此添加供给源
+    ? [billingSubTab, billingPaygTab]
     : [
         { id: 'p2p', label: t('accounts.tab.p2p'), sub: t('accounts.tab.p2pSub'), color: 'blue' },
-        statsTab,
-        { id: 'subscription', label: t('accounts.tab.subscription'), sub: t('accounts.count', { n: appSubs.length + apiSubs.length }), color: 'amber' },
+        { id: 'subscription', label: t('accounts.tab.subscription'), sub: t('accounts.count', { n: subscriptionTabCount }), color: 'amber' },
         { id: 'payg', label: t('accounts.tab.payg'), sub: t('accounts.count', { n: payg.length }), color: 'emerald' },
-        templatesTab,
       ];
 
   return (
@@ -677,23 +800,31 @@ export default function UserAccountsPanel({
           </>
         )}
 
-        {/* ── 统计 tab：账户统计 + 同步差异 ── */}
-        {tab === 'accounts' && (
+        {/* ── 供给页：订阅类账户类型（APP + API 订阅）── */}
+        {billingOnly && tab === 'subscription' && (
           loading ? <p className="text-sm text-gray-400">{t('accounts.loading')}</p> : (
             <div className="space-y-3">
               <SyncDiffBanner syncDiff={data?.sync_diff} t={t}
                 onAdoptServer={adoptServerTemplate} onDismissDrift={adoptServerTemplate} />
-              <AccountStatsView data={data} t={t} />
+              <SourceTemplateGrid templates={subTemplates}
+                addedKeys={configuredTemplateKeys} onEdit={setTemplateEditing}
+                hintKey="psrc.tpl.hintBilling" showAdd={false}
+                t={t} />
             </div>
           )
         )}
 
-        {/* ── 源模板库（账户源列表）── */}
-        {tab === 'templates' && (
+        {/* ── 供给页：按量付费账户类型 ── */}
+        {billingOnly && tab === 'payg' && (
           loading ? <p className="text-sm text-gray-400">{t('accounts.loading')}</p> : (
-            <SourceTemplateGrid templates={mergedTemplates}
-              addedKeys={addedTemplateKeys} onEdit={setTemplateEditing}
-              onAdd={() => setInstancePickerOpen(true)} t={t} />
+            <div className="space-y-3">
+              <SyncDiffBanner syncDiff={data?.sync_diff} t={t}
+                onAdoptServer={adoptServerTemplate} onDismissDrift={adoptServerTemplate} />
+              <SourceTemplateGrid templates={paygTemplates}
+                addedKeys={configuredTemplateKeys} onEdit={setTemplateEditing}
+                hintKey="psrc.tpl.hintBilling" showAdd={false}
+                t={t} />
+            </div>
           )
         )}
 
@@ -703,417 +834,106 @@ export default function UserAccountsPanel({
             payg={payg} subs={subs}
             customTemplates={data?.custom_source_templates || {}}
             paygCatalog={data?.payg_provider_catalog || []}
+            editOnly={billingOnly}
             onSave={(patch) => saveAccounts(patch, { quiet: true })}
             onInstanceAdded={onInstanceAdded}
             onClose={() => setTemplateEditing(null)} t={t} />
         )}
-        {wizardOpen && (
-          <CustomSourceWizard payg={payg} subs={subs} customTemplates={data?.custom_source_templates || {}} t={t}
-            onSave={(patch) => saveAccounts(patch)}
-            onClose={() => setWizardOpen(false)} />
-        )}
-        {instancePickerOpen && (
-          <SourcePickerModal templates={mergedTemplates} t={t}
-            onPick={async (tpl) => {
-              setInstancePickerOpen(false);
-              // 配好的源 → 直接建实例 + 弹凭证配置（一步）；没配好的 → 进模板编辑去配
-              if (!templateReadyForInstance(tpl)) { setTemplateEditing(tpl); return; }
-              await saveAccounts(buildInstancePatch(tpl, { payg, subs }), { quiet: true });
-              onInstanceAdded?.(tpl.key);
-            }}
-            onNewSource={() => { setInstancePickerOpen(false); setWizardOpen(true); }}
-            onClose={() => setInstancePickerOpen(false)} />
-        )}
 
-        {/* ── 订阅账户 ── */}
-        {tab === 'subscription' && (
-          <>
-            {loading ? (
-              <p className="text-sm text-gray-400">{t('accounts.loading')}</p>
-            ) : (
-              <>
-                <p className="text-xs text-gray-500">{t('accounts.subHint')}</p>
-
-                {/* APP 订阅 */}
-                <div className="space-y-2">
-                  <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-300">{t('accounts.sectionAppSubs')}</h4>
-                  {appSubs.length === 0 ? (
-                    <p className="text-sm text-gray-400 py-2 text-center">{t('accounts.noAppSubscriptions')}</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {appSubs.map(s => (
-                        <div key={s.id}
-                          className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
-                          <ServiceIcon id={s.plan_provider_id || s.source_id} name={s.app_name} icon={s.app_icon} />
-                          <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate max-w-[7rem] shrink-0">
-                            {s.app_name}
-                          </span>
-                          <span className="text-xs text-gray-500 truncate flex-1 min-w-0">
-                            {s.plan_label || s.plan_id}
-                            {s.monthly_usd != null ? ` · ${fmtCost(s.monthly_usd)}${t('accounts.perMonth')}` : ''}
-                            {(s.custom || s.plan_id === 'custom') && (
-                              <span className="ml-1 text-gray-400">{t('accounts.custom')}</span>
-                            )}
-                          </span>
-                          <select
-                            value={subUseApi(s) ? 'api' : 'stats'}
-                            onChange={e => updateSubApiFlag(s.id, e.target.value === 'api')}
-                            disabled={saving}
-                            className="text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1.5 shrink-0"
-                          >
-                            <option value="stats">{t('accounts.statsOnly')}</option>
-                            <option value="api">{t('accounts.convertApi')}</option>
-                          </select>
-                          <button type="button" onClick={() => removeSubscription(s.id)}
-                            className="text-xs text-red-400 hover:text-red-500 shrink-0">{t('accounts.remove')}</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* API 订阅 */}
-                <div className="space-y-2 pt-3 border-t border-zinc-100 dark:border-zinc-800">
-                  <h4 className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">{t('accounts.sectionApiSubs')}</h4>
-                  {apiSubs.length === 0 ? (
-                    <p className="text-sm text-zinc-400 py-2 text-center">{t('accounts.noApiSubscriptions')}</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {apiSubs.map(s => (
-                        <div key={s.id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
-                          <ServiceIcon id={s.plan_provider_id || s.source_id} name={s.app_name} icon={s.app_icon} />
-                          <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate max-w-[8rem] shrink-0">{s.app_name}</span>
-                          <span className="text-xs text-zinc-500 truncate flex-1 min-w-0">
-                            {s.plan_label || s.plan_id}
-                            {s.monthly_usd != null ? ` · ${fmtCost(s.monthly_usd)}${t('accounts.perMonth')}` : ''}
-                            {s.custom && (<span className="ml-1 text-zinc-400">{t('accounts.custom')}</span>)}
-                          </span>
-                          <button type="button" onClick={() => removeSubscription(s.id)} className="text-xs text-red-400 hover:text-red-500 shrink-0">{t('accounts.remove')}</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* 添加订阅（APP / API） */}
-                <div className="space-y-2 pt-2 border-t border-zinc-100 dark:border-zinc-800">
-                  {subMsg && (
-                    <p className={`text-xs ${isAccountOkMsg(subMsg, t) ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
-                      {subMsg}
-                    </p>
-                  )}
-                  <div className="flex flex-wrap items-end gap-2">
-                    <div className="flex-1 min-w-[100px]">
-                      <label className="text-xs text-zinc-400 block mb-1">{t('accounts.subKind')}</label>
-                      <select value={addSubKind} onChange={e => onSubKindChange(e.target.value)}
-                        className="w-full text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2">
-                        <option value={SUB_KIND_APP}>{t('accounts.subKindApp')}</option>
-                        <option value={SUB_KIND_API}>{t('accounts.subKindApi')}</option>
-                      </select>
-                    </div>
-                    {addSubKind === SUB_KIND_API ? (
-                      <>
-                        <div className="flex-1 min-w-[140px]">
-                          <label className="text-xs text-gray-400 block mb-1">{t('accounts.apiSubscription')}</label>
-                          <select value={addApiSource} onChange={e => onApiSourceChange(e.target.value)}
-                            className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2">
-                            <option value="">{t('accounts.selectApiSubscription')}</option>
-                            {apiCatalog.map(c => (
-                              <option key={c.source_id} value={c.source_id}>
-                                {c.app_icon} {c.app_name}
-                              </option>
-                            ))}
-                            <option value={CUSTOM_API}>{t('accounts.customApi')}</option>
-                          </select>
-                        </div>
-                        {!isCustomApi && (
-                        <div className="flex-1 min-w-[120px]">
-                          <label className="text-xs text-gray-400 block mb-1">{t('accounts.plan')}</label>
-                          <select value={addApiPlan} onChange={e => setAddApiPlan(e.target.value)} disabled={!addApiSource}
-                            className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2 disabled:opacity-50">
-                            <option value="">{t('accounts.selectPlan')}</option>
-                            {apiPlanOptions.map(p => (
-                              <option key={p.id} value={p.id}>
-                                {p.label}{p.monthly_usd != null ? ` (${fmtCost(p.monthly_usd)}${t('accounts.perMonth')})` : ''}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                    <div className="flex-1 min-w-[140px]">
-                      <label className="text-xs text-gray-400 block mb-1">{t('accounts.app')}</label>
-                      <select value={addSubSource} onChange={e => onSubSourceChange(e.target.value)}
-                        className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2">
-                        <option value="">{t('accounts.selectApp')}</option>
-                        {catalog.map(c => (
-                          <option key={c.source_id} value={c.source_id}>
-                            {c.app_icon} {c.app_name}
-                          </option>
-                        ))}
-                        <option value={CUSTOM_APP}>{t('accounts.customApp')}</option>
-                      </select>
-                    </div>
-
-                    {!isCustomApp && (
-                      <div className="flex-1 min-w-[120px]">
-                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.plan')}</label>
-                        <select value={addSubPlan} onChange={e => setAddSubPlan(e.target.value)} disabled={!addSubSource}
-                          className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2 disabled:opacity-50">
-                          <option value="">{t('accounts.selectPlan')}</option>
-                          {planOptions.map(p => (
-                            <option key={p.id} value={p.id}>
-                              {p.label}{p.monthly_usd != null ? ` (${fmtCost(p.monthly_usd)}${t('accounts.perMonth')})` : ''}
-                            </option>
-                          ))}
-                          <option value={CUSTOM_PLAN}>{t('accounts.customPlan')}</option>
-                        </select>
-                      </div>
-                    )}
-
-                    <div className="flex-1 min-w-[110px]">
-                      <label className="text-xs text-gray-400 block mb-1">{t('accounts.appMode')}</label>
-                      <select
-                        value={addSubUseApi ? 'api' : 'stats'}
-                        onChange={e => setAddSubUseApi(e.target.value === 'api')}
-                        disabled={!isCustomApp && !catalogItem}
-                        className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2 disabled:opacity-50"
-                      >
-                        <option value="stats">{t('accounts.statsOnly')}</option>
-                        <option value="api">{t('accounts.convertApi')}</option>
-                      </select>
-                    </div>
-                      </>
-                    )}
-
-                    <button type="button" onClick={addSubscription} disabled={!canAddSubscription || saving}
-                      className="text-xs px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50">
-                      {saving ? t('accounts.saving') : t('accounts.addSubscription')}
-                    </button>
-                  </div>
-
-                  {/* 自定义 API：名称 + 套餐 + 月费 */}
-                  {addSubKind === SUB_KIND_API && isCustomApi && (
-                    <div className="flex flex-wrap items-end gap-2 pl-1">
-                      <div className="flex-1 min-w-[120px]">
-                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.apiProviderName')}</label>
-                        <input value={customAppName} onChange={e => setCustomAppName(e.target.value)}
-                          placeholder="如 DeepSeek、Moonshot…"
-                          className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2" />
-                      </div>
-                      <div className="flex-1 min-w-[120px]">
-                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.planName')}</label>
-                        <input value={customPlanLabel} onChange={e => setCustomPlanLabel(e.target.value)}
-                          placeholder="如 Pro、Team…"
-                          className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2" />
-                      </div>
-                      <div className="w-24">
-                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.monthlyUsd')}</label>
-                        <input type="number" min="0" step="0.01" value={customPlanUsd}
-                          onChange={e => setCustomPlanUsd(e.target.value)} placeholder={t('accounts.optional')}
-                          className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2 text-right" />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 自定义 APP：名称 + 套餐 + 月费 */}
-                  {addSubKind === SUB_KIND_APP && isCustomApp && (
-                    <div className="flex flex-wrap items-end gap-2 pl-1">
-                      <div className="flex-1 min-w-[120px]">
-                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.appName')}</label>
-                        <input value={customAppName} onChange={e => setCustomAppName(e.target.value)}
-                          placeholder="如 Cursor、Warp…"
-                          className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2" />
-                      </div>
-                      <div className="flex-1 min-w-[120px]">
-                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.planName')}</label>
-                        <input value={customPlanLabel} onChange={e => setCustomPlanLabel(e.target.value)}
-                          placeholder="如 Pro、Business…"
-                          className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2" />
-                      </div>
-                      <div className="w-24">
-                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.monthlyUsd')}</label>
-                        <input type="number" min="0" step="0.01" value={customPlanUsd}
-                          onChange={e => setCustomPlanUsd(e.target.value)} placeholder={t('accounts.optional')}
-                          className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2 text-right" />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 目录 APP + 自定义套餐 */}
-                  {addSubKind === SUB_KIND_APP && !isCustomApp && isCustomPlan && (
-                    <div className="flex flex-wrap items-end gap-2 pl-1">
-                      <div className="flex-1 min-w-[120px]">
-                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.planName')}</label>
-                        <input value={customPlanLabel} onChange={e => setCustomPlanLabel(e.target.value)}
-                          placeholder={t('accounts.err.planPlaceholder')}
-                          className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2" />
-                      </div>
-                      <div className="w-24">
-                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.monthlyUsd')}</label>
-                        <input type="number" min="0" step="0.01" value={customPlanUsd}
-                          onChange={e => setCustomPlanUsd(e.target.value)} placeholder={t('accounts.optional')}
-                          className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2 text-right" />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </>
-        )}
-
-        {/* ── 按量付费账户 ── */}
-        {tab === 'payg' && (
-          <>
-            {loading ? (
-              <p className="text-sm text-gray-400">{t('accounts.loading')}</p>
-            ) : (
-              <>
-                <p className="text-xs text-zinc-500">{t('accounts.paygHint')}</p>
-
-                {/* ── 按量付费 ── */}
-                <h4 className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">{t('accounts.sectionPayg')}</h4>
-                {paygMsg && (
-                  <p className={`text-xs ${isAccountOkMsg(paygMsg, t) ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
-                    {paygMsg}
-                  </p>
-                )}
-
-                {/* 已添加 provider */}
-                {payg.length === 0 ? (
-                  <p className="text-sm text-gray-400 py-4 text-center">{t('accounts.noPayg')}</p>
+        {/* ── 订阅账户（个人页只读：云端汇总 + 各端登记摘要）── */}
+        {!billingOnly && tab === 'subscription' && (
+          loading ? (
+            <p className="text-sm text-gray-400">{t('accounts.loading')}</p>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-xs text-zinc-500">{t('accounts.summaryHint')}</p>
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">{t('accounts.sectionAppSubs')}</h4>
+                {appSubs.length === 0 && directAppSubs.length === 0 ? (
+                  <p className="text-sm text-zinc-400 py-2 text-center">{t('accounts.noAppSubscriptions')}</p>
                 ) : (
                   <div className="space-y-2">
-                    {payg.map(p => (
-                      <div key={p.id} className="rounded-xl border border-gray-100 dark:border-gray-700 overflow-hidden">
-                        <button type="button" onClick={() => setPaygExpanded(paygExpanded === p.id ? null : p.id)}
-                          className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700/30">
-                          <ServiceIcon id={p.provider_id} name={p.label} icon={p.icon} />
-                          <span className="text-sm font-medium text-gray-800 dark:text-gray-200 flex-1 min-w-0 truncate">
-                            {p.label}
-                            {p.custom && <span className="ml-1 text-xs text-emerald-600/80">{t('accounts.custom')}</span>}
-                          </span>
-                          <span className="text-xs text-gray-400 shrink-0">{t('accounts.modelsCount', { n: (p.models || []).length })}</span>
-                          <span className="text-gray-400 shrink-0">{paygExpanded === p.id ? '▲' : '▼'}</span>
-                        </button>
-                        {paygExpanded === p.id && (
-                          <div className="px-4 pb-4 space-y-3 border-t border-gray-100 dark:border-gray-700">
-                            <div className="flex gap-2 pt-2">
-                              <input id={`model-add-${p.id}`} placeholder={t('accounts.modelPlaceholder')}
-                                className="flex-1 text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1.5 font-mono"
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter') {
-                                    addModelToPayg(p.id, e.target.value);
-                                    e.target.value = '';
-                                  }
-                                }} />
-                              <button type="button"
-                                onClick={() => {
-                                  const el = document.getElementById(`model-add-${p.id}`);
-                                  addModelToPayg(p.id, el?.value);
-                                  if (el) el.value = '';
-                                }}
-                                className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white">{t('accounts.addModel')}</button>
-                            </div>
-
-                            {/* 该 provider 下的模型报价 */}
-                            <div className="rounded-lg border border-gray-100 dark:border-gray-700 overflow-hidden">
-                              <table className="w-full text-xs">
-                                <thead className="bg-gray-50 dark:bg-gray-700/50 text-gray-500">
-                                  <tr>
-                                    <th className="text-left px-2 py-1.5">{t('accounts.modelCol')}</th>
-                                    <th className="text-right px-1 py-1.5">{t('accounts.inputCol')}</th>
-                                    <th className="text-right px-1 py-1.5">{t('accounts.outputCol')}</th>
-                                    <th className="text-right px-1 py-1.5">{t('accounts.cacheReadCol')}</th>
-                                    <th className="w-8" />
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                                  {(p.models || []).length === 0 ? (
-                                    <tr>
-                                      <td colSpan={5} className="px-2 py-2 text-gray-400 text-center">{t('accounts.noModels')}</td>
-                                    </tr>
-                                  ) : pricingRowsForProvider(p.provider_id, p.models, providerPricing, overrides)
-                                    .filter(r => (p.models || []).includes(r.model))
-                                    .map(r => (
-                                    <tr key={r.model} className={r._override ? 'bg-amber-50/50 dark:bg-amber-900/10' : ''}>
-                                      <td className="px-2 py-1 font-mono text-gray-700 dark:text-gray-300 truncate max-w-[8rem]" title={r.model}>{r.model}</td>
-                                      {['in', 'out', 'cacheRead'].map(f => (
-                                        <td key={f} className="px-1 py-1">
-                                          <input type="number" min="0" step="0.001" value={r[f] ?? ''}
-                                            onChange={e => updatePricing(p.provider_id, r.model, f, e.target.value)}
-                                            className="w-12 ml-auto block text-right tabular-nums bg-transparent border border-transparent hover:border-gray-200 dark:hover:border-gray-600 focus:border-zinc-900 dark:focus:border-zinc-100 rounded px-0.5" />
-                                        </td>
-                                      ))}
-                                      <td className="px-1 py-1 text-center">
-                                        <button type="button" title={t('accounts.deleteModel')}
-                                          onClick={() => removeModelFromPayg(p.id, r.model)}
-                                          className="text-gray-400 hover:text-red-500 leading-none">×</button>
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-
-                            <button type="button" onClick={() => removePayg(p.id)}
-                              className="text-xs text-red-400 hover:text-red-500">{t('accounts.removeProvider')}</button>
+                    {appSubs.map(s => (
+                      <div key={s.id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
+                        <ServiceIcon id={s.plan_provider_id || s.source_id} name={s.app_name} icon={s.app_icon} />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{s.name || s.app_name}</div>
+                          <div className="text-xs text-zinc-500 truncate">
+                            {s.plan_label || s.plan_id}
+                            {s.monthly_usd != null ? ` · ${fmtCost(s.monthly_usd)}${t('accounts.perMonth')}` : ''}
                           </div>
-                        )}
+                        </div>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-700 text-zinc-500 shrink-0">{subModeLabel(s, t)}</span>
+                      </div>
+                    ))}
+                    {directAppSubs.map(d => (
+                      <div key={d.agent_id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
+                        <ServiceIcon id={d.source_id} name={d.name || d.label} icon={d.icon} />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{d.name || d.label}</div>
+                          <div className="text-xs text-zinc-500 truncate">
+                            {d.plan_label || t('accounts.directAppSub')}
+                            {d.monthly_usd != null ? ` · ${fmtCost(d.monthly_usd)}${t('accounts.perMonth')}` : ''}
+                          </div>
+                        </div>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-300 shrink-0">{t('accounts.directAppSub')}</span>
                       </div>
                     ))}
                   </div>
                 )}
-
-                {/* 添加 provider */}
-                <div className="space-y-2 pt-2 border-t border-gray-100 dark:border-gray-700">
-                  {paygMsg && (
-                    <p className={`text-xs ${isAccountOkMsg(paygMsg, t) ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
-                      {paygMsg}
-                    </p>
-                  )}
-                  <div className="flex flex-wrap items-end gap-2">
-                    <div className="flex-1 min-w-[140px]">
-                      <label className="text-xs text-gray-400 block mb-1">{t('accounts.provider')}</label>
-                      <select value={addPaygId} onChange={e => onPaygSelectChange(e.target.value)}
-                        className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2">
-                        <option value="">{t('accounts.selectProvider')}</option>
-                        {paygOptions.map(o => (
-                          <option key={o.id || o.provider_id} value={o.id || o.provider_id}>{o.icon} {o.label}</option>
-                        ))}
-                        <option value={CUSTOM_PAYG}>{t('accounts.customProvider')}</option>
-                      </select>
-                    </div>
-                    {!isCustomPayg && (
-                      <button type="button" onClick={addPaygProvider} disabled={!canAddPayg || saving}
-                        className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50">
-                        {saving ? t('accounts.saving') : t('accounts.add')}
-                      </button>
-                    )}
-                  </div>
-                  {isCustomPayg && (
-                    <div className="flex flex-wrap items-end gap-2 pl-1">
-                      <div className="flex-1 min-w-[160px]">
-                        <label className="text-xs text-gray-400 block mb-1">{t('accounts.providerName')}</label>
-                        <input value={customPaygLabel} onChange={e => setCustomPaygLabel(e.target.value)}
-                          placeholder="如 MiniMax、Moonshot…"
-                          className="w-full text-xs bg-gray-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2"
-                          onKeyDown={e => { if (e.key === 'Enter') addPaygProvider(); }} />
+              </div>
+              <div className="space-y-2 pt-2 border-t border-zinc-100 dark:border-zinc-800">
+                <h4 className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">{t('accounts.sectionApiSubs')}</h4>
+                {apiSubs.length === 0 ? (
+                  <p className="text-sm text-zinc-400 py-2 text-center">{t('accounts.noApiSubscriptions')}</p>
+                ) : (
+                  <div className="space-y-2">
+                    {apiSubs.map(s => (
+                      <div key={s.id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
+                        <ServiceIcon id={s.plan_provider_id || s.source_id} name={s.app_name} icon={s.app_icon} />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{s.name || s.app_name}</div>
+                          <div className="text-xs text-zinc-500 truncate">
+                            {s.plan_label || s.plan_id}
+                            {s.monthly_usd != null ? ` · ${fmtCost(s.monthly_usd)}${t('accounts.perMonth')}` : ''}
+                          </div>
+                        </div>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-300 shrink-0">{t('accounts.subKindApi')}</span>
                       </div>
-                      <button type="button" onClick={addPaygProvider} disabled={!canAddPayg || saving}
-                        className="text-xs px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50">
-                        {saving ? t('accounts.saving') : t('accounts.add')}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <DeviceAccountsBreakdown devices={deviceInv} t={t} />
+            </div>
+          )
         )}
+
+        {/* ── 按量供给源（个人页只读汇总）── */}
+        {!billingOnly && tab === 'payg' && (
+          loading ? (
+            <p className="text-sm text-gray-400">{t('accounts.loading')}</p>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-xs text-zinc-500">{t('accounts.summaryHint')}</p>
+              {payg.length === 0 ? (
+                <p className="text-sm text-zinc-400 py-4 text-center">{t('accounts.noPayg')}</p>
+              ) : (
+                <div className="space-y-2">
+                  {payg.map(p => (
+                    <div key={p.id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
+                      <ServiceIcon id={p.provider_id} name={p.label} icon={p.icon} />
+                      <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">{p.label || p.name}</span>
+                      <span className="text-xs text-zinc-400 shrink-0 tabular-nums">{t('accounts.modelsCount', { n: (p.models || []).length })}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <DeviceAccountsBreakdown devices={deviceInv} t={t} />
+            </div>
+          )
+        )}
+
       </div>
     </section>
   );

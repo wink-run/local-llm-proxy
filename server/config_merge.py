@@ -36,7 +36,6 @@ def merge_subscription_apps(current: list | None, defaults: list | None) -> list
         return def_list
 
     out: list[dict] = []
-    seen: set[str] = set()
     for app in cur_list:
         if not isinstance(app, dict):
             continue
@@ -44,7 +43,6 @@ def merge_subscription_apps(current: list | None, defaults: list | None) -> list
         if not sid:
             out.append(app)
             continue
-        seen.add(sid)
         base = def_by.get(sid) or {}
         merged = {**base, **app}
         # DB/管理员配置未显式设置时，用内置默认补全
@@ -54,10 +52,7 @@ def merge_subscription_apps(current: list | None, defaults: list | None) -> list
             merged["plan_provider_id"] = base["plan_provider_id"]
         out.append(merged)
 
-    # 默认 yaml 新增的应用追加到末尾
-    for sid, base in def_by.items():
-        if sid not in seen:
-            out.append(dict(base))
+    # 管理员发布后的列表即为准，不再把已从目录删除的默认项加回来
     return out
 
 
@@ -70,24 +65,25 @@ def merge_apps_doc(current: dict | None) -> dict:
 
 
 def merge_api_subscription_apps(current: list | None, defaults: list | None) -> list:
-    """API 订阅目录以内置默认为准，忽略已从默认移除的 source_id。"""
+    """API 订阅目录：已发布列表为准，仅用内置默认补全缺字段。"""
     def_list = list(defaults or [])
-    if not def_list:
-        return list(current or [])
-    cur_by: dict[str, dict] = {}
-    for app in current or []:
-        if isinstance(app, dict) and app.get("source_id"):
-            cur_by[app["source_id"]] = dict(app)
+    cur_list = list(current or [])
+    def_by = {a["source_id"]: dict(a) for a in def_list if a.get("source_id")}
+
+    if not cur_list:
+        return def_list
+
     out: list[dict] = []
-    for base in def_list:
-        if not isinstance(base, dict):
+    for app in cur_list:
+        if not isinstance(app, dict):
             continue
-        sid = base.get("source_id")
+        sid = app.get("source_id")
         if not sid:
+            out.append(app)
             continue
-        over = cur_by.get(sid) or {}
-        merged = {**base, **over}
-        if over.get("plan_provider_id") is None and base.get("plan_provider_id") is not None:
+        base = def_by.get(sid) or {}
+        merged = {**base, **app}
+        if app.get("plan_provider_id") is None and base.get("plan_provider_id") is not None:
             merged["plan_provider_id"] = base["plan_provider_id"]
         out.append(merged)
     return out

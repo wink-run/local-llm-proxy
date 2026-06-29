@@ -255,9 +255,10 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
     setMsg('');
     const token = localStorage.getItem('token');
 
-    // 桌面端：主进程拉 YAML 并合并
+    // 桌面端：apps/sources 全量覆盖，scenes 增量合并
     if (window.electronAPI?.toolsConfig?.importUrl) {
-      const r = await window.electronAPI.toolsConfig.importUrl(fullUrl, token);
+      const replace = endpoint.includes('/apps') || endpoint.includes('/sources');
+      const r = await window.electronAPI.toolsConfig.importUrl(fullUrl, token, { replace });
       setMsg(r.ok ? '✓ ' + importedMsg(r, t('gateway.sync.done')) : '✗ ' + r.error);
       if (r.ok && onImported) onImported();
       setBusy(false);
@@ -284,54 +285,246 @@ function ImportConfigButton({ onImported, endpoint = '/api/config/apps' }) {
   );
 }
 
-// ── 支持的应用图标行 ───────────────────────────────────────────────────────
-// 展示我们支持纳管的全部应用：本机已安装 → 彩色；未安装 → 灰色，且有官方安装链接时可点击跳转。
-// 数据来自 IPC apps:supported（桌面端检测安装状态）；Web/Docker 返回空数组 → 整行不渲染。
-//
-// 安装链接来自配置（config-loader 的 app_install_urls：内置默认兜底 + 服务端可下发覆盖），
-// 经 apps:supported 的 install_url 字段下发到前端，不在前端/主进程硬编码。
-function SupportedAppsBar() {
+// ── 百宝箱：安装/卸载说明弹框 ─────────────────────────────────────────────
+function toolboxOsKind() {
+  const p = typeof window !== 'undefined' && window.electronAPI?.platform;
+  if (p === 'darwin') return 'mac';
+  if (p === 'win32') return 'win';
+  if (typeof navigator !== 'undefined') {
+    if (/Win/i.test(navigator.userAgent)) return 'win';
+    if (/Mac/i.test(navigator.userAgent)) return 'mac';
+  }
+  return 'other';
+}
+function toolboxDefaultGuide(install, name, t) {
+  const os = toolboxOsKind();
+  if (install) {
+    if (os === 'mac') return t('gateway.toolbox.defaultInstallGuideMac', { name });
+    if (os === 'win') return t('gateway.toolbox.defaultInstallGuideWin', { name });
+    return t('gateway.toolbox.defaultInstallGuide', { name });
+  }
+  if (os === 'mac') return t('gateway.toolbox.defaultUninstallGuideMac', { name });
+  if (os === 'win') return t('gateway.toolbox.defaultUninstallGuideWin', { name });
+  return t('gateway.toolbox.defaultUninstallGuide', { name });
+}
+function toolboxPlatformLabel(t, install) {
+  const os = toolboxOsKind();
+  if (os === 'mac') return install ? t('gateway.toolbox.platformMacInstall') : t('gateway.toolbox.platformMacUninstall');
+  if (os === 'win') return install ? t('gateway.toolbox.platformWinInstall') : t('gateway.toolbox.platformWinUninstall');
+  return null;
+}
+
+function AppToolboxGuideModal({ app, mode, onClose }) {
   const { t } = useLang();
-  const [items, setItems] = useState([]);
-  const [failed, setFailed] = useState({});   // 品牌 logo 加载失败的 id → 回退 emoji
-  useEffect(() => {
-    let alive = true;
-    Promise.resolve(getApps().supported?.() ?? [])
-      .then(r => { if (alive) setItems(Array.isArray(r) ? r : []); })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, []);
-  if (!items.length) return null;
-  const openInstall = (url) => { if (url) getOauth().openExternal?.(url); };
+  if (!app || !mode) return null;
+  const install = mode === 'install';
+  const url = install ? app.install_url : (app.uninstall_url || app.install_url);
+  const configured = install ? app.install_guide : app.uninstall_guide;
+  const body = configured || toolboxDefaultGuide(install, app.name, t);
+  const platLabel = toolboxPlatformLabel(t, install);
+  const title = install
+    ? t('gateway.toolbox.installGuideTitle', { name: app.name })
+    : t('gateway.toolbox.uninstallGuideTitle', { name: app.name });
+  const brand = resolveBrandIcon(`${app.id} ${app.name}`);
+
   return (
-    <div className="flex items-center gap-1.5 flex-wrap mb-3">
-      <span className="text-[11px] text-zinc-400 dark:text-zinc-500 mr-0.5 shrink-0">{t('gateway.supported.title')}</span>
-      {items.map(a => {
-        const url = a.install_url || null;   // 来自配置（app_install_urls），经 supported 下发
-        const clickable = !a.installed && !!url;
-        const title = a.installed
-          ? `${a.name} · ${t('gateway.supported.installed')}`
-          : url ? `${a.name} · ${t('gateway.supported.clickInstall')}`
-          : `${a.name} · ${t('gateway.supported.notInstalled')}`;
-        const brand = resolveBrandIcon(`${a.id} ${a.name}`);   // 官方品牌 logo（@lobehub/icons），无则回退 emoji
-        // 与应用列表行图标同款：18px · object-contain · 命中品牌→logo，否则 isAppIcon→SVG，再否则 emoji；
-        // 未安装用灰度+半透明表达（裸图标无底色，仅可点击时 hover 微高亮并恢复彩色）。
-        const dim = a.installed ? '' : `grayscale opacity-50 ${clickable ? 'group-hover:grayscale-0 group-hover:opacity-100' : ''}`;
-        return (
-          <button key={a.id} type="button" title={title} aria-label={title} aria-disabled={!clickable}
-            onClick={clickable ? () => openInstall(url) : undefined}
-            className={`group w-7 h-7 flex items-center justify-center rounded-lg transition select-none
-              ${clickable ? 'cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-700/40' : 'cursor-default'}`}>
-            {brand && !failed[a.id]
-              ? <img src={brand} alt="" aria-hidden onError={() => setFailed(f => ({ ...f, [a.id]: true }))}
-                  className={`w-[18px] h-[18px] object-contain ${dim}`} />
-              : isAppIcon(a.icon)
-                ? appIconSvg(a.icon, `w-[18px] h-[18px] ${dim}`)
-                : <span aria-hidden className={`text-base leading-none ${dim}`}>{a.icon}</span>}
+    <div className="electron-no-drag fixed inset-0 z-[65] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-md mx-auto flex flex-col max-h-[min(85vh,420px)]"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-2.5 px-4 py-3 border-b border-zinc-200 dark:border-zinc-700 shrink-0">
+          {brand
+            ? <img src={brand} alt="" className="w-6 h-6 object-contain shrink-0" />
+            : isAppIcon(app.icon)
+              ? appIconSvg(app.icon, 'w-6 h-6 shrink-0')
+              : <span className="text-xl shrink-0">{app.icon}</span>}
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 truncate">{title}</h3>
+            {platLabel && (
+              <span className="text-[10px] text-zinc-400 dark:text-zinc-500">{platLabel}</span>
+            )}
+          </div>
+          <button type="button" onClick={onClose} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 text-lg leading-none shrink-0">✕</button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-4 py-3">
+          <p className="text-xs text-zinc-600 dark:text-zinc-300 whitespace-pre-wrap leading-relaxed">{body}</p>
+        </div>
+        <div className="flex items-center gap-2 px-4 py-3 border-t border-zinc-200 dark:border-zinc-700 shrink-0">
+          {url && (
+            <button type="button"
+              onClick={() => getOauth().openExternal?.(url)}
+              className="flex-1 text-xs px-3 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white font-medium transition-colors">
+              {t('gateway.toolbox.openOfficialLink')}
+            </button>
+          )}
+          <button type="button" onClick={onClose}
+            className={`text-xs px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-600 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700/50 transition-colors ${url ? '' : 'flex-1'}`}>
+            {t('gateway.toolbox.guideGotIt')}
           </button>
-        );
-      })}
+        </div>
+      </div>
     </div>
+  );
+}
+
+// ── 应用百宝箱：按钮侧下拉浮层，九宫格 + 安装/卸载 ─────────────────────────
+function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0 }) {
+  const { t } = useLang();
+  const wrapRef = useRef(null);
+  const btnRef = useRef(null);
+  const [pos, setPos] = useState({ top: 0, bottom: null, right: 16, maxH: 240 });
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState({});
+  const [guideDlg, setGuideDlg] = useState(null);   // { app, mode: 'install'|'uninstall' }
+
+  const updatePos = useCallback(() => {
+    if (!btnRef.current) return;
+    const r = btnRef.current.getBoundingClientRect();
+    const right = Math.max(8, window.innerWidth - r.right);
+    const spaceBelow = window.innerHeight - r.bottom - 12;
+    // 浮层最高约 240px，不足空间时向上展开
+    const maxH = Math.min(240, Math.max(160, spaceBelow));
+    if (spaceBelow >= 180) {
+      setPos({ top: r.bottom + 6, bottom: null, right, maxH });
+    } else {
+      setPos({ top: null, bottom: window.innerHeight - r.top + 6, right, maxH: Math.min(240, r.top - 12) });
+    }
+  }, []);
+
+  const loadItems = useCallback(() => {
+    setLoading(true);
+    return Promise.resolve(getApps().supported?.() ?? [])
+      .then(r => setItems(Array.isArray(r) ? r : []))
+      .catch(() => setItems([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    loadItems();
+    updatePos();
+    window.addEventListener('resize', updatePos);
+    window.addEventListener('scroll', updatePos, true);
+    return () => {
+      window.removeEventListener('resize', updatePos);
+      window.removeEventListener('scroll', updatePos, true);
+    };
+  }, [open, refreshKey, loadItems, updatePos]);
+
+  // 点击外部关闭
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) onClose();
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open, onClose]);
+
+  const openGuide = (app, install) => setGuideDlg({ app, mode: install ? 'install' : 'uninstall' });
+
+  return (
+    <>
+    {guideDlg && (
+      <AppToolboxGuideModal app={guideDlg.app} mode={guideDlg.mode} onClose={() => setGuideDlg(null)} />
+    )}
+    <div ref={wrapRef} className="relative ml-auto">
+      <button ref={btnRef} type="button" onClick={onToggle} disabled={busy}
+        title={t('gateway.toolbox.title')}
+        aria-expanded={open}
+        className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-colors disabled:opacity-50
+          ${open
+            ? 'bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400'
+            : 'bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'}`}>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className={`w-3.5 h-3.5 shrink-0 ${busy ? 'animate-spin' : ''}`}>
+          {busy
+            ? <path d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+            : <>
+                <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8z" />
+                <path d="M3.3 7 12 12l8.7-5M12 22V12" />
+              </>}
+        </svg>
+        {busy ? t('gateway.toolbox.syncing') : t('gateway.toolbox.btn')}
+      </button>
+
+      {/* 下拉浮层：fixed 锚定按钮，高度受限避免遮挡下方列表 */}
+      <div
+        aria-hidden={!open}
+        style={{
+          ...(pos.top != null ? { top: pos.top } : {}),
+          ...(pos.bottom != null ? { bottom: pos.bottom } : {}),
+          right: pos.right,
+          maxHeight: pos.maxH,
+        }}
+        className={`fixed z-[55] w-[min(calc(100vw-1rem),280px)] flex flex-col
+          origin-top-right transition-[opacity,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]
+          ${open ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto' : 'opacity-0 -translate-y-1.5 scale-[0.97] pointer-events-none'}`}>
+        <div className="bg-white dark:bg-zinc-800 rounded-xl shadow-xl shadow-black/10 dark:shadow-black/40 border border-zinc-200/80 dark:border-zinc-700 flex flex-col min-h-0 flex-1 overflow-hidden">
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-zinc-200 dark:border-zinc-700 shrink-0">
+            <h3 className="text-[11px] font-semibold text-zinc-800 dark:text-zinc-100 flex-1 truncate" title={t('gateway.toolbox.hint')}>
+              {t('gateway.toolbox.panelTitle')}
+            </h3>
+            <button type="button" onClick={loadItems} title={t('gateway.common.refresh')}
+              className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 p-0.5 rounded hover:bg-zinc-100 dark:hover:bg-zinc-700/50 transition-colors">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="w-3 h-3">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+              </svg>
+            </button>
+            <button type="button" onClick={onClose} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 text-sm leading-none p-0.5 transition-colors">✕</button>
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto p-2">
+            {loading ? (
+              <div className="flex items-center justify-center gap-2 py-6 text-[11px] text-zinc-400">
+                <div className="w-3 h-3 border-2 border-zinc-300 dark:border-zinc-600 border-t-blue-500 rounded-full animate-spin" />
+                {t('gateway.toolbox.loading')}
+              </div>
+            ) : items.length === 0 ? (
+              <div className="py-6 text-center text-[11px] text-zinc-400">{t('gateway.toolbox.empty')}</div>
+            ) : (
+              <div className="grid grid-cols-3 gap-1.5">
+                {items.map(a => {
+                  const brand = resolveBrandIcon(`${a.id} ${a.name}`);
+                  const dim = a.installed ? '' : 'grayscale opacity-45';
+                  const install = !a.installed;
+                  const btnLabel = install ? t('gateway.toolbox.install') : t('gateway.toolbox.uninstall');
+                  const btnTitle = install
+                    ? t('gateway.toolbox.installTitle', { name: a.name })
+                    : t('gateway.toolbox.uninstallTitle', { name: a.name });
+                  return (
+                    <div key={a.id}
+                      className={`flex flex-col items-center gap-0.5 p-1.5 rounded-md border transition-colors
+                        ${a.installed
+                          ? 'border-zinc-200/80 dark:border-zinc-600/50 bg-zinc-50/50 dark:bg-zinc-700/20'
+                          : 'border-zinc-100 dark:border-zinc-700/40'}`}>
+                      <div className="w-7 h-7 flex items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-700/40 shrink-0">
+                        {brand && !failed[a.id]
+                          ? <img src={brand} alt="" aria-hidden onError={() => setFailed(f => ({ ...f, [a.id]: true }))}
+                              className={`w-4 h-4 object-contain ${dim}`} />
+                          : isAppIcon(a.icon)
+                            ? appIconSvg(a.icon, `w-4 h-4 ${dim}`)
+                            : <span aria-hidden className={`text-sm leading-none ${dim}`}>{a.icon}</span>}
+                      </div>
+                      <span className="text-[9px] font-medium text-zinc-700 dark:text-zinc-200 text-center truncate w-full leading-none" title={a.name}>
+                        {a.name}
+                      </span>
+                      <button type="button" title={btnTitle}
+                        onClick={() => openGuide(a, install)}
+                        className={`text-[9px] px-1 py-px rounded font-medium transition-colors w-full leading-tight
+                          ${install
+                            ? 'bg-blue-500 hover:bg-blue-600 text-white'
+                            : 'border border-zinc-200 dark:border-zinc-600 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700/50'}`}>
+                        {btnLabel}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+    </>
   );
 }
 
@@ -1848,6 +2041,29 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
   const [manualDraft, setManualDraft] = useState(null); // 手工添加的内联面板对应的 app
   const [appStats, setAppStats] = useState({});     // id → {calls,tokens,lastTs}（当天用量）
   const [loading,  setLoading]  = useState(true);   // 首次加载中（应用检测较慢）→ 显示加载特效而非空状态
+  const [toolboxOpen, setToolboxOpen] = useState(false);       // 应用百宝箱展开态
+  const [toolboxBusy, setToolboxBusy] = useState(false);       // 展开前从云端拉取目录
+  const [toolboxRefresh, setToolboxRefresh] = useState(0);     // 拉取完成后刷新图标行
+
+  // 展开百宝箱：先从云端拉取 /api/config/apps，再结合本机安装状态展示彩色/灰色图标
+  async function toggleToolbox() {
+    if (toolboxOpen) { setToolboxOpen(false); return; }
+    setToolboxBusy(true);
+    try {
+      const base = await getSyncServerBase();
+      if (window.electronAPI?.toolsConfig?.importUrl && base) {
+        const token = localStorage.getItem('token');
+        const r = await window.electronAPI.toolsConfig.importUrl(base + '/api/config/apps', token, { replace: true });
+        if (r.ok) {
+          setToolboxRefresh(k => k + 1);
+          await load();   // 同步后刷新下方应用列表（可能有新识别的应用）
+        }
+      }
+    } finally {
+      setToolboxBusy(false);
+      setToolboxOpen(true);   // 即使拉取失败也展开，展示本地缓存目录
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -2207,8 +2423,6 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
       {/* 用量明细弹窗（点击统计区打开）*/}
       {detailApp && <AppDetailModal app={detailApp} onClose={() => setDetailApp(null)} />}
       <div className="p-4">
-            {/* 支持的应用一行：已装彩色 / 未装灰色可跳转安装 */}
-            <SupportedAppsBar />
             {/* 操作栏 */}
             <div className="flex items-center gap-2 mb-3 flex-wrap">
               <button onClick={() => manualDraft ? cancelManualDraft() : addCustom()}
@@ -2216,7 +2430,13 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                 {t('gateway.apps.new')}
               </button>
               <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('gateway.apps.newHint')}</span>
-              <div className="ml-auto"><ImportConfigButton onImported={load} /></div>
+              <AppToolbox
+                open={toolboxOpen}
+                busy={toolboxBusy}
+                onToggle={toggleToolbox}
+                onClose={() => setToolboxOpen(false)}
+                refreshKey={toolboxRefresh}
+              />
             </div>
 
             {/* 手工添加 → 内联面板（ManualAddPanel，独立组件）*/}

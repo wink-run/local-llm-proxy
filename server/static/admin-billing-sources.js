@@ -10,6 +10,7 @@ window.initBillingSourcesAdmin = function (api, lang, ref) {
 
   function emptyForm() {
     return {
+      sort_order: '',
       id: '', category: 'payg', label: '', icon: '🔧', tier: 'paid',
       base_url: '', auth: 'api_key', api_format: 'openai', handler: 'openai',
       hint: '', keyless: false, key_prefix: '', signup_url: '', aliases: '',
@@ -21,7 +22,9 @@ window.initBillingSourcesAdmin = function (api, lang, ref) {
   }
 
   const bsFiltered = () => {
-    const list = bsSources.value || []
+    const list = [...(bsSources.value || [])]
+    // 仅按序号；相等时保持接口返回顺序（自然顺序）
+    list.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
     if (bsFilter.value === 'all') return list
     return list.filter(s => s.category === bsFilter.value)
   }
@@ -37,15 +40,23 @@ window.initBillingSourcesAdmin = function (api, lang, ref) {
   async function fetchBillingSources() {
     bsMsg.value = ''
     try {
-      const d = await (await api('/admin/billing/sources')).json()
+      const r = await api('/admin/billing/sources')
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}))
+        bsMsg.value = d.detail || `HTTP ${r.status}`
+        bsSources.value = []
+        return
+      }
+      const d = await r.json()
       bsSources.value = d.sources || []
-    } catch (e) { bsMsg.value = e.message }
+    } catch (e) { bsMsg.value = e.message; bsSources.value = [] }
   }
 
   function openBsModal(source) {
     bsEditId.value = source ? source.id : null
     if (source) {
       bsForm.value = {
+        sort_order: source.sort_order ?? '',
         id: source.id,
         category: source.category || 'payg',
         label: source.label || '',
@@ -77,7 +88,8 @@ window.initBillingSourcesAdmin = function (api, lang, ref) {
         })),
       }
     } else {
-      bsForm.value = emptyForm()
+      const maxOrder = (bsSources.value || []).reduce((m, s) => Math.max(m, Number(s.sort_order) || 0), 0)
+      bsForm.value = { ...emptyForm(), sort_order: maxOrder + 1 }
     }
     bsModalOpen.value = true
   }
@@ -95,7 +107,8 @@ window.initBillingSourcesAdmin = function (api, lang, ref) {
 
   function buildPayload() {
     const f = bsForm.value
-    const models = (f.models || []).filter(m => m.id?.trim()).map(m => ({
+    const isPayg = f.category === 'payg'
+    const models = isPayg ? (f.models || []).filter(m => m.id?.trim()).map(m => ({
       id: m.id.trim(),
       modality: m.modality || 'chat',
       pricing: {
@@ -104,13 +117,14 @@ window.initBillingSourcesAdmin = function (api, lang, ref) {
         ...(m.cacheRead !== '' && m.cacheRead != null ? { cacheRead: Number(m.cacheRead) } : {}),
         ...(m.cacheWrite !== '' && m.cacheWrite != null ? { cacheWrite: Number(m.cacheWrite) } : {}),
       },
-    }))
+    })) : []
     const plans = (f.plans || []).filter(p => p.id?.trim()).map(p => ({
       id: p.id.trim(),
       label: (p.label || p.id).trim(),
       monthly_usd: p.monthly_usd !== '' && p.monthly_usd != null ? Number(p.monthly_usd) : null,
     }))
     const payload = {
+      sort_order: f.sort_order !== '' && f.sort_order != null ? Number(f.sort_order) : 0,
       id: (f.id || '').trim(),
       category: f.category,
       source_id: (f.source_id || f.id || '').trim(),
@@ -171,8 +185,12 @@ window.initBillingSourcesAdmin = function (api, lang, ref) {
   async function importBsLegacy() {
     bsSaving.value = true
     try {
-      const d = await (await api('/admin/billing/sources/import-legacy', { method: 'POST' })).json()
-      await fetchBillingSources()
+      const r = await api('/admin/billing/sources/import-legacy', { method: 'POST' })
+      const d = await r.json()
+      if (!r.ok) { bsMsg.value = d.detail || 'Error'; return }
+      // 优先用导入响应中的列表，再读库确认
+      bsSources.value = d.sources || []
+      if (!bsSources.value.length) await fetchBillingSources()
       bsMsg.value = lang.value === 'zh' ? `✓ 已导入 ${d.count} 条` : `✓ Imported ${d.count}`
     } catch (e) { bsMsg.value = e.message }
     finally { bsSaving.value = false }

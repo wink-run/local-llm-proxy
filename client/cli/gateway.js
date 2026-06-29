@@ -145,15 +145,29 @@ async function cmdStart(port, adminPort) {
     // Include inventory snapshot for cloud dashboard (works without browser)
     try {
       const { localStats } = require('../shared/telemetry');
+      const { buildAccountsSummary } = require('../shared/accounts-summary');
+      let billingMod;
+      try { billingMod = require('../electron/billing-config'); } catch (_) { billingMod = null; }
       const [d1, d7, d30] = await Promise.all([
         Promise.resolve(localStats.queryDashboard(1)).catch(() => null),
         Promise.resolve(localStats.queryDashboard(7)).catch(() => null),
         Promise.resolve(localStats.queryDashboard(30)).catch(() => null),
       ]);
+      let accountsSummary = null;
+      if (billingMod?.getUserAccounts) {
+        try {
+          const cfg = require('../electron/config-loader').readConfig?.() || {};
+          accountsSummary = buildAccountsSummary(billingMod.getUserAccounts(cfg));
+        } catch (_) {}
+      }
+      const attach = (snap) => {
+        if (snap && accountsSummary) snap.accounts_summary = accountsSummary;
+        return snap;
+      };
       const inv = {};
-      if (d1)  inv['1']  = d1;
-      if (d7)  inv['7']  = d7;
-      if (d30) inv['30'] = d30;
+      if (d1)  inv['1']  = attach(d1);
+      if (d7)  inv['7']  = attach(d7);
+      if (d30) inv['30'] = attach(d30);
       if (Object.keys(inv).length) base.inventory = inv;
     } catch (_) {}
     return base;

@@ -97,6 +97,7 @@ async function fetchUserBilling(token, serverUrl) {
 }
 
 async function saveUserBilling(token, serverUrl, patch) {
+  const { stripBillingSecrets } = require('../shared/accounts-summary');
   const body = {};
   for (const k of BILLING_FIELDS) {
     if (patch[k] !== undefined) body[k] = patch[k];
@@ -104,7 +105,7 @@ async function saveUserBilling(token, serverUrl, patch) {
   // 自定义实例(custom:true)不上云，只上传官方实例
   if (Array.isArray(body.user_subscriptions)) body.user_subscriptions = nonCustom(body.user_subscriptions);
   if (Array.isArray(body.user_payg_providers)) body.user_payg_providers = nonCustom(body.user_payg_providers);
-  return pickBilling(await requestJson('PUT', serverUrl, '/user/accounts', token, body));
+  return pickBilling(await requestJson('PUT', serverUrl, '/user/accounts', token, stripBillingSecrets(body)));
 }
 
 /**

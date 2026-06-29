@@ -180,6 +180,70 @@ function appInstallUrls() {
   return { ...builtin, ...curMap };
 }
 
+// 各应用官方卸载/卸载说明页（百宝箱「卸载」按钮跳转）。合并规则同 appInstallUrls。
+function appUninstallUrls() {
+  let builtin = {};
+  try { builtin = (yaml.load(fs.readFileSync(DEFAULT_YAML, 'utf8')) || {}).app_uninstall_urls || {}; } catch {}
+  const cur = get().app_uninstall_urls;
+  const curMap = (cur && typeof cur === 'object' && !Array.isArray(cur)) ? cur : {};
+  return { ...builtin, ...curMap };
+}
+
+// 百宝箱安装/卸载说明（多行文本，服务端可下发覆盖）
+function mergeStringMap(key) {
+  let builtin = {};
+  try { builtin = (yaml.load(fs.readFileSync(DEFAULT_YAML, 'utf8')) || {})[key] || {}; } catch {}
+  const cur = get()[key];
+  const curMap = (cur && typeof cur === 'object' && !Array.isArray(cur)) ? cur : {};
+  return { ...builtin, ...curMap };
+}
+function normalizeGuideText(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'string') return v.trim() || null;
+  if (Array.isArray(v)) return v.map(x => String(x)).filter(Boolean).join('\n') || null;
+  return null;
+}
+
+// 百宝箱说明：支持纯文本，或 { mac, win, default } 按本机平台选取（mac/darwin/osx、win/win32/windows）
+const GUIDE_PLATFORM_KEYS = {
+  darwin: ['mac', 'darwin', 'osx', 'macos'],
+  win32:  ['win', 'win32', 'windows'],
+  linux:  ['linux'],
+};
+function resolveGuide(v, platform = process.platform) {
+  const text = normalizeGuideText(v);
+  if (text) return text;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const aliases = GUIDE_PLATFORM_KEYS[platform] || [];
+  for (const k of aliases) {
+    const t = normalizeGuideText(v[k]);
+    if (t) return t;
+  }
+  return normalizeGuideText(v.default) || normalizeGuideText(v.other);
+}
+
+function mergeGuideMap(key) {
+  let builtin = {};
+  try { builtin = (yaml.load(fs.readFileSync(DEFAULT_YAML, 'utf8')) || {})[key] || {}; } catch {}
+  const cur = get()[key];
+  const curMap = (cur && typeof cur === 'object' && !Array.isArray(cur)) ? cur : {};
+  const out = { ...builtin };
+  for (const [id, val] of Object.entries(curMap)) {
+    const base = out[id];
+    if (val && typeof val === 'object' && !Array.isArray(val)
+        && base && typeof base === 'object' && !Array.isArray(base)) {
+      out[id] = { ...base, ...val };
+    } else {
+      out[id] = val;
+    }
+  }
+  return out;
+}
+function appInstallGuides() { return mergeGuideMap('app_install_guides'); }
+function appUninstallGuides() { return mergeGuideMap('app_uninstall_guides'); }
+// 兼容旧调用
+function normalizeGuide(v) { return resolveGuide(v); }
+
 /** 读取 tools 默认 yaml（计费目录回退源） */
 function toolsDefaultDoc() {
   try { return yaml.load(fs.readFileSync(TOOLS_DEFAULT_YAML, 'utf8')) || {}; } catch { return {}; }
@@ -231,18 +295,15 @@ function apiSubscriptionApps() {
   );
   const list = billingSection('api_subscription_apps');
   const cur = Array.isArray(list) ? list : [];
-  const curBySource = Object.fromEntries(
-    cur.filter(a => a?.source_id).map(a => [a.source_id, a]),
-  );
-  // 以内置默认为准，只展示默认 source_id；tokenbank.yaml / 服务端残留的旧条目不再出现
-  if (!defaults.length) return cur;
-  return defaults.map(def => {
-    const key = def.source_id || def.id;
-    const over = curBySource[key] || {};
+  if (!cur.length) return defaults;
+  // 服务端已下发：以当前列表为准，仅用内置默认补全缺字段
+  return cur.map(a => {
+    const key = a.source_id || a.id;
+    const def = defBySource[key] || {};
     return {
       ...def,
-      ...over,
-      plan_provider_id: over.plan_provider_id != null ? over.plan_provider_id : def.plan_provider_id,
+      ...a,
+      plan_provider_id: a.plan_provider_id != null ? a.plan_provider_id : def.plan_provider_id,
     };
   });
 }
@@ -304,7 +365,8 @@ module.exports = {
   load, get, setCaPath, getCaPath,
   gatewayCtx, mitmDomains, shouldMitm, tools, appPresets, apiKeyApps,
   routing, caRef,
-  claudeModels, isClaudeModel, sessionSources, agentHasModelStats, appInstallUrls,
+  claudeModels, isClaudeModel, sessionSources, agentHasModelStats, appInstallUrls, appUninstallUrls,
+  appInstallGuides, appUninstallGuides, normalizeGuide, resolveGuide,
   subscriptionApps, apiSubscriptionApps, paygProviders, subscriptionPlansDefaults,
   resolveRef, resolvePlaceholders, expandHome,
 };

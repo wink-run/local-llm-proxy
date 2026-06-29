@@ -4,6 +4,7 @@
 import { useEffect, useRef } from 'react';
 import { isElectron, getGateway, getConfig } from '../api/adapter';
 import { registerDevice, heartbeatDevice } from '../api/client';
+import { buildAccountsSummary } from '../lib/accountsSummary';
 
 const HEARTBEAT_INTERVAL_MS = 60 * 1000; // 60s（服务端 2 分钟无心跳会标离线，须小于该阈值）
 const RECONNECT_INTERVAL_MS = 30 * 1000;      // retry interval while offline
@@ -129,6 +130,13 @@ async function _doRegister() {
 async function _collectInventory() {
   const query = window.electronAPI?.localStats?.query;
   const comp  = window.electronAPI?.localStats?.compression;
+  const getUA = window.electronAPI?.localConfig?.getUserAccounts;
+  let accountsSummary = null;
+  if (getUA) {
+    try {
+      accountsSummary = buildAccountsSummary(await getUA());
+    } catch { /* 离线 */ }
+  }
   if (query) {
     const [d1, d7, d30] = await Promise.all([
       query(1).catch(() => null),
@@ -142,9 +150,14 @@ async function _collectInventory() {
       comp ? comp(30).catch(() => null) : Promise.resolve(null),
     ]);
     const inv = {};
-    if (d1) { if (c1) d1.compression = c1; inv['1'] = d1; }
-    if (d7) { if (c7) d7.compression = c7; inv['7'] = d7; }
-    if (d30) { if (c30) d30.compression = c30; inv['30'] = d30; }
+    const attach = (snap) => {
+      if (!snap) return snap;
+      if (accountsSummary) snap.accounts_summary = accountsSummary;
+      return snap;
+    };
+    if (d1) { if (c1) d1.compression = c1; inv['1'] = attach(d1); }
+    if (d7) { if (c7) d7.compression = c7; inv['7'] = attach(d7); }
+    if (d30) { if (c30) d30.compression = c30; inv['30'] = attach(d30); }
     return inv;
   }
   const d1 = await getGateway().getDailyStats().catch(() => ({}));

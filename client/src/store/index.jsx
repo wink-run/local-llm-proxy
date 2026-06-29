@@ -37,16 +37,16 @@ async function syncCloudKey() {
   } catch {}
 }
 
-// 启动/登录时静默在线同步一次：从服务器拉取「工具/应用」+「场景路由」配置并合并。
+// 启动/登录时从服务端拉取 apps/sources/scenes；apps 与 sources 全量覆盖本地默认。
 async function syncRemoteConfig() {
-  if (!window.electronAPI?.toolsConfig?.importUrl) return;
+  if (!window.electronAPI?.toolsConfig?.syncRemote) return;
   const token = localStorage.getItem('token');
   if (!token) return;
   const base = await getSyncServerBase();
   if (!base) return;
-  for (const ep of ['/api/config/apps', '/api/config/sources', '/api/config/scenes']) {
-    try { await window.electronAPI.toolsConfig.importUrl(base + ep, token); } catch {}
-  }
+  try {
+    await window.electronAPI.toolsConfig.syncRemote({ token, serverUrl: base, replace: true });
+  } catch {}
 }
 
 // 从云端拉取个人页订阅 / 按量 provider / 刊例价覆盖（跨终端）
@@ -77,13 +77,15 @@ export function AuthProvider({ children }) {
   }
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
     // 无 token 时默认游客模式，打开 app 无需登录
     const enterGuestMode = () => {
       localStorage.setItem('guest', '1');
       setGuest(true);
     };
-    bootstrapServerUrl().then(() => {
+    bootstrapServerUrl().then(async () => {
+      const token = localStorage.getItem('token');
+      // 已登录：bootstrap 完成后立即拉取服务端配置（覆盖本地 apps/sources 默认）
+      if (token) await syncRemoteConfig();
       if (!token) { enterGuestMode(); setLoading(false); return; }
       getProfile()
         .then((r) => {
@@ -92,7 +94,6 @@ export function AuthProvider({ children }) {
           syncAgentCredentials(r.data);
           syncCloudKey();
           syncCloudConfigUrl();
-          syncRemoteConfig();
           syncUserBilling();
           window.electronAPI?.tray?.setAuthState?.(true);
         })

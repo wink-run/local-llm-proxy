@@ -227,15 +227,12 @@ function resolveUserPaidProviderIds(cfg = {}) {
     subscriptionAppCatalog(cfg).map(c => [c.source_id, c]),
   );
   for (const sub of cfg.user_subscriptions || []) {
-    if (sub.subscription_kind === 'api' && sub.plan_provider_id) {
-      ids.add(sub.plan_provider_id);
-      continue;
-    }
-    const pid = catalogBySource[sub.source_id]?.plan_provider_id;
-    if (pid) ids.add(pid);
+    const gid = subscriptionGatewayId(sub, catalogBySource);
+    if (gid) ids.add(gid);
   }
   for (const p of cfg.user_payg_providers || []) {
-    if (p.provider_id) ids.add(p.provider_id);
+    const gid = paygGatewayId(p);
+    if (gid) ids.add(gid);
   }
   return [...ids];
 }
@@ -246,6 +243,20 @@ function resolveSubUseApi(sub, catalogBySource) {
   if (sub?.subscription_to_api != null) return sub.subscription_to_api === true;
   const cat = catalogBySource[sub?.source_id];
   return cat?.subscription_to_api === true;
+}
+
+/** 单条按量账户对应的网关 provider id（多实例时各用独立 gateway_id） */
+function paygGatewayId(p) {
+  return (p && p.gateway_id) || p?.provider_id || null;
+}
+
+/** 单条订阅对应的网关 provider id（未写 gateway_id 时走旧逻辑） */
+function subscriptionGatewayId(sub, catalogBySource) {
+  if (sub?.gateway_id) return sub.gateway_id;
+  if (sub.custom) return sub.source_id || sub.plan_provider_id || null;
+  if (sub.subscription_kind === 'api') return sub.plan_provider_id || sub.source_id || null;
+  if (!resolveSubUseApi(sub, catalogBySource)) return sub.gateway_id || null;
+  return subscriptionGatewayProviderId(sub, catalogBySource);
 }
 
 /** 订阅转 API 时对应的供给源 id（自定义订阅固定用 source_id） */
@@ -273,7 +284,7 @@ function resolveSubscriptionGatewayProviderIds(cfg = {}) {
     subscriptionAppCatalog(cfg).map(c => [c.source_id, c]),
   );
   for (const sub of cfg.user_subscriptions || []) {
-    const pid = subscriptionGatewayProviderId(sub, catalogBySource);
+    const pid = subscriptionGatewayId(sub, catalogBySource);
     if (pid && resolveSubUseApi(sub, catalogBySource)) ids.add(pid);
   }
   return [...ids];
@@ -283,7 +294,8 @@ function resolveSubscriptionGatewayProviderIds(cfg = {}) {
 function resolveGatewayPaygProviderIds(cfg = {}) {
   const ids = new Set();
   for (const p of cfg.user_payg_providers || []) {
-    if (p.provider_id) ids.add(p.provider_id);
+    const id = paygGatewayId(p);
+    if (id) ids.add(id);
   }
   return [...ids];
 }
@@ -296,7 +308,7 @@ function resolveProviderGatewayAuthMap(cfg = {}) {
   const modes = {};
 
   for (const sub of cfg.user_subscriptions || []) {
-    const pid = subscriptionGatewayProviderId(sub, catalogBySource);
+    const pid = subscriptionGatewayId(sub, catalogBySource);
     const auth = subscriptionGatewayAuthMode(sub, catalogBySource);
     if (!pid || !auth) continue;
     if (modes[pid] && modes[pid] !== auth) modes[pid] = 'both';
@@ -304,7 +316,7 @@ function resolveProviderGatewayAuthMap(cfg = {}) {
   }
 
   for (const p of cfg.user_payg_providers || []) {
-    const id = p.provider_id;
+    const id = paygGatewayId(p);
     if (!id) continue;
     if (modes[id] === 'oauth') modes[id] = 'both';
     else modes[id] = 'api_key';
@@ -467,17 +479,40 @@ function stableHash(obj) {
   return h.toString(36);
 }
 
-/** 服务端原始模板（未应用本地覆盖），按 templateKey 索引：payg→provider_id；app_sub/api_sub→source_id */
-function baseTemplatesByKey(cfg = {}) {
+/** 服务端下发的 catalog 键集合（不含任何本地自定义） */
+function serverCatalogKeySets() {
+  const paygIds = new Set(
+    paygProviderCatalog().map(p => p.provider_id || p.id).filter(Boolean),
+  );
+  const appSubIds = new Set(
+    subscriptionAppCatalog({}).map(a => a.source_id).filter(Boolean),
+  );
+  const apiSubIds = new Set(
+    apiSubscriptionCatalog({}).map(a => a.source_id).filter(Boolean),
+  );
+  const allTemplateKeys = new Set([...paygIds, ...appSubIds, ...apiSubIds]);
+  const pricingProviderIds = new Set(paygIds);
+  for (const a of subscriptionAppCatalog({})) {
+    if (a.plan_provider_id) pricingProviderIds.add(a.plan_provider_id);
+  }
+  for (const a of apiSubscriptionCatalog({})) {
+    if (a.plan_provider_id) pricingProviderIds.add(a.plan_provider_id);
+  }
+  return { paygIds, appSubIds, apiSubIds, allTemplateKeys, pricingProviderIds };
+}
+
+/** 仅服务端 catalog 的源模板（可选账户类型以此为准） */
+function serverTemplatesByKey(cfg = {}) {
   const m = {};
   const paygByKey = {};
   for (const p of paygProviderCatalog()) {
     const k = p.provider_id || p.id;
-    if (k) { m[k] = { kind: 'payg', key: k, label: p.label || k, icon: p.icon || '🔧',
-                      models: p.models || [], pricing: p.pricing || {} };
-             paygByKey[k] = m[k]; }
+    if (k) {
+      m[k] = { kind: 'payg', key: k, label: p.label || k, icon: p.icon || '🔧',
+        models: p.models || [], pricing: p.pricing || {} };
+      paygByKey[k] = m[k];
+    }
   }
-  // 订阅模板没配模型时，从 plan_provider_id 对应的 payg 预填「支持的模型 + 计费」（订阅转 API 后用这些）
   const fillSub = (models, pricing, planPid) => {
     if ((Array.isArray(models) && models.length) || Object.keys(pricing || {}).length) {
       return { models: models || [], pricing: pricing || {} };
@@ -487,47 +522,90 @@ function baseTemplatesByKey(cfg = {}) {
   };
   for (const a of subscriptionAppCatalog(cfg)) {
     const k = a.source_id;
-    if (k) { const f = fillSub(a.models, a.pricing, a.plan_provider_id);
+    if (k) {
+      const f = fillSub(a.models, a.pricing, a.plan_provider_id);
       m[k] = { kind: 'app_sub', key: k, label: a.app_name, icon: a.app_icon, agent_id: a.agent_id,
-               subscription_to_api: a.subscription_to_api === true, plans: a.plans || [],
-               plan_provider_id: a.plan_provider_id, models: f.models, pricing: f.pricing }; }
+        subscription_to_api: a.subscription_to_api === true, plans: a.plans || [],
+        plan_provider_id: a.plan_provider_id, models: f.models, pricing: f.pricing };
+    }
   }
   for (const a of apiSubscriptionCatalog(cfg)) {
     const k = a.source_id;
-    if (k) { const f = fillSub(a.models, a.pricing, a.plan_provider_id);
+    if (k) {
+      const f = fillSub(a.models, a.pricing, a.plan_provider_id);
       m[k] = { kind: 'api_sub', key: k, label: a.app_name, icon: a.app_icon,
-               plan_provider_id: a.plan_provider_id, plans: a.plans || [],
-               models: f.models, pricing: f.pricing }; }
-  }
-  // 自定义源模板（用户新建的源类型，纯本地，独立于实例）
-  const ct = (cfg.custom_source_templates && typeof cfg.custom_source_templates === 'object') ? cfg.custom_source_templates : {};
-  for (const key of Object.keys(ct)) {
-    const c = ct[key] || {};
-    m[key] = {
-      kind: c.kind || 'payg', key, label: c.label || key, icon: c.icon || '🔧',
-      models: Array.isArray(c.models) ? c.models : [],
-      pricing: (c.pricing && typeof c.pricing === 'object') ? c.pricing : {},
-      plans: Array.isArray(c.plans) ? c.plans : [],
-      subscription_to_api: c.subscription_to_api === true,
-      custom: true,
-    };
-  }
-  // 兼容旧数据：custom 实例但没有独立模板 → 从实例补一个模板项（保证网格能显示）
-  for (const p of (cfg.user_payg_providers || [])) {
-    if (p && p.custom && p.provider_id && !m[p.provider_id]) {
-      m[p.provider_id] = { kind: 'payg', key: p.provider_id, label: p.label || p.provider_id,
-                           icon: p.icon || '🔧', models: p.models || [], pricing: {}, custom: true };
-    }
-  }
-  for (const s of (cfg.user_subscriptions || [])) {
-    if (s && s.custom && s.source_id && !m[s.source_id]) {
-      m[s.source_id] = { kind: s.subscription_kind === 'api' ? 'api_sub' : 'app_sub', key: s.source_id,
-                         label: s.app_name || s.source_id, icon: s.app_icon || '🔧',
-                         plans: s.plan_label ? [{ id: s.plan_id || 'custom', label: s.plan_label, monthly_usd: s.monthly_usd ?? null }] : [],
-                         subscription_to_api: s.subscription_to_api === true, custom: true };
+        plan_provider_id: a.plan_provider_id, plans: a.plans || [],
+        models: f.models, pricing: f.pricing };
     }
   }
   return m;
+}
+
+/**
+ * 源目录同步后清理本地垃圾：自定义模板/实例、catalog 外条目、失效覆盖。
+ * 可选账户类型以服务端 catalog 为准。
+ */
+function pruneLocalBillingAgainstServer(cfg = {}) {
+  const { paygIds, appSubIds, apiSubIds, allTemplateKeys, pricingProviderIds } = serverCatalogKeySets();
+  let changed = false;
+
+  if (cfg.custom_source_templates && Object.keys(cfg.custom_source_templates).length) {
+    cfg.custom_source_templates = {};
+    changed = true;
+  }
+
+  if (cfg.source_template_overrides && typeof cfg.source_template_overrides === 'object') {
+    const next = {};
+    for (const [k, v] of Object.entries(cfg.source_template_overrides)) {
+      if (allTemplateKeys.has(k)) next[k] = v;
+      else changed = true;
+    }
+    cfg.source_template_overrides = next;
+  }
+
+  const keepSub = (s) => {
+    if (!s || typeof s !== 'object' || s.custom) return false;
+    const sid = s.source_id;
+    if (!sid) return false;
+    if (s.subscription_kind === 'api') return apiSubIds.has(sid);
+    return appSubIds.has(sid);
+  };
+  const nextSubs = (cfg.user_subscriptions || []).filter(keepSub);
+  if (nextSubs.length !== (cfg.user_subscriptions || []).length) {
+    cfg.user_subscriptions = nextSubs;
+    changed = true;
+  }
+
+  const keepPayg = (p) => {
+    if (!p || typeof p !== 'object' || p.custom) return false;
+    const pid = p.provider_id;
+    return !!(pid && paygIds.has(pid));
+  };
+  const nextPayg = (cfg.user_payg_providers || []).filter(keepPayg);
+  if (nextPayg.length !== (cfg.user_payg_providers || []).length) {
+    cfg.user_payg_providers = nextPayg;
+    changed = true;
+  }
+
+  if (cfg.provider_pricing_overrides && typeof cfg.provider_pricing_overrides === 'object') {
+    const next = {};
+    for (const [k, v] of Object.entries(cfg.provider_pricing_overrides)) {
+      if (pricingProviderIds.has(k)) next[k] = v;
+      else changed = true;
+    }
+    cfg.provider_pricing_overrides = next;
+  }
+
+  const mig = migrateAgentProviders(cfg);
+  if (mig.changed) changed = true;
+
+  return { cfg, changed };
+}
+
+/** 服务端原始模板（未应用本地覆盖），按 templateKey 索引：payg→provider_id；app_sub/api_sub→source_id */
+function baseTemplatesByKey(cfg = {}) {
+  // 可选账户类型：仅服务端 catalog（本地 custom 不再参与）
+  return serverTemplatesByKey(cfg);
 }
 
 /** 模板「可覆盖字段」快照（diff/hash 基准） */
@@ -736,4 +814,7 @@ module.exports = {
   accountStats,
   stableHash,
   templateSnapshot,
+  serverCatalogKeySets,
+  serverTemplatesByKey,
+  pruneLocalBillingAgainstServer,
 };

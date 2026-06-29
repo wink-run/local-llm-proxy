@@ -9,6 +9,7 @@ function billingAuth() {
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  platform: process.platform,   // darwin | win32 | linux — 百宝箱说明等平台差异
   version: ipcRenderer.sendSync('app:version'),
   app: {
     defaultServerUrl: () => ipcRenderer.sendSync('app:defaultServerUrl'),
@@ -129,7 +130,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   toolsConfig: {
     load:        () => ipcRenderer.invoke('toolsConfig:load'),
     importFile:  () => ipcRenderer.invoke('toolsConfig:importFile'),
-    importUrl:   (url, token) => ipcRenderer.invoke('toolsConfig:importUrl', { url, token }),
+    importUrl:   (url, token, opts) => ipcRenderer.invoke('toolsConfig:importUrl', { url, token, replace: !!opts?.replace }),
+    syncRemote:  (opts) => ipcRenderer.invoke('toolsConfig:syncRemote', opts || {}),
     reset:       () => ipcRenderer.invoke('toolsConfig:reset'),
   },
   policies: {

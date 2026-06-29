@@ -5,11 +5,14 @@ import os
 import random
 import secrets
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 import aiosqlite
 
-DB_PATH = os.getenv("DB_PATH", "proxy.db")
+# 固定到 server 目录，避免 cwd 不同读到不同 proxy.db
+_SERVER_DIR = Path(__file__).resolve().parent
+DB_PATH = os.getenv("DB_PATH", str(_SERVER_DIR / "proxy.db"))
 logger = logging.getLogger(__name__)
 
 
@@ -267,6 +270,30 @@ async def init_db() -> None:
     await _migrate_device_inventory()
     await _migrate_user_billing()
     await _migrate_circles()
+    await _migrate_cwd_proxy_db()
+
+
+async def _migrate_cwd_proxy_db() -> None:
+    """兼容旧版：进程 cwd 下的 proxy.db 若含个人源配置而当前库无，则迁入。"""
+    if os.getenv("DB_PATH"):
+        return
+    canonical = Path(DB_PATH).resolve()
+    cwd_db = (Path.cwd() / "proxy.db").resolve()
+    if not cwd_db.is_file() or cwd_db == canonical:
+        return
+    if (await get_config("config.billing_sources", "")).strip():
+        return
+    try:
+        async with aiosqlite.connect(str(cwd_db)) as db:
+            async with db.execute(
+                "SELECT value FROM system_config WHERE key=?", ("config.billing_sources",),
+            ) as cur:
+                row = await cur.fetchone()
+        if row and row[0] and str(row[0]).strip():
+            await set_config("config.billing_sources", str(row[0]))
+            logger.info("已从 %s 迁移 config.billing_sources", cwd_db)
+    except Exception as e:
+        logger.warning("迁移 cwd proxy.db 失败: %s", e)
 
 
 async def _migrate() -> None:
@@ -1529,6 +1556,8 @@ def merge_device_inventories(device_rows: list, days: int) -> dict:
             "agent_sources": snap.get("agent_sources") or [],
             "providers": dev_providers,
             "models": dev_models,
+            # 各端登记的订阅/供给源摘要（无凭证）
+            "accounts_summary": snap.get("accounts_summary") or {},
         })
 
     merged["devices"].sort(key=lambda d: d.get("calls", 0), reverse=True)

@@ -5,9 +5,8 @@ import { resolveBrandIcon } from '../lib/brandIcons';
 import ServiceIcon from '../components/ServiceIcon';
 import { getNetwork, getProfile, listKeys, createKey, deleteKey, getProviderCatalog, getModelsForCurrentUser } from '../api/client';
 import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
-import { DirectSourceCard, PersonalSourceModelView, AccountStatsView } from '../components/PersonalSources';
-import UserAccountsPanel from '../components/UserAccountsPanel';
-import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
+import { DirectSourceCard, PersonalSourceModelView, PricingTable, CollapsibleBillingPanel, buildInstancePatch, buildDirectSourcePatch, buildDirectSourceRemovePatch, TemplateEditModal, SyncDiffBanner } from '../components/PersonalSources';
+import { getServerUrl, normalizeServerBase, syncCloudConfigUrl, getSyncServerBase } from '../config';
 import { getGateway, getLocalConfig, getConfig, getOauth } from '../api/adapter';
 import { useLang } from '../store/lang';
 import { useAuth } from '../store/index';
@@ -153,9 +152,26 @@ function mergeUserPaygIntoProviders(resolved, metaMap, userPayg = [], t) {
   return { providers, meta };
 }
 
-/** 个人页按量账户（用于识别按量供给源） */
+// OAuth 订阅 source_id(=oauth provider) → catalog provider id
+const OAUTH_SUB_SOURCE_TO_PID = { claude: 'anthropic-paid', codex: 'openai', copilot: 'github-copilot' };
+
+/** 按量账户实例的网关 provider id（多实例时各用独立 gateway_id） */
+function paygInstGatewayId(p) {
+  return (p && p.gateway_id) || p?.provider_id || null;
+}
+
+/** 订阅账户实例的网关 provider id（未写 gateway_id 时走旧逻辑） */
+function subInstGatewayId(s) {
+  if (s?.gateway_id) return s.gateway_id;
+  if (s.custom) return s.source_id || s.plan_provider_id || null;
+  if (s.subscription_kind === 'api') return s.plan_provider_id || s.source_id || null;
+  if (!s.subscription_to_api) return null;
+  return OAUTH_SUB_SOURCE_TO_PID[s.source_id] || s.plan_provider_id || s.source_id;
+}
+
+/** 个人页按量账户（用于识别按量供给源，按 gateway_id 匹配） */
 function resolvePaygAccount(providerId, userPayg = []) {
-  return (userPayg || []).find(p => p.provider_id === providerId) || null;
+  return (userPayg || []).find(p => paygInstGatewayId(p) === providerId) || null;
 }
 
 function isPaygManagedProvider(providerId, userPayg = []) {
@@ -182,13 +198,14 @@ function buildModelSuggestions(providerId, userPayg = [], providerPricing = {}, 
   };
 
   const payg = resolvePaygAccount(providerId, userPayg);
+  const catalogId = payg?.provider_id || providerId;
   for (const m of payg?.models || []) add(m);
 
-  const cat = (paygCatalog || []).find(p => (p.provider_id || p.id) === providerId);
+  const cat = (paygCatalog || []).find(p => (p.provider_id || p.id) === catalogId);
   for (const m of cat?.models || []) add(m);
   for (const m of Object.keys(cat?.pricing || {})) add(m);
 
-  for (const m of Object.keys(providerPricing[providerId] || {})) add(m);
+  for (const m of Object.keys(providerPricing[catalogId] || {})) add(m);
 
   return [...names].sort((a, b) => a.localeCompare(b));
 }
@@ -204,8 +221,8 @@ function buildPersonalPaidPool(allProviders, paidIds, userPayg = [], userSubs = 
   for (const id of paidIds || []) {
     if (!id || seen.has(id)) continue;
     const live = allProviders.find(p => p.id === id);
-    const payg = userPayg.find(u => u.provider_id === id);
-    const sub = (userSubs || []).find(s => s.custom && s.source_id === id);
+    const payg = userPayg.find(u => paygInstGatewayId(u) === id);
+    const sub = (userSubs || []).find(s => s.custom && subInstGatewayId(s) === id);
     const displayName = sub?.app_name || payg?.label;
     if (live) {
       // 在付费层展示；写入时仍用原 id，保留 free 层条目的 base_url 等
@@ -229,10 +246,6 @@ function buildPersonalPaidPool(allProviders, paidIds, userPayg = [], userSubs = 
   }
   return pool;
 }
-
-// OAuth 订阅 source_id(=oauth provider) → catalog provider id。
-// catalog 缺 plan_provider_id 映射时回退，让已登记的 Claude/Codex/Copilot OAuth 订阅仍能进 picker 直接登录。
-const OAUTH_SUB_SOURCE_TO_PID = { claude: 'anthropic-paid', codex: 'openai', copilot: 'github-copilot' };
 
 /** 个人页登记项 → 供给源选择器条目（渲染端回退；Electron 优先用 billing-config 下发） */
 function buildGatewayPickerEntries(userSubs, userPayg, subscriptionCatalog) {
@@ -314,20 +327,35 @@ function buildGatewayPickerEntries(userSubs, userPayg, subscriptionCatalog) {
 /** 是否为个人页登记的 API 订阅 / 自定义订阅供给源（走 API Key 卡片） */
 function isCustomSubscriptionGatewayId(id, userSubs = []) {
   return (userSubs || []).some(s => {
-    if (s.custom && s.source_id === id) return true;
-    if (s.subscription_kind === 'api' && (s.plan_provider_id === id || s.source_id === id)) return true;
+    if (s.custom && (s.source_id === id || s.gateway_id === id)) return true;
+    if (s.subscription_kind === 'api' && (s.plan_provider_id === id || s.source_id === id || s.gateway_id === id)) return true;
     return false;
   });
 }
 
-/** 已启用卡片：按当前 auth 配置解析验证方式 */
-function resolveCardAuthMode(provider, gatewayAuth) {
+/** Claude/Codex/Copilot 等 OAuth 订阅转 API 实例 */
+function isOAuthSubToApiInstance(inst) {
+  return inst?.tag === 'sub_to_api' && !!OAUTH_SUB_SOURCE_TO_PID[inst?.source_id];
+}
+
+/** CustomProviderCard 仅用于自定义 URL+API Key；OAuth 订阅转 API 必须走 ProviderCard */
+function shouldUseCustomProviderCard(gwId, userSubs, inst, cardMeta) {
+  if (isOAuthSubToApiInstance(inst)) return false;
+  return isCustomSubscriptionGatewayId(gwId, userSubs) || !cardMeta?.label;
+}
+
+/** 已启用卡片：按账户类型 / 网关登记解析验证方式 */
+function resolveCardAuthMode(provider, gatewayAuth, accountInst) {
+  // 账户实例类型优先：订阅转 API 固定 OAuth，API 订阅/按量固定 API Key
+  if (accountInst?.tag === 'sub_to_api') return 'oauth';
+  if (accountInst?.tag === 'api_sub' || accountInst?.tag === 'payg') return 'api_key';
   if (gatewayAuth === 'oauth' || gatewayAuth === 'api_key') return gatewayAuth;
   if (gatewayAuth === 'both') {
     if (provider.auth_type === 'oauth' || provider.credentials?.refresh_token) return 'oauth';
     if (provider.token) return 'api_key';
     return 'oauth';
   }
+  if (provider.auth_type === 'oauth' || provider.credentials?.refresh_token) return 'oauth';
   return null;
 }
 
@@ -409,6 +437,202 @@ function getPickerEntryTag(entry) {
   if (entry.source === 'payg') return 'payg';
   if (entry.source === 'subscription') return 'sub_to_api';
   return 'free';
+}
+
+/** 添加供给源选择器：与列表区筛选标签对齐 */
+function pickerItemMatchesFilter(tag, filter) {
+  if (filter === 'all') return true;
+  if (filter === 'subscription') return ['app_sub', 'api_sub', 'sub_to_api'].includes(tag);
+  if (filter === 'api') return tag === 'payg';
+  return tag === filter;
+}
+
+/** 由源模板库条目生成供给源选择器项（展示全部账户类型） */
+function buildPickerEntryFromTemplate(tpl, subscriptionCatalog = []) {
+  const catalogBySource = Object.fromEntries(
+    (subscriptionCatalog || []).map(c => [c.source_id, c]),
+  );
+
+  if (tpl.kind === 'payg') {
+    return {
+      providerId: tpl.key,
+      pickerKey: `payg:${tpl.key}`,
+      label: tpl.label || tpl.key,
+      icon: tpl.icon || '🔧',
+      authMode: 'api_key',
+      source: 'payg',
+      personalTag: 'payg',
+      templateKey: tpl.key,
+      template: tpl,
+      gatewayAddable: true,
+    };
+  }
+
+  if (tpl.kind === 'api_sub') {
+    const pid = tpl.plan_provider_id || tpl.key;
+    return {
+      providerId: pid,
+      pickerKey: `sub:${tpl.key}`,
+      label: tpl.label || tpl.key,
+      icon: tpl.icon || '🔑',
+      authMode: 'api_key',
+      source: 'subscription',
+      personalTag: 'api_sub',
+      templateKey: tpl.key,
+      template: tpl,
+      custom: tpl.custom === true,
+      gatewayAddable: true,
+    };
+  }
+
+  // app_sub：一律先登记直连源；目录开启「可转 API」时在卡片内转换到供给源区
+  const cat = catalogBySource[tpl.key];
+  const canConvertToApi = tpl.subscription_to_api === true || cat?.subscription_to_api === true;
+  return {
+    providerId: cat?.plan_provider_id || OAUTH_SUB_SOURCE_TO_PID[tpl.key] || tpl.key,
+    pickerKey: `tpl:${tpl.key}`,
+    label: tpl.label || tpl.key,
+    icon: tpl.icon || '🔷',
+    authMode: canConvertToApi ? 'sub' : 'stats',
+    source: 'subscription',
+    personalTag: 'app_sub',
+    templateKey: tpl.key,
+    template: tpl,
+    directAgentId: tpl.agent_id || tpl.key,
+    canConvertToApi,
+    statsOnly: !canConvertToApi,
+    gatewayAddable: false,
+    custom: tpl.custom === true,
+  };
+}
+
+function buildTemplatePickerEntries(templates, subscriptionCatalog) {
+  const entries = [];
+  const seen = new Set();
+  for (const tpl of templates || []) {
+    const entry = buildPickerEntryFromTemplate(tpl, subscriptionCatalog);
+    if (!entry || seen.has(entry.pickerKey)) continue;
+    seen.add(entry.pickerKey);
+    entries.push(entry);
+  }
+  return entries;
+}
+
+/** legacy：尚未写入 direct_source_billing 的纯 APP 订阅，合成直连源卡片数据 */
+function legacyAppSubAsDirect(subs, directInstances) {
+  const seen = new Set((directInstances || []).map(d => d.agent_id));
+  return (subs || [])
+    .filter(s => s.subscription_kind !== 'api' && !s.subscription_to_api)
+    .filter(s => {
+      const aid = s.agent_id || s.source_id;
+      return aid && !seen.has(aid);
+    })
+    .map(s => {
+      const agentId = s.agent_id || s.source_id;
+      return {
+        kind: 'direct',
+        agent_id: agentId,
+        source_id: s.source_id,
+        name: s.name || s.app_name || agentId,
+        label: s.app_name || agentId,
+        icon: s.app_icon || '🖱',
+        mode: 'subscription',
+        monthly_usd: s.monthly_usd ?? null,
+        models: [],
+        pricing: {},
+        has_pricing: s.monthly_usd != null,
+      };
+    });
+}
+
+/** 已登记 direct_source_billing、但尚未被 directInstances 扫到的条目（如未安装） */
+function billingOnlyDirect(billing, directInstances, templates) {
+  const seen = new Set((directInstances || []).map(d => d.agent_id));
+  const tplByAgent = Object.fromEntries(
+    (templates || []).filter(t => t.agent_id || t.key).map(t => [t.agent_id || t.key, t]),
+  );
+  const out = [];
+  for (const [agentId, b] of Object.entries(billing || {})) {
+    if (!b || typeof b !== 'object' || seen.has(agentId)) continue;
+    const tpl = tplByAgent[agentId] || tplByAgent[b.source_id];
+    const mode = b.mode === 'api' ? 'api' : 'subscription';
+    const pricing = (b.pricing && typeof b.pricing === 'object') ? b.pricing : {};
+    const hasPricing = mode === 'api'
+      ? Object.keys(pricing).length > 0
+      : (b.monthly_usd != null);
+    out.push({
+      kind: 'direct',
+      agent_id: agentId,
+      source_id: b.source_id || tpl?.key || agentId,
+      name: b.name || tpl?.label || agentId,
+      label: tpl?.label || b.name || agentId,
+      icon: tpl?.icon || '🖱',
+      mode,
+      monthly_usd: b.monthly_usd ?? null,
+      models: Object.keys(pricing).length ? Object.keys(pricing) : (tpl?.models || []),
+      pricing,
+      has_pricing: hasPricing,
+    });
+  }
+  return out;
+}
+
+/** 该直连源是否已「转 API」并在供给源区登记 */
+function isDirectConvertedToGateway(subs, inst) {
+  return (subs || []).some(s => {
+    if (s.subscription_kind === 'api') return false;
+    if (!s.subscription_to_api) return false;
+    const aid = s.agent_id || s.source_id;
+    return aid === inst.agent_id || s.source_id === inst.source_id;
+  });
+}
+
+/** 合并：已安装直连 + 仅计费登记 + legacy 订阅（已转 API 的不再展示于直连区） */
+function mergeDirectInstances(directInstances, billing, subs, templates, subscriptionCatalog = []) {
+  const bill = billing || {};
+  const merged = (directInstances || []).filter(d => bill[d.agent_id] != null);
+  const seen = new Set(merged.map(d => d.agent_id));
+  for (const d of billingOnlyDirect(bill, merged, templates)) {
+    if (!seen.has(d.agent_id)) { merged.push(d); seen.add(d.agent_id); }
+  }
+  for (const d of legacyAppSubAsDirect(subs, merged)) {
+    if (!seen.has(d.agent_id)) { merged.push(d); seen.add(d.agent_id); }
+  }
+  return enrichDirectWithCatalog(merged, templates, subscriptionCatalog)
+    .filter(d => !isDirectConvertedToGateway(subs, d));
+}
+
+/** 注入目录能力：可转 API / 是否允许直连区内切换 API 计费估算 */
+function enrichDirectWithCatalog(instances, templates, subscriptionCatalog) {
+  const tplByKey = Object.fromEntries((templates || []).map(t => [t.key, t]));
+  const tplByAgent = Object.fromEntries(
+    (templates || []).filter(t => t.agent_id || t.key).map(t => [t.agent_id || t.key, t]),
+  );
+  const catBySource = Object.fromEntries((subscriptionCatalog || []).map(c => [c.source_id, c]));
+  return (instances || []).map(d => {
+    const tpl = tplByAgent[d.agent_id] || tplByKey[d.source_id];
+    const cat = catBySource[d.source_id] || catBySource[tpl?.key];
+    const canConvertToApi = tpl?.kind === 'app_sub'
+      && (tpl?.subscription_to_api === true || cat?.subscription_to_api === true);
+    // 非 APP 订阅模板的纯会话直连（无目录条目）才允许切换按模型计费估算
+    const allowApiBilling = !canConvertToApi && !tpl?.kind;
+    const mode = allowApiBilling && d.mode === 'api' ? 'api' : 'subscription';
+    return {
+      ...d,
+      can_convert_to_api: canConvertToApi,
+      allow_api_billing: allowApiBilling,
+      mode,
+      ...(mode === 'subscription' ? { pricing: {} } : {}),
+    };
+  });
+}
+
+/** 是否应在个人源页展示网关配置卡片（Base URL / API Key） */
+function isGatewayAccountInstance(inst) {
+  if (!inst || inst.kind === 'direct') return false;
+  if (inst.kind === 'payg') return true;
+  if (inst.kind === 'sub') return inst.tag !== 'app_sub';
+  return false;
 }
 
 function tagMatchesFilter(tag, filter) {
@@ -523,118 +747,82 @@ function PersonalFilterBar({ value, onChange, t }) {
   );
 }
 
-function PersonalPageHint({ onOpenConfig }) {
-  const { t } = useLang();
-  return (
-    <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/80 dark:bg-amber-950/20 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
-      <p>{t('providers.personalAccounts.emptyHint')}</p>
-      <button type="button" onClick={onOpenConfig}
-        className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline">
-        {t('providers.personalAccounts.open')}
-      </button>
-    </div>
-  );
+/** 由网关 provider id 反查对应账户类型模板 */
+function resolveTemplateForProvider(providerId, templates = [], userSubs = [], userPayg = []) {
+  const direct = templates.find(t => t.key === providerId);
+  if (direct) return direct;
+  // 多实例 acct-* 网关 id → 反查 source_id / provider_id
+  if (String(providerId || '').startsWith('acct-')) {
+    const payg = userPayg.find(p => paygInstGatewayId(p) === providerId);
+    if (payg) return templates.find(t => t.key === payg.provider_id);
+    const sub = userSubs.find(s => subInstGatewayId(s) === providerId);
+    if (sub) return templates.find(t => t.key === sub.source_id);
+  }
+  for (const [srcId, pid] of Object.entries(OAUTH_SUB_SOURCE_TO_PID)) {
+    if (pid === providerId) return templates.find(t => t.key === srcId);
+  }
+  const sub = userSubs.find(s => subInstGatewayId(s) === providerId
+    || s.plan_provider_id === providerId || s.source_id === providerId);
+  if (sub) return templates.find(t => t.key === sub.source_id);
+  const payg = userPayg.find(p => paygInstGatewayId(p) === providerId || p.provider_id === providerId);
+  if (payg) return templates.find(t => t.key === payg.provider_id);
+  return templates.find(t => t.plan_provider_id === providerId) || null;
 }
 
-/** 合并订阅 + 按量账户为去重后的 logo 列表 */
-function buildPersonalAccountTiles(userSubs = [], userPayg = [], meta = {}) {
-  const tiles = [];
-  const seen = new Set();
-  const push = (id, label, icon) => {
-    const key = String(id || label || '').trim();
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-    tiles.push({
-      id: key,
-      label: label || key,
-      icon: icon || meta[key]?.icon || '🔧',
-    });
+/** 账户实例 → 供给源卡片数据（acct-* 从 catalog 模板克隆） */
+function resolveProviderStubForInstance(inst, providers, meta, userPayg, userSubs) {
+  const gwId = inst.gateway_id;
+  const existing = providers.find(p => p.id === gwId);
+  const instModels = seedModelsFromNames(inst.models);
+  if (existing) {
+    const live = withProviderDisplayName(existing, userPayg, userSubs, meta);
+    // provider 尚未配置模型时，从账户实例模板预填
+    if ((!live.models || !live.models.length) && instModels.length) {
+      return { ...live, models: instModels };
+    }
+    return live;
+  }
+  const catalogId = inst.source_id;
+  const fb = FALLBACK_PROVIDERS.find(p => p.id === gwId)
+    || FALLBACK_PROVIDERS.find(p => p.id === catalogId);
+  const sibling = providers.find(p => p.id === catalogId);
+  const m = meta[gwId] || meta[catalogId] || {};
+  const fallbackModels = instModels.length
+    ? instModels
+    : seedModelsFromNames(sibling?.models || fb?.models || []);
+  return {
+    ...(fb || sibling || { type: 'paid', enabled: false, token: '', base_url: '', models: [] }),
+    id: gwId,
+    type: 'paid',
+    enabled: sibling?.enabled ?? fb?.enabled ?? false,
+    token: sibling?.token || '',
+    base_url: sibling?.base_url || fb?.base_url || m.base_url || '',
+    models: fallbackModels,
+    displayName: inst.name,
   };
-  for (const s of userSubs) {
-    push(s.plan_provider_id || s.source_id || s.id, s.app_name || s.source_id, s.app_icon);
-  }
-  for (const p of userPayg) {
-    push(p.provider_id || p.id, p.label || p.provider_id, p.icon || meta[p.provider_id]?.icon);
-  }
-  return tiles;
 }
 
-/** 未添加的目录项，用于空状态吸引用户 */
-function buildAccountCatalogSuggestions(subCatalog, paygCatalog, tiles, max = 5) {
-  const have = new Set(tiles.map(t => t.id));
-  const out = [];
-  for (const c of subCatalog || []) {
-    if (out.length >= max) break;
-    const id = c.source_id;
-    if (id && !have.has(id)) {
-      out.push({ id, label: c.app_name || id, icon: c.app_icon || '🔷', ghost: true });
-      have.add(id);
-    }
+/** 供给源卡片 meta：网关 id 优先，订阅转 API 按 source_id 补 OAuth 能力 */
+function resolveMetaForGateway(gwId, meta, inst, oauthById = {}) {
+  const direct = meta[gwId] || meta[inst?.source_id];
+  if (direct?.oauth) return direct;
+  const oauthPid = inst?.source_id && OAUTH_SUB_SOURCE_TO_PID[inst.source_id];
+  const fromPid = oauthPid && meta[oauthPid];
+  if (fromPid?.oauth) return { ...direct, ...fromPid };
+  if (oauthPid && oauthById[oauthPid]) {
+    return {
+      ...(direct || fromPid || {}),
+      oauth: oauthById[oauthPid],
+      label: direct?.label || fromPid?.label || inst?.name || inst?.label,
+      icon: direct?.icon || fromPid?.icon || inst?.icon,
+      hint: direct?.hint || fromPid?.hint,
+    };
   }
-  for (const c of paygCatalog || []) {
-    if (out.length >= max) break;
-    const id = c.provider_id || c.id;
-    if (id && !have.has(id)) {
-      out.push({ id, label: c.label || id, icon: c.icon || '🔧', ghost: true });
-      have.add(id);
-    }
+  const fallback = direct || fromPid || {};
+  if (!fallback.label && (inst?.name || inst?.label)) {
+    return { ...fallback, label: inst.name || inst.label, icon: inst.icon || fallback.icon };
   }
-  return out;
-}
-
-function AccountLogoTile({ tile, ghost = false }) {
-  if (ghost) {
-    return (
-      <ServiceIcon
-        id={tile.id}
-        name={tile.label}
-        icon={tile.icon}
-      title={tile.label}
-        boxClass="w-9 h-9 rounded-xl border border-dashed border-zinc-200 dark:border-zinc-700 bg-zinc-50/80 dark:bg-zinc-800/40 opacity-55"
-        imgClass="w-5 h-5"
-        className="!rounded-xl !bg-zinc-50/80 dark:!bg-zinc-800/40"
-      />
-    );
-  }
-  return (
-    <ServiceIcon
-      id={tile.id}
-      name={tile.label}
-      icon={tile.icon}
-      title={tile.label}
-      boxClass="w-9 h-9 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 shadow-sm"
-      imgClass="w-5 h-5"
-      className="!rounded-xl"
-    />
-  );
-}
-
-/** 折叠态：logo 平铺，引导展开添加（数量由标题行展示） */
-function PersonalAccountsPreview({ tiles, suggestions, loaded, t }) {
-  const showSuggestions = loaded && tiles.length === 0 && suggestions.length > 0;
-
-  return (
-    <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-      {tiles.map(tile => (
-        <AccountLogoTile key={tile.id} tile={tile} />
-      ))}
-      {showSuggestions && suggestions.map(tile => (
-        <AccountLogoTile key={`s-${tile.id}`} tile={tile} ghost />
-      ))}
-      <div
-        className="w-9 h-9 rounded-xl border-2 border-dashed border-zinc-200 dark:border-zinc-600 flex items-center justify-center text-zinc-400 dark:text-zinc-500 text-lg leading-none shrink-0"
-        title={t('providers.personalAccounts.addMore')}
-      >
-        +
-      </div>
-    </div>
-  );
-}
-
-function personalAccountsCountLabel(loaded, count, t) {
-  if (!loaded) return t('providers.personalAccounts.loading');
-  if (count > 0) return t('providers.personalAccounts.count', { n: count });
-  return t('providers.personalAccounts.emptyCount');
+  return fallback;
 }
 
 function Toggle({ enabled, onChange, disabled = false }) {
@@ -1008,6 +1196,11 @@ function normModel(m) {
   return typeof m === 'string' ? { name: m, type: 'chat' } : { name: m.name, type: m.type || 'chat' };
 }
 
+/** 模板/账户实例上的模型名 → 供给源卡片可编辑格式 */
+function seedModelsFromNames(names) {
+  return (names || []).map(normModel).filter(m => m.name);
+}
+
 /** 按量供给源：剔除个人页未配置的模型 */
 function filterPaygModels(models, providerId, userPayg) {
   const allowed = new Set(buildPaygProfileModels(providerId, userPayg));
@@ -1209,8 +1402,275 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
   );
 }
 
-/** 供给源卡片内模型区；按量供给源可独立编辑，新增供给源引导去个人页；默认折叠 */
-function ProviderModelSection({ provider, userPayg, onGoPayg, onUpdate, scrollable = false, providerPricing = {}, paygCatalog = [], readOnly = false }) {
+/** 用户手工添加模型时的默认刊例价（USD / 百万 Token） */
+const DEFAULT_MODEL_PRICING = { in: 1, out: 5, cacheRead: 0.1 };
+
+function modelEntryName(m) {
+  if (typeof m === 'string') return m.trim();
+  return String(m?.name || m?.id || '').trim();
+}
+
+/** 按模型视图：仅用户/网关实际配置的模型；订阅无模型、直连 APP 订阅均不展示 */
+function resolveModelsForModelView(inst, providers, userPayg, userSubscriptions, pricingOverrides, directByAgent) {
+  const fromArr = (arr) => (arr || []).map(modelEntryName).filter(Boolean);
+  if (inst.kind === 'payg') {
+    const p = userPayg.find(x => x.id === inst.id);
+    const names = new Set(fromArr(p?.models));
+    const prov = providers.find(x => x.id === inst.gateway_id);
+    for (const n of fromArr(prov?.models)) names.add(n);
+    const pid = p?.provider_id || inst.source_id;
+    for (const k of Object.keys(pricingOverrides?.[pid] || {})) if (k) names.add(k);
+    return [...names];
+  }
+  if (inst.kind === 'sub') {
+    if (inst.tag === 'app_sub') return [];
+    const prov = providers.find(x => x.id === inst.gateway_id);
+    const names = new Set(fromArr(prov?.models));
+    const subRec = userSubscriptions.find(s => s.id === inst.id);
+    const pid = subRec?.plan_provider_id || OAUTH_SUB_SOURCE_TO_PID[inst.source_id] || inst.source_id;
+    for (const k of Object.keys(pricingOverrides?.[pid] || {})) if (k) names.add(k);
+    return [...names];
+  }
+  if (inst.kind === 'direct') {
+    const d = directByAgent[inst.id];
+    if (!d || d.mode !== 'api') return [];
+    const fromPricing = Object.keys(d.pricing || {}).filter(Boolean);
+    if (fromPricing.length) return fromPricing;
+    return fromArr(d.models);
+  }
+  return [];
+}
+
+/** 合并 provider 下各模型刊例价（服务端默认 + 用户覆盖） */
+function pricingRowsForProvider(providerId, models, merged, overrides) {
+  const base = merged[providerId] || {};
+  const ovr = overrides[providerId] || {};
+  const names = new Set([...(models || []), ...Object.keys(base), ...Object.keys(ovr)]);
+  return [...names].sort().map(model => ({
+    model,
+    ...base[model],
+    ...ovr[model],
+    _override: !!(ovr[model] && Object.keys(ovr[model]).length),
+  }));
+}
+
+/**
+ * 供给源卡片计费区：按账户类型区分展示
+ * - api_sub / sub_to_api：订阅月费 + 可手工添加模型及按模型估价
+ * - payg：按模型刊例价
+ */
+function ProviderCardBillingSection({
+  billingTag, accountInst, provider, userPayg, userSubscriptions,
+  providerPricing, pricingOverrides, onSaveAccounts, onOverridesChange, onUpdate, onPersistModels, t,
+}) {
+  const isPayg = billingTag === 'payg';
+  const isSubBilling = billingTag === 'api_sub' || billingTag === 'sub_to_api';
+  const paygRec = isPayg ? userPayg.find(p => p.id === accountInst?.id) : null;
+  const subRec = isSubBilling ? userSubscriptions.find(s => s.id === accountInst?.id) : null;
+  const subSourceId = subRec?.source_id || accountInst?.source_id;
+  const pricingPid = isPayg
+    ? (paygRec?.provider_id || accountInst?.source_id)
+    : (subRec?.plan_provider_id || OAUTH_SUB_SOURCE_TO_PID[subSourceId] || subSourceId);
+
+  const userModelNames = useMemo(() => {
+    const names = new Set();
+    if (isPayg) {
+      for (const m of paygRec?.models || []) { const n = modelEntryName(m); if (n) names.add(n); }
+    } else {
+      for (const m of provider?.models || []) { const n = modelEntryName(m); if (n) names.add(n); }
+      for (const m of accountInst?.models || []) { if (m) names.add(m); }
+      for (const k of Object.keys(pricingOverrides?.[pricingPid] || {})) names.add(k);
+    }
+    return names;
+  }, [isPayg, paygRec, provider?.models, accountInst?.models, pricingOverrides, pricingPid]);
+
+  // 表格行 = 用户已配模型 + 刊例价目录（仅展示，不阻止「添加」）
+  const modelNames = useMemo(() => {
+    const names = new Set(userModelNames);
+    for (const k of Object.keys(providerPricing?.[pricingPid] || {})) names.add(k);
+    return [...names].sort();
+  }, [userModelNames, providerPricing, pricingPid]);
+
+  const baseMonthly = subRec?.monthly_usd ?? accountInst?.monthly_usd;
+  const [monthly, setMonthly] = useState(baseMonthly != null ? String(baseMonthly) : '');
+  const pricingSaveTimer = useRef(null);
+
+  useEffect(() => {
+    setMonthly(baseMonthly != null ? String(baseMonthly) : '');
+  }, [baseMonthly, subRec?.id]);
+
+  const rows = pricingRowsForProvider(pricingPid, modelNames, providerPricing, pricingOverrides);
+
+  /** 供给源 gateway 配置里的模型模态（chat / image / embedding） */
+  const modelTypeMap = useMemo(() => {
+    const map = {};
+    for (const m of provider?.models || []) {
+      const n = normModel(m);
+      if (n.name) map[n.name] = n.type || 'chat';
+    }
+    return map;
+  }, [provider?.models]);
+
+  function mergeModelList(name, type = 'chat') {
+    const cur = (provider.models || []).map(normModel);
+    if (cur.some(m => m.name === name)) {
+      return cur.map(m => (m.name === name ? { ...m, type } : m));
+    }
+    return [...cur, { name, type }];
+  }
+
+  async function persistModels(nextList) {
+    const normalized = nextList.map(normModel).filter(m => m.name);
+    onUpdate(provider.id, { models: normalized });
+    if (onPersistModels) await onPersistModels(provider.id, normalized);
+  }
+
+  async function toggleModelType(name) {
+    const cycle = { chat: 'image', image: 'embedding', embedding: 'chat' };
+    const cur = (provider.models || []).map(normModel);
+    const hit = cur.find(m => m.name === name);
+    const next = hit
+      ? cur.map(m => (m.name === name ? { ...m, type: cycle[m.type || 'chat'] || 'chat' } : m))
+      : [...cur, { name, type: 'image' }];
+    await persistModels(next);
+  }
+
+  function buildOverridesWithModel(name) {
+    const baseRow = (providerPricing[pricingPid] || {})[name] || {};
+    const ovrRow = (pricingOverrides[pricingPid] || {})[name] || {};
+    const hasPricing = ['in', 'out', 'cacheRead'].some(f => ovrRow[f] != null || baseRow[f] != null);
+    if (hasPricing) return pricingOverrides;
+    return {
+      ...pricingOverrides,
+      [pricingPid]: {
+        ...(pricingOverrides[pricingPid] || {}),
+        [name]: { ...DEFAULT_MODEL_PRICING },
+      },
+    };
+  }
+
+  function updatePricingCell(model, field, val) {
+    const num = val === '' ? null : Number(val);
+    const next = {
+      ...pricingOverrides,
+      [pricingPid]: {
+        ...(pricingOverrides[pricingPid] || {}),
+        [model]: { ...(pricingOverrides[pricingPid]?.[model] || {}), [field]: num },
+      },
+    };
+    onOverridesChange?.(next);
+    if (pricingSaveTimer.current) clearTimeout(pricingSaveTimer.current);
+    pricingSaveTimer.current = setTimeout(() => {
+      onSaveAccounts({ provider_pricing_overrides: next });
+    }, 400);
+  }
+
+  async function saveMonthly() {
+    if (!subRec) return;
+    const num = monthly.trim() === '' ? null : Number(monthly);
+    const monthly_usd = (num != null && Number.isFinite(num)) ? num : null;
+    const nextSubs = userSubscriptions.map(s => (
+      s.id === subRec.id ? { ...s, monthly_usd } : s
+    ));
+    await onSaveAccounts({ user_subscriptions: nextSubs });
+  }
+
+  async function addModel(name, type = 'chat') {
+    const n = (name || '').trim();
+    if (!n || userModelNames.has(n)) return;
+    const nextModels = mergeModelList(n, type);
+    const nextOverrides = buildOverridesWithModel(n);
+    onOverridesChange?.(nextOverrides);
+
+    if (isPayg && paygRec) {
+      const nextPayg = userPayg.map(p => (
+        p.id === paygRec.id ? { ...p, models: [...(p.models || []), n] } : p
+      ));
+      await persistModels(nextModels);
+      await onSaveAccounts({
+        user_payg_providers: nextPayg,
+        ...(nextOverrides !== pricingOverrides ? { provider_pricing_overrides: nextOverrides } : {}),
+      });
+      return;
+    }
+    // API 订阅 / 订阅转 API：模型写入供给源 + 刊例价
+    await persistModels(nextModels);
+    await onSaveAccounts({ provider_pricing_overrides: nextOverrides });
+  }
+
+  async function removeModel(name) {
+    const nextModels = (provider.models || []).map(normModel).filter(m => m.name !== name);
+    const nextOverrides = { ...pricingOverrides };
+    if (nextOverrides[pricingPid]?.[name]) {
+      const perModel = { ...nextOverrides[pricingPid] };
+      delete perModel[name];
+      if (Object.keys(perModel).length) nextOverrides[pricingPid] = perModel;
+      else delete nextOverrides[pricingPid];
+    }
+    onOverridesChange?.(nextOverrides);
+
+    if (isPayg && paygRec) {
+      const nextPayg = userPayg.map(p => (
+        p.id === paygRec.id ? { ...p, models: (p.models || []).filter(m => modelEntryName(m) !== name) } : p
+      ));
+      await persistModels(nextModels);
+      await onSaveAccounts({
+        user_payg_providers: nextPayg,
+        provider_pricing_overrides: nextOverrides,
+      });
+      return;
+    }
+    await persistModels(nextModels);
+    await onSaveAccounts({ provider_pricing_overrides: nextOverrides });
+  }
+
+  const hintKey = isPayg ? 'providers.billing.paygHint'
+    : billingTag === 'sub_to_api' ? 'providers.billing.subToApiHint'
+    : 'providers.billing.subHint';
+
+  const billingSummary = (() => {
+    const parts = [];
+    if (isSubBilling && monthly.trim()) parts.push(`$${monthly.trim()}${t('psrc.direct.monthlyUnit')}`);
+    if (rows.length) parts.push(t('providers.billing.modelCount', { n: rows.length }));
+    if (accountInst?.plan_label && !isSubBilling) parts.push(accountInst.plan_label);
+    return parts.join(' · ') || null;
+  })();
+
+  return (
+    <CollapsibleBillingPanel t={t} hint={t(hintKey)} summary={billingSummary}>
+      {isSubBilling && (
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-xs text-zinc-500 dark:text-zinc-400">{t('providers.billing.subMonthly')}</label>
+          <span className="text-xs text-zinc-400">$</span>
+          <input type="text" inputMode="decimal" value={monthly} placeholder="0"
+            onChange={e => setMonthly(e.target.value)}
+            onBlur={saveMonthly}
+            className="w-24 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1 tabular-nums" />
+          <span className="text-xs text-zinc-400">{t('psrc.direct.monthlyUnit')}</span>
+          {accountInst?.plan_label && (
+            <span className="text-xs text-zinc-400">· {accountInst.plan_label}</span>
+          )}
+        </div>
+      )}
+      {rows.length === 0 && (
+        <p className="text-xs text-zinc-400 text-center py-1">{t('providers.billing.noModels')}</p>
+      )}
+      <PricingTable
+        rows={rows}
+        onCell={updatePricingCell}
+        onAddModel={addModel}
+        onRemoveModel={removeModel}
+        withModality
+        modelTypes={modelTypeMap}
+        onToggleType={toggleModelType}
+        t={t}
+      />
+    </CollapsibleBillingPanel>
+  );
+}
+
+/** 供给源卡片内模型区；按量模型来自账户类型默认定价，可展开编辑 */
+function ProviderModelSection({ provider, userPayg, onEditPricing, onUpdate, scrollable = false, providerPricing = {}, paygCatalog = [], profileOnly = false }) {
   const { t } = useLang();
   const [modelsOpen, setModelsOpen] = useState(false);
   const isPayg = isPaygManagedProvider(provider.id, userPayg);
@@ -1221,15 +1681,15 @@ function ProviderModelSection({ provider, userPayg, onGoPayg, onUpdate, scrollab
     [isPayg, provider.id, userPayg],
   );
   const suggestions = useMemo(
-    () => (isPayg
+    () => (isPayg || profileOnly
       ? profileModels
       : buildModelSuggestions(provider.id, userPayg, providerPricing, paygCatalog)),
-    [isPayg, provider.id, userPayg, providerPricing, paygCatalog, profileModels],
+    [isPayg, profileOnly, provider.id, userPayg, providerPricing, paygCatalog, profileModels],
   );
 
   function handleModelsChange(next) {
     let out = next;
-    if (isPayg) {
+    if (isPayg || profileOnly) {
       const allowed = new Set(profileModels);
       out = next.map(normModel).filter(m => allowed.has(m.name));
     }
@@ -1246,53 +1706,45 @@ function ProviderModelSection({ provider, userPayg, onGoPayg, onUpdate, scrollab
             : <span className="text-xs text-zinc-400">{t('providers.models.unlimited')}</span>
           }
         </div>
-        <button
-          type="button"
-          onClick={() => setModelsOpen(v => !v)}
-          aria-expanded={modelsOpen}
-          className="shrink-0 text-xs px-2.5 py-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
-        >
-          {modelsOpen ? t('providers.models.collapse') : t('providers.models.expand')}
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {onEditPricing && (
+            <button type="button" onClick={() => onEditPricing(provider.id)}
+              className="text-xs px-2 py-0.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-300 dark:hover:border-blue-700 transition-colors">
+              {t('providers.card.editPricing')}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setModelsOpen(v => !v)}
+            aria-expanded={modelsOpen}
+            className="text-xs px-2.5 py-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+          >
+            {modelsOpen ? t('providers.models.collapse') : t('providers.models.expand')}
+          </button>
+        </div>
       </div>
       {modelsOpen && (
-        readOnly ? (
-          // 实例卡：模型只读（从模板同步），不能在实例上增删
-          <div className="flex flex-wrap gap-1">
-            {models.length === 0
-              ? <span className="text-xs text-zinc-400">{t('providers.models.unlimited')}</span>
-              : models.map((m, i) => (
-                <span key={i} className="text-xs px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 font-mono text-zinc-600 dark:text-zinc-300">
-                  {typeof m === 'string' ? m : (m?.name || '')}
-                </span>
-              ))}
-          </div>
-        ) : (
-          <>
-            <ModelListEditor
-              models={models}
-              onChange={handleModelsChange}
-              scrollable={scrollable}
-              suggestions={suggestions}
-              profileOnly={isPayg}
-            />
-            {isPayg && (
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                {t('providers.models.paygHint')}{' '}
-                <button type="button" onClick={onGoPayg}
-                  className="text-emerald-600 dark:text-emerald-400 hover:underline">
-                  {t('providers.models.goPaygProfile')}
-                </button>
-              </p>
-            )}
-          </>
-        )
+        <>
+          <ModelListEditor
+            models={models}
+            onChange={handleModelsChange}
+            scrollable={scrollable}
+            suggestions={suggestions}
+            profileOnly={isPayg || profileOnly}
+          />
+          {(isPayg || profileOnly) && profileModels.length === 0 && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">{t('providers.models.paygNoProfileModels')}</p>
+          )}
+          {(isPayg || profileOnly) && profileModels.length > 0 && onEditPricing && (
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('providers.models.paygPickPlaceholder')}</p>
+          )}
+        </>
       )}
     </div>
   );
 }
 
-function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [], userSubscriptions = [], onGoPayg, providerPricing = {}, paygCatalog = [] }) {
+function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels }) {
   const { t } = useLang();
   const [showKey, setShowKey] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -1390,16 +1842,33 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
         </div>
       </div>
 
-      {/* Model list — 按量供给源模型来自个人页 */}
-      <ProviderModelSection
-        provider={provider}
-        userPayg={userPayg}
-        onGoPayg={onGoPayg}
-        onUpdate={onUpdate}
-        scrollable
-        providerPricing={providerPricing}
-        paygCatalog={paygCatalog}
-      />
+      {/* 计费 / 模型列表 */}
+      {accountInst && ['payg', 'api_sub', 'sub_to_api'].includes(accountInst.tag) && onSaveAccounts ? (
+        <ProviderCardBillingSection
+          billingTag={accountInst.tag}
+          accountInst={accountInst}
+          provider={provider}
+          userPayg={userPayg}
+          userSubscriptions={userSubscriptions}
+          providerPricing={providerPricing}
+          pricingOverrides={pricingOverrides}
+          onSaveAccounts={onSaveAccounts}
+          onOverridesChange={onOverridesChange}
+          onUpdate={onUpdate}
+          onPersistModels={onPersistModels}
+          t={t}
+        />
+      ) : (
+        <ProviderModelSection
+          provider={provider}
+          userPayg={userPayg}
+          onEditPricing={onEditPricing}
+          onUpdate={onUpdate}
+          scrollable
+          providerPricing={providerPricing}
+          paygCatalog={paygCatalog}
+        />
+      )}
     </div>
   );
 }
@@ -1516,7 +1985,7 @@ function UsageMeter({ provider }) {
   );
 }
 
-function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpanded = false, gatewayAuthMode = null, userPayg = [], userSubscriptions = [], onGoPayg, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [], displayName = null, displayIcon = null, lockTemplate = false }) {
+function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpanded = false, gatewayAuthMode = null, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [], displayName = null, displayIcon = null, lockTemplate = false, accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels }) {
   const { t } = useLang();
   const [showKey,    setShowKey]    = useState(false);
   const [expanded,   setExpanded]   = useState(initialExpanded);
@@ -1525,24 +1994,25 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
 
   meta = meta || {};
   const isP2P    = provider.type === 'p2p';
+  const isSubToApiInst = accountInst?.tag === 'sub_to_api';
   const oauthCap = meta.oauth || null;                 // 该预设支持的 OAuth 登录（可选）
-  const forceOauth  = gatewayAuthMode === 'oauth';
+  const forceOauth  = gatewayAuthMode === 'oauth' || isSubToApiInst;
   const forceApiKey = gatewayAuthMode === 'api_key';
   const isOauthCfg = forceOauth || provider.auth_type === 'oauth';
   const hasOauth = !!(provider.credentials && provider.credentials.refresh_token);
   const hasKey   = !isOauthCfg && !!provider.token;
   const billingType    = forceApiKey ? 'api-key' : (provider.billing_type || 'api-key');
-  const subMode        = forceOauth ? 'api-proxy' : (provider.sub_mode || 'accounting');
-  const isSubscription = forceOauth || billingType === 'subscription';
-  // 付费层：订阅转 API 走 OAuth；按量走 API Key
+  const subMode        = isSubToApiInst ? 'api-proxy' : (forceOauth ? 'api-proxy' : (provider.sub_mode || 'accounting'));
+  const isSubscription = forceOauth || isSubToApiInst || billingType === 'subscription';
+  // 付费层：订阅转 API 走 OAuth；按量 / API 订阅走 API Key
   const configured = forceOauth
     ? hasOauth
     : forceApiKey
       ? hasKey
       : ((meta.keyless && !oauthCap) || hasKey || hasOauth || (isSubscription && subMode === 'accounting'));
-  const canApiKey = !meta.keyless && !forceOauth;
-  const showOauthUi = forceOauth ? !!oauthCap : (oauthCap && (!forceApiKey));
-  const showApiKeyUi = forceApiKey || (canApiKey && !forceOauth);
+  const canApiKey = !meta.keyless && !forceOauth && !isSubToApiInst;
+  const showOauthUi = (forceOauth || isSubToApiInst) ? !!oauthCap : (oauthCap && (!forceApiKey));
+  const showApiKeyUi = !forceOauth && !isSubToApiInst && (forceApiKey || canApiKey);
   // 是否支持订阅计费方式：yaml subscription_apps 中有 plan_provider_id 匹配且 subscription_to_api=true
   const hasSubscriptionOption = subscriptionCatalog.some(c => c.plan_provider_id === provider.id && c.subscription_to_api === true);
   const personalTag = getPersonalSourceTag(provider, { [provider.id]: meta }, userPayg, userSubscriptions);
@@ -1785,7 +2255,7 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
                   {!oauth.started && (
                     <button onClick={startOauth} disabled={oauth.busy}
                       className="text-xs px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-blue-600 dark:text-blue-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-50">
-                      {oauth.busy ? '…' : (hasOauth ? t('providers.card.relogin') : t('providers.card.login', { label: oauthCap.label }))}
+                      {oauth.busy ? '…' : (hasOauth ? t('providers.card.relogin') : t('providers.card.login', { label: oauthCap?.label || 'OAuth' }))}
                     </button>
                   )}
 
@@ -1874,17 +2344,32 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
         </div>
       </div>
 
-      {/* Model list section — 按量供给源模型来自个人页 */}
-      {!isP2P && (
+      {/* 计费 / 模型列表 */}
+      {!isP2P && accountInst && ['payg', 'api_sub', 'sub_to_api'].includes(accountInst.tag) && onSaveAccounts ? (
+        <ProviderCardBillingSection
+          billingTag={accountInst.tag}
+          accountInst={accountInst}
+          provider={provider}
+          userPayg={userPayg}
+          userSubscriptions={userSubscriptions}
+          providerPricing={providerPricing}
+          pricingOverrides={pricingOverrides}
+          onSaveAccounts={onSaveAccounts}
+          onOverridesChange={onOverridesChange}
+          onUpdate={onUpdate}
+          onPersistModels={onPersistModels}
+          t={t}
+        />
+      ) : !isP2P && (
         <ProviderModelSection
           provider={provider}
           userPayg={userPayg}
-          onGoPayg={onGoPayg}
+          onEditPricing={onEditPricing}
           onUpdate={onUpdate}
           scrollable
           providerPricing={providerPricing}
           paygCatalog={paygCatalog}
-          readOnly={lockTemplate}
+          profileOnly={lockTemplate && isPaygManagedProvider(provider.id, userPayg)}
         />
       )}
     </div>
@@ -1906,21 +2391,21 @@ export default function Providers() {
   const [statsOnlyIds, setStatsOnlyIds] = useState([]);
   const [userPayg, setUserPayg] = useState([]);
   const [providerPricing, setProviderPricing] = useState({});
+  const [pricingOverrides, setPricingOverrides] = useState({});
   const [paygCatalog, setPaygCatalog] = useState([]);
   const [directInstances, setDirectInstances] = useState([]);   // 直连源实例（仅统计的应用）
   const [directBilling, setDirectBilling] = useState({});        // 直连源计费（按 agent_id）
   const [accountsData, setAccountsData] = useState(null);        // 完整账户快照（统计视图用）
-  const [sourcesView, setSourcesView] = useState('list');        // 个人源视图：list | model
+  const [sourcesView, setSourcesView] = useState('model');       // 个人源视图：model | list（账户）
   const [credModalKey, setCredModalKey] = useState(null);        // 添加实例后弹出的凭证配置弹窗（source key）
   const [savedMsg,  setSavedMsg]  = useState('');
   // Track the last value written/loaded so we skip the initial load trigger
   const lastSaved = useRef(null);
-  const [addingPickerKey, setAddingPickerKey] = useState(null);
-  const [addingAuthMode, setAddingAuthMode] = useState(null);
   const [gatewayPickerEntries, setGatewayPickerEntries] = useState([]);
-  const [billingOpen, setBillingOpen] = useState(false);
-  const [billingTab, setBillingTab] = useState('subscription');
-  const billingRef = useRef(null);
+  const [templateEditing, setTemplateEditing] = useState(null);
+
+  const catalogFetchedRef = useRef(false);
+  const syncingCatalogRef = useRef(false);
 
   const loadUserPaidAccounts = useCallback(async () => {
     try {
@@ -1949,6 +2434,7 @@ export default function Providers() {
       setStatsOnlyIds(r.stats_only_provider_ids || []);
       setUserPayg(r.user_payg_providers || []);
       setProviderPricing(r.provider_pricing || {});
+      setPricingOverrides(r.provider_pricing_overrides || {});
       setPaygCatalog(r.payg_provider_catalog || []);
       setDirectInstances(r.direct_source_instances || []);
       setDirectBilling(r.direct_source_billing || {});
@@ -1962,10 +2448,83 @@ export default function Providers() {
   }, []);
 
   useEffect(() => {
-    loadUserPaidAccounts();
-    const unsub = window.electronAPI?.localConfig?.onBillingChanged?.(loadUserPaidAccounts);
-    return () => unsub?.();
+    let cancelled = false;
+    (async () => {
+      // 进入页仅同步一次源目录；不可放在 loadUserPaidAccounts 内（sync → billing:changed → 死循环）
+      if (!catalogFetchedRef.current && window.electronAPI?.toolsConfig?.syncRemote) {
+        catalogFetchedRef.current = true;
+        syncingCatalogRef.current = true;
+        try {
+          const token = localStorage.getItem('token');
+          const base = await getSyncServerBase();
+          if (token && base) {
+            await window.electronAPI.toolsConfig.syncRemote({ token, serverUrl: base, replace: true });
+          }
+        } catch { /* 离线时继续用本地目录 */ }
+        finally { syncingCatalogRef.current = false; }
+      }
+      if (!cancelled) await loadUserPaidAccounts();
+    })();
+    const unsub = window.electronAPI?.localConfig?.onBillingChanged?.(() => {
+      if (syncingCatalogRef.current) return;
+      loadUserPaidAccounts();
+    });
+    return () => { cancelled = true; unsub?.(); };
   }, [loadUserPaidAccounts]);
+
+  // 为每个 gateway_id 确保存在 provider stub（多实例 acct-* 从 catalog 克隆）
+  useEffect(() => {
+    if (!paidAllowlist?.length) return;
+    setProviders(prev => {
+      let changed = false;
+      const next = [...prev];
+      for (const gid of paidAllowlist) {
+        if (next.some(p => p.id === gid)) continue;
+        const payg = userPayg.find(p => paygInstGatewayId(p) === gid);
+        const sub = userSubscriptions.find(s => subInstGatewayId(s) === gid);
+        const catalogId = payg?.provider_id || sub?.source_id || sub?.plan_provider_id || gid;
+        const fb = FALLBACK_PROVIDERS.find(p => p.id === gid) || FALLBACK_PROVIDERS.find(p => p.id === catalogId);
+        const sibling = next.find(p => p.id === catalogId);
+        next.push({
+          ...(fb || sibling || { type: 'paid', enabled: false, token: '', base_url: '', models: [] }),
+          id: gid,
+          type: 'paid',
+          enabled: false,
+          token: '',
+          models: [],
+          base_url: sibling?.base_url || fb?.base_url || '',
+        });
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [paidAllowlist, userPayg, userSubscriptions]);
+
+  const openTemplateEdit = useCallback((tplOrKey) => {
+    const tpl = typeof tplOrKey === 'string'
+      ? (accountsData?.source_templates || []).find(t => t.key === tplOrKey)
+      : tplOrKey;
+    if (tpl) setTemplateEditing(tpl);
+  }, [accountsData]);
+
+  const openTemplateEditForProvider = useCallback((providerId) => {
+    const tpl = resolveTemplateForProvider(
+      providerId, accountsData?.source_templates, userSubscriptions, userPayg,
+    );
+    if (tpl) setTemplateEditing(tpl);
+  }, [accountsData, userSubscriptions, userPayg]);
+
+  async function saveAccountsPatch(patch) {
+    if (patch.provider_pricing_overrides) setPricingOverrides(patch.provider_pricing_overrides);
+    await saveUserAccounts(patch);
+    await loadUserPaidAccounts();
+  }
+
+  function adoptServerTemplate(key) {
+    const next = { ...(accountsData?.source_template_overrides || {}) };
+    delete next[key];
+    saveAccountsPatch({ source_template_overrides: next });
+  }
 
   useEffect(() => {
     (async () => {
@@ -2005,7 +2564,23 @@ export default function Providers() {
         merged.providers, merged.meta, userSubscriptions, paidAllowlist || [], t,
       );
       lastSaved.current = withCustomSubs.providers;
-      setProviders(withCustomSubs.providers);
+      // 账户重载时保留内存里刚写入、磁盘 debounce 尚未落盘的 models
+      setProviders(prev => {
+        const loaded = withCustomSubs.providers;
+        return loaded.map(p => {
+          const mem = prev.find(x => x.id === p.id);
+          if (!mem?.models?.length) return p;
+          const diskM = (p.models || []).map(normModel);
+          const memM = (mem.models || []).map(normModel);
+          const names = new Set(diskM.map(m => m.name));
+          const mergedModels = [...diskM];
+          for (const m of memM) {
+            if (!names.has(m.name)) { mergedModels.push(m); names.add(m.name); }
+          }
+          if (mergedModels.length === diskM.length) return p;
+          return { ...p, models: mergedModels };
+        });
+      });
       setMeta(localizeProviderMeta(withCustomSubs.meta, t));
     })();
   }, [userPayg, userSubscriptions, paidAllowlist, t, oauthById]);
@@ -2052,36 +2627,80 @@ export default function Providers() {
     });
   }, [userPayg]);
 
-  /** 选中选择器条目：按订阅/按量预设验证方式 */
-  const selectPickerEntry = useCallback((entry) => {
-    const isDeselect = addingPickerKey === entry.pickerKey;
-    if (isDeselect) {
-      setAddingPickerKey(null);
-      setAddingId(null);
-      setAddingAuthMode(null);
-      return;
+  /** 立即落盘 provider.models，避免 saveAccounts 触发重载时被 debounce 旧配置覆盖 */
+  const persistProviderModels = useCallback(async (id, models) => {
+    const normalized = (models || []).map(normModel).filter(m => m.name);
+    try {
+      const cfg = (await getConfig().read()) || {};
+      const list = [...(cfg.providers || [])];
+      const i = list.findIndex(p => p.id === id);
+      if (i >= 0) {
+        list[i] = { ...list[i], models: normalized };
+      } else {
+        list.push({ id, type: 'paid', enabled: false, token: '', base_url: '', models: normalized });
+      }
+      await getConfig().write({ ...cfg, providers: list });
+    } catch { /* 离线时仍保留内存态 */ }
+  }, []);
+
+  /** 选中选择器条目：每次点击登记新实例（支持同类型多账户），配置在上方列表卡片完成 */
+  const selectPickerEntry = useCallback(async (entry) => {
+    const tpl = entry.template;
+    let patch = null;
+
+    if (tpl) {
+      try {
+        // APP 订阅：先写入直连源；可转 API 的在卡片内再转到供给源区
+        if (tpl.kind === 'app_sub') {
+          patch = buildDirectSourcePatch(tpl, { billing: directBilling });
+        } else {
+          patch = buildInstancePatch(tpl, { payg: userPayg, subs: userSubscriptions });
+        }
+        await saveUserAccounts(patch);
+        await loadUserPaidAccounts();
+      } catch {
+        return;
+      }
     }
-    setAddingPickerKey(entry.pickerKey);
-    setAddingId(entry.providerId);
-    setAddingAuthMode(entry.authMode);
+
+    // APP 订阅 / 纯直连：不自动创建网关 provider
+    if (tpl?.kind === 'app_sub' || entry.statsOnly || entry.gatewayAddable === false) return;
+
+    // 新建实例的 gateway_id（多账户时 acct-*）
+    let newGwId = entry.providerId;
+    let seedModels = [];
+    if (patch?.user_payg_providers?.length) {
+      const added = patch.user_payg_providers[patch.user_payg_providers.length - 1];
+      newGwId = paygInstGatewayId(added) || entry.providerId;
+      seedModels = seedModelsFromNames(added.models);
+    } else if (patch?.user_subscriptions?.length) {
+      const added = patch.user_subscriptions[patch.user_subscriptions.length - 1];
+      newGwId = subInstGatewayId(added) || entry.providerId;
+      const tplModels = entry.template?.pricing ? Object.keys(entry.template.pricing) : (entry.template?.models || []);
+      seedModels = seedModelsFromNames(tplModels);
+    } else if (entry.template) {
+      const tplModels = entry.template.pricing ? Object.keys(entry.template.pricing) : (entry.template.models || []);
+      seedModels = seedModelsFromNames(tplModels);
+    }
+
     const base = {
-      id: entry.providerId,
+      id: newGwId,
       type: 'paid',
       enabled: true,
       token: '',
       base_url: '',
-      models: [],
+      models: seedModels,
       displayName: entry.label,
     };
     if (entry.authMode === 'oauth') {
-      updateProvider(entry.providerId, {
+      updateProvider(newGwId, {
         ...base,
         auth_type: 'oauth',
         billing_type: 'subscription',
         sub_mode: 'api-proxy',
       });
     } else {
-      updateProvider(entry.providerId, {
+      updateProvider(newGwId, {
         ...base,
         auth_type: 'api_key',
         billing_type: 'api-key',
@@ -2089,7 +2708,55 @@ export default function Providers() {
         oauth_provider: '',
       });
     }
-  }, [addingPickerKey, updateProvider]);
+  }, [updateProvider, userSubscriptions, userPayg, directBilling, loadUserPaidAccounts, saveUserAccounts]);
+
+  /** 直连源「转 API 供给源」→ 登记订阅实例并启用上方供给源卡片 */
+  const convertDirectToApi = useCallback(async (instance) => {
+    const tpl = (accountsData?.source_templates || []).find(
+      t => t.key === instance.source_id || t.agent_id === instance.agent_id,
+    );
+    if (!tpl) return;
+    const b = directBilling[instance.agent_id] || {};
+    const patch = buildInstancePatch(
+      { ...tpl, subscription_to_api: true },
+      { payg: userPayg, subs: userSubscriptions, planId: b.plan_id || undefined },
+    );
+    await saveUserAccounts(patch);
+    await loadUserPaidAccounts();
+
+    const added = patch.user_subscriptions?.[patch.user_subscriptions.length - 1];
+    const newGwId = subInstGatewayId(added) || OAUTH_SUB_SOURCE_TO_PID[instance.source_id];
+    if (!newGwId) return;
+    const tplModels = tpl.pricing ? Object.keys(tpl.pricing) : (tpl.models || []);
+    const oauthPid = OAUTH_SUB_SOURCE_TO_PID[instance.source_id];
+    const base = {
+      id: newGwId,
+      type: 'paid',
+      enabled: true,
+      token: '',
+      base_url: '',
+      models: seedModelsFromNames(tplModels),
+      displayName: instance.name || tpl.label,
+    };
+    if (oauthPid) {
+      const oauthMeta = getOAuthById(t)[oauthPid];
+      updateProvider(newGwId, {
+        ...base,
+        auth_type: 'oauth',
+        oauth_provider: oauthMeta?.provider || 'claude',
+        billing_type: 'subscription',
+        sub_mode: 'api-proxy',
+      });
+    } else {
+      updateProvider(newGwId, {
+        ...base,
+        auth_type: 'api_key',
+        billing_type: 'api-key',
+        credentials: null,
+        oauth_provider: '',
+      });
+    }
+  }, [accountsData, directBilling, userPayg, userSubscriptions, loadUserPaidAccounts, saveUserAccounts, updateProvider]);
 
   /** 从个人源列表移除：预设源标记为未添加，自定义源直接删除 */
   const removePersonalProvider = useCallback((id) => {
@@ -2100,20 +2767,6 @@ export default function Providers() {
     }
   }, [userSubscriptions, meta]);
 
-  function openBillingConfig(tab = 'subscription') {
-    setBillingTab(tab === 'payg' ? 'payg' : 'subscription');
-    setBillingOpen(true);
-    requestAnimationFrame(() => {
-      billingRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-  }
-
-  function addCustomProvider() {
-    openBillingConfig('payg');
-  }
-
-  const goPersonalPage = () => openBillingConfig('subscription');
-  const goPaygProfile = () => openBillingConfig('payg');
   const paidAccountsLoaded = paidAllowlist !== null;
   const hasPersonalPaid = paidAccountsLoaded && (paidAllowlist.length > 0 || statsOnlyIds.length > 0);
   const hasGatewayPaid = paidAccountsLoaded && paidAllowlist.length > 0;
@@ -2127,18 +2780,6 @@ export default function Providers() {
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [personalFilter, setPersonalFilter] = useState('all');
-  const [addingId,   setAddingId]   = useState(null);  // providerId being configured in picker
-
-  // When a provider gets enabled from the picker, deselect it
-  useEffect(() => {
-    if (!addingId) return;
-    const p = providers.find(p => p.id === addingId);
-    if (p?.enabled) {
-      setAddingId(null);
-      setAddingPickerKey(null);
-      setAddingAuthMode(null);
-    }
-  }, [providers, addingId]);
 
   // 个人源统一列表（不再分 API / 订阅两段）
   const liveStateOf = (p) => withProviderDisplayName(providers.find(x => x.id === p.id) || p, userPayg, userSubscriptions, meta);
@@ -2161,13 +2802,14 @@ export default function Providers() {
     const pr = providerPricing && providerPricing[pid];
     return pr ? Object.keys(pr) : [];
   };
+  const sourceTemplates = accountsData?.source_templates || [];
+  const directAll = mergeDirectInstances(directInstances, directBilling, userSubscriptions, sourceTemplates, subscriptionCatalog);
   // 统一的「账户实例」集：订阅 + 按量 + 直连。图标/名称字段与统计(AccountStatsView)保持一致，
   // models 用源的官方模型。统计、列表、按模型视图都基于它，数目与图标名称对齐。
   const accountInstances = [
     ...userSubscriptions.map(s => {
       const pid = s.plan_provider_id || s.source_id;
-      // 网关 provider id：自定义订阅用 source_id；OAuth 订阅(claude/codex/copilot)映射到 catalog pid
-      const gw = s.custom ? s.source_id : (OAUTH_SUB_SOURCE_TO_PID[s.source_id] || s.plan_provider_id || s.source_id);
+      const gw = subInstGatewayId(s);
       // 类型 tag：api订阅 / 订阅转API / app订阅
       const tag = s.subscription_kind === 'api' ? 'api_sub' : (s.subscription_to_api ? 'sub_to_api' : 'app_sub');
       return {
@@ -2179,11 +2821,11 @@ export default function Providers() {
     }),
     ...userPayg.map(p => ({
       kind: 'payg', billing_type: 'api', tag: 'payg',
-      id: p.id, source_id: p.provider_id, gateway_id: p.provider_id,
+      id: p.id, source_id: p.provider_id, gateway_id: paygInstGatewayId(p),
       name: p.name || p.label, label: p.label, icon: p.icon,
       models: (p.models && p.models.length) ? p.models : paygModelsOf(p.provider_id),
     })),
-    ...directInstances.map(d => ({
+    ...directAll.map(d => ({
       kind: 'direct', billing_type: d.mode === 'api' ? 'api' : 'subscription',
       tag: d.mode === 'api' ? 'payg' : 'app_sub',   // 直连：API→按量，订阅→app订阅
       id: d.agent_id, source_id: d.source_id,
@@ -2191,7 +2833,15 @@ export default function Providers() {
       models: d.models || [],
     })),
   ];
-  const allSourceInstances = accountInstances;   // 按模型视图沿用统一集
+  const directByAgent = useMemo(
+    () => Object.fromEntries(directAll.map(d => [d.agent_id, d])),
+    [directAll],
+  );
+  // 按模型视图：不回退 catalog 刊例价，订阅/直连 APP 无配置模型则不出现
+  const modelViewInstances = useMemo(() => accountInstances.map(inst => ({
+    ...inst,
+    models: resolveModelsForModelView(inst, providers, userPayg, userSubscriptions, pricingOverrides, directByAgent),
+  })), [accountInstances, providers, userPayg, userSubscriptions, pricingOverrides, directByAgent]);
   // 「已接入网关」= 对应 provider 真正 enabled（不是 gateway_provider_ids 那种「已登记可接入」）。
   // 接入的由上面 ProviderCard 展示；未接入的在这里补充展示，使列表数目与统计一致。
   // 顶部筛选：按账户实例的类型 tag（app订阅 / api订阅 / 订阅转API / API）；
@@ -2203,75 +2853,92 @@ export default function Providers() {
     if (personalFilter === 'api') return tag === 'payg';
     return tag === personalFilter;
   };
-  const directFiltered = directInstances.filter(d => matchFilter(d.mode === 'api' ? 'payg' : 'app_sub'));
+  const directFiltered = directAll.filter(d => matchFilter(d.mode === 'api' ? 'payg' : 'app_sub'));
   const hasAcct = (id) => accountInstances.some(i => i.gateway_id === id);
-  const acctTagOf = (id) => { const a = accountInstances.find(i => i.gateway_id === id); return a ? a.tag : null; };
-  // 账户实例对应的供给源 → 用 ProviderCard（保留 key/oauth/计费/测试等完整配置入口），按账户 tag 筛选
-  const accountSources = personalPaidPool.filter(p => {
-    const tag = acctTagOf(p.id);
-    return tag && matchFilter(tag);
-  });
+  // 仅「可接网关」的账户实例渲染 ProviderCard（纯 APP 订阅只做统计，无 Base URL）
+  const listedAccountInstances = accountInstances.filter(
+    inst => isGatewayAccountInstance(inst) && matchFilter(inst.tag),
+  );
   // 其他已启用但不对应账户实例的供给源（如历史配的 Groq）→ 也用 ProviderCard，可改 key/删除；不计入统计、不受筛选
   const otherSources = personalEnabledAll.filter(p => p.type !== 'p2p' && !hasAcct(p.id));
 
-  // 删除账户实例卡：删该源对应的账户实例（user_payg/subs）+ 停用网关 provider。
-  // 自定义源：删实例前把模板固化到 custom_source_templates，避免兼容推断丢失整个源。
-  const removeAccountSource = async (providerId) => {
-    const insts = accountInstances.filter(i => i.gateway_id === providerId);
-    if (!insts.length) { removePersonalProvider(providerId); return; }
-    let nextPayg = userPayg, nextSubs = userSubscriptions;
-    for (const inst of insts) {
-      if (inst.kind === 'payg') nextPayg = nextPayg.filter(p => p.id !== inst.id);
-      else if (inst.kind === 'sub') nextSubs = nextSubs.filter(s => s.id !== inst.id);
-    }
+  // 删除单个账户实例：仅删对应 user_payg/sub 行；无其他实例共用 gateway_id 时才停用 provider
+  const removeAccountInstance = async (inst) => {
+    const gwId = inst.gateway_id;
+    let nextPayg = userPayg;
+    let nextSubs = userSubscriptions;
+    if (inst.kind === 'payg') nextPayg = nextPayg.filter(p => p.id !== inst.id);
+    else if (inst.kind === 'sub') nextSubs = nextSubs.filter(s => s.id !== inst.id);
     const patch = { user_payg_providers: nextPayg, user_subscriptions: nextSubs };
-    const tpl = (accountsData?.source_templates || []).find(x => x.key === providerId && x.custom);
-    const ct = accountsData?.custom_source_templates || {};
-    if (tpl && !ct[providerId]) {
-      patch.custom_source_templates = { ...ct, [providerId]: {
-        kind: tpl.kind, label: tpl.label, icon: tpl.icon,
-        models: tpl.models || [], pricing: tpl.pricing || {}, plans: tpl.plans || [],
-        subscription_to_api: tpl.subscription_to_api === true,
-      } };
-    }
     await saveUserAccounts(patch);
-    removePersonalProvider(providerId);
+    const stillUsed = nextPayg.some(p => paygInstGatewayId(p) === gwId)
+      || nextSubs.some(s => subInstGatewayId(s) === gwId);
+    if (!stillUsed) removePersonalProvider(gwId);
     loadUserPaidAccounts();
   };
 
-  const disabledPickerEntries = gatewayPickerEntries.filter(e => !liveStateOf({ id: e.providerId }).enabled);
+  const removeAccountSource = async (providerId) => {
+    const inst = accountInstances.find(i => i.gateway_id === providerId);
+    if (inst && inst.kind !== 'direct') return removeAccountInstance(inst);
+    removePersonalProvider(providerId);
+  };
+
+  /** 删除直连源：清除计费登记，并移除 legacy 纯 APP 订阅 */
+  const removeDirectSource = async (instance) => {
+    const agentId = instance.agent_id;
+    const sourceId = instance.source_id;
+    const billingPatch = buildDirectSourceRemovePatch(agentId, directBilling);
+    const nextSubs = userSubscriptions.filter(s => {
+      if (s.subscription_kind === 'api' || s.subscription_to_api) return true;
+      const aid = s.agent_id || s.source_id;
+      return aid !== agentId && s.source_id !== sourceId;
+    });
+    await saveUserAccounts({
+      ...billingPatch,
+      ...(nextSubs.length !== userSubscriptions.length ? { user_subscriptions: nextSubs } : {}),
+    });
+    loadUserPaidAccounts();
+  };
+
+  const templatePickerEntries = buildTemplatePickerEntries(
+    accountsData?.source_templates,
+    subscriptionCatalog,
+  );
+  const pickerEntries = templatePickerEntries.length
+    ? templatePickerEntries
+    : gatewayPickerEntries;
   const freeAddableProviders = (() => {
     const oauthPids = new Set(Object.values(OAUTH_SUB_SOURCE_TO_PID));
-    const entryPids = new Set(disabledPickerEntries.map(e => e.providerId));
+    const entryPids = new Set(pickerEntries.map(e => e.providerId));
     return providers.filter(pr => !pr.enabled
       && (pr.type === 'free' || pr.type === 'paid')
       && !oauthPids.has(pr.id) && !entryPids.has(pr.id));
   })();
   const pickerItems = [
-    ...disabledPickerEntries.map(entry => ({
+    ...pickerEntries.map(entry => ({
       kind: 'entry', tag: getPickerEntryTag(entry), entry, key: entry.pickerKey,
     })),
-    ...freeAddableProviders.map(pr => ({
+    // 有服务端模板目录时不再混入 registry 免费源（可选类型以服务端为准）
+    ...(templatePickerEntries.length ? [] : freeAddableProviders.map(pr => ({
       kind: 'free', tag: 'free', provider: pr, key: `free:${pr.id}`,
-    })),
+    }))),
   ];
-  const pickerItemsFiltered = personalFilter === 'all'
-    ? pickerItems
-    : pickerItems.filter(item => item.tag === personalFilter);
+  const pickerItemsFiltered = pickerItems.filter(item =>
+    pickerItemMatchesFilter(item.tag, personalFilter),
+  );
 
   function togglePicker() {
-    if (pickerOpen) {
-      setPickerOpen(false);
-      setAddingId(null);
-      setAddingPickerKey(null);
-      setAddingAuthMode(null);
-    } else {
-      setPickerOpen(true);
-    }
+    setPickerOpen(v => !v);
   }
 
-  // 「添加供给源」（把已添加账户接入网关）—— 入口放在上面「个人源账户」区，
-  // 下面「个人源」只展示/编辑、不提供添加入口。
+  // 「添加供给源」入口在下方「个人源」区
+  const accountBillingProps = {
+    pricingOverrides,
+    onSaveAccounts: saveAccountsPatch,
+    onOverridesChange: setPricingOverrides,
+    onPersistModels: persistProviderModels,
+  };
+
   function renderAddSourcePicker() {
     return (
       <div className="space-y-3">
@@ -2285,8 +2952,8 @@ export default function Providers() {
           <span className="text-xs font-medium">{pickerOpen ? t('providers.add.collapse') : t('providers.add.expand')}</span>
           {!pickerOpen && (
             <span className="text-xs text-zinc-300 dark:text-zinc-600">
-              {pickerItems.length > 0
-                ? t('providers.add.availableCount', { n: pickerItems.length })
+              {pickerEntries.length > 0
+                ? t('providers.add.availableCount', { n: pickerEntries.length })
                 : t('providers.add.allTypesHint')}
             </span>
           )}
@@ -2298,116 +2965,91 @@ export default function Providers() {
               <p className="text-xs text-zinc-400">{t('providers.add.loadingAccounts')}</p>
             )}
             <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('providers.add.unifiedHint')}</p>
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-3 gap-3">
               {pickerItemsFiltered.map(item => {
                 if (item.kind === 'entry') return renderPickerButton(item.entry);
                 const pr = item.provider;
                 const m = meta[pr.id] || {};
-                const sel = addingId === pr.id;
                 return (
                   <button key={item.key} type="button" title={m.hint || ''} onClick={() => {
-                    if (sel) setAddingId(null);
-                    else {
-                      setAddingId(pr.id);
-                      updateProvider(pr.id, { enabled: true });
-                    }
+                    updateProvider(pr.id, { enabled: true });
                   }}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
-                      sel
-                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
-                        : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600'
-                    }`}>
-                    <span>{m.icon || '🔌'}</span>
-                    <span>{m.label || pr.id}</span>
+                    className="w-full flex items-center gap-2.5 px-3 py-3 rounded-xl border text-left text-sm font-medium transition-colors border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600">
+                    <span className="text-lg shrink-0">{m.icon || '🔌'}</span>
+                    <span className="min-w-0 flex-1 truncate">{m.label || pr.id}</span>
                     {(m.keyless || pr.type === 'free') && (
-                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400">{t('providers.add.freeTag')}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 shrink-0">{t('providers.add.freeTag')}</span>
                     )}
                   </button>
                 );
               })}
               {pickerItemsFiltered.length === 0 && paidAccountsLoaded && (
-                <p className="text-xs text-zinc-400">{t('providers.filter.pickerEmpty')}</p>
+                <p className="col-span-3 text-xs text-zinc-400 text-center py-4">{t('providers.filter.pickerEmpty')}</p>
               )}
             </div>
-            {paidAccountsLoaded && !hasGatewayPaid && (
-              <PersonalPageHint onOpenConfig={goPersonalPage} />
-            )}
             {pickerItems.length === 0 && hasGatewayPaid && (
               <p className="text-xs text-zinc-400">{t('providers.add.allAdded')}</p>
             )}
-
-            {addingId && (() => {
-              const entry = gatewayPickerEntries.find(e => e.pickerKey === addingPickerKey)
-                || gatewayPickerEntries.find(e => e.providerId === addingId);
-              const pid = addingId;
-              const stubFromEntry = entry ? {
-                id: pid,
-                type: 'paid',
-                enabled: true,
-                token: '',
-                base_url: '',
-                models: [],
-                displayName: entry.label,
-              } : null;
-              const p = personalPoolAll.find(pr => pr.id === pid)
-                || providers.find(pr => pr.id === pid)
-                || stubFromEntry;
-              if (!p) return null;
-              const live = liveStateOf(p);
-              const cardAuth = addingAuthMode || resolveCardAuthMode(live, providerGatewayAuth[pid]);
-              const useCustomCard = entry?.custom || isCustomSubscriptionGatewayId(pid, userSubscriptions) || !meta[pid];
-              return (
-                <div className="mt-1">
-                  {entry && (
-                    <p className="text-xs text-zinc-400 mb-2">
-                      {t('providers.add.configuring', {
-                        label: entry.label,
-                        auth: entry.authMode === 'oauth' ? t('providers.add.authOauth') : t('providers.add.authApiKey'),
-                      })}
-                    </p>
-                  )}
-                  {!useCustomCard
-                    ? <ProviderCard key={pid} provider={live} meta={meta[pid]} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} initialExpanded gatewayAuthMode={cardAuth} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} />
-                    : <CustomProviderCard key={pid} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />
-                  }
-                </div>
-              );
-            })()}
           </div>
         )}
       </div>
     );
   }
 
+  function pickerInstanceCount(entry) {
+    const k = entry.templateKey;
+    if (!k) return 0;
+    // APP 订阅：直连登记或已转 API 均算已添加
+    if (entry.template?.kind === 'app_sub' || entry.statsOnly || entry.authMode === 'stats' || entry.authMode === 'sub') {
+      const agentId = entry.directAgentId || entry.template?.agent_id || k;
+      const converted = userSubscriptions.some(
+        s => s.source_id === k && s.subscription_to_api && s.subscription_kind !== 'api',
+      );
+      if (converted) return 1;
+      return (directBilling && directBilling[agentId]) ? 1 : 0;
+    }
+    return userSubscriptions.filter(s => s.source_id === k).length
+      + userPayg.filter(p => p.provider_id === k).length;
+  }
+
   function renderPickerButton(entry) {
-    const sel = addingPickerKey === entry.pickerKey;
-    const authTag = entry.authMode === 'oauth' ? 'OAuth' : 'Key';
+    const count = pickerInstanceCount(entry);
+    const authTag = entry.authMode === 'oauth' ? 'OAuth'
+      : entry.authMode === 'stats' ? t('providers.add.statsTag')
+      : entry.authMode === 'sub' ? t('psrc.direct.subTag')
+      : 'Key';
     return (
       <button key={entry.pickerKey} type="button" onClick={() => selectPickerEntry(entry)}
-        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
-          sel
-            ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
-            : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600'
-        }`}>
-        <span>{entry.icon}</span>
-        <span>{entry.label}</span>
-        <span className={`text-xs px-1 rounded ${
-          entry.authMode === 'oauth'
-            ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-            : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-        }`}>{authTag}</span>
+        className="w-full flex items-center gap-2.5 px-3 py-3 rounded-xl border text-left transition-colors border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:border-blue-300 dark:hover:border-blue-700">
+        <ServiceIcon
+          id={entry.providerId || entry.templateKey}
+          name={entry.label}
+          icon={entry.icon}
+          boxClass="w-10 h-10"
+          imgClass="w-6 h-6"
+        />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium truncate text-zinc-800 dark:text-zinc-200">
+            {entry.label}
+          </span>
+          <span className="flex flex-wrap items-center gap-1 mt-0.5">
+            <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+              entry.authMode === 'oauth'
+                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                : entry.authMode === 'stats'
+                  ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300'
+                  : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+            }`}>{authTag}</span>
+            {count > 0 && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                {t('providers.add.instanceCount', { n: count })}
+              </span>
+            )}
+          </span>
+        </span>
       </button>
     );
   }
-
-  const personalAccountTiles = useMemo(
-    () => buildPersonalAccountTiles(userSubscriptions, userPayg, meta),
-    [userSubscriptions, userPayg, meta],
-  );
-  const accountCatalogSuggestions = useMemo(
-    () => buildAccountCatalogSuggestions(subscriptionCatalog, paygCatalog, personalAccountTiles),
-    [subscriptionCatalog, paygCatalog, personalAccountTiles],
-  );
 
   return (
     <div className="px-5 py-5 space-y-6">
@@ -2421,102 +3063,60 @@ export default function Providers() {
         {savedMsg && <span className="text-xs font-medium text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-2.5 py-1 rounded-full">{savedMsg}</span>}
       </div>
 
-      {/* 个人源账户：订阅 / 按量（与个人页同逻辑，未登录也可配置） */}
-      <section ref={billingRef} className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-        <button
-          type="button"
-          onClick={() => setBillingOpen(v => !v)}
-          className="w-full flex items-start justify-between gap-3 px-5 py-4 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
-          aria-expanded={billingOpen}
-        >
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5">
-              <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('providers.personalAccounts.title')}</h2>
-              {!billingOpen && (
-                <span className="text-xs text-zinc-400 dark:text-zinc-500">
-                  {personalAccountsCountLabel(paidAccountsLoaded, personalAccountTiles.length, t)}
-                </span>
-              )}
-            </div>
-            {!billingOpen && (
-              <PersonalAccountsPreview
-                tiles={personalAccountTiles}
-                suggestions={accountCatalogSuggestions}
-                loaded={paidAccountsLoaded}
-                t={t}
-              />
-            )}
-            {billingOpen && (
-              <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">{t('providers.personalAccounts.hint')}</p>
-            )}
-          </div>
-          <span className="shrink-0 text-xs px-2.5 py-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 mt-0.5">
-            {billingOpen ? t('providers.personalAccounts.collapse') : t('providers.personalAccounts.expand')}
-          </span>
-        </button>
-        {billingOpen && (
-          <div className="border-t border-zinc-100 dark:border-zinc-800 px-1 pb-1 space-y-3">
-            <UserAccountsPanel
-              key={billingTab}
-              scope="billing"
-              initialTab={billingTab}
-              onAccountsChanged={loadUserPaidAccounts}
-              onInstanceAdded={(key) => setCredModalKey(key)}
-            />
-          </div>
-        )}
-      </section>
-
-      {/* 个人源：统一卡片容器（统计 + 列表 + 直连框到一起）*/}
+      {/* 个人源：统计 + 已添加卡片 + 添加源（默认定价一键添加，需改价在卡片内编辑） */}
       <section className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 space-y-4">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div>
-            <h2 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">{t('providers.group.local')}</h2>
-            <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">{t('providers.group.localHint')}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="inline-flex rounded-lg border border-zinc-300 dark:border-zinc-700 overflow-hidden text-xs">
-              <button type="button" onClick={() => setSourcesView('list')}
-                className={`px-2.5 py-1 ${sourcesView === 'list' ? 'bg-zinc-100 dark:bg-zinc-700 font-medium' : 'text-zinc-400'}`}>{t('psrc.view.list')}</button>
-              <button type="button" onClick={() => setSourcesView('model')}
-                className={`px-2.5 py-1 ${sourcesView === 'model' ? 'bg-zinc-100 dark:bg-zinc-700 font-medium' : 'text-zinc-400'}`}>{t('psrc.view.model')}</button>
+        <div className="space-y-3">
+          <div className="relative">
+            <div className="min-w-0 pr-[5.5rem]">
+              <h2 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">{t('providers.group.local')}</h2>
+              <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">{t('providers.group.localHint')}</p>
             </div>
-            {sourcesView !== 'model' && <PersonalFilterBar value={personalFilter} onChange={setPersonalFilter} t={t} />}
+            {/* Tab 固定卡片右上角，切换视图时不跳动 */}
+            <div className="absolute top-0 right-0">
+              <div className="inline-flex rounded-lg border border-zinc-300 dark:border-zinc-700 overflow-hidden text-xs shrink-0">
+                <button type="button" onClick={() => setSourcesView('model')}
+                  className={`px-2.5 py-1 ${sourcesView === 'model' ? 'bg-zinc-100 dark:bg-zinc-700 font-medium' : 'text-zinc-400'}`}>{t('psrc.view.model')}</button>
+                <button type="button" onClick={() => setSourcesView('list')}
+                  className={`px-2.5 py-1 ${sourcesView === 'list' ? 'bg-zinc-100 dark:bg-zinc-700 font-medium' : 'text-zinc-400'}`}>{t('psrc.view.list')}</button>
+              </div>
+            </div>
           </div>
+          {sourcesView !== 'model' && (
+            <PersonalFilterBar value={personalFilter} onChange={setPersonalFilter} t={t} />
+          )}
         </div>
 
         {accountsData && (
-          <div className="pb-3 border-b border-zinc-100 dark:border-zinc-800">
-            <AccountStatsView data={accountsData} t={t} filter={personalFilter} onFilter={setPersonalFilter} />
-          </div>
+          <SyncDiffBanner syncDiff={accountsData.sync_diff} t={t}
+            onAdoptServer={adoptServerTemplate} onDismissDrift={adoptServerTemplate} />
         )}
 
         {sourcesView === 'model' ? (
-          <PersonalSourceModelView instances={allSourceInstances} t={t} />
+          <PersonalSourceModelView instances={modelViewInstances} t={t} />
         ) : (
         <>
         <div className="grid grid-cols-2 gap-3">
-          {accountSources.map(p => {
-            const live = liveStateOf(p);
-            const useCustomCard = isCustomSubscriptionGatewayId(live.id, userSubscriptions) || !meta[live.id];
-            const acct = accountInstances.find(i => i.gateway_id === live.id);   // 对齐统计的图标/名称
+          {listedAccountInstances.map(inst => {
+            const gwId = inst.gateway_id;
+            const live = resolveProviderStubForInstance(inst, providers, meta, userPayg, userSubscriptions);
+            const cardMeta = resolveMetaForGateway(gwId, meta, inst, oauthById);
+            const useCustomCard = shouldUseCustomProviderCard(gwId, userSubscriptions, inst, cardMeta);
             return !useCustomCard
-              ? <ProviderCard key={live.id} provider={live} meta={meta[live.id]} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id])} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={acct?.name} displayIcon={acct?.icon} lockTemplate />
-              : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />;
+              ? <ProviderCard key={inst.id} provider={live} meta={cardMeta} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId], inst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={inst.name} displayIcon={inst.icon} lockTemplate accountInst={inst} {...accountBillingProps} />
+              : <CustomProviderCard key={inst.id} provider={live} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={providerPricing} paygCatalog={paygCatalog} accountInst={inst} {...accountBillingProps} />;
           })}
-          {accountSources.length === 0 && directFiltered.length === 0 && otherSources.length === 0 && (
+          {directFiltered.map(d => (
+            <DirectSourceCard key={d.agent_id} instance={{ ...d, _allBilling: directBilling }} t={t}
+              allowApiBilling={d.allow_api_billing === true}
+              canConvertToApi={d.can_convert_to_api === true}
+              onConvertToApi={convertDirectToApi}
+              onSave={async (patch) => { await saveUserAccounts(patch); loadUserPaidAccounts(); }}
+              onRemove={removeDirectSource} />
+          ))}
+          {listedAccountInstances.length === 0 && directFiltered.length === 0 && otherSources.length === 0 && (
             <p className="col-span-2 text-xs text-zinc-400 text-center py-6">{t('providers.filter.empty')}</p>
           )}
         </div>
-        {directFiltered.length > 0 && (
-          <div className="space-y-2 pt-3 border-t border-zinc-100 dark:border-zinc-800">
-            <h3 className="text-xs font-semibold text-zinc-500">{t('psrc.direct.section')}</h3>
-            {directFiltered.map(d => (
-              <DirectSourceCard key={d.agent_id} instance={{ ...d, _allBilling: directBilling }} t={t}
-                onSave={async (patch) => { await saveUserAccounts(patch); loadUserPaidAccounts(); }} />
-            ))}
-          </div>
-        )}
         {otherSources.length > 0 && (
           <div className="space-y-2 pt-3 border-t border-zinc-100 dark:border-zinc-800">
             <h3 className="text-xs font-semibold text-zinc-500">{t('psrc.other.section')}</h3>
@@ -2524,14 +3124,17 @@ export default function Providers() {
             <div className="grid grid-cols-2 gap-3">
               {otherSources.map(p => {
                 const live = liveStateOf(p);
-                const useCustomCard = isCustomSubscriptionGatewayId(live.id, userSubscriptions) || !meta[live.id];
+                const otherInst = accountInstances.find(i => i.gateway_id === live.id);
+                const otherMeta = resolveMetaForGateway(live.id, meta, otherInst, oauthById);
+                const useCustomCard = shouldUseCustomProviderCard(live.id, userSubscriptions, otherInst, otherMeta);
                 return !useCustomCard
-                  ? <ProviderCard key={live.id} provider={live} meta={meta[live.id]} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id])} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} />
-                  : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />;
+                  ? <ProviderCard key={live.id} provider={live} meta={otherMeta} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id], otherInst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} accountInst={otherInst} />
+                  : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={providerPricing} paygCatalog={paygCatalog} accountInst={otherInst} />;
               })}
             </div>
           </div>
         )}
+        {renderAddSourcePicker()}
         </>
         )}
       </section>
@@ -2555,8 +3158,12 @@ export default function Providers() {
         const gwId = OAUTH_SUB_SOURCE_TO_PID[credModalKey] || credModalKey;
         const p = personalPoolAll.find(pr => pr.id === gwId) || providers.find(pr => pr.id === gwId);
         const live = p ? liveStateOf(p) : null;
-        const useCustomCard = live && (isCustomSubscriptionGatewayId(live.id, userSubscriptions) || !meta[live.id]);
-        const acct = live && accountInstances.find(i => i.gateway_id === live.id);
+        const acct = live && (
+          accountInstances.find(i => i.gateway_id === live.id)
+          || accountInstances.find(i => OAUTH_SUB_SOURCE_TO_PID[i.source_id] === live.id)
+        );
+        const credMeta = resolveMetaForGateway(gwId, meta, acct, oauthById);
+        const useCustomCard = live && shouldUseCustomProviderCard(live.id, userSubscriptions, acct, credMeta);
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setCredModalKey(null)}>
             <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-lg p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
@@ -2565,9 +3172,9 @@ export default function Providers() {
               {!live ? (
                 <p className="text-xs text-zinc-400 py-6 text-center">{t('providers.add.loadingAccounts')}</p>
               ) : !useCustomCard ? (
-                <ProviderCard provider={live} meta={meta[gwId]} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} initialExpanded lockTemplate gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId])} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={acct?.name} displayIcon={acct?.icon} />
+                <ProviderCard provider={live} meta={credMeta} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} initialExpanded lockTemplate gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId], acct)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={acct?.name} displayIcon={acct?.icon} accountInst={acct} {...accountBillingProps} />
               ) : (
-                <CustomProviderCard provider={live} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onGoPayg={goPaygProfile} providerPricing={providerPricing} paygCatalog={paygCatalog} />
+                <CustomProviderCard provider={live} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={providerPricing} paygCatalog={paygCatalog} accountInst={acct} {...accountBillingProps} />
               )}
               <div className="flex justify-end pt-1">
                 <button type="button" onClick={() => setCredModalKey(null)} className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 text-white">{t('providers.cred.done')}</button>
@@ -2576,6 +3183,18 @@ export default function Providers() {
           </div>
         );
       })()}
+
+      {/* 定价策略编辑（账户类型级，影响该类型下所有实例的计费基准） */}
+      {templateEditing && (
+        <TemplateEditModal template={templateEditing}
+          overrides={accountsData?.source_template_overrides || {}}
+          payg={userPayg} subs={userSubscriptions}
+          customTemplates={accountsData?.custom_source_templates || {}}
+          paygCatalog={paygCatalog}
+          editOnly
+          onSave={(patch) => saveAccountsPatch(patch)}
+          onClose={() => setTemplateEditing(null)} t={t} />
+      )}
     </div>
   );
 }

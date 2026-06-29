@@ -53,6 +53,104 @@ app_install_urls:
   grok:           https://x.ai/cli
   workbuddy:      https://www.codebuddy.ai
 
+# 百宝箱「卸载」跳转（无专属页时前端回退 app_install_urls 同 id 链接）
+app_uninstall_urls: {}
+
+# 百宝箱安装/卸载说明（弹框展示；按 mac / win 区分，服务端可下发覆盖）
+app_install_guides:
+  claude-code:
+    mac: |
+      1. 点击下方「打开官方链接」下载 Claude Code
+      2. 或终端执行：brew install --cask claude-code
+      3. 安装完成后点击百宝箱右上角刷新；图标变彩色即表示已识别
+    win: |
+      1. 点击下方「打开官方链接」下载 Windows 安装包
+      2. 运行安装程序并按提示完成安装
+      3. 安装完成后点击百宝箱右上角刷新；图标变彩色即表示已识别
+  codex:
+    mac: |
+      1. 打开官方链接，按文档安装 Codex CLI
+      2. 终端执行 codex --version 确认安装成功
+      3. 刷新百宝箱后，可在下方应用列表中纳管
+    win: |
+      1. 打开官方链接，按文档安装 Codex CLI（Windows）
+      2. 在 PowerShell 执行 codex --version 确认安装成功
+      3. 刷新百宝箱后，可在下方应用列表中纳管
+  gemini-cli:
+    mac: |
+      1. 打开官方 GitHub 链接，按文档安装 Gemini CLI
+      2. 终端执行 gemini --version 确认可用
+      3. 刷新百宝箱后即可在列表中纳管
+    win: |
+      1. 打开官方 GitHub 链接，按 Windows 安装说明操作
+      2. 在 PowerShell 执行 gemini --version 确认可用
+      3. 刷新百宝箱后即可在列表中纳管
+  cursor:
+    mac: |
+      1. 打开官方链接下载 macOS 版 Cursor
+      2. 拖入「应用程序」文件夹并至少启动一次
+      3. 刷新百宝箱；图标变彩色即表示已识别
+    win: |
+      1. 打开官方链接下载 Windows 安装包
+      2. 运行安装程序并至少启动一次
+      3. 刷新百宝箱；图标变彩色即表示已识别
+  claude-desktop:
+    mac: |
+      1. 打开官方链接下载 Claude for macOS
+      2. 安装并登录后，回到网关页在列表中纳管
+      3. 若需第三方网关，请先在 Desktop 中启用开发者模式
+    win: |
+      1. 打开官方链接下载 Claude for Windows
+      2. 安装并登录后，回到网关页在列表中纳管
+      3. 若需第三方网关，请先在 Desktop 中启用开发者模式
+  codex-desktop:
+    mac: |
+      1. 打开官方链接下载 Codex macOS 版
+      2. 安装完成后刷新百宝箱
+      3. 在下方应用列表中点击「纳管」并绑定路由
+    win: |
+      1. 打开官方链接下载 Codex Windows 版
+      2. 安装完成后刷新百宝箱
+      3. 在下方应用列表中点击「纳管」并绑定路由
+
+app_uninstall_guides:
+  claude-code:
+    mac: |
+      1. 打开「应用程序」，将 Claude Code 拖入废纸篓
+      2. 或通过 Homebrew：brew uninstall --cask claude-code
+      3. 刷新百宝箱，图标将变为灰色
+    win: |
+      1. 打开「设置 → 应用 → 已安装的应用」
+      2. 找到 Claude Code，点击「卸载」
+      3. 刷新百宝箱，图标将变为灰色
+  codex:
+    mac: |
+      1. 若通过 npm 安装：npm uninstall -g @openai/codex（以官方文档为准）
+      2. 若通过 Homebrew 等安装，使用对应 uninstall 命令
+      3. 刷新百宝箱确认已卸载
+    win: |
+      1. 若通过 npm 安装：npm uninstall -g @openai/codex（以官方文档为准）
+      2. 若在「应用和功能」中有条目，请一并卸载
+      3. 刷新百宝箱确认已卸载
+  cursor:
+    mac: |
+      1. 退出 Cursor，将应用从「应用程序」中删除
+      2. 可选：删除 ~/.cursor 以清除本地数据
+      3. 刷新百宝箱确认状态
+    win: |
+      1. 退出 Cursor，在「设置 → 应用」中卸载
+      2. 可选：删除 %USERPROFILE%\.cursor 以清除本地数据
+      3. 刷新百宝箱确认状态
+  claude-desktop:
+    mac: |
+      1. 退出 Claude，从「应用程序」中删除
+      2. 可选：删除 ~/Library/Application Support/Claude
+      3. 刷新百宝箱确认状态
+    win: |
+      1. 退出 Claude，在「设置 → 应用和功能」中卸载
+      2. 可选：删除 %APPDATA%\Claude
+      3. 刷新百宝箱确认状态
+
 # ════════ 会话用量解析（内置，YAML 驱动的解释器）════════
 # 补录「不走本网关、直连官方」的用量：扫各工具的会话文件(JSONL/JSON)解析 token，
 # 写库带 request_id → 与网关实时记录(proxy)按 request_id 去重，同一次调用只记一次。

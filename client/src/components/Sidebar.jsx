@@ -87,6 +87,9 @@ export default function Sidebar() {
     </p>
   ) : null;
 
+  // 圈子 / 贡献需登录；未登录时仍展示菜单项，点击跳转登录页
+  const LOGIN_PATHS = new Set(['/circles', '/contribute']);
+
   return (
     <aside className="w-[148px] flex flex-col pb-5 bg-white/55 dark:bg-zinc-900 backdrop-blur-2xl border-r border-zinc-900/[0.06] dark:border-white/[0.06] shrink-0">
       {/* Logo — pt-9 避开 macOS 交通灯；electron-drag 允许拖动窗口 */}
@@ -98,23 +101,36 @@ export default function Sidebar() {
         </div>
       </div>
 
-      {/* Nav items —— 游客隐藏「贡献」(p2p 需登录) */}
+      {/* Nav items */}
       <nav className="electron-no-drag flex-1 flex flex-col gap-0.5 px-2">
-        {NAV.filter(({ to }) => to !== '/contribute' || user).map(({ to, icon, labelKey }) => (
-          <NavLink
-            key={to}
-            to={to}
-            className={({ isActive }) =>
-              'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ' +
-              (isActive
-                ? 'bg-zinc-200/80 dark:bg-white/10 text-zinc-900 dark:text-white font-semibold'
-                : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200/60 dark:hover:bg-white/5 hover:text-zinc-900 dark:hover:text-zinc-100')
-            }
-          >
-            <span className="w-5 h-5 shrink-0 flex items-center justify-center">{icon}</span>
-            <span className="truncate font-medium">{t(labelKey)}</span>
-          </NavLink>
-        ))}
+        {NAV.map(({ to, icon, labelKey }) => {
+          const navCls = (active) =>
+            'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors w-full text-left ' +
+            (active
+              ? 'bg-zinc-200/80 dark:bg-white/10 text-zinc-900 dark:text-white font-semibold'
+              : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200/60 dark:hover:bg-white/5 hover:text-zinc-900 dark:hover:text-zinc-100');
+
+          if (!user && LOGIN_PATHS.has(to)) {
+            return (
+              <button
+                key={to}
+                type="button"
+                onClick={() => navigate('/login', { state: { from: to } })}
+                className={navCls(false)}
+              >
+                <span className="w-5 h-5 shrink-0 flex items-center justify-center">{icon}</span>
+                <span className="truncate font-medium">{t(labelKey)}</span>
+              </button>
+            );
+          }
+
+          return (
+            <NavLink key={to} to={to} className={({ isActive }) => navCls(isActive)}>
+              <span className="w-5 h-5 shrink-0 flex items-center justify-center">{icon}</span>
+              <span className="truncate font-medium">{t(labelKey)}</span>
+            </NavLink>
+          );
+        })}
       </nav>
 
       {/* 用户 / 未登录 + 设置：底部同一行（布局一致） */}

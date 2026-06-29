@@ -1480,9 +1480,10 @@ function registerIPC() {
   const SOURCE_SECTIONS = new Set(['subscription_plans', 'subscription_apps', 'api_subscription_apps', 'payg_providers']);
   const ROUTES_SECTIONS = new Set(['scene_routes']);
 
-  function applyConfigDoc(parsed, source) {
+  function applyConfigDoc(parsed, source, opts = {}) {
     if (!parsed || typeof parsed !== 'object') return { ok: false, error: '无效的 yaml 格式' };
     const yamlLib = require('js-yaml');
+    const replace = opts.replace === true;
     const applied = { tools: false, routes: false };
     const addedApps = [];   // 本次同步「新增」的工具/应用（id 之前没有、现在有）
 
@@ -1498,19 +1499,40 @@ function registerIPC() {
         for (const t of configLoader.tools()) beforeIds.add('tool:' + t.id);
         for (const a of (configLoader.apiKeyApps() || [])) beforeIds.add('app:' + a.id);
       } catch {}
-      // 各自合并已有文件再写，避免部分下发抹掉其它段
+      // replace=true：服务端全量覆盖；否则与本地文件合并
       const writeMerged = (file, sectionSet) => {
-        let existing = {};
-        try { if (fs.existsSync(file)) existing = yamlLib.load(fs.readFileSync(file, 'utf8')) || {}; } catch {}
-        const doc = { ...existing };
-        for (const k of Object.keys(parsed)) {
-          if (sectionSet.has(k) || k === 'version') doc[k] = parsed[k];
+        let doc;
+        if (replace) {
+          doc = { version: parsed.version || 1 };
+          for (const k of Object.keys(parsed)) {
+            if (sectionSet.has(k) || k === 'version') doc[k] = parsed[k];
+          }
+        } else {
+          let existing = {};
+          try { if (fs.existsSync(file)) existing = yamlLib.load(fs.readFileSync(file, 'utf8')) || {}; } catch {}
+          doc = { ...existing };
+          for (const k of Object.keys(parsed)) {
+            if (sectionSet.has(k) || k === 'version') doc[k] = parsed[k];
+          }
         }
         fs.writeFileSync(file, yamlLib.dump(doc, { lineWidth: 120 }), 'utf8');
       };
       if (hasAppSection) writeMerged(TB_YAML, APP_SECTIONS);
       if (hasSourceSection) writeMerged(TB_TOOLS_YAML, SOURCE_SECTIONS);
       configLoader.load();
+      // 源目录更新后：清理本地自定义/过期账户类型与实例
+      if (hasSourceSection) {
+        try {
+          const cfg = readLocalConfig();
+          const { cfg: pruned, changed } = billingConfigMod.pruneLocalBillingAgainstServer(cfg);
+          if (changed) {
+            applyUserBillingCfg(pruned);
+            console.log('[config] 已按服务端 catalog 清理本地过期计费数据');
+          }
+        } catch (e) {
+          console.warn('[config] prune local billing failed:', e.message);
+        }
+      }
       applied.tools = true;
 
       // 应用后：算出新增的工具/应用（id 在 before 集合里没有的）
@@ -1603,15 +1625,43 @@ function registerIPC() {
     } catch (e) { return { ok: false, error: e.message }; }
   });
 
+  /** 从 Token Bank 服务端拉取 apps / sources / scenes 配置 */
+  async function pullServerConfig(serverUrl, token, { replace = false } = {}) {
+    const base = String(serverUrl || '').replace(/\/$/, '').replace(/\/(api|v\d+)(\/.*)?$/, '');
+    if (!base || !token) return { ok: false, error: 'missing_auth' };
+    const results = [];
+    for (const ep of ['/api/config/apps', '/api/config/sources', '/api/config/scenes']) {
+      const url = base + ep;
+      try {
+        const text = await fetchYaml(url, token);
+        const parsed = require('js-yaml').load(text);
+        // apps/sources 全量覆盖本地默认；scenes 仍增量合并
+        const shouldReplace = replace && (ep.includes('/apps') || ep.includes('/sources'));
+        const r = applyConfigDoc(parsed, url, { replace: shouldReplace });
+        results.push({ endpoint: ep, ...r });
+      } catch (e) {
+        results.push({ endpoint: ep, ok: false, error: e.message });
+      }
+    }
+    return { ok: results.some(r => r.ok), results };
+  }
+
   ipcMain.handle('toolsConfig:importUrl', async (_e, arg) => {
-    // 兼容旧签名（字符串 url）与新签名（{ url, token }）
-    const url   = typeof arg === 'string' ? arg : arg?.url;
-    const token = typeof arg === 'string' ? null : arg?.token;
+    // 兼容旧签名（字符串 url）与新签名（{ url, token, replace }）
+    const url     = typeof arg === 'string' ? arg : arg?.url;
+    const token   = typeof arg === 'string' ? null : arg?.token;
+    const replace = typeof arg === 'string' ? false : !!arg?.replace;
     try {
       const text = await fetchYaml(url, token);
       const parsed = require('js-yaml').load(text);
-      return applyConfigDoc(parsed, url);
+      const u = String(url || '');
+      const isServerCatalog = u.includes('/config/apps') || u.includes('/config/sources');
+      return applyConfigDoc(parsed, url, { replace: replace || isServerCatalog });
     } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('toolsConfig:syncRemote', async (_e, { token, serverUrl, replace = true } = {}) => {
+    return pullServerConfig(serverUrl, token, { replace });
   });
 
   ipcMain.handle('toolsConfig:reset', () => {
@@ -1822,7 +1872,10 @@ function registerIPC() {
     } catch { return []; }
   }
   ipcMain.handle('localConfig:getUserAccounts', async (_e, auth = {}) => {
-    const cfg = await pullUserBilling(auth);
+    let cfg = await pullUserBilling(auth);
+    const { cfg: pruned, changed } = billingConfigMod.pruneLocalBillingAgainstServer(cfg);
+    if (changed) applyUserBillingCfg(pruned);
+    cfg = pruned;
     return billingConfigMod.getUserAccounts(cfg, { boundDirectAgentIds: boundDirectAgentIds() });
   });
   ipcMain.handle('localConfig:setUserAccounts', async (_e, payload = {}) => {
@@ -2000,6 +2053,10 @@ function registerIPC() {
     const configLoader = require('./config-loader');
     // 安装链接来自配置（app_install_urls：内置默认兜底 + 服务端下发可覆盖），不硬编码
     const INSTALL_URLS = configLoader.appInstallUrls();
+    const UNINSTALL_URLS = configLoader.appUninstallUrls();
+    const INSTALL_GUIDES = configLoader.appInstallGuides();
+    const UNINSTALL_GUIDES = configLoader.appUninstallGuides();
+    const guide = (map, id) => configLoader.resolveGuide(map[id]);
     // tools 段 yaml 无 icon 字段 → 给 CLI 工具一组兜底图标（与 apps:list 的 TOOL_ICONS 同源）
     const TOOL_ICON = { 'claude-code': '🤖', 'codex': '💻', 'gemini-cli': '🔮', 'opencode': '📝', 'hermes': '🧠' };
     const out = [];
@@ -2009,13 +2066,23 @@ function registerIPC() {
       // ① CLI 工具（shim 注入）：agentLinker.list() 已带 installed
       for (const tool of agentLinker.list()) {
         add({ id: tool.id, name: tool.name || tool.id, icon: TOOL_ICON[tool.id] || '🤖',
-              installed: !!tool.installed, install_url: INSTALL_URLS[tool.id] || null, kind: 'cli' });
+              installed: !!tool.installed,
+              install_url: INSTALL_URLS[tool.id] || null,
+              uninstall_url: UNINSTALL_URLS[tool.id] || null,
+              install_guide: guide(INSTALL_GUIDES, tool.id),
+              uninstall_guide: guide(UNINSTALL_GUIDES, tool.id),
+              kind: 'cli' });
       }
       // ② 桌面应用（写配置文件）：被管理员禁用(enable_3p:false)的不展示
       for (const d of (configLoader.apiKeyApps() || [])) {
         if (d.enable_3p === false) continue;
         add({ id: d.id, name: d.name || d.id, icon: d.icon || '🖥️',
-              installed: apiKeyAppDetected(d), install_url: INSTALL_URLS[d.id] || null, kind: 'desktop' });
+              installed: apiKeyAppDetected(d),
+              install_url: INSTALL_URLS[d.id] || null,
+              uninstall_url: UNINSTALL_URLS[d.id] || null,
+              install_guide: guide(INSTALL_GUIDES, d.id),
+              uninstall_guide: guide(UNINSTALL_GUIDES, d.id),
+              kind: 'desktop' });
       }
       // ③ 仅统计（direct_only 会话源，如 Cursor）：会话目录存在即视为已安装
       for (const s of (configLoader.sessionSources() || [])) {
@@ -2023,7 +2090,12 @@ function registerIPC() {
         let installed = false;
         try { installed = !!s.root && fs.existsSync(configLoader.expandHome(s.root)); } catch {}
         add({ id: s.agent_id, name: s.app_name || s.agent_id, icon: s.app_icon || '🖱',
-              installed, install_url: INSTALL_URLS[s.agent_id] || null, kind: 'direct' });
+              installed,
+              install_url: INSTALL_URLS[s.agent_id] || null,
+              uninstall_url: UNINSTALL_URLS[s.agent_id] || null,
+              install_guide: guide(INSTALL_GUIDES, s.agent_id),
+              uninstall_guide: guide(UNINSTALL_GUIDES, s.agent_id),
+              kind: 'direct' });
       }
     } catch (e) { console.error('[apps:supported] failed:', e.message); }
     // 已安装靠前（彩色在左），其次有安装链接的，最后无链接的小众工具

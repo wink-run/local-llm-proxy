@@ -7,13 +7,54 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLang } from '../store/lang';
 import { useCurrency } from '../store/currency';
 import ServiceIcon from './ServiceIcon';
+import { resolveBrandIcon } from '../lib/brandIcons';
+
+/** 模型名（字符串或 { name/id } 对象） */
+function modelEntryName(m) {
+  if (typeof m === 'string') return m.trim();
+  return String(m?.name || m?.id || '').trim();
+}
+
+/** 供给源 logo（紧凑图标，hover 显示名称） */
+function SourceProviderLogo({ inst }) {
+  const name = inst.name || inst.label || inst.source_id;
+  const brand = resolveBrandIcon(`${inst.source_id || inst.provider_id || ''} ${name || ''}`);
+  return (
+    <span title={name} className="inline-flex items-center justify-center w-4 h-4 shrink-0">
+      {brand
+        ? <img src={brand} alt="" className="w-3.5 h-3.5 object-contain" draggable={false} />
+        : <span className="text-[10px] leading-none">{inst.icon || '🔧'}</span>}
+    </span>
+  );
+}
 
 const PRICE_FIELDS = ['in', 'out', 'cacheRead'];
 
+function modelTypeLabel(type, t) {
+  if (type === 'image') return t('providers.models.typeImage');
+  if (type === 'embedding') return t('providers.models.typeEmbedding');
+  return t('providers.models.typeText');
+}
+
+function modelTypeBtnClass(type) {
+  if (type === 'image') {
+    return 'bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 hover:bg-purple-200 dark:hover:bg-purple-800/60';
+  }
+  if (type === 'embedding') {
+    return 'bg-teal-50 dark:bg-teal-900/20 text-teal-600 dark:text-teal-400 hover:bg-teal-100 dark:hover:bg-teal-900/40';
+  }
+  return 'bg-blue-50 dark:bg-blue-900/20 text-blue-500 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40';
+}
+
 /** 计费表格（模型 → in/out/cacheRead）。价格框编辑中用本地草稿字符串（允许 "2." 这类小数中间态），
- *  失焦(onBlur)才把字符串交给 onCell 提交，避免「输一个字就被 Number() 吃掉/被 reload 刷回」。 */
-function PricingTable({ rows, onCell, onAddModel, onRemoveModel, t }) {
+ *  失焦(onBlur)才把字符串交给 onCell 提交，避免「输一个字就被 Number() 吃掉/被 reload 刷回」。
+ *  withModality：添加时可选取模态（文本/图像/嵌入），行内可点击切换。 */
+export function PricingTable({
+  rows, onCell, onAddModel, onRemoveModel, t,
+  withModality = false, modelTypes = {}, onToggleType,
+}) {
   const [newModel, setNewModel] = useState('');
+  const [inputType, setInputType] = useState('chat');
   const [draft, setDraft] = useState({});   // 'model:field' → 编辑中的原始字符串
   const keyOf = (m, f) => `${m}:${f}`;
   const cellVal = (m, f, num) => {
@@ -25,39 +66,82 @@ function PricingTable({ rows, onCell, onAddModel, onRemoveModel, t }) {
     setDraft(d => { const n = { ...d }; delete n[keyOf(m, f)]; return n; });
     onCell(m, f, str);
   };
+  const resolveType = (name, row) => modelTypes[name] || row?.type || 'chat';
+
+  // 模型名单独占列；模态 badge 独立列，避免长 id 被 truncate
+  const rowGrid = withModality
+    ? 'grid-cols-[minmax(0,1fr)_1.75rem_repeat(3,minmax(2.5rem,3rem))_1.25rem]'
+    : 'grid-cols-[minmax(0,1fr)_repeat(3,minmax(2.5rem,3rem))_1.25rem]';
+
   return (
-    <div className="space-y-1.5">
-      <div className="grid grid-cols-[1fr_repeat(3,minmax(0,4rem))_auto] gap-1 text-[10px] text-zinc-400 px-1">
-        <span>{t('psrc.model')}</span>
-        {PRICE_FIELDS.map(f => <span key={f} className="text-right">{f}</span>)}
+    <div className="overflow-x-auto -mx-1 px-1">
+      <div className={`min-w-[17rem] space-y-1.5 ${withModality ? 'min-w-[20rem]' : ''}`}>
+      <div className={`grid ${rowGrid} gap-x-1.5 gap-y-0.5 text-[10px] text-zinc-400 px-0.5`}>
+        <span className="min-w-0">{t('psrc.model')}</span>
+        {withModality && <span className="text-center">{t('providers.models.modalityCol')}</span>}
+        {PRICE_FIELDS.map(f => <span key={f} className="text-right tabular-nums">{f}</span>)}
         <span />
       </div>
       {rows.length === 0 && (
         <p className="text-xs text-zinc-400 py-1.5 text-center">{t('psrc.noModels')}</p>
       )}
-      {rows.map(r => (
-        <div key={r.model} className={`grid grid-cols-[1fr_repeat(3,minmax(0,4rem))_auto] gap-1 items-center ${r._override ? 'bg-amber-50/50 dark:bg-amber-900/10 rounded' : ''}`}>
-          <span className="text-xs font-mono text-zinc-700 dark:text-zinc-300 truncate px-1" title={r.model}>{r.model}</span>
-          {PRICE_FIELDS.map(f => (
-            <input key={f} type="text" inputMode="decimal" value={cellVal(r.model, f, r[f])} placeholder="—"
-              onChange={e => onInput(r.model, f, e.target.value)}
-              onBlur={e => onCommit(r.model, f, e.target.value)}
-              className="text-xs text-right bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-1 py-1 w-full tabular-nums" />
-          ))}
-          {onRemoveModel
-            ? <button type="button" onClick={() => onRemoveModel(r.model)} className="text-xs text-red-400 hover:text-red-500 px-1">×</button>
-            : <span />}
-        </div>
-      ))}
+      {rows.map(r => {
+        const mType = resolveType(r.model, r);
+        return (
+          <div key={r.model} className={`grid ${rowGrid} gap-x-1.5 gap-y-0.5 items-start ${r._override ? 'bg-amber-50/50 dark:bg-amber-900/10 rounded px-0.5 py-0.5' : ''}`}>
+            <span
+              className="text-xs font-mono text-zinc-700 dark:text-zinc-300 break-all leading-snug px-0.5 py-0.5 min-w-0"
+              title={r.model}
+            >
+              {r.model}
+            </span>
+            {withModality && onToggleType && (
+              <button
+                type="button"
+                onClick={() => onToggleType(r.model)}
+                title={t('providers.models.toggleType')}
+                className={`shrink-0 w-7 h-6 flex items-center justify-center text-[10px] font-sans rounded border border-zinc-200 dark:border-zinc-700 transition-colors ${modelTypeBtnClass(mType)}`}
+              >
+                {modelTypeLabel(mType, t)}
+              </button>
+            )}
+            {PRICE_FIELDS.map(f => (
+              <input key={f} type="text" inputMode="decimal" value={cellVal(r.model, f, r[f])} placeholder="—"
+                onChange={e => onInput(r.model, f, e.target.value)}
+                onBlur={e => onCommit(r.model, f, e.target.value)}
+                className="text-xs text-right bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-1 py-1 w-full tabular-nums min-w-0" />
+            ))}
+            {onRemoveModel
+              ? <button type="button" onClick={() => onRemoveModel(r.model)} className="text-xs text-red-400 hover:text-red-500 pt-1">×</button>
+              : <span />}
+          </div>
+        );
+      })}
       {onAddModel && (
-        <div className="flex gap-1 pt-1">
+        <div className="flex flex-wrap gap-1.5 pt-1 items-center">
           <input value={newModel} onChange={e => setNewModel(e.target.value)} placeholder={t('psrc.addModelPh')}
-            className="flex-1 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1 font-mono" />
+            className="flex-1 min-w-[8rem] text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1 font-mono" />
+          {withModality && (
+            <select value={inputType} onChange={e => setInputType(e.target.value)}
+              className="shrink-0 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-1.5 py-1 text-zinc-700 dark:text-zinc-300">
+              <option value="chat">{t('providers.models.chat')}</option>
+              <option value="image">{t('providers.models.image')}</option>
+              <option value="embedding">{t('providers.models.embedding')}</option>
+            </select>
+          )}
           <button type="button" disabled={!newModel.trim()}
-            onClick={() => { if (newModel.trim()) { onAddModel(newModel.trim()); setNewModel(''); } }}
-            className="text-xs px-2 py-1 rounded bg-zinc-100 dark:bg-zinc-700 disabled:opacity-50">+ {t('psrc.add')}</button>
+            onClick={() => {
+              if (newModel.trim()) {
+                onAddModel(newModel.trim(), withModality ? inputType : undefined);
+                setNewModel('');
+              }
+            }}
+            className="shrink-0 text-xs px-2 py-1 rounded bg-zinc-100 dark:bg-zinc-700 disabled:opacity-50 whitespace-nowrap">
+            + {withModality ? t('providers.models.add') : t('psrc.add')}
+          </button>
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -102,109 +186,207 @@ export function AccountStatsView({ data, t, filter = 'all', onFilter }) {
   );
 }
 
-// ── 第3块：直连源卡（设计费 + 没设红警告）────────────────────────────────────────
-export function DirectSourceCard({ instance, onSave, t }) {
-  // 直连源计费类型与上面账户一致：订阅(月费) / API(按模型)。二选一，点「保存」才提交。
+/** 可折叠「模型和计费」区块，默认收起 */
+export function CollapsibleBillingPanel({ hint, summary, t, children }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-t border-zinc-100 dark:border-zinc-800 px-4 py-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">{t('providers.billing.section')}</span>
+          {!open && summary && (
+            <span className="text-[11px] text-zinc-400 truncate">{summary}</span>
+          )}
+        </div>
+        <button type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}
+          className="text-xs px-2.5 py-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors shrink-0">
+          {open ? t('providers.models.collapse') : t('providers.models.expand')}
+        </button>
+      </div>
+      {open && (
+        <div className="space-y-3 mt-3">
+          {hint && <p className="text-[11px] text-zinc-400">{hint}</p>}
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── 第3块：直连源卡（与其它供给源卡片同风格，编辑自动保存）────────────────────────
+export function DirectSourceCard({
+  instance, onSave, onRemove, allowApiBilling = false, canConvertToApi = false, onConvertToApi, t,
+}) {
   const baseMonthly = instance.monthly_usd != null ? String(instance.monthly_usd) : '';
   const basePricing = instance.pricing || {};
-  const baseApi = instance.mode === 'api';
+  const baseApi = allowApiBilling && instance.mode === 'api';
   const [monthly, setMonthly] = useState(baseMonthly);
   const [pricing, setPricing] = useState(basePricing);
-  const [isApi, setIsApi] = useState(baseApi);   // false=订阅(月费)  true=API(按模型)
-  const [dirty, setDirty] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [isApi, setIsApi] = useState(baseApi);
+  const [removing, setRemoving] = useState(false);
+  const [converting, setConverting] = useState(false);
+  const saveTimer = useRef(null);
+  const savingRef = useRef(false);
 
-  // reload 后（无未保存改动时）跟随最新 props；有未保存改动则保留用户输入不被冲掉
   const sig = `${baseMonthly}|${JSON.stringify(basePricing)}|${baseApi}`;
   const sigRef = useRef(sig);
   useEffect(() => {
     if (sigRef.current === sig) return;
     sigRef.current = sig;
-    if (!dirty) { setMonthly(baseMonthly); setPricing(basePricing); setIsApi(baseApi); }
+    if (savingRef.current) return;
+    setMonthly(baseMonthly);
+    setPricing(basePricing);
+    setIsApi(baseApi);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig]);
 
+  useEffect(() => {
+    if (!allowApiBilling && isApi) setIsApi(false);
+  }, [allowApiBilling, isApi]);
+
   const rows = Object.keys(pricing).map(m => ({ model: m, ...pricing[m] }));
-  // 草稿是否真的偏离基线（切回原状、改了又改回都不算改动）
-  const dirtyOf = (m, p, a) =>
-    m !== baseMonthly || a !== baseApi || JSON.stringify(p) !== JSON.stringify(basePricing);
+  const hasPricing = !!instance.has_pricing;
+  // Cursor 等不可转 API 的 App 订阅：仅说明直连官方，不单独罗列模型名
+  const isDirectAppSub = !canConvertToApi && !isApi;
+
+  function buildPatch(m, p, a) {
+    const num = m.trim() === '' ? null : Number(m);
+    const billing = { ...(instance._allBilling || {}) };
+    billing[instance.agent_id] = {
+      ...(billing[instance.agent_id] || {}),
+      mode: (allowApiBilling && a) ? 'api' : 'subscription',
+      monthly_usd: (num != null && Number.isFinite(num)) ? num : null,
+      pricing: allowApiBilling && a ? p : {},
+    };
+    return { direct_source_billing: billing };
+  }
+
+  const flushSave = async (m, p, a) => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    savingRef.current = true;
+    try { await onSave(buildPatch(m, p, a)); }
+    finally { savingRef.current = false; }
+  };
+
+  const scheduleSave = (m, p, a) => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => flushSave(m, p, a), 400);
+  };
+
   const onCell = (model, field, val) => {
     const next = { ...pricing, [model]: { ...(pricing[model] || {}) } };
     if (val === '' || val == null) delete next[model][field];
     else { const num = Number(val); if (Number.isFinite(num)) next[model][field] = num; }
     setPricing(next);
-    setDirty(dirtyOf(monthly, next, isApi));
+    scheduleSave(monthly, next, isApi);
   };
-  const onAddModel = (m) => { if (pricing[m]) return; const next = { ...pricing, [m]: {} }; setPricing(next); setDirty(dirtyOf(monthly, next, isApi)); };
-  const onRemoveModel = (m) => { const next = { ...pricing }; delete next[m]; setPricing(next); setDirty(dirtyOf(monthly, next, isApi)); };
-
-  const doSave = async () => {
-    setSaving(true);
-    const num = monthly.trim() === '' ? null : Number(monthly);
-    const billing = { ...(instance._allBilling || {}) };
-    billing[instance.agent_id] = {
-      ...(billing[instance.agent_id] || {}),
-      mode: isApi ? 'api' : 'subscription',
-      monthly_usd: (num != null && Number.isFinite(num)) ? num : null,
-      pricing,
-    };
-    try { await onSave({ direct_source_billing: billing }); setDirty(false); }
-    finally { setSaving(false); }
+  const onAddModel = (m) => {
+    if (pricing[m]) return;
+    const next = { ...pricing, [m]: {} };
+    setPricing(next);
+    scheduleSave(monthly, next, isApi);
   };
-  const reset = () => { setMonthly(baseMonthly); setPricing(basePricing); setIsApi(baseApi); setDirty(false); };
-  const toggleMode = () => { const nv = !isApi; setIsApi(nv); setDirty(dirtyOf(monthly, pricing, nv)); };
+  const onRemoveModel = (m) => {
+    const next = { ...pricing };
+    delete next[m];
+    setPricing(next);
+    scheduleSave(monthly, next, isApi);
+  };
 
-  const hasPricing = !!instance.has_pricing;
+  const doRemove = async () => {
+    if (!onRemove) return;
+    setRemoving(true);
+    try { await onRemove(instance); }
+    finally { setRemoving(false); }
+  };
+
+  const doConvert = async () => {
+    if (!onConvertToApi) return;
+    setConverting(true);
+    try { await onConvertToApi(instance); }
+    finally { setConverting(false); }
+  };
+
+  const toggleMode = () => {
+    const nv = !isApi;
+    setIsApi(nv);
+    flushSave(monthly, pricing, nv);
+  };
+
+  const billingSummary = (() => {
+    const parts = [];
+    if (!isApi && monthly.trim()) parts.push(`$${monthly.trim()}${t('psrc.direct.monthlyUnit')}`);
+    if (allowApiBilling && isApi && rows.length) parts.push(t('providers.billing.modelCount', { n: rows.length }));
+    return parts.join(' · ') || null;
+  })();
+
   return (
-    <div className={`rounded-2xl border p-4 space-y-3 ${hasPricing ? 'border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800/40' : 'border-red-300 dark:border-red-800/50 bg-red-50/40 dark:bg-red-900/10'}`}>
-      <div className="flex items-center gap-2">
-        <ServiceIcon id={instance.source_id} name={instance.label} icon={instance.icon} />
-        <span className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{instance.name}</span>
-        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300">{t('psrc.directTag')}</span>
-        <span className={`text-[10px] px-1.5 py-0.5 rounded ${isApi ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300' : 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300'}`}>
-          {isApi ? t('psrc.direct.apiTag') : t('psrc.direct.subTag')}
-        </span>
-        {!hasPricing && (
-          <span className="ml-auto text-xs text-red-500 font-medium">⚠ {t('psrc.direct.noPricing')}</span>
-        )}
-      </div>
-      <div className="flex items-center gap-2">
-        {isApi ? (
-          <label className="text-xs text-zinc-500 dark:text-zinc-400">{t('psrc.direct.apiTitle')}</label>
-        ) : (
-          <>
-            <label className="text-xs text-zinc-500 dark:text-zinc-400">{t('psrc.direct.subTitle')}</label>
-            <span className="text-xs text-zinc-400">$</span>
-            <input type="text" inputMode="decimal" value={monthly} placeholder="0"
-              onChange={e => { const v = e.target.value; setMonthly(v); setDirty(dirtyOf(v, pricing, isApi)); }}
-              className="w-24 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1 tabular-nums" />
-            <span className="text-xs text-zinc-400">{t('psrc.direct.monthlyUnit')}</span>
-          </>
-        )}
-        <button type="button" onClick={toggleMode} className="ml-auto text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
-          {isApi ? t('psrc.direct.switchSub') : t('psrc.direct.switchApi')}
-        </button>
-      </div>
-      {isApi && (
-        <div className="pt-1 border-t border-zinc-100 dark:border-zinc-800">
-          <PricingTable rows={rows} onCell={onCell} onAddModel={onAddModel} onRemoveModel={onRemoveModel} t={t} />
+    <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+      <div className="flex items-start gap-3 p-3.5">
+        <div className="w-8 h-8 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-[15px] shrink-0 mt-0.5">
+          <ServiceIcon id={instance.source_id} name={instance.label} icon={instance.icon} />
         </div>
-      )}
-      <div className="flex items-center gap-2 pt-1 border-t border-zinc-100 dark:border-zinc-800">
-        {dirty && <span className="text-xs text-amber-500">{t('psrc.direct.unsaved')}</span>}
-        <div className="ml-auto flex items-center gap-2">
-          {dirty && (
-            <button type="button" onClick={reset} disabled={saving}
-              className="text-xs px-3 py-1 rounded-lg text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 disabled:opacity-50">
-              {t('psrc.direct.cancel')}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{instance.name}</span>
+              <span className="inline-flex items-center justify-center w-5 h-5 rounded-md border shrink-0 bg-rose-50 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800/50" title={t('providers.filter.appSub')}>
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" className="w-3 h-3" aria-hidden>
+                  <rect x="2.5" y="2.5" width="11" height="11" rx="2.5" />
+                  <circle cx="8" cy="8" r="2" />
+                </svg>
+              </span>
+            </div>
+            {onRemove && (
+              <button type="button" onClick={doRemove} disabled={removing}
+                title={t('providers.custom.removeTitle')}
+                className="text-zinc-400 hover:text-red-500 dark:hover:text-red-400 text-lg leading-none transition-colors disabled:opacity-40 shrink-0">×</button>
+            )}
+          </div>
+          {!hasPricing && (
+            <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">⚠ {t('psrc.direct.noPricing')}</p>
+          )}
+          {canConvertToApi && onConvertToApi && (
+            <div className="mt-2">
+              <button type="button" onClick={doConvert} disabled={converting || removing}
+                className="text-xs px-2.5 py-1 rounded-lg border border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 disabled:opacity-40">
+                {converting ? t('psrc.direct.converting') : t('psrc.direct.convertToApi')}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <CollapsibleBillingPanel
+        t={t}
+        summary={billingSummary}
+        hint={isDirectAppSub ? t('psrc.direct.officialModelsHint') : (isApi ? t('psrc.direct.apiTitle') : t('psrc.direct.subTitle'))}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          {!isApi && (
+            <>
+              <span className="text-xs text-zinc-400">$</span>
+              <input type="text" inputMode="decimal" value={monthly} placeholder="0"
+                onChange={e => { const v = e.target.value; setMonthly(v); scheduleSave(v, pricing, isApi); }}
+                onBlur={() => flushSave(monthly, pricing, isApi)}
+                className="w-24 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1 tabular-nums" />
+              <span className="text-xs text-zinc-400">{t('psrc.direct.monthlyUnit')}</span>
+            </>
+          )}
+          {allowApiBilling && (
+            <button type="button" onClick={toggleMode}
+              className={`text-xs ${isApi ? '' : 'ml-auto'} text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300`}>
+              {isApi ? t('psrc.direct.switchSub') : t('psrc.direct.switchApi')}
             </button>
           )}
-          <button type="button" onClick={doSave} disabled={!dirty || saving}
-            className="text-xs px-3 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed">
-            {saving ? t('psrc.direct.saving') : t('psrc.direct.save')}
-          </button>
         </div>
-      </div>
+        {allowApiBilling && isApi && (
+          <PricingTable rows={rows} onCell={onCell} onAddModel={onAddModel} onRemoveModel={onRemoveModel} t={t} />
+        )}
+      </CollapsibleBillingPanel>
     </div>
   );
 }
@@ -231,33 +413,45 @@ export function UnenrolledInstanceCard({ instance, onRemove, t }) {
   );
 }
 
-// ── 第3块：按模型视图（仿社区源，一实例多模型多行，一模型多源聚组）────────────────
+// ── 第3块：按模型视图（仿社区源 P2P 网格：一行两列，左模型、右供给源 logo）────────
 export function PersonalSourceModelView({ instances, t }) {
   const byModel = useMemo(() => {
     const m = {};
     for (const inst of instances) {
-      for (const model of (inst.models || [])) {
-        (m[model] = m[model] || []).push(inst);
+      const modelList = (inst.models || []).map(modelEntryName).filter(Boolean);
+      if (!modelList.length) continue;
+      for (const model of modelList) {
+        const list = m[model] || (m[model] = []);
+        const uid = inst.id || inst.agent_id || inst.source_id;
+        if (!list.some(x => (x.id || x.agent_id || x.source_id) === uid)) list.push(inst);
       }
     }
     return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0]));
   }, [instances]);
   if (byModel.length === 0) return <p className="text-xs text-zinc-400 py-4 text-center">{t('psrc.model.empty')}</p>;
   return (
-    <div className="space-y-2">
-      {byModel.map(([model, srcs]) => (
-        <div key={model} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-100 dark:border-zinc-800">
-          <span className="text-sm font-mono text-zinc-700 dark:text-zinc-300 flex-1 truncate">{model}</span>
-          <div className="flex flex-wrap gap-1 justify-end">
-            {srcs.map((s, i) => (
-              <span key={(s.id || s.agent_id) + ':' + i} className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800">
-                <ServiceIcon id={s.source_id || s.provider_id} name={s.name || s.label} icon={s.icon} />
-                {s.name || s.label}
-              </span>
-            ))}
+    <div className="space-y-3">
+      <span className="text-xs text-zinc-500">
+        {t('psrc.modelView.title')} <span className="text-zinc-700 dark:text-zinc-300">{t('psrc.modelView.sub')}</span>
+      </span>
+      <div className="grid grid-cols-2 gap-2">
+        {byModel.map(([model, srcs]) => (
+          <div
+            key={model}
+            className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300/50 dark:border-zinc-700/50 rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-1.5 min-w-0"
+          >
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" aria-hidden />
+              <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate" title={model}>{model}</span>
+            </div>
+            <div className="flex items-center gap-0.5 shrink-0">
+              {srcs.map((s, i) => (
+                <SourceProviderLogo key={(s.id || s.agent_id || s.source_id) + ':' + i} inst={s} />
+              ))}
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
@@ -268,10 +462,13 @@ function templateKindLabel(tpl, t) {
   return tpl.custom ? `${base} · ${t('psrc.tpl.customTag')}` : base;
 }
 
-export function SourceTemplateGrid({ templates, addedKeys, onEdit, onAdd, t }) {
+export function SourceTemplateGrid({
+  templates, addedKeys, onEdit, onAdd, t,
+  hintKey = 'psrc.tpl.hint', showAdd = true,
+}) {
   return (
     <div className="space-y-3">
-      <p className="text-xs text-zinc-500">{t('psrc.tpl.hint')}</p>
+      <p className="text-xs text-zinc-500">{t(hintKey)}</p>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         {templates.map(tpl => {
           const added = addedKeys.has(tpl.key);
@@ -292,17 +489,19 @@ export function SourceTemplateGrid({ templates, addedKeys, onEdit, onAdd, t }) {
           );
         })}
       </div>
-      {/* 唯一的添加入口：选已有源加实例 / 或新建自定义源 */}
-      <button type="button" onClick={onAdd}
-        className="w-full text-xs py-2 rounded-xl border-2 border-dashed border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
-        + {t('psrc.tpl.addSource2')}
-      </button>
+      {/* 完整个人页：选源加实例 */}
+      {showAdd && onAdd && (
+        <button type="button" onClick={onAdd}
+          className="w-full text-xs py-2 rounded-xl border-2 border-dashed border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
+          + {t('psrc.tpl.addSource2')}
+        </button>
+      )}
     </div>
   );
 }
 
-// 添加源弹窗：选一个已有源 → 打开该源的编辑弹窗加实例；或点「新建自定义源」走向导
-export function SourcePickerModal({ templates, onPick, onNewSource, onClose, t }) {
+// 添加源弹窗：选一个已有源 → 打开该源的编辑弹窗加实例
+export function SourcePickerModal({ templates, onPick, onClose, t }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-md p-5 space-y-3 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
@@ -330,11 +529,7 @@ export function SourcePickerModal({ templates, onPick, onNewSource, onClose, t }
             );
           })}
         </div>
-        <div className="flex justify-between items-center pt-1">
-          <button type="button" onClick={onNewSource}
-            className="text-xs px-3 py-1.5 rounded-lg border border-dashed border-blue-300 dark:border-blue-700 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30">
-            + {t('psrc.tpl.newCustom')}
-          </button>
+        <div className="flex justify-end pt-1">
           <button type="button" onClick={onClose} className="text-xs px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800">{t('psrc.cancel')}</button>
         </div>
       </div>
@@ -343,6 +538,37 @@ export function SourcePickerModal({ templates, onPick, onNewSource, onClose, t }
 }
 
 // 基于模板建一个实例（字段与 add* 一致）。供模板编辑弹窗 + 选源弹窗（直接添加）共用。
+const OAUTH_SUB_TO_GW = { claude: 'anthropic-paid', codex: 'openai', copilot: 'github-copilot' };
+
+function collectUsedGatewayIds(payg = [], subs = []) {
+  const ids = new Set();
+  for (const p of payg) {
+    if (p.gateway_id) ids.add(p.gateway_id);
+    else if (p.provider_id) ids.add(p.provider_id);
+  }
+  for (const s of subs) {
+    if (s.gateway_id) ids.add(s.gateway_id);
+    else if (s.source_id) ids.add(s.source_id);
+  }
+  return ids;
+}
+
+function allocateGatewayId(baseId, used, instanceId) {
+  if (baseId && !used.has(baseId)) return baseId;
+  return `acct-${instanceId}`;
+}
+
+function baseGatewayForPayg(providerId) {
+  return providerId;
+}
+
+function baseGatewayForSubTpl(tpl, isApiSub) {
+  if (isApiSub) return tpl.plan_provider_id || tpl.key;
+  if (tpl.custom) return tpl.key;
+  if (tpl.subscription_to_api) return OAUTH_SUB_TO_GW[tpl.key] || tpl.plan_provider_id || tpl.key;
+  return tpl.key;
+}
+
 export function buildInstancePatch(tpl, { payg = [], subs = [], planId } = {}) {
   const key = tpl.key;
   const isPayg = tpl.kind === 'payg';
@@ -353,15 +579,25 @@ export function buildInstancePatch(tpl, { payg = [], subs = [], planId } = {}) {
     return n > 0 ? `${tpl.label}_${n + 1}` : tpl.label;
   };
   const tplModels = Object.keys(tpl.pricing || {}).length ? Object.keys(tpl.pricing) : (tpl.models || []);
+  const usedGw = collectUsedGatewayIds(payg, subs);
   if (isPayg) {
-    const inst = { id: uid(), provider_id: key, label: tpl.label, name: nextName(payg, 'provider_id'),
-      icon: tpl.icon, models: [...tplModels], enabled: true };
+    const instId = uid();
+    const gateway_id = allocateGatewayId(baseGatewayForPayg(key), usedGw, instId);
+    const inst = {
+      id: instId, provider_id: key, gateway_id, label: tpl.label,
+      name: nextName(payg, 'provider_id'), icon: tpl.icon, models: [...tplModels], enabled: true,
+    };
     return { user_payg_providers: [...payg, inst] };
   }
   const tplPlans = tpl.plans || [];
   const plan = tplPlans.find(p => p.id === planId) || tplPlans[0] || {};
+  const instId = uid();
+  const needsGateway = isApiSub || tpl.subscription_to_api === true;
+  const gateway_id = needsGateway
+    ? allocateGatewayId(baseGatewayForSubTpl(tpl, isApiSub), usedGw, instId)
+    : `acct-${instId}`;
   const inst = {
-    id: uid(), subscription_kind: isApiSub ? 'api' : 'app', source_id: key,
+    id: instId, subscription_kind: isApiSub ? 'api' : 'app', source_id: key, gateway_id,
     name: nextName(subs, 'source_id'), agent_id: isApiSub ? null : (tpl.agent_id || null),
     app_name: tpl.label, app_icon: tpl.icon,
     plan_id: plan.id || 'custom', plan_label: plan.label || plan.id || tpl.label,
@@ -372,15 +608,53 @@ export function buildInstancePatch(tpl, { payg = [], subs = [], planId } = {}) {
   return { user_subscriptions: [...subs, inst] };
 }
 
-/** 模板是否已配好「支持的模型」（可直接加实例）：payg 看 pricing，订阅看 pricing 或 plan_provider_id */
+/** 纯 APP 订阅（不可转 API）→ 写入直连源计费，在个人源页「直连源」区展示 */
+export function buildDirectSourcePatch(tpl, { billing = {}, planId } = {}) {
+  const agentId = tpl.agent_id || tpl.key;
+  if (!agentId) return {};
+  const plans = tpl.plans || [];
+  const plan = (planId && plans.find(p => p.id === planId)) || plans[0] || {};
+  return {
+    direct_source_billing: {
+      ...(billing || {}),
+      [agentId]: {
+        ...((billing || {})[agentId] || {}),
+        mode: 'subscription',
+        monthly_usd: plan.monthly_usd ?? null,
+        name: tpl.label || agentId,
+        plan_id: plan.id || null,
+        plan_label: plan.label || null,
+        source_id: tpl.key,
+      },
+    },
+  };
+}
+
+/** 删除直连源：清除计费登记 */
+export function buildDirectSourceRemovePatch(agentId, billing = {}) {
+  if (!agentId) return {};
+  const next = { ...(billing || {}) };
+  delete next[agentId];
+  return { direct_source_billing: next };
+}
+
+/** 模板是否已配好（UI 提示用）：按量源无预填模型也可直接添加 */
 export function templateReadyForInstance(tpl) {
+  if (tpl.kind === 'payg') return true;
+  if (tpl.kind === 'app_sub' || tpl.kind === 'api_sub') {
+    if ((tpl.plans || []).length > 0) return true;
+    if (tpl.kind === 'app_sub' && !tpl.subscription_to_api) return true;
+  }
   if (Object.keys(tpl.pricing || {}).length > 0) return true;
   if (tpl.kind !== 'payg' && tpl.plan_provider_id) return true;
   return (tpl.models || []).length > 0;
 }
 
 // ── 第2块：模板编辑弹窗（写 source_template_overrides）──────────────────────────
-export function TemplateEditModal({ template, overrides, payg = [], subs = [], customTemplates = {}, paygCatalog = [], onSave, onClose, onInstanceAdded, t }) {
+export function TemplateEditModal({
+  template, overrides, payg = [], subs = [], customTemplates = {}, paygCatalog = [],
+  onSave, onClose, onInstanceAdded, t, editOnly = false,
+}) {
   const key = template.key;
   const cur = overrides[key] || {};
   const isPayg = template.kind === 'payg';
@@ -407,10 +681,13 @@ export function TemplateEditModal({ template, overrides, payg = [], subs = [], c
   const tplReady = Object.keys(pricing).length > 0;
   const myInstances = isPayg ? payg.filter(p => p.provider_id === key) : subs.filter(s => s.source_id === key);
   function addInstance() {
-    // 用编辑中的 pricing / subToApi 作为「有效模板」，复用统一的建实例逻辑
     const effectiveTpl = { ...template, pricing, subscription_to_api: subToApi };
-    onSave(buildInstancePatch(effectiveTpl, { payg, subs, planId }));
-    onInstanceAdded?.(key);   // 通知父级弹出凭证配置（API key / OAuth）
+    if (isAppSub && !subToApi) {
+      onSave(buildDirectSourcePatch(effectiveTpl, { billing: {} }));
+    } else {
+      onSave(buildInstancePatch(effectiveTpl, { payg, subs, planId }));
+      onInstanceAdded?.(key);
+    }
   }
   function removeInstance(id) {
     if (isPayg) onSave({ user_payg_providers: payg.filter(p => p.id !== id) });
@@ -441,7 +718,7 @@ export function TemplateEditModal({ template, overrides, payg = [], subs = [], c
       const next = { ...overrides };
       const ov = { ...(cur || {}) };
       ov.pricing = pricing;
-      if (isAppSub) ov.subscription_to_api = subToApi;
+      if (isAppSub && isCustomTpl) ov.subscription_to_api = subToApi;
       ov._baseHash = template._serverHash;   // 记录基于哪个服务端模板版本改的（供 diff）
       next[key] = ov;
       onSave({ source_template_overrides: next });
@@ -474,11 +751,16 @@ export function TemplateEditModal({ template, overrides, payg = [], subs = [], c
           <ServiceIcon id={template.key} name={template.label} icon={template.icon} />
           <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('psrc.tpl.editTitle', { name: template.label })}</h3>
         </div>
-        {isAppSub && (
+        {isAppSub && isCustomTpl && (
           <label className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
             <input type="checkbox" checked={subToApi} onChange={e => setSubToApi(e.target.checked)} />
             {t('psrc.tpl.subToApi')}
           </label>
+        )}
+        {isAppSub && !isCustomTpl && (
+          <p className="text-xs text-zinc-400">
+            {template.subscription_to_api ? t('psrc.tpl.serverSubToApiOn') : t('psrc.tpl.serverSubToApiOff')}
+          </p>
         )}
         {/* 模型 + 计费：所有模板都配（订阅模板也要有支持的模型才能加实例）*/}
         <div className="space-y-1">
@@ -486,35 +768,37 @@ export function TemplateEditModal({ template, overrides, payg = [], subs = [], c
           <PricingTable rows={rows} onCell={onCell} onAddModel={onAddModel} onRemoveModel={onRemoveModel} t={t} />
         </div>
 
-        {/* 添加为我的源（实例化此模板）*/}
-        <div className="space-y-2 pt-2 border-t border-zinc-100 dark:border-zinc-800">
-          <p className="text-xs font-medium text-zinc-600 dark:text-zinc-300">{t('psrc.tpl.instances')}</p>
-          {myInstances.length === 0 && <p className="text-[11px] text-zinc-400">{t('psrc.tpl.noInstance')}</p>}
-          {myInstances.map(inst => (
-            <div key={inst.id} className="flex items-center gap-2 text-xs px-2 py-1 rounded-lg bg-zinc-50 dark:bg-zinc-800">
-              <span className="flex-1 truncate">
-                {inst.name || inst.label || inst.app_name}
-                {inst.plan_label ? <span className="text-zinc-400"> · {inst.plan_label}</span> : null}
-              </span>
-              <button type="button" onClick={() => removeInstance(inst.id)} className="text-red-400 hover:text-red-500 px-1">×</button>
+        {/* 添加为我的源（实例化此模板）；供给页 billing 模式仅编辑模板，实例在下方添加 */}
+        {!editOnly && (
+          <div className="space-y-2 pt-2 border-t border-zinc-100 dark:border-zinc-800">
+            <p className="text-xs font-medium text-zinc-600 dark:text-zinc-300">{t('psrc.tpl.instances')}</p>
+            {myInstances.length === 0 && <p className="text-[11px] text-zinc-400">{t('psrc.tpl.noInstance')}</p>}
+            {myInstances.map(inst => (
+              <div key={inst.id} className="flex items-center gap-2 text-xs px-2 py-1 rounded-lg bg-zinc-50 dark:bg-zinc-800">
+                <span className="flex-1 truncate">
+                  {inst.name || inst.label || inst.app_name}
+                  {inst.plan_label ? <span className="text-zinc-400"> · {inst.plan_label}</span> : null}
+                </span>
+                <button type="button" onClick={() => removeInstance(inst.id)} className="text-red-400 hover:text-red-500 px-1">×</button>
+              </div>
+            ))}
+            {!tplReady && <p className="text-[11px] text-amber-500">{t('psrc.tpl.needConfig')}</p>}
+            <div className="flex items-center gap-2">
+              {isSub && tplPlans.length > 0 && (
+                <select value={planId} onChange={e => setPlanId(e.target.value)}
+                  className="flex-1 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1.5">
+                  {tplPlans.map(p => (
+                    <option key={p.id} value={p.id}>{p.label}{p.monthly_usd != null ? ` · $${p.monthly_usd}/mo` : ''}</option>
+                  ))}
+                </select>
+              )}
+              <button type="button" onClick={addInstance} disabled={!tplReady}
+                className="text-xs px-3 py-1.5 rounded-lg border border-dashed border-blue-300 dark:border-blue-700 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 disabled:opacity-40 disabled:cursor-not-allowed">
+                + {t('psrc.tpl.addInstance')}
+              </button>
             </div>
-          ))}
-          {!tplReady && <p className="text-[11px] text-amber-500">{t('psrc.tpl.needConfig')}</p>}
-          <div className="flex items-center gap-2">
-            {isSub && tplPlans.length > 0 && (
-              <select value={planId} onChange={e => setPlanId(e.target.value)}
-                className="flex-1 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1.5">
-                {tplPlans.map(p => (
-                  <option key={p.id} value={p.id}>{p.label}{p.monthly_usd != null ? ` · $${p.monthly_usd}/mo` : ''}</option>
-                ))}
-              </select>
-            )}
-            <button type="button" onClick={addInstance} disabled={!tplReady}
-              className="text-xs px-3 py-1.5 rounded-lg border border-dashed border-blue-300 dark:border-blue-700 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 disabled:opacity-40 disabled:cursor-not-allowed">
-              + {t('psrc.tpl.addInstance')}
-            </button>
           </div>
-        </div>
+        )}
 
         <div className="flex justify-between gap-2 pt-1">
           <button type="button" onClick={reset} className="text-xs text-zinc-400 hover:text-red-500">{isCustomTpl ? t('psrc.tpl.deleteCustom') : t('psrc.tpl.reset')}</button>
@@ -522,106 +806,6 @@ export function TemplateEditModal({ template, overrides, payg = [], subs = [], c
             <button type="button" onClick={onClose} className="text-xs px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800">{t('psrc.cancel')}</button>
             <button type="button" onClick={save} className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 text-white">{t('psrc.save')}</button>
           </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── 第2块：自定义源向导（服务端不支持的源，分步填写）──────────────────────────────
-export function CustomSourceWizard({ payg, subs, customTemplates = {}, onSave, onClose, t }) {
-  const [step, setStep] = useState(1);
-  const [kind, setKind] = useState('payg');     // payg | app_sub | api_sub
-  const [name, setName] = useState('');
-  const [icon, setIcon] = useState('🔧');
-  const [subToApi, setSubToApi] = useState(false);
-  const [models, setModels] = useState([]);     // 模型名数组（按量）
-  const [newModel, setNewModel] = useState('');
-
-  const slug = (name.trim().toLowerCase().replace(/[^a-z0-9一-鿿]+/g, '-').replace(/^-|-$/g, '').slice(0, 32)) || 'source';
-  const canNext = step === 1 ? !!name.trim() : true;
-
-  function finish() {
-    const ts = Date.now().toString(36);
-    const sid = `custom-${slug}-${ts}`;
-    // 1) 建自定义源模板（纯本地，独立于实例）
-    const tpl = { kind, label: name.trim(), icon, custom: true };
-    if (kind === 'payg') { tpl.models = models.filter(Boolean); tpl.pricing = {}; }
-    else { tpl.plans = []; tpl.subscription_to_api = kind === 'api_sub' ? true : subToApi; }
-    const patch = { custom_source_templates: { ...(customTemplates || {}), [sid]: tpl } };
-    // 2) 同时建第一个实例（引用该模板 key）
-    if (kind === 'payg') {
-      patch.user_payg_providers = [...(payg || []), {
-        id: `ua-${ts}`, provider_id: sid, label: name.trim(), name: name.trim(),
-        icon, models: models.filter(Boolean), enabled: true, custom: true,
-      }];
-    } else {
-      patch.user_subscriptions = [...(subs || []), {
-        id: `ua-${ts}`, subscription_kind: kind === 'api_sub' ? 'api' : 'app',
-        source_id: sid, name: name.trim(), app_name: name.trim(), app_icon: icon,
-        plan_id: 'custom', plan_label: name.trim(), monthly_usd: null,
-        subscription_to_api: kind === 'api_sub' ? true : subToApi, custom: true,
-      }];
-    }
-    onSave(patch);
-    onClose();
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-md p-5 space-y-4" onClick={e => e.stopPropagation()}>
-        <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('psrc.wiz.title')} · {step}/2</h3>
-        {step === 1 && (
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs text-zinc-400 block mb-1">{t('psrc.wiz.kind')}</label>
-              <select value={kind} onChange={e => setKind(e.target.value)}
-                className="w-full text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2">
-                <option value="payg">{t('psrc.kind.payg')}</option>
-                <option value="app_sub">{t('psrc.kind.appSub')}</option>
-                <option value="api_sub">{t('psrc.kind.apiSub')}</option>
-              </select>
-            </div>
-            <div className="flex gap-2">
-              <input value={icon} onChange={e => setIcon(e.target.value)} className="w-14 text-center text-base bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2" />
-              <input value={name} onChange={e => setName(e.target.value)} placeholder={t('psrc.wiz.namePh')}
-                className="flex-1 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-2" />
-            </div>
-          </div>
-        )}
-        {step === 2 && kind === 'payg' && (
-          <div className="space-y-2">
-            <p className="text-xs text-zinc-500">{t('psrc.wiz.models')}</p>
-            <div className="flex flex-wrap gap-1">
-              {models.map((m, i) => (
-                <span key={i} className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-zinc-100 dark:bg-zinc-800 font-mono">
-                  {m}<button type="button" onClick={() => setModels(models.filter((_, j) => j !== i))} className="text-red-400">×</button>
-                </span>
-              ))}
-            </div>
-            <div className="flex gap-1">
-              <input value={newModel} onChange={e => setNewModel(e.target.value)} placeholder={t('psrc.addModelPh')}
-                className="flex-1 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1 font-mono" />
-              <button type="button" disabled={!newModel.trim()} onClick={() => { setModels([...models, newModel.trim()]); setNewModel(''); }}
-                className="text-xs px-2 py-1 rounded bg-zinc-100 dark:bg-zinc-700 disabled:opacity-50">+ {t('psrc.add')}</button>
-            </div>
-            <p className="text-[10px] text-zinc-400">{t('psrc.wiz.priceNote')}</p>
-          </div>
-        )}
-        {step === 2 && kind === 'app_sub' && (
-          <label className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
-            <input type="checkbox" checked={subToApi} onChange={e => setSubToApi(e.target.checked)} />
-            {t('psrc.tpl.subToApi')}
-          </label>
-        )}
-        {step === 2 && kind === 'api_sub' && <p className="text-xs text-zinc-400">{t('psrc.wiz.apiSubNote')}</p>}
-        <div className="flex justify-between gap-2 pt-1">
-          <button type="button" onClick={() => step === 1 ? onClose() : setStep(1)} className="text-xs px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800">
-            {step === 1 ? t('psrc.cancel') : t('psrc.wiz.back')}
-          </button>
-          {step === 1
-            ? <button type="button" disabled={!canNext} onClick={() => setStep(2)} className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 text-white disabled:opacity-50">{t('psrc.wiz.next')}</button>
-            : <button type="button" onClick={finish} className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 text-white">{t('psrc.wiz.create')}</button>}
         </div>
       </div>
     </div>
