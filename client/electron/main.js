@@ -2472,6 +2472,8 @@ function registerIPC() {
   // 取消纳管：用备份整份还原原配置文件（保留备份与应用条目，不删除）。状态跟随操作。
   ipcMain.handle('apps:revertConfigFile', (_e, { app_id, config_file } = {}) => {
     try {
+      // Claude Desktop：还原前先把 3p 期间的会话双向同步回官方，避免取消纳管后丢失
+      if (isClaudeDesktopApp(app_id)) runClaude3pSync('revert');
       const cl = require('./config-loader');
       let file = cl.expandHome(cl.resolvePlaceholders(String(config_file || ''), {}));
       if (file) {
