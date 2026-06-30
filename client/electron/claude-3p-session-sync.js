@@ -52,16 +52,26 @@ function findSessionDir(root) {
   return best;
 }
 
-/** 单向镜像 srcDir → dstDir（按索引文件名去重；transcript 同源不动）。 */
+/** 单向镜像 srcDir → dstDir（按索引文件名；源比目标新才覆盖——否则纳管期间增长的会话索引
+ *  同步回去时会被「已存在就跳过」拦掉，导致官方看到的是旧版本/被截断）。transcript 同源不动。 */
 function mirror(srcDir, dstDir) {
   let copied = 0;
   let skipped = 0;
   let files;
   try { files = fs.readdirSync(srcDir).filter((f) => IDX_RE.test(f)); } catch { return { copied: 0, skipped: 0 }; }
   for (const f of files) {
+    const srcPath = path.join(srcDir, f);
     const dst = path.join(dstDir, f);
-    if (fs.existsSync(dst)) { skipped++; continue; }
-    try { fs.copyFileSync(path.join(srcDir, f), dst); copied++; } catch {}
+    try {
+      const ss = fs.statSync(srcPath);
+      if (fs.existsSync(dst)) {
+        const ds = fs.statSync(dst);
+        if (ss.mtimeMs <= ds.mtimeMs) { skipped++; continue; }   // 目标不旧 → 跳过
+      }
+      fs.copyFileSync(srcPath, dst);
+      try { fs.utimesSync(dst, ss.atime, ss.mtime); } catch {}    // 保留源 mtime，避免双向来回复制
+      copied++;
+    } catch {}
   }
   return { copied, skipped };
 }
