@@ -1853,6 +1853,32 @@ function extractText(body) {
 // 粗估输入 token：约 4 字符/token（零成本，足够做长上下文分流）
 function estimateInputTokens(body) { return Math.ceil(extractText(body).length / 4); }
 
+// 关键词匹配只看「最后一条用户消息」（当前意图）——否则历史里出现过的词会一直命中、切不回去
+function extractLastUserText(body) {
+  if (!body || typeof body !== 'object') return '';
+  const collect = (c) => {
+    if (typeof c === 'string') return c;
+    if (Array.isArray(c)) return c.map(s => (typeof s === 'string' ? s : (s && typeof s.text === 'string' ? s.text : ''))).join('\n');
+    return '';
+  };
+  if (Array.isArray(body.messages)) {
+    for (let i = body.messages.length - 1; i >= 0; i--) {
+      const m = body.messages[i];
+      if (m && m.role === 'user') return collect(m.content);
+    }
+  }
+  if (Array.isArray(body.input)) {
+    for (let i = body.input.length - 1; i >= 0; i--) {
+      const m = body.input[i];
+      if (typeof m === 'string') return m;
+      if (m && (m.role === 'user' || !m.role)) return collect(m.content);
+    }
+  }
+  if (typeof body.prompt === 'string') return body.prompt;
+  if (typeof body.input === 'string') return body.input;
+  return '';
+}
+
 // 单条 when 求值。type: request_type|model|input_tokens|keyword|caller；op: is/not/in/gt/lt/gte/lte/match/contains
 function evalWhen(when, ctx) {
   if (!when || !when.type) return false;
@@ -1862,7 +1888,7 @@ function evalWhen(when, ctx) {
     case 'request_type': cur = ctx.modality; break;
     case 'model':        cur = ctx.model; break;
     case 'input_tokens': cur = ctx.input_tokens; break;
-    case 'keyword':      cur = ctx.text; break;
+    case 'keyword':      cur = (ctx.keyword_text != null ? ctx.keyword_text : ctx.text); break;
     case 'caller':       cur = ctx.caller; break;
     case 'classifier':   cur = ctx.classifier_label; break;   // 语义分类结果（懒计算，见 resolveSteps）
     default: return false;
@@ -2029,7 +2055,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     // 按请求特征选本次路由链：命中的规则链 / 默认链（零成本条件，从路径+body 提取）
     const ruleCtx = {
       modality: modalityOf(reqPath), model: origModel,
-      input_tokens: estimateInputTokens(body), text: extractText(body), caller: callerKey,
+      input_tokens: estimateInputTokens(body), text: extractText(body),
+      keyword_text: extractLastUserText(body), caller: callerKey,
     };
     const steps = await resolveSteps(scene, ruleCtx);
     if (!steps.length) {   // 规则全不命中且无默认链
