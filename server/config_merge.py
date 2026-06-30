@@ -8,11 +8,10 @@ import yaml
 
 _DEFAULTS_DIR = Path(__file__).resolve().parent / "static" / "defaults"
 _APPS_DEFAULT = _DEFAULTS_DIR / "apps.default.yaml"
-_SOURCES_DEFAULT = _DEFAULTS_DIR / "sources.default.yaml"
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _CLIENT_DEFAULT = _REPO_ROOT / "client" / "electron" / "config" / "tokenbank.default.yaml"
 
-# 「源」目录段（已从 apps.default.yaml 迁出至 sources.default.yaml，独立下发 config.sources）
+# 旧 config.apps / config.sources 中的计费四段（仅 DB 迁移用）
 _BILLING_KEYS = ("subscription_apps", "api_subscription_apps", "subscription_plans", "payg_providers")
 
 
@@ -23,9 +22,16 @@ def _default_apps_doc() -> dict:
 
 
 def _default_sources_doc() -> dict:
-    if not _SOURCES_DEFAULT.is_file():
+    """[deprecated] 从 providers.registry billing_sources 编译旧四段，供迁移/兼容。"""
+    reg = _default_registry_doc()
+    bs = reg.get("billing_sources") or []
+    if not bs:
         return {}
-    return yaml.safe_load(_SOURCES_DEFAULT.read_text(encoding="utf-8")) or {}
+    try:
+        import billing_sources as bs_mod
+        return bs_mod.compile_billing_sections(bs)
+    except Exception:
+        return {}
 
 
 def merge_subscription_apps(current: list | None, defaults: list | None) -> list:
@@ -47,14 +53,11 @@ def merge_subscription_apps(current: list | None, defaults: list | None) -> list
             continue
         base = def_by.get(sid) or {}
         merged = {**base, **app}
-        # DB/管理员配置未显式设置时，用内置默认补全
         if app.get("subscription_to_api") is None and "subscription_to_api" in base:
             merged["subscription_to_api"] = base["subscription_to_api"]
         if app.get("plan_provider_id") is None and base.get("plan_provider_id") is not None:
             merged["plan_provider_id"] = base["plan_provider_id"]
         out.append(merged)
-
-    # 管理员发布后的列表即为准，不再把已从目录删除的默认项加回来
     return out
 
 
@@ -95,7 +98,7 @@ def merge_session_sources(current: list | None, defaults: list | None) -> list:
 
 
 def merge_apps_doc(current: dict | None) -> dict:
-    """应用下发：仅基础设施 + app_entities（计费段已迁出至 config.sources）。"""
+    """应用下发：仅基础设施 + app_entities（计费段已统一到 config.providers）。"""
     if not isinstance(current, dict):
         return {}
     out = {k: v for k, v in current.items() if k not in _BILLING_KEYS}
@@ -165,9 +168,7 @@ def merge_apps_yaml_text(content: str) -> str:
 
 
 def merge_sources_doc(current: dict | None) -> dict:
-    """合并「源」目录段与内置默认（sources.default.yaml）。
-    subscription_apps / api_subscription_apps 按 source_id 合并补全；
-    subscription_plans / payg_providers 当前优先、空则回退默认。"""
+    """[deprecated] 从 config.providers.billing_sources 编译旧四段；空则回退内置 registry。"""
     if not isinstance(current, dict):
         current = {}
     defaults = _default_sources_doc()
@@ -188,16 +189,95 @@ def merge_sources_doc(current: dict | None) -> dict:
     return out
 
 
-def merge_sources_yaml_text(content: str) -> str:
-    """源 YAML 文本与内置默认合并后序列化。空文本回退为内置默认全集。"""
+def _default_registry_doc() -> dict:
+    path = _DEFAULTS_DIR / "providers.registry.yaml"
+    if not path.is_file():
+        return {"version": 1, "providers": []}
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def merge_providers_doc(current: dict | None) -> dict:
+    """合并 providers.registry：DB 内容优先；缺 billing_sources 时从内置默认或 legacy 源目录补全。"""
+    from provider_registry import sync_catalog_models_pricing
+
+    if not isinstance(current, dict):
+        current = {}
+    defaults = _default_registry_doc()
+    out = dict(current)
+    if not out.get("providers") and defaults.get("providers"):
+        out["providers"] = defaults["providers"]
+    if not out.get("version"):
+        out["version"] = defaults.get("version") or 1
+    if not out.get("billing_sources"):
+        if defaults.get("billing_sources"):
+            out["billing_sources"] = defaults["billing_sources"]
+        else:
+            try:
+                import billing_sources as bs
+                out["billing_sources"] = bs.sort_sources(bs.import_from_legacy())
+            except Exception:
+                pass
+    # 下发前对齐 models / pricing，修复历史漂移
+    providers = out.get("providers")
+    if isinstance(providers, list):
+        synced: list = []
+        for p in providers:
+            if not isinstance(p, dict) or not p.get("id"):
+                synced.append(p)
+                continue
+            models, pricing = sync_catalog_models_pricing(p.get("models"), p.get("pricing"))
+            synced.append({**p, "models": models, "pricing": pricing})
+        out["providers"] = synced
+    return out
+
+
+def merge_providers_yaml_text(content: str) -> str:
+    """providers.registry YAML 与内置默认合并；空文本回退默认文件。"""
     text = (content or "").strip()
-    parsed = yaml.safe_load(text) if text else {}
+    if not text:
+        reg = _default_registry_doc()
+        if reg:
+            merged = merge_providers_doc(reg)
+            return yaml.dump(
+                merged,
+                allow_unicode=True,
+                sort_keys=False,
+                default_flow_style=False,
+            ).rstrip()
+        return "version: 1\nproviders: []\n"
+    parsed = yaml.safe_load(text) or {}
     if not isinstance(parsed, dict):
         parsed = {}
-    merged = merge_sources_doc(parsed)
+    merged = merge_providers_doc(parsed)
     return yaml.dump(
         merged,
         allow_unicode=True,
         sort_keys=False,
         default_flow_style=False,
     ).rstrip()
+
+
+def merge_sources_yaml_text(content: str) -> str:
+    """[deprecated] 由 config.providers 编译旧四段 YAML；请改用 merge_providers_yaml_text。"""
+    text = (content or "").strip()
+    if text:
+        parsed = yaml.safe_load(text) or {}
+        if isinstance(parsed, dict) and any(parsed.get(k) for k in _BILLING_KEYS):
+            merged = merge_sources_doc(parsed)
+            return yaml.dump(
+                merged,
+                allow_unicode=True,
+                sort_keys=False,
+                default_flow_style=False,
+            ).rstrip()
+    # 无有效旧内容：从 providers.registry 默认编译
+    defaults = _default_sources_doc()
+    if defaults:
+        doc = {"version": 1, **defaults}
+        return yaml.dump(
+            doc,
+            allow_unicode=True,
+            sort_keys=False,
+            default_flow_style=False,
+        ).rstrip()
+    return "version: 1\nsubscription_apps: []\napi_subscription_apps: []\nsubscription_plans: {}\npayg_providers: []\n"

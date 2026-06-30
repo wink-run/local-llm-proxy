@@ -1,5 +1,5 @@
 // client/electron/billing-config.js
-// 订阅/按量目录来自 tokenbank.tools.yaml；刊例价按 provider 独立配置。
+// 订阅/按量目录来自 providers.registry.yaml（billing_sources）；刊例价按 provider 独立配置。
 'use strict';
 
 const configLoader = require('./config-loader');
@@ -43,6 +43,88 @@ function normPlan(p) {
   };
 }
 
+const PRICING_META_KEYS = new Set(['_excluded_models', 'excluded_models']);
+
+/** models 与 pricing 键对齐（与 server sync_catalog_models_pricing 一致） */
+function syncModelsPricing(models = [], pricing = {}) {
+  const pricingOut = {};
+  for (const [k, v] of Object.entries(pricing || {})) {
+    const kn = String(k || '').trim();
+    if (!kn || PRICING_META_KEYS.has(kn)) continue;
+    pricingOut[kn] = (v && typeof v === 'object') ? { ...v } : {};
+  }
+  const modelsOut = [];
+  const seen = new Set();
+  for (const m of models || []) {
+    const n = String(m || '').trim();
+    if (!n || PRICING_META_KEYS.has(n) || seen.has(n)) continue;
+    seen.add(n);
+    modelsOut.push(n);
+    if (!pricingOut[n]) pricingOut[n] = {};
+  }
+  for (const k of Object.keys(pricingOut)) {
+    if (seen.has(k)) continue;
+    seen.add(k);
+    modelsOut.push(k);
+  }
+  return { models: modelsOut, pricing: pricingOut };
+}
+
+/** 渲染进程 /api/catalog 快照；模板与刊例价以之为准，覆盖本地 billing_sources 漂移 */
+let _liveCatalogById = {};
+let _liveSubscriptionSources = [];
+
+function setLiveCatalogProviders(providers) {
+  _liveCatalogById = {};
+  for (const p of providers || []) {
+    if (!p?.id) continue;
+    const names = [];
+    for (const m of p.models || []) {
+      const n = typeof m === 'string' ? m : (m.name || m.id || m.model);
+      if (n) names.push(String(n).trim());
+    }
+    const synced = syncModelsPricing(names, p.pricing || {});
+    _liveCatalogById[p.id] = {
+      models: synced.models,
+      pricing: synced.pricing,
+      label: p.label || p.id,
+      icon: p.icon || '🔧',
+      base_url: p.base_url || '',
+      api_format: p.api_format || 'openai',
+      payg: p.payg === true,
+      type: p.type || 'paid',
+    };
+  }
+}
+
+/** 写入 /api/catalog 完整响应（providers + subscription_sources） */
+function setLiveCatalogPayload(payload = {}) {
+  const doc = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : { providers: payload };
+  setLiveCatalogProviders(doc.providers || []);
+  _liveSubscriptionSources = Array.isArray(doc.subscription_sources) ? doc.subscription_sources : [];
+}
+
+/** 已被 APP/API 订阅引用的 plan_provider_id（如 volcengine），不应再作为独立按量模板 */
+function referencedPlanProviderIds() {
+  const ids = new Set();
+  for (const s of configLoader.billingSourcesList()) {
+    if (s.category !== 'app_sub' && s.category !== 'api_sub') continue;
+    const pp = s.plan_provider_id;
+    if (pp) ids.add(pp);
+  }
+  for (const s of _liveSubscriptionSources) {
+    if (s.plan_provider_id) ids.add(s.plan_provider_id);
+  }
+  return ids;
+}
+
+function liveCatalogPaygEntry(entry) {
+  const id = entry.provider_id || entry.id;
+  const live = id && _liveCatalogById[id];
+  if (!live) return entry;
+  return { ...entry, models: [...live.models], pricing: { ...live.pricing } };
+}
+
 /** 归一化 payg_providers 条目：models 列表 + 该 provider 独立 pricing */
 function normPaygEntry(p) {
   const id = String(p.id || p.provider_id || '');
@@ -70,6 +152,7 @@ function normPaygEntry(p) {
       }
     }
   }
+  const synced = syncModelsPricing(models, pricing);
   return {
     id,
     provider_id: id,
@@ -78,9 +161,17 @@ function normPaygEntry(p) {
     aliases: Array.isArray(p.aliases) ? p.aliases.map(String) : [],
     api_format: p.api_format || 'openai',
     handler: p.handler || 'openai',
-    models,
-    pricing,
+    base_url: p.base_url || '',
+    models: synced.models,
+    pricing: synced.pricing,
   };
+}
+
+/** registry 中按 provider id 查 base_url（订阅/API 源常通过 plan_provider_id 关联） */
+function registryBaseUrl(providerId) {
+  if (!providerId) return '';
+  const reg = configLoader.registryProviders().find(p => p.id === providerId);
+  return reg?.base_url || '';
 }
 
 function getSubscriptionPlans(cfg = {}) {
@@ -95,34 +186,65 @@ function getSubscriptionPlans(cfg = {}) {
   return out;
 }
 
-/** 合并 registry 与 payg_providers 目录条目（payg 段优先覆盖同名 provider） */
+/** 合并 registry 与 payg_providers 目录条目；billing_sources（next）为模型/报价权威源 */
 function mergeCatalogEntries(prev, next) {
   if (!prev) return next;
   if (!next) return prev;
-  return {
+  const merged = {
     ...prev,
     ...next,
-    models: [...new Set([...(prev.models || []), ...(next.models || [])])],
-    pricing: { ...(prev.pricing || {}), ...(next.pricing || {}) },
     label: next.label || prev.label,
     icon: next.icon || prev.icon,
+    base_url: next.base_url || prev.base_url || '',
   };
+  // 以 billing_sources 为准，不把 registry 里已下线模型并回来
+  const pricing = { ...(next.pricing || {}) };
+  for (const m of (next.models || [])) {
+    if (!pricing[m]) pricing[m] = { ...(prev.pricing?.[m] || {}) };
+  }
+  const synced = syncModelsPricing(next.models || [], pricing);
+  merged.models = synced.models;
+  merged.pricing = synced.pricing;
+  return merged;
 }
 
 function paygProviderCatalog() {
   const byId = new Map();
-  // registry 打底（如 nvidia 等 free tier 仅在此有 models/pricing）
+  // registry 打底（models/pricing 解析用，不进「可选源模板」列表）
   for (const p of configLoader.registryProviders()) {
     const norm = normPaygEntry(p);
     if (norm.provider_id) byId.set(norm.provider_id, norm);
   }
-  // tokenbank.tools.yaml 的 payg_providers 覆盖/补充
+  // billing_sources 中的 payg 条目覆盖 registry（模板列表以 billing_sources 为准）
   for (const p of configLoader.paygProviders()) {
     const norm = normPaygEntry(p);
     if (!norm.provider_id) continue;
     byId.set(norm.provider_id, mergeCatalogEntries(byId.get(norm.provider_id), norm));
   }
+  // /api/catalog 优先于本地 registry 漂移
+  for (const [id, live] of Object.entries(_liveCatalogById)) {
+    const cur = byId.get(id);
+    if (cur) byId.set(id, { ...cur, models: live.models, pricing: live.pricing });
+  }
   return [...byId.values()];
+}
+
+/** 源目录 payg 列表（billing_sources 中 category=payg，与云端模板数一致） */
+function paygSourcesCatalog() {
+  return configLoader.billingSourcesList()
+    .filter(s => s.category === 'payg')
+    .map(s => liveCatalogPaygEntry(normPaygEntry({
+      id: s.id,
+      provider_id: s.id,
+      label: s.label,
+      icon: s.icon,
+      aliases: s.aliases,
+      models: (s.models || []).map(m => (typeof m === 'string' ? m : (m.id || m.name))),
+      pricing: s.pricing,
+      api_format: s.api_format,
+      base_url: s.base_url,
+    })))
+    .filter(p => p.provider_id);
 }
 
 /** yaml + registry 合并后的按 provider 刊例价 */
@@ -150,6 +272,8 @@ function getProviderPricing(cfg = {}) {
       merged[pid][model] = { ...(merged[pid][model] || {}), ...rates };
     }
     for (const [model, rates] of Object.entries(overrides[pid] || {})) {
+      if (model === '_excluded_models') continue;
+      if (!rates || typeof rates !== 'object' || Array.isArray(rates)) continue;
       merged[pid][model] = { ...(merged[pid][model] || {}), ...rates };
     }
   }
@@ -218,6 +342,7 @@ function subscriptionAppCatalog(cfg = {}) {
       app_icon: a.app_icon || a.icon || '🔧',
       plans: appPlans,
       api_format: a.api_format || null,
+      base_url: a.base_url || registryBaseUrl(planKey) || '',
       models: Array.isArray(a.models) ? a.models : [],
       pricing: (a.pricing && typeof a.pricing === 'object') ? a.pricing : {},
     };
@@ -239,6 +364,7 @@ function apiSubscriptionCatalog(cfg = {}) {
       app_icon: a.app_icon || a.icon || '🔑',
       plans: appPlans,
       api_format: a.api_format || null,
+      base_url: a.base_url || registryBaseUrl(planKey) || '',
       models: Array.isArray(a.models) ? a.models : [],
       pricing: (a.pricing && typeof a.pricing === 'object') ? a.pricing : {},
     };
@@ -447,10 +573,21 @@ function resolveStatsOnlyProviderIds(cfg = {}) {
   return [...statsOnly];
 }
 
+/** provider_pricing_overrides 中的非模型键（勿当作模型名） */
+const PRICING_OVERRIDE_META_KEYS = new Set(['_excluded_models']);
+
+function isValidModelName(name) {
+  const n = String(name || '').trim();
+  return !!n && !PRICING_OVERRIDE_META_KEYS.has(n) && n !== 'excluded_models';
+}
+
 /** 提取 provider.models 条目中的模型名 */
 function modelEntryId(m) {
-  if (typeof m === 'string') return m;
-  if (m && typeof m === 'object') return String(m.name || m.id || m.model || '');
+  if (typeof m === 'string') return isValidModelName(m) ? m : '';
+  if (m && typeof m === 'object') {
+    const n = String(m.name || m.id || m.model || '').trim();
+    return isValidModelName(n) ? n : '';
+  }
   return '';
 }
 
@@ -473,7 +610,9 @@ function collectModelsForGatewayProvider(gatewayId, localCfg = {}) {
   for (const p of userPayg) {
     if (paygGatewayId(p) !== gatewayId) continue;
     for (const m of p.models || []) addName(m);
-    for (const k of Object.keys(pricingOvr[p.provider_id] || {})) if (k) names.add(k);
+    for (const k of Object.keys(pricingOvr[p.provider_id] || {})) {
+      if (isValidModelName(k)) names.add(k);
+    }
   }
   for (const s of userSubs) {
     if (subscriptionGatewayId(s, catalogBySource) !== gatewayId) continue;
@@ -482,9 +621,13 @@ function collectModelsForGatewayProvider(gatewayId, localCfg = {}) {
     const pid = s.plan_provider_id
       || subscriptionGatewayProviderId(s, catalogBySource)
       || s.source_id;
-    for (const k of Object.keys(pricingOvr[pid] || {})) if (k) names.add(k);
+    for (const k of Object.keys(pricingOvr[pid] || {})) {
+      if (isValidModelName(k)) names.add(k);
+    }
   }
-  for (const k of Object.keys(pricingOvr[gatewayId] || {})) if (k) names.add(k);
+  for (const k of Object.keys(pricingOvr[gatewayId] || {})) {
+    if (isValidModelName(k)) names.add(k);
+  }
   return names;
 }
 
@@ -599,10 +742,11 @@ function stableHash(obj) {
   return h.toString(36);
 }
 
-/** 服务端下发的 catalog 键集合（不含任何本地自定义） */
+/** 服务端下发的 catalog 键集合（含 billing_sources + live catalog 补全的模板） */
 function serverCatalogKeySets() {
+  const templates = serverTemplatesByKey({});
   const paygIds = new Set(
-    paygProviderCatalog().map(p => p.provider_id || p.id).filter(Boolean),
+    Object.entries(templates).filter(([, t]) => t.kind === 'payg').map(([k]) => k),
   );
   const appSubIds = new Set(
     subscriptionAppCatalog({}).map(a => a.source_id).filter(Boolean),
@@ -621,18 +765,41 @@ function serverCatalogKeySets() {
   return { paygIds, appSubIds, apiSubIds, allTemplateKeys, pricingProviderIds };
 }
 
+/** 订阅型 APP 源（不走按量模板补全） */
+const SUBSCRIPTION_ONLY_CATALOG_IDS = new Set([
+  'openai', 'anthropic-paid', 'gemini', 'github-copilot', 'cursor',
+]);
+
 /** 仅服务端 catalog 的源模板（可选账户类型以此为准） */
 function serverTemplatesByKey(cfg = {}) {
   const m = {};
   const paygByKey = {};
-  for (const p of paygProviderCatalog()) {
+  for (const p of paygSourcesCatalog()) {
     const k = p.provider_id || p.id;
     if (k) {
       m[k] = { kind: 'payg', key: k, label: p.label || k, icon: p.icon || '🔧',
         api_format: p.api_format || 'openai',
+        base_url: p.base_url || registryBaseUrl(k) || '',
         models: p.models || [], pricing: p.pricing || {} };
       paygByKey[k] = m[k];
     }
+  }
+  // /api/catalog 有、billing_sources 未收录、且显式 payg 的 registry 供给源
+  const planPids = referencedPlanProviderIds();
+  for (const [id, live] of Object.entries(_liveCatalogById)) {
+    if (m[id] || SUBSCRIPTION_ONLY_CATALOG_IDS.has(id) || planPids.has(id)) continue;
+    const reg = configLoader.registryProviders().find(r => r.id === id);
+    if (reg?.payg === false) continue;
+    if (!(live.payg || reg?.payg === true)) continue;
+    m[id] = {
+      kind: 'payg', key: id,
+      label: live.label || reg?.label || id,
+      icon: live.icon || reg?.icon || '🔧',
+      api_format: live.api_format || reg?.api_format || 'openai',
+      base_url: live.base_url || reg?.base_url || registryBaseUrl(id) || '',
+      models: live.models || [], pricing: live.pricing || {},
+    };
+    paygByKey[id] = m[id];
   }
   const fillSub = (models, pricing, planPid) => {
     if ((Array.isArray(models) && models.length) || Object.keys(pricing || {}).length) {
@@ -649,6 +816,7 @@ function serverTemplatesByKey(cfg = {}) {
         subscription_to_api: a.subscription_to_api === true, plans: a.plans || [],
         plan_provider_id: a.plan_provider_id,
         api_format: a.api_format || (a.plan_provider_id && paygByKey[a.plan_provider_id]?.api_format) || 'openai',
+        base_url: a.base_url || registryBaseUrl(a.plan_provider_id) || '',
         models: f.models, pricing: f.pricing };
     }
   }
@@ -659,10 +827,77 @@ function serverTemplatesByKey(cfg = {}) {
       m[k] = { kind: 'api_sub', key: k, label: a.app_name, icon: a.app_icon,
         plan_provider_id: a.plan_provider_id, plans: a.plans || [],
         api_format: a.api_format || (a.plan_provider_id && paygByKey[a.plan_provider_id]?.api_format) || 'openai',
+        base_url: a.base_url || registryBaseUrl(a.plan_provider_id) || '',
+        models: f.models, pricing: f.pricing };
+    }
+  }
+  // /api/catalog 下发的 APP/API 订阅（补全 billing_sources 未同步的新增项）
+  for (const s of _liveSubscriptionSources) {
+    const k = s.id;
+    if (!k || m[k]) continue;
+    const modelNames = (s.models || []).map(x => (typeof x === 'string' ? x : (x.name || x.id))).filter(Boolean);
+    const pricing = s.pricing || {};
+    const f = fillSub(modelNames, pricing, s.plan_provider_id);
+    if (s.kind === 'api_sub') {
+      m[k] = { kind: 'api_sub', key: k, label: s.label || k, icon: s.icon || '🔑',
+        plan_provider_id: s.plan_provider_id, plans: s.plans || [],
+        api_format: s.api_format || 'openai',
+        base_url: s.base_url || registryBaseUrl(s.plan_provider_id) || '',
+        models: f.models, pricing: f.pricing };
+    } else if (s.kind === 'app_sub') {
+      m[k] = { kind: 'app_sub', key: k, label: s.label || k, icon: s.icon || '🖱',
+        agent_id: s.agent_id || k,
+        subscription_to_api: s.subscription_to_api === true,
+        plan_provider_id: s.plan_provider_id, plans: s.plans || [],
+        api_format: s.api_format || 'openai',
+        base_url: s.base_url || registryBaseUrl(s.plan_provider_id) || '',
         models: f.models, pricing: f.pricing };
     }
   }
   return m;
+}
+
+/** 服务端各 provider 允许的模型名集合（billing_sources 为准） */
+function catalogModelSetsByProvider() {
+  const out = {};
+  for (const p of paygSourcesCatalog()) {
+    const id = p.provider_id || p.id;
+    if (!id) continue;
+    const synced = syncModelsPricing(p.models || [], p.pricing || {});
+    out[id] = new Set(synced.models);
+  }
+  return out;
+}
+
+/** 裁剪 override 里服务端已删除的模型 */
+function pruneOverrideModels(override, allowed) {
+  if (!override || typeof override !== 'object' || !allowed) return { next: override, changed: false };
+  let changed = false;
+  const next = { ...override };
+  if (override.pricing && typeof override.pricing === 'object') {
+    const pr = { ...override.pricing };
+    for (const k of Object.keys(pr)) {
+      if (!allowed.has(k)) { delete pr[k]; changed = true; }
+    }
+    next.pricing = pr;
+  }
+  if (Array.isArray(override.models)) {
+    const ms = override.models.filter(m => allowed.has(m));
+    if (ms.length !== override.models.length) { next.models = ms; changed = true; }
+  }
+  return { next, changed };
+}
+
+/** 裁剪 provider 级 pricing override 里已下线的模型键 */
+function prunePricingMap(map, allowed) {
+  if (!map || typeof map !== 'object' || !allowed) return { next: map, changed: false };
+  let changed = false;
+  const next = { ...map };
+  for (const k of Object.keys(next)) {
+    if (k === '_excluded_models' || k === 'excluded_models') continue;
+    if (!allowed.has(k)) { delete next[k]; changed = true; }
+  }
+  return { next, changed };
 }
 
 /**
@@ -670,6 +905,7 @@ function serverTemplatesByKey(cfg = {}) {
  * 可选账户类型以服务端 catalog 为准。
  */
 function pruneLocalBillingAgainstServer(cfg = {}) {
+  const modelSets = catalogModelSetsByProvider();
   const { paygIds, appSubIds, apiSubIds, allTemplateKeys, pricingProviderIds } = serverCatalogKeySets();
   let changed = false;
 
@@ -681,14 +917,17 @@ function pruneLocalBillingAgainstServer(cfg = {}) {
   if (cfg.source_template_overrides && typeof cfg.source_template_overrides === 'object') {
     const next = {};
     for (const [k, v] of Object.entries(cfg.source_template_overrides)) {
-      if (allTemplateKeys.has(k)) next[k] = v;
-      else changed = true;
+      if (!allTemplateKeys.has(k)) { changed = true; continue; }
+      const { next: pruned, changed: c } = pruneOverrideModels(v, modelSets[k]);
+      if (c) changed = true;
+      next[k] = pruned;
     }
     cfg.source_template_overrides = next;
   }
 
   const keepSub = (s) => {
-    if (!s || typeof s !== 'object' || s.custom) return false;
+    if (!s || typeof s !== 'object') return false;
+    if (s.custom) return true; // 自定义实例纯本地，不参与 catalog 裁剪
     const sid = s.source_id;
     if (!sid) return false;
     if (s.subscription_kind === 'api') return apiSubIds.has(sid);
@@ -701,7 +940,8 @@ function pruneLocalBillingAgainstServer(cfg = {}) {
   }
 
   const keepPayg = (p) => {
-    if (!p || typeof p !== 'object' || p.custom) return false;
+    if (!p || typeof p !== 'object') return false;
+    if (p.custom) return true;
     const pid = p.provider_id;
     return !!(pid && paygIds.has(pid));
   };
@@ -714,10 +954,38 @@ function pruneLocalBillingAgainstServer(cfg = {}) {
   if (cfg.provider_pricing_overrides && typeof cfg.provider_pricing_overrides === 'object') {
     const next = {};
     for (const [k, v] of Object.entries(cfg.provider_pricing_overrides)) {
-      if (pricingProviderIds.has(k)) next[k] = v;
-      else changed = true;
+      if (!pricingProviderIds.has(k)) { changed = true; continue; }
+      const { next: pruned, changed: c } = prunePricingMap(v, modelSets[k]);
+      if (c) changed = true;
+      next[k] = pruned;
     }
     cfg.provider_pricing_overrides = next;
+  }
+
+  // 按量实例 / 网关 provider.models：去掉 catalog 已删除的模型
+  const nextPaygWithModels = (cfg.user_payg_providers || []).map(p => {
+    if (!p || p.custom || !p.provider_id || !modelSets[p.provider_id]) return p;
+    const allowed = modelSets[p.provider_id];
+    const ms = (p.models || []).filter(m => allowed.has(typeof m === 'string' ? m : (m.id || m.name || m.model)));
+    if (ms.length === (p.models || []).length) return p;
+    changed = true;
+    return { ...p, models: ms };
+  });
+  if (nextPaygWithModels !== cfg.user_payg_providers) cfg.user_payg_providers = nextPaygWithModels;
+
+  if (Array.isArray(cfg.providers)) {
+    const nextProviders = cfg.providers.map(p => {
+      if (!p?.id || !modelSets[p.id]) return p;
+      const allowed = modelSets[p.id];
+      const ms = (p.models || []).filter(m => {
+        const n = typeof m === 'string' ? m : (m.name || m.id || m.model);
+        return n && allowed.has(n);
+      });
+      if (ms.length === (p.models || []).length) return p;
+      changed = true;
+      return { ...p, models: ms };
+    });
+    cfg.providers = nextProviders;
   }
 
   const mig = migrateAgentProviders(cfg);
@@ -754,7 +1022,15 @@ function applyTemplateOverride(base, override) {
   if (Array.isArray(override.models)) merged.models = override.models;
   if (Array.isArray(override.plans)) merged.plans = override.plans;
   if (override.pricing && typeof override.pricing === 'object') {
-    merged.pricing = { ...(base.pricing || {}), ...override.pricing };
+    const allowed = new Set([...(base.models || []), ...Object.keys(base.pricing || {})]);
+    merged.pricing = {};
+    for (const k of allowed) {
+      merged.pricing[k] = {
+        ...((base.pricing || {})[k] || {}),
+        ...((override.pricing || {})[k] || {}),
+      };
+    }
+    merged.models = [...allowed];
   }
   return { ...merged, _override: true, _serverHash: serverHash, _baseHash: override._baseHash || null };
 }
@@ -915,6 +1191,7 @@ module.exports = {
   subscriptionAppCatalog,
   apiSubscriptionCatalog,
   paygProviderCatalog,
+  paygSourcesCatalog,
   resolveUserPaidProviderIds,
   resolveUserGatewayProviderIds,
   resolveSubscriptionGatewayProviderIds,
@@ -945,4 +1222,8 @@ module.exports = {
   serverCatalogKeySets,
   serverTemplatesByKey,
   pruneLocalBillingAgainstServer,
+  setLiveCatalogProviders,
+  setLiveCatalogPayload,
+  liveCatalogPaygEntry,
+  catalogModelSetsByProvider,
 };

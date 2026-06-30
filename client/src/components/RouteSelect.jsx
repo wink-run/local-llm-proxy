@@ -1,0 +1,481 @@
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { modelIdFromRoute } from '../lib/route-binding';
+
+function encodeTierModelRoute(tier, modelId) {
+  if (!modelId) return '';
+  if (!tier) return modelId;
+  return `${tier}:${modelId}`;
+}
+
+function modelTierKey(m) {
+  return encodeTierModelRoute(m.tier, m.id);
+}
+
+/** 场景路由 + 模型分层选项（供其他原生 <select> 复用） */
+export function routeSelectChildren({ routes, availableModels, t, showOfficial, showGatewayRoutes, isManual }) {
+  const avail = new Set((availableModels || []).map(m => m.id));
+  const usable = (routes || []).filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
+  const showRoutes = showGatewayRoutes !== false;
+  return (
+    <>
+      {isManual
+        ? null
+        : (showOfficial !== false ? <option value="">{t('gateway.app.routeOfficial')}</option> : null)}
+      {showRoutes && usable.length > 0 && (
+        <optgroup label={t('gateway.app.sceneRoutes')}>
+          {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon && !r.icon.startsWith('icon:') ? r.icon + ' ' : ''}{r.scene_name}</option>)}
+        </optgroup>
+      )}
+      {showRoutes && tierOptgroups(availableModels, t)}
+    </>
+  );
+}
+
+export function tierOptgroups(availableModels, t) {
+  const local = (availableModels || []).filter(m => m.tier === 'free' || m.tier === 'paid');
+  const remote = (availableModels || []).filter(m => m.tier === 'p2p');
+  const grp = (key, models) => (models.length ? (
+    <optgroup key={key} label={t(`gateway.app.tier.${key}`)}>
+      {models.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}
+    </optgroup>
+  ) : null);
+  return [grp('local', local), grp('remote', remote)];
+}
+
+/** 弹出菜单条目 */
+function buildRouteMenuItems({ routes, availableModels, t, showGatewayRoutes, isManual, showOfficial }) {
+  const items = [];
+  if (!isManual && showOfficial !== false) {
+    items.push({ kind: 'option', value: '', label: t('gateway.app.routeOfficial') });
+  }
+  if (showGatewayRoutes === false) return items;
+
+  const avail = new Set((availableModels || []).map(m => m.id));
+  const usable = (routes || []).filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
+  if (usable.length) {
+    items.push({ kind: 'group', label: t('gateway.app.sceneRoutes') });
+    for (const r of usable) {
+      const icon = r.icon && !String(r.icon).startsWith('icon:') ? `${r.icon} ` : '';
+      items.push({ kind: 'option', value: r.model_key || r.id, label: `${icon}${r.scene_name}` });
+    }
+  }
+  const local = (availableModels || []).filter(m => m.tier === 'free' || m.tier === 'paid');
+  const remote = (availableModels || []).filter(m => m.tier === 'p2p');
+  if (local.length) {
+    items.push({ kind: 'group', label: t('gateway.app.tier.local') });
+    for (const m of local) items.push({ kind: 'option', value: modelTierKey(m), label: m.id });
+  }
+  if (remote.length) {
+    items.push({ kind: 'group', label: t('gateway.app.tier.remote') });
+    for (const m of remote) items.push({ kind: 'option', value: modelTierKey(m), label: m.id });
+  }
+  return items;
+}
+
+export const ROUTE_SELECT_COMPACT = 'w-full min-w-0 max-w-full text-[11px] bg-white/45 dark:bg-zinc-900/35 border border-white/50 dark:border-white/10 rounded-[6px] px-1.5 py-1 outline-none text-zinc-700 dark:text-zinc-200 backdrop-blur-xl backdrop-saturate-150 shadow-[inset_0_1px_0_rgba(255,255,255,0.65),0_1px_3px_rgba(0,0,0,0.06)] disabled:opacity-40 disabled:cursor-not-allowed transition-[border-color,box-shadow,background-color] duration-200';
+export const ROUTE_SELECT_NORMAL = 'w-full text-sm bg-white/45 dark:bg-zinc-900/35 border border-white/50 dark:border-white/10 rounded-lg px-3 py-1.5 outline-none text-zinc-800 dark:text-zinc-100 backdrop-blur-xl backdrop-saturate-150 shadow-[inset_0_1px_0_rgba(255,255,255,0.65),0_1px_3px_rgba(0,0,0,0.06)] disabled:opacity-40 disabled:cursor-not-allowed transition-[border-color,box-shadow,background-color] duration-200';
+export const ROUTE_SELECT_OPEN = 'bg-white/55 dark:bg-zinc-900/45 ring-[2px] ring-[#007AFF]/25 border-[#007AFF]/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.75),0_0_0_1px_rgba(0,122,255,0.12),0_4px_16px_rgba(0,122,255,0.12)]';
+
+const PANEL_MAX_H = 240;
+const PANEL_MARGIN = 8;
+const PANEL_FOOTER_H = 28;
+
+/** 独立顶层 Portal，避免被 #root / 表格 overflow 遮挡 */
+function getPortalRoot() {
+  let el = document.getElementById('route-select-portal');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'route-select-portal';
+    el.style.cssText = 'position:fixed;inset:0;z-index:99990;pointer-events:none;';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+/** 根据视口空间计算弹出位置，不足时向上展开 */
+function computePanelPos(triggerEl) {
+  const r = triggerEl.getBoundingClientRect();
+  const width = Math.max(r.width, 200);
+  let left = r.left;
+  if (left + width > window.innerWidth - PANEL_MARGIN) left = window.innerWidth - width - PANEL_MARGIN;
+  if (left < PANEL_MARGIN) left = PANEL_MARGIN;
+
+  const footerH = PANEL_FOOTER_H;
+  const spaceBelow = window.innerHeight - r.bottom - PANEL_MARGIN;
+  const spaceAbove = r.top - PANEL_MARGIN;
+  const openDown = spaceBelow >= 120 + footerH || spaceBelow >= spaceAbove;
+
+  if (openDown) {
+    return {
+      top: r.bottom + 4,
+      bottom: null,
+      left,
+      width,
+      maxHeight: Math.min(PANEL_MAX_H + footerH, Math.max(96 + footerH, spaceBelow)),
+      openUp: false,
+    };
+  }
+  return {
+    top: null,
+    bottom: window.innerHeight - r.top + 4,
+    left,
+    width,
+    maxHeight: Math.min(PANEL_MAX_H + footerH, Math.max(96 + footerH, spaceAbove)),
+    openUp: true,
+  };
+}
+
+/** 毛玻璃弹出层主题 */
+const POPUP_THEME = {
+  compact: {
+    panel: [
+      'font-[system-ui,-apple-system,BlinkMacSystemFont,"SF_Pro_Text","Segoe_UI",sans-serif]',
+      'antialiased subpixel-antialiased',
+      'text-[11px] leading-[16px] tracking-[-0.01em]',
+      'rounded-[12px]',
+      'border border-white/40 dark:border-white/[0.12]',
+      'bg-white/55 dark:bg-zinc-900/45',
+      'backdrop-blur-3xl backdrop-saturate-[200%]',
+      'shadow-[inset_0_1px_0_rgba(255,255,255,0.72),0_0_0_0.5px_rgba(255,255,255,0.35),0_8px_32px_rgba(0,0,0,0.12),0_2px_8px_rgba(0,0,0,0.06)]',
+      'py-1.5',
+    ].join(' '),
+    row: 'flex items-center min-h-[22px] py-[3px] pl-2 pr-2.5 mx-1 rounded-[7px] cursor-default select-none transition-all duration-100',
+    rowActive: 'bg-[#007AFF]/75 backdrop-blur-md text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.28)]',
+    rowIdle: 'text-zinc-800/90 dark:text-zinc-100/90',
+    check: 'w-[15px] shrink-0 flex items-center justify-center',
+    group: 'mx-1 px-2 pt-1 pb-0.5 text-[11px] font-semibold text-zinc-500/80 dark:text-zinc-400/80 cursor-default select-none',
+    chevron: 'w-2.5 h-2.5 shrink-0 text-zinc-500/70 dark:text-zinc-400/70',
+    footer: 'shrink-0 flex items-center justify-between gap-2 border-t border-white/35 dark:border-white/[0.08] px-2 py-1',
+    footerSingle: 'shrink-0 flex items-center border-t border-white/35 dark:border-white/[0.08] px-2 py-1',
+    selectedHint: 'text-[10px] text-zinc-500/90 dark:text-zinc-400/90 tabular-nums shrink-0',
+    confirmBtn: 'rounded-[5px] bg-[#007AFF] hover:bg-[#0066E0] active:bg-[#005BD0] text-white text-[10px] font-medium px-2 py-0.5 leading-none transition-colors shrink-0',
+  },
+  normal: {
+    panel: [
+      'font-[system-ui,-apple-system,BlinkMacSystemFont,"SF_Pro_Text","Segoe_UI",sans-serif]',
+      'antialiased subpixel-antialiased',
+      'text-[13px] leading-[18px] tracking-[-0.01em]',
+      'rounded-[14px]',
+      'border border-white/40 dark:border-white/[0.12]',
+      'bg-white/55 dark:bg-zinc-900/45',
+      'backdrop-blur-3xl backdrop-saturate-[200%]',
+      'shadow-[inset_0_1px_0_rgba(255,255,255,0.72),0_0_0_0.5px_rgba(255,255,255,0.35),0_12px_40px_rgba(0,0,0,0.14),0_4px_12px_rgba(0,0,0,0.06)]',
+      'py-2',
+    ].join(' '),
+    row: 'flex items-center min-h-[28px] py-[4px] pl-2.5 pr-3 mx-1.5 rounded-[8px] cursor-default select-none transition-all duration-100',
+    rowActive: 'bg-[#007AFF]/75 backdrop-blur-md text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.28)]',
+    rowIdle: 'text-zinc-800/90 dark:text-zinc-100/90',
+    check: 'w-[18px] shrink-0 flex items-center justify-center',
+    group: 'mx-1.5 px-2.5 pt-1 pb-0.5 text-[13px] font-semibold text-zinc-500/80 dark:text-zinc-400/80 cursor-default select-none',
+    chevron: 'w-3 h-3 shrink-0 text-zinc-500/70 dark:text-zinc-400/70',
+    footer: 'shrink-0 flex items-center justify-between gap-2 border-t border-white/35 dark:border-white/[0.08] px-2.5 py-1',
+    footerSingle: 'shrink-0 flex items-center border-t border-white/35 dark:border-white/[0.08] px-2.5 py-1',
+    selectedHint: 'text-[11px] text-zinc-500/90 dark:text-zinc-400/90 tabular-nums shrink-0',
+    confirmBtn: 'rounded-md bg-[#007AFF] hover:bg-[#0066E0] active:bg-[#005BD0] text-white text-[11px] font-medium px-2.5 py-1 leading-none transition-colors shrink-0',
+  },
+};
+
+function routeOptionDisplayLabel(routeId, routes) {
+  const scene = (routes || []).find(r => r.model_key === routeId || r.id === routeId);
+  if (scene) {
+    const icon = scene.icon && !String(scene.icon).startsWith('icon:') ? `${scene.icon} ` : '';
+    return `${icon}${scene.scene_name}`;
+  }
+  return modelIdFromRoute(routeId, routes) || routeId || '';
+}
+
+function resolveTriggerLabel({ multi, value, values, routes, t, isManual, displayText }) {
+  if (multi) {
+    const selected = (values || []).filter(Boolean);
+    if (isManual && selected.length === 0) return '—';
+    if (selected.length === 0) return t('gateway.app.routeOfficial');
+    if (selected.length > 1 && displayText) return displayText;
+    if (selected.length === 1) return routeOptionDisplayLabel(selected[0], routes);
+    return isManual ? '—' : t('gateway.app.routeOfficial');
+  }
+  if (isManual && !value) return '—';
+  if (!value) return t('gateway.app.routeOfficial');
+  return routeOptionDisplayLabel(value, routes) || (isManual ? '—' : t('gateway.app.routeOfficial'));
+}
+
+function RouteChevron({ className, open }) {
+  return (
+    <svg
+      className={`${className} transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${open ? 'rotate-180' : ''}`}
+      viewBox="0 0 12 12"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** 单选：✓ 标记 */
+function RouteCheckIcon({ marked, active, compact }) {
+  if (!marked) return null;
+  const stroke = active ? '#ffffff' : '#007AFF';
+  const size = compact ? 11 : 13;
+  return (
+    <svg width={size} height={size} viewBox="0 0 12 12" fill="none" aria-hidden="true" className="drop-shadow-[0_0.5px_0_rgba(255,255,255,0.4)]">
+      <path
+        d="M2.5 6.2 5 8.7 9.5 3.8"
+        stroke={stroke}
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** 多选：checkbox + 勾，暗示可多选 */
+function RouteCheckboxIcon({ marked, active, compact }) {
+  const box = compact ? 'w-3 h-3 rounded-[3px]' : 'w-3.5 h-3.5 rounded-[4px]';
+  const tick = compact ? 8 : 9;
+  const idleBox = 'border border-zinc-400/55 dark:border-zinc-500/65 bg-white/40 dark:bg-white/[0.06]';
+  const hoverBox = 'border border-white/75 bg-white/25';
+  const checkedBox = active
+    ? 'border border-white bg-white shadow-[inset_0_0_0_1px_rgba(0,122,255,0.15)]'
+    : 'border border-[#007AFF] bg-[#007AFF]';
+  const tickStroke = active ? '#007AFF' : '#ffffff';
+
+  return (
+    <span
+      className={`${box} shrink-0 flex items-center justify-center transition-colors duration-75 ${
+        marked ? checkedBox : (active ? hoverBox : idleBox)
+      }`}
+      aria-hidden="true"
+    >
+      {marked && (
+        <svg width={tick} height={tick} viewBox="0 0 10 10" fill="none">
+          <path
+            d="M2 5.2 4.2 7.4 8 2.8"
+            stroke={tickStroke}
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      )}
+    </span>
+  );
+}
+
+function RouteMenuRow({ mark, label, active, theme, compact, multi, onEnter, onClick }) {
+  return (
+    <div
+      role={multi ? 'menuitemcheckbox' : 'option'}
+      aria-checked={multi ? !!mark : undefined}
+      aria-selected={multi ? undefined : !!mark}
+      className={`${theme.row} ${active ? theme.rowActive : theme.rowIdle}`}
+      onMouseEnter={onEnter}
+      onMouseDown={e => e.preventDefault()}
+      onClick={onClick}
+    >
+      <span className={theme.check}>
+        {multi
+          ? <RouteCheckboxIcon marked={mark} active={active} compact={compact} />
+          : <RouteCheckIcon marked={mark} active={active} compact={compact} />}
+      </span>
+      <span className="truncate">{label}</span>
+    </div>
+  );
+}
+
+/**
+ * 路由下拉（单选 / 多选共用同款触发器 + 弹出层）
+ */
+export default function RouteSelect({
+  multi = false,
+  value = '',
+  values = [],
+  onChange,
+  routes,
+  availableModels,
+  t,
+  showGatewayRoutes = true,
+  showOfficial = true,
+  isManual = false,
+  disabled = false,
+  compact = false,
+  className = '',
+}) {
+  const [open, setOpen] = useState(false);
+  const [hoverKey, setHoverKey] = useState(null);
+  const [panelPos, setPanelPos] = useState(null);
+  const [panelVisible, setPanelVisible] = useState(false);
+  /** 多选草稿：点「确定」后才 onChange */
+  const [draftSelected, setDraftSelected] = useState([]);
+  const rootRef = useRef(null);
+  const triggerRef = useRef(null);
+  const panelRef = useRef(null);
+
+  const theme = compact ? POPUP_THEME.compact : POPUP_THEME.normal;
+  const cls = `${compact ? ROUTE_SELECT_COMPACT : ROUTE_SELECT_NORMAL} ${className}`.trim();
+  const menuItems = buildRouteMenuItems({ routes, availableModels, t, showGatewayRoutes, isManual, showOfficial });
+  const selected = multi ? (values || []).filter(Boolean) : [];
+  const workingSelected = multi && open ? draftSelected : selected;
+  const singleValue = multi ? null : (value ?? '');
+  const officialActive = !isManual && (multi ? workingSelected.length === 0 : !singleValue);
+  const multiSelectedCount = multi
+    ? (isManual ? workingSelected.length : (officialActive ? 1 : workingSelected.length))
+    : 0;
+  const routeOptionCount = menuItems.filter(item => item.kind === 'option').length;
+
+  const displayText = multi && !officialActive && selected.length > 1
+    ? t('gateway.app.routeMultiSummary', {
+      first: routeOptionDisplayLabel(selected[0], routes),
+      n: selected.length - 1,
+    })
+    : null;
+
+  const triggerLabel = resolveTriggerLabel({ multi, value: singleValue, values, routes, t, isManual, displayText });
+  const triggerTitle = multi && selected.length > 1
+    ? selected.map(v => routeOptionDisplayLabel(v, routes)).join(', ')
+    : undefined;
+
+  const updatePanelPos = useCallback(() => {
+    const el = triggerRef.current;
+    if (!el) return;
+    setPanelPos(computePanelPos(el));
+  }, []);
+
+  useEffect(() => {
+    if (!open) { setHoverKey(null); setPanelVisible(false); return; }
+    updatePanelPos();
+    const raf = requestAnimationFrame(() => requestAnimationFrame(() => setPanelVisible(true)));
+    const onDoc = (e) => {
+      const t = e.target;
+      if (rootRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const onScroll = () => updatePanelPos();
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
+    return () => {
+      cancelAnimationFrame(raf);
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [open, updatePanelPos]);
+
+  const pickOfficial = () => {
+    if (multi) setDraftSelected([]);
+    else { onChange(null); setOpen(false); }
+  };
+
+  const pickRoute = (val) => {
+    if (!val) return;
+    if (multi) {
+      setDraftSelected(prev => {
+        if (!isManual && prev.length === 0) return [val];
+        if (prev.includes(val)) return prev.filter(v => v !== val);
+        return [...prev, val];
+      });
+    } else {
+      onChange(val);
+      setOpen(false);
+    }
+  };
+
+  const confirmMulti = () => {
+    onChange(draftSelected);
+    setOpen(false);
+  };
+
+  const isMarked = (itemValue) => {
+    if (itemValue === '') return officialActive;
+    return multi ? workingSelected.includes(itemValue) : singleValue === itemValue;
+  };
+
+  const popupPanel = open && !disabled && panelPos && createPortal(
+    <div
+      ref={panelRef}
+      className={[
+        'electron-no-drag fixed pointer-events-auto flex flex-col overflow-hidden',
+        theme.panel,
+        '!pb-0',
+        'transition-[opacity,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]',
+        panelVisible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-[0.97] translate-y-[-3px]',
+        panelPos.openUp ? 'origin-bottom' : 'origin-top',
+      ].join(' ')}
+      style={{
+        ...(panelPos.top != null ? { top: panelPos.top } : {}),
+        ...(panelPos.bottom != null ? { bottom: panelPos.bottom } : {}),
+        left: panelPos.left,
+        width: panelPos.width,
+        maxHeight: panelPos.maxHeight,
+        zIndex: 99999,
+      }}
+      onMouseLeave={() => setHoverKey(null)}
+    >
+      <div className={`min-h-0 flex-1 overflow-y-auto overscroll-contain ${multi ? '' : 'py-0'}`}>
+      {menuItems.map((item, i) => {
+        if (item.kind === 'group') {
+          return <div key={`grp-${item.label}`} className={theme.group}>{item.label}</div>;
+        }
+        const key = item.value || '__official__';
+        const isOfficial = item.value === '';
+        return (
+          <RouteMenuRow
+            key={key}
+            compact={compact}
+            multi={multi}
+            theme={theme}
+            mark={isMarked(item.value)}
+            label={item.label}
+            active={hoverKey === key}
+            onEnter={() => setHoverKey(key)}
+            onClick={() => (isOfficial ? pickOfficial() : pickRoute(item.value))}
+          />
+        );
+      })}
+      </div>
+      {multi ? (
+        <div className={theme.footer}>
+          <span className={theme.selectedHint}>
+            {t('gateway.app.routeMultiSelected', { total: routeOptionCount, selected: multiSelectedCount })}
+          </span>
+          <button type="button" className={theme.confirmBtn} onMouseDown={e => e.preventDefault()} onClick={confirmMulti}>
+            {t('gateway.app.routeMultiConfirm')}
+          </button>
+        </div>
+      ) : (
+        <div className={theme.footerSingle}>
+          <span className={theme.selectedHint}>
+            {t('gateway.app.routeTotal', { total: routeOptionCount })}
+          </span>
+        </div>
+      )}
+    </div>,
+    getPortalRoot(),
+  );
+
+  return (
+    <div ref={rootRef} className={`relative min-w-0 ${className}`}>
+      <button
+        ref={triggerRef}
+        type="button"
+        disabled={disabled}
+        title={triggerTitle}
+        className={`${cls} ${open ? ROUTE_SELECT_OPEN : ''} electron-no-drag flex items-center justify-between gap-1 text-left ${disabled ? '' : 'cursor-pointer'}`}
+        onClick={() => {
+          if (disabled) return;
+          if (!open) {
+            if (multi) setDraftSelected((values || []).filter(Boolean));
+            updatePanelPos();
+          }
+          setOpen(v => !v);
+        }}
+      >
+        <span className="truncate flex-1 min-w-0">{triggerLabel}</span>
+        <RouteChevron className={theme.chevron} open={open} />
+      </button>
+      {popupPanel}
+    </div>
+  );
+}

@@ -93,8 +93,11 @@ def _merge_provider_pricing(apps_doc: dict, user_billing: dict) -> dict:
     for pid in ids:
         merged[pid] = {**(yaml.get(pid) or {})}
         for model, rates in (overrides.get(pid) or {}).items():
-            if isinstance(rates, dict):
-                merged[pid][model] = {**(merged[pid].get(model) or {}), **rates}
+            if model == "_excluded_models":
+                continue
+            if not isinstance(rates, dict):
+                continue
+            merged[pid][model] = {**(merged[pid].get(model) or {}), **rates}
     return merged
 
 

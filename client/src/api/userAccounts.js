@@ -39,3 +39,22 @@ export async function saveUserAccounts(patch) {
   if (!res.ok) throw new Error(`user-accounts HTTP ${res.status}`);
   return res.json();
 }
+
+/** 登录后上传本机账户到云端，不拉取覆盖本地（个人源登录/游客共享同一份本机数据） */
+export async function pushUserAccountsToCloud() {
+  if (window.electronAPI?.localConfig?.pushUserAccountsToCloud) {
+    return window.electronAPI.localConfig.pushUserAccountsToCloud();
+  }
+  const token = localStorage.getItem('token');
+  if (!token) return null;
+  const serverUrl = normalizeServerBase(getServerUrl() || '');
+  if (!serverUrl) return null;
+  await syncCloudConfigUrl(serverUrl).catch(() => {});
+  const res = await fetch('/api/user-accounts', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...billingHeaders() },
+    body: JSON.stringify(await loadUserAccounts({ localOnly: true })),
+  });
+  if (!res.ok) throw new Error(`user-accounts HTTP ${res.status}`);
+  return res.json();
+}

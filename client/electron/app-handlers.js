@@ -114,6 +114,17 @@ function applyTraceFields(entity, session, vars, hid) {
   }
 }
 
+/** 路由绑定 → 展示标签（写入 Claude inferenceModels.labelOverride 等） */
+function routeLabelFor(routeId, routes = []) {
+  const parsed = parseRouteBinding(routeId, routes);
+  if (parsed.isScene && parsed.scene) {
+    const r = parsed.scene;
+    const icon = r.icon && !String(r.icon).startsWith('icon:') ? `${r.icon} ` : '';
+    return `${icon}${r.scene_name || r.model_key || routeId}`.trim();
+  }
+  return String(parsed.modelId || routeId).trim();
+}
+
 /** 绑定路由 → WorkBuddy models.json 的 id（场景名或模型 id，不含 marker 前缀） */
 function routeModelId(routeId, routes = []) {
   if (!routeId) return '';
@@ -149,10 +160,38 @@ function patchRouteWorkbuddyModels(patch, cfg, ctx) {
   return out;
 }
 
+/** Claude Desktop：inferenceModels[]，name 用 Anthropic 名过校验，labelOverride 显示绑定的路由 */
+function patchRouteClaudeInferenceModels(patch, cfg, ctx) {
+  const routeIds = ctx.routeIds?.length ? ctx.routeIds : (ctx.routeId ? [ctx.routeId] : []);
+  if (!routeIds.length) return patch;
+  const claudeName = cfg.claude_name || ctx.claudeName || 'claude-sonnet-4-5';
+  const routes = ctx.routes || [];
+  const models = routeIds
+    .map(rid => {
+      const label = routeLabelFor(rid, routes);
+      if (!label) return null;
+      return { name: claudeName, labelOverride: label };
+    })
+    .filter(Boolean);
+  if (!models.length) return patch;
+  return { ...patch, inferenceModels: models };
+}
+
+/** Codex Desktop：顶层 model 写绑定的路由/模型名；多选时首条为默认 */
+function patchRouteCodexModel(patch, cfg, ctx) {
+  const routeIds = ctx.routeIds?.length ? ctx.routeIds : (ctx.routeId ? [ctx.routeId] : []);
+  const first = routeIds[0];
+  if (!first) return patch;
+  const modelId = routeModelId(first, ctx.routes || []);
+  if (!modelId) return patch;
+  return { ...patch, model: modelId };
+}
+
 const PATCH_ROUTE_STRATEGIES = {
   workbuddy_models: patchRouteWorkbuddyModels,
-  // 兼容旧 strategy 名
   marker_model_list: patchRouteWorkbuddyModels,
+  claude_inference_models: patchRouteClaudeInferenceModels,
+  codex_model: patchRouteCodexModel,
 };
 
 /**
@@ -172,6 +211,18 @@ function applyRouteToProxyPatch(handlerId, patch, ctx = {}) {
   if (!fn) return patch;
   const marker = ctx.marker || handlersMap()[handlerId]?.proxy?.marker || 'tokenbank';
   return fn(patch, cfg, { ...ctx, routeIds, marker });
+}
+
+/** handler 是否声明了 patch_route（配置文件绑路由写入） */
+function handlerHasPatchRoute(hid) {
+  return !!(handlersMap()[hid]?.proxy?.patch_route?.strategy);
+}
+
+/** 实体是否启用路由多选（vars 覆盖 handler.patch_route.multi_select 默认） */
+function resolveRouteMultiSelect(hid, vars) {
+  const v = vars && typeof vars === 'object' ? vars : {};
+  if ('route_multi_select' in v) return !!v.route_multi_select;
+  return !!handlersMap()[hid]?.proxy?.patch_route?.multi_select;
 }
 
 /** preset_id / app.handler → handler id */
@@ -361,6 +412,11 @@ function expandEntity(compact) {
     entity.linked_data_sources = [];
   }
 
+  // 配置文件绑路由写入：是否允许多选（WorkBuddy / Claude Desktop / Codex 等）
+  if (handlerHasPatchRoute(hid)) {
+    entity.route_multi_select = resolveRouteMultiSelect(hid, vars);
+  }
+
   return entity;
 }
 
@@ -418,6 +474,9 @@ module.exports = {
   applyRouteToProxyPatch,
   resolveHandlerId,
   routeModelId,
+  routeLabelFor,
+  handlerHasPatchRoute,
+  resolveRouteMultiSelect,
   listHandlersMeta,
   normStrList,
 };

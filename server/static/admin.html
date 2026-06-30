@@ -586,8 +586,8 @@ select.form-input{cursor:pointer}
       </div>
       <p style="font-size:12px;color:#7b7b7b;margin-bottom:12px;line-height:1.6">
         {{ lang==='zh'
-          ? '在此配置个人页可选的按量/订阅供给源：图标、模型（ID·模态·价格）、层级、Base URL、验证方式、API 风格。发布后自动编译写入 config.sources 与 config.providers，客户端拉取即可生效。'
-          : 'Configure PAYG/subscription sources for the profile page. Publish compiles to config.sources + config.providers.' }}
+          ? '在此配置个人页可选的按量/订阅供给源：图标、模型（ID·模态·价格）、层级、Base URL、验证方式、API 风格。发布后写入 config.providers（providers.registry.yaml），客户端拉取即可生效。'
+          : 'Configure PAYG/subscription sources for the profile page. Publish writes config.providers (providers.registry.yaml).' }}
       </p>
       <div v-if="bsMsg" style="font-size:12px;margin-bottom:10px" :style="bsMsg.startsWith('✓')?'color:#16a34a':'color:#dc2626'">{{ bsMsg }}</div>
       <div class="panel" style="padding:0;overflow:hidden">
@@ -849,6 +849,13 @@ select.form-input{cursor:pointer}
             </ul>
             <p style="font-size:11px;color:#999;line-height:1.5;margin:4px 0 0">{{ lang==='zh' ? '三项能力均可自由勾选；发布时按选项展开，具体代理/扫描逻辑由内置 handler 实现。' : 'All capabilities are optional; publish applies your selections via built-in handlers.' }}</p>
           </div>
+          <div v-if="showRouteMultiSelect()" class="form-group" style="margin-bottom:12px">
+            <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px">
+              <input type="checkbox" v-model="acForm.route_multi_select" style="margin-top:3px" />
+              <span>{{ lang==='zh' ? '路由写入支持多选（客户端绑路由下拉可多选）' : 'Route write: multi-select (client route picker)' }}</span>
+            </label>
+            <p style="font-size:11px;color:#999;margin:4px 0 0;line-height:1.5">{{ lang==='zh' ? '适用于 WorkBuddy / Claude Desktop / Codex 等写配置文件的应用；多选时按各 handler 策略写入 models 或 inferenceModels。' : 'For config-file apps (WorkBuddy, Claude Desktop, Codex); writes multiple models per handler strategy.' }}</p>
+          </div>
           <div v-if="showModels()" class="form-group" style="margin-bottom:12px">
             <label>{{ lang==='zh'?'可选：展示模型（逗号分隔）':'Optional: display models' }}</label>
             <input v-model="acForm.models" class="form-input" style="width:100%" />
@@ -958,7 +965,7 @@ select.form-input{cursor:pointer}
             <span style="font-size:15px">{{ type==='apps' ? '🔧' : '🔀' }}</span>
             <span style="font-size:13px;font-weight:600;color:#000">
               {{ type==='apps'
-                ? (lang==='zh' ? '应用配置 (tokenbank.tools.yaml)' : 'Apps Config (tokenbank.tools.yaml)')
+                ? (lang==='zh' ? '应用配置 (tokenbank.yaml)' : 'Apps Config (tokenbank.yaml)')
                 : (lang==='zh' ? '场景路由配置 (tokenbank.routes.yaml)' : 'Routes Config (tokenbank.routes.yaml)') }}
             </span>
             <div style="margin-left:auto;display:flex;gap:6px">

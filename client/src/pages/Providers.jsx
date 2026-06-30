@@ -5,11 +5,12 @@ import { resolveBrandIcon } from '../lib/brandIcons';
 import ServiceIcon from '../components/ServiceIcon';
 import { getNetwork, getProfile, listKeys, createKey, deleteKey, getProviderCatalog, getModelsForCurrentUser } from '../api/client';
 import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
-import { DirectSourceCard, PersonalSourceModelView, PricingTable, CollapsibleBillingPanel, buildInstancePatch, buildDirectSourcePatch, buildDirectSourceRemovePatch, TemplateEditModal, SyncDiffBanner } from '../components/PersonalSources';
+import { DirectSourceCard, PersonalSourceModelView, PricingTable, CollapsibleBillingPanel, buildInstancePatch, buildDirectSourcePatch, buildDirectSourceRemovePatch, TemplateEditModal, SyncDiffBanner, accountInstanceAddedOrder } from '../components/PersonalSources';
 import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
 import { getGateway, getLocalConfig, getConfig, getOauth } from '../api/adapter';
 import { useLang } from '../store/lang';
 import { useAuth } from '../store/index';
+import { resolveModelsForModelView } from '../lib/personalAvailableModels';
 
 /** 按当前语言覆盖 meta 中的 label / hint / oauth.label */
 function localizeProviderMeta(metaMap, t) {
@@ -96,19 +97,30 @@ function parseCatalogModels(entry) {
     if (typeof m === 'string') push(m);
     else if (m && typeof m === 'object') push(m.name || m.id || m.model, m.type);
   }
-  // 仅有 pricing、无 models 列表时补全模型名
-  if (!models.length && entry?.pricing && typeof entry.pricing === 'object') {
-    for (const k of Object.keys(entry.pricing)) push(k);
+  // models 与 pricing 取并集，与服务端 sync_catalog_models_pricing 一致
+  if (entry?.pricing && typeof entry.pricing === 'object') {
+    for (const k of Object.keys(entry.pricing)) {
+      if (k && k !== '_excluded_models' && k !== 'excluded_models') push(k);
+    }
   }
   return models;
 }
 
-/** 从 catalog 提取 provider_id → pricing 映射（服务端发布后最新刊例价） */
+/** 从 catalog 提取 provider_id → pricing 映射（models 与 pricing 键严格对齐） */
 function catalogPricingFromProviders(providers) {
   const out = {};
   for (const p of providers || []) {
-    if (!p?.id || !p.pricing || typeof p.pricing !== 'object') continue;
-    if (Object.keys(p.pricing).length) out[p.id] = p.pricing;
+    if (!p?.id) continue;
+    const pricing = { ...(p.pricing && typeof p.pricing === 'object' ? p.pricing : {}) };
+    for (const m of parseCatalogModels(p)) {
+      const n = typeof m === 'string' ? m : m?.name;
+      if (!n || n === '_excluded_models' || n === 'excluded_models') continue;
+      if (!(n in pricing)) pricing[n] = {};
+    }
+    for (const k of Object.keys(pricing)) {
+      if (k === '_excluded_models' || k === 'excluded_models') delete pricing[k];
+    }
+    if (Object.keys(pricing).length) out[p.id] = pricing;
   }
   return out;
 }
@@ -123,6 +135,7 @@ function catalogToState(catalog, oauthById) {
       key_prefix: Array.isArray(p.key_prefix) ? p.key_prefix : [],
       signup_url: p.signup_url || '',
       api_format: p.api_format || 'openai',
+      base_url: p.base_url || '',
       // OAuth 能力以客户端为准（仅客户端有对应 oauth 模块）；不信任远端 catalog 的 oauth 字段，
       // 否则远端未重新部署时会下发已废弃的能力（如 gemini 的 google 登录）。
       oauth: oauthById[p.id] || null,
@@ -837,6 +850,34 @@ function resolveTemplateForProvider(providerId, templates = [], userSubs = [], u
   return templates.find(t => t.plan_provider_id === providerId) || null;
 }
 
+/** 多实例 gateway（acct-* 或与模板 catalog id 不同）= 独立供给源，不继承同类型凭证 */
+function isIndependentGatewayInstance(gatewayId, catalogId) {
+  if (!gatewayId) return false;
+  if (String(gatewayId).startsWith('acct-')) return true;
+  return !!catalogId && gatewayId !== catalogId;
+}
+
+/** 新实例默认凭证（空） */
+const FRESH_PROVIDER_CREDENTIALS = {
+  token: '',
+  credentials: null,
+  oauth_provider: '',
+  auth_type: 'api_key',
+  test_verified: false,
+};
+
+/** 添加供给源时从模板 / catalog / 已有 provider 解析 base_url */
+function resolveSeedBaseUrl(entry, { providers = [], paygCatalog = [], meta = {} } = {}) {
+  const tpl = entry?.template;
+  const catalogId = tpl?.key || entry?.providerId;
+  if (tpl?.base_url) return tpl.base_url;
+  const sibling = providers.find(p => p.id === catalogId || p.id === entry?.providerId);
+  if (sibling?.base_url) return sibling.base_url;
+  const payg = (paygCatalog || []).find(x => (x.provider_id || x.id) === catalogId);
+  if (payg?.base_url) return payg.base_url;
+  return meta[catalogId]?.base_url || meta[entry?.providerId]?.base_url || '';
+}
+
 /** 账户实例 → 供给源卡片数据（acct-* 从 catalog 模板克隆） */
 function resolveProviderStubForInstance(inst, providers, meta, userPayg, userSubs) {
   const gwId = inst.gateway_id;
@@ -855,17 +896,24 @@ function resolveProviderStubForInstance(inst, providers, meta, userPayg, userSub
     || FALLBACK_PROVIDERS.find(p => p.id === catalogId);
   const sibling = providers.find(p => p.id === catalogId);
   const m = meta[gwId] || meta[catalogId] || {};
+  const independent = isIndependentGatewayInstance(gwId, catalogId);
   const fallbackModels = instModels.length
     ? instModels
-    : seedModelsFromNames(sibling?.models || fb?.models || []);
+    : seedModelsFromNames(fb?.models || []);
   return {
-    ...(fb || sibling || { type: 'paid', enabled: false, token: '', base_url: '', models: [] }),
+    ...(fb || { type: 'paid', enabled: false, base_url: '', models: [] }),
     id: gwId,
     type: 'paid',
-    enabled: sibling?.enabled ?? fb?.enabled ?? false,
-    token: sibling?.token || '',
-    base_url: sibling?.base_url || fb?.base_url || m.base_url || '',
-    api_format: sibling?.api_format || fb?.api_format || m.api_format || 'openai',
+    enabled: independent ? true : (sibling?.enabled ?? fb?.enabled ?? false),
+    ...(independent ? FRESH_PROVIDER_CREDENTIALS : {
+      token: sibling?.token || '',
+      credentials: sibling?.credentials ?? null,
+      oauth_provider: sibling?.oauth_provider || '',
+      auth_type: sibling?.auth_type || 'api_key',
+      test_verified: sibling?.test_verified === true,
+    }),
+    base_url: fb?.base_url || m.base_url || sibling?.base_url || '',
+    api_format: fb?.api_format || m.api_format || sibling?.api_format || 'openai',
     models: fallbackModels,
     displayName: inst.name,
   };
@@ -1269,9 +1317,59 @@ function patchClearsTestVerified(patch) {
   return CREDENTIAL_PATCH_KEYS.some(k => Object.prototype.hasOwnProperty.call(patch, k));
 }
 
+/** provider_pricing_overrides 中非模型字段（历史遗留，不再写入） */
+const PRICING_OVERRIDE_META_KEYS = new Set(['_excluded_models']);
+
+function isValidModelName(name) {
+  const n = String(name || '').trim();
+  return !!n && !PRICING_OVERRIDE_META_KEYS.has(n) && n !== 'excluded_models';
+}
+
+function sanitizePricingOverrides(overrides) {
+  if (!overrides || typeof overrides !== 'object') return {};
+  let changed = false;
+  const next = {};
+  for (const [pid, ovr] of Object.entries(overrides)) {
+    if (!ovr || typeof ovr !== 'object') continue;
+    if (ovr._excluded_models != null) changed = true;
+    const perPid = { ...ovr };
+    delete perPid._excluded_models;
+    if (pricingOverrideModelKeys(perPid).length) next[pid] = perPid;
+  }
+  return changed ? next : overrides;
+}
+
+function pricingOverrideModelKeys(ovr) {
+  return Object.keys(ovr || {}).filter(k => isValidModelName(k));
+}
+
+/** 从 provider 列表剔除误写入的伪模型名（如 _excluded_models） */
+function sanitizeProviderModels(list) {
+  return (list || []).map(p => {
+    const models = (p.models || []).map(normModel).filter(m => m.name);
+    const before = (p.models || []).map(modelEntryName).filter(Boolean).join('\0');
+    const after = models.map(m => m.name).join('\0');
+    return before === after ? p : { ...p, models };
+  });
+}
+
 // Normalize a model entry to {name, type} — handles both string and object formats
 function normModel(m) {
-  return typeof m === 'string' ? { name: m, type: 'chat' } : { name: m.name, type: m.type || 'chat' };
+  const raw = typeof m === 'string' ? { name: m, type: 'chat' } : { name: m.name, type: m.type || 'chat' };
+  return isValidModelName(raw.name) ? raw : { name: '', type: 'chat' };
+}
+
+/** 以 catalog 模型列表为准合并本地配置（去掉服务端已删除的模型如 test2） */
+function mergeModelsFromCatalog(catalogModels, savedModels) {
+  if (!catalogModels?.length) return savedModels || [];
+  const savedByName = new Map(
+    (savedModels || []).map(m => { const n = normModel(m); return [n.name, n]; }).filter(([name]) => name),
+  );
+  return catalogModels.map(m => {
+    const c = normModel(typeof m === 'string' ? { name: m } : m);
+    const s = savedByName.get(c.name);
+    return s ? { name: c.name, type: s.type || c.type || 'chat' } : c;
+  }).filter(m => m.name);
 }
 
 /** 模板/账户实例上的模型名 → 供给源卡片可编辑格式 */
@@ -1486,46 +1584,37 @@ const DEFAULT_MODEL_PRICING = { in: 1, out: 5, cacheRead: 0.1 };
 const STANDALONE_MODEL_PRICING = { in: 0, out: 0, cacheRead: 0 };
 
 function modelEntryName(m) {
-  if (typeof m === 'string') return m.trim();
-  return String(m?.name || m?.id || '').trim();
+  let n = '';
+  if (typeof m === 'string') n = m.trim();
+  else n = String(m?.name || m?.id || '').trim();
+  return isValidModelName(n) ? n : '';
 }
 
-/** 按模型视图：仅用户/网关实际配置的模型；订阅无模型、直连 APP 订阅均不展示 */
-function resolveModelsForModelView(inst, providers, userPayg, userSubscriptions, pricingOverrides, directByAgent) {
-  const fromArr = (arr) => (arr || []).map(modelEntryName).filter(Boolean);
-  if (inst.kind === 'payg') {
-    const p = userPayg.find(x => x.id === inst.id);
-    const names = new Set(fromArr(p?.models));
-    const prov = providers.find(x => x.id === inst.gateway_id);
-    for (const n of fromArr(prov?.models)) names.add(n);
-    const pid = p?.provider_id || inst.source_id;
-    for (const k of Object.keys(pricingOverrides?.[pid] || {})) if (k) names.add(k);
-    return [...names];
-  }
-  if (inst.kind === 'sub') {
-    if (inst.tag === 'app_sub') return [];
-    const prov = providers.find(x => x.id === inst.gateway_id);
-    const names = new Set(fromArr(prov?.models));
-    const subRec = userSubscriptions.find(s => s.id === inst.id);
-    const pid = subRec?.plan_provider_id || OAUTH_SUB_SOURCE_TO_PID[inst.source_id] || inst.source_id;
-    for (const k of Object.keys(pricingOverrides?.[pid] || {})) if (k) names.add(k);
-    return [...names];
-  }
-  if (inst.kind === 'direct') {
-    const d = directByAgent[inst.id];
-    if (!d || d.mode !== 'api') return [];
-    const fromPricing = Object.keys(d.pricing || {}).filter(Boolean);
-    if (fromPricing.length) return fromPricing;
-    return fromArr(d.models);
-  }
+/** 实例级已隐藏的云预置模型（与模板 catalog 分离，新实例不受影响） */
+function getInstanceExcludedList({ standalone, provider, paygRec, subRec }) {
+  if (standalone) return Array.isArray(provider?.excluded_models) ? provider.excluded_models : [];
+  if (paygRec) return Array.isArray(paygRec.excluded_models) ? paygRec.excluded_models : [];
+  if (subRec) return Array.isArray(subRec.excluded_models) ? subRec.excluded_models : [];
   return [];
 }
 
+function withInstanceExcludedAdded(list, modelName) {
+  const prev = list || [];
+  return prev.includes(modelName) ? prev : [...prev, modelName];
+}
+
+function withInstanceExcludedRemoved(list, modelName) {
+  return (list || []).filter(m => m !== modelName);
+}
+
 /** 合并 provider 下各模型刊例价（服务端默认 + 用户覆盖） */
-function pricingRowsForProvider(providerId, models, merged, overrides) {
+function pricingRowsForProvider(providerId, models, merged, overrides, excludedModels = []) {
   const base = merged[providerId] || {};
   const ovr = overrides[providerId] || {};
-  const names = new Set([...(models || []), ...Object.keys(base), ...Object.keys(ovr)]);
+  const excluded = new Set(excludedModels);
+  const names = new Set([...(models || []), ...pricingOverrideModelKeys(base), ...pricingOverrideModelKeys(ovr)]);
+  for (const k of excluded) names.delete(k);
+  for (const k of [...names]) if (!isValidModelName(k)) names.delete(k);
   return [...names].sort().map(model => ({
     model,
     ...base[model],
@@ -1559,25 +1648,48 @@ function ProviderCardBillingSection({
     const names = new Set();
     if (standalone) {
       for (const m of provider?.models || []) { const n = modelEntryName(m); if (n) names.add(n); }
-      for (const k of Object.keys(pricingOverrides?.[pricingPid] || {})) if (k) names.add(k);
+      for (const k of Object.keys(pricingOverrides?.[pricingPid] || {})) {
+        if (k && !PRICING_OVERRIDE_META_KEYS.has(k)) names.add(k);
+      }
       return names;
     }
     if (isPayg) {
       for (const m of paygRec?.models || []) { const n = modelEntryName(m); if (n) names.add(n); }
     } else {
       for (const m of provider?.models || []) { const n = modelEntryName(m); if (n) names.add(n); }
-      for (const m of accountInst?.models || []) { if (m) names.add(m); }
-      for (const k of Object.keys(pricingOverrides?.[pricingPid] || {})) names.add(k);
+      for (const m of accountInst?.models || []) { if (isValidModelName(m)) names.add(m); }
+      for (const k of Object.keys(pricingOverrides?.[pricingPid] || {})) {
+        if (k && !PRICING_OVERRIDE_META_KEYS.has(k)) names.add(k);
+      }
     }
     return names;
   }, [standalone, isPayg, paygRec, provider?.models, accountInst?.models, pricingOverrides, pricingPid]);
 
-  // 表格行 = 用户已配模型 + 刊例价目录（仅展示，不阻止「添加」）
+  const instanceExcluded = useMemo(
+    () => getInstanceExcludedList({ standalone, provider, paygRec, subRec }),
+    [standalone, provider?.excluded_models, paygRec?.excluded_models, subRec?.excluded_models],
+  );
+
+  // 表格行：以云刊例价目录（mergedProviderPricing）为准，再叠加用户 override；避免本地 models 与 catalog 漂移
   const modelNames = useMemo(() => {
-    const names = new Set(userModelNames);
-    for (const k of Object.keys(providerPricing?.[pricingPid] || {})) names.add(k);
+    const excluded = new Set(instanceExcluded);
+    const catalogKeys = Object.keys(providerPricing?.[pricingPid] || {})
+      .filter(k => isValidModelName(k) && !excluded.has(k) && !PRICING_OVERRIDE_META_KEYS.has(k));
+    const names = new Set(catalogKeys.length ? catalogKeys : userModelNames);
+    if (catalogKeys.length) {
+      for (const k of Object.keys(pricingOverrides?.[pricingPid] || {})) {
+        if (isValidModelName(k) && !excluded.has(k)) names.add(k);
+      }
+    } else {
+      for (const n of userModelNames) {
+        if (!excluded.has(n)) names.add(n);
+      }
+      for (const k of Object.keys(providerPricing?.[pricingPid] || {})) {
+        if (!excluded.has(k) && !PRICING_OVERRIDE_META_KEYS.has(k)) names.add(k);
+      }
+    }
     return [...names].sort();
-  }, [userModelNames, providerPricing, pricingPid]);
+  }, [userModelNames, providerPricing, pricingPid, instanceExcluded, pricingOverrides]);
 
   const baseMonthly = subRec?.monthly_usd ?? accountInst?.monthly_usd;
   const [monthly, setMonthly] = useState(baseMonthly != null ? String(baseMonthly) : '');
@@ -1587,8 +1699,28 @@ function ProviderCardBillingSection({
     setMonthly(baseMonthly != null ? String(baseMonthly) : '');
   }, [baseMonthly, subRec?.id]);
 
+  // 加载时自动清理历史脏数据（_excluded_models 误入 provider.models / overrides）
+  useEffect(() => {
+    const badModels = (provider.models || []).some(m => !isValidModelName(modelEntryName(m)));
+    const badOverrides = pricingOverrides?.[pricingPid]?._excluded_models != null;
+    if (!badModels && !badOverrides) return;
+    (async () => {
+      if (badModels) {
+        const cleaned = (provider.models || []).map(normModel).filter(m => m.name);
+        onUpdate(provider.id, { models: cleaned });
+        if (onPersistModels) await onPersistModels(provider.id, cleaned);
+      }
+      if (badOverrides) {
+        const next = sanitizePricingOverrides(pricingOverrides);
+        onOverridesChange?.(next);
+        await onSaveAccounts({ provider_pricing_overrides: next });
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅实例/pricingPid 切换时迁移一次
+  }, [provider.id, pricingPid, subRec?.id, paygRec?.id]);
+
   const rows = useMemo(() => {
-    const raw = pricingRowsForProvider(pricingPid, modelNames, providerPricing, pricingOverrides);
+    const raw = pricingRowsForProvider(pricingPid, modelNames, providerPricing, pricingOverrides, instanceExcluded);
     if (!standalone) return raw;
     // 独立源未写覆盖时展示 0，便于与账户卡片 UI 一致
     return raw.map(r => ({
@@ -1597,7 +1729,7 @@ function ProviderCardBillingSection({
       out: r.out ?? STANDALONE_MODEL_PRICING.out,
       cacheRead: r.cacheRead ?? STANDALONE_MODEL_PRICING.cacheRead,
     }));
-  }, [standalone, pricingPid, modelNames, providerPricing, pricingOverrides]);
+  }, [standalone, pricingPid, modelNames, providerPricing, pricingOverrides, instanceExcluded]);
 
   /** 供给源 gateway 配置里的模型模态（chat / image / embedding） */
   const modelTypeMap = useMemo(() => {
@@ -1676,15 +1808,22 @@ function ProviderCardBillingSection({
 
   async function addModel(name, type = 'chat') {
     const n = (name || '').trim();
-    if (!n || userModelNames.has(n)) return;
-    const nextModels = mergeModelList(n, type);
+    if (!n || modelNames.includes(n)) return;
     const nextOverrides = buildOverridesWithModel(n);
     onOverridesChange?.(nextOverrides);
+    const excluded_models = withInstanceExcludedRemoved(
+      getInstanceExcludedList({ standalone, provider, paygRec, subRec }), n,
+    );
 
     if (isPayg && paygRec) {
-      const nextPayg = userPayg.map(p => (
-        p.id === paygRec.id ? { ...p, models: [...(p.models || []), n] } : p
-      ));
+      const nextPayg = userPayg.map(p => {
+        if (p.id !== paygRec.id) return p;
+        const patch = { ...p, models: [...(p.models || []), n] };
+        if (excluded_models.length) patch.excluded_models = excluded_models;
+        else delete patch.excluded_models;
+        return patch;
+      });
+      const nextModels = mergeModelList(n, type);
       await persistModels(nextModels);
       await onSaveAccounts({
         user_payg_providers: nextPayg,
@@ -1692,35 +1831,105 @@ function ProviderCardBillingSection({
       });
       return;
     }
-    // API 订阅 / 订阅转 API：模型写入供给源 + 刊例价
+    const nextModels = mergeModelList(n, type);
     await persistModels(nextModels);
-    await onSaveAccounts({ provider_pricing_overrides: nextOverrides });
+    const accountsPatch = { provider_pricing_overrides: nextOverrides };
+    if (subRec) {
+      accountsPatch.user_subscriptions = userSubscriptions.map(s => {
+        if (s.id !== subRec.id) return s;
+        const patch = { ...s };
+        if (excluded_models.length) patch.excluded_models = excluded_models;
+        else delete patch.excluded_models;
+        return patch;
+      });
+    } else if (standalone) {
+      onUpdate(provider.id, {
+        excluded_models: excluded_models.length ? excluded_models : undefined,
+      });
+    }
+    await onSaveAccounts(accountsPatch);
   }
 
   async function removeModel(name) {
-    const nextModels = (provider.models || []).map(normModel).filter(m => m.name !== name);
-    const nextOverrides = { ...pricingOverrides };
-    if (nextOverrides[pricingPid]?.[name]) {
-      const perModel = { ...nextOverrides[pricingPid] };
-      delete perModel[name];
-      if (Object.keys(perModel).length) nextOverrides[pricingPid] = perModel;
-      else delete nextOverrides[pricingPid];
+    if (!name) return;
+
+    // 清理历史脏数据：_excluded_models 被误写入 provider.models / overrides
+    if (PRICING_OVERRIDE_META_KEYS.has(name)) {
+      const nextModels = (provider.models || []).map(normModel).filter(m => m.name && m.name !== name);
+      let nextOverrides = { ...pricingOverrides };
+      let dirty = false;
+      if (nextOverrides[pricingPid]?._excluded_models != null) {
+        const perPid = { ...nextOverrides[pricingPid] };
+        delete perPid._excluded_models;
+        if (pricingOverrideModelKeys(perPid).length) nextOverrides[pricingPid] = perPid;
+        else delete nextOverrides[pricingPid];
+        dirty = true;
+      }
+      if (nextModels.length !== (provider.models || []).map(normModel).filter(m => m.name).length) dirty = true;
+      if (dirty) {
+        onOverridesChange?.(nextOverrides);
+        await persistModels(nextModels);
+        await onSaveAccounts({ provider_pricing_overrides: nextOverrides });
+      }
+      return;
     }
-    onOverridesChange?.(nextOverrides);
+
+    const nextModels = (provider.models || []).map(normModel).filter(m => m.name !== name);
+    let nextOverrides = pricingOverrides;
+    if (pricingOverrides[pricingPid]?.[name]) {
+      nextOverrides = { ...pricingOverrides };
+      const perPid = { ...(nextOverrides[pricingPid] || {}) };
+      delete perPid[name];
+      if (pricingOverrideModelKeys(perPid).length) nextOverrides[pricingPid] = perPid;
+      else delete nextOverrides[pricingPid];
+      onOverridesChange?.(nextOverrides);
+    }
+    const excluded_models = withInstanceExcludedAdded(
+      getInstanceExcludedList({ standalone, provider, paygRec, subRec }), name,
+    );
 
     if (isPayg && paygRec) {
-      const nextPayg = userPayg.map(p => (
-        p.id === paygRec.id ? { ...p, models: (p.models || []).filter(m => modelEntryName(m) !== name) } : p
-      ));
+      const nextPayg = userPayg.map(p => {
+        if (p.id !== paygRec.id) return p;
+        const patch = {
+          ...p,
+          models: (p.models || []).filter(m => modelEntryName(m) !== name),
+        };
+        if (excluded_models.length) patch.excluded_models = excluded_models;
+        else delete patch.excluded_models;
+        return patch;
+      });
       await persistModels(nextModels);
       await onSaveAccounts({
         user_payg_providers: nextPayg,
-        provider_pricing_overrides: nextOverrides,
+        ...(nextOverrides !== pricingOverrides ? { provider_pricing_overrides: nextOverrides } : {}),
       });
       return;
     }
     await persistModels(nextModels);
-    await onSaveAccounts({ provider_pricing_overrides: nextOverrides });
+    const accountsPatch = nextOverrides !== pricingOverrides
+      ? { provider_pricing_overrides: nextOverrides }
+      : {};
+    if (subRec) {
+      accountsPatch.user_subscriptions = userSubscriptions.map(s => {
+        if (s.id !== subRec.id) return s;
+        const patch = { ...s };
+        if (excluded_models.length) patch.excluded_models = excluded_models;
+        else delete patch.excluded_models;
+        return patch;
+      });
+      await onSaveAccounts(accountsPatch);
+      return;
+    }
+    if (standalone) {
+      onUpdate(provider.id, {
+        models: nextModels,
+        excluded_models: excluded_models.length ? excluded_models : undefined,
+      });
+      if (nextOverrides !== pricingOverrides) await onSaveAccounts({ provider_pricing_overrides: nextOverrides });
+      return;
+    }
+    if (nextOverrides !== pricingOverrides) await onSaveAccounts(accountsPatch);
   }
 
   const hintKey = standalone ? 'providers.billing.standaloneHint'
@@ -2506,6 +2715,7 @@ export default function Providers() {
   const lastSaved = useRef(null);
   const [gatewayPickerEntries, setGatewayPickerEntries] = useState([]);
   const [templateEditing, setTemplateEditing] = useState(null);
+  const [catalogSeed, setCatalogSeed] = useState(null); // { defaults, meta, fromNetwork }
 
   const loadUserPaidAccounts = useCallback(async () => {
     try {
@@ -2535,7 +2745,11 @@ export default function Providers() {
       setStatsOnlyIds(r.stats_only_provider_ids || []);
       setUserPayg(r.user_payg_providers || []);
       setProviderPricing(r.provider_pricing || {});
-      setPricingOverrides(r.provider_pricing_overrides || {});
+      const sanitizedOverrides = sanitizePricingOverrides(r.provider_pricing_overrides || {});
+      setPricingOverrides(sanitizedOverrides);
+      if (sanitizedOverrides !== (r.provider_pricing_overrides || {})) {
+        saveUserAccounts({ provider_pricing_overrides: sanitizedOverrides }).catch(() => {});
+      }
       setPaygCatalog(r.payg_provider_catalog || []);
       setDirectInstances(r.direct_source_instances || []);
       setDirectBilling(r.direct_source_billing || {});
@@ -2548,11 +2762,23 @@ export default function Providers() {
     }
   }, []);
 
-  /** catalog 刊例价（服务端）+ 本地 yaml/registry 合并；后者覆盖前者 */
+  /** catalog 刊例价（服务端）+ 本地 yaml 费率覆盖；模型键以 catalog 为准，不把本地残留并回来 */
   const mergedProviderPricing = useMemo(() => {
     const out = { ...catalogPricing };
-    for (const [pid, models] of Object.entries(providerPricing || {})) {
-      out[pid] = { ...(out[pid] || {}), ...models };
+    for (const [pid, local] of Object.entries(providerPricing || {})) {
+      const catalogKeys = catalogPricing[pid] ? new Set(Object.keys(catalogPricing[pid])) : null;
+      const clean = {};
+      for (const [k, v] of Object.entries(local || {})) {
+        if (!isValidModelName(k)) continue;
+        if (catalogKeys && !catalogKeys.has(k)) continue;
+        clean[k] = v;
+      }
+      out[pid] = { ...(out[pid] || {}), ...clean };
+    }
+    for (const pid of Object.keys(out)) {
+      for (const k of Object.keys(out[pid] || {})) {
+        if (!isValidModelName(k)) delete out[pid][k];
+      }
     }
     return out;
   }, [catalogPricing, providerPricing]);
@@ -2567,6 +2793,12 @@ export default function Providers() {
     });
     return () => { cancelled = true; unsub?.(); };
   }, [loadUserPaidAccounts]);
+
+  // 登录/退出后刷新个人源，与本机 local-config 保持一致
+  const { user } = useAuth();
+  useEffect(() => {
+    loadUserPaidAccounts();
+  }, [user?.id ?? null, loadUserPaidAccounts]);
 
   // 为每个 gateway_id 确保存在 provider stub（多实例 acct-* 从 catalog 克隆）；已登记即启用
   useEffect(() => {
@@ -2585,22 +2817,27 @@ export default function Providers() {
         const payg = userPayg.find(p => paygInstGatewayId(p) === gid);
         const sub = userSubscriptions.find(s => subInstGatewayId(s) === gid);
         const catalogId = payg?.provider_id || sub?.source_id || sub?.plan_provider_id || gid;
+        const tpl = resolveTemplateForProvider(gid, accountsData?.source_templates, userSubscriptions, userPayg);
         const fb = FALLBACK_PROVIDERS.find(p => p.id === gid) || FALLBACK_PROVIDERS.find(p => p.id === catalogId);
         const sibling = next.find(p => p.id === catalogId);
+        const instModels = seedModelsFromNames(
+          payg?.models || sub?.models || tpl?.models || [],
+        );
         next.push({
-          ...(fb || sibling || { type: 'paid', enabled: true, token: '', base_url: '', models: [] }),
+          ...(fb || { type: 'paid', enabled: true, base_url: '', models: [] }),
           id: gid,
-          type: sibling?.type || fb?.type || 'paid',
+          type: fb?.type || 'paid',
           enabled: true,
-          token: sibling?.token || fb?.token || '',
-          models: sibling?.models?.length ? sibling.models : (fb?.models || []),
-          base_url: sibling?.base_url || fb?.base_url || '',
+          ...FRESH_PROVIDER_CREDENTIALS,
+          models: instModels.length ? instModels : (fb?.models || []),
+          base_url: fb?.base_url || tpl?.base_url || sibling?.base_url || '',
+          api_format: fb?.api_format || tpl?.api_format || sibling?.api_format || 'openai',
         });
         changed = true;
       }
       return changed ? next : prev;
     });
-  }, [paidAllowlist, userPayg, userSubscriptions]);
+  }, [paidAllowlist, userPayg, userSubscriptions, accountsData?.source_templates]);
 
   const openTemplateEdit = useCallback((tplOrKey) => {
     const tpl = typeof tplOrKey === 'string'
@@ -2629,54 +2866,81 @@ export default function Providers() {
   }
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
-      // 1) 源目录由后端下发，拉不到则回退内置兜底
       let defaults = FALLBACK_PROVIDERS;
-      let metaMap  = localizeProviderMeta(FALLBACK_PROVIDER_META, t);
+      let metaMap = localizeProviderMeta(FALLBACK_PROVIDER_META, t);
+      let fromNetwork = false;
       try {
         const { data } = await getProviderCatalog();
+        if (cancelled) return;
         if (data?.providers?.length) {
+          fromNetwork = true;
           setCatalogPricing(catalogPricingFromProviders(data.providers));
+          await window.electronAPI?.localConfig?.setLiveCatalog?.(data)?.catch?.(() => {});
+          await loadUserPaidAccounts();
           const s = catalogToState(data, oauthById);
           defaults = s.defaults;
-          metaMap  = localizeProviderMeta(s.meta, t);
+          metaMap = localizeProviderMeta(s.meta, t);
         } else {
           setCatalogPricing({});
         }
-      } catch { /* 离线 / VPS 不可达：用兜底目录 */ setCatalogPricing({}); }
-      setMeta(metaMap);
+      } catch {
+        if (!cancelled) setCatalogPricing({});
+      }
+      if (!cancelled) {
+        setCatalogSeed({ defaults, meta: metaMap, fromNetwork });
+        setMeta(metaMap);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [t, oauthById, loadUserPaidAccounts]);
 
-      // 2) 与本地配置保存的开关/token/base_url 合并（adapter 兼容 Electron/HTTP）
+  // 与本地配置 / 个人源账户合并（不重复拉 /api/catalog）
+  useEffect(() => {
+    if (!catalogSeed) return;
+    let cancelled = false;
+    (async () => {
+      const { defaults, meta: seedMeta, fromNetwork } = catalogSeed;
       const cfg = await getConfig().read();
+      if (cancelled) return;
       let resolved;
       if (cfg?.providers?.length) {
         const defaultIds = new Set(defaults.map(p => p.id));
         const mapped = defaults.map(def => {
           const saved = cfg.providers.find(p => p.id === def.id);
           if (!saved) return def;
-          // 本地 models 为空时保留 catalog/registry 下发的默认模型列表
-          const models = (Array.isArray(saved.models) && saved.models.length)
-            ? saved.models
-            : (def.models || []);
+          const models = mergeModelsFromCatalog(def.models, saved.models);
           return { ...def, ...saved, models };
         });
-        // Preserve any custom (non-catalog) providers stored in config; normalize base_url
         const custom = cfg.providers.filter(p => !defaultIds.has(p.id)).map(p => ({
           ...p,
           base_url: (p.base_url || '').replace(/\/v1\/?$/, '').replace(/\/$/, ''),
         }));
-        resolved = [...mapped, ...custom];
+        resolved = sanitizeProviderModels([...mapped, ...custom]);
+        if (fromNetwork) {
+          let dirty = false;
+          const nextProviders = (cfg.providers || []).map(saved => {
+            if (!defaultIds.has(saved.id)) return saved;
+            const def = defaults.find(d => d.id === saved.id);
+            const merged = mergeModelsFromCatalog(def?.models, saved.models);
+            const before = (saved.models || []).map(m => normModel(m).name).join('\0');
+            const after = merged.map(m => m.name).join('\0');
+            if (before !== after) { dirty = true; return { ...saved, models: merged }; }
+            return saved;
+          });
+          if (dirty) getConfig().write({ ...cfg, providers: nextProviders }).catch(() => {});
+        }
       } else {
         resolved = defaults;
       }
-      // 社区 P2P 独立于个人源 registry，保证社区源区块可展示
       resolved = mergeCommunityP2PProvider(resolved, cfg);
-      const merged = mergeUserPaygIntoProviders(resolved, metaMap, userPayg, t);
+      const merged = mergeUserPaygIntoProviders(resolved, seedMeta, userPayg, t);
       const withCustomSubs = mergeCustomSubscriptionProviders(
         merged.providers, merged.meta, userSubscriptions, paidAllowlist || [], t,
       );
+      if (cancelled) return;
       lastSaved.current = withCustomSubs.providers;
-      // 账户重载时保留内存里刚写入、磁盘 debounce 尚未落盘的 models
       setProviders(prev => {
         const loaded = withCustomSubs.providers;
         return loaded.map(p => {
@@ -2684,18 +2948,18 @@ export default function Providers() {
           if (!mem?.models?.length) return p;
           const diskM = (p.models || []).map(normModel);
           const memM = (mem.models || []).map(normModel);
-          const names = new Set(diskM.map(m => m.name));
-          const mergedModels = [...diskM];
-          for (const m of memM) {
-            if (!names.has(m.name)) { mergedModels.push(m); names.add(m.name); }
-          }
-          if (mergedModels.length === diskM.length) return p;
-          return { ...p, models: mergedModels };
+          const mergedModels = diskM.map(d => {
+            const hit = memM.find(m => m.name === d.name);
+            return hit ? { ...d, type: hit.type || d.type } : d;
+          });
+          const changed = mergedModels.some((m, i) => m.type !== diskM[i]?.type);
+          return changed ? { ...p, models: mergedModels } : p;
         });
       });
       setMeta(localizeProviderMeta(withCustomSubs.meta, t));
     })();
-  }, [userPayg, userSubscriptions, paidAllowlist, t, oauthById]);
+    return () => { cancelled = true; };
+  }, [catalogSeed, userPayg, userSubscriptions, paidAllowlist, t]);
 
   // 语言切换时刷新 meta 文案
   useEffect(() => {
@@ -2802,8 +3066,8 @@ export default function Providers() {
       id: newGwId,
       type: 'paid',
       enabled: true,
-      token: '',
-      base_url: '',
+      ...FRESH_PROVIDER_CREDENTIALS,
+      base_url: resolveSeedBaseUrl(entry, { providers, paygCatalog, meta }),
       models: seedModels,
       displayName: entry.label,
     };
@@ -2813,17 +3077,16 @@ export default function Providers() {
         auth_type: 'oauth',
         billing_type: 'subscription',
         sub_mode: 'api-proxy',
+        credentials: null,
+        token: '',
       });
     } else {
       updateProvider(newGwId, {
         ...base,
-        auth_type: 'api_key',
         billing_type: 'api-key',
-        credentials: null,
-        oauth_provider: '',
       });
     }
-  }, [updateProvider, userSubscriptions, userPayg, directBilling, loadUserPaidAccounts, saveUserAccounts]);
+  }, [updateProvider, userSubscriptions, userPayg, directBilling, loadUserPaidAccounts, saveUserAccounts, providers, paygCatalog, meta]);
 
   /** 直连源「转 API 供给源」→ 登记订阅实例并启用上方供给源卡片 */
   const convertDirectToApi = useCallback(async (instance) => {
@@ -2849,7 +3112,7 @@ export default function Providers() {
       type: 'paid',
       enabled: true,
       token: '',
-      base_url: '',
+      base_url: tpl.base_url || resolveSeedBaseUrl({ providerId: newGwId, template: tpl }, { providers, paygCatalog, meta }),
       models: seedModelsFromNames(tplModels),
       displayName: instance.name || tpl.label,
     };
@@ -2871,7 +3134,7 @@ export default function Providers() {
         oauth_provider: '',
       });
     }
-  }, [accountsData, directBilling, userPayg, userSubscriptions, loadUserPaidAccounts, saveUserAccounts, updateProvider]);
+  }, [accountsData, directBilling, userPayg, userSubscriptions, loadUserPaidAccounts, saveUserAccounts, updateProvider, providers, paygCatalog, meta]);
 
   /** 从个人源列表移除：预设源标记为未添加，自定义源直接删除 */
   const removePersonalProvider = useCallback((id) => {
@@ -2919,19 +3182,19 @@ export default function Providers() {
   };
   const sourceTemplates = accountsData?.source_templates || [];
   const directAll = mergeDirectInstances(directInstances, directBilling, userSubscriptions, sourceTemplates, subscriptionCatalog);
-  // 统一的「账户实例」集：订阅 + 按量 + 直连。图标/名称字段与统计(AccountStatsView)保持一致，
-  // models 用源的官方模型。统计、列表、按模型视图都基于它，数目与图标名称对齐。
-  const accountInstances = [
+  const bill = directBilling || {};
+  // 统一的「账户实例」集：订阅 + 按量 + 直连，按添加顺序排列
+  const accountInstances = [...[
     ...userSubscriptions.map(s => {
       const pid = s.plan_provider_id || s.source_id;
       const gw = subInstGatewayId(s);
-      // 类型 tag：api订阅 / 订阅转API / app订阅
       const tag = s.subscription_kind === 'api' ? 'api_sub' : (s.subscription_to_api ? 'sub_to_api' : 'app_sub');
       return {
         kind: 'sub', billing_type: 'subscription', tag,
         id: s.id, source_id: s.source_id, gateway_id: gw,
         name: s.name || s.app_name, label: s.app_name, icon: s.app_icon,
         models: paygModelsOf(pid), plan_label: s.plan_label, monthly_usd: s.monthly_usd ?? null,
+        added_at: s.added_at,
       };
     }),
     ...userPayg.map(p => ({
@@ -2939,15 +3202,21 @@ export default function Providers() {
       id: p.id, source_id: p.provider_id, gateway_id: paygInstGatewayId(p),
       name: p.name || p.label, label: p.label, icon: p.icon,
       models: (p.models && p.models.length) ? p.models : paygModelsOf(p.provider_id),
+      added_at: p.added_at,
     })),
     ...directAll.map(d => ({
       kind: 'direct', billing_type: d.mode === 'api' ? 'api' : 'subscription',
-      tag: d.mode === 'api' ? 'payg' : 'app_sub',   // 直连：API→按量，订阅→app订阅
+      tag: d.mode === 'api' ? 'payg' : 'app_sub',
       id: d.agent_id, source_id: d.source_id,
       name: d.name, label: d.label, icon: d.icon,
       models: d.models || [],
+      added_at: bill[d.agent_id]?.added_at,
     })),
-  ];
+  ].sort((a, b) => {
+    const ka = accountInstanceAddedOrder(a, bill);
+    const kb = accountInstanceAddedOrder(b, bill);
+    return ka - kb || String(a.id || '').localeCompare(String(b.id || ''));
+  })];
   const directByAgent = useMemo(
     () => Object.fromEntries(directAll.map(d => [d.agent_id, d])),
     [directAll],
@@ -2959,7 +3228,9 @@ export default function Providers() {
     return {
       ...inst,
       test_verified: prov?.test_verified === true,
-      models: resolveModelsForModelView(inst, providers, userPayg, userSubscriptions, pricingOverrides, directByAgent),
+      models: resolveModelsForModelView(
+        inst, providers, userPayg, userSubscriptions, pricingOverrides, directByAgent,
+      ),
     };
   }), [accountInstances, providers, userPayg, userSubscriptions, pricingOverrides, directByAgent]);
   // 「已接入网关」= 对应 provider 真正 enabled（不是 gateway_provider_ids 那种「已登记可接入」）。
@@ -2973,17 +3244,34 @@ export default function Providers() {
     if (personalFilter === 'api') return tag === 'payg';
     return tag === personalFilter;
   };
-  const directFiltered = directAll.filter(d => matchFilter(d.mode === 'api' ? 'payg' : 'app_sub'));
   const hasAcct = (id) => accountInstances.some(i => i.gateway_id === id);
-  // 仅「可接网关」的账户实例渲染 ProviderCard（纯 APP 订阅只做统计，无 Base URL）
-  const listedAccountInstances = accountInstances.filter(
-    inst => isGatewayAccountInstance(inst) && matchFilter(inst.tag),
-  );
   // 已启用但未登记账户实例的供给源（如 Ollama），与账户卡片同一网格展示
   const extraEnabledSources = personalEnabledAll.filter(p => {
     if (p.type === 'p2p' || hasAcct(p.id)) return false;
     return matchFilter(getPersonalSourceTag(liveStateOf(p), meta, userPayg, userSubscriptions));
   });
+  // 列表视图：网关 / 直连 / 无账户实例的免费源，统一按添加顺序渲染
+  const personalSourceRows = useMemo(() => {
+    const rows = [];
+    const extraBase = accountInstances.reduce((max, inst) => {
+      const o = accountInstanceAddedOrder(inst, bill);
+      return o > max ? o : max;
+    }, 0) + 1;
+    for (const inst of accountInstances) {
+      if (!matchFilter(inst.tag)) continue;
+      if (inst.kind === 'direct') {
+        const d = directByAgent[inst.id];
+        if (d) rows.push({ order: accountInstanceAddedOrder(inst, bill), type: 'direct', inst, direct: d });
+      } else if (isGatewayAccountInstance(inst)) {
+        rows.push({ order: accountInstanceAddedOrder(inst, bill), type: 'gateway', inst });
+      }
+    }
+    extraEnabledSources.forEach((p, i) => {
+      rows.push({ order: extraBase + i, type: 'extra', provider: p });
+    });
+    rows.sort((a, b) => a.order - b.order);
+    return rows;
+  }, [accountInstances, directByAgent, bill, extraEnabledSources, personalFilter]);
 
   // 删除单个账户实例：仅删对应 user_payg/sub 行；无其他实例共用 gateway_id 时才停用 provider
   const removeAccountInstance = async (inst) => {
@@ -3228,7 +3516,29 @@ export default function Providers() {
         ) : (
         <>
         <div className="grid grid-cols-2 gap-3">
-          {listedAccountInstances.map(inst => {
+          {personalSourceRows.map(row => {
+            if (row.type === 'direct') {
+              const d = row.direct;
+              return (
+                <DirectSourceCard key={d.agent_id} instance={{ ...d, _allBilling: directBilling }} t={t}
+                  allowApiBilling={d.allow_api_billing === true}
+                  canConvertToApi={d.can_convert_to_api === true}
+                  onConvertToApi={convertDirectToApi}
+                  onSave={async (patch) => { await saveUserAccounts(patch); loadUserPaidAccounts(); }}
+                  onRemove={removeDirectSource} />
+              );
+            }
+            if (row.type === 'extra') {
+              const p = row.provider;
+              const live = liveStateOf(p);
+              const extraInst = accountInstances.find(i => i.gateway_id === live.id);
+              const extraMeta = resolveMetaForGateway(live.id, meta, extraInst, oauthById);
+              const useCustomCard = shouldUseCustomProviderCard(live.id, userSubscriptions, extraInst, extraMeta);
+              return !useCustomCard
+                ? <ProviderCard key={live.id} provider={live} meta={extraMeta} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id], extraInst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} accountInst={extraInst} {...accountBillingProps} />
+                : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={extraInst} {...accountBillingProps} />;
+            }
+            const inst = row.inst;
             const gwId = inst.gateway_id;
             const live = resolveProviderStubForInstance(inst, providers, meta, userPayg, userSubscriptions);
             const cardMeta = resolveMetaForGateway(gwId, meta, inst, oauthById);
@@ -3237,24 +3547,7 @@ export default function Providers() {
               ? <ProviderCard key={inst.id} provider={live} meta={cardMeta} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId], inst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={inst.name} displayIcon={inst.icon} lockTemplate accountInst={inst} {...accountBillingProps} />
               : <CustomProviderCard key={inst.id} provider={live} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={inst} {...accountBillingProps} />;
           })}
-          {directFiltered.map(d => (
-            <DirectSourceCard key={d.agent_id} instance={{ ...d, _allBilling: directBilling }} t={t}
-              allowApiBilling={d.allow_api_billing === true}
-              canConvertToApi={d.can_convert_to_api === true}
-              onConvertToApi={convertDirectToApi}
-              onSave={async (patch) => { await saveUserAccounts(patch); loadUserPaidAccounts(); }}
-              onRemove={removeDirectSource} />
-          ))}
-          {extraEnabledSources.map(p => {
-            const live = liveStateOf(p);
-            const extraInst = accountInstances.find(i => i.gateway_id === live.id);
-            const extraMeta = resolveMetaForGateway(live.id, meta, extraInst, oauthById);
-            const useCustomCard = shouldUseCustomProviderCard(live.id, userSubscriptions, extraInst, extraMeta);
-            return !useCustomCard
-              ? <ProviderCard key={live.id} provider={live} meta={extraMeta} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id], extraInst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} accountInst={extraInst} {...accountBillingProps} />
-              : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={extraInst} {...accountBillingProps} />;
-          })}
-          {listedAccountInstances.length === 0 && directFiltered.length === 0 && extraEnabledSources.length === 0 && (
+          {personalSourceRows.length === 0 && (
             <p className="col-span-2 text-xs text-zinc-400 text-center py-6">{t('providers.filter.empty')}</p>
           )}
         </div>

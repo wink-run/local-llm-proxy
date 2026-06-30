@@ -12,21 +12,19 @@ _DEFAULTS_DIR = Path(__file__).resolve().parent / "static" / "defaults"
 _SEED_KEYS = (
     ("config.apps", "apps.default.yaml"),
     ("config.scenes", "scenes.default.yaml"),
-    ("config.sources", "sources.default.yaml"),
+    ("config.providers", "providers.registry.yaml"),
 )
 
 
 async def seed_default_configs() -> None:
-    """DB 中 config.apps / config.scenes / config.sources 为空时，从内置 YAML 种子初始化。"""
-    # 先把旧库 config.apps 里的计费段迁到独立 config.sources（必须在 seed config.sources 之前，
-    # 否则用户自定义的计费段会被默认 sources.default.yaml 覆盖）。
-    await migrate_billing_to_sources()
+    """DB 中 config.apps / config.scenes / config.providers 为空时，从内置 YAML 种子初始化。"""
+    # 旧库迁移：config.apps / config.sources 计费段 → config.providers（须在 seed 之前）
+    await migrate_legacy_billing_to_providers()
 
     for key, filename in _SEED_KEYS:
         if await db.get_config(key, ""):
             continue
         if key == "config.apps":
-            # 种子：基础设施 + 默认 app_entities（非旧版 tools 扁平段）
             import app_catalog as ac
             compiled = ac.compile_apps_doc(ac.import_from_defaults())
             content = yaml.dump(
@@ -40,20 +38,16 @@ async def seed_default_configs() -> None:
         if content:
             await db.set_config(key, content)
 
-    # 已有 config.apps 时，与最新 apps.default.yaml 合并并剥离已迁出的计费段
     await migrate_apps_config_with_defaults()
-
-    # 已有 config.sources 时，把「默认有、DB 里为空」的 payg 模型/计费补上（让默认配置修正能同步到旧库）
-    await reconcile_sources_with_defaults()
+    await reconcile_providers_with_defaults()
 
 
-async def reconcile_sources_with_defaults() -> None:
-    """已有 config.sources 时，对账内置默认：默认里非空、但当前库里 models/pricing 为空的 payg 源补上。
-    幂等且保守——只补空字段，不覆盖管理员已编辑的非空内容。"""
-    cur = await db.get_config("config.sources", "")
+async def reconcile_providers_with_defaults() -> None:
+    """已有 config.providers 时，对账内置默认：默认里非空、但当前库里 models/pricing 为空的 payg 源补上。"""
+    cur = await db.get_config("config.providers", "")
     if not cur.strip():
         return
-    path = _DEFAULTS_DIR / "sources.default.yaml"
+    path = _DEFAULTS_DIR / "providers.registry.yaml"
     if not path.is_file():
         return
     try:
@@ -63,10 +57,13 @@ async def reconcile_sources_with_defaults() -> None:
         return
     if not isinstance(doc, dict) or not isinstance(deflt, dict):
         return
-    def_payg = {x.get("id"): x for x in (deflt.get("payg_providers") or []) if isinstance(x, dict)}
+    def_by = {p.get("id"): p for p in (deflt.get("providers") or []) if isinstance(p, dict)}
     changed = False
-    for p in (doc.get("payg_providers") or []):
-        d = def_payg.get(p.get("id"))
+    providers = doc.get("providers") or []
+    for p in providers:
+        if not isinstance(p, dict) or not p.get("payg"):
+            continue
+        d = def_by.get(p.get("id"))
         if not d:
             continue
         if not p.get("models") and d.get("models"):
@@ -76,17 +73,27 @@ async def reconcile_sources_with_defaults() -> None:
             p["pricing"] = d["pricing"]
             changed = True
     if changed:
-        out = yaml.dump(
-            doc, allow_unicode=True, sort_keys=False, default_flow_style=False,
-        ).rstrip()
-        await db.set_config("config.sources", out)
+        from provider_registry import serialize_registry_doc
+        await db.set_config("config.providers", serialize_registry_doc(doc))
 
 
-async def migrate_billing_to_sources() -> None:
-    """一次性迁移：把旧 config.apps 里的计费段（subscription_apps / api_subscription_apps /
-    subscription_plans / payg_providers）抽出写入独立 config.sources。幂等：config.sources 已有则跳过。"""
-    if await db.get_config("config.sources", ""):
+async def migrate_legacy_billing_to_providers() -> None:
+    """一次性迁移：旧 config.sources / config.apps 计费段 → config.providers。幂等。"""
+    if await db.get_config("config.providers", ""):
         return
+    import billing_sources as bs
+
+    sources_text = await db.get_config("config.sources", "")
+    if sources_text.strip():
+        try:
+            doc = yaml.safe_load(sources_text) or {}
+            sources = bs.import_from_billing_sections_doc(doc)
+            if sources:
+                await bs.publish_sources({"version": 1, "sources": sources})
+                return
+        except yaml.YAMLError:
+            pass
+
     apps_text = await db.get_config("config.apps", "")
     if not apps_text.strip():
         return
@@ -99,11 +106,9 @@ async def migrate_billing_to_sources() -> None:
     billing = {k: apps_doc[k] for k in _BILLING_KEYS if k in apps_doc}
     if not billing:
         return
-    sources_doc = {"version": 1, **billing}
-    sources_yaml = yaml.dump(
-        sources_doc, allow_unicode=True, sort_keys=False, default_flow_style=False,
-    ).rstrip()
-    await db.set_config("config.sources", sources_yaml)
+    sources = bs.import_from_billing_sections_doc({"version": 1, **billing})
+    if sources:
+        await bs.publish_sources({"version": 1, "sources": sources})
 
 
 async def migrate_apps_config_with_defaults() -> None:

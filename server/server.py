@@ -20,7 +20,7 @@ from admin_router import router as admin_router
 from billing_sources_router import router as billing_sources_router
 from app_catalog_router import router as app_catalog_router
 from routing_catalog_router import router as routing_catalog_router
-from catalog import TIERS, catalog_providers
+from catalog import TIERS, catalog_public_payload
 from device_router import router as device_router
 from auth import get_current_user_id
 from dispatch import handle_chat
@@ -134,8 +134,8 @@ async def wall_page():
 
 @app.get("/api/catalog")
 async def public_catalog():
-    """公开接口：供给源目录（客户端启动时拉取，离线则用内置兜底）"""
-    return {"tiers": list(TIERS), "providers": await catalog_providers()}
+    """公开接口：供给源目录（registry providers + 个人源 APP/API 订阅模板）"""
+    return await catalog_public_payload()
 
 
 @app.get("/api/rates")

@@ -52,6 +52,7 @@ function compileApiKeyApp(e) {
     pricing_provider_id: e.pricing_provider_id,
     handoff_target: e.handoff_target,
     integrations: e.integrations,
+    route_multi_select: !!e.route_multi_select,
   };
   if (e.enable_3p) out.enable_3p = true;
   if (e.detect_type === 'command') out.command = e.detect_value || '';

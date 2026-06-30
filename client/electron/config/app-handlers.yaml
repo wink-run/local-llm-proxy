@@ -136,6 +136,10 @@ handlers:
         inferenceGatewayApiKey: "{KEY}"
         inferenceGatewayAuthScheme: bearer
         _configManagedBy: tokenbank
+      # 绑路由写入 inferenceModels[]；多选时每条路由一项（name=Anthropic 名过校验）
+      patch_route:
+        strategy: claude_inference_models
+        multi_select: true
     session:
       activity_agent_id: claude-code
       trace_agent_id: claude-code
@@ -167,6 +171,10 @@ handlers:
         model_providers.tokenbank.env_key: TOKENBANK_API_KEY
       env:
         TOKENBANK_API_KEY: "{KEY}"
+      # 绑路由写入 model 字段；多选时取首条为默认模型（网关 keyScene 亦用首条）
+      patch_route:
+        strategy: codex_model
+        multi_select: true
     session:
       activity_agent_id: codex
       trace_agent_id: codex
@@ -277,6 +285,7 @@ handlers:
         strategy: workbuddy_models
         provider_name: tokenbank
         models_key: models
+        multi_select: true
     session:
       source_id: workbuddy
       standalone: true
@@ -301,13 +310,14 @@ default_entities:
   - { id: qwen-code, handler: qwen-stats }
   - { id: antigravity, handler: antigravity-stats }
   - { id: grok, handler: grok-stats }
-  - { id: workbuddy, handler: workbuddy-stats }
+  - { id: workbuddy, handler: workbuddy-stats, vars: { route_multi_select: true } }
 
 # vars 可覆盖字段（管理后台运营配置，下发在 app_entities[].vars）
 var_schema:
   capabilities:
     type: object
     label: "用户启用的 Handler 能力"
+  route_multi_select: { type: boolean, label: "路由写入支持多选" }
   models: { type: string_list, label: "展示模型（逗号分隔）" }
   route_bindable: { type: boolean, label: "可绑定路由" }
   allow_direct: { type: boolean, label: "允许直连（API Key 应用）" }

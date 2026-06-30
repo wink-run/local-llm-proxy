@@ -1,4 +1,4 @@
-"""个人源目录 — 统一表单 schema，编译为 config.sources / providers.registry 下发（与应用清单分离）。"""
+"""个人源目录 — 统一表单 schema，编译为 config.providers（providers.registry.yaml）下发。"""
 
 from __future__ import annotations
 
@@ -9,17 +9,15 @@ from typing import Any
 import yaml
 
 import database as db
-from config_merge import _default_sources_doc
-from provider_registry import serialize_registry_doc
+from provider_registry import serialize_registry_doc, sync_catalog_models_pricing
 
 CONFIG_KEY = "config.billing_sources"
+PROVIDERS_CONFIG_KEY = "config.providers"
 _DEFAULTS_DIR = Path(__file__).resolve().parent / "static" / "defaults"
 _REGISTRY_DEFAULT = _DEFAULTS_DIR / "providers.registry.yaml"
-_SOURCES_DEFAULT = _DEFAULTS_DIR / "sources.default.yaml"
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _CLIENT_CONFIG = _REPO_ROOT / "client" / "electron" / "config"
 _CLIENT_REGISTRY = _CLIENT_CONFIG / "providers.registry.yaml"
-_CLIENT_TOOLS_DEFAULT = _CLIENT_CONFIG / "tokenbank.tools.default.yaml"
 _BILLING_KEYS = ("subscription_apps", "api_subscription_apps", "subscription_plans", "payg_providers")
 
 CATEGORIES = ("payg", "app_sub", "api_sub")
@@ -257,10 +255,13 @@ def _models_to_payg_names(models: list[dict]) -> list[str]:
 
 
 def _pricing_from_models(models: list[dict], extra: dict | None = None) -> dict:
+    """每个模型都写入 pricing 键（含空 {}），避免 registry 模型数与刊例价键不一致。"""
     out = dict(extra or {})
     for m in models:
-        if m.get("pricing"):
-            out[m["id"]] = dict(m["pricing"])
+        mid = str(m.get("id") or "").strip()
+        if not mid:
+            continue
+        out[mid] = dict(m.get("pricing") or {})
     return out
 
 
@@ -379,6 +380,9 @@ def _build_registry_entry(s: dict, pid: str) -> dict:
         reg["aliases"] = list(s["aliases"])
     if s.get("oauth"):
         reg["oauth"] = dict(s["oauth"])
+    synced_models, synced_pricing = sync_catalog_models_pricing(reg["models"], reg["pricing"])
+    reg["models"] = synced_models
+    reg["pricing"] = synced_pricing
     return reg
 
 
@@ -430,169 +434,129 @@ def compile_registry_providers(sources: list[dict]) -> list[dict]:
     return list(by_id.values())
 
 
-def import_from_legacy(apps_doc: dict | None = None, registry_doc: dict | None = None) -> list[dict]:
-    """从 legacy apps + registry 导入为统一 sources。"""
-    apps = apps_doc if isinstance(apps_doc, dict) else _default_sources_doc()
-    registry = registry_doc if isinstance(registry_doc, dict) else _registry_default_doc()
-    reg_by_id = {p["id"]: p for p in (registry.get("providers") or []) if p.get("id")}
-    payg_by_id = {p["id"]: p for p in (apps.get("payg_providers") or []) if p.get("id")}
-    plans = apps.get("subscription_plans") if isinstance(apps.get("subscription_plans"), dict) else {}
-    sources: list[dict] = []
-    seen: set[str] = set()
-
-    def _next_order() -> int:
-        return len(sources) + 1
-
-    def _models_from_reg_and_payg(rid: str) -> list[dict]:
-        reg = reg_by_id.get(rid) or {}
-        payg = payg_by_id.get(rid) or {}
-        pricing = {**(reg.get("pricing") or {}), **(payg.get("pricing") or {})}
-        models: list[dict] = []
-        for m in reg.get("models") or payg.get("models") or []:
+def _models_from_legacy_entry(entry: dict) -> tuple[list[dict], dict]:
+    """旧四段 YAML 条目 → models + pricing。"""
+    pricing = dict(entry.get("pricing") or {})
+    models: list[dict] = []
+    for m in entry.get("models") or []:
+        if isinstance(m, str) and m.strip():
+            mid = m.strip()
+            models.append({"id": mid, "modality": "chat", "pricing": dict(pricing.get(mid) or {})})
+        elif isinstance(m, dict):
             nm = _norm_model(m)
             if nm:
-                nm["pricing"] = {**(pricing.get(nm["id"]) or {}), **(nm.get("pricing") or {})}
                 models.append(nm)
-        for mid, rates in pricing.items():
-            if not any(x["id"] == mid for x in models):
-                models.append({"id": mid, "modality": "chat", "pricing": dict(rates)})
-        return models
+                if nm["pricing"]:
+                    pricing[nm["id"]] = dict(nm["pricing"])
+    for mid, rates in pricing.items():
+        if isinstance(rates, dict) and not any(x["id"] == str(mid) for x in models):
+            models.append({"id": str(mid), "modality": "chat", "pricing": dict(rates)})
+    return models, pricing
 
-    for app in apps.get("subscription_apps") or []:
-        if not isinstance(app, dict):
+
+def import_from_billing_sections_doc(doc: dict) -> list[dict]:
+    """从旧 config.sources 四段 YAML 合成 billing_sources（仅 DB 迁移用）。"""
+    if not isinstance(doc, dict):
+        return []
+    plans_map = doc.get("subscription_plans") or {}
+    raw_sources: list[dict] = []
+    order = 0
+
+    for a in doc.get("subscription_apps") or []:
+        if not isinstance(a, dict):
             continue
-        sid = app.get("source_id") or app.get("agent_id")
-        if not sid or sid in seen:
+        key = str(a.get("source_id") or a.get("id") or a.get("agent_id") or "").strip()
+        if not key:
             continue
-        seen.add(sid)
-        ppid = app.get("plan_provider_id")
-        reg = reg_by_id.get(ppid) if ppid else {}
-        reg = reg or {}
-        sources.append(normalize_source({
-            "sort_order": _next_order(),
-            "id": sid,
+        ppid = a.get("plan_provider_id")
+        models, pricing = _models_from_legacy_entry(a)
+        raw_sources.append({
+            "sort_order": order + 1,
+            "id": key,
             "category": "app_sub",
-            "source_id": sid,
-            "agent_id": app.get("agent_id") or sid,
-            "label": app.get("app_name") or sid,
-            "icon": app.get("app_icon") or "🔧",
-            "tier": "paid",
+            "source_id": key,
+            "agent_id": a.get("agent_id") or key,
+            "label": a.get("app_name") or key,
+            "icon": a.get("app_icon") or "🔧",
             "plan_provider_id": ppid,
-            "subscription_to_api": app.get("subscription_to_api") is True,
-            "auth": "oauth" if app.get("subscription_to_api") else "api_key",
-            "base_url": reg.get("base_url") or "",
-            "api_format": reg.get("api_format") or "openai",
-            "handler": reg.get("handler") or "openai",
-            "oauth": reg.get("oauth"),
-            # 可转 API：从 registry/payg 预填模型与刊例
-            "models": _models_from_reg_and_payg(ppid) if app.get("subscription_to_api") and ppid else [],
-            # 关联套餐模板（个人页选套餐用）
-            "plans": plans.get(ppid) or [] if ppid else [],
-        }))
+            "subscription_to_api": a.get("subscription_to_api") is True,
+            "plans": plans_map.get(ppid or key) or [],
+            "models": models,
+            "pricing": pricing,
+        })
+        order += 1
 
-    for app in apps.get("api_subscription_apps") or []:
-        if not isinstance(app, dict):
+    for a in doc.get("api_subscription_apps") or []:
+        if not isinstance(a, dict):
             continue
-        sid = app.get("source_id")
-        if not sid or sid in seen:
+        key = str(a.get("source_id") or a.get("id") or "").strip()
+        if not key:
             continue
-        seen.add(sid)
-        ppid = app.get("plan_provider_id") or sid
-        reg = reg_by_id.get(ppid) if ppid else {}
-        reg = reg or {}
-        # 从 yaml 条目读取 models/pricing
-        api_models: list[dict] = []
-        for m in app.get("models") or []:
-            nm = _norm_model(m)
-            if nm:
-                nm["pricing"] = {**(app.get("pricing") or {}).get(nm["id"], {}), **(nm.get("pricing") or {})}
-                api_models.append(nm)
-        if isinstance(app.get("pricing"), dict):
-            for mid, rates in app["pricing"].items():
-                if isinstance(rates, dict) and not any(x["id"] == str(mid) for x in api_models):
-                    api_models.append({"id": str(mid), "modality": "chat", "pricing": dict(rates)})
-        sources.append(normalize_source({
-            "sort_order": _next_order(),
-            "id": sid,
+        ppid = a.get("plan_provider_id") or key
+        models, pricing = _models_from_legacy_entry(a)
+        raw_sources.append({
+            "sort_order": order + 1,
+            "id": key,
             "category": "api_sub",
-            "source_id": sid,
-            "label": app.get("app_name") or sid,
-            "icon": app.get("app_icon") or "🔧",
-            "tier": "paid",
+            "source_id": key,
+            "label": a.get("app_name") or key,
+            "icon": a.get("app_icon") or "🔧",
             "plan_provider_id": ppid,
-            "auth": "api_key",
-            "base_url": reg.get("base_url") or app.get("base_url") or "",
-            "api_format": reg.get("api_format") or "openai",
-            "handler": reg.get("handler") or "openai",
-            "models": api_models,
-            "plans": plans.get(ppid) or [],
-        }))
+            "plans": plans_map.get(ppid) or [],
+            "models": models,
+            "pricing": pricing,
+        })
+        order += 1
 
-    for payg in apps.get("payg_providers") or []:
-        if not isinstance(payg, dict):
+    for p in doc.get("payg_providers") or []:
+        if not isinstance(p, dict):
             continue
-        pid = payg.get("id")
-        if not pid or pid in seen:
+        pid = str(p.get("id") or p.get("provider_id") or "").strip()
+        if not pid:
             continue
-        seen.add(pid)
-        reg = reg_by_id.get(pid) or {}
-        sources.append(normalize_source({
-            "sort_order": _next_order(),
+        models, pricing = _models_from_legacy_entry(p)
+        raw_sources.append({
+            "sort_order": order + 1,
             "id": pid,
             "category": "payg",
-            "label": payg.get("label") or reg.get("label") or pid,
-            "icon": payg.get("icon") or reg.get("icon") or "🔧",
-            "tier": reg.get("tier") or "paid",
-            "base_url": reg.get("base_url") or "",
-            "auth": "oauth" if reg.get("oauth") else "api_key",
-            "api_format": reg.get("api_format") or "openai",
-            "handler": reg.get("handler") or "openai",
-            "hint": reg.get("hint") or "",
-            "key_prefix": reg.get("key_prefix") or [],
-            "signup_url": reg.get("signup_url") or "",
-            "aliases": payg.get("aliases") or reg.get("aliases") or [],
-            "oauth": reg.get("oauth"),
-            "keyless": reg.get("keyless"),
-            "enabled_default": reg.get("enabled_default"),
-            "models": _models_from_reg_and_payg(pid),
-            "pricing": payg.get("pricing") or reg.get("pricing") or {},
-        }))
+            "label": p.get("label") or pid,
+            "icon": p.get("icon") or "🔧",
+            "aliases": p.get("aliases") or [],
+            "models": models,
+            "pricing": pricing,
+        })
+        order += 1
 
-    # registry 中未出现在 payg 的免费/网关源
-    for reg in registry.get("providers") or []:
-        pid = reg.get("id")
-        if not pid or pid in seen:
-            continue
-        if reg.get("tier") == "p2p":
-            sources.append(normalize_source({
-                "sort_order": _next_order(),
-                **reg,
-                "category": "payg",
-                "auth": "api_key",
-                "models": _models_from_reg_and_payg(pid),
-            }))
-            seen.add(pid)
-            continue
-        if not reg.get("payg") and reg.get("tier") == "free":
-            sources.append(normalize_source({
-                "sort_order": _next_order(),
-                **reg,
-                "category": "payg",
-                "auth": "oauth" if reg.get("oauth") else "api_key",
-                "models": _models_from_reg_and_payg(pid),
-            }))
-            seen.add(pid)
+    return sort_sources([normalize_source(s) for s in raw_sources if s.get("id")])
 
-    return sources
+
+def import_from_legacy(apps_doc: dict | None = None, registry_doc: dict | None = None) -> list[dict]:
+    """从 providers.registry 的 billing_sources 读取（唯一默认数据源）。"""
+    registry = registry_doc if isinstance(registry_doc, dict) else _registry_default_doc()
+    bs = registry.get("billing_sources")
+    if isinstance(bs, list) and bs:
+        return sort_sources([normalize_source(s) for s in bs if s.get("id")])
+    # DB 迁移：旧 config.sources / config.apps 四段
+    if isinstance(apps_doc, dict):
+        legacy = import_from_billing_sections_doc(apps_doc)
+        if legacy:
+            return legacy
+    return []
 
 
 async def load_sources_doc() -> dict:
-    """从 DB 读取个人源目录；未导入前返回空列表（不自动填充默认）。"""
+    """从 DB 读取个人源目录；未导入前回退 config.providers.billing_sources。"""
     raw = await db.get_config(CONFIG_KEY, "")
     if raw.strip():
         doc = _parse_json_or_yaml(raw)
         if "sources" in doc:
             return {"version": doc.get("version") or 1, "sources": doc.get("sources") or []}
+    prov_raw = await db.get_config(PROVIDERS_CONFIG_KEY, "")
+    if prov_raw.strip():
+        prov = _parse_json_or_yaml(prov_raw)
+        bs = prov.get("billing_sources")
+        if isinstance(bs, list) and bs:
+            return {"version": prov.get("version") or 1, "sources": list(bs)}
     return {"version": 1, "sources": []}
 
 
@@ -606,10 +570,18 @@ def load_sources_doc_sync() -> dict:
             row = conn.execute(
                 "SELECT value FROM system_config WHERE key=?", (CONFIG_KEY,),
             ).fetchone()
-        if row and row[0] and str(row[0]).strip():
-            doc = _parse_json_or_yaml(str(row[0]))
-            if "sources" in doc:
-                return {"version": doc.get("version") or 1, "sources": doc.get("sources") or []}
+            if row and row[0] and str(row[0]).strip():
+                doc = _parse_json_or_yaml(str(row[0]))
+                if "sources" in doc:
+                    return {"version": doc.get("version") or 1, "sources": doc.get("sources") or []}
+            row2 = conn.execute(
+                "SELECT value FROM system_config WHERE key=?", (PROVIDERS_CONFIG_KEY,),
+            ).fetchone()
+            if row2 and row2[0] and str(row2[0]).strip():
+                prov = _parse_json_or_yaml(str(row2[0]))
+                bs = prov.get("billing_sources")
+                if isinstance(bs, list) and bs:
+                    return {"version": prov.get("version") or 1, "sources": list(bs)}
     except Exception:
         pass
     return {"version": 1, "sources": []}
@@ -625,32 +597,38 @@ async def save_sources_doc(doc: dict) -> None:
 
 
 async def publish_sources(doc: dict | None = None) -> dict:
-    """编译并写入独立的 config.sources（仅 4 计费段）+ config.providers。
-    不再触碰 config.apps —— 应用清单（tools/api_key_apps）与源彻底分离。"""
+    """编译并写入 config.providers（providers.registry.yaml 为唯一下发格式）。"""
     if doc is None:
         doc = await load_sources_doc()
     sources = doc.get("sources") or []
-    billing = compile_billing_sections(sources)
     registry_providers = compile_registry_providers(sources)
 
-    # 写入独立源下发文件 config.sources（应用清单 config.apps 不受影响）
-    sources_doc: dict = {"version": 1}
-    for key in ("subscription_apps", "api_subscription_apps", "subscription_plans", "payg_providers"):
-        sources_doc[key] = billing[key]
-    sources_yaml = yaml.dump(
-        sources_doc, allow_unicode=True, sort_keys=False, default_flow_style=False,
-    ).rstrip()
-    await db.set_config("config.sources", sources_yaml)
-
-    reg_doc = {"version": 1, "providers": registry_providers}
-    await db.set_config("config.providers", serialize_registry_doc(reg_doc))
+    reg_doc = {
+        "version": 1,
+        "providers": registry_providers,
+        "billing_sources": sort_sources([normalize_source(s) for s in sources]),
+    }
+    registry_yaml = serialize_registry_doc(reg_doc)
+    await db.set_config("config.providers", registry_yaml)
 
     return {
-        "sources_bytes": len(sources_yaml),
-        "apps_bytes": len(sources_yaml),   # 向后兼容旧 admin 前端字段名
+        "registry_bytes": len(registry_yaml),
+        "sources_bytes": len(registry_yaml),  # 向后兼容 admin 前端字段名
+        "apps_bytes": len(registry_yaml),
         "registry_count": len(registry_providers),
         "sources_count": len(sources),
     }
+
+
+def legacy_sources_yaml_from_billing_sources(sources: list[dict]) -> str:
+    """[deprecated] 由 billing_sources 编译旧四段 YAML，供 GET /config/sources 兼容。"""
+    billing = compile_billing_sections(sources)
+    doc: dict = {"version": 1}
+    for key in _BILLING_KEYS:
+        doc[key] = billing[key]
+    return yaml.dump(
+        doc, allow_unicode=True, sort_keys=False, default_flow_style=False,
+    ).rstrip()
 
 
 def _read_text_prefix_until(path: Path, marker: str) -> str:
@@ -662,23 +640,6 @@ def _read_text_prefix_until(path: Path, marker: str) -> str:
     if idx < 0:
         return ""
     return text[:idx].rstrip() + "\n\n"
-
-
-def _build_sources_default_yaml(sources: list[dict]) -> str:
-    billing = compile_billing_sections(sources)
-    doc = {"version": 1}
-    for key in _BILLING_KEYS:
-        doc[key] = billing[key]
-    prefix = _read_text_prefix_until(_SOURCES_DEFAULT, "subscription_apps:")
-    body = yaml.dump(doc, allow_unicode=True, sort_keys=False, default_flow_style=False).rstrip()
-    if prefix:
-        # 去掉 dump 自带的 version 行以上重复（prefix 已含 version 与注释）
-        lines = body.splitlines()
-        while lines and not lines[0].strip().startswith("subscription_apps:"):
-            lines.pop(0)
-        body = "\n".join(lines)
-        return prefix + body + "\n"
-    return body + "\n"
 
 
 def _merge_registry_for_export(sources: list[dict]) -> list[dict]:
@@ -713,7 +674,11 @@ def _merge_registry_for_export(sources: list[dict]) -> list[dict]:
 
 def _build_registry_default_yaml(sources: list[dict]) -> str:
     providers = _merge_registry_for_export(sources)
-    doc = {"version": 1, "providers": providers}
+    doc = {
+        "version": 1,
+        "providers": providers,
+        "billing_sources": sort_sources([normalize_source(s) for s in sources]),
+    }
     prefix = _read_text_prefix_until(_REGISTRY_DEFAULT, "providers:")
     body = serialize_registry_doc(doc)
     if prefix:
@@ -725,17 +690,6 @@ def _build_registry_default_yaml(sources: list[dict]) -> str:
             body += "\n"
         return prefix + body
     return body
-
-
-def _build_tools_default_yaml(sources: list[dict]) -> str:
-    billing = compile_billing_sections(sources)
-    prefix = _read_text_prefix_until(
-        _CLIENT_TOOLS_DEFAULT,
-        "# ════════ 个人页：订阅账户可选应用",
-    )
-    doc = {key: billing[key] for key in _BILLING_KEYS}
-    body = yaml.dump(doc, allow_unicode=True, sort_keys=False, default_flow_style=False).rstrip() + "\n"
-    return (prefix + body) if prefix else body
 
 
 def _write_export_file(path: Path, content: str) -> dict:
@@ -750,7 +704,7 @@ def _write_export_file(path: Path, content: str) -> dict:
 
 
 async def export_to_defaults(doc: dict | None = None) -> dict:
-    """将当前个人源目录写入仓库 static/defaults 与客户端离线回退 YAML。"""
+    """将当前个人源目录写入 providers.registry.yaml（服务端 + 客户端）。"""
     if doc is None:
         doc = await load_sources_doc()
     sources = doc.get("sources") or []
@@ -758,23 +712,11 @@ async def export_to_defaults(doc: dict | None = None) -> dict:
         from fastapi import HTTPException
         raise HTTPException(400, "目录为空，无法导出")
 
-    sources_yaml = _build_sources_default_yaml(sources)
     registry_yaml = _build_registry_default_yaml(sources)
-    tools_yaml = _build_tools_default_yaml(sources)
-
     files = [
-        _write_export_file(_SOURCES_DEFAULT, sources_yaml),
         _write_export_file(_REGISTRY_DEFAULT, registry_yaml),
         _write_export_file(_CLIENT_REGISTRY, registry_yaml),
     ]
-    if _CLIENT_TOOLS_DEFAULT.parent.is_dir():
-        files.append(_write_export_file(_CLIENT_TOOLS_DEFAULT, tools_yaml))
-    else:
-        files.append({
-            "path": str(_CLIENT_TOOLS_DEFAULT.relative_to(_REPO_ROOT)),
-            "ok": False,
-            "error": "client config dir not found",
-        })
 
     ok_count = sum(1 for f in files if f.get("ok"))
     return {

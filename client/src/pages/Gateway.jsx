@@ -8,6 +8,7 @@ import claudeDevModeImg2 from '../assets/claude-devmode-2.webp';
 import { brandIconFor, resolveBrandIcon } from '../lib/brandIcons';
 import { APP_ICONS, ROUTE_ICONS, isAppIcon, appIconSvg } from '../lib/appIcons';
 import { useLang } from '../store/lang';
+import RouteSelect, { tierOptgroups } from '../components/RouteSelect';
 import {
   encodeTierModelRoute,
   modelIdFromRoute,
@@ -20,16 +21,11 @@ function modelTierKey(m) {
   return encodeTierModelRoute(m.tier, m.id);
 }
 
-// 路由下拉的层级分组：本地(free+paid 合并) / 远程(p2p)。各处下拉/路由链复用。
-function tierOptgroups(availableModels, t) {
-  const local  = (availableModels || []).filter(m => m.tier === 'free' || m.tier === 'paid');
-  const remote = (availableModels || []).filter(m => m.tier === 'p2p');
-  const grp = (key, models) => (models.length ? (
-    <optgroup key={key} label={t(`gateway.app.tier.${key}`)}>
-      {models.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}
-    </optgroup>
-  ) : null);
-  return [grp('local', local), grp('remote', remote)];
+/** 应用已绑定的路由 id 列表（多选存 route_ids，单选回退 route_id） */
+function effectiveRouteIds(app) {
+  if (Array.isArray(app?.route_ids) && app.route_ids.length) return app.route_ids;
+  if (app?.route_id) return [app.route_id];
+  return [];
 }
 
 // ── PolicyManager：策略组管理 UI ──────────────────────────────────────────────
@@ -562,6 +558,8 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   const [icon,           setIcon]           = useState(app.icon || 'icon:cube');
   const [desc,           setDesc]           = useState(app.description || '');
   const [routeId,        setRouteId]        = useState(() => routeSelectValue(app.route_id, availableModels, routes));
+  const [routeIds,       setRouteIds]       = useState(() =>
+    effectiveRouteIds(app).map(rid => routeSelectValue(rid, availableModels, routes)).filter(Boolean));
   const [modelIntercept, setModelIntercept] = useState(app.model_intercept || '');
   const [busy,           setBusy]           = useState(false);
   const [copied,         setCopied]         = useState(false);
@@ -619,9 +617,13 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
 
   async function save() {
     setBusy(true);
+    const ids = app.route_multi_select
+      ? routeIds.filter(Boolean)
+      : (routeId ? [routeId] : []);
     await onUpdate({
       id: app.id, name, icon, description: desc,
-      route_id: routeId || null,
+      route_id: ids[0] || null,
+      route_ids: ids.length ? ids : null,
       model_intercept: modelIntercept.trim() || null,
       ...(app.env && !app.config_file ? { env: parseEnvText(envText) } : {}),
     });
@@ -643,9 +645,13 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     for (const [k, v] of Object.entries(app.patch || {})) patch[k] = resolveEnv(v);
     const env = {};
     for (const [k, v] of Object.entries(app.env || {})) env[k] = resolveEnv(v);
+    const ids = app.route_multi_select
+      ? routeIds.filter(Boolean)
+      : (routeId ? [routeId] : []);
     const r = await window.electronAPI?.apps?.writeConfigFile({
       app_id: app.id, config_file: app.config_file, patch, env, force,
-      route_id: routeId || null,
+      route_id: ids[0] || null,
+      route_ids: ids.length ? ids : null,
     }).catch(e => ({ ok: false, error: e.message }));
     // 冲突：目标配置项已有不同的值 → 弹确认显示当前值，确认后强制覆盖
     if (r && !r.ok && Array.isArray(r.conflicts) && r.conflicts.length) {
@@ -785,23 +791,19 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     <div className="space-y-3">
       <div>
         <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.routeRules')}</div>
-        <select value={routeId} onChange={e => setRouteId(e.target.value)}
-          className="w-full text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none text-zinc-800 dark:text-zinc-200">
-          {/* manual（手工添加）无官方可直连 → 必须绑定；其余与列表页一致：官方订阅（不走网关） */}
-          {app.link_method === 'manual'
-            ? <option value="" disabled>{t('gateway.app.routeRequired')}</option>
-            : <option value="">{t('gateway.app.routeOfficial')}</option>}
-          {(() => {
-            const avail = new Set(availableModels.map(m => m.id));
-            const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
-            return usable.length > 0 && (
-              <optgroup label={t('gateway.app.sceneRoutes')}>
-                {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon && !r.icon.startsWith('icon:') ? r.icon + ' ' : ''}{r.scene_name}</option>)}
-              </optgroup>
-            );
-          })()}
-          {tierOptgroups(availableModels, t)}
-        </select>
+        <RouteSelect
+          multi={!!app.route_multi_select}
+          value={routeId}
+          values={routeIds}
+          onChange={app.route_multi_select ? setRouteIds : (v => setRouteId(v || ''))}
+          routes={routes}
+          availableModels={availableModels}
+          t={t}
+          isManual={app.link_method === 'manual'}
+        />
+        {app.route_multi_select && (
+          <div className="text-xs text-zinc-400 mt-1">{t('gateway.app.routeMultiHint')}</div>
+        )}
       </div>
       {app.link_method === 'manual' && (
         <div>
@@ -2057,7 +2059,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
   const appsApi = getApps();
   const [apps,     setApps]     = useState([]);
   const [detailApp, setDetailApp] = useState(null);   // 用量明细弹窗对应的 app
-  const [claudeModels, setClaudeModels] = useState([]);  // Claude 名（写 Claude Desktop inferenceModels 用）
+  const [claudeModels, setClaudeModels] = useState([]);  // 保留供后续 Claude 相关 UI 使用
   const [routes,   setRoutes]   = useState([]);
   const [localBase, setLocalBase] = useState('');
   // 当 Gateway 的 routes 更新时同步进来（场景路由新建后立即可选）
@@ -2248,7 +2250,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
     if (on) {
       setBusyId(appId);
       // 纳管默认官方订阅：清空路由，确保不注入网关
-      await appsApi.update({ id: appId, hosted: true, route_id: null }).catch(() => {});
+      await appsApi.update({ id: appId, hosted: true, route_id: null, route_ids: null }).catch(() => {});
       if (app.host_method === 'config-file') {
         await appsApi.revertConfigFile({ app_id: appId, config_file: app.config_file }).catch(() => {});
         showNotice(appId, t('gateway.apps.restartToApply'));
@@ -2275,7 +2277,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
       } else if (app.link_method === 'direct') {
         showNotice(appId, t('gateway.apps.untracked'));
       }
-      await appsApi.update({ id: appId, hosted: false, route_id: null }).catch(() => {});
+      await appsApi.update({ id: appId, hosted: false, route_id: null, route_ids: null }).catch(() => {});
       if (settings?.id === appId) setSettings(null);
     }
     setBusyId(null);
@@ -2351,26 +2353,11 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
     }
     scheduleTestHide(app.id);
   }
-  // 写入某 api-key 应用的配置文件指向网关（解析 {BASE}/{KEY}，处理冲突/失败）。
+  // 写入某 api-key 应用的配置文件指向网关（解析 {BASE}/{KEY}，patch_route 在 main 进程按 handler 策略改写）。
   // 返回 true=成功。onAbort：冲突取消/写入失败时的回滚回调（新建时删条目；重新纳管不删）。
-  // Claude Desktop 的 inferenceModels 校验：name 必须是 Anthropic 模型名（claude-*）。
-  // 所以 name 用 claude 名（过校验，keyScene 会把它改写成绑定的路由/模型），
-  // labelOverride 显示我们绑定的「路由名 / 模型名」让用户看得懂。未绑路由(直连)则不写。
-  function buildInferenceModels(app) {
-    const claudeName = (claudeModels && claudeModels[0]) || 'claude-sonnet-4-5';
-    const route = routes.find(x => x.model_key === app.route_id || x.id === app.route_id);
-    let label = null;
-    // labelOverride 写入配置文件，只能是纯文本：图标集 id（icon:xxx）不拼进去，仅保留 emoji。
-    if (route) label = (route.icon && !route.icon.startsWith('icon:') ? `${route.icon} ` : '') + route.scene_name;
-    else if (app.route_id) label = modelIdFromRoute(app.route_id, routes) || app.route_id;
-    if (!label) return [];                          // 未绑路由（直连）→ 用默认
-    return [{ name: claudeName, labelOverride: label }];
-  }
-
   async function writeApiKeyConfig(app, { onAbort } = {}) {
     const gwOrigin = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/v1\/?$/, '');
     const apiKey = app.api_key || '';
-    // 嵌套 patch（如 WorkBuddy models[]）须递归替换 {BASE}/{KEY}
     const resolveTpl = (tpl) => {
       if (typeof tpl === 'string') {
         return tpl.replace(/\{BASE\}/g, gwOrigin).replace(/\{KEY\}/g, apiKey);
@@ -2383,25 +2370,22 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
       }
       return tpl;
     };
-    const isGatewayConfig = app.patch && 'inferenceProvider' in app.patch;   // Claude Desktop 等
-    const isCodexConfig   = app.patch && 'model_provider' in app.patch;      // Codex Desktop（OpenAI 风格）
+    const routeIds = effectiveRouteIds(app);
+    const isGatewayConfig = app.patch && 'inferenceProvider' in app.patch;
     const run = async (force) => {
       let patch = resolveTpl(app.patch || {});
       const env   = resolveTpl(app.env || {});
-      if (isGatewayConfig) {   // 显式 inferenceModels（不走 modelDiscovery，绕开 Anthropic 名校验）
+      if (isGatewayConfig) {
         delete patch.modelDiscoveryEnabled;
-        patch.chatTabEnabled = true;              // 3P 网关模式下开启 Chat 标签
+        patch.chatTabEnabled = true;
         patch.coworkEgressAllowedHosts = ['*'];
         patch.disableDeploymentModeChooser = true;
-        const im = buildInferenceModels(app);
-        if (im.length) patch.inferenceModels = im;   // 为空则不写，Claude 用默认
+        // inferenceModels 由 main.js applyRouteToProxyPatch（claude_inference_models）写入
       }
-      // Codex：OpenAI 风格、接受任意模型名 → 顶层 model 写绑定的路由/模型（运行时按此发起请求）。
-      // 注：Codex Desktop 的 GUI 模型选择器由其自身账号/provider 状态决定，配置文件改不动，仍显示「Custom」。
-      if (isCodexConfig && app.route_id) patch.model = modelIdFromRoute(app.route_id, routes) || app.route_id;
       const r = await appsApi.writeConfigFile({
         app_id: app.id, config_file: app.config_file, patch, env, force,
-        route_id: app.route_id || null,
+        route_id: routeIds[0] || null,
+        route_ids: routeIds.length ? routeIds : null,
       }).catch(e => ({ ok: false, error: e.message }));
       // 冲突：目标配置项已有不同的值 → 确认后强制覆盖；取消则回滚
       if (r && !r.ok && Array.isArray(r.conflicts) && r.conflicts.length) {
@@ -2414,6 +2398,51 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
       return true;
     };
     return run(false);
+  }
+
+  /** 列表行路由下拉变更：单选 val 或多选 selected */
+  async function applyAppRouteSelection(app, val, selected) {
+    const routeIds = Array.isArray(selected) && selected.length ? selected : (val ? [val] : []);
+    const primary = routeIds[0] || null;
+    setBusyId(app.id);
+    if (app.host_method === 'config-file') {
+      await appsApi.update({
+        id: app.id, route_id: primary, route_ids: routeIds.length ? routeIds : null,
+        ...(primary ? { hosted: true } : {}),
+      }).catch(() => {});
+      if (routeIds.length) {
+        await writeApiKeyConfig({ ...app, route_id: primary, route_ids: routeIds });
+        showNotice(app.id, t('gateway.apps.restartToApply'));
+      } else {
+        await appsApi.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {});
+        showNotice(app.id, t('gateway.apps.restartToApply'));
+      }
+    } else if (app.link_method === 'shim' && app.agent_id) {
+      let appId = app.id;
+      if (app._virtual) {
+        const created = await appsApi.ensureShimApp({ agent_id: app.agent_id, name: app.name, icon: app.icon }).catch(() => null);
+        if (created) appId = created.id;
+      }
+      await appsApi.update({
+        id: appId, route_id: primary, route_ids: routeIds.length ? routeIds : null,
+        ...(primary ? { hosted: true } : {}),
+      }).catch(() => {});
+      if (primary) { await window.electronAPI.agents?.apply(app.agent_id).catch(() => {}); showNotice(appId, t('gateway.apps.restartToApply')); }
+      else { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); showNotice(appId, t('gateway.apps.restartToApply')); }
+    } else if (app.link_method === 'session') {
+      await appsApi.update({
+        id: app.id, route_id: primary, route_ids: routeIds.length ? routeIds : null,
+        ...(primary ? { hosted: true } : {}),
+      }).catch(() => {});
+    } else {
+      await appsApi.update({
+        id: app.id, route_id: primary, route_ids: routeIds.length ? routeIds : null,
+        ...(primary ? { hosted: true } : {}),
+      }).catch(() => {});
+    }
+    if (app.host_method === 'config-file') { try { await window.electronAPI.claude3p?.sync(); } catch {} }
+    setBusyId(null);
+    await load();
   }
 
   // API Key 应用（虚拟行）「纳管」：建条目 + 标记 hosted（默认直连，不写配置）。要走网关在路由下拉选模型。
@@ -2539,24 +2568,30 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                   const hostable = app.link_method === 'shim' || isCfgApp || isDirectOnly;
                   const tracked  = app.hosted === true;
                   const isManaged = isSessionApp ? tracked : (hostable ? tracked : (keyApp && !app._virtual_apikey));
-                  const isGatewayRouted = isSessionApp ? !!app.route_id : (hostable ? !!(tracked && app.route_id) : !!(keyApp && app.route_id));
-                  // 路由下拉当前值：tier:id 区分同模型跨层；api-key/manual 有 route_id 即展示
-                  const currentRouteValue = (() => {
-                    if (!app.route_id) return '';
-                    const val = routeSelectValue(app.route_id, availableModels, routes);
-                    // known 必须与下方「实际渲染的 option 集合」完全一致，否则受控 <select>
-                    // 的 value 指向不存在的 option → 显示停留在旧选项、与实际 value 错位。
-                    // 渲染的 option = usable 场景路由(model_key/id) + tier∈{free,p2p,paid} 的模型(tier:id)。
+                  const isGatewayRouted = isSessionApp
+                    ? effectiveRouteIds(app).length > 0
+                    : (hostable ? !!(tracked && effectiveRouteIds(app).length) : !!(keyApp && effectiveRouteIds(app).length));
+                  const routeKnown = (val) => {
+                    if (!val) return false;
                     const avail = new Set(availableModels.map(m => m.id));
                     const usableRoutes = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
-                    const known =
-                      usableRoutes.some(r => (r.model_key || r.id) === val)
+                    return usableRoutes.some(r => (r.model_key || r.id) === val)
                       || availableModels.some(m => ['free', 'p2p', 'paid'].includes(m.tier) && modelTierKey(m) === val);
-                    if (keyApp && !isDirectOnly) return known ? val : '';
-                    if (isSessionApp) return known ? val : (app.route_id ? '' : '');
+                  };
+                  const currentRouteValue = (() => {
+                    const primary = effectiveRouteIds(app)[0];
+                    if (!primary) return '';
+                    const val = routeSelectValue(primary, availableModels, routes);
+                    if (keyApp && !isDirectOnly) return routeKnown(val) ? val : '';
+                    if (isSessionApp) return routeKnown(val) ? val : (primary ? '' : '');
                     if (!tracked) return '';
-                    return known ? val : '';
+                    return routeKnown(val) ? val : '';
                   })();
+                  const currentRouteValues = app.route_multi_select
+                    ? effectiveRouteIds(app)
+                        .map(rid => routeSelectValue(rid, availableModels, routes))
+                        .filter(v => routeKnown(v))
+                    : [];
                   const isActive = isManaged;
                   const statusDot = isManaged
                     ? 'bg-green-400 shadow-[0_0_6px] shadow-green-400/60'
@@ -2608,69 +2643,28 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                       <div className="text-center overflow-hidden text-xs font-medium text-zinc-600 dark:text-zinc-300 rounded hover:bg-zinc-100/60 dark:hover:bg-zinc-700/30 cursor-pointer" title={t('gateway.apps.statsTitle')} onClick={() => setDetailApp(app)}>{fmtTime(st.lastTs)}</div>
 
                       {/* 路由下拉：同一控件；不可绑路由时灰色禁用（与仅官方订阅应用一致） */}
-                      <div className="min-w-0 overflow-hidden">
+                      <div className="min-w-0 overflow-visible">
                       {((keyApp || app.link_method === 'shim' || isSessionApp || isDirectOnly) && !app._virtual_apikey) && (
-                      <select
+                      <RouteSelect
+                        compact
+                        multi={!!app.route_multi_select}
                         value={routeLocked ? '' : currentRouteValue}
+                        values={routeLocked ? [] : currentRouteValues}
                         disabled={routeLocked}
-                        onChange={async e => {
+                        routes={routes}
+                        availableModels={availableModels}
+                        t={t}
+                        showGatewayRoutes={showGatewayRoutes}
+                        isManual={isManual}
+                        onChange={async (val) => {
                           if (routeLocked) return;
-                          const val = e.target.value || null;
-                          // 直连官方(空) = 还原配置/撤 shim → 应用直连官方、不走网关；
-                          // 选模型/路由 = 写配置纳管/注入 shim → 走网关并按 keyScene 路由。
-                          setBusyId(app.id);
-                          // 选模型/路由 = 纳管 + 走网关（hosted:true）；直连官方(空) = 还原配置/撤 shim，保持纳管
-                          if (app.host_method === 'config-file') {        // Claude Desktop 等 config-file 应用
-                            await appsApi.update({ id: app.id, route_id: val, ...(val ? { hosted: true } : {}) }).catch(() => {});
-                            if (val) { await writeApiKeyConfig({ ...app, route_id: val }); showNotice(app.id, t('gateway.apps.restartToApply')); }   // 写配置→网关
-                            else     { await appsApi.revertConfigFile({ app_id: app.id, config_file: app.config_file }).catch(() => {}); showNotice(app.id, t('gateway.apps.restartToApply')); }
-                          } else if (app.link_method === 'shim' && app.agent_id) {  // CLI 透明托管
-                            let appId = app.id;
-                            if (app._virtual) {
-                              const created = await appsApi.ensureShimApp({ agent_id: app.agent_id, name: app.name, icon: app.icon }).catch(() => null);
-                              if (created) appId = created.id;
-                            }
-                            await appsApi.update({ id: appId, route_id: val, ...(val ? { hosted: true } : {}) }).catch(() => {});
-                            if (val) { await window.electronAPI.agents?.apply(app.agent_id).catch(() => {}); showNotice(appId, t('gateway.apps.restartToApply')); }   // 注入 shim → 网关
-                            else     { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); showNotice(appId, t('gateway.apps.restartToApply')); }
-                          } else if (app.link_method === 'session') {
-                            await appsApi.update({
-                              id: app.id,
-                              route_id: val,
-                              ...(val ? { hosted: true } : {}),
-                            }).catch(() => {});
-                          } else {                                          // 纯 api-key / manual
-                            await appsApi.update({
-                              id: app.id,
-                              route_id: val,
-                              ...(val ? { hosted: true } : {}),
-                            }).catch(() => {});
+                          if (app.route_multi_select) {
+                            await applyAppRouteSelection(app, val[0] || null, val);
+                          } else {
+                            await applyAppRouteSelection(app, val || null, val ? [val] : []);
                           }
-                          // config-file 应用（Claude Desktop）切换路由 = 纳管/还原 → 顺带同步一次会话（不等 30s 定时）
-                          if (app.host_method === 'config-file') { try { await window.electronAPI.claude3p?.sync(); } catch {} }
-                          setBusyId(null);
-                          await load();
                         }}
-                        className="w-full min-w-0 max-w-full text-[11px] bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-1.5 py-1 outline-none text-zinc-600 dark:text-zinc-400 disabled:opacity-40 disabled:cursor-not-allowed">
-                        {/* Cursor 等仅官方订阅应用：固定一项；manual 必须绑路由；其余可选官方订阅或走网关 */}
-                        {isManual
-                          ? <option value="" disabled>{t('gateway.app.routeRequired')}</option>
-                          : <option value="">{t('gateway.app.routeOfficial')}</option>}
-                        {showGatewayRoutes && (() => {
-                          const avail = new Set(availableModels.map(m => m.id));
-                          const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
-                          return (
-                            <>
-                              {usable.length > 0 && (
-                                <optgroup label={t('gateway.app.sceneRoutes')}>
-                                  {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon && !r.icon.startsWith('icon:') ? r.icon + ' ' : ''}{r.scene_name}</option>)}
-                                </optgroup>
-                              )}
-                              {tierOptgroups(availableModels, t)}
-                            </>
-                          );
-                        })()}
-                      </select>
+                      />
                       )}
                       </div>
 
@@ -2680,7 +2674,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                       {(app.api_key || isDirectOnly) && (() => {
                         const ts = testState[app.id];
                         return (
-                          <button onClick={() => runAppTest(app, currentRouteValue)} disabled={ts?.busy || !isGatewayRouted}
+                          <button onClick={() => runAppTest(app, currentRouteValues[0] || currentRouteValue)} disabled={ts?.busy || !isGatewayRouted}
                             className={`text-xs px-1.5 py-1 rounded-lg border transition-colors shrink-0 ${ts?.busy
                               ? 'border-zinc-300 dark:border-zinc-600 text-zinc-400 opacity-60 cursor-wait'
                               : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-blue-400 hover:text-blue-500'} disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-zinc-200 disabled:hover:text-zinc-500`}>

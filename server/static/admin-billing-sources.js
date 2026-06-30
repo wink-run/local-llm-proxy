@@ -209,16 +209,16 @@ window.initBillingSourcesAdmin = function (api, lang, ref) {
     try {
       const d = await (await api('/admin/billing/sources/publish', { method: 'POST' })).json()
       bsMsg.value = lang.value === 'zh'
-        ? `✓ 已发布：${d.sources_count} 源 → 源配置 ${d.sources_bytes ?? d.apps_bytes}B / 供给源 ${d.registry_count}（独立于应用配置）`
-        : `✓ Published: ${d.sources_count} sources → sources config ${d.sources_bytes ?? d.apps_bytes}B / ${d.registry_count} providers (separate from apps config)`
+        ? `✓ 已发布：${d.sources_count} 源 → config.providers ${d.registry_bytes ?? d.sources_bytes ?? d.apps_bytes}B / ${d.registry_count} 供给源`
+        : `✓ Published: ${d.sources_count} sources → config.providers ${d.registry_bytes ?? d.sources_bytes ?? d.apps_bytes}B / ${d.registry_count} providers`
     } catch (e) { bsMsg.value = e.message }
     finally { bsSaving.value = false }
   }
 
   async function exportBsDefaults() {
     const tip = lang.value === 'zh'
-      ? '将当前目录写入仓库默认 YAML（sources.default.yaml、providers.registry.yaml、客户端 tokenbank.tools.default.yaml），确认？'
-      : 'Write current catalog to repo default YAML files. Continue?'
+      ? '将当前目录写入 providers.registry.yaml（服务端 + 客户端），确认？'
+      : 'Write current catalog to providers.registry.yaml (server + client). Continue?'
     if (!confirm(tip)) return
     bsSaving.value = true; bsMsg.value = ''
     try {

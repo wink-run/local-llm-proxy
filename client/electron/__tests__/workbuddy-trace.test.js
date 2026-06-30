@@ -71,6 +71,44 @@ test('workbuddy patch_route supports multiple routes', () => {
   assert.ok(out.models.every(m => m.name === 'tokenbank'));
 });
 
+test('claude patch_route writes multiple inferenceModels', () => {
+  const { applyRouteToProxyPatch } = require('../app-handlers');
+  const routes = [
+    { id: 'r1', model_key: 'code', scene_name: '代码助手' },
+    { id: 'r2', model_key: 'auto', scene_name: '自动' },
+  ];
+  const patch = {
+    inferenceProvider: 'gateway',
+    inferenceGatewayBaseUrl: 'http://127.0.0.1:11430',
+    inferenceGatewayApiKey: 'sk-test',
+  };
+  const out = applyRouteToProxyPatch('claude-desktop-api', patch, {
+    routeIds: ['code', 'paid:gpt-4o'],
+    routes,
+    claudeName: 'claude-sonnet-4-5',
+  });
+  assert.equal(out.inferenceModels.length, 2);
+  assert.equal(out.inferenceModels[0].name, 'claude-sonnet-4-5');
+  assert.equal(out.inferenceModels[0].labelOverride, '代码助手');
+  assert.equal(out.inferenceModels[1].labelOverride, 'gpt-4o');
+});
+
+test('codex patch_route writes model from first route', () => {
+  const { applyRouteToProxyPatch } = require('../app-handlers');
+  const routes = [{ id: 'r1', model_key: 'code', scene_name: '代码助手' }];
+  const patch = { model_provider: 'tokenbank' };
+  const out = applyRouteToProxyPatch('codex-desktop-api', patch, {
+    routeIds: ['code', 'paid:gpt-4o'],
+    routes,
+  });
+  assert.equal(out.model, '代码助手');
+});
+
+test('workbuddy handler expands route_multi_select', () => {
+  const ent = expandEntity({ id: 'workbuddy', handler: 'workbuddy-stats', vars: { route_multi_select: true } });
+  assert.equal(ent.route_multi_select, true);
+});
+
 test('workbuddy handler expands gateway + session + trace', () => {
   const ent = expandEntity({ id: 'workbuddy', handler: 'workbuddy-stats' });
   assert.equal(ent.gateway_proxy, true);

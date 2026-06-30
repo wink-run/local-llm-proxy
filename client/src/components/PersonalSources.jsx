@@ -9,10 +9,34 @@ import { useCurrency } from '../store/currency';
 import ServiceIcon from './ServiceIcon';
 import { resolveBrandIcon } from '../lib/brandIcons';
 
+const INVALID_MODEL_NAMES = new Set(['_excluded_models', 'excluded_models']);
+
 /** 模型名（字符串或 { name/id } 对象） */
 function modelEntryName(m) {
-  if (typeof m === 'string') return m.trim();
-  return String(m?.name || m?.id || '').trim();
+  let n = '';
+  if (typeof m === 'string') n = m.trim();
+  else n = String(m?.name || m?.id || '').trim();
+  return n && !INVALID_MODEL_NAMES.has(n) ? n : '';
+}
+
+/** 供给源 logo 去重键：同一 provider 多账户只显示一个图标 */
+function providerDedupKey(inst) {
+  const hay = `${inst.source_id || inst.provider_id || ''} ${inst.gateway_id || ''} ${inst.label || inst.name || ''}`;
+  const brand = resolveBrandIcon(hay);
+  if (brand) return brand;
+  return String(inst.source_id || inst.provider_id || inst.gateway_id || inst.id || '');
+}
+
+function dedupeByProvider(insts) {
+  const seen = new Set();
+  const out = [];
+  for (const inst of insts) {
+    const k = providerDedupKey(inst);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(inst);
+  }
+  return out;
 }
 
 /** 供给源 logo（紧凑图标，hover 显示名称） */
@@ -429,19 +453,18 @@ export function PersonalSourceModelView({ instances, t, trailing = null, onEmpty
     return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0]));
   }, [instances]);
 
-  // 参与供给的账户（去重），用于顶部 logo 条
-  const uniqueSources = useMemo(() => {
-    const seen = new Set();
-    const list = [];
-    for (const inst of instances) {
-      const modelList = (inst.models || []).map(modelEntryName).filter(Boolean);
-      if (!modelList.length) continue;
-      const uid = inst.id || inst.agent_id || inst.source_id;
-      if (seen.has(uid)) continue;
-      seen.add(uid);
-      list.push(inst);
-    }
-    return list;
+  // 参与供给的账户（按 provider 去重 logo），统计仍用全部账户数
+  const uniqueProviders = useMemo(() => {
+    const withModels = instances.filter(inst =>
+      (inst.models || []).map(modelEntryName).filter(Boolean).length > 0,
+    );
+    return dedupeByProvider(withModels);
+  }, [instances]);
+
+  const accountCount = useMemo(() => {
+    return instances.filter(inst =>
+      (inst.models || []).map(modelEntryName).filter(Boolean).length > 0,
+    ).length;
   }, [instances]);
 
   if (byModel.length === 0) {
@@ -469,11 +492,11 @@ export function PersonalSourceModelView({ instances, t, trailing = null, onEmpty
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-2 min-w-0">
         <div className="flex flex-col gap-1 min-w-0 flex-1">
-          {uniqueSources.length > 0 && (
+          {uniqueProviders.length > 0 && (
             <div className="flex items-center -space-x-1 shrink-0">
-              {uniqueSources.map((s, i) => (
+              {uniqueProviders.map((s, i) => (
                 <span
-                  key={(s.id || s.agent_id || s.source_id) + ':' + i}
+                  key={providerDedupKey(s) + ':' + i}
                   className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-zinc-50 dark:bg-zinc-900 ring-1 ring-zinc-200 dark:ring-zinc-700"
                 >
                   <SourceProviderLogo inst={s} />
@@ -482,7 +505,7 @@ export function PersonalSourceModelView({ instances, t, trailing = null, onEmpty
             </div>
           )}
           <span className="text-xs text-zinc-500 truncate">
-            {t('psrc.modelView.summary', { accounts: uniqueSources.length, models: byModel.length })}
+            {t('psrc.modelView.summary', { accounts: accountCount, models: byModel.length })}
           </span>
         </div>
         {trailing}
@@ -629,11 +652,36 @@ function baseGatewayForSubTpl(tpl, isApiSub) {
   return tpl.key;
 }
 
+/** 解析账户实例添加时间（毫秒），用于列表按添加顺序排列 */
+export function accountInstanceAddedOrder(inst, directBilling = {}) {
+  const toMs = (v) => {
+    if (v == null) return NaN;
+    if (typeof v === 'number') return v;
+    const t = Date.parse(v);
+    return Number.isNaN(t) ? NaN : t;
+  };
+  const fromAddedAt = toMs(inst?.added_at);
+  if (!Number.isNaN(fromAddedAt)) return fromAddedAt;
+  if (inst?.kind === 'direct' && inst?.id) {
+    const fromBill = toMs(directBilling[inst.id]?.added_at);
+    if (!Number.isNaN(fromBill)) return fromBill;
+  }
+  // 新实例 id 前缀为 Date.now().toString(36)，可回退解析
+  const id = String(inst?.id || inst?.agent_id || '').replace(/^acct-/, '');
+  const prefix = id.match(/^([0-9a-z]+)/i)?.[1];
+  if (prefix) {
+    const n = parseInt(prefix, 36);
+    if (!Number.isNaN(n)) return n;
+  }
+  return 0;
+}
+
 export function buildInstancePatch(tpl, { payg = [], subs = [], planId } = {}) {
   const key = tpl.key;
   const isPayg = tpl.kind === 'payg';
   const isApiSub = tpl.kind === 'api_sub';
   const uid = () => (Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+  const addedAt = Date.now();
   const nextName = (list, kf) => {
     const n = (list || []).filter(x => x[kf] === key).length;
     return n > 0 ? `${tpl.label}_${n + 1}` : tpl.label;
@@ -646,6 +694,7 @@ export function buildInstancePatch(tpl, { payg = [], subs = [], planId } = {}) {
     const inst = {
       id: instId, provider_id: key, gateway_id, label: tpl.label,
       name: nextName(payg, 'provider_id'), icon: tpl.icon, models: [...tplModels], enabled: true,
+      added_at: addedAt,
     };
     return { user_payg_providers: [...payg, inst] };
   }
@@ -664,6 +713,7 @@ export function buildInstancePatch(tpl, { payg = [], subs = [], planId } = {}) {
     monthly_usd: plan.monthly_usd ?? null,
     subscription_to_api: isApiSub ? true : (tpl.subscription_to_api === true),
     ...(isApiSub ? { plan_provider_id: tpl.plan_provider_id || key } : {}),
+    added_at: addedAt,
   };
   return { user_subscriptions: [...subs, inst] };
 }
@@ -685,6 +735,7 @@ export function buildDirectSourcePatch(tpl, { billing = {}, planId } = {}) {
         plan_id: plan.id || null,
         plan_label: plan.label || null,
         source_id: tpl.key,
+        added_at: ((billing || {})[agentId]?.added_at) ?? Date.now(),
       },
     },
   };

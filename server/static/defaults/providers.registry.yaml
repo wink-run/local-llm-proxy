@@ -1,8 +1,4 @@
-# providers.registry.yaml — 供给源唯一配置表（server + client 同步）
-# 改此文件后同步到 server/static/defaults/providers.registry.yaml
-
 version: 1
-
 providers:
 - id: ollama
   label: Ollama
@@ -40,16 +36,21 @@ providers:
     type: chat
   - name: z-ai/glm-5.1
     type: chat
+  - name: test
+    type: chat
   pricing:
     minimaxai/minimax-m3:
-      in: 0
+      in: 1
       out: 0
+      cacheRead: 0
     moonshotai/kimi-k2.6:
-      in: 0
+      in: 1
       out: 0
+      cacheRead: 0
     deepseek-ai/deepseek-v4-flash:
       in: 0
       out: 0
+      cacheRead: 0
     deepseek-ai/deepseek-v4-pro:
       in: 0
       out: 0
@@ -459,3 +460,787 @@ providers:
   key_prefix: []
   signup_url: ''
   payg: true
+- id: test
+  label: test
+  icon: 🔧
+  tier: paid
+  hint: ''
+  base_url: ''
+  modalities:
+    language: true
+  models:
+  - name: test23
+    type: chat
+  pricing:
+    test23:
+      in: 1
+      out: 1
+      cacheRead: 1
+  handler: openai
+  api_format: openai
+  enabled_default: false
+  keyless: false
+  key_prefix: []
+  signup_url: ''
+  payg: true
+billing_sources:
+- id: claude
+  sort_order: 1
+  category: app_sub
+  source_id: claude
+  label: Claude Code
+  icon: 🔷
+  tier: paid
+  base_url: https://api.anthropic.com/v1
+  auth: oauth
+  api_format: anthropic
+  handler: anthropic
+  hint: ''
+  keyless: false
+  key_prefix: []
+  signup_url: ''
+  aliases: []
+  enabled_default: false
+  models:
+  - id: claude-sonnet-4-6
+    modality: chat
+    pricing:
+      in: 3
+      out: 15
+      cacheRead: 0.3
+      cacheWrite: 3.75
+  - id: claude-sonnet-4-5
+    modality: chat
+    pricing:
+      in: 3
+      out: 15
+      cacheRead: 0.3
+      cacheWrite: 3.75
+  - id: claude-sonnet-4
+    modality: chat
+    pricing:
+      in: 3
+      out: 15
+      cacheRead: 0.3
+      cacheWrite: 3.75
+  - id: claude-haiku-4-5
+    modality: chat
+    pricing:
+      in: 1
+      out: 5
+      cacheRead: 0.1
+      cacheWrite: 1.25
+  - id: claude-opus-4-6
+    modality: chat
+    pricing:
+      in: 5
+      out: 25
+      cacheRead: 0.5
+      cacheWrite: 6.25
+  pricing:
+    claude-sonnet-4-6:
+      in: 3
+      out: 15
+      cacheRead: 0.3
+      cacheWrite: 3.75
+    claude-sonnet-4-5:
+      in: 3
+      out: 15
+      cacheRead: 0.3
+      cacheWrite: 3.75
+    claude-sonnet-4:
+      in: 3
+      out: 15
+      cacheRead: 0.3
+      cacheWrite: 3.75
+    claude-haiku-4-5:
+      in: 1
+      out: 5
+      cacheRead: 0.1
+      cacheWrite: 1.25
+    claude-opus-4-6:
+      in: 5
+      out: 25
+      cacheRead: 0.5
+      cacheWrite: 6.25
+  plans:
+  - id: claude-pro
+    label: Claude Pro
+    monthly_usd: 20.0
+  - id: max5x
+    label: Claude Max (5×)
+    monthly_usd: 100.0
+  - id: max20x
+    label: Claude Max (20×)
+    monthly_usd: 200.0
+  agent_id: claude-code
+  plan_provider_id: anthropic-paid
+  subscription_to_api: true
+- id: codex
+  sort_order: 2
+  category: app_sub
+  source_id: codex
+  label: Codex
+  icon: ⚡
+  tier: paid
+  base_url: https://api.openai.com/v1
+  auth: oauth
+  api_format: openai
+  handler: openai
+  hint: ''
+  keyless: false
+  key_prefix: []
+  signup_url: ''
+  aliases: []
+  enabled_default: false
+  models: []
+  pricing: {}
+  plans:
+  - id: chatgpt-plus
+    label: ChatGPT Plus
+    monthly_usd: 20.0
+  - id: chatgpt-team
+    label: ChatGPT Team
+    monthly_usd: 25.0
+  - id: chatgpt-pro
+    label: ChatGPT Pro
+    monthly_usd: 200.0
+  agent_id: codex
+  plan_provider_id: openai
+  subscription_to_api: true
+- id: gemini
+  sort_order: 3
+  category: app_sub
+  source_id: gemini
+  label: Gemini CLI
+  icon: ♊
+  tier: paid
+  base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+  auth: api_key
+  api_format: gemini
+  handler: gemini
+  hint: ''
+  keyless: false
+  key_prefix: []
+  signup_url: ''
+  aliases: []
+  enabled_default: false
+  models: []
+  pricing: {}
+  plans:
+  - id: gemini-advanced
+    label: Gemini Advanced
+    monthly_usd: 20.0
+  - id: google-one-ai
+    label: Google One AI
+    monthly_usd: 20.0
+  agent_id: gemini-cli
+  plan_provider_id: gemini
+  subscription_to_api: false
+- id: cursor
+  sort_order: 4
+  category: app_sub
+  source_id: cursor
+  label: Cursor
+  icon: 🖱️
+  tier: paid
+  base_url: ''
+  auth: api_key
+  api_format: openai
+  handler: openai
+  hint: ''
+  keyless: false
+  key_prefix: []
+  signup_url: ''
+  aliases: []
+  enabled_default: false
+  models: []
+  pricing: {}
+  plans:
+  - id: cursor-pro
+    label: Cursor Pro
+    monthly_usd: 20.0
+  - id: cursor-ultra
+    label: Cursor Ultra
+    monthly_usd: 200.0
+  agent_id: cursor
+  plan_provider_id: cursor
+  subscription_to_api: false
+- id: copilot-cli
+  sort_order: 5
+  category: app_sub
+  source_id: copilot-cli
+  label: GitHub Copilot
+  icon: 🤖
+  tier: paid
+  base_url: ''
+  auth: api_key
+  api_format: openai
+  handler: openai
+  hint: ''
+  keyless: false
+  key_prefix: []
+  signup_url: ''
+  aliases: []
+  enabled_default: false
+  models: []
+  pricing: {}
+  plans:
+  - id: copilot-pro
+    label: GitHub Copilot Pro
+    monthly_usd: 10.0
+  - id: copilot-business
+    label: Copilot Business
+    monthly_usd: 19.0
+  agent_id: copilot
+  plan_provider_id: github-copilot
+  subscription_to_api: false
+- id: antigravity
+  sort_order: 6
+  category: app_sub
+  source_id: antigravity
+  label: Antigravity
+  icon: 🚀
+  tier: paid
+  base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+  auth: api_key
+  api_format: gemini
+  handler: gemini
+  hint: ''
+  keyless: false
+  key_prefix: []
+  signup_url: ''
+  aliases: []
+  enabled_default: false
+  models: []
+  pricing: {}
+  plans:
+  - id: gemini-advanced
+    label: Gemini Advanced
+    monthly_usd: 20.0
+  - id: google-one-ai
+    label: Google One AI
+    monthly_usd: 20.0
+  agent_id: antigravity
+  plan_provider_id: gemini
+  subscription_to_api: false
+- id: api-volcengine
+  sort_order: 7
+  category: api_sub
+  source_id: api-volcengine
+  label: 火山引擎
+  icon: 🌋
+  tier: paid
+  base_url: ''
+  auth: api_key
+  api_format: openai
+  handler: openai
+  hint: ''
+  keyless: false
+  key_prefix: []
+  signup_url: ''
+  aliases: []
+  enabled_default: false
+  models:
+  - id: doubao-seed-2.0-pro
+    modality: chat
+    pricing:
+      in: 0.4
+      out: 1.2
+  - id: doubao-seed-2.0-code
+    modality: chat
+    pricing:
+      in: 0.4
+      out: 1.2
+  - id: doubao-seed-2.0-flash
+    modality: chat
+    pricing:
+      in: 0.1
+      out: 0.3
+  - id: deepseek-v3.2
+    modality: chat
+    pricing:
+      in: 0.14
+      out: 0.28
+  - id: kimi-k2.6
+    modality: chat
+    pricing:
+      in: 0.15
+      out: 2.5
+  pricing:
+    doubao-seed-2.0-pro:
+      in: 0.4
+      out: 1.2
+    doubao-seed-2.0-code:
+      in: 0.4
+      out: 1.2
+    doubao-seed-2.0-flash:
+      in: 0.1
+      out: 0.3
+    deepseek-v3.2:
+      in: 0.14
+      out: 0.28
+    kimi-k2.6:
+      in: 0.15
+      out: 2.5
+  plans:
+  - id: coding-lite
+    label: Coding Plan Lite · 40元/月
+    monthly_usd: 5.71
+  - id: coding-pro
+    label: Coding Plan Pro · 200元/月
+    monthly_usd: 28.57
+  agent_id: ''
+  plan_provider_id: volcengine
+  subscription_to_api: false
+- id: openai
+  sort_order: 8
+  category: payg
+  source_id: openai
+  label: OpenAI
+  icon: 🤖
+  tier: paid
+  base_url: https://api.openai.com/v1
+  auth: api_key
+  api_format: openai
+  handler: openai
+  hint: 付费 API，支持 GPT-4o / o3 等全系模型
+  keyless: true
+  key_prefix:
+  - sk-proj-
+  - sk-
+  signup_url: https://platform.openai.com/api-keys
+  aliases:
+  - codex-cli
+  enabled_default: false
+  models: []
+  pricing: {}
+  plans: []
+  agent_id: ''
+  plan_provider_id: null
+  subscription_to_api: false
+- id: anthropic-paid
+  sort_order: 9
+  category: payg
+  source_id: anthropic-paid
+  label: Anthropic
+  icon: 🧬
+  tier: paid
+  base_url: https://api.anthropic.com/v1
+  auth: api_key
+  api_format: anthropic
+  handler: anthropic
+  hint: 付费 API，Claude 3.5 / 3.7 等系列
+  keyless: true
+  key_prefix:
+  - sk-ant-
+  signup_url: https://console.anthropic.com/settings/keys
+  aliases:
+  - claude-cli
+  enabled_default: false
+  models:
+  - id: claude-sonnet-4-6
+    modality: chat
+    pricing:
+      in: 3
+      out: 15
+      cacheRead: 0.3
+      cacheWrite: 3.75
+  - id: claude-sonnet-4-5
+    modality: chat
+    pricing:
+      in: 3
+      out: 15
+      cacheRead: 0.3
+      cacheWrite: 3.75
+  - id: claude-sonnet-4
+    modality: chat
+    pricing:
+      in: 3
+      out: 15
+      cacheRead: 0.3
+      cacheWrite: 3.75
+  - id: claude-haiku-4-5
+    modality: chat
+    pricing:
+      in: 1
+      out: 5
+      cacheRead: 0.1
+      cacheWrite: 1.25
+  - id: claude-opus-4-6
+    modality: chat
+    pricing:
+      in: 5
+      out: 25
+      cacheRead: 0.5
+      cacheWrite: 6.25
+  pricing:
+    claude-sonnet-4-6:
+      in: 3
+      out: 15
+      cacheRead: 0.3
+      cacheWrite: 3.75
+    claude-sonnet-4-5:
+      in: 3
+      out: 15
+      cacheRead: 0.3
+      cacheWrite: 3.75
+    claude-sonnet-4:
+      in: 3
+      out: 15
+      cacheRead: 0.3
+      cacheWrite: 3.75
+    claude-haiku-4-5:
+      in: 1
+      out: 5
+      cacheRead: 0.1
+      cacheWrite: 1.25
+    claude-opus-4-6:
+      in: 5
+      out: 25
+      cacheRead: 0.5
+      cacheWrite: 6.25
+  plans: []
+  agent_id: ''
+  plan_provider_id: null
+  subscription_to_api: false
+- id: deepseek
+  sort_order: 10
+  category: payg
+  source_id: deepseek
+  label: DeepSeek
+  icon: 🐋
+  tier: paid
+  base_url: https://api.deepseek.com/v1
+  auth: api_key
+  api_format: openai
+  handler: openai
+  hint: 官方付费：platform.deepseek.com
+  keyless: false
+  key_prefix:
+  - sk-
+  signup_url: https://platform.deepseek.com/api_keys
+  aliases: []
+  enabled_default: false
+  models:
+  - id: deepseek-v4-flash
+    modality: chat
+    pricing:
+      in: 0.14
+      out: 0.28
+      cacheRead: 0.003
+      cacheWrite: 0.18
+  - id: deepseek-v4-pro
+    modality: chat
+    pricing:
+      in: 0.14
+      out: 0.28
+      cacheRead: 0.003
+      cacheWrite: 0.18
+  pricing:
+    deepseek-v4-flash:
+      in: 0.14
+      out: 0.28
+      cacheRead: 0.003
+      cacheWrite: 0.18
+    deepseek-v4-pro:
+      in: 0.14
+      out: 0.28
+      cacheRead: 0.003
+      cacheWrite: 0.18
+  plans: []
+  agent_id: ''
+  plan_provider_id: null
+  subscription_to_api: false
+- id: xai
+  sort_order: 11
+  category: payg
+  source_id: xai
+  label: xAI Grok
+  icon: ✖️
+  tier: paid
+  base_url: ''
+  auth: api_key
+  api_format: openai
+  handler: openai
+  hint: ''
+  keyless: false
+  key_prefix: []
+  signup_url: ''
+  aliases:
+  - grok
+  enabled_default: false
+  models:
+  - id: grok-4
+    modality: chat
+    pricing:
+      in: 3.0
+      out: 15.0
+  - id: grok-3-mini
+    modality: chat
+    pricing:
+      in: 0.3
+      out: 0.5
+  pricing:
+    grok-4:
+      in: 3.0
+      out: 15.0
+    grok-3-mini:
+      in: 0.3
+      out: 0.5
+  plans: []
+  agent_id: ''
+  plan_provider_id: null
+  subscription_to_api: false
+- id: openrouter
+  sort_order: 12
+  category: payg
+  source_id: openrouter
+  label: OpenRouter
+  icon: 🛣
+  tier: free
+  base_url: https://openrouter.ai/api/v1
+  auth: api_key
+  api_format: openai
+  handler: openai
+  hint: 含 :free 免费模型：openrouter.ai
+  keyless: false
+  key_prefix:
+  - sk-or-
+  signup_url: https://openrouter.ai/keys
+  aliases: []
+  enabled_default: false
+  models:
+  - id: gpt-4o
+    modality: chat
+    pricing:
+      in: 3.0
+      out: 12.0
+      cacheRead: 1.5
+  - id: claude-sonnet-4-5
+    modality: chat
+    pricing:
+      in: 3.5
+      out: 16.0
+      cacheRead: 0.35
+  pricing:
+    gpt-4o:
+      in: 3.0
+      out: 12.0
+      cacheRead: 1.5
+    claude-sonnet-4-5:
+      in: 3.5
+      out: 16.0
+      cacheRead: 0.35
+  plans: []
+  agent_id: ''
+  plan_provider_id: null
+  subscription_to_api: false
+- id: agnes-ai
+  sort_order: 13
+  category: payg
+  source_id: agnes-ai
+  label: Agnes AI
+  icon: 🤍
+  tier: free
+  base_url: https://apihub.agnes-ai.com/v1
+  auth: api_key
+  api_format: openai
+  handler: agnes-image
+  hint: OpenAI 兼容接口：agnes-ai.com
+  keyless: false
+  key_prefix:
+  - sk-
+  signup_url: https://platform.agnes-ai.com/settings/apiKeys
+  aliases: []
+  enabled_default: false
+  models:
+  - id: agnes-image-2.0-flash
+    modality: image
+    pricing:
+      in: 0
+      out: 0
+  - id: agnes-2.0-flash
+    modality: chat
+    pricing:
+      in: 0
+      out: 0
+  pricing:
+    agnes-image-2.0-flash:
+      in: 0
+      out: 0
+    agnes-2.0-flash:
+      in: 0
+      out: 0
+  plans: []
+  agent_id: ''
+  plan_provider_id: null
+  subscription_to_api: false
+- id: ollama
+  sort_order: 14
+  category: payg
+  source_id: ollama
+  label: Ollama
+  icon: 🦙
+  tier: free
+  base_url: http://127.0.0.1:11434/v1
+  auth: api_key
+  api_format: openai
+  handler: local
+  hint: 自动检测本地实例，无需配置
+  keyless: true
+  key_prefix: []
+  signup_url: https://ollama.com/download
+  aliases: []
+  enabled_default: true
+  models: []
+  pricing: {}
+  plans: []
+  agent_id: ''
+  plan_provider_id: null
+  subscription_to_api: false
+- id: nvidia
+  sort_order: 15
+  category: payg
+  source_id: nvidia
+  label: NVIDIA NIM
+  icon: 🟢
+  tier: free
+  base_url: https://integrate.api.nvidia.com/v1
+  auth: api_key
+  api_format: openai
+  handler: openai
+  hint: 新用户免费额度：build.nvidia.com
+  keyless: false
+  key_prefix:
+  - nvapi-
+  signup_url: https://build.nvidia.com
+  aliases: []
+  enabled_default: false
+  models:
+  - id: minimaxai/minimax-m3
+    modality: chat
+    pricing:
+      in: 1
+      out: 0
+      cacheRead: 0
+  - id: moonshotai/kimi-k2.6
+    modality: chat
+    pricing:
+      in: 1
+      out: 0
+      cacheRead: 0
+  - id: deepseek-ai/deepseek-v4-flash
+    modality: chat
+    pricing:
+      in: 0
+      out: 0
+      cacheRead: 0
+  - id: deepseek-ai/deepseek-v4-pro
+    modality: chat
+    pricing:
+      in: 0
+      out: 0
+  - id: z-ai/glm-5.1
+    modality: chat
+    pricing:
+      in: 0
+      out: 0
+  - id: test
+    modality: chat
+    pricing: {}
+  pricing:
+    minimaxai/minimax-m3:
+      in: 1
+      out: 0
+      cacheRead: 0
+    moonshotai/kimi-k2.6:
+      in: 1
+      out: 0
+      cacheRead: 0
+    deepseek-ai/deepseek-v4-flash:
+      in: 0
+      out: 0
+      cacheRead: 0
+    deepseek-ai/deepseek-v4-pro:
+      in: 0
+      out: 0
+    z-ai/glm-5.1:
+      in: 0
+      out: 0
+  plans: []
+  agent_id: ''
+  plan_provider_id: null
+  subscription_to_api: false
+- id: siliconflow
+  sort_order: 16
+  category: payg
+  source_id: siliconflow
+  label: SiliconFlow
+  icon: 🧪
+  tier: free
+  base_url: https://api.siliconflow.cn/v1
+  auth: api_key
+  api_format: openai
+  handler: openai
+  hint: 国内免费源，新人 ¥16：siliconflow.cn
+  keyless: false
+  key_prefix:
+  - sk-
+  signup_url: https://cloud.siliconflow.cn/account/ak
+  aliases: []
+  enabled_default: false
+  models: []
+  pricing: {}
+  plans: []
+  agent_id: ''
+  plan_provider_id: null
+  subscription_to_api: false
+- id: openai-compatible
+  sort_order: 17
+  category: payg
+  source_id: openai-compatible
+  label: OpenAI Compatible
+  icon: 🔗
+  tier: free
+  base_url: ''
+  auth: api_key
+  api_format: openai
+  handler: openai
+  hint: 自定义 OpenAI 兼容 API 地址与 Key
+  keyless: false
+  key_prefix:
+  - sk-
+  signup_url: ''
+  aliases: []
+  enabled_default: false
+  models: []
+  pricing: {}
+  plans: []
+  agent_id: ''
+  plan_provider_id: null
+  subscription_to_api: false
+- id: anthropic-compatible
+  sort_order: 18
+  category: payg
+  source_id: anthropic-compatible
+  label: Anthropic Compatible
+  icon: 🔗
+  tier: free
+  base_url: ''
+  auth: api_key
+  api_format: anthropic
+  handler: anthropic
+  hint: 自定义 Anthropic 兼容 API 地址与 Key
+  keyless: false
+  key_prefix:
+  - sk-ant-
+  signup_url: ''
+  aliases: []
+  enabled_default: false
+  models: []
+  pricing: {}
+  plans: []
+  agent_id: ''
+  plan_provider_id: null
+  subscription_to_api: false

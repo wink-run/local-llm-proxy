@@ -196,6 +196,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resetBilling:    (d) => ipcRenderer.invoke('localConfig:resetBilling', { ...d, ...billingAuth() }),
     getUserAccounts: (opts = {}) => ipcRenderer.invoke('localConfig:getUserAccounts', { ...billingAuth(), ...opts }),
     setUserAccounts: (d) => ipcRenderer.invoke('localConfig:setUserAccounts', { ...d, ...billingAuth() }),
+    pushUserAccountsToCloud: () => ipcRenderer.invoke('localConfig:pushUserAccountsToCloud', billingAuth()),
+    setLiveCatalog: (payload) => ipcRenderer.invoke('localConfig:setLiveCatalog', payload),
     // 服务端配置下发 / 同步后刷新报价
     onBillingChanged: (cb) => {
       const h = () => cb();

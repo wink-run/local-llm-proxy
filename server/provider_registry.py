@@ -73,11 +73,55 @@ def _model_names(models) -> list[str]:
     return out
 
 
+_META_PRICING_KEYS = frozenset({"_excluded_models", "excluded_models"})
+
+
+def _model_name_from_entry(m) -> tuple[str, str]:
+    if isinstance(m, str) and m.strip():
+        return m.strip(), "chat"
+    if isinstance(m, dict):
+        name = str(m.get("name") or m.get("id") or m.get("model") or "").strip()
+        if name:
+            typ = str(m.get("type") or m.get("modality") or "chat").strip().lower() or "chat"
+            return name, typ
+    return "", "chat"
+
+
+def sync_catalog_models_pricing(raw_models, pricing: dict | None) -> tuple[list, dict]:
+    """models 与 pricing 取并集对齐，避免 /api/catalog 列表与刊例价键不一致。"""
+    pricing_out: dict = {}
+    for k, v in (pricing or {}).items():
+        kn = str(k or "").strip()
+        if not kn or kn in _META_PRICING_KEYS:
+            continue
+        pricing_out[kn] = dict(v) if isinstance(v, dict) else {}
+
+    models_out: list = []
+    seen: set[str] = set()
+
+    for m in raw_models or []:
+        name, typ = _model_name_from_entry(m)
+        if not name or name in seen or name in _META_PRICING_KEYS:
+            continue
+        seen.add(name)
+        models_out.append({"name": name, "type": typ})
+        pricing_out.setdefault(name, {})
+
+    for name in list(pricing_out.keys()):
+        if name in seen:
+            continue
+        seen.add(name)
+        models_out.append({"name": name, "type": "chat"})
+
+    return models_out, pricing_out
+
+
 def to_catalog_entry(entry: dict) -> dict:
     """registry 条目 → GET /api/catalog 下发的 provider 对象（含 models / pricing）。"""
     handler = entry.get("handler") or "openai"
     raw_models = entry.get("models") if isinstance(entry.get("models"), list) else []
-    pricing = dict(entry.get("pricing") or {}) if isinstance(entry.get("pricing"), dict) else {}
+    raw_pricing = dict(entry.get("pricing") or {}) if isinstance(entry.get("pricing"), dict) else {}
+    models, pricing = sync_catalog_models_pricing(raw_models, raw_pricing)
     cat = {
         "id": entry["id"],
         "type": entry.get("tier") or "paid",
@@ -92,9 +136,11 @@ def to_catalog_entry(entry: dict) -> dict:
         "modalities": entry.get("modalities") if isinstance(entry.get("modalities"), dict) else {},
         "handler": handler,
         "api_format": entry.get("api_format") or "openai",
-        "models": raw_models,
+        "models": models,
         "pricing": pricing,
     }
+    if entry.get("payg"):
+        cat["payg"] = True
     if entry.get("oauth"):
         cat["oauth"] = entry["oauth"]
     return cat
@@ -204,6 +250,10 @@ def normalize_provider(p: dict) -> dict:
             "provider": str(oauth["provider"]),
             "label": str(oauth.get("label") or oauth["provider"]),
         }
+    # 保存时对齐 models / pricing，避免 registry 漂移
+    synced_models, synced_pricing = sync_catalog_models_pricing(out["models"], out["pricing"])
+    out["models"] = synced_models
+    out["pricing"] = synced_pricing
     return out
 
 

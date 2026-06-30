@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { getProfile, listKeys } from '../api/client';
-import { loadUserAccounts } from '../api/userAccounts';
+import { loadUserAccounts, pushUserAccountsToCloud } from '../api/userAccounts';
 import { getLocalConfig, getConfig } from '../api/adapter';
 import { getServerUrl, normalizeServerBase, getSyncServerBase, syncCloudConfigUrl, bootstrapServerUrl } from '../config';
 
@@ -53,11 +53,11 @@ async function syncRemoteConfig() {
   } catch {}
 }
 
-// 从云端拉取个人页订阅 / 按量 provider / 刊例价覆盖（跨终端）
+// 登录后上传本机个人源到云端；不拉取覆盖，保证游客/登录态看到同一份本机数据
 async function syncUserBilling() {
   const token = localStorage.getItem('token');
   if (!token) return;
-  try { await loadUserAccounts(); } catch {}
+  try { await pushUserAccountsToCloud(); } catch {}
 }
 
 export function AuthProvider({ children }) {

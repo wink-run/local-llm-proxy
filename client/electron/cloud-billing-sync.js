@@ -80,14 +80,41 @@ function isEmptyBilling(b) {
     && !Object.keys(b.subscription_plans || {}).length;
 }
 
+/** 合并账户实例：本机已有项优先（同 id 保留本地），再追加云端独有项 */
+function mergeInstanceLists(localList = [], remoteList = []) {
+  const local = Array.isArray(localList) ? localList : [];
+  const remote = Array.isArray(remoteList) ? remoteList : [];
+  const out = [];
+  const seen = new Set();
+  for (const x of local) {
+    if (!x?.id || seen.has(x.id)) continue;
+    out.push(x);
+    seen.add(x.id);
+  }
+  for (const x of remote) {
+    if (!x?.id || seen.has(x.id)) continue;
+    out.push(x);
+    seen.add(x.id);
+  }
+  return out;
+}
+
 /** 写入 local-config（本地缓存，供网关离线估价） */
 function applyToCfg(cfg, billing) {
   const b = pickBilling(billing);
-  cfg.provider_pricing_overrides = b.provider_pricing_overrides;
-  cfg.subscription_plans = b.subscription_plans;
-  // 自定义实例(custom:true)纯本地：保留本地 custom，叠加云端官方实例
-  cfg.user_subscriptions = [...customOnly(cfg.user_subscriptions), ...nonCustom(b.user_subscriptions)];
-  cfg.user_payg_providers = [...customOnly(cfg.user_payg_providers), ...nonCustom(b.user_payg_providers)];
+  const localPick = pickBilling(cfg);
+  // 刊例价/套餐：云端为基线，本机覆盖项保留
+  cfg.provider_pricing_overrides = { ...b.provider_pricing_overrides, ...localPick.provider_pricing_overrides };
+  cfg.subscription_plans = { ...b.subscription_plans, ...localPick.subscription_plans };
+  // 自定义实例(custom:true)纯本地；官方实例本机与云端按 id 合并（本机优先）
+  cfg.user_subscriptions = [
+    ...customOnly(cfg.user_subscriptions),
+    ...mergeInstanceLists(nonCustom(cfg.user_subscriptions), nonCustom(b.user_subscriptions)),
+  ];
+  cfg.user_payg_providers = [
+    ...customOnly(cfg.user_payg_providers),
+    ...mergeInstanceLists(nonCustom(cfg.user_payg_providers), nonCustom(b.user_payg_providers)),
+  ];
   // direct_source_billing / source_template_overrides 纯本地，不被云端覆盖（保留 cfg 现值）
   return cfg;
 }
@@ -134,6 +161,7 @@ async function syncFromCloud(token, serverUrl, localCfg) {
 module.exports = {
   pickBilling,
   applyToCfg,
+  mergeInstanceLists,
   syncFromCloud,
   saveUserBilling,
   fetchUserBilling,

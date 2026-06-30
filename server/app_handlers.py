@@ -130,6 +130,22 @@ def resolve_user_capabilities(h: dict, vars_: dict) -> dict[str, bool]:
     return out
 
 
+def handler_has_patch_route(hid: str) -> bool:
+    h = handlers_map().get(hid) or {}
+    proxy = h.get("proxy") if isinstance(h.get("proxy"), dict) else {}
+    pr = proxy.get("patch_route") if isinstance(proxy.get("patch_route"), dict) else {}
+    return bool(pr.get("strategy"))
+
+
+def resolve_route_multi_select(h: dict, vars_: dict) -> bool:
+    """vars.route_multi_select 覆盖 handler.patch_route.multi_select 默认。"""
+    if "route_multi_select" in vars_:
+        return bool(vars_["route_multi_select"])
+    proxy = h.get("proxy") if isinstance(h.get("proxy"), dict) else {}
+    pr = proxy.get("patch_route") if isinstance(proxy.get("patch_route"), dict) else {}
+    return bool(pr.get("multi_select"))
+
+
 def list_handlers_meta() -> list[dict]:
     """管理后台：handler 下拉列表。"""
     out: list[dict] = []
@@ -142,6 +158,8 @@ def list_handlers_meta() -> list[dict]:
             pass
         cap_items = _capability_items(h)
         default_caps = default_user_capabilities(h)
+        proxy = h.get("proxy") if isinstance(h.get("proxy"), dict) else {}
+        pr = proxy.get("patch_route") if isinstance(proxy.get("patch_route"), dict) else {}
         out.append({
             "id": hid,
             "label": h.get("label") or hid,
@@ -157,6 +175,8 @@ def list_handlers_meta() -> list[dict]:
             "proxy_mode": preview.get("proxy_mode"),
             "default_route_bindable": preview.get("route_bindable", True),
             "default_allow_direct": preview.get("allow_direct", False),
+            "has_patch_route": bool(pr.get("strategy")),
+            "default_route_multi_select": bool(pr.get("multi_select")),
         })
     return out
 
@@ -327,6 +347,9 @@ def expand_entity(compact: dict) -> dict:
         entity["standalone"] = False
     else:
         entity["standalone"] = True
+
+    if handler_has_patch_route(hid):
+        entity["route_multi_select"] = resolve_route_multi_select(h, vars_)
 
     return entity
 

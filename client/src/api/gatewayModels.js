@@ -80,7 +80,7 @@ export async function loadGatewayAvailableModels() {
   try {
     [cfg, acc] = await Promise.all([
       getConfig().read().catch(() => null),
-      loadUserAccounts().catch(() => null),
+      loadUserAccounts({ localOnly: true }).catch(() => null),
     ]);
   } catch {}
 
@@ -90,6 +90,7 @@ export async function loadGatewayAvailableModels() {
       ...(acc || {}),
       provider_pricing_overrides: cfg?.provider_pricing_overrides || acc?.provider_pricing_overrides || {},
     };
+    const providerPricing = cfg?.provider_pricing || {};
     const enrichedProviders = enrichProvidersForRouting(cfg?.providers || [], localMerged);
     const gwIds = new Set([
       ...(acc?.gateway_provider_ids || []),
@@ -141,9 +142,12 @@ export async function loadGatewayAvailableModels() {
             } else if (owned === 'anthropic') {
               // Claude 透明名，调试页不展示
             } else {
-              const pt = provById[owned]?.type;
-              if (pt === 'free') add(id, 'free');
-              else if (pt === 'paid') add(id, 'paid');
+              const prov = provById[owned];
+              const pt = prov?.type;
+              const configured = new Set((prov?.models || []).map(modelId));
+              const inList = !configured.size || configured.has(id);
+              if (pt === 'free' && inList) add(id, 'free');
+              else if (pt === 'paid' && inList) add(id, 'paid');
               else if (pt === 'p2p') { online.add(id); add(id, 'p2p'); }
             }
           }

@@ -19,7 +19,7 @@ window.initAppCatalogAdmin = function (api, lang, ref) {
   function emptyEntityForm() {
     return {
       sort_order: '', id: '', name: '', icon: '🔧', handler: '',
-      capabilities: emptyCapabilities(), models: '',
+      capabilities: emptyCapabilities(), models: '', route_multi_select: false,
     }
   }
 
@@ -97,6 +97,8 @@ window.initAppCatalogAdmin = function (api, lang, ref) {
     if (!f.name) f.name = h.default_name || ''
     if (!f.icon || f.icon === '🔧') f.icon = h.default_icon || '🔧'
     f.capabilities = defaultCapabilitiesForHandler(f.handler)
+    if (h.has_patch_route) f.route_multi_select = !!h.default_route_multi_select
+    else f.route_multi_select = false
   }
 
   async function fetchAppCatalog() {
@@ -118,6 +120,7 @@ window.initAppCatalogAdmin = function (api, lang, ref) {
       const vars = item.vars || {}
       const caps = item.capabilities || vars.capabilities || {}
       const defs = defaultCapabilitiesForHandler(item.handler)
+      const hmeta = handlerMeta(item.handler)
       acForm.value = {
         sort_order: item.sort_order ?? '',
         id: item.id,
@@ -128,6 +131,9 @@ window.initAppCatalogAdmin = function (api, lang, ref) {
           CAP_KEYS.map(k => [k, k in caps ? !!caps[k] : !!defs[k]])
         ),
         models: Array.isArray(vars.models) ? vars.models.join(', ') : (item.models || []).join(', '),
+        route_multi_select: 'route_multi_select' in vars
+          ? !!vars.route_multi_select
+          : !!hmeta.default_route_multi_select,
       }
     } else {
       const max = acEntities.value.reduce((m, s) => Math.max(m, Number(s.sort_order) || 0), 0)
@@ -139,6 +145,7 @@ window.initAppCatalogAdmin = function (api, lang, ref) {
         name: first?.default_name || '',
         icon: first?.default_icon || '🔧',
         capabilities: defaultCapabilitiesForHandler(first?.id),
+        route_multi_select: !!first?.default_route_multi_select,
       }
     }
     acModalOpen.value = true
@@ -151,6 +158,7 @@ window.initAppCatalogAdmin = function (api, lang, ref) {
     const vars = { capabilities: { ...f.capabilities } }
     const models = (f.models || '').split(',').map(s => s.trim()).filter(Boolean)
     if (models.length) vars.models = models
+    if (showRouteMultiSelect()) vars.route_multi_select = !!f.route_multi_select
     return {
       sort_order: f.sort_order !== '' && f.sort_order != null ? Number(f.sort_order) : 0,
       id: (f.id || '').trim(),
@@ -225,12 +233,18 @@ window.initAppCatalogAdmin = function (api, lang, ref) {
     return !!(acForm.value.capabilities && acForm.value.capabilities.session_usage_import)
   }
 
+  /** handler 声明了 patch_route 时展示「路由写入多选」 */
+  function showRouteMultiSelect() {
+    const h = handlerMeta(acForm.value.handler)
+    return !!h.has_patch_route && !!(acForm.value.capabilities && acForm.value.capabilities.gateway_proxy)
+  }
+
   return {
     acEntities, acHandlers, acVarSchema, acCapabilityCatalog, acMsg, acSaving, acModalOpen, acEditId, acForm,
     acSorted, handlerLabel, handlerMeta, CAP_KEYS,
     capColumnTitle, capEnabled, capCell, capabilityLabel,
     selectedHandlerCapabilities,
     fetchAppCatalog, openAcModal, closeAcModal, saveAcEntity, deleteAcEntity,
-    importAcDefaults, publishAcCatalog, onHandlerChange, showModels,
+    importAcDefaults, publishAcCatalog, onHandlerChange, showModels, showRouteMultiSelect,
   }
 }

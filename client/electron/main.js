@@ -1349,6 +1349,7 @@ function nodeRequest(url, method, headers, body) {
 // ── IPC handlers ──────────────────────────────────────────────────────────────
 
 function registerIPC() {
+  const billingConfigMod = require('./billing-config');
   ipcMain.on('tray:lang',  (_e, lang)      => { _trayLang = lang === 'en' ? 'en' : 'zh'; refreshTray(); });
   ipcMain.on('tray:auth',  (_e, loggedIn)  => { _trayUserLoggedIn = !!loggedIn; refreshTray(); });
   ipcMain.on('app:version', (e) => { e.returnValue = app.getVersion(); });
@@ -1618,20 +1619,73 @@ function registerIPC() {
   // scene_routes 段               → local-config.scene_routes
   const configLoader = require('./config-loader');
   const TB_TOOLS_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.tools.yaml');
-  // 应用段 → tokenbank.yaml；源/计费段 → tokenbank.tools.yaml（两文件分离下发）
+  const USER_REGISTRY_YAML = path.join(os.homedir(), '.tokenbank', 'providers.registry.yaml');
+  // 应用段 → tokenbank.yaml；源目录 → providers.registry.yaml（废弃 tokenbank.tools.yaml）
   const APP_SECTIONS = new Set(['version', 'gateway', 'mitm', 'claude_models', 'app_entities', 'session_scans', 'handlers']);
   const SOURCE_SECTIONS = new Set(['subscription_plans', 'subscription_apps', 'api_subscription_apps', 'payg_providers']);
   const ROUTES_SECTIONS = new Set(['scene_routes']);
+
+  /** 写入云端下发的 providers.registry.yaml，并删除旧 tokenbank.tools.yaml */
+  function applyRegistryDoc(parsed, opts = {}) {
+    const yamlLib = require('js-yaml');
+    const tbDir = path.join(os.homedir(), '.tokenbank');
+    if (!fs.existsSync(tbDir)) fs.mkdirSync(tbDir, { recursive: true });
+    // 服务端旧库可能只有 providers，补全 billing_sources 避免个人源目录为空
+    let doc = parsed && typeof parsed === 'object' ? { ...parsed } : {};
+    try {
+      const existing = fs.existsSync(USER_REGISTRY_YAML)
+        ? yamlLib.load(fs.readFileSync(USER_REGISTRY_YAML, 'utf8')) || {}
+        : {};
+      const builtin = yamlLib.load(
+        fs.readFileSync(path.join(__dirname, 'config', 'providers.registry.yaml'), 'utf8'),
+      ) || {};
+      if (!Array.isArray(doc.billing_sources) || !doc.billing_sources.length) {
+        doc.billing_sources = (existing.billing_sources?.length && existing.billing_sources)
+          || builtin.billing_sources
+          || [];
+      }
+    } catch (e) {
+      console.warn('[config] merge billing_sources failed:', e.message);
+    }
+    fs.writeFileSync(USER_REGISTRY_YAML, yamlLib.dump(doc, { lineWidth: 120 }), 'utf8');
+    try { if (fs.existsSync(TB_TOOLS_YAML)) fs.unlinkSync(TB_TOOLS_YAML); } catch {}
+    configLoader.reloadRegistryDoc();
+    try {
+      const cfg = readLocalConfig();
+      const { cfg: pruned, changed } = billingConfigMod.pruneLocalBillingAgainstServer(cfg);
+      if (changed) {
+        applyUserBillingCfg(pruned);
+        console.log('[config] 已按服务端 registry 清理本地过期计费数据');
+      }
+    } catch (e) {
+      console.warn('[config] prune local billing failed:', e.message);
+    }
+    try { mainWindow?.webContents?.send('billing:changed'); } catch {}
+    return { ok: true, applied: { registry: true } };
+  }
 
   function applyConfigDoc(parsed, source, opts = {}) {
     if (!parsed || typeof parsed !== 'object') return { ok: false, error: '无效的 yaml 格式' };
     const yamlLib = require('js-yaml');
     const replace = opts.replace === true;
-    const applied = { tools: false, routes: false };
+    const applied = { tools: false, routes: false, registry: false };
     const addedApps = [];   // 本次同步「新增」的工具/应用（id 之前没有、现在有）
 
-    // 应用段 → tokenbank.yaml；源段 → tokenbank.tools.yaml（分流写入 + reload config-loader）
+    // providers.registry 格式（云端唯一下发源目录）
+    const isRegistryDoc = Array.isArray(parsed.providers) || Array.isArray(parsed.billing_sources);
     const hasAppSection = Object.keys(parsed).some(k => APP_SECTIONS.has(k) && k !== 'version');
+    if (isRegistryDoc && !hasAppSection) {
+      const r = applyRegistryDoc(parsed, opts);
+      applied.registry = true;
+      // 同文件内若带 scene_routes 继续处理（少见）
+      if (Array.isArray(parsed.scene_routes) && parsed.scene_routes.length > 0) {
+        // fall through to routes handling below — 简化：registry 下发通常不含 routes
+      } else {
+        return { ...r, applied, addedApps, addedRoutes: [] };
+      }
+    }
+
+    // 应用段 → tokenbank.yaml
     const hasSourceSection = Object.keys(parsed).some(k => SOURCE_SECTIONS.has(k));
     if (hasAppSection || hasSourceSection) {
       const tbDir = path.join(os.homedir(), '.tokenbank');
@@ -1664,21 +1718,11 @@ function registerIPC() {
         fs.writeFileSync(file, yamlLib.dump(doc, { lineWidth: 120 }), 'utf8');
       };
       if (hasAppSection) writeMerged(TB_YAML, APP_SECTIONS);
-      if (hasSourceSection) writeMerged(TB_TOOLS_YAML, SOURCE_SECTIONS);
-      configLoader.load();
-      // 源目录更新后：清理本地自定义/过期账户类型与实例
+      // 旧 tokenbank.tools.yaml 格式已废弃，不再写入；请通过 GET /config/providers 同步
       if (hasSourceSection) {
-        try {
-          const cfg = readLocalConfig();
-          const { cfg: pruned, changed } = billingConfigMod.pruneLocalBillingAgainstServer(cfg);
-          if (changed) {
-            applyUserBillingCfg(pruned);
-            console.log('[config] 已按服务端 catalog 清理本地过期计费数据');
-          }
-        } catch (e) {
-          console.warn('[config] prune local billing failed:', e.message);
-        }
+        console.warn('[config] 收到旧 config.sources 格式，已忽略；请升级服务端并使用 /config/providers');
       }
+      configLoader.load();
       applied.tools = true;
 
       // 应用后：算出新增的工具/应用（id 在 before 集合里没有的）
@@ -1775,7 +1819,7 @@ function registerIPC() {
   ipcMain.handle('toolsConfig:load', () => {
     try {
       if (fs.existsSync(TB_YAML)) return { ok: true, source: 'user', text: fs.readFileSync(TB_YAML, 'utf8') };
-      const def = path.join(__dirname, 'config', 'tokenbank.tools.default.yaml');
+      const def = path.join(__dirname, 'config', 'tokenbank.default.yaml');
       return { ok: true, source: 'default', text: fs.existsSync(def) ? fs.readFileSync(def, 'utf8') : '' };
     } catch (e) { return { ok: false, error: e.message }; }
   });
@@ -1794,12 +1838,12 @@ function registerIPC() {
     } catch (e) { return { ok: false, error: e.message }; }
   });
 
-  /** 从 Token Bank 服务端拉取 apps / sources / scenes 配置 */
+  /** 从 Token Bank 服务端拉取 apps / providers.registry / scenes 配置 */
   async function pullServerConfig(serverUrl, token, { replace = false } = {}) {
     const base = String(serverUrl || '').replace(/\/$/, '').replace(/\/(api|v\d+)(\/.*)?$/, '');
     if (!base) return { ok: false, error: 'missing_server' };
     const results = [];
-    for (const ep of ['/api/config/apps', '/api/config/sources', '/api/config/scenes']) {
+    for (const ep of ['/api/config/apps', '/api/config/providers', '/api/config/scenes']) {
       const url = base + ep;
       const isPublicApps = ep === '/api/config/apps';
       if (!isPublicApps && !token) {
@@ -1809,8 +1853,7 @@ function registerIPC() {
       try {
         const text = await fetchYaml(url, isPublicApps ? (token || null) : token);
         const parsed = require('js-yaml').load(text);
-        // apps/sources 全量覆盖本地默认；scenes 仍增量合并
-        const shouldReplace = replace && (ep.includes('/apps') || ep.includes('/sources') || ep.includes('/scenes'));
+        const shouldReplace = replace && (ep.includes('/apps') || ep.includes('/providers') || ep.includes('/scenes'));
         const r = applyConfigDoc(parsed, url, { replace: shouldReplace });
         results.push({ endpoint: ep, ...r });
       } catch (e) {
@@ -1829,7 +1872,7 @@ function registerIPC() {
       const text = await fetchYaml(url, token);
       const parsed = require('js-yaml').load(text);
       const u = String(url || '');
-      const isServerCatalog = u.includes('/config/apps') || u.includes('/config/sources');
+      const isServerCatalog = u.includes('/config/apps') || u.includes('/config/providers');
       return applyConfigDoc(parsed, url, { replace: replace || isServerCatalog });
     } catch (e) { return { ok: false, error: e.message }; }
   });
@@ -1913,12 +1956,18 @@ function registerIPC() {
         : (ent ? ent.route_bindable !== false : app.route_bindable !== false);
       if ((app.link_method === 'api-key' || app.link_method === 'manual') && app.api_key) {
         appControls.push({ ...ctrl, match: { key: app.api_key } });
-        if (app.route_id && routeBindable) bindRouteToKeyScene(keyScene, app.api_key, app.route_id, routes);
+        const bindRoute = (Array.isArray(app.route_ids) && app.route_ids.length)
+          ? app.route_ids[0]
+          : app.route_id;
+        if (bindRoute && routeBindable) bindRouteToKeyScene(keyScene, app.api_key, bindRoute, routes);
       } else if (app.link_method === 'shim' && app.agent_id) {
         if (!routeBindable || !toolProto[app.agent_id]) continue;
         const path = PROTOCOL_PATH[toolProto[app.agent_id]];
         if (path) appControls.push({ ...ctrl, match: { path } });
-        if (app.api_key && app.route_id) bindRouteToKeyScene(keyScene, app.api_key, app.route_id, routes);
+        const bindRoute = (Array.isArray(app.route_ids) && app.route_ids.length)
+          ? app.route_ids[0]
+          : app.route_id;
+        if (app.api_key && bindRoute) bindRouteToKeyScene(keyScene, app.api_key, bindRoute, routes);
       }
     }
     gateway.setAppControls(appControls);
@@ -1963,7 +2012,6 @@ function registerIPC() {
 
   // 个人页计费：云端同步辅助
   const cloudBilling = require('./cloud-billing-sync');
-  const billingConfigMod = require('./billing-config');
 
   /** 解析 Token Bank 服务地址：优先调用方传入，其次 cloud_config.url，最后 env */
   function resolveBillingServerUrl(serverUrl) {
@@ -2055,6 +2103,11 @@ function registerIPC() {
         .map(a => a.agent_id).filter(Boolean);
     } catch { return []; }
   }
+  ipcMain.handle('localConfig:setLiveCatalog', async (_e, payload = {}) => {
+    billingConfigMod.setLiveCatalogPayload(payload);
+    // 不广播 billing:changed，避免 Providers 页 catalog 拉取 ↔ 账户重载死循环
+    return { ok: true };
+  });
   ipcMain.handle('localConfig:getUserAccounts', async (_e, auth = {}) => {
     // 供给源页 personalOnly：仅读本机 local-config，不随登录态拉云端/裁剪
     if (auth.localOnly) {
@@ -2069,6 +2122,26 @@ function registerIPC() {
   });
   ipcMain.handle('localConfig:setUserAccounts', async (_e, payload = {}) => {
     const cfg = await pushUserBilling(payload);
+    return billingConfigMod.getUserAccounts(cfg, { boundDirectAgentIds: boundDirectAgentIds() });
+  });
+  /** 登录后仅上传本机账户数据，不以云端覆盖本地已添加的源 */
+  ipcMain.handle('localConfig:pushUserAccountsToCloud', async (_e, auth = {}) => {
+    let cfg = readLocalConfig();
+    const token = auth.token;
+    if (!token) {
+      return billingConfigMod.getUserAccounts(cfg, { boundDirectAgentIds: boundDirectAgentIds() });
+    }
+    const base = resolveBillingServerUrl(auth.serverUrl);
+    if (!base) {
+      return billingConfigMod.getUserAccounts(cfg, { boundDirectAgentIds: boundDirectAgentIds() });
+    }
+    try {
+      const remote = await cloudBilling.saveUserBilling(token, base, cloudBilling.pickBilling(cfg));
+      cfg = cloudBilling.applyToCfg(cfg, remote);
+      applyUserBillingCfg(cfg);
+    } catch (err) {
+      console.warn('[billing] cloud push failed, kept local:', err?.message || err);
+    }
     return billingConfigMod.getUserAccounts(cfg, { boundDirectAgentIds: boundDirectAgentIds() });
   });
 
@@ -2339,8 +2412,9 @@ function registerIPC() {
       for (const app of cur) {
         const bindable = resolveRouteBindable(app, app.route_bindable);
         if (app.route_bindable !== bindable) { app.route_bindable = bindable; mutated = true; }
-        if (!bindable && app.route_id) {
+        if (!bindable && (app.route_id || (app.route_ids && app.route_ids.length))) {
           app.route_id = null;
+          app.route_ids = null;
           mutated = true;
           if (app.link_method === 'shim' && app.agent_id) {
             try { agentLinker.revertById(app.agent_id); } catch {}
@@ -2532,6 +2606,7 @@ function registerIPC() {
         session_usage_import: ent.session_usage_import,
         session_trace: ent.session_trace,
         gateway_proxy: ent.gateway_proxy,
+        route_multi_select: !!ent.route_multi_select,
       };
     };
 
@@ -2592,9 +2667,10 @@ function registerIPC() {
         // 在线(经网关) = 纳管 且 绑了路由；纳管但直连(无 route_id) = 仅读文件、不走网关
         return { ...withCaps, linked: true, installed: true,
                  hosted: app.hosted === true,
-                 configured: !!(app.hosted && app.route_id),
+                 configured: !!(app.hosted && (app.route_id || (app.route_ids && app.route_ids.length))),
                  config_file: freshConfigFile, patch: freshPatch, env: freshEnv,
                  route_bindable: def ? resolveRouteBindable({ ...app, preset_id: app.preset_id }, def.route_bindable) : routeBindable,
+                 route_multi_select: !!(def?.route_multi_select ?? ent?.route_multi_select),
                  allow_direct: def ? def.allow_direct !== false : (app.allow_direct !== false),  // 无本地用量源的桌面壳=false
                  host_method: freshConfigFile ? 'config-file' : 'api-key' };
       })
@@ -2634,6 +2710,7 @@ function registerIPC() {
         preset_id: d.id,
         ...entityDerived(d.id),
         route_bindable: resolveRouteBindable({ preset_id: d.id, link_method: 'api-key' }, d.route_bindable),
+        route_multi_select: !!entityDerived(d.id).route_multi_select,
         config_file: file, patch: d.patch, env: d.env || null,
         configured: false,
         installed: true, linked: false, api_key: null, route_id: null,
@@ -2775,13 +2852,21 @@ function registerIPC() {
       const effectiveRouteId = route_id ?? appRec?.route_id;
       const routeIds = Array.isArray(route_ids) && route_ids.length
         ? route_ids
-        : (effectiveRouteId ? [effectiveRouteId] : []);
+        : (Array.isArray(appRec?.route_ids) && appRec.route_ids.length
+          ? appRec.route_ids
+          : (effectiveRouteId ? [effectiveRouteId] : []));
       if (handlerId && routeIds.length) {
+        let claudeName = 'claude-sonnet-4-5';
+        try {
+          const cms = require('./config-loader').claudeModels?.() || [];
+          if (cms.length) claudeName = cms[0];
+        } catch {}
         const def = getApiKeyApps().find(d => d.id === appRec?.preset_id);
         resolvedPatch = applyRouteToProxyPatch(handlerId, resolvedPatch, {
           routeIds,
           routes: readLocalConfig().scene_routes || [],
           marker: def?.marker || appRec?.marker,
+          claudeName,
         });
       }
       // 纳管 = 备份原配置文件（整份，仅首次），再写入我们的配置（整份替换）。
@@ -3195,8 +3280,9 @@ app.whenReady().then(() => {
   // 尽早注册菜单栏托盘：macOS 把新状态项插在已有第三方项的「左侧」（刘海侧，最先被挤掉），
   // 越早创建越靠右、越不容易在菜单栏满时被遮挡。数据读取已做空安全，2s 定时器随后补真实值。
   createTray();
-  createWindow();
+  // IPC 须在 createWindow 之前注册，避免 preload sendSync 时 handler 未就绪导致白屏
   registerIPC();
+  createWindow();
   repairClaude3pMetaIfNeeded();
   // Claude Desktop ↔ 3p 会话同步：启动一次 + 每 30s 一次（覆盖运行期间新建的会话，修复"新会话纳管后不同步"）
   runClaude3pSync('startup');

@@ -10,35 +10,63 @@ const os   = require('os');
 const yaml = require('js-yaml');
 
 const DEFAULT_YAML = path.join(__dirname, 'config', 'tokenbank.default.yaml');
-// 工具/计费目录内置默认（个人页订阅应用、按量供给源、刊例价；与服务器 config.apps 同 schema）
-const TOOLS_DEFAULT_YAML = path.join(__dirname, 'config', 'tokenbank.tools.default.yaml');
-// 供给源 registry（models / pricing / handler；与服务器 config.providers 同 schema）
+// 供给源 registry（models / pricing / handler / billing_sources；与服务器 config.providers 同 schema）
 const REGISTRY_YAML = path.join(__dirname, 'config', 'providers.registry.yaml');
-// 用户导入/服务器下发的配置覆盖文件（main.js 的 applyConfigDoc 写这里）。存在则优先于内置默认。
 const USER_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.yaml');
-// 「源」目录下发文件（GET /api/config/sources 写这里），与应用文件 tokenbank.yaml 分离。
-const USER_TOOLS_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.tools.yaml');
+// 云端下发的 providers.registry.yaml（GET /api/config/providers）
+const USER_REGISTRY_YAML = path.join(os.homedir(), '.tokenbank', 'providers.registry.yaml');
 
-let _config = null;        // 解析后的原始 yaml 对象（应用：tools / api_key_apps / 基础设施）
-let _appsRuntime = null;   // handler 展开后的运行时段（tools / api_key_apps / session_sources）
-let _sources = null;       // 源目录文件（tokenbank.tools.yaml）解析结果
+let _config = null;
+let _appsRuntime = null;
+let _registryDoc = null;
 let _caPath = null;        // 运行时由 ca-manager 注入的实际 CA 路径（解析 {CA_PATH}）
 
-// 加载源目录文件（tokenbank.tools.yaml）；不存在则空（billingSection 再回退内置默认）。
-function loadSources() {
-  try {
-    if (fs.existsSync(USER_TOOLS_YAML)) {
-      _sources = yaml.load(fs.readFileSync(USER_TOOLS_YAML, 'utf8')) || {};
-      return _sources;
-    }
-  } catch (e) { console.error('[config-loader] 加载 tokenbank.tools.yaml 失败:', e.message); }
-  _sources = {};
-  return _sources;
+/** 读取 providers.registry 内置默认（离线回退） */
+function registryDefaultDoc() {
+  try { return yaml.load(fs.readFileSync(REGISTRY_YAML, 'utf8')) || {}; } catch { return {}; }
 }
 
-function getSources() {
-  if (_sources === null) loadSources();
-  return _sources;
+/** 用户/云端 registry 缺段时从内置默认补全 billing_sources / providers */
+function mergeRegistryDoc(doc) {
+  const out = doc && typeof doc === 'object' ? { ...doc } : {};
+  const def = registryDefaultDoc();
+  if (!out.version) out.version = def.version || 1;
+  if (!Array.isArray(out.providers) || !out.providers.length) {
+    out.providers = Array.isArray(def.providers) ? def.providers : [];
+  }
+  if (!Array.isArray(out.billing_sources) || !out.billing_sources.length) {
+    out.billing_sources = Array.isArray(def.billing_sources) ? def.billing_sources : [];
+  }
+  return out;
+}
+
+// 加载 providers.registry.yaml：用户目录优先，回退内置默认
+function loadRegistryDoc() {
+  try {
+    if (fs.existsSync(USER_REGISTRY_YAML)) {
+      _registryDoc = mergeRegistryDoc(yaml.load(fs.readFileSync(USER_REGISTRY_YAML, 'utf8')) || {});
+      return _registryDoc;
+    }
+  } catch (e) {
+    console.error('[config-loader] 加载 providers.registry.yaml 失败:', e.message);
+  }
+  try {
+    _registryDoc = mergeRegistryDoc(yaml.load(fs.readFileSync(REGISTRY_YAML, 'utf8')) || {});
+  } catch {
+    _registryDoc = { version: 1, providers: [], billing_sources: [] };
+  }
+  return _registryDoc;
+}
+
+function getRegistryDoc() {
+  if (_registryDoc === null) loadRegistryDoc();
+  return _registryDoc;
+}
+
+/** 云端同步后刷新 registry */
+function reloadRegistryDoc() {
+  _registryDoc = null;
+  loadRegistryDoc();
 }
 
 // ── 占位符 / 路径解析 ────────────────────────────────────────────────────────
@@ -81,7 +109,7 @@ function load() {
   try {
     const text = fs.readFileSync(file, 'utf8');
     _config = yaml.load(text) || {};
-    _sources = null;          // 同步后强制下次重读源文件 tokenbank.tools.yaml
+    _registryDoc = null;
     _appsRuntime = null;
     // 云端下发的 handlers / session_scans 供 handler 展开时合并
     try { require('./app-handlers').applyCloudConfig(_config); } catch {}
@@ -332,90 +360,108 @@ function appUninstallGuides() {
 // 兼容旧调用
 function normalizeGuide(v) { return resolveGuide(v); }
 
-/** 读取 tools 默认 yaml（计费目录回退源） */
-function toolsDefaultDoc() {
-  try { return yaml.load(fs.readFileSync(TOOLS_DEFAULT_YAML, 'utf8')) || {}; } catch { return {}; }
+/** 个人源模板完整列表（billing_sources）；以 providers.registry.yaml 为准 */
+function billingSourcesList() {
+  const list = getRegistryDoc()?.billing_sources;
+  if (Array.isArray(list) && list.length) {
+    return [...list].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  }
+  return [];
 }
 
-/** 源/计费段：优先独立源文件 tokenbank.tools.yaml（GET /api/config/sources 下发），
- * 其次 tokenbank.yaml（兼容旧版混装），再回退内置默认 tokenbank.tools.default.yaml。 */
-function billingSection(key) {
-  const isEmpty = (v) => v == null
-    || (Array.isArray(v) && !v.length)
-    || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length);
-  let cur = getSources()[key];
-  if (isEmpty(cur)) cur = get()[key];
-  if (!isEmpty(cur)) return cur;
-  const fb = toolsDefaultDoc()[key];
-  if (fb != null) return fb;
-  return Array.isArray(cur) ? [] : {};
+function _modelsFromSource(s) {
+  const out = [];
+  for (const m of s?.models || []) {
+    if (typeof m === 'string' && m.trim()) {
+      out.push({ id: m.trim(), modality: 'chat', pricing: (s.pricing || {})[m.trim()] || {} });
+    } else if (m && typeof m === 'object') {
+      const id = String(m.id || m.name || m.model || '').trim();
+      if (id) out.push({ id, modality: m.modality || m.type || 'chat', pricing: m.pricing || (s.pricing || {})[id] || {} });
+    }
+  }
+  if (typeof s?.pricing === 'object') {
+    for (const [mid, rates] of Object.entries(s.pricing)) {
+      if (!out.some(x => x.id === mid)) out.push({ id: mid, modality: 'chat', pricing: rates || {} });
+    }
+  }
+  return out;
 }
 
-// 个人页：可订阅应用目录（由 tokenbank.tools.yaml 下发，缺字段时与内置默认按 source_id 合并）
+// 个人页：可订阅应用目录（由 billing_sources 派生）
 function subscriptionApps() {
-  const defaults = toolsDefaultDoc().subscription_apps || [];
-  const defBySource = Object.fromEntries(
-    defaults.map(a => [a.source_id || a.id || a.agent_id, a]),
-  );
-  const list = billingSection('subscription_apps');
-  const cur = Array.isArray(list) ? list : [];
-  if (!cur.length) return defaults;
-  return cur.map(a => {
-    const key = a.source_id || a.id || a.agent_id;
-    const def = defBySource[key] || {};
-    return {
-      ...def,
-      ...a,
-      plan_provider_id: a.plan_provider_id != null ? a.plan_provider_id : def.plan_provider_id,
-      // 下发配置未带该字段时，回退内置默认（如 Claude Code → true）
-      subscription_to_api: a.subscription_to_api != null
-        ? a.subscription_to_api === true
-        : def.subscription_to_api === true,
-    };
-  });
+  const plans = subscriptionPlansDefaults();
+  return billingSourcesList()
+    .filter(s => s.category === 'app_sub')
+    .map(s => {
+      const ppid = s.plan_provider_id;
+      const entry = {
+        source_id: s.source_id || s.id,
+        agent_id: s.agent_id || s.source_id || s.id,
+        app_name: s.label,
+        app_icon: s.icon || '🔧',
+        plan_provider_id: ppid,
+        subscription_to_api: s.subscription_to_api === true,
+      };
+      if (s.subscription_to_api) {
+        const models = _modelsFromSource(s).map(m => m.id);
+        if (models.length) entry.models = models;
+        if (Object.keys(s.pricing || {}).length) entry.pricing = s.pricing;
+      }
+      return entry;
+    });
 }
 
-// 个人页：预置 API 订阅目录（与 APP 订阅、按量供给源分离）
+// 个人页：预置 API 订阅目录
 function apiSubscriptionApps() {
-  const defaults = toolsDefaultDoc().api_subscription_apps || [];
-  const defBySource = Object.fromEntries(
-    defaults.map(a => [a.source_id || a.id, a]),
-  );
-  const list = billingSection('api_subscription_apps');
-  const cur = Array.isArray(list) ? list : [];
-  if (!cur.length) return defaults;
-  // 服务端已下发：以当前列表为准，仅用内置默认补全缺字段
-  return cur.map(a => {
-    const key = a.source_id || a.id;
-    const def = defBySource[key] || {};
-    return {
-      ...def,
-      ...a,
-      plan_provider_id: a.plan_provider_id != null ? a.plan_provider_id : def.plan_provider_id,
-    };
-  });
+  return billingSourcesList()
+    .filter(s => s.category === 'api_sub')
+    .map(s => {
+      const entry = {
+        source_id: s.source_id || s.id,
+        app_name: s.label,
+        app_icon: s.icon || '🔧',
+        plan_provider_id: s.plan_provider_id || s.id,
+      };
+      const models = _modelsFromSource(s).map(m => m.id);
+      if (models.length) entry.models = models;
+      if (Object.keys(s.pricing || {}).length) entry.pricing = s.pricing;
+      return entry;
+    });
 }
 
 // 个人页：按量付费供给源目录
 function paygProviders() {
-  const list = billingSection('payg_providers');
-  return Array.isArray(list) ? list : [];
+  return billingSourcesList()
+    .filter(s => s.category === 'payg')
+    .map(s => ({
+      id: s.id,
+      provider_id: s.id,
+      label: s.label || s.id,
+      icon: s.icon || '🔧',
+      aliases: s.aliases || [],
+      models: _modelsFromSource(s).map(m => m.id),
+      pricing: s.pricing || {},
+    }));
 }
 
-/** 内置 registry 供给源（离线 / payg_providers 未覆盖时的 models/pricing 来源） */
+/** 内置/云端 registry 供给源（models / pricing / handler） */
 function registryProviders() {
-  try {
-    const doc = yaml.load(fs.readFileSync(REGISTRY_YAML, 'utf8')) || {};
-    return Array.isArray(doc.providers) ? doc.providers : [];
-  } catch {
-    return [];
-  }
+  const raw = getRegistryDoc().providers;
+  return Array.isArray(raw) ? raw : [];
 }
 
-// 订阅套餐模板（按 plan_provider_id 索引）
+// 订阅套餐模板（按 plan_provider_id 索引，来自 billing_sources.plans）
 function subscriptionPlansDefaults() {
-  const plans = billingSection('subscription_plans');
-  return plans && typeof plans === 'object' && !Array.isArray(plans) ? plans : {};
+  const out = {};
+  for (const s of billingSourcesList()) {
+    const ppid = s.plan_provider_id || (s.category === 'api_sub' ? (s.source_id || s.id) : null);
+    if (!ppid || !Array.isArray(s.plans) || !s.plans.length) continue;
+    if (!out[ppid]) out[ppid] = [];
+    for (const pl of s.plans) {
+      if (pl && pl.id && !out[ppid].some(x => x.id === pl.id)) out[ppid].push(pl);
+    }
+  }
+  return out;
 }
 
 /** 该 Agent 是否会话补录真实 model（Cursor hook / transcript 有 model 字段 → true） */
@@ -471,6 +517,7 @@ module.exports = {
   claudeModels, isClaudeModel, sessionSources, agentHasModelStats, appInstallUrls, appUninstallUrls,
   appInstallGuides, appUninstallGuides, normalizeGuide, resolveGuide,
   subscriptionApps, apiSubscriptionApps, paygProviders, registryProviders, subscriptionPlansDefaults,
+  billingSourcesList, reloadRegistryDoc,
   resolveRef, resolvePlaceholders, expandHome,
   appsRuntime, appEntities, appEntitiesExpanded, appEntityById, appCapabilities,
   handoffTargets,

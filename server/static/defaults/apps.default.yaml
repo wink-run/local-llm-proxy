@@ -1,7 +1,7 @@
 # apps.default.yaml（服务端 canonical）
 # 工具清单 + API Key 应用 + 个人页计费目录。
 # 启动时若 config.apps 为空则自动种子写入 DB；客户端 GET /config/apps 同步到 ~/.tokenbank/tokenbank.yaml。
-# 计费段须与 client/electron/config/tokenbank.tools.default.yaml 保持同步（离线回退）。
+# 应用清单（gateway / mitm / app_entities）；计费/供给源已统一到 providers.registry.yaml。
 # 铁律：真 key / 真证书永不进此文件。
 
 version: 1
@@ -152,6 +152,6 @@ api_key_apps:
       models.providers.tokenbank.api: openai-completions
 
 # 个人页「源」目录（subscription_apps / api_subscription_apps / subscription_plans / payg_providers）
-# 已迁出本文件 → server/static/defaults/sources.default.yaml（下发走 config.sources / GET /api/config/sources）。
+# 计费/供给源已迁出 → providers.registry.yaml（下发走 config.providers / GET /api/config/providers）。
 # 本文件只保留「应用」相关段（tools / api_key_apps）。
 
