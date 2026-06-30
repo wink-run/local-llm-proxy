@@ -63,7 +63,56 @@ function getOAuthById(t) {
 const FALLBACK_PROVIDER_META = {};
 const FALLBACK_PROVIDERS = [];
 
+/** 社区 P2P（tokenbank-p2p）：不属于个人源 catalog，仅从 agent 网关配置合并 */
+const BUILTIN_P2P_PROVIDER = {
+  id: 'tokenbank-p2p',
+  type: 'p2p',
+  enabled: true,
+  token: '',
+  base_url: '',
+  models: [],
+};
+
+function mergeCommunityP2PProvider(providerList, agentCfg) {
+  const list = [...providerList];
+  if (list.some(p => p.type === 'p2p' || p.id === 'tokenbank-p2p')) return list;
+  const saved = agentCfg?.providers?.find(p => p.id === 'tokenbank-p2p');
+  list.push(saved ? { ...BUILTIN_P2P_PROVIDER, ...saved } : { ...BUILTIN_P2P_PROVIDER });
+  return list;
+}
+
 // 把后端下发的 catalog 拆成展示 meta 映射 + 默认 provider 列表（与本地配置合并的种子）
+/** catalog models 归一化为 { name, type }[]；无 models 时从 pricing 键推导 */
+function parseCatalogModels(entry) {
+  const models = [];
+  const seen = new Set();
+  const push = (name, type = 'chat') => {
+    const n = String(name || '').trim();
+    if (!n || seen.has(n)) return;
+    seen.add(n);
+    models.push({ name: n, type: type || 'chat' });
+  };
+  for (const m of entry?.models || []) {
+    if (typeof m === 'string') push(m);
+    else if (m && typeof m === 'object') push(m.name || m.id || m.model, m.type);
+  }
+  // 仅有 pricing、无 models 列表时补全模型名
+  if (!models.length && entry?.pricing && typeof entry.pricing === 'object') {
+    for (const k of Object.keys(entry.pricing)) push(k);
+  }
+  return models;
+}
+
+/** 从 catalog 提取 provider_id → pricing 映射（服务端发布后最新刊例价） */
+function catalogPricingFromProviders(providers) {
+  const out = {};
+  for (const p of providers || []) {
+    if (!p?.id || !p.pricing || typeof p.pricing !== 'object') continue;
+    if (Object.keys(p.pricing).length) out[p.id] = p.pricing;
+  }
+  return out;
+}
+
 function catalogToState(catalog, oauthById) {
   const meta = {};
   const defaults = [];
@@ -73,6 +122,7 @@ function catalogToState(catalog, oauthById) {
       icon: p.icon, label: p.label, hint: p.hint, keyless: !!p.keyless,
       key_prefix: Array.isArray(p.key_prefix) ? p.key_prefix : [],
       signup_url: p.signup_url || '',
+      api_format: p.api_format || 'openai',
       // OAuth 能力以客户端为准（仅客户端有对应 oauth 模块）；不信任远端 catalog 的 oauth 字段，
       // 否则远端未重新部署时会下发已废弃的能力（如 gemini 的 google 登录）。
       oauth: oauthById[p.id] || null,
@@ -83,7 +133,8 @@ function catalogToState(catalog, oauthById) {
       enabled: !!p.enabled_default || !!p.keyless, // 免 key 供给源默认启用（已存本地配置在合并时优先，不覆盖用户手动禁用）
       token: '',
       base_url: p.base_url || '',
-      models: [],
+      api_format: p.api_format || 'openai',
+      models: parseCatalogModels(p),
     });
   }
   // 后端目录里缺失的 OAuth 预设（如 gemini / github-copilot）从内置兜底补出来
@@ -630,11 +681,15 @@ function enrichDirectWithCatalog(instances, templates, subscriptionCatalog) {
     // 非 APP 订阅模板的纯会话直连（无目录条目）才允许切换按模型计费估算
     const allowApiBilling = !canConvertToApi && !tpl?.kind;
     const mode = allowApiBilling && d.mode === 'api' ? 'api' : 'subscription';
+    const apiFormat = tpl?.api_format || cat?.api_format
+      || (tpl?.plan_provider_id && tplByKey[tpl.plan_provider_id]?.api_format)
+      || 'openai';
     return {
       ...d,
       can_convert_to_api: canConvertToApi,
       allow_api_billing: allowApiBilling,
       mode,
+      api_format: apiFormat,
       ...(mode === 'subscription' ? { pricing: {} } : {}),
     };
   });
@@ -810,6 +865,7 @@ function resolveProviderStubForInstance(inst, providers, meta, userPayg, userSub
     enabled: sibling?.enabled ?? fb?.enabled ?? false,
     token: sibling?.token || '',
     base_url: sibling?.base_url || fb?.base_url || m.base_url || '',
+    api_format: sibling?.api_format || fb?.api_format || m.api_format || 'openai',
     models: fallbackModels,
     displayName: inst.name,
   };
@@ -1190,16 +1246,27 @@ function P2PNetworkCard({ provider, onUpdate }) {
   );
 }
 
-function StatusBadge({ hasKey, keyless }) {
+function StatusBadge({ verified }) {
   const { t } = useLang();
-  const connected = keyless || hasKey;
-  // 已配置/免 Key 源不再展示「已启用」；仅缺凭证时提示需配置
-  if (connected) return null;
+  if (verified) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400" title={t('providers.badge.verified')}>
+        <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" aria-hidden />
+      </span>
+    );
+  }
   return (
-    <span className="text-xs px-1.5 py-0.5 rounded-full border bg-zinc-100 dark:bg-zinc-800 text-zinc-500 border-zinc-300 dark:border-zinc-700">
-      {t('providers.badge.needsConfig')}
+    <span className="inline-flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+      <span className="w-2 h-2 rounded-full bg-zinc-400 dark:bg-zinc-500 shrink-0" aria-hidden />
+      <span>{t('providers.badge.needsConfig')}</span>
     </span>
   );
+}
+
+/** 修改凭证相关字段时清除 test 通过标记 */
+const CREDENTIAL_PATCH_KEYS = ['token', 'auth_type', 'oauth_provider', 'credentials', 'base_url', 'api_format'];
+function patchClearsTestVerified(patch) {
+  return CREDENTIAL_PATCH_KEYS.some(k => Object.prototype.hasOwnProperty.call(patch, k));
 }
 
 // Normalize a model entry to {name, type} — handles both string and object formats
@@ -1784,8 +1851,11 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
     setTesting(true); setTestMsg('');
     try {
       const result = await onTest(provider);
+      if (result.ok) onUpdate(provider.id, { test_verified: true });
+      else onUpdate(provider.id, { test_verified: false });
       setTestMsg(result.ok ? t('providers.test.success') : `✗ ${result.error || `HTTP ${result.status}`}`);
     } catch (e) {
+      onUpdate(provider.id, { test_verified: false });
       setTestMsg(`✗ ${e.message || t('providers.err.unknown')}`);
     } finally {
       setTimeout(() => setTestMsg(''), 3000);
@@ -1803,6 +1873,7 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
               <span className="text-sm font-medium truncate text-zinc-800 dark:text-zinc-200">
                 {displayLabel}
               </span>
+              <StatusBadge verified={provider.test_verified === true} />
               <PersonalSourceTypeBadge tag={personalTag} t={t} />
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -2114,8 +2185,11 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
     setTesting(true); setTestMsg('');
     try {
       const result = await onTest(provider);
+      if (result.ok) onUpdate(provider.id, { test_verified: true });
+      else onUpdate(provider.id, { test_verified: false });
       setTestMsg(result.ok ? t('providers.test.success') : `✗ ${result.error || `HTTP ${result.status}`}`);
     } catch (e) {
+      onUpdate(provider.id, { test_verified: false });
       setTestMsg(`✗ ${e.message || t('providers.err.unknown')}`);
     } finally {
       setTimeout(() => setTestMsg(''), 3000);
@@ -2143,7 +2217,7 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
               <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
                 {displayName || meta.label}
               </span>
-              <StatusBadge hasKey={hasKey || hasOauth} keyless={meta.keyless && !oauthCap} />
+              <StatusBadge verified={provider.test_verified === true} />
               <PersonalSourceTypeBadge tag={personalTag} t={t} />
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -2419,6 +2493,7 @@ export default function Providers() {
   const [statsOnlyIds, setStatsOnlyIds] = useState([]);
   const [userPayg, setUserPayg] = useState([]);
   const [providerPricing, setProviderPricing] = useState({});
+  const [catalogPricing, setCatalogPricing] = useState({}); // 服务端 catalog 刊例价（发布后立即生效）
   const [pricingOverrides, setPricingOverrides] = useState({});
   const [paygCatalog, setPaygCatalog] = useState([]);
   const [directInstances, setDirectInstances] = useState([]);   // 直连源实例（仅统计的应用）
@@ -2472,6 +2547,15 @@ export default function Providers() {
       setPaygCatalog([]);
     }
   }, []);
+
+  /** catalog 刊例价（服务端）+ 本地 yaml/registry 合并；后者覆盖前者 */
+  const mergedProviderPricing = useMemo(() => {
+    const out = { ...catalogPricing };
+    for (const [pid, models] of Object.entries(providerPricing || {})) {
+      out[pid] = { ...(out[pid] || {}), ...models };
+    }
+    return out;
+  }, [catalogPricing, providerPricing]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2552,11 +2636,14 @@ export default function Providers() {
       try {
         const { data } = await getProviderCatalog();
         if (data?.providers?.length) {
+          setCatalogPricing(catalogPricingFromProviders(data.providers));
           const s = catalogToState(data, oauthById);
           defaults = s.defaults;
           metaMap  = localizeProviderMeta(s.meta, t);
+        } else {
+          setCatalogPricing({});
         }
-      } catch { /* 离线 / VPS 不可达：用兜底目录 */ }
+      } catch { /* 离线 / VPS 不可达：用兜底目录 */ setCatalogPricing({}); }
       setMeta(metaMap);
 
       // 2) 与本地配置保存的开关/token/base_url 合并（adapter 兼容 Electron/HTTP）
@@ -2566,7 +2653,12 @@ export default function Providers() {
         const defaultIds = new Set(defaults.map(p => p.id));
         const mapped = defaults.map(def => {
           const saved = cfg.providers.find(p => p.id === def.id);
-          return saved ? { ...def, ...saved, models: saved.models || def.models || [] } : def;
+          if (!saved) return def;
+          // 本地 models 为空时保留 catalog/registry 下发的默认模型列表
+          const models = (Array.isArray(saved.models) && saved.models.length)
+            ? saved.models
+            : (def.models || []);
+          return { ...def, ...saved, models };
         });
         // Preserve any custom (non-catalog) providers stored in config; normalize base_url
         const custom = cfg.providers.filter(p => !defaultIds.has(p.id)).map(p => ({
@@ -2577,6 +2669,8 @@ export default function Providers() {
       } else {
         resolved = defaults;
       }
+      // 社区 P2P 独立于个人源 registry，保证社区源区块可展示
+      resolved = mergeCommunityP2PProvider(resolved, cfg);
       const merged = mergeUserPaygIntoProviders(resolved, metaMap, userPayg, t);
       const withCustomSubs = mergeCustomSubscriptionProviders(
         merged.providers, merged.meta, userSubscriptions, paidAllowlist || [], t,
@@ -2635,6 +2729,9 @@ export default function Providers() {
   const updateProvider = useCallback((id, patch) => {
     if (isPaygManagedProvider(id, userPayg) && patch.models != null) {
       patch = { ...patch, models: filterPaygModels(patch.models, id, userPayg) };
+    }
+    if (patchClearsTestVerified(patch) && patch.test_verified === undefined) {
+      patch = { ...patch, test_verified: false };
     }
     setProviders(prev => {
       const i = prev.findIndex(p => p.id === id);
@@ -2817,7 +2914,7 @@ export default function Providers() {
   const paygModelsOf = (pid) => {
     const c = (paygCatalog || []).find(x => (x.provider_id || x.id) === pid);
     if (c && Array.isArray(c.models) && c.models.length) return c.models;
-    const pr = providerPricing && providerPricing[pid];
+    const pr = mergedProviderPricing && mergedProviderPricing[pid];
     return pr ? Object.keys(pr) : [];
   };
   const sourceTemplates = accountsData?.source_templates || [];
@@ -2856,10 +2953,15 @@ export default function Providers() {
     [directAll],
   );
   // 按模型视图：不回退 catalog 刊例价，订阅/直连 APP 无配置模型则不出现
-  const modelViewInstances = useMemo(() => accountInstances.map(inst => ({
-    ...inst,
-    models: resolveModelsForModelView(inst, providers, userPayg, userSubscriptions, pricingOverrides, directByAgent),
-  })), [accountInstances, providers, userPayg, userSubscriptions, pricingOverrides, directByAgent]);
+  const modelViewInstances = useMemo(() => accountInstances.map(inst => {
+    const gwId = inst.gateway_id;
+    const prov = gwId ? providers.find(p => p.id === gwId) : null;
+    return {
+      ...inst,
+      test_verified: prov?.test_verified === true,
+      models: resolveModelsForModelView(inst, providers, userPayg, userSubscriptions, pricingOverrides, directByAgent),
+    };
+  }), [accountInstances, providers, userPayg, userSubscriptions, pricingOverrides, directByAgent]);
   // 「已接入网关」= 对应 provider 真正 enabled（不是 gateway_provider_ids 那种「已登记可接入」）。
   // 接入的由上面 ProviderCard 展示；未接入的在这里补充展示，使列表数目与统计一致。
   // 顶部筛选：按账户实例的类型 tag（app订阅 / api订阅 / 订阅转API / API）；
@@ -3117,7 +3219,12 @@ export default function Providers() {
         )}
 
         {sourcesView === 'model' ? (
-          <PersonalSourceModelView instances={modelViewInstances} t={t} trailing={renderSourcesViewTabs()} />
+          <PersonalSourceModelView
+            instances={modelViewInstances}
+            t={t}
+            trailing={renderSourcesViewTabs()}
+            onEmptyAdd={() => { setSourcesView('list'); setPickerOpen(true); }}
+          />
         ) : (
         <>
         <div className="grid grid-cols-2 gap-3">
@@ -3127,8 +3234,8 @@ export default function Providers() {
             const cardMeta = resolveMetaForGateway(gwId, meta, inst, oauthById);
             const useCustomCard = shouldUseCustomProviderCard(gwId, userSubscriptions, inst, cardMeta);
             return !useCustomCard
-              ? <ProviderCard key={inst.id} provider={live} meta={cardMeta} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId], inst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={inst.name} displayIcon={inst.icon} lockTemplate accountInst={inst} {...accountBillingProps} />
-              : <CustomProviderCard key={inst.id} provider={live} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={providerPricing} paygCatalog={paygCatalog} accountInst={inst} {...accountBillingProps} />;
+              ? <ProviderCard key={inst.id} provider={live} meta={cardMeta} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId], inst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={inst.name} displayIcon={inst.icon} lockTemplate accountInst={inst} {...accountBillingProps} />
+              : <CustomProviderCard key={inst.id} provider={live} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={inst} {...accountBillingProps} />;
           })}
           {directFiltered.map(d => (
             <DirectSourceCard key={d.agent_id} instance={{ ...d, _allBilling: directBilling }} t={t}
@@ -3144,8 +3251,8 @@ export default function Providers() {
             const extraMeta = resolveMetaForGateway(live.id, meta, extraInst, oauthById);
             const useCustomCard = shouldUseCustomProviderCard(live.id, userSubscriptions, extraInst, extraMeta);
             return !useCustomCard
-              ? <ProviderCard key={live.id} provider={live} meta={extraMeta} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id], extraInst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} accountInst={extraInst} {...accountBillingProps} />
-              : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={providerPricing} paygCatalog={paygCatalog} accountInst={extraInst} {...accountBillingProps} />;
+              ? <ProviderCard key={live.id} provider={live} meta={extraMeta} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id], extraInst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} accountInst={extraInst} {...accountBillingProps} />
+              : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={extraInst} {...accountBillingProps} />;
           })}
           {listedAccountInstances.length === 0 && directFiltered.length === 0 && extraEnabledSources.length === 0 && (
             <p className="col-span-2 text-xs text-zinc-400 text-center py-6">{t('providers.filter.empty')}</p>
@@ -3190,9 +3297,9 @@ export default function Providers() {
               {!live ? (
                 <p className="text-xs text-zinc-400 py-6 text-center">{t('providers.add.loadingAccounts')}</p>
               ) : !useCustomCard ? (
-                <ProviderCard provider={live} meta={credMeta} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} initialExpanded lockTemplate gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId], acct)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={acct?.name} displayIcon={acct?.icon} accountInst={acct} {...accountBillingProps} />
+                <ProviderCard provider={live} meta={credMeta} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} initialExpanded lockTemplate gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId], acct)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={acct?.name} displayIcon={acct?.icon} accountInst={acct} {...accountBillingProps} />
               ) : (
-                <CustomProviderCard provider={live} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={providerPricing} paygCatalog={paygCatalog} accountInst={acct} {...accountBillingProps} />
+                <CustomProviderCard provider={live} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={acct} {...accountBillingProps} />
               )}
               <div className="flex justify-end pt-1">
                 <button type="button" onClick={() => setCredModalKey(null)} className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 text-white">{t('providers.cred.done')}</button>

@@ -60,10 +60,10 @@ function normPaygEntry(p) {
       if (typeof m === 'string') {
         models.push(m);
       } else if (m && typeof m === 'object') {
-        const mid = m.id || m.model;
+        const mid = m.id || m.model || m.name;
         if (!mid) continue;
         models.push(mid);
-        const { id: _i, model: _m, ...rates } = m;
+        const { id: _i, model: _m, name: _n, type: _t, ...rates } = m;
         if (rates.in != null || rates.out != null || rates.cacheRead != null) {
           pricing[mid] = { ...(pricing[mid] || {}), ...rates };
         }
@@ -76,6 +76,8 @@ function normPaygEntry(p) {
     label: p.label || p.name || id,
     icon: p.icon || '🔧',
     aliases: Array.isArray(p.aliases) ? p.aliases.map(String) : [],
+    api_format: p.api_format || 'openai',
+    handler: p.handler || 'openai',
     models,
     pricing,
   };
@@ -93,11 +95,40 @@ function getSubscriptionPlans(cfg = {}) {
   return out;
 }
 
-/** yaml 下发的按 provider 刊例价 */
-function getYamlProviderPricing() {
-  const out = {};
+/** 合并 registry 与 payg_providers 目录条目（payg 段优先覆盖同名 provider） */
+function mergeCatalogEntries(prev, next) {
+  if (!prev) return next;
+  if (!next) return prev;
+  return {
+    ...prev,
+    ...next,
+    models: [...new Set([...(prev.models || []), ...(next.models || [])])],
+    pricing: { ...(prev.pricing || {}), ...(next.pricing || {}) },
+    label: next.label || prev.label,
+    icon: next.icon || prev.icon,
+  };
+}
+
+function paygProviderCatalog() {
+  const byId = new Map();
+  // registry 打底（如 nvidia 等 free tier 仅在此有 models/pricing）
+  for (const p of configLoader.registryProviders()) {
+    const norm = normPaygEntry(p);
+    if (norm.provider_id) byId.set(norm.provider_id, norm);
+  }
+  // tokenbank.tools.yaml 的 payg_providers 覆盖/补充
   for (const p of configLoader.paygProviders()) {
     const norm = normPaygEntry(p);
+    if (!norm.provider_id) continue;
+    byId.set(norm.provider_id, mergeCatalogEntries(byId.get(norm.provider_id), norm));
+  }
+  return [...byId.values()];
+}
+
+/** yaml + registry 合并后的按 provider 刊例价 */
+function getYamlProviderPricing() {
+  const out = {};
+  for (const norm of paygProviderCatalog()) {
     if (norm.provider_id && Object.keys(norm.pricing).length) {
       out[norm.provider_id] = norm.pricing;
     }
@@ -186,6 +217,7 @@ function subscriptionAppCatalog(cfg = {}) {
       app_name: a.app_name || a.name || a.agent_id,
       app_icon: a.app_icon || a.icon || '🔧',
       plans: appPlans,
+      api_format: a.api_format || null,
       models: Array.isArray(a.models) ? a.models : [],
       pricing: (a.pricing && typeof a.pricing === 'object') ? a.pricing : {},
     };
@@ -206,14 +238,11 @@ function apiSubscriptionCatalog(cfg = {}) {
       app_name: a.app_name || a.name || a.source_id,
       app_icon: a.app_icon || a.icon || '🔑',
       plans: appPlans,
+      api_format: a.api_format || null,
       models: Array.isArray(a.models) ? a.models : [],
       pricing: (a.pricing && typeof a.pricing === 'object') ? a.pricing : {},
     };
   });
-}
-
-function paygProviderCatalog() {
-  return configLoader.paygProviders().map(normPaygEntry);
 }
 
 /**
@@ -600,6 +629,7 @@ function serverTemplatesByKey(cfg = {}) {
     const k = p.provider_id || p.id;
     if (k) {
       m[k] = { kind: 'payg', key: k, label: p.label || k, icon: p.icon || '🔧',
+        api_format: p.api_format || 'openai',
         models: p.models || [], pricing: p.pricing || {} };
       paygByKey[k] = m[k];
     }
@@ -617,7 +647,9 @@ function serverTemplatesByKey(cfg = {}) {
       const f = fillSub(a.models, a.pricing, a.plan_provider_id);
       m[k] = { kind: 'app_sub', key: k, label: a.app_name, icon: a.app_icon, agent_id: a.agent_id,
         subscription_to_api: a.subscription_to_api === true, plans: a.plans || [],
-        plan_provider_id: a.plan_provider_id, models: f.models, pricing: f.pricing };
+        plan_provider_id: a.plan_provider_id,
+        api_format: a.api_format || (a.plan_provider_id && paygByKey[a.plan_provider_id]?.api_format) || 'openai',
+        models: f.models, pricing: f.pricing };
     }
   }
   for (const a of apiSubscriptionCatalog(cfg)) {
@@ -626,6 +658,7 @@ function serverTemplatesByKey(cfg = {}) {
       const f = fillSub(a.models, a.pricing, a.plan_provider_id);
       m[k] = { kind: 'api_sub', key: k, label: a.app_name, icon: a.app_icon,
         plan_provider_id: a.plan_provider_id, plans: a.plans || [],
+        api_format: a.api_format || (a.plan_provider_id && paygByKey[a.plan_provider_id]?.api_format) || 'openai',
         models: f.models, pricing: f.pricing };
     }
   }

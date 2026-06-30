@@ -12,6 +12,8 @@ const yaml = require('js-yaml');
 const DEFAULT_YAML = path.join(__dirname, 'config', 'tokenbank.default.yaml');
 // 工具/计费目录内置默认（个人页订阅应用、按量供给源、刊例价；与服务器 config.apps 同 schema）
 const TOOLS_DEFAULT_YAML = path.join(__dirname, 'config', 'tokenbank.tools.default.yaml');
+// 供给源 registry（models / pricing / handler；与服务器 config.providers 同 schema）
+const REGISTRY_YAML = path.join(__dirname, 'config', 'providers.registry.yaml');
 // 用户导入/服务器下发的配置覆盖文件（main.js 的 applyConfigDoc 写这里）。存在则优先于内置默认。
 const USER_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.yaml');
 // 「源」目录下发文件（GET /api/config/sources 写这里），与应用文件 tokenbank.yaml 分离。
@@ -314,6 +316,16 @@ function paygProviders() {
   return Array.isArray(list) ? list : [];
 }
 
+/** 内置 registry 供给源（离线 / payg_providers 未覆盖时的 models/pricing 来源） */
+function registryProviders() {
+  try {
+    const doc = yaml.load(fs.readFileSync(REGISTRY_YAML, 'utf8')) || {};
+    return Array.isArray(doc.providers) ? doc.providers : [];
+  } catch {
+    return [];
+  }
+}
+
 // 订阅套餐模板（按 plan_provider_id 索引）
 function subscriptionPlansDefaults() {
   const plans = billingSection('subscription_plans');
@@ -367,6 +379,6 @@ module.exports = {
   routing, caRef,
   claudeModels, isClaudeModel, sessionSources, agentHasModelStats, appInstallUrls, appUninstallUrls,
   appInstallGuides, appUninstallGuides, normalizeGuide, resolveGuide,
-  subscriptionApps, apiSubscriptionApps, paygProviders, subscriptionPlansDefaults,
+  subscriptionApps, apiSubscriptionApps, paygProviders, registryProviders, subscriptionPlansDefaults,
   resolveRef, resolvePlaceholders, expandHome,
 };

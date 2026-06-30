@@ -414,7 +414,7 @@ export function UnenrolledInstanceCard({ instance, onRemove, t }) {
 }
 
 // ── 第3块：按模型视图（仿社区源 P2P 网格：一行两列，左模型、右供给源 logo）────────
-export function PersonalSourceModelView({ instances, t, trailing = null }) {
+export function PersonalSourceModelView({ instances, t, trailing = null, onEmptyAdd = null }) {
   const byModel = useMemo(() => {
     const m = {};
     for (const inst of instances) {
@@ -448,7 +448,18 @@ export function PersonalSourceModelView({ instances, t, trailing = null }) {
     return (
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-2 min-w-0">
-          <p className="text-xs text-zinc-400">{t('psrc.model.empty')}</p>
+          <p className="text-xs text-zinc-400">
+            {t('psrc.model.empty')}
+            {onEmptyAdd && (
+              <>
+                ，
+                <button type="button" onClick={onEmptyAdd}
+                  className="text-blue-500 dark:text-blue-400 hover:underline">
+                  {t('psrc.model.emptyAdd')}
+                </button>
+              </>
+            )}
+          </p>
           {trailing}
         </div>
       </div>
@@ -477,13 +488,19 @@ export function PersonalSourceModelView({ instances, t, trailing = null }) {
         {trailing}
       </div>
       <div className="grid grid-cols-2 gap-2">
-        {byModel.map(([model, srcs]) => (
+        {byModel.map(([model, srcs]) => {
+          const verified = srcs.some(s => s.test_verified === true);
+          return (
           <div
             key={model}
             className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300/50 dark:border-zinc-700/50 rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-1.5 min-w-0"
           >
             <div className="flex items-center gap-1.5 min-w-0">
-              <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" aria-hidden />
+              <span
+                className={`w-2 h-2 rounded-full shrink-0 ${verified ? 'bg-green-500' : 'bg-zinc-400 dark:bg-zinc-500'}`}
+                aria-hidden
+                title={verified ? t('providers.badge.verified') : t('providers.badge.needsConfig')}
+              />
               <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate" title={model}>{model}</span>
             </div>
             <div className="flex items-center gap-0.5 shrink-0">
@@ -492,7 +509,8 @@ export function PersonalSourceModelView({ instances, t, trailing = null }) {
               ))}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

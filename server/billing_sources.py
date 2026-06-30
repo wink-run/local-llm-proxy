@@ -15,6 +15,12 @@ from provider_registry import serialize_registry_doc
 CONFIG_KEY = "config.billing_sources"
 _DEFAULTS_DIR = Path(__file__).resolve().parent / "static" / "defaults"
 _REGISTRY_DEFAULT = _DEFAULTS_DIR / "providers.registry.yaml"
+_SOURCES_DEFAULT = _DEFAULTS_DIR / "sources.default.yaml"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_CLIENT_CONFIG = _REPO_ROOT / "client" / "electron" / "config"
+_CLIENT_REGISTRY = _CLIENT_CONFIG / "providers.registry.yaml"
+_CLIENT_TOOLS_DEFAULT = _CLIENT_CONFIG / "tokenbank.tools.default.yaml"
+_BILLING_KEYS = ("subscription_apps", "api_subscription_apps", "subscription_plans", "payg_providers")
 
 CATEGORIES = ("payg", "app_sub", "api_sub")
 TIERS = ("free", "paid", "p2p")
@@ -63,9 +69,9 @@ def _norm_model(m: Any) -> dict | None:
     pricing = {}
     raw_p = m.get("pricing")
     if isinstance(raw_p, dict):
-        pricing = {k: raw_p[k] for k in ("in", "out", "cacheRead", "cacheWrite") if raw_p.get(k) is not None}
+        pricing = {k: raw_p[k] for k in ("in", "out", "cacheRead", "cacheWrite", "image") if raw_p.get(k) is not None}
     else:
-        for k in ("in", "out", "cacheRead", "cacheWrite"):
+        for k in ("in", "out", "cacheRead", "cacheWrite", "image"):
             if m.get(k) is not None:
                 pricing[k] = m[k]
     return {"id": mid, "modality": modality, "pricing": pricing}
@@ -212,8 +218,9 @@ def normalize_source(raw: dict) -> dict:
             "label": str(oauth.get("label") or oauth["provider"]),
         }
         out["auth"] = "oauth"
-    # 订阅类源不下发/不持久化模型刊例（套餐 + agent 关联即可）
-    if cat in ("app_sub", "api_sub"):
+    # 纯 APP 订阅（不可转 API）不下发模型；API 订阅与可转 API 的 APP 订阅保留 base_url / 模型刊例
+    sub_to_api = out["subscription_to_api"]
+    if cat == "app_sub" and not sub_to_api:
         out["models"] = []
         out["pricing"] = {}
     if cat == "app_sub" and not out["agent_id"]:
@@ -268,14 +275,23 @@ def compile_billing_sections(sources: list[dict]) -> dict:
         s = normalize_source(raw)
         cat = s["category"]
         if cat == "app_sub":
-            subscription_apps.append({
+            app_entry: dict[str, Any] = {
                 "source_id": s["source_id"] or s["id"],
                 "agent_id": s.get("agent_id") or s["id"],
                 "app_name": s["label"],
                 "app_icon": s["icon"],
                 "plan_provider_id": s.get("plan_provider_id"),
                 "subscription_to_api": s.get("subscription_to_api") is True,
-            })
+            }
+            # 可转 API：下发默认模型与刊例（客户端 fillSub / 供给源页展示）
+            if s.get("subscription_to_api"):
+                model_names = _models_to_payg_names(s.get("models") or [])
+                pricing = _pricing_from_models(s.get("models") or [], s.get("pricing"))
+                if model_names:
+                    app_entry["models"] = model_names
+                if pricing:
+                    app_entry["pricing"] = pricing
+            subscription_apps.append(app_entry)
             ppid = s.get("plan_provider_id")
             plan_key = ppid or s.get("source_id") or s["id"]
             if plan_key and s.get("plans"):
@@ -285,12 +301,19 @@ def compile_billing_sections(sources: list[dict]) -> dict:
                 ]
         elif cat == "api_sub":
             pid = s.get("plan_provider_id") or s["id"]
-            api_subscription_apps.append({
+            api_entry: dict[str, Any] = {
                 "source_id": s["source_id"] or s["id"],
                 "app_name": s["label"],
                 "app_icon": s["icon"],
                 "plan_provider_id": pid,
-            })
+            }
+            model_names = _models_to_payg_names(s.get("models") or [])
+            pricing = _pricing_from_models(s.get("models") or [], s.get("pricing"))
+            if model_names:
+                api_entry["models"] = model_names
+            if pricing:
+                api_entry["pricing"] = pricing
+            api_subscription_apps.append(api_entry)
             plan_key = s.get("plan_provider_id") or s.get("source_id") or s["id"]
             if plan_key and s.get("plans"):
                 subscription_plans[plan_key] = [
@@ -322,54 +345,89 @@ def compile_billing_sections(sources: list[dict]) -> dict:
     }
 
 
+def _registry_modalities(models: list[dict]) -> dict[str, bool]:
+    modalities: dict[str, bool] = {"language": True}
+    for m in models or []:
+        mod = m.get("modality") or "chat"
+        if mod == "image":
+            modalities["image"] = True
+        elif mod == "embedding":
+            modalities["embedding"] = True
+    return modalities
+
+
+def _build_registry_entry(s: dict, pid: str) -> dict:
+    models = s.get("models") or []
+    reg: dict[str, Any] = {
+        "id": pid,
+        "label": s["label"],
+        "icon": s["icon"],
+        "tier": s["tier"],
+        "hint": s.get("hint") or "",
+        "base_url": s.get("base_url") or "",
+        "modalities": _registry_modalities(models),
+        "models": _models_to_registry(models),
+        "pricing": _pricing_from_models(models, s.get("pricing")),
+        "handler": s.get("handler") or "openai",
+        "api_format": s.get("api_format") or "openai",
+        "enabled_default": bool(s.get("enabled_default")),
+        "keyless": bool(s.get("keyless")),
+        "key_prefix": s.get("key_prefix") or [],
+        "signup_url": s.get("signup_url") or "",
+    }
+    if s.get("aliases"):
+        reg["aliases"] = list(s["aliases"])
+    if s.get("oauth"):
+        reg["oauth"] = dict(s["oauth"])
+    return reg
+
+
+def _merge_registry_entry(existing: dict, incoming: dict) -> None:
+    """同 plan_provider_id 的 payg 与可转 API 订阅条目合并。"""
+    if incoming.get("oauth"):
+        existing["oauth"] = incoming["oauth"]
+    if incoming.get("base_url"):
+        existing["base_url"] = incoming["base_url"]
+    if incoming.get("models"):
+        existing["models"] = incoming["models"]
+        existing["modalities"] = incoming.get("modalities") or existing.get("modalities")
+    if incoming.get("pricing"):
+        existing["pricing"] = {**(existing.get("pricing") or {}), **incoming["pricing"]}
+    for k in ("handler", "api_format", "hint", "signup_url", "keyless", "key_prefix", "aliases"):
+        if incoming.get(k) not in (None, "", [], False):
+            existing[k] = incoming[k]
+
+
 def compile_registry_providers(sources: list[dict]) -> list[dict]:
     """编译供给源 registry（网关 + catalog 用）。"""
-    providers: list[dict] = []
-    seen: set[str] = set()
+    by_id: dict[str, dict] = {}
 
     for raw in sort_sources(sources):
         s = normalize_source(raw)
-        if s["category"] == "app_sub":
-            continue  # APP 订阅无独立 base_url，不走 registry
-        pid = s["id"]
-        if not pid or pid in seen:
+        cat = s["category"]
+        if cat == "app_sub":
+            if not s.get("subscription_to_api"):
+                continue  # 纯直连订阅不走 registry
+            pid = str(s.get("plan_provider_id") or s["id"]).strip()
+        elif cat == "api_sub":
+            pid = str(s.get("plan_provider_id") or s["id"]).strip()
+        else:
+            pid = str(s["id"]).strip()
+        if not pid:
             continue
-        seen.add(pid)
 
-        modalities: dict[str, bool] = {"language": True}
-        for m in s.get("models") or []:
-            mod = m.get("modality") or "chat"
-            if mod == "image":
-                modalities["image"] = True
-            elif mod == "embedding":
-                modalities["embedding"] = True
-
-        reg = {
-            "id": pid,
-            "label": s["label"],
-            "icon": s["icon"],
-            "tier": s["tier"],
-            "hint": s.get("hint") or "",
-            "base_url": s.get("base_url") or "",
-            "modalities": modalities,
-            "models": _models_to_registry(s.get("models") or []),
-            "pricing": _pricing_from_models(s.get("models") or [], s.get("pricing")),
-            "handler": s.get("handler") or "openai",
-            "api_format": s.get("api_format") or "openai",
-            "enabled_default": bool(s.get("enabled_default")),
-            "keyless": bool(s.get("keyless")),
-            "key_prefix": s.get("key_prefix") or [],
-            "signup_url": s.get("signup_url") or "",
-        }
-        if s["category"] == "payg":
+        reg = _build_registry_entry(s, pid)
+        if cat == "payg":
             reg["payg"] = True
-        if s.get("aliases"):
-            reg["aliases"] = list(s["aliases"])
-        if s.get("oauth"):
-            reg["oauth"] = dict(s["oauth"])
-        providers.append(reg)
+        if cat == "app_sub" and s.get("subscription_to_api"):
+            reg["keyless"] = True
 
-    return providers
+        if pid in by_id:
+            _merge_registry_entry(by_id[pid], reg)
+        else:
+            by_id[pid] = reg
+
+    return list(by_id.values())
 
 
 def import_from_legacy(apps_doc: dict | None = None, registry_doc: dict | None = None) -> list[dict]:
@@ -424,7 +482,10 @@ def import_from_legacy(apps_doc: dict | None = None, registry_doc: dict | None =
             "auth": "oauth" if app.get("subscription_to_api") else "api_key",
             "base_url": reg.get("base_url") or "",
             "api_format": reg.get("api_format") or "openai",
+            "handler": reg.get("handler") or "openai",
             "oauth": reg.get("oauth"),
+            # 可转 API：从 registry/payg 预填模型与刊例
+            "models": _models_from_reg_and_payg(ppid) if app.get("subscription_to_api") and ppid else [],
             # 关联套餐模板（个人页选套餐用）
             "plans": plans.get(ppid) or [] if ppid else [],
         }))
@@ -437,6 +498,19 @@ def import_from_legacy(apps_doc: dict | None = None, registry_doc: dict | None =
             continue
         seen.add(sid)
         ppid = app.get("plan_provider_id") or sid
+        reg = reg_by_id.get(ppid) if ppid else {}
+        reg = reg or {}
+        # 从 yaml 条目读取 models/pricing
+        api_models: list[dict] = []
+        for m in app.get("models") or []:
+            nm = _norm_model(m)
+            if nm:
+                nm["pricing"] = {**(app.get("pricing") or {}).get(nm["id"], {}), **(nm.get("pricing") or {})}
+                api_models.append(nm)
+        if isinstance(app.get("pricing"), dict):
+            for mid, rates in app["pricing"].items():
+                if isinstance(rates, dict) and not any(x["id"] == str(mid) for x in api_models):
+                    api_models.append({"id": str(mid), "modality": "chat", "pricing": dict(rates)})
         sources.append(normalize_source({
             "sort_order": _next_order(),
             "id": sid,
@@ -447,6 +521,10 @@ def import_from_legacy(apps_doc: dict | None = None, registry_doc: dict | None =
             "tier": "paid",
             "plan_provider_id": ppid,
             "auth": "api_key",
+            "base_url": reg.get("base_url") or app.get("base_url") or "",
+            "api_format": reg.get("api_format") or "openai",
+            "handler": reg.get("handler") or "openai",
+            "models": api_models,
             "plans": plans.get(ppid) or [],
         }))
 
@@ -572,6 +650,137 @@ async def publish_sources(doc: dict | None = None) -> dict:
         "apps_bytes": len(sources_yaml),   # 向后兼容旧 admin 前端字段名
         "registry_count": len(registry_providers),
         "sources_count": len(sources),
+    }
+
+
+def _read_text_prefix_until(path: Path, marker: str) -> str:
+    """保留默认文件头部注释/基础设施段，从 marker 起由导出内容替换。"""
+    if not path.is_file():
+        return ""
+    text = path.read_text(encoding="utf-8")
+    idx = text.find(marker)
+    if idx < 0:
+        return ""
+    return text[:idx].rstrip() + "\n\n"
+
+
+def _build_sources_default_yaml(sources: list[dict]) -> str:
+    billing = compile_billing_sections(sources)
+    doc = {"version": 1}
+    for key in _BILLING_KEYS:
+        doc[key] = billing[key]
+    prefix = _read_text_prefix_until(_SOURCES_DEFAULT, "subscription_apps:")
+    body = yaml.dump(doc, allow_unicode=True, sort_keys=False, default_flow_style=False).rstrip()
+    if prefix:
+        # 去掉 dump 自带的 version 行以上重复（prefix 已含 version 与注释）
+        lines = body.splitlines()
+        while lines and not lines[0].strip().startswith("subscription_apps:"):
+            lines.pop(0)
+        body = "\n".join(lines)
+        return prefix + body + "\n"
+    return body + "\n"
+
+
+def _merge_registry_for_export(sources: list[dict]) -> list[dict]:
+    """编译 registry，并保留默认文件中未纳入个人源表单的条目（如 Ollama、compatible 源）。"""
+    compiled = compile_registry_providers(sources)
+    by_id = {p["id"]: p for p in compiled if p.get("id")}
+    if _REGISTRY_DEFAULT.is_file():
+        existing = yaml.safe_load(_REGISTRY_DEFAULT.read_text(encoding="utf-8")) or {}
+        for p in existing.get("providers") or []:
+            pid = p.get("id")
+            if pid and pid not in by_id:
+                by_id[pid] = p
+    # 保持原文件大致顺序：先已有顺序，再追加新编译项
+    ordered: list[dict] = []
+    seen: set[str] = set()
+    if _REGISTRY_DEFAULT.is_file():
+        existing = yaml.safe_load(_REGISTRY_DEFAULT.read_text(encoding="utf-8")) or {}
+        for p in existing.get("providers") or []:
+            pid = p.get("id")
+            if pid and pid in by_id:
+                ordered.append(by_id.pop(pid))
+                seen.add(pid)
+    for p in compiled:
+        if p.get("id") and p["id"] not in seen:
+            ordered.append(p)
+            seen.add(p["id"])
+    for p in by_id.values():
+        if p.get("id") not in seen:
+            ordered.append(p)
+    return ordered
+
+
+def _build_registry_default_yaml(sources: list[dict]) -> str:
+    providers = _merge_registry_for_export(sources)
+    doc = {"version": 1, "providers": providers}
+    prefix = _read_text_prefix_until(_REGISTRY_DEFAULT, "providers:")
+    body = serialize_registry_doc(doc)
+    if prefix:
+        lines = body.splitlines()
+        while lines and not lines[0].strip().startswith("providers:"):
+            lines.pop(0)
+        body = "\n".join(lines)
+        if not body.endswith("\n"):
+            body += "\n"
+        return prefix + body
+    return body
+
+
+def _build_tools_default_yaml(sources: list[dict]) -> str:
+    billing = compile_billing_sections(sources)
+    prefix = _read_text_prefix_until(
+        _CLIENT_TOOLS_DEFAULT,
+        "# ════════ 个人页：订阅账户可选应用",
+    )
+    doc = {key: billing[key] for key in _BILLING_KEYS}
+    body = yaml.dump(doc, allow_unicode=True, sort_keys=False, default_flow_style=False).rstrip() + "\n"
+    return (prefix + body) if prefix else body
+
+
+def _write_export_file(path: Path, content: str) -> dict:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        rel = path.relative_to(_REPO_ROOT) if path.is_relative_to(_REPO_ROOT) else path.name
+        return {"path": str(rel), "bytes": len(content.encode("utf-8")), "ok": True}
+    except OSError as e:
+        rel = path.relative_to(_REPO_ROOT) if path.is_relative_to(_REPO_ROOT) else path.name
+        return {"path": str(rel), "ok": False, "error": str(e)}
+
+
+async def export_to_defaults(doc: dict | None = None) -> dict:
+    """将当前个人源目录写入仓库 static/defaults 与客户端离线回退 YAML。"""
+    if doc is None:
+        doc = await load_sources_doc()
+    sources = doc.get("sources") or []
+    if not sources:
+        from fastapi import HTTPException
+        raise HTTPException(400, "目录为空，无法导出")
+
+    sources_yaml = _build_sources_default_yaml(sources)
+    registry_yaml = _build_registry_default_yaml(sources)
+    tools_yaml = _build_tools_default_yaml(sources)
+
+    files = [
+        _write_export_file(_SOURCES_DEFAULT, sources_yaml),
+        _write_export_file(_REGISTRY_DEFAULT, registry_yaml),
+        _write_export_file(_CLIENT_REGISTRY, registry_yaml),
+    ]
+    if _CLIENT_TOOLS_DEFAULT.parent.is_dir():
+        files.append(_write_export_file(_CLIENT_TOOLS_DEFAULT, tools_yaml))
+    else:
+        files.append({
+            "path": str(_CLIENT_TOOLS_DEFAULT.relative_to(_REPO_ROOT)),
+            "ok": False,
+            "error": "client config dir not found",
+        })
+
+    ok_count = sum(1 for f in files if f.get("ok"))
+    return {
+        "sources_count": len(sources),
+        "files_written": ok_count,
+        "files": files,
     }
 
 

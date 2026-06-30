@@ -54,13 +54,13 @@ async def publish_billing_sources():
     return {"ok": True, **stats}
 
 
-@router.get("/billing/sources/{source_id}", dependencies=[Depends(auth_admin)])
-async def get_billing_source(source_id: str):
+# 独立路径，避免被 /billing/sources/{source_id} 误匹配导致 405
+@router.post("/billing/export-defaults", dependencies=[Depends(auth_admin)])
+async def export_billing_defaults():
+    """将当前目录写入仓库 static/defaults 与客户端离线回退 YAML。"""
     doc = await bs.load_sources_doc()
-    for s in bs.list_sources_normalized(doc):
-        if s["id"] == source_id:
-            return s
-    raise HTTPException(404, "not found")
+    stats = await bs.export_to_defaults(doc)
+    return {"ok": True, **stats}
 
 
 @router.post("/billing/sources", dependencies=[Depends(auth_admin)])
@@ -73,6 +73,26 @@ async def create_billing_source(body: SourceBody):
     doc.setdefault("sources", []).append(s)
     await bs.save_sources_doc(doc)
     return {"ok": True, "source": s}
+
+
+@router.put("/billing/sources-bulk", dependencies=[Depends(auth_admin)])
+async def replace_billing_sources(body: SourcesDocBody):
+    doc = {"version": 1, "sources": []}
+    for raw in body.sources:
+        s = bs.normalize_source(raw)
+        bs.validate_source(s)
+        doc["sources"].append(s)
+    await bs.save_sources_doc(doc)
+    return {"ok": True, "count": len(doc["sources"])}
+
+
+@router.get("/billing/sources/{source_id}", dependencies=[Depends(auth_admin)])
+async def get_billing_source(source_id: str):
+    doc = await bs.load_sources_doc()
+    for s in bs.list_sources_normalized(doc):
+        if s["id"] == source_id:
+            return s
+    raise HTTPException(404, "not found")
 
 
 @router.put("/billing/sources/{source_id}", dependencies=[Depends(auth_admin)])
@@ -99,16 +119,5 @@ async def delete_billing_source(source_id: str):
         raise HTTPException(404, "not found")
     await bs.save_sources_doc(doc)
     return {"ok": True}
-
-
-@router.put("/billing/sources-bulk", dependencies=[Depends(auth_admin)])
-async def replace_billing_sources(body: SourcesDocBody):
-    doc = {"version": 1, "sources": []}
-    for raw in body.sources:
-        s = bs.normalize_source(raw)
-        bs.validate_source(s)
-        doc["sources"].append(s)
-    await bs.save_sources_doc(doc)
-    return {"ok": True, "count": len(doc["sources"])}
 
 

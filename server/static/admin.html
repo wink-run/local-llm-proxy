@@ -579,6 +579,7 @@ select.form-input{cursor:pointer}
           <button class="btn-sm" :class="{ active: bsFilter==='app_sub' }" @click="bsFilter='app_sub'">{{ lang==='zh'?'APP 订阅':'App Sub' }}</button>
           <button class="btn-sm" :class="{ active: bsFilter==='api_sub' }" @click="bsFilter='api_sub'">{{ lang==='zh'?'API 订阅':'API Sub' }}</button>
           <button class="btn-sm" @click="importBsLegacy">{{ lang==='zh'?'从默认导入':'Import defaults' }}</button>
+          <button class="btn-sm" :disabled="bsSaving" @click="exportBsDefaults">{{ lang==='zh'?'导出到默认':'Export to defaults' }}</button>
           <button class="btn btn-indigo" @click="openBsModal(null)">＋ {{ lang==='zh'?'新增':'Add' }}</button>
           <button class="btn btn-indigo" :disabled="bsSaving" @click="publishBsSources">{{ lang==='zh'?'保存并发布':'Publish' }}</button>
         </div>
@@ -641,8 +642,24 @@ select.form-input{cursor:pointer}
             <div class="form-group"><label>{{ lang==='zh'?'名称':'Label' }}</label><input v-model="bsForm.label" class="form-input form-input-md" /></div>
             <div class="form-group"><label>{{ lang==='zh'?'图标':'Icon' }}</label><input v-model="bsForm.icon" class="form-input" style="width:64px" /></div>
           </div>
-          <div class="form-row" v-if="bsForm.category==='payg'">
-            <div class="form-group"><label>{{ lang==='zh'?'付费层次':'Tier' }}</label>
+          <div class="form-row" v-if="bsForm.category==='app_sub'">
+            <div class="form-group"><label>agent_id</label><input v-model="bsForm.agent_id" class="form-input form-input-md" /></div>
+            <div class="form-group"><label>plan_provider_id</label><input v-model="bsForm.plan_provider_id" class="form-input form-input-md" /></div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#7b7b7b;padding-bottom:8px">
+              <input type="checkbox" v-model="bsForm.subscription_to_api" /> {{ lang==='zh'?'可转 API 供给源':'Can convert to API' }}
+            </label>
+            <p v-if="bsForm.category==='app_sub'" style="font-size:11px;color:#999;margin:-4px 0 8px;line-height:1.4">
+              {{ lang==='zh'
+                ? '勾选：客户端订阅可「转 API」，并出现在 API 供给源卡片列表；未勾选：仅作直连源，不可切换计费模式'
+                : 'On: client may convert subscription to API supply source; off: direct source only, no mode switch' }}
+            </p>
+          </div>
+          <div class="form-row" v-if="bsForm.category==='api_sub'">
+            <div class="form-group"><label>plan_provider_id</label><input v-model="bsForm.plan_provider_id" class="form-input form-input-md" /></div>
+          </div>
+          <!-- 网关参数：按量付费 / API 订阅 / 可转 API 的 APP 订阅 -->
+          <div class="form-row" v-if="bsForm.category==='payg' || bsForm.category==='api_sub' || (bsForm.category==='app_sub' && bsForm.subscription_to_api)">
+            <div class="form-group" v-if="bsForm.category==='payg'"><label>{{ lang==='zh'?'付费层次':'Tier' }}</label>
               <select v-model="bsForm.tier" class="form-input form-input-sm">
                 <option value="free">free</option><option value="paid">paid</option><option value="p2p">p2p</option>
               </select>
@@ -668,31 +685,44 @@ select.form-input{cursor:pointer}
           <div class="form-group" v-if="bsForm.category==='payg'" style="margin-bottom:12px"><label>Base URL</label>
             <input v-model="bsForm.base_url" class="form-input" style="width:100%" placeholder="https://api.example.com/v1" />
           </div>
-          <div class="form-row" v-if="bsForm.category==='app_sub'">
-            <div class="form-group"><label>agent_id</label><input v-model="bsForm.agent_id" class="form-input form-input-md" /></div>
-            <div class="form-group"><label>plan_provider_id</label><input v-model="bsForm.plan_provider_id" class="form-input form-input-md" /></div>
-            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#7b7b7b;padding-bottom:8px">
-              <input type="checkbox" v-model="bsForm.subscription_to_api" /> {{ lang==='zh'?'可转 API 供给源':'Can convert to API' }}
-            </label>
-            <p v-if="bsForm.category==='app_sub'" style="font-size:11px;color:#999;margin:-4px 0 8px;line-height:1.4">
+          <!-- 可转 API 的 APP 订阅：默认 base_url -->
+          <div class="form-group" v-if="bsForm.category==='app_sub' && bsForm.subscription_to_api" style="margin-bottom:12px"><label>Base URL</label>
+            <input v-model="bsForm.base_url" class="form-input" style="width:100%" placeholder="https://api.anthropic.com/v1" />
+            <p style="font-size:11px;color:#999;margin:4px 0 0;line-height:1.4">
               {{ lang==='zh'
-                ? '勾选：客户端订阅可「转 API」，并出现在 API 供给源卡片列表；未勾选：仅作直连源，不可切换计费模式'
-                : 'On: client may convert subscription to API supply source; off: direct source only, no mode switch' }}
+                ? '订阅转 API 时网关使用的默认接口地址（对应 plan_provider_id 供给源）'
+                : 'Default API base URL when subscription converts to API supply (plan_provider_id registry)' }}
             </p>
           </div>
-          <div class="form-row" v-if="bsForm.category==='api_sub'">
-            <div class="form-group"><label>plan_provider_id</label><input v-model="bsForm.plan_provider_id" class="form-input form-input-md" /></div>
+          <!-- API 订阅：默认 base_url -->
+          <div class="form-group" v-if="bsForm.category==='api_sub'" style="margin-bottom:12px"><label>Base URL</label>
+            <input v-model="bsForm.base_url" class="form-input" style="width:100%" placeholder="https://ark.cn-beijing.volces.com/api/v3" />
+            <p style="font-size:11px;color:#999;margin:4px 0 0;line-height:1.4">
+              {{ lang==='zh'
+                ? 'API 订阅接入网关时使用的默认接口地址（对应 plan_provider_id 供给源）'
+                : 'Default API base URL for API subscription gateway (plan_provider_id registry)' }}
+            </p>
           </div>
           <div class="form-row" v-if="bsForm.auth==='oauth' || bsForm.oauth_provider">
             <div class="form-group"><label>OAuth provider</label><input v-model="bsForm.oauth_provider" class="form-input form-input-md" placeholder="claude / codex / copilot" /></div>
             <div class="form-group"><label>OAuth {{ lang==='zh'?'按钮文案':'Label' }}</label><input v-model="bsForm.oauth_label" class="form-input form-input-lg" /></div>
           </div>
-          <!-- 模型列表（仅按量付费需要） -->
-          <div v-if="bsForm.category==='payg'" style="margin:14px 0">
+          <!-- 模型列表：按量付费 / API 订阅 / 可转 API 的 APP 订阅 -->
+          <div v-if="bsForm.category==='payg' || bsForm.category==='api_sub' || (bsForm.category==='app_sub' && bsForm.subscription_to_api)" style="margin:14px 0">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
               <span style="font-size:13px;font-weight:600">{{ lang==='zh'?'可用模型':'Models' }}</span>
               <button type="button" class="btn-xs" @click="bsAddModel">＋ {{ lang==='zh'?'添加模型':'Add' }}</button>
             </div>
+            <p v-if="bsForm.category==='api_sub'" style="font-size:11px;color:#999;margin:-4px 0 8px;line-height:1.4">
+              {{ lang==='zh'
+                ? 'API 订阅供给源卡片展示的默认模型与刊例价（USD / 1M tokens）'
+                : 'Default models and list prices for API subscription supply cards' }}
+            </p>
+            <p v-else-if="bsForm.category==='app_sub' && bsForm.subscription_to_api" style="font-size:11px;color:#999;margin:-4px 0 8px;line-height:1.4">
+              {{ lang==='zh'
+                ? '转 API 后供给源卡片展示的默认模型与刊例价（USD / 1M tokens）'
+                : 'Default models and list prices shown on API supply cards after conversion' }}
+            </p>
             <div v-for="(m, mi) in bsForm.models" :key="mi" style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;align-items:center">
               <input v-model="m.id" class="form-input form-input-md" :placeholder="lang==='zh'?'模型 ID':'Model ID'" />
               <select v-model="m.modality" class="form-input form-input-sm">
@@ -700,8 +730,21 @@ select.form-input{cursor:pointer}
                 <option value="image">{{ lang==='zh'?'图像':'Image' }}</option>
                 <option value="embedding">Embedding</option>
               </select>
-              <input v-model="m.in" class="form-input form-input-sm" placeholder="in $/M" />
-              <input v-model="m.out" class="form-input form-input-sm" placeholder="out $/M" />
+              <!-- 对话：in / out / cache（USD / 1M tokens） -->
+              <template v-if="m.modality === 'chat'">
+                <input v-model="m.in" class="form-input form-input-sm" :placeholder="lang==='zh'?'in $/M':'in $/M'" title="in" />
+                <input v-model="m.out" class="form-input form-input-sm" :placeholder="lang==='zh'?'out $/M':'out $/M'" title="out" />
+                <input v-model="m.cacheRead" class="form-input form-input-sm" :placeholder="lang==='zh'?'cache $/M':'cache $/M'" title="cacheRead" />
+              </template>
+              <!-- 图像：按张计价 -->
+              <template v-else-if="m.modality === 'image'">
+                <input v-model="m.image" class="form-input form-input-sm" style="min-width:6rem" :placeholder="lang==='zh'?'$/张':'$/image'" title="image" />
+              </template>
+              <!-- Embedding：in / out -->
+              <template v-else>
+                <input v-model="m.in" class="form-input form-input-sm" :placeholder="lang==='zh'?'in $/M':'in $/M'" title="in" />
+                <input v-model="m.out" class="form-input form-input-sm" :placeholder="lang==='zh'?'out $/M':'out $/M'" title="out" />
+              </template>
               <button type="button" class="btn-xs btn-danger" @click="bsRemoveModel(mi)">×</button>
             </div>
           </div>

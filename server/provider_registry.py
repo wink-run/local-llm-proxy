@@ -74,8 +74,10 @@ def _model_names(models) -> list[str]:
 
 
 def to_catalog_entry(entry: dict) -> dict:
-    """registry 条目 → GET /api/catalog 下发的 provider 对象。"""
+    """registry 条目 → GET /api/catalog 下发的 provider 对象（含 models / pricing）。"""
     handler = entry.get("handler") or "openai"
+    raw_models = entry.get("models") if isinstance(entry.get("models"), list) else []
+    pricing = dict(entry.get("pricing") or {}) if isinstance(entry.get("pricing"), dict) else {}
     cat = {
         "id": entry["id"],
         "type": entry.get("tier") or "paid",
@@ -90,7 +92,8 @@ def to_catalog_entry(entry: dict) -> dict:
         "modalities": entry.get("modalities") if isinstance(entry.get("modalities"), dict) else {},
         "handler": handler,
         "api_format": entry.get("api_format") or "openai",
-        "models": entry.get("models") if isinstance(entry.get("models"), list) else [],
+        "models": raw_models,
+        "pricing": pricing,
     }
     if entry.get("oauth"):
         cat["oauth"] = entry["oauth"]

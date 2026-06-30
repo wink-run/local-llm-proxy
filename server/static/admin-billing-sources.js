@@ -81,7 +81,8 @@ window.initBillingSourcesAdmin = function (api, lang, ref) {
         models: (source.models || []).map(m => ({
           id: m.id, modality: m.modality || 'chat',
           in: m.pricing?.in ?? '', out: m.pricing?.out ?? '',
-          cacheRead: m.pricing?.cacheRead ?? '', cacheWrite: m.pricing?.cacheWrite ?? '',
+          cacheRead: m.pricing?.cacheRead ?? '',
+          image: m.pricing?.image ?? '',
         })),
         plans: (source.plans || []).map(p => ({
           id: p.id, label: p.label || p.id, monthly_usd: p.monthly_usd ?? '',
@@ -97,7 +98,7 @@ window.initBillingSourcesAdmin = function (api, lang, ref) {
   function closeBsModal() { bsModalOpen.value = false; bsEditId.value = null }
 
   function bsAddModel() {
-    bsForm.value.models.push({ id: '', modality: 'chat', in: '', out: '', cacheRead: '', cacheWrite: '' })
+    bsForm.value.models.push({ id: '', modality: 'chat', in: '', out: '', cacheRead: '', image: '' })
   }
   function bsRemoveModel(i) { bsForm.value.models.splice(i, 1) }
   function bsAddPlan() {
@@ -108,16 +109,23 @@ window.initBillingSourcesAdmin = function (api, lang, ref) {
   function buildPayload() {
     const f = bsForm.value
     const isPayg = f.category === 'payg'
-    const models = isPayg ? (f.models || []).filter(m => m.id?.trim()).map(m => ({
-      id: m.id.trim(),
-      modality: m.modality || 'chat',
-      pricing: {
-        ...(m.in !== '' && m.in != null ? { in: Number(m.in) } : {}),
-        ...(m.out !== '' && m.out != null ? { out: Number(m.out) } : {}),
-        ...(m.cacheRead !== '' && m.cacheRead != null ? { cacheRead: Number(m.cacheRead) } : {}),
-        ...(m.cacheWrite !== '' && m.cacheWrite != null ? { cacheWrite: Number(m.cacheWrite) } : {}),
-      },
-    })) : []
+    // 按量付费、API 订阅、可转 API 的 APP 订阅均需保存 base_url 与模型刊例
+    const needsModels = isPayg || f.category === 'api_sub'
+      || (f.category === 'app_sub' && f.subscription_to_api)
+    const models = needsModels ? (f.models || []).filter(m => m.id?.trim()).map(m => {
+      const modality = m.modality || 'chat'
+      let pricing = {}
+      if (modality === 'image') {
+        if (m.image !== '' && m.image != null) pricing = { image: Number(m.image) }
+      } else {
+        pricing = {
+          ...(m.in !== '' && m.in != null ? { in: Number(m.in) } : {}),
+          ...(m.out !== '' && m.out != null ? { out: Number(m.out) } : {}),
+          ...(modality === 'chat' && m.cacheRead !== '' && m.cacheRead != null ? { cacheRead: Number(m.cacheRead) } : {}),
+        }
+      }
+      return { id: m.id.trim(), modality, pricing }
+    }) : []
     const plans = (f.plans || []).filter(p => p.id?.trim()).map(p => ({
       id: p.id.trim(),
       label: (p.label || p.id).trim(),
@@ -207,11 +215,30 @@ window.initBillingSourcesAdmin = function (api, lang, ref) {
     finally { bsSaving.value = false }
   }
 
+  async function exportBsDefaults() {
+    const tip = lang.value === 'zh'
+      ? '将当前目录写入仓库默认 YAML（sources.default.yaml、providers.registry.yaml、客户端 tokenbank.tools.default.yaml），确认？'
+      : 'Write current catalog to repo default YAML files. Continue?'
+    if (!confirm(tip)) return
+    bsSaving.value = true; bsMsg.value = ''
+    try {
+      const r = await api('/admin/billing/export-defaults', { method: 'POST' })
+      const d = await r.json()
+      if (!r.ok) { bsMsg.value = d.detail || `HTTP ${r.status}`; return }
+      const paths = (d.files || []).filter(f => f.ok).map(f => f.path).join(', ')
+      const failed = (d.files || []).filter(f => !f.ok)
+      bsMsg.value = lang.value === 'zh'
+        ? `✓ 已导出 ${d.files_written} 个文件：${paths}${failed.length ? '；失败：' + failed.map(f => f.path).join(', ') : ''}`
+        : `✓ Exported ${d.files_written} file(s): ${paths}${failed.length ? '; failed: ' + failed.map(f => f.path).join(', ') : ''}`
+    } catch (e) { bsMsg.value = e.message }
+    finally { bsSaving.value = false }
+  }
+
   return {
     bsSources, bsFilter, bsMsg, bsSaving, bsModalOpen, bsEditId, bsForm,
     bsFiltered, catLabel,
     fetchBillingSources, openBsModal, closeBsModal,
     bsAddModel, bsRemoveModel, bsAddPlan, bsRemovePlan,
-    saveBsSource, deleteBsSource, importBsLegacy, publishBsSources,
+    saveBsSource, deleteBsSource, importBsLegacy, publishBsSources, exportBsDefaults,
   }
 }
