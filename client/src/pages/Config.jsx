@@ -5,6 +5,7 @@ import { useTheme } from '../store/theme';
 import { getConfig, getGateway } from '../api/adapter';
 import { useLang } from '../store/lang';
 import { useCurrency } from '../store/currency';
+import { useUpdater } from '../store/updater';
 import { defaultCurrencyForLang, DEFAULT_USD_CNY_RATE } from '../utils/currency';
 import { SERVER_URL_PLACEHOLDER, normalizeServerBase, syncCloudConfigUrl, bootstrapServerUrl } from '../config';
 
@@ -77,7 +78,14 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
   const { theme, setTheme } = useTheme();
   const { lang, setLang, t } = useLang();
   const { currency, usdCnyRate, applySettings } = useCurrency();
+  const updater = useUpdater();
   const navigate = useNavigate();
+  const isDesktop = !!window.electronAPI?.updater;
+
+  // 应用更新
+  const [allowPrerelease, setAllowPrerelease] = useState(false);
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateMsg, setUpdateMsg] = useState('');
 
   // 货币展示（内部仍以 USD 结算）
   const [displayCurrency, setDisplayCurrency] = useState(currency);
@@ -127,7 +135,40 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
     getGateway().status().then(s => {
       if (s?.port) setGatewayPort(s.port);
     }).catch(() => {});
+    window.electronAPI?.updater?.getSettings?.().then(s => {
+      if (s?.allowPrerelease != null) setAllowPrerelease(!!s.allowPrerelease);
+    }).catch(() => {});
   }, []);
+
+  async function handleAllowPrereleaseChange(next) {
+    setAllowPrerelease(next);
+    setUpdateMsg('');
+    try {
+      await window.electronAPI?.updater?.setAllowPrerelease?.(next);
+    } catch { /* 离线 */ }
+  }
+
+  async function handleCheckUpdate() {
+    if (!window.electronAPI?.updater?.checkNow) return;
+    setUpdateChecking(true);
+    setUpdateMsg('');
+    try {
+      const r = await window.electronAPI.updater.checkNow();
+      if (r.status === 'dev') {
+        setUpdateMsg(t('settings.updateDevSkip'));
+      } else if (r.status === 'available') {
+        setUpdateMsg(t('settings.updateAvailable', { version: r.version }));
+      } else if (r.status === 'latest') {
+        setUpdateMsg(t('settings.updateLatest', { version: r.version || window.electronAPI.version }));
+      } else {
+        setUpdateMsg(`${t('settings.updateError')}${r.message ? `: ${r.message}` : ''}`);
+      }
+    } catch (e) {
+      setUpdateMsg(`${t('settings.updateError')}: ${e.message || ''}`);
+    } finally {
+      setUpdateChecking(false);
+    }
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -343,6 +384,51 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
           </Row>
         </div>
       </div>
+
+      {/* 应用更新（仅桌面端） */}
+      {isDesktop && (
+        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
+            <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings.update')}</h2>
+            <p className="text-xs text-gray-500 mt-0.5">{t('settings.updateHint')}</p>
+          </div>
+          <div className="divide-y divide-gray-200/60 dark:divide-gray-800/60">
+            <Row label={t('settings.updateAllowBeta')} hint={t('settings.updateAllowBetaHint')}>
+              <Toggle
+                enabled={allowPrerelease}
+                onChange={() => handleAllowPrereleaseChange(!allowPrerelease)}
+              />
+            </Row>
+            <div className="px-5 py-4 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={handleCheckUpdate}
+                disabled={updateChecking}
+                className="text-sm px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium transition-colors"
+              >
+                {updateChecking ? t('settings.updateChecking') : t('settings.updateCheck')}
+              </button>
+              {updater?.pendingVersion && (
+                <button
+                  type="button"
+                  onClick={() => updater.install()}
+                  className="text-sm px-4 py-2 rounded-xl bg-green-600 hover:bg-green-500 text-white font-medium transition-colors"
+                >
+                  {t('settings.updateInstall')}
+                </button>
+              )}
+              {updateMsg && (
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">{updateMsg}</span>
+              )}
+              {!updateMsg && updater?.pendingVersion && (
+                <span className="text-xs text-green-600 dark:text-green-400">
+                  {t('settings.updateReady', { version: updater.pendingVersion })}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Server URL */}
       <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">

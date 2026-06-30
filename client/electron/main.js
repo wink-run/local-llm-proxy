@@ -25,6 +25,7 @@ const VITE_URL = 'http://localhost:5173';
 // macOS 菜单栏显示名（dev 下系统设置里通常显示 Electron）
 if (process.platform === 'darwin') app.setName('Token Bank');
 const AGENT_CONFIG_PATH = path.join(os.homedir(), '.llm-agent', 'config.json');
+const TB_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.yaml');
 // Claude Desktop 3p 配置目录（按平台）：
 //   Windows → %LOCALAPPDATA%\Claude-3p\configLibrary
 //   macOS   → ~/Library/Application Support/Claude-3p/configLibrary
@@ -136,6 +137,22 @@ function isClaudeDesktopApp(app_id) {
     const app = (readLocalConfig()?.apps || []).find(a => a.id === app_id);
     return app?.preset_id === 'claude-desktop';
   } catch { return false; }
+}
+
+/** 还原 config-file 应用配置（与 apps:revertConfigFile IPC 共用） */
+function revertAppConfigFile(app_id, config_file) {
+  if (isClaudeDesktopApp(app_id)) runClaude3pSync('revert');
+  const cl = require('./config-loader');
+  let file = cl.expandHome(cl.resolvePlaceholders(String(config_file || ''), {}));
+  if (file) {
+    const bak = file + '.tokenbank-bak';
+    if (fs.existsSync(bak)) {
+      try { fs.copyFileSync(bak, file); } catch {}
+    } else {
+      try { if (fs.existsSync(file)) fs.unlinkSync(file); } catch {}
+    }
+  }
+  if (isClaudeDesktopApp(app_id)) revertClaudeDesktopOfficialExtras();
 }
 
 function shouldUseClaude3pConfigWrite({ app_id, config_file, file }) {
@@ -723,32 +740,53 @@ function stopAgent() {
 
 /** 已下载、待用户重启安装的版本（侧栏标识用） */
 let pendingUpdateReady = null;
+let updaterRendererReady = false;
+const pendingUpdateEvents = [];
+let updaterEventsBound = false;
 
-function setupAutoUpdater() {
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.logger = console;
-
-  // renderer 未就绪时缓存 IPC 事件，避免 update:available 等消息丢失
-  let rendererReady = false;
-  const pendingUpdateEvents = [];
-
-  function pushUpdateEvent(channel, data) {
-    if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(channel, data);
-      return;
-    }
-    pendingUpdateEvents.push({ channel, data });
+function pushUpdateEvent(channel, data) {
+  if (updaterRendererReady && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, data);
+    return;
   }
+  pendingUpdateEvents.push({ channel, data });
+}
 
-  function markRendererReady() {
-    rendererReady = true;
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    for (const { channel, data } of pendingUpdateEvents) {
-      mainWindow.webContents.send(channel, data);
-    }
-    pendingUpdateEvents.length = 0;
+function markUpdaterRendererReady() {
+  updaterRendererReady = true;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  for (const { channel, data } of pendingUpdateEvents) {
+    mainWindow.webContents.send(channel, data);
   }
+  pendingUpdateEvents.length = 0;
+}
+
+/** 是否接收 beta/alpha/rc 预发布（用户可在设置页覆盖） */
+function readUpdaterAllowPrerelease() {
+  try {
+    const v = readLocalConfig().updater_allow_prerelease;
+    if (typeof v === 'boolean') return v;
+  } catch { /* 首次启动无配置 */ }
+  // 未显式设置时：当前安装包为预发布则默认可升预发布
+  return /-(alpha|beta|rc)/i.test(String(app.getVersion() || ''));
+}
+
+function applyUpdaterAllowPrerelease(allow) {
+  const v = allow != null ? !!allow : readUpdaterAllowPrerelease();
+  autoUpdater.allowPrerelease = v;
+  return v;
+}
+
+function persistUpdaterAllowPrerelease(allow) {
+  const cfg = readLocalConfig();
+  cfg.updater_allow_prerelease = !!allow;
+  writeLocalConfig(cfg);
+  return applyUpdaterAllowPrerelease(!!allow);
+}
+
+function bindUpdaterEvents() {
+  if (updaterEventsBound) return;
+  updaterEventsBound = true;
 
   autoUpdater.on('update-available', (info) => {
     console.info('[updater] update available:', info.version);
@@ -771,37 +809,79 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on('update-not-available', (info) => {
-    console.info('[updater] already on latest:', info.version);
+    console.info('[updater] already on latest:', info?.version);
+    pushUpdateEvent('update:not-available', { version: info?.version || app.getVersion() });
   });
 
   autoUpdater.on('error', (err) => {
     console.error('[updater] error:', err.message);
-    // 下载失败才清除；已下载待安装时不应因后续检查失败而丢失状态
     if (!pendingUpdateReady) {
       pushUpdateEvent('update:error', { message: err.message });
     }
   });
+}
+
+function runUpdaterCheck() {
+  return autoUpdater.checkForUpdates().catch((err) => {
+    console.error('[updater] checkForUpdates error:', err.message);
+    throw err;
+  });
+}
+
+/** 手动检查：等待 available / not-available / error 其一 */
+function checkForUpdatesAndWait(timeoutMs = 60000) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (payload) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      autoUpdater.removeListener('update-available', onAvail);
+      autoUpdater.removeListener('update-not-available', onNotAvail);
+      autoUpdater.removeListener('error', onErr);
+      resolve(payload);
+    };
+    const onAvail = (info) => finish({ status: 'available', version: info.version });
+    const onNotAvail = (info) => finish({ status: 'latest', version: info?.version || app.getVersion() });
+    const onErr = (err) => finish({ status: 'error', message: err?.message || String(err) });
+    const timer = setTimeout(() => finish({ status: 'error', message: 'check timeout' }), timeoutMs);
+    autoUpdater.once('update-available', onAvail);
+    autoUpdater.once('update-not-available', onNotAvail);
+    autoUpdater.once('error', onErr);
+    runUpdaterCheck().catch((e) => finish({ status: 'error', message: e.message }));
+  });
+}
+
+function setupAutoUpdater() {
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = console;
+  applyUpdaterAllowPrerelease();
+  bindUpdaterEvents();
 
   const CHECK_DELAY_MS = 3000;
   const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
-  function checkForUpdates() {
-    autoUpdater.checkForUpdates().catch((err) => {
-      console.error('[updater] checkForUpdates error:', err.message);
-    });
+  function scheduleInitialCheck() {
+    setTimeout(() => {
+      markUpdaterRendererReady();
+      runUpdaterCheck();
+    }, CHECK_DELAY_MS);
   }
 
-  // 等页面加载 + React 挂载 listener 后再检查，并定期重试
-  if (mainWindow) {
-    mainWindow.webContents.once('did-finish-load', () => {
-      setTimeout(() => {
-        markRendererReady();
-        checkForUpdates();
-      }, CHECK_DELAY_MS);
-    });
+  // 等页面加载 + React 挂载 listener 后再检查；若 init 较慢导致 did-finish-load 已触发则立即排期
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const wc = mainWindow.webContents;
+    if (wc.isLoading()) {
+      wc.once('did-finish-load', scheduleInitialCheck);
+    } else {
+      scheduleInitialCheck();
+    }
+  } else {
+    scheduleInitialCheck();
   }
 
-  setInterval(checkForUpdates, CHECK_INTERVAL_MS);
+  setInterval(() => runUpdaterCheck(), CHECK_INTERVAL_MS);
 }
 
 // ── Agent config helpers ──────────────────────────────────────────────────────
@@ -1004,6 +1084,27 @@ function resolveCfgPath(p) {
   try { const cl = require('./config-loader'); return cl.expandHome(cl.resolvePlaceholders(String(p || ''), {})); }
   catch { return String(p || ''); }
 }
+// 递归解析 patch/env 中的 {BASE}/{KEY}/{REVERSE}（WorkBuddy models.json 等嵌套结构）
+function resolvePatchDeep(obj, ctx = {}) {
+  const cl = require('./config-loader');
+  if (typeof obj === 'string') {
+    return cl.resolvePlaceholders(obj, {
+      reverse: ctx.reverse,
+      mitm: ctx.mitm,
+      caPath: ctx.caPath,
+    })
+      .replace(/\{BASE\}/g, ctx.base || '')
+      .replace(/\{KEY\}/g, ctx.key || '');
+  }
+  if (Array.isArray(obj)) return obj.map(v => resolvePatchDeep(v, ctx));
+  if (obj && typeof obj === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(obj)) out[k] = resolvePatchDeep(v, ctx);
+    return out;
+  }
+  return obj;
+}
+
 // dot-path patch（a.b.c）→ 嵌套对象（用于整份写出 JSON / YAML 配置）
 function patchToObject(patch) {
   const obj = {};
@@ -1413,6 +1514,29 @@ function registerIPC() {
     version: pendingUpdateReady?.version ?? null,
   }));
 
+  ipcMain.handle('updater:getSettings', () => ({
+    enabled: !isDev,
+    currentVersion: app.getVersion(),
+    allowPrerelease: readUpdaterAllowPrerelease(),
+    ready: !!pendingUpdateReady,
+    pendingVersion: pendingUpdateReady?.version ?? null,
+  }));
+
+  ipcMain.handle('updater:setAllowPrerelease', (_e, allow) => ({
+    allowPrerelease: persistUpdaterAllowPrerelease(!!allow),
+  }));
+
+  ipcMain.handle('updater:checkNow', async () => {
+    if (isDev) return { status: 'dev', message: 'dev mode' };
+    if (!updaterEventsBound) {
+      applyUpdaterAllowPrerelease();
+      bindUpdaterEvents();
+    } else {
+      applyUpdaterAllowPrerelease();
+    }
+    return checkForUpdatesAndWait();
+  });
+
   ipcMain.handle('gateway:status',        () => gateway.getStatus());
   ipcMain.handle('gateway:getLog',        () => gateway.getLog());
   ipcMain.handle('gateway:restart',       () => gateway.restart());
@@ -1493,10 +1617,9 @@ function registerIPC() {
   // tools/protocols/mitm/routing 段 → ~/.tokenbank/tokenbank.yaml（config-loader）
   // scene_routes 段               → local-config.scene_routes
   const configLoader = require('./config-loader');
-  const TB_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.yaml');
   const TB_TOOLS_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.tools.yaml');
   // 应用段 → tokenbank.yaml；源/计费段 → tokenbank.tools.yaml（两文件分离下发）
-  const APP_SECTIONS = new Set(['version', 'tools', 'mitm', 'gateway', 'app_presets', 'api_key_apps']);
+  const APP_SECTIONS = new Set(['version', 'gateway', 'mitm', 'claude_models', 'app_entities', 'session_scans', 'handlers']);
   const SOURCE_SECTIONS = new Set(['subscription_plans', 'subscription_apps', 'api_subscription_apps', 'payg_providers']);
   const ROUTES_SECTIONS = new Set(['scene_routes']);
 
@@ -1518,6 +1641,9 @@ function registerIPC() {
       try {
         for (const t of configLoader.tools()) beforeIds.add('tool:' + t.id);
         for (const a of (configLoader.apiKeyApps() || [])) beforeIds.add('app:' + a.id);
+        for (const s of (configLoader.sessionSources() || [])) {
+          if (s.direct_only) beforeIds.add('direct:' + s.id);
+        }
       } catch {}
       // replace=true：服务端全量覆盖；否则与本地文件合并
       const writeMerged = (file, sectionSet) => {
@@ -1559,13 +1685,16 @@ function registerIPC() {
       try {
         for (const t of configLoader.tools()) if (!beforeIds.has('tool:' + t.id)) addedApps.push(t.name || t.id);
         for (const a of (configLoader.apiKeyApps() || [])) if (!beforeIds.has('app:' + a.id)) addedApps.push(a.name || a.id);
+        for (const s of (configLoader.sessionSources() || [])) {
+          if (s.direct_only && !beforeIds.has('direct:' + s.id)) addedApps.push(s.app_name || s.id);
+        }
       } catch {}
 
       // 通知渲染进程刷新应用列表（让新的可配置行 / 托管状态立即显示）
       try { mainWindow?.webContents?.send('apps:changed'); } catch {}
     }
 
-    // 路由配置（scene_routes）→ 写入 local-config（本地优先：已有保留，只追加新）
+    // 路由配置（scene_routes）→ 写入 local-config
     const hasScenes  = Array.isArray(parsed.scene_routes) && parsed.scene_routes.length > 0;
     const addedRoutes = [];   // 本次同步「新增」的场景路由（本地没有、server 有）
     if (hasScenes) {
@@ -1574,11 +1703,28 @@ function registerIPC() {
       const local = cfg.scene_routes || [];
       const localKeys = new Set();
       for (const r of local) { if (r.id) localKeys.add(r.id); if (r.model_key) localKeys.add(r.model_key); }
-      const newFromServer = parsed.scene_routes
-        .filter(r => !localKeys.has(r.id) && !localKeys.has(r.model_key))
-        .map(r => ({ ...r, created_at: r.created_at || now }));
-      for (const r of newFromServer) addedRoutes.push(r.scene_name || r.model_key || r.id);
-      cfg.scene_routes = [...local, ...newFromServer];
+      // replace=true（服务端全量同步）：按 id 合并更新 steps 等字段，保留用户自建路由
+      if (opts.replace === true) {
+        const byId = new Map();
+        for (const r of local) { if (r.id) byId.set(r.id, r); }
+        for (const r of parsed.scene_routes) {
+          if (!r.id) continue;
+          const existing = byId.get(r.id);
+          if (existing) {
+            Object.assign(existing, r);
+          } else {
+            byId.set(r.id, { ...r, created_at: r.created_at || now });
+            addedRoutes.push(r.scene_name || r.model_key || r.id);
+          }
+        }
+        cfg.scene_routes = [...byId.values()];
+      } else {
+        const newFromServer = parsed.scene_routes
+          .filter(r => !localKeys.has(r.id) && !localKeys.has(r.model_key))
+          .map(r => ({ ...r, created_at: r.created_at || now }));
+        for (const r of newFromServer) addedRoutes.push(r.scene_name || r.model_key || r.id);
+        cfg.scene_routes = [...local, ...newFromServer];
+      }
       cfg.initialized_routes = true;
       writeLocalConfig(cfg);
       syncGatewayFromConfig(cfg);
@@ -1597,7 +1743,7 @@ function registerIPC() {
     }
 
     if (!applied.tools && !applied.routes) {
-      return { ok: false, error: '文件中未找到可识别的配置段（tools / scene_routes）' };
+      return { ok: false, error: '文件中未找到可识别的配置段（app_entities / scene_routes）' };
     }
     return { ok: true, source, applied, addedApps, addedRoutes };
   }
@@ -1606,14 +1752,17 @@ function registerIPC() {
     const https = require('https'); const http = require('http');
     return new Promise((resolve, reject) => {
       const mod = url.startsWith('https') ? https : http;
-      // 服务器配置端点需用户 JWT 鉴权；带上 token（renderer 的 localStorage.token）
+      // /config/apps 公开；sources/scenes 等仍可选带 JWT
       const opts = { timeout: 10000, headers: token ? { Authorization: `Bearer ${token}` } : {} };
       mod.get(url, opts, res => {
         let data = '';
         res.on('data', c => data += c);
         res.on('end', () => {
           if (res.statusCode && res.statusCode >= 400) {
-            reject(new Error(`服务器返回 HTTP ${res.statusCode}（请确认已登录且服务器已上传配置）`));
+            const hint = res.statusCode === 401
+              ? '请确认已登录（此接口需要鉴权）'
+              : '请确认服务器已上传配置';
+            reject(new Error(`服务器返回 HTTP ${res.statusCode}（${hint}）`));
           } else {
             resolve(data);
           }
@@ -1648,15 +1797,20 @@ function registerIPC() {
   /** 从 Token Bank 服务端拉取 apps / sources / scenes 配置 */
   async function pullServerConfig(serverUrl, token, { replace = false } = {}) {
     const base = String(serverUrl || '').replace(/\/$/, '').replace(/\/(api|v\d+)(\/.*)?$/, '');
-    if (!base || !token) return { ok: false, error: 'missing_auth' };
+    if (!base) return { ok: false, error: 'missing_server' };
     const results = [];
     for (const ep of ['/api/config/apps', '/api/config/sources', '/api/config/scenes']) {
       const url = base + ep;
+      const isPublicApps = ep === '/api/config/apps';
+      if (!isPublicApps && !token) {
+        results.push({ endpoint: ep, ok: false, error: 'missing_auth' });
+        continue;
+      }
       try {
-        const text = await fetchYaml(url, token);
+        const text = await fetchYaml(url, isPublicApps ? (token || null) : token);
         const parsed = require('js-yaml').load(text);
         // apps/sources 全量覆盖本地默认；scenes 仍增量合并
-        const shouldReplace = replace && (ep.includes('/apps') || ep.includes('/sources'));
+        const shouldReplace = replace && (ep.includes('/apps') || ep.includes('/sources') || ep.includes('/scenes'));
         const r = applyConfigDoc(parsed, url, { replace: shouldReplace });
         results.push({ endpoint: ep, ...r });
       } catch (e) {
@@ -1738,10 +1892,11 @@ function registerIPC() {
     };
     // agent_id → protocol（来自 tools 配置）
     const toolProto = {};
+    let appEntityById = () => null;
     try {
-      for (const t of require('./config-loader').tools()) {
-        toolProto[t.id] = t.protocol;
-      }
+      const cl = require('./config-loader');
+      appEntityById = (id) => cl.appEntityById(id);
+      for (const t of cl.tools()) toolProto[t.id] = t.protocol;
     } catch {}
 
     const appControls = [];
@@ -1749,10 +1904,18 @@ function registerIPC() {
     const { bindRouteToKeyScene } = require('../shared/route-binding');
     for (const app of apps) {
       const ctrl = { app_id: app.id, app_name: app.name };
+      const aid = app.agent_id || app.preset_id;
+      const ent = aid ? appEntityById(aid) : null;
+      const caps = aid ? (() => { try { return require('./config-loader').appCapabilities(aid); } catch { return null; } })() : null;
+      const gwProxy = caps ? !!caps.gateway_proxy : !!ent?.gateway_proxy;
+      const routeBindable = (app.link_method === 'api-key' || app.link_method === 'manual' || app.link_method === 'shim')
+        ? gwProxy && (ent ? ent.route_bindable !== false : app.route_bindable !== false)
+        : (ent ? ent.route_bindable !== false : app.route_bindable !== false);
       if ((app.link_method === 'api-key' || app.link_method === 'manual') && app.api_key) {
         appControls.push({ ...ctrl, match: { key: app.api_key } });
-        if (app.route_id) bindRouteToKeyScene(keyScene, app.api_key, app.route_id, routes);
+        if (app.route_id && routeBindable) bindRouteToKeyScene(keyScene, app.api_key, app.route_id, routes);
       } else if (app.link_method === 'shim' && app.agent_id) {
+        if (!routeBindable || !toolProto[app.agent_id]) continue;
         const path = PROTOCOL_PATH[toolProto[app.agent_id]];
         if (path) appControls.push({ ...ctrl, match: { path } });
         if (app.api_key && app.route_id) bindRouteToKeyScene(keyScene, app.api_key, app.route_id, routes);
@@ -2077,21 +2240,22 @@ function registerIPC() {
   // 各自复用既有检测逻辑判定 installed；install_url 集中维护官方下载页（无把握的留 null → 前端灰显不可点）。
   ipcMain.handle('apps:supported', () => {
     const configLoader = require('./config-loader');
-    // 安装链接来自配置（app_install_urls：内置默认兜底 + 服务端下发可覆盖），不硬编码
+    const entityMeta = (id) => {
+      try { return configLoader.appEntityById(id); } catch { return null; }
+    };
     const INSTALL_URLS = configLoader.appInstallUrls();
     const UNINSTALL_URLS = configLoader.appUninstallUrls();
     const INSTALL_GUIDES = configLoader.appInstallGuides();
     const UNINSTALL_GUIDES = configLoader.appUninstallGuides();
     const guide = (map, id) => configLoader.resolveGuide(map[id]);
-    // tools 段 yaml 无 icon 字段 → 给 CLI 工具一组兜底图标（与 apps:list 的 TOOL_ICONS 同源）
-    const TOOL_ICON = { 'claude-code': '🤖', 'codex': '💻', 'gemini-cli': '🔮', 'opencode': '📝', 'hermes': '🧠' };
     const out = [];
     const seen = new Set();
     const add = (o) => { if (o && o.id && !seen.has(o.id)) { seen.add(o.id); out.push(o); } };
     try {
-      // ① CLI 工具（shim 注入）：agentLinker.list() 已带 installed
       for (const tool of agentLinker.list()) {
-        add({ id: tool.id, name: tool.name || tool.id, icon: TOOL_ICON[tool.id] || '🤖',
+        const ent = entityMeta(tool.id);
+        add({ id: tool.id, name: ent?.name || tool.name || tool.id, icon: ent?.icon || '🤖',
+              capabilities: ent?.capabilities || tool.capabilities || null,
               installed: !!tool.installed,
               install_url: INSTALL_URLS[tool.id] || null,
               uninstall_url: UNINSTALL_URLS[tool.id] || null,
@@ -2102,7 +2266,9 @@ function registerIPC() {
       // ② 桌面应用（写配置文件）：被管理员禁用(enable_3p:false)的不展示
       for (const d of (configLoader.apiKeyApps() || [])) {
         if (d.enable_3p === false) continue;
-        add({ id: d.id, name: d.name || d.id, icon: d.icon || '🖥️',
+        const ent = entityMeta(d.id);
+        add({ id: d.id, name: ent?.name || d.name || d.id, icon: ent?.icon || d.icon || '🖥️',
+              capabilities: ent?.capabilities || d.capabilities || null,
               installed: apiKeyAppDetected(d),
               install_url: INSTALL_URLS[d.id] || null,
               uninstall_url: UNINSTALL_URLS[d.id] || null,
@@ -2110,18 +2276,20 @@ function registerIPC() {
               uninstall_guide: guide(UNINSTALL_GUIDES, d.id),
               kind: 'desktop' });
       }
-      // ③ 仅统计（direct_only 会话源，如 Cursor）：会话目录存在即视为已安装
+      // ③ 会话统计源：direct_only 与可绑路由两类，目录存在即视为已安装
       for (const s of (configLoader.sessionSources() || [])) {
-        if (!s || !s.direct_only || !s.agent_id) continue;
+        if (!s || !s.agent_id) continue;
         let installed = false;
         try { installed = !!s.root && fs.existsSync(configLoader.expandHome(s.root)); } catch {}
-        add({ id: s.agent_id, name: s.app_name || s.agent_id, icon: s.app_icon || '🖱',
+        add({ id: s.agent_id, name: s.app_name || entityMeta(s.agent_id)?.name || s.agent_id,
+              icon: s.app_icon || entityMeta(s.agent_id)?.icon || '🖱',
+              capabilities: entityMeta(s.agent_id)?.capabilities || null,
               installed,
               install_url: INSTALL_URLS[s.agent_id] || null,
               uninstall_url: UNINSTALL_URLS[s.agent_id] || null,
               install_guide: guide(INSTALL_GUIDES, s.agent_id),
               uninstall_guide: guide(UNINSTALL_GUIDES, s.agent_id),
-              kind: 'direct' });
+              kind: s.direct_only ? 'direct' : 'session' });
       }
     } catch (e) { console.error('[apps:supported] failed:', e.message); }
     // 已安装靠前（彩色在左），其次有安装链接的，最后无链接的小众工具
@@ -2130,6 +2298,65 @@ function registerIPC() {
   });
 
   ipcMain.handle('apps:list', () => {
+    const configLoader = require('./config-loader');
+    const entityMeta = (id) => {
+      try { return configLoader.appEntityById(id); } catch { return null; }
+    };
+    const sessionSrcOf = (agentId) => (configLoader.sessionSources() || []).find(s => s.agent_id === agentId);
+    const toolIds = new Set((configLoader.tools() || []).map(t => t.id));
+    const apiKeyIds = new Set((configLoader.apiKeyApps() || []).map(a => a.id));
+
+    /** 是否允许绑路由：api-key/shim/manual 须 gateway_proxy；session 须会话能力 */
+    const resolveRouteBindable = (app, fallback = true) => {
+      const aid = app.agent_id || app.preset_id;
+      if (!aid) return fallback !== false;
+
+      const ent = entityMeta(aid);
+      const caps = configLoader.appCapabilities(aid);
+      const gwProxy = caps ? !!caps.gateway_proxy : !!ent?.gateway_proxy;
+
+      if (app.link_method === 'shim' || app.link_method === 'api-key' || app.link_method === 'manual') {
+        return gwProxy;
+      }
+      if (app.link_method === 'session') {
+        const sessCaps = caps || ent?.capabilities || {};
+        return !!(sessCaps.session_trace || sessCaps.session_usage_import) && (ent?.route_bindable !== false);
+      }
+
+      if (app.link_method === 'shim') return gwProxy && toolIds.has(aid);
+      if (app.link_method === 'api-key' || app.preset_id) return gwProxy && apiKeyIds.has(app.preset_id || aid);
+      if (app.link_method === 'session') {
+        const src = sessionSrcOf(aid);
+        return !!(src && !src.direct_only);
+      }
+      return fallback !== false;
+    };
+
+    // 按云端实体能力同步本地持久化应用：取消路由能力时清空 route_id
+    try {
+      const cur = getApps();
+      let mutated = false;
+      for (const app of cur) {
+        const bindable = resolveRouteBindable(app, app.route_bindable);
+        if (app.route_bindable !== bindable) { app.route_bindable = bindable; mutated = true; }
+        if (!bindable && app.route_id) {
+          app.route_id = null;
+          mutated = true;
+          if (app.link_method === 'shim' && app.agent_id) {
+            try { agentLinker.revertById(app.agent_id); } catch {}
+          }
+          // 取消网关能力时还原 config-file 应用（如 Claude Desktop）
+          if ((app.link_method === 'api-key' || app.host_method === 'config-file') && app.config_file && app.hosted) {
+            try { revertAppConfigFile(app.id, app.config_file); } catch {}
+          }
+        }
+      }
+      if (mutated) {
+        saveApps(cur);
+        try { syncGatewayFromConfig(readLocalConfig()); } catch {}
+      }
+    } catch (e) { console.warn('[apps:list] sync route_bindable:', e.message); }
+
     // 检测到的 api-key 应用 → 自动建立「离线」持久条目（生成 key、不写配置文件），
     // 使其与透明托管(shim)一致：始终是真实条目、有完整的下拉/编辑/测试控件，
     // 「纳管」只是再写一次配置文件。去重以「目标配置文件」为准（同一文件不重复建）。
@@ -2160,33 +2387,78 @@ function registerIPC() {
     } catch (e) { console.error('[apps:list] materialize api-key failed:', e.message); }
 
     // direct_only 会话源 → 仅当本机会话数据目录存在时才创建并展示（未安装不显示）。
-    const configLoader = require('./config-loader');
+    // 非 direct_only 的会话源 → 可绑路由（link_method: session），仍只读 trace 不走网关代理。
     const directInstalled = (agentId) => {
-      const src = (configLoader.sessionSources() || []).find(s => s.agent_id === agentId);
+      const src = sessionSrcOf(agentId);
       if (!src?.root) return false;
       try { return fs.existsSync(configLoader.expandHome(src.root)); } catch { return false; }
     };
     try {
       const cur = getApps();
-      const haveDirect = new Set(cur.filter(a => a.link_method === 'direct').map(a => a.agent_id));
       let mutated = false;
+      // 按最新 session_sources 同步已持久化条目（云端改 direct_only 后本地须跟着变）
+      for (let i = 0; i < cur.length; i++) {
+        const app = cur[i];
+        if (!app.agent_id || (app.link_method !== 'direct' && app.link_method !== 'session')) continue;
+        const src = sessionSrcOf(app.agent_id);
+        if (!src) continue;
+        const wantDirect = !!src.direct_only;
+        if (wantDirect && app.link_method !== 'direct') {
+          app.link_method = 'direct';
+          app.route_bindable = false;
+          app.direct_only = true;
+          app.route_id = null;
+          mutated = true;
+        } else if (!wantDirect && app.link_method === 'direct') {
+          app.link_method = 'session';
+          app.route_bindable = resolveRouteBindable(app, true);
+          app.direct_only = false;
+          mutated = true;
+        }
+        if (src.app_name && app.name !== src.app_name) { app.name = src.app_name; mutated = true; }
+        if (src.app_icon && app.icon !== src.app_icon) { app.icon = src.app_icon; mutated = true; }
+      }
+      const haveAgent = new Set(cur.filter(a => a.agent_id && (a.link_method === 'direct' || a.link_method === 'session')).map(a => a.agent_id));
+      // 已有 shim / api-key 的 agent_id 不再为附属 session 单独建条目
+      const proxyAgentIds = new Set([
+        ...cur.filter(a => a.link_method === 'shim' || a.link_method === 'api-key').map(a => a.agent_id || a.preset_id),
+        ...((configLoader.tools() || []).map(t => t.id)),
+        ...((configLoader.apiKeyApps() || []).map(a => a.id)),
+      ]);
       for (const s of (configLoader.sessionSources() || [])) {
-        if (!s || !s.direct_only || !s.agent_id) continue;
-        if (haveDirect.has(s.agent_id)) continue;
+        if (!s || !s.agent_id) continue;
+        // standalone=false：附属统计，挂到已有 CLI/API 实体，不单独占百宝箱一行
+        if (s.standalone === false) continue;
+        if (proxyAgentIds.has(s.agent_id)) continue;
+        if (haveAgent.has(s.agent_id)) continue;
         if (!directInstalled(s.agent_id)) continue;
-        cur.push({
-          id: 'app-direct-' + s.agent_id,
-          name: s.app_name || s.agent_id, icon: s.app_icon || '🖱',
-          link_method: 'direct', agent_id: s.agent_id,
-          api_key: null, route_id: null,
-          route_bindable: false, direct_only: true,
-          hosted: true,    // 默认纳管+直连：只读会话日志统计
-          created_at: new Date().toISOString(),
-        });
-        haveDirect.add(s.agent_id); mutated = true;
+        if (s.direct_only) {
+          cur.push({
+            id: 'app-direct-' + s.agent_id,
+            name: s.app_name || s.agent_id, icon: s.app_icon || '🖱',
+            link_method: 'direct', agent_id: s.agent_id,
+            api_key: null, route_id: null,
+            route_bindable: false, direct_only: true,
+            hosted: true,
+            created_at: new Date().toISOString(),
+          });
+        } else {
+          cur.push({
+            id: 'app-session-' + s.agent_id,
+            name: s.app_name || s.agent_id, icon: s.app_icon || '🖱',
+            link_method: 'session', agent_id: s.agent_id,
+            api_key: null, route_id: null,
+            route_bindable: resolveRouteBindable({ agent_id: s.agent_id, link_method: 'session' }, true),
+            direct_only: false,
+            hosted: true,
+            created_at: new Date().toISOString(),
+          });
+        }
+        haveAgent.add(s.agent_id);
+        mutated = true;
       }
       if (mutated) saveApps(cur);
-    } catch (e) { console.error('[apps:list] materialize direct failed:', e.message); }
+    } catch (e) { console.error('[apps:list] materialize session failed:', e.message); }
 
     // 被管理员禁用（enable_3p:false）的 api_key 应用预设 id —— 这些应用整条隐藏
     const disabledPresets = new Set(
@@ -2197,14 +2469,21 @@ function registerIPC() {
 
     // 把 yaml tools 里有、但 apps[] 里还没有 shim 记录的 agent，动态补入
     const shimIds = new Set(savedApps.filter(a => a.link_method === 'shim').map(a => a.agent_id));
-    const TOOL_ICONS = { 'claude-code': '🤖', 'codex': '💻', 'gemini-cli': '🔮' };
-    const TOOL_NAMES = { 'claude-code': 'Claude Code CLI', 'codex': 'Codex CLI', 'gemini-cli': 'Gemini CLI' };
     const virtualShimApps = agentTools
       .filter(t => !shimIds.has(t.id))
-      .map(t => ({
+      .filter(t => toolIds.has(t.id))
+      .filter(t => {
+        const caps = configLoader.appCapabilities(t.id);
+        if (caps) return !!caps.gateway_proxy;
+        return true;
+      })
+      .map(t => {
+        const ent = entityMeta(t.id);
+        return {
         id: 'app-shim-' + t.id,
-        name: TOOL_NAMES[t.id] || t.name || t.id,
-        icon: TOOL_ICONS[t.id] || '🤖',
+        name: ent?.name || t.name || t.id,
+        icon: ent?.icon || '🤖',
+        capabilities: ent?.capabilities || t.capabilities || null,
         link_method: 'shim',
         agent_id: t.id,
         api_key: null,
@@ -2212,14 +2491,14 @@ function registerIPC() {
         description: '',
         type: t.type || 'cli',
         needs_ca: !!t.needs_ca,
-        route_bindable: t.route_bindable !== false,
+        route_bindable: ent ? ent.route_bindable !== false : (t.route_bindable !== false),
         unsupported: !!t.unsupported,
         note: t.note || null,
         installed: t.installed,
         linked: t.linked,
-        hosted: true,     // 默认纳管+直连：检测到即只读会话日志统计（取消纳管才停扫）
-        _virtual: true,   // 未持久化，仅展示
-      }));
+        hosted: true,
+        _virtual: true,
+      }; });
 
     // 合并：持久化的 app + 虚拟的 shim app
     const allApps = [...savedApps, ...virtualShimApps];
@@ -2239,25 +2518,66 @@ function registerIPC() {
       };
     };
 
+    const entityDerived = (aid) => {
+      const ent = entityMeta(aid);
+      if (!ent) return {};
+      return {
+        activity_agent_id: ent.activity_agent_id,
+        trace_agent_id: ent.trace_agent_id,
+        linked_data_sources: ent.linked_data_sources || [],
+        pricing_provider_id: ent.pricing_provider_id,
+        integrations: ent.integrations || {},
+        handoff_target: !!ent.handoff_target,
+        session_import: !!ent.session_import,
+        session_usage_import: ent.session_usage_import,
+        session_trace: ent.session_trace,
+        gateway_proxy: ent.gateway_proxy,
+      };
+    };
+
     // 注入实时托管状态 + 自动配置详情
     const rows = allApps
       .map(app => {
+        const aid = app.agent_id || app.preset_id;
+        const caps = aid ? configLoader.appCapabilities(aid) : null;
+        const ent = entityMeta(aid);
+        const derived = entityDerived(aid);
+        const routeBindable = resolveRouteBindable(app, app.route_bindable);
+        const withCaps = {
+          ...app,
+          ...derived,
+          capabilities: caps || ent?.capabilities || app.capabilities || null,
+          handler: ent?.handler || app.handler,
+          route_bindable: routeBindable,
+        };
         // 「仅直连·只统计」应用（cursor 等）：只读会话日志，不绑路由/不走网关。
         if (app.link_method === 'direct') {
-          return { ...app, linked: false, installed: true,
+          const src = sessionSrcOf(app.agent_id);
+          if (src && !src.direct_only) {
+            return { ...withCaps, linked: false, installed: true,
+                     hosted: app.hosted === true,
+                     direct_only: false, route_bindable: routeBindable,
+                     link_method: 'session', host_method: 'session' };
+          }
+          return { ...withCaps, linked: false, installed: true,
                    hosted: app.hosted === true,
                    direct_only: true, route_bindable: false, host_method: 'direct' };
+        }
+        if (app.link_method === 'session') {
+          return { ...withCaps, linked: false, installed: directInstalled(app.agent_id),
+                   hosted: app.hosted === true,
+                   direct_only: false, route_bindable: routeBindable, host_method: 'session' };
         }
         if (app.link_method === 'shim') {
           const tool = agentTools.find(t => t.id === app.agent_id);
           return {
-            ...app,
+            ...withCaps,
             linked: tool ? tool.linked : false,
             installed: tool ? tool.installed : false,
             hosted: app.hosted !== false,   // 默认纳管+直连（检测到即统计），仅显式取消纳管(false)才停扫
             type: tool ? tool.type : (app.type || 'cli'),
             note: tool ? tool.note : (app.note || null),
-            route_bindable: tool ? tool.route_bindable : (app.route_bindable !== false),
+            route_bindable: tool ? (resolveRouteBindable(app, tool.route_bindable)) : routeBindable,
             auto_config: autoConfigOf(app.agent_id),
           };
         }
@@ -2270,17 +2590,31 @@ function registerIPC() {
         const freshPatch       = def?.patch || app.patch;
         const freshEnv         = def?.env  ?? app.env;
         // 在线(经网关) = 纳管 且 绑了路由；纳管但直连(无 route_id) = 仅读文件、不走网关
-        return { ...app, linked: true, installed: true,
+        return { ...withCaps, linked: true, installed: true,
                  hosted: app.hosted === true,
                  configured: !!(app.hosted && app.route_id),
                  config_file: freshConfigFile, patch: freshPatch, env: freshEnv,
-                 route_bindable: def ? def.route_bindable !== false : (app.route_bindable !== false),
+                 route_bindable: def ? resolveRouteBindable({ ...app, preset_id: app.preset_id }, def.route_bindable) : routeBindable,
                  allow_direct: def ? def.allow_direct !== false : (app.allow_direct !== false),  // 无本地用量源的桌面壳=false
                  host_method: freshConfigFile ? 'config-file' : 'api-key' };
       })
       // 机器上没有的 shim / direct 应用不展示；api-key 应用始终展示。
       .filter(app => app.link_method !== 'shim' || app.installed)
-      .filter(app => app.link_method !== 'direct' || directInstalled(app.agent_id));
+      .filter(app => app.link_method !== 'direct' || directInstalled(app.agent_id))
+      .filter(app => app.link_method !== 'session' || directInstalled(app.agent_id));
+
+    // 同一 agent_id 只保留一行：api-key(持久) > shim > session/direct
+    const PRI = { 'api-key': 3, manual: 3, shim: 2, session: 1, direct: 1 };
+    const bestByAgent = new Map();
+    const noAgentRows = [];
+    for (const app of rows) {
+      const aid = app.agent_id || app.preset_id;
+      if (!aid) { noAgentRows.push(app); continue; }
+      const pri = PRI[app.link_method] || 0;
+      const cur = bestByAgent.get(aid);
+      if (!cur || pri > (PRI[cur.link_method] || 0)) bestByAgent.set(aid, app);
+    }
+    const dedupedRows = [...noAgentRows, ...bestByAgent.values()];
 
     // 追加：检测到、但还没"添加"过的 API Key 应用（虚拟行，显示「添加」）
     // 去重以「目标配置文件」为准：配置文件才是应用的真实身份（同一文件不可能托管两次）。
@@ -2291,21 +2625,21 @@ function registerIPC() {
     for (const d of getApiKeyApps()) {
       if (!apiKeyAppDetected(d)) continue;
       const file = resolveCfgPath(d.config_file);
-      // 已添加过（preset_id 命中）或该配置文件已被某应用托管 → 不再重复展示
       if (linkedApiKey.has(d.id) || managedFiles.has(norm(file))) continue;
-      rows.push({
+      dedupedRows.push({
         id: 'app-apikey-' + d.id,
         name: d.name, icon: d.icon,
         link_method: 'api-key', host_method: 'config-file',
         _virtual_apikey: true,
         preset_id: d.id,
-        route_bindable: d.route_bindable !== false,
+        ...entityDerived(d.id),
+        route_bindable: resolveRouteBindable({ preset_id: d.id, link_method: 'api-key' }, d.route_bindable),
         config_file: file, patch: d.patch, env: d.env || null,
-        configured: false,   // 状态跟随操作：未纳管（虚拟行）即离线
+        configured: false,
         installed: true, linked: false, api_key: null, route_id: null,
       });
     }
-    return rows;
+    return dedupedRows;
   });
 
   ipcMain.handle('apps:create', (_e, data) => {
@@ -2411,7 +2745,7 @@ function registerIPC() {
 
   // 写入工具配置文件（config-file 注入：如 Codex Desktop API 模式改 ~/.codex/config.toml）。
   // 前端已把 {BASE}/{KEY} 解析进 patch/env；这里解析路径占位符 + 展开 ~ 后写入。
-  ipcMain.handle('apps:writeConfigFile', async (_e, { app_id, config_file, patch, env } = {}) => {
+  ipcMain.handle('apps:writeConfigFile', async (_e, { app_id, config_file, patch, env, route_id, route_ids } = {}) => {
     try {
       const cl = require('./config-loader');
       let file = cl.resolvePlaceholders(String(config_file || ''), {});
@@ -2425,21 +2759,46 @@ function registerIPC() {
       } else if (!file) {
         return { ok: false, error: 'no-config-file' };
       }
+      // 兜底：前端未解析的 {BASE}/{KEY} 在此用本机网关地址 + 应用 api_key 替换
+      const gctx = cl.gatewayCtx();
+      const appRec = (getApps() || []).find(a => a.id === app_id);
+      const patchCtx = {
+        ...gctx,
+        base: `http://${gctx.reverse}`,
+        key: appRec?.api_key || '',
+      };
+      let resolvedPatch = resolvePatchDeep(patch || {}, patchCtx);
+      const resolvedEnv = resolvePatchDeep(env || {}, patchCtx);
+      // handler.patch_route：绑路由时改写 patch（如 WorkBuddy models.json id/name）
+      const { applyRouteToProxyPatch, resolveHandlerId } = require('./app-handlers');
+      const handlerId = resolveHandlerId(appRec);
+      const effectiveRouteId = route_id ?? appRec?.route_id;
+      const routeIds = Array.isArray(route_ids) && route_ids.length
+        ? route_ids
+        : (effectiveRouteId ? [effectiveRouteId] : []);
+      if (handlerId && routeIds.length) {
+        const def = getApiKeyApps().find(d => d.id === appRec?.preset_id);
+        resolvedPatch = applyRouteToProxyPatch(handlerId, resolvedPatch, {
+          routeIds,
+          routes: readLocalConfig().scene_routes || [],
+          marker: def?.marker || appRec?.marker,
+        });
+      }
       // 纳管 = 备份原配置文件（整份，仅首次），再写入我们的配置（整份替换）。
       // 不合并、不检测冲突、不预扫描内容——状态完全跟随用户操作。
       const bak = file + '.tokenbank-bak';
       if (fs.existsSync(file) && !fs.existsSync(bak)) { try { fs.copyFileSync(file, bak); } catch {} }
       fs.mkdirSync(path.dirname(file), { recursive: true });
       if (/\.json$/i.test(file)) {
-        fs.writeFileSync(file, JSON.stringify(patchToObject(patch || {}), null, 2), 'utf8');
+        fs.writeFileSync(file, JSON.stringify(patchToObject(resolvedPatch), null, 2), 'utf8');
       } else if (/\.ya?ml$/i.test(file)) {
-        fs.writeFileSync(file, require('js-yaml').dump(patchToObject(patch || {}), { lineWidth: 120 }), 'utf8');
+        fs.writeFileSync(file, require('js-yaml').dump(patchToObject(resolvedPatch), { lineWidth: 120 }), 'utf8');
       } else {
-        fs.writeFileSync(file, patchToToml(patch || {}), 'utf8');
+        fs.writeFileSync(file, patchToToml(resolvedPatch), 'utf8');
       }
       // 附带的环境变量（如存放 key 的 env_key）一并写入系统
       let envCount = 0;
-      const entries = Object.entries(env || {}).filter(([k]) => k && k.trim());
+      const entries = Object.entries(resolvedEnv || {}).filter(([k]) => k && k.trim());
       if (entries.length) {
         if (process.platform === 'win32') {
           const { execFileSync } = require('child_process');
@@ -2472,21 +2831,7 @@ function registerIPC() {
   // 取消纳管：用备份整份还原原配置文件（保留备份与应用条目，不删除）。状态跟随操作。
   ipcMain.handle('apps:revertConfigFile', (_e, { app_id, config_file } = {}) => {
     try {
-      // Claude Desktop：还原前先把 3p 期间的会话双向同步回官方，避免取消纳管后丢失
-      if (isClaudeDesktopApp(app_id)) runClaude3pSync('revert');
-      const cl = require('./config-loader');
-      let file = cl.expandHome(cl.resolvePlaceholders(String(config_file || ''), {}));
-      if (file) {
-        const bak = file + '.tokenbank-bak';
-        if (fs.existsSync(bak)) {
-          try { fs.copyFileSync(bak, file); } catch {}          // 整份还原；备份保留（不删）
-        } else {
-          try { if (fs.existsSync(file)) fs.unlinkSync(file); } catch {}  // 原本无文件 → 删掉我们建的
-        }
-      }
-      // Claude Desktop：configLibrary 之外还有 deploymentMode=3p 与 _meta 残留
-      if (isClaudeDesktopApp(app_id)) revertClaudeDesktopOfficialExtras();
-      // 注意：不在此改 hosted。直连(还原配置)仍保持纳管；「还原」按钮由渲染层显式置 hosted=false。
+      revertAppConfigFile(app_id, config_file);
       return { ok: true };
     } catch (e) { return { ok: false, error: e.message }; }
   });
@@ -2504,59 +2849,57 @@ function registerIPC() {
     return m;
   })();
 
-  // api-key 应用并入的会话补录数据源（preset_id → data_source）。
-  // Claude Desktop → session-claude-desktop；Codex Desktop → session-codex（~/.codex/sessions）。
-  const SESSION_DS_BY_PRESET = {
-    'claude-desktop': 'session-claude-desktop',
-    'codex-desktop':  'session-codex',
-  };
-
-  // 「与网关 proxy 记录天然去重」的会话 data_source 集合（源带 proxy_dedup，如 Claude：
-  // 会话 request_id=上游 msg_id，走网关时同一次调用 proxy+会话只记一次）。
-  // 含源主 data_source 及其 data_source_map 的所有目标（如 session-claude / session-claude-desktop）。
-  // 扫描跳过逻辑见 shared/telemetry.js computeImportSkip()。
-
-  // 单个应用的用量明细（合并网关实时 + 会话补录）。查询前先增量补录一次会话文件，
-  // 保证 Claude/Codex/Gemini 直连官方的用量也并进来。
   ipcMain.handle('apps:detail', (_e, { app, days } = {}) => {
     try { syncSessionTelemetry(localStats); } catch {}
-    // api-key 应用并入会话补录数据源（如 Claude Desktop 的 Cowork/Code）；shim/direct 始终读其会话用量（真实历史，不随纳管/还原增删）。
-    const dataSource = (app && (app.link_method === 'api-key' || app.link_method === 'manual')) ? (SESSION_DS_BY_PRESET[app.preset_id] || null)
-      : (app && (app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) ? AGENT_DATA_SOURCE[app.agent_id] : null;
-    const detail = localStats.queryAppDetail({ appId: app && app.id, apiKey: app && app.api_key, dataSource, days: days || 30 });
-    // 动态明细：Claude/Codex 桌面与 CLI 共用同目录，Desktop 按 preset 并入对应 data_source
-    const activityAgentId = (app && app.agent_id === 'claude-code') ? 'claude-code'
-      : (app && app.preset_id === 'claude-desktop') ? 'claude-code'
-      : (app && (app.agent_id === 'codex' || app.preset_id === 'codex-desktop')) ? 'codex'
-      : (app && app.agent_id);
-    const entrypointFilter = dataSource === 'session-claude-desktop'
-      ? (ep) => sessionImport.claudeDataSourceForEntrypoint(ep) === 'session-claude-desktop'
-      : dataSource === 'session-claude'
-        ? (ep) => sessionImport.claudeDataSourceForEntrypoint(ep) === 'session-claude'
-        : null;
-    if (activityAgentId) {
-      const scanned = sessionBrowser.listActivity(activityAgentId, {
-        limit: 50, sinceDays: days || 30, entrypointMatch: entrypointFilter || undefined,
+    const aid = app?.agent_id || app?.preset_id;
+    const ent = configLoader.appEntityById(aid);
+    const caps = configLoader.appCapabilities(aid);
+    const usageImport = !!(caps?.session_usage_import ?? ent?.session_usage_import ?? app?.session_usage_import);
+    const sessionTrace = !!(caps?.session_trace ?? ent?.session_trace ?? app?.session_trace);
+    const linked = usageImport ? (app?.linked_data_sources || ent?.linked_data_sources || []) : [];
+    let dataSource = null;
+    if (usageImport) {
+      if (app && (app.link_method === 'api-key' || app.link_method === 'manual') && linked.length) {
+        dataSource = linked[0];
+      } else if (app && (app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) {
+        dataSource = AGENT_DATA_SOURCE[app.agent_id] || null;
+      }
+    }
+    const detail = localStats.queryAppDetail({
+      appId: app && app.id, apiKey: app && app.api_key, dataSource,
+      days: days || 30, includeSessionImport: usageImport,
+    });
+    const activityAgentId = app?.activity_agent_id || ent?.activity_agent_id || app?.trace_agent_id || app?.agent_id;
+    if (sessionTrace && ent) {
+      const scanned = sessionBrowser.listActivityForEntity(ent, {
+        limit: 50, sinceDays: days || 30,
       });
       if (scanned.length) {
-        detail.activity = sessionBrowser.mergeActivityWithStats(scanned, detail.sessions)
-          .map(a => sessionBrowser.normalizeActivityRow(a, activityAgentId));
+        detail.activity = sessionBrowser.mergeActivityWithStats(
+          scanned, usageImport ? detail.sessions : [],
+        ).map(a => sessionBrowser.normalizeActivityRow(a, activityAgentId));
       }
       if (detail.recent?.length) {
         detail.recent = sessionBrowser.enrichRecentDetail(activityAgentId, detail.recent, detail.activity);
       }
     }
-    detail.hasModelStats = configLoader.agentHasModelStats(app && (
-      app.agent_id || (app.preset_id === 'claude-desktop' ? 'claude-code' : null)
-      || (app.preset_id === 'codex-desktop' ? 'codex' : null)
-    ));
+    detail.hasModelStats = configLoader.agentHasModelStats(
+      app?.activity_agent_id || app?.agent_id || app?.preset_id,
+    );
     return detail;
+  });
+
+  ipcMain.handle('apps:handoffTargets', () => {
+    try { return configLoader.handoffTargets(); } catch { return []; }
   });
 
   ipcMain.handle('apps:sessionTrace', (_e, { agent_id, session_id } = {}) => {
     if (!agent_id || !session_id) return { error: 'missing_params', steps: [] };
-    const trace = sessionBrowser.getTrace(agent_id, session_id);
-    const hookOnly = agent_id === 'cursor';
+    const ent = configLoader.appEntityById(agent_id);
+    const trace = ent
+      ? sessionBrowser.getTraceForEntity(ent, session_id)
+      : sessionBrowser.getTrace(agent_id, session_id);
+    const hookOnly = !!(ent?.integrations?.editor_hook);
     const dbRow = localStats.querySessionDetail(session_id, { hookOnly });
     return sessionBrowser.enrichTraceWithDb(trace, dbRow);
   });
@@ -2661,13 +3004,25 @@ function registerIPC() {
   });
 
   // 批量查所有应用的统计（调一次，合并进 apps:list 或单独查询）
-  /** 解析应用对应的会话补录 data_source（与 apps:detail / apps:stats 一致） */
+  /** 解析应用对应的会话补录 data_source（须启用 session_usage_import） */
   function appSessionDataSource(app) {
     if (!app) return null;
-    if (app.link_method === 'api-key' || app.link_method === 'manual') {
-      return SESSION_DS_BY_PRESET[app.preset_id] || null;
+    if ((app.link_method === 'api-key' || app.link_method === 'manual')) {
+      const aid = app.preset_id || app.agent_id;
+      const caps = configLoader.appCapabilities(aid);
+      const ent = configLoader.appEntityById(aid);
+      const usageImport = app.session_usage_import ?? caps?.session_usage_import ?? ent?.session_usage_import;
+      if (!usageImport) return null;
+      if (app.linked_data_sources?.length) return app.linked_data_sources[0];
+      if (ent?.linked_data_sources?.length) return ent.linked_data_sources[0];
+      return null;
     }
     if ((app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) {
+      const aid = app.agent_id;
+      const caps = configLoader.appCapabilities(aid);
+      const ent = configLoader.appEntityById(aid);
+      const usageImport = app.session_usage_import ?? caps?.session_usage_import ?? ent?.session_usage_import;
+      if (!usageImport) return null;
       return AGENT_DATA_SOURCE[app.agent_id] || null;
     }
     return null;
@@ -2678,20 +3033,24 @@ function registerIPC() {
     const stats = {};
     for (const app of (appList || [])) {
       const ds = appSessionDataSource(app);
+      const aid = app.agent_id || app.preset_id;
+      const caps = aid ? configLoader.appCapabilities(aid) : null;
+      const ent = aid ? configLoader.appEntityById(aid) : null;
+      const usageImport = !!(app.session_usage_import ?? caps?.session_usage_import ?? ent?.session_usage_import);
       let s;
       if (app.link_method === 'api-key' || app.link_method === 'manual') {
-        // 列表展示当天用量（本地 0 点至今）；明细弹窗仍走 apps:detail 全量/区间
         s = localStats.queryAppStatsToday({
           appId: app.id,
           apiKey: app.api_key,
           dataSource: ds,
+          includeSessionImport: usageImport,
         });
       } else if ((app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) {
-        // shim 走网关记 app_id(proxy)，直连官方记 data_source(session-*)，需合并查询
         s = localStats.queryAppStatsToday({
           appId: app.id,
           apiKey: app.api_key,
           dataSource: ds,
+          includeSessionImport: usageImport,
         });
       } else {
         s = { calls: 0, tokens: 0, lastTs: null };

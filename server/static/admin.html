@@ -586,8 +586,8 @@ select.form-input{cursor:pointer}
       </div>
       <p style="font-size:12px;color:#7b7b7b;margin-bottom:12px;line-height:1.6">
         {{ lang==='zh'
-          ? '在此配置个人页可选的按量/订阅供给源：图标、模型（ID·模态·价格）、层级、Base URL、验证方式、API 风格。发布后自动编译写入 config.apps 与 providers.registry，客户端拉取即可生效。'
-          : 'Configure PAYG/subscription sources for the profile page. Publish compiles to config.apps + providers.registry.' }}
+          ? '在此配置个人页可选的按量/订阅供给源：图标、模型（ID·模态·价格）、层级、Base URL、验证方式、API 风格。发布后自动编译写入 config.sources 与 config.providers，客户端拉取即可生效。'
+          : 'Configure PAYG/subscription sources for the profile page. Publish compiles to config.sources + config.providers.' }}
       </p>
       <div v-if="bsMsg" style="font-size:12px;margin-bottom:10px" :style="bsMsg.startsWith('✓')?'color:#16a34a':'color:#dc2626'">{{ bsMsg }}</div>
       <div class="panel" style="padding:0;overflow:hidden">
@@ -769,6 +769,163 @@ select.form-input{cursor:pointer}
       </div>
     </div>
 
+    <!-- 应用管理（用户可见实体） -->
+    <div v-show="activeTab === 'apps'" class="tab-content">
+      <div class="toolbar">
+        <span style="font-size:15px;font-weight:600">{{ lang==='zh' ? '应用实体目录' : 'App Entities' }}</span>
+        <div class="toolbar-right" style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn-sm" @click="importAcDefaults">{{ lang==='zh'?'从默认导入':'Import defaults' }}</button>
+          <button class="btn btn-indigo" @click="openAcModal(null)">＋ {{ lang==='zh'?'新增应用':'Add' }}</button>
+          <button class="btn btn-indigo" :disabled="acSaving" @click="publishAcCatalog">{{ lang==='zh'?'保存并发布':'Publish' }}</button>
+        </div>
+      </div>
+      <p style="font-size:12px;color:#7b7b7b;margin-bottom:12px;line-height:1.6">
+        {{ lang==='zh'
+          ? '一行 = 百宝箱里用户看到的一个应用。选择 Handler 并勾选三项能力（网关路由代理 / 会话 trace / 用量导入），发布后由客户端 handler 展开并下发。'
+          : 'One row = one user-visible app. Pick a handler and enable capabilities; client expands via built-in handlers.' }}
+      </p>
+      <div v-if="acMsg" style="font-size:12px;margin-bottom:10px" :style="acMsg.startsWith('✓')?'color:#16a34a':'color:#dc2626'">{{ acMsg }}</div>
+      <div class="panel" style="padding:0;overflow:hidden">
+        <table>
+          <thead><tr>
+            <th>#</th><th>ID</th><th>{{ lang==='zh'?'名称':'Name' }}</th>
+            <th>Handler</th>
+            <th>{{ capColumnTitle('gateway_proxy') }}</th>
+            <th>{{ capColumnTitle('session_trace') }}</th>
+            <th>{{ capColumnTitle('session_usage_import') }}</th>
+            <th>{{ lang==='zh'?'操作':'Actions' }}</th>
+          </tr></thead>
+          <tbody>
+            <tr v-for="(e, i) in acSorted()" :key="e.id">
+              <td class="mono" style="color:#7b7b7b">{{ i+1 }}</td>
+              <td class="mono">{{ e.id }}</td>
+              <td>{{ e.icon }} {{ e.name }}</td>
+              <td class="mono" style="font-size:11px;color:#666">{{ e.handler || '—' }}</td>
+              <td style="text-align:center">{{ capCell(e, 'gateway_proxy') }}</td>
+              <td style="text-align:center">{{ capCell(e, 'session_trace') }}</td>
+              <td style="text-align:center">{{ capCell(e, 'session_usage_import') }}</td>
+              <td>
+                <button class="btn-xs" @click="openAcModal(e)">{{ lang==='zh'?'编辑':'Edit' }}</button>
+                <button class="btn-xs btn-danger" @click="deleteAcEntity(e)">{{ lang==='zh'?'删':'Del' }}</button>
+              </td>
+            </tr>
+            <tr v-if="!acEntities.length" class="empty-row"><td colspan="8">{{ lang==='zh'?'暂无，可「从默认导入」':'No entries' }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 实体编辑弹窗（handler + vars） -->
+      <div v-if="acModalOpen" style="position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px" @click.self="closeAcModal">
+        <div style="background:#fff;border-radius:14px;padding:20px;width:560px;max-width:100%;max-height:90vh;overflow-y:auto;border:1px solid #e7e4e1">
+          <h3 style="font-size:16px;font-weight:600;margin-bottom:14px">{{ acEditId ? (lang==='zh'?'编辑应用':'Edit App') : (lang==='zh'?'新增应用':'Add App') }}</h3>
+          <div class="form-row">
+            <div class="form-group"><label>{{ lang==='zh'?'序号':'Order' }}</label><input v-model.number="acForm.sort_order" type="number" class="form-input form-input-sm" style="width:88px" /></div>
+            <div class="form-group"><label>ID *</label><input v-model="acForm.id" class="form-input form-input-md" :disabled="!!acEditId" /></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group" style="flex:1"><label>{{ lang==='zh'?'名称':'Name' }} *</label><input v-model="acForm.name" class="form-input" style="width:100%" /></div>
+            <div class="form-group"><label>{{ lang==='zh'?'图标':'Icon' }}</label><input v-model="acForm.icon" class="form-input" style="width:64px" /></div>
+          </div>
+          <div class="form-group" style="margin-bottom:12px">
+            <label>Handler *</label>
+            <select v-model="acForm.handler" class="form-input" style="width:100%" @change="onHandlerChange">
+              <option value="">{{ lang==='zh'?'请选择…':'Select…' }}</option>
+              <option v-for="h in acHandlers" :key="h.id" :value="h.id">{{ handlerLabel(h) }} ({{ h.id }})</option>
+            </select>
+            <p v-if="acForm.handler && handlerMeta(acForm.handler).description" style="font-size:11px;color:#888;margin-top:6px;line-height:1.5">{{ handlerMeta(acForm.handler).description }}</p>
+          </div>
+          <div v-if="acForm.handler" style="background:#f8f8f8;border-radius:10px;padding:12px;margin:12px 0">
+            <div style="font-size:13px;font-weight:600;margin-bottom:10px">{{ lang==='zh'?'Handler 能力':'Handler capabilities' }}</div>
+            <ul style="list-style:none;padding:0;margin:0">
+              <li v-for="cap in selectedHandlerCapabilities()" :key="cap.id"
+                  style="display:flex;align-items:flex-start;gap:8px;font-size:12px;line-height:1.6;margin-bottom:8px">
+                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                  <input type="checkbox"
+                    v-model="acForm.capabilities[cap.id]"
+                    style="margin-top:3px" />
+                  <span :style="cap.enabled ? 'color:#333' : 'color:#888'">{{ capabilityLabel(cap) }}</span>
+                </label>
+              </li>
+            </ul>
+            <p style="font-size:11px;color:#999;line-height:1.5;margin:4px 0 0">{{ lang==='zh' ? '三项能力均可自由勾选；发布时按选项展开，具体代理/扫描逻辑由内置 handler 实现。' : 'All capabilities are optional; publish applies your selections via built-in handlers.' }}</p>
+          </div>
+          <div v-if="showModels()" class="form-group" style="margin-bottom:12px">
+            <label>{{ lang==='zh'?'可选：展示模型（逗号分隔）':'Optional: display models' }}</label>
+            <input v-model="acForm.models" class="form-input" style="width:100%" />
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+            <button class="btn-sm" @click="closeAcModal">{{ lang==='zh'?'取消':'Cancel' }}</button>
+            <button class="btn btn-indigo" :disabled="acSaving" @click="saveAcEntity">{{ lang==='zh'?'保存':'Save' }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 路由管理（表单） -->
+    <div v-show="activeTab === 'routes'" class="tab-content">
+      <div class="toolbar">
+        <span style="font-size:15px;font-weight:600">{{ lang==='zh' ? '场景路由（表单）' : 'Scene Routes' }}</span>
+        <div class="toolbar-right" style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn-sm" @click="importRcDefaults">{{ lang==='zh'?'从默认导入':'Import defaults' }}</button>
+          <button class="btn btn-indigo" @click="openRcModal(null)">＋ {{ lang==='zh'?'新增路由':'Add Route' }}</button>
+          <button class="btn btn-indigo" :disabled="rcSaving" @click="publishRcCatalog">{{ lang==='zh'?'保存并发布':'Publish' }}</button>
+        </div>
+      </div>
+      <p style="font-size:12px;color:#7b7b7b;margin-bottom:12px;line-height:1.6">
+        {{ lang==='zh'
+          ? '配置 llm-router-* 场景路由及降级步骤。发布后写入 config.scenes，客户端 syncRemote 全量合并更新本地 scene_routes。'
+          : 'Configure llm-router-* scene routes and fallback steps. Publish writes config.scenes for client sync.' }}
+      </p>
+      <div v-if="rcMsg" style="font-size:12px;margin-bottom:10px" :style="rcMsg.startsWith('✓')?'color:#16a34a':'color:#dc2626'">{{ rcMsg }}</div>
+      <div class="panel" style="padding:0;overflow:hidden">
+        <table>
+          <thead><tr>
+            <th>#</th><th>ID</th><th>{{ lang==='zh'?'场景名':'Scene' }}</th><th>model_key</th><th>{{ lang==='zh'?'步骤':'Steps' }}</th><th>{{ lang==='zh'?'操作':'Actions' }}</th>
+          </tr></thead>
+          <tbody>
+            <tr v-for="(r, i) in rcSorted()" :key="r.id">
+              <td class="mono" style="color:#7b7b7b">{{ i+1 }}</td>
+              <td class="mono">{{ r.id }}</td><td>{{ r.icon }} {{ r.scene_name }}</td><td class="mono">{{ r.model_key }}</td>
+              <td>{{ (r.steps||[]).map(s=>s.model).join(' → ') }}</td>
+              <td>
+                <button class="btn-xs" @click="openRcModal(r)">{{ lang==='zh'?'编辑':'Edit' }}</button>
+                <button class="btn-xs btn-danger" @click="deleteRcRoute(r)">{{ lang==='zh'?'删':'Del' }}</button>
+              </td>
+            </tr>
+            <tr v-if="!rcRoutes.length" class="empty-row"><td colspan="6">{{ lang==='zh'?'暂无，可「从默认导入」':'No routes' }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <!-- 路由编辑弹窗 -->
+      <div v-if="rcModalOpen" style="position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px" @click.self="closeRcModal">
+        <div style="background:#fff;border-radius:14px;padding:20px;width:560px;max-width:100%;max-height:90vh;overflow-y:auto;border:1px solid #e7e4e1">
+          <h3 style="font-size:16px;font-weight:600;margin-bottom:14px">{{ rcEditId ? (lang==='zh'?'编辑路由':'Edit Route') : (lang==='zh'?'新增路由':'Add Route') }}</h3>
+          <div class="form-row">
+            <div class="form-group"><label>{{ lang==='zh'?'序号':'Order' }}</label><input v-model.number="rcForm.sort_order" type="number" class="form-input form-input-sm" style="width:88px" /></div>
+            <div class="form-group"><label>ID *</label><input v-model="rcForm.id" class="form-input form-input-md" :disabled="!!rcEditId" /></div>
+            <div class="form-group"><label>{{ lang==='zh'?'场景名':'Scene Name' }}</label><input v-model="rcForm.scene_name" class="form-input form-input-md" /></div>
+            <div class="form-group"><label>{{ lang==='zh'?'图标':'Icon' }}</label><input v-model="rcForm.icon" class="form-input" style="width:64px" /></div>
+          </div>
+          <div class="form-group" style="margin-bottom:12px"><label>model_key *</label><input v-model="rcForm.model_key" class="form-input" style="width:100%" placeholder="llm-router-code" /></div>
+          <div style="margin:14px 0">
+            <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+              <span style="font-size:13px;font-weight:600">{{ lang==='zh'?'降级步骤（按顺序）':'Fallback Steps' }}</span>
+              <button type="button" class="btn-xs" @click="rcAddStep">＋</button>
+            </div>
+            <div v-for="(st, si) in rcForm.steps" :key="si" style="display:flex;gap:6px;margin-bottom:6px">
+              <input v-model="st.model" class="form-input form-input-md" :placeholder="lang==='zh'?'模型 ID':'Model ID'" />
+              <select v-model="st.tier" class="form-input form-input-sm"><option value="free">free</option><option value="paid">paid</option><option value="p2p">p2p</option></select>
+              <button type="button" class="btn-xs btn-danger" @click="rcRemoveStep(si)">×</button>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+            <button class="btn-sm" @click="closeRcModal">{{ lang==='zh'?'取消':'Cancel' }}</button>
+            <button class="btn btn-indigo" :disabled="rcSaving" @click="saveRcRoute">{{ lang==='zh'?'保存':'Save' }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div v-show="activeTab === 'distrib'" class="tab-content">
       <!-- 状态概览 -->
       <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap">
@@ -850,6 +1007,8 @@ select.form-input{cursor:pointer}
 </div>
 
 <script src="/static/admin-billing-sources.js"></script>
+<script src="/static/admin-app-catalog.js"></script>
+<script src="/static/admin-routing-catalog.js"></script>
 <script>
 const { createApp, ref, computed, onMounted, onUnmounted, nextTick, reactive } = Vue
 
@@ -862,7 +1021,7 @@ const LANGS = {
     notePlaceholder: '备注（可选）', newKey: '新建 Key', note: '备注', status: '状态',
     createdAt: '创建时间', actions: '操作', noKeys: '暂无 API Key',
     copy: '复制', enabled: '启用', disabled: '禁用', enable: '启用', disable: '禁用', delete: '删除',
-    tabs: { workers:'在线 PC', keys:'API Keys', models:'模型配置', users:'用户管理', orders:'购买审批', config:'系统配置', debug:'调试', virtual:'虚拟 Agent', billing:'个人源', distrib:'配置下发' },
+    tabs: { workers:'在线 PC', keys:'API Keys', models:'模型配置', users:'用户管理', orders:'购买审批', config:'系统配置', debug:'调试', virtual:'虚拟 Agent', billing:'个人源', apps:'应用管理', routes:'路由管理', distrib:'配置下发' },
     addEditModel: '新增 / 编辑模型', modelName: '模型名称', displayName: '显示名称', tier: '类型',
     contributeRate: '贡献率（积分/千token）', consumeRate: '消费率（积分/千token）',
     yes: '是', no: '否', save: '保存', saving: '保存中', edit: '编辑',
@@ -905,7 +1064,7 @@ const LANGS = {
     notePlaceholder: 'Note (optional)', newKey: 'New Key', note: 'Note', status: 'Status',
     createdAt: 'Created', actions: 'Actions', noKeys: 'No API keys yet',
     copy: 'Copy', enabled: 'Active', disabled: 'Disabled', enable: 'Enable', disable: 'Disable', delete: 'Delete',
-    tabs: { workers:'Workers', keys:'API Keys', models:'Models', users:'Users', orders:'Orders', config:'Config', debug:'Debug', virtual:'Virtual Agents', billing:'Sources', distrib:'Config Distrib' },
+    tabs: { workers:'Workers', keys:'API Keys', models:'Models', users:'Users', orders:'Orders', config:'Config', debug:'Debug', virtual:'Virtual Agents', billing:'Sources', apps:'Apps', routes:'Routes', distrib:'Config Distrib' },
     addEditModel: 'Add / Edit Model', modelName: 'Model Name', displayName: 'Display Name', tier: 'Tier',
     contributeRate: 'Contribute Rate (credits/K tokens)', consumeRate: 'Consume Rate (credits/K tokens)',
     yes: 'Yes', no: 'No', save: 'Save', saving: 'Saving…', edit: 'Edit',
@@ -964,6 +1123,8 @@ createApp({
         { key:'debug',   label: tl.debug },
         { key:'virtual', label: tl.virtual },
         { key:'billing', label: tl.billing },
+        { key:'apps',    label: tl.apps },
+        { key:'routes',  label: tl.routes },
         { key:'distrib', label: tl.distrib },
       ]
     })
@@ -1334,6 +1495,14 @@ createApp({
     const billingAdmin = initBillingSourcesAdmin(api, lang, ref)
     const { fetchBillingSources } = billingAdmin
 
+    /* ── App Catalog (应用管理表单) ── */
+    const appCatalogAdmin = initAppCatalogAdmin(api, lang, ref)
+    const { fetchAppCatalog } = appCatalogAdmin
+
+    /* ── Routing Catalog (路由管理表单) ── */
+    const routingCatalogAdmin = initRoutingCatalogAdmin(api, lang, ref)
+    const { fetchRoutingCatalog } = routingCatalogAdmin
+
     function fetchForTab(k) {
       if (k === 'models') fetchModels()
       if (k === 'users')  fetchUsers()
@@ -1341,6 +1510,8 @@ createApp({
       if (k === 'config') fetchConfig()
       if (k === 'virtual') fetchVirtualAgents()
       if (k === 'billing') fetchBillingSources()
+      if (k === 'apps') fetchAppCatalog()
+      if (k === 'routes') fetchRoutingCatalog()
       if (k === 'distrib') fetchDistribInfo()
     }
     function switchTab(k) {
@@ -1375,6 +1546,8 @@ createApp({
       distribInfo, distribText, distribMsg, distribSaving,
       fetchDistribInfo, uploadDistrib, deleteDistrib, loadLocalFile, reloadDistribSource,
       ...billingAdmin,
+      ...appCatalogAdmin,
+      ...routingCatalogAdmin,
       fmtTime,
     }
   }

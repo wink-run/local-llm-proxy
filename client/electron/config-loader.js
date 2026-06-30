@@ -20,6 +20,7 @@ const USER_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.yaml');
 const USER_TOOLS_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.tools.yaml');
 
 let _config = null;        // 解析后的原始 yaml 对象（应用：tools / api_key_apps / 基础设施）
+let _appsRuntime = null;   // handler 展开后的运行时段（tools / api_key_apps / session_sources）
 let _sources = null;       // 源目录文件（tokenbank.tools.yaml）解析结果
 let _caPath = null;        // 运行时由 ca-manager 注入的实际 CA 路径（解析 {CA_PATH}）
 
@@ -81,6 +82,9 @@ function load() {
     const text = fs.readFileSync(file, 'utf8');
     _config = yaml.load(text) || {};
     _sources = null;          // 同步后强制下次重读源文件 tokenbank.tools.yaml
+    _appsRuntime = null;
+    // 云端下发的 handlers / session_scans 供 handler 展开时合并
+    try { require('./app-handlers').applyCloudConfig(_config); } catch {}
   } catch (e) {
     console.error('[config-loader] 加载 yaml 失败:', e.message, '(', file, ')');
     // 用户覆盖文件损坏时回退内置默认
@@ -95,6 +99,45 @@ function load() {
 function get() {
   if (!_config) load();
   return _config;
+}
+
+/** handler 展开后的应用运行时段（tools / api_key_apps / session_sources） */
+function appsRuntime() {
+  if (!_appsRuntime) {
+    const { resolveAppsRuntime } = require('./apps-compiler');
+    _appsRuntime = resolveAppsRuntime(get());
+  }
+  return _appsRuntime;
+}
+
+/** 紧凑实体列表（app_entities） */
+function appEntities() {
+  return appsRuntime().app_entities || [];
+}
+
+/** 展开后的实体（含 capabilities / proxy_mode 等） */
+function appEntitiesExpanded() {
+  return appsRuntime().entities_expanded || [];
+}
+
+function appEntityById(id) {
+  if (!id) return null;
+  const exp = appEntitiesExpanded().find(e => e.id === id);
+  if (exp) return exp;
+  // 紧凑实体按需展开（避免 entities_expanded 未缓存时拿不到 capabilities）
+  const compact = appEntities().find(e => e.id === id);
+  if (compact?.handler) {
+    try { return require('./app-handlers').expandEntity(compact); } catch {}
+  }
+  return null;
+}
+
+/** 用户勾选的三项能力（紧凑 vars 或展开实体） */
+function appCapabilities(id) {
+  const compact = appEntities().find(e => e.id === id);
+  if (compact?.vars?.capabilities) return compact.vars.capabilities;
+  const ent = appEntityById(id);
+  return ent?.capabilities || null;
 }
 
 // 由 ca-manager 在 CA 就绪后调用，供 {CA_PATH} 解析
@@ -115,7 +158,7 @@ function gatewayCtx() {
 
 // 所有需 MITM 的工具（mitm-env / mitm-system）的 mitm-domains 并集（= CA 约束域名）
 function mitmDomains() {
-  const tools = get().tools || [];
+  const tools = appsRuntime().tools || [];
   const set = new Set();
   for (const t of tools) {
     if ((t.strategy === 'mitm-env' || t.strategy === 'mitm-system') && Array.isArray(t['mitm-domains'])) {
@@ -133,7 +176,7 @@ function shouldMitm(host) {
 // 取工具列表，占位符已解析（inject.env / patch / config-file 等）
 function tools() {
   const ctx = gatewayCtx();
-  const list = get().tools || [];
+  const list = appsRuntime().tools || [];
   return list.map(t => resolveDeep(t, ctx));
 }
 
@@ -153,7 +196,7 @@ function routing()   { return get().routing || {}; }
 // 「添加应用」预设：占位符已解析（{CODEX_HOME|..} 等），但保留 {BASE}/{KEY}（前端按应用解析）
 function appPresets() { const ctx = gatewayCtx(); return (get().app_presets || []).map(p => resolveDeep(p, ctx)); }
 // API Key 应用（检测 appx → 写其配置文件指向网关）：同样保留 {BASE}/{KEY}，前端按应用解析
-function apiKeyApps() { const ctx = gatewayCtx(); return (get().api_key_apps || []).map(p => resolveDeep(p, ctx)); }
+function apiKeyApps() { const ctx = gatewayCtx(); return (appsRuntime().api_key_apps || []).map(p => resolveDeep(p, ctx)); }
 // Claude 客户端模型名（内部透明：仅供 /v1/models 暴露 + 标记 Claude 请求）。字符串数组。
 // 这是内部固定逻辑：始终并入内置默认（即使 TB_YAML 覆盖了 tools 也不丢失），再合并当前配置/下发的。
 function claudeModels() {
@@ -165,27 +208,40 @@ function claudeModels() {
 // 检查某模型名是否是 Claude 客户端模型名
 function isClaudeModel(modelId) { return claudeModels().includes(modelId); }
 
-// 会话用量解析配置（内部固定逻辑，YAML 驱动）：当前配置有就用，否则回退内置默认。
+// 会话用量解析：由 app_entities + handler 展开（session-scans.yaml）
 function sessionSources() {
-  const cur = get().session_sources;
-  if (Array.isArray(cur) && cur.length) return cur;
-  try { return ((yaml.load(fs.readFileSync(DEFAULT_YAML, 'utf8')) || {}).session_sources || []); } catch { return []; }
+  return appsRuntime().session_sources || [];
 }
 
-// 各应用官方安装/下载页（图标行「未安装」点击跳转）。内置默认始终兜底（即使 USER_YAML
-// 覆盖了其它配置也不丢失），当前配置 / 服务端下发的同名段按 id 叠加覆盖。
+/** 从 handler-ops + app_entities 构建安装链接/说明 */
+function buildHandlerOpsMaps() {
+  const { opsForEntityId, loadDoc } = require('./app-handlers');
+  const install = {};
+  const uninstall = {};
+  const installGuides = {};
+  const uninstallGuides = {};
+  const entities = appEntities();
+  const list = entities.length ? entities : (loadDoc().default_entities || []);
+  for (const ent of list) {
+    if (!ent?.id) continue;
+    const ops = opsForEntityId(ent.id, ent);
+    if (ops.install_url) install[ent.id] = ops.install_url;
+    if (ops.uninstall_url) uninstall[ent.id] = ops.uninstall_url;
+    if (ops.install_guide) installGuides[ent.id] = ops.install_guide;
+    if (ops.uninstall_guide) uninstallGuides[ent.id] = ops.uninstall_guide;
+  }
+  return { install, uninstall, installGuides, uninstallGuides };
+}
+
 function appInstallUrls() {
-  let builtin = {};
-  try { builtin = (yaml.load(fs.readFileSync(DEFAULT_YAML, 'utf8')) || {}).app_install_urls || {}; } catch {}
+  const builtin = buildHandlerOpsMaps().install;
   const cur = get().app_install_urls;
   const curMap = (cur && typeof cur === 'object' && !Array.isArray(cur)) ? cur : {};
   return { ...builtin, ...curMap };
 }
 
-// 各应用官方卸载/卸载说明页（百宝箱「卸载」按钮跳转）。合并规则同 appInstallUrls。
 function appUninstallUrls() {
-  let builtin = {};
-  try { builtin = (yaml.load(fs.readFileSync(DEFAULT_YAML, 'utf8')) || {}).app_uninstall_urls || {}; } catch {}
+  const builtin = buildHandlerOpsMaps().uninstall;
   const cur = get().app_uninstall_urls;
   const curMap = (cur && typeof cur === 'object' && !Array.isArray(cur)) ? cur : {};
   return { ...builtin, ...curMap };
@@ -241,8 +297,38 @@ function mergeGuideMap(key) {
   }
   return out;
 }
-function appInstallGuides() { return mergeGuideMap('app_install_guides'); }
-function appUninstallGuides() { return mergeGuideMap('app_uninstall_guides'); }
+function appInstallGuides() {
+  const builtin = buildHandlerOpsMaps().installGuides;
+  const cur = get().app_install_guides;
+  const curMap = (cur && typeof cur === 'object' && !Array.isArray(cur)) ? cur : {};
+  const out = { ...builtin };
+  for (const [id, val] of Object.entries(curMap)) {
+    const base = out[id];
+    if (val && typeof val === 'object' && !Array.isArray(val)
+        && base && typeof base === 'object' && !Array.isArray(base)) {
+      out[id] = { ...base, ...val };
+    } else {
+      out[id] = val;
+    }
+  }
+  return out;
+}
+function appUninstallGuides() {
+  const builtin = buildHandlerOpsMaps().uninstallGuides;
+  const cur = get().app_uninstall_guides;
+  const curMap = (cur && typeof cur === 'object' && !Array.isArray(cur)) ? cur : {};
+  const out = { ...builtin };
+  for (const [id, val] of Object.entries(curMap)) {
+    const base = out[id];
+    if (val && typeof val === 'object' && !Array.isArray(val)
+        && base && typeof base === 'object' && !Array.isArray(base)) {
+      out[id] = { ...base, ...val };
+    } else {
+      out[id] = val;
+    }
+  }
+  return out;
+}
 // 兼容旧调用
 function normalizeGuide(v) { return resolveGuide(v); }
 
@@ -373,6 +459,11 @@ function resolveRef(refs, ctx = {}) {
   return null;
 }
 
+function handoffTargets() {
+  const { handoffTargets: ht } = require('./app-handlers');
+  return ht(appEntities());
+}
+
 module.exports = {
   load, get, setCaPath, getCaPath,
   gatewayCtx, mitmDomains, shouldMitm, tools, appPresets, apiKeyApps,
@@ -381,4 +472,6 @@ module.exports = {
   appInstallGuides, appUninstallGuides, normalizeGuide, resolveGuide,
   subscriptionApps, apiSubscriptionApps, paygProviders, registryProviders, subscriptionPlansDefaults,
   resolveRef, resolvePlaceholders, expandHome,
+  appsRuntime, appEntities, appEntitiesExpanded, appEntityById, appCapabilities,
+  handoffTargets,
 };

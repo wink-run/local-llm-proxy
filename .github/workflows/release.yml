@@ -177,6 +177,10 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          # beta/alpha 须标记为 prerelease，否则 GitHub /releases/latest 指向 beta，
+          # electron-updater 稳定版客户端会拉 beta 元数据又因 allowPrerelease=false 跳过 → 永不更新
+          prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-rc') }}
+          make_latest: ${{ !(contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-rc')) }}
           files: |
             artifacts/mac/*.dmg
             artifacts/mac/*.zip

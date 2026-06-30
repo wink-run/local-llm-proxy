@@ -4,7 +4,7 @@ Admin uploads tool/route config YAML → stored in system_config table.
 Authenticated users GET the config YAML → client applies it locally.
 
 Keys in system_config:
-  config.apps    → tokenbank.yaml content (tools / api_key_apps，应用清单)
+  config.apps    → tokenbank.yaml content (gateway / mitm / app_entities)
   config.sources → tokenbank.tools.yaml content (订阅 / 按量 / 套餐 源目录，独立于应用)
   config.scenes  → tokenbank.routes.yaml content (scene_routes)
 """
@@ -148,20 +148,15 @@ async def delete_routes_config():
     return {"ok": True}
 
 
-# ── User: download config files ─────────────────────────────────────────────────
-# Requires valid user JWT (same token used for P2P / scene-routes).
-# Returns raw YAML text with Content-Type: text/plain so clients can
-# parse it directly without extra unwrapping.
+# ── Public / user: download config files ────────────────────────────────────────
+# GET /config/apps 为公开目录（无需登录）；sources / scenes 仍需用户 JWT。
 
 from fastapi.responses import PlainTextResponse
 
 @router.get("/config/apps")
-async def get_tools_config(uid: int = Depends(get_current_user_id)):
-    """Authenticated user downloads the tools config YAML."""
+async def get_tools_config():
+    """公开：下载应用目录 YAML（gateway / mitm / app_entities），无需登录。"""
     content = await db.get_config("config.apps", "")
-    if not content:
-        raise HTTPException(404, "Tools config not uploaded yet")
-    # 与内置默认合并，确保客户端拉取到 subscription_to_api 等新字段
     content = merge_apps_yaml_text(content)
     return PlainTextResponse(_normalize_yaml(content), media_type="text/yaml; charset=utf-8")
 

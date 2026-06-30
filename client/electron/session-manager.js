@@ -113,15 +113,7 @@ const { execFileSync } = require('child_process');
 const { estimateCost } = require('./pricing');
 const { resolvePricingProviderId } = require('./billing-config');
 
-/** agent → 刊例价 provider（jsonl 有 token 但 DB 未落账时的费用兜底） */
-const AGENT_PRICING_ID = {
-  'claude-code': 'anthropic',
-  'claude-3p': 'anthropic',
-  cursor: 'cursor',
-  codex: 'openai',
-};
-
-/** DB 无费用时，用 jsonl 扫到的 inTok/outTok 按 agent 刊例价估算 */
+/** DB 无费用时，用 jsonl 扫到的 inTok/outTok 按 provider 刊例价估算 */
 function enrichSessionCosts(rows = []) {
   return rows.map(r => {
     const existing = Number(r.cost_usd) || 0;
@@ -130,9 +122,16 @@ function enrichSessionCosts(rows = []) {
     const outTok = r.outTok || 0;
     if (!inTok && !outTok) return r;
     const agent = r.agent_id || r.agent;
+    let pricingId = r.provider_id;
+    if (!pricingId) {
+      try {
+        const src = require('./config-loader').sessionSources().find(s => s.agent_id === agent);
+        pricingId = src?.provider_id;
+      } catch {}
+    }
     const cost = estimateCost(
       null, inTok, outTok, 0, 0,
-      resolvePricingProviderId(AGENT_PRICING_ID[agent]),
+      resolvePricingProviderId(pricingId),
     );
     return cost > 0 ? { ...r, cost_usd: cost } : r;
   });

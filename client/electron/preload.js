@@ -99,6 +99,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     install: () => ipcRenderer.invoke('update:install'),
     getStatus: () => ipcRenderer.invoke('updater:status'),
+    getSettings: () => ipcRenderer.invoke('updater:getSettings'),
+    setAllowPrerelease: (allow) => ipcRenderer.invoke('updater:setAllowPrerelease', allow),
+    checkNow: () => ipcRenderer.invoke('updater:checkNow'),
+    onNotAvailable: (cb) => {
+      const h = (_e, d) => cb(d || {});
+      ipcRenderer.on('update:not-available', h);
+      return () => ipcRenderer.removeListener('update:not-available', h);
+    },
   },
   gateway: {
     status:          () => ipcRenderer.invoke('gateway:status'),
@@ -155,7 +163,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     presets:       ()       => ipcRenderer.invoke('apps:presets'),
     writeConfigFile: (d)    => ipcRenderer.invoke('apps:writeConfigFile', d),
     revertConfigFile: (d)   => ipcRenderer.invoke('apps:revertConfigFile', d),
-    claudeDevModeStatus: () => ipcRenderer.invoke('apps:claudeDevModeStatus'),
+    handoffTargets: () => ipcRenderer.invoke('apps:handoffTargets'),
     claudeModels:        () => ipcRenderer.invoke('apps:claudeModels'),
     // 配置下发/变更后主进程通知刷新应用列表
     onChanged: (cb) => {

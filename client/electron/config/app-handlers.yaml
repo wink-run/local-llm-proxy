@@ -1,0 +1,329 @@
+# app-handlers.yaml — 客户端内置应用 handler（代理 + 会话统计逻辑）
+# 服务端 / 客户端共用。实体只需 handler + vars；扫描规则见 session-scans.yaml，运营元数据见 handler-ops.yaml。
+
+version: 1
+
+handlers:
+  claude-code-cli:
+    label: Claude Code CLI
+    label_zh: Claude Code CLI
+    description: Anthropic CLI · env 注入网关 + 附属会话扫描
+    default_icon: "🤖"
+    default_name: Claude Code
+    capabilities: [gateway_proxy, session_import]
+    proxy:
+      mode: cli
+      protocol: anthropic
+      strategy: base_url-env
+      route_bindable: true
+      detect_command: claude
+      detect_version_arg: "--version"
+      detect_config_dirs: ["$CLAUDE_CONFIG_DIR", "~/.claude"]
+      inject_env:
+        ANTHROPIC_BASE_URL: "http://{REVERSE}"
+        ANTHROPIC_AUTH_TOKEN: "{KEY}"
+    session:
+      source_id: claude
+      standalone: false
+      activity_agent_id: claude-code
+      trace_agent_id: claude-code
+      trace:
+        profile: claude-jsonl
+        entrypoint_data_source: session-claude
+
+  codex-cli:
+    label: Codex CLI
+    label_zh: Codex CLI
+    default_icon: "💻"
+    default_name: Codex (CLI)
+    capabilities: [gateway_proxy, session_import]
+    proxy:
+      mode: cli
+      protocol: responses
+      strategy: base_url-env
+      route_bindable: true
+      detect_command: codex
+      detect_version_arg: "--version"
+      inject_env:
+        OPENAI_BASE_URL: "http://{REVERSE}/v1"
+        OPENAI_API_KEY: "{KEY}"
+    session:
+      source_id: codex
+      standalone: false
+      activity_agent_id: codex
+      trace_agent_id: codex
+      trace:
+        profile: codex-rollout
+
+  gemini-cli:
+    label: Gemini CLI
+    label_zh: Gemini CLI
+    default_icon: "🔮"
+    default_name: Gemini CLI
+    capabilities: [gateway_proxy, session_import]
+    proxy:
+      mode: cli
+      protocol: gemini
+      strategy: base_url-env
+      route_bindable: true
+      detect_command: gemini
+      detect_version_arg: "--version"
+      detect_config_dirs: ["~/.gemini"]
+      inject_env:
+        GEMINI_BASE_URL: "http://{REVERSE}"
+        GEMINI_API_KEY: "{KEY}"
+    session:
+      source_id: gemini
+      standalone: false
+
+  opencode-cli:
+    label: OpenCode CLI
+    label_zh: OpenCode CLI
+    default_icon: "📝"
+    default_name: OpenCode
+    capabilities: [gateway_proxy, session_import]
+    proxy:
+      mode: cli
+      protocol: openai
+      strategy: base_url-env
+      route_bindable: true
+      detect_command: opencode
+      detect_version_arg: "--version"
+      detect_config_dirs: ["~/.config/opencode"]
+      inject_env:
+        OPENAI_BASE_URL: "http://{REVERSE}/v1"
+        OPENAI_API_KEY: "{KEY}"
+    session:
+      source_id: opencode
+      standalone: false
+
+  hermes-cli:
+    label: Hermes Agent CLI
+    label_zh: Hermes Agent CLI
+    default_icon: "🧠"
+    default_name: Hermes Agent
+    capabilities: [gateway_proxy]
+    proxy:
+      mode: cli
+      protocol: openai
+      strategy: base_url-env
+      route_bindable: true
+      detect_command: hermes
+      detect_version_arg: "--version"
+      detect_config_dirs: ["~/.hermes"]
+      inject_env:
+        OPENAI_BASE_URL: "http://{REVERSE}/v1"
+        OPENAI_API_KEY: "{KEY}"
+
+  claude-desktop-api:
+    label: Claude Desktop
+    label_zh: Claude Desktop
+    default_icon: "🖥️"
+    default_name: Claude Desktop
+    capabilities: [gateway_proxy]
+    proxy:
+      mode: api_key
+      route_bindable: true
+      allow_direct: false
+      enable_3p: true
+      detect_type: appx
+      detect_value: Claude
+      config_file: "{CLAUDE_3P_CONFIG}"
+      marker: tokenbank
+      patch:
+        inferenceProvider: gateway
+        inferenceGatewayBaseUrl: "{BASE}"
+        inferenceGatewayApiKey: "{KEY}"
+        inferenceGatewayAuthScheme: bearer
+        _configManagedBy: tokenbank
+    session:
+      activity_agent_id: claude-code
+      trace_agent_id: claude-code
+      linked_data_sources:
+        - session-claude-desktop
+      trace:
+        profile: claude-jsonl
+        entrypoint_data_source: session-claude-desktop
+
+  codex-desktop-api:
+    label: Codex Desktop
+    label_zh: Codex Desktop
+    default_icon: "🖥️"
+    default_name: Codex Desktop
+    capabilities: [gateway_proxy]
+    proxy:
+      mode: api_key
+      route_bindable: true
+      allow_direct: false
+      detect_type: appx
+      detect_value: OpenAI.Codex
+      config_file: "{CODEX_HOME|~/.codex}/config.toml"
+      marker: tokenbank
+      patch:
+        model_provider: tokenbank
+        model_providers.tokenbank.name: Tokenbank
+        model_providers.tokenbank.base_url: "{BASE}/v1"
+        model_providers.tokenbank.wire_api: responses
+        model_providers.tokenbank.env_key: TOKENBANK_API_KEY
+      env:
+        TOKENBANK_API_KEY: "{KEY}"
+    session:
+      activity_agent_id: codex
+      trace_agent_id: codex
+      linked_data_sources:
+        - session-codex
+      trace:
+        profile: codex-rollout
+
+  openclaw-api:
+    label: OpenClaw
+    label_zh: OpenClaw
+    default_icon: "🦞"
+    default_name: OpenClaw
+    capabilities: [gateway_proxy]
+    proxy:
+      mode: api_key
+      route_bindable: true
+      detect_type: command
+      detect_value: openclaw
+      config_file: "~/.openclaw/openclaw.json"
+      marker: tokenbank
+      patch:
+        models.providers.tokenbank.baseUrl: "{BASE}/v1"
+        models.providers.tokenbank.apiKey: "{KEY}"
+        models.providers.tokenbank.api: openai-completions
+
+  cursor-stats:
+    label: Cursor
+    label_zh: Cursor
+    default_icon: "🖱"
+    default_name: Cursor
+    capabilities: [session_import]
+    session:
+      source_id: cursor
+      standalone: true
+      route_bindable: false
+      activity_agent_id: cursor
+      trace_agent_id: cursor
+      trace:
+        profile: cursor-transcript
+
+  copilot-stats:
+    label: GitHub Copilot
+    label_zh: GitHub Copilot
+    default_icon: "🤖"
+    default_name: GitHub Copilot
+    capabilities: [session_import]
+    session:
+      source_id: copilot-cli
+      standalone: true
+      route_bindable: false
+
+  qwen-stats:
+    label: Qwen Code
+    label_zh: Qwen Code
+    default_icon: "🐉"
+    default_name: Qwen Code
+    capabilities: [session_import]
+    session:
+      source_id: qwen
+      standalone: true
+      route_bindable: false
+
+  antigravity-stats:
+    label: Antigravity
+    label_zh: Antigravity
+    default_icon: "🚀"
+    default_name: Antigravity
+    capabilities: [session_import]
+    session:
+      source_id: antigravity
+      standalone: true
+      route_bindable: false
+
+  grok-stats:
+    label: Grok
+    label_zh: Grok
+    default_icon: "✖"
+    default_name: Grok
+    capabilities: [session_import]
+    session:
+      source_id: grok
+      standalone: true
+      route_bindable: false
+
+  workbuddy-stats:
+    label: WorkBuddy
+    label_zh: WorkBuddy
+    default_icon: "🤝"
+    default_name: WorkBuddy
+    capabilities: [gateway_proxy, session_import]
+    proxy:
+      mode: api_key
+      route_bindable: true
+      config_file: "~/.workbuddy/models.json"
+      marker: tokenbank
+      patch:
+        models:
+          - id: placeholder
+            name: tokenbank
+            vendor: TokenBank
+            url: "{BASE}/v1/chat/completions"
+            apiKey: "{KEY}"
+            supportsToolCall: true
+            supportsImages: true
+      # 绑路由写入：id=场景名/模型 id，name=tokenbank；多路由则 models[] 多条
+      patch_route:
+        strategy: workbuddy_models
+        provider_name: tokenbank
+        models_key: models
+    session:
+      source_id: workbuddy
+      standalone: true
+      route_bindable: true
+      activity_agent_id: workbuddy
+      trace_agent_id: workbuddy
+      trace:
+        profile: workbuddy-trace
+
+# 默认实体清单（导入时用）
+default_entities:
+  - { id: claude-code, handler: claude-code-cli }
+  - { id: codex, handler: codex-cli }
+  - { id: gemini-cli, handler: gemini-cli }
+  - { id: opencode, handler: opencode-cli }
+  - { id: hermes, handler: hermes-cli }
+  - { id: claude-desktop, handler: claude-desktop-api }
+  - { id: codex-desktop, handler: codex-desktop-api }
+  - { id: openclaw, handler: openclaw-api }
+  - { id: cursor, handler: cursor-stats }
+  - { id: copilot, handler: copilot-stats }
+  - { id: qwen-code, handler: qwen-stats }
+  - { id: antigravity, handler: antigravity-stats }
+  - { id: grok, handler: grok-stats }
+  - { id: workbuddy, handler: workbuddy-stats }
+
+# vars 可覆盖字段（管理后台运营配置，下发在 app_entities[].vars）
+var_schema:
+  capabilities:
+    type: object
+    label: "用户启用的 Handler 能力"
+  models: { type: string_list, label: "展示模型（逗号分隔）" }
+  route_bindable: { type: boolean, label: "可绑定路由" }
+  allow_direct: { type: boolean, label: "允许直连（API Key 应用）" }
+  provider_id: { type: string, label: "供给源 ID" }
+  tier: { type: string, label: "档位（paid/free）" }
+  billing_type: { type: string, label: "计费类型（subscription/api-key）" }
+  data_source: { type: string, label: "数据来源标识" }
+
+# Handler 能力目录（管理后台只读展示）
+capability_catalog:
+  gateway_proxy:
+    label_zh: 应用支持本地网关路由代理
+    label_en: Local gateway routing proxy
+  session_trace:
+    label_zh: 应用支持会话 trace 分析
+    label_en: Session trace analysis
+  session_usage_import:
+    label_zh: 应用用量数据支持会话导入
+    label_en: Session usage data import

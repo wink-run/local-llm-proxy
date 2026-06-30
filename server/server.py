@@ -18,6 +18,8 @@ from fastapi.staticfiles import StaticFiles
 import database as db
 from admin_router import router as admin_router
 from billing_sources_router import router as billing_sources_router
+from app_catalog_router import router as app_catalog_router
+from routing_catalog_router import router as routing_catalog_router
 from catalog import TIERS, catalog_providers
 from device_router import router as device_router
 from auth import get_current_user_id
@@ -95,6 +97,8 @@ app.add_middleware(
 )
 app.include_router(admin_router, prefix="/admin")
 app.include_router(billing_sources_router, prefix="/admin")
+app.include_router(app_catalog_router, prefix="/admin")
+app.include_router(routing_catalog_router, prefix="/admin")
 app.include_router(user_router, prefix="/user")
 app.include_router(scene_router, prefix="/user")
 app.include_router(provider_router, prefix="/user")   # 个人供给源 /user/providers + /user/oauth/claude/*

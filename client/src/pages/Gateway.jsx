@@ -367,7 +367,7 @@ function AppToolboxGuideModal({ app, mode, onClose }) {
 }
 
 // ── 应用百宝箱：按钮侧下拉浮层，九宫格 + 安装/卸载 ─────────────────────────
-function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0 }) {
+function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0, syncError = null }) {
   const { t } = useLang();
   const wrapRef = useRef(null);
   const btnRef = useRef(null);
@@ -473,6 +473,11 @@ function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0 }) {
             <button type="button" onClick={onClose} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 text-sm leading-none p-0.5 transition-colors">✕</button>
           </div>
           <div className="flex-1 min-h-0 overflow-y-auto p-2">
+            {syncError && (
+              <div className="mb-2 px-2 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/50 text-[10px] text-amber-700 dark:text-amber-400 leading-snug">
+                {t('gateway.toolbox.syncFailed', { error: syncError })}
+              </div>
+            )}
             {loading ? (
               <div className="flex items-center justify-center gap-2 py-6 text-[11px] text-zinc-400">
                 <div className="w-3 h-3 border-2 border-zinc-300 dark:border-zinc-600 border-t-blue-500 rounded-full animate-spin" />
@@ -564,7 +569,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   // config-file 类 API Key 应用：两 Tab（0=配置文件写入和 API Key｜1=路由规则）
   const isCfg = app.link_method === 'api-key' && !!app.config_file;
   const isShim = app.link_method === 'shim';   // 透明托管：路由规则 + 基础信息
-  const isClaudeDesktop = app.preset_id === 'claude-desktop';
+  const isClaudeDesktop = !!(app.integrations?.dev_mode_check || app.integrations?.claude_3p);
   // Claude Desktop 且开发者模式未就绪 → 需引导用户先启用
   const needDevMode = isClaudeDesktop && claudeDevMode && !claudeDevMode.dev_mode_ready;
   const [tab,         setTab]         = useState(0);
@@ -583,10 +588,19 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
 
   // 网关 origin（去掉 /v1），用于解析环境变量模板里的 {BASE}
   const gwOrigin = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/v1\/?$/, '');
-  // 只对字符串做占位符替换；布尔/数字（如 modelDiscoveryEnabled: false）原样保留类型
-  const resolveEnv = (tpl) => typeof tpl === 'string'
-    ? tpl.replace(/\{BASE\}/g, gwOrigin).replace(/\{KEY\}/g, app.api_key || '')
-    : tpl;
+  // 只对字符串做占位符替换；对象/数组递归（WorkBuddy models.json 等嵌套 patch）
+  const resolveEnv = (tpl) => {
+    if (typeof tpl === 'string') {
+      return tpl.replace(/\{BASE\}/g, gwOrigin).replace(/\{KEY\}/g, app.api_key || '');
+    }
+    if (Array.isArray(tpl)) return tpl.map(resolveEnv);
+    if (tpl && typeof tpl === 'object') {
+      const out = {};
+      for (const [k, v] of Object.entries(tpl)) out[k] = resolveEnv(v);
+      return out;
+    }
+    return tpl;
+  };
   // 环境变量编辑文本（VAR=value，每行一条）
   const [envText, setEnvText] = useState(() =>
     app.env ? Object.entries(app.env).map(([k, v]) => `${k}=${resolveEnv(v)}`).join('\n') : '');
@@ -631,6 +645,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     for (const [k, v] of Object.entries(app.env || {})) env[k] = resolveEnv(v);
     const r = await window.electronAPI?.apps?.writeConfigFile({
       app_id: app.id, config_file: app.config_file, patch, env, force,
+      route_id: routeId || null,
     }).catch(e => ({ ok: false, error: e.message }));
     // 冲突：目标配置项已有不同的值 → 弹确认显示当前值，确认后强制覆盖
     if (r && !r.ok && Array.isArray(r.conflicts) && r.conflicts.length) {
@@ -1390,6 +1405,7 @@ function SessionManager() {
   const [favOnly, setFavOnly]     = useState(false);
   const [traceRow, setTraceRow]   = useState(null);
   const [contState, setContState] = useState(null);
+  const [handoffTargets, setHandoffTargets] = useState([]);
   const [mining, setMining]       = useState(false);
   const [kStatus, setKStatus]     = useState('idle'); // 知识提炼后台任务状态
   const [notice, setNotice]       = useState('');
@@ -1404,6 +1420,11 @@ function SessionManager() {
   }, []);
 
   useEffect(() => { reload(); }, [reload]);
+  useEffect(() => {
+    window.electronAPI?.apps?.handoffTargets?.()
+      .then(r => setHandoffTargets(Array.isArray(r) ? r : []))
+      .catch(() => setHandoffTargets([]));
+  }, []);
 
   // 知识提炼后台任务：进页面拉一次状态；running 时轮询，让工具栏按钮显示 loading。
   useEffect(() => {
@@ -1463,7 +1484,7 @@ function SessionManager() {
           traceAgentId={traceRow.agent_id} onClose={() => setTraceRow(null)} />
       )}
       {contState && (
-        <ContinueModal source={contState.row} target={contState.target} onClose={() => setContState(null)} />
+        <ContinueModal source={contState.row} target={contState.target} handoffTargets={handoffTargets} onClose={() => setContState(null)} />
       )}
       {mining && (
         <PreferenceMiningModal onClose={() => setMining(false)} flash={flash} onJobStart={() => setKStatus('running')} />
@@ -1528,6 +1549,7 @@ function SessionManager() {
           <div className="px-5 py-16 text-center text-xs text-zinc-400">{t('gateway.sessions.empty')}</div>
         ) : filtered.map(row => (
           <SessionRow key={`${row.agent_id}-${row.session_id}`} row={row} fmtN={fmtN}
+            handoffTargets={handoffTargets}
             onTrace={() => setTraceRow(row)} onMeta={patch => setMeta(row, patch)} onExport={fmt => doExport(row, fmt)}
             onContinue={target => setContState({ row, target })} />
         ))}
@@ -1536,26 +1558,18 @@ function SessionManager() {
   );
 }
 
-// 可作为交接目标的 agent。claude-code/codex 走终端 CLI；cursor 是 GUI，打开项目 + brief 入剪贴板。
-const CONTINUE_TARGETS = [
-  { id: 'claude-code', label: 'Claude Code' },
-  { id: 'codex', label: 'Codex' },
-  { id: 'cursor', label: 'Cursor' },
-];
-
-// 会话来源客户端展示名（按 jsonl entrypoint 区分，仅用于显示）
+// 会话来源客户端展示名（jsonl entrypoint 等，仅用于显示）
 const CLIENT_LABELS = {
-  'claude-code': 'Claude Code',
   'claude-desktop': 'Claude Desktop',
 };
 
 /** 单会话行 */
-function SessionRow({ row, fmtN, onTrace, onMeta, onExport, onContinue }) {
+function SessionRow({ row, fmtN, handoffTargets = [], onTrace, onMeta, onExport, onContinue }) {
   const { t } = useLang();
   const { fmtCost } = useCurrency();
   const [exportOpen, setExportOpen] = useState(false);
   const [contOpen, setContOpen] = useState(false);
-  const targets = CONTINUE_TARGETS.filter(x => x.id !== row.agent_id);
+  const targets = handoffTargets.filter(x => x.id !== row.agent_id);
   const fmtTime = ts => ts ? new Date(ts * 1000).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 
   const costUsd = Number(row.cost_usd) || 0;
@@ -1619,12 +1633,12 @@ function SessionRow({ row, fmtN, onTrace, onMeta, onExport, onContinue }) {
 }
 
 /** 跨智能体交接：生成交接 brief → 复制 → 可在 Terminal 启动目标 agent */
-function ContinueModal({ source, target, onClose }) {
+function ContinueModal({ source, target, handoffTargets = [], onClose }) {
   const { t } = useLang();
   const [res, setRes]         = useState(null);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice]   = useState('');
-  const targetLabel = (CONTINUE_TARGETS.find(x => x.id === target) || {}).label || target;
+  const targetLabel = (handoffTargets.find(x => x.id === target) || {}).label || target;
 
   useEffect(() => {
     let alive = true;
@@ -1713,31 +1727,36 @@ function DetailSection({ n, title, hint, children }) {
   );
 }
 
-/** Claude Desktop 等：会话 jsonl 补录（无 agent_id 的 api-key 应用） */
-function appHasSessionImport(app) {
+/** 是否展示「会话补录」数据来源（须显式启用用量导入） */
+function appHasSessionUsageImport(app) {
   if (!app) return false;
-  if (app.agent_id || app.link_method === 'direct' || app.link_method === 'shim') return true;
-  return app.preset_id === 'claude-desktop' || app.preset_id === 'codex-desktop';
+  if (typeof app.session_usage_import === 'boolean') return app.session_usage_import;
+  return !!app.capabilities?.session_usage_import;
 }
 
-/** 可打开 Session Trace 的 agent（Claude Desktop 共用 claude-code jsonl） */
+/** 是否启用会话 trace（与用量导入独立） */
+function appHasSessionTrace(app) {
+  if (!app) return false;
+  if (typeof app.session_trace === 'boolean') return app.session_trace;
+  return !!app.capabilities?.session_trace;
+}
+
+/** 可打开 Session Trace 的 agent（由 handler 派生 trace_agent_id） */
 function traceAgentIdForApp(app) {
   if (!app) return null;
-  if (['cursor', 'claude-code', 'codex'].includes(app.agent_id)) return app.agent_id;
-  if (app.preset_id === 'claude-desktop') return 'claude-code';
-  if (app.preset_id === 'codex-desktop') return 'codex';
-  return null;
+  if (!appHasSessionTrace(app)) return null;
+  return app.trace_agent_id || app.activity_agent_id || app.agent_id || null;
 }
 
 /** 数据来源摘要：网关 / 会话补录（或二者皆有） */
 function buildDataSourceSummary(app, proxy, session, fmtN, t) {
-  const hasSession = appHasSessionImport(app);
+  const hasSessionImport = appHasSessionUsageImport(app);
   const tags = [];
   // 有 proxy 记录即展示网关来源（manual/api-key/shim 均可能产生）
   if (proxy.calls > 0) {
     tags.push({ icon: '🛰️', label: t('gateway.detail.sourceGateway'), calls: proxy.calls, tokens: proxy.tokens, tone: 'blue' });
   }
-  if (hasSession || session.calls > 0) {
+  if (hasSessionImport && (session.calls > 0 || session.tokens > 0)) {
     tags.push({ icon: '📄', label: t('gateway.detail.sourceSession'), calls: session.calls, tokens: session.tokens, tone: 'green' });
   }
   const summary = tags.length === 2
@@ -1819,10 +1838,14 @@ function AppDetailModal({ app, onClose }) {
   const proxy   = data?.bySource?.find(s => s.source === 'proxy')   || { calls:0, tokens:0 };
   const session = data?.bySource?.find(s => s.source === 'session') || { calls:0, tokens:0 };
 
+  const hasUsageImport = appHasSessionUsageImport(app);
+  const hasSessionTrace = appHasSessionTrace(app);
   const sourceSummary = buildDataSourceSummary(app, proxy, session, fmtN, t);
-  const sessionHistoryRows = (data?.activity?.length ? data.activity : (data?.sessions || []).map(s => ({
-    ...s, project: '—', context: shortId(s.session_id),
-  }))).map(r => ({
+  const sessionHistoryRows = (data?.activity?.length ? data.activity : (
+    hasUsageImport ? (data?.sessions || []).map(s => ({
+      ...s, project: '—', context: shortId(s.session_id),
+    })) : []
+  )).map(r => ({
     ...r,
     project: shortProjectName(r),
     project_path: projectPathTooltip(r),
@@ -1935,7 +1958,8 @@ function AppDetailModal({ app, onClose }) {
             </DetailSection>
             )}
 
-            {/* 4. 按会话历史 */}
+            {/* 4. 按会话历史（trace 或用量导入） */}
+            {(hasSessionTrace || hasUsageImport) && (
             <DetailSection n={secSession} title={t('gateway.detail.bySession')} hint={canTrace ? t('gateway.detail.traceHint') : undefined}>
               {sessionHistoryRows.length === 0 ? (
                 <div className="text-xs text-zinc-400 px-1">{t('gateway.detail.noSessions')}</div>
@@ -1985,6 +2009,7 @@ function AppDetailModal({ app, onClose }) {
                 </div>
               )}
             </DetailSection>
+            )}
 
             {/* 5. 调用明细（无 model 的应用不展示） */}
             {showCallDetails && (
@@ -2044,20 +2069,28 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
   const [toolboxOpen, setToolboxOpen] = useState(false);       // 应用百宝箱展开态
   const [toolboxBusy, setToolboxBusy] = useState(false);       // 展开前从云端拉取目录
   const [toolboxRefresh, setToolboxRefresh] = useState(0);     // 拉取完成后刷新图标行
+  const [toolboxSyncError, setToolboxSyncError] = useState(null); // 云端拉取失败原因
 
   // 展开百宝箱：先从云端拉取 /api/config/apps，再结合本机安装状态展示彩色/灰色图标
   async function toggleToolbox() {
     if (toolboxOpen) { setToolboxOpen(false); return; }
     setToolboxBusy(true);
+    setToolboxSyncError(null);
     try {
       const base = await getSyncServerBase();
       if (window.electronAPI?.toolsConfig?.importUrl && base) {
-        const token = localStorage.getItem('token');
+        const token = localStorage.getItem('token'); // apps 公开，token 可选
         const r = await window.electronAPI.toolsConfig.importUrl(base + '/api/config/apps', token, { replace: true });
         if (r.ok) {
           setToolboxRefresh(k => k + 1);
           await load();   // 同步后刷新下方应用列表（可能有新识别的应用）
+        } else {
+          const err = r.error || 'unknown';
+          console.warn('[toolbox] cloud sync failed:', err);
+          setToolboxSyncError(err);
         }
+      } else if (!base) {
+        setToolboxSyncError('no_server');
       }
     } finally {
       setToolboxBusy(false);
@@ -2336,14 +2369,25 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
 
   async function writeApiKeyConfig(app, { onAbort } = {}) {
     const gwOrigin = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/v1\/?$/, '');
-    const resolveTpl = (tpl) => typeof tpl === 'string'
-      ? tpl.replace(/\{BASE\}/g, gwOrigin).replace(/\{KEY\}/g, app.api_key || '')
-      : tpl;
+    const apiKey = app.api_key || '';
+    // 嵌套 patch（如 WorkBuddy models[]）须递归替换 {BASE}/{KEY}
+    const resolveTpl = (tpl) => {
+      if (typeof tpl === 'string') {
+        return tpl.replace(/\{BASE\}/g, gwOrigin).replace(/\{KEY\}/g, apiKey);
+      }
+      if (Array.isArray(tpl)) return tpl.map(resolveTpl);
+      if (tpl && typeof tpl === 'object') {
+        const out = {};
+        for (const [k, v] of Object.entries(tpl)) out[k] = resolveTpl(v);
+        return out;
+      }
+      return tpl;
+    };
     const isGatewayConfig = app.patch && 'inferenceProvider' in app.patch;   // Claude Desktop 等
     const isCodexConfig   = app.patch && 'model_provider' in app.patch;      // Codex Desktop（OpenAI 风格）
     const run = async (force) => {
-      const patch = {}; for (const [k, v] of Object.entries(app.patch || {})) patch[k] = resolveTpl(v);
-      const env   = {}; for (const [k, v] of Object.entries(app.env   || {})) env[k]   = resolveTpl(v);
+      let patch = resolveTpl(app.patch || {});
+      const env   = resolveTpl(app.env || {});
       if (isGatewayConfig) {   // 显式 inferenceModels（不走 modelDiscovery，绕开 Anthropic 名校验）
         delete patch.modelDiscoveryEnabled;
         patch.chatTabEnabled = true;              // 3P 网关模式下开启 Chat 标签
@@ -2357,6 +2401,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
       if (isCodexConfig && app.route_id) patch.model = modelIdFromRoute(app.route_id, routes) || app.route_id;
       const r = await appsApi.writeConfigFile({
         app_id: app.id, config_file: app.config_file, patch, env, force,
+        route_id: app.route_id || null,
       }).catch(e => ({ ok: false, error: e.message }));
       // 冲突：目标配置项已有不同的值 → 确认后强制覆盖；取消则回滚
       if (r && !r.ok && Array.isArray(r.conflicts) && r.conflicts.length) {
@@ -2436,6 +2481,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                 onToggle={toggleToolbox}
                 onClose={() => setToolboxOpen(false)}
                 refreshKey={toolboxRefresh}
+                syncError={toolboxSyncError}
               />
             </div>
 
@@ -2489,10 +2535,11 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                   const isCfgApp = keyApp && app.host_method === 'config-file';
                   const isManual = app.link_method === 'manual';
                   const isDirectOnly = app.link_method === 'direct';        // 仅官方订阅（cursor 等）
+                  const isSessionApp = app.link_method === 'session';       // 可绑路由的会话统计（WorkBuddy 等）
                   const hostable = app.link_method === 'shim' || isCfgApp || isDirectOnly;
                   const tracked  = app.hosted === true;
-                  const isManaged = hostable ? tracked : (keyApp && !app._virtual_apikey);
-                  const isGatewayRouted = hostable ? !!(tracked && app.route_id) : !!(keyApp && app.route_id);
+                  const isManaged = isSessionApp ? tracked : (hostable ? tracked : (keyApp && !app._virtual_apikey));
+                  const isGatewayRouted = isSessionApp ? !!app.route_id : (hostable ? !!(tracked && app.route_id) : !!(keyApp && app.route_id));
                   // 路由下拉当前值：tier:id 区分同模型跨层；api-key/manual 有 route_id 即展示
                   const currentRouteValue = (() => {
                     if (!app.route_id) return '';
@@ -2506,6 +2553,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                       usableRoutes.some(r => (r.model_key || r.id) === val)
                       || availableModels.some(m => ['free', 'p2p', 'paid'].includes(m.tier) && modelTierKey(m) === val);
                     if (keyApp && !isDirectOnly) return known ? val : '';
+                    if (isSessionApp) return known ? val : (app.route_id ? '' : '');
                     if (!tracked) return '';
                     return known ? val : '';
                   })();
@@ -2516,6 +2564,10 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                   const rowBg = isManaged
                     ? 'bg-white dark:bg-zinc-800/60 hover:bg-zinc-50/80 dark:hover:bg-zinc-800/30'
                     : 'bg-zinc-50/40 dark:bg-zinc-800/10 hover:bg-zinc-50 dark:hover:bg-zinc-800/20';
+                  const canBindRoute = app.route_bindable !== false
+                    && (app.link_method === 'session' || isDirectOnly || app.capabilities?.gateway_proxy !== false);
+                  const routeLocked = isDirectOnly || !canBindRoute || ((hostable && !tracked) && !isSessionApp);
+                  const showGatewayRoutes = canBindRoute && !isDirectOnly;
                   const isApiLink = app.link_method === 'manual';
                   const statusLabel = !isManaged
                     ? t('gateway.apps.statusUntracked')
@@ -2555,14 +2607,14 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                       <div className="text-center overflow-hidden tabular-nums text-xs font-semibold text-zinc-700 dark:text-zinc-200 rounded hover:bg-zinc-100/60 dark:hover:bg-zinc-700/30 cursor-pointer" title={t('gateway.apps.statsTitle')} onClick={() => setDetailApp(app)}>{st.tokens > 0 ? fmtTokens(st.tokens) : '—'}</div>
                       <div className="text-center overflow-hidden text-xs font-medium text-zinc-600 dark:text-zinc-300 rounded hover:bg-zinc-100/60 dark:hover:bg-zinc-700/30 cursor-pointer" title={t('gateway.apps.statsTitle')} onClick={() => setDetailApp(app)}>{fmtTime(st.lastTs)}</div>
 
-                      {/* 路由下拉槽 */}
+                      {/* 路由下拉：同一控件；不可绑路由时灰色禁用（与仅官方订阅应用一致） */}
                       <div className="min-w-0 overflow-hidden">
-                      {(((keyApp || app.link_method === 'shim') && app.route_bindable !== false) || isDirectOnly) && !app._virtual_apikey && (
+                      {((keyApp || app.link_method === 'shim' || isSessionApp || isDirectOnly) && !app._virtual_apikey) && (
                       <select
-                        value={currentRouteValue}
-                        disabled={isDirectOnly || (hostable && !tracked)}
+                        value={routeLocked ? '' : currentRouteValue}
+                        disabled={routeLocked}
                         onChange={async e => {
-                          if (isDirectOnly) return;   // 仅直连应用：不可改路由
+                          if (routeLocked) return;
                           const val = e.target.value || null;
                           // 直连官方(空) = 还原配置/撤 shim → 应用直连官方、不走网关；
                           // 选模型/路由 = 写配置纳管/注入 shim → 走网关并按 keyScene 路由。
@@ -2581,6 +2633,12 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                             await appsApi.update({ id: appId, route_id: val, ...(val ? { hosted: true } : {}) }).catch(() => {});
                             if (val) { await window.electronAPI.agents?.apply(app.agent_id).catch(() => {}); showNotice(appId, t('gateway.apps.restartToApply')); }   // 注入 shim → 网关
                             else     { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); showNotice(appId, t('gateway.apps.restartToApply')); }
+                          } else if (app.link_method === 'session') {
+                            await appsApi.update({
+                              id: app.id,
+                              route_id: val,
+                              ...(val ? { hosted: true } : {}),
+                            }).catch(() => {});
                           } else {                                          // 纯 api-key / manual
                             await appsApi.update({
                               id: app.id,
@@ -2598,7 +2656,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                         {isManual
                           ? <option value="" disabled>{t('gateway.app.routeRequired')}</option>
                           : <option value="">{t('gateway.app.routeOfficial')}</option>}
-                        {!isDirectOnly && (() => {
+                        {showGatewayRoutes && (() => {
                           const avail = new Set(availableModels.map(m => m.id));
                           const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
                           return (
@@ -2636,7 +2694,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                           {t('gateway.common.settings')}
                         </button>
                       ) : null}
-                      {isDirectOnly ? (
+                      {isDirectOnly || isSessionApp ? (
                         tracked ? (
                           <button onClick={() => setTracked(app, false)} disabled={busyId === app.id}
                             title={t('gateway.apps.revertTitle')}

@@ -25,10 +25,18 @@ async def seed_default_configs() -> None:
     for key, filename in _SEED_KEYS:
         if await db.get_config(key, ""):
             continue
-        path = _DEFAULTS_DIR / filename
-        if not path.is_file():
-            continue
-        content = path.read_text(encoding="utf-8").strip()
+        if key == "config.apps":
+            # 种子：基础设施 + 默认 app_entities（非旧版 tools 扁平段）
+            import app_catalog as ac
+            compiled = ac.compile_apps_doc(ac.import_from_defaults())
+            content = yaml.dump(
+                compiled, allow_unicode=True, sort_keys=False, default_flow_style=False,
+            ).rstrip()
+        else:
+            path = _DEFAULTS_DIR / filename
+            if not path.is_file():
+                continue
+            content = path.read_text(encoding="utf-8").strip()
         if content:
             await db.set_config(key, content)
 
@@ -106,3 +114,33 @@ async def migrate_apps_config_with_defaults() -> None:
     merged = merge_apps_yaml_text(content)
     if merged and merged != content.strip():
         await db.set_config("config.apps", merged)
+        content = merged
+    await _ensure_app_entities_in_apps_config(content)
+
+
+async def _ensure_app_entities_in_apps_config(content: str = "") -> None:
+    """旧库仅有 tools 扁平段、或 merge 剥离后缺 app_entities → 从目录默认实体补全。"""
+    if not content:
+        content = await db.get_config("config.apps", "")
+    if not content.strip():
+        return
+    try:
+        doc = yaml.safe_load(content) or {}
+    except yaml.YAMLError:
+        return
+    if not isinstance(doc, dict):
+        return
+    if doc.get("app_entities"):
+        return
+    import app_catalog as ac
+    catalog = await ac.load_catalog_doc()
+    entities = catalog.get("entities") or []
+    if not entities:
+        entities = ac.import_from_defaults().get("entities") or []
+    if not entities:
+        return
+    compiled = ac.compile_apps_doc({"version": doc.get("version") or 1, "entities": entities})
+    yaml_text = yaml.dump(
+        compiled, allow_unicode=True, sort_keys=False, default_flow_style=False,
+    ).rstrip()
+    await db.set_config("config.apps", yaml_text)

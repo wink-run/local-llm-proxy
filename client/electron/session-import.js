@@ -20,21 +20,9 @@ const os   = require('os');
 const { estimateCost } = require('./pricing');
 const { resolvePricingProviderId } = require('./billing-config');
 
-// 各 Agent 默认计费类型（对齐 tokentelemetry billing_mode 默认值）
-const AGENT_BILLING = {
-  'claude-code':  'subscription',
-  'codex':        'subscription',
-  'gemini-cli':   'subscription',
-  'cursor':       'subscription',
-  'copilot':      'subscription',
-  'qwen-code':    'subscription',
-  'antigravity':  'subscription',
-  'opencode-cli': 'api-key',
-  'grok':         'api-key',
-};
-
+// 各 Agent 默认计费类型：优先读 session_sources.billing_type（来自 handler/session-scans）
 function resolveBillingType(src) {
-  return src.billing_type || AGENT_BILLING[src.agent_id] || 'api-key';
+  return src.billing_type || 'api-key';
 }
 
 /** 会话补录行的 cost_usd / billing_type（与网关 recordStats 一致） */
@@ -221,6 +209,8 @@ function claudeDataSourceForEntrypoint(entrypoint) {
 // rec=当前对象，ctx={ model, session_id, seq, index, prev } ，doc=整文件级回退源（json）。
 // 返回 true=写入了一行新数据。
 function emitRecord(localStats, src, rec, ctx, doc) {
+  // 用户关闭「用量导入」时仅扫描 trace，不写 local-stats
+  if (src.session_usage_import === false) return false;
   const f = src.fields || {};
 
   // 必需字段
@@ -486,6 +476,10 @@ function importGrokSessionsSource(localStats, src) {
 
 // ── 单个 source 的扫描 ────────────────────────────────────────────────────────
 function importSource(localStats, src) {
+  // 用户关闭 trace 分析时不扫描会话文件
+  if (src.session_trace === false) {
+    return { source: src.id || src.data_source, imported: 0, skipped: 0, files_scanned: 0 };
+  }
   if (src.format === 'sqlite')         return importSqliteSource(localStats, src);
   if (src.format === 'copilot-events') return importCopilotEventsSource(localStats, src);
   if (src.format === 'grok-session')   return importGrokSessionsSource(localStats, src);
@@ -564,15 +558,15 @@ function importSource(localStats, src) {
           }
         }
         if (consumed) continue;
-        // Codex：token_count 在 task_complete 之前，延迟需等 turn 结束再写入
-        if (src.id === 'codex') {
+        // defer_emit：token 行需等 turn 结束再写入（见 session-scans.yaml defer_emit）
+        if (src.defer_emit) {
           const pl = e.payload || {};
           if (e.type === 'event_msg' && pl.type === 'task_complete') {
             ctx.latency_ms     = pl.duration_ms != null ? num(pl.duration_ms) : null;
             ctx.first_token_ms = pl.time_to_first_token_ms != null ? num(pl.time_to_first_token_ms) : null;
-            if (ctx._codexDefer) {
-              if (emitRecord(localStats, src, ctx._codexDefer, ctx, null)) imported++;
-              ctx._codexDefer = null;
+            if (ctx._deferEmit) {
+              if (emitRecord(localStats, src, ctx._deferEmit, ctx, null)) imported++;
+              ctx._deferEmit = null;
             }
             ctx.latency_ms = undefined;
             ctx.first_token_ms = undefined;
@@ -580,16 +574,15 @@ function importSource(localStats, src) {
           }
         }
         if (!matchFilter(e, src.record_filter)) continue;
-        if (src.id === 'codex') {
-          ctx._codexDefer = e;
+        if (src.defer_emit) {
+          ctx._deferEmit = e;
           continue;
         }
         if (emitRecord(localStats, src, e, ctx, null)) imported++;
       }
-      // 文件末尾无 task_complete 时仍落账（无延迟）
-      if (src.id === 'codex' && ctx._codexDefer) {
-        if (emitRecord(localStats, src, ctx._codexDefer, ctx, null)) imported++;
-        ctx._codexDefer = null;
+      if (src.defer_emit && ctx._deferEmit) {
+        if (emitRecord(localStats, src, ctx._deferEmit, ctx, null)) imported++;
+        ctx._deferEmit = null;
       }
     }
 

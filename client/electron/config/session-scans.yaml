@@ -1,0 +1,348 @@
+# session-scans.yaml — 会话文件扫描规则（由 handler.session.source_id 引用）
+version: 1
+
+scans:
+  claude:
+    data_source: session-claude
+    agent_id: claude-code
+    provider_id: claude-cli
+    tier: paid
+    billing_type: subscription
+    proxy_dedup: true
+    root: ~/.claude/projects
+    glob: '**/*.jsonl'
+    format: jsonl
+    record_filter:
+      field: type
+      equals: assistant
+    require_fields:
+    - message.usage
+    request_id:
+    - message.id
+    - requestId
+    require_request_id: true
+    data_source_map:
+      field: entrypoint
+      map:
+        claude-desktop: session-claude-desktop
+        claude-desktop-3p: session-claude-desktop
+      prefix_map:
+        claude-desktop: session-claude-desktop
+      skip:
+      - sdk-cli
+      default: session-claude
+    fields:
+      ts: timestamp
+      model: message.model
+      session_id: sessionId
+      input_tokens: message.usage.input_tokens
+      output_tokens: message.usage.output_tokens
+      cache_create_tokens: message.usage.cache_creation_input_tokens
+      cache_read_tokens: message.usage.cache_read_input_tokens
+  codex:
+    data_source: session-codex
+    agent_id: codex
+    provider_id: codex-cli
+    tier: paid
+    billing_type: subscription
+    root: ~/.codex/sessions
+    glob: '**/*.jsonl'
+    format: jsonl
+    session_id_from: filename
+    meta:
+    - filter:
+        field:
+        - type
+        - payload.type
+        in:
+        - session_meta
+        - turn_context
+      set:
+        model:
+        - model
+        - info.model
+        - payload.model
+        - payload.info.model
+        session_id:
+        - id
+        - session_id
+        - payload.id
+        - payload.session_id
+    record_filter:
+      field:
+      - payload.type
+      - type
+      equals: token_count
+    accumulate:
+      input:
+      - payload.info.total_token_usage.input_tokens
+      - payload.total_token_usage.input_tokens
+      - payload.usage.input_tokens
+      - payload.usage.prompt_tokens
+      output:
+      - payload.info.total_token_usage.output_tokens
+      - payload.total_token_usage.output_tokens
+      - payload.usage.output_tokens
+      - payload.usage.completion_tokens
+      cached:
+      - payload.info.total_token_usage.cached_input_tokens
+      - payload.total_token_usage.cached_input_tokens
+      - payload.usage.cache_read_tokens
+    skip_if_zero: true
+    request_id: codex:{session_id}:{seq}
+    fields:
+      ts:
+      - timestamp
+      - payload.timestamp
+    defer_emit: true
+  gemini:
+    data_source: session-gemini
+    agent_id: gemini-cli
+    provider_id: gemini-cli
+    tier: paid
+    billing_type: subscription
+    root: ~/.gemini/tmp
+    glob: '**/chats/session-*.json'
+    format: json
+    doc_session_id:
+    - sessionId
+    - session_id
+    iterate:
+    - messages
+    - history
+    record_filter:
+      field:
+      - role
+      - type
+      in:
+      - model
+      - assistant
+      allow_missing: true
+    skip_if_zero: true
+    request_id: gemini:{session_id}:{index}
+    fields:
+      input_tokens:
+      - tokens.promptTokenCount
+      - usageMetadata.promptTokenCount
+      - usage_metadata.promptTokenCount
+      - usage.promptTokenCount
+      - tokens.input
+      - tokens.input_tokens
+      output_tokens:
+      - tokens.candidatesTokenCount
+      - usageMetadata.candidatesTokenCount
+      - usage_metadata.candidatesTokenCount
+      - usage.candidatesTokenCount
+      - tokens.output
+      - tokens.output_tokens
+      cache_read_tokens:
+      - tokens.cachedContentTokenCount
+      - usageMetadata.cachedContentTokenCount
+      - tokens.cached
+      model: model
+      ts: timestamp
+    doc_fallback:
+      model:
+      - model
+      ts:
+      - lastUpdated
+      - updatedAt
+  cursor:
+    data_source: session-cursor
+    agent_id: cursor
+    provider_id: cursor
+    tier: paid
+    billing_type: subscription
+    direct_only: true
+    app_name: Cursor
+    app_icon: 🖱
+    models:
+    - claude-opus-4-8
+    - claude-sonnet-4-6
+    - gpt-5.4
+    - gemini-2.5-pro
+    - gemini-2.5-flash
+    root: ~/.cursor/projects
+    glob: '**/agent-transcripts/**/*.jsonl'
+    format: jsonl
+    session_id_from: filename
+    record_filter:
+      field: role
+      equals: assistant
+    request_id: cursor:{session_id}:{index}
+    record_label: assistant_tools
+    fields:
+      ts:
+      - timestamp
+      - message.timestamp
+      model: message.model
+      input_tokens: message.usage.input_tokens
+      output_tokens: message.usage.output_tokens
+      cache_read_tokens: message.usage.cache_read_input_tokens
+      cache_create_tokens: message.usage.cache_creation_input_tokens
+  opencode:
+    data_source: session-opencode
+    agent_id: opencode
+    provider_id: opencode-cli
+    tier: paid
+    billing_type: api-key
+    format: sqlite
+    db: ~/.local/share/opencode/opencode.db
+    query: SELECT m.id AS message_id, m.session_id AS session_id, m.data AS data FROM
+      message m
+    json_column: data
+    record_filter:
+      field: role
+      equals: assistant
+    require_fields:
+    - tokens
+    - time.completed
+    skip_if_zero: true
+    request_id: opencode_session:{session_id}:{message_id}
+    latency_from:
+      start: time.created
+      end: time.completed
+      first_token: true
+    fields:
+      ts: time.created
+      model: modelID
+      session_id: session_id
+      input_tokens: tokens.input
+      output_tokens: tokens.output
+      output_extra: tokens.reasoning
+      cache_read_tokens: tokens.cache.read
+      cache_create_tokens: tokens.cache.write
+  copilot-cli:
+    data_source: session-copilot
+    agent_id: copilot
+    provider_id: github-copilot
+    tier: paid
+    billing_type: subscription
+    direct_only: true
+    app_name: GitHub Copilot
+    app_icon: 🤖
+    models:
+    - gpt-5.4
+    - gpt-5-mini
+    - claude-opus-4-8
+    - claude-sonnet-4-6
+    - gemini-2.5-pro
+    format: copilot-events
+    root: ~/.copilot/session-state
+    glob: '*/events.jsonl'
+  qwen:
+    data_source: session-qwen
+    agent_id: qwen-code
+    provider_id: qwen-cli
+    tier: paid
+    billing_type: subscription
+    direct_only: true
+    app_name: Qwen Code
+    app_icon: 🐉
+    models:
+    - qwen3-coder-plus
+    - qwen3-coder-next
+    - qwen3-max
+    root: ~/.qwen/projects
+    glob: '*/chats/*.jsonl'
+    format: jsonl
+    session_id_from: filename
+    record_filter:
+      field: type
+      equals: assistant
+    require_fields:
+    - message.usage
+    skip_if_zero: true
+    request_id: qwen:{session_id}:{index}
+    fields:
+      ts: timestamp
+      model: message.model
+      input_tokens: message.usage.input_tokens
+      output_tokens: message.usage.output_tokens
+      cache_create_tokens: message.usage.cache_creation_input_tokens
+      cache_read_tokens: message.usage.cache_read_input_tokens
+  antigravity:
+    data_source: session-antigravity
+    agent_id: antigravity
+    provider_id: antigravity
+    tier: paid
+    billing_type: subscription
+    direct_only: true
+    app_name: Antigravity
+    app_icon: 🚀
+    models:
+    - gemini-3-pro
+    - gemini-2.5-pro
+    - gemini-2.5-flash
+    - claude-sonnet-4-6
+    root: ~/.gemini/tmp
+    glob: '**/chats/*.json'
+    format: json
+    doc_session_id:
+    - sessionId
+    - session_id
+    doc_skip:
+      field: kind
+      equals: main
+    iterate: messages
+    record_filter:
+      field: type
+      equals: gemini
+    skip_if_zero: true
+    request_id: antigravity:{session_id}:{index}
+    fields:
+      input_tokens: tokens.input
+      output_tokens: tokens.output
+      cache_read_tokens: tokens.cached
+    doc_fallback:
+      model: model
+      ts:
+      - lastUpdated
+      - updatedAt
+  grok:
+    data_source: session-grok
+    agent_id: grok
+    provider_id: grok
+    tier: paid
+    billing_type: api-key
+    direct_only: true
+    app_name: Grok
+    app_icon: 𝕏
+    models:
+    - grok-build-0.1
+    - grok-4.3
+    format: grok-session
+    root: ~/.grok/sessions
+    skip_if_zero: true
+  workbuddy:
+    data_source: session-workbuddy
+    agent_id: workbuddy
+    provider_id: workbuddy
+    tier: paid
+    billing_type: api-key
+    direct_only: false
+    app_name: WorkBuddy
+    app_icon: 🤝
+    models:
+    - auto
+    - gpt-5
+    - deepseek-v4-pro
+    - deepseek-v4-flash
+    root: ~/.workbuddy/traces
+    glob: '**/trace_*.json'
+    format: json
+    iterate: spans
+    record_filter:
+      field: type
+      equals: generation
+    item_json_field: toolOutput
+    doc_session_id:
+    - trace.traceId
+    skip_if_zero: true
+    request_id: workbuddy:{session_id}:{index}
+    fields:
+      model: model
+      input_tokens: usage.prompt_tokens
+      output_tokens: usage.completion_tokens
+      cache_read_tokens: usage.prompt_tokens_details.cached_tokens
+      ts: startedAt

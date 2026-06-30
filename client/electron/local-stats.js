@@ -372,17 +372,12 @@ function _empty() {
  *   - shim 应用「不走网关、直连官方」的部分按 data_source（session-claude/codex/gemini）
  * 返回：总计 / 来源拆分(网关 vs 会话) / 按模型 / 按会话(session_id) / 最近明细。
  */
-function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50 } = {}) {
+function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50, includeSessionImport = true } = {}) {
   const empty = { total: { calls: 0, tokens: 0, inTok: 0, outTok: 0, lastTs: null, totalCost: 0 }, bySource: [], byModel: [], sessions: [], recent: [] };
   if (!db) return empty;
   // days=1 对齐本地 0 点（与 queryTodaySummary / queryDashboard 一致），其余用滚动窗口
   const since = days === 1 ? todaySinceTs() : Math.floor(Date.now() / 1000) - days * 86400;
-  const where =
-    '(' +
-    '(@appId IS NOT NULL AND app_id = @appId) OR ' +
-    '(@apiKey IS NOT NULL AND app_id IS NULL AND api_key = @apiKey) OR ' +
-    '(@dataSource IS NOT NULL AND data_source = @dataSource)' +
-    ') AND ts >= @since';
+  const where = `${_appMatchWhere(includeSessionImport)} AND ts >= @since`;
   const p = { appId: appId || null, apiKey: apiKey || null, dataSource: dataSource || null, since };
   try {
     const total = db.prepare(
@@ -569,20 +564,27 @@ function queryTodaySummary() {
   }
 }
 
+/** 应用归属 WHERE（可选排除会话补录 data_source） */
+function _appMatchWhere(includeSessionImport = true) {
+  const match =
+    '(' +
+    '(@appId IS NOT NULL AND app_id = @appId) OR ' +
+    '(@apiKey IS NOT NULL AND app_id IS NULL AND api_key = @apiKey) OR ' +
+    '(@dataSource IS NOT NULL AND data_source = @dataSource)' +
+    ')';
+  if (includeSessionImport) return match;
+  return `${match} AND data_source = 'proxy'`;
+}
+
 /** 时间窗口内单个应用用量（与 queryAppDetail / apps:stats 归属规则一致） */
-function queryAppStatsInPeriod({ appId, apiKey, dataSource, days = 30, since: sinceTs } = {}) {
+function queryAppStatsInPeriod({ appId, apiKey, dataSource, days = 30, since: sinceTs, includeSessionImport = true } = {}) {
   const empty = {
     calls: 0, tokens: 0, cost: 0, lastTs: null,
     proxyCalls: 0, sessionCalls: 0, proxyTokens: 0, sessionTokens: 0,
   };
   if (!db || (!appId && !apiKey && !dataSource)) return empty;
   const since = sinceTs != null ? sinceTs : Math.floor(Date.now() / 1000) - days * 86400;
-  const where =
-    '(' +
-    '(@appId IS NOT NULL AND app_id = @appId) OR ' +
-    '(@apiKey IS NOT NULL AND app_id IS NULL AND api_key = @apiKey) OR ' +
-    '(@dataSource IS NOT NULL AND data_source = @dataSource)' +
-    ') AND ts >= @since';
+  const where = `${_appMatchWhere(includeSessionImport)} AND ts >= @since`;
   const p = { appId: appId || null, apiKey: apiKey || null, dataSource: dataSource || null, since };
   try {
     const total = db.prepare(
@@ -614,17 +616,12 @@ function queryAppStatsInPeriod({ appId, apiKey, dataSource, days = 30, since: si
 }
 
 /** 当天（本地 0 点至今）请求/Token；lastTs 为历史最近使用时间（不限当天） */
-function queryAppStatsToday({ appId, apiKey, dataSource } = {}) {
-  const today = queryAppStatsInPeriod({ appId, apiKey, dataSource, since: todaySinceTs() });
+function queryAppStatsToday({ appId, apiKey, dataSource, includeSessionImport = true } = {}) {
+  const today = queryAppStatsInPeriod({ appId, apiKey, dataSource, since: todaySinceTs(), includeSessionImport });
   let lastTs = null;
   if (db && (appId || apiKey || dataSource)) {
     try {
-      const where =
-        '(' +
-        '(@appId IS NOT NULL AND app_id = @appId) OR ' +
-        '(@apiKey IS NOT NULL AND app_id IS NULL AND api_key = @apiKey) OR ' +
-        '(@dataSource IS NOT NULL AND data_source = @dataSource)' +
-        ')';
+      const where = _appMatchWhere(includeSessionImport);
       const p = { appId: appId || null, apiKey: apiKey || null, dataSource: dataSource || null };
       const r = db.prepare(`SELECT MAX(ts) AS lastTs FROM requests WHERE ${where}`).get(p);
       lastTs = r.lastTs || null;

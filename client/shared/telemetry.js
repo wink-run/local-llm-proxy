@@ -13,22 +13,25 @@ const { readLocalConfig } = require('./config-loader');
 /** 与 Electron 统一的数据目录（local-stats.db） */
 const STATS_DIR = path.join(os.homedir(), '.tokenbank');
 
-// agent_id → data_source（从 tokenbank.default.yaml 的 session_sources 派生）
+function configLoader() {
+  return require('../electron/config-loader');
+}
+
+// agent_id → data_source（从展开的 session_sources 派生）
 function buildAgentDataSource() {
   const m = {};
   try {
-    for (const s of (require('../electron/config-loader').sessionSources() || [])) {
+    for (const s of (configLoader().sessionSources() || [])) {
       if (s && s.agent_id && s.data_source) m[s.agent_id] = s.data_source;
     }
   } catch {}
   return m;
 }
 
-// 带 proxy_dedup 的 data_source 集合（Claude 等：网关与会话 request_id 可对齐去重）
 function buildProxyDedupDs() {
   const s = new Set();
   try {
-    for (const src of (require('../electron/config-loader').sessionSources() || [])) {
+    for (const src of (configLoader().sessionSources() || [])) {
       if (src && src.proxy_dedup) {
         if (src.data_source) s.add(src.data_source);
         const m = src.data_source_map && src.data_source_map.map;
@@ -39,36 +42,45 @@ function buildProxyDedupDs() {
   return s;
 }
 
-const SESSION_DS_BY_PRESET = {
-  'claude-desktop': 'session-claude-desktop',
-  'codex-desktop':  'session-codex',
-};
+/** 应用关联的会话 data_source 列表（handler.linked_data_sources 或 agent 主源） */
+function dataSourcesForApp(app) {
+  if (!app) return [];
+  if (app.linked_data_sources?.length) return [...app.linked_data_sources];
+  const aid = app.agent_id || app.preset_id;
+  if (!aid) return [];
+  try {
+    const ent = configLoader().appEntityById(aid);
+    if (ent?.linked_data_sources?.length) return [...ent.linked_data_sources];
+  } catch {}
+  const AGENT_DATA_SOURCE = buildAgentDataSource();
+  const ds = AGENT_DATA_SOURCE[app.agent_id];
+  return ds ? [ds] : [];
+}
 
 /** 取消纳管 / 已走网关且无法去重的源 → 跳过会话扫描 */
 function computeImportSkip() {
   const skip = new Set();
-  const AGENT_DATA_SOURCE = buildAgentDataSource();
-  const PROXY_DEDUP_DS    = buildProxyDedupDs();
+  const PROXY_DEDUP_DS = buildProxyDedupDs();
   try {
     for (const app of ((readLocalConfig() || {}).apps || [])) {
-      const ds = AGENT_DATA_SOURCE[app.agent_id] || SESSION_DS_BY_PRESET[app.preset_id];
-      if (!ds) continue;
-      if (app.hosted === false) { skip.add(ds); continue; }
-      if (app.hosted && app.route_id && !PROXY_DEDUP_DS.has(ds)) skip.add(ds);
+      for (const ds of dataSourcesForApp(app)) {
+        if (app.hosted === false) { skip.add(ds); continue; }
+        if (app.hosted && app.route_id && !PROXY_DEDUP_DS.has(ds)) skip.add(ds);
+      }
     }
-    // Cursor 纳管且 stop hook 已装：transcript 无 usage，改由 hook 落账
-    const cursor = ((readLocalConfig() || {}).apps || []).find(
-      a => a.link_method === 'direct' && a.agent_id === 'cursor',
-    );
-    if (cursor?.hosted && cursorHooks.isInstalled()) skip.add('session-cursor');
+    // editor hook 纳管：由 handler.integrations.editor_hook 声明
+    for (const app of ((readLocalConfig() || {}).apps || [])) {
+      if (app.link_method !== 'direct' || !app.agent_id || !app.hosted) continue;
+      const ent = configLoader().appEntityById(app.agent_id);
+      if (ent?.integrations?.editor_hook && cursorHooks.isInstalled()) {
+        const ds = buildAgentDataSource()[app.agent_id];
+        if (ds) skip.add(ds);
+      }
+    }
   } catch {}
   return skip;
 }
 
-/**
- * 初始化 SQLite 统计、网关落账回调、定时会话补录。
- * @returns {{ shutdown: function }} 进程退出时调用
- */
 function initGatewayTelemetry(gateway) {
   localStats.init(STATS_DIR);
   gateway.setStatsRecorder(localStats.record);
