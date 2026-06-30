@@ -11,10 +11,11 @@ function billingHeaders() {
   };
 }
 
-/** 拉取并合并云端账户配置（与 Electron localConfig:getUserAccounts 同结构） */
-export async function loadUserAccounts() {
+/** 拉取账户配置（与 Electron localConfig:getUserAccounts 同结构）
+ *  @param {{ localOnly?: boolean }} opts localOnly=true 时仅读本机配置（供给源个人源） */
+export async function loadUserAccounts({ localOnly = false } = {}) {
   if (window.electronAPI?.localConfig?.getUserAccounts) {
-    return window.electronAPI.localConfig.getUserAccounts();
+    return window.electronAPI.localConfig.getUserAccounts({ localOnly });
   }
   const serverUrl = normalizeServerBase(getServerUrl() || '');
   if (serverUrl) await syncCloudConfigUrl(serverUrl).catch(() => {});

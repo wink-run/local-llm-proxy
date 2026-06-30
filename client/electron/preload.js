@@ -186,7 +186,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getBilling:      ()  => ipcRenderer.invoke('localConfig:getBilling', billingAuth()),
     setBilling:      (d) => ipcRenderer.invoke('localConfig:setBilling', { ...d, ...billingAuth() }),
     resetBilling:    (d) => ipcRenderer.invoke('localConfig:resetBilling', { ...d, ...billingAuth() }),
-    getUserAccounts: ()  => ipcRenderer.invoke('localConfig:getUserAccounts', billingAuth()),
+    getUserAccounts: (opts = {}) => ipcRenderer.invoke('localConfig:getUserAccounts', { ...billingAuth(), ...opts }),
     setUserAccounts: (d) => ipcRenderer.invoke('localConfig:setUserAccounts', { ...d, ...billingAuth() }),
     // 服务端配置下发 / 同步后刷新报价
     onBillingChanged: (cb) => {

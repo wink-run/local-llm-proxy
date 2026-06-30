@@ -1893,6 +1893,11 @@ function registerIPC() {
     } catch { return []; }
   }
   ipcMain.handle('localConfig:getUserAccounts', async (_e, auth = {}) => {
+    // 供给源页 personalOnly：仅读本机 local-config，不随登录态拉云端/裁剪
+    if (auth.localOnly) {
+      const cfg = readLocalConfig();
+      return billingConfigMod.getUserAccounts(cfg, { boundDirectAgentIds: boundDirectAgentIds() });
+    }
     let cfg = await pullUserBilling(auth);
     const { cfg: pruned, changed } = billingConfigMod.pruneLocalBillingAgainstServer(cfg);
     if (changed) applyUserBillingCfg(pruned);

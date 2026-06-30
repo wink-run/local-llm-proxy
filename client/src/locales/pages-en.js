@@ -631,6 +631,7 @@ export default {
   'providers.billing.subMonthly': 'Subscription',
   'providers.billing.subHint': 'Default plan monthly fee (editable); add models and set prices below',
   'providers.billing.paygHint': 'Per-model list price (USD / 1M tokens)',
+  'providers.billing.standaloneHint': 'Local sources default to $0; adjust per-model pricing as needed',
   'providers.billing.subToApiHint': 'Sub → API: monthly fee + supported model estimates (same as API sub)',
   'providers.billing.addModelPh': 'Add model…',
   'providers.billing.noModels': 'No models yet — add one',

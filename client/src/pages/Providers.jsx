@@ -6,7 +6,7 @@ import ServiceIcon from '../components/ServiceIcon';
 import { getNetwork, getProfile, listKeys, createKey, deleteKey, getProviderCatalog, getModelsForCurrentUser } from '../api/client';
 import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
 import { DirectSourceCard, PersonalSourceModelView, PricingTable, CollapsibleBillingPanel, buildInstancePatch, buildDirectSourcePatch, buildDirectSourceRemovePatch, TemplateEditModal, SyncDiffBanner } from '../components/PersonalSources';
-import { getServerUrl, normalizeServerBase, syncCloudConfigUrl, getSyncServerBase } from '../config';
+import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
 import { getGateway, getLocalConfig, getConfig, getOauth } from '../api/adapter';
 import { useLang } from '../store/lang';
 import { useAuth } from '../store/index';
@@ -1415,6 +1415,8 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
 
 /** 用户手工添加模型时的默认刊例价（USD / 百万 Token） */
 const DEFAULT_MODEL_PRICING = { in: 1, out: 5, cacheRead: 0.1 };
+/** 独立供给源（无账户实例，如 Ollama）添加模型时的默认定价 */
+const STANDALONE_MODEL_PRICING = { in: 0, out: 0, cacheRead: 0 };
 
 function modelEntryName(m) {
   if (typeof m === 'string') return m.trim();
@@ -1473,18 +1475,26 @@ function pricingRowsForProvider(providerId, models, merged, overrides) {
 function ProviderCardBillingSection({
   billingTag, accountInst, provider, userPayg, userSubscriptions,
   providerPricing, pricingOverrides, onSaveAccounts, onOverridesChange, onUpdate, onPersistModels, t,
+  standalone = false,
 }) {
   const isPayg = billingTag === 'payg';
   const isSubBilling = billingTag === 'api_sub' || billingTag === 'sub_to_api';
-  const paygRec = isPayg ? userPayg.find(p => p.id === accountInst?.id) : null;
+  const paygRec = isPayg && accountInst ? userPayg.find(p => p.id === accountInst?.id) : null;
   const subRec = isSubBilling ? userSubscriptions.find(s => s.id === accountInst?.id) : null;
   const subSourceId = subRec?.source_id || accountInst?.source_id;
-  const pricingPid = isPayg
-    ? (paygRec?.provider_id || accountInst?.source_id)
-    : (subRec?.plan_provider_id || OAUTH_SUB_SOURCE_TO_PID[subSourceId] || subSourceId);
+  const pricingPid = standalone
+    ? provider.id
+    : isPayg
+      ? (paygRec?.provider_id || accountInst?.source_id)
+      : (subRec?.plan_provider_id || OAUTH_SUB_SOURCE_TO_PID[subSourceId] || subSourceId);
 
   const userModelNames = useMemo(() => {
     const names = new Set();
+    if (standalone) {
+      for (const m of provider?.models || []) { const n = modelEntryName(m); if (n) names.add(n); }
+      for (const k of Object.keys(pricingOverrides?.[pricingPid] || {})) if (k) names.add(k);
+      return names;
+    }
     if (isPayg) {
       for (const m of paygRec?.models || []) { const n = modelEntryName(m); if (n) names.add(n); }
     } else {
@@ -1493,7 +1503,7 @@ function ProviderCardBillingSection({
       for (const k of Object.keys(pricingOverrides?.[pricingPid] || {})) names.add(k);
     }
     return names;
-  }, [isPayg, paygRec, provider?.models, accountInst?.models, pricingOverrides, pricingPid]);
+  }, [standalone, isPayg, paygRec, provider?.models, accountInst?.models, pricingOverrides, pricingPid]);
 
   // 表格行 = 用户已配模型 + 刊例价目录（仅展示，不阻止「添加」）
   const modelNames = useMemo(() => {
@@ -1510,7 +1520,17 @@ function ProviderCardBillingSection({
     setMonthly(baseMonthly != null ? String(baseMonthly) : '');
   }, [baseMonthly, subRec?.id]);
 
-  const rows = pricingRowsForProvider(pricingPid, modelNames, providerPricing, pricingOverrides);
+  const rows = useMemo(() => {
+    const raw = pricingRowsForProvider(pricingPid, modelNames, providerPricing, pricingOverrides);
+    if (!standalone) return raw;
+    // 独立源未写覆盖时展示 0，便于与账户卡片 UI 一致
+    return raw.map(r => ({
+      ...r,
+      in: r.in ?? STANDALONE_MODEL_PRICING.in,
+      out: r.out ?? STANDALONE_MODEL_PRICING.out,
+      cacheRead: r.cacheRead ?? STANDALONE_MODEL_PRICING.cacheRead,
+    }));
+  }, [standalone, pricingPid, modelNames, providerPricing, pricingOverrides]);
 
   /** 供给源 gateway 配置里的模型模态（chat / image / embedding） */
   const modelTypeMap = useMemo(() => {
@@ -1551,11 +1571,12 @@ function ProviderCardBillingSection({
     const ovrRow = (pricingOverrides[pricingPid] || {})[name] || {};
     const hasPricing = ['in', 'out', 'cacheRead'].some(f => ovrRow[f] != null || baseRow[f] != null);
     if (hasPricing) return pricingOverrides;
+    const defaultPricing = standalone ? STANDALONE_MODEL_PRICING : DEFAULT_MODEL_PRICING;
     return {
       ...pricingOverrides,
       [pricingPid]: {
         ...(pricingOverrides[pricingPid] || {}),
-        [name]: { ...DEFAULT_MODEL_PRICING },
+        [name]: { ...defaultPricing },
       },
     };
   }
@@ -1635,7 +1656,8 @@ function ProviderCardBillingSection({
     await onSaveAccounts({ provider_pricing_overrides: nextOverrides });
   }
 
-  const hintKey = isPayg ? 'providers.billing.paygHint'
+  const hintKey = standalone ? 'providers.billing.standaloneHint'
+    : isPayg ? 'providers.billing.paygHint'
     : billingTag === 'sub_to_api' ? 'providers.billing.subToApiHint'
     : 'providers.billing.subHint';
 
@@ -1681,7 +1703,7 @@ function ProviderCardBillingSection({
 }
 
 /** 供给源卡片内模型区；按量模型来自账户类型默认定价，可展开编辑 */
-function ProviderModelSection({ provider, userPayg, onEditPricing, onUpdate, scrollable = false, providerPricing = {}, paygCatalog = [], profileOnly = false }) {
+function ProviderModelSection({ provider, userPayg, onUpdate, scrollable = false, providerPricing = {}, paygCatalog = [], profileOnly = false }) {
   const { t } = useLang();
   const [modelsOpen, setModelsOpen] = useState(false);
   const isPayg = isPaygManagedProvider(provider.id, userPayg);
@@ -1718,12 +1740,6 @@ function ProviderModelSection({ provider, userPayg, onEditPricing, onUpdate, scr
           }
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {onEditPricing && (
-            <button type="button" onClick={() => onEditPricing(provider.id)}
-              className="text-xs px-2 py-0.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-300 dark:hover:border-blue-700 transition-colors">
-              {t('providers.card.editPricing')}
-            </button>
-          )}
           <button
             type="button"
             onClick={() => setModelsOpen(v => !v)}
@@ -1745,9 +1761,6 @@ function ProviderModelSection({ provider, userPayg, onEditPricing, onUpdate, scr
           />
           {(isPayg || profileOnly) && profileModels.length === 0 && (
             <p className="text-xs text-amber-600 dark:text-amber-400">{t('providers.models.paygNoProfileModels')}</p>
-          )}
-          {(isPayg || profileOnly) && profileModels.length > 0 && onEditPricing && (
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('providers.models.paygPickPlaceholder')}</p>
           )}
         </>
       )}
@@ -1854,9 +1867,11 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
       </div>
 
       {/* 计费 / 模型列表 */}
-      {accountInst && ['payg', 'api_sub', 'sub_to_api'].includes(accountInst.tag) && onSaveAccounts ? (
+      {onSaveAccounts && (
+        (accountInst && ['payg', 'api_sub', 'sub_to_api'].includes(accountInst.tag)) || !accountInst
+      ) ? (
         <ProviderCardBillingSection
-          billingTag={accountInst.tag}
+          billingTag={accountInst?.tag || 'payg'}
           accountInst={accountInst}
           provider={provider}
           userPayg={userPayg}
@@ -1867,19 +1882,19 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
           onOverridesChange={onOverridesChange}
           onUpdate={onUpdate}
           onPersistModels={onPersistModels}
+          standalone={!accountInst}
           t={t}
         />
-      ) : (
+      ) : accountInst ? (
         <ProviderModelSection
           provider={provider}
           userPayg={userPayg}
-          onEditPricing={onEditPricing}
           onUpdate={onUpdate}
           scrollable
           providerPricing={providerPricing}
           paygCatalog={paygCatalog}
         />
-      )}
+      ) : null}
     </div>
   );
 }
@@ -2355,10 +2370,12 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
         </div>
       </div>
 
-      {/* 计费 / 模型列表 */}
-      {!isP2P && accountInst && ['payg', 'api_sub', 'sub_to_api'].includes(accountInst.tag) && onSaveAccounts ? (
+      {/* 计费 / 模型列表：账户实例或独立供给源（无账户实例时默认定价 0） */}
+      {!isP2P && onSaveAccounts && (
+        (accountInst && ['payg', 'api_sub', 'sub_to_api'].includes(accountInst.tag)) || !accountInst
+      ) ? (
         <ProviderCardBillingSection
-          billingTag={accountInst.tag}
+          billingTag={accountInst?.tag || 'payg'}
           accountInst={accountInst}
           provider={provider}
           userPayg={userPayg}
@@ -2369,20 +2386,20 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
           onOverridesChange={onOverridesChange}
           onUpdate={onUpdate}
           onPersistModels={onPersistModels}
+          standalone={!accountInst}
           t={t}
         />
-      ) : !isP2P && (
+      ) : !isP2P && accountInst ? (
         <ProviderModelSection
           provider={provider}
           userPayg={userPayg}
-          onEditPricing={onEditPricing}
           onUpdate={onUpdate}
           scrollable
           providerPricing={providerPricing}
           paygCatalog={paygCatalog}
           profileOnly={lockTemplate && isPaygManagedProvider(provider.id, userPayg)}
         />
-      )}
+      ) : null}
     </div>
   );
 }
@@ -2415,12 +2432,10 @@ export default function Providers() {
   const [gatewayPickerEntries, setGatewayPickerEntries] = useState([]);
   const [templateEditing, setTemplateEditing] = useState(null);
 
-  const catalogFetchedRef = useRef(false);
-  const syncingCatalogRef = useRef(false);
-
   const loadUserPaidAccounts = useCallback(async () => {
     try {
-      const r = await loadUserAccounts();
+      // 个人源始终读本机 local-config，与是否登录无关
+      const r = await loadUserAccounts({ localOnly: true });
       setPaidAllowlist(r.gateway_provider_ids || []);
       setProviderGatewayAuth(r.provider_gateway_auth || {});
       setUserSubscriptions(r.user_subscriptions || []);
@@ -2461,23 +2476,9 @@ export default function Providers() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // 进入页仅同步一次源目录；不可放在 loadUserPaidAccounts 内（sync → billing:changed → 死循环）
-      if (!catalogFetchedRef.current && window.electronAPI?.toolsConfig?.syncRemote) {
-        catalogFetchedRef.current = true;
-        syncingCatalogRef.current = true;
-        try {
-          const token = localStorage.getItem('token');
-          const base = await getSyncServerBase();
-          if (token && base) {
-            await window.electronAPI.toolsConfig.syncRemote({ token, serverUrl: base, replace: true });
-          }
-        } catch { /* 离线时继续用本地目录 */ }
-        finally { syncingCatalogRef.current = false; }
-      }
       if (!cancelled) await loadUserPaidAccounts();
     })();
     const unsub = window.electronAPI?.localConfig?.onBillingChanged?.(() => {
-      if (syncingCatalogRef.current) return;
       loadUserPaidAccounts();
     });
     return () => { cancelled = true; unsub?.(); };
@@ -2876,8 +2877,11 @@ export default function Providers() {
   const listedAccountInstances = accountInstances.filter(
     inst => isGatewayAccountInstance(inst) && matchFilter(inst.tag),
   );
-  // 其他已启用但不对应账户实例的供给源（如历史配的 Groq）→ 也用 ProviderCard，可改 key/删除；不计入统计、不受筛选
-  const otherSources = personalEnabledAll.filter(p => p.type !== 'p2p' && !hasAcct(p.id));
+  // 已启用但未登记账户实例的供给源（如 Ollama），与账户卡片同一网格展示
+  const extraEnabledSources = personalEnabledAll.filter(p => {
+    if (p.type === 'p2p' || hasAcct(p.id)) return false;
+    return matchFilter(getPersonalSourceTag(liveStateOf(p), meta, userPayg, userSubscriptions));
+  });
 
   // 删除单个账户实例：仅删对应 user_payg/sub 行；无其他实例共用 gateway_id 时才停用 provider
   const removeAccountInstance = async (inst) => {
@@ -3134,27 +3138,19 @@ export default function Providers() {
               onSave={async (patch) => { await saveUserAccounts(patch); loadUserPaidAccounts(); }}
               onRemove={removeDirectSource} />
           ))}
-          {listedAccountInstances.length === 0 && directFiltered.length === 0 && otherSources.length === 0 && (
+          {extraEnabledSources.map(p => {
+            const live = liveStateOf(p);
+            const extraInst = accountInstances.find(i => i.gateway_id === live.id);
+            const extraMeta = resolveMetaForGateway(live.id, meta, extraInst, oauthById);
+            const useCustomCard = shouldUseCustomProviderCard(live.id, userSubscriptions, extraInst, extraMeta);
+            return !useCustomCard
+              ? <ProviderCard key={live.id} provider={live} meta={extraMeta} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id], extraInst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} accountInst={extraInst} {...accountBillingProps} />
+              : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={providerPricing} paygCatalog={paygCatalog} accountInst={extraInst} {...accountBillingProps} />;
+          })}
+          {listedAccountInstances.length === 0 && directFiltered.length === 0 && extraEnabledSources.length === 0 && (
             <p className="col-span-2 text-xs text-zinc-400 text-center py-6">{t('providers.filter.empty')}</p>
           )}
         </div>
-        {otherSources.length > 0 && (
-          <div className="space-y-2 pt-3 border-t border-zinc-100 dark:border-zinc-800">
-            <h3 className="text-xs font-semibold text-zinc-500">{t('psrc.other.section')}</h3>
-            <p className="text-[11px] text-zinc-400">{t('psrc.other.hint')}</p>
-            <div className="grid grid-cols-2 gap-3">
-              {otherSources.map(p => {
-                const live = liveStateOf(p);
-                const otherInst = accountInstances.find(i => i.gateway_id === live.id);
-                const otherMeta = resolveMetaForGateway(live.id, meta, otherInst, oauthById);
-                const useCustomCard = shouldUseCustomProviderCard(live.id, userSubscriptions, otherInst, otherMeta);
-                return !useCustomCard
-                  ? <ProviderCard key={live.id} provider={live} meta={otherMeta} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id], otherInst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={providerPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} accountInst={otherInst} />
-                  : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={providerPricing} paygCatalog={paygCatalog} accountInst={otherInst} />;
-              })}
-            </div>
-          </div>
-        )}
         {renderAddSourcePicker()}
         </>
         )}

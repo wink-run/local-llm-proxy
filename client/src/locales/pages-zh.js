@@ -631,6 +631,7 @@ export default {
   'providers.billing.subMonthly': '订阅',
   'providers.billing.subHint': '默认套餐月费，可修改；下方可手工添加模型并设价',
   'providers.billing.paygHint': '按模型刊例价（USD / 百万 Token）',
+  'providers.billing.standaloneHint': '本地供给源默认定价 0，可按需调整各模型单价',
   'providers.billing.subToApiHint': '订阅转 API：月费 + 支持模型估价（同 API 订阅）',
   'providers.billing.addModelPh': '添加模型…',
   'providers.billing.noModels': '暂无模型，请添加',
