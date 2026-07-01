@@ -3304,6 +3304,7 @@ app.whenReady().then(() => {
   createWindow();
   repairClaude3pMetaIfNeeded();
   // Claude Desktop ↔ 3p 会话同步：启动一次 + 每 30s 一次（覆盖运行期间新建的会话，修复"新会话纳管后不同步"）
+  console.log('[3p-sync] ==== BOOT v2 (reconcile + 双向 watch) 已加载，开始同步 ====');
   runClaude3pSync('startup');
   setInterval(() => runClaude3pSync('interval'), 30000);
   // 文件监听兜底：native / 3p 任一 claude-code-sessions 目录有新/变更文件就立即同步（不等 30s 定时器）。
@@ -3328,6 +3329,7 @@ app.whenReady().then(() => {
         });
         global.__sessionWatchers.push(w);
       }
+      console.log(`[3p-sync] watchers armed: ${dirs.length} 个目录`, dirs);
     } catch (e) { console.warn('[3p-sync] watch setup failed:', e.message); }
   }
   watchSessions();
