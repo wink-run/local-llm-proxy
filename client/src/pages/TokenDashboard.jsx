@@ -6,7 +6,7 @@ import { useLang } from '../store/lang';
 import { useCurrency } from '../store/currency';
 import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getUserDevices, deleteDevice, getInventoryStats, getProviderCatalog } from '../api/client';
 import UserAccountsPanel from '../components/UserAccountsPanel';
-import { enrichBillingCost } from '../utils/billing-cost';
+import { enrichBillingCost, resolveBillableSubscriptions } from '../utils/billing-cost';
 import { loadUserAccounts } from '../api/userAccounts';
 import { formatDeviceTitle, formatLegacyPlatform } from '../lib/device-display';
 import { isAppIcon, appIconSvg } from '../lib/appIcons';
@@ -32,17 +32,16 @@ async function fetchDashboardStats(days) {
     }
   }
 
-  let subs = [];
   let payg = [];
   let catalog = [];
   try {
     const acct = await loadUserAccounts();
-    subs = acct.user_subscriptions || [];
     payg = acct.user_payg_providers || [];
     catalog = acct.subscription_catalog || [];
+    return enrichBillingCost(raw, resolveBillableSubscriptions(acct), payg, days, catalog);
   } catch { /* 无账户配置时仅显示按量 token 费用 */ }
 
-  return enrichBillingCost(raw, subs, payg, days, catalog);
+  return enrichBillingCost(raw, [], payg, days, catalog);
 }
 
 // 颜色 palette，按 provider id hash 分配，避免写死 provider 列表
@@ -816,7 +815,7 @@ export default function TokenDashboard() {
             <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('profile.compression.title')}</h2>
           </div>
           {compStats.count > 0 ? (
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <div>
                 <p className="text-xs text-zinc-400 dark:text-zinc-500 mb-1">{t('profile.compression.requests')}</p>
                 <p className="text-2xl font-bold text-zinc-800 dark:text-zinc-100">{compStats.count}</p>
@@ -826,6 +825,10 @@ export default function TokenDashboard() {
                 <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
                   {compStats.saved >= 1000 ? `${(compStats.saved / 1000).toFixed(1)}K` : compStats.saved}
                 </p>
+              </div>
+              <div className="border-l border-zinc-200/70 dark:border-zinc-700/70 pl-4">
+                <p className="text-xs text-zinc-400 dark:text-zinc-500 mb-1">{t('profile.compression.savedCost')}</p>
+                <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{fmtCost(compStats.saved_usd || 0)}</p>
               </div>
               <div className="border-l border-zinc-200/70 dark:border-zinc-700/70 pl-4">
                 <p className="text-xs text-zinc-400 dark:text-zinc-500 mb-1">{t('profile.compression.ratio')}</p>

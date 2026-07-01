@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { summarizeCompressionLog, parseJsonl } = require('../compression-report');
+const { summarizeCompressionLog, parseJsonl, applyGatewaySavedCost } = require('../compression-report');
 
 test('summarizeCompressionLog totals, ratio, and per-model breakdown', () => {
   const s = summarizeCompressionLog([
@@ -16,6 +16,19 @@ test('summarizeCompressionLog totals, ratio, and per-model breakdown', () => {
   assert.ok(Math.abs(s.ratio - 0.225) < 1e-9);
   assert.equal(s.models[0].model, 'a'); // sorted by saved desc
   assert.equal(s.models[0].saved, 80);
+  assert.equal(s.saved_usd, 0); // 费用需 applyGatewaySavedCost
+});
+
+test('applyGatewaySavedCost uses gateway model input rate, not client model name', () => {
+  const s = summarizeCompressionLog([
+    { model: 'claude-opus-4-8', before: 1_000_000, after: 0 },
+  ]);
+  // 网关实际走 deepseek：$0.14/M input → 1M saved ≈ $0.14
+  applyGatewaySavedCost(s, {
+    totalInputTokens: 10_000_000,
+    totalInputCostUsd: 1.4, // $0.14/M
+  });
+  assert.ok(Math.abs(s.saved_usd - 0.14) < 0.001);
 });
 
 test('summarizeCompressionLog tolerates empty / malformed records', () => {

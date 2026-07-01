@@ -2519,7 +2519,8 @@ function handleRequest(req, res) {
     const data = _localStats ? _localStats.queryDashboard(days) : {
       total_calls: 0, total_tokens: 0, total_cost: 0,
       tiers: { free: 0, p2p: 0, paid: 0 },
-      hourly: Array(24).fill(0),
+      hourly: Array.from({ length: 24 }, (_, hour) => ({ hour, calls: 0, tokens: 0, cost_usd: 0, isNow: false })),
+      daily: [],
       models: [], keys: [], providers: [], agent_sources: [],
     };
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2531,8 +2532,14 @@ function handleRequest(req, res) {
   if (method === 'GET' && url.startsWith('/api/compression-stats')) {
     const qs   = new URL('http://x' + url).searchParams;
     const days = Math.max(1, Math.min(365, parseInt(qs.get('days'), 10) || 1));
-    let summary = { count: 0, before: 0, after: 0, saved: 0, ratio: 0, models: [] };
-    try { summary = require('./compression-report').readCompressionSummary(days); } catch {}
+    let summary = { count: 0, before: 0, after: 0, saved: 0, ratio: 0, saved_usd: 0, models: [] };
+    try {
+      let rates = null;
+      if (_localStats?.sinceTsForDays && _localStats?.queryGatewayInputCostRate) {
+        rates = _localStats.queryGatewayInputCostRate(_localStats.sinceTsForDays(days));
+      }
+      summary = require('./compression-report').readCompressionSummary(days, rates);
+    } catch {}
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(summary));
     return;

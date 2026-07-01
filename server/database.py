@@ -1471,7 +1471,7 @@ def _empty_inventory() -> dict:
         "tiers": {"free": 0, "p2p": 0, "paid": 0},
         "hourly": [0] * 24,
         "models": [], "providers": [], "agent_sources": [], "devices": [],
-        "compression": {"count": 0, "before": 0, "after": 0, "saved": 0, "ratio": 0},
+        "compression": {"count": 0, "before": 0, "after": 0, "saved": 0, "ratio": 0, "saved_usd": 0},
     }
 
 
@@ -1527,6 +1527,7 @@ def merge_device_inventories(device_rows: list, days: int) -> dict:
         merged["compression"]["count"] += int(comp.get("count") or 0)
         merged["compression"]["before"] += int(comp.get("before") or 0)
         merged["compression"]["after"] += int(comp.get("after") or 0)
+        merged["compression"]["saved_usd"] += float(comp.get("saved_usd") or 0)
 
         provider_rows.append(snap.get("providers") or [])
         model_rows.append(snap.get("models") or [])

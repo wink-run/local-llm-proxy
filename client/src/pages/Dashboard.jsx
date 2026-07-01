@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { enrichDashboardBilling } from '../utils/billing-cost';
+import { enrichDashboardBilling, enrichTrendWithSubscriptionCost, enrichAppsUsageBilling, enrichModelCostBilling, resolveBillableSubscriptions } from '../utils/billing-cost';
 import { loadUserAccounts } from '../api/userAccounts';
 import { useLang } from '../store/lang';
 import { useCurrency } from '../store/currency';
@@ -13,7 +13,15 @@ const P2P_PROVIDERS  = ['tokenbank-p2p'];
 const fmtN    = n => n >= 1_000_000 ? (n/1e6).toFixed(2)+'M' : n >= 1000 ? (n/1000).toFixed(1)+'K' : String(n||0);
 
 function linkMethodLabel(method, t) {
-  return method === 'manual' ? t('common.linkApi') : t('common.linkApp');
+  if (method === 'manual' || method === 'api-key') return t('common.linkApi');
+  return t('common.linkApp');
+}
+
+function appSourceLabel(row, t) {
+  if (row.proxyCalls > 0 && row.sessionCalls > 0) return t('common.mixedSource');
+  if (row.proxyCalls > 0) return t('common.sourceGateway');
+  if (row.sessionCalls > 0) return t('common.sourceSession');
+  return '';
 }
 
 /** 应用图标：与网关页一致 — 品牌 logo → icon:xxx SVG → emoji */
@@ -143,7 +151,7 @@ function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
                       <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{r.name}</div>
                       <div className="text-xs text-zinc-500 truncate">
                         {linkMethodLabel(r.link_method, t)}
-                        {r.proxyCalls > 0 && r.sessionCalls > 0 ? t('common.mixedSource') : r.proxyCalls > 0 ? t('common.sourceGateway') : t('common.sourceSession')}
+                        {appSourceLabel(r, t)}
                       </div>
                     </div>
                   </div>
@@ -244,38 +252,201 @@ function TierDonut({ byProvider = {}, t }) {
   );
 }
 
-function TrendBars({ data = [], t }) {
+/** 趋势图：请求柱状 + Token/费用折线点叠加 */
+function TrendBars({ mode = 'hourly', data = [], t, fmtCost, fmtN }) {
   const [tip, setTip] = useState(null);
-  const max = Math.max(...data, 1);
   const H = 96;
+  const nowH = new Date().getHours();
+
+  const emptyHourly = () => Array.from({ length: 24 }, (_, hour) => ({
+    hour, calls: 0, tokens: 0, cost_usd: 0, isNow: hour === nowH,
+  }));
+
+  const normalizeHourly = (raw) => {
+    if (!Array.isArray(raw) || !raw.length) return emptyHourly();
+    if (typeof raw[0] === 'number') {
+      return raw.map((calls, hour) => ({
+        hour, calls, tokens: 0, cost_usd: 0, isNow: hour === nowH,
+      }));
+    }
+    return raw;
+  };
+
+  const items = mode === 'daily'
+    ? (Array.isArray(data) ? data : [])
+    : normalizeHourly(data);
+
+  const n = items.length || 1;
+  const maxCalls  = Math.max(...items.map(d => d.calls || 0), 1);
+  const maxTokens = Math.max(...items.map(d => d.tokens || 0), 1);
+  const maxCost   = Math.max(...items.map(d => d.cost_usd || 0), 1);
+
+  const barH = (v) => Math.max(Math.round((v / maxCalls) * H), v > 0 ? 4 : 2);
+  const lineY = (v, max) => H - (v / max) * H;
+
+  const fmtDay = (dateStr) => {
+    const d = new Date(`${dateStr}T12:00:00`);
+    if (Number.isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' });
+  };
+
+  const renderTooltip = (item) => {
+    const head = mode === 'daily'
+      ? fmtDay(item.date)
+      : t('dashboard.trendTipHour', { h: item.hour });
+    return (
+      <div className="space-y-0.5">
+        <div>{head}</div>
+        <div>{t('dashboard.trendTipCalls', { v: item.calls || 0 })}</div>
+        <div>{t('dashboard.trendTipTokens', { v: fmtN(item.tokens || 0) })}</div>
+        <div>{t('dashboard.trendTipCost', { v: fmtCost(item.cost_usd || 0) })}</div>
+      </div>
+    );
+  };
+
+  const labelIdx = mode === 'daily'
+    ? (n <= 7 ? items.map((_, i) => i) : [0, Math.floor(n / 4), Math.floor(n / 2), Math.floor(n * 3 / 4), n - 1])
+    : null;
+
+  const tokenPts = items.map((item, i) => `${i + 0.5},${lineY(item.tokens || 0, maxTokens)}`).join(' ');
+  const costPts  = items.map((item, i) => `${i + 0.5},${lineY(item.cost_usd || 0, maxCost)}`).join(' ');
+
   return (
-    <div className="space-y-1">
-      <div className="relative flex items-end gap-1 h-24">
-        {data.map((v, i) => {
-          const px = Math.max(Math.round((v / max) * H), v > 0 ? 4 : 2);
-          const now = new Date().getHours();
-          return (
-            <div key={i} className="flex-1 cursor-default relative"
-              onMouseEnter={e => setTip({ i, rect: e.currentTarget.getBoundingClientRect() })}
-              onMouseLeave={() => setTip(null)}>
-              {tip?.i === i && (
-                <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 z-10
-                  bg-zinc-800 dark:bg-zinc-700 text-white text-xs rounded px-1.5 py-0.5
-                  whitespace-nowrap pointer-events-none shadow">
-                  {t('dashboard.trendTip', { h: i, v })}
-                </div>
-              )}
-              <div className={`w-full rounded-sm transition-all duration-300 ${i === now ? 'bg-blue-500' : 'bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-400 dark:hover:bg-zinc-500'}`}
-                style={{ height: `${px}px` }} />
-            </div>
-          );
+    <div className="space-y-2">
+      <div className="flex gap-4 text-xs text-zinc-500 dark:text-zinc-400">
+        <span className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-sm bg-blue-500" />
+          {t('dashboard.trendLegendCalls')}
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="w-3 h-0.5 bg-purple-500 rounded-full relative">
+            <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-purple-500" />
+          </span>
+          {t('dashboard.trendLegendTokens')}
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="w-3 h-0.5 bg-emerald-500 rounded-full relative">
+            <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-emerald-500" />
+          </span>
+          {t('dashboard.trendLegendCost')}
+        </span>
+      </div>
+
+      <div className="relative h-24">
+        {/* 请求柱状图 */}
+        <div className="absolute inset-0 flex items-end gap-0.5">
+          {items.map((item, i) => {
+            const highlight = mode === 'daily' ? item.isToday : item.isNow;
+            const key = mode === 'daily' ? (item.date || i) : i;
+            return (
+              <div key={key} className="flex-1 min-w-0 flex items-end justify-center h-full">
+                <div
+                  className={`w-full max-w-[10px] rounded-sm transition-all duration-300 ${
+                    highlight ? 'bg-blue-500' : 'bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-400 dark:hover:bg-zinc-500'
+                  }`}
+                  style={{ height: `${barH(item.calls || 0)}px` }}
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Token / 费用折线（SVG）+ 圆点（HTML，避免拉伸变形） */}
+        <svg
+          className="absolute inset-0 w-full h-full pointer-events-none overflow-visible"
+          viewBox={`0 0 ${n} ${H}`}
+          preserveAspectRatio="none"
+        >
+          {maxTokens > 0 && (
+            <polyline
+              points={tokenPts}
+              fill="none"
+              stroke="rgb(168 85 247)"
+              strokeWidth={0.12}
+              vectorEffect="non-scaling-stroke"
+              strokeLinejoin="round"
+            />
+          )}
+          {maxCost > 0 && (
+            <polyline
+              points={costPts}
+              fill="none"
+              stroke="rgb(16 185 129)"
+              strokeWidth={0.12}
+              vectorEffect="non-scaling-stroke"
+              strokeLinejoin="round"
+            />
+          )}
+        </svg>
+        {items.map((item, i) => {
+          const left = ((i + 0.5) / n) * 100;
+          const dots = [];
+          if ((item.tokens || 0) > 0) {
+            dots.push(
+              <span
+                key={`t-${i}`}
+                className="absolute w-1.5 h-1.5 rounded-full bg-purple-500 ring-1 ring-white dark:ring-zinc-800 pointer-events-none"
+                style={{ left: `${left}%`, bottom: `${((item.tokens || 0) / maxTokens) * 100}%`, transform: 'translate(-50%, 50%)' }}
+              />
+            );
+          }
+          if ((item.cost_usd || 0) > 0) {
+            dots.push(
+              <span
+                key={`c-${i}`}
+                className="absolute w-1.5 h-1.5 rounded-full bg-emerald-500 ring-1 ring-white dark:ring-zinc-800 pointer-events-none"
+                style={{ left: `${left}%`, bottom: `${((item.cost_usd || 0) / maxCost) * 100}%`, transform: 'translate(-50%, 50%)' }}
+              />
+            );
+          }
+          return dots;
         })}
+
+        {/* 悬停热区 + tooltip */}
+        <div className="absolute inset-0 flex gap-0.5">
+          {items.map((item, i) => {
+            const key = mode === 'daily' ? (item.date || i) : i;
+            return (
+              <div
+                key={`tip-${key}`}
+                className="flex-1 min-w-0 cursor-default relative"
+                onMouseEnter={() => setTip({ i, item })}
+                onMouseLeave={() => setTip(null)}
+              >
+                {tip?.i === i && (
+                  <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 z-10
+                    bg-zinc-800 dark:bg-zinc-700 text-white text-xs rounded px-2 py-1
+                    whitespace-nowrap pointer-events-none shadow">
+                    {renderTooltip(item)}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
-      <div className="flex justify-between px-0.5">
-        {['0h','6h','12h','18h','24h'].map(l => (
-          <span key={l} className="text-xs text-zinc-700">{l}</span>
-        ))}
-      </div>
+
+      {mode === 'daily' ? (
+        <div className="relative h-4">
+          {labelIdx.map(i => {
+            const item = items[i];
+            if (!item) return null;
+            const left = n <= 1 ? 0 : (i / (n - 1)) * 100;
+            return (
+              <span key={i} className="absolute text-xs text-zinc-700 dark:text-zinc-400 -translate-x-1/2"
+                style={{ left: `${left}%` }}>
+                {fmtDay(item.date)}
+              </span>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="flex justify-between px-0.5">
+          {['0h', '6h', '12h', '18h', '24h'].map(l => (
+            <span key={l} className="text-xs text-zinc-700 dark:text-zinc-400">{l}</span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -286,6 +457,8 @@ export default function Dashboard() {
   const [range, setRange]         = useState('today');
   const [localData, setLocalData] = useState(null);
   const [appsUsage, setAppsUsage] = useState([]);
+  const [billableSubs, setBillableSubs] = useState([]);
+  const [billingAccounts, setBillingAccounts] = useState({});
   const [usageSort, setUsageSort] = useState('calls');
   const [gwStatus, setGwStatus]   = useState(null);
   const [compStats, setCompStats] = useState(null);
@@ -295,12 +468,24 @@ export default function Dashboard() {
     setLoading(true);
     try {
       const days = RANGE_DAYS[range];
+      let acct = {};
+      let payg = [];
+      let catalog = [];
+      try {
+        acct = await loadUserAccounts();
+        payg = acct.user_payg_providers || [];
+        catalog = acct.subscription_catalog || [];
+      } catch { /* 无账户配置时回退 payg_usage_cost */ }
+      setBillingAccounts(acct);
+      const billableSubsList = resolveBillableSubscriptions(acct);
+      setBillableSubs(billableSubsList);
+
       let data;
       if (window.electronAPI?.localStats) {
         data = await window.electronAPI.localStats.query(days);
         if (window.electronAPI.localStats.appsUsage) {
           const usage = await window.electronAPI.localStats.appsUsage(days);
-          setAppsUsage(usage || []);
+          setAppsUsage(enrichAppsUsageBilling(usage || [], billableSubsList, days, catalog, acct));
         } else {
           setAppsUsage([]);
         }
@@ -311,13 +496,7 @@ export default function Dashboard() {
         setAppsUsage([]);
       }
 
-      // 估算费用：与个人页一致，仅统计按量 API 刊例价（不含订阅月费折算）
-      let payg = [];
-      try {
-        const acct = await loadUserAccounts();
-        payg = acct.user_payg_providers || [];
-      } catch { /* 无账户配置时回退 payg_usage_cost */ }
-      setLocalData(enrichDashboardBilling(data, payg, days));
+      setLocalData(enrichDashboardBilling(data, payg, days, billableSubsList, catalog));
 
       const fetchStatus = window.electronAPI?.gateway
         ? () => window.electronAPI.gateway.status().then(setGwStatus).catch(() => {})
@@ -341,14 +520,28 @@ export default function Dashboard() {
   // ── Derived ───────────────────────────────────────────────────────────────
   const totalCalls  = localData?.total_calls  ?? 0;
   const totalTokens = localData?.total_tokens ?? 0;
-  const totalCost   = localData?.payg_cost ?? 0;
+  const totalCost   = localData?.total_cost ?? 0;
+  const subCost     = localData?.subscription_cost ?? 0;
+  const paygCost    = localData?.payg_cost ?? 0;
 
   const freeCalls  = localData?.tiers?.free  ?? 0;
   const p2pCalls   = localData?.tiers?.p2p   ?? 0;
   const paidCalls  = localData?.tiers?.paid  ?? 0;
   const freeRatio  = totalCalls > 0 ? Math.round(freeCalls / totalCalls * 100) : 0;
 
-  const trendData  = localData?.hourly ?? Array(24).fill(0);
+  const trendMode = range === 'today' ? 'hourly' : 'daily';
+  const trendDays = RANGE_DAYS[range];
+  const trendDataRaw = range === 'today'
+    ? (localData?.hourly ?? [])
+    : (localData?.daily ?? []);
+  const trendData = enrichTrendWithSubscriptionCost(
+    trendDataRaw, trendMode, subCost, trendDays,
+  );
+  const trendTitle = range === 'today'
+    ? t('dashboard.trend')
+    : range === '7d'
+      ? t('dashboard.trend7d')
+      : t('dashboard.trend30d');
   const byProvider = Object.fromEntries(
     (localData?.providers ?? []).map(p => [p.id, { calls: p.calls, tier: p.tier }])
   );
@@ -357,7 +550,16 @@ export default function Dashboard() {
   const maxModel      = modelStats[0]?.calls || 1;
   const modelByTokens = [...modelStats].filter(m => m.tokens > 0).sort((a, b) => b.tokens - a.tokens);
   const maxModelTokens = modelByTokens[0]?.tokens || 1;
-  const modelByCost   = [...modelStats].filter(m => (m.cost_usd || 0) > 0).sort((a, b) => b.cost_usd - a.cost_usd);
+  const modelByCost   = enrichModelCostBilling(
+    modelStats, billableSubs, RANGE_DAYS[range],
+    billingAccounts.subscription_catalog || [],
+    {
+      api_subscription_catalog: billingAccounts.api_subscription_catalog || [],
+      direct_source_billing: billingAccounts.direct_source_billing,
+      direct_source_instances: billingAccounts.direct_source_instances,
+      user_subscriptions: billingAccounts.user_subscriptions,
+    },
+  );
   const maxModelCost  = modelByCost[0]?.cost_usd || 1;
 
   const rangeLabel = t(`profile.range.${range}`);
@@ -415,7 +617,11 @@ export default function Dashboard() {
           <div className={`text-2xl font-bold mt-1 ${totalCost > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400'}`}>
             {fmtCost(totalCost)}
           </div>
-          <div className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">{t('dashboard.estCostHint')}</div>
+          <div className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
+            {totalCost > 0
+              ? t('profile.costSub', { sub: subCost > 0 ? fmtCost(subCost) : '—', payg: paygCost > 0 ? fmtCost(paygCost) : '—' })
+              : t('dashboard.estCostHint')}
+          </div>
         </div>
       </div>
 
@@ -426,8 +632,8 @@ export default function Dashboard() {
           <TierDonut byProvider={byProvider} t={t} />
         </div>
         <div className="col-span-3 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5">
-          <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-4">{t('dashboard.trend')}</div>
-          <TrendBars data={trendData} t={t} />
+          <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-4">{trendTitle}</div>
+          <TrendBars mode={trendMode} data={trendData} t={t} fmtCost={fmtCost} fmtN={fmtN} />
         </div>
       </div>
 
@@ -447,7 +653,7 @@ export default function Dashboard() {
             <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('profile.compression.title')}</div>
           </div>
           {compStats.count > 0 ? (
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <div>
                 <div className="text-xs text-zinc-400 dark:text-zinc-500 mb-1">{t('profile.compression.requests')}</div>
                 <div className="text-2xl font-bold text-zinc-800 dark:text-zinc-100">{compStats.count}</div>
@@ -455,6 +661,10 @@ export default function Dashboard() {
               <div className="border-l border-zinc-200/70 dark:border-zinc-700/70 pl-4">
                 <div className="text-xs text-zinc-400 dark:text-zinc-500 mb-1">{t('profile.compression.saved')}</div>
                 <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{fmtN(compStats.saved)}</div>
+              </div>
+              <div className="border-l border-zinc-200/70 dark:border-zinc-700/70 pl-4">
+                <div className="text-xs text-zinc-400 dark:text-zinc-500 mb-1">{t('profile.compression.savedCost')}</div>
+                <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{fmtCost(compStats.saved_usd || 0)}</div>
               </div>
               <div className="border-l border-zinc-200/70 dark:border-zinc-700/70 pl-4">
                 <div className="text-xs text-zinc-400 dark:text-zinc-500 mb-1">{t('profile.compression.ratio')}</div>

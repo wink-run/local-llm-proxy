@@ -19,7 +19,7 @@ window.initAppCatalogAdmin = function (api, lang, ref) {
   function emptyEntityForm() {
     return {
       sort_order: '', id: '', name: '', icon: '🔧', handler: '',
-      capabilities: emptyCapabilities(), models: '', route_multi_select: false,
+      capabilities: emptyCapabilities(), route_multi_select: false,
     }
   }
 
@@ -130,7 +130,6 @@ window.initAppCatalogAdmin = function (api, lang, ref) {
         capabilities: Object.fromEntries(
           CAP_KEYS.map(k => [k, k in caps ? !!caps[k] : !!defs[k]])
         ),
-        models: Array.isArray(vars.models) ? vars.models.join(', ') : (item.models || []).join(', '),
         route_multi_select: 'route_multi_select' in vars
           ? !!vars.route_multi_select
           : !!hmeta.default_route_multi_select,
@@ -156,8 +155,6 @@ window.initAppCatalogAdmin = function (api, lang, ref) {
   function buildPayload() {
     const f = acForm.value
     const vars = { capabilities: { ...f.capabilities } }
-    const models = (f.models || '').split(',').map(s => s.trim()).filter(Boolean)
-    if (models.length) vars.models = models
     if (showRouteMultiSelect()) vars.route_multi_select = !!f.route_multi_select
     return {
       sort_order: f.sort_order !== '' && f.sort_order != null ? Number(f.sort_order) : 0,
@@ -229,10 +226,6 @@ window.initAppCatalogAdmin = function (api, lang, ref) {
     return lang.value === 'zh' ? (h.label_zh || h.label) : (h.label || h.id)
   }
 
-  function showModels() {
-    return !!(acForm.value.capabilities && acForm.value.capabilities.session_usage_import)
-  }
-
   /** handler 声明了 patch_route 时展示「路由写入多选」 */
   function showRouteMultiSelect() {
     const h = handlerMeta(acForm.value.handler)
@@ -245,6 +238,6 @@ window.initAppCatalogAdmin = function (api, lang, ref) {
     capColumnTitle, capEnabled, capCell, capabilityLabel,
     selectedHandlerCapabilities,
     fetchAppCatalog, openAcModal, closeAcModal, saveAcEntity, deleteAcEntity,
-    importAcDefaults, publishAcCatalog, onHandlerChange, showModels, showRouteMultiSelect,
+    importAcDefaults, publishAcCatalog, onHandlerChange, showRouteMultiSelect,
   }
 }

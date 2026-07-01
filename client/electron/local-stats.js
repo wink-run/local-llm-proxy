@@ -11,6 +11,20 @@ let _setImportStateStmt = null;
 // 盘点费用口径：仅 api-key 计费 + provider 刊例价（无刊例价则为 0）
 const { estimatePaygCost, estimateCost } = require('./pricing');
 const { resolvePricingProviderId } = require('./billing-config');
+const { filterRankableModels } = require('../shared/model-rank');
+
+/** claude_models：客户端透明 mask 名，不计入模型排行 */
+function maskedModelNames() {
+  try {
+    return new Set(require('./config-loader').claudeModels() || []);
+  } catch {
+    return new Set();
+  }
+}
+
+function rankableModels(rows) {
+  return filterRankableModels(rows, { maskedModels: maskedModelNames() });
+}
 
 /** 按 provider/model 聚合 token 后重算按量刊例价（不读库内 cost_usd，避免全局兜底价） */
 function _queryPaygCostMaps(where, params) {
@@ -43,6 +57,64 @@ function _queryPaygCostMaps(where, params) {
   } catch (e) {
     console.error('[local-stats] _queryPaygCostMaps failed:', e.message);
     return empty;
+  }
+}
+
+/** 按 model + provider 聚合按量刊例价 */
+function _queryPaygCostByModelProvider(where, params) {
+  const byModelProvider = {};
+  if (!db) return byModelProvider;
+  try {
+    const rows = db.prepare(
+      `SELECT provider_id, model,
+        SUM(input_tokens) AS inTok, SUM(output_tokens) AS outTok,
+        SUM(cache_create_tokens) AS cCreate, SUM(cache_read_tokens) AS cRead
+       FROM requests WHERE ${where} AND billing_type = 'api-key' AND model IS NOT NULL AND provider_id IS NOT NULL
+       GROUP BY provider_id, model`
+    ).all(params);
+    for (const r of rows) {
+      const c = estimatePaygCost(
+        r.model, r.inTok || 0, r.outTok || 0, r.cCreate || 0, r.cRead || 0,
+        resolvePricingProviderId(r.provider_id),
+      );
+      if (!byModelProvider[r.model]) byModelProvider[r.model] = {};
+      byModelProvider[r.model][r.provider_id] = (byModelProvider[r.model][r.provider_id] || 0) + c;
+    }
+  } catch (e) {
+    console.error('[local-stats] _queryPaygCostByModelProvider failed:', e.message);
+  }
+  return byModelProvider;
+}
+
+/** 按时间桶（hour / date）累加按量刊例价，与仪表盘费用口径一致 */
+function _fillPaygCostForBuckets(buckets, since, bucketKey) {
+  if (!db || !buckets.length) return;
+  const groupCol = bucketKey === 'hour'
+    ? "CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INTEGER)"
+    : "date(ts, 'unixepoch', 'localtime')";
+  try {
+    const rows = db.prepare(
+      `SELECT ${groupCol} AS bucket_key, provider_id, tier, model,
+        SUM(input_tokens) AS inTok, SUM(output_tokens) AS outTok,
+        SUM(cache_create_tokens) AS cCreate, SUM(cache_read_tokens) AS cRead
+       FROM requests WHERE ts >= ? AND billing_type = 'api-key'
+       GROUP BY bucket_key, provider_id, tier, model`
+    ).all(since);
+    const costByKey = {};
+    for (const r of rows) {
+      const k = bucketKey === 'hour' ? Number(r.bucket_key) : r.bucket_key;
+      const c = estimatePaygCost(
+        r.model, r.inTok || 0, r.outTok || 0, r.cCreate || 0, r.cRead || 0,
+        resolvePricingProviderId(r.provider_id),
+      );
+      costByKey[k] = (costByKey[k] || 0) + c;
+    }
+    for (const b of buckets) {
+      const k = bucketKey === 'hour' ? b.hour : b.date;
+      b.cost_usd = costByKey[k] || 0;
+    }
+  } catch (e) {
+    console.error('[local-stats] _fillPaygCostForBuckets failed:', e.message);
   }
 }
 
@@ -274,13 +346,11 @@ function queryDashboard(days = 1) {
   const tiers = { free: 0, p2p: 0, paid: 0 };
   for (const r of tierRows) if (r.tier in tiers) tiers[r.tier] = r.calls;
 
-  // Hourly trend — today only
-  const hourlyRows = db.prepare(
-    "SELECT CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INTEGER) AS h, COUNT(*) AS calls " +
-    "FROM requests WHERE ts >= ? GROUP BY h"
-  ).all(todaySince);
-  const hourly = Array(24).fill(0);
-  for (const r of hourlyRows) hourly[r.h] = r.calls;
+  // 今日：按小时聚合（请求 + Token + 费用）
+  const hourly = queryHourlyTrend(todaySince);
+
+  // 7/30 天：按日历日聚合
+  const daily = days > 1 ? queryDailyTrend(days) : [];
 
   // Model ranking（排除 Cursor 等无 model 的会话源，避免 Read/Shell 等工具名误入）
   const excludeModelDs = dataSourcesWithoutModelStats();
@@ -291,7 +361,20 @@ function queryDashboard(days = 1) {
     modelSql += ` AND (data_source IS NULL OR data_source NOT IN (${excludeModelDs.map(() => '?').join(',')}))`;
   }
   modelSql += ' GROUP BY model ORDER BY calls DESC';
-  const models = db.prepare(modelSql).all(since, ...excludeModelDs);
+  const models = rankableModels(db.prepare(modelSql).all(since, ...excludeModelDs));
+
+  // 各模型经网关的 provider 用量（API / 订阅转 API 摊薄用）
+  const modelProvSql =
+    'SELECT model, provider_id, COUNT(*) AS calls, ' +
+    'SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens ' +
+    'FROM requests WHERE ts >= ? AND model IS NOT NULL AND data_source = \'proxy\' AND provider_id IS NOT NULL ' +
+    'GROUP BY model, provider_id';
+  const modelProvRows = db.prepare(modelProvSql).all(since);
+  const modelProviders = {};
+  for (const r of modelProvRows) {
+    if (!modelProviders[r.model]) modelProviders[r.model] = {};
+    modelProviders[r.model][r.provider_id] = { calls: r.calls || 0, tokens: r.tokens || 0 };
+  }
 
   // Models that have ANY proxy request → 网关; others → 直连
   const modelGwSql =
@@ -310,6 +393,7 @@ function queryDashboard(days = 1) {
   }
   const paygAll = _queryPaygCostMaps('ts >= @since', paygParams);
   const paygModels = _queryPaygCostMaps(paygModelWhere, paygModelParams);
+  const paygModelProvider = _queryPaygCostByModelProvider(paygModelWhere, paygModelParams);
 
   // Per-key stats
   const keys = db.prepare(
@@ -338,11 +422,30 @@ function queryDashboard(days = 1) {
     agent_sources: agentRows.map(r => ({ source: r.data_source, calls: r.calls, tokens: r.tokens || 0 })),
     tiers,
     hourly,
-    models:    models.map(r => ({
-      model: r.model, calls: r.calls, tokens: r.tokens || 0,
-      cost_usd: paygModels.byModel[r.model] || 0,
-      tier: modelGwSet.has(r.model) ? 'proxy' : null,
-    })),
+    daily,
+    models:    models.map(r => {
+      const provMap = { ...(modelProviders[r.model] || {}) };
+      const paygByProv = paygModelProvider[r.model] || {};
+      for (const pid of Object.keys(provMap)) {
+        provMap[pid] = { ...provMap[pid], cost_usd: paygByProv[pid] || 0 };
+      }
+      for (const pid of Object.keys(paygByProv)) {
+        if (!provMap[pid]) provMap[pid] = { calls: 0, tokens: 0, cost_usd: paygByProv[pid] };
+      }
+      const providerIds = Object.keys(provMap).sort(
+        (a, b) => (provMap[b].calls || 0) - (provMap[a].calls || 0),
+      );
+      return {
+        model: r.model,
+        calls: r.calls,
+        tokens: r.tokens || 0,
+        cost_usd: paygModels.byModel[r.model] || 0,
+        tier: modelGwSet.has(r.model) ? 'proxy' : null,
+        provider_id: providerIds[0] || null,
+        provider_ids: providerIds,
+        providers: provMap,
+      };
+    }),
     keys:      keys.map(r => ({ api_key: r.api_key, calls: r.calls, tokens: r.tokens || 0 })),
     providers: providers.map(r => ({
       id: r.provider_id, tier: r.tier, calls: r.calls, tokens: r.tokens || 0,
@@ -357,7 +460,8 @@ function _empty() {
   return {
     total_calls: 0, total_tokens: 0, total_cost: 0,
     tiers: { free: 0, p2p: 0, paid: 0 },
-    hourly: Array(24).fill(0),
+    hourly: queryHourlyTrend(todaySinceTs()),
+    daily: [],
     models: [], keys: [], providers: [], agent_sources: [],
     payg_usage_cost: 0,
     avg_latency_ms: null,
@@ -408,7 +512,7 @@ function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50, incl
     return {
       total: { calls: total.calls || 0, tokens: total.tokens || 0, inTok: total.inTok || 0, outTok: total.outTok || 0, lastTs: total.lastTs || null, totalCost: total.totalCost || 0 },
       bySource: bySource.map(r => ({ source: r.src, calls: r.calls, tokens: r.tokens || 0 })),
-      byModel: byModel.map(r => ({ model: r.model, calls: r.calls, tokens: r.tokens || 0 })),
+      byModel: rankableModels(byModel).map(r => ({ model: r.model, calls: r.calls, tokens: r.tokens || 0 })),
       sessions: sessions.map(r => ({ session_id: r.session_id, calls: r.calls, tokens: r.tokens || 0, firstTs: r.firstTs, lastTs: r.lastTs })),
       recent: recent.map(r => ({ ts: r.ts, model: r.model, inTok: r.inTok || 0, outTok: r.outTok || 0, tokens: r.tokens || 0, source: r.source, status_code: r.status_code, session_id: r.session_id, provider_id: r.provider_id, cost_usd: r.cost_usd || 0, billing_type: r.billing_type || null, latency_ms: r.latency_ms || null })),
     };
@@ -541,6 +645,106 @@ function todaySinceTs() {
   return Math.floor(midnight.getTime() / 1000);
 }
 
+/** 与 queryDashboard 一致的时间窗口起点 */
+function sinceTsForDays(days) {
+  const d = Math.max(1, parseInt(days, 10) || 1);
+  return d === 1 ? todaySinceTs() : Math.floor(Date.now() / 1000) - d * 86400;
+}
+
+/**
+ * 网关实际路由模型的 input 刊例价加权（$ / input token）。
+ * 压缩日志里的 model 是客户端名（如 claude-opus），费用应以此处真实模型为准。
+ */
+function queryGatewayInputCostRate(sinceTs) {
+  const empty = { totalInputTokens: 0, totalInputCostUsd: 0, byModel: {} };
+  if (!db) return empty;
+  try {
+    const rows = db.prepare(
+      'SELECT model, provider_id, SUM(input_tokens) AS inTok FROM requests ' +
+      'WHERE ts >= ? AND data_source = \'proxy\' AND model IS NOT NULL AND input_tokens > 0 ' +
+      'GROUP BY model, provider_id'
+    ).all(sinceTs);
+    let totalInputTokens = 0;
+    let totalInputCostUsd = 0;
+    const byModel = {};
+    for (const r of rows) {
+      const inTok = r.inTok || 0;
+      if (!inTok) continue;
+      const pid = resolvePricingProviderId(r.provider_id);
+      // 压缩省的是 input token，仅按 input 侧计费
+      let inputCost = estimatePaygCost(r.model, inTok, 0, 0, 0, pid);
+      if (inputCost <= 0) inputCost = estimateCost(r.model, inTok, 0, 0, 0, pid);
+      totalInputTokens += inTok;
+      totalInputCostUsd += inputCost;
+      if (!byModel[r.model]) byModel[r.model] = { inputTokens: 0, inputCostUsd: 0 };
+      byModel[r.model].inputTokens += inTok;
+      byModel[r.model].inputCostUsd += inputCost;
+    }
+    return { totalInputTokens, totalInputCostUsd, byModel };
+  } catch (e) {
+    console.error('[local-stats] queryGatewayInputCostRate failed:', e.message);
+    return empty;
+  }
+}
+
+/** 今日按小时趋势 → [{ hour, calls, tokens, cost_usd, isNow }] */
+function queryHourlyTrend(since) {
+  if (!db) return Array.from({ length: 24 }, (_, hour) => ({ hour, calls: 0, tokens: 0, cost_usd: 0, isNow: false }));
+  const nowH = new Date().getHours();
+  const buckets = Array.from({ length: 24 }, (_, hour) => ({
+    hour, calls: 0, tokens: 0, cost_usd: 0, isNow: hour === nowH,
+  }));
+  const rows = db.prepare(
+    "SELECT CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INTEGER) AS h, " +
+    'COUNT(*) AS calls, ' +
+    'SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens ' +
+    'FROM requests WHERE ts >= ? GROUP BY h'
+  ).all(since);
+  for (const r of rows) {
+    if (r.h >= 0 && r.h < 24) {
+      buckets[r.h].calls = r.calls;
+      buckets[r.h].tokens = r.tokens || 0;
+    }
+  }
+  _fillPaygCostForBuckets(buckets, since, 'hour');
+  return buckets;
+}
+
+/** 近 N 天每日趋势（本地日历日）→ [{ date, calls, tokens, cost_usd, isToday }] */
+function queryDailyTrend(numDays) {
+  if (!db || numDays < 2) return [];
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (numDays - 1));
+  const since = Math.floor(start.getTime() / 1000);
+
+  const rows = db.prepare(
+    "SELECT date(ts, 'unixepoch', 'localtime') AS d, COUNT(*) AS calls, " +
+    'SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens ' +
+    'FROM requests WHERE ts >= ? GROUP BY d'
+  ).all(since);
+  const byDay = Object.fromEntries(rows.map(r => [r.d, { calls: r.calls, tokens: r.tokens || 0 }]));
+
+  const todayKey = new Date().toLocaleDateString('sv-SE');
+  const buckets = [];
+  for (let i = numDays - 1; i >= 0; i--) {
+    const dt = new Date();
+    dt.setHours(0, 0, 0, 0);
+    dt.setDate(dt.getDate() - i);
+    const key = dt.toLocaleDateString('sv-SE');
+    const row = byDay[key] || { calls: 0, tokens: 0 };
+    buckets.push({
+      date: key,
+      calls: row.calls || 0,
+      tokens: row.tokens || 0,
+      cost_usd: 0,
+      isToday: key === todayKey,
+    });
+  }
+  _fillPaygCostForBuckets(buckets, since, 'date');
+  return buckets;
+}
+
 /** 今日 Token 汇总（上行 input / 下行 output），供托盘与状态栏轻量查询 */
 function queryTodaySummary() {
   const empty = { inTok: 0, outTok: 0, totalTokens: 0, calls: 0 };
@@ -581,6 +785,7 @@ function queryAppStatsInPeriod({ appId, apiKey, dataSource, days = 30, since: si
   const empty = {
     calls: 0, tokens: 0, cost: 0, lastTs: null,
     proxyCalls: 0, sessionCalls: 0, proxyTokens: 0, sessionTokens: 0,
+    providers: {},
   };
   if (!db || (!appId && !apiKey && !dataSource)) return empty;
   const since = sinceTs != null ? sinceTs : Math.floor(Date.now() / 1000) - days * 86400;
@@ -599,6 +804,15 @@ function queryAppStatsInPeriod({ appId, apiKey, dataSource, days = 30, since: si
     ).all(p);
     const proxy = bySource.find(r => r.src === 'proxy') || {};
     const session = bySource.find(r => r.src === 'session') || {};
+    const byProvider = db.prepare(
+      `SELECT provider_id, COUNT(*) AS calls, ` +
+      `SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens ` +
+      `FROM requests WHERE ${where} AND data_source = 'proxy' AND provider_id IS NOT NULL GROUP BY provider_id`
+    ).all(p);
+    const providers = {};
+    for (const r of byProvider) {
+      providers[r.provider_id] = { calls: r.calls || 0, tokens: r.tokens || 0 };
+    }
     return {
       calls: total.calls || 0,
       tokens: total.tokens || 0,
@@ -608,6 +822,7 @@ function queryAppStatsInPeriod({ appId, apiKey, dataSource, days = 30, since: si
       sessionCalls: session.calls || 0,
       proxyTokens: proxy.tokens || 0,
       sessionTokens: session.tokens || 0,
+      providers,
     };
   } catch (e) {
     console.error('[local-stats] queryAppStatsInPeriod failed:', e.message);
@@ -726,4 +941,5 @@ module.exports = {
   queryAppDetail, queryAppStatsInPeriod, queryAppStatsToday, querySessionDetail, querySessionStatsMap,
   getImportState, setImportState, resetSessionData, deleteZeroTokenSessionRows, close,
   listSessionMeta, getSessionMeta, setSessionMeta,
+  todaySinceTs, sinceTsForDays, queryGatewayInputCostRate,
 };

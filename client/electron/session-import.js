@@ -251,13 +251,8 @@ function emitRecord(localStats, src, rec, ctx, doc) {
 
   if (tsv === undefined && ctx.estimated_ts_ms != null) tsv = ctx.estimated_ts_ms;
 
-  // 无 model 时从 assistant 工具/文本生成标签（仅无 model 字段映射且允许 model_stats 的源）
-  const hasModelField = !!(f.model || (src.doc_fallback && src.doc_fallback.model));
-  if ((model == null || model === '') && src.record_label === 'assistant_tools'
-      && src.model_stats !== false && !hasModelField) {
-    try { model = require('./session-browser').assistantLineLabel(rec); } catch {}
-  }
-
+  // 无 model 时不把工具标签写入 model 字段（避免 Grep/Read 等误入模型排行）
+  // record_label assistant_tools 仅用于会话明细展示，见 session-browser.enrichRecentDetail
   // request_id：模板 or 字段路径
   ctx.session_id = session_id;
   let request_id;

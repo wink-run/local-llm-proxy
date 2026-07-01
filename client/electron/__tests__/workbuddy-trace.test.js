@@ -15,14 +15,86 @@ test('workbuddy trace steps parse generation spans', () => {
       type: 'generation',
       model: 'gpt-5',
       startedAt: '2026-01-01T00:00:00.000Z',
-      usage: { prompt_tokens: 10, completion_tokens: 20 },
-      toolOutput: JSON.stringify({
-        choices: [{ message: { content: 'console.log("hello")' } }],
-      }),
+      toolOutput: JSON.stringify([{
+        usage: { prompt_tokens: 10, completion_tokens: 20 },
+        choices: [{ message: { role: 'assistant', content: 'console.log("hello")' } }],
+      }]),
     },
   ], span);
   assert.ok(steps.some(s => s.kind === 'user'));
-  assert.ok(steps.some(s => s.kind === 'assistant' && s.outTok === 20));
+  const asst = steps.find(s => s.kind === 'assistant');
+  assert.ok(asst);
+  assert.ok(asst.text.includes('hello'));
+  assert.equal(asst.outTok, 20);
+  assert.equal(asst.inTok, 10);
+});
+
+test('workbuddy generation with tool_calls shows call summary', () => {
+  const steps = buildStepsFromSpans([{
+    type: 'generation',
+    toolInput: JSON.stringify([{ role: 'user', content: [{ type: 'text', text: '<user_query>读文件</user_query>' }] }]),
+    toolOutput: JSON.stringify([{
+      usage: { prompt_tokens: 100, completion_tokens: 5 },
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{ function: { name: 'Read', arguments: '{"file_path":"/tmp/a"}' } }],
+        },
+      }],
+    }]),
+  }], span);
+  assert.ok(steps.some(s => s.kind === 'user' && s.text.includes('读文件')));
+  const asst = steps.find(s => s.kind === 'assistant');
+  assert.ok(asst.text.includes('Read'));
+  assert.equal(asst.inTok, 100);
+});
+
+test('workbuddy user prompt is not truncated in trace steps', () => {
+  const long = 'A'.repeat(500);
+  const steps = buildStepsFromSpans([{
+    type: 'generation',
+    toolInput: JSON.stringify([{ role: 'user', content: [{ type: 'text', text: `<user_query>${long}</user_query>` }] }]),
+    toolOutput: JSON.stringify([{ usage: { prompt_tokens: 1, completion_tokens: 1 }, choices: [{ message: { content: 'ok' } }] }]),
+  }], span);
+  const user = steps.find(s => s.kind === 'user');
+  assert.equal(user.text.length, 500);
+});
+
+test('workbuddy list merges traces under same project directory', () => {
+  const { mergeRowsByProject } = require('../session-trace/workbuddy-trace');
+  const merged = mergeRowsByProject([
+    { session_id: 'trace_a', project: '38453', project_path: '/tmp/traces/38453', calls: 1, tokens: 100, lastTs: 100, context: 'hello' },
+    { session_id: 'trace_b', project: '38453', project_path: '/tmp/traces/38453', calls: 3, tokens: 200, lastTs: 200, context: 'hello' },
+    { session_id: 'trace_c', project: '999', project_path: '/tmp/traces/999', calls: 1, tokens: 50, lastTs: 150, context: 'other' },
+  ]);
+  assert.equal(merged.length, 2);
+  const p38453 = merged.find(r => r.project === '38453');
+  assert.equal(p38453.calls, 4);
+  assert.equal(p38453.tokens, 300);
+  assert.equal(p38453.session_id, 'trace_b');
+  assert.equal(p38453.lastTs, 200);
+});
+
+test('workbuddy findSessionFile matches by filename without full scan parse', () => {
+  const { findSessionFile, traceBasename } = require('../session-trace/workbuddy-trace');
+  assert.equal(traceBasename('trace_abc'), 'trace_abc.json');
+  assert.equal(traceBasename('abc'), 'trace_abc.json');
+  const f = findSessionFile('trace_e7f75f80e65149bd829193546bde5f1a');
+  assert.ok(f && f.endsWith('trace_e7f75f80e65149bd829193546bde5f1a.json'));
+});
+
+test('workbuddy function span parses toolInput and toolOutput', () => {
+  const steps = buildStepsFromSpans([{
+    type: 'function',
+    toolName: 'Read',
+    toolInput: '{"file_path":"/tmp/a"}',
+    toolOutput: JSON.stringify({ title: 'Read 11 lines', content: 'line1\nline2' }),
+  }], span);
+  assert.equal(steps.length, 1);
+  assert.equal(steps[0].kind, 'tool');
+  assert.equal(steps[0].tool, 'Read');
+  assert.ok(steps[0].text.includes('line1'));
 });
 
 test('workbuddy patch_route writes custom model format', () => {

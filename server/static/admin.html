@@ -856,10 +856,6 @@ select.form-input{cursor:pointer}
             </label>
             <p style="font-size:11px;color:#999;margin:4px 0 0;line-height:1.5">{{ lang==='zh' ? '适用于 WorkBuddy / Claude Desktop / Codex 等写配置文件的应用；多选时按各 handler 策略写入 models 或 inferenceModels。' : 'For config-file apps (WorkBuddy, Claude Desktop, Codex); writes multiple models per handler strategy.' }}</p>
           </div>
-          <div v-if="showModels()" class="form-group" style="margin-bottom:12px">
-            <label>{{ lang==='zh'?'可选：展示模型（逗号分隔）':'Optional: display models' }}</label>
-            <input v-model="acForm.models" class="form-input" style="width:100%" />
-          </div>
           <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
             <button class="btn-sm" @click="closeAcModal">{{ lang==='zh'?'取消':'Cancel' }}</button>
             <button class="btn btn-indigo" :disabled="acSaving" @click="saveAcEntity">{{ lang==='zh'?'保存':'Save' }}</button>

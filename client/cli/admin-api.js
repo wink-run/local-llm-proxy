@@ -385,7 +385,8 @@ async function handleRequest(req, res) {
       : {
           total_calls: 0, total_tokens: 0, total_cost: 0,
           tiers: { free: 0, p2p: 0, paid: 0 },
-          hourly: Array(24).fill(0),
+          hourly: Array.from({ length: 24 }, (_, hour) => ({ hour, calls: 0, tokens: 0, cost_usd: 0, isNow: false })),
+          daily: [],
           models: [], keys: [], providers: [], agent_sources: [],
         };
     return json(res, 200, data);

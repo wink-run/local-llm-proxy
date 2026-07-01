@@ -17,6 +17,16 @@ const detectTools = require('./detect-tools');
 const agentLinker = require('./agent-linker');
 const cursorHooks = require('./cursor-hooks');
 const { syncSessionTelemetry } = require('./session-telemetry-sync');
+
+/** 会话补录节流：用量页频繁打开时不重复全量扫描 */
+let _lastSessionTelemetrySync = 0;
+const SESSION_TELEMETRY_SYNC_MS = 20_000;
+function maybeSyncSessionTelemetry(localStats) {
+  const now = Date.now();
+  if (now - _lastSessionTelemetrySync < SESSION_TELEMETRY_SYNC_MS) return;
+  _lastSessionTelemetrySync = now;
+  try { syncSessionTelemetry(localStats); } catch {}
+}
 // device-reporter is used by the CLI only; desktop registration is handled
 // by useDeviceReporter in the renderer (which has access to the JWT).
 
@@ -1543,8 +1553,12 @@ function registerIPC() {
   ipcMain.handle('gateway:restart',       () => gateway.restart());
   ipcMain.handle('localStats:compression', (_e, days) => {
     const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
-    try { return require('./compression-report').readCompressionSummary(d); }
-    catch (e) { console.error('[localStats:compression]', e.message); return { count: 0, before: 0, after: 0, saved: 0, ratio: 0, models: [] }; }
+    try {
+      const since = localStats.sinceTsForDays(d);
+      const rates = localStats.queryGatewayInputCostRate(since);
+      return require('./compression-report').readCompressionSummary(d, rates);
+    }
+    catch (e) { console.error('[localStats:compression]', e.message); return { count: 0, before: 0, after: 0, saved: 0, ratio: 0, saved_usd: 0, models: [] }; }
   });
   ipcMain.handle('localStats:todaySummary', () => {
     try { return localStats.queryTodaySummary(); }
@@ -2940,7 +2954,7 @@ function registerIPC() {
   })();
 
   ipcMain.handle('apps:detail', (_e, { app, days } = {}) => {
-    try { syncSessionTelemetry(localStats); } catch {}
+    maybeSyncSessionTelemetry(localStats);
     const aid = app?.agent_id || app?.preset_id;
     const ent = configLoader.appEntityById(aid);
     const caps = configLoader.appCapabilities(aid);

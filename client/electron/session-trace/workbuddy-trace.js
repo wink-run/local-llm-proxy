@@ -12,7 +12,19 @@ const AGENT_ID = 'workbuddy';
 const PROFILE = 'workbuddy-trace';
 const ROOT = () => path.join(os.homedir(), '.workbuddy/traces');
 
+/** 目录扫描结果短期缓存（单次用量页会多次 find/list） */
+let _filesCache = null;
+let _filesCacheAt = 0;
+const FILES_CACHE_MS = 8000;
+
+function invalidateTraceFileCache() {
+  _filesCache = null;
+  _filesCacheAt = 0;
+}
+
 function walkTraceFiles() {
+  const now = Date.now();
+  if (_filesCache && now - _filesCacheAt < FILES_CACHE_MS) return _filesCache;
   const out = [];
   const re = /^trace_.*\.json$/i;
   const walk = (dir) => {
@@ -25,7 +37,16 @@ function walkTraceFiles() {
     }
   };
   walk(ROOT());
+  _filesCache = out;
+  _filesCacheAt = now;
   return out;
+}
+
+/** sessionId → 文件名（trace_*.json） */
+function traceBasename(sessionId) {
+  const s = String(sessionId || '');
+  const id = s.startsWith('trace_') ? s : `trace_${s}`;
+  return `${id}.json`.toLowerCase();
 }
 
 function loadTraceDoc(file) {
@@ -38,30 +59,92 @@ function sessionIdFromDoc(doc, file) {
   return path.basename(file).replace(/^trace_/, '').replace(/\.json$/i, '');
 }
 
-/** 从 span 提取可读文本（含 toolOutput JSON 字符串） */
+/** 解析 OpenAI 风格 message content（string 或 [{type,text}]） */
+function openAiMessageText(msg) {
+  if (!msg || typeof msg !== 'object') return '';
+  const c = msg.content;
+  if (typeof c === 'string' && c.trim()) return c.trim();
+  if (Array.isArray(c)) {
+    return c.map(x => (x?.type === 'text' ? x.text : (typeof x === 'string' ? x : ''))).filter(Boolean).join('\n').trim();
+  }
+  return '';
+}
+
+/** 解析 generation span 的 toolOutput（chat.completion 数组或对象） */
+function parseGenerationOutput(span) {
+  const empty = { text: '', usage: span?.usage || {}, toolCalls: [] };
+  if (!span?.toolOutput) return empty;
+  try {
+    let parsed = JSON.parse(span.toolOutput);
+    const item = Array.isArray(parsed)
+      ? (parsed.find(x => x?.choices?.length) || parsed[0])
+      : parsed;
+    if (!item || typeof item !== 'object') return empty;
+    const msg = item.choices?.[0]?.message || {};
+    const usage = item.usage || span.usage || {};
+    let text = openAiMessageText(msg);
+    const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
+    if (!text && toolCalls.length) {
+      text = toolCalls.map(tc => {
+        const fn = tc.function || {};
+        return `${fn.name || 'tool'}(${fn.arguments || ''})`;
+      }).join('\n');
+    }
+    return { text, usage, toolCalls };
+  } catch {
+    return empty;
+  }
+}
+
+/** Trace 详情全文：优先提取 user_query，但不截断（列表摘要用 extractContext） */
+function fullTraceText(text) {
+  if (!text || typeof text !== 'string') return '';
+  const uq = text.match(/<user_query>\s*([\s\S]*?)\s*<\/user_query>/i);
+  return (uq ? uq[1] : text).trim();
+}
+
+/** 从 generation toolInput（messages 数组）提取最后一条 user 消息 */
+function userTextFromToolInput(toolInput) {
+  if (!toolInput) return '';
+  try {
+    const parsed = typeof toolInput === 'string' ? JSON.parse(toolInput) : toolInput;
+    const msgs = Array.isArray(parsed) ? parsed : (parsed?.messages || []);
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m?.role !== 'user') continue;
+      const t = openAiMessageText(m);
+      if (t) return fullTraceText(t);
+    }
+  } catch { /* ignore */ }
+  return '';
+}
+
+/** 解析 function span 的 toolOutput（{ title, content, renderer }） */
+function parseFunctionOutput(toolOutput) {
+  if (!toolOutput) return '';
+  try {
+    const parsed = typeof toolOutput === 'string' ? JSON.parse(toolOutput) : toolOutput;
+    if (parsed && typeof parsed.content === 'string') return parsed.content.trim();
+  } catch {
+    return String(toolOutput);
+  }
+  return toolResultText(toolOutput);
+}
+
+/** 从 span 提取可读文本（trace 详情用，不截断） */
 function spanText(span) {
   if (!span || typeof span !== 'object') return '';
+  if (String(span.type || '').toLowerCase() === 'generation') {
+    return parseGenerationOutput(span).text;
+  }
   for (const key of ['input', 'prompt', 'userMessage', 'message', 'content', 'text']) {
     const v = span[key];
-    if (typeof v === 'string' && v.trim()) return extractContext(v);
+    if (typeof v === 'string' && v.trim()) return fullTraceText(v);
   }
   if (span.toolOutput) {
-    try {
-      let parsed = JSON.parse(span.toolOutput);
-      if (Array.isArray(parsed)) parsed = parsed.find(x => x && typeof x === 'object') || parsed[0];
-      if (parsed && typeof parsed === 'object') {
-        const choice = parsed.choices?.[0]?.message?.content
-          || parsed.message?.content
-          || parsed.content;
-        if (typeof choice === 'string') return extractContext(choice);
-        if (Array.isArray(choice)) {
-          const t = choice.find(x => x?.type === 'text')?.text;
-          if (t) return extractContext(t);
-        }
-      }
-    } catch {
-      return extractContext(String(span.toolOutput).slice(0, 500));
-    }
+    const fnOut = parseFunctionOutput(span.toolOutput);
+    if (fnOut) return fnOut;
+    return parseGenerationOutput(span).text;
   }
   return '';
 }
@@ -84,15 +167,40 @@ function buildStepsFromSpans(spans, timeSpan) {
     const ts = stepTs(timeSpan, lineIdx++);
     const type = String(span.type || '').toLowerCase();
 
-    if (type === 'generation' || type === 'assistant' || type === 'agent') {
-      const text = spanText(span);
-      const usage = span.usage || {};
+    // WorkBuddy 专有 span 类型，无展示内容则跳过
+    if (type === 'custom') continue;
+
+    if (type === 'generation') {
+      const userText = userTextFromToolInput(span.toolInput);
+      if (userText) {
+        steps.push({ idx: steps.length, kind: 'user', label: 'User prompt', ts, text: userText });
+      }
+      const { text, usage } = parseGenerationOutput(span);
+      const inTok = usage.prompt_tokens || usage.input_tokens || 0;
+      const outTok = usage.completion_tokens || usage.output_tokens || 0;
+      const cached = usage.prompt_tokens_details?.cached_tokens || usage.cache_read_tokens || 0;
+      const body = text || (span.model ? `模型: ${span.model}` : '');
+      if (!body && !inTok && !outTok) continue;
       steps.push({
         idx: steps.length,
         kind: 'assistant',
         label: 'Assistant',
         ts,
-        text: text.slice(0, 500) || (span.model ? `模型: ${span.model}` : 'Assistant'),
+        text: body,
+        inTok,
+        outTok,
+        cached,
+      });
+    } else if (type === 'assistant' || type === 'agent') {
+      const text = spanText(span);
+      if (!text && type === 'agent') continue; // agent 容器 span，无内容跳过
+      const usage = span.usage || {};
+      steps.push({
+        idx: steps.length,
+        kind: 'assistant',
+        label: type === 'agent' ? (span.agentName || 'Agent') : 'Assistant',
+        ts,
+        text: text || (span.model ? `模型: ${span.model}` : ''),
         inTok: usage.prompt_tokens || usage.input_tokens || 0,
         outTok: usage.completion_tokens || usage.output_tokens || 0,
         cached: usage.prompt_tokens_details?.cached_tokens || 0,
@@ -103,13 +211,16 @@ function buildStepsFromSpans(spans, timeSpan) {
         steps.push({ idx: steps.length, kind: 'user', label: 'User prompt', ts, text });
       }
     } else if (type === 'tool' || type === 'tool_call' || type === 'function') {
+      const toolName = span.toolName || span.name || span.tool || 'tool';
+      const resultText = parseFunctionOutput(span.toolOutput);
       steps.push({
         idx: steps.length,
         kind: 'tool',
-        label: span.name || span.tool || 'tool',
+        label: toolName,
         ts,
-        tool: span.name || span.tool,
-        input: span.input || span.arguments,
+        tool: toolName,
+        input: span.toolInput || span.input || span.arguments,
+        ...(resultText ? { text: resultText } : {}),
       });
     } else if (type === 'tool_result' || type === 'tool_output') {
       steps.push({
@@ -117,7 +228,7 @@ function buildStepsFromSpans(spans, timeSpan) {
         kind: 'tool_result',
         label: 'Tool output',
         ts,
-        text: toolResultText(span.output ?? span.toolOutput ?? span.content).slice(0, 4000),
+        text: toolResultText(span.output ?? span.toolOutput ?? span.content),
       });
     }
   }
@@ -138,13 +249,13 @@ function summarizeDoc(doc, file) {
 
   for (const span of spans) {
     const type = String(span?.type || '').toLowerCase();
-    if (!context) {
-      const t = spanText(span);
-      if (t && type !== 'generation') context = t;
+    if (!context && type === 'generation') {
+      const t = userTextFromToolInput(span.toolInput) || spanText(span);
+      if (t) context = extractContext(t); // 列表摘要仍截断
     }
     if (type === 'generation') {
       calls++;
-      const u = span.usage || {};
+      const { usage: u } = parseGenerationOutput(span);
       inTok += u.prompt_tokens || u.input_tokens || 0;
       outTok += u.completion_tokens || u.output_tokens || 0;
       const ms = parseStartedAtMs(span, 0);
@@ -173,18 +284,63 @@ function summarizeDoc(doc, file) {
   };
 }
 
+/** 同一 WorkBuddy project 目录下多条 trace 合并为一行（用量页按 project 展示） */
+function mergeRowsByProject(rows) {
+  const byPath = new Map();
+  for (const row of rows) {
+    const key = row.project_path || row.project || row.session_id;
+    const prev = byPath.get(key);
+    if (!prev) {
+      byPath.set(key, { ...row });
+      continue;
+    }
+    prev.calls = (prev.calls || 0) + (row.calls || 0);
+    prev.tokens = (prev.tokens || 0) + (row.tokens || 0);
+    prev.inTok = (prev.inTok || 0) + (row.inTok || 0);
+    prev.outTok = (prev.outTok || 0) + (row.outTok || 0);
+    // 保留最新 trace 供 Trace 按钮打开
+    if ((row.lastTs || 0) >= (prev.lastTs || 0)) {
+      prev.session_id = row.session_id;
+      prev.context = row.context || prev.context;
+      prev.lastTs = row.lastTs;
+      prev.file = row.file;
+    }
+  }
+  return [...byPath.values()];
+}
+
 function findSessionFile(sessionId) {
+  const target = traceBasename(sessionId);
+  for (const file of walkTraceFiles()) {
+    if (path.basename(file).toLowerCase() === target) return file;
+  }
+  // 兼容 traceId 与文件名不一致的旧数据
+  const sid = String(sessionId);
   for (const file of walkTraceFiles()) {
     const doc = loadTraceDoc(file);
-    if (doc && sessionIdFromDoc(doc, file) === sessionId) return file;
+    if (doc && sessionIdFromDoc(doc, file) === sid) return file;
   }
   return null;
 }
 
 function list({ limit = 50, sinceDays = 30 } = {}) {
   const since = Date.now() / 1000 - (sinceDays || 30) * 86400;
-  const bySid = new Map();
+  const cap = Math.max(1, limit || 50);
+  const candidates = [];
   for (const file of walkTraceFiles()) {
+    try {
+      const st = fs.statSync(file);
+      const mtimeTs = Math.floor(st.mtimeMs / 1000);
+      if (mtimeTs < since) continue;
+      candidates.push({ file, mtimeTs });
+    } catch { /* skip */ }
+  }
+  candidates.sort((a, b) => b.mtimeTs - a.mtimeTs);
+  const bySid = new Map();
+  const parseBudget = Math.min(candidates.length, cap * 4);
+  for (let i = 0; i < parseBudget; i++) {
+    if (bySid.size >= cap) break;
+    const { file } = candidates[i];
     const doc = loadTraceDoc(file);
     if (!doc) continue;
     const row = summarizeDoc(doc, file);
@@ -194,7 +350,7 @@ function list({ limit = 50, sinceDays = 30 } = {}) {
   }
   const out = [...bySid.values()].map(({ file, ...rest }) => rest);
   out.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
-  return out.slice(0, limit);
+  return mergeRowsByProject(out).slice(0, cap);
 }
 
 function trace(sessionId) {
@@ -223,4 +379,7 @@ module.exports = {
   trace,
   findSessionFile,
   buildStepsFromSpans,
+  invalidateTraceFileCache,
+  traceBasename,
+  mergeRowsByProject,
 };

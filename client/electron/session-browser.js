@@ -29,6 +29,8 @@ function enrichTraceWithDb(trace, dbRow) {
 /** 规范化 activity 行：同步修正 project / project_path */
 function normalizeActivityRow(row, agentId) {
   if (!row) return row;
+  // 适配器已提供路径时跳过全量扫描（WorkBuddy trace 等）
+  if (row.project_path && row.project) return row;
   const sessionFile = row.session_id ? registry.findSessionFile(agentId, row.session_id) : null;
   const { project, project_path } = resolveProjectName({
     projectPath: row.project_path || row.project,
