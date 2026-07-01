@@ -53,8 +53,10 @@ function findSessionDir(root) {
 }
 
 /** 单向镜像 srcDir → dstDir（按索引文件名；源比目标新才覆盖——否则纳管期间增长的会话索引
- *  同步回去时会被「已存在就跳过」拦掉，导致官方看到的是旧版本/被截断）。transcript 同源不动。 */
-function mirror(srcDir, dstDir) {
+ *  同步回去时会被「已存在就跳过」拦掉，导致官方看到的是旧版本/被截断）。transcript 同源不动。
+ *  @param {string[]} [stripFields]  — 复制时从 JSON 内容中移除的字段（如 lastFocusedAt），
+ *       用于 3p→native 方向，避免 3p Desktop 刷新时间戳污染 native 的排序顺序。 */
+function mirror(srcDir, dstDir, stripFields) {
   let copied = 0;
   let skipped = 0;
   let files;
@@ -66,10 +68,17 @@ function mirror(srcDir, dstDir) {
       const ss = fs.statSync(srcPath);
       if (fs.existsSync(dst)) {
         const ds = fs.statSync(dst);
-        if (ss.mtimeMs <= ds.mtimeMs) { skipped++; continue; }   // 目标不旧 → 跳过
+        if (ss.mtimeMs <= ds.mtimeMs) { skipped++; continue; }
       }
-      fs.copyFileSync(srcPath, dst);
-      try { fs.utimesSync(dst, ss.atime, ss.mtime); } catch {}    // 保留源 mtime，避免双向来回复制
+      if (Array.isArray(stripFields) && stripFields.length) {
+        // 读 JSON，删指定字段，写回（保留源 mtime）
+        const obj = JSON.parse(fs.readFileSync(srcPath, 'utf8'));
+        for (const k of stripFields) delete obj[k];
+        fs.writeFileSync(dst, JSON.stringify(obj, null, 2), 'utf8');
+      } else {
+        fs.copyFileSync(srcPath, dst);
+      }
+      try { fs.utimesSync(dst, ss.atime, ss.mtime); } catch {}
       copied++;
     } catch {}
   }
@@ -102,7 +111,8 @@ function syncCodeSessionsBidirectional() {
     return out;
   }
   out.toP3 = mirror(nativeDir, p3Dir);
-  out.toNative = mirror(p3Dir, nativeDir);
+  // 3p→native：删 lastFocusedAt/lastActivityAt（3p Desktop 刷新它们会污染 native 排序）
+  out.toNative = mirror(p3Dir, nativeDir, ['lastFocusedAt', 'lastActivityAt']);
   return out;
 }
 
