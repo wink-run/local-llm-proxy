@@ -2761,6 +2761,11 @@ function registerIPC() {
     if (updated.agent_id === 'cursor' && updated.link_method === 'direct' && Object.prototype.hasOwnProperty.call(patch, 'hosted')) {
       syncCursorHookState(apps);
     }
+    // 路由相关字段变化 → 直接触发 Claude Desktop ↔ 3p 会话同步（不依赖前端主动调 claude3p:sync）。
+    // runClaude3pSync 增量去重、无变化近乎零成本，多调无害。
+    if (['route_id', 'route_ids', 'hosted'].some(k => Object.prototype.hasOwnProperty.call(patch, k))) {
+      try { runClaude3pSync('apps-update'); } catch {}
+    }
     return updated;
   });
 
