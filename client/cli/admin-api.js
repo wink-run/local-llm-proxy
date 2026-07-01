@@ -19,6 +19,7 @@ const { bindRouteToKeyScene } = require('../shared/route-binding');
 const { localStats } = require('../shared/telemetry');
 const billingConfig = require('../electron/billing-config');
 const cloudBilling = require('../electron/cloud-billing-sync');
+const configLoader = require('../electron/config-loader');
 const agentControl = require('./agent-control');
 
 // ── Module state ──────────────────────────────────────────────────────────────
@@ -226,6 +227,19 @@ function resolveBillingServerUrl(req) {
 
 function applyUserBillingCfg(cfg) {
   try { billingConfig.applyPricingOverrides(cfg.provider_pricing_overrides || {}); } catch {}
+  syncAgentProviderModelsFromAccounts();
+}
+
+/** 账户/刊例价模型 → agent config（与 Electron main 对齐） */
+function syncAgentProviderModelsFromAccounts() {
+  try {
+    const agentCfg = readAgentConfig() || { providers: [] };
+    const localCfg = readLocalConfig() || {};
+    const { cfg, changed } = billingConfig.syncGatewayProvidersFromAccounts(agentCfg, localCfg);
+    if (changed) writeAgentConfig(cfg);
+  } catch (e) {
+    console.warn('[admin-api] sync provider models skipped:', e.message);
+  }
 }
 
 async function pullUserBillingApi(token, req) {
@@ -414,7 +428,12 @@ async function handleRequest(req, res) {
     const body = await parseBody(req, res);
     if (body === null) return;
     writeAgentConfig(body);
+    syncAgentProviderModelsFromAccounts();
     return json(res, 200, { ok: true });
+  }
+
+  if (method === 'GET' && url === '/api/provider-catalog') {
+    return json(res, 200, configLoader.builtinCatalogPayload());
   }
 
   // ── P2P 贡献 Agent（Docker / CLI，对应 Electron agent:* IPC）────────────────

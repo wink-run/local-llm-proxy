@@ -9,7 +9,7 @@ import { fetchServerCommunityModels } from '../lib/communityModels';
 import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
 import { DirectSourceCard, PersonalSourceModelView, PricingTable, CollapsibleBillingPanel, buildInstancePatch, buildDirectSourcePatch, buildDirectSourceRemovePatch, TemplateEditModal, SyncDiffBanner, accountInstanceAddedOrder } from '../components/PersonalSources';
 import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
-import { getGateway, getLocalConfig, getConfig, getOauth } from '../api/adapter';
+import { getGateway, getLocalConfig, getConfig, getOauth, isElectron } from '../api/adapter';
 import { useLang } from '../store/lang';
 import { useAuth } from '../store/index';
 import { resolveModelsForModelView } from '../lib/personalAvailableModels';
@@ -166,11 +166,18 @@ function catalogToState(catalog, oauthById) {
   return { meta, defaults };
 }
 
-/** 从本机 yaml 读取供给源 catalog（Electron IPC；浏览器模式无 yaml 则空） */
+/** 从本机 yaml / admin-api 读取供给源 catalog（Docker CLI Web UI 走 /api/provider-catalog） */
 async function readProviderCatalogFromYaml() {
   const api = window.electronAPI?.localConfig;
   if (api?.getProviderCatalog) return api.getProviderCatalog();
   if (api?.getBuiltinCatalog) return api.getBuiltinCatalog();
+  if (!isElectron()) {
+    try {
+      const base = import.meta.env?.VITE_ADMIN_BASE ?? '';
+      const res = await fetch(`${base}/api/provider-catalog`);
+      if (res.ok) return await res.json();
+    } catch {}
+  }
   return { providers: [] };
 }
 
@@ -1325,6 +1332,69 @@ function patchClearsTestVerified(patch) {
   return CREDENTIAL_PATCH_KEYS.some(k => Object.prototype.hasOwnProperty.call(patch, k));
 }
 
+/** catalog / 账户重载时保留内存里尚未 debounce 落盘的字段，避免 base_url 等被磁盘旧值覆盖 */
+const PROVIDER_RELOAD_PRESERVE_KEYS = [
+  ...CREDENTIAL_PATCH_KEYS,
+  'enabled', 'test_verified', 'billing_type', 'sub_mode',
+];
+
+function mergeProviderAfterReload(disk, mem) {
+  if (!mem) return disk;
+  const normBase = u => String(u || '').trim().replace(/\/v1\/?$/, '').replace(/\/$/, '');
+  const patch = {};
+  for (const k of PROVIDER_RELOAD_PRESERVE_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(mem, k) || mem[k] === disk[k]) continue;
+    // 仅差 /v1 尾缀时以 catalog 对齐后的磁盘值为准（避免旧本地值覆盖服务端 base_url）
+    if (k === 'base_url' && normBase(mem[k]) === normBase(disk[k])) continue;
+    patch[k] = mem[k];
+  }
+  let out = Object.keys(patch).length ? { ...disk, ...patch } : { ...disk };
+  if (!mem.models?.length) return out;
+  const diskM = (out.models || []).map(normModel);
+  const memM = (mem.models || []).map(normModel);
+  const mergedModels = diskM.map(d => {
+    const hit = memM.find(m => m.name === d.name);
+    return hit ? { ...d, type: hit.type || d.type } : d;
+  });
+  const changed = mergedModels.some((m, i) => m.type !== diskM[i]?.type);
+  return changed ? { ...out, models: mergedModels } : out;
+}
+
+/** 合并 catalog 默认与用户保存：本地仅存去掉 /v1 的旧 base_url 时，对齐 catalog 完整值 */
+function pickBaseUrlOnCatalogMerge(def, saved, metaEntry) {
+  const savedUrl = saved?.base_url || '';
+  const catalogUrl = def?.base_url || metaEntry?.base_url || '';
+  if (!savedUrl) return catalogUrl;
+  if (!catalogUrl) return savedUrl;
+  const norm = u => String(u || '').trim().replace(/\/v1\/?$/, '').replace(/\/$/, '');
+  if (norm(savedUrl) === norm(catalogUrl) && savedUrl !== catalogUrl) return catalogUrl;
+  return savedUrl;
+}
+
+function buildCatalogDefaultsById(defaults) {
+  const out = {};
+  for (const d of defaults || []) {
+    if (d?.id) out[d.id] = d;
+  }
+  return out;
+}
+
+/** 落盘前规范化 base_url：catalog 源保留/对齐完整 URL；仅自定义源去掉 /v1 */
+function normalizeProviderBaseUrlForSave(provider, defaultsById, meta) {
+  const def = defaultsById[provider.id];
+  const metaEntry = meta[provider.id];
+  const isCatalog = !!(def || metaEntry?.base_url);
+  if (isCatalog) {
+    return { ...provider, base_url: pickBaseUrlOnCatalogMerge(def, provider, metaEntry) };
+  }
+  // catalog 尚未加载时不 strip，避免 Agnes 等预设源在首屏保存时被误删 /v1
+  if (!Object.keys(defaultsById).length) return provider;
+  return {
+    ...provider,
+    base_url: (provider.base_url || '').replace(/\/v1\/?$/, '').replace(/\/$/, ''),
+  };
+}
+
 /** provider_pricing_overrides 中非模型字段（历史遗留，不再写入） */
 const PRICING_OVERRIDE_META_KEYS = new Set(['_excluded_models']);
 
@@ -2301,7 +2371,7 @@ function UsageMeter({ provider }) {
   );
 }
 
-function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpanded = false, gatewayAuthMode = null, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [], displayName = null, displayIcon = null, lockTemplate = false, accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels }) {
+function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpanded = false, gatewayAuthMode = null, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [], displayName = null, displayIcon = null, lockTemplate = false, accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels, onPersistBaseUrl }) {
   const { t } = useLang();
   const [showKey,    setShowKey]    = useState(false);
   const [expanded,   setExpanded]   = useState(initialExpanded);
@@ -2625,6 +2695,7 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
                 <input
                   value={provider.base_url || ''}
                   onChange={e => onUpdate(provider.id, { base_url: e.target.value })}
+                  onBlur={e => onPersistBaseUrl?.(provider.id, e.target.value)}
                   type="text"
                   placeholder={t('providers.card.defaultBaseUrl')}
                   autoComplete="off"
@@ -2726,6 +2797,19 @@ export default function Providers() {
   const [gatewayPickerEntries, setGatewayPickerEntries] = useState([]);
   const [templateEditing, setTemplateEditing] = useState(null);
   const [catalogSeed, setCatalogSeed] = useState(null); // { defaults, meta, fromNetwork }
+
+  // catalog 预设 + 按量刊例目录（Docker 无 yaml 时 paygCatalog 补全 base_url）
+  const catalogDefaultsById = useMemo(() => {
+    const out = buildCatalogDefaultsById(catalogSeed?.defaults);
+    for (const p of paygCatalog || []) {
+      const id = p.provider_id || p.id;
+      if (!id) continue;
+      if (!out[id]?.base_url && p.base_url) {
+        out[id] = { ...(out[id] || { id }), base_url: p.base_url };
+      }
+    }
+    return out;
+  }, [catalogSeed?.defaults, paygCatalog]);
 
   const { user } = useAuth();
 
@@ -2926,7 +3010,7 @@ export default function Providers() {
     if (!catalogSeed) return;
     let cancelled = false;
     (async () => {
-      const { defaults, meta: seedMeta, fromNetwork } = catalogSeed;
+      const { defaults, meta: seedMeta } = catalogSeed;
       const cfg = await getConfig().read();
       if (cancelled) return;
       let resolved;
@@ -2936,26 +3020,31 @@ export default function Providers() {
           const saved = cfg.providers.find(p => p.id === def.id);
           if (!saved) return def;
           const models = mergeModelsFromCatalog(def.models, saved.models);
-          return { ...def, ...saved, models };
+          const base_url = pickBaseUrlOnCatalogMerge(def, saved, seedMeta[def.id]);
+          return { ...def, ...saved, base_url, models };
         });
-        const custom = cfg.providers.filter(p => !defaultIds.has(p.id)).map(p => ({
-          ...p,
-          base_url: (p.base_url || '').replace(/\/v1\/?$/, '').replace(/\/$/, ''),
-        }));
+        const custom = cfg.providers.filter(p => !defaultIds.has(p.id)).map(p =>
+          normalizeProviderBaseUrlForSave(p, catalogDefaultsById, seedMeta),
+        );
         resolved = sanitizeProviderModels([...mapped, ...custom]);
-        if (fromNetwork) {
-          let dirty = false;
-          const nextProviders = (cfg.providers || []).map(saved => {
-            if (!defaultIds.has(saved.id)) return saved;
-            const def = defaults.find(d => d.id === saved.id);
-            const merged = mergeModelsFromCatalog(def?.models, saved.models);
-            const before = (saved.models || []).map(m => normModel(m).name).join('\0');
-            const after = merged.map(m => m.name).join('\0');
-            if (before !== after) { dirty = true; return { ...saved, models: merged }; }
-            return saved;
-          });
-          if (dirty) getConfig().write({ ...cfg, providers: nextProviders }).catch(() => {});
-        }
+        // 将 catalog 对齐后的 base_url / 模型裁剪写回 agent config
+        let configDirty = false;
+        const nextConfigProviders = (cfg.providers || []).map(saved => {
+          if (!defaultIds.has(saved.id)) {
+            const next = normalizeProviderBaseUrlForSave(saved, catalogDefaultsById, seedMeta);
+            if ((saved.base_url || '') !== (next.base_url || '')) configDirty = true;
+            return next;
+          }
+          const def = defaults.find(d => d.id === saved.id);
+          const base_url = pickBaseUrlOnCatalogMerge(def, saved, seedMeta[saved.id]);
+          const merged = mergeModelsFromCatalog(def?.models, saved.models);
+          if ((saved.base_url || '') !== base_url) configDirty = true;
+          const before = (saved.models || []).map(m => normModel(m).name).join('\0');
+          const after = merged.map(m => m.name).join('\0');
+          if (before !== after) configDirty = true;
+          return { ...saved, base_url, models: merged };
+        });
+        if (configDirty) getConfig().write({ ...cfg, providers: nextConfigProviders }).catch(() => {});
       } else {
         resolved = defaults;
       }
@@ -3000,23 +3089,12 @@ export default function Providers() {
       lastSaved.current = withCustomSubs.providers;
       setProviders(prev => {
         const loaded = withCustomSubs.providers;
-        return loaded.map(p => {
-          const mem = prev.find(x => x.id === p.id);
-          if (!mem?.models?.length) return p;
-          const diskM = (p.models || []).map(normModel);
-          const memM = (mem.models || []).map(normModel);
-          const mergedModels = diskM.map(d => {
-            const hit = memM.find(m => m.name === d.name);
-            return hit ? { ...d, type: hit.type || d.type } : d;
-          });
-          const changed = mergedModels.some((m, i) => m.type !== diskM[i]?.type);
-          return changed ? { ...p, models: mergedModels } : p;
-        });
+        return loaded.map(p => mergeProviderAfterReload(p, prev.find(x => x.id === p.id)));
       });
       setMeta(localizeProviderMeta(withCustomSubs.meta, t));
     })();
     return () => { cancelled = true; };
-  }, [catalogSeed, userPayg, userSubscriptions, paidAllowlist, t]);
+  }, [catalogSeed, catalogDefaultsById, userPayg, userSubscriptions, paidAllowlist, t]);
 
   // 语言切换时刷新 meta 文案
   useEffect(() => {
@@ -3030,22 +3108,21 @@ export default function Providers() {
       try {
         const cfg = (await getConfig().read()) || {};
         const normalizedProviders = providers.map(p => {
-          const base = meta[p.id]
-            ? p
-            : { ...p, base_url: (p.base_url || '').replace(/\/v1\/?$/, '').replace(/\/$/, '') };
+          const base = normalizeProviderBaseUrlForSave(p, catalogDefaultsById, meta);
           if (isPaygManagedProvider(p.id, userPayg)) {
             return { ...base, models: filterPaygModels(base.models, p.id, userPayg) };
           }
           return base;
         });
         await getConfig().write({ ...cfg, providers: normalizedProviders });
-        lastSaved.current = providers;
+        lastSaved.current = normalizedProviders;
+        setProviders(normalizedProviders);
         setSavedMsg(t('providers.saved'));
         setTimeout(() => setSavedMsg(''), 1500);
       } catch {}
     }, 500);
     return () => clearTimeout(timer);
-  }, [providers, meta, t, userPayg]);
+  }, [providers, meta, catalogDefaultsById, t, userPayg]);
 
   const updateProvider = useCallback((id, patch) => {
     if (isPaygManagedProvider(id, userPayg) && patch.models != null) {
@@ -3078,6 +3155,25 @@ export default function Providers() {
       await getConfig().write({ ...cfg, providers: list });
     } catch { /* 离线时仍保留内存态 */ }
   }, []);
+
+  /** 立即落盘 base_url，避免折叠/切换视图时 debounce 尚未写入 */
+  const persistProviderBaseUrl = useCallback(async (id, base_url) => {
+    const cur = providers.find(p => p.id === id) || { id, type: 'paid', enabled: true, token: '', models: [] };
+    const normalized = normalizeProviderBaseUrlForSave({ ...cur, base_url }, catalogDefaultsById, meta);
+    try {
+      const cfg = (await getConfig().read()) || {};
+      const list = [...(cfg.providers || [])];
+      const i = list.findIndex(p => p.id === id);
+      if (i >= 0) list[i] = { ...list[i], base_url: normalized.base_url };
+      else list.push({ ...normalized, models: normalized.models || [] });
+      await getConfig().write({ ...cfg, providers: list });
+      setProviders(prev => {
+        const next = prev.map(p => (p.id === id ? { ...p, base_url: normalized.base_url } : p));
+        lastSaved.current = next;
+        return next;
+      });
+    } catch { /* 离线时仍保留内存态 */ }
+  }, [providers, catalogDefaultsById, meta]);
 
   /** 选中选择器条目：每次点击登记新实例（支持同类型多账户），配置在上方列表卡片完成 */
   const selectPickerEntry = useCallback(async (entry) => {
@@ -3416,6 +3512,7 @@ export default function Providers() {
     onSaveAccounts: saveAccountsPatch,
     onOverridesChange: setPricingOverrides,
     onPersistModels: persistProviderModels,
+    onPersistBaseUrl: persistProviderBaseUrl,
   };
 
   function renderAddSourcePicker() {
