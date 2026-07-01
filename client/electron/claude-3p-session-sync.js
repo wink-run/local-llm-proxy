@@ -52,11 +52,8 @@ function findSessionDir(root) {
   return best;
 }
 
-/** 单向镜像 srcDir → dstDir（按索引文件名；源比目标新才覆盖——否则纳管期间增长的会话索引
- *  同步回去时会被「已存在就跳过」拦掉，导致官方看到的是旧版本/被截断）。transcript 同源不动。
- *  @param {string[]} [stripFields]  — 复制时从 JSON 内容中移除的字段（如 lastFocusedAt），
- *       用于 3p→native 方向，避免 3p Desktop 刷新时间戳污染 native 的排序顺序。 */
-function mirror(srcDir, dstDir, stripFields) {
+/** 单向镜像 srcDir → dstDir（按索引文件名；源比目标新才覆盖）。transcript 同源不动。整份复制，不改内容。 */
+function mirror(srcDir, dstDir) {
   let copied = 0;
   let skipped = 0;
   let files;
@@ -70,19 +67,46 @@ function mirror(srcDir, dstDir, stripFields) {
         const ds = fs.statSync(dst);
         if (ss.mtimeMs <= ds.mtimeMs) { skipped++; continue; }
       }
-      if (Array.isArray(stripFields) && stripFields.length) {
-        // 读 JSON，删指定字段，写回（保留源 mtime）
-        const obj = JSON.parse(fs.readFileSync(srcPath, 'utf8'));
-        for (const k of stripFields) delete obj[k];
-        fs.writeFileSync(dst, JSON.stringify(obj, null, 2), 'utf8');
-      } else {
-        fs.copyFileSync(srcPath, dst);
-      }
+      fs.copyFileSync(srcPath, dst);
       try { fs.utimesSync(dst, ss.atime, ss.mtime); } catch {}
       copied++;
     } catch {}
   }
   return { copied, skipped };
+}
+
+function readIdxJson(p) { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; } }
+/** 会话「最近活动时间」：Desktop 就用它排序。lastActivityAt 优先，兜底 lastFocusedAt。 */
+function activityTs(o) { return (o && (o.lastActivityAt || o.lastFocusedAt)) || 0; }
+
+/**
+ * 双向对账：逐个索引文件，按 JSON 内 lastActivityAt/lastFocusedAt 取「活动更新」的一方内容，
+ * 双向补齐（只在一边的复制过去）+ 覆盖旧版，最终两边内容完全一致 → Desktop 排序也一致。
+ * 关键：用 JSON 内活动时间判新旧（而非文件 mtime），因为 Desktop 正是按它排序——
+ * 这样既不丢新会话，也不会把时间戳删掉/搞乱顺序。ts 相等即视为已同步，跳过（避免无谓写入）。
+ */
+function reconcileSessions(dirA, dirB) {
+  const listOf = (d) => { try { return fs.readdirSync(d).filter((f) => IDX_RE.test(f)); } catch { return []; } };
+  const names = new Set([...listOf(dirA), ...listOf(dirB)]);
+  let a2b = 0;
+  let b2a = 0;
+  for (const name of names) {
+    const pa = path.join(dirA, name);
+    const pb = path.join(dirB, name);
+    const a = readIdxJson(pa);
+    const b = readIdxJson(pb);
+    try {
+      if (a && !b) { fs.copyFileSync(pa, pb); a2b++; continue; }
+      if (b && !a) { fs.copyFileSync(pb, pa); b2a++; continue; }
+      if (!a || !b) continue;
+      const ta = activityTs(a);
+      const tb = activityTs(b);
+      if (ta === tb) continue;
+      if (ta > tb) { fs.writeFileSync(pb, JSON.stringify(a, null, 2), 'utf8'); a2b++; }
+      else { fs.writeFileSync(pa, JSON.stringify(b, null, 2), 'utf8'); b2a++; }
+    } catch {}
+  }
+  return { a2b, b2a };
 }
 
 /**
@@ -99,8 +123,9 @@ function syncNativeCodeSessionsTo3p() {
 
 /**
  * 双向：原生 ↔ 3p。原生→3p 让 3p 看到代理前会话；3p→原生 让代理期间跑的会话切回非接管也能看到。
+ * 用 reconcileSessions 按活动时间对账合并，两边内容/顺序最终一致。
  * 只同步 Code 索引（claude-code-sessions），transcript 同源（~/.claude/projects）不动。
- * 任一侧目录缺失则跳过该方向，不报错（接管/启动时静默尽力而为）。
+ * 任一侧目录缺失则跳过（接管/启动时静默尽力而为）。
  */
 function syncCodeSessionsBidirectional() {
   const nativeDir = findSessionDir(nativeCodeSessionsRoot());
@@ -110,9 +135,9 @@ function syncCodeSessionsBidirectional() {
     out.skipped = !nativeDir ? 'no_native_sessions' : 'no_3p_dir';
     return out;
   }
-  out.toP3 = mirror(nativeDir, p3Dir);
-  // 3p→native：删 lastFocusedAt/lastActivityAt（3p Desktop 刷新它们会污染 native 排序）
-  out.toNative = mirror(p3Dir, nativeDir, ['lastFocusedAt', 'lastActivityAt']);
+  const r = reconcileSessions(nativeDir, p3Dir);
+  out.toP3 = { copied: r.a2b, skipped: 0 };   // native→3p 写入数
+  out.toNative = { copied: r.b2a, skipped: 0 }; // 3p→native 写入数
   return out;
 }
 
