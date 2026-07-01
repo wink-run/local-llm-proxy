@@ -3292,25 +3292,32 @@ app.whenReady().then(() => {
   // Claude Desktop ↔ 3p 会话同步：启动一次 + 每 30s 一次（覆盖运行期间新建的会话，修复"新会话纳管后不同步"）
   runClaude3pSync('startup');
   setInterval(() => runClaude3pSync('interval'), 30000);
-  // 文件监听兜底：native claude-code-sessions 目录有新/变更文件时立即同步（不等 30s 定时器）。
-  // 不依赖路由切换触发，新 session 一创建就同步。只监 account/org 目录（findSessionDir 动态定位）。
+  // 文件监听兜底：native / 3p 任一 claude-code-sessions 目录有新/变更文件就立即同步（不等 30s 定时器）。
+  // 必须双向监听——3p 建的 session 只会改 3p 目录、native 建的只改 native 目录。
+  // 只监 account/org 目录（findSessionDir 动态定位）。account/org 变化靠每 60s 重建 watcher 兜底。
   let watchTimer;
-  function watchNativeSessions() {
+  function watchSessions() {
     try {
       const sync = require('./claude-3p-session-sync');
-      const root = sync.nativeCodeSessionsRoot();
-      const dir = sync.findSessionDir(root);
-      if (!dir) { setTimeout(watchNativeSessions, 10000); return; }
-      // 清除旧 watcher（account/org 变化时重建）
-      if (global.__sessionWatcher) try { global.__sessionWatcher.close(); } catch {}
-      global.__sessionWatcher = fs.watch(dir, (eventType, filename) => {
-        if (!filename || !/^local_.+\.json$/.test(filename)) return;
-        clearTimeout(watchTimer);
-        watchTimer = setTimeout(() => runClaude3pSync('watch'), 2000); // 2s 防抖
-      });
+      const dirs = [
+        sync.findSessionDir(sync.nativeCodeSessionsRoot()),
+        sync.findSessionDir(sync.p3CodeSessionsRoot()),
+      ].filter(Boolean);
+      // 清除旧 watchers（account/org 变化时重建）
+      if (global.__sessionWatchers) for (const w of global.__sessionWatchers) { try { w.close(); } catch {} }
+      global.__sessionWatchers = [];
+      for (const dir of dirs) {
+        const w = fs.watch(dir, (eventType, filename) => {
+          if (!filename || !/^local_.+\.json$/.test(filename)) return;
+          clearTimeout(watchTimer);
+          watchTimer = setTimeout(() => runClaude3pSync('watch'), 2000); // 2s 防抖
+        });
+        global.__sessionWatchers.push(w);
+      }
     } catch (e) { console.warn('[3p-sync] watch setup failed:', e.message); }
   }
-  watchNativeSessions();
+  watchSessions();
+  setInterval(watchSessions, 60000); // 每 60s 重建，覆盖 account/org 目录变化
   // Init local SQLite stats DB（与 CLI 共用 ~/.tokenbank）
   localStats.init(STATS_DIR);
   try { cursorHooks.syncForApps(readLocalConfig().apps || [], process.execPath); } catch (e) {
