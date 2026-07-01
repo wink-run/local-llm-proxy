@@ -2281,6 +2281,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
       if (settings?.id === appId) setSettings(null);
     }
     setBusyId(null);
+    try { await window.electronAPI.claude3p?.sync(); } catch {}
     await load();
   }
 
@@ -2440,7 +2441,8 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
         ...(primary ? { hosted: true } : {}),
       }).catch(() => {});
     }
-    if (app.host_method === 'config-file') { try { await window.electronAPI.claude3p?.sync(); } catch {} }
+    // 切换路由后立即同步会话（覆盖所有 app 类型，不等 30s 定时器）
+    try { await window.electronAPI.claude3p?.sync(); } catch {}
     setBusyId(null);
     await load();
   }
