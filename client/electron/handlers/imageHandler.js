@@ -123,12 +123,30 @@ const BODY_CONFIGS = [
 ];
 
 // ── Provider lookup ───────────────────────────────────────────────────────────
+function modelEntryName(m) {
+  if (typeof m === 'string') return m;
+  return m?.name || m?.id || '';
+}
+
+function modelEntryType(m) {
+  if (typeof m === 'string') return 'chat';
+  return m?.type || m?.modality || 'chat';
+}
+
 function hasImageModel(provider, modelStr) {
-  return (provider.models || []).some(m => {
-    const name = typeof m === 'string' ? m : m.name;
-    const type = typeof m === 'string' ? 'chat' : (m.type || 'chat');
-    return type === 'image' && name === modelStr;
-  });
+  return (provider.models || []).some(m =>
+    modelEntryType(m) === 'image' && modelEntryName(m) === modelStr
+  );
+}
+
+function isAgnesImageModel(modelStr) {
+  return /agnes[-_]image|^agnes-image/i.test(modelStr || '');
+}
+
+function isAgnesProvider(p) {
+  return /agnes/i.test(p.id || '')
+    || p.handler === 'agnes-image'
+    || /apihub\.agnes-ai\.com/i.test(p.base_url || '');
 }
 
 function resolveProvider(modelStr, providers) {
@@ -142,6 +160,11 @@ function resolveProvider(modelStr, providers) {
   // Match by image model list entry first
   const byModel = providers.find(p => hasImageModel(p, modelStr));
   if (byModel) return { provider: byModel, model: modelStr };
+  // agnes-image-* 必须走 Agnes 供给源，避免误选 volcengine 等首个 BODY_CONFIGS 命中项
+  if (isAgnesImageModel(modelStr)) {
+    const p = providers.find(isAgnesProvider);
+    if (p) return { provider: p, model: modelStr };
+  }
   // Fall back: provider with image_config, a known adapter, or a matching body config
   const p = providers.find(p => p.image_config || ADAPTERS[p.id] || BODY_CONFIGS.some(c => c.match(p)));
   return p ? { provider: p, model: modelStr } : null;

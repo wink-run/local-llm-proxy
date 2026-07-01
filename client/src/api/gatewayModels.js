@@ -1,16 +1,13 @@
-// 本地网关可选模型（free / p2p / paid），网关页与调试页共用
+// 本地网关可选模型：统一从 /v1/models 拉取（OpenAI 列表格式），网关页与调试页共用
 import { getConfig, getGateway, getLocalConfig, isElectron } from './adapter';
 import { getServerUrl, normalizeServerBase } from '../config';
 import { loadUserAccounts } from './userAccounts';
-import { collectPersonalAvailableModels, enrichProvidersForRouting, filterRoutablePersonalModels } from '../lib/personalAvailableModels';
-
-function addAvailableModel(models, seen, id, tier) {
-  if (!id || !tier) return;
-  const k = `${tier}:${id}`;
-  if (seen.has(k)) return;
-  seen.add(k);
-  models.push({ id, tier });
-}
+import { fetchServerCommunityModels } from '../lib/communityModels';
+import {
+  collectPersonalAvailableModels,
+  enrichProvidersForRouting,
+  mergeAccountsForGateway,
+} from '../lib/personalAvailableModels';
 
 const modelId = (m) => (typeof m === 'string' ? m : (m?.name || m?.id || ''));
 
@@ -22,162 +19,257 @@ export function resolveLocalGatewayHost() {
   return h;
 }
 
+/** 根据 /v1/models 条目的 owned_by 推断 free | p2p | paid */
+function tierFromOwnedBy(owned, provById = {}) {
+  const ob = String(owned || '').trim();
+  // Claude 透明名：仅供 Claude Desktop 校验，下拉不展示
+  if (!ob || ob === 'anthropic') return null;
+  if (ob === 'p2p' || ob === 'tokenbank-p2p' || ob === 'local') return 'p2p';
+  const prov = provById[ob];
+  if (prov?.type === 'free') return 'free';
+  if (prov?.type === 'p2p') return 'p2p';
+  if (prov?.type === 'paid') return 'paid';
+  // 网关已暴露、配置里能匹配到 provider id → 视为个人付费层
+  if (prov) return 'paid';
+  return null;
+}
+
 /**
- * 从 Token Bank 云端拉取当前在线 P2P 模型。
- * /v1/models 仅接受用户 API Key（cloud_config.token），不能用登录 JWT。
+ * 解析 OpenAI 风格模型列表：{ object: 'list', data: [{ id, owned_by, ... }] }
+ * @returns {Array<{ id: string, tier: 'free'|'p2p'|'paid' }>}
  */
-async function fetchCloudPeerModelIds() {
+export function parseV1ModelsResponse(json, provById = {}) {
+  const out = [];
+  const seen = new Set();
+  for (const m of json?.data || []) {
+    const id = m?.id;
+    if (!id) continue;
+    const tier = tierFromOwnedBy(m.owned_by, provById);
+    if (!tier) continue;
+    const k = `${tier}:${id}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const mtype = m?.model_type;
+    out.push({
+      id,
+      tier,
+      ...(mtype && mtype !== 'chat' ? { type: mtype } : {}),
+    });
+  }
+  return out;
+}
+
+async function fetchV1ModelsJson(baseUrl, headers = {}) {
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/v1/models`, { headers });
+  if (!res.ok) return null;
+  return res.json();
+}
+
+/** 拉取前先同步云端 P2P 模型到本地 gateway 缓存 */
+async function refreshPeerModelsCache() {
+  try {
+    if (isElectron() && window.electronAPI?.gateway?.refreshPeerModels) {
+      await window.electronAPI.gateway.refreshPeerModels();
+    } else {
+      await fetch('/api/gateway/refresh-peer-models', { method: 'POST' });
+    }
+  } catch {}
+}
+
+/** 读取本地 gateway 原始 /v1/models JSON（网关未启动时返回 null） */
+async function fetchLocalGatewayV1ModelsJson() {
+  let gwPort = null;
+  let gwRunning = false;
+  try {
+    const gw = await getGateway().status();
+    gwPort = gw?.port || null;
+    gwRunning = !!gw?.running;
+  } catch {}
+  if (!gwPort || !gwRunning) return null;
+
+  try {
+    const host = resolveLocalGatewayHost();
+    return await fetchV1ModelsJson(`http://${host}:${gwPort}`);
+  } catch {
+    return null;
+  }
+}
+
+/** 本地网关 /v1/models（网关未启动时返回 null） */
+async function fetchLocalGatewayV1Models(provById) {
+  const json = await fetchLocalGatewayV1ModelsJson();
+  if (!json) return null;
+  const models = parseV1ModelsResponse(json, provById);
+  return models.length ? models : null;
+}
+
+/**
+ * 云端 /v1/models（网关未运行时回退，主要为社区 P2P）。
+ * 仅接受 cloud_config API Key，不能用登录 JWT。
+ */
+async function fetchCloudV1ModelsJson() {
   try {
     const cfg = await getLocalConfig().get().catch(() => null);
     const base = normalizeServerBase(cfg?.cloud_config?.url || getServerUrl());
     const apiKey = cfg?.cloud_config?.token;
-    if (!base || !apiKey) return [];
+    if (!base || !apiKey) return null;
 
     if (typeof window !== 'undefined' && window.electronAPI?.auth?.request) {
       const r = await window.electronAPI.auth.request({
         base, method: 'GET', path: '/v1/models', token: apiKey,
       });
-      if (r.status < 200 || r.status >= 300 || !r.body) return [];
-      const data = JSON.parse(r.body);
-      return (data.data || []).map(m => m.id).filter(Boolean);
+      if (r.status < 200 || r.status >= 300 || !r.body) return null;
+      return JSON.parse(r.body);
     }
 
-    const res = await fetch(`${base}/v1/models`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.data || []).map(m => m.id).filter(Boolean);
+    return await fetchV1ModelsJson(base, { Authorization: `Bearer ${apiKey}` });
   } catch {
-    return [];
+    return null;
   }
 }
 
-/** 刷新本地 gateway 缓存的 peerModels（Electron IPC / Docker admin API） */
-async function refreshGatewayPeerModelsCache() {
-  try {
-    if (isElectron() && window.electronAPI?.gateway?.refreshPeerModels) {
-      const gw = await window.electronAPI.gateway.refreshPeerModels();
-      return gw?.peerModels || [];
-    }
-    const r = await fetch('/api/gateway/refresh-peer-models', { method: 'POST' });
-    if (!r.ok) return [];
-    const gw = await getGateway().status();
-    return gw?.peerModels || [];
-  } catch {
-    return [];
-  }
+async function fetchCloudV1Models(provById) {
+  const json = await fetchCloudV1ModelsJson();
+  return json ? parseV1ModelsResponse(json, provById) : [];
 }
 
-/** @returns {Promise<Array<{ id: string, tier: 'free'|'p2p'|'paid' }>>} */
-export async function loadGatewayAvailableModels() {
-  const models = [];
-  const seen = new Set();
-  const add = (id, tier) => addAvailableModel(models, seen, id, tier);
+/** 按 tier:id 合并条目，同名模型在不同层可并存；保留已有 type */
+function mergeModelEntriesByTier(existing, additions) {
+  const byKey = new Map(existing.map(m => [`${m.tier}:${m.id}`, m]));
+  for (const m of additions) {
+    const key = `${m.tier}:${m.id}`;
+    const prev = byKey.get(key);
+    byKey.set(key, prev ? { ...prev, ...m, type: m.type || prev.type } : m);
+  }
+  return [...byKey.values()];
+}
 
+/** 补全供给源登记的个人模型（与 /v1/models 并存，不覆盖同 id 的社区层） */
+function mergePersonalModelsFromAccounts(models, cfg, acc) {
+  const mergedAccounts = mergeAccountsForGateway(cfg || {}, acc || {});
+  const personal = collectPersonalAvailableModels(cfg || {}, mergedAccounts)
+    .filter(m => m.tier !== 'p2p');
+  return mergeModelEntriesByTier(models, personal);
+}
+
+/** 与网关下拉同源：优先本地 /v1/models，否则云端 */
+export async function fetchGatewayV1ModelsJson() {
+  await refreshPeerModelsCache();
+  const local = await fetchLocalGatewayV1ModelsJson();
+  if (local?.data?.length) return local;
+  return fetchCloudV1ModelsJson();
+}
+
+/**
+ * 网关下拉可选模型：优先本地网关 /v1/models，与 OpenAI 列表接口一致。
+ * @param {{ includeCommunity?: boolean }} [opts] includeCommunity=false 时排除社区 P2P 层（未登录）
+ * @returns {Promise<Array<{ id: string, tier: 'free'|'p2p'|'paid' }>>}
+ */
+export async function loadGatewayAvailableModels(opts = {}) {
+  const { includeCommunity = true } = opts;
   let cfg = null;
   let acc = null;
+  let provById = {};
   try {
     [cfg, acc] = await Promise.all([
       getConfig().read().catch(() => null),
       loadUserAccounts({ localOnly: true }).catch(() => null),
     ]);
+    provById = Object.fromEntries((cfg?.providers || []).map(p => [p.id, p]));
   } catch {}
 
-  // 个人层：与供给源页一致，且须已启用供给源可路由
-  try {
-    const localMerged = {
-      ...(acc || {}),
-      provider_pricing_overrides: cfg?.provider_pricing_overrides || acc?.provider_pricing_overrides || {},
-    };
-    const providerPricing = cfg?.provider_pricing || {};
-    const enrichedProviders = enrichProvidersForRouting(cfg?.providers || [], localMerged);
-    const gwIds = new Set([
-      ...(acc?.gateway_provider_ids || []),
-      ...(acc?.user_payg_providers || []).map(p => p.gateway_id || p.provider_id).filter(Boolean),
-      ...(acc?.user_subscriptions || []).map(s => s.gateway_id).filter(Boolean),
-    ]);
-    const personal = filterRoutablePersonalModels(
-      collectPersonalAvailableModels(cfg || {}, acc || {}),
-      enrichedProviders,
-      gwIds,
-    );
-    for (const { id, tier } of personal) add(id, tier);
-  } catch {}
+  await refreshPeerModelsCache();
+  const local = await fetchLocalGatewayV1Models(provById);
+  let models = local?.length ? local : [];
 
-  // 补充：已启用但未纳入账户实例的免费源（如独立 Ollama）
-  try {
-    for (const p of (cfg?.providers || [])) {
-      if (!p.enabled || p.type !== 'free') continue;
-      for (const m of (p.models || [])) add(modelId(m), 'free');
-    }
-  } catch {}
-
-  try {
-    const online = new Set();
-    let gwPort = null;
-    let gwRunning = false;
+  if (!models.length) {
     try {
-      const gw = await getGateway().status();
-      gwPort = gw?.port || null;
-      gwRunning = !!gw?.running;
-      for (const id of (gw?.peerModels || [])) online.add(id);
-    } catch {}
-
-    // gateway 未运行时勿请求本地 /v1/models（避免 CONNECTION_REFUSED 刷屏）
-    if (gwPort && gwRunning) {
-      try {
-        const host = resolveLocalGatewayHost();
-        const lr = await fetch(`http://${host}:${gwPort}/v1/models`);
-        if (lr.ok) {
-          const lj = await lr.json();
-          const provById = Object.fromEntries((cfg?.providers || []).map(p => [p.id, p]));
-          for (const m of (lj.data || [])) {
-            const id = m.id;
-            if (!id) continue;
-            const owned = m.owned_by || '';
-            if (owned === 'p2p' || owned === 'tokenbank-p2p') {
-              online.add(id);
-              add(id, 'p2p');
-            } else if (owned === 'anthropic') {
-              // Claude 透明名，调试页不展示
-            } else {
-              const prov = provById[owned];
-              const pt = prov?.type;
-              const configured = new Set((prov?.models || []).map(modelId));
-              const inList = !configured.size || configured.has(id);
-              if (pt === 'free' && inList) add(id, 'free');
-              else if (pt === 'paid' && inList) add(id, 'paid');
-              else if (pt === 'p2p') { online.add(id); add(id, 'p2p'); }
-            }
-          }
-        }
-      } catch {}
+      models = await fetchCloudV1Models(provById);
+    } catch (e) {
+      console.error('loadGatewayAvailableModels', e);
+      models = [];
     }
-
-    if (online.size === 0) {
-      // 先用 cloud_config API Key 刷新 gateway，再直连云端拉模型列表
-      for (const id of await refreshGatewayPeerModelsCache()) online.add(id);
-    }
-    if (online.size === 0) {
-      for (const id of await fetchCloudPeerModelIds()) online.add(id);
-    }
-    // P2P 下拉仅以当前在线模型为准（与供给源页 P2P 网络列表一致）
-    for (const id of online) add(id, 'p2p');
-  } catch (e) {
-    console.error('loadGatewayAvailableModels', e);
   }
 
-  return models;
+  // 补全 /v1/models 未覆盖的个人登记模型（如仅写在刊例价覆盖里、或与社区同名）
+  models = mergePersonalModelsFromAccounts(models, cfg, acc);
+
+  // 社区层与云端 /v1/models 一致（worker 可见性由服务端处理）；个人层仍来自本地 /v1/models
+  if (includeCommunity) {
+    try {
+      const { entries } = await fetchServerCommunityModels();
+      models = mergeModelEntriesByTier(models.filter(m => m.tier !== 'p2p'), entries);
+    } catch { /* 离线时保留本地解析的 p2p */ }
+  } else {
+    models = models.filter(m => m.tier !== 'p2p');
+  }
+  return enrichModelsWithType(models, cfg, acc);
 }
 
-/** 从供给源配置解析模型类型（chat / image） */
-export function resolveGatewayModelType(id, cfg) {
-  for (const p of (cfg?.providers || [])) {
-    for (const m of (p.models || [])) {
-      const mid = modelId(m);
-      if (mid === id) return typeof m === 'string' ? 'chat' : (m.type || 'chat');
+/** 模型名启发式推断模态（账户/供给源未标注时兜底） */
+export function inferModelTypeFromName(id) {
+  const n = String(id || '').toLowerCase();
+  if (/(?:^|[\-_/])image(?:[\-_/]|$|\d)|gpt-image|dall-e|stable-diffusion|flux-|midjourney/.test(n)) {
+    return 'image';
+  }
+  if (/embed|text-embedding|bge-|e5-/.test(n)) return 'embedding';
+  return 'chat';
+}
+
+function ingestModelType(map, m) {
+  const id = modelId(m);
+  if (!id) return;
+  const t = typeof m === 'string' ? null : (m.type || m.modality);
+  if (t && t !== 'chat') map[id] = t;
+}
+
+/** 供给源 models 列表 → id → type 映射（含账户登记模型） */
+export function buildModelTypeMap(providers = [], accounts = null) {
+  const map = {};
+  for (const p of providers) {
+    for (const m of p.models || []) ingestModelType(map, m);
+  }
+  if (accounts) {
+    for (const p of accounts.user_payg_providers || []) {
+      for (const m of p.models || []) ingestModelType(map, m);
+    }
+    for (const s of accounts.user_subscriptions || []) {
+      for (const m of s.models || []) ingestModelType(map, m);
+    }
+    for (const d of Object.values(accounts.direct_source_billing || {})) {
+      for (const m of d.models || []) ingestModelType(map, m);
     }
   }
-  return 'chat';
+  return map;
+}
+
+/** 个人源页 / 路由下拉共用的 type 映射 */
+export function buildPersonalModelTypeMap(cfg, accounts) {
+  const merged = mergeAccountsForGateway(cfg || {}, accounts || {});
+  const providers = enrichProvidersForRouting(cfg?.providers || [], merged);
+  return buildModelTypeMap(providers, merged);
+}
+
+/** 社区 P2P 模型（与云端 /v1/models 同源） */
+export async function loadCommunityP2pModels(opts = {}) {
+  const { includeCommunity = true } = opts;
+  if (!includeCommunity) return [];
+  const { entries } = await fetchServerCommunityModels();
+  return entries;
+}
+
+/** 从供给源配置解析模型类型（chat / image / embedding） */
+export function resolveGatewayModelType(id, cfg, accounts = null) {
+  const typeMap = buildPersonalModelTypeMap(cfg, accounts);
+  return typeMap[id] || inferModelTypeFromName(id);
+}
+
+/** 为下拉条目补全模态（供给源 + 账户 + 名称推断） */
+export function enrichModelsWithType(models, cfg, accounts = null) {
+  const typeMap = buildPersonalModelTypeMap(cfg, accounts);
+  return (models || []).map(m => {
+    const type = m.type || typeMap[m.id] || inferModelTypeFromName(m.id);
+    if (type === 'chat') return m;
+    return { ...m, type };
+  });
 }

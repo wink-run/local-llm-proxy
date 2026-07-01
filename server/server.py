@@ -11,7 +11,7 @@ from typing import Optional
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 
@@ -23,6 +23,7 @@ from routing_catalog_router import router as routing_catalog_router
 from catalog import TIERS, catalog_public_payload
 from device_router import router as device_router
 from auth import get_current_user_id
+from api_errors import DispatchError, openai_error_response
 from dispatch import handle_chat
 from dispatch_image import handle_image
 from settler import run_settler
@@ -95,6 +96,36 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+
+def _openai_path(path: str) -> bool:
+    return path.startswith("/v1/")
+
+
+@app.exception_handler(DispatchError)
+async def dispatch_error_handler(request: Request, exc: DispatchError):
+    if _openai_path(request.url.path):
+        return openai_error_response(exc.status_code, exc.message, exc.error_type)
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
+
+
+@app.exception_handler(HTTPException)
+async def openai_http_exception_handler(request: Request, exc: HTTPException):
+    if _openai_path(request.url.path):
+        detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        etype = "invalid_request_error"
+        if exc.status_code == 401:
+            etype = "authentication_error"
+        elif exc.status_code == 402:
+            etype = "insufficient_credits"
+        elif exc.status_code == 429:
+            etype = "rate_limit_exceeded"
+        elif exc.status_code in (503, 504):
+            etype = "service_unavailable" if exc.status_code == 503 else "timeout"
+        return openai_error_response(exc.status_code, detail, etype)
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
 app.include_router(admin_router, prefix="/admin")
 app.include_router(billing_sources_router, prefix="/admin")
 app.include_router(app_catalog_router, prefix="/admin")
@@ -189,12 +220,13 @@ async def wall():
 
 
 def _mask_name(name: str) -> str:
-    """T***r 脱敏：保留首尾字符，中间用星号"""
+    """脱敏：保留首字符 + 最多 4 个星号 + 后续明文"""
     if not name:
         return "***"
     if len(name) <= 2:
         return name[0] + "*"
-    return name[0] + "*" * (len(name) - 2) + name[-1]
+    masked = min(4, len(name) - 2)
+    return name[0] + "*" * masked + name[1 + masked:]
 
 
 def _stars(multiplier: float) -> int:
@@ -248,12 +280,15 @@ async def public_network():
     all_ws = pool.all_workers()   # capture once
     workers_data = [_worker_row(w) for w in all_ws]
     distinct_users = len({w.user_id for w in all_ws if w.user_id})
+    # 与匿名 /v1/models 同源：公开 worker 模型（不含圈子限定）
+    public_models = pool.models_for_user(owner_user_id=None, user_circle_ids=set())
     return {
         "summary": {
             "online_workers": len(workers_data),
             "active_users": distinct_users,
         },
         "workers": workers_data,
+        "available_models": sorted(public_models.keys()),
     }
 
 

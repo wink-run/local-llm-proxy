@@ -610,23 +610,15 @@ function collectModelsForGatewayProvider(gatewayId, localCfg = {}) {
   for (const p of userPayg) {
     if (paygGatewayId(p) !== gatewayId) continue;
     for (const m of p.models || []) addName(m);
-    for (const k of Object.keys(pricingOvr[p.provider_id] || {})) {
-      if (isValidModelName(k)) names.add(k);
-    }
+    for (const k of Object.keys(pricingOvr[p.provider_id] || {})) addName(k);
   }
   for (const s of userSubs) {
     if (subscriptionGatewayId(s, catalogBySource) !== gatewayId) continue;
     const isApi = s.subscription_kind === 'api' || resolveSubUseApi(s, catalogBySource);
     if (!isApi) continue;
-    const pid = s.plan_provider_id
-      || subscriptionGatewayProviderId(s, catalogBySource)
-      || s.source_id;
-    for (const k of Object.keys(pricingOvr[pid] || {})) {
-      if (isValidModelName(k)) names.add(k);
-    }
-  }
-  for (const k of Object.keys(pricingOvr[gatewayId] || {})) {
-    if (isValidModelName(k)) names.add(k);
+    for (const m of s.models || []) addName(m);
+    const pid = s.plan_provider_id || subscriptionGatewayProviderId(s, catalogBySource) || s.source_id;
+    for (const k of Object.keys(pricingOvr[pid] || {})) addName(k);
   }
   return names;
 }

@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
-const { parseRouteBinding } = require('../shared/route-binding');
+const { parseRouteBinding, claudeNameAtIndex } = require('../shared/route-binding');
 
 const HANDLERS_YAML = path.join(__dirname, 'config', 'app-handlers.yaml');
 const SCANS_YAML = path.join(__dirname, 'config', 'session-scans.yaml');
@@ -160,17 +160,20 @@ function patchRouteWorkbuddyModels(patch, cfg, ctx) {
   return out;
 }
 
-/** Claude Desktop：inferenceModels[]，name 用 Anthropic 名过校验，labelOverride 显示绑定的路由 */
+/** Claude Desktop：inferenceModels[]，每条路由独占一个 claude-* name，labelOverride 显示绑定的路由 */
 function patchRouteClaudeInferenceModels(patch, cfg, ctx) {
   const routeIds = ctx.routeIds?.length ? ctx.routeIds : (ctx.routeId ? [ctx.routeId] : []);
   if (!routeIds.length) return patch;
-  const claudeName = cfg.claude_name || ctx.claudeName || 'claude-sonnet-4-5';
+  const fallback = cfg.claude_name || ctx.claudeName || 'claude-sonnet-4-5';
+  const claudeModels = ctx.claudeModels?.length
+    ? ctx.claudeModels
+    : (ctx.claudeName ? [ctx.claudeName] : [fallback]);
   const routes = ctx.routes || [];
   const models = routeIds
-    .map(rid => {
+    .map((rid, i) => {
       const label = routeLabelFor(rid, routes);
       if (!label) return null;
-      return { name: claudeName, labelOverride: label };
+      return { name: claudeNameAtIndex(i, claudeModels, fallback), labelOverride: label };
     })
     .filter(Boolean);
   if (!models.length) return patch;

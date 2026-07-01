@@ -200,6 +200,17 @@ function forwardRequest(reqId, payload, cfg) {
       { hostname: url.hostname, port: url.port || (url.protocol === 'https:' ? 443 : 80),
         path: url.pathname, method: 'POST', headers, timeout: 120000 },
       (res) => {
+        if (res.statusCode >= 400) {
+          const chunks = [];
+          res.on('data', (d) => chunks.push(d));
+          res.on('end', () => {
+            const raw = Buffer.concat(chunks).toString();
+            send({ type: 'error', req_id: reqId, error: `HTTP ${res.statusCode}: ${raw.slice(0, 500)}` });
+            resolve();
+          });
+          res.on('error', (e) => { send({ type: 'error', req_id: reqId, error: e.message }); resolve(); });
+          return;
+        }
         if (streaming) {
           let buf = '';
           let lastUsage = null;
@@ -254,6 +265,11 @@ function forwardRequest(reqId, payload, cfg) {
             let usage = null;
             try {
               const json = JSON.parse(rawBody);
+              if (json?.error) {
+                send({ type: 'error', req_id: reqId, error: `HTTP ${res.statusCode}: ${rawBody.slice(0, 500)}` });
+                resolve();
+                return;
+              }
               if (anthropic) {
                 const converted = anthropicToOpenAI(json);
                 usage = converted.usage;

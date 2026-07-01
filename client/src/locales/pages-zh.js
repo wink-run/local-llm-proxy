@@ -87,6 +87,7 @@ export default {
   'gateway.common.settings': '编辑',
   'gateway.common.test': '测试',
   'gateway.common.testing': '测试中…',
+  'gateway.common.testFirstToken': '首token {ms}ms',
   'gateway.common.loading': '加载中…',
   'gateway.common.back': '← 返回',
   'gateway.common.collapse': '收起',

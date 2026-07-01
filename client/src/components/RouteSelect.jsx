@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { modelIdFromRoute } from '../lib/route-binding';
+import { modelTypeLabel, modelTypeBtnClass } from './PersonalSources';
 
 function encodeTierModelRoute(tier, modelId) {
   if (!modelId) return '';
@@ -37,7 +38,7 @@ export function tierOptgroups(availableModels, t) {
   const remote = (availableModels || []).filter(m => m.tier === 'p2p');
   const grp = (key, models) => (models.length ? (
     <optgroup key={key} label={t(`gateway.app.tier.${key}`)}>
-      {models.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}
+      {models.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{modelOptionLabel(m, t)}</option>)}
     </optgroup>
   ) : null);
   return [grp('local', local), grp('remote', remote)];
@@ -64,11 +65,11 @@ function buildRouteMenuItems({ routes, availableModels, t, showGatewayRoutes, is
   const remote = (availableModels || []).filter(m => m.tier === 'p2p');
   if (local.length) {
     items.push({ kind: 'group', label: t('gateway.app.tier.local') });
-    for (const m of local) items.push({ kind: 'option', value: modelTierKey(m), label: m.id });
+    for (const m of local) items.push({ kind: 'option', value: modelTierKey(m), label: m.id, type: m.type });
   }
   if (remote.length) {
     items.push({ kind: 'group', label: t('gateway.app.tier.remote') });
-    for (const m of remote) items.push({ kind: 'option', value: modelTierKey(m), label: m.id });
+    for (const m of remote) items.push({ kind: 'option', value: modelTierKey(m), label: m.id, type: m.type });
   }
   return items;
 }
@@ -176,6 +177,30 @@ const POPUP_THEME = {
   },
 };
 
+/** 生图 / 嵌入模型在列表项右侧显示的模态标识 */
+function ModelTypeBadge({ type, t, active, compact }) {
+  if (!type || type === 'chat') return null;
+  const label = modelTypeLabel(type, t);
+  const idle = modelTypeBtnClass(type);
+  const activeCls = active
+    ? 'border border-white/45 bg-white/20 text-white'
+    : `${idle} border border-transparent`;
+  return (
+    <span
+      className={`shrink-0 font-sans leading-none rounded ${compact ? 'text-[9px] px-1 py-px' : 'text-[10px] px-1.5 py-0.5'} ${activeCls}`}
+      title={type === 'image' ? t('providers.models.image') : t('providers.models.embedding')}
+    >
+      {label}
+    </span>
+  );
+}
+
+function modelOptionLabel(m, t) {
+  if (!m?.type || m.type === 'chat') return m.id;
+  const badge = modelTypeLabel(m.type, t);
+  return `${m.id} · ${badge}`;
+}
+
 function routeOptionDisplayLabel(routeId, routes) {
   const scene = (routes || []).find(r => r.model_key === routeId || r.id === routeId);
   if (scene) {
@@ -263,7 +288,7 @@ function RouteCheckboxIcon({ marked, active, compact }) {
   );
 }
 
-function RouteMenuRow({ mark, label, active, theme, compact, multi, onEnter, onClick }) {
+function RouteMenuRow({ mark, label, modelType, active, theme, compact, multi, t, onEnter, onClick }) {
   return (
     <div
       role={multi ? 'menuitemcheckbox' : 'option'}
@@ -279,7 +304,8 @@ function RouteMenuRow({ mark, label, active, theme, compact, multi, onEnter, onC
           ? <RouteCheckboxIcon marked={mark} active={active} compact={compact} />
           : <RouteCheckIcon marked={mark} active={active} compact={compact} />}
       </span>
-      <span className="truncate">{label}</span>
+      <span className="truncate flex-1 min-w-0">{label}</span>
+      <ModelTypeBadge type={modelType} t={t} active={active} compact={compact} />
     </div>
   );
 }
@@ -426,8 +452,10 @@ export default function RouteSelect({
             compact={compact}
             multi={multi}
             theme={theme}
+            t={t}
             mark={isMarked(item.value)}
             label={item.label}
+            modelType={item.type}
             active={hoverKey === key}
             onEnter={() => setHoverKey(key)}
             onClick={() => (isOfficial ? pickOfficial() : pickRoute(item.value))}

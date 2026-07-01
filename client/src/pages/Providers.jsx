@@ -3,7 +3,9 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { resolveBrandIcon } from '../lib/brandIcons';
 import ServiceIcon from '../components/ServiceIcon';
-import { getNetwork, getProfile, listKeys, createKey, deleteKey, getProviderCatalog, getModelsForCurrentUser } from '../api/client';
+import { getNetwork, getProfile, listKeys, createKey, deleteKey } from '../api/client';
+import { modelStatsForIds } from '../lib/networkModelStats';
+import { fetchServerCommunityModels } from '../lib/communityModels';
 import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
 import { DirectSourceCard, PersonalSourceModelView, PricingTable, CollapsibleBillingPanel, buildInstancePatch, buildDirectSourcePatch, buildDirectSourceRemovePatch, TemplateEditModal, SyncDiffBanner, accountInstanceAddedOrder } from '../components/PersonalSources';
 import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
@@ -11,6 +13,7 @@ import { getGateway, getLocalConfig, getConfig, getOauth } from '../api/adapter'
 import { useLang } from '../store/lang';
 import { useAuth } from '../store/index';
 import { resolveModelsForModelView } from '../lib/personalAvailableModels';
+import { buildPersonalModelTypeMap, inferModelTypeFromName } from '../api/gatewayModels';
 
 /** 按当前语言覆盖 meta 中的 label / hint / oauth.label */
 function localizeProviderMeta(metaMap, t) {
@@ -161,6 +164,25 @@ function catalogToState(catalog, oauthById) {
     }
   }
   return { meta, defaults };
+}
+
+/** 从本机 yaml 读取供给源 catalog（Electron IPC；浏览器模式无 yaml 则空） */
+async function readProviderCatalogFromYaml() {
+  const api = window.electronAPI?.localConfig;
+  if (api?.getProviderCatalog) return api.getProviderCatalog();
+  if (api?.getBuiltinCatalog) return api.getBuiltinCatalog();
+  return { providers: [] };
+}
+
+function buildCatalogSeed(data, oauthById, t, fromNetwork) {
+  if (!data?.providers?.length) return null;
+  const s = catalogToState(data, oauthById);
+  return {
+    defaults: s.defaults,
+    meta: localizeProviderMeta(s.meta, t),
+    fromNetwork,
+    pricing: catalogPricingFromProviders(data.providers),
+  };
 }
 
 /** 从个人页登记 / meta 解析供给源展示名（优先于 URL hostname） */
@@ -897,9 +919,7 @@ function resolveProviderStubForInstance(inst, providers, meta, userPayg, userSub
   const sibling = providers.find(p => p.id === catalogId);
   const m = meta[gwId] || meta[catalogId] || {};
   const independent = isIndependentGatewayInstance(gwId, catalogId);
-  const fallbackModels = instModels.length
-    ? instModels
-    : seedModelsFromNames(fb?.models || []);
+  const fallbackModels = instModels;
   return {
     ...(fb || { type: 'paid', enabled: false, base_url: '', models: [] }),
     id: gwId,
@@ -963,7 +983,8 @@ function P2PNetworkCard({ provider, onUpdate }) {
   const [network,        setNetwork]        = useState(null);
   const [balance,        setBalance]        = useState(null);
   const [loading,        setLoading]        = useState(true);
-  const [circleModelMap, setCircleModelMap] = useState({});  // {modelName: {circle_id, circle_name}}
+  const [circleModelMap, setCircleModelMap] = useState({});
+  const [communityIds, setCommunityIds] = useState([]);
 
   // P2P gateway API key config
   const [showKeyConfig, setShowKeyConfig] = useState(false);
@@ -1062,16 +1083,15 @@ function P2PNetworkCard({ provider, onUpdate }) {
     async function load() {
       setLoading(true);
       try {
-        const [netRes, profRes, modelsRes] = await Promise.allSettled([getNetwork(), getProfile(), getModelsForCurrentUser()]);
+        const [netRes, profRes, communityRes] = await Promise.allSettled([
+          getNetwork(), getProfile(), fetchServerCommunityModels(),
+        ]);
         if (cancelled) return;
         if (netRes.status === 'fulfilled') setNetwork(netRes.value.data);
         if (profRes.status === 'fulfilled') setBalance(profRes.value.data?.credits_balance ?? null);
-        if (modelsRes.status === 'fulfilled') {
-          const map = {};
-          for (const m of (modelsRes.value.data?.data || [])) {
-            if (m.circle_id) map[m.id] = { circle_id: m.circle_id, circle_name: m.circle_name || '' };
-          }
-          setCircleModelMap(map);
+        if (communityRes.status === 'fulfilled') {
+          setCommunityIds(communityRes.value.ids);
+          setCircleModelMap(communityRes.value.circleMap);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -1082,23 +1102,11 @@ function P2PNetworkCard({ provider, onUpdate }) {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  // Aggregate per-model stats from worker list
-  const modelStats = React.useMemo(() => {
-    if (!network?.workers) return [];
-    const map = {};
-    for (const w of network.workers) {
-      for (const m of (w.models || [])) {
-        if (!map[m]) map[m] = { name: m, nodes: 0, totalLatency: 0, latencyCount: 0, activeReqs: 0 };
-        map[m].nodes++;
-        if (w.avg_latency_ms > 0) {
-          map[m].totalLatency += w.avg_latency_ms;
-          map[m].latencyCount++;
-        }
-        map[m].activeReqs += w.active_requests || 0;
-      }
-    }
-    return Object.values(map).sort((a, b) => b.nodes - a.nodes);
-  }, [network]);
+  // 与 /v1/models 一致；节点数从 workers 补充
+  const modelStats = React.useMemo(
+    () => modelStatsForIds(communityIds, network),
+    [network, communityIds],
+  );
 
   const totalNodes = network?.summary?.online_workers ?? 0;
 
@@ -1359,17 +1367,24 @@ function normModel(m) {
   return isValidModelName(raw.name) ? raw : { name: '', type: 'chat' };
 }
 
-/** 以 catalog 模型列表为准合并本地配置（去掉服务端已删除的模型如 test2） */
+/** 以 catalog 为准裁剪本地已配置模型（去掉服务端已下线的；不自动填入 catalog 全量） */
 function mergeModelsFromCatalog(catalogModels, savedModels) {
-  if (!catalogModels?.length) return savedModels || [];
-  const savedByName = new Map(
-    (savedModels || []).map(m => { const n = normModel(m); return [n.name, n]; }).filter(([name]) => name),
+  const saved = (savedModels || [])
+    .map(m => normModel(typeof m === 'string' ? { name: m } : m))
+    .filter(m => m.name);
+  if (!catalogModels?.length) return saved;
+  const catalogByName = new Map(
+    catalogModels.map(m => {
+      const c = normModel(typeof m === 'string' ? { name: m } : m);
+      return [c.name, c];
+    }).filter(([name]) => name),
   );
-  return catalogModels.map(m => {
-    const c = normModel(typeof m === 'string' ? { name: m } : m);
-    const s = savedByName.get(c.name);
-    return s ? { name: c.name, type: s.type || c.type || 'chat' } : c;
-  }).filter(m => m.name);
+  return saved
+    .filter(m => catalogByName.has(m.name))
+    .map(m => {
+      const c = catalogByName.get(m.name);
+      return { name: m.name, type: m.type || c?.type || 'chat' };
+    });
 }
 
 /** 模板/账户实例上的模型名 → 供给源卡片可编辑格式 */
@@ -1612,7 +1627,8 @@ function pricingRowsForProvider(providerId, models, merged, overrides, excludedM
   const base = merged[providerId] || {};
   const ovr = overrides[providerId] || {};
   const excluded = new Set(excludedModels);
-  const names = new Set([...(models || []), ...pricingOverrideModelKeys(base), ...pricingOverrideModelKeys(ovr)]);
+  // 仅展示账户已添加的模型名，不回退 catalog 全量键
+  const names = new Set(models || []);
   for (const k of excluded) names.delete(k);
   for (const k of [...names]) if (!isValidModelName(k)) names.delete(k);
   return [...names].sort().map(model => ({
@@ -1655,41 +1671,29 @@ function ProviderCardBillingSection({
     }
     if (isPayg) {
       for (const m of paygRec?.models || []) { const n = modelEntryName(m); if (n) names.add(n); }
+      for (const k of Object.keys(pricingOverrides?.[pricingPid] || {})) {
+        if (k && !PRICING_OVERRIDE_META_KEYS.has(k)) names.add(k);
+      }
     } else {
-      for (const m of provider?.models || []) { const n = modelEntryName(m); if (n) names.add(n); }
-      for (const m of accountInst?.models || []) { if (isValidModelName(m)) names.add(m); }
+      // API 订阅：仅账户实例登记的 models + 用户自定义刊例价，不读 catalog 全量
+      for (const m of subRec?.models || []) { const n = modelEntryName(m); if (n) names.add(n); }
       for (const k of Object.keys(pricingOverrides?.[pricingPid] || {})) {
         if (k && !PRICING_OVERRIDE_META_KEYS.has(k)) names.add(k);
       }
     }
     return names;
-  }, [standalone, isPayg, paygRec, provider?.models, accountInst?.models, pricingOverrides, pricingPid]);
+  }, [standalone, isPayg, paygRec, subRec, provider?.models, pricingOverrides, pricingPid]);
 
   const instanceExcluded = useMemo(
     () => getInstanceExcludedList({ standalone, provider, paygRec, subRec }),
     [standalone, provider?.excluded_models, paygRec?.excluded_models, subRec?.excluded_models],
   );
 
-  // 表格行：以云刊例价目录（mergedProviderPricing）为准，再叠加用户 override；避免本地 models 与 catalog 漂移
+  // 表格行：按量 / API 订阅均仅展示账户已添加的模型
   const modelNames = useMemo(() => {
     const excluded = new Set(instanceExcluded);
-    const catalogKeys = Object.keys(providerPricing?.[pricingPid] || {})
-      .filter(k => isValidModelName(k) && !excluded.has(k) && !PRICING_OVERRIDE_META_KEYS.has(k));
-    const names = new Set(catalogKeys.length ? catalogKeys : userModelNames);
-    if (catalogKeys.length) {
-      for (const k of Object.keys(pricingOverrides?.[pricingPid] || {})) {
-        if (isValidModelName(k) && !excluded.has(k)) names.add(k);
-      }
-    } else {
-      for (const n of userModelNames) {
-        if (!excluded.has(n)) names.add(n);
-      }
-      for (const k of Object.keys(providerPricing?.[pricingPid] || {})) {
-        if (!excluded.has(k) && !PRICING_OVERRIDE_META_KEYS.has(k)) names.add(k);
-      }
-    }
-    return [...names].sort();
-  }, [userModelNames, providerPricing, pricingPid, instanceExcluded, pricingOverrides]);
+    return [...userModelNames].filter(n => !excluded.has(n)).sort();
+  }, [userModelNames, instanceExcluded]);
 
   const baseMonthly = subRec?.monthly_usd ?? accountInst?.monthly_usd;
   const [monthly, setMonthly] = useState(baseMonthly != null ? String(baseMonthly) : '');
@@ -1837,7 +1841,10 @@ function ProviderCardBillingSection({
     if (subRec) {
       accountsPatch.user_subscriptions = userSubscriptions.map(s => {
         if (s.id !== subRec.id) return s;
-        const patch = { ...s };
+        const patch = {
+          ...s,
+          models: [...(s.models || []), n],
+        };
         if (excluded_models.length) patch.excluded_models = excluded_models;
         else delete patch.excluded_models;
         return patch;
@@ -1913,7 +1920,10 @@ function ProviderCardBillingSection({
     if (subRec) {
       accountsPatch.user_subscriptions = userSubscriptions.map(s => {
         if (s.id !== subRec.id) return s;
-        const patch = { ...s };
+        const patch = {
+          ...s,
+          models: (s.models || []).filter(m => modelEntryName(m) !== name),
+        };
         if (excluded_models.length) patch.excluded_models = excluded_models;
         else delete patch.excluded_models;
         return patch;
@@ -2717,6 +2727,8 @@ export default function Providers() {
   const [templateEditing, setTemplateEditing] = useState(null);
   const [catalogSeed, setCatalogSeed] = useState(null); // { defaults, meta, fromNetwork }
 
+  const { user } = useAuth();
+
   const loadUserPaidAccounts = useCallback(async () => {
     try {
       // 个人源始终读本机 local-config，与是否登录无关
@@ -2784,21 +2796,25 @@ export default function Providers() {
   }, [catalogPricing, providerPricing]);
 
   useEffect(() => {
+    loadUserPaidAccounts();
+    const unsub = window.electronAPI?.localConfig?.onBillingChanged?.(loadUserPaidAccounts);
+    return () => unsub?.();
+  }, [loadUserPaidAccounts, user?.id ?? null]);
+
+  // 首屏：先渲染本机 agent.providers，不等待远端 catalog
+  useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!cancelled) await loadUserPaidAccounts();
+      try {
+        const cfg = await getConfig().read();
+        if (cancelled || !cfg?.providers?.length) return;
+        const local = sanitizeProviderModels(mergeCommunityP2PProvider(cfg.providers, cfg));
+        lastSaved.current = local;
+        setProviders(local);
+      } catch {}
     })();
-    const unsub = window.electronAPI?.localConfig?.onBillingChanged?.(() => {
-      loadUserPaidAccounts();
-    });
-    return () => { cancelled = true; unsub?.(); };
-  }, [loadUserPaidAccounts]);
-
-  // 登录/退出后刷新个人源，与本机 local-config 保持一致
-  const { user } = useAuth();
-  useEffect(() => {
-    loadUserPaidAccounts();
-  }, [user?.id ?? null, loadUserPaidAccounts]);
+    return () => { cancelled = true; };
+  }, []);
 
   // 为每个 gateway_id 确保存在 provider stub（多实例 acct-* 从 catalog 克隆）；已登记即启用
   useEffect(() => {
@@ -2820,16 +2836,14 @@ export default function Providers() {
         const tpl = resolveTemplateForProvider(gid, accountsData?.source_templates, userSubscriptions, userPayg);
         const fb = FALLBACK_PROVIDERS.find(p => p.id === gid) || FALLBACK_PROVIDERS.find(p => p.id === catalogId);
         const sibling = next.find(p => p.id === catalogId);
-        const instModels = seedModelsFromNames(
-          payg?.models || sub?.models || tpl?.models || [],
-        );
+        const instModels = seedModelsFromNames(payg?.models || sub?.models || []);
         next.push({
           ...(fb || { type: 'paid', enabled: true, base_url: '', models: [] }),
           id: gid,
           type: fb?.type || 'paid',
           enabled: true,
           ...FRESH_PROVIDER_CREDENTIALS,
-          models: instModels.length ? instModels : (fb?.models || []),
+          models: instModels,
           base_url: fb?.base_url || tpl?.base_url || sibling?.base_url || '',
           api_format: fb?.api_format || tpl?.api_format || sibling?.api_format || 'openai',
         });
@@ -2867,34 +2881,45 @@ export default function Providers() {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      let defaults = FALLBACK_PROVIDERS;
-      let metaMap = localizeProviderMeta(FALLBACK_PROVIDER_META, t);
-      let fromNetwork = false;
+    const emptySeed = {
+      defaults: FALLBACK_PROVIDERS,
+      meta: localizeProviderMeta(FALLBACK_PROVIDER_META, t),
+      fromNetwork: false,
+    };
+
+    const applySeed = (seed) => {
+      if (cancelled || !seed) return;
+      setCatalogPricing(seed.pricing || {});
+      setCatalogSeed({ defaults: seed.defaults, meta: seed.meta, fromNetwork: seed.fromNetwork });
+      setMeta(seed.meta);
+    };
+
+    const loadFromYaml = async () => {
       try {
-        const { data } = await getProviderCatalog();
-        if (cancelled) return;
-        if (data?.providers?.length) {
-          fromNetwork = true;
-          setCatalogPricing(catalogPricingFromProviders(data.providers));
-          await window.electronAPI?.localConfig?.setLiveCatalog?.(data)?.catch?.(() => {});
-          await loadUserPaidAccounts();
-          const s = catalogToState(data, oauthById);
-          defaults = s.defaults;
-          metaMap = localizeProviderMeta(s.meta, t);
-        } else {
-          setCatalogPricing({});
-        }
-      } catch {
-        if (!cancelled) setCatalogPricing({});
-      }
-      if (!cancelled) {
-        setCatalogSeed({ defaults, meta: metaMap, fromNetwork });
-        setMeta(metaMap);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [t, oauthById, loadUserPaidAccounts]);
+        const data = await readProviderCatalogFromYaml();
+        applySeed(buildCatalogSeed(data, oauthById, t, false));
+      } catch {}
+      if (!cancelled) setCatalogSeed(prev => prev || emptySeed);
+    };
+
+    loadFromYaml();
+    const unsubCatalog = window.electronAPI?.localConfig?.onCatalogUpdated?.(() => {
+      loadFromYaml();
+    });
+    const unsubBilling = window.electronAPI?.localConfig?.onBillingChanged?.(() => {
+      loadFromYaml();
+    });
+    return () => {
+      cancelled = true;
+      unsubCatalog?.();
+      unsubBilling?.();
+    };
+  }, [t, oauthById]);
+
+  // 进入供给源页：后台拉 /api/catalog 写 yaml（首屏仍读本地 yaml，同步完成后 catalog:updated 刷新）
+  useEffect(() => {
+    window.electronAPI?.localConfig?.syncProviderCatalog?.().catch?.(() => {});
+  }, []);
 
   // 与本地配置 / 个人源账户合并（不重复拉 /api/catalog）
   useEffect(() => {
@@ -2939,6 +2964,38 @@ export default function Providers() {
       const withCustomSubs = mergeCustomSubscriptionProviders(
         merged.providers, merged.meta, userSubscriptions, paidAllowlist || [], t,
       );
+      // 账户实例 models 与 provider.models 对齐，去掉 catalog 预填
+      const subModelsByGateway = new Map();
+      for (const s of userSubscriptions) {
+        const isApi = s.subscription_kind === 'api' || s.subscription_to_api;
+        if (!isApi) continue;
+        const gwId = subInstGatewayId(s);
+        if (!gwId) continue;
+        const set = subModelsByGateway.get(gwId) || new Set();
+        for (const m of s.models || []) {
+          const n = normModel(typeof m === 'string' ? { name: m } : m).name;
+          if (n) set.add(n);
+        }
+        subModelsByGateway.set(gwId, set);
+      }
+      withCustomSubs.providers = withCustomSubs.providers.map(p => {
+        const payg = userPayg.find(x => paygInstGatewayId(x) === p.id);
+        if (payg) {
+          const accountModels = (payg.models || []).map(normModel).filter(m => m.name);
+          const before = (p.models || []).map(m => normModel(m).name).join('\0');
+          const after = accountModels.map(m => m.name).join('\0');
+          return before === after ? p : { ...p, models: accountModels };
+        }
+        if (subModelsByGateway.has(p.id)) {
+          const accountModels = [...subModelsByGateway.get(p.id)]
+            .sort()
+            .map(name => ({ name, type: 'chat' }));
+          const before = (p.models || []).map(m => normModel(m).name).join('\0');
+          const after = accountModels.map(m => m.name).join('\0');
+          return before === after ? p : { ...p, models: accountModels };
+        }
+        return p;
+      });
       if (cancelled) return;
       lastSaved.current = withCustomSubs.providers;
       setProviders(prev => {
@@ -3055,11 +3112,7 @@ export default function Providers() {
     } else if (patch?.user_subscriptions?.length) {
       const added = patch.user_subscriptions[patch.user_subscriptions.length - 1];
       newGwId = subInstGatewayId(added) || entry.providerId;
-      const tplModels = entry.template?.pricing ? Object.keys(entry.template.pricing) : (entry.template?.models || []);
-      seedModels = seedModelsFromNames(tplModels);
-    } else if (entry.template) {
-      const tplModels = entry.template.pricing ? Object.keys(entry.template.pricing) : (entry.template.models || []);
-      seedModels = seedModelsFromNames(tplModels);
+      seedModels = seedModelsFromNames(added.models);
     }
 
     const base = {
@@ -3105,7 +3158,6 @@ export default function Providers() {
     const added = patch.user_subscriptions?.[patch.user_subscriptions.length - 1];
     const newGwId = subInstGatewayId(added) || OAUTH_SUB_SOURCE_TO_PID[instance.source_id];
     if (!newGwId) return;
-    const tplModels = tpl.pricing ? Object.keys(tpl.pricing) : (tpl.models || []);
     const oauthPid = OAUTH_SUB_SOURCE_TO_PID[instance.source_id];
     const base = {
       id: newGwId,
@@ -3113,7 +3165,7 @@ export default function Providers() {
       enabled: true,
       token: '',
       base_url: tpl.base_url || resolveSeedBaseUrl({ providerId: newGwId, template: tpl }, { providers, paygCatalog, meta }),
-      models: seedModelsFromNames(tplModels),
+      models: [],
       displayName: instance.name || tpl.label,
     };
     if (oauthPid) {
@@ -3136,14 +3188,15 @@ export default function Providers() {
     }
   }, [accountsData, directBilling, userPayg, userSubscriptions, loadUserPaidAccounts, saveUserAccounts, updateProvider, providers, paygCatalog, meta]);
 
-  /** 从个人源列表移除：预设源标记为未添加，自定义源直接删除 */
+  /** 从个人源列表移除：预设源标记为未添加，自定义源直接删除；同时清空 models 避免删后重加仍显示 catalog 预填 */
   const removePersonalProvider = useCallback((id) => {
     if (isCustomSubscriptionGatewayId(id, userSubscriptions) || !meta[id]) {
       setProviders(prev => prev.filter(p => p.id !== id));
     } else {
-      setProviders(prev => prev.map(p => (p.id === id ? { ...p, enabled: false } : p)));
+      setProviders(prev => prev.map(p => (p.id === id ? { ...p, enabled: false, models: [] } : p)));
     }
-  }, [userSubscriptions, meta]);
+    persistProviderModels(id, []).catch(() => {});
+  }, [userSubscriptions, meta, persistProviderModels]);
 
   const paidAccountsLoaded = paidAllowlist !== null;
   const hasPersonalPaid = paidAccountsLoaded && (paidAllowlist.length > 0 || statsOnlyIds.length > 0);
@@ -3173,13 +3226,6 @@ export default function Providers() {
         getPersonalSourceTag(liveStateOf(p), meta, userPayg, userSubscriptions),
         personalFilter,
       ));
-  // 源的官方模型（payg catalog 优先，回退运行时 pricing 的模型名）
-  const paygModelsOf = (pid) => {
-    const c = (paygCatalog || []).find(x => (x.provider_id || x.id) === pid);
-    if (c && Array.isArray(c.models) && c.models.length) return c.models;
-    const pr = mergedProviderPricing && mergedProviderPricing[pid];
-    return pr ? Object.keys(pr) : [];
-  };
   const sourceTemplates = accountsData?.source_templates || [];
   const directAll = mergeDirectInstances(directInstances, directBilling, userSubscriptions, sourceTemplates, subscriptionCatalog);
   const bill = directBilling || {};
@@ -3193,7 +3239,8 @@ export default function Providers() {
         kind: 'sub', billing_type: 'subscription', tag,
         id: s.id, source_id: s.source_id, gateway_id: gw,
         name: s.name || s.app_name, label: s.app_name, icon: s.app_icon,
-        models: paygModelsOf(pid), plan_label: s.plan_label, monthly_usd: s.monthly_usd ?? null,
+        models: (Array.isArray(s.models) && s.models.length) ? s.models : [],
+        plan_label: s.plan_label, monthly_usd: s.monthly_usd ?? null,
         added_at: s.added_at,
       };
     }),
@@ -3201,7 +3248,7 @@ export default function Providers() {
       kind: 'payg', billing_type: 'api', tag: 'payg',
       id: p.id, source_id: p.provider_id, gateway_id: paygInstGatewayId(p),
       name: p.name || p.label, label: p.label, icon: p.icon,
-      models: (p.models && p.models.length) ? p.models : paygModelsOf(p.provider_id),
+      models: (p.models && p.models.length) ? p.models : [],
       added_at: p.added_at,
     })),
     ...directAll.map(d => ({
@@ -3233,6 +3280,27 @@ export default function Providers() {
       ),
     };
   }), [accountInstances, providers, userPayg, userSubscriptions, pricingOverrides, directByAgent]);
+  // 个人源模型模态（图/嵌），供按模型视图与路由下拉同源
+  const personalModelTypeMap = useMemo(() => {
+    const cfg = { providers, provider_pricing_overrides: pricingOverrides };
+    const accounts = {
+      ...(accountsData || {}),
+      user_payg_providers: userPayg,
+      user_subscriptions: userSubscriptions,
+      direct_source_billing: directBilling,
+      provider_pricing_overrides: pricingOverrides,
+    };
+    const map = buildPersonalModelTypeMap(cfg, accounts);
+    for (const inst of modelViewInstances) {
+      for (const name of inst.models || []) {
+        const n = typeof name === 'string' ? name : (name?.name || name?.id || '');
+        if (!n || (map[n] && map[n] !== 'chat')) continue;
+        const inferred = inferModelTypeFromName(n);
+        if (inferred !== 'chat') map[n] = inferred;
+      }
+    }
+    return map;
+  }, [providers, accountsData, userPayg, userSubscriptions, directBilling, pricingOverrides, modelViewInstances]);
   // 「已接入网关」= 对应 provider 真正 enabled（不是 gateway_provider_ids 那种「已登记可接入」）。
   // 接入的由上面 ProviderCard 展示；未接入的在这里补充展示，使列表数目与统计一致。
   // 顶部筛选：按账户实例的类型 tag（app订阅 / api订阅 / 订阅转API / API）；
@@ -3510,6 +3578,7 @@ export default function Providers() {
           <PersonalSourceModelView
             instances={modelViewInstances}
             t={t}
+            modelTypeMap={personalModelTypeMap}
             trailing={renderSourcesViewTabs()}
             onEmptyAdd={() => { setSourcesView('list'); setPickerOpen(true); }}
           />

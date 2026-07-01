@@ -52,6 +52,21 @@ function isKnownRouteSelectValue(val, availableModels = [], routes = []) {
   return availableModels.some(m => encodeTierModelRoute(m.tier, m.id) === val);
 }
 
+/** 按索引从 claude_models 列表取 Claude Desktop inferenceModels.name */
+function claudeNameAtIndex(index, claudeModels = [], fallback = 'claude-sonnet-4-5') {
+  if (!claudeModels.length) return fallback;
+  return claudeModels[index % claudeModels.length] || fallback;
+}
+
+/** Claude Desktop 多路由：每个 claude-* 名 → 对应 route（与写入 inferenceModels 顺序一致） */
+function bindClaudeRoutesToKeyScene(keyScene, routeIds, routes = [], claudeModels = []) {
+  if (!Array.isArray(routeIds) || !routeIds.length) return;
+  routeIds.forEach((routeId, i) => {
+    const claudeName = claudeNameAtIndex(i, claudeModels);
+    bindRouteToKeyScene(keyScene, claudeName, routeId, routes);
+  });
+}
+
 /** 写入 keyScene（Electron main + CLI admin-api 共用） */
 function bindRouteToKeyScene(keyScene, callerKey, routeId, routes = []) {
   const parsed = parseRouteBinding(routeId, routes);
@@ -81,5 +96,7 @@ module.exports = {
   modelIdFromRoute,
   routeSelectValue,
   isKnownRouteSelectValue,
+  claudeNameAtIndex,
+  bindClaudeRoutesToKeyScene,
   bindRouteToKeyScene,
 };

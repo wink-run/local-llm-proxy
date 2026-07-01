@@ -20,29 +20,38 @@ let _heartbeatTimer      = null;
 let _consecutiveFailures = 0;
 let _reregistering       = false; // guard against concurrent re-register attempts
 
-/** 生成稳定的本地设备 ID（仅首次无记录时调用一次） */
-function _generateDeviceId() {
+/** 解析本机唯一设备 ID：桌面版用 ~/.tokenbank/device-id（主进程 IPC） */
+async function _resolveDeviceId(cfg) {
+  if (isElectron() && window.electronAPI?.app?.getDeviceId) {
+    const id = window.electronAPI.app.getDeviceId();
+    if (id && id !== cfg?.device_id) {
+      getConfig().write({ ...(cfg || {}), device_id: id }).catch(() => {});
+    }
+    return id;
+  }
+
+  // Docker / CLI Web：经 admin-api 读 ~/.tokenbank/device-id
+  try {
+    const r = await fetch('/api/device-identity');
+    if (r.ok) {
+      const j = await r.json();
+      if (j.device_id) {
+        if (j.device_id !== cfg?.device_id) {
+          getConfig().write({ ...(cfg || {}), device_id: j.device_id }).catch(() => {});
+        }
+        return j.device_id;
+      }
+    }
+  } catch {}
+
+  const fallback = String(cfg?.device_id || '').trim();
+  if (fallback) return fallback;
+
   const bytes = new Uint8Array(8);
   crypto.getRandomValues(bytes);
-  return 'dev-' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
-}
-
-/**
- * 解析并持久化设备 ID：localStorage → config.json → 新生成。
- * 避免每次启动因 localStorage 为空而向服务端注册新设备。
- */
-async function _resolveDeviceId(port, cfg) {
-  const storageKey = `llm_gateway_device_id_${port}`;
-  let id = (localStorage.getItem(storageKey) || cfg?.device_id || '').trim();
-  if (!id) {
-    id = _generateDeviceId();
-    localStorage.setItem(storageKey, id);
-    await getConfig().write({ ...(cfg || {}), device_id: id }).catch(() => {});
-  } else if (!localStorage.getItem(storageKey)) {
-    // config 有 ID 但 localStorage 缺失时同步回写
-    localStorage.setItem(storageKey, id);
-  }
-  return { id, storageKey };
+  const id = `dev-${Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')}`;
+  await getConfig().write({ ...(cfg || {}), device_id: id }).catch(() => {});
+  return id;
 }
 
 /** 浏览器 / Docker Web 环境下的平台说明（非 Electron） */
@@ -99,13 +108,11 @@ async function _collectDeviceMeta(port, cfg) {
 
 async function _doRegister() {
   try {
-    // Fetch actual gateway port — each CLI instance runs on a different port,
-    // so use port-scoped localStorage key and name to distinguish them.
     const gwStatus = await getGateway().status().catch(() => null);
     const port     = gwStatus?.port || 11430;
 
     const cfg = await getConfig().read().catch(() => ({}));
-    const { id: storedId, storageKey } = await _resolveDeviceId(port, cfg);
+    const storedId = await _resolveDeviceId(cfg);
 
     const { type, name, platform, version } = await _collectDeviceMeta(port, cfg);
     _deviceMeta = { name, platform, version };
@@ -115,9 +122,6 @@ async function _doRegister() {
     const newId = res.data?.id || res.data?.device_id;
     if (!newId) return;
     _deviceId = newId;
-    // Persist immediately to localStorage so next refresh reuses the same row
-    localStorage.setItem(storageKey, newId);
-    // Also write to config file as best-effort backup
     if (newId !== cfg?.device_id) {
       getConfig().write({ ...(cfg || {}), device_id: newId }).catch(() => {});
     }

@@ -13,6 +13,7 @@ const crypto = require('crypto');
 const { readAgentConfig, writeAgentConfig, readLocalConfig, writeLocalConfig } = require('../shared/config-loader');
 const { defaultServerUrlFromEnv } = require('../shared/default-server-url');
 const deviceIdentity = require('../shared/device-identity');
+const { ensureDeviceId } = require('../shared/device-id');
 const { refreshGatewayPeerModels } = require('../shared/peer-models-sync');
 const { bindRouteToKeyScene } = require('../shared/route-binding');
 const { localStats } = require('../shared/telemetry');
@@ -348,11 +349,14 @@ async function handleRequest(req, res) {
     const st = _gateway.getStatus();
     let pkgVer = '0.0.0';
     try { pkgVer = require('../package.json').version || pkgVer; } catch (_) {}
-    return json(res, 200, deviceIdentity.collect({
-      type: 'cli',
-      port: st?.port || 11430,
-      version: pkgVer,
-    }));
+    return json(res, 200, {
+      ...deviceIdentity.collect({
+        type: 'cli',
+        port: st?.port || 11430,
+        version: pkgVer,
+      }),
+      device_id: ensureDeviceId(),
+    });
   }
 
   if (method === 'POST' && url === '/api/gateway/refresh-peer-models') {

@@ -6,8 +6,7 @@ import time
 import uuid
 from pathlib import Path
 
-from fastapi import HTTPException
-
+from api_errors import DispatchError, raise_dispatch_error
 import database as db
 from worker_pool import pool
 
@@ -23,14 +22,15 @@ async def handle_image(body: dict, consumer_user_id: int | None = None):
     if consumer_user_id is not None:
         rate = await db.get_or_ensure_consume_rate(model, model_type="image")
         if rate is None:
-            raise HTTPException(
+            raise DispatchError(
                 400,
                 f"模型「{model}」未在后台启用或未配置消费率；"
                 "请在管理端「模型配置」添加与 Worker 上报完全一致的模型名称。",
+                "invalid_request_error",
             )
         user = await db.get_user_by_id(consumer_user_id)
         if not user or user["credits_balance"] <= 0:
-            raise HTTPException(402, "Insufficient credits")
+            raise DispatchError(402, "Insufficient credits", "insufficient_credits")
 
     # 图像请求只路由到声明了 image 类型的 worker；虚拟 worker 是 chat 端点转发器、
     # 未实现图像生成，若被选中会把图像请求误发到 /chat/completions 并泄漏 active_requests，
@@ -41,7 +41,11 @@ async def handle_image(body: dict, consumer_user_id: int | None = None):
                             user_circle_ids=set())
     worker = cands[0] if cands else None
     if not worker or isinstance(worker, VirtualWorkerConnection):
-        raise HTTPException(503, f"No image-capable worker available for model '{model}'")
+        raise DispatchError(
+            503,
+            f"No image-capable worker available for model '{model}'",
+            "service_unavailable",
+        )
 
     req_id = str(uuid.uuid4())
     q: asyncio.Queue = asyncio.Queue()
@@ -57,17 +61,17 @@ async def handle_image(body: dict, consumer_user_id: int | None = None):
     except Exception:
         worker.pending.pop(req_id, None)
         worker.active_requests = max(0, worker.active_requests - 1)
-        raise HTTPException(502, "Failed to reach worker")
+        raise DispatchError(502, "Failed to reach worker", "api_error")
 
     try:
         kind, data = await asyncio.wait_for(q.get(), timeout=REQUEST_TIMEOUT)
     except asyncio.TimeoutError:
         worker.pending.pop(req_id, None)
         worker.active_requests = max(0, worker.active_requests - 1)
-        raise HTTPException(504, "Gateway timeout")
+        raise DispatchError(504, "Gateway timeout", "timeout")
 
     if kind == "error":
-        raise HTTPException(502, data)
+        raise_dispatch_error(str(data))
 
     images_raw: list[dict] = data if isinstance(data, list) else []
     created = int(time.time())

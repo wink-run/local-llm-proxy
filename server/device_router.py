@@ -34,9 +34,9 @@ class HeartbeatRequest(BaseModel):
 async def register_device(req: RegisterRequest, uid: int = Depends(get_current_user_id)):
     device_id = req.device_id.strip()
     if device_id:
-        # verify it belongs to this user before reusing
+        # 仅当 ID 已归属其他用户时丢弃；新 ID（库中不存在）允许客户端预生成
         owner_id = await db.get_device_owner(device_id)
-        if owner_id != uid:
+        if owner_id is not None and owner_id != uid:
             device_id = ""
     if not device_id:
         device_id = "dev-" + secrets.token_hex(8)

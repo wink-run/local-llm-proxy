@@ -5,9 +5,9 @@
 const https  = require('https');
 const http   = require('http');
 const os     = require('os');
-const crypto = require('crypto');
 const { readAgentConfig, writeAgentConfig } = require('./config-loader');
 const deviceIdentity = require('./device-identity');
+const { ensureDeviceId, readDeviceId, writeDeviceId } = require('./device-id');
 
 const HEARTBEAT_INTERVAL_MS = 60 * 1000; // 60s（服务端 2 分钟无心跳会标离线）
 
@@ -55,14 +55,15 @@ function _post(url, body, token) {
 
 // ── Registration ──────────────────────────────────────────────────────────────
 
-/** 生成并持久化本地设备 ID（仅首次无记录时调用） */
+/** 读取/生成本机唯一设备 ID（~/.tokenbank/device-id） */
 function _ensureLocalDeviceId(existing) {
-  if (existing) return existing;
-  const id = 'dev-' + crypto.randomBytes(8).toString('hex');
-  const cfg = readAgentConfig() || {};
-  cfg.device_id = id;
-  try { writeAgentConfig(cfg); } catch (_) {}
-  return id;
+  const persisted = readDeviceId();
+  if (persisted) return persisted;
+  if (existing && /^dev-[a-f0-9]{16}$/.test(existing)) {
+    writeDeviceId(existing);
+    return existing;
+  }
+  return ensureDeviceId();
 }
 
 /**
@@ -175,7 +176,8 @@ async function init(options) {
   // belongs to this user.
   const registeredId = await _register();
   _config.device_id = registeredId;
-  // Persist device_id back into agent config (may differ if server assigned a new one)
+  // 持久化到 ~/.tokenbank/device-id 与 agent config
+  if (registeredId) writeDeviceId(registeredId);
   const cfg = readAgentConfig() || {};
   cfg.device_id = registeredId;
   try { writeAgentConfig(cfg); } catch (_) {}

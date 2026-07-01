@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { loadGatewayAvailableModels, resolveLocalGatewayHost } from '../api/gatewayModels';
+import { loadGatewayAvailableModels, resolveLocalGatewayHost, inferModelTypeFromName } from '../api/gatewayModels';
 import { getSyncServerBase } from '../config';
 import { getGateway, getLocalConfig, getConfig, getApps, getOauth } from '../api/adapter';
 import { listAgents, applyAgent, revertAgent } from '../api/agents';
@@ -8,6 +8,7 @@ import claudeDevModeImg2 from '../assets/claude-devmode-2.webp';
 import { brandIconFor, resolveBrandIcon } from '../lib/brandIcons';
 import { APP_ICONS, ROUTE_ICONS, isAppIcon, appIconSvg } from '../lib/appIcons';
 import { useLang } from '../store/lang';
+import { useAuth } from '../store/index';
 import RouteSelect, { tierOptgroups } from '../components/RouteSelect';
 import {
   encodeTierModelRoute,
@@ -15,6 +16,7 @@ import {
   routeSelectValue,
 } from '../lib/route-binding';
 import { useCurrency } from '../store/currency';
+import { runStreamChatTest } from '../lib/streamTestLatency';
 
 // tier:id 作为下拉唯一 value，避免同模型跨层选中错位
 function modelTierKey(m) {
@@ -821,7 +823,9 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     <div>
       <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.accessConfig')}</div>
       <KeyConfigPanel apiKey={app.api_key} localBase="http://127.0.0.1:11430/v1"
-        model={routeId ? (modelIdFromRoute(routeId, routes) || routeId) : undefined} hideAuto />
+        model={routeId ? (modelIdFromRoute(routeId, routes) || routeId) : undefined}
+        modelType={availableModels.find(m => m.id === (modelIdFromRoute(routeId, routes) || routeId))?.type}
+        hideAuto />
     </div>
   );
 
@@ -980,7 +984,9 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
           <div>
             <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.accessConfigHint')}</div>
             <KeyConfigPanel apiKey={app.api_key} localBase="http://127.0.0.1:11430/v1"
-              model={routeId ? (modelIdFromRoute(routeId, routes) || routeId) : undefined} hideAuto />
+              model={routeId ? (modelIdFromRoute(routeId, routes) || routeId) : undefined}
+              modelType={availableModels.find(m => m.id === (modelIdFromRoute(routeId, routes) || routeId))?.type}
+              hideAuto />
           </div>
         )}
       </div>
@@ -2314,43 +2320,23 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
       try { await appsApi.update({ id: app.id, route_id: routeVal }); } catch {}
     }
     const base = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/$/, '');
-    const start = Date.now();
-    // 流式 + max_tokens:1：首块计延迟（首字），但把流读完整，让网关正常结束并落账
-    // （中途 abort 会导致不计入统计）；30s 硬超时防卡死。
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 30000);
     try {
-      const res = await fetch(`${base}/chat/completions`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'authorization': `Bearer ${key}` },
-        body: JSON.stringify({ model, max_tokens: 1, stream: true, messages: [{ role: 'user', content: 'Hi' }] }),
-        signal: ctrl.signal,
+      const result = await runStreamChatTest({
+        url: `${base}/chat/completions`,
+        headers: { authorization: `Bearer ${key}` },
+        body: { model, max_tokens: 1, messages: [{ role: 'user', content: 'Hello!' }] },
       });
-      if (!res.ok) {
-        const b = await res.json().catch(() => ({}));
-        const msg = b?.error?.detail || b?.error?.message || b?.detail || `HTTP ${res.status}`;
-        setTestState(s => ({ ...s, [app.id]: { ok: false, error: msg, latency: Date.now() - start } }));
+      if (!result.ok) {
+        const msg = result.error === 'timeout' ? t('gateway.common.timeout30s') : (result.error || t('gateway.common.connectFailed'));
+        setTestState(s => ({ ...s, [app.id]: { ok: false, error: msg, latency: result.latency } }));
       } else {
-        let latency = null;
-        const reader = res.body?.getReader();
-        if (reader) {
-          // 读到首块即记下首字延迟，再把剩余流读完（让网关完成请求并落账）
-          for (;;) {
-            const { done } = await reader.read();
-            if (latency == null) latency = Date.now() - start;
-            if (done) break;
-          }
-        } else { latency = Date.now() - start; }
-        setTestState(s => ({ ...s, [app.id]: { ok: true, latency } }));
+        setTestState(s => ({ ...s, [app.id]: { ok: true, latency: result.latency } }));
         // 网关已落账 → 刷新统计（总请求数 / 总token）+ 路由明细日志
         setTimeout(() => { load(); refresh(); }, 600);
       }
     } catch (e) {
-      const msg = e?.name === 'AbortError' ? t('gateway.common.timeout30s') : (e?.message || t('gateway.common.connectFailed'));
-      setTestState(s => ({ ...s, [app.id]: { ok: false, error: msg, latency: Date.now() - start } }));
+      setTestState(s => ({ ...s, [app.id]: { ok: false, error: e?.message || t('gateway.common.connectFailed'), latency: null } }));
       setTimeout(() => refresh(), 600);
-    } finally {
-      clearTimeout(timer);
     }
     scheduleTestHide(app.id);
   }
@@ -2745,9 +2731,9 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                         return (
                           <div
                             className={`mt-0.5 text-right text-[10px] leading-tight truncate max-w-full font-mono ${ts.busy ? 'text-zinc-400' : ts.ok ? 'text-green-500 dark:text-green-400' : 'text-red-400'}`}
-                            title={ts.busy ? t('gateway.common.testing') : ts.ok ? `${ts.latency}ms` : ts.error}
+                            title={ts.busy ? t('gateway.common.testing') : ts.ok ? t('gateway.common.testFirstToken', { ms: ts.latency }) : ts.error}
                           >
-                            {ts.busy ? t('gateway.common.testing') : ts.ok ? `✓ ${ts.latency}ms` : `✗ ${ts.error}`}
+                            {ts.busy ? t('gateway.common.testing') : ts.ok ? `✓ ${t('gateway.common.testFirstToken', { ms: ts.latency })}` : `✗ ${ts.error}`}
                           </div>
                         );
                       })()}
@@ -3192,7 +3178,103 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
 
 // ── Code snippets ─────────────────────────────────────────────────────────────
 
-function codeSnippet(lang, baseUrl, apiKey, model = 'claude-opus-4-5') {
+function snippetModelType(model, modelType) {
+  if (modelType && modelType !== 'chat') return modelType;
+  return model ? inferModelTypeFromName(model) : 'chat';
+}
+
+function codeSnippet(lang, baseUrl, apiKey, model = 'claude-opus-4-5', modelType) {
+  const modality = snippetModelType(model, modelType);
+
+  // 图像模态 → OpenAI Images API
+  if (modality === 'image') {
+    switch (lang) {
+      case 'curl':
+      case 'curl-oai':
+        return `curl ${baseUrl}/images/generations \\
+  -H "Authorization: Bearer ${apiKey}" \\
+  -H "content-type: application/json" \\
+  -d '{
+    "model": "${model}",
+    "prompt": "一只可爱的狗",
+    "n": 1,
+    "response_format": "b64_json"
+  }'`;
+      case 'python':
+      case 'openai':
+        return `from openai import OpenAI
+
+client = OpenAI(
+    base_url="${baseUrl}",
+    api_key="${apiKey}",
+)
+resp = client.images.generate(
+    model="${model}",
+    prompt="一只可爱的狗",
+    n=1,
+    response_format="b64_json",
+)
+print(resp.data[0].b64_json[:80], "...")`;
+      case 'nodejs':
+        return `import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: '${baseUrl}',
+  apiKey: '${apiKey}',
+});
+const resp = await client.images.generate({
+  model: '${model}',
+  prompt: '一只可爱的狗',
+  n: 1,
+  response_format: 'b64_json',
+});
+console.log(resp.data[0].b64_json?.slice(0, 80), '...');`;
+      default: return '';
+    }
+  }
+
+  // 向量模态 → OpenAI Embeddings API
+  if (modality === 'embedding') {
+    switch (lang) {
+      case 'curl':
+      case 'curl-oai':
+        return `curl ${baseUrl}/embeddings \\
+  -H "Authorization: Bearer ${apiKey}" \\
+  -H "content-type: application/json" \\
+  -d '{
+    "model": "${model}",
+    "input": "Hello!"
+  }'`;
+      case 'python':
+      case 'openai':
+        return `from openai import OpenAI
+
+client = OpenAI(
+    base_url="${baseUrl}",
+    api_key="${apiKey}",
+)
+resp = client.embeddings.create(
+    model="${model}",
+    input="Hello!",
+)
+print(len(resp.data[0].embedding))`;
+      case 'nodejs':
+        return `import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: '${baseUrl}',
+  apiKey: '${apiKey}',
+});
+const resp = await client.embeddings.create({
+  model: '${model}',
+  input: 'Hello!',
+});
+console.log(resp.data[0].embedding.length);`;
+      default: return '';
+    }
+  }
+
+  // 对话模态（默认）
   switch (lang) {
     case 'curl':
       return `curl ${baseUrl}/messages \\
@@ -3201,6 +3283,7 @@ function codeSnippet(lang, baseUrl, apiKey, model = 'claude-opus-4-5') {
   -H "content-type: application/json" \\
   -d '{
     "model": "${model}",
+    "stream": true,
     "max_tokens": 1024,
     "messages": [{"role": "user", "content": "Hello!"}]
   }'`;
@@ -3214,9 +3297,12 @@ client = anthropic.Anthropic(
 msg = client.messages.create(
     model="${model}",
     max_tokens=1024,
+    stream=True,
     messages=[{"role": "user", "content": "Hello!"}],
 )
-print(msg.content[0].text)`;
+for event in msg:
+    if event.type == "content_block_delta":
+        print(event.delta.text, end="", flush=True)`;
     case 'nodejs':
       return `import Anthropic from '@anthropic-ai/sdk';
 
@@ -3224,12 +3310,15 @@ const client = new Anthropic({
   baseURL: '${baseUrl}',
   apiKey: '${apiKey}',
 });
-const msg = await client.messages.create({
+const stream = await client.messages.create({
   model: '${model}',
   maxTokens: 1024,
+  stream: true,
   messages: [{ role: 'user', content: 'Hello!' }],
 });
-console.log(msg.content[0].text);`;
+for await (const event of stream) {
+  if (event.type === 'content_block_delta') process.stdout.write(event.delta.text);
+}`;
     case 'openai':
       return `from openai import OpenAI
 
@@ -3237,17 +3326,20 @@ client = OpenAI(
     base_url="${baseUrl}",
     api_key="${apiKey}",
 )
-resp = client.chat.completions.create(
+stream = client.chat.completions.create(
     model="${model}",
+    stream=True,
     messages=[{"role": "user", "content": "Hello!"}],
 )
-print(resp.choices[0].message.content)`;
+for chunk in stream:
+    print(chunk.choices[0].delta.content or "", end="", flush=True)`;
     case 'curl-oai':
       return `curl ${baseUrl}/chat/completions \\
   -H "Authorization: Bearer ${apiKey}" \\
   -H "content-type: application/json" \\
   -d '{
     "model": "${model}",
+    "stream": true,
     "messages": [{"role": "user", "content": "Hello!"}]
   }'`;
     default: return '';
@@ -3265,7 +3357,7 @@ const CONFIG_TABS = [
   { id: 'auto',     labelKey: 'gateway.key.autoConfig' },
 ];
 
-function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
+function KeyConfigPanel({ apiKey, localBase, model, modelType, hideAuto = false }) {
   const { t } = useLang();
   const TOOLS = autoConfigTools(t);
   const [tab,     setTab]     = useState('curl');
@@ -3273,6 +3365,7 @@ function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
   const [writeOk, setWriteOk] = useState(false);
   const tabs = hideAuto ? CONFIG_TABS.filter(tabItem => tabItem.id !== 'auto') : CONFIG_TABS;
 
+  const resolvedType = snippetModelType(model, modelType);
   const isRouter = model?.startsWith('llm-router-');
   const envText  = [
     `ANTHROPIC_BASE_URL=${localBase}`,
@@ -3290,7 +3383,7 @@ function KeyConfigPanel({ apiKey, localBase, model, hideAuto = false }) {
   }
 
   const isCodeTab = tab !== 'auto';
-  const code = isCodeTab ? codeSnippet(tab, localBase, apiKey, model) : '';
+  const code = isCodeTab ? codeSnippet(tab, localBase, apiKey, model, resolvedType) : '';
 
   return (
     <div className="border border-zinc-200 dark:border-zinc-700 rounded-xl overflow-hidden">
@@ -3394,32 +3487,21 @@ function InstanceList({ keysScene, onDelete, localBase, newKeyId, routeHealth })
   async function runTest(k) {
     setTestState(s => ({ ...s, [k.id]: { busy: true } }));
     const model = k.model_key || 'claude-opus-4-5';
-    const start = Date.now();
+    const base = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/$/, '');
     try {
-      const res = await fetch(`${localBase}/messages`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-api-key': k.key,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: 16,
-          messages: [{ role: 'user', content: 'Hi' }],
-        }),
+      const result = await runStreamChatTest({
+        url: `${base}/chat/completions`,
+        headers: { authorization: `Bearer ${k.key}` },
+        body: { model, max_tokens: 1, messages: [{ role: 'user', content: 'Hello!' }] },
       });
-      const latency = Date.now() - start;
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        const msg  = body?.error?.message || `HTTP ${res.status}`;
-        setTestState(s => ({ ...s, [k.id]: { ok: false, error: msg, latency } }));
+      if (!result.ok) {
+        const msg = result.error === 'timeout' ? t('gateway.common.timeout30s') : (result.error || t('gateway.common.connectFailed'));
+        setTestState(s => ({ ...s, [k.id]: { ok: false, error: msg, latency: result.latency } }));
       } else {
-        setTestState(s => ({ ...s, [k.id]: { ok: true, latency } }));
+        setTestState(s => ({ ...s, [k.id]: { ok: true, latency: result.latency } }));
       }
     } catch (e) {
-      const latency = Date.now() - start;
-      setTestState(s => ({ ...s, [k.id]: { ok: false, error: e.message || t('gateway.common.connectFailed'), latency } }));
+      setTestState(s => ({ ...s, [k.id]: { ok: false, error: e.message || t('gateway.common.connectFailed'), latency: null } }));
     }
     setTimeout(() => setTestState(s => ({ ...s, [k.id]: null })), 6000);
   }
@@ -3478,9 +3560,9 @@ function InstanceList({ keysScene, onDelete, localBase, newKeyId, routeHealth })
                 <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
                   {/* Test result badge */}
                   {ts && !ts.busy && (
-                    <span className={`text-xs font-mono shrink-0 max-w-[120px] truncate ${ts.ok ? 'text-green-500 dark:text-green-400' : 'text-red-400'}`}
-                      title={ts.ok ? `${ts.latency}ms` : ts.error}>
-                      {ts.ok ? `✓ ${ts.latency}ms` : `✗ ${ts.error}`}
+                    <span className={`text-xs font-mono shrink-0 max-w-[140px] truncate ${ts.ok ? 'text-green-500 dark:text-green-400' : 'text-red-400'}`}
+                      title={ts.ok ? t('gateway.common.testFirstToken', { ms: ts.latency }) : ts.error}>
+                      {ts.ok ? `✓ ${t('gateway.common.testFirstToken', { ms: ts.latency })}` : `✗ ${ts.error}`}
                     </span>
                   )}
                   <button
@@ -3531,6 +3613,7 @@ function autoConfigTools(t) {
 
 export default function Gateway() {
   const { t } = useLang();
+  const { user } = useAuth();
   const [status, setStatus]     = useState(null);
   const [stats, setStats]       = useState(null);
   const [logEntries, setLog]    = useState([]);
@@ -3597,11 +3680,11 @@ export default function Gateway() {
 
   const loadAvailableModels = useCallback(async () => {
     try {
-      setAvailableModels(await loadGatewayAvailableModels());
+      setAvailableModels(await loadGatewayAvailableModels({ includeCommunity: !!user }));
     } catch (e) {
       console.error('loadAvailableModels', e);
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     refresh();

@@ -87,6 +87,7 @@ export default {
   'gateway.common.settings': 'Edit',
   'gateway.common.test': 'Test',
   'gateway.common.testing': 'Testing…',
+  'gateway.common.testFirstToken': 'first token {ms}ms',
   'gateway.common.loading': 'Loading…',
   'gateway.common.back': '← Back',
   'gateway.common.collapse': 'Collapse',

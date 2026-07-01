@@ -450,6 +450,52 @@ function registryProviders() {
   return Array.isArray(raw) ? raw : [];
 }
 
+/** registry 条目 → GET /api/catalog 同构对象（离线首屏秒开） */
+function catalogEntryFromRegistry(entry) {
+  if (!entry?.id) return null;
+  const models = [];
+  const seen = new Set();
+  const pushModel = (name, type = 'chat') => {
+    const n = String(name || '').trim();
+    if (!n || seen.has(n)) return;
+    seen.add(n);
+    models.push({ name: n, type: type || 'chat' });
+  };
+  for (const m of entry.models || []) {
+    if (typeof m === 'string') pushModel(m);
+    else if (m?.name) pushModel(m.name, m.type);
+    else if (m?.id) pushModel(m.id, m.modality || m.type);
+  }
+  const pricing = { ...(entry.pricing && typeof entry.pricing === 'object' ? entry.pricing : {}) };
+  for (const k of Object.keys(pricing)) {
+    if (k && k !== '_excluded_models' && k !== 'excluded_models') pushModel(k);
+  }
+  const out = {
+    id: entry.id,
+    type: entry.tier || entry.type || 'paid',
+    enabled_default: !!entry.enabled_default,
+    base_url: entry.base_url || '',
+    icon: entry.icon || '🔧',
+    label: entry.label || entry.id,
+    hint: entry.hint || '',
+    keyless: !!entry.keyless,
+    key_prefix: Array.isArray(entry.key_prefix) ? entry.key_prefix : [],
+    signup_url: entry.signup_url || '',
+    api_format: entry.api_format || 'openai',
+    models,
+    pricing,
+  };
+  if (entry.payg) out.payg = true;
+  return out;
+}
+
+/** 本机 registry → catalog 快照（Providers 页离线/首屏回退） */
+function builtinCatalogPayload() {
+  return {
+    providers: registryProviders().map(catalogEntryFromRegistry).filter(Boolean),
+  };
+}
+
 // 订阅套餐模板（按 plan_provider_id 索引，来自 billing_sources.plans）
 function subscriptionPlansDefaults() {
   const out = {};
@@ -516,7 +562,8 @@ module.exports = {
   routing, caRef,
   claudeModels, isClaudeModel, sessionSources, agentHasModelStats, appInstallUrls, appUninstallUrls,
   appInstallGuides, appUninstallGuides, normalizeGuide, resolveGuide,
-  subscriptionApps, apiSubscriptionApps, paygProviders, registryProviders, subscriptionPlansDefaults,
+  subscriptionApps, apiSubscriptionApps, paygProviders, registryProviders, builtinCatalogPayload,
+  registryDefaultDoc, mergeRegistryDoc, subscriptionPlansDefaults,
   billingSourcesList, reloadRegistryDoc,
   resolveRef, resolvePlaceholders, expandHome,
   appsRuntime, appEntities, appEntitiesExpanded, appEntityById, appCapabilities,

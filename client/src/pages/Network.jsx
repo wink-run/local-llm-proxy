@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getNetwork, getStats, getModelsForCurrentUser } from '../api/client';
+import { getNetwork, getStats } from '../api/client';
+import { modelStatsForIds } from '../lib/networkModelStats';
+import { fetchServerCommunityModels } from '../lib/communityModels';
 import { useLang } from '../store/lang';
 
 // Extract param size from model name, e.g. "llama-3.3-70b" → "70B"
@@ -38,21 +40,21 @@ export default function Network() {
   const [myStats,        setMyStats]        = useState(null);
   const [loading,        setLoading]        = useState(true);
   const [circleModelMap, setCircleModelMap] = useState({});
+  const [communityIds,   setCommunityIds]   = useState([]);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        const [netRes, statsRes, modelsRes] = await Promise.allSettled([getNetwork(), getStats(), getModelsForCurrentUser()]);
+        const [netRes, statsRes, communityRes] = await Promise.allSettled([
+          getNetwork(), getStats(), fetchServerCommunityModels(),
+        ]);
         if (cancelled) return;
         if (netRes.status === 'fulfilled')   setNetwork(netRes.value.data);
         if (statsRes.status === 'fulfilled') setMyStats(statsRes.value.data);
-        if (modelsRes.status === 'fulfilled') {
-          const map = {};
-          for (const m of (modelsRes.value.data?.data || [])) {
-            if (m.circle_id) map[m.id] = { circle_id: m.circle_id, circle_name: m.circle_name || '' };
-          }
-          setCircleModelMap(map);
+        if (communityRes.status === 'fulfilled') {
+          setCommunityIds(communityRes.value.ids);
+          setCircleModelMap(communityRes.value.circleMap);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -63,24 +65,11 @@ export default function Network() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  // ── Aggregate per-model stats ─────────────────────────────────────────────
-
-  const modelStats = useMemo(() => {
-    if (!network?.workers) return [];
-    const map = {};
-    for (const w of network.workers) {
-      for (const m of (w.models || [])) {
-        if (!map[m]) map[m] = { name: m, nodes: 0, totalLatency: 0, latencyCount: 0, activeReqs: 0 };
-        map[m].nodes++;
-        if (w.avg_latency_ms > 0) {
-          map[m].totalLatency  += w.avg_latency_ms;
-          map[m].latencyCount++;
-        }
-        map[m].activeReqs += w.active_requests || 0;
-      }
-    }
-    return Object.values(map).sort((a, b) => b.nodes - a.nodes);
-  }, [network]);
+  // 模型列表与 /v1/models 一致；节点数从 workers 聚合补充
+  const modelStats = useMemo(
+    () => modelStatsForIds(communityIds, network),
+    [communityIds, network],
+  );
 
   // Sort workers by tokens as contributor ranking proxy
   const topWorkers = useMemo(() => {

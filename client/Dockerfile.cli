@@ -28,27 +28,15 @@ RUN apt-get update \
 FROM node:20.18-bookworm-slim
 WORKDIR /app
 
-# CLI entry + shared helpers
+# CLI entry + shared helpers + 构建脚本（剪枝后删除 scripts）
 COPY package.json ./package.json
-COPY cli    ./cli
-COPY shared ./shared
+COPY cli     ./cli
+COPY shared  ./shared
+COPY scripts ./scripts
 
-# Gateway core modules (local-gateway.js + telemetry dependencies)
-RUN mkdir -p ./electron
-COPY electron/local-gateway.js \
-     electron/codex-transform.js \
-     electron/request-router.js \
-     electron/config-loader.js \
-     electron/pricing.js \
-     electron/billing-config.js \
-     electron/cloud-billing-sync.js \
-     electron/local-stats.js \
-     electron/session-import.js \
-     electron/session-browser.js \
-     electron/agent-worker.js \
-     ./electron/
-COPY electron/oauth ./electron/oauth
-COPY electron/config ./electron/config
+# 与桌面版共用完整 electron 模块，仅剪枝 Electron 壳专属文件（见 scripts/cli-runtime-manifest.js）
+COPY electron ./electron
+RUN node scripts/prune-electron-for-cli.js && rm -rf ./scripts
 
 # 运行时 npm 依赖（来自 native-deps 阶段，无需 node-gyp 编译）
 COPY --from=native-deps /deps/node_modules ./node_modules

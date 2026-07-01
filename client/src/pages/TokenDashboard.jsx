@@ -595,11 +595,18 @@ export default function TokenDashboard() {
       getTransactions().then(r => setTxs(r.data.transactions || [])).catch(() => {});
       getPurchaseOrders().then(r => { setOrders(r.data.orders || []); if (r.data.contact_info) setAdminInfo(String(r.data.contact_info)); }).catch(() => {});
     }
-    getProviderCatalog().then(r => {
-      const map = {};
-      for (const p of r.data?.providers || []) map[p.id] = { label: p.label, type: p.type };
-      _catalogMeta = map;
-    }).catch(() => {});
+    const loadCatalogMeta = async () => {
+      try {
+        const api = window.electronAPI?.localConfig;
+        const providers = api?.getProviderCatalog
+          ? (await api.getProviderCatalog())?.providers
+          : (await getProviderCatalog()).data?.providers;
+        const map = {};
+        for (const p of providers || []) map[p.id] = { label: p.label, type: p.type };
+        _catalogMeta = map;
+      } catch {}
+    };
+    loadCatalogMeta();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

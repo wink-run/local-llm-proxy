@@ -339,7 +339,8 @@ createApp({
       const n = u.nickname || ''
       if (!n) return '***'
       if (n.length <= 2) return n[0] + '*'
-      return n[0] + '*'.repeat(n.length - 2) + n[n.length - 1]
+      const masked = Math.min(4, n.length - 2)
+      return n[0] + '*'.repeat(masked) + n.slice(1 + masked)
     }
     function fmtNum(n) {
       if (n >= 1e6) return (n/1e6).toFixed(1)+'M'

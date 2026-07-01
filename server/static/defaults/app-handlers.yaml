@@ -131,7 +131,7 @@ handlers:
         inferenceGatewayApiKey: "{KEY}"
         inferenceGatewayAuthScheme: bearer
         _configManagedBy: tokenbank
-      # 绑路由写入 inferenceModels[]；多选时每条路由一项（name=Anthropic 名过校验）
+      # 绑路由写入 inferenceModels[]；多选时每条路由一项（name 按 claude_models 列表依次分配）
       patch_route:
         strategy: claude_inference_models
         multi_select: true

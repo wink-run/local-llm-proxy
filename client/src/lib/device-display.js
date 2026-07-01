@@ -16,9 +16,12 @@ export function formatLegacyPlatform(platform) {
   return p;
 }
 
-/** 设备主标题：优先可读名称，去掉 .local */
+/** 设备主标题：优先可读名称，去掉 .local；桌面版去掉历史 CLI 后缀 */
 export function formatDeviceTitle(device) {
-  const raw = device?.name || device?.device_id || '';
+  let raw = device?.name || device?.device_id || '';
+  if (device?.type === 'desktop') {
+    raw = raw.replace(/\s·\sCLI\s:\d+$/, '');
+  }
   return stripLocalSuffix(raw) || raw;
 }
 

@@ -54,13 +54,14 @@ function SourceProviderLogo({ inst }) {
 
 const PRICE_FIELDS = ['in', 'out', 'cacheRead'];
 
-function modelTypeLabel(type, t) {
+/** 模型模态短标签（文/图/嵌），供供给源页与路由下拉复用 */
+export function modelTypeLabel(type, t) {
   if (type === 'image') return t('providers.models.typeImage');
   if (type === 'embedding') return t('providers.models.typeEmbedding');
   return t('providers.models.typeText');
 }
 
-function modelTypeBtnClass(type) {
+export function modelTypeBtnClass(type) {
   if (type === 'image') {
     return 'bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 hover:bg-purple-200 dark:hover:bg-purple-800/60';
   }
@@ -438,7 +439,7 @@ export function UnenrolledInstanceCard({ instance, onRemove, t }) {
 }
 
 // ── 第3块：按模型视图（仿社区源 P2P 网格：一行两列，左模型、右供给源 logo）────────
-export function PersonalSourceModelView({ instances, t, trailing = null, onEmptyAdd = null }) {
+export function PersonalSourceModelView({ instances, t, trailing = null, onEmptyAdd = null, modelTypeMap = {} }) {
   const byModel = useMemo(() => {
     const m = {};
     for (const inst of instances) {
@@ -513,6 +514,7 @@ export function PersonalSourceModelView({ instances, t, trailing = null, onEmpty
       <div className="grid grid-cols-2 gap-2">
         {byModel.map(([model, srcs]) => {
           const verified = srcs.some(s => s.test_verified === true);
+          const mType = modelTypeMap[model];
           return (
           <div
             key={model}
@@ -525,6 +527,14 @@ export function PersonalSourceModelView({ instances, t, trailing = null, onEmpty
                 title={verified ? t('providers.badge.verified') : t('providers.badge.needsConfig')}
               />
               <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate" title={model}>{model}</span>
+              {mType && mType !== 'chat' && (
+                <span
+                  className={`shrink-0 text-[9px] font-sans leading-none px-1 py-px rounded border border-transparent ${modelTypeBtnClass(mType)}`}
+                  title={mType === 'image' ? t('providers.models.image') : t('providers.models.embedding')}
+                >
+                  {modelTypeLabel(mType, t)}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-0.5 shrink-0">
               {srcs.map((s, i) => (
@@ -686,14 +696,13 @@ export function buildInstancePatch(tpl, { payg = [], subs = [], planId } = {}) {
     const n = (list || []).filter(x => x[kf] === key).length;
     return n > 0 ? `${tpl.label}_${n + 1}` : tpl.label;
   };
-  const tplModels = Object.keys(tpl.pricing || {}).length ? Object.keys(tpl.pricing) : (tpl.models || []);
   const usedGw = collectUsedGatewayIds(payg, subs);
   if (isPayg) {
     const instId = uid();
     const gateway_id = allocateGatewayId(baseGatewayForPayg(key), usedGw, instId);
     const inst = {
       id: instId, provider_id: key, gateway_id, label: tpl.label,
-      name: nextName(payg, 'provider_id'), icon: tpl.icon, models: [...tplModels], enabled: true,
+      name: nextName(payg, 'provider_id'), icon: tpl.icon, models: [], enabled: true,
       added_at: addedAt,
     };
     return { user_payg_providers: [...payg, inst] };
@@ -712,6 +721,7 @@ export function buildInstancePatch(tpl, { payg = [], subs = [], planId } = {}) {
     plan_id: plan.id || 'custom', plan_label: plan.label || plan.id || tpl.label,
     monthly_usd: plan.monthly_usd ?? null,
     subscription_to_api: isApiSub ? true : (tpl.subscription_to_api === true),
+    models: [], // 新建时不预填 catalog 模型，由用户在卡片上添加
     ...(isApiSub ? { plan_provider_id: tpl.plan_provider_id || key } : {}),
     added_at: addedAt,
   };

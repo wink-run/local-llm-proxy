@@ -571,7 +571,7 @@ function formatHttpError(statusCode, bodyStr) {
   if (!bodyStr) return msg;
   try {
     const j = JSON.parse(bodyStr);
-    const em = j.error?.message || j.error?.detail || (typeof j.error === 'string' ? j.error : '');
+    const em = j.error?.message || j.error?.detail || j.detail || (typeof j.error === 'string' ? j.error : '');
     if (em) return `${msg}: ${em}`;
   } catch {}
   const t = String(bodyStr).trim().slice(0, 240);
@@ -596,6 +596,100 @@ function pickBestRouteError(errors) {
   if (!errors?.length) return null;
   const nonP2p = errors.find(e => e.id !== 'tokenbank-p2p');
   return (nonP2p || errors[0]).err;
+}
+
+/** 社区 P2P 供给源 */
+function isP2pProvider(provider) {
+  return provider?.type === 'p2p' || provider?.id === 'tokenbank-p2p';
+}
+
+/** 云端 P2P 积分不足（402 / Insufficient credits） */
+function isP2pCreditsError(err) {
+  if (!err) return false;
+  if (err.status === 402) return true;
+  const msg = String(err.message || '').toLowerCase();
+  return msg.includes('insufficient credits') || msg.includes('http_402');
+}
+
+/** 客户端错误优先透传 4xx，其余维持 502 */
+function resolveFailStatus(err) {
+  const s = err?.status;
+  return (typeof s === 'number' && s >= 400 && s < 500) ? s : 502;
+}
+
+/** P2P 积分不足：直接 402 拒绝，不再尝试其他 provider */
+function writeInsufficientCredits(res, isResponses) {
+  const detail = 'Insufficient credits';
+  const payload = isResponses
+    ? codexTransform.chatErrorToResponseError({ error: { message: detail, type: 'insufficient_credits' } })
+    : { error: { message: detail, type: 'insufficient_credits', code: 'insufficient_credits' } };
+  if (!res.headersSent) {
+    res.writeHead(402, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(JSON.stringify(payload));
+  }
+}
+
+const P2P_API_KEY_HINT =
+  'P2P relay API Key not configured. Open Community (社区算力) and set Gateway relay API Key.';
+
+/** 是否已配置 P2P 转发 Key（cloud_config.token 或 provider 自带 token） */
+function hasP2pRelayKey(provider) {
+  return !!String(_cloudToken || provider?.token || '').trim();
+}
+
+/** P2P 鉴权失败（未配置 Key / 云端 401） */
+function isP2pApiKeyError(err) {
+  if (!err) return false;
+  if (err.code === 'p2p_api_key_required') return true;
+  if (err.status === 401) return true;
+  const msg = String(err.message || '').toLowerCase();
+  return msg.includes('missing api key') || msg.includes('invalid or disabled api key');
+}
+
+/** P2P 未配置转发 Key：401 拒绝，不降级到其他 provider */
+function writeP2pApiKeyRequired(res, isResponses) {
+  const detail = P2P_API_KEY_HINT;
+  const payload = isResponses
+    ? codexTransform.chatErrorToResponseError({ error: { message: detail, type: 'p2p_api_key_required' } })
+    : { error: { message: detail, type: 'p2p_api_key_required', code: 'p2p_api_key_required' } };
+  if (!res.headersSent) {
+    res.writeHead(401, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(JSON.stringify(payload));
+  }
+}
+
+/** 调用 P2P 前检查转发 Key；已写入响应则返回 true */
+function rejectP2pIfUnconfigured(provider, res, isResponses) {
+  if (!isP2pProvider(provider) || hasP2pRelayKey(provider)) return false;
+  writeP2pApiKeyRequired(res, isResponses);
+  return true;
+}
+
+/** P2P 致命错误（积分不足 / 未配置 Key）：已写入响应则返回 true */
+function handleP2pFatal(provider, err, res, isResponses) {
+  if (!isP2pProvider(provider)) return false;
+  if (isP2pCreditsError(err)) {
+    writeInsufficientCredits(res, isResponses);
+    return true;
+  }
+  if (isP2pApiKeyError(err)) {
+    writeP2pApiKeyRequired(res, isResponses);
+    return true;
+  }
+  return false;
+}
+
+function p2pAbortError(kind) {
+  if (kind === 'api_key') {
+    return Object.assign(new Error(P2P_API_KEY_HINT), { status: 401, code: 'p2p_api_key_required' });
+  }
+  return Object.assign(new Error('Insufficient credits'), { status: 402, code: 'insufficient_credits' });
 }
 
 // ── HTTP proxy ────────────────────────────────────────────────────────────────
@@ -1490,13 +1584,7 @@ function proxyP2PSync(provider, oaiBody, model, res) {
       method: 'POST', headers, timeout: 120_000,
     }, (proxyRes) => {
       if (proxyRes.statusCode >= 400) {
-        const errChunks = [];
-        proxyRes.on('data', c => errChunks.push(c));
-        proxyRes.on('end', () => {
-          const body = Buffer.concat(errChunks).toString().slice(0, 200);
-          console.warn(`[gateway] proxyP2PSync ${proxyRes.statusCode} body:`, body);
-        });
-        return reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode }));
+        return readProxyError(proxyRes, reject);
       }
       let buf = '', fullText = '', inputTokens = 0, outputTokens = 0, stopReason = 'end_turn', firstTokenMs = null, msgId = null;
       proxyRes.on('data', (chunk) => {
@@ -2025,14 +2113,18 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       const payload = isResponses
         ? codexTransform.chatErrorToResponseError({ error: { message: detail, type: 'all_providers_failed' } })
         : { error: 'all_providers_failed', detail };
-      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.writeHead(resolveFailStatus(lastErr), { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(payload));
     }
   }
 
   // ── Scene route：应用绑定路由（keyScene）/ llm-router-* ──
-  // Claude 应用绑 route_id 后，keyScene[key] 把 claude-* 请求透明改写成绑定的真实模型/路由链。
-  const boundScene = (callerKey && _keyScene[callerKey]) || null;
+  // Claude Desktop 多模型：keyScene[claude-*] 按 inferenceModels.name 改写；
+  // 单模型/旧配置仍可用 keyScene[api_key]。
+  const boundScene =
+    (_claudeModels.includes(origModel) && _keyScene[origModel]) ||
+    (callerKey && _keyScene[callerKey]) ||
+    null;
   const isLlmRouter = origModel.startsWith('llm-router-');
   const interceptScene = !boundScene ? _routerModelMap[origModel] : null;
   debugLog(`route() 路由判定`, {
@@ -2083,6 +2175,17 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       let   stepSucceeded = false;
 
       for (const provider of stepProviders) {
+        if (rejectP2pIfUnconfigured(provider, res, isResponses)) {
+          lastErr = p2pAbortError('api_key');
+          pushLog({
+            ts: t0, requested_model: origModel, model: stepModel,
+            scene_name: scene.scene_name, claude_from: stepClaudeFrom,
+            tier: provider.type, via: provider.id, via_label: provider.label,
+            latency_ms: Date.now() - t0, status: 'error', error: lastErr.message,
+          });
+          recordError(stepModel, callerKey, lastErr);
+          return;
+        }
         try {
           const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, stepModel, res);
           pushLog({
@@ -2099,6 +2202,17 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           stepSucceeded = true;
           return;
         } catch (err) {
+          if (handleP2pFatal(provider, err, res, isResponses)) {
+            lastErr = err;
+            pushLog({
+              ts: t0, requested_model: origModel, model: stepModel,
+              scene_name: scene.scene_name, claude_from: stepClaudeFrom,
+              tier: provider.type, via: provider.id, via_label: provider.label,
+              latency_ms: Date.now() - t0, status: 'error', error: lastErr.message,
+            });
+            recordError(stepModel, callerKey, lastErr);
+            return;
+          }
           stepErrors.push({ id: provider.id, err });
           lastErr = err;
           if (res.headersSent) return;
@@ -2108,6 +2222,16 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     }
 
     lastErr = pickBestRouteError(stepErrors) || lastErr;
+    if (isP2pApiKeyError(lastErr)) {
+      recordError(model, callerKey, lastErr);
+      writeP2pApiKeyRequired(res, isResponses);
+      return;
+    }
+    if (isP2pCreditsError(lastErr)) {
+      recordError(model, callerKey, lastErr);
+      writeInsufficientCredits(res, isResponses);
+      return;
+    }
     fail(scene.scene_name, failedModels);
     return;
   }
@@ -2162,6 +2286,16 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
 
   const routeErrors = [];
   for (const provider of sorted) {
+    if (rejectP2pIfUnconfigured(provider, res, isResponses)) {
+      lastErr = p2pAbortError('api_key');
+      pushLog({
+        ts: t0, requested_model: origModel, model, claude_from: claudeFrom,
+        tier: provider.type, via: provider.id, via_label: provider.label,
+        latency_ms: Date.now() - t0, status: 'error', error: lastErr.message,
+      });
+      recordError(model, callerKey, lastErr);
+      return;
+    }
     try {
       const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, model, res);
       // 记录延迟（供 latency 策略下次参考）
@@ -2177,6 +2311,16 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       reportUsage(provider.id, model, directTok);
       return;
     } catch (err) {
+      if (handleP2pFatal(provider, err, res, isResponses)) {
+        lastErr = err;
+        pushLog({
+          ts: t0, requested_model: origModel, model, claude_from: claudeFrom,
+          tier: provider.type, via: provider.id, via_label: provider.label,
+          latency_ms: Date.now() - t0, status: 'error', error: lastErr.message,
+        });
+        recordError(model, callerKey, lastErr);
+        return;
+      }
       routeErrors.push({ id: provider.id, err });
       lastErr = err;
       if (res.headersSent) return;
@@ -2184,6 +2328,16 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   }
 
   lastErr = pickBestRouteError(routeErrors) || lastErr;
+  if (isP2pApiKeyError(lastErr)) {
+    recordError(model, callerKey, lastErr);
+    writeP2pApiKeyRequired(res, isResponses);
+    return;
+  }
+  if (isP2pCreditsError(lastErr)) {
+    recordError(model, callerKey, lastErr);
+    writeInsufficientCredits(res, isResponses);
+    return;
+  }
   fail(null, null);
 }
 
@@ -2323,18 +2477,34 @@ function handleRequest(req, res) {
   //   真实模型（在线 P2P + 各 provider）供其他客户端直接选用。
   //   Claude 发的 claude-* 请求由 keyScene（应用绑定的路由）透明改写成真实模型。
   if (method === 'GET' && (cleanPath === '/v1/models' || cleanPath === '/models')) {
-    const seen = new Set();
     const data = [];
-    const add = (id, owned) => {
-      if (id && !seen.has(id)) { seen.add(id); data.push({ id, object: 'model', created: 0, owned_by: owned || 'tokenbank' }); }
+    const seen = new Set();
+    // 同名模型可分别来自社区(p2p)与个人供给源：以 owned_by + id 去重，不互相覆盖
+    const add = (id, owned, modelType) => {
+      if (!id) return;
+      const ob = owned || 'tokenbank';
+      const key = `${ob}\0${id}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      data.push({
+        id,
+        object: 'model',
+        created: 0,
+        owned_by: ob,
+        ...(modelType && modelType !== 'chat' ? { model_type: modelType } : {}),
+      });
     };
     // Claude 客户端模型名（透明逻辑）
     for (const id of _claudeModels) add(id, 'anthropic');
-    // 真实模型：在线 P2P + 各 provider
     for (const id of _peerModels) add(id, 'p2p');
     try {
       for (const p of enabledProviders()) {
-        for (const m of (p.models || [])) add(typeof m === 'string' ? m : m.name, p.id);
+        if (p.type === 'p2p') continue;
+        for (const m of (p.models || [])) {
+          const id = typeof m === 'string' ? m : m.name;
+          const mtype = providerModelType(id, p);
+          add(id, p.id, mtype);
+        }
       }
     } catch {}
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2604,6 +2774,7 @@ module.exports = {
   setClaudeModels,
   // 条件路由规则引擎（供单测/复用）
   pickSteps, evalWhen, modalityOf, estimateInputTokens, extractText, _providerTier,
+  isP2pProvider, isP2pCreditsError, isP2pApiKeyError, hasP2pRelayKey, resolveFailStatus,
   // 格式转换（供单测/复用）：Anthropic ⇄ OpenAI（含 tool-calling）
   anthropicToOpenai, openaiToAnthropic, oaiRequestToAnthropic, anthropicRespToOai,
   // Gemini 转换（供单测/复用，含 tool-calling）

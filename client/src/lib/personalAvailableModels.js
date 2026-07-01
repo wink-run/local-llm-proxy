@@ -42,51 +42,51 @@ function subInstGatewayId(s) {
   return OAUTH_SUB_SOURCE_TO_PID[s.source_id] || s.plan_provider_id || s.source_id;
 }
 
-/** 与供给源页计费表格 modelNames 一致：网关模型 + 账户模型 + 可选刊例价覆盖 */
+function configuredModelsFromOverrides(pricingPid, pricingOverrides) {
+  const names = [];
+  if (!pricingPid || !pricingOverrides) return names;
+  for (const k of Object.keys(pricingOverrides[pricingPid] || {})) {
+    if (isValidModelName(k)) names.push(k);
+  }
+  return names;
+}
+
+/**
+ * 模型视图：仅展示用户在账户/供给源卡片上显式添加的模型。
+ * 来源 = 账户实例 models + 用户自定义刊例价（provider_pricing_overrides），不含 catalog 全量。
+ */
 export function resolveModelsForModelView(
-  inst, providers, userPayg, userSubscriptions, pricingOverrides, directByAgent, providerPricing = {},
-  { includeCatalogPricing = false } = {},
+  inst, providers, userPayg, userSubscriptions, pricingOverrides, directByAgent,
 ) {
   const fromArr = (arr) => (arr || []).map(modelEntryName).filter(Boolean);
-  const addPricingKeys = (names, pid) => {
-    if (!pid) return;
-    for (const k of Object.keys(pricingOverrides?.[pid] || {})) {
-      if (isValidModelName(k)) names.add(k);
-    }
-    if (includeCatalogPricing) {
-      for (const k of Object.keys(providerPricing?.[pid] || {})) {
-        if (isValidModelName(k)) names.add(k);
-      }
-    }
-  };
-
   const excluded = instanceExcludedSet(inst, userPayg, userSubscriptions);
 
   if (inst.kind === 'payg') {
     const p = userPayg.find(x => x.id === inst.id);
-    const names = new Set(fromArr(p?.models));
-    const prov = providers.find(x => x.id === inst.gateway_id);
-    for (const n of fromArr(prov?.models)) names.add(n);
-    for (const n of fromArr(inst?.models)) names.add(n);
-    addPricingKeys(names, p?.provider_id || inst.source_id);
+    const pricingPid = p?.provider_id || inst.source_id;
+    const names = new Set([
+      ...fromArr(p?.models),
+      ...configuredModelsFromOverrides(pricingPid, pricingOverrides),
+    ]);
     return finalizeModelNames(names, excluded);
   }
   if (inst.kind === 'sub') {
     if (inst.tag === 'app_sub') return [];
-    const prov = providers.find(x => x.id === inst.gateway_id);
-    const names = new Set(fromArr(prov?.models));
-    for (const n of fromArr(inst?.models)) names.add(n);
-    const subRec = userSubscriptions.find(s => s.id === inst.id);
-    const pid = subRec?.plan_provider_id || OAUTH_SUB_SOURCE_TO_PID[inst.source_id] || inst.source_id;
-    addPricingKeys(names, pid);
+    const s = userSubscriptions.find(x => x.id === inst.id);
+    const pricingPid = s?.plan_provider_id
+      || OAUTH_SUB_SOURCE_TO_PID[s?.source_id]
+      || s?.source_id
+      || inst.source_id;
+    const names = new Set([
+      ...fromArr(s?.models),
+      ...configuredModelsFromOverrides(pricingPid, pricingOverrides),
+    ]);
     return finalizeModelNames(names, excluded);
   }
   if (inst.kind === 'direct') {
     const d = directByAgent[inst.id];
     if (!d || d.mode !== 'api') return [];
-    const fromPricing = Object.keys(d.pricing || {}).filter(isValidModelName);
-    if (fromPricing.length) return finalizeModelNames(fromPricing, excluded);
-    return finalizeModelNames(fromArr(d.models), excluded);
+    return finalizeModelNames(new Set(fromArr(d.models)), excluded);
   }
   return [];
 }
@@ -131,8 +131,34 @@ function tierForInstance(inst, providers) {
   if (gwId && provById[gwId]) {
     return provById[gwId].type === 'free' ? 'free' : 'paid';
   }
-  // 直连或未挂 provider 的登记模型，归入付费层
   return 'paid';
+}
+
+/** 账户登记的全部 gateway provider id（含未写 gateway_id 的订阅回退逻辑） */
+export function buildGatewayIdsFromAccounts(accounts = {}) {
+  const ids = new Set(accounts.gateway_provider_ids || []);
+  for (const p of accounts.user_payg_providers || []) {
+    const gid = paygInstGatewayId(p);
+    if (gid) ids.add(gid);
+  }
+  for (const s of accounts.user_subscriptions || []) {
+    const gid = subInstGatewayId(s);
+    if (gid) ids.add(gid);
+  }
+  return ids;
+}
+
+/**
+ * 合并 cfg + accounts 为网关路由用的账户快照（刊例价覆盖以 local-config 为准）
+ */
+export function mergeAccountsForGateway(cfg = {}, accounts = {}) {
+  return {
+    ...(accounts || {}),
+    provider_pricing_overrides: {
+      ...(accounts?.provider_pricing_overrides || {}),
+      ...(cfg?.provider_pricing_overrides || {}),
+    },
+  };
 }
 
 /**
@@ -141,15 +167,18 @@ function tierForInstance(inst, providers) {
  */
 export function collectPersonalAvailableModels(cfg = {}, accounts = {}) {
   const providers = cfg?.providers || [];
-  const pricingOverrides = cfg?.provider_pricing_overrides || {};
-  const providerPricing = cfg?.provider_pricing || {};
+  // 刊例价覆盖存于 local-config（accounts），agent config 可能未同步
+  const pricingOverrides = {
+    ...(accounts?.provider_pricing_overrides || {}),
+    ...(cfg?.provider_pricing_overrides || {}),
+  };
   const { instances, userPayg, userSubs, directBilling } = buildAccountInstances(accounts);
   const out = [];
   const seen = new Set();
 
   for (const inst of instances) {
     const models = resolveModelsForModelView(
-      inst, providers, userPayg, userSubs, pricingOverrides, directBilling, providerPricing,
+      inst, providers, userPayg, userSubs, pricingOverrides, directBilling,
     );
     const tier = tierForInstance(inst, providers);
     for (const id of models) {
@@ -165,16 +194,9 @@ export function collectPersonalAvailableModels(cfg = {}, accounts = {}) {
 
 /** 合并账户模型到 provider（路由校验用；不含刊例价目录，避免下拉出现未配置模型） */
 export function enrichProvidersForRouting(providers = [], accounts = {}) {
-  const pricingOvr = accounts.provider_pricing_overrides || {};
   const userPayg = accounts.user_payg_providers || [];
   const userSubs = accounts.user_subscriptions || [];
-
-  function addOverrideKeys(names, pid) {
-    if (!pid) return;
-    for (const k of Object.keys(pricingOvr[pid] || {})) {
-      if (isValidModelName(k)) names.add(k);
-    }
-  }
+  const pricingOverrides = accounts.provider_pricing_overrides || {};
 
   function extraNames(gatewayId) {
     const names = new Set();
@@ -182,16 +204,16 @@ export function enrichProvidersForRouting(providers = [], accounts = {}) {
     for (const p of userPayg) {
       if (paygInstGatewayId(p) !== gatewayId) continue;
       for (const m of p.models || []) { const n = modelEntryName(m); if (n) names.add(n); }
-      addOverrideKeys(names, p.provider_id);
+      for (const k of configuredModelsFromOverrides(p.provider_id, pricingOverrides)) names.add(k);
     }
     for (const s of userSubs) {
       if (subInstGatewayId(s) !== gatewayId) continue;
       const isApi = s.subscription_kind === 'api' || s.subscription_to_api;
       if (!isApi) continue;
+      for (const m of s.models || []) { const n = modelEntryName(m); if (n) names.add(n); }
       const pid = s.plan_provider_id || OAUTH_SUB_SOURCE_TO_PID[s.source_id] || s.source_id;
-      addOverrideKeys(names, pid);
+      for (const k of configuredModelsFromOverrides(pid, pricingOverrides)) names.add(k);
     }
-    addOverrideKeys(names, gatewayId);
     return names;
   }
 

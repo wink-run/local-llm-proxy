@@ -5,10 +5,17 @@ import os
 import time
 import uuid
 
-from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 import database as db
+from api_errors import (
+    DispatchError,
+    error_message_from_payload,
+    openai_error_content,
+    parse_worker_error,
+    payload_has_openai_error,
+    raise_dispatch_error,
+)
 from caveman import inject_caveman, VALID_LEVELS as CAVEMAN_VALID_LEVELS
 from worker_pool import pool
 
@@ -57,13 +64,14 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
             if rate is not None:
                 break
         if rate is None:
-            raise HTTPException(
+            raise DispatchError(
                 400,
                 f"模型「{model}」未在后台启用或未配置消费率；请在管理端「模型配置」添加与 Worker 上报完全一致的模型名称。",
+                "invalid_request_error",
             )
         user = await db.get_user_by_id(consumer_user_id)
         if not user or user["credits_balance"] <= 0:
-            raise HTTPException(402, "Insufficient credits")
+            raise DispatchError(402, "Insufficient credits", "insufficient_credits")
 
     session_key = _session_key(body, consumer_user_id)
 
@@ -126,11 +134,12 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                                 yield "data: [DONE]\n\n"
                                 return
                             if kind == "error":
-                                yield f'data: {json.dumps({"error": str(data)})}\n\n'
+                                _, msg, etype = parse_worker_error(str(data))
+                                yield f"data: {json.dumps(openai_error_content(msg, etype))}\n\n"
                                 return
                             yield data
                     except asyncio.TimeoutError:
-                        yield 'data: {"error":"gateway timeout"}\n\n'
+                        yield f"data: {json.dumps(openai_error_content('Gateway timeout', 'timeout'))}\n\n"
 
                 return StreamingResponse(
                     sse_gen(),
@@ -150,7 +159,16 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                         got_error = True
                         break
                     if kind == "chunk":
-                        result_data = json.loads(data)
+                        try:
+                            result_data = json.loads(data)
+                        except Exception:
+                            last_error = f"Invalid JSON from worker for '{attempt_model}'"
+                            got_error = True
+                            break
+                        if payload_has_openai_error(result_data):
+                            last_error = error_message_from_payload(result_data)
+                            got_error = True
+                            break
                         break
                     if kind == "done":
                         break
@@ -172,6 +190,6 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                     pool.bind_sticky(session_key, worker.worker_id)
                 return result_data
 
-            raise HTTPException(502, "Empty response from worker")
+            raise DispatchError(502, "Empty response from worker", "api_error")
 
-    raise HTTPException(503, last_error)
+    raise_dispatch_error(last_error)

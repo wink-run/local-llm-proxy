@@ -13,6 +13,7 @@ const os   = require('os');
 const path = require('path');
 const fs   = require('fs');
 const deviceIdentity = require('../shared/device-identity');
+const { ensureDeviceId } = require('../shared/device-id');
 const pkg = require('../package.json');
 
 const gateway  = require('../electron/local-gateway');
@@ -86,6 +87,9 @@ function getToken(adminPort) {
 async function cmdStart(port, adminPort) {
   // 首次启动自动创建 ~/.llm-agent/local-config.json（Docker 挂载目录同理）
   const lc = ensureLocalConfig();
+  try { ensureDeviceId(); } catch (e) {
+    console.warn('[device-id] ensure skipped:', e.message);
+  }
   // Docker 端口映射需监听 0.0.0.0；本机 CLI 默认仍用 127.0.0.1
   const bindHost = process.env.GATEWAY_BIND_HOST
     || (fs.existsSync('/.dockerenv') ? '0.0.0.0' : '127.0.0.1');
