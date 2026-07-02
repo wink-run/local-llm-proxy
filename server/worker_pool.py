@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import random
 import time
 from dataclasses import dataclass, field
@@ -7,6 +8,8 @@ from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from virtual_worker import VirtualWorkerConnection
+
+logger = logging.getLogger("server")
 
 
 @dataclass
@@ -84,6 +87,64 @@ class WorkerConnection:
             "user_id": self.user_id,
         }
 
+    def offline_model(self, model: str) -> bool:
+        """从该贡献节点在线列表移除模型（服务不可用时自动下线）。"""
+        if model not in worker_model_names(self):
+            return False
+        kept = []
+        for m in self.models:
+            name = m if isinstance(m, str) else (m.get("name") if isinstance(m, dict) else str(m))
+            if name != model:
+                kept.append(m)
+        self.models = kept
+        self.model_types.pop(model, None)
+        self.period_stats.pop(model, None)
+        return True
+
+
+def worker_model_names(worker) -> set[str]:
+    """Worker 声明的模型名集合（兼容 str / {name} 混用）。"""
+    out: set[str] = set()
+    for m in getattr(worker, "models", None) or []:
+        if isinstance(m, str):
+            name = m.strip()
+        elif isinstance(m, dict):
+            name = (m.get("name") or "").strip()
+        else:
+            name = str(m).strip()
+        if name:
+            out.add(name)
+    return out
+
+
+def worker_has_model(worker, model: str) -> bool:
+    return model in worker_model_names(worker)
+
+
+async def offline_contributor_model(worker, model: str, reason: str) -> bool:
+    """贡献节点模型服务失败：从调度池下线并通知 Agent 同步本地配置。"""
+    wid = str(getattr(worker, "worker_id", "") or "")
+    if wid.startswith("vw-"):
+        return False
+    if not worker.offline_model(model):
+        return False
+    logger.warning(
+        "[p2p] contributor model offline worker=%s model=%s reason=%s remaining=%s",
+        wid,
+        model,
+        str(reason or "")[:240],
+        sorted(worker_model_names(worker)),
+    )
+    try:
+        await worker.send({
+            "type": "offline_models",
+            "models": [model],
+            "reason": str(reason or "")[:500],
+        })
+    except Exception as e:
+        logger.warning("[p2p] offline_models notify failed worker=%s: %s", wid, e)
+    return True
+
 
 class WorkerPool:
     _STICKY_TTL = 3600   # 粘性会话有效期（秒）
@@ -147,7 +208,7 @@ class WorkerPool:
         If model_type is given, only workers whose declared type matches are considered.
         If None (default), any worker carrying the model is eligible."""
         def _matches(w) -> bool:
-            return model in w.models and (
+            return worker_has_model(w, model) and (
                 model_type is None or w.model_types.get(model, "chat") == model_type
             )
         real = [w for w in self._workers if _matches(w)]
@@ -188,7 +249,7 @@ class WorkerPool:
         circles = user_circle_ids or set()
 
         def _matches(w) -> bool:
-            return model in w.models and (
+            return worker_has_model(w, model) and (
                 model_type is None or w.model_types.get(model, "chat") == model_type
             )
 
