@@ -191,6 +191,46 @@ function removeCodexCatalog(codexHome, fileName = CATALOG_FILE) {
   try { const f = path.join(codexHome, fileName); if (fs.existsSync(f)) fs.unlinkSync(f); } catch {}
 }
 
+// ── 会话 provider 归一（让纳管态/直连态都看到全部会话）──
+// Codex 会话 rollout 首行 session_meta 记了 payload.model_provider，Codex Desktop 按当前
+// config 的 model_provider 过滤会话列表。切换纳管/直连时把所有 rollout 的 model_provider
+// 归一到目标 provider，使当前 provider 组始终包含全部历史会话 → 两态都显示全部。
+function retagRolloutProvider(file, target) {
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return false; }
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i] || !lines[i].trim()) continue;
+    let o;
+    try { o = JSON.parse(lines[i]); } catch { continue; }
+    if (o && o.payload && typeof o.payload === 'object' && 'model_provider' in o.payload) {
+      if (o.payload.model_provider === target) return false;      // 已是目标，跳过
+      o.payload.model_provider = target;
+      lines[i] = JSON.stringify(o);
+      try { fs.writeFileSync(file, lines.join('\n'), 'utf8'); return true; } catch { return false; }
+    }
+  }
+  return false;
+}
+
+/** 把 <codexHome>/sessions 下所有 rollout 的 model_provider 归一到 targetProvider。 */
+function retagSessionsProvider(codexHome, targetProvider) {
+  const root = path.join(codexHome, 'sessions');
+  let changed = 0;
+  let total = 0;
+  const walk = (d) => {
+    let ents;
+    try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/^rollout-.+\.jsonl$/.test(e.name)) { total++; if (retagRolloutProvider(p, targetProvider)) changed++; }
+    }
+  };
+  walk(root);
+  return { changed, total };
+}
+
 // ── auth.json：官方登录态检测 + 清第三方残留 key(保留官方 tokens.*) ──
 function readCodexAuth(codexHome) {
   try { return JSON.parse(fs.readFileSync(path.join(codexHome, 'auth.json'), 'utf8')); } catch { return null; }
@@ -217,6 +257,7 @@ module.exports = {
   revertCodexProvider,
   writeCodexCatalog,
   removeCodexCatalog,
+  retagSessionsProvider,
   codexHasOfficialLogin,
   cleanupThirdPartyAuthKey,
   CATALOG_FILE,
