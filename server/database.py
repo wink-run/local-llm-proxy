@@ -1758,7 +1758,8 @@ async def delete_device(device_id: str, user_id: int) -> None:
 async def sweep_offline_devices() -> int:
     async with connect() as db:
         cur = await db.execute(
-            "UPDATE devices SET online=0 WHERE online=1 AND last_seen < datetime('now', '-2 minutes')"
+            # last_seen 为 TEXT，比较前需显式转为 TIMESTAMPTZ
+            "UPDATE devices SET online=0 WHERE online=1 AND last_seen::TIMESTAMPTZ < datetime('now', '-2 minutes')"
         )
         await db.commit()
         return cur.rowcount

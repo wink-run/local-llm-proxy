@@ -13,7 +13,7 @@ const HEARTBEAT_INTERVAL_MS = 60 * 1000; // 60s（服务端 2 分钟无心跳会
 
 // ── Module state ──────────────────────────────────────────────────────────────
 
-let _config   = null;  // { type, name, platform, version, serverUrl, token, device_id }
+let _config   = null;  // { type, name, platform, version, serverUrl, userJwt, device_id }
 let _timer    = null;
 let _getStats = null;  // () => { calls, errors, providers_active }  (may be async)
 
@@ -73,7 +73,8 @@ function _ensureLocalDeviceId(existing, kind = 'desktop') {
 async function _register() {
   const persisted = _config?.device_id || '';
 
-  if (!_config?.serverUrl || !_config?.token) return persisted;
+  // 心跳/注册须用户登录 JWT，不能用 P2P API Key
+  if (!_config?.serverUrl || !_config?.userJwt) return persisted;
 
   try {
     const res = await _post(
@@ -86,7 +87,7 @@ async function _register() {
         gateway_port : 11430,
         device_id    : persisted,
       },
-      _config.token
+      _config.userJwt
     );
 
     if (res.status >= 200 && res.status < 300) {
@@ -106,7 +107,7 @@ async function _register() {
 
 /** POST to /device/heartbeat — never throws. */
 async function _sendHeartbeat(online = true) {
-  if (!_config?.serverUrl || !_config?.token) return;
+  if (!_config?.serverUrl || !_config?.userJwt) return;
 
   let stats = { calls: 0, errors: 0, providers_active: 0 };
   try {
@@ -134,7 +135,7 @@ async function _sendHeartbeat(online = true) {
         platform : _config.platform || '',
         stats    : { ...statsClean, inventory },
       },
-      _config.token
+      _config.userJwt
     );
   } catch (_) {
     // Heartbeat is best-effort; swallow all errors
@@ -145,7 +146,7 @@ async function _sendHeartbeat(online = true) {
 
 /**
  * Call once on startup.
- * options: { type: 'desktop'|'cli', name, platform, version, serverUrl, token }
+ * options: { type: 'desktop'|'cli', name, platform, version, serverUrl, userJwt }
  * Reads/generates device_id from config.json and persists it back.
  */
 async function init(options) {
@@ -168,11 +169,12 @@ async function init(options) {
     platform  : options.platform || identity.platform,
     version   : options.version  || identity.version,
     serverUrl : options.serverUrl || existing.serverUrl || null,
-    token     : options.token    || existing.token      || null,
+    userJwt   : options.userJwt  || null,
     device_id : localDeviceId,
   };
 
-  // Always call register on startup: confirms the device_id with the server,
+  // 未登录时不向云端注册
+  if (!_config.userJwt) return;
   // re-registers if it was previously a local-only fallback ID, and creates
   // a new ID if we have none. The server reuses the existing ID if it already
   // belongs to this user.
@@ -190,6 +192,7 @@ async function init(options) {
  * getStats: optional async/sync () => { calls, errors, providers_active }
  */
 function start(getStats) {
+  if (!_config?.userJwt) return;
   _getStats = getStats || null;
 
   // Immediate heartbeat (best-effort, don't block)
@@ -210,9 +213,18 @@ function start(getStats) {
  */
 function stop() {
   if (_timer) { clearInterval(_timer); _timer = null; }
-  _sendHeartbeat(false).catch(() => {});
+  if (_config?.userJwt) _sendHeartbeat(false).catch(() => {});
+}
+
+/** 登录/登出时更新 JWT；登出后停止心跳 */
+function setUserJwt(jwt) {
+  if (_config) _config.userJwt = jwt || null;
+  if (!jwt && _timer) {
+    clearInterval(_timer);
+    _timer = null;
+  }
 }
 
 // ── Exports ───────────────────────────────────────────────────────────────────
 
-module.exports = { init, start, stop };
+module.exports = { init, start, stop, setUserJwt };

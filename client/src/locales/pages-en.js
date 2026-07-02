@@ -739,7 +739,7 @@ export default {
   'contribute.forwardUrl': 'Forward URL',
   'contribute.models': 'Models to share',
   'contribute.modelsSelected': '{n}',
-  'contribute.noModelsHint': 'Configure models on Providers first',
+  'contribute.noModelsHint': 'Configure models in Personal Sources or Providers first',
   'contribute.modelTypeImage': 'Img',
   'contribute.modelTypeText': 'Txt',
   'contribute.nodeName': 'Node name',

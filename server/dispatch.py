@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import time
 import uuid
@@ -20,7 +21,22 @@ from api_errors import (
 from caveman import inject_caveman, VALID_LEVELS as CAVEMAN_VALID_LEVELS
 from worker_pool import pool
 
+logger = logging.getLogger("server")
+
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "120"))
+# P2P：首 token 超过该秒数则断开并返回超时错误
+P2P_TTFT_TIMEOUT = int(os.getenv("P2P_TTFT_TIMEOUT", "20"))
+P2P_TTFT_TIMEOUT_MSG = f"First token timeout ({P2P_TTFT_TIMEOUT}s)"
+
+
+def _p2p_worker_summary(w) -> str:
+    """单行 worker 摘要，便于转发日志检索。"""
+    wid = getattr(w, "worker_id", "?")
+    name = getattr(w, "name", "") or "-"
+    uid = getattr(w, "owner_user_id", None)
+    kind = "virtual" if str(wid).startswith("vw-") else "real"
+    active = getattr(w, "active_requests", 0)
+    return f"{wid}({name},{kind},uid={uid},load={active})"
 
 
 def _session_key(body: dict, consumer_user_id: int | None) -> str | None:
@@ -81,6 +97,16 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
     if consumer_user_id is not None:
         user_circles = set(await db.get_user_circle_ids(consumer_user_id))
 
+    logger.info(
+        "[p2p] chat start user=%s model=%s stream=%s route=%s circles=%s own_source=%s",
+        consumer_user_id,
+        model,
+        streaming,
+        models_to_try,
+        sorted(user_circles),
+        owns_personal,
+    )
+
     last_error: str = "No worker available"
     for attempt_model in models_to_try:
         # 该模型下的候选账号（个人源优先 + 粘性 + 负载感知），逐个 failover
@@ -89,7 +115,19 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                                 user_circle_ids=user_circles)
         if not cands:
             last_error = f"No worker available for model '{attempt_model}'"
+            logger.warning(
+                "[p2p] no worker model=%s user=%s circles=%s",
+                attempt_model, consumer_user_id, sorted(user_circles),
+            )
             continue
+
+        logger.info(
+            "[p2p] candidates model=%s user=%s count=%d workers=%s",
+            attempt_model,
+            consumer_user_id,
+            len(cands),
+            [_p2p_worker_summary(w) for w in cands],
+        )
 
         for worker in cands:
             # 由本人个人源服务的请求免扣平台积分（用的是自己的订阅额度）
@@ -116,10 +154,19 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
 
             try:
                 await worker.send({"type": "request", "req_id": req_id, "payload": dispatch_body})
-            except Exception:
+                logger.info(
+                    "[p2p] dispatch req=%s model=%s user=%s stream=%s worker=%s own=%s",
+                    req_id[:8], attempt_model, consumer_user_id, streaming,
+                    _p2p_worker_summary(worker), served_by_own,
+                )
+            except Exception as e:
                 worker.pending.pop(req_id, None)
                 worker.active_requests = max(0, worker.active_requests - 1)
                 last_error = f"Failed to reach worker for '{attempt_model}'"
+                logger.warning(
+                    "[p2p] send failed req=%s model=%s worker=%s err=%s",
+                    req_id[:8], attempt_model, _p2p_worker_summary(worker), e,
+                )
                 continue  # 换下一个账号
 
             if streaming:
@@ -127,12 +174,32 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                 if session_key:
                     pool.bind_sticky(session_key, worker.worker_id)
 
-                async def sse_gen(w=worker, rid=req_id, q=q, m=attempt_model, own=served_by_own, req_body=dispatch_body):
+                dispatched_at = worker.pending[req_id]["dispatch_time"]
+
+                async def sse_gen(w=worker, rid=req_id, q=q, m=attempt_model, own=served_by_own, req_body=dispatch_body, t0=dispatched_at):
+                    awaiting_first = True
                     try:
                         while True:
-                            kind, data = await asyncio.wait_for(q.get(), timeout=REQUEST_TIMEOUT)
+                            timeout = P2P_TTFT_TIMEOUT if awaiting_first else REQUEST_TIMEOUT
+                            try:
+                                kind, data = await asyncio.wait_for(q.get(), timeout=timeout)
+                            except asyncio.TimeoutError:
+                                w.pending.pop(rid, None)
+                                w.active_requests = max(0, w.active_requests - 1)
+                                msg = P2P_TTFT_TIMEOUT_MSG if awaiting_first else "Gateway timeout"
+                                logger.warning(
+                                    "[p2p] stream timeout req=%s model=%s worker=%s ttft=%s",
+                                    rid[:8], m, _p2p_worker_summary(w), awaiting_first,
+                                )
+                                yield f"data: {json.dumps(openai_error_content(msg, 'timeout'))}\n\n"
+                                return
                             if kind == "done":
                                 usage = normalize_usage(data if isinstance(data, dict) else {}, req_body)
+                                logger.info(
+                                    "[p2p] stream done req=%s model=%s worker=%s tokens=%s own=%s",
+                                    rid[:8], m, _p2p_worker_summary(w),
+                                    usage.get("completion_tokens", 0), own,
+                                )
                                 # 客户端 sniff 常拿不到 input；补一帧 usage 再 [DONE]
                                 if (usage.get("completion_tokens") or 0) > 0:
                                     yield usage_sse_chunk(usage, m)
@@ -142,10 +209,28 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                                 return
                             if kind == "error":
                                 _, msg, etype = parse_worker_error(str(data))
+                                logger.warning(
+                                    "[p2p] stream error req=%s model=%s worker=%s type=%s msg=%s",
+                                    rid[:8], m, _p2p_worker_summary(w), etype, msg,
+                                )
                                 yield f"data: {json.dumps(openai_error_content(msg, etype))}\n\n"
                                 return
+                            if kind == "chunk":
+                                if awaiting_first:
+                                    ttft_ms = (time.time() - t0) * 1000
+                                    logger.info(
+                                        "[p2p] stream first_token req=%s model=%s worker=%s ttft_ms=%.0f",
+                                        rid[:8], m, _p2p_worker_summary(w), ttft_ms,
+                                    )
+                                awaiting_first = False
                             yield data
                     except asyncio.TimeoutError:
+                        w.pending.pop(rid, None)
+                        w.active_requests = max(0, w.active_requests - 1)
+                        logger.warning(
+                            "[p2p] stream timeout req=%s model=%s worker=%s",
+                            rid[:8], m, _p2p_worker_summary(w),
+                        )
                         yield f"data: {json.dumps(openai_error_content('Gateway timeout', 'timeout'))}\n\n"
 
                 return StreamingResponse(
@@ -157,15 +242,44 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
             # 非流式：等待结果；账号出错/超时则换下一个账号
             result_data = None
             got_error = False
+            awaiting_first = True
+            dispatched_at = worker.pending[req_id]["dispatch_time"]
             try:
                 while True:
-                    kind, data = await asyncio.wait_for(q.get(), timeout=REQUEST_TIMEOUT)
+                    timeout = P2P_TTFT_TIMEOUT if awaiting_first else REQUEST_TIMEOUT
+                    try:
+                        kind, data = await asyncio.wait_for(q.get(), timeout=timeout)
+                    except asyncio.TimeoutError:
+                        worker.pending.pop(req_id, None)
+                        worker.active_requests = max(0, worker.active_requests - 1)
+                        last_error = (
+                            P2P_TTFT_TIMEOUT_MSG if awaiting_first
+                            else f"Timeout on '{attempt_model}'"
+                        )
+                        logger.warning(
+                            "[p2p] sync timeout req=%s model=%s worker=%s ttft=%s err=%s",
+                            req_id[:8], attempt_model, _p2p_worker_summary(worker),
+                            awaiting_first, last_error,
+                        )
+                        got_error = True
+                        break
                     if kind == "error":
                         worker.pending.pop(req_id, None)
                         last_error = str(data)
+                        logger.warning(
+                            "[p2p] sync error req=%s model=%s worker=%s err=%s",
+                            req_id[:8], attempt_model, _p2p_worker_summary(worker), last_error,
+                        )
                         got_error = True
                         break
                     if kind == "chunk":
+                        if awaiting_first:
+                            ttft_ms = (time.time() - dispatched_at) * 1000
+                            logger.info(
+                                "[p2p] sync first_token req=%s model=%s worker=%s ttft_ms=%.0f",
+                                req_id[:8], attempt_model, _p2p_worker_summary(worker), ttft_ms,
+                            )
+                        awaiting_first = False
                         try:
                             result_data = json.loads(data)
                         except Exception:
@@ -178,6 +292,7 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                             break
                         break
                     if kind == "done":
+                        awaiting_first = False
                         break
             except asyncio.TimeoutError:
                 worker.pending.pop(req_id, None)
@@ -188,11 +303,16 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                 continue  # 换下一个账号
 
             if result_data is not None:
+                usage = normalize_usage(result_data.get("usage") or {}, dispatch_body)
+                logger.info(
+                    "[p2p] sync done req=%s model=%s worker=%s tokens=%s own=%s",
+                    req_id[:8], attempt_model, _p2p_worker_summary(worker),
+                    usage.get("completion_tokens", 0), served_by_own,
+                )
                 # 非流式扣费集中在此（流式在 sse_gen 内）；本人个人源服务则豁免
                 if consumer_user_id and not served_by_own:
                     await db.consume_credits_for_usage(
-                        consumer_user_id, attempt_model,
-                        normalize_usage(result_data.get("usage") or {}, dispatch_body),
+                        consumer_user_id, attempt_model, usage,
                     )
                 if session_key:
                     pool.bind_sticky(session_key, worker.worker_id)
@@ -200,4 +320,8 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
 
             raise DispatchError(502, "Empty response from worker", "api_error")
 
+    logger.warning(
+        "[p2p] chat failed user=%s model=%s route=%s err=%s",
+        consumer_user_id, model, models_to_try, last_error,
+    )
     raise_dispatch_error(last_error)

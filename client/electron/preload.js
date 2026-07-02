@@ -115,6 +115,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     testProvider:    (p) => ipcRenderer.invoke('gateway:testProvider', p),
     restart:         () => ipcRenderer.invoke('gateway:restart'),
     refreshPeerModels: () => ipcRenderer.invoke('gateway:refreshPeerModels'),
+    setUserAuth:       (jwt) => ipcRenderer.invoke('gateway:setUserAuth', jwt),
   },
   localStats: {
     query: (days) => ipcRenderer.invoke('localStats:query', days),

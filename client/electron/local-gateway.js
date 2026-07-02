@@ -98,6 +98,8 @@ let _peerModels   = new Set();
 // Backend config: p2p providers forward here by default
 let _backendUrl   = null;
 let _cloudToken   = null;
+// 登录 JWT（用量上报 /device/* 须用户登录，不能用 P2P API Key）
+let _userJwt      = null;
 
 // Stats recorder callback — set by main process via setStatsRecorder()
 let _statsRecorder = null;
@@ -592,6 +594,53 @@ function readProxyError(proxyRes, reject) {
   });
 }
 
+/** 从 OpenAI 兼容 JSON（含 SSE data 行）提取 error */
+function extractOpenaiPayloadError(obj) {
+  if (!obj || typeof obj !== 'object' || !obj.error) return null;
+  const err = obj.error;
+  if (typeof err === 'string') return { message: err, type: 'api_error' };
+  const message = err.message || err.detail || JSON.stringify(err).slice(0, 500);
+  const type = err.type || err.code || 'api_error';
+  return { message: String(message), type: String(type) };
+}
+
+/** OpenAI error.type → HTTP 状态码（与 server/api_errors.parse_worker_error 对齐） */
+function openaiErrorTypeToStatus(type) {
+  const t = String(type || '').toLowerCase();
+  if (t === 'rate_limit_exceeded' || t === 'rate_limit_error') return 429;
+  if (t === 'insufficient_credits') return 402;
+  if (t === 'authentication_error') return 401;
+  if (t === 'timeout' || t === 'timeout_error') return 504;
+  if (t === 'service_unavailable') return 503;
+  if (t === 'invalid_request_error') return 400;
+  return 502;
+}
+
+function toAnthropicErrorType(openaiType) {
+  const t = String(openaiType || '').toLowerCase();
+  if (t === 'rate_limit_exceeded') return 'rate_limit_error';
+  if (t === 'insufficient_credits') return 'billing_error';
+  if (t === 'timeout') return 'timeout_error';
+  return t === 'authentication_error' ? 'authentication_error' : 'api_error';
+}
+
+/** Anthropic /v1/messages 错误体 */
+function writeAnthropicApiError(res, status, message, openaiType) {
+  if (res.headersSent) return;
+  res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+  res.end(JSON.stringify({
+    type: 'error',
+    error: { type: toAnthropicErrorType(openaiType), message },
+  }));
+}
+
+function rejectOpenaiPayloadError(reject, errObj, res, { anthropic = false } = {}) {
+  const status = openaiErrorTypeToStatus(errObj.type);
+  const msg = errObj.message;
+  if (anthropic && res && !res.headersSent) writeAnthropicApiError(res, status, msg, errObj.type);
+  reject(Object.assign(new Error(`HTTP_${status}: ${msg}`), { status }));
+}
+
 /** 路由失败时优先展示付费/本地源错误，避免 P2P 401 掩盖上游真实原因 */
 function pickBestRouteError(errors) {
   if (!errors?.length) return null;
@@ -604,6 +653,53 @@ function isP2pProvider(provider) {
   return provider?.type === 'p2p' || provider?.id === 'tokenbank-p2p';
 }
 
+/** P2P 首 token 超时（毫秒） */
+const P2P_TTFT_MS = 20_000;
+
+function p2pTtftError() {
+  return Object.assign(new Error('P2P first token timeout (20s)'), { status: 504, code: 'timeout' });
+}
+
+/**
+ * P2P 请求首 token 守卫：超过 20s 未收到首 token 则断开连接。
+ * onFirstToken() 在收到首个有效输出时调用；dispose() 在请求正常结束时调用。
+ */
+function createP2pTtftGuard(provider, { proxyReq, res, isStream, reject }) {
+  if (!isP2pProvider(provider)) {
+    return { setProxyRes() {}, onFirstToken() {}, dispose() {} };
+  }
+  let proxyRes = null;
+  let fired = false;
+  let gotFirst = false;
+  const errJson = JSON.stringify({ error: { message: 'P2P first token timeout (20s)', type: 'timeout' } });
+
+  const fire = () => {
+    if (fired || gotFirst) return;
+    fired = true;
+    try { proxyReq.destroy(); } catch {}
+    try { proxyRes?.destroy?.(); } catch {}
+    if (!res.headersSent) {
+      res.writeHead(504, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(errJson);
+    } else if (!res.writableEnded) {
+      if (isStream) res.write(`data: ${errJson}\n\n`);
+      res.end();
+    }
+    reject(p2pTtftError());
+  };
+
+  const timer = setTimeout(fire, P2P_TTFT_MS);
+  return {
+    setProxyRes(pr) { proxyRes = pr; },
+    onFirstToken() {
+      if (gotFirst) return;
+      gotFirst = true;
+      clearTimeout(timer);
+    },
+    dispose() { clearTimeout(timer); },
+  };
+}
+
 /** 云端 P2P 积分不足（402 / Insufficient credits） */
 function isP2pCreditsError(err) {
   if (!err) return false;
@@ -612,10 +708,10 @@ function isP2pCreditsError(err) {
   return msg.includes('insufficient credits') || msg.includes('http_402');
 }
 
-/** 客户端错误优先透传 4xx，其余维持 502 */
+/** 客户端错误优先透传 4xx/5xx，其余维持 502 */
 function resolveFailStatus(err) {
   const s = err?.status;
-  return (typeof s === 'number' && s >= 400 && s < 500) ? s : 502;
+  return (typeof s === 'number' && s >= 400 && s < 600) ? s : 502;
 }
 
 /** P2P 积分不足：直接 402 拒绝，不再尝试其他 provider */
@@ -738,9 +834,12 @@ function proxyRequest(provider, reqPath, body, res) {
     const t0 = Date.now();
     let firstTokenMs = null;
     const isStream = !!body.stream;
+    let ttftGuard = null;
 
     const proxyReq = mod.request(opts, (proxyRes) => {
+      ttftGuard?.setProxyRes(proxyRes);
       if (proxyRes.statusCode >= 400) {
+        ttftGuard?.dispose();
         return readProxyError(proxyRes, reject);
       }
       if (res.headersSent) {
@@ -769,7 +868,10 @@ function proxyRequest(provider, reqPath, body, res) {
             if (!line.startsWith('data: ')) continue;
             const ds = line.slice(6).trim();
             if (!ds || ds === '[DONE]') continue;
-            if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
+            if (firstTokenMs === null) {
+              firstTokenMs = Date.now() - t0;
+              ttftGuard?.onFirstToken();
+            }
             try {
               const obj = JSON.parse(ds);
               // 上游响应 id：OpenAI chunk 顶层 id；Anthropic message_start 在 message.id
@@ -789,16 +891,26 @@ function proxyRequest(provider, reqPath, body, res) {
             } catch {}
           }
         });
-        const done = () => ({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0,
+        const done = () => {
+          ttftGuard?.dispose();
+          return { provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0,
           input_tokens: usageIn, output_tokens: usageOut, cache_create_tokens: cacheCreate, cache_read_tokens: cacheRead,
-          message_id: msgId, status_code: status });
+          message_id: msgId, status_code: status };
+        };
         proxyRes.on('end',   () => { res.end();        resolve(done()); });
-        proxyRes.on('error', (err) => { res.destroy(err); resolve(done()); });
+        proxyRes.on('error', (err) => { ttftGuard?.dispose(); res.destroy(err); resolve(done()); });
       } else {
         // Non-streaming: buffer, forward, then parse usage + id from JSON
         const chunks = [];
-        proxyRes.on('data', c => chunks.push(c));
+        proxyRes.on('data', c => {
+          if (firstTokenMs === null) {
+            firstTokenMs = Date.now() - t0;
+            ttftGuard?.onFirstToken();
+          }
+          chunks.push(c);
+        });
         proxyRes.on('end', () => {
+          ttftGuard?.dispose();
           const buf = Buffer.concat(chunks);
           res.end(buf);
           let usageIn = 0, usageOut = 0, cacheCreate = 0, cacheRead = 0, msgId = null;
@@ -815,12 +927,13 @@ function proxyRequest(provider, reqPath, body, res) {
             input_tokens: usageIn, output_tokens: usageOut, cache_create_tokens: cacheCreate, cache_read_tokens: cacheRead,
             message_id: msgId, status_code: status });
         });
-        proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: Date.now() - t0, input_tokens: 0, output_tokens: 0, status_code: status }); });
+        proxyRes.on('error', (err) => { ttftGuard?.dispose(); res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: Date.now() - t0, input_tokens: 0, output_tokens: 0, status_code: status }); });
       }
     });
 
-    proxyReq.on('error',   reject);
-    proxyReq.on('timeout', () => { proxyReq.destroy(); reject(new Error('timeout')); });
+    ttftGuard = createP2pTtftGuard(provider, { proxyReq, res, isStream, reject });
+    proxyReq.on('error',   (err) => { ttftGuard?.dispose(); reject(err); });
+    proxyReq.on('timeout', () => { ttftGuard?.dispose(); proxyReq.destroy(); reject(new Error('timeout')); });
     proxyReq.write(bodyStr);
     proxyReq.end();
   });
@@ -865,6 +978,8 @@ function proxyConvertSync(provider, oaiBody, model, res) {
       proxyRes.on('end', () => {
         try {
           const oaiResp = JSON.parse(Buffer.concat(chunks).toString());
+          const oaiErr = extractOpenaiPayloadError(oaiResp);
+          if (oaiErr) return rejectOpenaiPayloadError(reject, oaiErr, res, { anthropic: true });
           const resp    = JSON.stringify(openaiToAnthropic(oaiResp, model));
           res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
           res.end(resp);
@@ -905,28 +1020,44 @@ function proxyConvertStream(provider, oaiBody, model, res) {
     else if (provider.token) headers['Authorization'] = `Bearer ${provider.token}`;
 
     const t0       = Date.now();
+    let ttftGuard  = null;
     const proxyReq = mod.request({
       hostname: u.hostname,
       port: u.port || (u.protocol === 'https:' ? 443 : 80),
       path: u.pathname + (u.search || ''),
       method: 'POST', headers, timeout: 120_000,
     }, (proxyRes) => {
+      ttftGuard?.setProxyRes(proxyRes);
       if (proxyRes.statusCode >= 400) {
+        ttftGuard?.dispose();
         return readProxyError(proxyRes, reject);
       }
       if (res.headersSent) { proxyRes.resume(); return reject(new Error('headers_already_sent')); }
 
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache',
-        'X-Accel-Buffering': 'no', 'Access-Control-Allow-Origin': '*',
-      });
-
       const msgId = 'msg_' + Math.random().toString(36).slice(2, 26);
-      res.write(`event: message_start\ndata: ${JSON.stringify({ type: 'message_start', message: {
-        id: msgId, type: 'message', role: 'assistant', content: [], model,
-        stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 },
-      }})}\n\n`);
-      res.write('event: ping\ndata: {"type":"ping"}\n\n');
+      let streamStarted = false;
+      let settled = false;
+
+      const settleStreamError = (oaiErr) => {
+        if (settled) return;
+        settled = true;
+        ttftGuard?.dispose();
+        rejectOpenaiPayloadError(reject, oaiErr, res, { anthropic: true });
+      };
+
+      const ensureStreamStarted = () => {
+        if (streamStarted || settled) return;
+        streamStarted = true;
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache',
+          'X-Accel-Buffering': 'no', 'Access-Control-Allow-Origin': '*',
+        });
+        res.write(`event: message_start\ndata: ${JSON.stringify({ type: 'message_start', message: {
+          id: msgId, type: 'message', role: 'assistant', content: [], model,
+          stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 },
+        }})}\n\n`);
+        res.write('event: ping\ndata: {"type":"ping"}\n\n');
+      };
 
       let buf = '', outputTokens = 0, stopReason = 'end_turn', firstTokenMs = null;
       let usageIn = 0, usageOut = 0; // from actual usage field in SSE, if present
@@ -972,13 +1103,23 @@ function proxyConvertStream(provider, oaiBody, model, res) {
           if (ds === '[DONE]') continue;
           try {
             const c      = JSON.parse(ds);
+            const oaiErr = extractOpenaiPayloadError(c);
+            if (oaiErr) {
+              try { proxyRes.destroy(); } catch {}
+              settleStreamError(oaiErr);
+              return;
+            }
             const choice = (c.choices || [{}])[0];
             const delta  = choice.delta || {};
             // kimi 等模型经火山 v3 转发时文本可能在 reasoning_content
             const text   = delta.content || delta.reasoning_content || '';
             const finish = choice.finish_reason;
             if (text) {
-              if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
+              ensureStreamStarted();
+              if (firstTokenMs === null) {
+                firstTokenMs = Date.now() - t0;
+                ttftGuard?.onFirstToken();
+              }
               outputTokens++;
               if (!cur || cur.kind !== 'text') openText();
               res.write(`event: content_block_delta\ndata: ${JSON.stringify({
@@ -990,7 +1131,11 @@ function proxyConvertStream(provider, oaiBody, model, res) {
             if (Array.isArray(delta.tool_calls)) {
               for (const tc of delta.tool_calls) {
                 hadToolCall = true;
-                if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
+                ensureStreamStarted();
+                if (firstTokenMs === null) {
+                  firstTokenMs = Date.now() - t0;
+                  ttftGuard?.onFirstToken();
+                }
                 const oaiIndex = (tc.index != null) ? tc.index : 0;
                 if (!cur || cur.kind !== 'tool' || cur.oaiIndex !== oaiIndex) {
                   openTool(oaiIndex, tc.id, tc.function?.name);
@@ -1019,6 +1164,12 @@ function proxyConvertStream(provider, oaiBody, model, res) {
       });
 
       proxyRes.on('end', () => {
+        ttftGuard?.dispose();
+        if (settled) return;
+        if (!streamStarted) {
+          settleStreamError({ message: 'Empty response from upstream', type: 'api_error' });
+          return;
+        }
         // Prefer actual usage from provider; fall back to manual output token count
         const finalOut = usageOut || outputTokens;
         if (hadToolCall && stopReason === 'end_turn') stopReason = 'tool_use';
@@ -1032,10 +1183,11 @@ function proxyConvertStream(provider, oaiBody, model, res) {
         resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: finalOut, message_id: msgId, status_code: proxyRes.statusCode });
       });
 
-      proxyRes.on('error', (err) => { res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut || outputTokens, message_id: msgId, status_code: proxyRes.statusCode }); });
+      proxyRes.on('error', (err) => { ttftGuard?.dispose(); res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut || outputTokens, message_id: msgId, status_code: proxyRes.statusCode }); });
     });
-    proxyReq.on('error', reject);
-    proxyReq.on('timeout', () => { proxyReq.destroy(); reject(new Error('timeout')); });
+    ttftGuard = createP2pTtftGuard(provider, { proxyReq, res, isStream: true, reject });
+    proxyReq.on('error', (err) => { ttftGuard?.dispose(); reject(err); });
+    proxyReq.on('timeout', () => { ttftGuard?.dispose(); proxyReq.destroy(); reject(new Error('timeout')); });
     proxyReq.write(bodyStr);
     proxyReq.end();
   });
@@ -1578,18 +1730,48 @@ function proxyP2PSync(provider, oaiBody, model, res) {
     else if (provider.token) headers['Authorization'] = `Bearer ${provider.token}`;
 
     const t0 = Date.now();
+    let ttftGuard = null;
     const proxyReq = mod.request({
       hostname: u.hostname,
       port: u.port || (u.protocol === 'https:' ? 443 : 80),
       path: u.pathname + (u.search || ''),
       method: 'POST', headers, timeout: 120_000,
     }, (proxyRes) => {
+      ttftGuard?.setProxyRes(proxyRes);
       if (proxyRes.statusCode >= 400) {
-        return readProxyError(proxyRes, reject);
+        ttftGuard?.dispose();
+        const errChunks = [];
+        proxyRes.on('data', c => errChunks.push(c));
+        proxyRes.on('end', () => {
+          const body = Buffer.concat(errChunks).toString();
+          let errObj = extractOpenaiPayloadError((() => { try { return JSON.parse(body); } catch { return null; } })());
+          if (!errObj) {
+            errObj = {
+              message: formatHttpError(proxyRes.statusCode, body).replace(/^HTTP_\d+\s*:?\s*/, ''),
+              type: proxyRes.statusCode === 429 ? 'rate_limit_exceeded' : 'api_error',
+            };
+          }
+          rejectOpenaiPayloadError(reject, errObj, res, { anthropic: true });
+        });
+        proxyRes.on('error', () => {
+          rejectOpenaiPayloadError(reject, { message: `HTTP_${proxyRes.statusCode}`, type: 'api_error' }, res, { anthropic: true });
+        });
+        return;
       }
       let buf = '', fullText = '', inputTokens = 0, outputTokens = 0, stopReason = 'end_turn', firstTokenMs = null, msgId = null;
+      let settled = false;
+      let streamError = null;
+
+      const settleP2pError = (oaiErr) => {
+        if (settled) return;
+        settled = true;
+        streamError = oaiErr;
+        ttftGuard?.dispose();
+        rejectOpenaiPayloadError(reject, oaiErr, res, { anthropic: true });
+      };
+
       proxyRes.on('data', (chunk) => {
-        if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
+        if (settled) return;
         buf += chunk.toString();
         const lines = buf.split('\n');
         buf = lines.pop();
@@ -1599,10 +1781,22 @@ function proxyP2PSync(provider, oaiBody, model, res) {
           if (ds === '[DONE]') continue;
           try {
             const c      = JSON.parse(ds);
+            const oaiErr = extractOpenaiPayloadError(c);
+            if (oaiErr) {
+              try { proxyRes.destroy(); } catch {}
+              settleP2pError(oaiErr);
+              return;
+            }
             if (!msgId) msgId = c.id || null;
             const choice = (c.choices || [{}])[0];
             const text   = (choice.delta || {}).content || '';
-            if (text) fullText += text;
+            if (text) {
+              if (firstTokenMs === null) {
+                firstTokenMs = Date.now() - t0;
+                ttftGuard?.onFirstToken();
+              }
+              fullText += text;
+            }
             const finish = choice.finish_reason;
             if (finish) stopReason = finish === 'stop' ? 'end_turn' : finish;
             if (c.usage) {
@@ -1613,6 +1807,12 @@ function proxyP2PSync(provider, oaiBody, model, res) {
         }
       });
       proxyRes.on('end', () => {
+        ttftGuard?.dispose();
+        if (settled) return;
+        if (!fullText) {
+          settleP2pError(streamError || { message: 'Empty response from upstream', type: 'api_error' });
+          return;
+        }
         try {
           const resp = JSON.stringify({
             id: 'msg_' + Math.random().toString(36).slice(2, 26),
@@ -1628,10 +1828,11 @@ function proxyP2PSync(provider, oaiBody, model, res) {
           resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: inputTokens, output_tokens: outputTokens, message_id: msgId, status_code: proxyRes.statusCode });
         } catch (err) { reject(err); }
       });
-      proxyRes.on('error', reject);
+      proxyRes.on('error', (err) => { ttftGuard?.dispose(); reject(err); });
     });
-    proxyReq.on('error', reject);
-    proxyReq.on('timeout', () => { proxyReq.destroy(); reject(new Error('timeout')); });
+    ttftGuard = createP2pTtftGuard(provider, { proxyReq, res, isStream: true, reject });
+    proxyReq.on('error', (err) => { ttftGuard?.dispose(); reject(err); });
+    proxyReq.on('timeout', () => { ttftGuard?.dispose(); proxyReq.destroy(); reject(new Error('timeout')); });
     proxyReq.write(bodyStr);
     proxyReq.end();
   });
@@ -2133,12 +2334,11 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     }
   }
 
-  // ── Scene route：应用绑定路由（keyScene）/ llm-router-* ──
-  // Claude Desktop 多模型：keyScene[claude-*] 按 inferenceModels.name 改写；
-  // 单模型/旧配置仍可用 keyScene[api_key]。
+  // ── Scene route：Claude 透明名 keyScene / llm-router-* ──
+  // api_key 只绑定应用（统计归因），不改写 model；模型以请求体为准。
+  // Claude Desktop：keyScene[claude-*] 按 inferenceModels.name 透明改写到绑定的 route。
   const boundScene =
     (_claudeModels.includes(origModel) && _keyScene[origModel]) ||
-    (callerKey && _keyScene[callerKey]) ||
     null;
   const isLlmRouter = origModel.startsWith('llm-router-');
   const interceptScene = !boundScene ? _routerModelMap[origModel] : null;
@@ -2446,8 +2646,9 @@ function _providerTier(provider) {
 
 // Fire-and-forget: report a completed non-P2P call to the backend so it appears
 // in dashboard stats. P2P calls are already recorded server-side.
+// 须用户登录 JWT；未登录或仅有 P2P API Key 时不请求。
 function reportUsage(providerId, model, totalTokens) {
-  if (!_backendUrl || !_cloudToken) return;
+  if (!_backendUrl || !_userJwt) return;
   const tier = _providerTier(providerId);
   if (tier === 'p2p') return; // already recorded by backend
   const body = JSON.stringify({ model, tokens: totalTokens, tier, provider_id: providerId });
@@ -2460,7 +2661,7 @@ function reportUsage(providerId, model, totalTokens) {
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),
-        'Authorization': `Bearer ${_cloudToken}`,
+        'Authorization': `Bearer ${_userJwt}`,
       },
       timeout: 10_000,
     }, res => { res.resume(); }); // drain response
@@ -2733,12 +2934,12 @@ function getLog() {
   return [...log].reverse(); // newest first
 }
 
-// api-key 应用的 route_id → 路由覆盖：callerKey → { steps, scene_name }
+// claude-* 透明名 → route 步骤（Claude Desktop inferenceModels.name）；api_key 不在此映射
 let _keyScene = {};
 function setKeySceneMap(map) { _keyScene = map && typeof map === 'object' ? map : {}; }
 
 // Claude 客户端模型名（内部透明逻辑）：仅用于 /v1/models 暴露给 Claude + 标记 Claude 请求。
-// 真实使用的模型来自「应用绑定的 route_id」（keyScene 透明改写），这里不做映射。
+// 真实模型由 claude-* → keyScene 透明改写；其余请求以请求体 model 为准。
 let _claudeModels = [];
 function setClaudeModels(list) { _claudeModels = Array.isArray(list) ? list.filter(x => typeof x === 'string') : []; }
 
@@ -2781,6 +2982,12 @@ function setBackendConfig({ url, token } = {}) {
   console.log(`[gateway] backend config: url=${_backendUrl} token=${_cloudToken ? '***' : 'none'}`);
 }
 
+/** 同步用户登录 JWT（登出时传 null，停止云端用量上报） */
+function setUserAuth(jwt) {
+  _userJwt = jwt || null;
+  console.log(`[gateway] user auth: ${_userJwt ? 'logged in' : 'logged out'}`);
+}
+
 function setStatsRecorder(fn) {
   _statsRecorder = typeof fn === 'function' ? fn : null;
 }
@@ -2796,7 +3003,7 @@ function setLocalConfigReader(fn) {
 
 module.exports = {
   start, stop, restart, setStrategy, getStatus, getLog,
-  setKeySceneMap, setRouterModelMap, setPeerModels, setBackendConfig,
+  setKeySceneMap, setRouterModelMap, setPeerModels, setBackendConfig, setUserAuth,
   setStatsRecorder, setLocalStats, setLocalConfigReader, setAppControls,
   setClaudeModels,
   // 条件路由规则引擎（供单测/复用）
