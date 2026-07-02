@@ -191,7 +191,7 @@ function getAdapter(provider) {
 }
 
 // ── Public handler ────────────────────────────────────────────────────────────
-async function handleImageGeneration(body, res, getProviders) {
+async function handleImageGeneration(body, res, getProviders, { skipP2P = false } = {}) {
   if (!body.prompt) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Missing required field: prompt' }));
@@ -208,6 +208,7 @@ async function handleImageGeneration(body, res, getProviders) {
   }
 
   let providers = getProviders();
+  if (skipP2P) providers = providers.filter(p => p.type !== 'p2p');
   if (requestTier) providers = providers.filter(p => p.type === requestTier);
 
   const resolved  = resolveProvider(modelStr, providers);

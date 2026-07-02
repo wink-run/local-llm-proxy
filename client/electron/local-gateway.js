@@ -2391,7 +2391,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       const stepModel     = step.model;
       const stepClaudeFrom = claudeFrom;
       // Match providers by model list；step.tier 指定时只走对应供给层（同模型跨 P2P/付费）
-      let stepCandidates = all.filter(p => providerHasModel(p, stepModel));
+      let stepCandidates = all.filter(p => providerHasModel(p, stepModel, { strict: skipP2P }));
       if (step.tier) stepCandidates = stepCandidates.filter(p => p.type === step.tier);
       const stepProviders = [
         ...stepCandidates.filter(p => Array.isArray(p.models) && p.models.length > 0),
@@ -2475,7 +2475,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       // 策略组有明确 provider 列表：按策略顺序排，不在策略组里的 enabled providers 追加兜底
       const inPolicy = providerIds
         .map(id => allEnabled.find(p => p.id === id))
-        .filter(Boolean);
+        .filter(Boolean)
+        .filter(p => providerHasModel(p, model, modelMatch));
       const others   = allEnabled.filter(p => !providerIds.includes(p.id) && providerHasModel(p, model, modelMatch));
       sorted = [...inPolicy, ...others];
       pushLog({ ts: t0, requested_model: model, model, policy: policyRef,
@@ -2500,6 +2501,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
 
   // 请求体指定 tier 时只走对应供给层（同模型跨 P2P/付费/免费）
   if (requestTier) sorted = sorted.filter(p => p.type === requestTier);
+  // P2P hop：再次确保不会选到未声明该模型的供给源（防止策略组/inPolicy 漏网）
+  if (skipP2P) sorted = sorted.filter(p => providerHasModel(p, model, modelMatch));
 
   debugLog(`直接模型路由候选 providers`, {
     requested_model: origModel,
@@ -2688,7 +2691,7 @@ function handleRequest(req, res) {
   // CORS preflight
   res.setHeader('Access-Control-Allow-Origin',  '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, x-api-key, anthropic-version');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, x-api-key, anthropic-version, x-p2p-hop');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
   const { method, url } = req;
@@ -2808,10 +2811,11 @@ function handleRequest(req, res) {
 
   // Image generation
   if (method === 'POST' && (cleanPath === '/v1/images/generations' || cleanPath === '/v1/images/generate')) {
+    const skipP2P = !!req.headers['x-p2p-hop'];
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
-      try { handleImageGeneration(JSON.parse(body), res, enabledProviders); }
+      try { handleImageGeneration(JSON.parse(body), res, enabledProviders, { skipP2P }); }
       catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); }
     });
     return;

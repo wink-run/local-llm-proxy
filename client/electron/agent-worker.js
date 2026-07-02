@@ -403,6 +403,7 @@ function forwardImageRequest(reqId, payload, cfg) {
   const headers = {
     'Content-Type': 'application/json',
     'Content-Length': Buffer.byteLength(body),
+    'X-P2P-Hop': '1',  // 贡献节点转发：禁止本地网关再回 P2P
   };
   if (cfg.llm_token) headers['Authorization'] = `Bearer ${cfg.llm_token}`;
 
@@ -586,8 +587,9 @@ function connect(cfg) {
       log(`[agent] → req_id=${req_id} model=${payload.model} stream=${!!payload.stream}`);
       activeRequests++;
       try {
-        assertModelContributed(cfg, payload.model);
-        await forwardRequest(req_id, payload, resolveModelCfg(cfg, payload.model));
+        const liveCfg = loadConfig() || cfg;
+        assertModelContributed(liveCfg, payload.model);
+        await forwardRequest(req_id, payload, resolveModelCfg(liveCfg, payload.model));
       } catch (e) {
         log(`[agent] error req_id=${req_id}: ${e.message}`);
         send({ type: 'error', req_id, error: e.message });
@@ -601,8 +603,9 @@ function connect(cfg) {
       log(`[agent] image → req_id=${req_id} model=${payload.model}`);
       activeRequests++;
       try {
-        assertModelContributed(cfg, payload.model);
-        await forwardImageRequest(req_id, payload, resolveModelCfg(cfg, payload.model));
+        const liveCfg = loadConfig() || cfg;
+        assertModelContributed(liveCfg, payload.model);
+        await forwardImageRequest(req_id, payload, resolveModelCfg(liveCfg, payload.model));
       } catch (e) {
         log(`[agent] image error req_id=${req_id}: ${e.message}`);
         send({ type: 'error', req_id, error: e.message });
