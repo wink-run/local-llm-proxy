@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { loadGatewayAvailableModels, resolveLocalGatewayHost, inferModelTypeFromName } from '../api/gatewayModels';
+import { loadGatewayAvailableModels, resolveLocalGatewayBase, inferModelTypeFromName } from '../api/gatewayModels';
 import { getSyncServerBase } from '../config';
 import { getGateway, getLocalConfig, getConfig, getApps, getOauth } from '../api/adapter';
 import { listAgents, applyAgent, revertAgent } from '../api/agents';
@@ -587,7 +587,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   }, [isClaudeDesktop]);
 
   // 网关 origin（去掉 /v1），用于解析环境变量模板里的 {BASE}
-  const gwOrigin = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/v1\/?$/, '');
+  const gwOrigin = (localBase || resolveLocalGatewayBase()).replace(/\/v1\/?$/, '');
   // 只对字符串做占位符替换；对象/数组递归（WorkBuddy models.json 等嵌套 patch）
   const resolveEnv = (tpl) => {
     if (typeof tpl === 'string') {
@@ -822,7 +822,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   const accessSection = isKeyApp(app.link_method) && app.api_key && !app.env && !app.config_file && (
     <div>
       <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.accessConfig')}</div>
-      <KeyConfigPanel apiKey={app.api_key} localBase="http://127.0.0.1:11430/v1"
+      <KeyConfigPanel apiKey={app.api_key} localBase={localBase || resolveLocalGatewayBase()}
         model={routeId ? (modelIdFromRoute(routeId, routes) || routeId) : undefined}
         modelType={availableModels.find(m => m.id === (modelIdFromRoute(routeId, routes) || routeId))?.type}
         hideAuto />
@@ -983,7 +983,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
         {app.api_key && (
           <div>
             <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.accessConfigHint')}</div>
-            <KeyConfigPanel apiKey={app.api_key} localBase="http://127.0.0.1:11430/v1"
+            <KeyConfigPanel apiKey={app.api_key} localBase={localBase || resolveLocalGatewayBase()}
               model={routeId ? (modelIdFromRoute(routeId, routes) || routeId) : undefined}
               modelType={availableModels.find(m => m.id === (modelIdFromRoute(routeId, routes) || routeId))?.type}
               hideAuto />
@@ -2118,7 +2118,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
       const list = Array.isArray(appList) ? appList : [];
       setApps(list);
       if (gw?.port) {
-        setLocalBase(`http://${resolveLocalGatewayHost()}:${gw.port}/v1`);
+        setLocalBase(resolveLocalGatewayBase(gw.port));
       }
       if (list.length && appsApi.stats) {
         appsApi.stats(list).then(s => setAppStats(s || {})).catch(() => {});
@@ -2319,7 +2319,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
     if (routeVal && routeVal !== '') {
       try { await appsApi.update({ id: app.id, route_id: routeVal }); } catch {}
     }
-    const base = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/$/, '');
+    const base = (localBase || resolveLocalGatewayBase()).replace(/\/$/, '');
     try {
       const result = await runStreamChatTest({
         url: `${base}/chat/completions`,
@@ -2343,7 +2343,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
   // 写入某 api-key 应用的配置文件指向网关（解析 {BASE}/{KEY}，patch_route 在 main 进程按 handler 策略改写）。
   // 返回 true=成功。onAbort：冲突取消/写入失败时的回滚回调（新建时删条目；重新纳管不删）。
   async function writeApiKeyConfig(app, { onAbort } = {}) {
-    const gwOrigin = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/v1\/?$/, '');
+    const gwOrigin = (localBase || resolveLocalGatewayBase()).replace(/\/v1\/?$/, '');
     const apiKey = app.api_key || '';
     const resolveTpl = (tpl) => {
       if (typeof tpl === 'string') {
@@ -3487,7 +3487,7 @@ function InstanceList({ keysScene, onDelete, localBase, newKeyId, routeHealth })
   async function runTest(k) {
     setTestState(s => ({ ...s, [k.id]: { busy: true } }));
     const model = k.model_key || 'claude-opus-4-5';
-    const base = (localBase || 'http://127.0.0.1:11430/v1').replace(/\/$/, '');
+    const base = (localBase || resolveLocalGatewayBase()).replace(/\/$/, '');
     try {
       const result = await runStreamChatTest({
         url: `${base}/chat/completions`,
@@ -3645,9 +3645,7 @@ export default function Gateway() {
   const [appModelId,     setAppModelId]     = useState('');
   const [appRouterModel, setAppRouterModel] = useState('');     // resolved model/router key
 
-  const localBase = status?.port
-    ? `http://127.0.0.1:${status.port}/v1`
-    : 'http://127.0.0.1:11430/v1';
+  const localBase = resolveLocalGatewayBase(status?.port);
 
   // ── Data loading ────────────────────────────────────────────────────────────
 

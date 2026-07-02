@@ -11,12 +11,18 @@ import {
 
 const modelId = (m) => (typeof m === 'string' ? m : (m?.name || m?.id || ''));
 
-/** 本地 gateway HTTP 地址：Electron / Vite dev 固定 127.0.0.1，避免 file:// 或 localhost→::1 导致无效 URL */
+/** 本地 gateway HTTP 主机名：Electron 固定 127.0.0.1；Docker/CLI Web 用浏览器 hostname，便于远程调试 */
 export function resolveLocalGatewayHost() {
   if (isElectron()) return '127.0.0.1';
   const h = typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1';
   if (!h || h === 'localhost' || h === '127.0.0.1') return '127.0.0.1';
   return h;
+}
+
+/** 本地 gateway OpenAI 兼容 base URL（含 /v1 后缀） */
+export function resolveLocalGatewayBase(port) {
+  const p = port || 11430;
+  return `http://${resolveLocalGatewayHost()}:${p}/v1`;
 }
 
 /** 根据 /v1/models 条目的 owned_by 推断 free | p2p | paid */

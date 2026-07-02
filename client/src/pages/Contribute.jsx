@@ -2,6 +2,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { getStats, getSettlements, listJoinedCircles, listMyCircles } from '../api/client';
 import { getConfig, getGateway } from '../api/adapter';
+import { resolveLocalGatewayBase } from '../api/gatewayModels';
 import {
   getAgentStatus, startAgent, stopAgent, getAgentLogs,
   subscribeAgentEvents, useAgentPolling,
@@ -36,7 +37,7 @@ function ContributionConfigCard() {
   const [autoStart,       setAutoStart]       = useState(false);
   const [saving,          setSaving]          = useState(false);
   const [savedMsg,        setSavedMsg]        = useState('');
-  const [localGw,         setLocalGw]         = useState('http://127.0.0.1:11430/v1');
+  const [localGw,         setLocalGw]         = useState(() => resolveLocalGatewayBase());
   const [circles,         setCircles]         = useState([]);         // 可分享的圈子
   const [circleScope,     setCircleScope]     = useState('public');   // 'public' | 'circle'
   const [selectedCircleIds, setSelectedCircleIds] = useState(new Set());
@@ -55,7 +56,7 @@ function ContributionConfigCard() {
     ]).then(([saved, gwStatus]) => {
       // Dynamic gateway URL from actual running port
       const port = gwStatus?.port || 11430;
-      const gw   = `http://127.0.0.1:${port}/v1`;
+      const gw   = resolveLocalGatewayBase(port);
       setLocalGw(gw);
 
       if (!saved) return;

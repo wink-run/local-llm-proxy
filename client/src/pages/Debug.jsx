@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { getConfig, getLocalConfig, getGateway } from '../api/adapter';
-import { loadGatewayAvailableModels, resolveGatewayModelType } from '../api/gatewayModels';
+import { loadGatewayAvailableModels, resolveGatewayModelType, resolveLocalGatewayBase } from '../api/gatewayModels';
 import { useLang } from '../store/lang';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -214,7 +214,7 @@ export default function Debug() {
     ]).then(([c, lc, gwStatus]) => {
       setCfg(c);
       const gwPort = gwStatus?.port || 11430;
-      const localGw = { ...LOCAL_GW, base_url: `http://127.0.0.1:${gwPort}` };
+      const localGw = { ...LOCAL_GW, base_url: resolveLocalGatewayBase(gwPort).replace(/\/v1\/?$/, '') };
       setProvOpts(providerOptions(c, lc, localGw, t));
     });
   }, [t]);
