@@ -5,6 +5,11 @@ const os = require('os');
 const http = require('http');
 const https = require('https');
 const { autoUpdater } = require('electron-updater');
+const {
+  findLatestReleaseTag,
+  feedUrlForTag,
+  isRemoteNewer,
+} = require('./updater-release');
 const agent = require('./agent-worker');
 const gateway = require('./local-gateway');
 const localStats = require('./local-stats');
@@ -823,6 +828,39 @@ function persistUpdaterAllowPrerelease(allow) {
   return applyUpdaterAllowPrerelease(!!allow);
 }
 
+function resetUpdaterFeedDefault(allowPrerelease) {
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: 'wink-run',
+    repo: 'local-llm-proxy',
+  });
+  autoUpdater.allowPrerelease = allowPrerelease;
+}
+
+/**
+ * 通过 GitHub API 解析最新 release，并指向具体 tag 的 yml。
+ * 修复 0.4.9-betaN 版本号导致 electron-updater channel 匹配失败的问题。
+ */
+async function prepareUpdaterFeed() {
+  const allowPrerelease = applyUpdaterAllowPrerelease();
+  const current = app.getVersion();
+  try {
+    const latestTag = await findLatestReleaseTag(allowPrerelease);
+    if (!latestTag || !isRemoteNewer(current, latestTag)) {
+      resetUpdaterFeedDefault(allowPrerelease);
+      return { allowPrerelease, hasUpdate: false, latestTag };
+    }
+    autoUpdater.setFeedURL(feedUrlForTag(latestTag));
+    autoUpdater.allowPrerelease = allowPrerelease;
+    console.info('[updater] targeting release:', latestTag);
+    return { allowPrerelease, hasUpdate: true, latestTag };
+  } catch (err) {
+    console.warn('[updater] resolve latest release failed:', err.message);
+    resetUpdaterFeedDefault(allowPrerelease);
+    return { allowPrerelease, hasUpdate: null, error: err.message };
+  }
+}
+
 function bindUpdaterEvents() {
   if (updaterEventsBound) return;
   updaterEventsBound = true;
@@ -848,8 +886,8 @@ function bindUpdaterEvents() {
   });
 
   autoUpdater.on('update-not-available', (info) => {
-    console.info('[updater] already on latest:', info?.version);
-    pushUpdateEvent('update:not-available', { version: info?.version || app.getVersion() });
+    console.info('[updater] already on latest:', app.getVersion(), '(remote:', info?.version, ')');
+    pushUpdateEvent('update:not-available', { version: app.getVersion() });
   });
 
   autoUpdater.on('error', (err) => {
@@ -860,7 +898,12 @@ function bindUpdaterEvents() {
   });
 }
 
-function runUpdaterCheck() {
+async function runUpdaterCheck() {
+  const prep = await prepareUpdaterFeed();
+  if (prep.hasUpdate === false) {
+    console.info('[updater] already on latest:', app.getVersion());
+    return null;
+  }
   return autoUpdater.checkForUpdates().catch((err) => {
     console.error('[updater] checkForUpdates error:', err.message);
     throw err;
@@ -868,7 +911,11 @@ function runUpdaterCheck() {
 }
 
 /** 手动检查：等待 available / not-available / error 其一 */
-function checkForUpdatesAndWait(timeoutMs = 60000) {
+async function checkForUpdatesAndWait(timeoutMs = 60000) {
+  const prep = await prepareUpdaterFeed();
+  if (prep.hasUpdate === false) {
+    return { status: 'latest', version: app.getVersion() };
+  }
   return new Promise((resolve) => {
     let settled = false;
     const finish = (payload) => {
@@ -881,13 +928,13 @@ function checkForUpdatesAndWait(timeoutMs = 60000) {
       resolve(payload);
     };
     const onAvail = (info) => finish({ status: 'available', version: info.version });
-    const onNotAvail = (info) => finish({ status: 'latest', version: info?.version || app.getVersion() });
+    const onNotAvail = () => finish({ status: 'latest', version: app.getVersion() });
     const onErr = (err) => finish({ status: 'error', message: err?.message || String(err) });
     const timer = setTimeout(() => finish({ status: 'error', message: 'check timeout' }), timeoutMs);
     autoUpdater.once('update-available', onAvail);
     autoUpdater.once('update-not-available', onNotAvail);
     autoUpdater.once('error', onErr);
-    runUpdaterCheck().catch((e) => finish({ status: 'error', message: e.message }));
+    autoUpdater.checkForUpdates().catch((e) => finish({ status: 'error', message: e.message }));
   });
 }
 
