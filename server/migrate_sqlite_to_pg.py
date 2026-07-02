@@ -2,16 +2,16 @@
 """将 SQLite proxy.db 数据迁移到 PostgreSQL。
 
 用法（本地）:
-  export DATABASE_URL=postgresql://proxy:proxy@localhost:5432/proxy
+  export DATABASE_URL=postgresql://root:wink123@localhost:5432/tokenbank
   python migrate_sqlite_to_pg.py --sqlite ./proxy.db
 
 用法（docker compose 已启动 postgres + proxy）:
-  docker compose exec -e DATABASE_URL=postgresql://proxy:proxy@postgres:5432/proxy \\
+  docker compose exec -e DATABASE_URL=postgresql://root:wink123@postgres:5432/tokenbank \\
     proxy python migrate_sqlite_to_pg.py --sqlite /backup/proxy.db --truncate
 
 挂载旧库示例:
   docker compose run --rm -v $(pwd)/server/proxy.db:/backup/proxy.db \\
-    -e DATABASE_URL=postgresql://proxy:proxy@postgres:5432/proxy \\
+    -e DATABASE_URL=postgresql://root:wink123@postgres:5432/tokenbank \\
     proxy python migrate_sqlite_to_pg.py --sqlite /backup/proxy.db --truncate
 """
 
@@ -246,6 +246,18 @@ async def _reset_serial_sequences(pg: asyncpg.Connection) -> None:
         )
 
 
+def _ensure_database_url() -> None:
+    """未设置 DATABASE_URL 时，从 POSTGRES_* 环境变量拼装。"""
+    if os.getenv("DATABASE_URL", "").strip():
+        return
+    user = os.getenv("POSTGRES_USER", "root")
+    password = os.getenv("POSTGRES_PASSWORD", "wink123")
+    host = os.getenv("POSTGRES_HOST", "localhost")
+    port = os.getenv("POSTGRES_PORT", "5432")
+    db = os.getenv("POSTGRES_DB", "tokenbank")
+    os.environ["DATABASE_URL"] = f"postgresql://{user}:{password}@{host}:{port}/{db}"
+
+
 async def migrate(
     sqlite_path: Path,
     truncate: bool,
@@ -254,6 +266,7 @@ async def migrate(
     if not sqlite_path.is_file():
         raise FileNotFoundError(f"SQLite 文件不存在: {sqlite_path}")
 
+    _ensure_database_url()
     print(f"源库: {sqlite_path}")
     print(f"目标: {get_database_url()}")
 

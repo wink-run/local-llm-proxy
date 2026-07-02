@@ -1,19 +1,29 @@
 services:
 
-  # ── PostgreSQL ───────────────────────────────────────────────────────────────
+  # ── PostgreSQL（pgvector）────────────────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg17
+    container_name: pg-db
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-proxy}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-proxy}
-      POSTGRES_DB: ${POSTGRES_DB:-proxy}
+      POSTGRES_USER: ${POSTGRES_USER:-root}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wink123}
+      POSTGRES_DB: ${POSTGRES_DB:-tokenbank}
+      TZ: Asia/Shanghai
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
+    deploy:
+      resources:
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+        limits:
+          cpus: "1"
+          memory: 2G
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-proxy} -d ${POSTGRES_DB:-proxy}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-root} -d ${POSTGRES_DB:-tokenbank}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -29,7 +39,7 @@ services:
     env_file: .env
     environment:
       # 容器内固定连 postgres 服务名，覆盖 .env 里面向 localhost 的配置
-      DATABASE_URL: postgresql://${POSTGRES_USER:-proxy}:${POSTGRES_PASSWORD:-proxy}@postgres:5432/${POSTGRES_DB:-proxy}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-wink123}@postgres:5432/${POSTGRES_DB:-tokenbank}
     volumes:
       - app_data:/app/data
     depends_on:
@@ -118,5 +128,5 @@ services:
 
 volumes:
   app_data:
-  pg_data:
+  pgdata:
   certbot_www:
