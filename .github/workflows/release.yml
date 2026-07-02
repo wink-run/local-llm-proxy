@@ -12,8 +12,31 @@ env:
 
 jobs:
 
+  # ── 回归测试（发版前门禁）────────────────────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Client tests
+        working-directory: client
+        run: npm ci && npm test
+
+      - name: Server tests
+        working-directory: server
+        run: pip install -r requirements.txt && python -m unittest discover -s . -p 'test_*.py' -v
+
   # ── macOS .dmg ───────────────────────────────────────────────────────────────
   build-mac:
+    needs: [test]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -72,6 +95,7 @@ jobs:
 
   # ── Windows .exe ─────────────────────────────────────────────────────────────
   build-windows:
+    needs: [test]
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
@@ -119,6 +143,7 @@ jobs:
 
   # ── Docker image (ghcr.io) ───────────────────────────────────────────────────
   build-docker:
+    needs: [test]
     runs-on: ubuntu-latest
     permissions:
       contents: read

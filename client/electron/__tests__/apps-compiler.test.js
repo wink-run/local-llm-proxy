@@ -1,5 +1,7 @@
 'use strict';
 
+const { describe, test } = require('node:test');
+const assert = require('node:assert/strict');
 const { compileAppsDoc, resolveAppsRuntime } = require('../apps-compiler');
 
 describe('apps-compiler', () => {
@@ -18,11 +20,11 @@ describe('apps-compiler', () => {
         },
       }],
     });
-    expect(doc.tools).toHaveLength(0);
-    expect(doc.api_key_apps).toHaveLength(1);
-    expect(doc.api_key_apps[0].id).toBe('openclaw');
-    expect(doc.session_sources).toHaveLength(0);
-    expect(doc.entities_expanded[0].capabilities.gateway_proxy).toBe(true);
+    assert.equal(doc.tools.length, 0);
+    assert.equal(doc.api_key_apps.length, 1);
+    assert.equal(doc.api_key_apps[0].id, 'openclaw');
+    assert.equal(doc.session_sources.length, 0);
+    assert.equal(doc.entities_expanded[0].capabilities.gateway_proxy, true);
   });
 
   test('session-only entity compiles session_sources with trace flags', () => {
@@ -39,21 +41,21 @@ describe('apps-compiler', () => {
         },
       }],
     });
-    expect(doc.tools).toHaveLength(0);
-    expect(doc.session_sources).toHaveLength(1);
+    assert.equal(doc.tools.length, 0);
+    assert.equal(doc.session_sources.length, 1);
     const s = doc.session_sources[0];
-    expect(s.agent_id).toBe('claude-code');
-    expect(s.session_trace).toBe(true);
-    expect(s.session_usage_import).toBe(true);
-    expect(s.standalone).toBe(false);
+    assert.equal(s.agent_id, 'claude-code');
+    assert.equal(s.session_trace, true);
+    assert.equal(s.session_usage_import, true);
+    assert.equal(s.standalone, false);
   });
 
   test('resolveAppsRuntime falls back to default_entities when section missing', () => {
     const rt = resolveAppsRuntime({
       tools: [{ id: 'stale-tool', name: 'Stale' }],
     });
-    expect(rt.app_entities.length).toBeGreaterThan(0);
-    expect(rt.tools.length).toBeGreaterThan(0);
+    assert.ok(rt.app_entities.length > 0);
+    assert.ok(rt.tools.length > 0);
   });
 
   test('resolveAppsRuntime compiles from app_entities', () => {
@@ -64,8 +66,8 @@ describe('apps-compiler', () => {
         vars: { capabilities: { gateway_proxy: true, session_trace: false, session_usage_import: false } },
       }],
     });
-    expect(rt.tools).toHaveLength(1);
-    expect(rt.tools[0].id).toBe('hermes');
+    assert.equal(rt.tools.length, 1);
+    assert.equal(rt.tools[0].id, 'hermes');
   });
 
   test('vars provider_id overlays session source', () => {
@@ -79,6 +81,6 @@ describe('apps-compiler', () => {
         },
       }],
     });
-    expect(doc.session_sources[0].provider_id).toBe('cursor-custom');
+    assert.equal(doc.session_sources[0].provider_id, 'cursor-custom');
   });
 });

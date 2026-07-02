@@ -9,6 +9,7 @@
     "prebuild": "node scripts/gen-icons.js",
     "build": "vite build && electron-builder",
     "gen-icons": "node scripts/gen-icons.js",
+    "test": "node --test electron/__tests__/*.test.js",
     "test:cli-runtime": "node --test electron/__tests__/cli-runtime-deps.test.js",
     "rebuild": "electron-rebuild -f -w better-sqlite3"
   },

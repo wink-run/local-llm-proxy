@@ -77,11 +77,32 @@ test('workbuddy list merges traces under same project directory', () => {
 });
 
 test('workbuddy findSessionFile matches by filename without full scan parse', () => {
-  const { findSessionFile, traceBasename } = require('../session-trace/workbuddy-trace');
+  const fs = require('fs');
+  const path = require('path');
+  const os = require('os');
+  const { findSessionFile, traceBasename, invalidateTraceFileCache } = require('../session-trace/workbuddy-trace');
+
   assert.equal(traceBasename('trace_abc'), 'trace_abc.json');
   assert.equal(traceBasename('abc'), 'trace_abc.json');
-  const f = findSessionFile('trace_e7f75f80e65149bd829193546bde5f1a');
-  assert.ok(f && f.endsWith('trace_e7f75f80e65149bd829193546bde5f1a.json'));
+
+  // 使用临时 HOME，避免依赖开发者本机 ~/.workbuddy/traces
+  const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-trace-'));
+  const traceDir = path.join(tmpHome, '.workbuddy', 'traces');
+  fs.mkdirSync(traceDir, { recursive: true });
+  const traceName = 'trace_e7f75f80e65149bd829193546bde5f1a.json';
+  fs.writeFileSync(path.join(traceDir, traceName), '{}');
+
+  const oldHome = process.env.HOME;
+  process.env.HOME = tmpHome;
+  invalidateTraceFileCache();
+  try {
+    const f = findSessionFile('trace_e7f75f80e65149bd829193546bde5f1a');
+    assert.ok(f && f.endsWith(traceName));
+  } finally {
+    process.env.HOME = oldHome;
+    invalidateTraceFileCache();
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  }
 });
 
 test('workbuddy function span parses toolInput and toolOutput', () => {
