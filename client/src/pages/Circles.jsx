@@ -279,7 +279,7 @@ export default function Circles() {
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-80 p-6 space-y-4" onClick={e => e.stopPropagation()}>
             <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">{t('circles.inviteTitle')}</h3>
             <div className="flex items-center gap-3">
-              <div className={`w-12 h-12 rounded-full ${circleColor(inviteModal.circle.name)} flex items-center justify-center text-xl font-bold text-white shrink-0`}>
+              <div className={`w-12 h-12 rounded-full ${avatarColor(inviteModal.circle.name)} flex items-center justify-center text-xl font-bold text-white shrink-0`}>
                 {inviteModal.circle.name[0].toUpperCase()}
               </div>
               <div className="min-w-0">
@@ -310,7 +310,7 @@ export default function Circles() {
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-80 p-6 space-y-4" onClick={e => e.stopPropagation()}>
             <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">加入圈子</h3>
             <div className="flex items-center gap-3">
-              <div className={`w-12 h-12 rounded-full ${circleColor(joinPreview.circle.name)} flex items-center justify-center text-xl font-bold text-white shrink-0`}>
+              <div className={`w-12 h-12 rounded-full ${avatarColor(joinPreview.circle.name)} flex items-center justify-center text-xl font-bold text-white shrink-0`}>
                 {joinPreview.circle.name[0].toUpperCase()}
               </div>
               <div>

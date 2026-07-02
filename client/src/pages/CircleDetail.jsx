@@ -17,7 +17,7 @@ import {
 } from '../api/client';
 import RichMediaInput from '../components/RichMediaInput';
 import RichMediaContent from '../components/RichMediaContent';
-import UserAvatar, { userDisplayName } from '../components/UserAvatar';
+import UserAvatar, { userDisplayName, avatarColor } from '../components/UserAvatar';
 
 function authorName(a) {
   return userDisplayName(a);
@@ -314,7 +314,7 @@ export default function CircleDetail() {
     );
   }
 
-  const color = circleColor(circle?.name);
+  const color = avatarColor(circle?.name);
 
   return (
     <div className="px-5 py-5 space-y-5">
