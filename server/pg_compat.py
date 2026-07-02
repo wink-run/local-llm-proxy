@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Optional
 
@@ -89,19 +90,33 @@ def translate_sql(sql: str) -> tuple[str, Optional[str]]:
     return _qmarks_to_pg(out), None
 
 
-class PgRow(dict):
-    """兼容 aiosqlite.Row：同时支持 row[0] 与 row['col']。"""
+class PgRow(Mapping):
+    """兼容 aiosqlite.Row：同时支持 row[0] 与 row['col']，且可 dict(row)。"""
 
-    __slots__ = ("_values",)
+    __slots__ = ("_values", "_map")
 
     def __init__(self, keys: list[str], values: list[Any]):
-        super().__init__(zip(keys, values))
         self._values = list(values)
+        self._map = dict(zip(keys, values))
 
     def __getitem__(self, key):
         if isinstance(key, int):
             return self._values[key]
-        return super().__getitem__(key)
+        return self._map[key]
+
+    def __iter__(self):
+        return iter(self._map)
+
+    def __len__(self) -> int:
+        return len(self._map)
+
+    def get(self, key, default=None):
+        if isinstance(key, int):
+            try:
+                return self._values[key]
+            except IndexError:
+                return default
+        return self._map.get(key, default)
 
 
 def _pg_row(record) -> PgRow:
