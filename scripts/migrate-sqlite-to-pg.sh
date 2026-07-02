@@ -95,23 +95,20 @@ _find_compose_sqlite_volume() {
 }
 
 _run_migration_in_compose() {
-  local sqlite_in_container="$1"
+  local sqlite_path="$1"
   shift
 
   docker compose up -d postgres
 
-  # 镜像内代码是 build 时 COPY 的快照，git pull 后须 rebuild；同时挂载 server 确保用最新脚本
-  echo "构建 proxy 镜像…"
-  docker compose build proxy
+  echo "构建 migrate 镜像…"
+  docker compose --profile migrate build migrate
 
-  docker compose run --rm \
+  # 使用 migrate 服务（勿用 proxy：proxy 自带 app_data:/app/data 会与 /app:ro 冲突）
+  docker compose --profile migrate run --rm \
     -v "$ROOT/server:/app:ro" \
     -e "DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}" \
     "$@" \
-    proxy python migrate_sqlite_to_pg.py \
-      --sqlite "$sqlite_in_container" \
-      --truncate \
-      "${EXTRA_ARGS[@]}"
+    migrate --sqlite "$sqlite_path" --truncate "${EXTRA_ARGS[@]}"
 }
 
 if [[ "$FROM_COMPOSE" == "1" ]]; then
@@ -127,7 +124,7 @@ if [[ "$FROM_COMPOSE" == "1" ]]; then
   echo "目标: postgresql://${POSTGRES_USER}:***@postgres:5432/${POSTGRES_DB}"
   echo ""
 
-  _run_migration_in_compose "/data/proxy.db" -v "${VOL}:/data:ro"
+  _run_migration_in_compose "/data/proxy.db" -v "${VOL}:/data:ro" "${EXTRA_ARGS[@]}"
   echo ""
   echo "迁移完成。启动服务: docker compose up -d"
   exit 0
@@ -154,7 +151,7 @@ if [[ "$MODE" == "local" ]]; then
     "${EXTRA_ARGS[@]}"
 fi
 
-_run_migration_in_compose "/backup/proxy.db" -v "$SQLITE_PATH:/backup/proxy.db:ro"
+_run_migration_in_compose "/backup/proxy.db" -v "$SQLITE_PATH:/backup/proxy.db:ro" "${EXTRA_ARGS[@]}"
 
 echo ""
 echo "迁移完成。启动服务: docker compose up -d"
