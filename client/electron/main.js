@@ -82,7 +82,9 @@ function revertClaudeDesktopOfficialExtras() {
       const p = path.join(CLAUDE_3P_CONFIG_DIR, f);
       try {
         const c = JSON.parse(fs.readFileSync(p, 'utf8'));
-        if (c.inferenceProvider !== 'gateway' && c._configManagedBy !== 'tokenbank') continue;
+        // 只回退 tokenbank 自己写入的配置；用户/Claude 自建的 gateway 配置绝不动，
+        // 否则会清空 configLibrary，导致开发者模式被误判为「未启用」、纳管按钮回弹。
+        if (c._configManagedBy !== 'tokenbank') continue;
         const bak = p + '.tokenbank-bak';
         if (fs.existsSync(bak)) fs.copyFileSync(bak, p);
         else fs.unlinkSync(p);
@@ -149,17 +151,42 @@ function isClaudeDesktopApp(app_id) {
   } catch { return false; }
 }
 
+function isCodexDesktopApp(app_id) {
+  if (String(app_id || '').includes('codex-desktop')) return true;
+  try {
+    const app = (readLocalConfig()?.apps || []).find(a => a.id === app_id);
+    return app?.preset_id === 'codex-desktop';
+  } catch { return false; }
+}
+
 /** 还原 config-file 应用配置（与 apps:revertConfigFile IPC 共用） */
 function revertAppConfigFile(app_id, config_file) {
   if (isClaudeDesktopApp(app_id)) runClaude3pSync('revert');
   const cl = require('./config-loader');
   let file = cl.expandHome(cl.resolvePlaceholders(String(config_file || ''), {}));
+  // Codex Desktop：精确删除我们写的段(保留 config.toml 其他更新)+ 删 catalog，不动 auth.json
+  if (isCodexDesktopApp(app_id) && file) {
+    const codexCfg = require('./codex-config');
+    codexCfg.revertCodexProvider(file);
+    codexCfg.removeCodexCatalog(path.dirname(file));
+    return;
+  }
   if (file) {
     const bak = file + '.tokenbank-bak';
     if (fs.existsSync(bak)) {
       try { fs.copyFileSync(bak, file); } catch {}
     } else {
-      try { if (fs.existsSync(file)) fs.unlinkSync(file); } catch {}
+      // 无备份：只删 tokenbank 自己写入的配置。Claude Desktop 的 configLibrary 里可能是
+      // 用户/Claude 自建的配置（纳管前 config_file 就指向它），删了会清空 configLibrary、
+      // 让开发者模式被误判为未启用——所以未标记 _configManagedBy:tokenbank 的一律不动。
+      try {
+        let managed = true;
+        if (isClaudeDesktopApp(app_id) && fs.existsSync(file)) {
+          try { managed = JSON.parse(fs.readFileSync(file, 'utf8'))._configManagedBy === 'tokenbank'; }
+          catch { managed = false; }
+        }
+        if (managed && fs.existsSync(file)) fs.unlinkSync(file);
+      } catch {}
     }
   }
   if (isClaudeDesktopApp(app_id)) revertClaudeDesktopOfficialExtras();
@@ -200,14 +227,14 @@ function repairClaude3pMetaIfNeeded() {
   } catch (e) { console.warn('[claude] repair _meta', e.message); }
 }
 
-// Claude Desktop 开发者模式状态：configLibrary 是否存在且非空
-// 空 = 用户还没在 Claude Desktop 启用 Developer Mode（Help → Troubleshooting → Enable Developer Mode）
+// Claude Desktop 开发者模式状态：configLibrary 目录是否存在。
+// Claude 在启用 Developer Mode（Help → Troubleshooting → Enable Developer Mode）时创建该目录。
+// 只看「目录在不在」而非「里面有没有 .json」——内容可能为空（Claude 会清掉空的 Default、
+// 「回官方」也会清空内容），但目录仍在即代表开发者模式开过；写配置时缺文件会自动新建。
+// Token Bank 自己只在写配置（纳管动作，此前提为 dev_mode_ready）时才 mkdir，不会凭空创建该目录。
 function claudeDevModeReady() {
-  try {
-    if (!fs.existsSync(CLAUDE_3P_CONFIG_DIR)) return false;
-    const files = fs.readdirSync(CLAUDE_3P_CONFIG_DIR).filter(f => f.endsWith('.json'));
-    return files.length > 0;
-  } catch { return false; }
+  try { return fs.existsSync(CLAUDE_3P_CONFIG_DIR); }
+  catch { return false; }
 }
 
 // 获取 Claude Desktop 当前【激活】的 3p 配置文件路径。
@@ -1047,7 +1074,11 @@ function getApiKeyApps() {
       // 处理 Claude Desktop 的动态配置路径
       .map(app => {
         if (app.id === 'claude-desktop' && app.config_file === '{CLAUDE_3P_CONFIG}') {
-          return { ...app, config_file: getClaudeCloudConfig() };
+          const resolved = getClaudeCloudConfig();  // 有激活配置=其路径；configLibrary 空时=null（写入时再新建）
+          // config_file_optional：本质是 config-file 应用，但目标路径依赖 Claude 开发者模式；
+          // dev_mode_ready 只看开发者模式是否开过（configLibrary 目录在否），与「当前有没有 profile」解耦——
+          // 否则清空/回官方后会误报「需启用开发者模式」。UI 据此决定是否显示启用引导。
+          return { ...app, config_file: resolved, config_file_optional: true, dev_mode_ready: claudeDevModeReady() };
         }
         return app;
       });
@@ -1968,7 +1999,7 @@ function registerIPC() {
 
     const appControls = [];
     const keyScene = {};
-    const { bindRouteToKeyScene } = require('../shared/route-binding');
+    const { bindRouteToKeyScene, bindClaudeRoutesToKeyScene } = require('../shared/route-binding');
     for (const app of apps) {
       const ctrl = { app_id: app.id, app_name: app.name };
       const aid = app.agent_id || app.preset_id;
@@ -1993,7 +2024,19 @@ function registerIPC() {
         : app.route_id;
       if ((app.link_method === 'api-key' || app.link_method === 'manual' || app.link_method === 'session') && app.api_key) {
         appControls.push({ ...ctrl, match: { key: app.api_key } });
-        if (bindRoute && routeBindable) bindRouteToKeyScene(keyScene, app.api_key, bindRoute, routes);
+        const appRouteIds = (Array.isArray(app.route_ids) && app.route_ids.length)
+          ? app.route_ids
+          : (app.route_id ? [app.route_id] : []);
+        if (appRouteIds.length && routeBindable) {
+          // Claude Desktop 多路由：每个 claude-* 名（= inferenceModels.name）绑到对应 route，
+          // 名字与写入配置的 claude_models 白名单顺序一致，客户端选哪条就路由到哪条。
+          if (appRouteIds.length > 1 && isClaudeDesktopApp(app.id)) {
+            const cms = (() => { try { return require('./config-loader').claudeModels(); } catch { return []; } })();
+            bindClaudeRoutesToKeyScene(keyScene, appRouteIds, routes, cms);
+          }
+          // api_key 兜底（单路由 / 旧配置 / 首条）
+          bindRouteToKeyScene(keyScene, app.api_key, appRouteIds[0], routes);
+        }
       } else if (app.link_method === 'shim' && app.agent_id) {
         if (!routeBindable || !toolProto[app.agent_id]) continue;
         const path = PROTOCOL_PATH[toolProto[app.agent_id]];
@@ -2662,6 +2705,10 @@ function registerIPC() {
         const freshConfigFile = def?.config_file || app.config_file;
         const freshPatch       = def?.patch || app.patch;
         const freshEnv         = def?.env  ?? app.env;
+        // config-file 预设即使当前解析不到路径（Claude Desktop 开发者模式未就绪）仍按 config-file 归类，
+        // 避免掉进危险的「删除」分支；needs_dev_mode 让 UI 显示「启用开发者模式」引导。
+        const isConfigFileApp = !!freshConfigFile || def?.config_file_optional === true;
+        const needsDevMode = def?.config_file_optional === true && def?.dev_mode_ready === false;
         // 在线(经网关) = 纳管 且 绑了路由；纳管但直连(无 route_id) = 仅读文件、不走网关
         return { ...withCaps, linked: true, installed: true,
                  hosted: app.hosted === true,
@@ -2670,7 +2717,8 @@ function registerIPC() {
                  route_bindable: def ? resolveRouteBindable({ ...app, preset_id: app.preset_id }, def.route_bindable) : routeBindable,
                  route_multi_select: !!(def?.route_multi_select ?? ent?.route_multi_select),
                  allow_direct: def ? def.allow_direct !== false : (app.allow_direct !== false),  // 无本地用量源的桌面壳=false
-                 host_method: freshConfigFile ? 'config-file' : 'api-key' };
+                 host_method: isConfigFileApp ? 'config-file' : 'api-key',
+                 needs_dev_mode: needsDevMode };
       })
       // 机器上没有的 shim / direct 应用不展示；api-key 应用始终展示。
       .filter(app => app.link_method !== 'shim' || app.installed)
@@ -2704,6 +2752,7 @@ function registerIPC() {
         id: 'app-apikey-' + d.id,
         name: d.name, icon: d.icon,
         link_method: 'api-key', host_method: 'config-file',
+        needs_dev_mode: d.config_file_optional === true && !file,
         _virtual_apikey: true,
         preset_id: d.id,
         ...entityDerived(d.id),
@@ -2860,9 +2909,10 @@ function registerIPC() {
           : (effectiveRouteId ? [effectiveRouteId] : []));
       if (handlerId && routeIds.length) {
         let claudeName = 'claude-sonnet-4-5';
+        let claudeModels = [];
         try {
           const cms = require('./config-loader').claudeModels?.() || [];
-          if (cms.length) claudeName = cms[0];
+          if (cms.length) { claudeModels = cms; claudeName = cms[0]; }
         } catch {}
         const def = getApiKeyApps().find(d => d.id === appRec?.preset_id);
         resolvedPatch = applyRouteToProxyPatch(handlerId, resolvedPatch, {
@@ -2870,7 +2920,31 @@ function registerIPC() {
           routes: readLocalConfig().scene_routes || [],
           marker: def?.marker || appRec?.marker,
           claudeName,
+          // 多路由时每条按 claude_models 列表依次分配独立 name（与 keyScene 绑定顺序一致）
+          claudeModels,
         });
+      }
+      // Codex Desktop：走合并写入(保留 config.toml 其他段)，不整份重写、不写系统环境变量。
+      // 生成 model_catalog(绑定路由的模型) + requires_openai_auth=true + experimental_bearer_token，
+      // 并保留 auth.json 官方登录态(Desktop 门控放行自定义模型的前提)。
+      if (handlerId === 'codex-desktop-api') {
+        const codexCfg = require('./codex-config');
+        const { getRouteModels } = require('./app-handlers');
+        const codexHome = path.dirname(file);
+        const baseUrl = resolvedPatch['model_providers.tokenbank.base_url'] || `${patchCtx.base}/v1`;
+        const models = getRouteModels(appRec, readLocalConfig().scene_routes || []);
+        const model = resolvedPatch['model'] || models[0] || '';
+        codexCfg.writeCodexCatalog(codexHome, models);
+        codexCfg.applyCodexProvider(file, {
+          providerId: 'tokenbank', name: 'Tokenbank',
+          baseUrl, model, bearerToken: appRec?.api_key || '', catalogFile: codexCfg.CATALOG_FILE,
+        });
+        codexCfg.cleanupThirdPartyAuthKey(codexHome);   // 清第三方残留 key，不动官方 tokens.*
+        setAppHosted(app_id, true);
+        const officialLogin = codexCfg.codexHasOfficialLogin(codexHome);
+        // 缺官方登录 → Desktop 门控会藏掉自定义模型，回传提示让前端引导登录
+        return { ok: true, file, envCount: 0, codex: true, officialLogin,
+          ...(officialLogin ? {} : { warning: 'codex-no-official-login' }) };
       }
       // 纳管 = 备份原配置文件（整份，仅首次），再写入我们的配置（整份替换）。
       // 不合并、不检测冲突、不预扫描内容——状态完全跟随用户操作。
