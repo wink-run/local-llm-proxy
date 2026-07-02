@@ -39,7 +39,8 @@ function routeSelectValue(routeId, availableModels = [], routes = []) {
   if (TIER_ROUTE_RE.test(routeId)) return routeId;
   const matches = availableModels.filter(m => m.id === routeId);
   if (matches.length >= 1) {
-    const order = { paid: 0, p2p: 1, free: 2 };
+    // 与网关 defaultRouteId 一致：同名模型优先社区 P2P，避免 legacy 纯 id 误显示为付费层
+    const order = { p2p: 0, paid: 1, free: 2 };
     const pick = [...matches].sort((a, b) => (order[a.tier] ?? 9) - (order[b.tier] ?? 9))[0];
     return encodeTierModelRoute(pick.tier, routeId);
   }

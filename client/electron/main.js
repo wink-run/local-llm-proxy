@@ -1975,22 +1975,29 @@ function registerIPC() {
       const ent = aid ? appEntityById(aid) : null;
       const caps = aid ? (() => { try { return require('./config-loader').appCapabilities(aid); } catch { return null; } })() : null;
       const gwProxy = caps ? !!caps.gateway_proxy : !!ent?.gateway_proxy;
-      const routeBindable = (app.link_method === 'api-key' || app.link_method === 'manual' || app.link_method === 'shim')
-        ? gwProxy && (ent ? ent.route_bindable !== false : app.route_bindable !== false)
-        : (ent ? ent.route_bindable !== false : app.route_bindable !== false);
-      if ((app.link_method === 'api-key' || app.link_method === 'manual') && app.api_key) {
+      // 与 apps:list 的 resolveRouteBindable 一致：无 preset 的 manual 应用仍可按 route_id 绑路由
+      const routeBindable = (() => {
+        if (!aid) return app.route_bindable !== false;
+        if (app.link_method === 'api-key' || app.link_method === 'manual' || app.link_method === 'shim') {
+          return gwProxy && (ent ? ent.route_bindable !== false : app.route_bindable !== false);
+        }
+        if (app.link_method === 'session') {
+          const sessCaps = caps || ent?.capabilities || {};
+          return !!(sessCaps.session_trace || sessCaps.session_usage_import)
+            && (ent ? ent.route_bindable !== false : app.route_bindable !== false);
+        }
+        return ent ? ent.route_bindable !== false : app.route_bindable !== false;
+      })();
+      const bindRoute = (Array.isArray(app.route_ids) && app.route_ids.length)
+        ? app.route_ids[0]
+        : app.route_id;
+      if ((app.link_method === 'api-key' || app.link_method === 'manual' || app.link_method === 'session') && app.api_key) {
         appControls.push({ ...ctrl, match: { key: app.api_key } });
-        const bindRoute = (Array.isArray(app.route_ids) && app.route_ids.length)
-          ? app.route_ids[0]
-          : app.route_id;
         if (bindRoute && routeBindable) bindRouteToKeyScene(keyScene, app.api_key, bindRoute, routes);
       } else if (app.link_method === 'shim' && app.agent_id) {
         if (!routeBindable || !toolProto[app.agent_id]) continue;
         const path = PROTOCOL_PATH[toolProto[app.agent_id]];
         if (path) appControls.push({ ...ctrl, match: { path } });
-        const bindRoute = (Array.isArray(app.route_ids) && app.route_ids.length)
-          ? app.route_ids[0]
-          : app.route_id;
         if (app.api_key && bindRoute) bindRouteToKeyScene(keyScene, app.api_key, bindRoute, routes);
       }
     }

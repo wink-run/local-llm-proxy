@@ -12,7 +12,7 @@ import { useAuth } from '../store/index';
 import RouteSelect, { tierOptgroups } from '../components/RouteSelect';
 import {
   encodeTierModelRoute,
-  modelIdFromRoute,
+  parseRouteBinding,
   routeSelectValue,
 } from '../lib/route-binding';
 import { useCurrency } from '../store/currency';
@@ -21,6 +21,23 @@ import { runStreamChatTest } from '../lib/streamTestLatency';
 // tier:id 作为下拉唯一 value，避免同模型跨层选中错位
 function modelTierKey(m) {
   return encodeTierModelRoute(m.tier, m.id);
+}
+
+/** 网关测试 / 接入示例：场景路由用 model_key；单层路由保留 tier 前缀 */
+function exampleModelFromRoute(routeVal, routes, availableModels) {
+  if (!routeVal) {
+    const fallback = availableModels[0];
+    return { model: fallback?.id || 'gpt-4o', modelType: fallback?.type };
+  }
+  if (routes.some(r => r.model_key === routeVal || r.id === routeVal)) {
+    return { model: routeVal, modelType: undefined };
+  }
+  const parsed = parseRouteBinding(routeVal, routes);
+  const entry = availableModels.find(m => modelTierKey(m) === routeVal)
+    || (parsed.modelId && availableModels.find(m =>
+      m.id === parsed.modelId && (!parsed.tier || m.tier === parsed.tier)));
+  const model = parsed.tier ? routeVal : (parsed.modelId || routeVal);
+  return { model, modelType: entry?.type };
 }
 
 /** 应用已绑定的路由 id 列表（多选存 route_ids，单选回退 route_id） */
@@ -823,8 +840,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     <div>
       <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.accessConfig')}</div>
       <KeyConfigPanel apiKey={app.api_key} localBase={localBase || resolveLocalGatewayBase()}
-        model={routeId ? (modelIdFromRoute(routeId, routes) || routeId) : undefined}
-        modelType={availableModels.find(m => m.id === (modelIdFromRoute(routeId, routes) || routeId))?.type}
+        {...(routeId ? exampleModelFromRoute(routeId, routes, availableModels) : {})}
         hideAuto />
     </div>
   );
@@ -984,8 +1000,7 @@ function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKe
           <div>
             <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.accessConfigHint')}</div>
             <KeyConfigPanel apiKey={app.api_key} localBase={localBase || resolveLocalGatewayBase()}
-              model={routeId ? (modelIdFromRoute(routeId, routes) || routeId) : undefined}
-              modelType={availableModels.find(m => m.id === (modelIdFromRoute(routeId, routes) || routeId))?.type}
+              {...(routeId ? exampleModelFromRoute(routeId, routes, availableModels) : {})}
               hideAuto />
           </div>
         )}
@@ -2308,11 +2323,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
     // 测试用的模型必须与下拉框「实际显示值」一致：用 routeValue（受控 <select> 的当前值）
     // 而非 app.route_id —— 绑定失效/不在选项内时下拉显示为空，测试也应按显示值走。
     const routeVal = routeValue ?? app.route_id;
-    const model = routeVal
-      ? (routes.some(r => r.model_key === routeVal || r.id === routeVal)
-          ? routeVal
-          : (modelIdFromRoute(routeVal, routes) || routeVal))
-      : (availableModels[0]?.id || 'gpt-4o');
+    const { model } = exampleModelFromRoute(routeVal, routes, availableModels);
     // 关键：网关按 keyScene（应用绑定）改写真实模型，会覆盖请求体里的 model。切换路由后
     // keyScene 可能滞后（持久化了 route_id、下拉已更新，但网关内存绑定还是上一次的模型），
     // 导致测到上一次的模型。测试前把「下拉显示的绑定」写回并同步网关，确保 keyScene 与显示值一致。
@@ -3180,7 +3191,8 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
 
 function snippetModelType(model, modelType) {
   if (modelType && modelType !== 'chat') return modelType;
-  return model ? inferModelTypeFromName(model) : 'chat';
+  const bare = model ? (parseRouteBinding(model).modelId || model) : '';
+  return bare ? inferModelTypeFromName(bare) : 'chat';
 }
 
 function codeSnippet(lang, baseUrl, apiKey, model = 'claude-opus-4-5', modelType) {
@@ -3465,6 +3477,11 @@ function KeyConfigPanel({ apiKey, localBase, model, modelType, hideAuto = false 
           )}
         </div>
       )}
+
+      {/* tier 前缀说明：与示例 model 字段对齐 */}
+      <p className="px-4 py-2.5 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed border-t border-zinc-200 dark:border-zinc-700 bg-zinc-50/40 dark:bg-zinc-900/20">
+        {t('gateway.key.modelTierHint')}
+      </p>
     </div>
   );
 }

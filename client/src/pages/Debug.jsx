@@ -1,7 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { getConfig, getLocalConfig, getGateway } from '../api/adapter';
 import { loadGatewayAvailableModels, resolveGatewayModelType, resolveLocalGatewayBase } from '../api/gatewayModels';
+import { encodeTierModelRoute } from '../lib/route-binding';
 import { useLang } from '../store/lang';
+
+/** 下拉 value：同 id 跨层时用 tier:id，避免 HTML option 重复 value 选中错位 */
+function modelSelectValue(m) {
+  if (!m) return '';
+  const id = m.name || m.id || '';
+  return m.tier ? encodeTierModelRoute(m.tier, id) : id;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -245,7 +253,7 @@ export default function Debug() {
           }));
           setModels(mapped);
           const preferred = mapped.filter(m => imageMode ? m.type === 'image' : m.type !== 'image');
-          setModel((preferred[0] || mapped[0])?.name || '');
+          setModel(modelSelectValue(preferred[0] || mapped[0]));
           setManualModel(mapped.length === 0);
         } catch {
           if (!cancelled) { setModels([]); setManualModel(true); }
@@ -301,7 +309,9 @@ export default function Debug() {
   useEffect(() => {
     if (!models.length) return;
     const preferred = models.filter(m => imageMode ? m.type === 'image' : m.type !== 'image');
-    if (preferred.length && !preferred.some(m => m.name === model)) setModel(preferred[0].name);
+    if (preferred.length && !preferred.some(m => modelSelectValue(m) === model)) {
+      setModel(modelSelectValue(preferred[0]));
+    }
   }, [imageMode]);
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [conversation]);
@@ -441,7 +451,7 @@ export default function Debug() {
                     const tms = filteredModels.filter(m => g.tiers.includes(m.tier));
                     return tms.length ? (
                       <optgroup key={g.key} label={t(`debug.tier.${g.key}`)}>
-                        {tms.map(m => <option key={`${m.tier}:${m.name}`} value={m.name}>{m.name}</option>)}
+                        {tms.map(m => <option key={modelSelectValue(m)} value={modelSelectValue(m)}>{m.name}</option>)}
                       </optgroup>
                     ) : null;
                   })

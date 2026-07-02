@@ -8,6 +8,7 @@ const os    = require('os');
 const path  = require('path');
 const codexTransform = require('./codex-transform');
 const reqRouter = require('./request-router');
+const { TIER_ROUTE_RE } = require('../shared/route-binding');
 const oauth = require('./oauth');
 const { estimateCost } = require('./pricing');
 const { compressBody, compressionRatio } = require('./compressor');
@@ -2092,6 +2093,13 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   // 应用绑定的真实模型；claudeFrom 仅用于路由明细展示「claude名 → 真实」这层透明转化。
   const origModel = model;
   const claudeFrom = _claudeModels.includes(origModel) ? origModel : null;
+  // 直连请求体可带 tier 前缀（p2p:deepseek-v4-flash），与 route_id 语法一致；上游只认裸模型名
+  let requestTier = null;
+  const tierMatch = TIER_ROUTE_RE.exec(model);
+  if (tierMatch) {
+    requestTier = tierMatch[1];
+    model = tierMatch[2];
+  }
 
   function fail(scene_name, failedModels) {
     debugLog(`<<< 路由失败 fail()`, {
@@ -2272,14 +2280,19 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     ];
   }
 
+  // 请求体指定 tier 时只走对应供给层（同模型跨 P2P/付费/免费）
+  if (requestTier) sorted = sorted.filter(p => p.type === requestTier);
+
   debugLog(`直接模型路由候选 providers`, {
-    requested_model: model,
+    requested_model: origModel,
+    resolved_model: model,
+    request_tier: requestTier,
     candidate_count: sorted.length,
     candidates: sorted.map(p => ({ id: p.id, type: p.type, models: p.models })),
   });
 
   if (!sorted.length) {
-    lastErr = new Error(`no_enabled_provider_for_model: ${model}`);
+    lastErr = new Error(`no_enabled_provider_for_model: ${model}${requestTier ? ` (tier=${requestTier})` : ''}`);
     fail(null, null);
     return;
   }

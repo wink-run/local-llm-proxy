@@ -418,6 +418,7 @@ export default {
   // ── Key config ──
   'gateway.key.autoConfig': '⚡ Auto configure',
   'gateway.key.modelName': 'Model name',
+  'gateway.key.modelTierHint': 'Pin a supply layer with a tier prefix (e.g. p2p:deepseek-v4-flash, paid:…, free:…). Without a prefix, the gateway tries matching providers in priority order.',
   'gateway.key.envVars': 'Environment variables',
   'gateway.key.writeClaude': '⚡ Auto-write Claude Code config',
   'gateway.key.writtenClaude': '✓ Wrote ~/.claude/settings.json',

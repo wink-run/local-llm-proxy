@@ -418,6 +418,7 @@ export default {
   // ── KeyConfigPanel / InstanceList ──
   'gateway.key.autoConfig': '⚡ 自动配置',
   'gateway.key.modelName': '模型名称',
+  'gateway.key.modelTierHint': '模型名可用 tier 前缀指定供给层（如 p2p:deepseek-v4-flash、paid:…、free:…）。不带前缀时，网关会在所有可提供该模型的供给源中按优先级依次尝试。',
   'gateway.key.envVars': '环境变量',
   'gateway.key.writeClaude': '⚡ 自动写入 Claude Code 配置',
   'gateway.key.writtenClaude': '✓ 已写入 ~/.claude/settings.json',
