@@ -32,10 +32,28 @@ function winNativeClaudeDir(sub) {
   return path.join(home, 'AppData', 'Roaming', 'Claude', sub); // 传统 exe 版
 }
 
+// macOS: 若 Claude Desktop 为 Mac App Store（MAS）沙箱版，数据在
+// ~/Library/Containers/<bundle-id>/Data/Library/Application Support/Claude\<sub>；
+// .dmg 直装（非沙箱）版则在标准 ~/Library/Application Support/Claude。优先标准路径，否则扫容器。
+function macNativeClaudeDir(sub) {
+  const home = os.homedir();
+  const std = path.join(home, 'Library', 'Application Support', 'Claude', sub);
+  if (fs.existsSync(std)) return std;
+  const containers = path.join(home, 'Library', 'Containers');
+  try {
+    for (const c of fs.readdirSync(containers)) {
+      if (!/claude|anthropic/i.test(c)) continue;
+      const p = path.join(containers, c, 'Data', 'Library', 'Application Support', 'Claude', sub);
+      if (fs.existsSync(p)) return p;
+    }
+  } catch {}
+  return std;
+}
+
 function nativeCodeSessionsRoot() {
   const home = os.homedir();
   if (process.platform === 'win32')  return winNativeClaudeDir('claude-code-sessions');
-  if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'Claude', 'claude-code-sessions');
+  if (process.platform === 'darwin') return macNativeClaudeDir('claude-code-sessions');
   return path.join(home, '.config', 'Claude', 'claude-code-sessions');
 }
 
@@ -166,7 +184,7 @@ function syncCodeSessionsBidirectional() {
 function nativeCoworkSessionsRoot() {
   const home = os.homedir();
   if (process.platform === 'win32')  return winNativeClaudeDir('local-agent-mode-sessions');
-  if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'Claude', 'local-agent-mode-sessions');
+  if (process.platform === 'darwin') return macNativeClaudeDir('local-agent-mode-sessions');
   return path.join(home, '.config', 'Claude', 'local-agent-mode-sessions');
 }
 function p3CoworkSessionsRoot() {
