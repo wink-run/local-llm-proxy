@@ -17,9 +17,10 @@ from api_errors import (
     parse_worker_error,
     payload_has_openai_error,
     raise_dispatch_error,
+    should_offline_contributor_model,
 )
 from caveman import inject_caveman, VALID_LEVELS as CAVEMAN_VALID_LEVELS
-from worker_pool import pool
+from worker_pool import pool, worker_has_model, worker_model_names, offline_contributor_model
 
 logger = logging.getLogger("server")
 
@@ -130,6 +131,16 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
         )
 
         for worker in cands:
+            # 防御：不向未声明该模型的 worker 派发（避免误路由后返回误导性网关错误）
+            if not worker_has_model(worker, attempt_model):
+                last_error = f"No worker available for model '{attempt_model}'"
+                logger.warning(
+                    "[p2p] skip worker model mismatch want=%s worker=%s has=%s",
+                    attempt_model,
+                    _p2p_worker_summary(worker),
+                    sorted(worker_model_names(worker)),
+                )
+                continue
             # 由本人个人源服务的请求免扣平台积分（用的是自己的订阅额度）
             served_by_own = (consumer_user_id is not None
                              and getattr(worker, "owner_user_id", None) == consumer_user_id)
@@ -208,11 +219,14 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                                 yield "data: [DONE]\n\n"
                                 return
                             if kind == "error":
-                                _, msg, etype = parse_worker_error(str(data))
+                                err_str = str(data)
+                                _, msg, etype = parse_worker_error(err_str)
                                 logger.warning(
                                     "[p2p] stream error req=%s model=%s worker=%s type=%s msg=%s",
                                     rid[:8], m, _p2p_worker_summary(w), etype, msg,
                                 )
+                                if should_offline_contributor_model(err_str):
+                                    await offline_contributor_model(w, m, err_str)
                                 yield f"data: {json.dumps(openai_error_content(msg, etype))}\n\n"
                                 return
                             if kind == "chunk":
@@ -300,6 +314,8 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                 continue  # 换下一个账号
 
             if got_error:
+                if should_offline_contributor_model(last_error):
+                    await offline_contributor_model(worker, attempt_model, last_error)
                 continue  # 换下一个账号
 
             if result_data is not None:

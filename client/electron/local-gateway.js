@@ -558,13 +558,14 @@ function enabledProviders() {
 }
 
 // Returns true if provider can serve the given model
-function providerHasModel(provider, model) {
+// strict：P2P hop 贡献节点转发时，不接受「空 models 列表 = 任意模型」的兜底
+function providerHasModel(provider, model, { strict = false } = {}) {
   const list = provider.models;
   // P2P 仅服务云端在线模型列表，不能因 models 为空就匹配任意模型（否则会抢在付费源之前回退）
   if (provider.type === 'p2p') {
     return _peerModels.size > 0 && _peerModels.has(model);
   }
-  if (!Array.isArray(list) || list.length === 0) return true; // 无列表 = 接受任意（付费/免费自定义源）
+  if (!Array.isArray(list) || list.length === 0) return strict ? false : true; // 无列表 = 接受任意（付费/免费自定义源）
   return list.some(m => (typeof m === 'string' ? m : m.name) === model);
 }
 
@@ -706,6 +707,11 @@ function isP2pCreditsError(err) {
   if (err.status === 402) return true;
   const msg = String(err.message || '').toLowerCase();
   return msg.includes('insufficient credits') || msg.includes('http_402');
+}
+
+function modelNotFoundError(model, tier) {
+  const detail = `Model '${model}' is not available${tier ? ` (tier=${tier})` : ''}`;
+  return Object.assign(new Error(detail), { status: 404, code: 'model_not_found' });
 }
 
 /** 客户端错误优先透传 4xx/5xx，其余维持 502 */
@@ -2324,12 +2330,16 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     });
     recordError(model, callerKey, lastErr); // 失败也落账，保证不丢账
     if (!res.headersSent) {
-      // Codex Responses 客户端只识别 Responses 风格错误体；其余路径维持原 Chat 风格。
       const detail = lastErr?.message || 'all_providers_failed';
+      const status = resolveFailStatus(lastErr);
+      if (isAnthropic && !isResponses && lastErr?.code === 'model_not_found') {
+        writeAnthropicApiError(res, status, detail, 'model_not_found');
+        return;
+      }
       const payload = isResponses
         ? codexTransform.chatErrorToResponseError({ error: { message: detail, type: 'all_providers_failed' } })
         : { error: 'all_providers_failed', detail };
-      res.writeHead(resolveFailStatus(lastErr), { 'Content-Type': 'application/json' });
+      res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(payload));
     }
   }
@@ -2453,6 +2463,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
 
   // ── Direct model request ──────────────────────────────────────────────────
   const allEnabled = enabledProviders().filter(p => !skipP2P || p.type !== 'p2p');
+  const modelMatch = { strict: skipP2P }; // 贡献节点 P2P hop：禁止空 models 列表兜底匹配
 
   // ★ 三层特征提取 + 策略组调度：按 policy 决定 provider 优先顺序
   let sorted;
@@ -2465,14 +2476,14 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       const inPolicy = providerIds
         .map(id => allEnabled.find(p => p.id === id))
         .filter(Boolean);
-      const others   = allEnabled.filter(p => !providerIds.includes(p.id) && providerHasModel(p, model));
+      const others   = allEnabled.filter(p => !providerIds.includes(p.id) && providerHasModel(p, model, modelMatch));
       sorted = [...inPolicy, ...others];
       pushLog({ ts: t0, requested_model: model, model, policy: policyRef,
                 features: { task_type: features.task_type, has_tools: features.has_tools,
                             context_length: features.context_length }, status: 'routing' });
     } else {
       // fallthrough：策略组为空或未匹配，用原有 model 匹配逻辑
-      const candidates = allEnabled.filter(p => providerHasModel(p, model));
+      const candidates = allEnabled.filter(p => providerHasModel(p, model, modelMatch));
       sorted = [
         ...candidates.filter(p => Array.isArray(p.models) && p.models.length > 0),
         ...candidates.filter(p => !Array.isArray(p.models) || p.models.length === 0),
@@ -2480,7 +2491,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     }
   } catch {
     // 策略路由出错不影响正常请求，回退到原逻辑
-    const candidates = allEnabled.filter(p => providerHasModel(p, model));
+    const candidates = allEnabled.filter(p => providerHasModel(p, model, modelMatch));
     sorted = [
       ...candidates.filter(p => Array.isArray(p.models) && p.models.length > 0),
       ...candidates.filter(p => !Array.isArray(p.models) || p.models.length === 0),
@@ -2499,7 +2510,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   });
 
   if (!sorted.length) {
-    lastErr = new Error(`no_enabled_provider_for_model: ${model}${requestTier ? ` (tier=${requestTier})` : ''}`);
+    lastErr = modelNotFoundError(model, requestTier);
     fail(null, null);
     return;
   }

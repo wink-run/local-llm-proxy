@@ -58,13 +58,18 @@ def parse_worker_error(err: str) -> tuple[int, str, str]:
         code = int(m.group(1))
         tail = (m.group(2) or "").strip()
         msg = _extract_message_from_json_text(tail) or s
-        if code == 402 or "insufficient credits" in msg.lower():
+        msg_low = msg.lower()
+        if "no worker available for model" in msg_low:
+            return 404, msg, "model_not_found"
+        if "not configured on this contributor" in msg_low or "not offered by this node" in msg_low:
+            return 404, msg, "model_not_found"
+        if code == 402 or "insufficient credits" in msg_low:
             return 402, msg, "insufficient_credits"
         if code == 401:
             return 401, msg, "authentication_error"
         if code == 429:
             return 429, msg, "rate_limit_exceeded"
-        if code in (504, 408) or "timeout" in msg.lower():
+        if code in (504, 408) or "timeout" in msg_low:
             return 504, msg, "timeout"
         if code == 503:
             return 503, msg, "service_unavailable"
@@ -75,6 +80,10 @@ def parse_worker_error(err: str) -> tuple[int, str, str]:
     low = s.lower()
     if "timeout" in low:
         return 504, s, "timeout"
+    if "no worker available for model" in low:
+        return 404, s, "model_not_found"
+    if "not configured on this contributor" in low or "not offered by this node" in low:
+        return 404, s, "model_not_found"
     if "no worker" in low or "no image-capable worker" in low:
         return 503, s, "service_unavailable"
     if "insufficient credits" in low:
@@ -87,6 +96,20 @@ def parse_worker_error(err: str) -> tuple[int, str, str]:
 def raise_dispatch_error(err: str) -> None:
     status, msg, etype = parse_worker_error(err)
     raise DispatchError(status, msg, etype)
+
+
+def should_offline_contributor_model(err: str) -> bool:
+    """贡献节点无法实际提供该模型时，应从在线池下线对应模型。"""
+    low = str(err or "").lower()
+    if "not configured on this contributor" in low:
+        return True
+    if "p2p relay api key not configured" in low:
+        return True
+    if "no_enabled_provider_for_model" in low:
+        return True
+    if "is not available" in low and "model '" in low:
+        return True
+    return False
 
 
 def payload_has_openai_error(data: dict | None) -> bool:

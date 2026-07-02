@@ -46,6 +46,41 @@ function loadConfig() {
   catch { return null; }
 }
 
+function saveConfig(cfg) {
+  fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+}
+
+/** 从贡献配置中移除指定模型（服务端下线通知后持久化） */
+function removeModelsFromCfg(cfg, names) {
+  const drop = new Set(names);
+  const keepModel = (m) => {
+    const n = typeof m === 'string' ? m : m?.name;
+    return n && !drop.has(n);
+  };
+  if (cfg.model_groups?.length) {
+    for (const g of cfg.model_groups) {
+      g.models = (g.models || []).filter(keepModel);
+    }
+  }
+  if (Array.isArray(cfg.models)) {
+    cfg.models = cfg.models.filter(keepModel);
+  }
+  return cfg;
+}
+
+function applyOfflineModels(names, reason) {
+  const list = (names || []).filter(Boolean);
+  if (!list.length) return;
+  const cfg = loadConfig();
+  if (!cfg) return;
+  const before = new Set(contributedModelNames(cfg));
+  const removed = list.filter(n => before.has(n));
+  if (!removed.length) return;
+  saveConfig(removeModelsFromCfg(cfg, removed));
+  log(`[agent] 模型已下线: ${removed.join(', ')}${reason ? ` (${reason})` : ''}`);
+}
+
 // ── Anthropic ↔ OpenAI conversion ─────────────────────────────────────────────
 
 function isAnthropicStyle(baseUrl) {
@@ -145,6 +180,22 @@ function resolveModelCfg(cfg, modelName) {
   );
   if (!entry || typeof entry === 'string' || !entry.base_url) return cfg;
   return { ...cfg, llm_base_url: entry.base_url };
+}
+
+/** 贡献节点已声明、可对外提供的模型名 */
+function contributedModelNames(cfg) {
+  if (cfg.model_groups?.length) {
+    return cfg.model_groups.flatMap(g => (g.models || []).map(m => (typeof m === 'string' ? m : m.name)));
+  }
+  return (cfg.models || []).map(m => (typeof m === 'string' ? m : m.name));
+}
+
+/** 未在贡献配置中的模型直接拒绝，避免误走本地网关 P2P 回环并报 API Key 错误 */
+function assertModelContributed(cfg, modelName) {
+  const names = new Set(contributedModelNames(cfg).filter(Boolean));
+  if (!names.has(modelName)) {
+    throw new Error(`Model '${modelName}' is not configured on this contributor node`);
+  }
 }
 
 // ── HTTP forward ──────────────────────────────────────────────────────────────
@@ -525,11 +576,17 @@ function connect(cfg) {
       return;
     }
 
+    if (msg.type === 'offline_models') {
+      applyOfflineModels(msg.models, msg.reason);
+      return;
+    }
+
     if (msg.type === 'request') {
       const { req_id, payload } = msg;
       log(`[agent] → req_id=${req_id} model=${payload.model} stream=${!!payload.stream}`);
       activeRequests++;
       try {
+        assertModelContributed(cfg, payload.model);
         await forwardRequest(req_id, payload, resolveModelCfg(cfg, payload.model));
       } catch (e) {
         log(`[agent] error req_id=${req_id}: ${e.message}`);
@@ -544,6 +601,7 @@ function connect(cfg) {
       log(`[agent] image → req_id=${req_id} model=${payload.model}`);
       activeRequests++;
       try {
+        assertModelContributed(cfg, payload.model);
         await forwardImageRequest(req_id, payload, resolveModelCfg(cfg, payload.model));
       } catch (e) {
         log(`[agent] image error req_id=${req_id}: ${e.message}`);
