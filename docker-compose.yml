@@ -59,6 +59,7 @@ services:
     build:
       context: ./server
     volumes:
+      - ./server:/app:ro
       - app_data:/app/data:ro
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-tokenbank}
