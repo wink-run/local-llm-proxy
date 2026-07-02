@@ -897,6 +897,13 @@ function setupAutoUpdater() {
 // ── Agent config helpers ──────────────────────────────────────────────────────
 
 // Claude Desktop ↔ 3p 会话同步（启动/接管/定期共用；增量去重，无新增时近乎零成本）
+function sync3pDebugLog(msg) {
+  try {
+    const p = require('electron').app.getPath('userData') + '/3p-sync-debug.log';
+    fs.appendFileSync(p, new Date().toISOString() + ' ' + msg + '\n');
+  } catch {}
+}
+
 function runClaude3pSync(reason) {
   try {
     const sync = require('./claude-3p-session-sync');
@@ -904,12 +911,15 @@ function runClaude3pSync(reason) {
     const cowork = sync.syncCoworkSessionsBidirectional();
     const copied = ((code.toP3 && code.toP3.copied) || 0) + ((code.toNative && code.toNative.copied) || 0)
       + (cowork.toP3 || 0) + (cowork.toNative || 0);
+    const line = `[3p-sync] ${reason}: code →3p ${(code.toP3 && code.toP3.copied) || 0}/→native ${(code.toNative && code.toNative.copied) || 0}`
+      + ` | dirs native=${code.nativeDir ? 'ok' : 'NULL'} p3=${code.p3Dir ? 'ok' : 'NULL'} skip=${code.skipped || '-'}`;
     // 定期同步只在真有新增时打日志，避免刷屏
-    if (copied > 0 || reason !== 'interval') {
-      console.log(`[3p-sync] ${reason}: code →3p ${(code.toP3 && code.toP3.copied) || 0}/→native ${(code.toNative && code.toNative.copied) || 0}`
-        + ` | cowork →3p ${cowork.toP3 || 0}/→native ${cowork.toNative || 0}`);
-    }
-  } catch (e) { console.warn(`[3p-sync] ${reason} failed:`, e && e.message); }
+    if (copied > 0 || reason !== 'interval') console.log(line);
+    sync3pDebugLog(line);
+  } catch (e) {
+    console.warn(`[3p-sync] ${reason} failed:`, e && e.message);
+    sync3pDebugLog(`FAILED ${reason}: ${e && e.message}`);
+  }
 }
 
 function readAgentConfig() {
@@ -3305,6 +3315,7 @@ app.whenReady().then(() => {
   repairClaude3pMetaIfNeeded();
   // Claude Desktop ↔ 3p 会话同步：启动一次 + 每 30s 一次（覆盖运行期间新建的会话，修复"新会话纳管后不同步"）
   console.log('[3p-sync] ==== BOOT v2 (reconcile + 双向 watch) 已加载，开始同步 ====');
+  sync3pDebugLog('==== BOOT v2 app.whenReady, pid=' + process.pid + ' ====');
   runClaude3pSync('startup');
   setInterval(() => runClaude3pSync('interval'), 30000);
   // 文件监听兜底：native / 3p 任一 claude-code-sessions 目录有新/变更文件就立即同步（不等 30s 定时器）。
@@ -3323,6 +3334,7 @@ app.whenReady().then(() => {
       global.__sessionWatchers = [];
       for (const dir of dirs) {
         const w = fs.watch(dir, (eventType, filename) => {
+          sync3pDebugLog(`watch event: evt=${eventType} file=${JSON.stringify(filename)}`);
           if (!filename || !/^local_.+\.json$/.test(filename)) return;
           clearTimeout(watchTimer);
           watchTimer = setTimeout(() => runClaude3pSync('watch'), 2000); // 2s 防抖
@@ -3330,6 +3342,7 @@ app.whenReady().then(() => {
         global.__sessionWatchers.push(w);
       }
       console.log(`[3p-sync] watchers armed: ${dirs.length} 个目录`, dirs);
+      sync3pDebugLog(`watchers armed: ${dirs.length} dirs: ${JSON.stringify(dirs)}`);
     } catch (e) { console.warn('[3p-sync] watch setup failed:', e.message); }
   }
   watchSessions();
