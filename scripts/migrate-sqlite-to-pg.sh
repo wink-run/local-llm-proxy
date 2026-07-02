@@ -100,7 +100,12 @@ _run_migration_in_compose() {
 
   docker compose up -d postgres
 
+  # 镜像内代码是 build 时 COPY 的快照，git pull 后须 rebuild；同时挂载 server 确保用最新脚本
+  echo "构建 proxy 镜像…"
+  docker compose build proxy
+
   docker compose run --rm \
+    -v "$ROOT/server:/app:ro" \
     -e "DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}" \
     "$@" \
     proxy python migrate_sqlite_to_pg.py \
