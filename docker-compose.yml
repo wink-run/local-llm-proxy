@@ -52,6 +52,22 @@ services:
         max-size: "20m"
         max-file: "5"
 
+  # 一次性 SQLite → PostgreSQL 迁移（读取 app_data 卷内 proxy.db）
+  # 用法: docker compose --profile migrate run --rm migrate
+  migrate:
+    profiles: [migrate]
+    build:
+      context: ./server
+    volumes:
+      - app_data:/app/data:ro
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-wink123}@postgres:5432/${POSTGRES_DB:-tokenbank}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["python", "migrate_sqlite_to_pg.py"]
+    command: ["--sqlite", "/app/data/proxy.db", "--truncate"]
+
   # ── Nginx HTTPS 反代（绑定域名）────────────────────────────────────────────
   # 用法见 .env.example：放置证书后 docker compose --profile https up -d
   nginx:
