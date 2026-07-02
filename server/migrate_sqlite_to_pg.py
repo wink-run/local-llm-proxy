@@ -22,6 +22,7 @@ import asyncio
 import os
 import sqlite3
 import sys
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -77,14 +78,9 @@ SERIAL_ID_TABLES = frozenset({
     "device_stats_snapshots",
 })
 
-# SQLite 文本时间字段 → PG TIMESTAMPTZ
-TIMESTAMP_COLUMNS = frozenset({
-    "created_at",
-    "updated_at",
-    "joined_at",
-    "ts",
-    "last_seen",
-})
+# PostgreSQL 时间列类型（asyncpg 需要 datetime/date 对象，不能传 str）
+_PG_TS_TYPES = frozenset({"timestamp with time zone", "timestamp without time zone"})
+_PG_DATE_TYPES = frozenset({"date"})
 
 TRUNCATE_SQL = """
 TRUNCATE TABLE
@@ -136,20 +132,61 @@ async def _pg_columns(conn: asyncpg.Connection, table: str) -> list[str]:
     return [r["column_name"] for r in rows]
 
 
-def _normalize_value(column: str, value: Any) -> Any:
+async def _pg_column_types(conn: asyncpg.Connection, table: str) -> dict[str, str]:
+    rows = await conn.fetch(
+        """
+        SELECT column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = $1
+        """,
+        table,
+    )
+    return {r["column_name"]: r["data_type"] for r in rows}
+
+
+def _parse_datetime(text: str) -> datetime:
+    """解析 SQLite 常见时间字符串为 datetime。"""
+    raw = text.strip()
+    if not raw:
+        raise ValueError("empty datetime")
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    normalized = raw.replace(" ", "T")
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        pass
+    base = normalized.split(".")[0].split("+")[0]
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(base, fmt)
+        except ValueError:
+            continue
+    raise ValueError(f"无法解析时间: {text!r}")
+
+
+def _coerce_value(pg_type: str, value: Any) -> Any:
+    """按 PostgreSQL 列类型转换 SQLite 读出的值。"""
     if value is None:
         return None
-    if column in TIMESTAMP_COLUMNS and isinstance(value, str):
+    if pg_type in _PG_TS_TYPES and isinstance(value, str):
+        text = value.strip()
+        return None if not text else _parse_datetime(text)
+    if pg_type in _PG_DATE_TYPES and isinstance(value, str):
         text = value.strip()
         if not text:
             return None
-        # SQLite 常见格式均可被 PG 解析
-        return text.replace(" ", "T") if " " in text and "T" not in text else text
+        if "T" in text or " " in text:
+            return _parse_datetime(text).date()
+        return date.fromisoformat(text[:10])
     return value
 
 
 def _read_sqlite_rows(
-    conn: sqlite3.Connection, table: str, columns: list[str]
+    conn: sqlite3.Connection,
+    table: str,
+    columns: list[str],
+    col_types: dict[str, str],
 ) -> list[tuple]:
     if not columns:
         return []
@@ -157,7 +194,12 @@ def _read_sqlite_rows(
     cur = conn.execute(f'SELECT {quoted} FROM "{table}"')
     out: list[tuple] = []
     for row in cur.fetchall():
-        out.append(tuple(_normalize_value(columns[i], row[i]) for i in range(len(columns))))
+        out.append(
+            tuple(
+                _coerce_value(col_types.get(columns[i], ""), row[i])
+                for i in range(len(columns))
+            )
+        )
     return out
 
 
@@ -183,12 +225,13 @@ async def _copy_table(
 
     src_cols = _sqlite_columns(sqlite, table)
     dst_cols = await _pg_columns(pg, table)
+    col_types = await _pg_column_types(pg, table)
     common = [c for c in dst_cols if c in src_cols]
     if not common:
         print(f"  [skip] {table} 无共同列")
         return 0
 
-    rows = _read_sqlite_rows(sqlite, table, common)
+    rows = _read_sqlite_rows(sqlite, table, common, col_types)
     if not rows:
         print(f"  [ok]   {table}: 0 行")
         return 0
