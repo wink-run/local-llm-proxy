@@ -8,6 +8,7 @@ import uuid
 from fastapi.responses import StreamingResponse
 
 import database as db
+from usage_utils import normalize_usage, usage_sse_chunk
 from api_errors import (
     DispatchError,
     error_message_from_payload,
@@ -106,6 +107,9 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
 
             dispatch_body = dict(body)
             dispatch_body["model"] = attempt_model
+            # 流式 OpenAI 兼容 API 需 include_usage 才在末帧返回 token；上游不支持时会忽略
+            if streaming and dispatch_body.get("stream") and not dispatch_body.get("stream_options"):
+                dispatch_body["stream_options"] = {"include_usage": True}
             if caveman_level and caveman_level in CAVEMAN_VALID_LEVELS:
                 dispatch_body["messages"] = list(dispatch_body.get("messages") or [])
                 inject_caveman(dispatch_body, caveman_level)
@@ -123,12 +127,15 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                 if session_key:
                     pool.bind_sticky(session_key, worker.worker_id)
 
-                async def sse_gen(w=worker, rid=req_id, q=q, m=attempt_model, own=served_by_own):
+                async def sse_gen(w=worker, rid=req_id, q=q, m=attempt_model, own=served_by_own, req_body=dispatch_body):
                     try:
                         while True:
                             kind, data = await asyncio.wait_for(q.get(), timeout=REQUEST_TIMEOUT)
                             if kind == "done":
-                                usage = data if isinstance(data, dict) else {}
+                                usage = normalize_usage(data if isinstance(data, dict) else {}, req_body)
+                                # 客户端 sniff 常拿不到 input；补一帧 usage 再 [DONE]
+                                if (usage.get("completion_tokens") or 0) > 0:
+                                    yield usage_sse_chunk(usage, m)
                                 if consumer_user_id and not own:
                                     await db.consume_credits_for_usage(consumer_user_id, m, usage)
                                 yield "data: [DONE]\n\n"
@@ -184,7 +191,8 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                 # 非流式扣费集中在此（流式在 sse_gen 内）；本人个人源服务则豁免
                 if consumer_user_id and not served_by_own:
                     await db.consume_credits_for_usage(
-                        consumer_user_id, attempt_model, result_data.get("usage") or {}
+                        consumer_user_id, attempt_model,
+                        normalize_usage(result_data.get("usage") or {}, dispatch_body),
                     )
                 if session_key:
                     pool.bind_sticky(session_key, worker.worker_id)

@@ -1968,6 +1968,23 @@ async def _migrate_circles() -> None:
                 created_at  TEXT DEFAULT (datetime('now'))
             )
         """)
+        # 公开浏览 + 入圈申请
+        async with db.execute("PRAGMA table_info(circles)") as cur:
+            circle_cols = {row[1] async for row in cur}
+        if "is_public" not in circle_cols:
+            await db.execute("ALTER TABLE circles ADD COLUMN is_public INTEGER DEFAULT 1")
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS circle_join_requests (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                circle_id   INTEGER NOT NULL REFERENCES circles(id) ON DELETE CASCADE,
+                user_id     INTEGER NOT NULL REFERENCES users(id),
+                message     TEXT DEFAULT '',
+                status      TEXT NOT NULL DEFAULT 'pending',
+                created_at  TEXT DEFAULT (datetime('now')),
+                updated_at  TEXT DEFAULT (datetime('now')),
+                UNIQUE(circle_id, user_id)
+            )
+        """)
         await db.commit()
 
 
@@ -1988,7 +2005,7 @@ async def create_circle(owner_id: int, name: str, description: str = "") -> dict
         for _ in range(5):
             try:
                 async with db.execute(
-                    "INSERT INTO circles(name,description,code,owner_id) VALUES(?,?,?,?)",
+                    "INSERT INTO circles(name,description,code,owner_id,is_public) VALUES(?,?,?,?,1)",
                     (name, description, code, owner_id),
                 ) as cur:
                     circle_id = cur.lastrowid
@@ -2378,4 +2395,114 @@ async def create_circle_post_reply(post_id: int, author_id: int, content: str) -
             row = await cur.fetchone()
             return dict(row)
 
+
+# ── 圈子浏览 / 入圈申请 ───────────────────────────────────────────────────────
+
+async def list_browsable_circles(user_id: int, query: str = "") -> list:
+    """公开圈子列表，附带当前用户的入圈状态。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        sql = """
+            SELECT c.id, c.name, c.description, c.max_members, c.created_at, c.owner_id,
+                   (SELECT COUNT(*) FROM circle_members m WHERE m.circle_id=c.id) AS member_count,
+                   CASE
+                     WHEN EXISTS(SELECT 1 FROM circle_members m WHERE m.circle_id=c.id AND m.user_id=?)
+                       THEN 'member'
+                     WHEN EXISTS(SELECT 1 FROM circle_join_requests r
+                                  WHERE r.circle_id=c.id AND r.user_id=? AND r.status='pending')
+                       THEN 'pending'
+                     ELSE 'none'
+                   END AS join_status
+            FROM circles c
+            WHERE c.is_public=1
+        """
+        params: list = [user_id, user_id]
+        q = (query or "").strip()
+        if q:
+            sql += " AND (c.name LIKE ? OR c.description LIKE ?)"
+            like = f"%{q}%"
+            params.extend([like, like])
+        sql += " ORDER BY member_count DESC, c.created_at DESC LIMIT 100"
+        async with db.execute(sql, params) as cur:
+            rows = [dict(r) async for r in cur]
+            for r in rows:
+                r["member_count"] = int(r.get("member_count") or 0)
+            return rows
+
+
+async def get_circle_join_request(circle_id: int, user_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM circle_join_requests WHERE circle_id=? AND user_id=?",
+            (circle_id, user_id),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def get_circle_join_request_by_id(request_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM circle_join_requests WHERE id=?", (request_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def upsert_circle_join_request(circle_id: int, user_id: int, message: str = "") -> dict:
+    """创建或重新提交入圈申请（被拒绝后可再次申请）。"""
+    text = (message or "").strip()[:200]
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT status FROM circle_join_requests WHERE circle_id=? AND user_id=?",
+            (circle_id, user_id),
+        ) as cur:
+            row = await cur.fetchone()
+        if row and row[0] == "pending":
+            return await get_circle_join_request(circle_id, user_id)  # type: ignore[return-value]
+        if row:
+            await db.execute(
+                """UPDATE circle_join_requests
+                   SET status='pending', message=?, updated_at=datetime('now')
+                   WHERE circle_id=? AND user_id=?""",
+                (text, circle_id, user_id),
+            )
+        else:
+            await db.execute(
+                "INSERT INTO circle_join_requests(circle_id, user_id, message) VALUES(?,?,?)",
+                (circle_id, user_id, text),
+            )
+        await db.commit()
+    req = await get_circle_join_request(circle_id, user_id)
+    if not req:
+        raise RuntimeError("failed to create join request")
+    return req
+
+
+async def list_circle_join_requests(circle_id: int, status: str = "pending") -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT r.id, r.circle_id, r.user_id, r.message, r.status, r.created_at, r.updated_at,
+                      u.nickname, u.email
+               FROM circle_join_requests r
+               JOIN users u ON u.id = r.user_id
+               WHERE r.circle_id=? AND r.status=?
+               ORDER BY r.created_at ASC""",
+            (circle_id, status),
+        ) as cur:
+            return [dict(r) async for r in cur]
+
+
+async def set_circle_join_request_status(request_id: int, status: str) -> Optional[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE circle_join_requests SET status=?, updated_at=datetime('now') WHERE id=?",
+            (status, request_id),
+        )
+        await db.commit()
+    return await get_circle_join_request_by_id(request_id)
 

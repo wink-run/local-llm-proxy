@@ -178,9 +178,45 @@ function buildUrl(baseUrl, anthropic, explicitChatPath) {
   return new URL(path, baseForJoin);
 }
 
+// OAI 流式需 stream_options.include_usage 才在末帧返回 usage
+function withUsageOption(body) {
+  if (!body?.stream || body.stream_options) return body;
+  return { ...body, stream_options: { include_usage: true } };
+}
+
+function extractText(body) {
+  if (!body || typeof body !== 'object') return '';
+  const parts = [];
+  const push = (c) => {
+    if (typeof c === 'string') parts.push(c);
+    else if (Array.isArray(c)) for (const s of c) {
+      if (typeof s === 'string') parts.push(s);
+      else if (s && typeof s.text === 'string') parts.push(s.text);
+    }
+  };
+  if (Array.isArray(body.messages)) for (const m of body.messages) push(m && m.content);
+  if (typeof body.prompt === 'string') parts.push(body.prompt);
+  return parts.join('\n');
+}
+
+/** 流式仅有 output 时粗估 input（与服务端 usage_utils 对齐） */
+function fillMissingInputUsage(usage, body) {
+  if (!usage || !body) return usage;
+  const inTok = usage.prompt_tokens || usage.input_tokens || 0;
+  const outTok = usage.completion_tokens || usage.output_tokens || 0;
+  if (inTok || !outTok) return usage;
+  const est = Math.max(1, Math.ceil(extractText(body).length / 4));
+  return {
+    ...usage,
+    prompt_tokens: est,
+    input_tokens: est,
+    total_tokens: est + outTok,
+  };
+}
+
 function forwardRequest(reqId, payload, cfg) {
   const anthropic  = isAnthropicStyle(cfg.llm_base_url);
-  const outPayload = anthropic ? openaiToAnthropic(payload) : payload;
+  const outPayload = anthropic ? openaiToAnthropic(payload) : withUsageOption(payload);
 
   const url = buildUrl(cfg.llm_base_url, anthropic, cfg.llm_chat_path);
   const mod = url.protocol === 'https:' ? https : http;
@@ -252,7 +288,7 @@ function forwardRequest(reqId, payload, cfg) {
             }
             if (lastUsage?.completion_tokens) recordTokens(lastUsage.completion_tokens);
             else if (lastUsage?.output_tokens) recordTokens(lastUsage.output_tokens);
-            send({ type: 'done', req_id: reqId, usage: lastUsage });
+            send({ type: 'done', req_id: reqId, usage: fillMissingInputUsage(lastUsage, payload) });
             resolve();
           });
 

@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { extractContext, buildTraceStats, fileTimeSpan } = require('./shared');
+const { extractContext, buildTraceStats, fileTimeSpan, pickUsage, msgText } = require('./shared');
 const { buildClaudeStyleSteps } = require('./claude-jsonl');
 
 const AGENT_ID = 'claude-3p';
@@ -43,6 +43,37 @@ function findSessionFile(sessionId) {
   return found;
 }
 
+/** 从 session jsonl 汇总 token（list 用；索引 JSON 不含 usage） */
+function scanSessionJsonlUsage(sessionId) {
+  const file = findSessionFile(sessionId);
+  if (!file) return { calls: 0, inTok: 0, outTok: 0, tokens: 0 };
+  let calls = 0;
+  let inTok = 0;
+  let outTok = 0;
+  let userChars = 0; // user 行字符数，用于 jsonl 无 input_tokens 时粗估
+  try {
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+      const s = line.trim();
+      if (!s) continue;
+      let data;
+      try { data = JSON.parse(s); } catch { continue; }
+      if (data.type === 'user') {
+        userChars += extractContext(msgText(data.message || {})).length;
+      }
+      if (data.type !== 'assistant') continue;
+      calls++;
+      const u = pickUsage(data);
+      if (u) {
+        inTok += u.inTok;
+        outTok += u.outTok;
+      }
+    }
+    // Cowork jsonl 常只记 output；有输出无输入时按 user 文本粗估（约 4 字符/token）
+    if (outTok > 0 && !inTok && userChars > 0) inTok = Math.ceil(userChars / 4);
+  } catch { /* 单文件损坏不影响列表 */ }
+  return { calls, inTok, outTok, tokens: inTok + outTok };
+}
+
 function list({ limit = 50, sinceDays = 30 } = {}) {
   const since = Date.now() / 1000 - (sinceDays || 30) * 86400;
   const out = [];
@@ -68,14 +99,20 @@ function list({ limit = 50, sinceDays = 30 } = {}) {
           seen.add(sid);
           const lastTs = Math.floor((idx.lastActivityAt || idx.createdAt || 0) / 1000);
           if (lastTs && lastTs < since) continue;
+          const usage = scanSessionJsonlUsage(sid);
           out.push({
             session_id: sid,
             project: idx.title || '(无标题)',
             project_path: null,
             context: extractContext(String(idx.initialMessage || idx.title || '')) || '(无用户消息)',
-            calls: 0, tokens: 0, inTok: 0, outTok: 0,
+            calls: usage.calls,
+            tokens: usage.tokens,
+            inTok: usage.inTok,
+            outTok: usage.outTok,
             lastTs: lastTs || 0,
             agent: AGENT_ID,
+            client: 'claude-desktop',
+            trace_agent_id: AGENT_ID,
           });
         }
       }
@@ -94,6 +131,7 @@ function trace(sessionId) {
   return {
     session_id: sessionId,
     agent: AGENT_ID,
+    client: 'claude-desktop',
     project: null,
     project_path: null,
     cwd: null,

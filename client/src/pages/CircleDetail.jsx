@@ -11,7 +11,12 @@ import {
   createCirclePostReply,
   updateCirclePostReply,
   deleteCirclePostReply,
+  listCircleJoinRequests,
+  approveCircleJoinRequest,
+  rejectCircleJoinRequest,
 } from '../api/client';
+import RichMediaInput from '../components/RichMediaInput';
+import RichMediaContent from '../components/RichMediaContent';
 
 const AVATAR_COLORS = [
   'bg-blue-600', 'bg-violet-600', 'bg-emerald-600',
@@ -140,6 +145,8 @@ export default function CircleDetail() {
   const [replyDraft, setReplyDraft] = useState('');
   const [replying, setReplying] = useState(false);
   const [showComposer, setShowComposer] = useState(false);
+  const [joinRequests, setJoinRequests] = useState([]);
+  const [requestBusy, setRequestBusy] = useState(null); // request id
 
   const isAuthor = (item) => myId != null && item?.author_id === myId;
 
@@ -156,6 +163,16 @@ export default function CircleDetail() {
       setModels(r.data?.models || []);
       setPosts(r.data?.posts || []);
       setMembers(memRes.data?.members || []);
+      if (r.data?.circle?.is_owner) {
+        try {
+          const jr = await listCircleJoinRequests(id);
+          setJoinRequests(jr.data?.requests || []);
+        } catch {
+          setJoinRequests([]);
+        }
+      } else {
+        setJoinRequests([]);
+      }
     } catch (err) {
       setError(err?.response?.data?.detail || t('circles.detail.loadFailed'));
     } finally {
@@ -268,6 +285,35 @@ export default function CircleDetail() {
     }
   }
 
+  async function handleApproveRequest(req) {
+    setRequestBusy(req.id);
+    try {
+      await approveCircleJoinRequest(id, req.id);
+      setJoinRequests(prev => prev.filter(r => r.id !== req.id));
+      const memRes = await listCircleMembers(id);
+      setMembers(memRes.data?.members || []);
+      if (circle) {
+        setCircle(c => ({ ...c, member_count: (c.member_count || 0) + 1 }));
+      }
+    } catch (err) {
+      setError(err?.response?.data?.detail || t('circles.browse.applyFailed'));
+    } finally {
+      setRequestBusy(null);
+    }
+  }
+
+  async function handleRejectRequest(req) {
+    setRequestBusy(req.id);
+    try {
+      await rejectCircleJoinRequest(id, req.id);
+      setJoinRequests(prev => prev.filter(r => r.id !== req.id));
+    } catch (err) {
+      setError(err?.response?.data?.detail || t('circles.browse.applyFailed'));
+    } finally {
+      setRequestBusy(null);
+    }
+  }
+
   if (loading) {
     return (
       <div className="px-5 py-10 text-center text-sm text-gray-400">{t('circles.detail.loading')}</div>
@@ -321,6 +367,58 @@ export default function CircleDetail() {
 
       {error && <p className="text-xs text-red-500">{error}</p>}
 
+      {/* 圈主：待审批入圈申请 */}
+      {circle?.is_owner && (
+        <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 space-y-3">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+            {t('circles.browse.requestsTitle')}
+            {joinRequests.length > 0 && (
+              <span className="ml-2 text-xs font-normal text-amber-600 dark:text-amber-400">
+                {joinRequests.length}
+              </span>
+            )}
+          </h2>
+          {joinRequests.length === 0 ? (
+            <p className="text-xs text-gray-400">{t('circles.browse.noRequests')}</p>
+          ) : (
+            <div className="space-y-2">
+              {joinRequests.map(req => {
+                const name = req.nickname || req.email?.split('@')[0] || '?';
+                return (
+                  <div key={req.id} className="flex items-center gap-3 py-2 border-t border-gray-100 dark:border-gray-700 first:border-0 first:pt-0">
+                    <AuthorAvatar author={req} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{name}</p>
+                      {req.message && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 truncate">{req.message}</p>
+                      )}
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      <button
+                        type="button"
+                        disabled={requestBusy === req.id}
+                        onClick={() => handleApproveRequest(req)}
+                        className="text-xs px-2.5 py-1 rounded-lg bg-green-600 text-white hover:bg-green-500 disabled:opacity-50"
+                      >
+                        {t('circles.browse.approve')}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={requestBusy === req.id}
+                        onClick={() => handleRejectRequest(req)}
+                        className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+                      >
+                        {t('circles.browse.reject')}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
+
       {/* 圈友 */}
       <section className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 space-y-2">
         <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200">{t('circles.detail.friends')}</h2>
@@ -367,13 +465,13 @@ export default function CircleDetail() {
           <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 space-y-2">
             <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{t('circles.detail.composePost')}</p>
             <form onSubmit={handlePost} className="space-y-2">
-              <textarea
-                className="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                rows={3}
-                placeholder={t('circles.detail.announcePh')}
+              <RichMediaInput
+                circleId={id}
                 value={draft}
-                onChange={e => setDraft(e.target.value)}
+                onChange={setDraft}
                 maxLength={2000}
+                rows={4}
+                placeholder={t('circles.detail.announcePh')}
                 autoFocus
               />
               <div className="flex gap-2">
@@ -414,12 +512,12 @@ export default function CircleDetail() {
 
             {editId === post.id ? (
               <div className="space-y-2">
-                <textarea
-                  className="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  rows={3}
+                <RichMediaInput
+                  circleId={id}
                   value={editText}
-                  onChange={e => setEditText(e.target.value)}
+                  onChange={setEditText}
                   maxLength={2000}
+                  rows={4}
                 />
                 <div className="flex gap-2">
                   <button type="button" onClick={() => handleSaveEdit(post)} disabled={posting}
@@ -434,9 +532,7 @@ export default function CircleDetail() {
               </div>
             ) : (
               <>
-                <p className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-words leading-relaxed">
-                  {post.content}
-                </p>
+                <RichMediaContent content={post.content} />
                 <ActionBar
                   replyCount={post.replies?.length || 0}
                   onReply={() => {
@@ -465,12 +561,13 @@ export default function CircleDetail() {
 
                       {editReply?.replyId === reply.id ? (
                         <div className="space-y-2">
-                          <textarea
-                            className="w-full border border-gray-200 dark:border-gray-600 rounded-xl px-3.5 py-2 text-sm bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-gray-100 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            rows={2}
+                          <RichMediaInput
+                            circleId={id}
                             value={editReply.text}
-                            onChange={e => setEditReply(prev => ({ ...prev, text: e.target.value }))}
+                            onChange={text => setEditReply(prev => ({ ...prev, text }))}
                             maxLength={1000}
+                            rows={3}
+                            className="rounded-xl bg-gray-50 dark:bg-gray-700/50"
                           />
                           <div className="flex gap-2">
                             <button type="button" onClick={() => handleSaveEditReply(post)} disabled={posting}
@@ -486,9 +583,10 @@ export default function CircleDetail() {
                       ) : (
                         <>
                           <div className="rounded-xl bg-gray-50 dark:bg-gray-700/45 px-3.5 py-2.5">
-                            <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words leading-relaxed">
-                              {reply.content}
-                            </p>
+                            <RichMediaContent
+                              content={reply.content}
+                              className="[&_p]:text-gray-700 [&_p]:dark:text-gray-300"
+                            />
                           </div>
                           {isAuthor(reply) && (
                             <ActionBar
@@ -505,14 +603,15 @@ export default function CircleDetail() {
 
                 {replyingId === post.id && (
                   <form onSubmit={e => handleReply(e, post)} className="space-y-2 pl-10">
-                    <textarea
-                      className="w-full border border-gray-200 dark:border-gray-600 rounded-xl px-3.5 py-2.5 text-sm bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                      rows={2}
-                      placeholder={t('circles.detail.replyPh')}
+                    <RichMediaInput
+                      circleId={id}
                       value={replyDraft}
-                      onChange={e => setReplyDraft(e.target.value)}
+                      onChange={setReplyDraft}
                       maxLength={1000}
+                      rows={3}
+                      placeholder={t('circles.detail.replyPh')}
                       autoFocus
+                      className="rounded-xl bg-gray-50 dark:bg-gray-700/50"
                     />
                     <div className="flex gap-2">
                       <button type="submit" disabled={replying || !replyDraft.trim()}

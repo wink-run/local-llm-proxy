@@ -152,10 +152,11 @@ function getSessions(deps, opts = {}) {
 }
 
 /** 导出单会话为 JSON 包或 Markdown，写入默认目录，返回落盘信息。 */
-function exportSession(deps, { agent_id, session_id, format = 'json' } = {}) {
+function exportSession(deps, { agent_id, session_id, trace_agent_id, format = 'json' } = {}) {
   const { sessionBrowser } = deps;
-  if (!agent_id || !session_id) return { error: 'missing_params' };
-  const trace = sessionBrowser.getTrace(agent_id, session_id);
+  const traceId = trace_agent_id || agent_id;
+  if (!traceId || !session_id) return { error: 'missing_params' };
+  const trace = sessionBrowser.getTrace(traceId, session_id);
   if (!trace || trace.error) return { error: 'trace_unavailable' };
 
   const pack = buildSessionPackJSON({ trace, agent_id, session_id });

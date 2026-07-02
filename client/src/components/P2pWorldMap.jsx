@@ -73,7 +73,17 @@ export default function P2pWorldMap({ workers = [], labels = {} }) {
   const unmapped = Math.max(0, total - mapped);
 
   return (
-    <div className="relative">
+    <div
+      className="p2p-world-map relative rounded-xl overflow-hidden"
+      style={{
+        // 浅色：天蓝海洋 + 白色陆地；暗色：深海 + 青绿陆地（避免灰阶地图）
+        background: 'var(--p2p-map-ocean)',
+        ['--p2p-map-ocean']: '#bae6fd',
+        ['--p2p-map-fill']: '#f0fdf4',
+        ['--p2p-map-stroke']: '#0284c7',
+        ['--p2p-map-hover']: '#bbf7d0',
+      }}
+    >
       <ComposableMap
         projection="geoEqualEarth"
         projectionConfig={{ scale: 145, center: [10, 8] }}
@@ -88,12 +98,12 @@ export default function P2pWorldMap({ workers = [], labels = {} }) {
                 <Geography
                   key={geo.rsmKey}
                   geography={geo}
-                  fill="var(--p2p-map-fill, #e4e4e7)"
-                  stroke="var(--p2p-map-stroke, #d4d4d8)"
-                  strokeWidth={0.4}
+                  fill="var(--p2p-map-fill)"
+                  stroke="var(--p2p-map-stroke)"
+                  strokeWidth={0.5}
                   style={{
                     default: { outline: 'none' },
-                    hover: { fill: 'var(--p2p-map-hover, #d4d4d8)', outline: 'none' },
+                    hover: { fill: 'var(--p2p-map-hover)', outline: 'none' },
                     pressed: { outline: 'none' },
                   }}
                 />
@@ -143,12 +153,13 @@ export default function P2pWorldMap({ workers = [], labels = {} }) {
         </span>
       </div>
 
-      {/* 暗色地图配色 */}
+      {/* 暗色：深海蓝底 + 青绿陆地 */}
       <style>{`
-        .dark {
-          --p2p-map-fill: #27272a;
-          --p2p-map-stroke: #3f3f46;
-          --p2p-map-hover: #3f3f46;
+        .dark .p2p-world-map {
+          --p2p-map-ocean: #082f49;
+          --p2p-map-fill: #0e7490;
+          --p2p-map-stroke: #22d3ee;
+          --p2p-map-hover: #0891b2;
         }
       `}</style>
     </div>

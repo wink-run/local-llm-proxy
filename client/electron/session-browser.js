@@ -44,14 +44,18 @@ function normalizeActivityRow(row, agentId) {
 /** 合并 DB 统计与会话文件扫描结果 */
 function mergeActivityWithStats(activity, dbSessions = []) {
   const byId = Object.fromEntries((dbSessions || []).map(s => [s.session_id, s]));
-  return activity.map(a => {
+    return activity.map(a => {
     const db = byId[a.session_id];
     if (!db) return a;
     const dbCost = Number(db.cost_usd) || 0;
+    const inTok = db.inTok || a.inTok || 0;
+    const outTok = db.outTok || a.outTok || 0;
     return {
       ...a,
       calls: db.calls || a.calls,
-      tokens: db.tokens || a.tokens,
+      inTok,
+      outTok,
+      tokens: db.tokens || a.tokens || (inTok + outTok),
       lastTs: db.lastTs || a.lastTs,
       cost_usd: dbCost > 0 ? dbCost : (Number(a.cost_usd) || 0),
     };
@@ -139,18 +143,32 @@ function enrichRecentDetail(agentId, recent, activity = []) {
 }
 
 function getTrace(agentId, sessionId, handlerOverride) {
-  const raw = handlerOverride
-    ? registry.traceForAdapter(handlerOverride, sessionId)
-    : registry.getTrace(agentId, sessionId);
+  let result;
+  if (handlerOverride) {
+    result = registry.getTraceWithFallback(agentId, sessionId, handlerOverride);
+    if (result.raw.error) {
+      result = registry.getTraceWithFallback(agentId, sessionId, null);
+    }
+  } else {
+    result = registry.getTraceWithFallback(agentId, sessionId, null);
+  }
+  const raw = result.raw;
+  const resolvedAgentId = result.adapter?.agentId || agentId;
   if (raw.error || !sessionId) return raw;
-  const sessionFile = findSessionJsonl(agentId, sessionId);
+  const sessionFile = findSessionJsonl(resolvedAgentId, sessionId);
   const { project, project_path } = resolveProjectName({
     projectPath: raw.project_path || raw.project,
     sessionFile,
-    agentId,
+    agentId: resolvedAgentId,
     cwdHint: raw.cwd,
   });
-  return { ...raw, project, project_path, cwd: project_path };
+  return {
+    ...raw,
+    project,
+    project_path,
+    cwd: project_path,
+    client: raw.client || (resolvedAgentId === 'claude-3p' ? 'claude-desktop' : undefined),
+  };
 }
 
 function getTraceForEntity(entity, sessionId) {

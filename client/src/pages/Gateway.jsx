@@ -1100,11 +1100,19 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
           <div className="py-16 text-center text-xs text-zinc-400">{t('gateway.trace.notFound')}</div>
         ) : (
           <>
-            {/* 会话元信息 */}
-            <div className="px-5 py-2 text-xs text-zinc-500 dark:text-zinc-400 border-b border-zinc-100 dark:border-zinc-800 shrink-0 flex flex-wrap gap-x-4 gap-y-1">
-              <span>{t('gateway.detail.projectLabel')} <strong className="text-zinc-700 dark:text-zinc-300">{trace.project || '—'}</strong></span>
+            {/* 会话元信息：路径单独一行，避免 truncate 截断 */}
+            <div className="px-5 py-2 text-xs text-zinc-500 dark:text-zinc-400 border-b border-zinc-100 dark:border-zinc-800 shrink-0 space-y-1">
+              <div>
+                {t('gateway.detail.projectLabel')}{' '}
+                <strong className="text-zinc-700 dark:text-zinc-300">{trace.project || '—'}</strong>
+              </div>
               {projectPathTooltip(trace) !== '—' && (
-                <span className="font-mono truncate max-w-xs" title={projectPathTooltip(trace)}>{projectPathTooltip(trace)}</span>
+                <div
+                  className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400 break-all leading-relaxed select-all"
+                  title={projectPathTooltip(trace)}
+                >
+                  {projectPathTooltip(trace)}
+                </div>
               )}
             </div>
 
@@ -1402,10 +1410,17 @@ function PreferenceMiningModal({ onClose, flash, onJobStart }) {
                 placeholder={t('gateway.mine.tabEmpty')}
                 className="w-full h-full min-h-[320px] text-xs font-mono leading-relaxed text-zinc-700 dark:text-zinc-200 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-3 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:border-violet-400 resize-none" />
             </div>
-            <div className="px-5 py-3 border-t border-zinc-100 dark:border-zinc-800 shrink-0 flex items-center gap-2">
-              <button onClick={start} className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500">↻ {t('gateway.mine.regenerate')}</button>
-              {activeTab?.dir && <span className="text-[11px] text-zinc-400 truncate max-w-[16rem]" title={activeTab.dir}>→ {activeTab.dir}/AGENTS.md</span>}
-              <div className="ml-auto flex gap-2">
+            <div className="px-5 py-3 border-t border-zinc-100 dark:border-zinc-800 shrink-0 flex flex-col sm:flex-row sm:items-center gap-2">
+              <button onClick={start} className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500 shrink-0">↻ {t('gateway.mine.regenerate')}</button>
+              {activeTab?.dir && (
+                <span
+                  className="text-[11px] font-mono text-zinc-400 break-all leading-relaxed min-w-0 flex-1"
+                  title={`${activeTab.dir}/AGENTS.md`}
+                >
+                  → {activeTab.dir}/AGENTS.md
+                </span>
+              )}
+              <div className="ml-auto flex gap-2 shrink-0">
                 <button onClick={copy} disabled={!activeText} className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 disabled:opacity-40">{t('gateway.mine.copy')}</button>
                 <button onClick={save} disabled={!activeText} className="text-xs px-3 py-1.5 rounded-lg bg-violet-500 hover:bg-violet-600 text-white disabled:opacity-40">{t('gateway.mine.save')}</button>
                 <button onClick={onClose} className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500">{t('gateway.sessions.close')}</button>
@@ -1471,7 +1486,8 @@ function SessionManager() {
 
   const doExport = async (row, format) => {
     const res = await window.electronAPI.sessions.export({
-      agent_id: row.agent_id, session_id: row.session_id, format,
+      agent_id: row.agent_id, trace_agent_id: row.trace_agent_id,
+      session_id: row.session_id, format,
     });
     if (res?.error || !res?.ok) { flash(t('gateway.sessions.exportFailed')); return; }
     if (format === 'copy') {
@@ -1504,7 +1520,7 @@ function SessionManager() {
     <div>
       {traceRow && (
         <SessionTraceModal app={null} sessionId={traceRow.session_id}
-          traceAgentId={traceRow.agent_id} onClose={() => setTraceRow(null)} />
+          traceAgentId={traceRow.trace_agent_id || traceRow.agent_id} onClose={() => setTraceRow(null)} />
       )}
       {contState && (
         <ContinueModal source={contState.row} target={contState.target} handoffTargets={handoffTargets} onClose={() => setContState(null)} />
@@ -1710,7 +1726,7 @@ function ContinueModal({ source, target, handoffTargets = [], onClose }) {
               <span className={`px-2 py-0.5 rounded ${res.aiGenerated ? 'bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400' : 'bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400'}`}>
                 {res.aiGenerated ? `${t('gateway.sessions.aiBrief')}${res.model ? ` · ${res.model}` : ''}` : t('gateway.sessions.rawBrief')}
               </span>
-              <span className="font-mono truncate max-w-md" title={res.handoffFile}>{t('gateway.sessions.handoffFile')}: {res.handoffFile}</span>
+              <span className="font-mono break-all leading-relaxed max-w-md" title={res.handoffFile}>{t('gateway.sessions.handoffFile')}: {res.handoffFile}</span>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               <div className="text-xs text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-900/40 rounded-lg px-3 py-2 flex items-start gap-2">

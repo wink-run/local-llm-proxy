@@ -161,10 +161,19 @@ export default function Circles() {
 
   return (
     <div className="px-5 py-5 space-y-5">
-      {/* 页头 */}
-      <div>
-        <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('circles.title')}</h1>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{t('circles.subtitle')}</p>
+      {/* 页头：右侧与标题区垂直居中对齐，electron-no-drag 保证可点击 */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{t('circles.title')}</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{t('circles.subtitle')}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => navigate('/circles/browse')}
+          className="electron-no-drag relative z-50 shrink-0 text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400"
+        >
+          {t('circles.browse.link')}
+        </button>
       </div>
 
       {/* 入圈结果横幅 */}
@@ -371,15 +380,26 @@ function CircleCard({ circle, isOwner, onOpen, onInvite, onAction, actionLabel, 
   const extra    = members.length > SHOW_MAX ? members.length - SHOW_MAX : 0;
 
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 space-y-3">
-      {/* 主行：点击标题区进入详情 */}
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-4 space-y-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors"
+    >
       <div className="flex items-center gap-4">
-        <button type="button" onClick={onOpen}
-          className={`w-11 h-11 rounded-full ${color} flex items-center justify-center text-lg font-bold text-white shrink-0 hover:opacity-90 transition-opacity`}>
+        <div
+          className={`w-11 h-11 rounded-full ${color} flex items-center justify-center text-lg font-bold text-white shrink-0`}
+        >
           {initial}
-        </button>
+        </div>
 
-        <button type="button" onClick={onOpen} className="flex-1 min-w-0 text-left hover:opacity-80 transition-opacity">
+        <div className="flex-1 min-w-0 text-left">
           <div className="flex items-center gap-2">
             <span className="font-semibold text-gray-900 dark:text-gray-100 truncate">{circle.name}</span>
             {isOwner && (
@@ -394,15 +414,15 @@ function CircleCard({ circle, isOwner, onOpen, onInvite, onAction, actionLabel, 
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
             {t('circles.members').replace('{n}', circle.member_count)}
           </p>
-        </button>
+        </div>
 
-        {/* 操作 */}
+        {/* 操作按钮：阻止冒泡，避免触发进入详情 */}
         <div className="flex gap-2 shrink-0">
-          <button onClick={e => { e.stopPropagation(); onInvite(); }}
+          <button type="button" onClick={e => { e.stopPropagation(); onInvite(); }}
             className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
             {t('circles.inviteBtn')}
           </button>
-          <button onClick={e => { e.stopPropagation(); onAction(); }}
+          <button type="button" onClick={e => { e.stopPropagation(); onAction(); }}
             className="text-xs px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
             {actionLabel}
           </button>

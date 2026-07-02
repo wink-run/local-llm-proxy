@@ -41,6 +41,7 @@ logger = logging.getLogger("server")
 
 BASE_DIR = Path(__file__).resolve().parent
 DOWNLOADS_DIR = BASE_DIR / "static" / "downloads"
+CIRCLE_MEDIA_DIR = BASE_DIR / "data" / "circle_media"
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -339,6 +340,19 @@ async def download_agent(filename: str):
         raise HTTPException(404, "Not found")
     return FileResponse(path, filename=safe, media_type="application/octet-stream",
                         content_disposition_type="attachment")
+
+
+@app.get("/media/circle/{circle_id}/{filename}")
+async def serve_circle_media(circle_id: int, filename: str):
+    """圈子消息图片（公开可读，需知道 URL）。"""
+    safe = Path(filename).name
+    if not safe or safe != filename:
+        raise HTTPException(400, "Invalid filename")
+    path = CIRCLE_MEDIA_DIR / str(circle_id) / safe
+    root = (CIRCLE_MEDIA_DIR / str(circle_id)).resolve()
+    if not path.is_file() or path.resolve().parent != root:
+        raise HTTPException(404, "Not found")
+    return FileResponse(path)
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")

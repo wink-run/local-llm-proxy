@@ -565,6 +565,7 @@ function querySessionStatsMap() {
   try {
     const agg = db.prepare(
       `SELECT session_id, COUNT(*) AS calls, ` +
+      `SUM(input_tokens) AS inTok, SUM(output_tokens) AS outTok, ` +
       `SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, ` +
       `MAX(ts) AS lastTs FROM requests WHERE session_id IS NOT NULL GROUP BY session_id`
     ).all();
@@ -586,6 +587,8 @@ function querySessionStatsMap() {
       if (!r.session_id) continue;
       out[r.session_id] = {
         calls: r.calls || 0,
+        inTok: r.inTok || 0,
+        outTok: r.outTok || 0,
         tokens: r.tokens || 0,
         lastTs: r.lastTs || null,
         cost_usd: costBySid[r.session_id] || 0,

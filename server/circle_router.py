@@ -1,6 +1,9 @@
 """圈子接口：创建、管理、邀请入圈"""
 
-from fastapi import APIRouter, Depends, HTTPException
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 import database as db
@@ -11,6 +14,17 @@ router = APIRouter()
 
 MAX_OWNED  = 5
 MAX_JOINED = 20   # not counting owned circles
+
+# 圈子图片存储目录
+CIRCLE_MEDIA_ROOT = Path(__file__).resolve().parent / "data" / "circle_media"
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+IMAGE_EXT = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+}
 
 
 # ── 创建圈子 ──────────────────────────────────────────────────────────────────
@@ -49,6 +63,114 @@ async def list_joined_circles(uid: int = Depends(get_current_user_id)):
         c["member_count"] = await db.circle_member_count(c["id"])
         c["is_owner"] = c["owner_id"] == uid
     return {"circles": circles}
+
+
+# ── 浏览公开圈子 / 申请入圈 ───────────────────────────────────────────────────
+
+@router.get("/circles/browse")
+async def browse_circles(q: str = "", uid: int = Depends(get_current_user_id)):
+    circles = await db.list_browsable_circles(uid, q)
+    for c in circles:
+        c["full"] = c["member_count"] >= c["max_members"]
+        c["is_owner"] = c["owner_id"] == uid
+    return {"circles": circles}
+
+
+class ApplyJoinBody(BaseModel):
+    message: str = ""
+
+
+@router.post("/circles/{circle_id}/apply")
+async def apply_join_circle(circle_id: int, req: ApplyJoinBody, uid: int = Depends(get_current_user_id)):
+    circle = await db.get_circle_by_id(circle_id)
+    if not circle:
+        raise HTTPException(404, "圈子不存在")
+    if not circle.get("is_public", 1):
+        raise HTTPException(403, "该圈子未开放浏览")
+    if circle["owner_id"] == uid:
+        raise HTTPException(400, "你是圈主，无需申请")
+    if await db.is_circle_member(circle_id, uid):
+        return {"ok": True, "already_member": True, "pending": False}
+
+    member_count = await db.circle_member_count(circle_id)
+    if member_count >= circle["max_members"]:
+        return {"ok": False, "full": True, "message": "圈子已满"}
+
+    existing = await db.get_circle_join_request(circle_id, uid)
+    if existing and existing["status"] == "pending":
+        return {"ok": True, "already_member": False, "pending": True}
+
+    joined_only = await db.count_circles_joined_only(uid)
+    if joined_only >= MAX_JOINED:
+        raise HTTPException(400, f"最多加入 {MAX_JOINED} 个圈子")
+
+    await db.upsert_circle_join_request(circle_id, uid, req.message)
+    return {"ok": True, "already_member": False, "pending": True}
+
+
+@router.get("/circles/{circle_id}/join-requests")
+async def list_join_requests(circle_id: int, uid: int = Depends(get_current_user_id)):
+    circle = await db.get_circle_by_id(circle_id)
+    if not circle:
+        raise HTTPException(404, "圈子不存在")
+    if circle["owner_id"] != uid:
+        raise HTTPException(403, "仅圈主可查看入圈申请")
+    requests = await db.list_circle_join_requests(circle_id, "pending")
+    return {"requests": requests}
+
+
+@router.post("/circles/{circle_id}/join-requests/{request_id}/approve")
+async def approve_join_request(circle_id: int, request_id: int, uid: int = Depends(get_current_user_id)):
+    circle = await db.get_circle_by_id(circle_id)
+    if not circle:
+        raise HTTPException(404, "圈子不存在")
+    if circle["owner_id"] != uid:
+        raise HTTPException(403, "仅圈主可审批")
+
+    req_row = await db.get_circle_join_request_by_id(request_id)
+    if not req_row or req_row["circle_id"] != circle_id or req_row["status"] != "pending":
+        raise HTTPException(404, "申请不存在或已处理")
+
+    applicant = req_row["user_id"]
+    if await db.is_circle_member(circle_id, applicant):
+        await db.set_circle_join_request_status(request_id, "approved")
+        return {"ok": True, "already_member": True}
+
+    member_count = await db.circle_member_count(circle_id)
+    if member_count >= circle["max_members"]:
+        raise HTTPException(400, "圈子已满，无法通过申请")
+
+    joined_only = await db.count_circles_joined_only(applicant)
+    if circle["owner_id"] != applicant and joined_only >= MAX_JOINED:
+        raise HTTPException(400, "该用户加入圈子数已达上限")
+
+    await db.add_circle_member(circle_id, applicant)
+    await db.set_circle_join_request_status(request_id, "approved")
+
+    invite_reward = float(await db.get_config("circle_invite_reward", "50"))
+    if invite_reward > 0 and circle["owner_id"] != applicant:
+        await db.award_credits(
+            circle["owner_id"], invite_reward, type_="referral",
+            note=f"审批用户入圈 {circle['name']}"
+        )
+
+    return {"ok": True, "already_member": False}
+
+
+@router.post("/circles/{circle_id}/join-requests/{request_id}/reject")
+async def reject_join_request(circle_id: int, request_id: int, uid: int = Depends(get_current_user_id)):
+    circle = await db.get_circle_by_id(circle_id)
+    if not circle:
+        raise HTTPException(404, "圈子不存在")
+    if circle["owner_id"] != uid:
+        raise HTTPException(403, "仅圈主可审批")
+
+    req_row = await db.get_circle_join_request_by_id(request_id)
+    if not req_row or req_row["circle_id"] != circle_id or req_row["status"] != "pending":
+        raise HTTPException(404, "申请不存在或已处理")
+
+    await db.set_circle_join_request_status(request_id, "rejected")
+    return {"ok": True}
 
 
 # ── 入圈预览 / 入圈（须在 /circles/{circle_id} 之前注册） ─────────────────────
@@ -195,6 +317,28 @@ async def get_circle_detail(circle_id: int, uid: int = Depends(get_current_user_
         "models": models,
         "posts": posts,
     }
+
+
+@router.post("/circles/{circle_id}/media")
+async def upload_circle_media(
+    circle_id: int,
+    file: UploadFile = File(...),
+    uid: int = Depends(get_current_user_id),
+):
+    """圈子成员上传图片，返回可嵌入 Markdown 的 URL。"""
+    await _require_member(circle_id, uid)
+    ctype = (file.content_type or "").split(";")[0].strip().lower()
+    if ctype not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(400, "仅支持 JPG/PNG/GIF/WebP 图片")
+    data = await file.read()
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(400, "图片不能超过 5MB")
+    ext = IMAGE_EXT.get(ctype, ".bin")
+    name = f"{uuid.uuid4().hex}{ext}"
+    dest_dir = CIRCLE_MEDIA_ROOT / str(circle_id)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    (dest_dir / name).write_bytes(data)
+    return {"url": f"/media/circle/{circle_id}/{name}"}
 
 
 class PostBody(BaseModel):

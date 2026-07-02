@@ -1942,6 +1942,13 @@ function extractText(body) {
 // 粗估输入 token：约 4 字符/token（零成本，足够做长上下文分流）
 function estimateInputTokens(body) { return Math.ceil(extractText(body).length / 4); }
 
+/** 流式上游常只回 completion_tokens；有输出但 input 为 0 时用请求体粗估（与路由规则同算法） */
+function fillMissingInputTokens(usage, body) {
+  if (!usage || usage.input_tokens || !body) return usage;
+  if (!(usage.output_tokens > 0)) return usage;
+  return { ...usage, input_tokens: estimateInputTokens(body) };
+}
+
 // 关键词匹配只看「最后一条用户消息」（当前意图）——否则历史里出现过的词会一直命中、切不回去
 function extractLastUserText(body) {
   if (!body || typeof body !== 'object') return '';
@@ -2205,7 +2212,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           });
           const stepTok  = (result.input_tokens || 0) + (result.output_tokens || 0);
           const stepTier = _providerTier(provider);
-          recordStats(provider.id, stepModel, result, stepTier, callerKey, streaming, provider.billing_type || null);
+          recordStats(provider.id, stepModel, fillMissingInputTokens(result, body), stepTier, callerKey, streaming, provider.billing_type || null);
           reportUsage(provider.id, stepModel, stepTok);
           stepSucceeded = true;
           return;
@@ -2320,7 +2327,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       });
       const directTok  = (result.input_tokens || 0) + (result.output_tokens || 0);
       const directTier = _providerTier(provider);
-      recordStats(provider.id, model, result, directTier, callerKey, streaming, provider.billing_type || null);
+      recordStats(provider.id, model, fillMissingInputTokens(result, body), directTier, callerKey, streaming, provider.billing_type || null);
       reportUsage(provider.id, model, directTok);
       return;
     } catch (err) {

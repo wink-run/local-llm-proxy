@@ -1,5 +1,6 @@
 // client/src/pages/Contribute.jsx
 import React, { useEffect, useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { getStats, getSettlements, getContributeSummary, listJoinedCircles, listMyCircles } from '../api/client';
 import { getConfig, getGateway } from '../api/adapter';
 import { resolveLocalGatewayBase } from '../api/gatewayModels';
@@ -261,6 +262,7 @@ function ContributionConfigCard() {
 
 export default function Contribute() {
   const { t, lang } = useLang();
+  const navigate = useNavigate();
   const [running,     setRunning]     = useState(false);
   const [stats,       setStats]       = useState(null);
   const [chartData,   setChartData]   = useState([]);
@@ -358,8 +360,17 @@ export default function Contribute() {
   return (
     <div className="px-5 py-5 space-y-5">
       <div>
-        <h1 className="text-[17px] font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{t('contribute.title')}</h1>
-        <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">{t('contribute.subtitle')}</p>
+        <div>
+          <h1 className="text-[17px] font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{t('contribute.title')}</h1>
+          <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">{t('contribute.subtitle')}</p>
+          <button
+            type="button"
+            onClick={() => navigate('/network')}
+            className="electron-no-drag relative z-50 mt-2 text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400"
+          >
+            {t('providers.p2p.globalNetwork')}
+          </button>
+        </div>
       </div>
 
       {/* 累计贡献 / 赚取积分 / P2P 节省 */}

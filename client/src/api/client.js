@@ -312,3 +312,34 @@ export function updateCirclePostReply(circleId, postId, replyId, content) {
 export function deleteCirclePostReply(circleId, postId, replyId) {
   return http.delete(`/user/circles/${circleId}/posts/${postId}/replies/${replyId}`);
 }
+
+export function browseCircles(q = '') {
+  const qs = q ? `?q=${encodeURIComponent(q)}` : '';
+  return http.get(`/user/circles/browse${qs}`);
+}
+
+export function applyJoinCircle(circleId, message = '') {
+  return http.post(`/user/circles/${circleId}/apply`, { message });
+}
+
+export function listCircleJoinRequests(circleId) {
+  return http.get(`/user/circles/${circleId}/join-requests`);
+}
+
+export function approveCircleJoinRequest(circleId, requestId) {
+  return http.post(`/user/circles/${circleId}/join-requests/${requestId}/approve`);
+}
+
+export function rejectCircleJoinRequest(circleId, requestId) {
+  return http.post(`/user/circles/${circleId}/join-requests/${requestId}/reject`);
+}
+
+/** 上传圈子图片（multipart） */
+export function uploadCircleMedia(circleId, file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  return http.post(`/user/circles/${circleId}/media`, fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000,
+  });
+}

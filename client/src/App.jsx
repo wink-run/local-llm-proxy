@@ -15,6 +15,7 @@ import Config     from './pages/Config';
 import Login      from './pages/Login';
 import Debug      from './pages/Debug';
 import Circles    from './pages/Circles';
+import CircleBrowse from './pages/CircleBrowse';
 import CircleDetail from './pages/CircleDetail';
 import UpdateNotification from './components/UpdateNotification';
 import { UpdaterProvider } from './store/updater';
@@ -74,6 +75,7 @@ function Layout() {
           <Route path="/gateway"   element={authed ? <Gateway />        : <Navigate to="/login" replace />} />
           <Route path="/providers" element={authed ? <Providers />      : <Navigate to="/login" replace />} />
           <Route path="/contribute" element={<RequireLogin><Contribute /></RequireLogin>} />
+          <Route path="/circles/browse" element={<RequireLogin><CircleBrowse /></RequireLogin>} />
           <Route path="/circles"   element={<RequireLogin><Circles /></RequireLogin>} />
           <Route path="/circles/:circleId" element={<RequireLogin><CircleDetail /></RequireLogin>} />
           <Route path="/dashboard" element={authed ? <Dashboard />      : <Navigate to="/login" replace />} />
