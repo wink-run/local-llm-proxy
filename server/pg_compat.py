@@ -89,6 +89,26 @@ def translate_sql(sql: str) -> tuple[str, Optional[str]]:
     return _qmarks_to_pg(out), None
 
 
+class PgRow(dict):
+    """兼容 aiosqlite.Row：同时支持 row[0] 与 row['col']。"""
+
+    __slots__ = ("_values",)
+
+    def __init__(self, keys: list[str], values: list[Any]):
+        super().__init__(zip(keys, values))
+        self._values = list(values)
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._values[key]
+        return super().__getitem__(key)
+
+
+def _pg_row(record) -> PgRow:
+    keys = list(record.keys())
+    return PgRow(keys, [record[k] for k in keys])
+
+
 class PgCursor:
     def __init__(self, rows: list[Any], lastrowid: Optional[int] = None, rowcount: int = 0):
         self._rows = rows
@@ -195,7 +215,7 @@ class PgConnection:
                 """,
                 table,
             )
-            return PgCursor([tuple(r) for r in rows])
+            return PgCursor([_pg_row(r) for r in rows])
 
         upper = pg_sql.strip().upper()
         is_insert = upper.startswith("INSERT") and "RETURNING" not in upper
@@ -208,7 +228,7 @@ class PgConnection:
 
         if upper.startswith("SELECT") or is_insert:
             records = await self._conn.fetch(pg_sql, *args)
-            rows = [dict(r) for r in records]
+            rows = [_pg_row(r) for r in records]
             lastrowid = rows[0].get("id") if is_insert and rows else None
             return PgCursor(rows, lastrowid=lastrowid, rowcount=len(rows))
 
