@@ -2405,6 +2405,8 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
         return false;
       }
       if (!r?.ok) { await onAbort?.(); window.alert(t('gateway.apps.hostFailed', { msg: r?.error || t('gateway.common.writeFailed') })); return false; }
+      // Codex Desktop 缺官方登录态 → 门控会藏掉自定义模型，提示用户先登录官方账号
+      if (r.warning === 'codex-no-official-login') window.alert(t('gateway.apps.codexNeedOfficialLogin'));
       return true;
     };
     return run(false);

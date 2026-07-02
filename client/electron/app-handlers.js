@@ -136,6 +136,19 @@ function routeModelId(routeId, routes = []) {
   return String(parsed.modelId || routeId).trim();
 }
 
+/** 应用绑定的路由 → 模型名数组（去重、保序）。供 Codex model catalog 等消费。 */
+function getRouteModels(app, routes = []) {
+  const ids = Array.isArray(app?.route_ids) && app.route_ids.length
+    ? app.route_ids
+    : (app?.route_id ? [app.route_id] : []);
+  const out = [];
+  for (const rid of ids) {
+    const m = routeModelId(rid, routes);
+    if (m && !out.includes(m)) out.push(m);
+  }
+  return out;
+}
+
 /**
  * WorkBuddy 自定义模型格式：name=provider（tokenbank），id=路由/模型名；
  * 多路由则 models[] 多条，不写 availableModels。
@@ -477,6 +490,7 @@ module.exports = {
   applyRouteToProxyPatch,
   resolveHandlerId,
   routeModelId,
+  getRouteModels,
   routeLabelFor,
   handlerHasPatchRoute,
   resolveRouteMultiSelect,

@@ -163,14 +163,18 @@ handlers:
       detect_value: OpenAI.Codex
       config_file: "{CODEX_HOME|~/.codex}/config.toml"
       marker: tokenbank
+      # Codex Desktop 走客户端 codex-config.js 合并写入(保留 config.toml 其他段)，
+      # 下列 patch 为声明式目标配置：base_url 供写入模块取用；requires_openai_auth=true
+      # 解锁 Desktop Model 门控，experimental_bearer_token 提供请求 key(替代 env_key，
+      # 免依赖系统环境变量)，model_catalog_json 指向自动生成的模型目录(绑定路由的模型)。
       patch:
         model_provider: tokenbank
         model_providers.tokenbank.name: Tokenbank
         model_providers.tokenbank.base_url: "{BASE}/v1"
         model_providers.tokenbank.wire_api: responses
-        model_providers.tokenbank.env_key: TOKENBANK_API_KEY
-      env:
-        TOKENBANK_API_KEY: "{KEY}"
+        model_providers.tokenbank.requires_openai_auth: true
+        model_providers.tokenbank.experimental_bearer_token: "{KEY}"
+        model_catalog_json: tokenbank-codex-catalog.json
       # 绑路由写入 model 字段；多选时取首条为默认模型（网关 keyScene 亦用首条）
       patch_route:
         strategy: codex_model

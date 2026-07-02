@@ -277,6 +277,7 @@ export default {
   'gateway.apps.confirmDelete': '删除该应用？',
   'gateway.apps.newAppName': '新应用',
   'gateway.apps.restartToApply': '重启应用后生效',
+  'gateway.apps.codexNeedOfficialLogin': '已配置成功，但 Codex Desktop 需要先登录官方账号（免费即可）才会在模型列表显示自定义模型。请在 Codex 里登录官方账号后，重新纳管并完全重启 Codex。',
   'gateway.apps.managedOfficial': '✓ 已纳管（官方订阅），重启应用后生效',
   'gateway.apps.managedOfficialShell': '✓ 已纳管（官方订阅），重开终端后生效',
   'gateway.apps.managedSession': '✓ 已纳管，开始统计会话',

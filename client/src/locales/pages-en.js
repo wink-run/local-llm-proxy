@@ -277,6 +277,7 @@ export default {
   'gateway.apps.confirmDelete': 'Delete this app?',
   'gateway.apps.newAppName': 'New app',
   'gateway.apps.restartToApply': 'Restart app to apply',
+  'gateway.apps.codexNeedOfficialLogin': 'Configured successfully, but Codex Desktop only shows custom models after you sign in to an official account (free tier works). Sign in to your official Codex account, then re-apply and fully restart Codex.',
   'gateway.apps.managedOfficial': '✓ Managed (official subscription) — restart app',
   'gateway.apps.managedOfficialShell': '✓ Managed (official subscription) — reopen terminal',
   'gateway.apps.managedSession': '✓ Managed — session stats started',

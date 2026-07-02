@@ -151,11 +151,26 @@ function isClaudeDesktopApp(app_id) {
   } catch { return false; }
 }
 
+function isCodexDesktopApp(app_id) {
+  if (String(app_id || '').includes('codex-desktop')) return true;
+  try {
+    const app = (readLocalConfig()?.apps || []).find(a => a.id === app_id);
+    return app?.preset_id === 'codex-desktop';
+  } catch { return false; }
+}
+
 /** 还原 config-file 应用配置（与 apps:revertConfigFile IPC 共用） */
 function revertAppConfigFile(app_id, config_file) {
   if (isClaudeDesktopApp(app_id)) runClaude3pSync('revert');
   const cl = require('./config-loader');
   let file = cl.expandHome(cl.resolvePlaceholders(String(config_file || ''), {}));
+  // Codex Desktop：精确删除我们写的段(保留 config.toml 其他更新)+ 删 catalog，不动 auth.json
+  if (isCodexDesktopApp(app_id) && file) {
+    const codexCfg = require('./codex-config');
+    codexCfg.revertCodexProvider(file);
+    codexCfg.removeCodexCatalog(path.dirname(file));
+    return;
+  }
   if (file) {
     const bak = file + '.tokenbank-bak';
     if (fs.existsSync(bak)) {
@@ -2908,6 +2923,28 @@ function registerIPC() {
           // 多路由时每条按 claude_models 列表依次分配独立 name（与 keyScene 绑定顺序一致）
           claudeModels,
         });
+      }
+      // Codex Desktop：走合并写入(保留 config.toml 其他段)，不整份重写、不写系统环境变量。
+      // 生成 model_catalog(绑定路由的模型) + requires_openai_auth=true + experimental_bearer_token，
+      // 并保留 auth.json 官方登录态(Desktop 门控放行自定义模型的前提)。
+      if (handlerId === 'codex-desktop-api') {
+        const codexCfg = require('./codex-config');
+        const { getRouteModels } = require('./app-handlers');
+        const codexHome = path.dirname(file);
+        const baseUrl = resolvedPatch['model_providers.tokenbank.base_url'] || `${patchCtx.base}/v1`;
+        const models = getRouteModels(appRec, readLocalConfig().scene_routes || []);
+        const model = resolvedPatch['model'] || models[0] || '';
+        codexCfg.writeCodexCatalog(codexHome, models);
+        codexCfg.applyCodexProvider(file, {
+          providerId: 'tokenbank', name: 'Tokenbank',
+          baseUrl, model, bearerToken: appRec?.api_key || '', catalogFile: codexCfg.CATALOG_FILE,
+        });
+        codexCfg.cleanupThirdPartyAuthKey(codexHome);   // 清第三方残留 key，不动官方 tokens.*
+        setAppHosted(app_id, true);
+        const officialLogin = codexCfg.codexHasOfficialLogin(codexHome);
+        // 缺官方登录 → Desktop 门控会藏掉自定义模型，回传提示让前端引导登录
+        return { ok: true, file, envCount: 0, codex: true, officialLogin,
+          ...(officialLogin ? {} : { warning: 'codex-no-official-login' }) };
       }
       // 纳管 = 备份原配置文件（整份，仅首次），再写入我们的配置（整份替换）。
       // 不合并、不检测冲突、不预扫描内容——状态完全跟随用户操作。
