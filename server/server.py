@@ -34,6 +34,7 @@ from config_router import router as config_router
 from circle_router import router as circle_router
 from worker_pool import pool, WorkerConnection
 from geo_ip import client_ip_from_ws, resolve_ip_geo
+from contrib_display import apply_contrib_display
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("server")
@@ -286,7 +287,7 @@ def _worker_row(w) -> dict:
 @app.get("/api/workers-wall")
 async def workers_wall():
     """公开接口：大屏展示用，脱敏后返回在线 Worker 列表"""
-    rows = [_worker_row(w) for w in pool.all_workers()]
+    rows, _extra = apply_contrib_display([_worker_row(w) for w in pool.all_workers()])
     return {"workers": rows, "total": len(rows)}
 
 
@@ -294,7 +295,7 @@ async def workers_wall():
 async def public_network():
     """公开：全局运营统计 + 在线 Worker 列表（脱敏）"""
     all_ws = pool.all_workers()   # capture once
-    workers_data = [_worker_row(w) for w in all_ws]
+    workers_data, contrib = apply_contrib_display([_worker_row(w) for w in all_ws])
     distinct_users = len({w.user_id for w in all_ws if w.user_id})
     # 与匿名 /v1/models 同源：公开 worker 模型（不含圈子限定）
     public_models = pool.models_for_user(owner_user_id=None, user_circle_ids=set())
@@ -302,6 +303,7 @@ async def public_network():
         "summary": {
             "online_workers": len(workers_data),
             "active_users": distinct_users,
+            **contrib,
         },
         "workers": workers_data,
         "available_models": sorted(public_models.keys()),

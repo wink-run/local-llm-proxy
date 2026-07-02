@@ -6,7 +6,15 @@ import { fetchServerCommunityModels } from '../lib/communityModels';
 import { useLang } from '../store/lang';
 import P2pWorldMap from '../components/P2pWorldMap';
 
-// Extract param size from model name, e.g. "llama-3.3-70b" → "70B"
+/** 贡献 Token 大数展示（M/K） */
+function fmtContribTokens(n) {
+  const v = Number(n) || 0;
+  if (v >= 1_000_000) return (v / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (v >= 1000) return (v / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+  return String(v);
+}
+
+// Extract param size from model name
 function parseSize(name) {
   const m = name.match(/[:\-_](\d+(?:\.\d+)?)[bB]\b/);
   if (m) return m[1].replace(/\.0$/, '') + 'B';
@@ -80,7 +88,9 @@ export default function Network() {
 
   const totalNodes  = network?.summary?.online_workers ?? 0;
   const totalModels = modelStats.length;
-  const totalTokens = network?.workers?.reduce((s, w) => s + (w.period_tokens || 0), 0) ?? 0;
+  const totalTokens = network?.summary?.contrib_tokens
+    ?? network?.workers?.reduce((s, w) => s + (w.period_tokens || 0), 0)
+    ?? 0;
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -125,7 +135,7 @@ export default function Network() {
         <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
           <div className="text-xs text-zinc-400">{t('network.contribTokens')}</div>
           <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-1">
-            {loading ? '—' : totalTokens > 999 ? (totalTokens / 1000).toFixed(1) + 'K' : totalTokens}
+            {loading ? '—' : fmtContribTokens(totalTokens)}
           </div>
           <div className="text-xs text-zinc-400 mt-0.5">{t('network.thisPeriod')}</div>
         </div>
@@ -253,7 +263,7 @@ export default function Network() {
                       </div>
                       <div className="text-right shrink-0">
                         <div className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                          {(w.period_tokens || 0).toLocaleString()} tok
+                          {fmtContribTokens(w.period_tokens || 0)} tok
                         </div>
                         <div className="text-xs text-zinc-400">{w.avg_latency_ms ?? 0} ms</div>
                       </div>
