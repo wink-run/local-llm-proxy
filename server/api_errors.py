@@ -37,14 +37,49 @@ def _extract_message_from_json_text(text: str) -> str | None:
     if not isinstance(j, dict):
         return text[:500]
     err = j.get("error")
+    detail = j.get("detail")
     if isinstance(err, dict):
         return err.get("message") or err.get("detail") or str(err)
     if isinstance(err, str):
+        # 网关常见 { error: "all_providers_failed", detail: "Model 'x' is not available" }
+        generic = err.lower() in ("all_providers_failed", "api_error", "error")
+        if generic and detail is not None:
+            return str(detail)
         return err
-    detail = j.get("detail")
     if detail is not None:
         return str(detail)
     return text[:500]
+
+
+def combined_worker_error_text(err: str) -> str:
+    """合并 HTTP 状态与 JSON body 中的 error/detail，供下线判定与日志。"""
+    s = str(err or "").strip()
+    if not s:
+        return ""
+    parts = [s]
+    m = re.match(r"^HTTP[_\s]?(\d{3})\s*[:\s]*(.*)$", s, re.I | re.S)
+    if not m:
+        return s
+    code = m.group(1)
+    tail = (m.group(2) or "").strip()
+    parts.append(f"http_{code}")
+    try:
+        j = json.loads(tail)
+    except Exception:
+        return " ".join(parts)
+    if not isinstance(j, dict):
+        return " ".join(parts)
+    err = j.get("error")
+    if isinstance(err, dict):
+        for key in ("message", "type", "code", "detail"):
+            val = err.get(key)
+            if val is not None:
+                parts.append(str(val))
+    elif isinstance(err, str):
+        parts.append(err)
+    if j.get("detail") is not None:
+        parts.append(str(j["detail"]))
+    return " ".join(p for p in parts if p)
 
 
 def parse_worker_error(err: str) -> tuple[int, str, str]:
@@ -62,6 +97,10 @@ def parse_worker_error(err: str) -> tuple[int, str, str]:
         if "no worker available for model" in msg_low:
             return 404, msg, "model_not_found"
         if "not configured on this contributor" in msg_low or "not offered by this node" in msg_low:
+            return 404, msg, "model_not_found"
+        if "model_not_found" in msg_low or ("is not available" in msg_low and "model '" in msg_low):
+            return 404, msg, "model_not_found"
+        if "all_providers_failed" in combined_worker_error_text(s).lower():
             return 404, msg, "model_not_found"
         if code == 402 or "insufficient credits" in msg_low:
             return 402, msg, "insufficient_credits"
@@ -84,6 +123,8 @@ def parse_worker_error(err: str) -> tuple[int, str, str]:
         return 404, s, "model_not_found"
     if "not configured on this contributor" in low or "not offered by this node" in low:
         return 404, s, "model_not_found"
+    if "all_providers_failed" in low:
+        return 404, s, "model_not_found"
     if "no worker" in low or "no image-capable worker" in low:
         return 503, s, "service_unavailable"
     if "insufficient credits" in low:
@@ -100,14 +141,19 @@ def raise_dispatch_error(err: str) -> None:
 
 def should_offline_contributor_model(err: str) -> bool:
     """贡献节点无法实际提供该模型时，应从在线池下线对应模型。"""
-    low = str(err or "").lower()
+    low = combined_worker_error_text(err).lower()
     if "not configured on this contributor" in low:
         return True
     if "p2p relay api key not configured" in low:
         return True
     if "no_enabled_provider_for_model" in low:
         return True
+    if "model_not_found" in low:
+        return True
     if "is not available" in low and "model '" in low:
+        return True
+    # 贡献节点本地网关 all_providers_failed：模型不存在、无供给源或全部转发失败
+    if "all_providers_failed" in low:
         return True
     return False
 
@@ -129,6 +175,9 @@ def error_message_from_payload(data: dict | None) -> str:
     if isinstance(err, dict):
         return err.get("message") or err.get("detail") or json.dumps(err, ensure_ascii=False)
     if isinstance(err, str):
+        generic = err.lower() in ("all_providers_failed", "api_error", "error")
+        if generic and data.get("detail") is not None:
+            return str(data["detail"])
         return err
     if data.get("detail"):
         return str(data["detail"])

@@ -2336,6 +2336,15 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
         writeAnthropicApiError(res, status, detail, 'model_not_found');
         return;
       }
+      // 模型不存在：OpenAI 兼容 error 体，便于服务端识别并下线误贡献的模型
+      if (lastErr?.code === 'model_not_found') {
+        const payload = isResponses
+          ? codexTransform.chatErrorToResponseError({ error: { message: detail, type: 'model_not_found', code: 'model_not_found' } })
+          : { error: { message: detail, type: 'model_not_found', code: 'model_not_found' } };
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(payload));
+        return;
+      }
       const payload = isResponses
         ? codexTransform.chatErrorToResponseError({ error: { message: detail, type: 'all_providers_failed' } })
         : { error: 'all_providers_failed', detail };
