@@ -21,6 +21,7 @@ const billingConfig = require('../electron/billing-config');
 const cloudBilling = require('../electron/cloud-billing-sync');
 const configLoader = require('../electron/config-loader');
 const appsUsage = require('../shared/apps-usage-handlers');
+const compressionReport = require('../electron/compression-report');
 const agentControl = require('./agent-control');
 
 // ── Module state ──────────────────────────────────────────────────────────────
@@ -406,6 +407,21 @@ async function handleRequest(req, res) {
           models: [], keys: [], providers: [], agent_sources: [],
         };
     return json(res, 200, data);
+  }
+
+  // 压缩比统计（盘点页 / Dashboard；与 local-gateway :11430 同源）
+  if (method === 'GET' && url.startsWith('/api/compression-stats')) {
+    const qs = new URL('http://x' + req.url).searchParams;
+    const days = Math.max(1, Math.min(365, parseInt(qs.get('days'), 10) || 1));
+    let summary = { count: 0, before: 0, after: 0, saved: 0, ratio: 0, saved_usd: 0, models: [] };
+    try {
+      let rates = null;
+      if (localStats?.sinceTsForDays && localStats?.queryGatewayInputCostRate) {
+        rates = localStats.queryGatewayInputCostRate(localStats.sinceTsForDays(days));
+      }
+      summary = compressionReport.readCompressionSummary(days, rates);
+    } catch {}
+    return json(res, 200, summary);
   }
 
   if (method === 'POST' && url === '/api/gateway/restart') {
