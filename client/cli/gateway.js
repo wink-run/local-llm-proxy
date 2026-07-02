@@ -85,6 +85,10 @@ function getToken(adminPort) {
 // ── Commands ──────────────────────────────────────────────────────────────────
 
 async function cmdStart(port, adminPort) {
+  // 贡献 Agent 与网关同进程：转发必须走 loopback，X-P2P-Hop 才能阻断 P2P 回环
+  process.env.TOKENBANK_CLI = '1';
+  process.env.GATEWAY_PORT = String(port);
+
   // 首次启动自动创建 ~/.llm-agent/local-config.json（Docker 挂载目录同理）
   const lc = ensureLocalConfig();
   try { ensureDeviceId('cli'); } catch (e) {

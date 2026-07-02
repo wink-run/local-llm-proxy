@@ -11,6 +11,7 @@ const path = require('path');
 const os = require('os');
 
 const CONFIG_PATH = path.join(os.homedir(), '.llm-agent', 'config.json');
+const { normalizeAgentForwardCfg } = require('../shared/agent-forward-url');
 
 let ws = null;
 let running = false;
@@ -170,16 +171,20 @@ function resolveModelCfg(cfg, modelName) {
       (g.models || []).some(m => (typeof m === 'string' ? m : m.name) === modelName)
     );
     if (group?.base_url) {
-      return { ...cfg, llm_base_url: group.base_url, llm_token: group.token || '' };
+      return normalizeAgentForwardCfg({
+        ...cfg,
+        llm_base_url: group.base_url,
+        llm_token: group.token || '',
+      });
     }
-    return cfg;
+    return normalizeAgentForwardCfg(cfg);
   }
   // legacy per-model base_url
   const entry = (cfg.models || []).find(m =>
     (typeof m === 'string' ? m : m.name) === modelName
   );
-  if (!entry || typeof entry === 'string' || !entry.base_url) return cfg;
-  return { ...cfg, llm_base_url: entry.base_url };
+  if (!entry || typeof entry === 'string' || !entry.base_url) return normalizeAgentForwardCfg(cfg);
+  return normalizeAgentForwardCfg({ ...cfg, llm_base_url: entry.base_url });
 }
 
 /** 贡献节点已声明、可对外提供的模型名 */
