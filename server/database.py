@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 
+from avatar_utils import pick_random_avatar_url
 from db_pool import init_pool, close_pool
 from pg_compat import connect
 logger = logging.getLogger(__name__)
@@ -267,6 +268,7 @@ async def init_db() -> None:
     await _migrate_device_inventory()
     await _migrate_user_billing()
     await _migrate_circles()
+    await _migrate_user_avatars()
 
 
 
@@ -448,13 +450,14 @@ async def verify_key(key: str) -> Optional[dict]:
 async def create_user(email: str, nickname: str, password_hash: str, referred_by: Optional[int]) -> dict:
     ref_code = "REF-" + secrets.token_urlsafe(6).upper()
     worker_key = "wk-" + secrets.token_urlsafe(32)
+    avatar_url = pick_random_avatar_url()
     async with connect() as db:
         cur = await db.execute(
             """INSERT INTO users
                (email, nickname, password_hash, referral_code, referred_by, worker_key,
-                can_create_apikey)
-               VALUES (?,?,?,?,?,?,1)""",
-            (email, nickname, password_hash, ref_code, referred_by, worker_key),
+                can_create_apikey, avatar_url)
+               VALUES (?,?,?,?,?,?,1,?)""",
+            (email, nickname, password_hash, ref_code, referred_by, worker_key, avatar_url),
         )
         await db.commit()
         return {"id": cur.lastrowid, "email": email, "nickname": nickname,
@@ -1065,12 +1068,14 @@ async def create_virtual_agent(name: str, base_url: str, api_key: str,
     worker_key = "vwk-" + secrets.token_urlsafe(32)
     virtual_email = f"virtual-{secrets.token_urlsafe(8)}@virtual.local"
     creds_json = _dump_agent_credentials(credentials)
+    avatar_url = pick_random_avatar_url()
     async with connect() as db:
         cur = await db.execute(
             """INSERT INTO users
-               (email, nickname, password_hash, referral_code, worker_key, is_virtual, can_create_apikey)
-               VALUES (?,?,?,?,?,1,0)""",
-            (virtual_email, name, "", ref_code, worker_key),
+               (email, nickname, password_hash, referral_code, worker_key, is_virtual,
+                can_create_apikey, avatar_url)
+               VALUES (?,?,?,?,?,1,0,?)""",
+            (virtual_email, name, "", ref_code, worker_key, avatar_url),
         )
         virtual_user_id = cur.lastrowid
         models_json = _json.dumps(models_list)
@@ -1814,6 +1819,33 @@ async def _migrate_user_billing() -> None:
         await db.commit()
 
 
+async def _migrate_user_avatars() -> None:
+    """users.avatar_url：注册时随机分配 server/avatar 目录中的头像。"""
+    async with connect() as db:
+        async with db.execute("PRAGMA table_info(users)") as cur:
+            cols = {r[1] for r in await cur.fetchall()}
+        if "avatar_url" not in cols:
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''"
+            )
+        await db.commit()
+
+    # 为历史用户补随机头像
+    async with connect() as db:
+        async with db.execute(
+            "SELECT id FROM users WHERE avatar_url IS NULL OR avatar_url=''"
+        ) as cur:
+            rows = await cur.fetchall()
+        for row in rows:
+            url = pick_random_avatar_url()
+            if url:
+                await db.execute(
+                    "UPDATE users SET avatar_url=? WHERE id=?",
+                    (url, row["id"]),
+                )
+        await db.commit()
+
+
 async def get_user_billing(user_id: int) -> dict:
     import json as _json
     async with connect() as db:
@@ -2087,7 +2119,7 @@ async def list_circle_members(circle_id: int) -> list:
     """Return basic info of all circle members (id, nickname, email, joined_at)."""
     async with connect() as db:
         async with db.execute(
-            """SELECT u.id, u.nickname, u.email, m.joined_at
+            """SELECT u.id, u.nickname, u.email, u.avatar_url, m.joined_at
                FROM circle_members m
                JOIN users u ON u.id = m.user_id
                WHERE m.circle_id = ?
@@ -2102,7 +2134,7 @@ async def list_circle_announcements(circle_id: int, viewer_id: int) -> list:
     async with connect() as db:
         async with db.execute(
             """SELECT a.id, a.circle_id, a.author_id, a.content, a.created_at, a.updated_at,
-                      u.nickname, u.email,
+                      u.nickname, u.email, u.avatar_url,
                       (SELECT COUNT(*) FROM circle_announcement_likes l
                        WHERE l.announcement_id = a.id) AS like_count,
                       EXISTS(SELECT 1 FROM circle_announcement_likes l
@@ -2141,7 +2173,7 @@ async def create_circle_announcement(circle_id: int, author_id: int, content: st
             aid = cur.lastrowid
         await db.commit()
         async with db.execute(
-            """SELECT a.*, u.nickname, u.email FROM circle_announcements a
+            """SELECT a.*, u.nickname, u.email, u.avatar_url FROM circle_announcements a
                JOIN users u ON u.id = a.author_id WHERE a.id=?""",
             (aid,),
         ) as cur:
@@ -2252,7 +2284,7 @@ async def update_circle_post_reply(reply_id: int, author_id: int, content: str) 
         await db.commit()
         async with db.execute(
             """SELECT r.id, r.post_id, r.author_id, r.content, r.created_at,
-                      u.nickname, u.email
+                      u.nickname, u.email, u.avatar_url
                FROM circle_post_replies r
                JOIN users u ON u.id = r.author_id
                WHERE r.id=?""",
@@ -2280,7 +2312,7 @@ async def list_circle_post_replies(post_ids: list) -> dict:
     async with connect() as db:
         async with db.execute(
             """SELECT r.id, r.post_id, r.author_id, r.content, r.created_at,
-                       u.nickname, u.email
+                       u.nickname, u.email, u.avatar_url
                 FROM circle_post_replies r
                 JOIN users u ON u.id = r.author_id
                 WHERE r.post_id = ANY($1)
@@ -2318,7 +2350,7 @@ async def create_circle_post_reply(post_id: int, author_id: int, content: str) -
         await db.commit()
         async with db.execute(
             """SELECT r.id, r.post_id, r.author_id, r.content, r.created_at,
-                      u.nickname, u.email
+                      u.nickname, u.email, u.avatar_url
                FROM circle_post_replies r
                JOIN users u ON u.id = r.author_id
                WHERE r.id=?""",
@@ -2414,7 +2446,7 @@ async def list_circle_join_requests(circle_id: int, status: str = "pending") -> 
     async with connect() as db:
         async with db.execute(
             """SELECT r.id, r.circle_id, r.user_id, r.message, r.status, r.created_at, r.updated_at,
-                      u.nickname, u.email
+                      u.nickname, u.email, u.avatar_url
                FROM circle_join_requests r
                JOIN users u ON u.id = r.user_id
                WHERE r.circle_id=? AND r.status=?

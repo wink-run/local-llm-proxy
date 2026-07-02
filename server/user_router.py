@@ -115,6 +115,7 @@ async def profile(uid: int = Depends(get_current_user_id)):
         "can_create_apikey": bool(user["can_create_apikey"]),
         "show_on_wall": bool(user["show_on_wall"]),
         "wall_display": user["wall_display"],
+        "avatar_url": user.get("avatar_url") or "",
         "created_at": user["created_at"],
     }
 
