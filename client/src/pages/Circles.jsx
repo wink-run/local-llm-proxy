@@ -7,18 +7,7 @@ import {
   previewCircle, joinCircle,
 } from '../api/client';
 import { getServerUrl } from '../config';
-
-const AVATAR_COLORS = [
-  'bg-blue-600', 'bg-violet-600', 'bg-emerald-600',
-  'bg-orange-500', 'bg-pink-600', 'bg-teal-600',
-  'bg-indigo-600', 'bg-rose-600',
-];
-
-function circleColor(name = '') {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
+import UserAvatar, { userDisplayName, avatarColor } from '../components/UserAvatar';
 
 export default function Circles() {
   const { t } = useLang();
@@ -357,14 +346,10 @@ export default function Circles() {
 }
 
 function MemberAvatar({ user }) {
-  const name    = user.nickname || user.email || '?';
-  const initial = name[0].toUpperCase();
-  const color   = circleColor(name);
+  const name = userDisplayName(user);
   return (
     <div className="flex flex-col items-center gap-1 w-10">
-      <div className={`w-8 h-8 rounded-full ${color} flex items-center justify-center text-xs font-bold text-white shrink-0`}>
-        {initial}
-      </div>
+      <UserAvatar user={user} />
       <span className="text-[10px] text-gray-500 dark:text-gray-400 truncate w-full text-center leading-tight">
         {name}
       </span>
@@ -374,7 +359,7 @@ function MemberAvatar({ user }) {
 
 function CircleCard({ circle, isOwner, onOpen, onInvite, onAction, actionLabel, t }) {
   const initial  = (circle.name || '?')[0].toUpperCase();
-  const color    = circleColor(circle.name);
+  const color    = avatarColor(circle.name);
   const members  = circle.members || [];
   const SHOW_MAX = 5;
   const extra    = members.length > SHOW_MAX ? members.length - SHOW_MAX : 0;

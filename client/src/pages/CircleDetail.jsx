@@ -17,20 +17,10 @@ import {
 } from '../api/client';
 import RichMediaInput from '../components/RichMediaInput';
 import RichMediaContent from '../components/RichMediaContent';
-
-const AVATAR_COLORS = [
-  'bg-blue-600', 'bg-violet-600', 'bg-emerald-600',
-  'bg-orange-500', 'bg-pink-600', 'bg-teal-600',
-];
-
-function circleColor(name = '') {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
+import UserAvatar, { userDisplayName } from '../components/UserAvatar';
 
 function authorName(a) {
-  return a?.nickname || a?.email?.split('@')[0] || '?';
+  return userDisplayName(a);
 }
 
 import { formatServerTime } from '../lib/datetime';
@@ -40,12 +30,7 @@ function fmtTime(iso) {
 }
 
 function AuthorAvatar({ author }) {
-  const name = authorName(author);
-  return (
-    <div className={`w-8 h-8 rounded-full ${circleColor(name)} flex items-center justify-center text-xs font-bold text-white shrink-0`}>
-      {name[0]?.toUpperCase() || '?'}
-    </div>
-  );
+  return <UserAvatar user={author} />;
 }
 
 /** 操作按钮：回复 / 编辑 / 删除 */
@@ -77,13 +62,10 @@ function ActionBar({ onReply, onEdit, onDelete, replyCount, showReply = true }) 
 }
 
 function MemberAvatar({ user }) {
-  const name = user.nickname || user.email?.split('@')[0] || '?';
-  const initial = name[0].toUpperCase();
+  const name = userDisplayName(user);
   return (
     <div className="flex flex-col items-center gap-1 w-10 shrink-0">
-      <div className={`w-8 h-8 rounded-full ${circleColor(name)} flex items-center justify-center text-xs font-bold text-white`}>
-        {initial}
-      </div>
+      <UserAvatar user={user} />
       <span className="text-[10px] text-gray-500 dark:text-gray-400 truncate w-full text-center leading-tight">
         {name}
       </span>

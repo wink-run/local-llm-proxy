@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 
+from avatar_utils import resolve_avatar_path
 import database as db
 from admin_router import router as admin_router
 from billing_sources_router import router as billing_sources_router
@@ -352,6 +353,15 @@ async def serve_circle_media(circle_id: int, filename: str):
     path = CIRCLE_MEDIA_DIR / str(circle_id) / safe
     root = (CIRCLE_MEDIA_DIR / str(circle_id)).resolve()
     if not path.is_file() or path.resolve().parent != root:
+        raise HTTPException(404, "Not found")
+    return FileResponse(path)
+
+
+@app.get("/avatar/{filename}")
+async def serve_avatar(filename: str):
+    """用户头像（注册时随机分配）。"""
+    path = resolve_avatar_path(filename)
+    if not path:
         raise HTTPException(404, "Not found")
     return FileResponse(path)
 
