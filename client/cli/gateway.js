@@ -87,7 +87,7 @@ function getToken(adminPort) {
 async function cmdStart(port, adminPort) {
   // 首次启动自动创建 ~/.llm-agent/local-config.json（Docker 挂载目录同理）
   const lc = ensureLocalConfig();
-  try { ensureDeviceId(); } catch (e) {
+  try { ensureDeviceId('cli'); } catch (e) {
     console.warn('[device-id] ensure skipped:', e.message);
   }
   // Docker 端口映射需监听 0.0.0.0；本机 CLI 默认仍用 127.0.0.1
@@ -160,7 +160,8 @@ async function cmdStart(port, adminPort) {
       let accountsSummary = null;
       if (billingMod?.getUserAccounts) {
         try {
-          const cfg = require('../electron/config-loader').readConfig?.() || {};
+          // CLI 供给源在 ~/.llm-agent/local-config.json（非 electron/config-loader）
+          const cfg = readLocalConfig() || {};
           accountsSummary = buildAccountsSummary(billingMod.getUserAccounts(cfg));
         } catch (_) {}
       }

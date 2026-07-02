@@ -130,17 +130,35 @@ async function _doRegister() {
   }
 }
 
+/** 读本机供给源摘要（Electron IPC 或 CLI admin-api） */
+async function _loadAccountsSummary() {
+  const getUA = window.electronAPI?.localConfig?.getUserAccounts;
+  if (getUA) {
+    try {
+      return buildAccountsSummary(await getUA());
+    } catch { /* 离线 */ }
+  }
+  // CLI / Docker Web：经 admin-api 读 ~/.llm-agent/local-config.json
+  try {
+    const token = localStorage.getItem('token') || '';
+    const res = await fetch('/api/user-accounts', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (res.ok) return buildAccountsSummary(await res.json());
+  } catch { /* 未登录或网关未就绪 */ }
+  return null;
+}
+
 /** 采集本机 1/7/30 天盘点快照，随心跳上报云端 */
 async function _collectInventory() {
   const query = window.electronAPI?.localStats?.query;
   const comp  = window.electronAPI?.localStats?.compression;
-  const getUA = window.electronAPI?.localConfig?.getUserAccounts;
-  let accountsSummary = null;
-  if (getUA) {
-    try {
-      accountsSummary = buildAccountsSummary(await getUA());
-    } catch { /* 离线 */ }
-  }
+  const accountsSummary = await _loadAccountsSummary();
+  const attach = (snap) => {
+    if (!snap) return snap;
+    if (accountsSummary) snap.accounts_summary = accountsSummary;
+    return snap;
+  };
   if (query) {
     const [d1, d7, d30] = await Promise.all([
       query(1).catch(() => null),
@@ -154,18 +172,14 @@ async function _collectInventory() {
       comp ? comp(30).catch(() => null) : Promise.resolve(null),
     ]);
     const inv = {};
-    const attach = (snap) => {
-      if (!snap) return snap;
-      if (accountsSummary) snap.accounts_summary = accountsSummary;
-      return snap;
-    };
     if (d1) { if (c1) d1.compression = c1; inv['1'] = attach(d1); }
     if (d7) { if (c7) d7.compression = c7; inv['7'] = attach(d7); }
     if (d30) { if (c30) d30.compression = c30; inv['30'] = attach(d30); }
     return inv;
   }
   const d1 = await getGateway().getDailyStats().catch(() => ({}));
-  return d1?.total_calls != null ? { '1': d1 } : {};
+  const snap = d1?.total_calls != null ? attach({ ...d1 }) : (accountsSummary ? attach({}) : null);
+  return snap ? { '1': snap } : {};
 }
 
 async function _sendHeartbeat() {

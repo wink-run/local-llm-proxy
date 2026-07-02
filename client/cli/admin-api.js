@@ -344,7 +344,7 @@ async function handleRequest(req, res) {
         port: st?.port || 11430,
         version: pkgVer,
       }),
-      device_id: ensureDeviceId(),
+      device_id: ensureDeviceId('cli'),
     });
   }
 

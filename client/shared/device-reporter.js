@@ -55,15 +55,15 @@ function _post(url, body, token) {
 
 // ── Registration ──────────────────────────────────────────────────────────────
 
-/** 读取/生成本机唯一设备 ID（~/.tokenbank/device-id） */
-function _ensureLocalDeviceId(existing) {
-  const persisted = readDeviceId();
+/** 读取/生成本机唯一设备 ID（~/.tokenbank/device-id 或 device-id-cli） */
+function _ensureLocalDeviceId(existing, kind = 'desktop') {
+  const persisted = readDeviceId(kind);
   if (persisted) return persisted;
   if (existing && /^dev-[a-f0-9]{16}$/.test(existing)) {
-    writeDeviceId(existing);
+    writeDeviceId(existing, kind);
     return existing;
   }
-  return ensureDeviceId();
+  return ensureDeviceId(kind);
 }
 
 /**
@@ -123,11 +123,12 @@ async function _sendHeartbeat(online = true) {
   const { inventory: _inv, ...statsClean } = stats;
 
   try {
-    await _post(
+      await _post(
       `${_config.serverUrl}/device/heartbeat`,
       {
         device_id: _config.device_id,
         online,
+        type     : _config.type || '',
         version  : _config.version || '',
         name     : _config.name || '',
         platform : _config.platform || '',
@@ -151,7 +152,8 @@ async function init(options) {
   // Merge options with any existing agent config
   const existing = readAgentConfig() || {};
 
-  const localDeviceId = _ensureLocalDeviceId(existing.device_id || null);
+  const deviceKind = options.type === 'cli' ? 'cli' : 'desktop';
+  const localDeviceId = _ensureLocalDeviceId(existing.device_id || null, deviceKind);
 
   const identity = deviceIdentity.collect({
     type     : options.type || 'desktop',
@@ -177,7 +179,7 @@ async function init(options) {
   const registeredId = await _register();
   _config.device_id = registeredId;
   // 持久化到 ~/.tokenbank/device-id 与 agent config
-  if (registeredId) writeDeviceId(registeredId);
+  if (registeredId) writeDeviceId(registeredId, deviceKind);
   const cfg = readAgentConfig() || {};
   cfg.device_id = registeredId;
   try { writeAgentConfig(cfg); } catch (_) {}

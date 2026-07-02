@@ -1645,6 +1645,11 @@ async def update_device_inventory(device_id: str, user_id: int, inventory: dict)
                 existing = {}
         for k, v in inventory.items():
             if v is not None:
+                # 部分心跳只上报用量、不含 accounts_summary，保留已有登记摘要避免被空覆盖
+                if isinstance(v, dict):
+                    prev = existing.get(str(k))
+                    if isinstance(prev, dict) and prev.get("accounts_summary") and not v.get("accounts_summary"):
+                        v = {**v, "accounts_summary": prev["accounts_summary"]}
                 existing[str(k)] = v
         await db.execute(
             "UPDATE devices SET inventory_json=? WHERE id=? AND user_id=?",
