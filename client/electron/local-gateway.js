@@ -744,12 +744,23 @@ function hasP2pRelayKey(provider) {
 }
 
 /** P2P 鉴权失败（未配置 Key / 云端 401） */
+/** 无可用 worker / 模型不存在（上游 404 或错误体含 no worker）——非鉴权错误 */
+function isNoWorkerError(err) {
+  if (!err) return false;
+  if (err.code === 'model_not_found') return true;
+  const hay = (String(err.message || '') + ' ' + String(err.body || '')).toLowerCase();
+  return hay.includes('no worker') || hay.includes('model_not_found');
+}
+
 function isP2pApiKeyError(err) {
   if (!err) return false;
   if (err.code === 'p2p_api_key_required') return true;
-  if (err.status === 401) return true;
-  const msg = String(err.message || '').toLowerCase();
-  return msg.includes('missing api key') || msg.includes('invalid or disabled api key');
+  // 「无可用 worker / 模型不存在」不是转发 Key 问题（否则会误报"未配置转发 Key"）
+  if (isNoWorkerError(err)) return false;
+  // 只在错误体确有鉴权失败信号时才判为转发 Key 问题；
+  // 不再把任意 401 一律当成"未配置转发 Key"（no-worker 等非鉴权 401 会被误伤）。
+  const hay = (String(err.message || '') + ' ' + String(err.body || '')).toLowerCase();
+  return /missing api key|invalid or disabled api key|invalid api key|unauthorized|forbidden|api key required/.test(hay);
 }
 
 /** P2P 未配置转发 Key：401 拒绝，不降级到其他 provider */
@@ -971,13 +982,9 @@ function proxyConvertSync(provider, oaiBody, model, res) {
       method: 'POST', headers, timeout: 120_000,
     }, (proxyRes) => {
       if (proxyRes.statusCode >= 400) {
-        const errChunks = [];
-        proxyRes.on('data', c => errChunks.push(c));
-        proxyRes.on('end', () => {
-          const body = Buffer.concat(errChunks).toString().slice(0, 200);
-          console.warn(`[gateway] proxyConvertSync ${proxyRes.statusCode} body:`, body);
-        });
-        return reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode }));
+        // 捕获上游错误体（含 "no worker available" 等信息）→ 供错误分类识别，
+        // 避免非鉴权 401（如无可用 worker）被误判成"未配置转发 Key"。
+        return readProxyError(proxyRes, reject);
       }
       const chunks = [];
       proxyRes.on('data', c => chunks.push(c));
@@ -2356,8 +2363,12 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   // ── Scene route：Claude 透明名 keyScene / llm-router-* ──
   // api_key 只绑定应用（统计归因），不改写 model；模型以请求体为准。
   // Claude Desktop：keyScene[claude-*] 按 inferenceModels.name 透明改写到绑定的 route。
+  // Codex 兜底：Codex 会用自带的 gpt-* 辅助模型（写死、非用户配置）发请求；按 gpt 前缀
+  // （future-proof：以后升级出新 gpt-* 也匹配）转到该 Codex 应用绑定的主路由。
+  const codexGptScene = (callerKey && /^gpt/i.test(origModel)) ? _codexGptFallback[callerKey] : null;
   const boundScene =
     (_claudeModels.includes(origModel) && _keyScene[origModel]) ||
+    codexGptScene ||
     null;
   const isLlmRouter = origModel.startsWith('llm-router-');
   const interceptScene = !boundScene ? _routerModelMap[origModel] : null;
@@ -2456,6 +2467,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     }
 
     lastErr = pickBestRouteError(stepErrors) || lastErr;
+    if (isNoWorkerError(lastErr) && lastErr && !lastErr.code) lastErr.code = 'model_not_found';
     if (isP2pApiKeyError(lastErr)) {
       recordError(model, callerKey, lastErr);
       writeP2pApiKeyRequired(res, isResponses);
@@ -2571,6 +2583,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   }
 
   lastErr = pickBestRouteError(routeErrors) || lastErr;
+  if (isNoWorkerError(lastErr) && lastErr && !lastErr.code) lastErr.code = 'model_not_found';
   if (isP2pApiKeyError(lastErr)) {
     recordError(model, callerKey, lastErr);
     writeP2pApiKeyRequired(res, isResponses);
@@ -2961,6 +2974,9 @@ function getLog() {
 // claude-* 透明名 → route 步骤（Claude Desktop inferenceModels.name）；api_key 不在此映射
 let _keyScene = {};
 function setKeySceneMap(map) { _keyScene = map && typeof map === 'object' ? map : {}; }
+// Codex 内建 gpt-* 辅助模型的兜底路由（api_key → scene）
+let _codexGptFallback = {};
+function setCodexGptFallback(map) { _codexGptFallback = map && typeof map === 'object' ? map : {}; }
 
 // Claude 客户端模型名（内部透明逻辑）：仅用于 /v1/models 暴露给 Claude + 标记 Claude 请求。
 // 真实模型由 claude-* → keyScene 透明改写；其余请求以请求体 model 为准。
@@ -3027,7 +3043,7 @@ function setLocalConfigReader(fn) {
 
 module.exports = {
   start, stop, restart, setStrategy, getStatus, getLog,
-  setKeySceneMap, setRouterModelMap, setPeerModels, setBackendConfig, setUserAuth,
+  setKeySceneMap, setCodexGptFallback, setRouterModelMap, setPeerModels, setBackendConfig, setUserAuth,
   setStatsRecorder, setLocalStats, setLocalConfigReader, setAppControls,
   setClaudeModels,
   // 条件路由规则引擎（供单测/复用）
