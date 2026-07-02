@@ -3316,6 +3316,17 @@ app.whenReady().then(() => {
   // Claude Desktop ↔ 3p 会话同步：启动一次 + 每 30s 一次（覆盖运行期间新建的会话，修复"新会话纳管后不同步"）
   console.log('[3p-sync] ==== BOOT v2 (reconcile + 双向 watch) 已加载，开始同步 ====');
   sync3pDebugLog('==== BOOT v2 app.whenReady, pid=' + process.pid + ' ====');
+  try {
+    const _s = require('./claude-3p-session-sync');
+    const _os = require('os');
+    const _nr = _s.nativeCodeSessionsRoot();
+    const _pr = _s.p3CodeSessionsRoot();
+    sync3pDebugLog(`DIAG home=${_os.homedir()} USERPROFILE=${process.env.USERPROFILE} appData=${app.getPath('appData')}`);
+    sync3pDebugLog(`DIAG nativeRoot=${_nr} exists=${fs.existsSync(_nr)}`);
+    sync3pDebugLog(`DIAG p3Root=${_pr} exists=${fs.existsSync(_pr)}`);
+    try { sync3pDebugLog(`DIAG native subdirs=${JSON.stringify(fs.readdirSync(_nr))}`); }
+    catch (e) { sync3pDebugLog(`DIAG native readdir ERR=${e.message}`); }
+  } catch (e) { sync3pDebugLog('DIAG setup err ' + e.message); }
   runClaude3pSync('startup');
   setInterval(() => runClaude3pSync('interval'), 30000);
   // 文件监听兜底：native / 3p 任一 claude-code-sessions 目录有新/变更文件就立即同步（不等 30s 定时器）。

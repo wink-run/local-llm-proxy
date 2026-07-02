@@ -15,9 +15,26 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+// Windows: 官方 Claude Desktop 可能是 MSIX/Store 版——真实数据在
+// Local\Packages\Claude_*\LocalCache\Roaming\Claude\<sub>（始终存在的物理目录），
+// 而 Roaming\Claude 只是「仅 Claude 运行时可见」的兼容 junction。主进程启动时 native Claude
+// 常没开 → junction 不存在 → 传统路径读不到。故优先探测 MSIX 真实路径，否则回退传统路径。
+function winNativeClaudeDir(sub) {
+  const home = os.homedir();
+  const pkgRoot = path.join(home, 'AppData', 'Local', 'Packages');
+  try {
+    for (const pkg of fs.readdirSync(pkgRoot)) {
+      if (!/^Claude_/i.test(pkg)) continue;
+      const p = path.join(pkgRoot, pkg, 'LocalCache', 'Roaming', 'Claude', sub);
+      if (fs.existsSync(p)) return p;
+    }
+  } catch {}
+  return path.join(home, 'AppData', 'Roaming', 'Claude', sub); // 传统 exe 版
+}
+
 function nativeCodeSessionsRoot() {
   const home = os.homedir();
-  if (process.platform === 'win32')  return path.join(home, 'AppData', 'Roaming', 'Claude', 'claude-code-sessions');
+  if (process.platform === 'win32')  return winNativeClaudeDir('claude-code-sessions');
   if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'Claude', 'claude-code-sessions');
   return path.join(home, '.config', 'Claude', 'claude-code-sessions');
 }
@@ -148,7 +165,7 @@ function syncCodeSessionsBidirectional() {
 
 function nativeCoworkSessionsRoot() {
   const home = os.homedir();
-  if (process.platform === 'win32')  return path.join(home, 'AppData', 'Roaming', 'Claude', 'local-agent-mode-sessions');
+  if (process.platform === 'win32')  return winNativeClaudeDir('local-agent-mode-sessions');
   if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'Claude', 'local-agent-mode-sessions');
   return path.join(home, '.config', 'Claude', 'local-agent-mode-sessions');
 }
