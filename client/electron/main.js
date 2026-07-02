@@ -2065,7 +2065,8 @@ function registerIPC() {
 
     const appControls = [];
     const keyScene = {};
-    const { bindClaudeRoutesToKeyScene } = require('../shared/route-binding');
+    const codexGptFallback = {};   // Codex 内建 gpt-* 辅助模型 → 兜底到该应用绑定的主路由（按 api_key）
+    const { bindClaudeRoutesToKeyScene, bindRouteToKeyScene } = require('../shared/route-binding');
     for (const app of apps) {
       const ctrl = { app_id: app.id, app_name: app.name };
       const aid = app.agent_id || app.preset_id;
@@ -2096,6 +2097,12 @@ function registerIPC() {
             const cms = (() => { try { return require('./config-loader').claudeModels(); } catch { return []; } })();
             bindClaudeRoutesToKeyScene(keyScene, appRouteIds, routes, cms);
           }
+          // Codex Desktop：它会用自带的 gpt-* 辅助模型（标题/分类等，写死在 App 里、非用户配置）发请求，
+          // 网关没有这些模型 → 401。用 gpt 前缀兜底（future-proof：以后升级出新 gpt-* 也自动匹配），
+          // 把这类请求转到该 Codex 应用绑定的主路由（route_ids[0]，= 用户在 Codex 里选的模型）。
+          if (String(app.preset_id || app.agent_id || app.id || '').includes('codex')) {
+            bindRouteToKeyScene(codexGptFallback, app.api_key, appRouteIds[0], routes);
+          }
         }
       } else if (app.link_method === 'shim' && app.agent_id) {
         if (!routeBindable || !toolProto[app.agent_id]) continue;
@@ -2105,6 +2112,7 @@ function registerIPC() {
     }
     gateway.setAppControls(appControls);
     gateway.setKeySceneMap(keyScene);
+    gateway.setCodexGptFallback(codexGptFallback);
 
     // P2P backend config（登出时也要清空，避免残留 token 继续上报）
     const cc = cfg.cloud_config || {};
@@ -3432,8 +3440,7 @@ app.whenReady().then(() => {
   console.log('[3p-sync] ==== BOOT v2 (reconcile + 双向 watch) 已加载，开始同步 ====');
   sync3pDebugLog('==== BOOT app.whenReady, pid=' + process.pid + ' ====');
   runClaude3pSync('startup');
-  setInterval(() => runClaude3pSync('interval'), 30000);
-  // 文件监听兜底：native / 3p 任一 claude-code-sessions 目录有新/变更文件就立即同步（不等 30s 定时器）。
+  // 文件监听兜底：native / 3p 任一 claude-code-sessions 目录有新/变更文件就立即同步（实时）。
   // 必须双向监听——3p 建的 session 只会改 3p 目录、native 建的只改 native 目录。
   // 只监 account/org 目录（findSessionDir 动态定位）。account/org 变化靠每 60s 重建 watcher 兜底。
   let watchTimer;
@@ -3458,6 +3465,9 @@ app.whenReady().then(() => {
       }
       console.log(`[3p-sync] watchers armed: ${dirs.length} 个目录`, dirs);
       sync3pDebugLog(`watchers armed: ${dirs.length} dirs: ${JSON.stringify(dirs)}`);
+      // 重建 watcher 时顺带对账一次：兜底 fs.watch 漏事件 / 新 account 目录的存量会话。
+      // 取代原来独立的 30s 轮询——本函数每 60s 跑一次，即 60s 安全网（实时同步仍靠上面的 watch）。
+      runClaude3pSync('watch-rebuild');
     } catch (e) { console.warn('[3p-sync] watch setup failed:', e.message); }
   }
   watchSessions();
