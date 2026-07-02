@@ -171,6 +171,7 @@ scans:
       equals: assistant
     request_id: cursor:{session_id}:{index}
     record_label: assistant_tools
+    skip_if_zero: true
     fields:
       ts:
       - timestamp

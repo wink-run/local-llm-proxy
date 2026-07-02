@@ -7,6 +7,7 @@ const {
   toolResultText,
   sanitizeCursorText,
 } = require('../session-browser');
+const { extractContext, clipTraceText, TRACE_STEP_TEXT_MAX } = require('../session-trace/shared');
 
 const span = { t0: 0, span: 1000, lineCount: 10 };
 
@@ -98,4 +99,19 @@ test('sanitizeCursorText strips [REDACTED] placeholders', () => {
     '正在排查 AVG LATENCY 无数据的原因。',
   );
   assert.equal(sanitizeCursorText('plain text'), 'plain text');
+});
+
+test('extractContext forTrace keeps full user_query without list preview truncation', () => {
+  const long = 'x'.repeat(300);
+  const wrapped = `<user_query>${long}</user_query>`;
+  assert.equal(extractContext(wrapped, { forTrace: true }), long);
+  assert.match(extractContext(wrapped), /…$/);
+  assert.ok(extractContext(wrapped).length <= 160);
+});
+
+test('clipTraceText only truncates beyond TRACE_STEP_TEXT_MAX', () => {
+  assert.equal(clipTraceText('abc'), 'abc');
+  const huge = 'z'.repeat(TRACE_STEP_TEXT_MAX + 10);
+  assert.equal(clipTraceText(huge).length, TRACE_STEP_TEXT_MAX);
+  assert.match(clipTraceText(huge), /…$/);
 });

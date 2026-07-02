@@ -12,15 +12,27 @@ function expandHome(p) {
   return p;
 }
 
-/** 从 user 消息提取可读上下文（去掉 XML 包装） */
-function extractContext(text) {
+/** 从 user 消息提取可读上下文（去掉 XML 包装）；列表预览默认截断，trace 详情 forTrace 保留全文 */
+function extractContext(text, { forTrace = false } = {}) {
   if (!text || typeof text !== 'string') return '';
   let s = text;
   const uq = s.match(/<user_query>\s*([\s\S]*?)\s*<\/user_query>/i);
   if (uq) s = uq[1];
+  if (forTrace) {
+    return s.replace(/\r\n/g, '\n').trim();
+  }
   s = s.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   if (s.length > 160) s = s.slice(0, 157) + '…';
   return s;
+}
+
+/** trace 步骤正文上限（详情页按需加载，仅防极端超大行撑爆内存） */
+const TRACE_STEP_TEXT_MAX = 65536;
+
+function clipTraceText(text, max = TRACE_STEP_TEXT_MAX) {
+  if (!text || typeof text !== 'string') return '';
+  if (text.length <= max) return text;
+  return text.slice(0, max - 1) + '…';
 }
 
 function msgText(msg) {
@@ -278,6 +290,8 @@ function stepTs(timeSpan, lineIdx) {
 module.exports = {
   expandHome,
   extractContext,
+  clipTraceText,
+  TRACE_STEP_TEXT_MAX,
   msgText,
   sanitizeCursorText,
   toolResultText,

@@ -3,6 +3,7 @@ import { getConfig } from '../api/adapter';
 import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
 import { getInventoryStats } from '../api/client';
 import { formatDeviceTitle } from '../lib/device-display';
+import { formatServerTime } from '../lib/datetime';
 import { useLang } from '../store/lang';
 import { useCurrency } from '../store/currency';
 import { isAccountOkMsg } from '../i18n';
@@ -781,7 +782,7 @@ export default function UserAccountsPanel({
                       <span className="text-gray-700 dark:text-gray-300">
                         {t(`accounts.tx.${tx.type}`) !== `accounts.tx.${tx.type}` ? t(`accounts.tx.${tx.type}`) : tx.type}{tx.model_name ? ` · ${tx.model_name}` : ''}
                       </span>
-                      <span className="text-xs text-gray-400 ml-2">{tx.created_at?.slice(0, 16)}</span>
+                      <span className="text-xs text-gray-400 ml-2">{formatServerTime(tx.created_at)}</span>
                     </div>
                     <span className={`font-medium ${(tx.delta ?? 0) >= 0 ? 'text-green-600' : 'text-red-500'}`}>
                       {(tx.delta ?? 0) >= 0 ? '+' : ''}{(tx.delta ?? 0).toFixed(1)}

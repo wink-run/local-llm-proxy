@@ -28,12 +28,10 @@ function authorName(a) {
   return a?.nickname || a?.email?.split('@')[0] || '?';
 }
 
+import { formatServerTime } from '../lib/datetime';
+
 function fmtTime(iso) {
-  if (!iso) return '';
-  try {
-    return new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z')
-      .toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  } catch { return iso; }
+  return formatServerTime(iso, { month: 'short' });
 }
 
 function AuthorAvatar({ author }) {

@@ -15,6 +15,8 @@ function syncSessionTelemetry(localStats) {
     hookImported = cursorHooks.importEvents(localStats);
     const r = sessionImport.run(localStats, { skip: computeImportSkip() });
     sessionImported = (r && r.imported) || 0;
+    // transcript 行常无 usage → 0 token 占位；hook 纳管后以 hook 为准，清掉 cursor:… 脏行
+    cursorHooks.purgeTranscriptZeroTokens(localStats);
   } catch (e) {
     console.error('[session-telemetry]', e.message);
   }

@@ -240,9 +240,12 @@ function SpinCard({ onSuccess }) {
 const DEVICE_ICON = { desktop: '💻', cli: '🖥' };
 const DEVICE_PIE_COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#f43f5e', '#06b6d4'];
 
+/** Token 数量：>=100万显示 M，>=1000 显示 K */
 function fmtNum(n) {
   if (!n) return '0';
-  return n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+  return String(n);
 }
 
 /** 全部设备：各端调用 / Token / 费用占比饼图 */
@@ -644,7 +647,7 @@ export default function TokenDashboard() {
   const localTotalCalls = localData?.total_calls ?? 0;
 
   const fmtRangeCalls  = heroTotal >= 1000 ? `${(heroTotal / 1000).toFixed(1)}K` : String(heroTotal);
-  const fmtRangeTokens = rangeStats.tokens >= 1000 ? `${(rangeStats.tokens / 1000).toFixed(1)}K` : String(rangeStats.tokens);
+  const fmtRangeTokens = fmtNum(rangeStats.tokens);
   const deviceCount    = localData?.device_count ?? localData?.devices?.length ?? 0;
   const onlineCount    = (localData?.devices || []).filter(d => d.online).length;
 
@@ -823,7 +826,7 @@ export default function TokenDashboard() {
               <div className="border-l border-zinc-200/70 dark:border-zinc-700/70 pl-4">
                 <p className="text-xs text-zinc-400 dark:text-zinc-500 mb-1">{t('profile.compression.saved')}</p>
                 <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
-                  {compStats.saved >= 1000 ? `${(compStats.saved / 1000).toFixed(1)}K` : compStats.saved}
+                  {fmtNum(compStats.saved)}
                 </p>
               </div>
               <div className="border-l border-zinc-200/70 dark:border-zinc-700/70 pl-4">

@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <script src="/static/vue.global.prod.js"></script>
+<script src="/static/datetime.js"></script>
 <style>
 /* 与 landing / 用户门户一致的浅色设计系统 */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -1524,7 +1525,11 @@ createApp({
     }
 
     /* ── Utils ── */
-    function fmtTime(iso) { if (!iso) return '—'; return new Date(iso).toLocaleString(lang.value==='zh'?'zh-CN':'en-US',{hour12:false}) }
+    function fmtTime(iso) {
+      if (!iso) return '—';
+      const loc = lang.value === 'zh' ? 'zh-CN' : 'en-US';
+      return formatServerTime(iso, loc);
+    }
 
     let timer = null
     function boot() { fetchWorkers(); fetchKeys(); fetchForTab(activeTab.value) }

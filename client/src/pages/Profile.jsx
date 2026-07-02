@@ -4,6 +4,7 @@ import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPu
 import { getServerUrl } from '../config';
 import BillingConfigSection from '../components/BillingConfigSection';
 import { formatDeviceTitle, formatDeviceSubtitle } from '../lib/device-display';
+import { formatServerTime } from '../lib/datetime';
 
 const TX_LABEL = {
   contribute: '贡献',
@@ -261,7 +262,7 @@ function PurchaseSection() {
                 className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-3 text-sm"
               >
                 <div className="flex flex-wrap justify-between gap-2">
-                  <span className="text-gray-500 dark:text-gray-400 text-xs">{o.created_at?.slice(0, 19)?.replace('T', ' ')}</span>
+                  <span className="text-gray-500 dark:text-gray-400 text-xs">{formatServerTime(o.created_at)}</span>
                   {o.amount_credits > 0 && (
                     <span className="font-semibold text-gray-900 dark:text-gray-100">{o.amount_credits} 积分</span>
                   )}
@@ -788,7 +789,7 @@ export default function Profile() {
                     {TX_LABEL[tx.type] || tx.type}
                     {tx.model_name ? ` · ${tx.model_name}` : ''}
                   </p>
-                  <p className="text-xs text-gray-400 dark:text-gray-500">{tx.created_at?.slice(0, 16)}</p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">{formatServerTime(tx.created_at)}</p>
                 </div>
                 <div className="text-right">
                   <p className={`text-sm font-medium ${(tx.delta ?? 0) >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>

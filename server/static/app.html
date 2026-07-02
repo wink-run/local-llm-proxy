@@ -10,6 +10,7 @@
 <script src="/static/vue.global.prod.js"></script>
 <script src="/static/brand-icons.js"></script>
 <script src="/static/app-icons.js"></script>
+<script src="/static/datetime.js"></script>
 <style>
 /* 与 landing 页一致的浅色设计系统 */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -1142,7 +1143,11 @@ createApp({
       } catch (_) {}
     }
 
-    function fmtTime(iso) { if (!iso) return '—'; return new Date(iso).toLocaleString(lang.value==='zh'?'zh-CN':'en-US',{hour12:false}) }
+    function fmtTime(iso) {
+      if (!iso) return '—';
+      const loc = lang.value === 'zh' ? 'zh-CN' : 'en-US';
+      return formatServerTime(iso, loc);
+    }
     function fmt1(n) { return n==null?'…':Number(n).toFixed(1) }
     function fmt2(n) { return n==null?'—':Number(n).toFixed(2) }
     function fmt0(n) { return n==null?'—':Math.round(n) }

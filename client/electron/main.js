@@ -2972,6 +2972,10 @@ function registerIPC() {
 
   ipcMain.handle('apps:detail', (_e, { app, days } = {}) => {
     maybeSyncSessionTelemetry(localStats);
+    // Cursor：打开明细时立即清 transcript 0 token 占位（节流窗口内也能刷新列表）
+    if (app?.agent_id === 'cursor') {
+      try { cursorHooks.purgeTranscriptZeroTokens(localStats); } catch {}
+    }
     const aid = app?.agent_id || app?.preset_id;
     const ent = configLoader.appEntityById(aid);
     const caps = configLoader.appCapabilities(aid);

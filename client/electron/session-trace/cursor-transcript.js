@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const {
-  extractContext, msgText, sanitizeCursorText, projectLabel,
+  extractContext, clipTraceText, msgText, sanitizeCursorText, projectLabel,
   pathFromEncodedSlug, nameFromGithubprojectsSlug, pickUsage,
   buildTraceStats, fileTimeSpan, stepTs,
 } = require('./shared');
@@ -192,9 +192,10 @@ function trace(sessionId) {
       const usage = pickUsage(data) || pickUsage(msg);
 
       if (role === 'user') {
+        const userText = extractContext(msgText(msg), { forTrace: true }) || msgText(msg);
         steps.push({
           idx: steps.length, kind: 'user', label: 'User prompt', ts,
-          text: extractContext(msgText(msg)) || msgText(msg),
+          text: clipTraceText(userText),
           ...(usage || {}),
         });
       } else if (role === 'assistant') {
@@ -213,7 +214,7 @@ function trace(sessionId) {
               if (think) {
                 steps.push({
                   idx: steps.length, kind: 'assistant', label: 'Reasoning', ts,
-                  reasoning: true, text: think.slice(0, 500),
+                  reasoning: true, text: clipTraceText(think),
                 });
               }
             } else if (t === 'text' && item.text) {
@@ -221,7 +222,7 @@ function trace(sessionId) {
               if (text) {
                 steps.push({
                   idx: steps.length, kind: 'assistant', label: 'Assistant', ts,
-                  text: text.slice(0, 500), ...(usage || {}),
+                  text: clipTraceText(text), ...(usage || {}),
                 });
               }
             }
@@ -231,7 +232,7 @@ function trace(sessionId) {
           if (text) {
             steps.push({
               idx: steps.length, kind: 'assistant', label: 'Assistant', ts,
-              text: text.slice(0, 500), ...(usage || {}),
+              text: clipTraceText(text), ...(usage || {}),
             });
           }
         }
