@@ -3,7 +3,7 @@ import { useAuth } from '../store/index';
 import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getRates, getUserDevices, deleteDevice } from '../api/client';
 import { getServerUrl } from '../config';
 import BillingConfigSection from '../components/BillingConfigSection';
-import { formatDeviceTitle, formatDeviceSubtitle } from '../lib/device-display';
+import { formatDeviceTitle, formatDeviceSubtitle, effectiveDeviceType } from '../lib/device-display';
 import { formatServerTime } from '../lib/datetime';
 
 const TX_LABEL = {
@@ -610,7 +610,7 @@ function DevicesSection() {
                 {/* Header row */}
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <span className="text-lg shrink-0 select-none">{DEVICE_ICON[d.type] || '🖥'}</span>
+                    <span className="text-lg shrink-0 select-none">{DEVICE_ICON[effectiveDeviceType(d)] || '🖥'}</span>
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="text-sm font-semibold text-gray-800 dark:text-gray-100 truncate">{formatDeviceTitle(d)}</span>

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { getProfile, listKeys } from '../api/client';
-import { loadUserAccounts, pushUserAccountsToCloud } from '../api/userAccounts';
+import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
 import { getLocalConfig, getConfig } from '../api/adapter';
 import { getServerUrl, normalizeServerBase, getSyncServerBase, syncCloudConfigUrl, bootstrapServerUrl } from '../config';
 
@@ -53,12 +53,8 @@ async function syncRemoteConfig() {
   } catch {}
 }
 
-// 登录后上传本机个人源到云端；不拉取覆盖，保证游客/登录态看到同一份本机数据
-async function syncUserBilling() {
-  const token = localStorage.getItem('token');
-  if (!token) return;
-  try { await pushUserAccountsToCloud(); } catch {}
-}
+// 个人供给源配置仅本机；账户摘要由 useDeviceReporter 心跳单向上报
+async function syncUserBilling() {}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);

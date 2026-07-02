@@ -1,14 +1,11 @@
-// 个人页计费配置与 Token Bank 服务端同步（跨终端）
+// 个人供给源账户：仅本机配置，不经云端拉取/合并（避免多设备错乱）。
+// 各端通过设备心跳 inventory.accounts_summary 单向上报登记摘要；云端个人页按设备展示。
 'use strict';
 
 const http = require('http');
 const https = require('https');
 
-// 跨终端同步字段。注意：以下三类是「纯本地」数据，不进此列表、不上云：
-//   · direct_source_billing   直连应用计费（本机安装的应用，计费是本机估算）
-//   · source_template_overrides 本地模板覆盖
-//   · user_*[].custom===true   自定义源实例（不在官方目录里，机器本地的）
-// custom 实例混在 user_subscriptions / user_payg_providers 里，上传时拆出、下载时与云端官方实例合并。
+// 历史字段（已停用跨端账户同步；保留常量供旧调用方解构，不再读写云端）
 const BILLING_FIELDS = [
   'user_subscriptions',
   'user_payg_providers',
@@ -99,63 +96,22 @@ function mergeInstanceLists(localList = [], remoteList = []) {
   return out;
 }
 
-/** 写入 local-config（本地缓存，供网关离线估价） */
-function applyToCfg(cfg, billing) {
-  const b = pickBilling(billing);
-  const localPick = pickBilling(cfg);
-  // 刊例价/套餐：云端为基线，本机覆盖项保留
-  cfg.provider_pricing_overrides = { ...b.provider_pricing_overrides, ...localPick.provider_pricing_overrides };
-  cfg.subscription_plans = { ...b.subscription_plans, ...localPick.subscription_plans };
-  // 自定义实例(custom:true)纯本地；官方实例本机与云端按 id 合并（本机优先）
-  cfg.user_subscriptions = [
-    ...customOnly(cfg.user_subscriptions),
-    ...mergeInstanceLists(nonCustom(cfg.user_subscriptions), nonCustom(b.user_subscriptions)),
-  ];
-  cfg.user_payg_providers = [
-    ...customOnly(cfg.user_payg_providers),
-    ...mergeInstanceLists(nonCustom(cfg.user_payg_providers), nonCustom(b.user_payg_providers)),
-  ];
-  // direct_source_billing / source_template_overrides 纯本地，不被云端覆盖（保留 cfg 现值）
+/** 不再用云端 billing 覆盖本机（个人供给源各设备独立） */
+function applyToCfg(cfg, _billing) {
   return cfg;
 }
 
-async function fetchUserBilling(token, serverUrl) {
-  return pickBilling(await requestJson('GET', serverUrl, '/user/accounts', token));
+async function fetchUserBilling(_token, _serverUrl) {
+  return pickBilling({});
 }
 
-async function saveUserBilling(token, serverUrl, patch) {
-  const { stripBillingSecrets } = require('../shared/accounts-summary');
-  const body = {};
-  for (const k of BILLING_FIELDS) {
-    if (patch[k] !== undefined) body[k] = patch[k];
-  }
-  // 自定义实例(custom:true)不上云，只上传官方实例
-  if (Array.isArray(body.user_subscriptions)) body.user_subscriptions = nonCustom(body.user_subscriptions);
-  if (Array.isArray(body.user_payg_providers)) body.user_payg_providers = nonCustom(body.user_payg_providers);
-  return pickBilling(await requestJson('PUT', serverUrl, '/user/accounts', token, stripBillingSecrets(body)));
+async function saveUserBilling(_token, _serverUrl, patch) {
+  return pickBilling(patch);
 }
 
-/**
- * 从云端拉取；云端为空且本地有旧数据时自动上传一次（迁移）。
- * 失败时回退本地缓存。
- */
-async function syncFromCloud(token, serverUrl, localCfg) {
-  const local = pickBilling(localCfg);
-  if (!token) return local;
-  let remote;
-  try {
-    remote = await fetchUserBilling(token, serverUrl);
-  } catch {
-    return local;
-  }
-  if (isEmptyBilling(remote) && !isEmptyBilling(local)) {
-    try {
-      remote = await saveUserBilling(token, serverUrl, local);
-    } catch {
-      return local;
-    }
-  }
-  return remote;
+/** 个人供给源配置仅读本机，不拉云端 */
+async function syncFromCloud(_token, _serverUrl, localCfg) {
+  return pickBilling(localCfg);
 }
 
 module.exports = {

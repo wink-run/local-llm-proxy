@@ -343,7 +343,8 @@ export function resolveBillableSubscriptions(accounts = {}) {
   const seen = new Set();
 
   const push = (entry) => {
-    const key = entry.agent_id || entry.plan_provider_id || entry.gateway_id || entry.source_id || entry.id;
+    const key = entry.config_fp
+      || entry.agent_id || entry.plan_provider_id || entry.gateway_id || entry.source_id || entry.id;
     if (key && seen.has(key)) return;
     if (key) seen.add(key);
     out.push(entry);

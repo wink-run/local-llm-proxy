@@ -4,6 +4,7 @@ import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
 import { getInventoryStats } from '../api/client';
 import { formatDeviceTitle } from '../lib/device-display';
 import { formatServerTime } from '../lib/datetime';
+import { collectDeviceAccounts, dedupeDeviceAccounts } from '../lib/accountsSummary';
 import { useLang } from '../store/lang';
 import { useCurrency } from '../store/currency';
 import { isAccountOkMsg } from '../i18n';
@@ -51,42 +52,24 @@ function pricingRowsForProvider(providerId, models, merged, overrides) {
 }
 
 function subModeLabel(s, t) {
-  if (subscriptionKind(s) === SUB_KIND_API) return t('accounts.subKindApi');
-  if (s.subscription_to_api) return t('accounts.convertApi');
+  if (s.kind === 'api_sub' || subscriptionKind(s) === SUB_KIND_API) return t('accounts.subKindApi');
+  if (s.kind === 'sub_to_api' || s.subscription_to_api) return t('accounts.convertApi');
   return t('accounts.statsOnly');
 }
 
-/** 个人页：各设备登记的订阅/供给源摘要（只读，无凭证） */
-function DeviceAccountsBreakdown({ devices, t }) {
-  const rows = (devices || []).filter(d => {
-    const a = d.accounts_summary || {};
-    return (a.subscriptions?.length || a.payg?.length || a.direct?.length);
-  });
-  if (!rows.length) return null;
+/** 个人页：各设备上报的账户行上的设备标记（可多台） */
+function DeviceTag({ labels, label }) {
+  const text = Array.isArray(labels) && labels.length
+    ? [...new Set(labels)].join(' · ')
+    : (label || '');
+  if (!text) return null;
   return (
-    <div className="space-y-2 pt-3 border-t border-zinc-100 dark:border-zinc-800">
-      <h4 className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">{t('accounts.deviceBreakdown')}</h4>
-      <div className="space-y-1.5">
-        {rows.map(d => {
-          const a = d.accounts_summary || {};
-          const nSub = (a.subscriptions || []).length;
-          const nPayg = (a.payg || []).length;
-          const nDirect = (a.direct || []).length;
-          return (
-            <div key={d.device_id} className="flex items-center justify-between gap-2 text-xs px-3 py-2 rounded-lg bg-zinc-50 dark:bg-zinc-800/60">
-              <span className="font-medium text-zinc-700 dark:text-zinc-300 truncate">{formatDeviceTitle(d)}</span>
-              <span className="text-zinc-400 shrink-0 tabular-nums">
-                {nSub > 0 && t('accounts.deviceSubCount', { n: nSub })}
-                {nSub > 0 && (nPayg > 0 || nDirect > 0) && ' · '}
-                {nPayg > 0 && t('accounts.devicePaygCount', { n: nPayg })}
-                {nPayg > 0 && nDirect > 0 && ' · '}
-                {nDirect > 0 && t('accounts.deviceDirectCount', { n: nDirect })}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
+    <span
+      className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300 shrink-0 truncate max-w-[160px]"
+      title={text}
+    >
+      {text}
+    </span>
   );
 }
 
@@ -198,7 +181,8 @@ export default function UserAccountsPanel({
 
   const load = useCallback(() => {
     setLoading(true);
-    loadUserAccounts()
+    // 个人供给源配置仅本机；个人页账户汇总来自云端各设备 inventory
+    loadUserAccounts({ localOnly: true })
       .then(r => {
         setData(r);
         setOverrides(JSON.parse(JSON.stringify(r.provider_pricing_overrides || {})));
@@ -210,14 +194,30 @@ export default function UserAccountsPanel({
 
   useEffect(() => { load(); }, [load, user?.id]);
 
-  // 个人页订阅/按量 Tab：拉各端上报的登记摘要（无凭证）
+  // 个人页：拉各端心跳上报的 accounts_summary（无凭证，单向上报）
   useEffect(() => {
     if (billingOnly || !user) return;
-    if (tab !== 'subscription' && tab !== 'payg') return;
     getInventoryStats(1)
       .then(r => setDeviceInv(r.data?.devices || []))
       .catch(() => setDeviceInv([]));
-  }, [billingOnly, user, tab]);
+  }, [billingOnly, user]);
+
+  const deviceAccounts = useMemo(
+    () => dedupeDeviceAccounts(collectDeviceAccounts(deviceInv, formatDeviceTitle)),
+    [deviceInv],
+  );
+  const profileAppSubs = useMemo(
+    () => deviceAccounts.subs.filter(s => s.kind === 'app_sub' || s.kind === 'sub_to_api'),
+    [deviceAccounts],
+  );
+  const profileApiSubs = useMemo(
+    () => deviceAccounts.subs.filter(s => s.kind === 'api_sub'),
+    [deviceAccounts],
+  );
+  const profileDirectSubs = useMemo(
+    () => deviceAccounts.direct.filter(d => d.mode !== 'api'),
+    [deviceAccounts],
+  );
 
 
   // 供给页从卡片跳转时切换 tab（如按量配置）
@@ -311,7 +311,10 @@ export default function UserAccountsPanel({
     }
     return [...instances, ...extras];
   }, [data?.direct_source_instances, data?.direct_source_billing, data?.source_templates, appSubs]);
-  const subscriptionTabCount = appSubs.length + directAppSubs.length + apiSubs.length;
+  const subscriptionTabCount = billingOnly
+    ? appSubs.length + directAppSubs.length + apiSubs.length
+    : profileAppSubs.length + profileApiSubs.length + profileDirectSubs.length;
+  const profilePaygCount = deviceAccounts.payg.length;
   // 网格模板 = 官方目录 + 自定义源模板（均由 billing-config 的 source_templates 下发，含 custom 标记）
   const mergedTemplates = data?.source_templates || [];
   const addedTemplateKeys = useMemo(() => {
@@ -725,7 +728,7 @@ export default function UserAccountsPanel({
     : [
         { id: 'p2p', label: t('accounts.tab.p2p'), sub: t('accounts.tab.p2pSub'), color: 'blue' },
         { id: 'subscription', label: t('accounts.tab.subscription'), sub: t('accounts.count', { n: subscriptionTabCount }), color: 'amber' },
-        { id: 'payg', label: t('accounts.tab.payg'), sub: t('accounts.count', { n: payg.length }), color: 'emerald' },
+        { id: 'payg', label: t('accounts.tab.payg'), sub: t('accounts.count', { n: profilePaygCount }), color: 'emerald' },
       ];
 
   return (
@@ -841,22 +844,22 @@ export default function UserAccountsPanel({
             onClose={() => setTemplateEditing(null)} t={t} />
         )}
 
-        {/* ── 订阅账户（个人页只读：云端汇总 + 各端登记摘要）── */}
+        {/* ── 订阅账户（个人页只读：各设备上报摘要 + 设备标记）── */}
         {!billingOnly && tab === 'subscription' && (
-          loading ? (
+          loading && deviceInv.length === 0 ? (
             <p className="text-sm text-gray-400">{t('accounts.loading')}</p>
           ) : (
             <div className="space-y-3">
               <p className="text-xs text-zinc-500">{t('accounts.summaryHint')}</p>
               <div className="space-y-2">
                 <h4 className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">{t('accounts.sectionAppSubs')}</h4>
-                {appSubs.length === 0 && directAppSubs.length === 0 ? (
+                {profileAppSubs.length === 0 && profileDirectSubs.length === 0 ? (
                   <p className="text-sm text-zinc-400 py-2 text-center">{t('accounts.noAppSubscriptions')}</p>
                 ) : (
                   <div className="space-y-2">
-                    {appSubs.map(s => (
-                      <div key={s.id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
-                        <ServiceIcon id={s.plan_provider_id || s.source_id} name={s.app_name} icon={s.app_icon} />
+                    {profileAppSubs.map(s => (
+                      <div key={s.config_fp || s.id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
+                        <ServiceIcon id={s.source_id} name={s.name || s.app_name} icon={s.app_icon} />
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{s.name || s.app_name}</div>
                           <div className="text-xs text-zinc-500 truncate">
@@ -864,19 +867,18 @@ export default function UserAccountsPanel({
                             {s.monthly_usd != null ? ` · ${fmtCost(s.monthly_usd)}${t('accounts.perMonth')}` : ''}
                           </div>
                         </div>
+                        <DeviceTag labels={s.device_labels} label={s.device_label} />
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-700 text-zinc-500 shrink-0">{subModeLabel(s, t)}</span>
                       </div>
                     ))}
-                    {directAppSubs.map(d => (
-                      <div key={d.agent_id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
-                        <ServiceIcon id={d.source_id} name={d.name || d.label} icon={d.icon} />
+                    {profileDirectSubs.map(d => (
+                      <div key={d.config_fp || d.agent_id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
+                        <ServiceIcon id={d.source_id || d.agent_id} name={d.name} />
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{d.name || d.label}</div>
-                          <div className="text-xs text-zinc-500 truncate">
-                            {d.plan_label || t('accounts.directAppSub')}
-                            {d.monthly_usd != null ? ` · ${fmtCost(d.monthly_usd)}${t('accounts.perMonth')}` : ''}
-                          </div>
+                          <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{d.name || d.agent_id}</div>
+                          <div className="text-xs text-zinc-500 truncate">{t('accounts.directAppSub')}</div>
                         </div>
+                        <DeviceTag labels={d.device_labels} label={d.device_label} />
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-300 shrink-0">{t('accounts.directAppSub')}</span>
                       </div>
                     ))}
@@ -885,13 +887,13 @@ export default function UserAccountsPanel({
               </div>
               <div className="space-y-2 pt-2 border-t border-zinc-100 dark:border-zinc-800">
                 <h4 className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">{t('accounts.sectionApiSubs')}</h4>
-                {apiSubs.length === 0 ? (
+                {profileApiSubs.length === 0 ? (
                   <p className="text-sm text-zinc-400 py-2 text-center">{t('accounts.noApiSubscriptions')}</p>
                 ) : (
                   <div className="space-y-2">
-                    {apiSubs.map(s => (
-                      <div key={s.id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
-                        <ServiceIcon id={s.plan_provider_id || s.source_id} name={s.app_name} icon={s.app_icon} />
+                    {profileApiSubs.map(s => (
+                      <div key={s.config_fp || s.id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
+                        <ServiceIcon id={s.source_id} name={s.name || s.app_name} icon={s.app_icon} />
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">{s.name || s.app_name}</div>
                           <div className="text-xs text-zinc-500 truncate">
@@ -899,38 +901,38 @@ export default function UserAccountsPanel({
                             {s.monthly_usd != null ? ` · ${fmtCost(s.monthly_usd)}${t('accounts.perMonth')}` : ''}
                           </div>
                         </div>
+                        <DeviceTag labels={s.device_labels} label={s.device_label} />
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-300 shrink-0">{t('accounts.subKindApi')}</span>
                       </div>
                     ))}
                   </div>
                 )}
               </div>
-              <DeviceAccountsBreakdown devices={deviceInv} t={t} />
             </div>
           )
         )}
 
-        {/* ── 按量供给源（个人页只读汇总）── */}
+        {/* ── 按量供给源（个人页只读：各设备上报摘要）── */}
         {!billingOnly && tab === 'payg' && (
-          loading ? (
+          loading && deviceInv.length === 0 ? (
             <p className="text-sm text-gray-400">{t('accounts.loading')}</p>
           ) : (
             <div className="space-y-3">
               <p className="text-xs text-zinc-500">{t('accounts.summaryHint')}</p>
-              {payg.length === 0 ? (
+              {deviceAccounts.payg.length === 0 ? (
                 <p className="text-sm text-zinc-400 py-4 text-center">{t('accounts.noPayg')}</p>
               ) : (
                 <div className="space-y-2">
-                  {payg.map(p => (
-                    <div key={p.id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
-                      <ServiceIcon id={p.provider_id} name={p.label} icon={p.icon} />
+                  {deviceAccounts.payg.map(p => (
+                    <div key={p.config_fp || `${p.provider_id}-${p.id}`} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/60">
+                      <ServiceIcon id={p.provider_id} name={p.label || p.name} icon={p.icon} />
                       <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">{p.label || p.name}</span>
-                      <span className="text-xs text-zinc-400 shrink-0 tabular-nums">{t('accounts.modelsCount', { n: (p.models || []).length })}</span>
+                      <span className="text-xs text-zinc-400 shrink-0 tabular-nums">{t('accounts.modelsCount', { n: p.models_count ?? 0 })}</span>
+                      <DeviceTag labels={p.device_labels} label={p.device_label} />
                     </div>
                   ))}
                 </div>
               )}
-              <DeviceAccountsBreakdown devices={deviceInv} t={t} />
             </div>
           )
         )}

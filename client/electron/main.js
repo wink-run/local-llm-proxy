@@ -2060,11 +2060,8 @@ function registerIPC() {
     syncAgentProviderModelsFromAccounts();
   }
 
-  async function pullUserBilling({ token, serverUrl } = {}) {
-    let cfg = readLocalConfig();
-    const base = resolveBillingServerUrl(serverUrl);
-    const remote = await cloudBilling.syncFromCloud(token, base, cfg);
-    cfg = cloudBilling.applyToCfg(cfg, remote);
+  async function pullUserBilling(_auth = {}) {
+    const cfg = readLocalConfig();
     applyUserBillingCfg(cfg);
     return cfg;
   }
@@ -2088,18 +2085,8 @@ function registerIPC() {
     if (patch.direct_source_billing && typeof patch.direct_source_billing === 'object') {
       cfg.direct_source_billing = patch.direct_source_billing;           // 直连应用计费
     }
-    // 先写本地，再尝试同步云端（未登录也可保存）
+    // 个人供给源仅写本机；账户摘要由设备心跳单向上报
     applyUserBillingCfg(cfg);
-    if (!token) return cfg;
-    const base = resolveBillingServerUrl(serverUrl);
-    if (!base) return cfg;
-    try {
-      const remote = await cloudBilling.saveUserBilling(token, base, cloudBilling.pickBilling(cfg));
-      cfg = cloudBilling.applyToCfg(cfg, remote);
-      applyUserBillingCfg(cfg);
-    } catch (err) {
-      console.warn('[billing] cloud sync failed, kept local:', err?.message || err);
-    }
     return cfg;
   }
 
@@ -2139,13 +2126,8 @@ function registerIPC() {
     // 不广播 billing:changed，避免 Providers 页 catalog 拉取 ↔ 账户重载死循环
     return { ok: true };
   });
-  ipcMain.handle('localConfig:getUserAccounts', async (_e, auth = {}) => {
-    // 供给源页 personalOnly：仅读本机 local-config，不随登录态拉云端/裁剪
-    if (auth.localOnly) {
-      const cfg = readLocalConfig();
-      return billingConfigMod.getUserAccounts(cfg, { boundDirectAgentIds: boundDirectAgentIds() });
-    }
-    let cfg = await pullUserBilling(auth);
+  ipcMain.handle('localConfig:getUserAccounts', async () => {
+    let cfg = readLocalConfig();
     const { cfg: pruned, changed } = billingConfigMod.pruneLocalBillingAgainstServer(cfg);
     if (changed) applyUserBillingCfg(pruned);
     cfg = pruned;
@@ -2155,24 +2137,9 @@ function registerIPC() {
     const cfg = await pushUserBilling(payload);
     return billingConfigMod.getUserAccounts(cfg, { boundDirectAgentIds: boundDirectAgentIds() });
   });
-  /** 登录后仅上传本机账户数据，不以云端覆盖本地已添加的源 */
-  ipcMain.handle('localConfig:pushUserAccountsToCloud', async (_e, auth = {}) => {
-    let cfg = readLocalConfig();
-    const token = auth.token;
-    if (!token) {
-      return billingConfigMod.getUserAccounts(cfg, { boundDirectAgentIds: boundDirectAgentIds() });
-    }
-    const base = resolveBillingServerUrl(auth.serverUrl);
-    if (!base) {
-      return billingConfigMod.getUserAccounts(cfg, { boundDirectAgentIds: boundDirectAgentIds() });
-    }
-    try {
-      const remote = await cloudBilling.saveUserBilling(token, base, cloudBilling.pickBilling(cfg));
-      cfg = cloudBilling.applyToCfg(cfg, remote);
-      applyUserBillingCfg(cfg);
-    } catch (err) {
-      console.warn('[billing] cloud push failed, kept local:', err?.message || err);
-    }
+  /** 账户摘要随设备心跳上报；不再 PUT /user/accounts 同步配置 */
+  ipcMain.handle('localConfig:pushUserAccountsToCloud', async () => {
+    const cfg = readLocalConfig();
     return billingConfigMod.getUserAccounts(cfg, { boundDirectAgentIds: boundDirectAgentIds() });
   });
 

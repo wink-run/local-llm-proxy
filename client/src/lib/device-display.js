@@ -16,13 +16,19 @@ export function formatLegacyPlatform(platform) {
   return p;
 }
 
-/** 设备主标题：优先可读名称，去掉 .local；桌面版去掉历史 CLI 后缀 */
+/** 设备主标题：去掉 .local 与历史 CLI 端口后缀 */
 export function formatDeviceTitle(device) {
   let raw = device?.name || device?.device_id || '';
-  if (device?.type === 'desktop') {
-    raw = raw.replace(/\s·\sCLI\s:\d+$/, '');
-  }
+  raw = raw.replace(/\s·\sCLI\s:\d+$/, '');
   return stripLocalSuffix(raw) || raw;
+}
+
+/** 展示用设备类型（DB 未及时刷新时根据名称推断） */
+export function effectiveDeviceType(device) {
+  if (device?.type === 'desktop') return 'desktop';
+  const name = String(device?.name || '');
+  if (/\s·\sCLI\s:\d+$/.test(name)) return 'cli';
+  return device?.type || 'desktop';
 }
 
 /** 设备副标题：类型 · 版本 · 平台 */

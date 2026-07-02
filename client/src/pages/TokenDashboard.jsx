@@ -6,9 +6,10 @@ import { useLang } from '../store/lang';
 import { useCurrency } from '../store/currency';
 import { getTransactions, checkin, getCheckinStatus, getPurchaseOrders, createPurchaseOrder, spin, getSpinStatus, getUserDevices, deleteDevice, getInventoryStats, getProviderCatalog } from '../api/client';
 import UserAccountsPanel from '../components/UserAccountsPanel';
+import { billingAccountsFromDevices } from '../lib/accountsSummary';
 import { enrichBillingCost, resolveBillableSubscriptions } from '../utils/billing-cost';
 import { loadUserAccounts } from '../api/userAccounts';
-import { formatDeviceTitle, formatLegacyPlatform } from '../lib/device-display';
+import { formatDeviceTitle, formatLegacyPlatform, effectiveDeviceType } from '../lib/device-display';
 import { isAppIcon, appIconSvg } from '../lib/appIcons';
 
 /** 从云端拉取各设备聚合盘点；失败时回退本机数据，并合并订阅折算 + 按量费用 */
@@ -36,8 +37,14 @@ async function fetchDashboardStats(days) {
   let catalog = [];
   try {
     const acct = await loadUserAccounts();
-    payg = acct.user_payg_providers || [];
     catalog = acct.subscription_catalog || [];
+    // 云端：各设备上报摘要按 config_fp 去重后计订阅/按量费用，避免同配置重复计费
+    if (raw.source === 'cloud' && (raw.devices || []).length) {
+      const cloudAcct = billingAccountsFromDevices(raw.devices, formatDeviceTitle);
+      payg = cloudAcct.user_payg_providers || [];
+      return enrichBillingCost(raw, resolveBillableSubscriptions(cloudAcct), payg, days, catalog);
+    }
+    payg = acct.user_payg_providers || [];
     return enrichBillingCost(raw, resolveBillableSubscriptions(acct), payg, days, catalog);
   } catch { /* 无账户配置时仅显示按量 token 费用 */ }
 
@@ -122,7 +129,7 @@ function pickDistData(localData, devices, filterId) {
     models: dev.models || dev.top_models || [],
     total_calls: dev.calls || 0,
     scopeLabelKey: 'device',
-    scopeName: dev.name || filterId,
+    scopeName: formatDeviceTitle(dev),
   };
 }
 
@@ -259,7 +266,7 @@ function DeviceSharePies({ devices, rangeLabel }) {
   function PieBlock({ title, dataKey, formatValue }) {
     const data = list
       .filter(d => (d[dataKey] || 0) > 0)
-      .map(d => ({ id: d.device_id, name: d.name || d.device_id, value: d[dataKey] }));
+      .map(d => ({ id: d.device_id, name: formatDeviceTitle(d), value: d[dataKey] }));
     if (data.length === 0) {
       return (
         <div className="flex flex-col items-center justify-center min-h-[200px] text-xs text-zinc-400">
@@ -365,8 +372,8 @@ function UsageDistributionPanel({ localData, devices, rangeLabel, filterId, onFi
                   ? 'bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-medium'
                   : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
               }`}
-              title={d.name}>
-              {DEVICE_ICON[d.type] || '🖥'} {d.name}
+              title={formatDeviceTitle(d)}>
+              {DEVICE_ICON[effectiveDeviceType(d)] || '🖥'} {formatDeviceTitle(d)}
             </button>
           ))}
         </div>
@@ -529,7 +536,7 @@ function DevicesSection() {
         {devices.map((d, i) => (
           <div key={`${d.device_id ?? ''}-${i}`}
             className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800/80">
-            <span className="text-base select-none shrink-0">{DEVICE_ICON[d.type] || '🖥'}</span>
+            <span className="text-base select-none shrink-0">{DEVICE_ICON[effectiveDeviceType(d)] || '🖥'}</span>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5">
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.online ? 'bg-green-500' : 'bg-zinc-400'}`} />

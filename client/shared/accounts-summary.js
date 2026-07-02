@@ -1,5 +1,12 @@
 // 各端心跳上报：仅登记项摘要（名称/类型/源 id），不含 Key、密码等凭证。
 
+const {
+  fingerprintSubscription,
+  fingerprintPayg,
+  fingerprintDirect,
+  dedupeByConfigFp,
+} = require('./account-config-fingerprint');
+
 const SENSITIVE_KEYS = new Set([
   'token', 'credentials', 'api_key', 'password', 'secret', 'refresh_token', 'access_token',
 ]);
@@ -14,18 +21,20 @@ function pickSafe(obj, keys) {
 
 /** 从 getUserAccounts 快照提取可跨端汇总的上报结构 */
 function buildAccountsSummary(accounts = {}) {
-  const subs = (accounts.user_subscriptions || []).map(s => pickSafe(s, [
-    'id', 'source_id', 'name', 'app_name', 'app_icon', 'plan_label', 'plan_id',
-    'subscription_kind', 'subscription_to_api', 'monthly_usd',
-  ])).map(s => ({
-    ...s,
+  const subs = (accounts.user_subscriptions || []).map(s => ({
+    ...pickSafe(s, [
+      'id', 'source_id', 'name', 'app_name', 'app_icon', 'plan_label', 'plan_id',
+      'subscription_kind', 'subscription_to_api', 'monthly_usd',
+    ]),
     name: s.name || s.app_name,
     kind: s.subscription_kind === 'api' ? 'api_sub' : (s.subscription_to_api ? 'sub_to_api' : 'app_sub'),
+    config_fp: fingerprintSubscription(s),
   }));
 
   const payg = (accounts.user_payg_providers || []).map(p => ({
     ...pickSafe(p, ['id', 'provider_id', 'name', 'label', 'icon']),
     models_count: Array.isArray(p.models) ? p.models.length : 0,
+    config_fp: fingerprintPayg(p),
   }));
 
   const direct = [];
@@ -37,6 +46,8 @@ function buildAccountsSummary(accounts = {}) {
       source_id: b.source_id || agentId,
       name: b.name || agentId,
       mode: b.mode === 'api' ? 'api' : 'subscription',
+      monthly_usd: b.monthly_usd,
+      config_fp: fingerprintDirect(agentId, b),
     });
   }
 
@@ -60,4 +71,4 @@ function stripBillingSecrets(billing = {}) {
   };
 }
 
-module.exports = { buildAccountsSummary, stripBillingSecrets };
+module.exports = { buildAccountsSummary, dedupeByConfigFp, stripBillingSecrets };

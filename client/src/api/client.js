@@ -226,13 +226,14 @@ export function registerDevice(info) {
 }
 
 export function heartbeatDevice(deviceId, payload = {}) {
-  const { version, name, platform, ...stats } = payload;
+  const { version, name, platform, type, ...stats } = payload;
   return http.post('/device/heartbeat', {
     device_id: deviceId,
     online: true,
     version: version || '',
     name: name || '',
     platform: platform || '',
+    type: type || '',
     stats,
   });
 }

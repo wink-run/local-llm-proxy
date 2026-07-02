@@ -1475,6 +1475,39 @@ def _empty_inventory() -> dict:
     }
 
 
+def _empty_period_snap() -> dict:
+    """单设备、单时间窗口的空盘点（用于尚未上报该窗口数据的设备）。"""
+    return {
+        "total_calls": 0, "total_tokens": 0, "total_cost": 0,
+        "tiers": {"free": 0, "p2p": 0, "paid": 0},
+        "hourly": [0] * 24,
+        "models": [], "providers": [], "agent_sources": [], "app_usage": [],
+        "compression": {"count": 0, "before": 0, "after": 0, "saved": 0, "ratio": 0, "saved_usd": 0},
+    }
+
+
+def _hourly_calls(v, index: int = 0) -> int:
+    """hourly 槽位：旧格式为 int，新格式为 {hour, calls, tokens, ...}。"""
+    if isinstance(v, dict):
+        return int(v.get("calls") or 0)
+    if isinstance(v, (int, float)):
+        return int(v)
+    return 0
+
+
+def _merge_hourly_into(target: list, hourly: list) -> None:
+    """合并单设备 hourly 到 24 位 calls 数组。"""
+    if not isinstance(hourly, list):
+        return
+    for i, v in enumerate(hourly[:24]):
+        if isinstance(v, dict):
+            idx = int(v.get("hour", i))
+            if 0 <= idx < 24:
+                target[idx] += _hourly_calls(v, idx)
+        elif isinstance(v, (int, float)):
+            target[i] += int(v)
+
+
 def _merge_inventory_list(rows_list: list, key_field: str) -> list:
     """合并多设备同名维度（provider/model/source）。"""
     acc: dict = {}
@@ -1493,13 +1526,29 @@ def _merge_inventory_list(rows_list: list, key_field: str) -> list:
     return sorted(acc.values(), key=lambda x: x.get("calls", 0), reverse=True)
 
 
+def _merge_app_usage(rows_list: list) -> list:
+    """合并多设备按应用聚合的用量（app_usage）。"""
+    acc: dict = {}
+    for rows in rows_list:
+        for r in rows or []:
+            k = r.get("id") or r.get("name")
+            if not k:
+                continue
+            if k not in acc:
+                acc[k] = dict(r)
+            else:
+                for field in ("calls", "tokens", "proxyCalls", "sessionCalls"):
+                    acc[k][field] = acc[k].get(field, 0) + (r.get(field) or 0)
+    return sorted(acc.values(), key=lambda x: x.get("calls", 0), reverse=True)
+
+
 def merge_device_inventories(device_rows: list, days: int) -> dict:
     """将各设备上报的盘点 JSON 按时间范围合并为用户总览。"""
     import json as _json
 
     key = str(days)
     merged = _empty_inventory()
-    provider_rows, model_rows, agent_rows = [], [], []
+    provider_rows, model_rows, agent_rows, app_usage_rows = [], [], [], []
 
     for dev in device_rows:
         raw = dev.get("inventory_json") or "{}"
@@ -1507,9 +1556,8 @@ def merge_device_inventories(device_rows: list, days: int) -> dict:
             inv_all = _json.loads(raw) if isinstance(raw, str) else (raw or {})
         except (ValueError, TypeError):
             inv_all = {}
-        snap = inv_all.get(key) or inv_all.get(str(days))
-        if not snap:
-            continue
+        # 无该窗口快照仍展示设备（用量为 0），避免多设备只显示有数据的一台
+        snap = inv_all.get(key) or inv_all.get(str(days)) or _empty_period_snap()
 
         merged["total_calls"] += int(snap.get("total_calls") or 0)
         merged["total_tokens"] += int(snap.get("total_tokens") or 0)
@@ -1519,9 +1567,8 @@ def merge_device_inventories(device_rows: list, days: int) -> dict:
         for t in ("free", "p2p", "paid"):
             merged["tiers"][t] += int(tiers.get(t) or 0)
 
-        if days == 1 and isinstance(snap.get("hourly"), list):
-            for i, v in enumerate(snap["hourly"][:24]):
-                merged["hourly"][i] += int(v or 0)
+        if days == 1:
+            _merge_hourly_into(merged["hourly"], snap.get("hourly") or [])
 
         comp = snap.get("compression") or {}
         merged["compression"]["count"] += int(comp.get("count") or 0)
@@ -1532,11 +1579,13 @@ def merge_device_inventories(device_rows: list, days: int) -> dict:
         provider_rows.append(snap.get("providers") or [])
         model_rows.append(snap.get("models") or [])
         agent_rows.append(snap.get("agent_sources") or [])
+        app_usage_rows.append(snap.get("app_usage") or [])
 
         dev_tiers = {t: int((tiers or {}).get(t) or 0) for t in ("free", "p2p", "paid")}
         dev_models = sorted(snap.get("models") or [], key=lambda x: x.get("calls", 0), reverse=True)
         dev_sources = sorted(snap.get("agent_sources") or [], key=lambda x: x.get("calls", 0), reverse=True)
         dev_providers = sorted(snap.get("providers") or [], key=lambda x: x.get("calls", 0), reverse=True)
+        dev_app_usage = sorted(snap.get("app_usage") or [], key=lambda x: x.get("calls", 0), reverse=True)
 
         merged["devices"].append({
             "device_id": dev.get("id"),
@@ -1555,6 +1604,7 @@ def merge_device_inventories(device_rows: list, days: int) -> dict:
             "top_providers": dev_providers[:3],
             # 完整列表供分布图按端筛选
             "agent_sources": snap.get("agent_sources") or [],
+            "app_usage": dev_app_usage,
             "providers": dev_providers,
             "models": dev_models,
             # 各端登记的订阅/供给源摘要（无凭证）
@@ -1568,6 +1618,7 @@ def merge_device_inventories(device_rows: list, days: int) -> dict:
     merged["providers"] = _merge_inventory_list(provider_rows, "id")
     merged["models"] = _merge_inventory_list(model_rows, "model")
     merged["agent_sources"] = _merge_inventory_list(agent_rows, "source")
+    merged["app_usage"] = _merge_app_usage(app_usage_rows)
     _c = merged["compression"]
     _c["saved"] = _c["before"] - _c["after"]
     _c["ratio"] = round((_c["before"] - _c["after"]) / _c["before"], 4) if _c["before"] > 0 else 0
@@ -1613,7 +1664,8 @@ async def get_user_inventory_stats(user_id: int, days: int = 1) -> dict:
             rows = [dict(r) for r in await cur.fetchall()]
     out = merge_device_inventories(rows, days)
     out["days"] = days
-    out["device_count"] = len(out["devices"])
+    # 已注册设备总数（含尚未上报盘点快照的设备）
+    out["device_count"] = len(rows)
     return out
 
 
@@ -1621,7 +1673,7 @@ async def record_device_heartbeat(device_id: str, user_id: int, online: bool,
                                    calls: int, errors: int, providers: int,
                                    inventory: dict | None = None,
                                    version: str = "", name: str = "",
-                                   platform: str = "") -> None:
+                                   platform: str = "", type_: str = "") -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         updates = ["online=?", "last_seen=datetime('now')"]
         params: list = [1 if online else 0]
@@ -1634,6 +1686,9 @@ async def record_device_heartbeat(device_id: str, user_id: int, online: bool,
         if platform:
             updates.append("platform=?")
             params.append(platform)
+        if type_ in ("desktop", "cli"):
+            updates.append("type=?")
+            params.append(type_)
         params.append(device_id)
         await db.execute(
             f"UPDATE devices SET {', '.join(updates)} WHERE id=?",

@@ -244,21 +244,8 @@ function syncAgentProviderModelsFromAccounts() {
   }
 }
 
-async function pullUserBillingApi(token, req) {
-  let cfg = readLocalConfig() || { scene_routes: [], local_keys: [] };
-  const base = resolveBillingServerUrl(req);
-  if (token && base) {
-    try {
-      const remote = await cloudBilling.syncFromCloud(token, base, cfg);
-      cfg = cloudBilling.applyToCfg(cfg, remote);
-      writeLocalConfig(cfg);
-      syncGateway(cfg);
-    } catch (e) {
-      console.warn('[admin-api] billing pull failed:', e.message);
-    }
-  } else if (token && !base) {
-    console.warn('[admin-api] billing pull skipped: Token Bank server URL not configured');
-  }
+async function pullUserBillingApi(_token, _req) {
+  const cfg = readLocalConfig() || { scene_routes: [], local_keys: [] };
   applyUserBillingCfg(cfg);
   return billingConfig.getUserAccounts(cfg);
 }
@@ -276,20 +263,6 @@ async function pushUserBillingApi(token, req, patch) {
   writeLocalConfig(cfg);
   syncGateway(cfg);
   applyUserBillingCfg(cfg);
-  if (token) {
-    const base = resolveBillingServerUrl(req);
-    if (base) {
-      try {
-        const remote = await cloudBilling.saveUserBilling(token, base, cloudBilling.pickBilling(cfg));
-        cfg = cloudBilling.applyToCfg(cfg, remote);
-        writeLocalConfig(cfg);
-        syncGateway(cfg);
-        applyUserBillingCfg(cfg);
-      } catch (e) {
-        console.warn('[admin-api] billing push failed:', e.message);
-      }
-    }
-  }
   return billingConfig.getUserAccounts(cfg);
 }
 

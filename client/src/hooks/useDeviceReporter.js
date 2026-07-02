@@ -15,7 +15,7 @@ const MAX_FAILURES_BEFORE_RECONNECT = 2;       // failures before trying re-regi
 let _registeredForUserId = null;
 let _registrationPromise = null;
 let _deviceId            = null;
-let _deviceMeta          = { name: '', platform: '', version: '' }; // 心跳同步用
+let _deviceMeta          = { name: '', platform: '', version: '', type: 'desktop' }; // 心跳同步用
 let _heartbeatTimer      = null;
 let _consecutiveFailures = 0;
 let _reregistering       = false; // guard against concurrent re-register attempts
@@ -115,7 +115,7 @@ async function _doRegister() {
     const storedId = await _resolveDeviceId(cfg);
 
     const { type, name, platform, version } = await _collectDeviceMeta(port, cfg);
-    _deviceMeta = { name, platform, version };
+    _deviceMeta = { name, platform, version, type };
 
     const res   = await registerDevice({ device_id: storedId, type, name, platform, version, gateway_port: port });
     // Backend returns the devices table row: primary key column is "id", not "device_id"
@@ -174,6 +174,7 @@ async function _sendHeartbeat() {
     const inv = await _collectInventory();
     const d1 = inv['1'] || {};
     await heartbeatDevice(_deviceId, {
+      type             : _deviceMeta.type,
       version          : _deviceMeta.version,
       name             : _deviceMeta.name,
       platform         : _deviceMeta.platform,

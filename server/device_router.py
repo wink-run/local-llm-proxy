@@ -24,10 +24,11 @@ class HeartbeatRequest(BaseModel):
     device_id: str
     online: bool = True
     stats: dict = Field(default_factory=dict)
-    # 客户端升级后心跳可刷新设备元数据，避免 DB 长期滞留旧版本
+    # 客户端升级后心跳可刷新设备元数据，避免 DB 长期滞留旧版本/错误 type
     version: str = ""
     name: str = ""
     platform: str = ""
+    type: str = ""
 
 
 @router.post("/device/register")
@@ -73,6 +74,7 @@ async def device_heartbeat(req: HeartbeatRequest, uid: int = Depends(get_current
         version=req.version.strip(),
         name=req.name.strip(),
         platform=req.platform.strip(),
+        type_=req.type.strip(),
     )
     return {"ok": True}
 

@@ -274,7 +274,8 @@ async def model_stats(days: int = 30, uid: int = Depends(get_current_user_id)):
     return {"models": models, "hourly": hourly}
 
 
-# ── 个人页账户（订阅 / 按量 provider / 刊例价，跨终端同步）────────────────────
+# ── 个人页账户（订阅 / 按量 provider / 刊例价）────────────────────
+# 注意：官方客户端供给源配置仅存本机；云端 inventory.accounts_summary 为各设备单向上报摘要。
 
 class UserAccountsUpdate(BaseModel):
     user_subscriptions: list | None = None
