@@ -20,6 +20,7 @@ const { localStats } = require('../shared/telemetry');
 const billingConfig = require('../electron/billing-config');
 const cloudBilling = require('../electron/cloud-billing-sync');
 const configLoader = require('../electron/config-loader');
+const appsUsage = require('../shared/apps-usage-handlers');
 const agentControl = require('./agent-control');
 
 // ── Module state ──────────────────────────────────────────────────────────────
@@ -394,6 +395,7 @@ async function handleRequest(req, res) {
   if (method === 'GET' && url.startsWith('/api/local-stats')) {
     const qs = new URL('http://x' + req.url).searchParams;
     const days = Math.max(1, Math.min(365, parseInt(qs.get('days'), 10) || 1));
+    try { appsUsage.maybeSyncSessionTelemetry(localStats); } catch {}
     const data = (localStats && typeof localStats.queryDashboard === 'function')
       ? localStats.queryDashboard(days)
       : {
@@ -491,6 +493,29 @@ async function handleRequest(req, res) {
   if (method === 'GET' && url === '/api/apps') {
     const cfg = readAppsCfg();
     return json(res, 200, cfg.apps);
+  }
+
+  if (method === 'POST' && url === '/api/apps/stats') {
+    const body = await parseBody(req, res);
+    if (body === null) return;
+    const list = body.apps || body.list || [];
+    return json(res, 200, appsUsage.getAppStats(localStats, list));
+  }
+
+  if (method === 'POST' && url === '/api/apps/detail') {
+    const body = await parseBody(req, res);
+    if (body === null) return;
+    return json(res, 200, appsUsage.getAppDetail(localStats, body.app, body.days));
+  }
+
+  if (method === 'POST' && url === '/api/apps/session-trace') {
+    const body = await parseBody(req, res);
+    if (body === null) return;
+    return json(res, 200, appsUsage.getSessionTrace(localStats, body.agent_id, body.session_id));
+  }
+
+  if (method === 'GET' && url === '/api/apps/handoff-targets') {
+    return json(res, 200, appsUsage.getHandoffTargets());
   }
 
   if (method === 'POST' && url === '/api/apps') {

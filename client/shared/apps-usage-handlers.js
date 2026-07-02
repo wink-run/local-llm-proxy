@@ -1,0 +1,156 @@
+// apps-usage-handlers.js — 应用用量明细 / 统计（Electron IPC 与 Docker admin-api 共用）
+'use strict';
+
+const configLoader = require('../electron/config-loader');
+const sessionBrowser = require('../electron/session-browser');
+const { syncSessionTelemetry } = require('../electron/session-telemetry-sync');
+
+let _lastSessionTelemetrySync = 0;
+const SESSION_TELEMETRY_SYNC_MS = 20_000;
+
+function buildAgentDataSource() {
+  const m = {};
+  try {
+    for (const s of (configLoader.sessionSources() || [])) {
+      if (s && s.agent_id && s.data_source) m[s.agent_id] = s.data_source;
+    }
+  } catch {}
+  return m;
+}
+
+const AGENT_DATA_SOURCE = buildAgentDataSource();
+
+/** 解析应用对应的会话补录 data_source（须启用 session_usage_import） */
+function appSessionDataSource(app) {
+  if (!app) return null;
+  if (app.link_method === 'api-key' || app.link_method === 'manual') {
+    const aid = app.preset_id || app.agent_id;
+    const caps = configLoader.appCapabilities(aid);
+    const ent = configLoader.appEntityById(aid);
+    const usageImport = app.session_usage_import ?? caps?.session_usage_import ?? ent?.session_usage_import;
+    if (!usageImport) return null;
+    if (app.linked_data_sources?.length) return app.linked_data_sources[0];
+    if (ent?.linked_data_sources?.length) return ent.linked_data_sources[0];
+    return null;
+  }
+  if ((app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) {
+    const aid = app.agent_id;
+    const caps = configLoader.appCapabilities(aid);
+    const ent = configLoader.appEntityById(aid);
+    const usageImport = app.session_usage_import ?? caps?.session_usage_import ?? ent?.session_usage_import;
+    if (!usageImport) return null;
+    return AGENT_DATA_SOURCE[app.agent_id] || null;
+  }
+  return null;
+}
+
+function maybeSyncSessionTelemetry(localStats) {
+  const now = Date.now();
+  if (now - _lastSessionTelemetrySync < SESSION_TELEMETRY_SYNC_MS) return;
+  _lastSessionTelemetrySync = now;
+  try { syncSessionTelemetry(localStats); } catch {}
+}
+
+/** 单个应用用量明细（与 Electron apps:detail 一致） */
+function getAppDetail(localStats, app, days) {
+  maybeSyncSessionTelemetry(localStats);
+  const aid = app?.agent_id || app?.preset_id;
+  const ent = configLoader.appEntityById(aid);
+  const caps = configLoader.appCapabilities(aid);
+  const usageImport = !!(caps?.session_usage_import ?? ent?.session_usage_import ?? app?.session_usage_import);
+  const sessionTrace = !!(caps?.session_trace ?? ent?.session_trace ?? app?.session_trace);
+  const linked = usageImport ? (app?.linked_data_sources || ent?.linked_data_sources || []) : [];
+  let dataSource = null;
+  if (usageImport) {
+    if (app && (app.link_method === 'api-key' || app.link_method === 'manual') && linked.length) {
+      dataSource = linked[0];
+    } else if (app && (app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) {
+      dataSource = AGENT_DATA_SOURCE[app.agent_id] || null;
+    }
+  }
+  const detail = localStats.queryAppDetail({
+    appId: app && app.id,
+    apiKey: app && app.api_key,
+    dataSource,
+    days: days || 30,
+    includeSessionImport: usageImport,
+  });
+  const activityAgentId = app?.activity_agent_id || ent?.activity_agent_id || app?.trace_agent_id || app?.agent_id;
+  if (sessionTrace && ent) {
+    const scanned = sessionBrowser.listActivityForEntity(ent, {
+      limit: 50,
+      sinceDays: days || 30,
+    });
+    if (scanned.length) {
+      detail.activity = sessionBrowser.mergeActivityWithStats(
+        scanned,
+        usageImport ? detail.sessions : [],
+      ).map(a => sessionBrowser.normalizeActivityRow(a, activityAgentId));
+    }
+    if (detail.recent?.length) {
+      detail.recent = sessionBrowser.enrichRecentDetail(activityAgentId, detail.recent, detail.activity);
+    }
+  }
+  detail.hasModelStats = configLoader.agentHasModelStats(
+    app?.activity_agent_id || app?.agent_id || app?.preset_id,
+  );
+  return detail;
+}
+
+/** 批量查应用今日统计（与 Electron apps:stats 一致） */
+function getAppStats(localStats, appList) {
+  try { syncSessionTelemetry(localStats); } catch {}
+  const stats = {};
+  for (const app of (appList || [])) {
+    const ds = appSessionDataSource(app);
+    const aid = app.agent_id || app.preset_id;
+    const caps = aid ? configLoader.appCapabilities(aid) : null;
+    const ent = aid ? configLoader.appEntityById(aid) : null;
+    const usageImport = !!(app.session_usage_import ?? caps?.session_usage_import ?? ent?.session_usage_import);
+    let s;
+    if (app.link_method === 'api-key' || app.link_method === 'manual') {
+      s = localStats.queryAppStatsToday({
+        appId: app.id,
+        apiKey: app.api_key,
+        dataSource: ds,
+        includeSessionImport: usageImport,
+      });
+    } else if ((app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) {
+      s = localStats.queryAppStatsToday({
+        appId: app.id,
+        apiKey: app.api_key,
+        dataSource: ds,
+        includeSessionImport: usageImport,
+      });
+    } else {
+      s = { calls: 0, tokens: 0, lastTs: null };
+    }
+    stats[app.id] = s;
+  }
+  return stats;
+}
+
+/** Session trace（与 Electron apps:sessionTrace 一致） */
+function getSessionTrace(localStats, agent_id, session_id) {
+  if (!agent_id || !session_id) return { error: 'missing_params', steps: [] };
+  const ent = configLoader.appEntityById(agent_id);
+  const trace = ent
+    ? sessionBrowser.getTraceForEntity(ent, session_id)
+    : sessionBrowser.getTrace(agent_id, session_id);
+  const hookOnly = !!(ent?.integrations?.editor_hook);
+  const dbRow = localStats.querySessionDetail(session_id, { hookOnly });
+  return sessionBrowser.enrichTraceWithDb(trace, dbRow);
+}
+
+function getHandoffTargets() {
+  try { return configLoader.handoffTargets(); } catch { return []; }
+}
+
+module.exports = {
+  getAppDetail,
+  getAppStats,
+  getSessionTrace,
+  getHandoffTargets,
+  appSessionDataSource,
+  maybeSyncSessionTelemetry,
+};

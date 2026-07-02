@@ -1033,7 +1033,7 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
     let alive = true;
     setLoading(true);
     setStepIdx(0);
-    window.electronAPI?.apps?.sessionTrace?.(agentId, sessionId)
+    Promise.resolve(getApps().sessionTrace?.(agentId, sessionId))
       .then(t => { if (alive) { setTrace(t); setLoading(false); } })
       .catch(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
@@ -1833,7 +1833,7 @@ function AppDetailModal({ app, onClose }) {
     setSelectedSid(null);
     setTraceSid(null);
     setModelFilter(null);
-    window.electronAPI?.apps?.detail?.(app, days)
+    Promise.resolve(getApps().detail?.(app, days))
       .then(d => { if (alive) { setData(d); setLoading(false); } })
       .catch(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
