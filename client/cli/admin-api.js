@@ -15,7 +15,7 @@ const { defaultServerUrlFromEnv } = require('../shared/default-server-url');
 const deviceIdentity = require('../shared/device-identity');
 const { ensureDeviceId } = require('../shared/device-id');
 const { refreshGatewayPeerModels } = require('../shared/peer-models-sync');
-const { bindRouteToKeyScene } = require('../shared/route-binding');
+const { bindRouteToKeyScene, bindClaudeRoutesToKeyScene } = require('../shared/route-binding');
 const { localStats } = require('../shared/telemetry');
 const billingConfig = require('../electron/billing-config');
 const cloudBilling = require('../electron/cloud-billing-sync');
@@ -195,7 +195,17 @@ function syncGateway(lc) {
     const ctrl = { app_id: app.id, app_name: app.name };
     if ((app.link_method === 'api-key' || app.link_method === 'manual') && app.api_key) {
       appControls.push({ ...ctrl, match: { key: app.api_key } });
-      if (app.route_id) bindRouteToKeyScene(keyScene, app.api_key, app.route_id, routes);
+      const appRouteIds = (Array.isArray(app.route_ids) && app.route_ids.length)
+        ? app.route_ids
+        : (app.route_id ? [app.route_id] : []);
+      if (appRouteIds.length) {
+        // Claude Desktop 多路由：按 claude-* 名逐条绑（与写入 inferenceModels.name 顺序一致）
+        if (appRouteIds.length > 1 && String(app.preset_id || app.id).includes('claude-desktop')) {
+          const cms = (() => { try { return configLoader.claudeModels(); } catch { return []; } })();
+          bindClaudeRoutesToKeyScene(keyScene, appRouteIds, routes, cms);
+        }
+        bindRouteToKeyScene(keyScene, app.api_key, appRouteIds[0], routes);
+      }
     } else if (app.link_method === 'shim' && app.agent_id) {
       const p = PROTOCOL_PATH[toolProto[app.agent_id]];
       if (p) appControls.push({ ...ctrl, match: { path: p } });

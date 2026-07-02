@@ -2096,6 +2096,8 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
   // 当 Gateway 的 routes 更新时同步进来（场景路由新建后立即可选）
   useEffect(() => { if (externalRoutes?.length) setRoutes(externalRoutes); }, [externalRoutes]);
   const [settings, setSettings] = useState(null);     // 设置弹窗对应的 app（编辑/桌面应用托管）
+  const [devTipApp, setDevTipApp] = useState(null);   // 开发者模式引导弹窗对应的 app
+  const [devTipMsg, setDevTipMsg] = useState('');     // 引导弹窗内「刷新检测」结果提示
   const [manualDraft, setManualDraft] = useState(null); // 手工添加的内联面板对应的 app
   const [appStats, setAppStats] = useState({});     // id → {calls,tokens,lastTs}（当天用量）
   const [loading,  setLoading]  = useState(true);   // 首次加载中（应用检测较慢）→ 显示加载特效而非空状态
@@ -2505,6 +2507,51 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
       )}
       {/* 用量明细弹窗（点击统计区打开）*/}
       {detailApp && <AppDetailModal app={detailApp} onClose={() => setDetailApp(null)} />}
+      {/* Claude Desktop 开发者模式引导（「怎么启用」的步骤提示，非设置窗口）*/}
+      {devTipApp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setDevTipApp(null)}>
+          <div className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 shadow-xl p-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-2">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px] shrink-0 text-amber-600 dark:text-amber-400">
+                <path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+              </svg>
+              <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">{t('gateway.app.devModeTitle')}</span>
+            </div>
+            <div className="text-xs text-zinc-600 dark:text-zinc-300 space-y-1 mb-3">
+              <p>{t('gateway.app.devModeIntro')}</p>
+              <p>{t('gateway.app.devModeStep1')}</p>
+              <p>{t('gateway.app.devModeStep2')}</p>
+              <p>{t('gateway.app.devModeStep3')}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <div>
+                <div className="text-xs text-zinc-400 mb-1">{t('gateway.app.devModeImg1')}</div>
+                <img src={claudeDevModeImg1} alt="Enable Developer Mode" className="rounded border border-zinc-200 dark:border-zinc-700 w-full" />
+              </div>
+              <div>
+                <div className="text-xs text-zinc-400 mb-1">{t('gateway.app.devModeImg2')}</div>
+                <img src={claudeDevModeImg2} alt="Configure Gateway" className="rounded border border-zinc-200 dark:border-zinc-700 w-full" />
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={async () => {
+                  const st = await window.electronAPI?.apps?.claudeDevModeStatus?.();
+                  if (st?.dev_mode_ready) { setDevTipApp(null); setDevTipMsg(''); await load(); }
+                  else setDevTipMsg(t('gateway.app.devModeNotReady'));
+                }}
+                className="text-xs px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white transition-colors">
+                {t('gateway.app.devModeRefresh')}
+              </button>
+              <button onClick={() => setDevTipApp(null)}
+                className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
+                {t('gateway.common.close')}
+              </button>
+              {devTipMsg && <span className="text-xs text-red-500">{devTipMsg}</span>}
+            </div>
+          </div>
+        </div>
+      )}
       <div className="p-4">
             {/* 操作栏 */}
             <div className="flex items-center gap-2 mb-3 flex-wrap">
@@ -2575,7 +2622,9 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                   const isDirectOnly = app.link_method === 'direct';        // 仅官方订阅（cursor 等）
                   const isSessionApp = app.link_method === 'session';       // 可绑路由的会话统计（WorkBuddy 等）
                   const hostable = app.link_method === 'shim' || isCfgApp || isDirectOnly;
-                  const tracked  = app.hosted === true;
+                  // needs_dev_mode（Claude Desktop 开发者模式未就绪）时无法真正纳管：
+                  // 强制按未纳管显示，避免「已纳管」与「启用开发者模式」并存的矛盾状态。
+                  const tracked  = app.hosted === true && !app.needs_dev_mode;
                   const isManaged = isSessionApp ? tracked : (hostable ? tracked : (keyApp && !app._virtual_apikey));
                   const isGatewayRouted = isSessionApp
                     ? effectiveRouteIds(app).length > 0
@@ -2728,7 +2777,14 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                           {busyId === app.id ? '…' : t('gateway.common.manage')}
                         </button>
                       ) : app.host_method === 'config-file' ? (
-                        tracked ? (
+                        app.needs_dev_mode ? (
+                          // 开发者模式未就绪：弹出「如何启用」的步骤提示（非设置窗口），绝不显示危险的「删除」
+                          <button onClick={() => { setDevTipMsg(''); setDevTipApp(app); }}
+                            title={t('gateway.app.devModeTitle')}
+                            className="text-xs px-2.5 py-1 rounded-lg border border-amber-300 dark:border-amber-700/60 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors shrink-0 font-medium">
+                            {t('gateway.apps.enableDevMode')}
+                          </button>
+                        ) : tracked ? (
                           <button onClick={() => setTracked(app, false)} disabled={busyId === app.id}
                             className="text-xs px-1.5 py-1 rounded-lg border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0">
                             {busyId === app.id ? '…' : t('gateway.common.revert')}
