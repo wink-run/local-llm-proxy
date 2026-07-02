@@ -1,14 +1,13 @@
 /**
  * GitHub Release 更新解析。
  *
- * 项目历史版本号形如 0.4.9-beta4（无点号），semver 会把 prerelease 解析成
- * 「beta4」而非标准「beta + 4」，导致 electron-updater 的 GitHubProvider
- * 把每个 betaN 当成独立 channel，无法从 beta3 升到 beta4。
- * 此处统一规范化后再比较，并可直接指向具体 release 的 yml。
+ * 项目历史版本号形如 0.4.9-beta4（无点号），electron-updater 会把每个 betaN
+ * 当成独立 channel。此处统一规范化后再比较，并可直接指向具体 release 的 yml。
+ *
+ * 注意：不依赖 npm semver 包，避免打包后 asar 内找不到模块。
  */
 
 const https = require('https');
-const semver = require('semver');
 
 const GH_OWNER = 'wink-run';
 const GH_REPO = 'local-llm-proxy';
@@ -22,16 +21,50 @@ function normalizeSemverVersion(version) {
     .replace(/-rc(\d+)\b/i, '-rc.$1');
 }
 
-function parseVersion(version) {
+/** 解析为 { major, minor, patch, prerelease: string[] | null } */
+function parseVersionParts(version) {
   const norm = normalizeSemverVersion(version);
-  return semver.valid(norm) ? semver.parse(norm) : null;
+  const m = norm.match(/^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/);
+  if (!m) return null;
+  return {
+    major: Number(m[1]),
+    minor: Number(m[2]),
+    patch: Number(m[3]),
+    prerelease: m[4] ? m[4].split('.') : null,
+  };
+}
+
+function comparePrerelease(a, b) {
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    const ai = a[i];
+    const bi = b[i];
+    if (ai === undefined) return -1;
+    if (bi === undefined) return 1;
+    const an = /^\d+$/.test(ai) ? Number(ai) : null;
+    const bn = /^\d+$/.test(bi) ? Number(bi) : null;
+    if (an !== null && bn !== null) {
+      if (an !== bn) return an - bn;
+      continue;
+    }
+    if (an !== null) return -1;
+    if (bn !== null) return 1;
+    if (ai !== bi) return ai < bi ? -1 : 1;
+  }
+  return 0;
 }
 
 function compareVersions(a, b) {
-  const pa = parseVersion(a);
-  const pb = parseVersion(b);
+  const pa = parseVersionParts(a);
+  const pb = parseVersionParts(b);
   if (!pa || !pb) return 0;
-  return semver.compare(pa, pb);
+  if (pa.major !== pb.major) return pa.major - pb.major;
+  if (pa.minor !== pb.minor) return pa.minor - pb.minor;
+  if (pa.patch !== pb.patch) return pa.patch - pb.patch;
+  if (!pa.prerelease && !pb.prerelease) return 0;
+  if (!pa.prerelease) return 1;
+  if (!pb.prerelease) return -1;
+  return comparePrerelease(pa.prerelease, pb.prerelease);
 }
 
 function isRemoteNewer(currentVersion, remoteTag) {
@@ -79,13 +112,11 @@ async function findLatestReleaseTag(allowPrerelease) {
   );
 
   let bestTag = null;
-  let bestParsed = null;
 
   for (const rel of releases) {
     if (rel.draft) continue;
     const tag = String(rel.tag_name || '');
-    const parsed = parseVersion(tag);
-    if (!parsed) continue;
+    if (!parseVersionParts(tag)) continue;
 
     if (allowPrerelease) {
       if (!rel.prerelease) continue;
@@ -93,9 +124,8 @@ async function findLatestReleaseTag(allowPrerelease) {
       continue;
     }
 
-    if (!bestParsed || semver.gt(parsed, bestParsed)) {
+    if (!bestTag || compareVersions(tag, bestTag) > 0) {
       bestTag = tag;
-      bestParsed = parsed;
     }
   }
 
