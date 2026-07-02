@@ -477,7 +477,7 @@ function _empty() {
  * 返回：总计 / 来源拆分(网关 vs 会话) / 按模型 / 按会话(session_id) / 最近明细。
  */
 function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50, includeSessionImport = true } = {}) {
-  const empty = { total: { calls: 0, tokens: 0, inTok: 0, outTok: 0, lastTs: null, totalCost: 0 }, bySource: [], byModel: [], sessions: [], recent: [] };
+  const empty = { total: { calls: 0, tokens: 0, inTok: 0, outTok: 0, cached: 0, lastTs: null, totalCost: 0 }, bySource: [], byModel: [], sessions: [], recent: [] };
   if (!db) return empty;
   // days=1 对齐本地 0 点（与 queryTodaySummary / queryDashboard 一致），其余用滚动窗口
   const since = days === 1 ? todaySinceTs() : Math.floor(Date.now() / 1000) - days * 86400;
@@ -486,7 +486,7 @@ function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50, incl
   try {
     const total = db.prepare(
       `SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, ` +
-      `SUM(input_tokens) AS inTok, SUM(output_tokens) AS outTok, MAX(ts) AS lastTs, ` +
+      `SUM(input_tokens) AS inTok, SUM(output_tokens) AS outTok, SUM(cache_read_tokens) AS cached, MAX(ts) AS lastTs, ` +
       `SUM(cost_usd) AS totalCost FROM requests WHERE ${where}`
     ).get(p);
     const bySource = db.prepare(
@@ -505,16 +505,17 @@ function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50, incl
       `WHERE ${where} AND session_id IS NOT NULL GROUP BY session_id ORDER BY lastTs DESC LIMIT @lim`
     ).all({ ...p, lim: limit });
     const recent = db.prepare(
-      `SELECT ts, model, input_tokens AS inTok, output_tokens AS outTok, (input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, ` +
-      `data_source AS source, status_code, session_id, provider_id, cost_usd, billing_type, latency_ms FROM requests ` +
+      `SELECT ts, model, input_tokens AS inTok, output_tokens AS outTok, cache_read_tokens AS cached, ` +
+      `(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, ` +
+      `data_source AS source, status_code, session_id, provider_id, cost_usd, billing_type, latency_ms, request_id FROM requests ` +
       `WHERE ${where} ORDER BY ts DESC LIMIT @lim`
     ).all({ ...p, lim: limit });
     return {
-      total: { calls: total.calls || 0, tokens: total.tokens || 0, inTok: total.inTok || 0, outTok: total.outTok || 0, lastTs: total.lastTs || null, totalCost: total.totalCost || 0 },
+      total: { calls: total.calls || 0, tokens: total.tokens || 0, inTok: total.inTok || 0, outTok: total.outTok || 0, cached: total.cached || 0, lastTs: total.lastTs || null, totalCost: total.totalCost || 0 },
       bySource: bySource.map(r => ({ source: r.src, calls: r.calls, tokens: r.tokens || 0 })),
       byModel: rankableModels(byModel).map(r => ({ model: r.model, calls: r.calls, tokens: r.tokens || 0 })),
       sessions: sessions.map(r => ({ session_id: r.session_id, calls: r.calls, tokens: r.tokens || 0, firstTs: r.firstTs, lastTs: r.lastTs })),
-      recent: recent.map(r => ({ ts: r.ts, model: r.model, inTok: r.inTok || 0, outTok: r.outTok || 0, tokens: r.tokens || 0, source: r.source, status_code: r.status_code, session_id: r.session_id, provider_id: r.provider_id, cost_usd: r.cost_usd || 0, billing_type: r.billing_type || null, latency_ms: r.latency_ms || null })),
+      recent: recent.map(r => ({ ts: r.ts, model: r.model, inTok: r.inTok || 0, outTok: r.outTok || 0, cached: r.cached || 0, tokens: r.tokens || 0, source: r.source, status_code: r.status_code, session_id: r.session_id, provider_id: r.provider_id, cost_usd: r.cost_usd || 0, billing_type: r.billing_type || null, latency_ms: r.latency_ms || null, request_id: r.request_id || null })),
     };
   } catch (e) { console.error('[local-stats] queryAppDetail failed:', e.message); return empty; }
 }

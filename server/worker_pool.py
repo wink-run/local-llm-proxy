@@ -19,6 +19,11 @@ class WorkerConnection:
     user_id: Optional[int] = None
     circle_id: Optional[int] = None          # 兼容旧逻辑（单圈子）
     circle_ids: list = field(default_factory=list)  # 多圈子共享
+    client_ip: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    country_code: str = ""
+    city: str = ""
     connected_at: datetime = field(default_factory=datetime.now)
     active_requests: int = 0
     # req_id -> {queue, model, dispatch_time}
@@ -101,6 +106,7 @@ class WorkerPool:
     def sync_virtual(self, agents: list[dict]) -> None:
         """从数据库 agent 列表重建虚拟 Worker 列表，立即生效。"""
         from virtual_worker import VirtualWorkerConnection
+        from geo_ip import virtual_worker_geo
         self._virtual = []
         for a in agents:
             if not a.get("enabled"):
@@ -115,19 +121,25 @@ class WorkerPool:
                     if n:
                         names.append(n)
                         model_types[n] = m.get("type", "chat")
+            worker_id = f"vw-{a['id']}"
+            geo = virtual_worker_geo(worker_id)
             self._virtual.append(VirtualWorkerConnection(
                 base_url=a["base_url"],
                 api_key=a["api_key"],
                 api_style=a["api_style"],
                 models=names,
                 model_types=model_types,
-                worker_id=f"vw-{a['id']}",
+                worker_id=worker_id,
                 name=a["name"],
                 user_id=a.get("user_id"),
                 credentials=a.get("credentials") or {},
                 agent_id=a.get("id"),
                 owner_user_id=a.get("owner_user_id"),
                 circle_id=a.get("circle_id"),
+                latitude=geo["lat"],
+                longitude=geo["lng"],
+                country_code=geo["country_code"],
+                city=geo["city"],
             ))
 
     def pick(self, model: str, model_type: Optional[str] = None) -> Optional[WorkerConnection]:

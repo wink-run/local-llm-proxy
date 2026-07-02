@@ -4,6 +4,7 @@ import { getNetwork, getStats } from '../api/client';
 import { modelStatsForIds } from '../lib/networkModelStats';
 import { fetchServerCommunityModels } from '../lib/communityModels';
 import { useLang } from '../store/lang';
+import P2pWorldMap from '../components/P2pWorldMap';
 
 // Extract param size from model name, e.g. "llama-3.3-70b" → "70B"
 function parseSize(name) {
@@ -136,6 +137,26 @@ export default function Network() {
           <div className="text-xs text-zinc-400 mt-0.5">{t('network.contributing')}</div>
         </div>
       </div>
+
+      {/* 全球节点地图 */}
+      {!loading && network && (
+        <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 overflow-hidden">
+          <div className="flex items-center justify-between mb-3 px-1">
+            <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('network.mapTitle')}</h2>
+            <span className="text-xs text-zinc-400">{t('network.mapHint')}</span>
+          </div>
+          <P2pWorldMap
+            workers={network.workers || []}
+            labels={{
+              idle: t('network.idle'),
+              busy: t('network.busy'),
+              country: code => t('network.countryCode', { code }),
+              mapped: ({ mapped, total }) => t('network.mapMapped', { mapped, total }),
+              unmapped: n => t('network.mapUnmapped', { n }),
+            }}
+          />
+        </div>
+      )}
 
       {loading ? (
         <div className="text-sm text-zinc-400">{t('common.loading')}</div>
@@ -297,13 +318,23 @@ export default function Network() {
                     <div key={w.worker_id || w.name}
                       className="flex items-center gap-3 px-5 py-2.5">
                       <span className="relative flex h-1.5 w-1.5 shrink-0">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60" />
-                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500" />
+                        {w.status === 'busy' ? (
+                          <>
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-60" />
+                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500" />
+                          </>
+                        ) : (
+                          <>
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60" />
+                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500" />
+                          </>
+                        )}
                       </span>
                       <div className="flex-1 min-w-0">
                         <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300 truncate">{w.name}</span>
                         <div className="text-xs text-zinc-400 truncate mt-0.5">
                           {(w.models || []).join(', ')}
+                          {w.geo?.city ? ` · ${w.geo.city}` : (w.geo?.country ? ` · ${w.geo.country}` : '')}
                         </div>
                       </div>
                       <div className="text-right shrink-0 text-xs text-zinc-400">

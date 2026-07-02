@@ -1855,6 +1855,15 @@ function AppDetailModal({ app, onClose }) {
   }, [app, days]);
 
   const fmtN    = n => n >= 1_000_000 ? (n/1e6).toFixed(2)+'M' : n >= 1000 ? (n/1000).toFixed(1)+'K' : String(n||0);
+  /** 调用明细：↑输入 ↓输出 C缓存读（与 Trace 顶栏一致） */
+  const fmtTokLine = (r) => (
+    <span className="text-zinc-500 shrink-0 tabular-nums">
+      ↑{fmtN(r.inTok)} ↓{fmtN(r.outTok)}
+      {(r.cached || 0) > 0 && (
+        <span className="text-cyan-600 dark:text-cyan-400"> C{fmtN(r.cached)}</span>
+      )}
+    </span>
+  );
   const fmtMs   = n => (n != null) ? (n >= 1000 ? (n/1000).toFixed(1)+'s' : n+'ms') : null;
   const fmtTime = ts => ts ? new Date(ts*1000).toLocaleString('zh-CN',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
   const shortId = id => id ? (String(id).length > 12 ? String(id).slice(0,8)+'…'+String(id).slice(-4) : String(id)) : '—';
@@ -1943,12 +1952,13 @@ function AppDetailModal({ app, onClose }) {
 
             {/* 2. 概要总计 */}
             <DetailSection n="2" title={t('gateway.detail.summary')}>
-              <div className="grid grid-cols-5 gap-2">
+              <div className="grid grid-cols-6 gap-2">
                 {[
                   [t('gateway.detail.totalCalls'), fmtN(data.total.calls)],
                   [t('gateway.detail.totalTokens'),  fmtN(data.total.tokens)],
                   [t('gateway.detail.inputTokens'), fmtN(data.total.inTok)],
                   [t('gateway.detail.outputTokens'), fmtN(data.total.outTok)],
+                  [t('gateway.detail.cachedTokens'), fmtN(data.total.cached)],
                   [t('gateway.detail.estCost'),  fmtCost(data.total.totalCost) || '—'],
                 ].map(([l,v]) => (
                   <div key={l} className="bg-zinc-50 dark:bg-zinc-800/50 rounded-xl p-3">
@@ -2021,7 +2031,7 @@ function AppDetailModal({ app, onClose }) {
                               <div key={i} className="flex items-center gap-2 px-3 py-1 text-xs">
                                 <span className="text-zinc-400 w-20 shrink-0">{fmtTime(r.ts)}</span>
                                 <span className="text-zinc-600 dark:text-zinc-400 flex-1 truncate">{r.label || r.model || '—'}</span>
-                                <span className="text-zinc-500 shrink-0">↑{fmtN(r.inTok)} ↓{fmtN(r.outTok)}</span>
+                                <span className="shrink-0">{fmtTokLine(r)}</span>
                               </div>
                             ))}
                           </div>
@@ -2055,7 +2065,7 @@ function AppDetailModal({ app, onClose }) {
                           {r.label || r.context || shortId(r.session_id) || '—'}
                         </span>
                       )}
-                      <span className="text-zinc-500 shrink-0 tabular-nums ml-auto">↑{fmtN(r.inTok)} ↓{fmtN(r.outTok)}</span>
+                      <span className="ml-auto">{fmtTokLine(r)}</span>
                       {fmtMs(r.latency_ms) && <span className="text-zinc-400 shrink-0">{fmtMs(r.latency_ms)}</span>}
                       {fmtCostOptional(r.cost_usd) && <span className="text-emerald-600 dark:text-emerald-400 shrink-0">{fmtCostOptional(r.cost_usd)}</span>}
                       {r.status_code != null && r.status_code >= 400 && <span className="text-red-500 shrink-0">{r.status_code}</span>}

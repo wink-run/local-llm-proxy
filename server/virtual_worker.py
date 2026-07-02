@@ -455,6 +455,10 @@ class VirtualWorkerConnection:
     agent_id: Optional[int] = None   # 用于 token 刷新后回写数据库
     owner_user_id: Optional[int] = None   # 个人供给源归属真实用户；None=全局共享
     circle_id: Optional[int] = None   # 贡献给指定圈子；None=私有或公开
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    country_code: str = ""
+    city: str = ""
     connected_at: datetime = field(default_factory=datetime.now)
     active_requests: int = 0
     pending: dict = field(default_factory=dict)

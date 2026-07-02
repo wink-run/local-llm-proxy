@@ -327,6 +327,7 @@ export default {
   'gateway.detail.totalTokens': '总Token',
   'gateway.detail.inputTokens': '输入Token',
   'gateway.detail.outputTokens': '输出Token',
+  'gateway.detail.cachedTokens': '缓存Token',
   'gateway.detail.estCost': '估算费用',
   'gateway.detail.costHint': '费用按 API 刊例价估算；订阅类接入显示等效价，非实际账单。',
   'gateway.detail.byModel': '按模型统计',
@@ -782,6 +783,12 @@ export default {
   'network.loginRequired': '需要登录后查看',
   'network.workersTitle': '在线节点',
   'network.workersCount': '{n} 个',
+  'network.mapTitle': '全球节点分布',
+  'network.mapHint': '按 IP 解析位置 · 绿=空闲 橙=忙碌',
+  'network.busy': '忙碌',
+  'network.mapMapped': '已定位 {mapped}/{total}',
+  'network.mapUnmapped': ' · {n} 个无公网定位',
+  'network.countryCode': '{code}',
 
   // ── 调试 ──
   'debug.localGw': '本地网关',

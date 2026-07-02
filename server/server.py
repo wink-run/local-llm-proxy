@@ -33,6 +33,7 @@ from provider_router import router as provider_router
 from config_router import router as config_router
 from circle_router import router as circle_router
 from worker_pool import pool, WorkerConnection
+from geo_ip import client_ip_from_ws, resolve_ip_geo
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("server")
@@ -253,7 +254,8 @@ def _worker_row(w) -> dict:
         latency_f = max(0.6, min(1.5, 500 / avg_ttft_ms)) if avg_ttft_ms > 0 else 1.0
         stability_f = 0.5 + 0.7 * success_rate
         multiplier = round(max(0.5, min(1.5, 0.4 * online_f + 0.4 * latency_f + 0.2 * stability_f)), 3)
-    return {
+    status = "busy" if (w.active_requests or 0) > 0 else "idle"
+    row = {
         "worker_id": w.worker_id,
         "name": _mask_name(w.name),
         "models": w.models,
@@ -264,7 +266,21 @@ def _worker_row(w) -> dict:
         "stars": _stars(multiplier),
         "online_mins": round(online_mins, 1),
         "connected_at": w.connected_at.isoformat(),
+        "status": status,
     }
+    lat = getattr(w, "latitude", None)
+    lng = getattr(w, "longitude", None)
+    if lat is not None and lng is not None:
+        geo_row = {
+            "lat": lat,
+            "lng": lng,
+            "country": getattr(w, "country_code", "") or "",
+        }
+        city = getattr(w, "city", "") or ""
+        if city:
+            geo_row["city"] = city
+        row["geo"] = geo_row
+    return row
 
 
 @app.get("/api/workers-wall")
@@ -407,14 +423,27 @@ async def worker_ws(ws: WebSocket):
         # 去重并保持顺序
         worker_circle_ids_list = list(dict.fromkeys(worker_circle_ids_list))
 
+        client_ip = client_ip_from_ws(ws)
         worker = WorkerConnection(
             ws=ws, models=models, worker_id=worker_id,
             name=name, user_id=user_id,
             model_types=model_types,
             circle_id=worker_circle_ids_list[0] if len(worker_circle_ids_list) == 1 else None,
             circle_ids=worker_circle_ids_list,
+            client_ip=client_ip,
         )
         pool.add(worker)
+
+        async def _geo_worker(w: WorkerConnection) -> None:
+            geo = await resolve_ip_geo(w.client_ip)
+            if not geo:
+                return
+            w.latitude = geo["lat"]
+            w.longitude = geo["lng"]
+            w.country_code = geo.get("country_code") or ""
+            w.city = geo.get("city") or ""
+
+        asyncio.create_task(_geo_worker(worker))
         await ws.send_text(json.dumps({"type": "registered", "worker_id": worker_id}))
         logger.info(
             "[worker/ws] online peer=%s worker_id=%s name=%s user_id=%s models=%s",
