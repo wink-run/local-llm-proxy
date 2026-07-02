@@ -125,6 +125,30 @@ class PgCursor:
         pass
 
 
+class _ExecuteContext:
+    """兼容 aiosqlite：支持 async with db.execute(...) 与 cur = await db.execute(...)。"""
+
+    def __init__(self, conn: "PgConnection", sql: str, params: tuple):
+        self._conn = conn
+        self._sql = sql
+        self._params = params
+        self._cursor: PgCursor | None = None
+
+    def __await__(self):
+        return self._ensure_cursor().__await__()
+
+    async def _ensure_cursor(self) -> PgCursor:
+        if self._cursor is None:
+            self._cursor = await self._conn._run_execute(self._sql, self._params)
+        return self._cursor
+
+    async def __aenter__(self) -> PgCursor:
+        return await self._ensure_cursor()
+
+    async def __aexit__(self, *_) -> None:
+        pass
+
+
 class PgConnection:
     row_factory = None
 
@@ -132,7 +156,10 @@ class PgConnection:
         self._conn = conn
         self._tx = None
 
-    async def execute(self, sql: str, params: tuple | list = ()) -> PgCursor:
+    def execute(self, sql: str, params: tuple | list = ()) -> _ExecuteContext:
+        return _ExecuteContext(self, sql, tuple(params))
+
+    async def _run_execute(self, sql: str, params: tuple) -> PgCursor:
         pg_sql, special = translate_sql(sql)
         args = tuple(params)
 
