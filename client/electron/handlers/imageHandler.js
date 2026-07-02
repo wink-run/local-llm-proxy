@@ -9,6 +9,7 @@
 
 const https = require('https');
 const http  = require('http');
+const { TIER_ROUTE_RE } = require('../../shared/route-binding');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -197,13 +198,24 @@ async function handleImageGeneration(body, res, getProviders) {
     return;
   }
 
-  const modelStr  = body.model || '';
-  const providers = getProviders();
+  let modelStr = body.model || '';
+  // 与 chat 路由一致：剥离 tier 前缀（free:/paid:/p2p:），上游只认裸模型名
+  let requestTier = null;
+  const tierMatch = TIER_ROUTE_RE.exec(modelStr);
+  if (tierMatch) {
+    requestTier = tierMatch[1];
+    modelStr = tierMatch[2];
+  }
+
+  let providers = getProviders();
+  if (requestTier) providers = providers.filter(p => p.type === requestTier);
+
   const resolved  = resolveProvider(modelStr, providers);
 
   if (!resolved) {
+    const tierHint = requestTier ? ` (tier=${requestTier})` : '';
     res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: `No image provider found for model "${modelStr}". Use "providerId/model" format or configure a provider with image_config.` }));
+    res.end(JSON.stringify({ error: `No image provider found for model "${body.model}"${tierHint}. Use "providerId/model" format or configure a provider with image_config.` }));
     return;
   }
 

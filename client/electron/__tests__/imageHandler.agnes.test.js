@@ -110,3 +110,14 @@ test('match is by base_url, robust to a custom provider id', () => {
   const url = getAdapter(custom).buildUrl('m', custom);
   assert.equal(url, 'https://apihub.agnes-ai.com/v1/images/generations');
 });
+
+test('tier prefix free: is stripped before provider lookup (same as chat route)', () => {
+  const { TIER_ROUTE_RE } = require('../../shared/route-binding');
+  const m = TIER_ROUTE_RE.exec('free:agnes-image-2.0-flash');
+  assert.ok(m);
+  assert.equal(m[1], 'free');
+  assert.equal(m[2], 'agnes-image-2.0-flash');
+  const r = resolveProvider(m[2], [PROVIDER]);
+  assert.equal(r.provider.id, 'agnes-ai');
+  assert.equal(r.model, 'agnes-image-2.0-flash');
+});
