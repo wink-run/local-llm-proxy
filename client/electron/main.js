@@ -1451,7 +1451,24 @@ function nodeRequest(url, method, headers, body) {
 function registerIPC() {
   const billingConfigMod = require('./billing-config');
   ipcMain.on('tray:lang',  (_e, lang)      => { _trayLang = lang === 'en' ? 'en' : 'zh'; refreshTray(); });
-  ipcMain.on('tray:auth',  (_e, loggedIn)  => { _trayUserLoggedIn = !!loggedIn; refreshTray(); });
+  ipcMain.on('tray:auth',  (_e, loggedIn)  => {
+    _trayUserLoggedIn = !!loggedIn;
+    if (!loggedIn) {
+      gateway.setUserAuth(null);
+      stopAgent();
+    }
+    refreshTray();
+  });
+  ipcMain.handle('gateway:setUserAuth', (_e, jwt) => {
+    gateway.setUserAuth(jwt || null);
+    try {
+      const cfg = readLocalConfig();
+      if (jwt) cfg.user_session = { jwt };
+      else delete cfg.user_session;
+      writeLocalConfig(cfg);
+    } catch {}
+    return { ok: true };
+  });
   ipcMain.on('app:version', (e) => { e.returnValue = app.getVersion(); });
   ipcMain.on('app:defaultServerUrl', (e) => { e.returnValue = defaultServerUrlFromEnv(); });
   // 设备注册用：系统电脑名 + macOS/Windows 版本说明
@@ -2048,7 +2065,7 @@ function registerIPC() {
 
     const appControls = [];
     const keyScene = {};
-    const { bindRouteToKeyScene, bindClaudeRoutesToKeyScene } = require('../shared/route-binding');
+    const { bindClaudeRoutesToKeyScene } = require('../shared/route-binding');
     for (const app of apps) {
       const ctrl = { app_id: app.id, app_name: app.name };
       const aid = app.agent_id || app.preset_id;
@@ -2068,37 +2085,32 @@ function registerIPC() {
         }
         return ent ? ent.route_bindable !== false : app.route_bindable !== false;
       })();
-      const bindRoute = (Array.isArray(app.route_ids) && app.route_ids.length)
-        ? app.route_ids[0]
-        : app.route_id;
       if ((app.link_method === 'api-key' || app.link_method === 'manual' || app.link_method === 'session') && app.api_key) {
         appControls.push({ ...ctrl, match: { key: app.api_key } });
         const appRouteIds = (Array.isArray(app.route_ids) && app.route_ids.length)
           ? app.route_ids
           : (app.route_id ? [app.route_id] : []);
         if (appRouteIds.length && routeBindable) {
-          // Claude Desktop 多路由：每个 claude-* 名（= inferenceModels.name）绑到对应 route，
-          // 名字与写入配置的 claude_models 白名单顺序一致，客户端选哪条就路由到哪条。
-          if (appRouteIds.length > 1 && isClaudeDesktopApp(app.id)) {
+          // Claude Desktop：claude-* 名（inferenceModels.name）→ 绑定的 route；api_key 仅识别应用，不改写 model
+          if (isClaudeDesktopApp(app.id)) {
             const cms = (() => { try { return require('./config-loader').claudeModels(); } catch { return []; } })();
             bindClaudeRoutesToKeyScene(keyScene, appRouteIds, routes, cms);
           }
-          // api_key 兜底（单路由 / 旧配置 / 首条）
-          bindRouteToKeyScene(keyScene, app.api_key, appRouteIds[0], routes);
         }
       } else if (app.link_method === 'shim' && app.agent_id) {
         if (!routeBindable || !toolProto[app.agent_id]) continue;
         const path = PROTOCOL_PATH[toolProto[app.agent_id]];
         if (path) appControls.push({ ...ctrl, match: { path } });
-        if (app.api_key && bindRoute) bindRouteToKeyScene(keyScene, app.api_key, bindRoute, routes);
       }
     }
     gateway.setAppControls(appControls);
     gateway.setKeySceneMap(keyScene);
 
-    // P2P backend config
+    // P2P backend config（登出时也要清空，避免残留 token 继续上报）
     const cc = cfg.cloud_config || {};
-    if (cc.url && cc.token) gateway.setBackendConfig({ url: cc.url, token: cc.token });
+    gateway.setBackendConfig({ url: cc.url || null, token: cc.token || null });
+    const userJwt = cfg.user_session?.jwt || null;
+    gateway.setUserAuth(userJwt);
   }
 
   // Fetch currently active P2P model names from /v1/models (requires auth, reflects live workers)
@@ -3312,7 +3324,7 @@ function registerIPC() {
       id: 'app-shim-' + agent_id,
       name, icon: icon || '🤖',
       link_method: 'shim', agent_id,
-      // shim 也发一个 key（注入到 shim 的鉴权 env），网关按 key 走 keyScene 改写模型
+      // shim 鉴权 key，仅用于识别应用（appControls）；模型由请求体指定
       api_key: 'sk-local-' + rndHex(16), route_id: null,
       description: '', allowed_models: [], max_rpm: null,
       max_concurrent: null, allow_stream: true,

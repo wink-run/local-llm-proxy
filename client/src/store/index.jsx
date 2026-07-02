@@ -3,14 +3,31 @@ import { getProfile, listKeys } from '../api/client';
 import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
 import { getLocalConfig, getConfig } from '../api/adapter';
 import { getServerUrl, normalizeServerBase, getSyncServerBase, syncCloudConfigUrl, bootstrapServerUrl } from '../config';
+import { stopAgent } from '../api/agentControl';
 
 const AuthContext = createContext(null);
 
 const POLL_INTERVAL = 30_000;
 
+// 将登录 JWT 同步到网关主进程 / CLI admin-api（用量上报与设备心跳须 JWT，非 P2P Key）
+async function syncUserSession(jwt) {
+  try {
+    await window.electronAPI?.gateway?.setUserAuth?.(jwt || null);
+  } catch {}
+  try {
+    if (jwt) {
+      await fetch('/api/user-session', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+    } else {
+      await fetch('/api/user-session', { method: 'DELETE' });
+    }
+  } catch {}
+}
+
 // Docker / CLI：登录后将 worker_key 写入 config.json，供贡献 Agent 注册
 async function syncAgentCredentials(userData) {
-  if (window.electronAPI?.config?.write) return;
   const base = normalizeServerBase(getServerUrl());
   const wk = userData?.worker_key;
   if (!base || !wk) return;
@@ -18,6 +35,18 @@ async function syncAgentCredentials(userData) {
     const current = (await getConfig().read().catch(() => null)) || {};
     const wsUrl = base.replace(/^https?/, (m) => (m === 'https' ? 'wss' : 'ws')) + '/ws/worker';
     await getConfig().write({ ...current, server_url: wsUrl, worker_key: wk });
+  } catch {}
+}
+
+/** 登出后清除贡献 Agent 凭证，防止未登录时自动重连 */
+async function clearAgentCredentials() {
+  try {
+    const current = (await getConfig().read().catch(() => null)) || {};
+    if (!current.worker_key && !current.server_url) return;
+    const next = { ...current };
+    delete next.worker_key;
+    delete next.server_url;
+    await getConfig().write(next);
   } catch {}
 }
 
@@ -95,10 +124,14 @@ export function AuthProvider({ children }) {
           syncCloudKey();
           syncCloudConfigUrl();
           syncUserBilling();
+          syncUserSession(token);
           window.electronAPI?.tray?.setAuthState?.(true);
         })
         .catch(() => {
           localStorage.removeItem('token');
+          syncUserSession(null);
+          stopAgent().catch(() => {});
+          clearAgentCredentials().catch(() => {});
           enterGuestMode();  // token 失效时也回退到游客模式
         })
         .finally(() => setLoading(false));
@@ -123,6 +156,7 @@ export function AuthProvider({ children }) {
     syncCloudConfigUrl();
     syncRemoteConfig();
     syncUserBilling();
+    syncUserSession(token);
   }
 
   function enterGuest() {
@@ -138,6 +172,9 @@ export function AuthProvider({ children }) {
     // 退出后恢复为未登录浏览态，可继续使用网关/设置等，无需跳转登录页
     localStorage.setItem('guest', '1');
     setGuest(true);
+    syncUserSession(null);
+    stopAgent().catch(() => {});
+    clearAgentCredentials().catch(() => {});
     getLocalConfig().setCloudConfig({ url: null, token: null }).catch(() => {});
   }
 

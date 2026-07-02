@@ -1,6 +1,7 @@
 """Image generation dispatch — routes /v1/images/generations to Worker."""
 import asyncio
 import base64
+import logging
 import os
 import time
 import uuid
@@ -10,6 +11,8 @@ from api_errors import DispatchError, raise_dispatch_error
 import database as db
 from worker_pool import pool
 
+logger = logging.getLogger("server")
+
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "120"))
 IMG_CACHE_DIR = Path(__file__).resolve().parent / "static" / "img_cache"
 
@@ -18,6 +21,11 @@ async def handle_image(body: dict, consumer_user_id: int | None = None):
     model = body.get("model", "")
     n = int(body.get("n") or 1)
     response_format = body.get("response_format", "b64_json")
+
+    logger.info(
+        "[p2p] image start user=%s model=%s n=%s format=%s",
+        consumer_user_id, model, n, response_format,
+    )
 
     if consumer_user_id is not None:
         rate = await db.get_or_ensure_consume_rate(model, model_type="image")
@@ -41,6 +49,10 @@ async def handle_image(body: dict, consumer_user_id: int | None = None):
                             user_circle_ids=set())
     worker = cands[0] if cands else None
     if not worker or isinstance(worker, VirtualWorkerConnection):
+        logger.warning(
+            "[p2p] image no worker model=%s user=%s candidates=%d",
+            model, consumer_user_id, len(cands),
+        )
         raise DispatchError(
             503,
             f"No image-capable worker available for model '{model}'",
@@ -58,9 +70,17 @@ async def handle_image(body: dict, consumer_user_id: int | None = None):
 
     try:
         await worker.send({"type": "image_request", "req_id": req_id, "payload": body})
-    except Exception:
+        logger.info(
+            "[p2p] image dispatch req=%s model=%s user=%s worker=%s",
+            req_id[:8], model, consumer_user_id, getattr(worker, "worker_id", "?"),
+        )
+    except Exception as e:
         worker.pending.pop(req_id, None)
         worker.active_requests = max(0, worker.active_requests - 1)
+        logger.warning(
+            "[p2p] image send failed req=%s model=%s worker=%s err=%s",
+            req_id[:8], model, getattr(worker, "worker_id", "?"), e,
+        )
         raise DispatchError(502, "Failed to reach worker", "api_error")
 
     try:
@@ -68,9 +88,17 @@ async def handle_image(body: dict, consumer_user_id: int | None = None):
     except asyncio.TimeoutError:
         worker.pending.pop(req_id, None)
         worker.active_requests = max(0, worker.active_requests - 1)
+        logger.warning(
+            "[p2p] image timeout req=%s model=%s worker=%s",
+            req_id[:8], model, getattr(worker, "worker_id", "?"),
+        )
         raise DispatchError(504, "Gateway timeout", "timeout")
 
     if kind == "error":
+        logger.warning(
+            "[p2p] image error req=%s model=%s worker=%s err=%s",
+            req_id[:8], model, getattr(worker, "worker_id", "?"), data,
+        )
         raise_dispatch_error(str(data))
 
     images_raw: list[dict] = data if isinstance(data, list) else []
@@ -99,5 +127,9 @@ async def handle_image(body: dict, consumer_user_id: int | None = None):
     # active_requests / pending already cleaned up by server.py image_done handler;
     # only record stats here (does not touch ws state)
     worker.record_image_complete(model, n)
+    logger.info(
+        "[p2p] image done req=%s model=%s user=%s worker=%s n=%d",
+        req_id[:8], model, consumer_user_id, getattr(worker, "worker_id", "?"), n,
+    )
 
     return {"created": created, "data": result_items}

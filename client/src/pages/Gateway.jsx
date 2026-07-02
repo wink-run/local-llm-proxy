@@ -2352,9 +2352,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
     // 而非 app.route_id —— 绑定失效/不在选项内时下拉显示为空，测试也应按显示值走。
     const routeVal = routeValue ?? app.route_id;
     const { model } = exampleModelFromRoute(routeVal, routes, availableModels);
-    // 关键：网关按 keyScene（应用绑定）改写真实模型，会覆盖请求体里的 model。切换路由后
-    // keyScene 可能滞后（持久化了 route_id、下拉已更新，但网关内存绑定还是上一次的模型），
-    // 导致测到上一次的模型。测试前把「下拉显示的绑定」写回并同步网关，确保 keyScene 与显示值一致。
+    // 测试请求在 body 里显式带 model；api_key 仅识别应用，网关不再按 key 改写模型
     if (routeVal && routeVal !== '') {
       try { await appsApi.update({ id: app.id, route_id: routeVal }); } catch {}
     }

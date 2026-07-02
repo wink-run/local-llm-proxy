@@ -15,7 +15,7 @@ const { defaultServerUrlFromEnv } = require('../shared/default-server-url');
 const deviceIdentity = require('../shared/device-identity');
 const { ensureDeviceId } = require('../shared/device-id');
 const { refreshGatewayPeerModels } = require('../shared/peer-models-sync');
-const { bindRouteToKeyScene, bindClaudeRoutesToKeyScene } = require('../shared/route-binding');
+const { bindClaudeRoutesToKeyScene } = require('../shared/route-binding');
 const { localStats } = require('../shared/telemetry');
 const billingConfig = require('../electron/billing-config');
 const cloudBilling = require('../electron/cloud-billing-sync');
@@ -23,11 +23,13 @@ const configLoader = require('../electron/config-loader');
 const appsUsage = require('../shared/apps-usage-handlers');
 const compressionReport = require('../electron/compression-report');
 const agentControl = require('./agent-control');
+const reporter = require('../shared/device-reporter');
 
 // ── Module state ──────────────────────────────────────────────────────────────
 
 let _gateway = null;
 let _server  = null;
+let _reporterGetStats = null;
 
 const DIST_DIR = path.resolve(__dirname, '..', 'dist');
 
@@ -199,17 +201,15 @@ function syncGateway(lc) {
         ? app.route_ids
         : (app.route_id ? [app.route_id] : []);
       if (appRouteIds.length) {
-        // Claude Desktop 多路由：按 claude-* 名逐条绑（与写入 inferenceModels.name 顺序一致）
-        if (appRouteIds.length > 1 && String(app.preset_id || app.id).includes('claude-desktop')) {
+        // Claude Desktop：claude-* 名 → route；api_key 仅识别应用
+        if (String(app.preset_id || app.id).includes('claude-desktop')) {
           const cms = (() => { try { return configLoader.claudeModels(); } catch { return []; } })();
           bindClaudeRoutesToKeyScene(keyScene, appRouteIds, routes, cms);
         }
-        bindRouteToKeyScene(keyScene, app.api_key, appRouteIds[0], routes);
       }
     } else if (app.link_method === 'shim' && app.agent_id) {
       const p = PROTOCOL_PATH[toolProto[app.agent_id]];
       if (p) appControls.push({ ...ctrl, match: { path: p } });
-      if (app.api_key && app.route_id) bindRouteToKeyScene(keyScene, app.api_key, app.route_id, routes);
     }
   }
   _gateway.setAppControls(appControls);
@@ -217,7 +217,9 @@ function syncGateway(lc) {
 
   const cc = lc.cloud_config || {};
   const serverUrl = cc.url || defaultServerUrlFromEnv() || '';
-  if (serverUrl && cc.token) _gateway.setBackendConfig({ url: serverUrl, token: cc.token });
+  _gateway.setBackendConfig({ url: serverUrl || null, token: cc.token || null });
+  const userJwt = lc.user_session?.jwt || null;
+  if (_gateway.setUserAuth) _gateway.setUserAuth(userJwt);
 }
 
 /** 用户 JWT（个人页登录 token，非 P2P cloud_config.token） */
@@ -474,6 +476,36 @@ async function handleRequest(req, res) {
     return json(res, 200, { ok: true });
   }
 
+  // 登录态同步：供 CLI 网关进程获知用户 JWT（心跳 / 用量上报）
+  if (method === 'POST' && url === '/api/user-session') {
+    const jwt = userBearerToken(req);
+    if (!jwt) return json(res, 401, { error: 'Not authenticated' });
+    const lc = readLocalConfig() || { scene_routes: [], local_keys: [] };
+    lc.user_session = { jwt };
+    writeLocalConfig(lc);
+    if (_gateway?.setUserAuth) _gateway.setUserAuth(jwt);
+    reporter.setUserJwt(jwt);
+    if (_reporterGetStats) reporter.start(_reporterGetStats);
+    return json(res, 200, { ok: true });
+  }
+
+  if (method === 'DELETE' && url === '/api/user-session') {
+    const lc = readLocalConfig() || { scene_routes: [], local_keys: [] };
+    delete lc.user_session;
+    writeLocalConfig(lc);
+    if (_gateway?.setUserAuth) _gateway.setUserAuth(null);
+    reporter.setUserJwt(null);
+    reporter.stop();
+    agentControl.stopAgent();
+    try {
+      const ac = readAgentConfig() || {};
+      delete ac.worker_key;
+      delete ac.server_url;
+      writeAgentConfig(ac);
+    } catch {}
+    return json(res, 200, { ok: true });
+  }
+
   // 个人页：订阅 / 按量（与 Electron 相同，经云端 /user/accounts 同步）
   if (method === 'GET' && url === '/api/user-accounts') {
     const data = await pullUserBillingApi(userBearerToken(req), req);
@@ -691,8 +723,9 @@ async function handleRequest(req, res) {
  * @param {object} gatewayInstance  — the local-gateway module
  * @returns {http.Server}
  */
-function start(port, gatewayInstance, bindHost = '127.0.0.1') {
+function start(port, gatewayInstance, bindHost = '127.0.0.1', opts = {}) {
   _gateway = gatewayInstance;
+  _reporterGetStats = opts.reporterGetStats || null;
 
   _server = http.createServer((req, res) => {
     handleRequest(req, res).catch((err) => {

@@ -58,6 +58,7 @@ async function refreshGatewayPeerModels(gateway, readLocalConfig, defaultServerU
   const token = cc.token || '';
 
   if (!serverUrl || !token) {
+    gateway.setBackendConfig({ url: serverUrl || null, token: null });
     gateway.setPeerModels([]);
     return [];
   }

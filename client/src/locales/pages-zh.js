@@ -742,7 +742,7 @@ export default {
   'contribute.forwardUrl': '转发地址',
   'contribute.models': '贡献模型',
   'contribute.modelsSelected': '{n} 个',
-  'contribute.noModelsHint': '请先在「供给源」中配置模型',
+  'contribute.noModelsHint': '请先在「个人源」或「供给源」中配置模型',
   'contribute.modelTypeImage': '图',
   'contribute.modelTypeText': '文',
   'contribute.nodeName': '节点名称',

@@ -2,8 +2,10 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getStats, getSettlements, getContributeSummary, listJoinedCircles, listMyCircles } from '../api/client';
-import { getConfig, getGateway } from '../api/adapter';
+import { getConfig, getGateway, getLocalConfig } from '../api/adapter';
 import { resolveLocalGatewayBase } from '../api/gatewayModels';
+import { loadUserAccounts } from '../api/userAccounts';
+import { collectPersonalAvailableModels, mergeAccountsForGateway } from '../lib/personalAvailableModels';
 import {
   getAgentStatus, startAgent, stopAgent, getAgentLogs,
   subscribeAgentEvents, useAgentPolling,
@@ -31,6 +33,48 @@ function uniqueCircleIds(ids) {
   return [...new Set((ids || []).map(id => Number(id)).filter(Boolean))];
 }
 
+/** 贡献可选模型：个人源 + agent providers + 已保存配置 */
+function collectContributeAvailableModels(saved, accounts, localCfg) {
+  const merged = mergeAccountsForGateway(localCfg || {}, accounts || {});
+  const avail = [];
+  const seen  = new Set();
+  const add = (name, type = 'chat') => {
+    const n = String(name || '').trim();
+    if (!n || seen.has(n)) return;
+    seen.add(n);
+    avail.push({ name: n, type });
+  };
+
+  // 个人源（与「个人源」页模型视图同源）
+  for (const { id } of collectPersonalAvailableModels(saved || {}, merged)) {
+    add(id, 'chat');
+  }
+
+  for (const p of (saved?.providers || [])) {
+    if (p.type === 'p2p') continue;
+    for (const m of (p.models || [])) {
+      const name = typeof m === 'string' ? m : m.name;
+      const type = typeof m === 'string' ? 'chat' : (m.type || 'chat');
+      add(name, type);
+    }
+  }
+
+  for (const m of (saved?.models || [])) {
+    const name = typeof m === 'string' ? m : m.name;
+    const type = typeof m === 'string' ? 'chat' : (m.type || 'chat');
+    add(name, type);
+  }
+
+  for (const g of (saved?.model_groups || [])) {
+    for (const m of (g.models || [])) {
+      const name = typeof m === 'string' ? m : m.name;
+      add(name, typeof m === 'string' ? 'chat' : (m.type || 'chat'));
+    }
+  }
+
+  return avail;
+}
+
 function ContributionConfigCard() {
   const { t } = useLang();
   const [selectedNames,   setSelectedNames]   = useState(new Set()); // Set<string>
@@ -55,42 +99,32 @@ function ContributionConfigCard() {
     Promise.all([
       getConfig().read().catch(() => null),
       getGateway().status().catch(() => null),
-    ]).then(([saved, gwStatus]) => {
+      loadUserAccounts().catch(() => ({})),
+      getLocalConfig().get().catch(() => ({})),
+    ]).then(([saved, gwStatus, accounts, localCfg]) => {
       // Dynamic gateway URL from actual running port
       const port = gwStatus?.port || 11430;
       const gw   = resolveLocalGatewayBase(port);
       setLocalGw(gw);
 
-      if (!saved) return;
-      const avail = [];
-      const seen  = new Set();
-      for (const p of (saved?.providers || [])) {
-        if (p.type === 'p2p') continue;
-        for (const m of (p.models || [])) {
-          const name = typeof m === 'string' ? m : m.name;
-          const type = typeof m === 'string' ? 'chat' : (m.type || 'chat');
-          if (!name || seen.has(name)) continue;
-          seen.add(name);
-          avail.push({ name, type });
-        }
-      }
-      setAvailableModels(avail);
-
+      const cfg = saved || {};
+      const avail = collectContributeAvailableModels(cfg, accounts, localCfg);
       const prevNames = new Set(
-        (saved?.model_groups || [])
+        (cfg.model_groups || [])
           .flatMap(g => g.models || [])
           .map(m => typeof m === 'string' ? m : m.name)
           .filter(Boolean)
       );
+      setAvailableModels(avail);
       setSelectedNames(prevNames);
-      setNodeName(saved?.name || '');
-      setAutoStart(!!saved?.auto_start);
-      if (saved?.contribute_circle_ids?.length) {
+      setNodeName(cfg.name || '');
+      setAutoStart(!!cfg.auto_start);
+      if (cfg.contribute_circle_ids?.length) {
         setCircleScope('circle');
-        setSelectedCircleIds(new Set(uniqueCircleIds(saved.contribute_circle_ids)));
-      } else if (saved?.contribute_circle_id) {
+        setSelectedCircleIds(new Set(uniqueCircleIds(cfg.contribute_circle_ids)));
+      } else if (cfg.contribute_circle_id) {
         setCircleScope('circle');
-        setSelectedCircleIds(new Set(uniqueCircleIds([saved.contribute_circle_id])));
+        setSelectedCircleIds(new Set(uniqueCircleIds([cfg.contribute_circle_id])));
       }
     });
   }, []);
@@ -116,7 +150,9 @@ function ContributionConfigCard() {
   async function save() {
     setSaving(true);
     try {
-      const models       = availableModels.filter(m => selectedNames.has(m.name));
+      const models = [...selectedNames].map(name =>
+        availableModels.find(m => m.name === name) || { name, type: 'chat' }
+      );
       const model_groups = [{ base_url: localGw, token: '', models }];
       const current      = (await getConfig().read().catch(() => null)) || {};
       const updated      = { ...current, model_groups, llm_base_url: localGw, llm_token: '', models, name: nodeName, auto_start: autoStart };
@@ -145,14 +181,7 @@ function ContributionConfigCard() {
 
       {/* Model selection */}
       <div className="space-y-2">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('contribute.models')}</span>
-          {selectedNames.size > 0 && (
-            <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/40">
-              {t('contribute.modelsSelected', { n: selectedNames.size })}
-            </span>
-          )}
-        </div>
+        <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('contribute.models')}</span>
 
         {availableModels.length === 0 ? (
           <p className="text-xs text-zinc-400 dark:text-zinc-500 dark:text-zinc-400">{t('contribute.noModelsHint')}</p>

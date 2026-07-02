@@ -120,26 +120,8 @@ async function cmdStart(port, adminPort) {
   // 本地统计 + 会话补录（与 Electron 共用 ~/.tokenbank/local-stats.db）
   const telemetry = initGatewayTelemetry(gateway);
 
-  // Start admin API
-  adminApi.start(adminPort, gateway, bindHost);
-  console.log(`[gateway] Admin API started on port ${adminPort}`);
-
-  // Init device reporter（系统电脑名 + OS 版本说明）
-  const identity = deviceIdentity.collect({
-    type: 'cli',
-    port,
-    version: pkg.version || '0.0.0',
-  });
-  await reporter.init({
-    type: 'cli',
-    name: identity.name,
-    platform: identity.platform,
-    version: identity.version,
-    serverUrl: serverUrl,
-    token: cc.token || null,
-  });
-
-  reporter.start(async () => {
+  // Start admin API（传入 reporter 回调，供 Web 登录后启动心跳）
+  const reporterGetStats = async () => {
     const s = gateway.getDailyStats();
     const base = {
       calls: s.calls || 0,
@@ -176,7 +158,28 @@ async function cmdStart(port, adminPort) {
       if (Object.keys(inv).length) base.inventory = inv;
     } catch (_) {}
     return base;
+  };
+
+  adminApi.start(adminPort, gateway, bindHost, { reporterGetStats });
+  console.log(`[gateway] Admin API started on port ${adminPort}`);
+
+  // Init device reporter（仅登录用户才向云端注册/心跳）
+  const identity = deviceIdentity.collect({
+    type: 'cli',
+    port,
+    version: pkg.version || '0.0.0',
   });
+  const userJwt = lc.user_session?.jwt || null;
+  gateway.setUserAuth(userJwt);
+  await reporter.init({
+    type: 'cli',
+    name: identity.name,
+    platform: identity.platform,
+    version: identity.version,
+    serverUrl: serverUrl,
+    userJwt,
+  });
+  if (userJwt) reporter.start(reporterGetStats);
 
   console.log(`[gateway] Ready. Gateway :${port}  Admin :${adminPort}`);
   console.log('[gateway] Press Ctrl+C to stop.');
