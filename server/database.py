@@ -1,41 +1,26 @@
-"""SQLite 数据库操作层（全部异步）"""
+"""PostgreSQL 数据库操作层（全部异步）"""
 
 import logging
-import os
 import random
 import secrets
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
-import aiosqlite
 
-# 固定到 server 目录，避免 cwd 不同读到不同 proxy.db
-_SERVER_DIR = Path(__file__).resolve().parent
-DB_PATH = os.getenv("DB_PATH", str(_SERVER_DIR / "proxy.db"))
+from db_pool import init_pool, close_pool
+from pg_compat import connect
 logger = logging.getLogger(__name__)
 
 
 # ── 初始化 & 迁移 ─────────────────────────────────────────────────────────────
 
 async def init_db() -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        # api_keys（原表）
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS api_keys (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                key        TEXT    UNIQUE NOT NULL,
-                note       TEXT    DEFAULT '',
-                is_active  INTEGER DEFAULT 1,
-                user_id    INTEGER REFERENCES users(id),
-                created_at TEXT    DEFAULT (datetime('now'))
-            )
-        """)
-
-        # users
+    await init_pool()
+    async with connect() as db:
+        # users（须先于引用它的表创建）
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                id                SERIAL PRIMARY KEY,
                 email             TEXT UNIQUE NOT NULL,
                 nickname          TEXT DEFAULT '',
                 password_hash     TEXT NOT NULL,
@@ -48,28 +33,40 @@ async def init_db() -> None:
                 wall_display      TEXT DEFAULT 'masked',
                 can_create_apikey INTEGER DEFAULT 1,
                 worker_key        TEXT UNIQUE,
-                created_at        TEXT DEFAULT (datetime('now'))
+                created_at        TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+
+        # api_keys
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id         SERIAL PRIMARY KEY,
+                key        TEXT    UNIQUE NOT NULL,
+                note       TEXT    DEFAULT '',
+                is_active  INTEGER DEFAULT 1,
+                user_id    INTEGER REFERENCES users(id),
+                created_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
 
         # model_configs
         await db.execute("""
             CREATE TABLE IF NOT EXISTS model_configs (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                id              SERIAL PRIMARY KEY,
                 name            TEXT UNIQUE NOT NULL,
                 display_name    TEXT DEFAULT '',
                 tier            TEXT NOT NULL DEFAULT 'open',
                 contribute_rate REAL NOT NULL DEFAULT 8,
                 consume_rate    REAL NOT NULL DEFAULT 5,
                 enabled         INTEGER DEFAULT 1,
-                created_at      TEXT DEFAULT (datetime('now'))
+                created_at      TIMESTAMPTZ DEFAULT NOW()
             )
         """)
 
         # transactions
         await db.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                id           SERIAL PRIMARY KEY,
                 user_id      INTEGER NOT NULL REFERENCES users(id),
                 type         TEXT NOT NULL,
                 model_name   TEXT DEFAULT '',
@@ -79,7 +76,7 @@ async def init_db() -> None:
                 delta        REAL NOT NULL,
                 balance      REAL NOT NULL,
                 note         TEXT DEFAULT '',
-                created_at   TEXT DEFAULT (datetime('now'))
+                created_at   TIMESTAMPTZ DEFAULT NOW()
             )
         """)
         # safe migration: add tier column if missing (idempotent)
@@ -92,7 +89,7 @@ async def init_db() -> None:
         # settlement_logs
         await db.execute("""
             CREATE TABLE IF NOT EXISTS settlement_logs (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                id              SERIAL PRIMARY KEY,
                 worker_id       TEXT NOT NULL,
                 user_id         INTEGER REFERENCES users(id),
                 period_start    TEXT NOT NULL,
@@ -103,20 +100,20 @@ async def init_db() -> None:
                 success_rate    REAL DEFAULT 0,
                 multiplier      REAL DEFAULT 1.0,
                 credits_awarded REAL DEFAULT 0,
-                created_at      TEXT DEFAULT (datetime('now'))
+                created_at      TIMESTAMPTZ DEFAULT NOW()
             )
         """)
 
         # purchase_orders
         await db.execute("""
             CREATE TABLE IF NOT EXISTS purchase_orders (
-                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                id             SERIAL PRIMARY KEY,
                 user_id        INTEGER NOT NULL REFERENCES users(id),
                 amount_credits REAL NOT NULL,
                 note           TEXT DEFAULT '',
                 status         TEXT DEFAULT 'pending',
                 admin_note     TEXT DEFAULT '',
-                created_at     TEXT DEFAULT (datetime('now'))
+                created_at     TIMESTAMPTZ DEFAULT NOW()
             )
         """)
 
@@ -131,11 +128,11 @@ async def init_db() -> None:
         # checkins
         await db.execute("""
             CREATE TABLE IF NOT EXISTS checkins (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         SERIAL PRIMARY KEY,
                 user_id    INTEGER NOT NULL REFERENCES users(id),
                 date       TEXT NOT NULL,
                 credits    REAL NOT NULL DEFAULT 0,
-                created_at TEXT DEFAULT (datetime('now')),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
                 UNIQUE(user_id, date)
             )
         """)
@@ -143,24 +140,24 @@ async def init_db() -> None:
         # spin_logs
         await db.execute("""
             CREATE TABLE IF NOT EXISTS spin_logs (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         SERIAL PRIMARY KEY,
                 user_id    INTEGER NOT NULL REFERENCES users(id),
                 date       TEXT NOT NULL,
                 credits    REAL NOT NULL,
-                created_at TEXT DEFAULT (datetime('now'))
+                created_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
 
         # circles
         await db.execute("""
             CREATE TABLE IF NOT EXISTS circles (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          SERIAL PRIMARY KEY,
                 name        TEXT NOT NULL,
                 description TEXT DEFAULT '',
                 code        TEXT UNIQUE NOT NULL,
                 owner_id    INTEGER NOT NULL REFERENCES users(id),
                 max_members INTEGER DEFAULT 100,
-                created_at  TEXT DEFAULT (datetime('now'))
+                created_at  TIMESTAMPTZ DEFAULT NOW()
             )
         """)
 
@@ -169,48 +166,48 @@ async def init_db() -> None:
             CREATE TABLE IF NOT EXISTS circle_members (
                 circle_id   INTEGER NOT NULL REFERENCES circles(id) ON DELETE CASCADE,
                 user_id     INTEGER NOT NULL REFERENCES users(id),
-                joined_at   TEXT DEFAULT (datetime('now')),
+                joined_at   TIMESTAMPTZ DEFAULT NOW(),
                 PRIMARY KEY (circle_id, user_id)
             )
         """)
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS circle_announcements (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          SERIAL PRIMARY KEY,
                 circle_id   INTEGER NOT NULL REFERENCES circles(id) ON DELETE CASCADE,
                 author_id   INTEGER NOT NULL REFERENCES users(id),
                 content     TEXT NOT NULL,
-                created_at  TEXT DEFAULT (datetime('now')),
-                updated_at  TEXT DEFAULT (datetime('now'))
+                created_at  TIMESTAMPTZ DEFAULT NOW(),
+                updated_at  TIMESTAMPTZ DEFAULT NOW()
             )
         """)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS circle_announcement_likes (
                 announcement_id INTEGER NOT NULL REFERENCES circle_announcements(id) ON DELETE CASCADE,
                 user_id         INTEGER NOT NULL REFERENCES users(id),
-                created_at      TEXT DEFAULT (datetime('now')),
+                created_at      TIMESTAMPTZ DEFAULT NOW(),
                 PRIMARY KEY (announcement_id, user_id)
             )
         """)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS circle_post_replies (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          SERIAL PRIMARY KEY,
                 post_id     INTEGER NOT NULL REFERENCES circle_announcements(id) ON DELETE CASCADE,
                 author_id   INTEGER NOT NULL REFERENCES users(id),
                 content     TEXT NOT NULL,
-                created_at  TEXT DEFAULT (datetime('now'))
+                created_at  TIMESTAMPTZ DEFAULT NOW()
             )
         """)
 
         # scene_routes
         await db.execute("""
             CREATE TABLE IF NOT EXISTS scene_routes (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          SERIAL PRIMARY KEY,
                 user_id     INTEGER NOT NULL REFERENCES users(id),
                 scene_name  TEXT NOT NULL,
                 icon        TEXT DEFAULT '🔀',
                 steps       TEXT NOT NULL DEFAULT '[]',
-                created_at  TEXT DEFAULT (datetime('now'))
+                created_at  TIMESTAMPTZ DEFAULT NOW()
             )
         """)
 
@@ -226,17 +223,17 @@ async def init_db() -> None:
                 gateway_port INTEGER DEFAULT 11430,
                 online       INTEGER DEFAULT 0,
                 last_seen    TEXT,
-                created_at   TEXT DEFAULT (datetime('now'))
+                created_at   TIMESTAMPTZ DEFAULT NOW()
             )
         """)
 
         # device_stats_snapshots
         await db.execute("""
             CREATE TABLE IF NOT EXISTS device_stats_snapshots (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                id        SERIAL PRIMARY KEY,
                 device_id TEXT REFERENCES devices(id) ON DELETE CASCADE,
                 user_id   INTEGER,
-                ts        TEXT DEFAULT (datetime('now')),
+                ts        TIMESTAMPTZ DEFAULT NOW(),
                 calls     INTEGER DEFAULT 0,
                 errors    INTEGER DEFAULT 0,
                 providers INTEGER DEFAULT 0
@@ -270,35 +267,12 @@ async def init_db() -> None:
     await _migrate_device_inventory()
     await _migrate_user_billing()
     await _migrate_circles()
-    await _migrate_cwd_proxy_db()
 
-
-async def _migrate_cwd_proxy_db() -> None:
-    """兼容旧版：进程 cwd 下的 proxy.db 若含个人源配置而当前库无，则迁入。"""
-    if os.getenv("DB_PATH"):
-        return
-    canonical = Path(DB_PATH).resolve()
-    cwd_db = (Path.cwd() / "proxy.db").resolve()
-    if not cwd_db.is_file() or cwd_db == canonical:
-        return
-    if (await get_config("config.billing_sources", "")).strip():
-        return
-    try:
-        async with aiosqlite.connect(str(cwd_db)) as db:
-            async with db.execute(
-                "SELECT value FROM system_config WHERE key=?", ("config.billing_sources",),
-            ) as cur:
-                row = await cur.fetchone()
-        if row and row[0] and str(row[0]).strip():
-            await set_config("config.billing_sources", str(row[0]))
-            logger.info("已从 %s 迁移 config.billing_sources", cwd_db)
-    except Exception as e:
-        logger.warning("迁移 cwd proxy.db 失败: %s", e)
 
 
 async def _migrate() -> None:
     """补齐早期 SQLite 库缺失列（仅 api_keys.user_id）"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute("PRAGMA table_info(api_keys)") as cur:
             cols = {r[1] for r in await cur.fetchall()}
         if "user_id" not in cols:
@@ -308,14 +282,14 @@ async def _migrate() -> None:
 
 async def _migrate_checkins() -> None:
     """补齐 checkins 表和 checkin_reward 配置（早期数据库无此表）"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS checkins (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         SERIAL PRIMARY KEY,
                 user_id    INTEGER NOT NULL REFERENCES users(id),
                 date       TEXT NOT NULL,
                 credits    REAL NOT NULL DEFAULT 0,
-                created_at TEXT DEFAULT (datetime('now')),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
                 UNIQUE(user_id, date)
             )
         """)
@@ -327,14 +301,14 @@ async def _migrate_checkins() -> None:
 
 async def _migrate_spin_logs() -> None:
     """Add spin_logs table and config keys for databases created before this feature."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS spin_logs (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         SERIAL PRIMARY KEY,
                 user_id    INTEGER NOT NULL REFERENCES users(id),
                 date       TEXT NOT NULL,
                 credits    REAL NOT NULL,
-                created_at TEXT DEFAULT (datetime('now'))
+                created_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
         await db.execute("INSERT OR IGNORE INTO system_config(key,value) VALUES('spin_daily_limit','3')")
@@ -344,14 +318,14 @@ async def _migrate_spin_logs() -> None:
 
 async def _migrate_virtual_agents() -> None:
     """补齐 virtual_agents 表和 users.is_virtual 列（早期数据库无此结构）"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute("PRAGMA table_info(users)") as cur:
             cols = {r[1] for r in await cur.fetchall()}
         if "is_virtual" not in cols:
             await db.execute("ALTER TABLE users ADD COLUMN is_virtual INTEGER DEFAULT 0")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS virtual_agents (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          SERIAL PRIMARY KEY,
                 name        TEXT NOT NULL,
                 base_url    TEXT NOT NULL,
                 api_key     TEXT NOT NULL,
@@ -361,7 +335,7 @@ async def _migrate_virtual_agents() -> None:
                 user_id     INTEGER REFERENCES users(id),
                 credentials TEXT DEFAULT '',
                 owner_user_id INTEGER REFERENCES users(id),
-                created_at  TEXT DEFAULT (datetime('now'))
+                created_at  TIMESTAMPTZ DEFAULT NOW()
             )
         """)
         # 为旧库补列：credentials（OAuth 凭证 JSON）、owner_user_id（个人供给源归属，NULL=全局）
@@ -376,7 +350,7 @@ async def _migrate_virtual_agents() -> None:
 
 async def _migrate_image_support() -> None:
     """Add model_type column to model_configs and image_tokens_weight system config."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute("PRAGMA table_info(model_configs)") as cur:
             cols = {r[1] for r in await cur.fetchall()}
         if "model_type" not in cols:
@@ -391,7 +365,7 @@ async def _migrate_image_support() -> None:
 
 async def _migrate_apikey_default_open() -> None:
     """一次性迁移：全体用户默认可自助创建 API Key（无需管理员预先开通）"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             "SELECT 1 FROM system_config WHERE key='migrate_selfserve_apikey_v1'"
         ) as cur:
@@ -408,7 +382,7 @@ async def _migrate_apikey_default_open() -> None:
 
 async def create_key(note: str, user_id: Optional[int] = None) -> dict:
     key = "sk-" + secrets.token_urlsafe(32)
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         cur = await db.execute(
             "INSERT INTO api_keys (key, note, user_id) VALUES (?,?,?)",
             (key, note, user_id),
@@ -425,8 +399,7 @@ async def create_key(note: str, user_id: Optional[int] = None) -> dict:
 
 
 async def list_keys(user_id: Optional[int] = None) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         if user_id is None:
             sql = "SELECT * FROM api_keys ORDER BY created_at DESC"
             args = ()
@@ -438,7 +411,7 @@ async def list_keys(user_id: Optional[int] = None) -> list[dict]:
 
 
 async def set_key_active(key_id: int, is_active: bool, user_id: Optional[int] = None) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         if user_id is None:
             await db.execute("UPDATE api_keys SET is_active=? WHERE id=?", (int(is_active), key_id))
         else:
@@ -450,7 +423,7 @@ async def set_key_active(key_id: int, is_active: bool, user_id: Optional[int] = 
 
 
 async def delete_key(key_id: int, user_id: Optional[int] = None) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         if user_id is None:
             await db.execute("DELETE FROM api_keys WHERE id=?", (key_id,))
         else:
@@ -460,8 +433,7 @@ async def delete_key(key_id: int, user_id: Optional[int] = None) -> None:
 
 async def verify_key(key: str) -> Optional[dict]:
     """返回 key 记录（含 user_id），无效/禁用返回 None"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             "SELECT id, user_id, is_active FROM api_keys WHERE key=?", (key,)
         ) as cur:
@@ -476,7 +448,7 @@ async def verify_key(key: str) -> Optional[dict]:
 async def create_user(email: str, nickname: str, password_hash: str, referred_by: Optional[int]) -> dict:
     ref_code = "REF-" + secrets.token_urlsafe(6).upper()
     worker_key = "wk-" + secrets.token_urlsafe(32)
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         cur = await db.execute(
             """INSERT INTO users
                (email, nickname, password_hash, referral_code, referred_by, worker_key,
@@ -490,40 +462,35 @@ async def create_user(email: str, nickname: str, password_hash: str, referred_by
 
 
 async def get_user_by_email(email: str) -> Optional[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute("SELECT * FROM users WHERE email=?", (email,)) as cur:
             r = await cur.fetchone()
             return dict(r) if r else None
 
 
 async def get_user_by_id(user_id: int) -> Optional[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute("SELECT * FROM users WHERE id=?", (user_id,)) as cur:
             r = await cur.fetchone()
             return dict(r) if r else None
 
 
 async def get_user_by_worker_key(worker_key: str) -> Optional[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute("SELECT * FROM users WHERE worker_key=?", (worker_key,)) as cur:
             r = await cur.fetchone()
             return dict(r) if r else None
 
 
 async def get_user_by_referral_code(code: str) -> Optional[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute("SELECT * FROM users WHERE referral_code=?", (code,)) as cur:
             r = await cur.fetchone()
             return dict(r) if r else None
 
 
 async def list_users() -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             "SELECT id,email,nickname,credits_balance,credits_earned,credits_spent,"
             "can_create_apikey,referral_code,created_at FROM users ORDER BY created_at DESC"
@@ -532,14 +499,14 @@ async def list_users() -> list[dict]:
 
 
 async def set_user_apikey_permission(user_id: int, can: bool) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute("UPDATE users SET can_create_apikey=? WHERE id=?", (int(can), user_id))
         await db.commit()
 
 
 async def adjust_user_credits(user_id: int, delta: float, note: str = "") -> float:
     """管理员手动调整积分，返回新余额"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute("SELECT credits_balance FROM users WHERE id=?", (user_id,)) as cur:
             row = await cur.fetchone()
             if not row:
@@ -571,7 +538,7 @@ async def award_credits(user_id: int, delta: float, type_: str,
                         base_credits: float = 0, multiplier: float = 1.0,
                         note: str = "") -> float:
     """给用户增加积分，返回新余额"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute("SELECT credits_balance FROM users WHERE id=?", (user_id,)) as cur:
             row = await cur.fetchone()
             if not row:
@@ -593,7 +560,7 @@ async def award_credits(user_id: int, delta: float, type_: str,
 
 async def deduct_credits(user_id: int, delta: float, model_name: str = "", tokens: int = 0, tier: str = "p2p") -> tuple[bool, float]:
     """消费积分，余额不足返回 (False, balance)，成功返回 (True, new_balance)"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute("SELECT credits_balance FROM users WHERE id=?", (user_id,)) as cur:
             row = await cur.fetchone()
             if not row or row[0] < delta:
@@ -613,7 +580,7 @@ async def deduct_credits(user_id: int, delta: float, model_name: str = "", token
 
 async def record_gateway_usage(user_id: int, model_name: str, tokens: int, tier: str, provider_id: str = "") -> None:
     """Record a zero-cost gateway call (free/paid-direct tier) so it appears in stats."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute("SELECT credits_balance FROM users WHERE id=?", (user_id,)) as cur:
             row = await cur.fetchone()
             if not row:
@@ -648,8 +615,7 @@ async def consume_credits_for_usage(
 
 
 async def get_transactions(user_id: int, limit: int = 50) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             "SELECT * FROM transactions WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
             (user_id, limit),
@@ -660,8 +626,7 @@ async def get_transactions(user_id: int, limit: int = 50) -> list[dict]:
 # ── model_configs ─────────────────────────────────────────────────────────────
 
 async def list_model_configs(enabled_only: bool = False) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         sql = "SELECT * FROM model_configs"
         if enabled_only:
             sql += " WHERE enabled=1"
@@ -684,7 +649,7 @@ async def ensure_default_open_models(
         return []
     model_types = model_types or {}
     created: list[str] = []
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         for name in names:
             mtype = model_types.get(name, "chat")
             async with db.execute(
@@ -713,7 +678,7 @@ async def upsert_model_config(
     contribute_rate: float, consume_rate: float,
     enabled: bool, model_type: str = "chat"
 ) -> dict:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute(
             """INSERT INTO model_configs
                (name,display_name,tier,contribute_rate,consume_rate,enabled,model_type)
@@ -733,13 +698,13 @@ async def upsert_model_config(
 
 
 async def delete_model_config(name: str) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute("DELETE FROM model_configs WHERE name=?", (name,))
         await db.commit()
 
 
 async def get_contribute_rate(model_name: str) -> Optional[float]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             "SELECT contribute_rate FROM model_configs WHERE name=? AND enabled=1", (model_name,)
         ) as cur:
@@ -748,7 +713,7 @@ async def get_contribute_rate(model_name: str) -> Optional[float]:
 
 
 async def get_consume_rate(model_name: str) -> Optional[float]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             "SELECT consume_rate FROM model_configs WHERE name=? AND enabled=1", (model_name,)
         ) as cur:
@@ -763,7 +728,7 @@ async def get_or_ensure_consume_rate(
     rate = await get_consume_rate(model_name)
     if rate is not None:
         return rate
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             "SELECT 1 FROM model_configs WHERE name=?", (model_name,)
         ) as cur:
@@ -792,7 +757,7 @@ async def log_settlement(worker_id: str, user_id: int, period_start: str, period
                          online_mins: float, output_tokens: int, avg_latency: float,
                          success_rate: float, multiplier: float, credits_awarded: float) -> None:
     """avg_latency 写入 avg_latency_ms 列：语义为首 Token 平均延迟（ms）。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute(
             """INSERT INTO settlement_logs
                (worker_id,user_id,period_start,period_end,online_mins,output_tokens,
@@ -805,8 +770,7 @@ async def log_settlement(worker_id: str, user_id: int, period_start: str, period
 
 
 async def get_settlements(user_id: int, limit: int = 30) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             "SELECT * FROM settlement_logs WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
             (user_id, limit),
@@ -818,8 +782,7 @@ async def get_contribute_summary(user_id: int) -> dict:
     """贡献页汇总：累计贡献 token、赚取积分及 P2P 使用节省金额。"""
     from credit_pricing import credits_to_cny, cny_per_million_tokens
 
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             """SELECT COALESCE(SUM(tokens), 0) AS tokens,
                       COALESCE(SUM(delta), 0) AS credits
@@ -868,7 +831,7 @@ async def get_contribute_summary(user_id: int) -> dict:
 # ── purchase_orders ───────────────────────────────────────────────────────────
 
 async def create_purchase_order(user_id: int, amount_credits: float, note: str) -> dict:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         cur = await db.execute(
             "INSERT INTO purchase_orders(user_id,amount_credits,note) VALUES(?,?,?)",
             (user_id, amount_credits, note),
@@ -879,8 +842,7 @@ async def create_purchase_order(user_id: int, amount_credits: float, note: str) 
 
 
 async def list_purchase_orders(status: Optional[str] = None) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         if status:
             sql, args = "SELECT po.*,u.email,u.nickname FROM purchase_orders po JOIN users u ON po.user_id=u.id WHERE po.status=? ORDER BY po.created_at DESC", (status,)
         else:
@@ -890,8 +852,7 @@ async def list_purchase_orders(status: Optional[str] = None) -> list[dict]:
 
 
 async def approve_purchase_order(order_id: int, admin_note: str) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute("SELECT * FROM purchase_orders WHERE id=?", (order_id,)) as cur:
             row = await cur.fetchone()
         if row is None:
@@ -912,7 +873,7 @@ async def approve_purchase_order(order_id: int, admin_note: str) -> None:
 
 
 async def reject_purchase_order(order_id: int, admin_note: str) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute(
             "UPDATE purchase_orders SET status='rejected', admin_note=? WHERE id=?",
             (admin_note, order_id),
@@ -921,8 +882,7 @@ async def reject_purchase_order(order_id: int, admin_note: str) -> None:
 
 
 async def get_user_purchase_orders(user_id: int) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             "SELECT * FROM purchase_orders WHERE user_id=? ORDER BY created_at DESC",
             (user_id,),
@@ -933,14 +893,14 @@ async def get_user_purchase_orders(user_id: int) -> list[dict]:
 # ── system_config ─────────────────────────────────────────────────────────────
 
 async def get_config(key: str, default: str = "") -> str:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute("SELECT value FROM system_config WHERE key=?", (key,)) as cur:
             row = await cur.fetchone()
             return row[0] if row else default
 
 
 async def set_config(key: str, value: str) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute(
             "INSERT INTO system_config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (key, value),
@@ -949,7 +909,7 @@ async def set_config(key: str, value: str) -> None:
 
 
 async def get_all_configs() -> dict:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute("SELECT key,value FROM system_config") as cur:
             return {r[0]: r[1] for r in await cur.fetchall()}
 
@@ -961,7 +921,7 @@ async def get_all_configs() -> dict:
 async def do_checkin(user_id: int) -> dict:
     """执行签到：已签到返回 already=True；否则发放积分并记录。"""
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             "SELECT credits FROM checkins WHERE user_id=? AND date=?", (user_id, today)
         ) as cur:
@@ -985,7 +945,7 @@ async def do_checkin(user_id: int) -> dict:
 async def get_checkin_status(user_id: int) -> dict:
     today = datetime.utcnow().strftime("%Y-%m-%d")
     reward = float(await get_config("checkin_reward", "5"))
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             "SELECT credits FROM checkins WHERE user_id=? AND date=?", (user_id, today)
         ) as cur:
@@ -1022,7 +982,7 @@ async def do_spin(user_id: int) -> dict:
     today = datetime.utcnow().strftime("%Y-%m-%d")
     daily_limit = int(await get_config("spin_daily_limit", "3"))
     max_credits = int(await get_config("spin_max_credits", "50"))
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute("BEGIN IMMEDIATE")
         async with db.execute(
             "SELECT COUNT(*) FROM spin_logs WHERE user_id=? AND date=?", (user_id, today)
@@ -1051,7 +1011,7 @@ async def do_spin(user_id: int) -> dict:
 async def get_spin_status(user_id: int) -> dict:
     today = datetime.utcnow().strftime("%Y-%m-%d")
     daily_limit = int(await get_config("spin_daily_limit", "3"))
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             "SELECT COUNT(*) FROM spin_logs WHERE user_id=? AND date=?", (user_id, today)
         ) as cur:
@@ -1105,7 +1065,7 @@ async def create_virtual_agent(name: str, base_url: str, api_key: str,
     worker_key = "vwk-" + secrets.token_urlsafe(32)
     virtual_email = f"virtual-{secrets.token_urlsafe(8)}@virtual.local"
     creds_json = _dump_agent_credentials(credentials)
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         cur = await db.execute(
             """INSERT INTO users
                (email, nickname, password_hash, referral_code, worker_key, is_virtual, can_create_apikey)
@@ -1150,8 +1110,7 @@ async def list_virtual_agents(enabled_only: bool = False,
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY created_at DESC"
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(sql, args) as cur:
             rows = [dict(r) for r in await cur.fetchall()]
     for r in rows:
@@ -1167,8 +1126,7 @@ async def list_virtual_agents_by_owner(owner_user_id: int) -> list:
 
 async def get_virtual_agent(agent_id: int) -> Optional[dict]:
     import json as _json
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute("SELECT * FROM virtual_agents WHERE id=?", (agent_id,)) as cur:
             r = await cur.fetchone()
             if not r:
@@ -1194,7 +1152,7 @@ async def update_virtual_agent(agent_id: int, name: str, base_url: str,
     """api_key 为空串时不更新密钥字段；credentials 为 None 时不更新凭证字段。"""
     import json as _json
     models_json = _json.dumps(models_list)
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         if api_key:
             await db.execute(
                 """UPDATE virtual_agents
@@ -1223,7 +1181,7 @@ async def update_virtual_agent(agent_id: int, name: str, base_url: str,
 
 async def update_virtual_agent_credentials(agent_id: int, credentials: dict) -> None:
     """仅更新 OAuth 凭证（token 刷新后回写，避免触动其它字段）。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute(
             "UPDATE virtual_agents SET credentials=? WHERE id=?",
             (_dump_agent_credentials(credentials), agent_id),
@@ -1233,7 +1191,7 @@ async def update_virtual_agent_credentials(agent_id: int, credentials: dict) -> 
 
 async def delete_virtual_agent(agent_id: int) -> None:
     """删除虚拟 Agent 记录（保留虚拟用户账户以保留积分历史）。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute("DELETE FROM virtual_agents WHERE id=?", (agent_id,))
         await db.commit()
 
@@ -1241,7 +1199,7 @@ async def delete_virtual_agent(agent_id: int) -> None:
 async def _migrate_scene_routes() -> None:
     """Add scene_route_id + app_name to api_keys, and model_key to scene_routes if missing."""
     import uuid as _uuid
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         # api_keys columns
         async with db.execute("PRAGMA table_info(api_keys)") as cur:
             cols = {r[1] for r in await cur.fetchall()}
@@ -1279,8 +1237,7 @@ async def _migrate_scene_routes() -> None:
 # ── Scene Routes ──────────────────────────────────────────────────────────────
 
 async def list_scene_routes(user_id: int) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             "SELECT * FROM scene_routes WHERE user_id=? ORDER BY id", (user_id,)
         ) as cur:
@@ -1294,14 +1251,13 @@ async def create_scene_route(user_id: int, scene_name: str, icon: str, steps: li
     import uuid as _uuid
     steps_json = _json.dumps(steps, ensure_ascii=False)
     model_key  = "llm-router-" + _uuid.uuid4().hex[:12]
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         cur = await db.execute(
             "INSERT INTO scene_routes(user_id, scene_name, icon, steps, model_key, caveman_level) VALUES(?,?,?,?,?,?)",
             (user_id, scene_name, icon, steps_json, model_key, caveman_level or None),
         )
         row_id = cur.lastrowid
         await db.commit()
-        db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM scene_routes WHERE id=?", (row_id,)) as c:
             row = await c.fetchone()
     return dict(row)
@@ -1311,7 +1267,7 @@ async def update_scene_route(route_id: int, user_id: int, scene_name: str, icon:
                               caveman_level: str | None = None) -> bool:
     import json as _json
     steps_json = _json.dumps(steps, ensure_ascii=False)
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         cur = await db.execute(
             "UPDATE scene_routes SET scene_name=?, icon=?, steps=?, caveman_level=? WHERE id=? AND user_id=?",
             (scene_name, icon, steps_json, caveman_level or None, route_id, user_id),
@@ -1321,7 +1277,7 @@ async def update_scene_route(route_id: int, user_id: int, scene_name: str, icon:
 
 
 async def delete_scene_route(route_id: int, user_id: int) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute(
             "UPDATE api_keys SET scene_route_id=NULL WHERE scene_route_id=? AND user_id=?",
             (route_id, user_id),
@@ -1334,8 +1290,7 @@ async def delete_scene_route(route_id: int, user_id: int) -> bool:
 
 
 async def get_scene_route_by_key(key_id: int) -> Optional[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             """SELECT sr.* FROM scene_routes sr
                JOIN api_keys ak ON ak.scene_route_id = sr.id
@@ -1347,7 +1302,7 @@ async def get_scene_route_by_key(key_id: int) -> Optional[dict]:
 
 
 async def bind_key_to_scene_route(key_id: int, user_id: int, scene_route_id: Optional[int], app_name: str) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         cur = await db.execute(
             "UPDATE api_keys SET scene_route_id=?, app_name=? WHERE id=? AND user_id=?",
             (scene_route_id, app_name, key_id, user_id),
@@ -1357,8 +1312,7 @@ async def bind_key_to_scene_route(key_id: int, user_id: int, scene_route_id: Opt
 
 
 async def list_keys_with_scene(user_id: int) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             """SELECT ak.id, ak.key, ak.note, ak.app_name, ak.is_active,
                       ak.scene_route_id, sr.scene_name, sr.icon, sr.steps, sr.model_key,
@@ -1374,8 +1328,7 @@ async def list_keys_with_scene(user_id: int) -> list[dict]:
 
 
 async def get_dashboard_stats(user_id: int, days: int = 30) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             """SELECT
                  ak.id        AS key_id,
@@ -1395,11 +1348,11 @@ async def get_dashboard_stats(user_id: int, days: int = 30) -> list[dict]:
                LEFT JOIN transactions t
                  ON t.user_id = ak.user_id
                  AND t.type = 'consume'
-                 AND t.created_at >= datetime('now', ?)
-               WHERE ak.user_id = ?
+                 AND t.created_at >= NOW() - ($1::int * INTERVAL '1 day')
+               WHERE ak.user_id = $2
                GROUP BY ak.id
                ORDER BY total_tokens DESC""",
-            (f"-{days} days", user_id),
+            (days, user_id),
         ) as cur:
             rows = await cur.fetchall()
     return [dict(r) for r in rows]
@@ -1407,21 +1360,20 @@ async def get_dashboard_stats(user_id: int, days: int = 30) -> list[dict]:
 
 async def get_model_stats(user_id: int, days: int = 30) -> list[dict]:
     """Top models by request count from transactions."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             """SELECT model_name,
                       COUNT(*) AS request_count,
                       COALESCE(SUM(tokens), 0) AS total_tokens,
                       COALESCE(SUM(ABS(delta)), 0) AS total_credits
                FROM transactions
-               WHERE user_id=? AND type='consume'
+               WHERE user_id=$1 AND type='consume'
                  AND model_name != ''
-                 AND created_at >= datetime('now', ?)
+                 AND created_at >= NOW() - ($2::int * INTERVAL '1 day')
                GROUP BY model_name
                ORDER BY request_count DESC
                LIMIT 10""",
-            (user_id, f"-{days} days"),
+            (user_id, days),
         ) as cur:
             rows = await cur.fetchall()
     return [dict(r) for r in rows]
@@ -1429,14 +1381,13 @@ async def get_model_stats(user_id: int, days: int = 30) -> list[dict]:
 
 async def get_hourly_stats(user_id: int) -> list[int]:
     """Request counts per hour for today (list of 24 ints)."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
-            """SELECT CAST(strftime('%H', created_at, 'localtime') AS INTEGER) AS hour,
+            """SELECT EXTRACT(HOUR FROM created_at AT TIME ZONE current_setting('TIMEZONE'))::int AS hour,
                       COUNT(*) AS cnt
                FROM transactions
-               WHERE user_id=? AND type='consume'
-                 AND date(created_at, 'localtime') = date('now', 'localtime')
+               WHERE user_id=$1 AND type='consume'
+                 AND (created_at AT TIME ZONE current_setting('TIMEZONE'))::date = CURRENT_DATE
                GROUP BY hour""",
             (user_id,),
         ) as cur:
@@ -1449,7 +1400,7 @@ async def get_hourly_stats(user_id: int) -> list[int]:
 
 async def _migrate_devices() -> None:
     """Add devices and device_stats_snapshots tables for databases created before this feature."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS devices (
                 id           TEXT PRIMARY KEY,
@@ -1461,15 +1412,15 @@ async def _migrate_devices() -> None:
                 gateway_port INTEGER DEFAULT 11430,
                 online       INTEGER DEFAULT 0,
                 last_seen    TEXT,
-                created_at   TEXT DEFAULT (datetime('now'))
+                created_at   TIMESTAMPTZ DEFAULT NOW()
             )
         """)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS device_stats_snapshots (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                id        SERIAL PRIMARY KEY,
                 device_id TEXT REFERENCES devices(id) ON DELETE CASCADE,
                 user_id   INTEGER,
-                ts        TEXT DEFAULT (datetime('now')),
+                ts        TIMESTAMPTZ DEFAULT NOW(),
                 calls     INTEGER DEFAULT 0,
                 errors    INTEGER DEFAULT 0,
                 providers INTEGER DEFAULT 0
@@ -1482,7 +1433,7 @@ async def _migrate_devices() -> None:
 
 async def upsert_device(device_id: str, user_id: int, type_: str, name: str,
                         platform: str, version: str, gateway_port: int) -> dict:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute(
             """INSERT INTO devices (id, user_id, type, name, platform, version, gateway_port, online, last_seen)
                VALUES (?,?,?,?,?,?,?,1,datetime('now'))
@@ -1498,7 +1449,6 @@ async def upsert_device(device_id: str, user_id: int, type_: str, name: str,
             (device_id, user_id, type_, name, platform, version, gateway_port),
         )
         await db.commit()
-        db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM devices WHERE id=?", (device_id,)) as cur:
             row = await cur.fetchone()
             return dict(row) if row else {}
@@ -1506,7 +1456,7 @@ async def upsert_device(device_id: str, user_id: int, type_: str, name: str,
 
 async def _migrate_device_inventory() -> None:
     """devices.inventory_json：各端上报的盘点快照（按 1/7/30 天）。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute("PRAGMA table_info(devices)") as cur:
             cols = {r[1] for r in await cur.fetchall()}
         if "inventory_json" not in cols:
@@ -1682,7 +1632,7 @@ async def update_device_inventory(device_id: str, user_id: int, inventory: dict)
 
     if not inventory:
         return
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             "SELECT inventory_json FROM devices WHERE id=? AND user_id=?",
             (device_id, user_id),
@@ -1711,8 +1661,7 @@ async def update_device_inventory(device_id: str, user_id: int, inventory: dict)
 
 async def get_user_inventory_stats(user_id: int, days: int = 1) -> dict:
     """汇总用户所有设备上报的盘点数据。"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             "SELECT * FROM devices WHERE user_id=? ORDER BY created_at DESC",
             (user_id,),
@@ -1730,7 +1679,7 @@ async def record_device_heartbeat(device_id: str, user_id: int, online: bool,
                                    inventory: dict | None = None,
                                    version: str = "", name: str = "",
                                    platform: str = "", type_: str = "") -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         updates = ["online=?", "last_seen=datetime('now')"]
         params: list = [1 if online else 0]
         if version:
@@ -1761,8 +1710,7 @@ async def record_device_heartbeat(device_id: str, user_id: int, online: bool,
 
 
 async def get_user_devices(user_id: int) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             "SELECT * FROM devices WHERE user_id=? ORDER BY created_at DESC", (user_id,)
         ) as cur:
@@ -1786,7 +1734,7 @@ async def get_user_devices(user_id: int) -> list[dict]:
 
 async def get_device_owner(device_id: str) -> Optional[int]:
     """Return the user_id that owns device_id, or None if not found."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             "SELECT user_id FROM devices WHERE id=?", (device_id,)
         ) as cur:
@@ -1795,7 +1743,7 @@ async def get_device_owner(device_id: str) -> Optional[int]:
 
 
 async def delete_device(device_id: str, user_id: int) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute(
             "DELETE FROM devices WHERE id=? AND user_id=?", (device_id, user_id)
         )
@@ -1803,7 +1751,7 @@ async def delete_device(device_id: str, user_id: int) -> None:
 
 
 async def sweep_offline_devices() -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         cur = await db.execute(
             "UPDATE devices SET online=0 WHERE online=1 AND last_seen < datetime('now', '-2 minutes')"
         )
@@ -1856,7 +1804,7 @@ def _normalize_user_billing(raw: dict | None) -> dict:
 
 async def _migrate_user_billing() -> None:
     """users.billing_json：个人页订阅 / 按量 provider / 刊例价覆盖。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute("PRAGMA table_info(users)") as cur:
             cols = {r[1] for r in await cur.fetchall()}
         if "billing_json" not in cols:
@@ -1868,7 +1816,7 @@ async def _migrate_user_billing() -> None:
 
 async def get_user_billing(user_id: int) -> dict:
     import json as _json
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             "SELECT billing_json FROM users WHERE id=?", (user_id,)
         ) as cur:
@@ -1886,7 +1834,7 @@ async def set_user_billing(user_id: int, patch: dict) -> dict:
         if key in patch and patch[key] is not None:
             current[key] = patch[key]
     payload = _json.dumps(current, ensure_ascii=False)
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute(
             "UPDATE users SET billing_json=? WHERE id=?", (payload, user_id)
         )
@@ -1895,16 +1843,15 @@ async def set_user_billing(user_id: int, patch: dict) -> dict:
 
 
 async def get_wall_users(limit: int = 50) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             """SELECT u.id, u.nickname, u.wall_display, u.credits_earned,
                       (SELECT COUNT(*) FROM users r WHERE r.referred_by=u.id) AS referral_count,
-                      CAST((julianday('now') - julianday(u.created_at)) AS INTEGER) AS days_online
+                      (CURRENT_DATE - u.created_at::date) AS days_online
                FROM users u
                WHERE u.show_on_wall=1 AND u.wall_display != 'hidden'
-               ORDER BY (u.credits_earned*0.5 + (SELECT COUNT(*) FROM users r WHERE r.referred_by=u.id)*0.3 + CAST((julianday('now')-julianday(u.created_at)) AS INTEGER)*0.2) DESC
-               LIMIT ?""",
+               ORDER BY (u.credits_earned*0.5 + (SELECT COUNT(*) FROM users r WHERE r.referred_by=u.id)*0.3 + (CURRENT_DATE - u.created_at::date)*0.2) DESC
+               LIMIT $1""",
             (limit,),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
@@ -1912,25 +1859,25 @@ async def get_wall_users(limit: int = 50) -> list[dict]:
 
 async def _migrate_circles() -> None:
     """Add circle_id to virtual_agents; create circles/circle_members if not present (for old DBs)."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         # Enable FK support for cascade to work at migration time
         await db.execute("PRAGMA foreign_keys = ON")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS circles (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          SERIAL PRIMARY KEY,
                 name        TEXT NOT NULL,
                 description TEXT DEFAULT '',
                 code        TEXT UNIQUE NOT NULL,
                 owner_id    INTEGER NOT NULL REFERENCES users(id),
                 max_members INTEGER DEFAULT 100,
-                created_at  TEXT DEFAULT (datetime('now'))
+                created_at  TIMESTAMPTZ DEFAULT NOW()
             )
         """)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS circle_members (
                 circle_id   INTEGER NOT NULL REFERENCES circles(id) ON DELETE CASCADE,
                 user_id     INTEGER NOT NULL REFERENCES users(id),
-                joined_at   TEXT DEFAULT (datetime('now')),
+                joined_at   TIMESTAMPTZ DEFAULT NOW(),
                 PRIMARY KEY (circle_id, user_id)
             )
         """)
@@ -1943,29 +1890,29 @@ async def _migrate_circles() -> None:
         )
         await db.execute("""
             CREATE TABLE IF NOT EXISTS circle_announcements (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          SERIAL PRIMARY KEY,
                 circle_id   INTEGER NOT NULL REFERENCES circles(id) ON DELETE CASCADE,
                 author_id   INTEGER NOT NULL REFERENCES users(id),
                 content     TEXT NOT NULL,
-                created_at  TEXT DEFAULT (datetime('now')),
-                updated_at  TEXT DEFAULT (datetime('now'))
+                created_at  TIMESTAMPTZ DEFAULT NOW(),
+                updated_at  TIMESTAMPTZ DEFAULT NOW()
             )
         """)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS circle_announcement_likes (
                 announcement_id INTEGER NOT NULL REFERENCES circle_announcements(id) ON DELETE CASCADE,
                 user_id         INTEGER NOT NULL REFERENCES users(id),
-                created_at      TEXT DEFAULT (datetime('now')),
+                created_at      TIMESTAMPTZ DEFAULT NOW(),
                 PRIMARY KEY (announcement_id, user_id)
             )
         """)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS circle_post_replies (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          SERIAL PRIMARY KEY,
                 post_id     INTEGER NOT NULL REFERENCES circle_announcements(id) ON DELETE CASCADE,
                 author_id   INTEGER NOT NULL REFERENCES users(id),
                 content     TEXT NOT NULL,
-                created_at  TEXT DEFAULT (datetime('now'))
+                created_at  TIMESTAMPTZ DEFAULT NOW()
             )
         """)
         # 公开浏览 + 入圈申请
@@ -1975,13 +1922,13 @@ async def _migrate_circles() -> None:
             await db.execute("ALTER TABLE circles ADD COLUMN is_public INTEGER DEFAULT 1")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS circle_join_requests (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          SERIAL PRIMARY KEY,
                 circle_id   INTEGER NOT NULL REFERENCES circles(id) ON DELETE CASCADE,
                 user_id     INTEGER NOT NULL REFERENCES users(id),
                 message     TEXT DEFAULT '',
                 status      TEXT NOT NULL DEFAULT 'pending',
-                created_at  TEXT DEFAULT (datetime('now')),
-                updated_at  TEXT DEFAULT (datetime('now')),
+                created_at  TIMESTAMPTZ DEFAULT NOW(),
+                updated_at  TIMESTAMPTZ DEFAULT NOW(),
                 UNIQUE(circle_id, user_id)
             )
         """)
@@ -1998,8 +1945,7 @@ def _gen_circle_code() -> str:
 
 async def create_circle(owner_id: int, name: str, description: str = "") -> dict:
     code = _gen_circle_code()
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         await db.execute("PRAGMA foreign_keys = ON")
         # Retry on code collision (astronomically unlikely)
         for _ in range(5):
@@ -2026,24 +1972,21 @@ async def create_circle(owner_id: int, name: str, description: str = "") -> dict
 
 
 async def get_circle_by_code(code: str) -> Optional[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute("SELECT * FROM circles WHERE code=?", (code,)) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
 
 
 async def get_circle_by_id(circle_id: int) -> Optional[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute("SELECT * FROM circles WHERE id=?", (circle_id,)) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
 
 
 async def list_circles_owned(owner_id: int) -> list:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             "SELECT * FROM circles WHERE owner_id=? ORDER BY created_at DESC", (owner_id,)
         ) as cur:
@@ -2052,8 +1995,7 @@ async def list_circles_owned(owner_id: int) -> list:
 
 async def list_circles_joined(user_id: int) -> list:
     """All circles the user belongs to (including owned)."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             """SELECT c.* FROM circles c
                JOIN circle_members m ON m.circle_id=c.id
@@ -2066,7 +2008,7 @@ async def list_circles_joined(user_id: int) -> list:
 
 async def get_user_circle_ids(user_id: int) -> list[int]:
     """Return list of circle IDs the user belongs to (for dispatch visibility)."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             "SELECT circle_id FROM circle_members WHERE user_id=?", (user_id,)
         ) as cur:
@@ -2074,7 +2016,7 @@ async def get_user_circle_ids(user_id: int) -> list[int]:
 
 
 async def circle_member_count(circle_id: int) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             "SELECT COUNT(*) FROM circle_members WHERE circle_id=?", (circle_id,)
         ) as cur:
@@ -2083,7 +2025,7 @@ async def circle_member_count(circle_id: int) -> int:
 
 
 async def is_circle_member(circle_id: int, user_id: int) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             "SELECT 1 FROM circle_members WHERE circle_id=? AND user_id=?", (circle_id, user_id)
         ) as cur:
@@ -2091,7 +2033,7 @@ async def is_circle_member(circle_id: int, user_id: int) -> bool:
 
 
 async def add_circle_member(circle_id: int, user_id: int) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute(
             "INSERT OR IGNORE INTO circle_members(circle_id,user_id) VALUES(?,?)",
             (circle_id, user_id),
@@ -2100,7 +2042,7 @@ async def add_circle_member(circle_id: int, user_id: int) -> None:
 
 
 async def remove_circle_member(circle_id: int, user_id: int) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute(
             "DELETE FROM circle_members WHERE circle_id=? AND user_id=?", (circle_id, user_id)
         )
@@ -2108,7 +2050,7 @@ async def remove_circle_member(circle_id: int, user_id: int) -> None:
 
 
 async def delete_circle(circle_id: int) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute("PRAGMA foreign_keys = ON")
         # Detach virtual_agents from this circle first
         await db.execute(
@@ -2120,7 +2062,7 @@ async def delete_circle(circle_id: int) -> None:
 
 
 async def count_circles_owned(owner_id: int) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             "SELECT COUNT(*) FROM circles WHERE owner_id=?", (owner_id,)
         ) as cur:
@@ -2130,7 +2072,7 @@ async def count_circles_owned(owner_id: int) -> int:
 
 async def count_circles_joined_only(user_id: int) -> int:
     """Circles user is a member of but does NOT own."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             """SELECT COUNT(*) FROM circle_members m
                JOIN circles c ON c.id=m.circle_id
@@ -2143,8 +2085,7 @@ async def count_circles_joined_only(user_id: int) -> int:
 
 async def list_circle_members(circle_id: int) -> list:
     """Return basic info of all circle members (id, nickname, email, joined_at)."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             """SELECT u.id, u.nickname, u.email, m.joined_at
                FROM circle_members m
@@ -2158,8 +2099,7 @@ async def list_circle_members(circle_id: int) -> list:
 
 async def list_circle_announcements(circle_id: int, viewer_id: int) -> list:
     """圈子公告列表（含作者、点赞数、当前用户是否已赞）。"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             """SELECT a.id, a.circle_id, a.author_id, a.content, a.created_at, a.updated_at,
                       u.nickname, u.email,
@@ -2181,8 +2121,7 @@ async def list_circle_announcements(circle_id: int, viewer_id: int) -> list:
 
 
 async def get_circle_announcement(announcement_id: int) -> Optional[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             "SELECT * FROM circle_announcements WHERE id=?", (announcement_id,)
         ) as cur:
@@ -2194,8 +2133,7 @@ async def create_circle_announcement(circle_id: int, author_id: int, content: st
     text = (content or "").strip()
     if not text:
         raise ValueError("empty content")
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             "INSERT INTO circle_announcements(circle_id, author_id, content) VALUES(?,?,?)",
             (circle_id, author_id, text),
@@ -2219,7 +2157,7 @@ async def set_circle_announcement_content(announcement_id: int, content: str) ->
     text = (content or "").strip()
     if not text:
         raise ValueError("empty content")
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             "UPDATE circle_announcements SET content=?, updated_at=datetime('now') WHERE id=?",
             (text, announcement_id),
@@ -2231,8 +2169,7 @@ async def update_circle_announcement(announcement_id: int, author_id: int, conte
     text = (content or "").strip()
     if not text:
         raise ValueError("empty content")
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             "SELECT author_id, circle_id FROM circle_announcements WHERE id=?",
             (announcement_id,),
@@ -2252,7 +2189,7 @@ async def update_circle_announcement(announcement_id: int, author_id: int, conte
 
 async def toggle_announcement_like(announcement_id: int, user_id: int) -> dict:
     """切换点赞；返回 {liked, like_count}。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             "SELECT 1 FROM circle_announcement_likes WHERE announcement_id=? AND user_id=?",
             (announcement_id, user_id),
@@ -2281,7 +2218,7 @@ async def toggle_announcement_like(announcement_id: int, user_id: int) -> dict:
 
 
 async def delete_circle_announcement(announcement_id: int, author_id: int) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             "DELETE FROM circle_announcements WHERE id=? AND author_id=?",
             (announcement_id, author_id),
@@ -2292,8 +2229,7 @@ async def delete_circle_announcement(announcement_id: int, author_id: int) -> bo
 
 
 async def get_circle_post_reply(reply_id: int) -> Optional[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             "SELECT * FROM circle_post_replies WHERE id=?", (reply_id,)
         ) as cur:
@@ -2305,8 +2241,7 @@ async def update_circle_post_reply(reply_id: int, author_id: int, content: str) 
     text = (content or "").strip()
     if not text:
         raise ValueError("empty content")
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         reply = await get_circle_post_reply(reply_id)
         if not reply or reply["author_id"] != author_id:
             return None
@@ -2328,7 +2263,7 @@ async def update_circle_post_reply(reply_id: int, author_id: int, content: str) 
 
 
 async def delete_circle_post_reply(reply_id: int, author_id: int) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         async with db.execute(
             "DELETE FROM circle_post_replies WHERE id=? AND author_id=?",
             (reply_id, author_id),
@@ -2342,17 +2277,15 @@ async def list_circle_post_replies(post_ids: list) -> dict:
     """批量获取帖子回复，按 post_id 分组。"""
     if not post_ids:
         return {}
-    placeholders = ",".join("?" * len(post_ids))
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
-            f"""SELECT r.id, r.post_id, r.author_id, r.content, r.created_at,
+            """SELECT r.id, r.post_id, r.author_id, r.content, r.created_at,
                        u.nickname, u.email
                 FROM circle_post_replies r
                 JOIN users u ON u.id = r.author_id
-                WHERE r.post_id IN ({placeholders})
+                WHERE r.post_id = ANY($1)
                 ORDER BY r.created_at ASC""",
-            post_ids,
+            (post_ids,),
         ) as cur:
             rows = [dict(r) async for r in cur]
     grouped: dict = {}
@@ -2376,8 +2309,7 @@ async def create_circle_post_reply(post_id: int, author_id: int, content: str) -
     text = (content or "").strip()
     if not text:
         raise ValueError("empty content")
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             "INSERT INTO circle_post_replies(post_id, author_id, content) VALUES(?,?,?)",
             (post_id, author_id, text),
@@ -2400,8 +2332,7 @@ async def create_circle_post_reply(post_id: int, author_id: int, content: str) -
 
 async def list_browsable_circles(user_id: int, query: str = "") -> list:
     """公开圈子列表，附带当前用户的入圈状态。"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         sql = """
             SELECT c.id, c.name, c.description, c.max_members, c.created_at, c.owner_id,
                    (SELECT COUNT(*) FROM circle_members m WHERE m.circle_id=c.id) AS member_count,
@@ -2431,8 +2362,7 @@ async def list_browsable_circles(user_id: int, query: str = "") -> list:
 
 
 async def get_circle_join_request(circle_id: int, user_id: int) -> Optional[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             "SELECT * FROM circle_join_requests WHERE circle_id=? AND user_id=?",
             (circle_id, user_id),
@@ -2442,8 +2372,7 @@ async def get_circle_join_request(circle_id: int, user_id: int) -> Optional[dict
 
 
 async def get_circle_join_request_by_id(request_id: int) -> Optional[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             "SELECT * FROM circle_join_requests WHERE id=?", (request_id,)
         ) as cur:
@@ -2454,8 +2383,7 @@ async def get_circle_join_request_by_id(request_id: int) -> Optional[dict]:
 async def upsert_circle_join_request(circle_id: int, user_id: int, message: str = "") -> dict:
     """创建或重新提交入圈申请（被拒绝后可再次申请）。"""
     text = (message or "").strip()[:200]
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             "SELECT status FROM circle_join_requests WHERE circle_id=? AND user_id=?",
             (circle_id, user_id),
@@ -2483,8 +2411,7 @@ async def upsert_circle_join_request(circle_id: int, user_id: int, message: str 
 
 
 async def list_circle_join_requests(circle_id: int, status: str = "pending") -> list:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with connect() as db:
         async with db.execute(
             """SELECT r.id, r.circle_id, r.user_id, r.message, r.status, r.created_at, r.updated_at,
                       u.nickname, u.email
@@ -2498,7 +2425,7 @@ async def list_circle_join_requests(circle_id: int, status: str = "pending") -> 
 
 
 async def set_circle_join_request_status(request_id: int, status: str) -> Optional[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with connect() as db:
         await db.execute(
             "UPDATE circle_join_requests SET status=?, updated_at=datetime('now') WHERE id=?",
             (status, request_id),

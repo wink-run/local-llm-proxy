@@ -562,26 +562,29 @@ async def load_sources_doc() -> dict:
 
 def load_sources_doc_sync() -> dict:
     """同步读取 DB（list_sources_normalized 无 doc 时的兜底）。"""
-    import sqlite3
-    from database import DB_PATH
+    import psycopg2
+    from db_pool import get_database_url
 
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            row = conn.execute(
-                "SELECT value FROM system_config WHERE key=?", (CONFIG_KEY,),
-            ).fetchone()
-            if row and row[0] and str(row[0]).strip():
-                doc = _parse_json_or_yaml(str(row[0]))
-                if "sources" in doc:
-                    return {"version": doc.get("version") or 1, "sources": doc.get("sources") or []}
-            row2 = conn.execute(
-                "SELECT value FROM system_config WHERE key=?", (PROVIDERS_CONFIG_KEY,),
-            ).fetchone()
-            if row2 and row2[0] and str(row2[0]).strip():
-                prov = _parse_json_or_yaml(str(row2[0]))
-                bs = prov.get("billing_sources")
-                if isinstance(bs, list) and bs:
-                    return {"version": prov.get("version") or 1, "sources": list(bs)}
+        with psycopg2.connect(get_database_url()) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT value FROM system_config WHERE key=%s", (CONFIG_KEY,),
+                )
+                row = cur.fetchone()
+                if row and row[0] and str(row[0]).strip():
+                    doc = _parse_json_or_yaml(str(row[0]))
+                    if "sources" in doc:
+                        return {"version": doc.get("version") or 1, "sources": doc.get("sources") or []}
+                cur.execute(
+                    "SELECT value FROM system_config WHERE key=%s", (PROVIDERS_CONFIG_KEY,),
+                )
+                row2 = cur.fetchone()
+                if row2 and row2[0] and str(row2[0]).strip():
+                    prov = _parse_json_or_yaml(str(row2[0]))
+                    bs = prov.get("billing_sources")
+                    if isinstance(bs, list) and bs:
+                        return {"version": prov.get("version") or 1, "sources": list(bs)}
     except Exception:
         pass
     return {"version": 1, "sources": []}

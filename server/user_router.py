@@ -127,8 +127,6 @@ class UpdateProfileRequest(BaseModel):
 
 @router.patch("/profile")
 async def update_profile(req: UpdateProfileRequest, uid: int = Depends(get_current_user_id)):
-    import aiosqlite
-    from database import DB_PATH
     updates, params = [], []
     if req.nickname is not None:
         updates.append("nickname=?"); params.append(req.nickname)
@@ -140,9 +138,12 @@ async def update_profile(req: UpdateProfileRequest, uid: int = Depends(get_curre
         updates.append("wall_display=?"); params.append(req.wall_display)
     if updates:
         params.append(uid)
-        async with aiosqlite.connect(DB_PATH) as conn:
-            await conn.execute(f"UPDATE users SET {','.join(updates)} WHERE id=?", params)
-            await conn.commit()
+        from pg_compat import connect
+        async with connect() as conn:
+            await conn.execute(
+                f"UPDATE users SET {','.join(updates)} WHERE id=?",
+                tuple(params),
+            )
     return {"ok": True}
 
 

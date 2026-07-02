@@ -60,6 +60,7 @@ async def lifespan(app: FastAPI):
     task = asyncio.create_task(run_settler())
     yield
     task.cancel()
+    await db.close_pool()
 
 
 # landing 页产品截图，需长期保留

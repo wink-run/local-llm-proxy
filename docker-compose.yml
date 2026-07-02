@@ -1,19 +1,40 @@
 services:
 
+  # ── PostgreSQL ───────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-proxy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-proxy}
+      POSTGRES_DB: ${POSTGRES_DB:-proxy}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-proxy} -d ${POSTGRES_DB:-proxy}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   # ── Backend API server ───────────────────────────────────────────────────────
   proxy:
     build:
       context: ./server
-    # 生产环境经 nginx 暴露 HTTPS 时可注释下一行，仅保留 expose
     ports:
       - "8000:8000"
     expose:
       - "8000"
     env_file: .env
     environment:
-      - DB_PATH=/app/data/proxy.db
+      # 容器内固定连 postgres 服务名，覆盖 .env 里面向 localhost 的配置
+      DATABASE_URL: postgresql://${POSTGRES_USER:-proxy}:${POSTGRES_PASSWORD:-proxy}@postgres:5432/${POSTGRES_DB:-proxy}
     volumes:
-      - db_data:/app/data
+      - app_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -96,5 +117,6 @@ services:
         max-file: "3"
 
 volumes:
-  db_data:
+  app_data:
+  pg_data:
   certbot_www:

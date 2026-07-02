@@ -162,12 +162,11 @@ class ApproveRequest(BaseModel):
 
 @router.post("/purchase-orders/{order_id}/approve", dependencies=[Depends(auth_admin)])
 async def approve_order(order_id: int, req: ApproveRequest):
-    import aiosqlite
-    from database import DB_PATH
-    # 先取出 user_id
-    async with aiosqlite.connect(DB_PATH) as conn:
-        conn.row_factory = aiosqlite.Row
-        async with conn.execute("SELECT user_id FROM purchase_orders WHERE id=?", (order_id,)) as cur:
+    from pg_compat import connect
+    async with connect() as conn:
+        async with conn.execute(
+            "SELECT user_id FROM purchase_orders WHERE id=?", (order_id,)
+        ) as cur:
             row = await cur.fetchone()
             if not row:
                 raise HTTPException(404, "Order not found")

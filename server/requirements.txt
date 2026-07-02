@@ -4,7 +4,8 @@ uvicorn==0.32.1
 websockets==13.1
 httptools==0.6.4
 uvloop==0.21.0; sys_platform != "win32"
-aiosqlite==0.20.0
+asyncpg==0.30.0
+psycopg2-binary==2.9.10
 python-multipart==0.0.12
 PyJWT==2.9.0
 PyYAML>=6.0
