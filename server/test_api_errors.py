@@ -3,6 +3,7 @@ import json
 import unittest
 
 from api_errors import (
+    combined_worker_error_text,
     error_message_from_payload,
     openai_error_content,
     parse_worker_error,
@@ -37,6 +38,20 @@ class ApiErrorsTest(unittest.TestCase):
         msg = error_message_from_payload({"error": {"message": "rate limited"}})
         self.assertEqual(msg, "rate limited")
 
+    def test_parse_all_providers_failed_uses_detail(self):
+        err = 'HTTP 404: {"error":"all_providers_failed","detail":"Model \'test\' is not available"}'
+        code, msg, etype = parse_worker_error(err)
+        self.assertEqual(code, 404)
+        self.assertIn("not available", msg)
+        self.assertEqual(etype, "model_not_found")
+
+    def test_combined_worker_error_text_merges_json_detail(self):
+        err = 'HTTP 404: {"error":"all_providers_failed","detail":"Model \'test\' is not available"}'
+        combined = combined_worker_error_text(err)
+        self.assertIn("all_providers_failed", combined)
+        self.assertIn("http_404", combined)
+        self.assertIn("not available", combined)
+
     def test_should_offline_contributor_model(self):
         self.assertTrue(should_offline_contributor_model(
             "Model 'gpt-4o' is not configured on this contributor node"
@@ -44,6 +59,19 @@ class ApiErrorsTest(unittest.TestCase):
         self.assertTrue(should_offline_contributor_model(
             "P2P relay API Key not configured. Open Community"
         ))
+        self.assertTrue(should_offline_contributor_model(
+            'HTTP 404: {"error":"all_providers_failed","detail":"Model \'test\' is not available"}'
+        ))
+        self.assertTrue(should_offline_contributor_model(
+            'HTTP 404: {"error":"all_providers_failed","detail":"all_providers_failed"}'
+        ))
+        self.assertTrue(should_offline_contributor_model(
+            'HTTP 404: {"error":{"message":"Model \'test\' is not available","type":"model_not_found"}}'
+        ))
+        self.assertTrue(should_offline_contributor_model(
+            'HTTP 502: {"error":"all_providers_failed","detail":"HTTP_401: invalid key"}'
+        ))
+        self.assertTrue(should_offline_contributor_model("all_providers_failed"))
         self.assertFalse(should_offline_contributor_model("Gateway timeout"))
 
 
