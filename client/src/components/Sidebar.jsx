@@ -5,7 +5,7 @@ import { useLang } from '../store/lang';
 import { useUpdater } from '../store/updater';
 import logoSvg from '../assets/logo.svg';
 
-export default function Sidebar() {
+export default function Sidebar({ onToggleCollapse }) {
   const { user, guest } = useAuth();
   const { t } = useLang();
   const { pendingVersion, reopenToast } = useUpdater() || {};
@@ -91,7 +91,21 @@ export default function Sidebar() {
   const LOGIN_PATHS = new Set(['/circles', '/contribute']);
 
   return (
-    <aside className="w-[148px] flex flex-col pb-5 bg-white/55 dark:bg-zinc-900 backdrop-blur-2xl border-r border-zinc-900/[0.06] dark:border-white/[0.06] shrink-0">
+    <aside className="relative w-[148px] flex flex-col pb-5 bg-white/55 dark:bg-zinc-900 backdrop-blur-2xl border-r border-zinc-900/[0.06] dark:border-white/[0.06] shrink-0">
+      {/* CLI：收起侧边栏 */}
+      {onToggleCollapse && (
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          title={t('sidebar.collapse')}
+          aria-label={t('sidebar.collapse')}
+          className="absolute top-3 right-2 z-10 flex items-center justify-center w-7 h-7 rounded-md text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-white/10 transition-colors"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+            <path d="M15 18 9 12l6-6" />
+          </svg>
+        </button>
+      )}
       {/* Logo — pt-9 避开 macOS 交通灯；electron-drag 允许拖动窗口 */}
       <div className="electron-drag flex items-center gap-2.5 pt-14 pb-5 px-4 select-none mb-3">
         <img src={logoSvg} alt="Token Bank" className="w-10 h-10 shrink-0" />
