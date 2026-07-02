@@ -1,6 +1,6 @@
 // client/src/pages/Contribute.jsx
 import React, { useEffect, useState, useRef } from 'react';
-import { getStats, getSettlements, listJoinedCircles, listMyCircles } from '../api/client';
+import { getStats, getSettlements, getContributeSummary, listJoinedCircles, listMyCircles } from '../api/client';
 import { getConfig, getGateway } from '../api/adapter';
 import { resolveLocalGatewayBase } from '../api/gatewayModels';
 import {
@@ -9,6 +9,7 @@ import {
 } from '../api/agentControl';
 import RateChart from '../components/RateChart';
 import { useLang } from '../store/lang';
+import { fmtContribTokens, fmtCreditCny, creditsToCny } from '../lib/credit-pricing';
 function multiplierToStars(m) {
   const n = m >= 1.3 ? 5 : m >= 1.1 ? 4 : m >= 0.9 ? 3 : m >= 0.7 ? 2 : 1;
   return '★'.repeat(n) + '☆'.repeat(5 - n);
@@ -264,6 +265,7 @@ export default function Contribute() {
   const [stats,       setStats]       = useState(null);
   const [chartData,   setChartData]   = useState([]);
   const [settlements, setSettlements] = useState([]);
+  const [summary,     setSummary]     = useState(null);
   const [logs,        setLogs]        = useState([]);
   const [agentError,  setAgentError]  = useState('');
   const logRef = useRef(null);
@@ -318,6 +320,15 @@ export default function Contribute() {
   }, [lang]);
 
   useEffect(() => {
+    function loadSummary() {
+      getContributeSummary().then(r => setSummary(r.data)).catch(() => {});
+    }
+    loadSummary();
+    const id = setInterval(loadSummary, 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
     getSettlements().then(r => setSettlements((r.data.settlements || []).slice(0, 10))).catch(() => {});
   }, []);
 
@@ -350,6 +361,49 @@ export default function Contribute() {
         <h1 className="text-[17px] font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{t('contribute.title')}</h1>
         <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">{t('contribute.subtitle')}</p>
       </div>
+
+      {/* 累计贡献 / 赚取积分 / P2P 节省 */}
+      {summary && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4">
+            <p className="text-xs font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">
+              {t('contribute.totalTokens')}
+            </p>
+            <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
+              {fmtContribTokens(summary.contrib_tokens)}
+            </p>
+            <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
+              {summary.period_tokens > 0
+                ? t('contribute.periodTokens', { n: fmtContribTokens(summary.period_tokens) })
+                : t('contribute.totalTokensHint')}
+            </p>
+          </div>
+          <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4">
+            <p className="text-xs font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">
+              {t('contribute.earnedCredits')}
+            </p>
+            <p className="text-2xl font-bold text-green-600 dark:text-green-400">
+              +{(summary.contrib_credits ?? 0).toLocaleString(undefined, { maximumFractionDigits: 1 })}
+            </p>
+            <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
+              {t('contribute.approxCny', { amount: fmtCreditCny(summary.contrib_cny) })}
+            </p>
+          </div>
+          <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4">
+            <p className="text-xs font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-1.5">
+              {t('contribute.savedMoney')}
+            </p>
+            <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+              {fmtCreditCny(summary.saved_cny)}
+            </p>
+            <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
+              {summary.p2p_tokens > 0
+                ? t('contribute.p2pTokensUsed', { n: fmtContribTokens(summary.p2p_tokens) })
+                : t('contribute.savedHint')}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Start/Stop */}
       <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-5 py-4 flex items-center justify-between">
@@ -407,12 +461,15 @@ export default function Contribute() {
           <div className="space-y-2">
             {settlements.map(s => (
               <div key={s.id ?? s.period_end}
-                className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-3 grid grid-cols-5 gap-2 text-sm items-center">
-                <span className="text-zinc-400 dark:text-zinc-500 text-xs">{s.period_end?.slice(0, 16)}</span>
-                <span className="text-zinc-700 dark:text-zinc-300">{(s.output_tokens ?? 0).toLocaleString()} tok</span>
+                className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-3 grid grid-cols-6 gap-2 text-sm items-center">
+                <span className="text-zinc-400 dark:text-zinc-500 text-xs col-span-2 sm:col-span-1">{s.period_end?.slice(0, 16)}</span>
+                <span className="text-zinc-700 dark:text-zinc-300">{fmtContribTokens(s.output_tokens ?? 0)} tok</span>
                 <span className="text-yellow-500 text-xs">{multiplierToStars(s.multiplier ?? 1)}</span>
                 <span className="text-zinc-700 dark:text-zinc-300">{(s.multiplier ?? 1).toFixed(2)}×</span>
                 <span className="text-green-600 dark:text-green-400 font-medium">+{(s.credits_awarded ?? 0).toFixed(1)}</span>
+                <span className="text-zinc-400 dark:text-zinc-500 text-xs">
+                  ≈{fmtCreditCny(creditsToCny(s.credits_awarded))}
+                </span>
               </div>
             ))}
           </div>

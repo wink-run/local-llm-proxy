@@ -33,7 +33,7 @@ from provider_router import router as provider_router
 from config_router import router as config_router
 from circle_router import router as circle_router
 from worker_pool import pool, WorkerConnection
-from geo_ip import client_ip_from_ws, resolve_ip_geo
+from geo_ip import client_ip_from_ws, resolve_client_ip, resolve_ip_geo, virtual_worker_geo
 from contrib_display import apply_contrib_display
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -425,7 +425,13 @@ async def worker_ws(ws: WebSocket):
         # 去重并保持顺序
         worker_circle_ids_list = list(dict.fromkeys(worker_circle_ids_list))
 
-        client_ip = client_ip_from_ws(ws)
+        ws_ip = client_ip_from_ws(ws)
+        client_ip = resolve_client_ip(ws_ip, msg.get("public_ip"))
+        if not client_ip and ws_ip:
+            logger.debug(
+                "[worker/ws] no public ip peer=%s ws_ip=%s reported=%s",
+                peer, ws_ip, msg.get("public_ip"),
+            )
         worker = WorkerConnection(
             ws=ws, models=models, worker_id=worker_id,
             name=name, user_id=user_id,
@@ -438,8 +444,9 @@ async def worker_ws(ws: WebSocket):
 
         async def _geo_worker(w: WorkerConnection) -> None:
             geo = await resolve_ip_geo(w.client_ip)
+            # 仍无定位时按 worker_id 稳定落点（与虚拟 Agent 同一套城市池）
             if not geo:
-                return
+                geo = virtual_worker_geo(w.worker_id)
             w.latitude = geo["lat"]
             w.longitude = geo["lng"]
             w.country_code = geo.get("country_code") or ""

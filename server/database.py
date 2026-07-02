@@ -814,6 +814,57 @@ async def get_settlements(user_id: int, limit: int = 30) -> list[dict]:
             return [dict(r) for r in await cur.fetchall()]
 
 
+async def get_contribute_summary(user_id: int) -> dict:
+    """贡献页汇总：累计贡献 token、赚取积分及 P2P 使用节省金额。"""
+    from credit_pricing import credits_to_cny, cny_per_million_tokens
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT COALESCE(SUM(tokens), 0) AS tokens,
+                      COALESCE(SUM(delta), 0) AS credits
+               FROM transactions WHERE user_id=? AND type='contribute'""",
+            (user_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        contrib_tokens = int(row["tokens"] or 0)
+        contrib_credits = float(row["credits"] or 0)
+
+        async with db.execute(
+            """SELECT model_name,
+                      COALESCE(SUM(tokens), 0) AS tokens,
+                      COALESCE(SUM(ABS(delta)), 0) AS credits_spent
+               FROM transactions
+               WHERE user_id=? AND type='consume' AND tier='p2p' AND tokens > 0
+               GROUP BY model_name""",
+            (user_id,),
+        ) as cur:
+            p2p_rows = [dict(r) for r in await cur.fetchall()]
+
+    rate_map = {m["name"]: m["consume_rate"] for m in await list_model_configs()}
+
+    p2p_tokens = 0
+    p2p_credits_spent = 0.0
+    saved_cny = 0.0
+    for r in p2p_rows:
+        tokens = int(r["tokens"] or 0)
+        credits = float(r["credits_spent"] or 0)
+        model = r["model_name"] or ""
+        cpm = cny_per_million_tokens(rate_map.get(model))
+        p2p_tokens += tokens
+        p2p_credits_spent += credits
+        saved_cny += tokens / 1_000_000 * cpm
+
+    return {
+        "contrib_tokens": contrib_tokens,
+        "contrib_credits": round(contrib_credits, 2),
+        "contrib_cny": round(credits_to_cny(contrib_credits), 4),
+        "p2p_tokens": p2p_tokens,
+        "p2p_credits_spent": round(p2p_credits_spent, 2),
+        "saved_cny": round(saved_cny, 4),
+    }
+
+
 # ── purchase_orders ───────────────────────────────────────────────────────────
 
 async def create_purchase_order(user_id: int, amount_credits: float, note: str) -> dict:

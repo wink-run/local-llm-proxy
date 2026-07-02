@@ -39,6 +39,55 @@ def client_ip_from_ws(ws) -> Optional[str]:
     return None
 
 
+def resolve_client_ip(ws_ip: Optional[str], reported_ip: Optional[str] = None) -> Optional[str]:
+    """优先 WebSocket 公网 IP；本机/内网连接时用 Agent 主动上报的 public_ip。"""
+    if ws_ip and _is_public_ip(ws_ip):
+        return ws_ip.strip()
+    reported = (reported_ip or "").strip()
+    if reported and _is_public_ip(reported):
+        return reported
+    return None
+
+
+async def _lookup_ip_api(ip: str) -> Optional[dict]:
+    url = f"http://ip-api.com/json/{ip}?fields=status,lat,lon,countryCode,city"
+    async with httpx.AsyncClient(timeout=4.0) as client:
+        r = await client.get(url)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        if data.get("status") != "success":
+            return None
+        lat, lng = data.get("lat"), data.get("lon")
+        if lat is None or lng is None:
+            return None
+        return {
+            "lat": float(lat),
+            "lng": float(lng),
+            "country_code": (data.get("countryCode") or "").upper(),
+            "city": (data.get("city") or "").strip(),
+        }
+
+
+async def _lookup_ip_sb(ip: str) -> Optional[dict]:
+    """备用：ip.sb（HTTPS，国内相对可用）。"""
+    url = f"https://api.ip.sb/geoip/{ip}"
+    async with httpx.AsyncClient(timeout=4.0) as client:
+        r = await client.get(url, headers={"User-Agent": "local-llm-proxy/1.0"})
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        lat, lng = data.get("latitude"), data.get("longitude")
+        if lat is None or lng is None:
+            return None
+        return {
+            "lat": float(lat),
+            "lng": float(lng),
+            "country_code": (data.get("country_code") or "").upper(),
+            "city": (data.get("city") or "").strip(),
+        }
+
+
 async def resolve_ip_geo(ip: Optional[str]) -> Optional[dict]:
     """解析公网 IP → { lat, lng, country_code, city }；私网/无效返回 None。"""
     if not ip or not _is_public_ip(ip):
@@ -55,23 +104,13 @@ async def resolve_ip_geo(ip: Optional[str]) -> Optional[dict]:
             return cached[1]
 
         geo: Optional[dict] = None
-        try:
-            url = f"http://ip-api.com/json/{ip}?fields=status,lat,lon,countryCode,city"
-            async with httpx.AsyncClient(timeout=4.0) as client:
-                r = await client.get(url)
-                if r.status_code == 200:
-                    data = r.json()
-                    if data.get("status") == "success":
-                        lat, lng = data.get("lat"), data.get("lon")
-                        if lat is not None and lng is not None:
-                            geo = {
-                                "lat": float(lat),
-                                "lng": float(lon),
-                                "country_code": (data.get("countryCode") or "").upper(),
-                                "city": (data.get("city") or "").strip(),
-                            }
-        except Exception as e:
-            logger.debug("[geo_ip] lookup failed ip=%s: %s", ip, e)
+        for lookup in (_lookup_ip_api, _lookup_ip_sb):
+            try:
+                geo = await lookup(ip)
+                if geo:
+                    break
+            except Exception as e:
+                logger.debug("[geo_ip] lookup failed ip=%s: %s", ip, e)
 
         _CACHE[ip] = (time.time(), geo)
         return geo

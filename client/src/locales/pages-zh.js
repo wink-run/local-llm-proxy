@@ -746,6 +746,15 @@ export default {
   'contribute.nodeNamePh': '留空使用主机名',
   'contribute.autoStart': '启动应用时自动运行贡献节点',
   'contribute.saveConfig': '保存配置',
+  'contribute.totalTokens': '累计贡献 Token',
+  'contribute.totalTokensHint': '历史结算累计',
+  'contribute.periodTokens': '本周期 +{n}（待结算）',
+  'contribute.earnedCredits': '累计赚取积分',
+  'contribute.approxCny': '约合 {amount}',
+  'contribute.savedMoney': 'P2P 节省金额',
+  'contribute.savedHint': '使用社区算力相对刊例价',
+  'contribute.p2pTokensUsed': '已用 {n} P2P token',
+  'contribute.settlementCny': '约合',
 
   // ── 网络 ──
   'network.backProviders': '← 供给源',

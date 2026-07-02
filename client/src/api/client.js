@@ -81,6 +81,11 @@ export function getSettlements() {
   return http.get('/user/settlements');
 }
 
+/** 贡献页汇总：累计 token、积分、P2P 节省金额 */
+export function getContributeSummary() {
+  return http.get('/user/contribute-summary');
+}
+
 export function getNetwork() {
   return http.get('/public/network');
 }

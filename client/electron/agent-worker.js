@@ -359,6 +359,79 @@ function forwardImageRequest(reqId, payload, cfg) {
   });
 }
 
+// ── 公网 IP（WebSocket 连 localhost 时服务端只能看到 127.0.0.1，需客户端主动上报）──
+
+let _cachedPublicIp = null;
+let _cachedPublicIpAt = 0;
+const PUBLIC_IP_TTL_MS = 5 * 60 * 1000;
+
+/** 简单 IPv4 公网校验（与服务端 is_global 语义一致，够用即可） */
+function isPublicIpv4(ip) {
+  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(String(ip || '').trim());
+  if (!m) return false;
+  const o = m.slice(1, 5).map(Number);
+  if (o.some(n => n > 255)) return false;
+  if (o[0] === 10) return false;
+  if (o[0] === 127) return false;
+  if (o[0] === 172 && o[1] >= 16 && o[1] <= 31) return false;
+  if (o[0] === 192 && o[1] === 168) return false;
+  if (o[0] === 169 && o[1] === 254) return false;
+  return true;
+}
+
+function httpGetText(url, timeoutMs = 4000) {
+  return new Promise((resolve, reject) => {
+    const lib = url.startsWith('https') ? https : http;
+    const req = lib.get(url, { timeout: timeoutMs, headers: { 'User-Agent': 'tokenbank-agent/1.0' } }, (res) => {
+      let body = '';
+      res.on('data', c => { body += c; });
+      res.on('end', () => resolve(body));
+    });
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    req.on('error', reject);
+  });
+}
+
+/** 多源探测公网 IP，失败返回 null（不阻塞 Agent 注册） */
+async function fetchPublicIp() {
+  const now = Date.now();
+  if (_cachedPublicIp && now - _cachedPublicIpAt < PUBLIC_IP_TTL_MS) {
+    return _cachedPublicIp;
+  }
+  const providers = [
+    async () => {
+      const body = await httpGetText('https://api.ipify.org?format=json');
+      const ip = JSON.parse(body).ip;
+      return isPublicIpv4(ip) ? ip : null;
+    },
+    async () => {
+      const body = await httpGetText('https://cloudflare.com/cdn-cgi/trace');
+      const m = body.match(/^ip=(.+)$/m);
+      const ip = m ? m[1].trim() : '';
+      return isPublicIpv4(ip) ? ip : null;
+    },
+    async () => {
+      const ip = (await httpGetText('https://ifconfig.me/ip')).trim();
+      return isPublicIpv4(ip) ? ip : null;
+    },
+    async () => {
+      const ip = (await httpGetText('https://api.ip.sb/ip')).trim();
+      return isPublicIpv4(ip) ? ip : null;
+    },
+  ];
+  for (const probe of providers) {
+    try {
+      const ip = await probe();
+      if (ip) {
+        _cachedPublicIp = ip;
+        _cachedPublicIpAt = now;
+        return ip;
+      }
+    } catch { /* 换下一个源 */ }
+  }
+  return null;
+}
+
 // ── WebSocket helpers ─────────────────────────────────────────────────────────
 
 function send(obj) {
@@ -372,21 +445,32 @@ function connect(cfg) {
   ws = new WebSocket(cfg.server_url, { handshakeTimeout: 10000 });
 
   ws.on('open', () => {
-    const models = cfg.model_groups?.length
-      ? cfg.model_groups.flatMap(g => g.models || [])
-      : (cfg.models || []);
-    const regMsg = {
-      type: 'register',
-      worker_key: cfg.worker_key,
-      models,
-      name: cfg.name || os.hostname(),
-    };
-    if (cfg.contribute_circle_ids?.length) {
-      regMsg.circle_ids = cfg.contribute_circle_ids;
-    } else if (cfg.contribute_circle_id) {
-      regMsg.circle_ids = [cfg.contribute_circle_id];
-    }
-    ws.send(JSON.stringify(regMsg));
+    (async () => {
+      const models = cfg.model_groups?.length
+        ? cfg.model_groups.flatMap(g => g.models || [])
+        : (cfg.models || []);
+      const regMsg = {
+        type: 'register',
+        worker_key: cfg.worker_key,
+        models,
+        name: cfg.name || os.hostname(),
+      };
+      if (cfg.contribute_circle_ids?.length) {
+        regMsg.circle_ids = cfg.contribute_circle_ids;
+      } else if (cfg.contribute_circle_id) {
+        regMsg.circle_ids = [cfg.contribute_circle_id];
+      }
+      const publicIp = await fetchPublicIp();
+      if (publicIp) {
+        regMsg.public_ip = publicIp;
+        log(`[agent] public_ip=${publicIp}`);
+      } else {
+        log('[agent] public_ip unavailable — map may use fallback location');
+      }
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(regMsg));
+      }
+    })();
   });
 
   ws.on('message', async (raw) => {

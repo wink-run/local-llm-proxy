@@ -200,6 +200,21 @@ async def my_settlements(uid: int = Depends(get_current_user_id)):
     return {"settlements": await db.get_settlements(uid)}
 
 
+@router.get("/contribute-summary")
+async def contribute_summary(uid: int = Depends(get_current_user_id)):
+    """贡献页：累计 token、赚取积分（折算人民币）、P2P 使用节省金额。"""
+    summary = await db.get_contribute_summary(uid)
+    # 当前未结算周期内的实时贡献 token
+    period_tokens = sum(
+        s.get("output_tokens", 0)
+        for w in _pool.all_workers()
+        if w.user_id == uid
+        for s in w.period_stats.values()
+    )
+    summary["period_tokens"] = period_tokens
+    return summary
+
+
 # ── 购买积分 ──────────────────────────────────────────────────────────────────
 
 class PurchaseRequest(BaseModel):
