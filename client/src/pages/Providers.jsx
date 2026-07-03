@@ -3149,8 +3149,26 @@ export default function Providers() {
     };
 
     loadFromYaml();
+
+    // 进入供给源页：后台拉 /api/catalog 写 yaml，完成后刷新目录与账户模板
+    (async () => {
+      try {
+        if (window.electronAPI?.localConfig?.syncProviderCatalog) {
+          await window.electronAPI.localConfig.syncProviderCatalog();
+        } else if (!isElectron()) {
+          const base = import.meta.env?.VITE_ADMIN_BASE ?? '';
+          await fetch(`${base}/api/provider-catalog/sync`, { method: 'POST' });
+        }
+        if (!cancelled) {
+          await loadFromYaml();
+          loadUserPaidAccounts();
+        }
+      } catch {}
+    })();
+
     const unsubCatalog = window.electronAPI?.localConfig?.onCatalogUpdated?.(() => {
       loadFromYaml();
+      loadUserPaidAccounts();
     });
     const unsubBilling = window.electronAPI?.localConfig?.onBillingChanged?.(() => {
       loadFromYaml();
@@ -3160,12 +3178,7 @@ export default function Providers() {
       unsubCatalog?.();
       unsubBilling?.();
     };
-  }, [t, oauthById]);
-
-  // 进入供给源页：后台拉 /api/catalog 写 yaml（首屏仍读本地 yaml，同步完成后 catalog:updated 刷新）
-  useEffect(() => {
-    window.electronAPI?.localConfig?.syncProviderCatalog?.().catch?.(() => {});
-  }, []);
+  }, [t, oauthById, loadUserPaidAccounts]);
 
   // 与本地配置 / 个人源账户合并（不重复拉 /api/catalog）
   useEffect(() => {

@@ -19,6 +19,7 @@ const { refreshGatewayPeerModels } = require('../shared/peer-models-sync');
 const { bindClaudeRoutesToKeyScene } = require('../shared/route-binding');
 const { localStats } = require('../shared/telemetry');
 const billingConfig = require('../electron/billing-config');
+const catalogSync = require('../electron/catalog-sync');
 const cloudBilling = require('../electron/cloud-billing-sync');
 const configLoader = require('../electron/config-loader');
 const appsUsage = require('../shared/apps-usage-handlers');
@@ -244,7 +245,23 @@ function resolveBillingServerUrl(req) {
 
 function applyUserBillingCfg(cfg) {
   try { billingConfig.applyPricingOverrides(cfg.provider_pricing_overrides || {}); } catch {}
+  writeLocalConfig(cfg);
   syncAgentProviderModelsFromAccounts();
+}
+
+/** 后台拉 /api/catalog 写入 ~/.tokenbank/providers.registry.yaml（与 Electron 对齐） */
+function scheduleCatalogSync() {
+  return catalogSync.scheduleBackgroundSync({
+    readLocalConfig,
+    applyUserBillingCfg,
+  });
+}
+
+async function syncProviderCatalogApi() {
+  return catalogSync.syncCatalogToRegistry({
+    readLocalConfig,
+    applyUserBillingCfg,
+  });
 }
 
 /** 账户/刊例价模型 → agent config（与 Electron main 对齐） */
@@ -490,6 +507,16 @@ async function handleRequest(req, res) {
     return json(res, 200, configLoader.builtinCatalogPayload());
   }
 
+  if (method === 'POST' && url === '/api/provider-catalog/sync') {
+    const result = await syncProviderCatalogApi();
+    const payload = {
+      ...result,
+      catalog: configLoader.builtinCatalogPayload(),
+      template_count: (configLoader.billingSourcesList() || []).length,
+    };
+    return json(res, result.ok ? 200 : 502, payload);
+  }
+
   // ── P2P 贡献 Agent（Docker / CLI，对应 Electron agent:* IPC）────────────────
 
   if (method === 'GET' && url === '/api/agent/status') {
@@ -524,6 +551,7 @@ async function handleRequest(req, res) {
     writeLocalConfig(lc);
     syncGateway(lc);
     refreshGatewayPeerModels(_gateway, readLocalConfig, defaultServerUrlFromEnv, readAgentConfig).catch(() => {});
+    scheduleCatalogSync();
     return json(res, 200, { ok: true });
   }
 
@@ -537,6 +565,7 @@ async function handleRequest(req, res) {
     if (_gateway?.setUserAuth) _gateway.setUserAuth(jwt);
     reporter.setUserJwt(jwt);
     if (_reporterGetStats) reporter.start(_reporterGetStats);
+    scheduleCatalogSync();
     return json(res, 200, { ok: true });
   }
 
@@ -792,6 +821,7 @@ function start(port, gatewayInstance, bindHost = '127.0.0.1', opts = {}) {
 
   _server.listen(port, bindHost, () => {
     console.log(`[admin-api] listening on ${bindHost}:${port}`);
+    scheduleCatalogSync();
   });
 
   return _server;
