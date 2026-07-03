@@ -2769,6 +2769,8 @@ function handleRequest(req, res) {
         if (p.type === 'p2p') continue;
         for (const m of (p.models || [])) {
           const id = typeof m === 'string' ? m : m.name;
+          // mask 名仅通过 owned_by=anthropic 暴露给 Claude Desktop，下拉不重复展示
+          if (_claudeModels.includes(id)) continue;
           const mtype = providerModelType(id, p);
           add(id, p.id, mtype);
         }

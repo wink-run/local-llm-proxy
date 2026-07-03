@@ -983,7 +983,7 @@ function Toggle({ enabled, onChange, disabled = false }) {
 
 // ── P2P Network Card ──────────────────────────────────────────────────────────
 
-function P2PNetworkCard({ provider, onUpdate }) {
+function P2PNetworkCard({ provider, onUpdate, onPersistEnabled }) {
   const { t } = useLang();
   const { user } = useAuth();
   const needsLogin = !user;
@@ -1224,7 +1224,11 @@ function P2PNetworkCard({ provider, onUpdate }) {
             <Toggle
               enabled={provider.enabled}
               disabled={needsLogin}
-              onChange={() => onUpdate('tokenbank-p2p', { enabled: !provider.enabled })}
+              onChange={() => {
+                const next = !provider.enabled;
+                onUpdate('tokenbank-p2p', { enabled: next });
+                onPersistEnabled?.('tokenbank-p2p', next);
+              }}
             />
           </div>
           {!loading && (
@@ -3231,6 +3235,23 @@ export default function Providers() {
     });
   }, [userPayg]);
 
+  /** 立即落盘 enabled，避免 debounce 未完成时网关页仍读到旧开关 */
+  const persistProviderEnabled = useCallback(async (id, enabled) => {
+    const stub = id === 'tokenbank-p2p'
+      ? { ...BUILTIN_P2P_PROVIDER, enabled: !!enabled }
+      : { id, type: 'paid', enabled: !!enabled, token: '', base_url: '', models: [] };
+    try {
+      const cfg = (await getConfig().read()) || {};
+      const list = [...(cfg.providers || [])];
+      const i = list.findIndex(p => p.id === id);
+      if (i >= 0) list[i] = { ...list[i], enabled: !!enabled };
+      else list.push(stub);
+      await getConfig().write({ ...cfg, providers: list });
+      lastSaved.current = list;
+      setProviders(prev => prev.map(p => (p.id === id ? { ...p, enabled: !!enabled } : p)));
+    } catch { /* 离线时仍保留内存态 */ }
+  }, []);
+
   /** 立即落盘 provider.models，避免 saveAccounts 触发重载时被 debounce 旧配置覆盖 */
   const persistProviderModels = useCallback(async (id, models) => {
     const normalized = (models || []).map(normModel).filter(m => m.name);
@@ -3847,7 +3868,7 @@ export default function Providers() {
         />
         <div className={`grid ${tierConfig.p2p.cols} gap-3`}>
           {providers.filter(p => p.type === 'p2p').map(p => (
-            <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} />
+            <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} onPersistEnabled={persistProviderEnabled} />
           ))}
         </div>
       </section>
