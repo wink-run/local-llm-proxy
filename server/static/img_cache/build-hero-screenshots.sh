@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# 将 PNG 源图严格按文件名转为 landing hero 用 webp。
-# 命名约定（与 landing.html data-tab 一一对应）：
-#   {key}.png      → {key}.webp      （中文截图，tab 高亮须与 key 对应）
-#   {key}_en.png   → {key}_en.webp   （英文截图）
-# 输出尺寸固定 1600×1269，等比缩放后留白（不裁剪），避免 tab 与内容被裁切。
+# PNG → landing hero webp（1600×1269）
+# 规则：仅缩小过大图片；原始尺寸不足时不放大，居中铺底色填充。
+# 命名与 landing.html data-tab 一一对应：{key}.png / {key}_en.png
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -12,7 +10,6 @@ TARGET_H=1269
 QUALITY=85
 PAD_COLOR=0xF5F2F0
 
-# 顺序与 landing #tb-tabs 一致
 KEYS=(dashboard gateway provider contribute circle world device trace)
 
 need_cmd() {
@@ -20,6 +17,7 @@ need_cmd() {
 }
 need_cmd ffmpeg
 need_cmd cwebp
+need_cmd sips
 
 missing=()
 for key in "${KEYS[@]}"; do
@@ -38,16 +36,21 @@ for key in "${KEYS[@]}"; do
   for suffix in "" "_en"; do
     png="${DIR}/${key}${suffix}.png"
     webp="${DIR}/${key}${suffix}.webp"
+    src_w=$(sips -g pixelWidth "$png" 2>/dev/null | awk '/pixelWidth/{print $2}')
+    src_h=$(sips -g pixelHeight "$png" 2>/dev/null | awk '/pixelHeight/{print $2}')
     tmp="$(mktemp /tmp/tb_${key}${suffix}.XXXXXX.png)"
-    # 等比缩放到画布内，居中铺底色，保证完整画面
+
+    # decrease：只缩小不放大；pad：不足处用背景色填充
     ffmpeg -y -loglevel error -i "$png" \
       -vf "scale=${TARGET_W}:${TARGET_H}:force_original_aspect_ratio=decrease,pad=${TARGET_W}:${TARGET_H}:(ow-iw)/2:(oh-ih)/2:color=${PAD_COLOR}" \
       "$tmp"
     cwebp -q "$QUALITY" "$tmp" -o "$webp"
     rm -f "$tmp"
-    w=$(sips -g pixelWidth "$webp" 2>/dev/null | awk '/pixelWidth/{print $2}')
-    h=$(sips -g pixelHeight "$webp" 2>/dev/null | awk '/pixelHeight/{print $2}')
-    echo "OK ${key}${suffix}.png → ${key}${suffix}.webp (${w}x${h})"
+
+    out_w=$(sips -g pixelWidth "$webp" 2>/dev/null | awk '/pixelWidth/{print $2}')
+    out_h=$(sips -g pixelHeight "$webp" 2>/dev/null | awk '/pixelHeight/{print $2}')
+    scaled=$([[ "$src_w" -le $TARGET_W && "$src_h" -le $TARGET_H ]] && echo "原尺寸+填充" || echo "缩小+填充")
+    echo "OK ${key}${suffix}.png (${src_w}x${src_h}) → ${key}${suffix}.webp (${out_w}x${out_h}, ${scaled})"
   done
 done
 
