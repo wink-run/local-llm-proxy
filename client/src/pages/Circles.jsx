@@ -29,9 +29,9 @@ export default function Circles() {
   const [joinBanner, setJoinBanner] = useState(() => {
     const r = location.state?.circleResult;
     if (!r) return null;
-    if (r.already_member) return { type: 'info',    text: '你已经是该圈子的成员了' };
-    if (r.full)           return { type: 'warning', text: '圈子已满，未能自动加入' };
-    if (r.ok)             return { type: 'success', text: '已成功加入圈子 🎉' };
+    if (r.already_member) return { type: 'info',    key: 'circles.alreadyMember' };
+    if (r.full)           return { type: 'warning', key: 'circles.fullAutoJoinFailed' };
+    if (r.ok)             return { type: 'success', key: 'circles.joinSuccess' };
     return null;
   });
 
@@ -68,7 +68,7 @@ export default function Circles() {
       setName(''); setDesc(''); setShowCreate(false);
       await load();
     } catch (err) {
-      setError(err?.response?.data?.detail || err.message || '创建失败');
+      setError(err?.response?.data?.detail || err.message || t('circles.createFailed'));
     } finally {
       setCreating(false);
     }
@@ -101,7 +101,7 @@ export default function Circles() {
       const r = await previewCircle(code);
       setJoinPreview({ ...r.data, code });  // opens modal
     } catch (err) {
-      setJoinError(err?.response?.data?.detail || '圈子不存在或邀请码错误');
+      setJoinError(err?.response?.data?.detail || t('circles.inviteInvalid'));
       setTimeout(() => setJoinError(''), 3000);
     } finally {
       setJoinLoading(false);
@@ -115,16 +115,16 @@ export default function Circles() {
       const r = await joinCircle(joinPreview.code);
       const d = r.data;
       if (d.already_member) {
-        setJoinBanner({ type: 'info', text: '你已经是该圈子的成员了' });
+        setJoinBanner({ type: 'info', key: 'circles.alreadyMember' });
       } else if (d.full) {
-        setJoinBanner({ type: 'warning', text: '圈子已满，无法加入' });
+        setJoinBanner({ type: 'warning', key: 'circles.fullCannotJoin' });
       } else {
-        setJoinBanner({ type: 'success', text: `已成功加入「${joinPreview.circle.name}」🎉` });
+        setJoinBanner({ type: 'success', key: 'circles.joinSuccessNamed', params: { name: joinPreview.circle.name } });
       }
       setJoinInput(''); setJoinPreview(null);
       await load();
     } catch (err) {
-      setJoinError(err?.response?.data?.detail || '加入失败');
+      setJoinError(err?.response?.data?.detail || t('circles.joinFailed'));
     } finally {
       setJoinLoading(false);
     }
@@ -171,7 +171,7 @@ export default function Circles() {
           ${joinBanner.type === 'success' ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300' :
             joinBanner.type === 'warning' ? 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-300' :
             'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'}`}>
-          <span>{joinBanner.text}</span>
+          <span>{joinBanner.key ? t(joinBanner.key, joinBanner.params) : joinBanner.text}</span>
           <button onClick={() => setJoinBanner(null)} className="ml-3 opacity-60 hover:opacity-100 text-lg leading-none">×</button>
         </div>
       )}
@@ -201,7 +201,7 @@ export default function Circles() {
               </button>
               <button type="button" onClick={() => { setShowCreate(false); setError(''); }}
                 className="px-3 py-1.5 text-sm border border-gray-200 dark:border-gray-600 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                取消
+                {t('circles.cancel')}
               </button>
             </div>
           </form>
@@ -244,13 +244,13 @@ export default function Circles() {
           <form onSubmit={handleJoinPreview} className="flex gap-2">
             <input
               className="w-48 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="邀请链接或邀请码"
+              placeholder={t('circles.joinInputPh')}
               value={joinInput}
               onChange={e => { setJoinInput(e.target.value); setJoinPreview(null); setJoinError(''); }}
             />
             <button type="submit" disabled={joinLoading || !joinInput.trim()}
               className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors shrink-0">
-              加入
+              {t('circles.joinBtn')}
             </button>
           </form>
         </div>
@@ -321,7 +321,7 @@ export default function Circles() {
       {joinPreview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setJoinPreview(null)}>
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-80 p-6 space-y-4" onClick={e => e.stopPropagation()}>
-            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">加入圈子</h3>
+            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">{t('circles.joinModalTitle')}</h3>
             <div className="flex items-center gap-3">
               <div className={`w-12 h-12 rounded-full ${avatarColor(joinPreview.circle.name)} flex items-center justify-center text-xl font-bold text-white shrink-0`}>
                 {joinPreview.circle.name[0].toUpperCase()}
@@ -331,24 +331,26 @@ export default function Circles() {
                 {joinPreview.circle.description && (
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{joinPreview.circle.description}</p>
                 )}
-                <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{joinPreview.circle.member_count} / {joinPreview.circle.max_members} 人</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                  {t('circles.memberSlots', { current: joinPreview.circle.member_count, max: joinPreview.circle.max_members })}
+                </p>
               </div>
             </div>
             {joinError && <p className="text-red-500 text-xs">{joinError}</p>}
             <div className="flex gap-2 pt-1">
               {joinPreview.already_member ? (
-                <p className="text-sm text-blue-600 dark:text-blue-400 flex-1">你已经是该圈子的成员</p>
+                <p className="text-sm text-blue-600 dark:text-blue-400 flex-1">{t('circles.alreadyMember')}</p>
               ) : joinPreview.full ? (
-                <p className="text-sm text-yellow-600 dark:text-yellow-400 flex-1">圈子已满，无法加入</p>
+                <p className="text-sm text-yellow-600 dark:text-yellow-400 flex-1">{t('circles.fullCannotJoin')}</p>
               ) : (
                 <button onClick={handleJoinConfirm} disabled={joinLoading}
                   className="flex-1 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
-                  {joinLoading ? '加入中…' : '确认加入'}
+                  {joinLoading ? t('circles.joining') : t('circles.joinConfirm')}
                 </button>
               )}
               <button onClick={() => setJoinPreview(null)}
                 className="flex-1 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                取消
+                {t('circles.cancel')}
               </button>
             </div>
           </div>
