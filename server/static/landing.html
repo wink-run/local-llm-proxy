@@ -38,6 +38,10 @@
     .tb-app-row { animation: none !important; }
   }
   #tb-hero-dashboard { transition: opacity .35s ease; }
+  /* hero 截图 tab 较多时横向滚动 */
+  #tb-tabs { overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  #tb-tabs::-webkit-scrollbar { display: none; }
+  #tb-tabs [data-tab] { flex-shrink: 0; white-space: nowrap; }
   .tb-faq[open] .tb-faq-mark { transform: rotate(45deg); background: #FFD055; }
   @keyframes tbPacket { 0% { top: -6px; opacity: 0; } 12% { opacity: 1; } 88% { opacity: 1; } 100% { top: 44px; opacity: 0; } }
   @keyframes tbPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(224,138,0,0); } 50% { box-shadow: 0 0 0 8px rgba(224,138,0,0.10); } }
@@ -133,10 +137,14 @@
               <span style="width:11px;height:11px;border-radius:50%;background:#e6e2df;"></span>
               <span style="width:11px;height:11px;border-radius:50%;background:#e6e2df;"></span>
             </div>
-            <div id="tb-tabs" style="display:flex;gap:6px;align-items:center;">
-              <span data-tab="dashboard" style="font-size:13px;font-weight:500;color:#000;background:#f5f2f0;padding:5px 12px;border-radius:8px;cursor:pointer;">Dashboard</span>
-              <span data-tab="gateway" style="font-size:13px;color:#7b7b7b;padding:5px 12px;border-radius:8px;cursor:pointer;">Gateway</span>
-              <span data-tab="provider" style="font-size:13px;color:#7b7b7b;padding:5px 12px;border-radius:8px;cursor:pointer;">Providers</span>
+            <div id="tb-tabs" style="display:flex;gap:4px;align-items:center;min-width:0;flex:1;">
+              <span data-tab="dashboard" data-i18n="hero.tab.dashboard" style="font-size:12px;font-weight:500;color:#000;background:#f5f2f0;padding:4px 10px;border-radius:8px;cursor:pointer;">Dashboard</span>
+              <span data-tab="gateway" data-i18n="hero.tab.gateway" style="font-size:12px;color:#7b7b7b;padding:4px 10px;border-radius:8px;cursor:pointer;">Gateway</span>
+              <span data-tab="provider" data-i18n="hero.tab.provider" style="font-size:12px;color:#7b7b7b;padding:4px 10px;border-radius:8px;cursor:pointer;">Providers</span>
+              <span data-tab="contribute" data-i18n="hero.tab.contribute" style="font-size:12px;color:#7b7b7b;padding:4px 10px;border-radius:8px;cursor:pointer;">Contribute</span>
+              <span data-tab="circle" data-i18n="hero.tab.circle" style="font-size:12px;color:#7b7b7b;padding:4px 10px;border-radius:8px;cursor:pointer;">Circles</span>
+              <span data-tab="world" data-i18n="hero.tab.world" style="font-size:12px;color:#7b7b7b;padding:4px 10px;border-radius:8px;cursor:pointer;">Network</span>
+              <span data-tab="device" data-i18n="hero.tab.device" style="font-size:12px;color:#7b7b7b;padding:4px 10px;border-radius:8px;cursor:pointer;">Devices</span>
             </div>
             <span style="margin-left:auto;font-family:'Space Mono',monospace;font-size:12px;color:#bcbcbc;">localhost:11430</span>
           </div>
@@ -823,6 +831,8 @@ class Component extends DCLogic {
     'hero.sub': '一个本地网关接管全部 AI 应用——追踪每个 token，智能路由省更多，把闲置额度变成积分。你的工具只指向一个本地地址，路由全程透明。',
     'hero.ctaPrimary': '免费下载', 'hero.ctaSecondary': '在 GitHub 查看',
     'hero.meta': 'macOS · Windows · Linux　·　Apache-2.0 开源',
+    'hero.tab.dashboard': '盘点', 'hero.tab.gateway': '网关', 'hero.tab.provider': '供给源',
+    'hero.tab.contribute': '贡献', 'hero.tab.circle': '圈子', 'hero.tab.world': '网络', 'hero.tab.device': '设备',
     'trust.label': '已与你正在用的主流 AI 应用协同',
     'stat.1': '一个本地端口<br>接管全部 AI 应用',
     'stat.2': '种协议自动转换<br>Anthropic · OpenAI · Codex',
@@ -970,7 +980,7 @@ class Component extends DCLogic {
 
     // hero tab switching（含自动轮播）
     const tabs = root.querySelector('#tb-tabs');
-    const TAB_KEYS = ['dashboard', 'gateway', 'provider'];
+    const TAB_KEYS = ['dashboard', 'gateway', 'provider', 'contribute', 'circle', 'world', 'device'];
     const switchHeroTab = (key) => {
       if (!tabs) return;
       const lang = this.state.lang || 'en';
