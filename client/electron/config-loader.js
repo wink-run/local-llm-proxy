@@ -369,11 +369,18 @@ function billingSourcesList() {
   return [];
 }
 
+function _inferModalityFromPricing(rates) {
+  if (!rates || typeof rates !== 'object') return 'chat';
+  if (rates.image != null && rates.in == null && rates.out == null && rates.cacheRead == null) return 'image';
+  return 'chat';
+}
+
 function _modelsFromSource(s) {
   const out = [];
   for (const m of s?.models || []) {
     if (typeof m === 'string' && m.trim()) {
-      out.push({ id: m.trim(), modality: 'chat', pricing: (s.pricing || {})[m.trim()] || {} });
+      const id = m.trim();
+      out.push({ id, modality: 'chat', pricing: (s.pricing || {})[id] || {} });
     } else if (m && typeof m === 'object') {
       const id = String(m.id || m.name || m.model || '').trim();
       if (id) out.push({ id, modality: m.modality || m.type || 'chat', pricing: m.pricing || (s.pricing || {})[id] || {} });
@@ -381,7 +388,16 @@ function _modelsFromSource(s) {
   }
   if (typeof s?.pricing === 'object') {
     for (const [mid, rates] of Object.entries(s.pricing)) {
-      if (!out.some(x => x.id === mid)) out.push({ id: mid, modality: 'chat', pricing: rates || {} });
+      if (!out.some(x => x.id === mid)) {
+        out.push({ id: mid, modality: _inferModalityFromPricing(rates), pricing: rates || {} });
+      }
+    }
+  }
+  // 仅有 models 条目、pricing 在 model 内联时对齐模态
+  for (const entry of out) {
+    if (entry.modality === 'chat' && entry.pricing && entry.pricing.image != null
+        && entry.pricing.in == null && entry.pricing.out == null) {
+      entry.modality = 'image';
     }
   }
   return out;
@@ -564,7 +580,7 @@ module.exports = {
   appInstallGuides, appUninstallGuides, normalizeGuide, resolveGuide,
   subscriptionApps, apiSubscriptionApps, paygProviders, registryProviders, builtinCatalogPayload,
   registryDefaultDoc, mergeRegistryDoc, subscriptionPlansDefaults,
-  billingSourcesList, reloadRegistryDoc,
+  billingSourcesList, reloadRegistryDoc, modelsFromBillingSource: _modelsFromSource,
   resolveRef, resolvePlaceholders, expandHome,
   appsRuntime, appEntities, appEntitiesExpanded, appEntityById, appCapabilities,
   handoffTargets,

@@ -275,6 +275,15 @@ async function pushUserBillingApi(token, req, patch) {
   if (patch.provider_pricing_overrides && typeof patch.provider_pricing_overrides === 'object') {
     cfg.provider_pricing_overrides = patch.provider_pricing_overrides;
   }
+  if (patch.source_template_overrides && typeof patch.source_template_overrides === 'object') {
+    cfg.source_template_overrides = patch.source_template_overrides;
+  }
+  if (patch.custom_source_templates && typeof patch.custom_source_templates === 'object') {
+    cfg.custom_source_templates = patch.custom_source_templates;
+  }
+  if (patch.direct_source_billing && typeof patch.direct_source_billing === 'object') {
+    cfg.direct_source_billing = patch.direct_source_billing;
+  }
   writeLocalConfig(cfg);
   syncGateway(cfg);
   applyUserBillingCfg(cfg);

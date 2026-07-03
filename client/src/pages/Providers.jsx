@@ -7,7 +7,7 @@ import { getNetwork, getProfile, listKeys, createKey, deleteKey } from '../api/c
 import { modelStatsForIds, workersForModel, normalizeNetworkPayload } from '../lib/networkModelStats';
 import { fetchServerCommunityModels } from '../lib/communityModels';
 import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
-import { DirectSourceCard, PersonalSourceModelView, PricingTable, CollapsibleBillingPanel, buildInstancePatch, buildDirectSourcePatch, buildDirectSourceRemovePatch, TemplateEditModal, SyncDiffBanner, accountInstanceAddedOrder } from '../components/PersonalSources';
+import { DirectSourceCard, PersonalSourceModelView, PricingTable, CollapsibleBillingPanel, buildInstancePatch, buildDirectSourcePatch, buildDirectSourceRemovePatch, TemplateEditModal, SyncDiffBanner, accountInstanceAddedOrder, inferModalityFromPricing, priceFieldsForModality } from '../components/PersonalSources';
 import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
 import { getGateway, getLocalConfig, getConfig, getOauth, isElectron } from '../api/adapter';
 import { useLang } from '../store/lang';
@@ -285,13 +285,22 @@ function isPaygManagedProvider(providerId, userPayg = []) {
   return !!resolvePaygAccount(providerId, userPayg);
 }
 
-/** 个人页按量账户已配置的模型（供给源页仅可从中选取） */
-function buildPaygProfileModels(providerId, userPayg = []) {
+/** 个人页按量账户已配置的模型；无登记时回退服务端刊例价目录 */
+function buildPaygProfileModels(providerId, userPayg = [], providerPricing = {}, paygCatalog = []) {
   const payg = resolvePaygAccount(providerId, userPayg);
+  const catalogId = payg?.provider_id || providerId;
   const names = new Set();
-  for (const m of payg?.models || []) {
-    const n = typeof m === 'string' ? m.trim() : String(m?.name || '').trim();
+  const add = (m) => {
+    const n = typeof m === 'string' ? m.trim() : String(m?.name || m?.id || '').trim();
     if (n) names.add(n);
+  };
+  for (const m of payg?.models || []) add(m);
+  if (!payg?.models?.length) {
+    const cat = (paygCatalog || []).find(p => (p.provider_id || p.id) === catalogId);
+    for (const m of cat?.models || []) add(m);
+    for (const k of Object.keys(providerPricing?.[catalogId] || {})) {
+      if (k && !PRICING_OVERRIDE_META_KEYS.has(k)) names.add(k);
+    }
   }
   return [...names].sort((a, b) => a.localeCompare(b));
 }
@@ -1557,9 +1566,9 @@ function seedModelsFromNames(names) {
   return (names || []).map(normModel).filter(m => m.name);
 }
 
-/** 按量供给源：剔除个人页未配置的模型 */
-function filterPaygModels(models, providerId, userPayg) {
-  const allowed = new Set(buildPaygProfileModels(providerId, userPayg));
+/** 按量供给源：剔除个人页未配置的模型（含服务端刊例价目录） */
+function filterPaygModels(models, providerId, userPayg, providerPricing = {}, paygCatalog = []) {
+  const allowed = new Set(buildPaygProfileModels(providerId, userPayg, providerPricing, paygCatalog));
   return (models || []).map(normModel).filter(m => allowed.has(m.name));
 }
 
@@ -1760,8 +1769,29 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
 
 /** 用户手工添加模型时的默认刊例价（USD / 百万 Token） */
 const DEFAULT_MODEL_PRICING = { in: 1, out: 5, cacheRead: 0.1 };
+const DEFAULT_IMAGE_PRICING = { image: 0.04 };
+const DEFAULT_EMBEDDING_PRICING = { in: 0.1, out: 0.1 };
 /** 独立供给源（无账户实例，如 Ollama）添加模型时的默认定价 */
 const STANDALONE_MODEL_PRICING = { in: 0, out: 0, cacheRead: 0 };
+
+function defaultPricingForType(type, standalone = false) {
+  if (type === 'image') return standalone ? { image: 0 } : { ...DEFAULT_IMAGE_PRICING };
+  if (type === 'embedding') return standalone ? { in: 0, out: 0 } : { ...DEFAULT_EMBEDDING_PRICING };
+  return standalone ? { ...STANDALONE_MODEL_PRICING } : { ...DEFAULT_MODEL_PRICING };
+}
+
+function billingHintKey({ standalone, isPayg, modelTypeMap, modelNames }) {
+  if (standalone) return 'providers.billing.standaloneHint';
+  if (!isPayg) return null;
+  const types = new Set((modelNames || []).map(n => modelTypeMap[n] || 'chat'));
+  if (types.size === 1) {
+    const only = [...types][0];
+    if (only === 'image') return 'providers.billing.paygHintImage';
+    if (only === 'embedding') return 'providers.billing.paygHintEmbedding';
+  }
+  if (types.has('image') && types.size > 1) return 'providers.billing.paygHintMixed';
+  return 'providers.billing.paygHint';
+}
 
 function modelEntryName(m) {
   let n = '';
@@ -1812,7 +1842,7 @@ function pricingRowsForProvider(providerId, models, merged, overrides, excludedM
 function ProviderCardBillingSection({
   billingTag, accountInst, provider, userPayg, userSubscriptions,
   providerPricing, pricingOverrides, onSaveAccounts, onOverridesChange, onUpdate, onPersistModels, t,
-  standalone = false,
+  standalone = false, paygCatalog = [],
 }) {
   const isPayg = billingTag === 'payg';
   const isSubBilling = billingTag === 'api_sub' || billingTag === 'sub_to_api';
@@ -1836,6 +1866,15 @@ function ProviderCardBillingSection({
     }
     if (isPayg) {
       for (const m of paygRec?.models || []) { const n = modelEntryName(m); if (n) names.add(n); }
+      // 账户尚无模型时，展示服务端下发的刊例价目录
+      if (!paygRec?.models?.length) {
+        const catalogPricing = providerPricing?.[pricingPid];
+        if (catalogPricing && typeof catalogPricing === 'object') {
+          for (const k of Object.keys(catalogPricing)) {
+            if (k && !PRICING_OVERRIDE_META_KEYS.has(k)) names.add(k);
+          }
+        }
+      }
       for (const k of Object.keys(pricingOverrides?.[pricingPid] || {})) {
         if (k && !PRICING_OVERRIDE_META_KEYS.has(k)) names.add(k);
       }
@@ -1847,7 +1886,7 @@ function ProviderCardBillingSection({
       }
     }
     return names;
-  }, [standalone, isPayg, paygRec, subRec, provider?.models, pricingOverrides, pricingPid]);
+  }, [standalone, isPayg, paygRec, subRec, provider?.models, pricingOverrides, pricingPid, providerPricing]);
 
   const instanceExcluded = useMemo(
     () => getInstanceExcludedList({ standalone, provider, paygRec, subRec }),
@@ -1897,18 +1936,27 @@ function ProviderCardBillingSection({
       in: r.in ?? STANDALONE_MODEL_PRICING.in,
       out: r.out ?? STANDALONE_MODEL_PRICING.out,
       cacheRead: r.cacheRead ?? STANDALONE_MODEL_PRICING.cacheRead,
+      image: r.image ?? 0,
     }));
   }, [standalone, pricingPid, modelNames, providerPricing, pricingOverrides, instanceExcluded]);
 
-  /** 供给源 gateway 配置里的模型模态（chat / image / embedding） */
+  /** 供给源 gateway + 服务端目录里的模型模态 */
   const modelTypeMap = useMemo(() => {
     const map = {};
+    const catalogId = paygRec?.provider_id || pricingPid;
+    const cat = (paygCatalog || []).find(p => (p.provider_id || p.id) === catalogId);
+    if (cat?.model_types) Object.assign(map, cat.model_types);
     for (const m of provider?.models || []) {
       const n = normModel(m);
-      if (n.name) map[n.name] = n.type || 'chat';
+      if (n.name) map[n.name] = n.type || map[n.name] || 'chat';
+    }
+    for (const name of modelNames) {
+      if (map[name]) continue;
+      const rates = providerPricing?.[pricingPid]?.[name] || {};
+      map[name] = inferModalityFromPricing(rates);
     }
     return map;
-  }, [provider?.models]);
+  }, [provider?.models, paygRec?.provider_id, pricingPid, paygCatalog, modelNames, providerPricing]);
 
   function mergeModelList(name, type = 'chat') {
     const cur = (provider.models || []).map(normModel);
@@ -1920,7 +1968,8 @@ function ProviderCardBillingSection({
 
   async function persistModels(nextList) {
     const normalized = nextList.map(normModel).filter(m => m.name);
-    onUpdate(provider.id, { models: normalized });
+    // 计费区添加模型时跳过 payg 裁剪（账户 state 尚未刷新）
+    onUpdate(provider.id, { models: normalized, _fromBilling: true });
     if (onPersistModels) await onPersistModels(provider.id, normalized);
   }
 
@@ -1928,23 +1977,33 @@ function ProviderCardBillingSection({
     const cycle = { chat: 'image', image: 'embedding', embedding: 'chat' };
     const cur = (provider.models || []).map(normModel);
     const hit = cur.find(m => m.name === name);
+    const prevType = hit?.type || modelTypeMap[name] || 'chat';
+    const nextType = cycle[prevType] || 'chat';
     const next = hit
-      ? cur.map(m => (m.name === name ? { ...m, type: cycle[m.type || 'chat'] || 'chat' } : m))
-      : [...cur, { name, type: 'image' }];
+      ? cur.map(m => (m.name === name ? { ...m, type: nextType } : m))
+      : [...cur, { name, type: nextType }];
     await persistModels(next);
+    // 切换模态时重置该模型刊例价字段结构
+    const nextOverrides = { ...pricingOverrides };
+    const perPid = { ...(nextOverrides[pricingPid] || {}) };
+    perPid[name] = { ...defaultPricingForType(nextType, standalone) };
+    nextOverrides[pricingPid] = perPid;
+    onOverridesChange?.(nextOverrides);
+    await onSaveAccounts({ provider_pricing_overrides: nextOverrides });
   }
 
-  function buildOverridesWithModel(name) {
+  function buildOverridesWithModel(name, type = 'chat') {
     const baseRow = (providerPricing[pricingPid] || {})[name] || {};
     const ovrRow = (pricingOverrides[pricingPid] || {})[name] || {};
-    const hasPricing = ['in', 'out', 'cacheRead'].some(f => ovrRow[f] != null || baseRow[f] != null);
+    const fields = priceFieldsForModality(type);
+    const hasPricing = fields.some(f => ovrRow[f] != null || baseRow[f] != null);
     if (hasPricing) return pricingOverrides;
-    const defaultPricing = standalone ? STANDALONE_MODEL_PRICING : DEFAULT_MODEL_PRICING;
+    const defaults = defaultPricingForType(type, standalone);
     return {
       ...pricingOverrides,
       [pricingPid]: {
         ...(pricingOverrides[pricingPid] || {}),
-        [name]: { ...defaultPricing },
+        [name]: { ...defaults },
       },
     };
   }
@@ -1978,30 +2037,31 @@ function ProviderCardBillingSection({
   async function addModel(name, type = 'chat') {
     const n = (name || '').trim();
     if (!n || modelNames.includes(n)) return;
-    const nextOverrides = buildOverridesWithModel(n);
+    const nextOverrides = buildOverridesWithModel(n, type);
     onOverridesChange?.(nextOverrides);
     const excluded_models = withInstanceExcludedRemoved(
       getInstanceExcludedList({ standalone, provider, paygRec, subRec }), n,
     );
 
     if (isPayg && paygRec) {
+      const modelEntry = type === 'chat' ? n : { name: n, type };
       const nextPayg = userPayg.map(p => {
         if (p.id !== paygRec.id) return p;
-        const patch = { ...p, models: [...(p.models || []), n] };
+        const patch = { ...p, models: [...(p.models || []), modelEntry] };
         if (excluded_models.length) patch.excluded_models = excluded_models;
         else delete patch.excluded_models;
         return patch;
       });
       const nextModels = mergeModelList(n, type);
-      await persistModels(nextModels);
+      // 先写账户，再落盘 gateway models（避免 filterPaygModels 用旧 userPayg 删掉新模型）
       await onSaveAccounts({
         user_payg_providers: nextPayg,
         ...(nextOverrides !== pricingOverrides ? { provider_pricing_overrides: nextOverrides } : {}),
       });
+      await persistModels(nextModels);
       return;
     }
     const nextModels = mergeModelList(n, type);
-    await persistModels(nextModels);
     const accountsPatch = { provider_pricing_overrides: nextOverrides };
     if (subRec) {
       accountsPatch.user_subscriptions = userSubscriptions.map(s => {
@@ -2019,7 +2079,9 @@ function ProviderCardBillingSection({
         excluded_models: excluded_models.length ? excluded_models : undefined,
       });
     }
+    // 先写账户再落盘 gateway models（与按量路径一致，避免裁剪时序问题）
     await onSaveAccounts(accountsPatch);
+    await persistModels(nextModels);
   }
 
   async function removeModel(name) {
@@ -2107,10 +2169,10 @@ function ProviderCardBillingSection({
     if (nextOverrides !== pricingOverrides) await onSaveAccounts(accountsPatch);
   }
 
-  const hintKey = standalone ? 'providers.billing.standaloneHint'
-    : isPayg ? 'providers.billing.paygHint'
+  const hintKey = billingHintKey({ standalone, isPayg, modelTypeMap, modelNames })
+    || (standalone ? 'providers.billing.standaloneHint'
     : billingTag === 'sub_to_api' ? 'providers.billing.subToApiHint'
-    : 'providers.billing.subHint';
+    : 'providers.billing.subHint');
 
   const billingSummary = (() => {
     const parts = [];
@@ -2161,8 +2223,8 @@ function ProviderModelSection({ provider, userPayg, onUpdate, scrollable = false
   const models = provider.models || [];
   const modelCount = models.length;
   const profileModels = useMemo(
-    () => (isPayg ? buildPaygProfileModels(provider.id, userPayg) : []),
-    [isPayg, provider.id, userPayg],
+    () => (isPayg ? buildPaygProfileModels(provider.id, userPayg, providerPricing, paygCatalog) : []),
+    [isPayg, provider.id, userPayg, providerPricing, paygCatalog],
   );
   const suggestions = useMemo(
     () => (isPayg || profileOnly
@@ -2338,6 +2400,7 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
           onUpdate={onUpdate}
           onPersistModels={onPersistModels}
           standalone={!accountInst}
+          paygCatalog={paygCatalog}
           t={t}
         />
       ) : accountInst ? (
@@ -2846,6 +2909,7 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
           onUpdate={onUpdate}
           onPersistModels={onPersistModels}
           standalone={!accountInst}
+          paygCatalog={paygCatalog}
           t={t}
         />
       ) : !isP2P && accountInst ? (
@@ -3048,6 +3112,9 @@ export default function Providers() {
 
   async function saveAccountsPatch(patch) {
     if (patch.provider_pricing_overrides) setPricingOverrides(patch.provider_pricing_overrides);
+    // 乐观更新，避免计费区添加模型后被 filterPaygModels 用旧账户列表裁掉
+    if (Array.isArray(patch.user_payg_providers)) setUserPayg(patch.user_payg_providers);
+    if (Array.isArray(patch.user_subscriptions)) setUserSubscriptions(patch.user_subscriptions);
     await saveUserAccounts(patch);
     await loadUserPaidAccounts();
   }
@@ -3205,7 +3272,7 @@ export default function Providers() {
         const normalizedProviders = providers.map(p => {
           const base = normalizeProviderBaseUrlForSave(p, catalogDefaultsById, meta);
           if (isPaygManagedProvider(p.id, userPayg)) {
-            return { ...base, models: filterPaygModels(base.models, p.id, userPayg) };
+            return { ...base, models: filterPaygModels(base.models, p.id, userPayg, mergedProviderPricing, paygCatalog) };
           }
           return base;
         });
@@ -3217,11 +3284,16 @@ export default function Providers() {
       } catch {}
     }, 500);
     return () => clearTimeout(timer);
-  }, [providers, meta, catalogDefaultsById, t, userPayg]);
+  }, [providers, meta, catalogDefaultsById, t, userPayg, mergedProviderPricing, paygCatalog]);
 
   const updateProvider = useCallback((id, patch) => {
-    if (isPaygManagedProvider(id, userPayg) && patch.models != null) {
-      patch = { ...patch, models: filterPaygModels(patch.models, id, userPayg) };
+    const fromBilling = patch._fromBilling === true;
+    if (fromBilling) {
+      const { _fromBilling, ...rest } = patch;
+      patch = rest;
+    }
+    if (!fromBilling && isPaygManagedProvider(id, userPayg) && patch.models != null) {
+      patch = { ...patch, models: filterPaygModels(patch.models, id, userPayg, mergedProviderPricing, paygCatalog) };
     }
     if (patchClearsTestVerified(patch) && patch.test_verified === undefined) {
       patch = { ...patch, test_verified: false };
@@ -3233,7 +3305,7 @@ export default function Providers() {
       }
       return prev.map(p => (p.id === id ? { ...p, ...patch } : p));
     });
-  }, [userPayg]);
+  }, [userPayg, mergedProviderPricing, paygCatalog]);
 
   /** 立即落盘 enabled，避免 debounce 未完成时网关页仍读到旧开关 */
   const persistProviderEnabled = useCallback(async (id, enabled) => {
@@ -3321,6 +3393,10 @@ export default function Providers() {
       const added = patch.user_subscriptions[patch.user_subscriptions.length - 1];
       newGwId = subInstGatewayId(added) || entry.providerId;
       seedModels = seedModelsFromNames(added.models);
+    }
+    // 模板有模型但账户未写入时（兼容旧数据）仍预填网关
+    if (!seedModels.length && tpl?.models?.length) {
+      seedModels = seedModelsFromNames(tpl.models);
     }
 
     const base = {

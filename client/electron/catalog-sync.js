@@ -59,7 +59,10 @@ function catalogProviderToRegistry(p) {
   const pricing = { ...(p.pricing && typeof p.pricing === 'object' ? p.pricing : {}) };
   for (const k of Object.keys(pricing)) {
     if (!k || k === '_excluded_models' || k === 'excluded_models') continue;
-    if (!models.some(x => x.id === k)) models.push({ id: k, modality: 'chat' });
+    const rates = pricing[k];
+    const modality = (rates && typeof rates === 'object' && rates.image != null
+      && rates.in == null && rates.out == null) ? 'image' : 'chat';
+    if (!models.some(x => x.id === k)) models.push({ id: k, modality });
   }
   const out = {
     id: p.id,
@@ -98,7 +101,12 @@ function catalogProviderToBilling(p, existing) {
     if (typeof m === 'string') push(m);
     else if (m && typeof m === 'object') push(m.name || m.id, m.type || m.modality || 'chat');
   }
-  for (const k of Object.keys(pricing)) push(k);
+  for (const k of Object.keys(pricing)) {
+    const rates = pricing[k];
+    const mod = (rates && typeof rates === 'object' && rates.image != null
+      && rates.in == null && rates.out == null) ? 'image' : 'chat';
+    push(k, mod);
+  }
   return {
     ...(existing && typeof existing === 'object' ? existing : {}),
     id: p.id,
@@ -139,7 +147,12 @@ function subscriptionSourceToBilling(s, existing) {
     if (typeof m === 'string') push(m);
     else if (m && typeof m === 'object') push(m.name || m.id, m.type || m.modality || 'chat');
   }
-  for (const k of Object.keys(pricing)) push(k);
+  for (const k of Object.keys(pricing)) {
+    const rates = pricing[k];
+    const mod = (rates && typeof rates === 'object' && rates.image != null
+      && rates.in == null && rates.out == null) ? 'image' : 'chat';
+    push(k, mod);
+  }
   const kind = s.kind === 'api_sub' ? 'api_sub' : 'app_sub';
   return {
     ...(existing && typeof existing === 'object' ? existing : {}),
@@ -160,18 +173,40 @@ function subscriptionSourceToBilling(s, existing) {
   };
 }
 
+/** 合并 providers：catalog 覆盖同 id，保留本地/内置中 catalog 未下发的条目（如 Ollama） */
+function mergeProvidersFromCatalog(existingProviders, catalogProviders) {
+  const byId = {};
+  for (const p of existingProviders || []) {
+    if (p?.id) byId[p.id] = p;
+  }
+  // 内置默认中未出现在 catalog 的基础设施源也保留
+  for (const p of configLoader.registryDefaultDoc().providers || []) {
+    if (p?.id && !byId[p.id]) byId[p.id] = p;
+  }
+  for (const p of catalogProviders || []) {
+    if (p?.id) byId[p.id] = p;
+  }
+  return Object.values(byId);
+}
+
 /** 合并 /api/catalog 到 registry yaml 文档 */
 function mergeCatalogIntoRegistryDoc(existingDoc, catalogPayload) {
   const existing = existingDoc && typeof existingDoc === 'object' ? existingDoc : {};
-  const providers = (catalogPayload?.providers || [])
+  const catalogProviders = (catalogPayload?.providers || [])
     .map(catalogProviderToRegistry)
     .filter(Boolean);
+  const providers = catalogProviders.length
+    ? mergeProvidersFromCatalog(existing.providers, catalogProviders)
+    : (existing.providers || []);
 
   const billingByKey = {};
-  // 订阅源：保留本地非 payg 条目，再由 subscription_sources 覆盖
+  const existingPayg = {};
+  // 订阅源：保留本地非 payg；payg 元数据单独保留 sort_order / auth 等字段
   for (const s of existing.billing_sources || []) {
     const k = s.source_id || s.id;
-    if (k && s.category !== 'payg') billingByKey[k] = { ...s };
+    if (!k) continue;
+    if (s.category === 'payg') existingPayg[k] = { ...s };
+    else billingByKey[k] = { ...s };
   }
   for (const sub of catalogPayload?.subscription_sources || []) {
     const k = sub.id;
@@ -183,13 +218,13 @@ function mergeCatalogIntoRegistryDoc(existingDoc, catalogPayload) {
   for (const p of catalogPayload?.providers || []) {
     if (!p?.id || !p.payg) continue;
     const k = p.id;
-    const merged = catalogProviderToBilling(p, billingByKey[k]);
+    const merged = catalogProviderToBilling(p, existingPayg[k]);
     if (merged) billingByKey[k] = merged;
   }
 
   return {
     version: existing.version || catalogPayload?.version || 1,
-    providers: providers.length ? providers : (existing.providers || []),
+    providers,
     billing_sources: Object.values(billingByKey).sort(
       (a, b) => (a.sort_order || 0) - (b.sort_order || 0),
     ),
@@ -278,6 +313,7 @@ module.exports = {
   scheduleBackgroundSync,
   readCatalogFromYaml,
   mergeCatalogIntoRegistryDoc,
+  mergeProvidersFromCatalog,
   fetchCatalogJson,
   catalogProviderToBilling,
 };
