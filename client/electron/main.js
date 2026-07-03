@@ -281,6 +281,25 @@ function getClaudeCloudConfig() {
 
 let mainWindow = null;
 let tray = null;
+
+// ── 单实例锁 ──────────────────────────────────────────────────────────────────
+// 只允许一个桌面实例：第二个实例拿不到锁就直接退出（避免 11430/5173 端口冲突、
+// 重复托盘/网关/会话同步），并把已有实例的窗口拉到前台。必须在 app.whenReady/建窗/
+// 起网关之前完成——放在这里即先于文件底部的 whenReady 执行。
+// 注：仅约束 Electron 桌面 app；无头 CLI（cli/gateway.js）是另一入口，不受此锁影响。
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
+app.on('second-instance', () => {
+  try {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      if (!mainWindow.isVisible()) mainWindow.show();
+      mainWindow.focus();
+    }
+  } catch {}
+});
 /** 菜单栏是否显示 ↑↓Token 两行文字（仅 macOS）。持久化在 localConfig.tray_show_tokens，默认开 */
 let showTrayTokens = true;
 /** macOS 点关闭仅隐藏窗口；托盘/Cmd+Q 退出时设为 true，避免 close 拦截 quit */
