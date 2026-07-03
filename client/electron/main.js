@@ -2568,7 +2568,7 @@ function registerIPC() {
 
   // 一键安装/更新 CLI 工具：跑 npm i -g <包>@latest（用户级全局，无需管理员）。
   // 异步 exec，不阻塞主进程；装完前端刷新检测状态。
-  ipcMain.handle('apps:installTool', async (_e, { id } = {}) => {
+  ipcMain.handle('apps:npmGlobalInstall', async (_e, { id } = {}) => {
     const pkg = (require('./config-loader').appNpmPackages() || {})[id];
     if (!pkg) return { ok: false, error: 'no-npm-package' };
     const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
