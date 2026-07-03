@@ -507,6 +507,13 @@ async def set_user_apikey_permission(user_id: int, can: bool) -> None:
         await db.commit()
 
 
+async def set_user_nickname(user_id: int, nickname: str) -> None:
+    """管理员修改用户昵称"""
+    async with connect() as db:
+        await db.execute("UPDATE users SET nickname=? WHERE id=?", (nickname, user_id))
+        await db.commit()
+
+
 async def adjust_user_credits(user_id: int, delta: float, note: str = "") -> float:
     """管理员手动调整积分，返回新余额"""
     async with connect() as db:

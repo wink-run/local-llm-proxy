@@ -136,12 +136,15 @@ class UpdateUserRequest(BaseModel):
     can_create_apikey: bool | None = None
     credit_delta: float | None = None
     credit_note: str = ""
+    nickname: str | None = None
 
 
 @router.patch("/users/{user_id}", dependencies=[Depends(auth_admin)])
 async def update_user(user_id: int, req: UpdateUserRequest):
     if req.can_create_apikey is not None:
         await db.set_user_apikey_permission(user_id, req.can_create_apikey)
+    if req.nickname is not None:
+        await db.set_user_nickname(user_id, req.nickname.strip())
     if req.credit_delta is not None:
         new_bal = await db.adjust_user_credits(user_id, req.credit_delta, req.credit_note)
         return {"ok": True, "new_balance": new_bal}

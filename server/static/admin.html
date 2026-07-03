@@ -329,7 +329,16 @@ select.form-input{cursor:pointer}
           <tr v-for="u in users" :key="u.id">
             <td style="color:#7b7b7b">{{ u.id }}</td>
             <td>{{ u.email }}</td>
-            <td style="color:#7b7b7b">{{ u.nickname }}</td>
+            <td>
+              <input
+                v-model="u.nickname"
+                class="form-input"
+                type="text"
+                style="width:140px;color:#7b7b7b"
+                @blur="saveNickname(u)"
+                @keyup.enter="$event.target.blur()"
+              />
+            </td>
             <td style="font-weight:600">{{ Number(u.credits_balance).toFixed(1) }}</td>
             <td style="color:#7b7b7b">{{ Number(u.credits_earned).toFixed(1) }}</td>
             <td>
@@ -1222,8 +1231,26 @@ createApp({
     })
 
     /* ── Users ── */
-    const users = ref([]), userCreditDelta = ref({}), userCreditNote = ref({})
-    async function fetchUsers() { try { const d = await (await api('/admin/users')).json(); users.value = d.users||[] } catch {} }
+    const users = ref([]), userCreditDelta = ref({}), userCreditNote = ref({}), userNicknameOrig = ref({})
+    async function fetchUsers() {
+      try {
+        const d = await (await api('/admin/users')).json()
+        users.value = d.users || []
+        for (const u of users.value) userNicknameOrig.value[u.id] = u.nickname || ''
+      } catch {}
+    }
+    async function saveNickname(u) {
+      const nick = (u.nickname || '').trim()
+      const orig = userNicknameOrig.value[u.id] || ''
+      if (nick === orig) return
+      try {
+        await api(`/admin/users/${u.id}`, { method: 'PATCH', body: JSON.stringify({ nickname: nick }) })
+        u.nickname = nick
+        userNicknameOrig.value[u.id] = nick
+      } catch {
+        u.nickname = orig
+      }
+    }
     async function toggleApikey(u) { try { await api(`/admin/users/${u.id}`,{method:'PATCH',body:JSON.stringify({can_create_apikey:!u.can_create_apikey})}); u.can_create_apikey=!u.can_create_apikey } catch {} }
     async function adjustCredit(u) {
       const delta = parseFloat(userCreditDelta.value[u.id]||0); if (!delta) return
@@ -1543,7 +1570,7 @@ createApp({
       workers, fetchWorkers,
       keys, newNote, createKey, toggleKey, removeKey, maskKey, copyKey,
       models, modelForm, modelMsg, upsertModel, deleteModel, editModel, onTierChange, crossPreview,
-      users, userCreditDelta, userCreditNote, fetchUsers, toggleApikey, adjustCredit,
+      users, userCreditDelta, userCreditNote, fetchUsers, saveNickname, toggleApikey, adjustCredit,
       orders, orderNote, orderGrantApikey, fetchOrders, approveOrder, rejectOrder,
       sysConfig, configSaving, saveConfig,
       debugModel, chatMsgs, chatInput, chatLoading, chatArea, allModels, allModelTypes,
