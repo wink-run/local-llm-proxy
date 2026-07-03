@@ -231,6 +231,45 @@ function retagSessionsProvider(codexHome, targetProvider) {
   return { changed, total };
 }
 
+// ── Codex Desktop 会话列表来源：state_*.sqlite 的 threads 表(按 model_provider 过滤)──
+// 参考 cc-switch codex_history_migration：改 threads.model_provider 即可让 Desktop
+// 在当前 provider 下显示这些会话。只改这一个字段，rollout_path 等不动。
+function retagThreadsProvider(codexHome, targetProvider) {
+  let Database;
+  try { Database = require('better-sqlite3'); } catch { return { changed: 0, dbs: 0, err: 'no-sqlite' }; }
+  let dbs;
+  try { dbs = fs.readdirSync(codexHome).filter((f) => /^state_\d+\.sqlite$/.test(f)); } catch { return { changed: 0, dbs: 0 }; }
+  let changed = 0;
+  for (const name of dbs) {
+    const dbPath = path.join(codexHome, name);
+    let conn;
+    try {
+      const bak = dbPath + '.tokenbank-bak';
+      if (!fs.existsSync(bak)) { try { fs.copyFileSync(dbPath, bak); } catch {} }
+      conn = new Database(dbPath, { timeout: 5000 });
+      const tbl = conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='threads'").get();
+      if (tbl) {
+        const cols = conn.prepare('PRAGMA table_info(threads)').all().map((r) => r.name);
+        if (cols.includes('model_provider')) {
+          const r = conn.prepare('UPDATE threads SET model_provider = ? WHERE model_provider IS NOT ?').run(targetProvider, targetProvider);
+          changed += r.changes || 0;
+        }
+      }
+    } catch {} finally { try { conn && conn.close(); } catch {} }
+  }
+  return { changed, dbs: dbs.length };
+}
+
+/**
+ * Codex 会话 provider 归一(纳管/直连切换时调)：threads sqlite(决定 Desktop 列表显示)
+ * + rollout jsonl(保持一致，打开会话时 provider 匹配)一并归一到 targetProvider。
+ */
+function syncCodexSessionProvider(codexHome, targetProvider) {
+  const threads = retagThreadsProvider(codexHome, targetProvider);
+  const rollout = retagSessionsProvider(codexHome, targetProvider);
+  return { threads, rollout };
+}
+
 // ── auth.json：官方登录态检测 + 清第三方残留 key(保留官方 tokens.*) ──
 function readCodexAuth(codexHome) {
   try { return JSON.parse(fs.readFileSync(path.join(codexHome, 'auth.json'), 'utf8')); } catch { return null; }
@@ -258,6 +297,8 @@ module.exports = {
   writeCodexCatalog,
   removeCodexCatalog,
   retagSessionsProvider,
+  retagThreadsProvider,
+  syncCodexSessionProvider,
   codexHasOfficialLogin,
   cleanupThirdPartyAuthKey,
   CATALOG_FILE,

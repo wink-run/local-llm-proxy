@@ -174,8 +174,8 @@ function revertAppConfigFile(app_id, config_file) {
     const codexCfg = require('./codex-config');
     codexCfg.revertCodexProvider(file);
     codexCfg.removeCodexCatalog(path.dirname(file));
-    // 会话归一回 openai：让直连态 Codex Desktop 也看到全部历史会话(与纳管态同步)
-    try { codexCfg.retagSessionsProvider(path.dirname(file), 'openai'); } catch {}
+    // 会话归一回 openai：threads(Desktop 列表) + rollout 一并归一，直连态也看到全部
+    try { codexCfg.syncCodexSessionProvider(path.dirname(file), 'openai'); } catch {}
     return;
   }
   if (file) {
@@ -3093,8 +3093,8 @@ function registerIPC() {
           baseUrl, model, bearerToken: appRec?.api_key || '', catalogFile: codexCfg.CATALOG_FILE,
         });
         codexCfg.cleanupThirdPartyAuthKey(codexHome);   // 清第三方残留 key，不动官方 tokens.*
-        // 会话归一到 tokenbank：让纳管态 Codex Desktop 看到全部历史会话(与直连态保持同步)
-        try { codexCfg.retagSessionsProvider(codexHome, 'tokenbank'); } catch {}
+        // 会话归一到 tokenbank：threads(Desktop 列表) + rollout 一并归一，纳管态看到全部
+        try { codexCfg.syncCodexSessionProvider(codexHome, 'tokenbank'); } catch {}
         setAppHosted(app_id, true);
         const officialLogin = codexCfg.codexHasOfficialLogin(codexHome);
         // 缺官方登录 → Desktop 门控会藏掉自定义模型，回传提示让前端引导登录
