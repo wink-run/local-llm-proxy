@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { resolveBrandIcon } from '../lib/brandIcons';
 import ServiceIcon from '../components/ServiceIcon';
 import { getNetwork, getProfile, listKeys, createKey, deleteKey } from '../api/client';
-import { modelStatsForIds } from '../lib/networkModelStats';
+import { modelStatsForIds, workersForModel, normalizeNetworkPayload } from '../lib/networkModelStats';
 import { fetchServerCommunityModels } from '../lib/communityModels';
 import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
 import { DirectSourceCard, PersonalSourceModelView, PricingTable, CollapsibleBillingPanel, buildInstancePatch, buildDirectSourcePatch, buildDirectSourceRemovePatch, TemplateEditModal, SyncDiffBanner, accountInstanceAddedOrder } from '../components/PersonalSources';
@@ -14,6 +14,7 @@ import { useLang } from '../store/lang';
 import { useAuth } from '../store/index';
 import { resolveModelsForModelView } from '../lib/personalAvailableModels';
 import { buildPersonalModelTypeMap, inferModelTypeFromName } from '../api/gatewayModels';
+import { avatarColor } from '../components/UserAvatar';
 
 /** 按当前语言覆盖 meta 中的 label / hint / oauth.label */
 function localizeProviderMeta(metaMap, t) {
@@ -991,7 +992,8 @@ function P2PNetworkCard({ provider, onUpdate }) {
   const [balance,        setBalance]        = useState(null);
   const [loading,        setLoading]        = useState(true);
   const [circleModelMap, setCircleModelMap] = useState({});
-  const [communityIds, setCommunityIds] = useState([]);
+  const [communityIds,   setCommunityIds]   = useState([]);
+  const [expandedModel,  setExpandedModel]  = useState(null);
 
   // P2P gateway API key config
   const [showKeyConfig, setShowKeyConfig] = useState(false);
@@ -1094,11 +1096,15 @@ function P2PNetworkCard({ provider, onUpdate }) {
           getNetwork(), getProfile(), fetchServerCommunityModels(),
         ]);
         if (cancelled) return;
-        if (netRes.status === 'fulfilled') setNetwork(netRes.value.data);
-        if (profRes.status === 'fulfilled') setBalance(profRes.value.data?.credits_balance ?? null);
+        if (netRes.status === 'fulfilled') {
+          const payload = netRes.value?.data ?? netRes.value;
+          setNetwork(normalizeNetworkPayload(payload));
+        }
+        if (profRes.status === 'fulfilled') setBalance(profRes.value?.data?.credits_balance ?? null);
         if (communityRes.status === 'fulfilled') {
-          setCommunityIds(communityRes.value.ids);
-          setCircleModelMap(communityRes.value.circleMap);
+          const v = communityRes.value;
+          setCommunityIds(Array.isArray(v?.ids) ? v.ids : []);
+          setCircleModelMap(v?.circleMap && typeof v.circleMap === 'object' ? v.circleMap : {});
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -1110,10 +1116,13 @@ function P2PNetworkCard({ provider, onUpdate }) {
   }, []);
 
   // 与 /v1/models 一致；节点数从 workers 补充
-  const modelStats = React.useMemo(
-    () => modelStatsForIds(communityIds, network),
-    [network, communityIds],
-  );
+  const modelStats = React.useMemo(() => {
+    try {
+      return modelStatsForIds(communityIds, network);
+    } catch {
+      return [];
+    }
+  }, [network, communityIds]);
 
   const totalNodes = network?.summary?.online_workers ?? 0;
 
@@ -1123,16 +1132,78 @@ function P2PNetworkCard({ provider, onUpdate }) {
   }
 
   function ModelSub({ m }) {
-    if (m.nodes === 0) return <span className="text-zinc-600">{t('providers.p2p.unavailable')}</span>;
-    const avgS = m.latencyCount > 0 ? (m.totalLatency / m.latencyCount / 1000).toFixed(1) : null;
+    if (!m || m.nodes === 0) return <span className="text-zinc-600">{t('providers.p2p.unavailable')}</span>;
+
+    let nodes = [];
+    try {
+      nodes = workersForModel(m.name, network);
+    } catch { /* ignore */ }
+
+    const total = nodes.length || m.nodes;
+    const MAX_SHOW = 5;
+    const shown = nodes.slice(0, MAX_SHOW);
+    const overflow = total > MAX_SHOW;
+    // 折叠行默认展示最快节点的首 token 延迟
+    const fastMs = m.minLatency > 0
+      ? m.minLatency
+      : (m.latencyCount > 0 ? m.totalLatency / m.latencyCount : null);
+
     return (
-      <>
-        <span>{t('providers.p2p.nodeCount', { n: m.nodes })}</span>
-        {avgS
-          ? <span className="text-zinc-500"> · avg {avgS}s</span>
-          : <span className="text-green-600 dark:text-green-400">{t('providers.p2p.idle')}</span>}
-      </>
+      <span className="inline-flex items-center gap-1 min-w-0">
+        <span className="inline-flex items-center -space-x-1 shrink-0">
+          {shown.map((w, i) => (
+            <span
+              key={`${w.worker_id || w.name || 'n'}:${i}`}
+              title={w.name}
+              className={`inline-flex items-center justify-center w-4 h-4 rounded-full ring-1 ring-white dark:ring-zinc-800 text-[8px] font-bold text-white ${avatarColor(w.worker_id || w.name || '')} ${w.status === 'busy' ? 'ring-amber-400' : ''}`}
+            >
+              {(w.name || '?').replace(/\*/g, '')[0] || '?'}
+            </span>
+          ))}
+          {overflow && (
+            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full ring-1 ring-white dark:ring-zinc-800 bg-zinc-200 dark:bg-zinc-600 text-[10px] leading-none text-zinc-500 dark:text-zinc-300">
+              …
+            </span>
+          )}
+        </span>
+        {overflow && (
+          <span className="text-[10px] text-zinc-400 whitespace-nowrap shrink-0">
+            {t('providers.p2p.nodesTotal', { n: total })}
+          </span>
+        )}
+        {fastMs != null ? (
+          <span className="text-zinc-500 text-[10px] tabular-nums shrink-0">
+            · {t('providers.p2p.ttftShort', { s: (fastMs / 1000).toFixed(1) })}
+          </span>
+        ) : (
+          <span className="text-green-600 dark:text-green-400 text-[10px] shrink-0">{t('providers.p2p.idle')}</span>
+        )}
+      </span>
     );
+  }
+
+  function ModelNodeList({ modelName }) {
+    let nodes = [];
+    try {
+      nodes = workersForModel(modelName, network);
+    } catch {
+      nodes = [];
+    }
+    if (!nodes.length) {
+      return <p className="text-[10px] text-zinc-500 py-0.5">{t('providers.p2p.noProviderNodes')}</p>;
+    }
+    return nodes.map((w, i) => (
+      <div key={`${w.worker_id || w.name || 'node'}:${i}`} className="flex items-center justify-between gap-2 text-[10px] text-zinc-500 dark:text-zinc-400">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${w.status === 'busy' ? 'bg-amber-500' : 'bg-green-500'}`} />
+          <span className="truncate text-zinc-700 dark:text-zinc-300">{w.name}</span>
+          {w.geo?.city && <span className="truncate text-zinc-400">· {w.geo.city}</span>}
+        </div>
+        <span className="shrink-0 tabular-nums">
+          {t('providers.p2p.lastTtft', { ms: Math.round(w.last_ttft_ms || 0) })}
+        </span>
+      </div>
+    ));
   }
 
   return (
@@ -1171,7 +1242,7 @@ function P2PNetworkCard({ provider, onUpdate }) {
       <div className="px-4 pb-4 space-y-3">
         <div className="flex items-center justify-between">
           <span className="text-xs text-zinc-500">
-            {t('providers.p2p.modelsTitle')} <span className="text-zinc-700">{t('providers.p2p.modelsSub')}</span>
+            {t('providers.p2p.modelsTitle', { n: modelStats.length })} <span className="text-zinc-700">{t('providers.p2p.modelsSub')}</span>
           </span>
           <button onClick={() => navigate('/network')}
             className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 flex items-center gap-1">
@@ -1181,29 +1252,49 @@ function P2PNetworkCard({ provider, onUpdate }) {
         {modelStats.length === 0 && !loading ? (
           <p className="text-xs text-zinc-600 py-2">{t('providers.p2p.noNodes')}</p>
         ) : (
-          <div className="grid grid-cols-3 gap-2 max-h-[180px] overflow-y-auto">
-            {(modelStats.length > 0 ? modelStats : Array(3).fill(null)).map((m, i) => (
+          <>
+            <div className="grid grid-cols-2 gap-2">
+            {(modelStats.length > 0 ? modelStats : Array(4).fill(null)).map((m, i) => (
               m ? (
-                <div key={m.name} className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300/50 dark:border-zinc-700/50 rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-1.5 min-w-0">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <ModelDot m={m} />
-                    <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">{m.name}</span>
-                    {circleModelMap[m.name] && (
-                      <span
-                        title={circleModelMap[m.name].circle_name || '圈子'}
-                        className="shrink-0 text-[10px] leading-none px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 cursor-default"
-                      >
-                        ⊙
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-xs text-zinc-500 shrink-0"><ModelSub m={m} /></span>
+                <div key={m.name || `model-${i}`} className="min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedModel(prev => (prev === m.name ? null : m.name))}
+                    className={`w-full bg-zinc-100 dark:bg-zinc-800 border rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-1.5 min-w-0 text-left transition-colors ${
+                      expandedModel === m.name
+                        ? 'border-blue-300 dark:border-blue-700/60 ring-1 ring-blue-200/60 dark:ring-blue-800/40'
+                        : 'border-zinc-300/50 dark:border-zinc-700/50 hover:border-zinc-400 dark:hover:border-zinc-600'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <ModelDot m={m} />
+                      <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">{m.name}</span>
+                      {circleModelMap?.[m.name] && (
+                        <span
+                          title={circleModelMap[m.name]?.circle_name || '圈子'}
+                          className="shrink-0 text-[10px] leading-none px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 cursor-default"
+                        >
+                          ⊙
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <span className="text-xs text-zinc-500"><ModelSub m={m} /></span>
+                      <span className="text-[10px] text-zinc-400">{expandedModel === m.name ? '▾' : '▸'}</span>
+                    </div>
+                  </button>
+                  {expandedModel === m.name && (
+                    <div className="mt-1 ml-1 pl-2 border-l border-zinc-200 dark:border-zinc-700 space-y-1">
+                      <ModelNodeList modelName={m.name} />
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div key={i} className="bg-zinc-100/50 dark:bg-zinc-800/50 border border-zinc-300/30 dark:border-zinc-700/30 rounded-lg py-1.5 h-7 animate-pulse" />
               )
             ))}
           </div>
+          </>
         )}
       </div>
 
@@ -3307,6 +3398,28 @@ export default function Providers() {
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [personalFilter, setPersonalFilter] = useState('all');
+  const [personalLatencyMap, setPersonalLatencyMap] = useState({});
+
+  const loadPersonalLatency = useCallback(async () => {
+    try {
+      const map = await getGateway().getModelProviderLatency(7);
+      if (map && typeof map === 'object') setPersonalLatencyMap({ ...map });
+    } catch { /* 网关未就绪 */ }
+  }, []);
+
+  // 个人源延迟：5s 轮询 + 落账事件 + 页签重新可见时刷新（与网关页统计同源）
+  useEffect(() => {
+    loadPersonalLatency();
+    const id = setInterval(loadPersonalLatency, 5000);
+    const onVis = () => { if (document.visibilityState === 'visible') loadPersonalLatency(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
+  }, [loadPersonalLatency]);
+
+  useEffect(() => {
+    if (!isElectron() || !window.electronAPI?.localStats?.onChanged) return undefined;
+    return window.electronAPI.localStats.onChanged(loadPersonalLatency);
+  }, [loadPersonalLatency]);
 
   // 个人源统一列表（不再分 API / 订阅两段）
   const liveStateOf = (p) => withProviderDisplayName(providers.find(x => x.id === p.id) || p, userPayg, userSubscriptions, meta);
@@ -3676,6 +3789,8 @@ export default function Providers() {
             instances={modelViewInstances}
             t={t}
             modelTypeMap={personalModelTypeMap}
+            latencyMap={personalLatencyMap}
+            onRefreshLatency={loadPersonalLatency}
             trailing={renderSourcesViewTabs()}
             onEmptyAdd={() => { setSourcesView('list'); setPickerOpen(true); }}
           />

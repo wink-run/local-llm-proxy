@@ -119,9 +119,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   localStats: {
     query: (days) => ipcRenderer.invoke('localStats:query', days),
+    modelLatency: (days) => ipcRenderer.invoke('localStats:modelLatency', days),
     todaySummary: () => ipcRenderer.invoke('localStats:todaySummary'),
     compression: (days) => ipcRenderer.invoke('localStats:compression', days),
     appsUsage: (days) => ipcRenderer.invoke('localStats:appsUsage', days),
+    onChanged: (cb) => {
+      const h = () => cb();
+      ipcRenderer.on('localStats:changed', h);
+      return () => ipcRenderer.removeListener('localStats:changed', h);
+    },
   },
   sessionImport: {
     run: () => ipcRenderer.invoke('sessionImport:run'),

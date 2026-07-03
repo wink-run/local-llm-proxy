@@ -394,6 +394,17 @@ async function handleRequest(req, res) {
     return json(res, 200, data);
   }
 
+  if (method === 'GET' && url.startsWith('/api/model-provider-latency')) {
+    const qs = new URL('http://x' + req.url).searchParams;
+    const days = Math.max(1, Math.min(365, parseInt(qs.get('days'), 10) || 7));
+    try {
+      const since = localStats.sinceTsForDays(days);
+      return json(res, 200, localStats.queryModelProviderLatency(since));
+    } catch {
+      return json(res, 200, {});
+    }
+  }
+
   // 压缩比统计（盘点页 / Dashboard；与 local-gateway :11430 同源）
   if (method === 'GET' && url.startsWith('/api/compression-stats')) {
     const qs = new URL('http://x' + req.url).searchParams;

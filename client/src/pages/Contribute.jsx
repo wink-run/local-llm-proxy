@@ -75,7 +75,7 @@ function collectContributeAvailableModels(saved, accounts, localCfg) {
   return avail;
 }
 
-function ContributionConfigCard() {
+function ContributionConfigCard({ onStart, onStop, running, stats, agentError }) {
   const { t } = useLang();
   const [selectedNames,   setSelectedNames]   = useState(new Set()); // Set<string>
   const [availableModels, setAvailableModels] = useState([]);        // {name, type}[]
@@ -149,6 +149,7 @@ function ContributionConfigCard() {
 
   async function save() {
     setSaving(true);
+    setSavedMsg('');
     try {
       const models = [...selectedNames].map(name =>
         availableModels.find(m => m.name === name) || { name, type: 'chat' }
@@ -162,22 +163,41 @@ function ContributionConfigCard() {
         contribute_circle_ids: circleIds,
         contribute_circle_id: circleIds[0] ?? null,
       });
-      setSavedMsg(t('common.saved')); setTimeout(() => setSavedMsg(''), 2000);
+      // 保存后立即启动贡献节点
+      const started = onStart ? await onStart() : true;
+      setSavedMsg(started ? t('contribute.savedAndStarted') : t('common.saved'));
+      setTimeout(() => setSavedMsg(''), 2000);
     } finally { setSaving(false); }
   }
 
   return (
     <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 space-y-4">
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('contribute.configTitle')}</span>
-        {savedMsg && <span className="text-xs text-green-600 dark:text-green-400">{savedMsg}</span>}
+      {/* 标题、运行状态、转发地址 — 单行 */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pb-4 border-b border-zinc-100 dark:border-zinc-700/80">
+        <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200 shrink-0">{t('contribute.configTitle')}</span>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="relative flex h-2.5 w-2.5">
+            {running && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />}
+            <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${running ? 'bg-green-500' : 'bg-zinc-400 dark:bg-zinc-600'}`} />
+          </span>
+          <span className="text-sm text-zinc-700 dark:text-zinc-300 whitespace-nowrap">
+            {running ? t('contribute.running') : t('contribute.stopped')}
+          </span>
+          {stats && running && (
+            <span className="text-xs text-zinc-400 dark:text-zinc-500 whitespace-nowrap">
+              {t('contribute.agentRunning', { n: stats.contribute_req_per_min ?? 0 })}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 min-w-0 flex-1 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2.5 py-1.5">
+          <span className="text-xs text-zinc-400 shrink-0">{t('contribute.forwardUrl')}</span>
+          <code className="text-xs font-mono text-green-600 dark:text-green-400 truncate">{localGw}</code>
+        </div>
+        {savedMsg && <span className="text-xs text-green-600 dark:text-green-400 shrink-0 ml-auto">{savedMsg}</span>}
       </div>
-
-      {/* Fixed forwarding URL */}
-      <div className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2">
-        <span className="text-xs text-zinc-400 shrink-0">{t('contribute.forwardUrl')}</span>
-        <code className="text-xs font-mono text-green-600 dark:text-green-400 truncate">{localGw}</code>
-      </div>
+      {agentError && (
+        <p className="text-sm text-red-600 dark:text-red-400 -mt-1">{agentError}</p>
+      )}
 
       {/* Model selection */}
       <div className="space-y-2">
@@ -281,10 +301,16 @@ function ContributionConfigCard() {
         )}
       </div>
 
-      <button onClick={save} disabled={saving}
-        className="px-5 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-50 text-white font-medium transition-colors">
-        {saving ? t('common.saving') : t('contribute.saveConfig')}
-      </button>
+      <div className="flex flex-wrap gap-2">
+        <button onClick={save} disabled={saving}
+          className="px-5 py-2 text-sm rounded-lg bg-green-700 hover:bg-green-600 dark:bg-green-800 dark:hover:bg-green-700 disabled:opacity-50 text-white font-medium transition-colors">
+          {saving ? t('contribute.savingAndStarting') : t('contribute.saveAndStart')}
+        </button>
+        <button type="button" onClick={onStop} disabled={!running}
+          className="px-5 py-2 text-sm rounded-lg bg-red-700 hover:bg-red-600 disabled:opacity-40 text-white font-medium transition-colors">
+          {t('contribute.stop')}
+        </button>
+      </div>
     </div>
   );
 }
@@ -371,8 +397,10 @@ export default function Contribute() {
       setRunning(!!st.running);
       const lines = await getAgentLogs();
       if (lines.length) setLogs(lines.map(l => String(l).trimEnd()));
+      return true;
     } catch (e) {
       setAgentError(e.message || String(e));
+      return false;
     }
   }
 
@@ -445,30 +473,13 @@ export default function Contribute() {
         </div>
       )}
 
-      {/* Start/Stop */}
-      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-5 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <span className="relative flex h-3 w-3">
-            {running && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />}
-            <span className={`relative inline-flex rounded-full h-3 w-3 ${running ? 'bg-green-500' : 'bg-zinc-600'}`} />
-          </span>
-          <span className="text-base font-medium text-zinc-800 dark:text-zinc-200">{running ? t('contribute.running') : t('contribute.stopped')}</span>
-          {stats && running && (
-            <span className="text-xs text-zinc-400 dark:text-zinc-500">{t('contribute.agentRunning', { n: stats.contribute_req_per_min ?? 0 })}</span>
-          )}
-        </div>
-        <div className="flex gap-2">
-          <button onClick={handleStart} disabled={running}
-            className="px-4 py-2 bg-green-700 hover:bg-green-600 disabled:opacity-40 rounded-lg text-sm font-medium text-white transition-colors">{t('contribute.start')}</button>
-          <button onClick={handleStop} disabled={!running}
-            className="px-4 py-2 bg-red-700 hover:bg-red-600 disabled:opacity-40 rounded-lg text-sm font-medium text-white transition-colors">{t('contribute.stop')}</button>
-        </div>
-      </div>
-      {agentError && (
-        <p className="text-sm text-red-600 dark:text-red-400">{agentError}</p>
-      )}
-
-      <ContributionConfigCard />
+      <ContributionConfigCard
+        onStart={handleStart}
+        onStop={handleStop}
+        running={running}
+        stats={stats}
+        agentError={agentError}
+      />
 
       {stats && (
         <div className="grid grid-cols-3 gap-3">

@@ -258,8 +258,21 @@ export default function Circles() {
 
         {joined.length === 0
           ? (
-            <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-6 text-center">
+            <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-transparent rounded-xl px-4 py-6 text-center space-y-2">
               <p className="text-sm text-gray-400 dark:text-gray-500">{t('circles.noJoined')}</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {t('circles.noJoinedHint')}
+                {' '}
+                <button
+                  type="button"
+                  onClick={() => navigate('/circles/browse')}
+                  className="text-blue-500 hover:text-blue-600 dark:text-blue-400 hover:underline"
+                >
+                  {t('circles.browse.link')}
+                </button>
+                {' '}
+                {t('circles.noJoinedHintAfter')}
+              </p>
             </div>
           )
           : joined.map(c => (

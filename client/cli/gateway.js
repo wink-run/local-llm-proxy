@@ -188,10 +188,10 @@ async function cmdStart(port, adminPort) {
   console.log(`[gateway] Ready. Gateway :${port}  Admin :${adminPort}`);
   console.log('[gateway] Press Ctrl+C to stop.');
 
-  // 与桌面版一致：配置 auto_start 且已登录（有 worker_key）时自动启动贡献 Agent
+  // 与桌面版一致：配置 auto_start 且已登录（有 worker_key）时自动启动贡献 Agent（延后，不阻塞 gateway 就绪）
   const agentCfg = readAgentConfig();
   if (agentCfg?.auto_start && agentCfg?.worker_key) {
-    agentControl.startAgent();
+    setImmediate(() => agentControl.startAgent());
   }
 
   // Graceful shutdown

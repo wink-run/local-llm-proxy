@@ -2785,6 +2785,18 @@ function handleRequest(req, res) {
     return;
   }
 
+  if (method === 'GET' && url.startsWith('/api/model-provider-latency')) {
+    const qs   = new URL('http://x' + url).searchParams;
+    const days = Math.max(1, Math.min(365, parseInt(qs.get('days'), 10) || 7));
+    const since = _localStats?.sinceTsForDays ? _localStats.sinceTsForDays(days) : Math.floor(Date.now() / 1000) - days * 86400;
+    const data = _localStats?.queryModelProviderLatency
+      ? _localStats.queryModelProviderLatency(since)
+      : {};
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(data));
+    return;
+  }
+
   // 压缩比统计（盘点页用）
   if (method === 'GET' && url.startsWith('/api/compression-stats')) {
     const qs   = new URL('http://x' + url).searchParams;

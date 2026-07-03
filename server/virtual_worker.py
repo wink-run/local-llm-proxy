@@ -782,6 +782,7 @@ class VirtualWorkerConnection:
         if success and ttft_ms is not None and ttft_ms >= 0:
             s["ttft_sum"] += ttft_ms
             s["ttft_count"] += 1
+            s["last_ttft_ms"] = round(ttft_ms)
 
     def record_image_complete(self, model: str, image_count: int) -> None:
         s = self.period_stats.setdefault(

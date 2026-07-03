@@ -33,7 +33,7 @@ from scene_router import router as scene_router
 from provider_router import router as provider_router
 from config_router import router as config_router
 from circle_router import router as circle_router
-from worker_pool import pool, WorkerConnection
+from worker_pool import pool, WorkerConnection, worker_model_names, default_ttft_ms
 from geo_ip import client_ip_from_ws, resolve_client_ip, resolve_ip_geo, virtual_worker_geo
 from contrib_display import apply_contrib_display
 
@@ -249,9 +249,25 @@ def _worker_row(w) -> dict:
     total_ttft = sum(s.get("ttft_sum", 0) for s in stats.values())
     total_ttft_count = sum(s.get("ttft_count", 0) for s in stats.values())
     total_tokens = sum(s["output_tokens"] for s in stats.values())
-    avg_ttft_ms = total_ttft / total_ttft_count if total_ttft_count > 0 else 0
     success_rate = total_success / total_req if total_req > 0 else 1.0
     online_mins = w.period_online_mins()
+    # 每模型延迟：有实测用实测，否则服务端生成稳定默认 TTFT
+    model_latency = {}
+    for model in sorted(worker_model_names(w)):
+        s = stats.get(model, {})
+        if s.get("last_ttft_ms") is not None:
+            last_ms = int(s["last_ttft_ms"])
+        else:
+            last_ms = default_ttft_ms(w.worker_id, model)
+        tc = s.get("ttft_count") or 0
+        avg_ms = round(s.get("ttft_sum", 0) / tc) if tc > 0 else last_ms
+        model_latency[model] = {"last_ttft_ms": last_ms, "avg_ttft_ms": avg_ms}
+    if total_ttft_count > 0:
+        avg_ttft_ms = total_ttft / total_ttft_count
+    elif model_latency:
+        avg_ttft_ms = sum(m["last_ttft_ms"] for m in model_latency.values()) / len(model_latency)
+    else:
+        avg_ttft_ms = 0
     multiplier = 1.0
     if total_req > 0:
         online_f = min(0.5 + 0.8 * min(online_mins / 5, 1.0), 1.3)
@@ -271,6 +287,7 @@ def _worker_row(w) -> dict:
         "online_mins": round(online_mins, 1),
         "connected_at": w.connected_at.isoformat(),
         "status": status,
+        "model_latency": model_latency,
     }
     lat = getattr(w, "latitude", None)
     lng = getattr(w, "longitude", None)

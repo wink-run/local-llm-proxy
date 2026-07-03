@@ -3,9 +3,10 @@
 // direct_source_instances / sync_diff / user_subscriptions / user_payg_providers。
 // 保存统一走父级传入的 onSave(patch)（= saveAccounts），写 source_template_overrides /
 // direct_source_billing / user_payg_providers 等字段。
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLang } from '../store/lang';
 import { useCurrency } from '../store/currency';
+import { getGateway, isElectron } from '../api/adapter';
 import ServiceIcon from './ServiceIcon';
 import { resolveBrandIcon } from '../lib/brandIcons';
 
@@ -438,8 +439,94 @@ export function UnenrolledInstanceCard({ instance, onRemove, t }) {
   );
 }
 
+/** 账户实例可能对应的网关 provider_id（与 local-stats 落账字段对齐） */
+function accountProviderIds(inst) {
+  const raw = [
+    inst.gateway_id,
+    inst.provider_id,
+    inst.source_id,
+    inst.id,
+    inst.id ? `acct-${String(inst.id).replace(/^acct-/, '')}` : null,
+  ].filter(Boolean);
+  return [...new Set(raw.map(String))];
+}
+
+/** 在延迟表里查找模型（兼容大小写 / 带前缀别名） */
+function providerLatencyMap(latencyMap, model) {
+  if (!latencyMap || !model) return null;
+  if (latencyMap[model]) return latencyMap[model];
+  const lower = model.toLowerCase();
+  for (const key of Object.keys(latencyMap)) {
+    if (key.toLowerCase() === lower) return latencyMap[key];
+    if (key.endsWith(`/${model}`) || key.endsWith(`/${lower}`)) return latencyMap[key];
+  }
+  return null;
+}
+
+/** 读取某模型在某账户上的最近延迟（多 id 别名时取时间最新的一条） */
+function resolveAccountLatencyRow(latencyMap, model, inst) {
+  const pmap = providerLatencyMap(latencyMap, model);
+  if (!pmap) return null;
+  let best = null;
+  for (const pid of accountProviderIds(inst)) {
+    const row = pmap[pid];
+    if (!row) continue;
+    const ts = row.last_ts || 0;
+    const ttft = row.last_ttft_ms > 0 ? row.last_ttft_ms : (row.avg_ttft_ms > 0 ? row.avg_ttft_ms : 0);
+    if (ttft <= 0) continue;
+    if (!best || ts > best.ts) {
+      best = { ts, ttft };
+    }
+  }
+  return best;
+}
+
+function resolveAccountTtft(latencyMap, model, inst) {
+  return resolveAccountLatencyRow(latencyMap, model, inst)?.ttft ?? null;
+}
+
+function accountDisplayName(inst) {
+  return inst.name || inst.label || inst.plan_label || inst.source_id || inst.gateway_id || inst.provider_id || '—';
+}
+
 // ── 第3块：按模型视图（仿社区源 P2P 网格：一行两列，左模型、右供给源 logo）────────
-export function PersonalSourceModelView({ instances, t, trailing = null, onEmptyAdd = null, modelTypeMap = {} }) {
+export function PersonalSourceModelView({
+  instances, t, trailing = null, onEmptyAdd = null, modelTypeMap = {},
+  latencyMap: latencyMapProp = null, onRefreshLatency = null,
+}) {
+  const [expandedModel, setExpandedModel] = useState(null);
+  const [latencyMapLocal, setLatencyMapLocal] = useState({});
+  const latencyMap = latencyMapProp ?? latencyMapLocal;
+
+  const loadLatency = useCallback(async () => {
+    if (onRefreshLatency) {
+      onRefreshLatency();
+      return;
+    }
+    try {
+      const map = await getGateway().getModelProviderLatency(7);
+      if (map && typeof map === 'object') setLatencyMapLocal({ ...map });
+    } catch { /* 网关未就绪时忽略 */ }
+  }, [onRefreshLatency]);
+
+  // 无父级注入时自行拉取
+  useEffect(() => {
+    if (latencyMapProp) return undefined;
+    loadLatency();
+    const fast = expandedModel ? 5000 : 30000;
+    const id = setInterval(loadLatency, fast);
+    return () => clearInterval(id);
+  }, [loadLatency, expandedModel, latencyMapProp]);
+
+  useEffect(() => {
+    if (latencyMapProp || !isElectron() || !window.electronAPI?.localStats?.onChanged) return undefined;
+    return window.electronAPI.localStats.onChanged(loadLatency);
+  }, [loadLatency, latencyMapProp]);
+
+  useEffect(() => {
+    if (expandedModel) loadLatency();
+  }, [expandedModel, loadLatency]);
+
   const byModel = useMemo(() => {
     const m = {};
     for (const inst of instances) {
@@ -515,32 +602,75 @@ export function PersonalSourceModelView({ instances, t, trailing = null, onEmpty
         {byModel.map(([model, srcs]) => {
           const verified = srcs.some(s => s.test_verified === true);
           const mType = modelTypeMap[model];
+          const ttftList = srcs.map(s => resolveAccountTtft(latencyMap, model, s)).filter(v => v > 0);
+          const fastMs = ttftList.length ? Math.min(...ttftList) : null;
+          const sortedSrcs = [...srcs].sort((a, b) => {
+            const ta = resolveAccountTtft(latencyMap, model, a) ?? 999999;
+            const tb = resolveAccountTtft(latencyMap, model, b) ?? 999999;
+            return ta - tb;
+          });
           return (
-          <div
-            key={model}
-            className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300/50 dark:border-zinc-700/50 rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-1.5 min-w-0"
-          >
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span
-                className={`w-2 h-2 rounded-full shrink-0 ${verified ? 'bg-green-500' : 'bg-zinc-400 dark:bg-zinc-500'}`}
-                aria-hidden
-                title={verified ? t('providers.badge.verified') : t('providers.badge.needsConfig')}
-              />
-              <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate" title={model}>{model}</span>
-              {mType && mType !== 'chat' && (
+          <div key={model} className="min-w-0">
+            <button
+              type="button"
+              onClick={() => setExpandedModel(prev => (prev === model ? null : model))}
+              className={`w-full bg-zinc-100 dark:bg-zinc-800 border rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-1.5 min-w-0 text-left transition-colors ${
+                expandedModel === model
+                  ? 'border-blue-400/60 dark:border-blue-500/50'
+                  : 'border-zinc-300/50 dark:border-zinc-700/50 hover:border-zinc-400/70 dark:hover:border-zinc-600/70'
+              }`}
+            >
+              <div className="flex items-center gap-1.5 min-w-0">
                 <span
-                  className={`shrink-0 text-[9px] font-sans leading-none px-1 py-px rounded border border-transparent ${modelTypeBtnClass(mType)}`}
-                  title={mType === 'image' ? t('providers.models.image') : t('providers.models.embedding')}
-                >
-                  {modelTypeLabel(mType, t)}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-0.5 shrink-0">
-              {srcs.map((s, i) => (
-                <SourceProviderLogo key={(s.id || s.agent_id || s.source_id) + ':' + i} inst={s} />
-              ))}
-            </div>
+                  className={`w-2 h-2 rounded-full shrink-0 ${verified ? 'bg-green-500' : 'bg-zinc-400 dark:bg-zinc-500'}`}
+                  aria-hidden
+                  title={verified ? t('providers.badge.verified') : t('providers.badge.needsConfig')}
+                />
+                <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate" title={model}>{model}</span>
+                {mType && mType !== 'chat' && (
+                  <span
+                    className={`shrink-0 text-[9px] font-sans leading-none px-1 py-px rounded border border-transparent ${modelTypeBtnClass(mType)}`}
+                    title={mType === 'image' ? t('providers.models.image') : t('providers.models.embedding')}
+                  >
+                    {modelTypeLabel(mType, t)}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-0.5 shrink-0">
+                {srcs.map((s, i) => (
+                  <SourceProviderLogo key={(s.id || s.agent_id || s.source_id) + ':' + i} inst={s} />
+                ))}
+                {fastMs != null && (
+                  <span className="text-[10px] text-zinc-400 tabular-nums ml-0.5">
+                    {t('providers.p2p.ttftShort', { s: (fastMs / 1000).toFixed(1) })}
+                  </span>
+                )}
+                <span className="text-[10px] text-zinc-400">{expandedModel === model ? '▾' : '▸'}</span>
+              </div>
+            </button>
+            {expandedModel === model && (
+              <div className="mt-1 ml-1 pl-2 border-l border-zinc-200 dark:border-zinc-700 space-y-1">
+                {sortedSrcs.map((inst, i) => {
+                  const row = resolveAccountLatencyRow(latencyMap, model, inst);
+                  return (
+                    <div
+                      key={(inst.id || inst.agent_id || inst.source_id) + ':' + i}
+                      className="flex items-center justify-between gap-2 text-[10px] text-zinc-500 dark:text-zinc-400"
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <SourceProviderLogo inst={inst} />
+                        <span className="truncate text-zinc-700 dark:text-zinc-300">{accountDisplayName(inst)}</span>
+                      </div>
+                      <span className="shrink-0 tabular-nums text-right">
+                        {row?.ttft != null
+                          ? t('providers.p2p.lastTtft', { ms: Math.round(row.ttft) })
+                          : t('providers.p2p.noTtftYet')}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
           );
         })}

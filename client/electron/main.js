@@ -413,6 +413,13 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
     if (isDev) mainWindow.webContents.openDevTools({ mode: 'detach' });
+    // 窗口可见后再自动启动贡献 Agent，避免拖慢应用启动
+    try {
+      const cfg = readAgentConfig();
+      if (cfg?.auto_start && cfg?.worker_key) {
+        setImmediate(() => startAgent());
+      }
+    } catch {}
   });
 
   // 关闭 / 最小化 → 隐藏到托盘（全平台；仅「退出」才真正结束进程）
@@ -1696,6 +1703,16 @@ function registerIPC() {
       }).filter(a => a.calls > 0).sort((a, b) => b.calls - a.calls);
     } catch { data.app_usage = []; }
     return data;
+  });
+  ipcMain.handle('localStats:modelLatency', (_e, days) => {
+    const d = Math.max(1, Math.min(365, parseInt(days, 10) || 7));
+    try {
+      const since = localStats.sinceTsForDays(d);
+      return localStats.queryModelProviderLatency(since);
+    } catch (e) {
+      console.error('[localStats:modelLatency]', e.message);
+      return {};
+    }
   });
   // 手动触发会话文件补录（扫 ~/.claude、~/.codex、~/.gemini），返回各来源计数
   ipcMain.handle('sessionImport:run', () => syncSessionTelemetry(localStats));
@@ -3487,8 +3504,10 @@ app.whenReady().then(() => {
     }
   } catch (e) { console.error('[cursor-hooks] migrate purge', e.message); }
   gateway.setStatsRecorder((...args) => {
-    localStats.record(...args);
-    // 托盘 Token 文字由 2s 定时器统一刷新，这里不再每条请求都更新
+    const ok = localStats.record(...args);
+    if (ok) {
+      try { mainWindow?.webContents?.send('localStats:changed'); } catch {}
+    }
   });
   gateway.setLocalStats(localStats);
   gateway.setLocalConfigReader(readLocalConfig);   // 供策略组调度查 policies[]
@@ -3561,12 +3580,6 @@ app.whenReady().then(() => {
   setInterval(runSessionImport, 30_000);
 
   if (!isDev) setupAutoUpdater();
-
-  // Auto-start agent if configured
-  const cfg = readAgentConfig();
-  if (cfg?.auto_start && cfg?.worker_key) {
-    startAgent();
-  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

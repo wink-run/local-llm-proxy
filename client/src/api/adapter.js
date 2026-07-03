@@ -43,6 +43,14 @@ const electronAdapter = {
   gateway: {
     status:        ()  => window.electronAPI.gateway.status(),
     getDailyStats: (days) => window.electronAPI.localStats.query(days || 1),
+    getModelProviderLatency: async (days) => {
+      const d = days || 7;
+      if (window.electronAPI.localStats.modelLatency) {
+        return window.electronAPI.localStats.modelLatency(d);
+      }
+      const data = await window.electronAPI.localStats.query(d);
+      return data?.model_provider_latency || {};
+    },
     getLog:        ()  => window.electronAPI.gateway.getLog(),
     restart:       ()  => window.electronAPI.gateway.restart(),
     refreshPeerModels: () => window.electronAPI.gateway.refreshPeerModels(),
@@ -78,6 +86,7 @@ const httpAdapter = {
   gateway: {
     status:        ()  => adminFetch('/api/gateway/status'),
     getDailyStats: (days) => adminFetch('/api/local-stats?days=' + (days || 1)),
+    getModelProviderLatency: (days) => adminFetch('/api/model-provider-latency?days=' + (days || 7)),
     // admin-api returns { log: [...] }, but callers expect the array directly
     getLog:        ()  => adminFetch('/api/gateway/log').then(r => r.log || []),
     restart:       ()  => adminFetch('/api/gateway/restart', { method: 'POST' }),

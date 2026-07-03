@@ -164,11 +164,13 @@ td{padding:10px 12px;vertical-align:middle}
         <button :class="{ active: authTab === 'register' }" @click="authTab='register'">{{ T.register }}</button>
       </div>
       <div v-if="authTab === 'login'">
+        <div v-if="inviteCircleCode" class="ok" style="text-align:left;margin-bottom:12px;line-height:1.5">{{ T.circleInviteHint }}</div>
         <div class="field"><label>{{ T.email }}</label><input v-model="form.email" type="email" placeholder="you@example.com" @keyup.enter="doLogin" /></div>
         <div class="field"><label>{{ T.password }}</label><input v-model="form.password" type="password" placeholder="••••••" @keyup.enter="doLogin" /></div>
         <button class="btn-block" :disabled="authLoading" @click="doLogin">{{ authLoading ? T.loggingIn : T.login }}</button>
       </div>
       <div v-else>
+        <div v-if="inviteCircleCode" class="ok" style="text-align:left;margin-bottom:12px;line-height:1.5">{{ T.circleInviteHint }}</div>
         <div class="field"><label>{{ T.email }}</label><input v-model="form.email" type="email" placeholder="you@example.com" /></div>
         <div class="field"><label>{{ T.nickname }}</label><input v-model="form.nickname" type="text" :placeholder="T.nicknamePlaceholder" /></div>
         <div class="field"><label>{{ T.password }} (≥6)</label><input v-model="form.password" type="password" placeholder="••••••" /></div>
@@ -183,8 +185,21 @@ td{padding:10px 12px;vertical-align:middle}
     </div>
   </div>
 
+  <!-- 邀请入圈导引页：登录/注册成功后展示，引导下载桌面客户端 -->
+  <div v-else-if="loggedIn && circleGuide" class="auth-overlay">
+    <div class="auth-box" style="text-align:center">
+      <div style="font-size:40px;margin-bottom:8px">🎉</div>
+      <h2>{{ T.circleGuideTitle }}</h2>
+      <p class="subtitle" style="margin-bottom:16px">{{ circleGuideMessage }}</p>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.6;margin-bottom:24px">{{ T.circleGuideDesc }}</p>
+      <a href="https://github.com/wink-run/local-llm-proxy/releases" target="_blank" rel="noopener noreferrer"
+        class="btn-block" style="display:block;text-decoration:none;margin-bottom:10px">{{ T.circleGuideDownload }}</a>
+      <button type="button" class="btn-sm" style="width:100%;padding:10px" @click="dismissCircleGuide">{{ T.circleGuideContinue }}</button>
+    </div>
+  </div>
+
   <!-- Main -->
-  <div v-else class="app">
+  <div v-else-if="loggedIn" class="app">
     <header>
       <div class="header-title"><span class="brand-mark"></span> Token Bank <span>{{ T.portalTitle }}</span></div>
       <div class="header-user">
@@ -667,6 +682,14 @@ const LANGS = {
     model: '模型', tier: '类型',
     earnRate: '贡献率（积分/千Token）', spendRate: '消费率（积分/千Token）',
     econNote: '质量系数范围 0.5 ~ 1.5，由在线时长占比（40%）+ 首 Token 平均延迟（40%）+ 请求成功率（20%）综合决定。贡献率 > 消费率，持续在线贡献可积累大量可用积分。',
+    circleInviteHint: '通过邀请链接访问，登录后将自动加入圈子',
+    circleGuideTitle: '欢迎加入圈子！',
+    circleGuideJoined: '你已成功加入圈子「{name}」',
+    circleGuideAlready: '你已是圈子「{name}」的成员',
+    circleGuideFull: '圈子「{name}」已满，未能加入',
+    circleGuideDesc: '下载 Token Bank 桌面客户端，与圈友共享 AI 算力，畅享完整功能',
+    circleGuideDownload: '免费下载客户端',
+    circleGuideContinue: '稍后，进入用户中心',
   },
   en: {
     authSubtitle: 'Contribute · Earn Credits · Enjoy AI',
@@ -723,6 +746,14 @@ const LANGS = {
     model: 'Model', tier: 'Tier',
     earnRate: 'Earn Rate (credits/K tokens)', spendRate: 'Spend Rate (credits/K tokens)',
     econNote: 'Quality multiplier range: 0.5 ~ 1.5 — weighted by uptime (40%) + avg time-to-first-token (40%) + success rate (20%). Earn rate > spend rate by design: active contributors accumulate credits over time.',
+    circleInviteHint: 'You opened an invite link — you will join the circle after sign-in',
+    circleGuideTitle: 'Welcome to the circle!',
+    circleGuideJoined: 'You have joined "{name}"',
+    circleGuideAlready: 'You are already a member of "{name}"',
+    circleGuideFull: 'Circle "{name}" is full — could not join',
+    circleGuideDesc: 'Download the Token Bank desktop client to share compute with circle mates and unlock the full experience',
+    circleGuideDownload: 'Download client',
+    circleGuideContinue: 'Later — go to user portal',
   }
 }
 
@@ -741,6 +772,9 @@ createApp({
     const authLoading = ref(false)
     const authErr = ref(''), authOk = ref('')
     const form = ref({ email:'', password:'', nickname:'', referral_code:'' })
+    // 邀请链接 ?c= 圈子码；登录/注册成功后展示导引页
+    const inviteCircleCode = ref('')
+    const circleGuide = ref(null)  // { circleName, status: 'joined'|'already_member'|'full' }
 
     const profile = ref({})
 
@@ -795,6 +829,70 @@ createApp({
 
     function getToken() { return storageGet('user_token') || '' }
 
+    /** 根据入圈结果展示导引页（需已登录） */
+    async function showCircleGuideFromCode(code, joinResult) {
+      if (!code) return
+      const succeeded = joinResult.already_member || joinResult.joined || joinResult.ok
+      if (!succeeded && !joinResult.full) return
+      let circleName = ''
+      try {
+        const pr = await userApi(`/user/circles/join/${encodeURIComponent(code)}`)
+        if (pr.ok) {
+          const preview = await pr.json()
+          circleName = preview.circle?.name || ''
+        }
+      } catch {}
+      let status = 'joined'
+      if (joinResult.already_member) status = 'already_member'
+      else if (joinResult.full) status = 'full'
+      circleGuide.value = { circleName, status }
+    }
+
+    /** 已注册用户通过邀请链接登录后自动入圈 */
+    async function joinCircleAfterLogin() {
+      const code = inviteCircleCode.value
+      if (!code) return
+      let circleName = ''
+      let previewOk = false
+      try {
+        const pr = await userApi(`/user/circles/join/${encodeURIComponent(code)}`)
+        if (pr.ok) {
+          const preview = await pr.json()
+          circleName = preview.circle?.name || ''
+          previewOk = true
+        }
+      } catch {}
+      if (!previewOk) return
+      try {
+        const jr = await userApi(`/user/circles/join/${encodeURIComponent(code)}`, { method: 'POST' })
+        const result = jr.ok ? await jr.json() : {}
+        let status = 'joined'
+        if (result.already_member) status = 'already_member'
+        else if (result.full) status = 'full'
+        circleGuide.value = { circleName, status }
+      } catch {
+        circleGuide.value = { circleName, status: 'joined' }
+      }
+    }
+
+    function dismissCircleGuide() {
+      circleGuide.value = null
+      try {
+        const url = new URL(location.href)
+        url.searchParams.delete('c')
+        history.replaceState({}, '', url.pathname + url.search + url.hash)
+      } catch {}
+    }
+
+    const circleGuideMessage = computed(() => {
+      if (!circleGuide.value) return ''
+      const g = circleGuide.value
+      const name = g.circleName || '…'
+      if (g.status === 'already_member') return (T.value.circleGuideAlready || '').replace('{name}', name)
+      if (g.status === 'full') return (T.value.circleGuideFull || '').replace('{name}', name)
+      return (T.value.circleGuideJoined || '').replace('{name}', name)
+    })
+
     async function userApi(path, opts = {}) {
       const r = await fetch(path, {
         ...opts,
@@ -814,6 +912,9 @@ createApp({
         if (!r.ok) { authErr.value = d.detail || T.value.loggingIn; return }
         storageSet('user_token', d.token)
         loggedIn.value = true
+        if (inviteCircleCode.value) {
+          await joinCircleAfterLogin()
+        }
         boot()
       } catch { authErr.value = 'Network error' }
       finally { authLoading.value = false }
@@ -824,17 +925,27 @@ createApp({
       if (!form.value.email || !form.value.password) return
       authLoading.value = true
       try {
-        const r = await fetch('/user/register', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email:form.value.email, password:form.value.password, nickname:form.value.nickname, referral_code:form.value.referral_code }) })
+        const r = await fetch('/user/register', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email:form.value.email, password:form.value.password, nickname:form.value.nickname, referral_code:form.value.referral_code, circle_code: inviteCircleCode.value || '' }) })
         const d = await r.json()
         if (!r.ok) { authErr.value = d.detail || 'Error'; return }
         authOk.value = lang.value === 'zh' ? '注册成功！正在登录…' : 'Registered! Signing in…'
         storageSet('user_token', d.token)
-        setTimeout(() => { loggedIn.value = true; boot() }, 800)
+        setTimeout(async () => {
+          loggedIn.value = true
+          boot()
+          if (inviteCircleCode.value) {
+            await showCircleGuideFromCode(inviteCircleCode.value, {
+              joined: d.circle_joined,
+              full: d.circle_full,
+              already_member: false,
+            })
+          }
+        }, 800)
       } catch { authErr.value = 'Network error' }
       finally { authLoading.value = false }
     }
 
-    function logout() { storageRemove('user_token'); loggedIn.value = false }
+    function logout() { storageRemove('user_token'); loggedIn.value = false; circleGuide.value = null }
 
     async function fetchProfile() {
       try { const d = await (await userApi('/user/profile')).json(); profile.value = d } catch {}
@@ -1191,16 +1302,24 @@ createApp({
       if (k === 'purchase') fetchPurchaseOrders()
     })
 
-    onMounted(() => {
-      if (loggedIn.value) boot()
+    onMounted(async () => {
       const params = new URLSearchParams(location.search)
       const ref = params.get('ref')
       if (ref) form.value.referral_code = ref
+      const c = params.get('c')
+      if (c) inviteCircleCode.value = c
+
+      if (loggedIn.value) {
+        boot()
+        // 已登录用户打开邀请链接：自动入圈并展示导引页
+        if (c) await joinCircleAfterLogin()
+      }
     })
 
     return {
       lang, T, toggleLang, brandIconFor, isAppIcon, appIconSvg,
       loggedIn, authTab, authLoading, authErr, authOk, form, doLogin, doRegister, logout,
+      inviteCircleCode, circleGuide, circleGuideMessage, dismissCircleGuide,
       profile, activeTab, visibleTabs, switchTab, creditsSub, creditsSubTabs, switchCreditsSub,
       myKeys, newKeyNote, createKey, toggleKey, deleteKey, maskKey,
       settlements, fetchSettlements, transactions, fetchTransactions,
