@@ -3783,6 +3783,14 @@ export default function Gateway() {
 
   // ── Data loading ────────────────────────────────────────────────────────────
 
+  const loadAvailableModels = useCallback(async () => {
+    try {
+      setAvailableModels(await loadGatewayAvailableModels({ includeCommunity: !!user }));
+    } catch (e) {
+      console.error('loadAvailableModels', e);
+    }
+  }, [user]);
+
   const refresh = useCallback(async () => {
     const [s, st, lg] = await Promise.all([
       getGateway().status(),
@@ -3792,7 +3800,8 @@ export default function Gateway() {
     setStatus(s);
     setStats(st);
     setLog(lg.slice(0, 50));
-  }, []);
+    loadAvailableModels();
+  }, [loadAvailableModels]);
 
   const loadSceneData = useCallback(async () => {
     try {
@@ -3810,23 +3819,13 @@ export default function Gateway() {
     }
   }, []);
 
-  const loadAvailableModels = useCallback(async () => {
-    try {
-      setAvailableModels(await loadGatewayAvailableModels({ includeCommunity: !!user }));
-    } catch (e) {
-      console.error('loadAvailableModels', e);
-    }
-  }, [user]);
-
   useEffect(() => {
     refresh();
     loadSceneData();
-    loadAvailableModels();
-    // 状态/统计保持 5s 实时刷新；/v1/models（供给模型列表）变化很慢，单独用 60s 轮询降频。
-    const statsId  = setInterval(refresh, 5000);
-    const modelsId = setInterval(loadAvailableModels, 60000);
-    return () => { clearInterval(statsId); clearInterval(modelsId); };
-  }, [refresh, loadSceneData, loadAvailableModels]);
+    // 状态/统计 5s 刷新（含模型列表，以便供给源开关变更后下拉及时更新）
+    const statsId = setInterval(refresh, 5000);
+    return () => { clearInterval(statsId); };
+  }, [refresh, loadSceneData]);
 
   // ── Computed stats ──────────────────────────────────────────────────────────
 

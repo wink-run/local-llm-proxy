@@ -654,6 +654,14 @@ function isP2pProvider(provider) {
   return provider?.type === 'p2p' || provider?.id === 'tokenbank-p2p';
 }
 
+/** 用户是否在供给源页启用了社区分享网络 */
+function isCommunityP2pEnabled() {
+  if (!_getConfig) return true;
+  const p = (_getConfig().providers || []).find(x => x.id === 'tokenbank-p2p' || x.type === 'p2p');
+  if (!p) return true;
+  return p.enabled !== false;
+}
+
 /** P2P 首 token 超时（毫秒） */
 const P2P_TTFT_MS = 20_000;
 
@@ -2753,7 +2761,9 @@ function handleRequest(req, res) {
     };
     // Claude 客户端模型名（透明逻辑）
     for (const id of _claudeModels) add(id, 'anthropic');
-    for (const id of _peerModels) add(id, 'p2p');
+    if (isCommunityP2pEnabled()) {
+      for (const id of _peerModels) add(id, 'p2p');
+    }
     try {
       for (const p of enabledProviders()) {
         if (p.type === 'p2p') continue;

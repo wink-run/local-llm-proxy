@@ -166,13 +166,19 @@ export async function fetchGatewayV1ModelsJson() {
   return fetchCloudV1ModelsJson();
 }
 
+/** 社区分享网络（tokenbank-p2p）是否在供给源中启用 */
+export function isCommunityP2pEnabled(cfg) {
+  const p = (cfg?.providers || []).find(x => x.id === 'tokenbank-p2p' || x.type === 'p2p');
+  if (!p) return true;
+  return p.enabled !== false;
+}
+
 /**
  * 网关下拉可选模型：优先本地网关 /v1/models，与 OpenAI 列表接口一致。
- * @param {{ includeCommunity?: boolean }} [opts] includeCommunity=false 时排除社区 P2P 层（未登录）
+ * @param {{ includeCommunity?: boolean }} [opts] includeCommunity=false 时排除社区 P2P 层（未登录或已关闭社区源）
  * @returns {Promise<Array<{ id: string, tier: 'free'|'p2p'|'paid' }>>}
  */
 export async function loadGatewayAvailableModels(opts = {}) {
-  const { includeCommunity = true } = opts;
   let cfg = null;
   let acc = null;
   let provById = {};
@@ -184,7 +190,9 @@ export async function loadGatewayAvailableModels(opts = {}) {
     provById = Object.fromEntries((cfg?.providers || []).map(p => [p.id, p]));
   } catch {}
 
-  await refreshPeerModelsCache();
+  const includeCommunity = (opts.includeCommunity !== false) && isCommunityP2pEnabled(cfg);
+
+  if (includeCommunity) await refreshPeerModelsCache();
   const local = await fetchLocalGatewayV1Models(provById);
   let models = local?.length ? local : [];
 
@@ -258,7 +266,9 @@ export function buildPersonalModelTypeMap(cfg, accounts) {
 
 /** 社区 P2P 模型（与云端 /v1/models 同源） */
 export async function loadCommunityP2pModels(opts = {}) {
-  const { includeCommunity = true } = opts;
+  let cfg = null;
+  try { cfg = await getConfig().read().catch(() => null); } catch {}
+  const includeCommunity = (opts.includeCommunity !== false) && isCommunityP2pEnabled(cfg);
   if (!includeCommunity) return [];
   const { entries } = await fetchServerCommunityModels();
   return entries;
