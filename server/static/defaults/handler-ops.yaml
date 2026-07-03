@@ -149,6 +149,7 @@ ops:
         '
   openclaw-api:
     install_url: https://openclaw.ai
+    npm_package: openclaw
   cursor-stats:
     install_url: https://cursor.com
     install_guide:
