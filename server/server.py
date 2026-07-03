@@ -72,7 +72,7 @@ _LANDING_SCREENSHOTS = frozenset({
     "circle.webp", "circle_en.webp",
     "world.webp", "world_en.webp",
     "device.webp", "device_en.webp",
-    "trace_en.webp",
+    "trace.webp", "trace_en.webp",
 })
 
 
