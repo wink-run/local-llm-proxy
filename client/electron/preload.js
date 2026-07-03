@@ -159,6 +159,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     list:          ()       => ipcRenderer.invoke('apps:list'),
     supported:     ()       => ipcRenderer.invoke('apps:supported'),
     npmGlobalInstall: (id)  => ipcRenderer.invoke('apps:npmGlobalInstall', { id }),
+    npmGlobalUninstall: (id) => ipcRenderer.invoke('apps:npmGlobalUninstall', { id }),
     stats:         (list)   => ipcRenderer.invoke('apps:stats', list),
     detail:        (app, days) => ipcRenderer.invoke('apps:detail', { app, days }),
     sessionTrace:  (agent_id, session_id) => ipcRenderer.invoke('apps:sessionTrace', { agent_id, session_id }),
