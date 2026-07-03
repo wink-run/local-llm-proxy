@@ -82,6 +82,46 @@ function catalogProviderToRegistry(p) {
   return out;
 }
 
+/** catalog 按量 provider → billing_sources 条目（个人源模板列表以 billing_sources 为准） */
+function catalogProviderToBilling(p, existing) {
+  if (!p?.id) return null;
+  const pricing = { ...(p.pricing && typeof p.pricing === 'object' ? p.pricing : {}) };
+  const models = [];
+  const seen = new Set();
+  const push = (id, modality = 'chat') => {
+    const n = String(id || '').trim();
+    if (!n || seen.has(n)) return;
+    seen.add(n);
+    models.push({ id: n, modality, pricing: pricing[n] || {} });
+  };
+  for (const m of p.models || []) {
+    if (typeof m === 'string') push(m);
+    else if (m && typeof m === 'object') push(m.name || m.id, m.type || m.modality || 'chat');
+  }
+  for (const k of Object.keys(pricing)) push(k);
+  return {
+    ...(existing && typeof existing === 'object' ? existing : {}),
+    id: p.id,
+    source_id: p.id,
+    category: 'payg',
+    label: p.label || existing?.label || p.id,
+    icon: p.icon || existing?.icon || '🔧',
+    tier: p.type || existing?.tier || 'paid',
+    base_url: p.base_url || existing?.base_url || '',
+    auth: existing?.auth || 'api_key',
+    api_format: p.api_format || existing?.api_format || 'openai',
+    handler: p.handler || existing?.handler || 'openai',
+    hint: p.hint || existing?.hint || '',
+    keyless: !!p.keyless,
+    key_prefix: Array.isArray(p.key_prefix) ? p.key_prefix : (existing?.key_prefix || []),
+    signup_url: p.signup_url || existing?.signup_url || '',
+    enabled_default: !!p.enabled_default,
+    models: models.length ? models : (existing?.models || []),
+    pricing: Object.keys(pricing).length ? pricing : (existing?.pricing || {}),
+    sort_order: existing?.sort_order ?? 0,
+  };
+}
+
 /** catalog subscription_sources → billing_sources 条目 */
 function subscriptionSourceToBilling(s, existing) {
   const sid = s.id;
@@ -128,14 +168,22 @@ function mergeCatalogIntoRegistryDoc(existingDoc, catalogPayload) {
     .filter(Boolean);
 
   const billingByKey = {};
+  // 订阅源：保留本地非 payg 条目，再由 subscription_sources 覆盖
   for (const s of existing.billing_sources || []) {
     const k = s.source_id || s.id;
-    if (k) billingByKey[k] = { ...s };
+    if (k && s.category !== 'payg') billingByKey[k] = { ...s };
   }
   for (const sub of catalogPayload?.subscription_sources || []) {
     const k = sub.id;
     if (!k) continue;
     const merged = subscriptionSourceToBilling(sub, billingByKey[k]);
+    if (merged) billingByKey[k] = merged;
+  }
+  // 按量源：从 catalog.providers（payg=true）同步到 billing_sources
+  for (const p of catalogPayload?.providers || []) {
+    if (!p?.id || !p.payg) continue;
+    const k = p.id;
+    const merged = catalogProviderToBilling(p, billingByKey[k]);
     if (merged) billingByKey[k] = merged;
   }
 
@@ -231,4 +279,5 @@ module.exports = {
   readCatalogFromYaml,
   mergeCatalogIntoRegistryDoc,
   fetchCatalogJson,
+  catalogProviderToBilling,
 };
