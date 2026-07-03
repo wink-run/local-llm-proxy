@@ -205,6 +205,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setUserAccounts: (d) => ipcRenderer.invoke('localConfig:setUserAccounts', { ...d, ...billingAuth() }),
     pushUserAccountsToCloud: () => ipcRenderer.invoke('localConfig:pushUserAccountsToCloud', billingAuth()),
     setLiveCatalog: (payload) => ipcRenderer.invoke('localConfig:setLiveCatalog', payload),
+    getProviderCatalog: () => ipcRenderer.invoke('localConfig:getProviderCatalog'),
+    getBuiltinCatalog:  () => ipcRenderer.invoke('localConfig:getBuiltinCatalog'),
+    syncProviderCatalog: () => ipcRenderer.invoke('localConfig:syncProviderCatalog'),
+    onCatalogUpdated: (cb) => {
+      const h = () => cb();
+      ipcRenderer.on('catalog:updated', h);
+      return () => ipcRenderer.removeListener('catalog:updated', h);
+    },
     // 服务端配置下发 / 同步后刷新报价
     onBillingChanged: (cb) => {
       const h = () => cb();

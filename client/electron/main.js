@@ -1799,6 +1799,7 @@ function registerIPC() {
       console.warn('[config] prune local billing failed:', e.message);
     }
     try { mainWindow?.webContents?.send('billing:changed'); } catch {}
+    try { mainWindow?.webContents?.send('catalog:updated'); } catch {}
     return { ok: true, applied: { registry: true } };
   }
 
@@ -2170,6 +2171,28 @@ function registerIPC() {
 
   ipcMain.handle('localConfig:get', () => readLocalConfig());
 
+  // 供给源目录：后台拉 /api/catalog 写 yaml，UI 读本地 yaml
+  const catalogSync = require('./catalog-sync');
+
+  function notifyCatalogUpdated() {
+    try { mainWindow?.webContents?.send('catalog:updated'); } catch {}
+    try { mainWindow?.webContents?.send('billing:changed'); } catch {}
+  }
+
+  ipcMain.handle('localConfig:getProviderCatalog', () => catalogSync.readCatalogFromYaml());
+  ipcMain.handle('localConfig:getBuiltinCatalog', () => {
+    const configLoader = require('./config-loader');
+    return configLoader.builtinCatalogPayload();
+  });
+  ipcMain.handle('localConfig:syncProviderCatalog', async () => {
+    const result = await catalogSync.syncCatalogToRegistry({
+      readLocalConfig,
+      applyUserBillingCfg,
+      onApplied: notifyCatalogUpdated,
+    });
+    return result;
+  });
+
   // 个人页计费：云端同步辅助
   const cloudBilling = require('./cloud-billing-sync');
 
@@ -2187,6 +2210,15 @@ function registerIPC() {
     billingConfigMod.applyPricingOverrides(overrides || cfg.provider_pricing_overrides || {});
     writeLocalConfig(cfg);
     syncAgentProviderModelsFromAccounts();
+  }
+
+  // 启动时后台拉 /api/catalog 同步供给源（非阻塞）
+  if (_initCfg.cloud_config?.url) {
+    catalogSync.scheduleBackgroundSync({
+      readLocalConfig,
+      applyUserBillingCfg,
+      onApplied: notifyCatalogUpdated,
+    });
   }
 
   async function pullUserBilling(_auth = {}) {
