@@ -234,11 +234,18 @@ function retagSessionsProvider(codexHome, targetProvider) {
 // ── Codex Desktop 会话列表来源：state_*.sqlite 的 threads 表(按 model_provider 过滤)──
 // 参考 cc-switch codex_history_migration：改 threads.model_provider 即可让 Desktop
 // 在当前 provider 下显示这些会话。只改这一个字段，rollout_path 等不动。
+function codexDebugLog(msg) {
+  try { fs.appendFileSync(path.join(os.homedir(), '.tokenbank', 'codex-retag-debug.log'), new Date().toISOString() + ' ' + msg + '\n'); } catch {}
+}
+
 function retagThreadsProvider(codexHome, targetProvider) {
   let Database;
-  try { Database = require('better-sqlite3'); } catch { return { changed: 0, dbs: 0, err: 'no-sqlite' }; }
+  try { Database = require('better-sqlite3'); }
+  catch (e) { codexDebugLog('retagThreads: require better-sqlite3 FAILED: ' + (e && e.message)); return { changed: 0, dbs: 0, err: 'no-sqlite' }; }
   let dbs;
-  try { dbs = fs.readdirSync(codexHome).filter((f) => /^state_\d+\.sqlite$/.test(f)); } catch { return { changed: 0, dbs: 0 }; }
+  try { dbs = fs.readdirSync(codexHome).filter((f) => /^state_\d+\.sqlite$/.test(f)); }
+  catch (e) { codexDebugLog('retagThreads: readdir ' + codexHome + ' FAILED: ' + (e && e.message)); return { changed: 0, dbs: 0 }; }
+  codexDebugLog(`retagThreads: home=${codexHome} target=${targetProvider} dbs=${JSON.stringify(dbs)}`);
   let changed = 0;
   for (const name of dbs) {
     const dbPath = path.join(codexHome, name);
@@ -253,9 +260,11 @@ function retagThreadsProvider(codexHome, targetProvider) {
         if (cols.includes('model_provider')) {
           const r = conn.prepare('UPDATE threads SET model_provider = ? WHERE model_provider IS NOT ?').run(targetProvider, targetProvider);
           changed += r.changes || 0;
-        }
-      }
-    } catch {} finally { try { conn && conn.close(); } catch {} }
+          codexDebugLog(`retagThreads: ${name} changed=${r.changes}`);
+        } else codexDebugLog(`retagThreads: ${name} threads 无 model_provider 列`);
+      } else codexDebugLog(`retagThreads: ${name} 无 threads 表`);
+    } catch (e) { codexDebugLog(`retagThreads: ${name} UPDATE FAILED: ${e && e.message}`); }
+    finally { try { conn && conn.close(); } catch {} }
   }
   return { changed, dbs: dbs.length };
 }
