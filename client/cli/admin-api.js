@@ -250,18 +250,30 @@ function applyUserBillingCfg(cfg) {
 }
 
 /** 后台拉 /api/catalog 写入 ~/.tokenbank/providers.registry.yaml（与 Electron 对齐） */
-function scheduleCatalogSync() {
-  return catalogSync.scheduleBackgroundSync({
+function catalogSyncOpts(req, body = {}) {
+  const serverUrl = catalogSync.resolveSyncServerUrl({
+    baseUrl: body.serverUrl || resolveBillingServerUrl(req),
     readLocalConfig,
-    applyUserBillingCfg,
   });
+  const token = userBearerToken(req) || readLocalConfig()?.user_session?.jwt || null;
+  // 设置页 URL 与 cloud_config 不一致时，以本次同步地址为准写回
+  if (serverUrl) {
+    const lc = readLocalConfig() || { scene_routes: [], local_keys: [] };
+    const cur = cloudBilling.normalizeBase(lc.cloud_config?.url || '');
+    if (cur !== serverUrl) {
+      lc.cloud_config = { ...(lc.cloud_config || {}), url: serverUrl };
+      writeLocalConfig(lc);
+    }
+  }
+  return { readLocalConfig, applyUserBillingCfg, baseUrl: serverUrl, serverUrl, token };
 }
 
-async function syncProviderCatalogApi() {
-  return catalogSync.syncCatalogToRegistry({
-    readLocalConfig,
-    applyUserBillingCfg,
-  });
+function scheduleCatalogSync(req) {
+  return catalogSync.scheduleBackgroundSync(catalogSyncOpts(req));
+}
+
+async function syncProviderCatalogApi(req, body = {}) {
+  return catalogSync.syncCatalogToRegistry(catalogSyncOpts(req, body));
 }
 
 /** 账户/刊例价模型 → agent config（与 Electron main 对齐） */
@@ -277,6 +289,7 @@ function syncAgentProviderModelsFromAccounts() {
 }
 
 async function pullUserBillingApi(_token, _req) {
+  configLoader.reloadRegistryDoc();
   const cfg = readLocalConfig() || { scene_routes: [], local_keys: [] };
   applyUserBillingCfg(cfg);
   return billingConfig.getUserAccounts(cfg);
@@ -504,13 +517,17 @@ async function handleRequest(req, res) {
   }
 
   if (method === 'GET' && url === '/api/provider-catalog') {
+    configLoader.reloadRegistryDoc();
     return json(res, 200, configLoader.builtinCatalogPayload());
   }
 
   if (method === 'POST' && url === '/api/provider-catalog/sync') {
-    const result = await syncProviderCatalogApi();
+    const body = await parseBody(req, res);
+    if (body === null) return;
+    const result = await syncProviderCatalogApi(req, body || {});
     const payload = {
       ...result,
+      serverUrl: catalogSync.resolveSyncServerUrl(catalogSyncOpts(req, body || {})),
       catalog: configLoader.builtinCatalogPayload(),
       template_count: (configLoader.billingSourcesList() || []).length,
     };
@@ -551,7 +568,7 @@ async function handleRequest(req, res) {
     writeLocalConfig(lc);
     syncGateway(lc);
     refreshGatewayPeerModels(_gateway, readLocalConfig, defaultServerUrlFromEnv, readAgentConfig).catch(() => {});
-    scheduleCatalogSync();
+    scheduleCatalogSync(req);
     return json(res, 200, { ok: true });
   }
 
@@ -565,7 +582,7 @@ async function handleRequest(req, res) {
     if (_gateway?.setUserAuth) _gateway.setUserAuth(jwt);
     reporter.setUserJwt(jwt);
     if (_reporterGetStats) reporter.start(_reporterGetStats);
-    scheduleCatalogSync();
+    scheduleCatalogSync(req);
     return json(res, 200, { ok: true });
   }
 
@@ -821,7 +838,7 @@ function start(port, gatewayInstance, bindHost = '127.0.0.1', opts = {}) {
 
   _server.listen(port, bindHost, () => {
     console.log(`[admin-api] listening on ${bindHost}:${port}`);
-    scheduleCatalogSync();
+    scheduleCatalogSync(null);
   });
 
   return _server;

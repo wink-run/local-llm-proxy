@@ -18,38 +18,44 @@ async def catalog_public_payload() -> dict:
     from billing_sources import normalize_source, sort_sources
 
     doc = await load_registry_doc()
+    billing_sources = sort_sources([
+        normalize_source(s)
+        for s in (doc.get("billing_sources") or [])
+        if isinstance(s, dict) and (s.get("id") or s.get("source_id"))
+    ])
     subscription_sources: list[dict] = []
-    for raw in sort_sources(doc.get("billing_sources") or []):
-        s = normalize_source(raw)
-        cat = s.get("category")
+    for raw in billing_sources:
+        cat = raw.get("category")
         if cat not in ("app_sub", "api_sub"):
             continue
-        sid = s.get("source_id") or s.get("id")
+        sid = raw.get("source_id") or raw.get("id")
         if not sid:
             continue
         models = [
             {"name": m["id"], "type": m.get("modality") or "chat"}
-            for m in (s.get("models") or [])
-            if m.get("id")
+            for m in (raw.get("models") or [])
+            if isinstance(m, dict) and m.get("id")
         ]
         subscription_sources.append({
             "id": sid,
             "kind": cat,
-            "label": s.get("label") or sid,
-            "icon": s.get("icon") or "🔧",
-            "agent_id": s.get("agent_id") or "",
-            "plan_provider_id": s.get("plan_provider_id"),
-            "subscription_to_api": bool(s.get("subscription_to_api")),
-            "base_url": s.get("base_url") or "",
-            "api_format": s.get("api_format") or "openai",
+            "label": raw.get("label") or sid,
+            "icon": raw.get("icon") or "🔧",
+            "agent_id": raw.get("agent_id") or "",
+            "plan_provider_id": raw.get("plan_provider_id"),
+            "subscription_to_api": bool(raw.get("subscription_to_api")),
+            "base_url": raw.get("base_url") or "",
+            "api_format": raw.get("api_format") or "openai",
             "models": models,
-            "pricing": dict(s.get("pricing") or {}),
-            "plans": list(s.get("plans") or []),
+            "pricing": dict(raw.get("pricing") or {}),
+            "plans": list(raw.get("plans") or []),
         })
     return {
         "tiers": list(TIERS),
         "providers": catalog_from_doc(doc),
         "subscription_sources": subscription_sources,
+        # 完整个人源目录（与 admin 发布一致），供 CLI/Electron 直接写入 registry
+        "billing_sources": billing_sources,
     }
 
 

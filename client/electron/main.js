@@ -2185,10 +2185,13 @@ function registerIPC() {
     return configLoader.builtinCatalogPayload();
   });
   ipcMain.handle('localConfig:syncProviderCatalog', async () => {
+    const cfg = readLocalConfig();
     const result = await catalogSync.syncCatalogToRegistry({
       readLocalConfig,
       applyUserBillingCfg,
       onApplied: notifyCatalogUpdated,
+      token: cfg?.user_session?.jwt || null,
+      serverUrl: resolveBillingServerUrl(),
     });
     return result;
   });
@@ -2212,14 +2215,14 @@ function registerIPC() {
     syncAgentProviderModelsFromAccounts();
   }
 
-  // 启动时后台拉 /api/catalog 同步供给源（非阻塞）
-  if (_initCfg.cloud_config?.url) {
-    catalogSync.scheduleBackgroundSync({
-      readLocalConfig,
-      applyUserBillingCfg,
-      onApplied: notifyCatalogUpdated,
-    });
-  }
+  // 启动时后台拉 /api/catalog 同步供给源（非阻塞；无 cloud_config 时用 env 默认地址）
+  catalogSync.scheduleBackgroundSync({
+    readLocalConfig,
+    applyUserBillingCfg,
+    onApplied: notifyCatalogUpdated,
+    token: _initCfg.user_session?.jwt || null,
+    serverUrl: resolveBillingServerUrl(),
+  });
 
   async function pullUserBilling(_auth = {}) {
     const cfg = readLocalConfig();

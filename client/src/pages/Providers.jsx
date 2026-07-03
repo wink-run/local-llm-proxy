@@ -6,7 +6,7 @@ import ServiceIcon from '../components/ServiceIcon';
 import { getNetwork, getProfile, listKeys, createKey, deleteKey } from '../api/client';
 import { modelStatsForIds, workersForModel, normalizeNetworkPayload } from '../lib/networkModelStats';
 import { fetchServerCommunityModels } from '../lib/communityModels';
-import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
+import { loadUserAccounts, saveUserAccounts, syncProviderCatalog } from '../api/userAccounts';
 import { DirectSourceCard, PersonalSourceModelView, PricingTable, CollapsibleBillingPanel, buildInstancePatch, buildDirectSourcePatch, buildDirectSourceRemovePatch, TemplateEditModal, SyncDiffBanner, accountInstanceAddedOrder, inferModalityFromPricing, priceFieldsForModality } from '../components/PersonalSources';
 import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
 import { getGateway, getLocalConfig, getConfig, getOauth, isElectron } from '../api/adapter';
@@ -3150,15 +3150,10 @@ export default function Providers() {
 
     loadFromYaml();
 
-    // 进入供给源页：后台拉 /api/catalog 写 yaml，完成后刷新目录与账户模板
+    // 进入供给源页：后台拉云端目录写 yaml，完成后刷新模板
     (async () => {
       try {
-        if (window.electronAPI?.localConfig?.syncProviderCatalog) {
-          await window.electronAPI.localConfig.syncProviderCatalog();
-        } else if (!isElectron()) {
-          const base = import.meta.env?.VITE_ADMIN_BASE ?? '';
-          await fetch(`${base}/api/provider-catalog/sync`, { method: 'POST' });
-        }
+        await syncProviderCatalog();
         if (!cancelled) {
           await loadFromYaml();
           loadUserPaidAccounts();

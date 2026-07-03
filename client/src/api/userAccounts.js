@@ -39,6 +39,26 @@ export async function saveUserAccounts(patch) {
   return res.json();
 }
 
+/** 从云端同步供给源目录到本机 registry（CLI 传 serverUrl + JWT） */
+export async function syncProviderCatalog() {
+  if (window.electronAPI?.localConfig?.syncProviderCatalog) {
+    return window.electronAPI.localConfig.syncProviderCatalog();
+  }
+  const serverUrl = normalizeServerBase(getServerUrl() || '');
+  if (serverUrl) await syncCloudConfigUrl(serverUrl).catch(() => {});
+  const res = await fetch('/api/provider-catalog/sync', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...billingHeaders() },
+    body: JSON.stringify({ serverUrl }),
+  });
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.json())?.error || ''; } catch {}
+    throw new Error(`catalog sync HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
+  }
+  return res.json();
+}
+
 /** @deprecated 账户配置不再 PUT 云端；保留 API 兼容 */
 export async function pushUserAccountsToCloud() {
   if (window.electronAPI?.localConfig?.pushUserAccountsToCloud) {

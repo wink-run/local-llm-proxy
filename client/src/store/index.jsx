@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { getProfile, listKeys } from '../api/client';
-import { loadUserAccounts, saveUserAccounts } from '../api/userAccounts';
+import { loadUserAccounts, saveUserAccounts, syncProviderCatalog } from '../api/userAccounts';
 import { getLocalConfig, getConfig } from '../api/adapter';
 import { getServerUrl, normalizeServerBase, getSyncServerBase, syncCloudConfigUrl, bootstrapServerUrl } from '../config';
 import { stopAgent } from '../api/agentControl';
@@ -16,10 +16,15 @@ async function syncUserSession(jwt) {
   } catch {}
   try {
     if (jwt) {
+      const serverUrl = normalizeServerBase(getServerUrl() || '');
       await fetch('/api/user-session', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${jwt}` },
+        headers: {
+          Authorization: `Bearer ${jwt}`,
+          ...(serverUrl ? { 'X-TokenBank-Server': serverUrl } : {}),
+        },
       });
+      syncProviderCatalog().catch(() => {});
     } else {
       await fetch('/api/user-session', { method: 'DELETE' });
     }
