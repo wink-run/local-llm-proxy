@@ -1188,17 +1188,16 @@ function commandInstalled(cmd) {
 //   Linux   → CLI 命令 / 配置目录已存在
 function apiKeyAppDetected(d) {
   if (d.appx && appxInstalled(d.appx)) return true;            // Windows Store 包
-  if (d.command && commandInstalled(d.command)) return true;   // CLI 命令（跨平台）
-  if (process.platform === 'win32') return false;              // Windows 仅靠上面两种
-  // 非 Windows（appx 检测不可用）的桌面应用回退：
-  // 1) macOS：按 appx 末段名探测 /Applications/<App>.app（OpenAI.Codex→Codex；Claude→Claude）
+  if (d.command && commandInstalled(d.command)) return true;   // CLI 命令（跨平台，含 npm 全局 bin）
+  // macOS：按 appx 末段名探测 /Applications/<App>.app（OpenAI.Codex→Codex；Claude→Claude）
   if (process.platform === 'darwin' && d.appx) {
     const appName = String(d.appx).split('.').pop();
     for (const base of ['/Applications', path.join(os.homedir(), 'Applications')]) {
       try { if (fs.existsSync(path.join(base, appName + '.app'))) return true; } catch {}
     }
   }
-  // 2) 通用：配置文件所在目录已存在 = 该应用装过/跑过（null 路径跳过）
+  // 通用回退（含 Windows）：配置文件所在目录已存在 = 该应用装过/跑过（null 路径跳过）。
+  // 命令行装的应用（如 WorkBuddy）首启会建 ~/.<app> 目录，靠这条跨平台识别。
   if (d.config_file) {
     try { const f = resolveCfgPath(d.config_file); if (f && fs.existsSync(path.dirname(f))) return true; } catch {}
   }
@@ -2516,13 +2515,29 @@ function registerIPC() {
     const UNINSTALL_GUIDES = configLoader.appUninstallGuides();
     const NPM_PACKAGES = configLoader.appNpmPackages();
     const guide = (map, id) => configLoader.resolveGuide(map[id]);
-    const out = [];
-    const seen = new Set();
-    const add = (o) => { if (o && o.id && !seen.has(o.id)) { seen.add(o.id); out.push(o); } };
+    // 按 id 合并三分支（CLI / 桌面 / 会话）：同一应用可同时出现在多条分支，
+    // 不再"先到先得"丢弃后来的证据 —— installed 取各分支 OR、元数据补空，
+    // npm_package 统一按 id 查（任何分支的应用都可能是 npm 命令行装的），
+    // 有包即可命令行装卸。kind 取更"可操作"的类型（cli>desktop>session）。
+    const byId = new Map();
+    const KIND_RANK = { cli: 3, desktop: 2, session: 1, direct: 1 };
+    const merge = (o) => {
+      if (!o || !o.id) return;
+      if (!o.npm_package) o.npm_package = NPM_PACKAGES[o.id] || null;
+      const ex = byId.get(o.id);
+      if (!ex) { byId.set(o.id, o); return; }
+      ex.installed = ex.installed || o.installed;
+      for (const k of ['name', 'icon', 'capabilities', 'install_url', 'uninstall_url',
+                       'install_guide', 'uninstall_guide', 'npm_package']) {
+        if ((ex[k] == null || ex[k] === '') && o[k] != null) ex[k] = o[k];
+      }
+      if ((KIND_RANK[o.kind] || 0) > (KIND_RANK[ex.kind] || 0)) ex.kind = o.kind;
+    };
     try {
+      // ① CLI 工具（shim 托管，命令在 PATH）
       for (const tool of agentLinker.list()) {
         const ent = entityMeta(tool.id);
-        add({ id: tool.id, name: ent?.name || tool.name || tool.id, icon: ent?.icon || '🤖',
+        merge({ id: tool.id, name: ent?.name || tool.name || tool.id, icon: ent?.icon || '🤖',
               capabilities: ent?.capabilities || tool.capabilities || null,
               installed: !!tool.installed,
               install_url: INSTALL_URLS[tool.id] || null,
@@ -2536,13 +2551,14 @@ function registerIPC() {
       for (const d of (configLoader.apiKeyApps() || [])) {
         if (d.enable_3p === false) continue;
         const ent = entityMeta(d.id);
-        add({ id: d.id, name: ent?.name || d.name || d.id, icon: ent?.icon || d.icon || '🖥️',
+        merge({ id: d.id, name: ent?.name || d.name || d.id, icon: ent?.icon || d.icon || '🖥️',
               capabilities: ent?.capabilities || d.capabilities || null,
               installed: apiKeyAppDetected(d),
               install_url: INSTALL_URLS[d.id] || null,
               uninstall_url: UNINSTALL_URLS[d.id] || null,
               install_guide: guide(INSTALL_GUIDES, d.id),
               uninstall_guide: guide(UNINSTALL_GUIDES, d.id),
+              npm_package: NPM_PACKAGES[d.id] || null,
               kind: 'desktop' });
       }
       // ③ 会话统计源：direct_only 与可绑路由两类，目录存在即视为已安装
@@ -2550,7 +2566,7 @@ function registerIPC() {
         if (!s || !s.agent_id) continue;
         let installed = false;
         try { installed = !!s.root && fs.existsSync(configLoader.expandHome(s.root)); } catch {}
-        add({ id: s.agent_id, name: s.app_name || entityMeta(s.agent_id)?.name || s.agent_id,
+        merge({ id: s.agent_id, name: s.app_name || entityMeta(s.agent_id)?.name || s.agent_id,
               icon: s.app_icon || entityMeta(s.agent_id)?.icon || '🖱',
               capabilities: entityMeta(s.agent_id)?.capabilities || null,
               installed,
@@ -2558,9 +2574,11 @@ function registerIPC() {
               uninstall_url: UNINSTALL_URLS[s.agent_id] || null,
               install_guide: guide(INSTALL_GUIDES, s.agent_id),
               uninstall_guide: guide(UNINSTALL_GUIDES, s.agent_id),
+              npm_package: NPM_PACKAGES[s.agent_id] || null,
               kind: s.direct_only ? 'direct' : 'session' });
       }
     } catch (e) { console.error('[apps:supported] failed:', e.message); }
+    const out = [...byId.values()];
     // 已安装靠前（彩色在左），其次有安装链接的，最后无链接的小众工具
     out.sort((a, b) => (Number(b.installed) - Number(a.installed)) || ((b.install_url ? 1 : 0) - (a.install_url ? 1 : 0)));
     return out;
@@ -2579,6 +2597,25 @@ function registerIPC() {
             if (err) resolve({ ok: false, error: (String(stderr || '') || err.message).slice(0, 400) });
             else {
               // 清命令探测缓存，使前端刷新时立即检测到刚装的工具（不等 30s TTL）
+              try { require('./shim-installer').clearCommandCache(); } catch {}
+              resolve({ ok: true, pkg });
+            }
+          });
+      } catch (e) { resolve({ ok: false, error: e.message }); }
+    });
+  });
+
+  // 一键卸载 CLI 工具：跑 npm uninstall -g <包>。与安装对称，装完/卸完都清命令缓存。
+  ipcMain.handle('apps:npmGlobalUninstall', async (_e, { id } = {}) => {
+    const pkg = (require('./config-loader').appNpmPackages() || {})[id];
+    if (!pkg) return { ok: false, error: 'no-npm-package' };
+    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    return await new Promise((resolve) => {
+      try {
+        require('child_process').exec(`${npmCmd} uninstall -g ${pkg}`, { timeout: 300000, windowsHide: true },
+          (err, _stdout, stderr) => {
+            if (err) resolve({ ok: false, error: (String(stderr || '') || err.message).slice(0, 400) });
+            else {
               try { require('./shim-installer').clearCommandCache(); } catch {}
               resolve({ ok: true, pkg });
             }

@@ -410,6 +410,22 @@ function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0, syncError =
     }
   }, [t]);
 
+  // 一键卸载 CLI 工具：跑 npm uninstall -g，卸完刷新检测状态
+  const oneClickUninstall = useCallback(async (app) => {
+    if (!getApps().npmGlobalUninstall) return;
+    if (!window.confirm(t('gateway.toolbox.uninstallConfirm', { name: app.name }))) return;
+    setNpmBusy(b => ({ ...b, [app.id]: true }));
+    try {
+      const r = await getApps().npmGlobalUninstall(app.id);
+      if (!r?.ok) window.alert(t('gateway.toolbox.uninstallFailed', { name: app.name, msg: r?.error || '' }));
+      await loadItems();
+    } catch (e) {
+      window.alert(t('gateway.toolbox.uninstallFailed', { name: app.name, msg: e.message }));
+    } finally {
+      setNpmBusy(b => { const c = { ...b }; delete c[app.id]; return c; });
+    }
+  }, [t]);
+
   const updatePos = useCallback(() => {
     if (!btnRef.current) return;
     const r = btnRef.current.getBoundingClientRect();
@@ -525,13 +541,19 @@ function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0, syncError =
                   const dim = a.installed ? '' : 'grayscale opacity-45';
                   const install = !a.installed;
                   const canNpm = install && !!a.npm_package && !!getApps().npmGlobalInstall;   // 未装 + 有 npm 包 → 可一键装
+                  const canNpmUninstall = !install && !!a.npm_package && !!getApps().npmGlobalUninstall;  // 已装 + 有 npm 包 → 可命令行卸
                   const installing = !!npmBusy[a.id];
-                  const btnLabel = installing ? t('gateway.toolbox.installing')
+                  const btnLabel = installing ? (install ? t('gateway.toolbox.installing') : t('gateway.toolbox.uninstalling'))
                     : canNpm ? t('gateway.toolbox.oneClickInstall')
+                    : canNpmUninstall ? t('gateway.toolbox.oneClickUninstall')
                     : install ? t('gateway.toolbox.install') : t('gateway.toolbox.uninstall');
                   const btnTitle = canNpm ? t('gateway.toolbox.oneClickTitle', { name: a.name })
+                    : canNpmUninstall ? t('gateway.toolbox.oneClickUninstallTitle', { name: a.name })
                     : install ? t('gateway.toolbox.installTitle', { name: a.name })
                     : t('gateway.toolbox.uninstallTitle', { name: a.name });
+                  const onBtn = () => canNpm ? oneClickInstall(a)
+                    : canNpmUninstall ? oneClickUninstall(a)
+                    : openGuide(a, install);
                   return (
                     <div key={a.id}
                       className={`flex flex-col items-center gap-0.5 p-1.5 rounded-md border transition-colors
@@ -550,7 +572,7 @@ function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0, syncError =
                         {a.name}
                       </span>
                       <button type="button" title={btnTitle} disabled={installing}
-                        onClick={() => (canNpm ? oneClickInstall(a) : openGuide(a, install))}
+                        onClick={onBtn}
                         className={`text-[9px] px-1 py-px rounded font-medium transition-colors w-full leading-tight disabled:opacity-60
                           ${install
                             ? 'bg-blue-500 hover:bg-blue-600 text-white'

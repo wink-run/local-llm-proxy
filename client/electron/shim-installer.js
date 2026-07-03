@@ -55,6 +55,12 @@ function resolveRealCommand(command) {
   return result;
 }
 
+// 清命令探测缓存（一键安装/卸载后调，使下次检测立即重查，不等 30s TTL）。
+function clearCommandCache(command) {
+  if (command) _cmdCache.delete(command);
+  else _cmdCache.clear();
+}
+
 // 生成一个工具的 shim。envMap = {KEY: value}（要注入的环境变量）。
 // realPath = 真实可执行文件绝对路径（已探测、写死）。
 // 从注入的 env 值里取网关 origin（http://host:port），用于探活
