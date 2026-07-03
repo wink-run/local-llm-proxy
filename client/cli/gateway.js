@@ -17,6 +17,7 @@ const { ensureDeviceId } = require('../shared/device-id');
 const pkg = require('../package.json');
 
 const gateway  = require('../electron/local-gateway');
+const configLoader = require('../electron/config-loader');
 const adminApi = require('./admin-api');
 const agentControl = require('./agent-control');
 const reporter = require('../shared/device-reporter');
@@ -106,14 +107,16 @@ async function cmdStart(port, adminPort) {
     }
   }
   gateway.setRouterModelMap(routerMap);
+  // Claude Desktop 透明 mask 名（与 Electron main.js 一致）
+  try { gateway.setClaudeModels(configLoader.claudeModels()); } catch {}
 
   // P2P：拉取云端在线模型（与 Electron fetchPeerModels 一致）
   const cc = lc.cloud_config || {};
   const serverUrl = cc.url || defaultServerUrlFromEnv() || null;
-  await refreshGatewayPeerModels(gateway, readLocalConfig, defaultServerUrlFromEnv);
+  await refreshGatewayPeerModels(gateway, readLocalConfig, defaultServerUrlFromEnv, readAgentConfig);
   if (_peerModelsTimer) clearInterval(_peerModelsTimer);
   _peerModelsTimer = setInterval(
-    () => refreshGatewayPeerModels(gateway, readLocalConfig, defaultServerUrlFromEnv),
+    () => refreshGatewayPeerModels(gateway, readLocalConfig, defaultServerUrlFromEnv, readAgentConfig),
     PEER_MODELS_POLL_MS,
   );
 

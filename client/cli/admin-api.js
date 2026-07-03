@@ -11,6 +11,7 @@ const path   = require('path');
 const crypto = require('crypto');
 
 const { readAgentConfig, writeAgentConfig, readLocalConfig, writeLocalConfig } = require('../shared/config-loader');
+const { isCommunityP2pEnabled } = require('../shared/community-p2p');
 const { defaultServerUrlFromEnv } = require('../shared/default-server-url');
 const deviceIdentity = require('../shared/device-identity');
 const { ensureDeviceId } = require('../shared/device-id');
@@ -214,6 +215,8 @@ function syncGateway(lc) {
   }
   _gateway.setAppControls(appControls);
   _gateway.setKeySceneMap(keyScene);
+  // Claude Desktop 透明 mask 名（与 Electron syncGatewayFromConfig 一致）
+  try { _gateway.setClaudeModels(configLoader.claudeModels()); } catch {}
 
   const cc = lc.cloud_config || {};
   const serverUrl = cc.url || defaultServerUrlFromEnv() || '';
@@ -362,11 +365,35 @@ async function handleRequest(req, res) {
 
   if (method === 'POST' && url === '/api/gateway/refresh-peer-models') {
     try {
-      const names = await refreshGatewayPeerModels(_gateway, readLocalConfig, defaultServerUrlFromEnv);
+      if (!isCommunityP2pEnabled(readAgentConfig())) {
+        _gateway?.setPeerModels?.([]);
+        return json(res, 200, { ok: true, peerModels: [] });
+      }
+      const names = await refreshGatewayPeerModels(_gateway, readLocalConfig, defaultServerUrlFromEnv, readAgentConfig);
       return json(res, 200, { ok: true, peerModels: names });
     } catch (e) {
       return json(res, 500, { error: e.message });
     }
+  }
+
+  // CLI Web：同源代理本地 /v1/models，避免浏览器跨端口拉取失败后误回退云端社区列表
+  if (method === 'GET' && url === '/api/gateway/v1-models') {
+    const st = _gateway?.getStatus?.() || {};
+    if (!st.running || !st.port) return json(res, 200, { object: 'list', data: [] });
+    return new Promise((resolve) => {
+      http.get(`http://127.0.0.1:${st.port}/v1/models`, (r) => {
+        let buf = '';
+        r.on('data', (c) => { buf += c; });
+        r.on('end', () => {
+          try { json(res, 200, JSON.parse(buf)); }
+          catch { json(res, 200, { object: 'list', data: [] }); }
+          resolve();
+        });
+      }).on('error', () => {
+        json(res, 200, { object: 'list', data: [] });
+        resolve();
+      });
+    });
   }
 
   if (method === 'GET' && url === '/api/gateway/log') {
@@ -435,14 +462,18 @@ async function handleRequest(req, res) {
   // ── Agent config routes ─────────────────────────────────────────────────────
 
   if (method === 'GET' && url === '/api/config') {
-    return json(res, 200, readAgentConfig());
+    return json(res, 200, readAgentConfig() || {});
   }
 
   if (method === 'POST' && url === '/api/config') {
     const body = await parseBody(req, res);
     if (body === null) return;
-    writeAgentConfig(body);
+    const existing = readAgentConfig() || {};
+    const merged = { ...existing, ...body };
+    if (Array.isArray(body.providers)) merged.providers = body.providers;
+    writeAgentConfig(merged);
     syncAgentProviderModelsFromAccounts();
+    try { syncGateway(readLocalConfig() || {}); } catch {}
     return json(res, 200, { ok: true });
   }
 
@@ -483,7 +514,7 @@ async function handleRequest(req, res) {
     lc.cloud_config = { url: body.url || '', token: body.token || '' };
     writeLocalConfig(lc);
     syncGateway(lc);
-    refreshGatewayPeerModels(_gateway, readLocalConfig, defaultServerUrlFromEnv).catch(() => {});
+    refreshGatewayPeerModels(_gateway, readLocalConfig, defaultServerUrlFromEnv, readAgentConfig).catch(() => {});
     return json(res, 200, { ok: true });
   }
 
@@ -535,6 +566,11 @@ async function handleRequest(req, res) {
   if (method === 'GET' && url === '/api/apps') {
     const cfg = readAppsCfg();
     return json(res, 200, cfg.apps);
+  }
+
+  if (method === 'GET' && url === '/api/apps/claude-models') {
+    try { return json(res, 200, configLoader.claudeModels() || []); }
+    catch { return json(res, 200, []); }
   }
 
   if (method === 'POST' && url === '/api/apps/stats') {

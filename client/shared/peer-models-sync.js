@@ -3,6 +3,7 @@
 
 const http  = require('http');
 const https = require('https');
+const { isCommunityP2pEnabled } = require('./community-p2p');
 
 function normalizeBase(url) {
   if (!url) return '';
@@ -48,9 +49,19 @@ function parseModelIds(payload) {
  * @param {object} gateway - local-gateway 实例
  * @param {function} readLocalConfig - 读取 local-config
  * @param {function} [defaultServerUrlFromEnv] - 环境变量默认地址
+ * @param {function} [readAgentConfig] - 读取 agent config（检查 tokenbank-p2p 开关）
  */
-async function refreshGatewayPeerModels(gateway, readLocalConfig, defaultServerUrlFromEnv) {
+async function refreshGatewayPeerModels(gateway, readLocalConfig, defaultServerUrlFromEnv, readAgentConfig) {
   if (!gateway?.setPeerModels) return [];
+  // 用户关闭社区源时不拉取/缓存 P2P 模型
+  if (readAgentConfig) {
+    try {
+      if (!isCommunityP2pEnabled(readAgentConfig())) {
+        gateway.setPeerModels([]);
+        return [];
+      }
+    } catch {}
+  }
   const lc = (readLocalConfig && readLocalConfig()) || {};
   const cc = lc.cloud_config || {};
   const serverUrl = normalizeBase(cc.url)

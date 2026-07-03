@@ -1,8 +1,9 @@
 // 本地网关可选模型：统一从 /v1/models 拉取（OpenAI 列表格式），网关页与调试页共用
-import { getConfig, getGateway, getLocalConfig, isElectron } from './adapter';
+import { getConfig, getGateway, getLocalConfig, getApps, isElectron } from './adapter';
 import { getServerUrl, normalizeServerBase } from '../config';
 import { loadUserAccounts } from './userAccounts';
 import { fetchServerCommunityModels } from '../lib/communityModels';
+import { claudeMaskModelSet } from '../lib/claudeMaskModels';
 import {
   collectPersonalAvailableModels,
   enrichProvidersForRouting,
@@ -10,6 +11,20 @@ import {
 } from '../lib/personalAvailableModels';
 
 const modelId = (m) => (typeof m === 'string' ? m : (m?.name || m?.id || ''));
+
+/** Claude Desktop 透明 mask 名：下拉不展示（Electron IPC / CLI admin-api / 内置默认） */
+async function loadClaudeMaskModelSet() {
+  try {
+    const extra = await getApps().claudeModels?.();
+    if (Array.isArray(extra) && extra.length) return claudeMaskModelSet(extra);
+  } catch {}
+  return claudeMaskModelSet();
+}
+
+function filterClaudeMaskModels(models, maskSet) {
+  if (!maskSet?.size) return models || [];
+  return (models || []).filter(m => !maskSet.has(m.id));
+}
 
 /** 本地 gateway HTTP 主机名：Electron 固定 127.0.0.1；Docker/CLI Web 用浏览器 hostname，便于远程调试 */
 export function resolveLocalGatewayHost() {
@@ -71,8 +86,9 @@ async function fetchV1ModelsJson(baseUrl, headers = {}) {
   return res.json();
 }
 
-/** 拉取前先同步云端 P2P 模型到本地 gateway 缓存 */
-async function refreshPeerModelsCache() {
+/** 拉取前先同步云端 P2P 模型到本地 gateway 缓存（社区源关闭时跳过） */
+async function refreshPeerModelsCache(cfg) {
+  if (cfg && !isCommunityP2pEnabled(cfg)) return;
   try {
     if (isElectron() && window.electronAPI?.gateway?.refreshPeerModels) {
       await window.electronAPI.gateway.refreshPeerModels();
@@ -84,6 +100,18 @@ async function refreshPeerModelsCache() {
 
 /** 读取本地 gateway 原始 /v1/models JSON（网关未启动时返回 null） */
 async function fetchLocalGatewayV1ModelsJson() {
+  // CLI / Docker Web：优先走 admin-api 同源代理，避免跨端口失败误回退云端社区列表
+  if (!isElectron()) {
+    try {
+      const base = import.meta.env?.VITE_ADMIN_BASE ?? '';
+      const res = await fetch(`${base}/api/gateway/v1-models`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json && typeof json === 'object') return json;
+      }
+    } catch {}
+  }
+
   let gwPort = null;
   let gwRunning = false;
   try {
@@ -106,6 +134,8 @@ async function fetchLocalGatewayV1Models(provById) {
   const json = await fetchLocalGatewayV1ModelsJson();
   if (!json) return null;
   const models = parseV1ModelsResponse(json, provById);
+  // 本地网关已响应时不再回退云端（空列表亦如此），避免 CLI Web 误注入社区模型
+  if (json.object === 'list') return models;
   return models.length ? models : null;
 }
 
@@ -160,8 +190,11 @@ function mergePersonalModelsFromAccounts(models, cfg, acc) {
 
 /** 与网关下拉同源：优先本地 /v1/models，否则云端 */
 export async function fetchGatewayV1ModelsJson() {
-  await refreshPeerModelsCache();
+  let cfg = null;
+  try { cfg = await getConfig().read().catch(() => null); } catch {}
+  if (isCommunityP2pEnabled(cfg)) await refreshPeerModelsCache(cfg);
   const local = await fetchLocalGatewayV1ModelsJson();
+  if (local && local.object === 'list') return local;
   if (local?.data?.length) return local;
   return fetchCloudV1ModelsJson();
 }
@@ -182,6 +215,7 @@ export async function loadGatewayAvailableModels(opts = {}) {
   let cfg = null;
   let acc = null;
   let provById = {};
+  const maskSet = await loadClaudeMaskModelSet();
   try {
     [cfg, acc] = await Promise.all([
       getConfig().read().catch(() => null),
@@ -192,11 +226,11 @@ export async function loadGatewayAvailableModels(opts = {}) {
 
   const includeCommunity = (opts.includeCommunity !== false) && isCommunityP2pEnabled(cfg);
 
-  if (includeCommunity) await refreshPeerModelsCache();
+  if (includeCommunity) await refreshPeerModelsCache(cfg);
   const local = await fetchLocalGatewayV1Models(provById);
-  let models = local?.length ? local : [];
+  let models = local != null ? local : [];
 
-  if (!models.length) {
+  if (local == null) {
     try {
       models = await fetchCloudV1Models(provById);
     } catch (e) {
@@ -217,6 +251,7 @@ export async function loadGatewayAvailableModels(opts = {}) {
   } else {
     models = models.filter(m => m.tier !== 'p2p');
   }
+  models = filterClaudeMaskModels(models, maskSet);
   return enrichModelsWithType(models, cfg, acc);
 }
 
