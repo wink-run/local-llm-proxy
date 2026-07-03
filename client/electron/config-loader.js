@@ -248,6 +248,7 @@ function buildHandlerOpsMaps() {
   const uninstall = {};
   const installGuides = {};
   const uninstallGuides = {};
+  const npmPackages = {};
   const entities = appEntities();
   const list = entities.length ? entities : (loadDoc().default_entities || []);
   for (const ent of list) {
@@ -257,8 +258,14 @@ function buildHandlerOpsMaps() {
     if (ops.uninstall_url) uninstall[ent.id] = ops.uninstall_url;
     if (ops.install_guide) installGuides[ent.id] = ops.install_guide;
     if (ops.uninstall_guide) uninstallGuides[ent.id] = ops.uninstall_guide;
+    if (ops.npm_package) npmPackages[ent.id] = ops.npm_package;
   }
-  return { install, uninstall, installGuides, uninstallGuides };
+  return { install, uninstall, installGuides, uninstallGuides, npmPackages };
+}
+
+/** CLI 工具的 npm 全局包名（有则百宝箱可一键 npm i -g 安装/更新）。 */
+function appNpmPackages() {
+  return buildHandlerOpsMaps().npmPackages;
 }
 
 function appInstallUrls() {
@@ -576,7 +583,7 @@ module.exports = {
   load, get, setCaPath, getCaPath,
   gatewayCtx, mitmDomains, shouldMitm, tools, appPresets, apiKeyApps,
   routing, caRef,
-  claudeModels, isClaudeModel, sessionSources, agentHasModelStats, appInstallUrls, appUninstallUrls,
+  claudeModels, isClaudeModel, sessionSources, agentHasModelStats, appInstallUrls, appUninstallUrls, appNpmPackages,
   appInstallGuides, appUninstallGuides, normalizeGuide, resolveGuide,
   subscriptionApps, apiSubscriptionApps, paygProviders, registryProviders, builtinCatalogPayload,
   registryDefaultDoc, mergeRegistryDoc, subscriptionPlansDefaults,

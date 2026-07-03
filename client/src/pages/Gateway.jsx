@@ -393,6 +393,22 @@ function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0, syncError =
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState({});
   const [guideDlg, setGuideDlg] = useState(null);   // { app, mode: 'install'|'uninstall' }
+  const [npmBusy, setNpmBusy] = useState({});       // { [id]: true } 一键安装进行中
+
+  // 一键安装 CLI 工具：跑 npm i -g，装完刷新检测状态
+  const oneClickInstall = useCallback(async (app) => {
+    if (!getApps().installTool) return;
+    setNpmBusy(b => ({ ...b, [app.id]: true }));
+    try {
+      const r = await getApps().installTool(app.id);
+      if (!r?.ok) window.alert(t('gateway.toolbox.installFailed', { name: app.name, msg: r?.error || '' }));
+      await loadItems();
+    } catch (e) {
+      window.alert(t('gateway.toolbox.installFailed', { name: app.name, msg: e.message }));
+    } finally {
+      setNpmBusy(b => { const c = { ...b }; delete c[app.id]; return c; });
+    }
+  }, [t]);
 
   const updatePos = useCallback(() => {
     if (!btnRef.current) return;
@@ -508,9 +524,13 @@ function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0, syncError =
                   const brand = resolveBrandIcon(`${a.id} ${a.name}`);
                   const dim = a.installed ? '' : 'grayscale opacity-45';
                   const install = !a.installed;
-                  const btnLabel = install ? t('gateway.toolbox.install') : t('gateway.toolbox.uninstall');
-                  const btnTitle = install
-                    ? t('gateway.toolbox.installTitle', { name: a.name })
+                  const canNpm = install && !!a.npm_package && !!getApps().installTool;   // 未装 + 有 npm 包 → 可一键装
+                  const installing = !!npmBusy[a.id];
+                  const btnLabel = installing ? t('gateway.toolbox.installing')
+                    : canNpm ? t('gateway.toolbox.oneClickInstall')
+                    : install ? t('gateway.toolbox.install') : t('gateway.toolbox.uninstall');
+                  const btnTitle = canNpm ? t('gateway.toolbox.oneClickTitle', { name: a.name })
+                    : install ? t('gateway.toolbox.installTitle', { name: a.name })
                     : t('gateway.toolbox.uninstallTitle', { name: a.name });
                   return (
                     <div key={a.id}
@@ -529,9 +549,9 @@ function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0, syncError =
                       <span className="text-[9px] font-medium text-zinc-700 dark:text-zinc-200 text-center truncate w-full leading-none" title={a.name}>
                         {a.name}
                       </span>
-                      <button type="button" title={btnTitle}
-                        onClick={() => openGuide(a, install)}
-                        className={`text-[9px] px-1 py-px rounded font-medium transition-colors w-full leading-tight
+                      <button type="button" title={btnTitle} disabled={installing}
+                        onClick={() => (canNpm ? oneClickInstall(a) : openGuide(a, install))}
+                        className={`text-[9px] px-1 py-px rounded font-medium transition-colors w-full leading-tight disabled:opacity-60
                           ${install
                             ? 'bg-blue-500 hover:bg-blue-600 text-white'
                             : 'border border-zinc-200 dark:border-zinc-600 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700/50'}`}>

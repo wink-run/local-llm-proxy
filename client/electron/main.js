@@ -2514,6 +2514,7 @@ function registerIPC() {
     const UNINSTALL_URLS = configLoader.appUninstallUrls();
     const INSTALL_GUIDES = configLoader.appInstallGuides();
     const UNINSTALL_GUIDES = configLoader.appUninstallGuides();
+    const NPM_PACKAGES = configLoader.appNpmPackages();
     const guide = (map, id) => configLoader.resolveGuide(map[id]);
     const out = [];
     const seen = new Set();
@@ -2528,6 +2529,7 @@ function registerIPC() {
               uninstall_url: UNINSTALL_URLS[tool.id] || null,
               install_guide: guide(INSTALL_GUIDES, tool.id),
               uninstall_guide: guide(UNINSTALL_GUIDES, tool.id),
+              npm_package: NPM_PACKAGES[tool.id] || null,
               kind: 'cli' });
       }
       // ② 桌面应用（写配置文件）：被管理员禁用(enable_3p:false)的不展示
@@ -2562,6 +2564,23 @@ function registerIPC() {
     // 已安装靠前（彩色在左），其次有安装链接的，最后无链接的小众工具
     out.sort((a, b) => (Number(b.installed) - Number(a.installed)) || ((b.install_url ? 1 : 0) - (a.install_url ? 1 : 0)));
     return out;
+  });
+
+  // 一键安装/更新 CLI 工具：跑 npm i -g <包>@latest（用户级全局，无需管理员）。
+  // 异步 exec，不阻塞主进程；装完前端刷新检测状态。
+  ipcMain.handle('apps:installTool', async (_e, { id } = {}) => {
+    const pkg = (require('./config-loader').appNpmPackages() || {})[id];
+    if (!pkg) return { ok: false, error: 'no-npm-package' };
+    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    return await new Promise((resolve) => {
+      try {
+        require('child_process').exec(`${npmCmd} i -g ${pkg}@latest`, { timeout: 300000, windowsHide: true },
+          (err, _stdout, stderr) => {
+            if (err) resolve({ ok: false, error: (String(stderr || '') || err.message).slice(0, 400) });
+            else resolve({ ok: true, pkg });
+          });
+      } catch (e) { resolve({ ok: false, error: e.message }); }
+    });
   });
 
   ipcMain.handle('apps:list', () => {
