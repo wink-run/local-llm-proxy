@@ -584,7 +584,10 @@ export default {
   'providers.common.edit': '修改',
   'providers.common.loading': '加载中…',
   'providers.test.needBaseUrl': '请先填写 Base URL',
+  'providers.test.needToken': '请先填写 API Key',
   'providers.test.success': '✓ 连接成功',
+  'providers.test.failed': '✗ 连接失败：{detail}',
+  'providers.test.failedGeneric': '无法连接，请检查 API Key 与 Base URL',
   'providers.err.unknown': '未知错误',
   'providers.err.createFailed': '创建失败: {msg}',
   'providers.err.deleteFailed': '删除失败: {msg}',
@@ -839,6 +842,9 @@ export default {
   'debug.resolutionDefault': '分辨率(默认)',
   'debug.stream': '流式',
   'debug.clear': '清空',
+  'debug.clearChat': '清空聊天记录',
+  'debug.clearConfirm': '确定清空全部聊天记录？',
+  'debug.imageNotRestored': '图片未保存到本地（刷新后无法预览）',
   'debug.systemPh': 'System Prompt（可选）',
   'debug.emptyImage': '输入提示词生成图片',
   'debug.emptyChat': '选择供给源和模型，发送消息开始调试',
@@ -853,6 +859,7 @@ export default {
   'debug.inputChatPh': '输入消息… (Cmd+Enter 发送)',
   'debug.send': '发送',
   'debug.emptyImageList': '上游返回空图像列表: {text}',
+  'debug.imageTimeout': '图像生成超时（已等待 5 分钟），慢速模型可稍后重试',
 
   // ── 登录 ──
   'config.noAccount': '没有账户？',

@@ -169,12 +169,15 @@ function syncGateway(lc) {
   const routerMap = {};
   for (const r of routes) {
     if (r.model_key && (r.steps?.length || r.rules?.length)) {
-      routerMap[r.model_key] = {
+      const entry = {
         steps: r.steps || [],
         scene_name: r.scene_name,
         rules: r.rules || null,
         classifier: r.classifier || null,
       };
+      routerMap[r.model_key] = entry;
+      // 兼容 route_id 存 UUID 的旧数据
+      if (r.id && r.id !== r.model_key) routerMap[r.id] = entry;
     }
   }
   _gateway.setRouterModelMap(routerMap);
@@ -321,36 +324,93 @@ async function pushUserBillingApi(token, req, patch) {
   return billingConfig.getUserAccounts(cfg);
 }
 
+const { providerTestTargets, logProviderTestProbe, parseProviderProbeError } = require('../shared/provider-test');
+const { resolveOutboundProxyAgent } = require('../shared/outbound-proxy');
+
 // ── testProvider ─────────────────────────────────────────────────────────────
 
-function testProvider(base_url, token) {
+function probeProviderTarget(target, ctx = {}) {
+  logProviderTestProbe(ctx, target, 'request');
+  const method = String(target.method || 'GET').toUpperCase();
+  const bodyStr = target.body ? JSON.stringify(target.body) : '';
+  const headers = { ...(target.headers || {}) };
+  if (bodyStr) {
+    if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
+    headers['Content-Length'] = Buffer.byteLength(bodyStr);
+  }
+  const agent = resolveOutboundProxyAgent({
+    provider: ctx.provider,
+    urlStr: target.url,
+    networkProxy: ctx.networkProxy,
+  });
   return new Promise((resolve) => {
     let url;
-    try { url = new URL(base_url.replace(/\/$/, '') + '/models'); }
-    catch (_) { resolve({ ok: false, status: 0 }); return; }
+    try { url = new URL(target.url); }
+    catch (_) { resolve({ ok: false, status: 0, error: 'Invalid URL' }); return; }
 
     const mod = url.protocol === 'https:' ? https : http;
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const req = mod.request(
       {
         hostname: url.hostname,
         port: url.port || (url.protocol === 'https:' ? 443 : 80),
         path: url.pathname + (url.search || ''),
-        method: 'GET',
+        method,
         headers,
-        timeout: 8000,
+        timeout: 30000,
+        ...(agent ? { agent } : {}),
       },
       (res) => {
-        res.resume(); // drain
+        let body = '';
+        res.on('data', (c) => { body += c; if (body.length > 400) body = body.slice(0, 400); });
         res.on('end', () => {
-          resolve({ ok: res.statusCode >= 200 && res.statusCode < 400, status: res.statusCode });
+          const ok = res.statusCode >= 200 && res.statusCode < 400;
+          let errDetail = body.trim();
+          if (!ok && errDetail) {
+            try {
+              const j = JSON.parse(body);
+              errDetail = j.error?.message || j.message || errDetail;
+            } catch { /* 非 JSON 则保留原文 */ }
+          }
+          resolve({
+            ok,
+            status: res.statusCode,
+            error: ok ? undefined : (errDetail || `HTTP ${res.statusCode}`),
+          });
         });
       }
     );
-    req.on('error', () => resolve({ ok: false, status: 0 }));
-    req.on('timeout', () => { req.destroy(); resolve({ ok: false, status: 0 }); });
+    req.on('error', (e) => resolve({ ok: false, status: 0, error: e.message }));
+    req.on('timeout', () => { req.destroy(); resolve({ ok: false, status: 0, error: 'timeout' }); });
+    if (bodyStr) req.write(bodyStr);
     req.end();
+  }).then((out) => {
+    logProviderTestProbe(ctx, target, 'response', out);
+    return out;
   });
+}
+
+async function testProvider(p = {}) {
+  const agentCfg = readAgentConfig() || {};
+  const ctx = {
+    id: p.id,
+    api_format: p.api_format,
+    base_url: p.base_url,
+    provider: { proxy: p.proxy },
+    networkProxy: agentCfg.network_proxy,
+  };
+  console.log('[provider-test] start', { id: ctx.id, api_format: ctx.api_format, base_url: ctx.base_url });
+  const { targets, error } = providerTestTargets(p);
+  if (error === 'missing_api_key') return { ok: false, error: 'API Key required' };
+  if (error === 'missing_base_url') return { ok: false, error: 'Base URL required' };
+  if (error === 'invalid_base_url') return { ok: false, error: 'Invalid Base URL' };
+  if (!targets.length) return { ok: false, error: 'No probe target' };
+
+  let last = { ok: false, status: 0, error: 'Connection failed' };
+  for (const target of targets) {
+    last = await probeProviderTarget(target, ctx);
+    if (last.ok) return last;
+  }
+  return last;
 }
 
 // ── Auth middleware ───────────────────────────────────────────────────────────
@@ -495,7 +555,7 @@ async function handleRequest(req, res) {
   if (method === 'POST' && url === '/api/gateway/test-provider') {
     const body = await parseBody(req, res);
     if (body === null) return;
-    const result = await testProvider(body.base_url || '', body.token || '');
+    const result = await testProvider(body);
     return json(res, 200, result);
   }
 

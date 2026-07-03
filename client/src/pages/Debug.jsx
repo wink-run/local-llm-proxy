@@ -140,27 +140,52 @@ async function doGenerateImage({ baseUrl, token, model, prompt, ratio, resolutio
   const startTime = Date.now();
 
   const parse = async (text) => {
-    const data = JSON.parse(text);
-    if (data.detail || data.error) throw new Error(data.detail || data.error?.message || 'Error');
-    const images = (data.data || []).map(item => item.b64_json || item.url || '').filter(Boolean);
+    let data = JSON.parse(text);
+    // 网关曾把截断后的 JSON 字符串二次序列化，需再 parse 一层
+    if (typeof data === 'string') {
+      try { data = JSON.parse(data); } catch { throw new Error(t('debug.emptyImageList', { text: text.slice(0, 200) })); }
+    }
+    const errMsg = data.detail
+      || (typeof data.error === 'string' ? data.error : data.error?.message);
+    if (errMsg) throw new Error(errMsg);
+    const images = (Array.isArray(data.data) ? data.data : [])
+      .map(item => (item && (item.b64_json || item.url || item.image?.url)) || '')
+      .filter(Boolean);
     if (!images.length) throw new Error(t('debug.emptyImageList', { text: text.slice(0, 200) }));
     onDone({ images, totalMs: Date.now() - startTime });
   };
 
   try {
     if (window.electronAPI?.llm) {
-      const r = await window.electronAPI.llm.fetch(url, { method: 'POST', headers, body });
-      if (r.status >= 300) { onError(`HTTP ${r.status}: ${r.body}`); return; }
+      const r = await window.electronAPI.llm.fetch(url, {
+        method: 'POST', headers, body, timeoutMs: IMAGE_FETCH_TIMEOUT_MS,
+      });
+      if (r.status >= 300 || r.status === 0) {
+        onError(r.status === 0 ? (r.body || t('debug.imageTimeout')) : `HTTP ${r.status}: ${r.body}`);
+        return;
+      }
       await parse(r.body);
     } else {
-      const resp = await fetch(url, { method: 'POST', headers, body });
-      if (!resp.ok) { onError(`HTTP ${resp.status}: ${await resp.text()}`); return; }
-      await parse(await resp.text());
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = ctrl ? setTimeout(() => ctrl.abort(), IMAGE_FETCH_TIMEOUT_MS) : null;
+      try {
+        const resp = await fetch(url, { method: 'POST', headers, body, signal: ctrl?.signal });
+        if (!resp.ok) { onError(`HTTP ${resp.status}: ${await resp.text()}`); return; }
+        await parse(await resp.text());
+      } catch (e) {
+        if (e?.name === 'AbortError') onError(t('debug.imageTimeout'));
+        else onError(e.message);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     }
   } catch (e) { onError(e.message); }
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
+
+/** 图像生成 IPC/HTTP 超时（须 ≥ 上游轮询耗时，如即梦 ~30–60s） */
+const IMAGE_FETCH_TIMEOUT_MS = 300_000;
 
 const LOCAL_GW = { id: '__local_gw__', base_url: 'http://127.0.0.1:11430', token: '', models: [] };
 const CUSTOM   = { id: '__custom__',   base_url: '', token: '', models: [] };
@@ -189,6 +214,66 @@ function providerOptions(cfg, localCfg, localGw, t) {
 
 const defaultPanel = () => ({ conversation: [], input: '', systemPrompt: '', showSystem: false, streamMode: true, imageMode: false, imageRatio: '', imageResolution: '' });
 
+/** localStorage 键：调试页聊天记录（切换页面/重启后恢复） */
+const DEBUG_CHAT_KEY = 'tokenbank.debug.chat';
+const DEBUG_CHAT_MAX = 200;
+const B64_OMITTED = '__b64_omitted__';
+
+/** 持久化前清洗：去掉流式态；图片 base64 过大则仅存占位符 */
+function serializeDebugMessage(msg) {
+  const base = { ...msg, streaming: false, generating: false };
+  if (!Array.isArray(base.images)) return base;
+  return {
+    ...base,
+    images: base.images.map(src => {
+      if (!src || src === B64_OMITTED) return B64_OMITTED;
+      if (String(src).startsWith('http')) return src;
+      return B64_OMITTED;
+    }),
+  };
+}
+
+function loadDebugPanel() {
+  try {
+    const raw = localStorage.getItem(DEBUG_CHAT_KEY);
+    if (!raw) return defaultPanel();
+    const data = JSON.parse(raw);
+    const conversation = (Array.isArray(data.conversation) ? data.conversation : [])
+      .slice(-DEBUG_CHAT_MAX)
+      .map(m => ({ ...m, streaming: false, generating: false }));
+    return {
+      ...defaultPanel(),
+      conversation,
+      systemPrompt: data.systemPrompt || '',
+      showSystem: !!data.showSystem,
+      streamMode: data.streamMode !== false,
+      imageMode: !!data.imageMode,
+      imageRatio: data.imageRatio || '',
+      imageResolution: data.imageResolution || '',
+    };
+  } catch {
+    return defaultPanel();
+  }
+}
+
+function persistDebugPanel(panel) {
+  try {
+    localStorage.setItem(DEBUG_CHAT_KEY, JSON.stringify({
+      conversation: (panel.conversation || []).slice(-DEBUG_CHAT_MAX).map(serializeDebugMessage),
+      systemPrompt: panel.systemPrompt || '',
+      showSystem: !!panel.showSystem,
+      streamMode: panel.streamMode !== false,
+      imageMode: !!panel.imageMode,
+      imageRatio: panel.imageRatio || '',
+      imageResolution: panel.imageResolution || '',
+    }));
+  } catch { /* quota 超限等：忽略，不影响当前会话 */ }
+}
+
+function clearDebugPanelStorage() {
+  try { localStorage.removeItem(DEBUG_CHAT_KEY); } catch {}
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function Debug() {
@@ -203,7 +288,7 @@ export default function Debug() {
   const [model,          setModel]         = useState('');
   const [manualModel,    setManualModel]   = useState(false);
   const [loadingModels,  setLoadingModels] = useState(false);
-  const [panels,         setPanels]        = useState({ main: defaultPanel() });
+  const [panels,         setPanels]        = useState(() => ({ main: loadDebugPanel() }));
   const [sending,        setSending]       = useState(false);
   const [lightbox,       setLightbox]      = useState(null);
 
@@ -316,7 +401,20 @@ export default function Debug() {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [conversation]);
 
+  // 聊天记录落盘：流式/生成中不写，避免频繁 IO
+  useEffect(() => {
+    if (sending) return;
+    if (conversation.some(m => m.streaming || m.generating)) return;
+    persistDebugPanel(panel);
+  }, [panel, sending, conversation]);
+
   function setPanel(patch) { setPanels(prev => ({ ...prev, main: { ...prev.main, ...patch } })); }
+
+  function handleClearChat() {
+    if (!window.confirm(t('debug.clearConfirm'))) return;
+    setPanel({ conversation: [], input: '' });
+    clearDebugPanelStorage();
+  }
 
   const effectiveBase = selectedId === '__custom__' ? manualBaseUrl : (provOpts.find(o => o.id === selectedId)?.base_url || '');
   const anthropic     = isAnthropicUrl(effectiveBase);
@@ -512,9 +610,10 @@ export default function Debug() {
           )}
 
           {conversation.length > 0 && (
-            <button onClick={() => setPanel({ conversation: [], input: '' })}
-              className="ml-auto text-xs text-zinc-400 dark:text-zinc-500 hover:text-red-500 dark:hover:text-red-400 transition-colors">
-              {t('debug.clear')}
+            <button onClick={handleClearChat}
+              className="ml-auto text-xs text-zinc-400 dark:text-zinc-500 hover:text-red-500 dark:hover:text-red-400 transition-colors"
+              title={t('debug.clearChat')}>
+              {t('debug.clearChat')}
             </button>
           )}
         </div>
@@ -550,9 +649,13 @@ export default function Debug() {
                     <div className="px-4 py-6 flex items-center gap-2 text-sm text-zinc-400 dark:text-zinc-500">
                       <span className="w-4 h-4 border-2 border-zinc-700 border-t-blue-500 rounded-full animate-spin" /> {t('debug.generating')}
                     </div>
-                  ) : (msg.images || []).length > 0 ? (
+                  ) : (() => {
+                    const displayImages = (msg.images || []).filter(src => src && src !== B64_OMITTED);
+                    const hasOmitted = (msg.images || []).some(src => src === B64_OMITTED);
+                    if (displayImages.length > 0) {
+                      return (
                     <div className="space-y-2 p-2">
-                      {msg.images.map((src, j) => {
+                      {displayImages.map((src, j) => {
                         const imgSrc = src.startsWith('data:') || src.startsWith('http') ? src : `data:image/png;base64,${src}`;
                         return (
                           <div key={j} className="relative group">
@@ -566,10 +669,17 @@ export default function Debug() {
                           </div>
                         );
                       })}
+                      {hasOmitted && (
+                        <p className="px-2 pb-1 text-xs text-zinc-400 dark:text-zinc-500">{t('debug.imageNotRestored')}</p>
+                      )}
                     </div>
-                  ) : (
-                    <div className="px-4 py-3 text-sm text-zinc-400 dark:text-zinc-500">{t('debug.noImage')}</div>
-                  )}
+                      );
+                    }
+                    if (hasOmitted) {
+                      return <div className="px-4 py-3 text-sm text-zinc-400 dark:text-zinc-500">{t('debug.imageNotRestored')}</div>;
+                    }
+                    return <div className="px-4 py-3 text-sm text-zinc-400 dark:text-zinc-500">{t('debug.noImage')}</div>;
+                  })()}
                 </div>
               ) : (
                 <div className={`rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap ${

@@ -29,8 +29,10 @@ function exampleModelFromRoute(routeVal, routes, availableModels) {
     const fallback = availableModels[0];
     return { model: fallback?.id || 'gpt-4o', modelType: fallback?.type };
   }
-  if (routes.some(r => r.model_key === routeVal || r.id === routeVal)) {
-    return { model: routeVal, modelType: undefined };
+  const scene = routes.find(r => r.model_key === routeVal || r.id === routeVal);
+  if (scene) {
+    // 网关 scene 拦截按 model_key 索引，不能用 route UUID
+    return { model: scene.model_key || scene.id || routeVal, modelType: undefined };
   }
   const parsed = parseRouteBinding(routeVal, routes);
   const entry = availableModels.find(m => modelTierKey(m) === routeVal)
@@ -2385,21 +2387,26 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
     const key = app.api_key;
     if (!key) return;   // 无 key（未托管/虚拟行）不能测
     setTestState(s => ({ ...s, [app.id]: { busy: true } }));
-    // 测试用的模型必须与下拉框「实际显示值」一致：用 routeValue（受控 <select> 的当前值）
-    // 而非 app.route_id —— 绑定失效/不在选项内时下拉显示为空，测试也应按显示值走。
-    const routeVal = routeValue ?? app.route_id;
-    const { model } = exampleModelFromRoute(routeVal, routes, availableModels);
-    // 测试请求在 body 里显式带 model；api_key 仅识别应用，网关不再按 key 改写模型
-    if (routeVal && routeVal !== '') {
-      try { await appsApi.update({ id: app.id, route_id: routeVal }); } catch {}
+    // 优先下拉当前值，其次已绑定 route_id（空字符串不算有效值）
+    const boundRouteId = (routeValue && String(routeValue).trim())
+      || effectiveRouteIds(app)[0]
+      || app.route_id
+      || '';
+    const { model } = exampleModelFromRoute(boundRouteId, routes, availableModels);
+    if (boundRouteId && boundRouteId !== '') {
+      try { await appsApi.update({ id: app.id, route_id: boundRouteId }); } catch {}
     }
     const base = (localBase || resolveLocalGatewayBase()).replace(/\/$/, '');
+    const url = `${base}/chat/completions`;
+    const body = { model, max_tokens: 1, messages: [{ role: 'user', content: 'Hello!' }] };
+    console.log('[route-test] POST', url, { appId: app.id, routeId: boundRouteId, model });
     try {
       const result = await runStreamChatTest({
-        url: `${base}/chat/completions`,
+        url,
         headers: { authorization: `Bearer ${key}` },
-        body: { model, max_tokens: 1, messages: [{ role: 'user', content: 'Hello!' }] },
+        body,
       });
+      console.log('[route-test] result', { appId: app.id, ok: result.ok, error: result.error, latency: result.latency });
       if (!result.ok) {
         const msg = result.error === 'timeout' ? t('gateway.common.timeout30s') : (result.error || t('gateway.common.connectFailed'));
         setTestState(s => ({ ...s, [app.id]: { ok: false, error: msg, latency: result.latency } }));
@@ -2686,6 +2693,8 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                     : (hostable ? !!(tracked && effectiveRouteIds(app).length) : !!(keyApp && effectiveRouteIds(app).length));
                   const routeKnown = (val) => {
                     if (!val) return false;
+                    // 场景路由始终可识别（按 model_key / id）
+                    if (routes.some(r => (r.model_key || r.id) === val)) return true;
                     const avail = new Set(availableModels.map(m => m.id));
                     const usableRoutes = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
                     return usableRoutes.some(r => (r.model_key || r.id) === val)

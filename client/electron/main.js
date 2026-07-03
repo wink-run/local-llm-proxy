@@ -1430,7 +1430,17 @@ function scanLLMConfigs() {
 
 // ── Node-side HTTP proxy (avoids CORS in renderer) ───────────────────────────
 
-function nodeRequest(url, method, headers, body) {
+function nodeRequest(url, method, headers, body, agentOrOpts) {
+  let agent = null;
+  let timeoutMs = 120_000;
+  if (agentOrOpts != null) {
+    if (typeof agentOrOpts === 'object' && (agentOrOpts.timeoutMs != null || agentOrOpts.agent != null)) {
+      agent = agentOrOpts.agent || null;
+      if (agentOrOpts.timeoutMs != null) timeoutMs = agentOrOpts.timeoutMs;
+    } else if (agentOrOpts instanceof http.Agent || agentOrOpts instanceof https.Agent) {
+      agent = agentOrOpts;
+    }
+  }
   return new Promise((resolve) => {
     const u = new URL(url);
     const mod = u.protocol === 'https:' ? https : http;
@@ -1438,7 +1448,8 @@ function nodeRequest(url, method, headers, body) {
       hostname: u.hostname,
       port: u.port || (u.protocol === 'https:' ? 443 : 80),
       path: u.pathname + (u.search || ''),
-      method, headers, timeout: 120000,
+      method, headers, timeout: timeoutMs,
+      ...(agent ? { agent } : {}),
     };
     const req = mod.request(opts, (res) => {
       const chunks = [];
@@ -1590,8 +1601,8 @@ function registerIPC() {
   });
 
   // Buffered HTTP request (for models list, non-streaming chat)
-  ipcMain.handle('llm:fetch', async (_e, { url, method = 'GET', headers = {}, body }) => {
-    return nodeRequest(url, method, headers, body);
+  ipcMain.handle('llm:fetch', async (_e, { url, method = 'GET', headers = {}, body, timeoutMs }) => {
+    return nodeRequest(url, method, headers, body, timeoutMs != null ? { timeoutMs } : undefined);
   });
 
   // 登录 / 注册 / profile：走主进程 HTTP，避免系统代理拦截
@@ -2046,7 +2057,9 @@ function registerIPC() {
     const routerMap = {};
     for (const r of routes) {
       if (r.model_key && (r.steps?.length || r.rules?.length)) {
-        routerMap[r.model_key] = { steps: r.steps || [], scene_name: r.scene_name, rules: r.rules || null, classifier: r.classifier || null };
+        const entry = { steps: r.steps || [], scene_name: r.scene_name, rules: r.rules || null, classifier: r.classifier || null };
+        routerMap[r.model_key] = entry;
+        if (r.id && r.id !== r.model_key) routerMap[r.id] = entry;
       }
     }
     // manual / api-key apps: if model_intercept is set, redirect that incoming model name to the configured route
@@ -3442,9 +3455,28 @@ function registerIPC() {
     const base_url = p.base_url;
     if (!base_url || typeof base_url !== 'string') return { ok: false, error: 'base_url required' };
     try {
-      let headers = {};
+      const { providerTestTargets, logProviderTestProbe, parseProviderProbeError } = require('../shared/provider-test');
+      const { resolveOutboundProxyAgent } = require('../shared/outbound-proxy');
+
+      const agentCfg = readAgentConfig() || {};
+      const ctx = { id: p.id, api_format: p.api_format, base_url: p.base_url };
+      console.log('[provider-test] start', ctx);
+
+      /** 解析响应体中的错误详情 */
+      function parseProbeError(body, status) {
+        const raw = String(body || '').trim();
+        if (!raw) return status ? `HTTP ${status}` : 'Connection failed';
+        try {
+          const j = JSON.parse(raw);
+          return j.error?.message || j.message || raw.slice(0, 300);
+        } catch {
+          return raw.slice(0, 300);
+        }
+      }
+
+      // OAuth 供给源：刷新凭证后用 provider 注入头探测
       if (p.auth_type === 'oauth' && p.oauth_provider) {
-        // OAuth 供给源：刷新凭证 + 用该 provider 的注入头探测
+        let headers = {};
         const ready = await oauthMod.prepare(
           { id: p.id, auth_type: 'oauth', oauth_provider: p.oauth_provider, credentials: p.credentials },
           readAgentConfig, writeAgentConfig,
@@ -3455,19 +3487,49 @@ function registerIPC() {
           delete headers['Content-Type'];
           delete headers['Content-Length'];
         }
-      } else if (p.token) {
-        if (/anthropic/i.test(base_url)) { headers['x-api-key'] = p.token; headers['anthropic-version'] = '2023-06-01'; }
-        else headers['Authorization'] = `Bearer ${p.token}`;
+        const base = base_url.replace(/\/$/, '');
+        const oauthTargets = [`${base}/models`, `${base}/v1/models`];
+        let result = null;
+        for (const probeUrl of oauthTargets) {
+          logProviderTestProbe(ctx, { url: probeUrl, headers }, 'request');
+          result = await nodeRequest(probeUrl, 'GET', headers, null);
+          const ok = result.status >= 200 && result.status < 400;
+          logProviderTestProbe(ctx, { url: probeUrl, headers }, 'response', {
+            ok,
+            status: result.status,
+            error: ok ? undefined : parseProbeError(result.body, result.status),
+          });
+          if (ok || (result.status !== 404 && probeUrl === oauthTargets[0])) break;
+        }
+        const ok = result.status >= 200 && result.status < 400;
+        return { ok, status: result.status, error: ok ? undefined : parseProbeError(result.body, result.status) };
       }
-      const base = base_url.replace(/\/$/, '');
-      let result = await nodeRequest(base + '/models', 'GET', headers, null);
-      // If /models returns 404 and base has no version suffix, also try /v1/models
-      if (result.status === 404 && !/\/v\d+$/.test(base)) {
-        const r2 = await nodeRequest(base + '/v1/models', 'GET', headers, null);
-        if (r2.status !== 404) result = r2;
+
+      const { targets, error } = providerTestTargets({
+        base_url,
+        token: p.token,
+        api_format: p.api_format,
+      });
+      if (error === 'missing_api_key') return { ok: false, error: 'API Key required' };
+      if (error === 'invalid_base_url') return { ok: false, error: 'Invalid Base URL' };
+
+      let last = { ok: false, status: 0, error: 'Connection failed' };
+      for (const target of targets) {
+        logProviderTestProbe(ctx, target, 'request');
+        const method = target.method || 'GET';
+        const payload = target.body ? JSON.stringify(target.body) : null;
+        const agent = resolveOutboundProxyAgent({
+          provider: { proxy: p.proxy },
+          urlStr: target.url,
+          networkProxy: agentCfg.network_proxy,
+        });
+        const result = await nodeRequest(target.url, method, target.headers, payload, agent);
+        const ok = result.status >= 200 && result.status < 400;
+        last = { ok, status: result.status, error: ok ? undefined : parseProviderProbeError(result.body, result.status) };
+        logProviderTestProbe(ctx, target, 'response', last);
+        if (ok) return last;
       }
-      const ok = result.status >= 200 && result.status < 400;
-      return { ok, status: result.status, error: ok ? undefined : (result.body || '').slice(0, 300) };
+      return last;
     } catch (err) {
       return { ok: false, error: err.message };
     }

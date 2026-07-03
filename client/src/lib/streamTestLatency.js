@@ -43,6 +43,19 @@ function parseSseChunk(buf, anthropicEventRef, onFirstToken) {
  * @param {number} [opts.timeoutMs=30000]
  * @returns {Promise<{ok:boolean, latency:number, error?:string}>}
  */
+/** 解析流式测试失败时的错误文案（兼容 OpenAI / 网关 all_providers_failed 格式） */
+function parseStreamTestError(body, status) {
+  if (!body || typeof body !== 'object') return `HTTP ${status}`;
+  if (typeof body.error === 'string') {
+    return body.detail || body.error;
+  }
+  const nested = body.error;
+  if (nested && typeof nested === 'object') {
+    return nested.detail || nested.message || body.detail || `HTTP ${status}`;
+  }
+  return body.detail || body.message || `HTTP ${status}`;
+}
+
 export async function runStreamChatTest({ url, headers, body, timeoutMs = 30000 }) {
   const start = Date.now();
   const ctrl = new AbortController();
@@ -57,7 +70,7 @@ export async function runStreamChatTest({ url, headers, body, timeoutMs = 30000 
     });
     if (!res.ok) {
       const b = await res.json().catch(() => ({}));
-      const msg = b?.error?.detail || b?.error?.message || b?.detail || `HTTP ${res.status}`;
+      const msg = parseStreamTestError(b, res.status);
       return { ok: false, error: msg, latency: Date.now() - start };
     }
 
