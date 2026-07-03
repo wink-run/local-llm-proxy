@@ -228,6 +228,7 @@ function syncGateway(lc) {
 
 /** 用户 JWT（个人页登录 token，非 P2P cloud_config.token） */
 function userBearerToken(req) {
+  if (!req?.headers) return '';
   const h = req.headers.authorization || req.headers.Authorization || '';
   const m = /^Bearer\s+(.+)$/i.exec(String(h));
   return m ? m[1].trim() : '';
