@@ -538,32 +538,36 @@ function connect(cfg) {
   ws = new WebSocket(cfg.server_url, { handshakeTimeout: 10000 });
 
   ws.on('open', () => {
-    (async () => {
-      const models = cfg.model_groups?.length
-        ? cfg.model_groups.flatMap(g => g.models || [])
-        : (cfg.models || []);
-      const regMsg = {
-        type: 'register',
-        worker_key: cfg.worker_key,
-        models,
-        name: cfg.name || os.hostname(),
-      };
-      if (cfg.contribute_circle_ids?.length) {
-        regMsg.circle_ids = cfg.contribute_circle_ids;
-      } else if (cfg.contribute_circle_id) {
-        regMsg.circle_ids = [cfg.contribute_circle_id];
-      }
-      const publicIp = await fetchPublicIp();
-      if (publicIp) {
-        regMsg.public_ip = publicIp;
-        log(`[agent] public_ip=${publicIp}`);
-      } else {
-        log('[agent] public_ip unavailable — map may use fallback location');
-      }
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(regMsg));
-      }
-    })();
+    const models = cfg.model_groups?.length
+      ? cfg.model_groups.flatMap(g => g.models || [])
+      : (cfg.models || []);
+    const regMsg = {
+      type: 'register',
+      worker_key: cfg.worker_key,
+      models,
+      name: cfg.name || os.hostname(),
+    };
+    if (cfg.contribute_circle_ids?.length) {
+      regMsg.circle_ids = cfg.contribute_circle_ids;
+    } else if (cfg.contribute_circle_id) {
+      regMsg.circle_ids = [cfg.contribute_circle_id];
+    }
+    // 先用缓存 IP 立即注册，不等待公网探测（最多 16s）阻塞连接
+    const cachedIp = (_cachedPublicIp && Date.now() - _cachedPublicIpAt < PUBLIC_IP_TTL_MS)
+      ? _cachedPublicIp : null;
+    if (cachedIp) {
+      regMsg.public_ip = cachedIp;
+      log(`[agent] public_ip=${cachedIp} (cached)`);
+    }
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(regMsg));
+    }
+    if (!cachedIp) {
+      fetchPublicIp().then((ip) => {
+        if (ip) log(`[agent] public_ip=${ip} (background, next reconnect)`);
+        else log('[agent] public_ip unavailable — map may use fallback location');
+      }).catch(() => {});
+    }
   });
 
   ws.on('message', async (raw) => {
@@ -664,6 +668,8 @@ function start({ onLog, onStatus } = {}) {
   running = true;
   _onStatus?.({ running: true });
   log(`[agent] starting: ${cfg.name || 'unnamed'}`);
+  // 后台预拉公网 IP，供首次/下次注册使用，不阻塞 connect
+  fetchPublicIp().catch(() => {});
   connect(cfg);
 }
 

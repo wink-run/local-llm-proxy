@@ -315,6 +315,104 @@ function dataSourcesWithoutModelStats() {
 }
 
 /** Returns aggregated dashboard data for the last `days` calendar days. */
+/** 将同一账户的 gateway_id / source_id / plan_provider_id 别名互相同步 */
+function mirrorProviderLatencyAliases(out) {
+  try {
+    const bc = require('./billing-config');
+    const pairs = [];
+    for (const c of (bc.apiSubscriptionCatalog?.() || [])) {
+      const plan = c.plan_provider_id;
+      const sid = c.source_id;
+      if (plan && sid) pairs.push([sid, plan], [plan, sid]);
+    }
+    for (const p of (bc.paygProviderCatalog?.() || [])) {
+      const id = p.provider_id || p.id;
+      for (const a of (p.aliases || [])) {
+        if (id && a) pairs.push([a, id], [id, a]);
+      }
+    }
+    for (const model of Object.keys(out)) {
+      const pmap = out[model];
+      for (const [from, to] of pairs) {
+        if (!pmap[from]) continue;
+        const src = pmap[from];
+        const dst = pmap[to];
+        if (!dst || (src.last_ts || 0) > (dst.last_ts || 0)) {
+          pmap[to] = { ...src };
+        }
+      }
+    }
+  } catch { /* billing-config 不可用时跳过 */ }
+  return out;
+}
+
+/** 各模型 × 供给源账户的首 token 延迟（个人源下拉展示用） */
+function queryModelProviderLatency(since) {
+  if (!db) return {};
+  try {
+    const avgRows = db.prepare(
+      'SELECT model, provider_id, ' +
+      'AVG(COALESCE(first_token_ms, latency_ms)) AS avg_ms, COUNT(*) AS calls ' +
+      'FROM requests WHERE ts >= ? AND model IS NOT NULL AND provider_id IS NOT NULL ' +
+      "AND data_source = 'proxy' " +
+      'AND COALESCE(first_token_ms, latency_ms) IS NOT NULL ' +
+      'AND COALESCE(first_token_ms, latency_ms) > 0 ' +
+      'GROUP BY model, provider_id'
+    ).all(since);
+
+    // 按 MAX(ts) 取每个 model+provider 最近一次请求的首 token + 总延迟
+    const lastRows = db.prepare(
+      'SELECT r.model, r.provider_id, ' +
+      'COALESCE(r.first_token_ms, r.latency_ms) AS last_ttft_ms, ' +
+      'r.latency_ms AS last_latency_ms, r.ts AS last_ts ' +
+      'FROM requests r INNER JOIN (' +
+      '  SELECT model, provider_id, MAX(ts) AS max_ts FROM requests ' +
+      '  WHERE ts >= ? AND model IS NOT NULL AND provider_id IS NOT NULL ' +
+      "  AND data_source = 'proxy' " +
+      '  AND COALESCE(first_token_ms, latency_ms) IS NOT NULL ' +
+      '  AND COALESCE(first_token_ms, latency_ms) > 0 ' +
+      '  GROUP BY model, provider_id' +
+      ') latest ON r.model = latest.model AND r.provider_id = latest.provider_id AND r.ts = latest.max_ts ' +
+      'WHERE r.ts >= ? AND r.model IS NOT NULL AND r.provider_id IS NOT NULL ' +
+      "AND r.data_source = 'proxy' " +
+      'AND COALESCE(r.first_token_ms, r.latency_ms) IS NOT NULL ' +
+      'AND COALESCE(r.first_token_ms, r.latency_ms) > 0'
+    ).all(since, since);
+
+    const out = {};
+    for (const r of avgRows) {
+      if (!out[r.model]) out[r.model] = {};
+      out[r.model][r.provider_id] = {
+        avg_ttft_ms: Math.round(r.avg_ms),
+        calls: r.calls || 0,
+        last_ttft_ms: null,
+        last_latency_ms: null,
+        last_ts: 0,
+      };
+    }
+    for (const r of lastRows) {
+      if (!out[r.model]) out[r.model] = {};
+      const ttft = Math.round(r.last_ttft_ms);
+      const total = r.last_latency_ms > 0 ? Math.round(r.last_latency_ms) : null;
+      const ts = r.last_ts || 0;
+      const slot = out[r.model][r.provider_id];
+      if (!slot) {
+        out[r.model][r.provider_id] = {
+          avg_ttft_ms: null, calls: 0, last_ttft_ms: ttft, last_latency_ms: total, last_ts: ts,
+        };
+      } else if (!slot.last_ts || ts >= slot.last_ts) {
+        slot.last_ttft_ms = ttft;
+        slot.last_latency_ms = total;
+        slot.last_ts = ts;
+      }
+    }
+    return mirrorProviderLatencyAliases(out);
+  } catch (e) {
+    console.error('[local-stats] queryModelProviderLatency failed:', e.message);
+    return {};
+  }
+}
+
 function queryDashboard(days = 1) {
   if (!db) return _empty();
 
@@ -453,6 +551,7 @@ function queryDashboard(days = 1) {
     })),
     payg_usage_cost: paygAll.total,
     avg_latency_ms: latRow?.avg_ms ? Math.round(latRow.avg_ms) : null,
+    model_provider_latency: queryModelProviderLatency(since),
   };
 }
 
@@ -465,6 +564,7 @@ function _empty() {
     models: [], keys: [], providers: [], agent_sources: [],
     payg_usage_cost: 0,
     avg_latency_ms: null,
+    model_provider_latency: {},
   };
 }
 
@@ -507,7 +607,7 @@ function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50, incl
     const recent = db.prepare(
       `SELECT ts, model, input_tokens AS inTok, output_tokens AS outTok, cache_read_tokens AS cached, ` +
       `(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, ` +
-      `data_source AS source, status_code, session_id, provider_id, cost_usd, billing_type, latency_ms, request_id FROM requests ` +
+      `data_source AS source, status_code, session_id, provider_id, cost_usd, billing_type, latency_ms, first_token_ms, request_id FROM requests ` +
       `WHERE ${where} ORDER BY ts DESC LIMIT @lim`
     ).all({ ...p, lim: limit });
     return {
@@ -515,7 +615,7 @@ function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50, incl
       bySource: bySource.map(r => ({ source: r.src, calls: r.calls, tokens: r.tokens || 0 })),
       byModel: rankableModels(byModel).map(r => ({ model: r.model, calls: r.calls, tokens: r.tokens || 0 })),
       sessions: sessions.map(r => ({ session_id: r.session_id, calls: r.calls, tokens: r.tokens || 0, firstTs: r.firstTs, lastTs: r.lastTs })),
-      recent: recent.map(r => ({ ts: r.ts, model: r.model, inTok: r.inTok || 0, outTok: r.outTok || 0, cached: r.cached || 0, tokens: r.tokens || 0, source: r.source, status_code: r.status_code, session_id: r.session_id, provider_id: r.provider_id, cost_usd: r.cost_usd || 0, billing_type: r.billing_type || null, latency_ms: r.latency_ms || null, request_id: r.request_id || null })),
+      recent: recent.map(r => ({ ts: r.ts, model: r.model, inTok: r.inTok || 0, outTok: r.outTok || 0, cached: r.cached || 0, tokens: r.tokens || 0, source: r.source, status_code: r.status_code, session_id: r.session_id, provider_id: r.provider_id, cost_usd: r.cost_usd || 0, billing_type: r.billing_type || null, latency_ms: r.latency_ms || null, first_token_ms: r.first_token_ms || null, request_id: r.request_id || null })),
     };
   } catch (e) { console.error('[local-stats] queryAppDetail failed:', e.message); return empty; }
 }
@@ -945,5 +1045,5 @@ module.exports = {
   queryAppDetail, queryAppStatsInPeriod, queryAppStatsToday, querySessionDetail, querySessionStatsMap,
   getImportState, setImportState, resetSessionData, deleteZeroTokenSessionRows, close,
   listSessionMeta, getSessionMeta, setSessionMeta,
-  todaySinceTs, sinceTsForDays, queryGatewayInputCostRate,
+  todaySinceTs, sinceTsForDays, queryGatewayInputCostRate, queryModelProviderLatency,
 };

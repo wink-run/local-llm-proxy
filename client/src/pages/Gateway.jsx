@@ -557,6 +557,41 @@ function linkMethodLabel(method, t) {
 // 应用列保留 modest 最小宽；不设表格 min-width，避免常态出现横向滚动条
 // 应用列加大最小宽；固定短列与路由 min 适当压缩，空间让给应用名
 const APPS_TABLE_GRID = 'grid w-full grid-cols-[1.75rem_minmax(5rem,1.5fr)_3.75rem_1.75rem_3.75rem_3.5rem_3.75rem_minmax(4.5rem,2fr)_minmax(7.75rem,auto)] gap-x-3 items-center px-4 [&>*]:min-w-0';
+
+/** 应用行测试状态：成功/进行中行内短提示；失败用浮层展示完整错误（避免窄列截断） */
+function AppTestResultHint({ ts, t }) {
+  if (!ts) return null;
+  if (ts.busy) {
+    return (
+      <div className="mt-0.5 text-right text-[10px] leading-tight text-zinc-400">
+        {t('gateway.common.testing')}
+      </div>
+    );
+  }
+  if (ts.ok) {
+    return (
+      <div className="mt-0.5 text-right text-[10px] leading-tight font-mono text-green-500 dark:text-green-400">
+        ✓ {t('gateway.common.testFirstToken', { ms: ts.latency })}
+      </div>
+    );
+  }
+  return null;
+}
+
+/** 测试失败浮层：挂在整行下方，不受操作列宽度限制 */
+function AppTestErrorFloat({ error }) {
+  if (!error) return null;
+  return (
+    <div className="flex justify-end px-4 -mt-0.5 pb-1.5 relative z-[5]">
+      <div
+        className="text-[10px] leading-snug font-mono text-red-600 dark:text-red-300 bg-white dark:bg-zinc-900 border border-red-200/80 dark:border-red-800/60 rounded-lg px-2.5 py-1.5 shadow-md dark:shadow-black/40 max-w-full whitespace-normal break-words text-left"
+        role="alert"
+      >
+        ✗ {error}
+      </div>
+    </div>
+  );
+}
 // 按 API Key 路由的应用：自动写配置的 api-key，和用户自配的 manual（手工添加）
 const isKeyApp = (m) => m === 'api-key' || m === 'manual';
 
@@ -1881,6 +1916,8 @@ function AppDetailModal({ app, onClose }) {
     </span>
   );
   const fmtMs   = n => (n != null) ? (n >= 1000 ? (n/1000).toFixed(1)+'s' : n+'ms') : null;
+  /** 展示首 token 延迟（无首 token 记录时回退总延迟，兼容旧数据） */
+  const fmtTtft = r => fmtMs(r?.first_token_ms ?? r?.latency_ms);
   const fmtTime = ts => ts ? new Date(ts*1000).toLocaleString('zh-CN',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
   const shortId = id => id ? (String(id).length > 12 ? String(id).slice(0,8)+'…'+String(id).slice(-4) : String(id)) : '—';
   const proxy   = data?.bySource?.find(s => s.source === 'proxy')   || { calls:0, tokens:0 };
@@ -2082,7 +2119,7 @@ function AppDetailModal({ app, onClose }) {
                         </span>
                       )}
                       <span className="ml-auto">{fmtTokLine(r)}</span>
-                      {fmtMs(r.latency_ms) && <span className="text-zinc-400 shrink-0">{fmtMs(r.latency_ms)}</span>}
+                      {fmtTtft(r) && <span className="text-zinc-400 shrink-0">{fmtTtft(r)}</span>}
                       {fmtCostOptional(r.cost_usd) && <span className="text-emerald-600 dark:text-emerald-400 shrink-0">{fmtCostOptional(r.cost_usd)}</span>}
                       {r.status_code != null && r.status_code >= 400 && <span className="text-red-500 shrink-0">{r.status_code}</span>}
                     </div>
@@ -2366,16 +2403,18 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
       if (!result.ok) {
         const msg = result.error === 'timeout' ? t('gateway.common.timeout30s') : (result.error || t('gateway.common.connectFailed'));
         setTestState(s => ({ ...s, [app.id]: { ok: false, error: msg, latency: result.latency } }));
+        scheduleTestHide(app.id, 8000);
       } else {
         setTestState(s => ({ ...s, [app.id]: { ok: true, latency: result.latency } }));
+        scheduleTestHide(app.id, 3000);
         // 网关已落账 → 刷新统计（总请求数 / 总token）+ 路由明细日志
         setTimeout(() => { load(); refresh(); }, 600);
       }
     } catch (e) {
       setTestState(s => ({ ...s, [app.id]: { ok: false, error: e?.message || t('gateway.common.connectFailed'), latency: null } }));
+      scheduleTestHide(app.id, 8000);
       setTimeout(() => refresh(), 600);
     }
-    scheduleTestHide(app.id);
   }
   // 写入某 api-key 应用的配置文件指向网关（解析 {BASE}/{KEY}，patch_route 在 main 进程按 handler 策略改写）。
   // 返回 true=成功。onAbort：冲突取消/写入失败时的回滚回调（新建时删条目；重新纳管不删）。
@@ -2687,7 +2726,8 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                   return (
                     // 离线不整行压暗（否则操作按钮看着像禁用）；离线感由灰底/灰点/「离线」标签/
                     // 图标灰度/灰名体现，操作按钮保持全亮可点（含「测试」）。
-                    <div key={app.id} className={`${APPS_TABLE_GRID} py-3 transition-colors border-t border-zinc-100/80 dark:border-white/[0.05] ${rowBg}`}>
+                    <React.Fragment key={app.id}>
+                    <div className={`${APPS_TABLE_GRID} py-3 transition-colors border-t border-zinc-100/80 dark:border-white/[0.05] ${rowBg}`}>
                       {/* 图标 + 名称（命中品牌则用 lobehub logo，否则回退 emoji）*/}
                       {(() => {
                         const brand = brandIconFor(app);
@@ -2742,8 +2782,8 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                       )}
                       </div>
 
-                      {/* 操作区：单列；测试/提示状态单独一行避免裁切 */}
-                      <div className="min-w-0 overflow-hidden">
+                      {/* 操作区 */}
+                      <div className="relative min-w-0">
                         <div className="flex items-center justify-end gap-1.5 min-w-0 max-w-full overflow-hidden">
                       {(app.api_key || isDirectOnly) && (() => {
                         const ts = testState[app.id];
@@ -2818,18 +2858,9 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                         </button>
                       )}
                         </div>
-                      {(app.api_key || isDirectOnly) && (() => {
-                        const ts = testState[app.id];
-                        if (!ts) return null;
-                        return (
-                          <div
-                            className={`mt-0.5 text-right text-[10px] leading-tight truncate max-w-full font-mono ${ts.busy ? 'text-zinc-400' : ts.ok ? 'text-green-500 dark:text-green-400' : 'text-red-400'}`}
-                            title={ts.busy ? t('gateway.common.testing') : ts.ok ? t('gateway.common.testFirstToken', { ms: ts.latency }) : ts.error}
-                          >
-                            {ts.busy ? t('gateway.common.testing') : ts.ok ? `✓ ${t('gateway.common.testFirstToken', { ms: ts.latency })}` : `✗ ${ts.error}`}
-                          </div>
-                        );
-                      })()}
+                      {(app.api_key || isDirectOnly) && (
+                        <AppTestResultHint ts={testState[app.id]} t={t} />
+                      )}
                       {(() => {
                         const key = app.agent_id || app.id;
                         const msg = notice[key];
@@ -2844,6 +2875,10 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                       })()}
                       </div>
                     </div>
+                    {(app.api_key || isDirectOnly) && testState[app.id]?.ok === false && !testState[app.id]?.busy && (
+                      <AppTestErrorFloat error={testState[app.id].error} />
+                    )}
+                    </React.Fragment>
                   );
                 })}
                 </div>
@@ -3803,6 +3838,7 @@ export default function Gateway() {
   const proxyCalls   = (stats?.agent_sources ?? []).find(s => s.source === 'proxy')?.calls ?? 0;
   const gatewayRatio = totalCalls > 0 ? Math.round((proxyCalls / totalCalls) * 100) : null;
   const fmtTokens    = n => n >= 1_000_000 ? (n / 1e6).toFixed(2) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'K' : String(n || 0);
+  const fmtMs        = n => (n != null && n > 0) ? (n >= 1000 ? (n/1000).toFixed(1)+'s' : n+'ms') : null;
   const okLogs       = logEntries.filter(e => e.status === 'ok');
   const recentOkLogs = okLogs.filter(e => e.ts >= Date.now() - 5 * 60 * 1000);
   // 优先近 5 分钟；无近期成功请求时回退到内存日志全部 ok，避免刷新后显示 —
@@ -4224,7 +4260,9 @@ export default function Gateway() {
                   <span className={`shrink-0 font-medium ${e.status === 'ok' ? 'text-blue-600 dark:text-blue-400' : 'text-red-500'}`}>
                     {e.status === 'ok' ? (e.via_label || e.via || '—') : t('gateway.log.failed')}
                   </span>
-                  <span className="text-zinc-400 shrink-0">{e.latency_ms}ms</span>
+                  {e.status === 'ok' && fmtMs(e.first_token_ms ?? e.latency_ms) && (
+                    <span className="text-zinc-400 shrink-0">{fmtMs(e.first_token_ms ?? e.latency_ms)}</span>
+                  )}
                 </div>
               );
             })}

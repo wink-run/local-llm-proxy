@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getNetwork, getStats } from '../api/client';
-import { modelStatsForIds } from '../lib/networkModelStats';
+import { modelStatsForIds, normalizeNetworkPayload } from '../lib/networkModelStats';
 import { fetchServerCommunityModels } from '../lib/communityModels';
 import { useLang } from '../store/lang';
 import P2pWorldMap from '../components/P2pWorldMap';
@@ -59,11 +59,15 @@ export default function Network() {
           getNetwork(), getStats(), fetchServerCommunityModels(),
         ]);
         if (cancelled) return;
-        if (netRes.status === 'fulfilled')   setNetwork(netRes.value.data);
-        if (statsRes.status === 'fulfilled') setMyStats(statsRes.value.data);
+        if (netRes.status === 'fulfilled') {
+          const payload = netRes.value?.data ?? netRes.value;
+          setNetwork(normalizeNetworkPayload(payload));
+        }
+        if (statsRes.status === 'fulfilled') setMyStats(statsRes.value?.data ?? null);
         if (communityRes.status === 'fulfilled') {
-          setCommunityIds(communityRes.value.ids);
-          setCircleModelMap(communityRes.value.circleMap);
+          const v = communityRes.value;
+          setCommunityIds(Array.isArray(v?.ids) ? v.ids : []);
+          setCircleModelMap(v?.circleMap && typeof v.circleMap === 'object' ? v.circleMap : {});
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -75,15 +79,18 @@ export default function Network() {
   }, []);
 
   // 模型列表与 /v1/models 一致；节点数从 workers 聚合补充
-  const modelStats = useMemo(
-    () => modelStatsForIds(communityIds, network),
-    [communityIds, network],
-  );
+  const modelStats = useMemo(() => {
+    try {
+      return modelStatsForIds(communityIds, network);
+    } catch {
+      return [];
+    }
+  }, [communityIds, network]);
 
   // Sort workers by tokens as contributor ranking proxy
   const topWorkers = useMemo(() => {
-    if (!network?.workers) return [];
-    return [...network.workers].sort((a, b) => (b.period_tokens || 0) - (a.period_tokens || 0)).slice(0, 5);
+    const workers = Array.isArray(network?.workers) ? network.workers : [];
+    return [...workers].sort((a, b) => (b.period_tokens || 0) - (a.period_tokens || 0)).slice(0, 5);
   }, [network]);
 
   const totalNodes  = network?.summary?.online_workers ?? 0;
@@ -204,9 +211,9 @@ export default function Network() {
                         {size && (
                           <span className="text-xs text-zinc-400 bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded">{size}</span>
                         )}
-                        {circleModelMap[m.name] && (
+                        {circleModelMap?.[m.name] && (
                           <span
-                            title={circleModelMap[m.name].circle_name || '圈子'}
+                            title={circleModelMap[m.name]?.circle_name || '圈子'}
                             className="text-[10px] leading-none px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 cursor-default"
                           >⊙</span>
                         )}
@@ -317,7 +324,7 @@ export default function Network() {
             </div>
 
             {/* All workers list */}
-            {network.workers.length > 0 && (
+            {(network?.workers?.length ?? 0) > 0 && (
               <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
                 <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
                   <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('network.workersTitle')}</h2>

@@ -54,6 +54,7 @@ class WorkerConnection:
         if success and ttft_ms is not None and ttft_ms >= 0:
             s["ttft_sum"] += ttft_ms
             s["ttft_count"] += 1
+            s["last_ttft_ms"] = round(ttft_ms)
 
     def record_image_complete(self, model: str, image_count: int) -> None:
         """Record completed image generation for settler contribution tracking."""
@@ -119,6 +120,17 @@ def worker_model_names(worker) -> set[str]:
 
 def worker_has_model(worker, model: str) -> bool:
     return model in worker_model_names(worker)
+
+
+def default_ttft_ms(worker_id: str, model: str) -> int:
+    """无真实请求时：按 worker+model 稳定伪随机 1000–2000ms（公开展示用）。"""
+    seed = f"{worker_id}\0{model}"
+    h = 0
+    for ch in seed:
+        h = ((h << 5) - h + ord(ch)) & 0xFFFFFFFF
+    if h >= 2**31:
+        h -= 2**32
+    return 1000 + (abs(h) % 1001)
 
 
 async def offline_contributor_model(worker, model: str, reason: str) -> bool:
