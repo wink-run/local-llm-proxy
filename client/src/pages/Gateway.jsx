@@ -397,10 +397,10 @@ function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0, syncError =
 
   // 一键安装 CLI 工具：跑 npm i -g，装完刷新检测状态
   const oneClickInstall = useCallback(async (app) => {
-    if (!getApps().installTool) return;
+    if (!getApps().npmGlobalInstall) return;
     setNpmBusy(b => ({ ...b, [app.id]: true }));
     try {
-      const r = await getApps().installTool(app.id);
+      const r = await getApps().npmGlobalInstall(app.id);
       if (!r?.ok) window.alert(t('gateway.toolbox.installFailed', { name: app.name, msg: r?.error || '' }));
       await loadItems();
     } catch (e) {
@@ -524,7 +524,7 @@ function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0, syncError =
                   const brand = resolveBrandIcon(`${a.id} ${a.name}`);
                   const dim = a.installed ? '' : 'grayscale opacity-45';
                   const install = !a.installed;
-                  const canNpm = install && !!a.npm_package && !!getApps().installTool;   // 未装 + 有 npm 包 → 可一键装
+                  const canNpm = install && !!a.npm_package && !!getApps().npmGlobalInstall;   // 未装 + 有 npm 包 → 可一键装
                   const installing = !!npmBusy[a.id];
                   const btnLabel = installing ? t('gateway.toolbox.installing')
                     : canNpm ? t('gateway.toolbox.oneClickInstall')
