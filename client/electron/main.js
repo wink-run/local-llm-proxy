@@ -1204,6 +1204,31 @@ function apiKeyAppDetected(d) {
   return false;
 }
 
+// 分强/弱信号检测（供 apps:supported 用）：
+//   强信号 strong = 命令/appx/mac-app 现在确实装着；strongDefined 表示该应用配了强信号可判。
+//   弱信号 weak   = 残留的配置目录（应用卸载后目录常仍在，不足以证明"已安装"）。
+// 卸载（尤其 npm uninstall 只删命令、不删 ~/.<app> 目录）后，强信号立即转 false，
+// 上层"有强信号只认强信号"即可正确变灰，不被残留目录误判为已安装。
+function apiKeyDetect(d) {
+  let strongDefined = false, strong = false;
+  if (d.appx) {
+    strongDefined = true;
+    if (appxInstalled(d.appx)) strong = true;
+    if (!strong && process.platform === 'darwin') {
+      const appName = String(d.appx).split('.').pop();
+      for (const base of ['/Applications', path.join(os.homedir(), 'Applications')]) {
+        try { if (fs.existsSync(path.join(base, appName + '.app'))) strong = true; } catch {}
+      }
+    }
+  }
+  if (d.command) { strongDefined = true; if (commandInstalled(d.command)) strong = true; }
+  let weak = false;
+  if (d.config_file) {
+    try { const f = resolveCfgPath(d.config_file); if (f && fs.existsSync(path.dirname(f))) weak = true; } catch {}
+  }
+  return { strongDefined, strong, weak };
+}
+
 // 解析配置文件路径（{占位}+~）
 function resolveCfgPath(p) {
   try { const cl = require('./config-loader'); return cl.expandHome(cl.resolvePlaceholders(String(p || ''), {})); }
@@ -2516,9 +2541,10 @@ function registerIPC() {
     const NPM_PACKAGES = configLoader.appNpmPackages();
     const guide = (map, id) => configLoader.resolveGuide(map[id]);
     // 按 id 合并三分支（CLI / 桌面 / 会话）：同一应用可同时出现在多条分支，
-    // 不再"先到先得"丢弃后来的证据 —— installed 取各分支 OR、元数据补空，
-    // npm_package 统一按 id 查（任何分支的应用都可能是 npm 命令行装的），
-    // 有包即可命令行装卸。kind 取更"可操作"的类型（cli>desktop>session）。
+    // 不再"先到先得"丢弃后来的证据 —— 按 id 合并三分支、元数据补空，
+    // npm_package 统一按 id 查（任何分支的应用都可能是 npm 命令行装的），有包即可命令行装卸。
+    // installed 分强/弱信号聚合：强信号=命令/appx/app 现在确实装着；弱信号=残留配置/会话目录。
+    // 有强信号只认强信号（卸载后立即变灰）；无强信号才用弱信号兜底（如纯会话源 WorkBuddy/cursor）。
     const byId = new Map();
     const KIND_RANK = { cli: 3, desktop: 2, session: 1, direct: 1 };
     const merge = (o) => {
@@ -2526,7 +2552,9 @@ function registerIPC() {
       if (!o.npm_package) o.npm_package = NPM_PACKAGES[o.id] || null;
       const ex = byId.get(o.id);
       if (!ex) { byId.set(o.id, o); return; }
-      ex.installed = ex.installed || o.installed;
+      ex.sStrongDefined = ex.sStrongDefined || o.sStrongDefined;
+      ex.sStrong = ex.sStrong || o.sStrong;
+      ex.sWeak = ex.sWeak || o.sWeak;
       for (const k of ['name', 'icon', 'capabilities', 'install_url', 'uninstall_url',
                        'install_guide', 'uninstall_guide', 'npm_package']) {
         if ((ex[k] == null || ex[k] === '') && o[k] != null) ex[k] = o[k];
@@ -2534,12 +2562,12 @@ function registerIPC() {
       if ((KIND_RANK[o.kind] || 0) > (KIND_RANK[ex.kind] || 0)) ex.kind = o.kind;
     };
     try {
-      // ① CLI 工具（shim 托管，命令在 PATH）
+      // ① CLI 工具（shim 托管，命令在 PATH）：命令检测=强信号
       for (const tool of agentLinker.list()) {
         const ent = entityMeta(tool.id);
         merge({ id: tool.id, name: ent?.name || tool.name || tool.id, icon: ent?.icon || '🤖',
               capabilities: ent?.capabilities || tool.capabilities || null,
-              installed: !!tool.installed,
+              sStrongDefined: true, sStrong: !!tool.installed, sWeak: false,
               install_url: INSTALL_URLS[tool.id] || null,
               uninstall_url: UNINSTALL_URLS[tool.id] || null,
               install_guide: guide(INSTALL_GUIDES, tool.id),
@@ -2551,9 +2579,10 @@ function registerIPC() {
       for (const d of (configLoader.apiKeyApps() || [])) {
         if (d.enable_3p === false) continue;
         const ent = entityMeta(d.id);
+        const det = apiKeyDetect(d);
         merge({ id: d.id, name: ent?.name || d.name || d.id, icon: ent?.icon || d.icon || '🖥️',
               capabilities: ent?.capabilities || d.capabilities || null,
-              installed: apiKeyAppDetected(d),
+              sStrongDefined: det.strongDefined, sStrong: det.strong, sWeak: det.weak,
               install_url: INSTALL_URLS[d.id] || null,
               uninstall_url: UNINSTALL_URLS[d.id] || null,
               install_guide: guide(INSTALL_GUIDES, d.id),
@@ -2561,15 +2590,15 @@ function registerIPC() {
               npm_package: NPM_PACKAGES[d.id] || null,
               kind: 'desktop' });
       }
-      // ③ 会话统计源：direct_only 与可绑路由两类，目录存在即视为已安装
+      // ③ 会话统计源：direct_only 与可绑路由两类，目录存在=弱信号（残留数据，不足证明已安装）
       for (const s of (configLoader.sessionSources() || [])) {
         if (!s || !s.agent_id) continue;
-        let installed = false;
-        try { installed = !!s.root && fs.existsSync(configLoader.expandHome(s.root)); } catch {}
+        let weak = false;
+        try { weak = !!s.root && fs.existsSync(configLoader.expandHome(s.root)); } catch {}
         merge({ id: s.agent_id, name: s.app_name || entityMeta(s.agent_id)?.name || s.agent_id,
               icon: s.app_icon || entityMeta(s.agent_id)?.icon || '🖱',
               capabilities: entityMeta(s.agent_id)?.capabilities || null,
-              installed,
+              sStrongDefined: false, sStrong: false, sWeak: weak,
               install_url: INSTALL_URLS[s.agent_id] || null,
               uninstall_url: UNINSTALL_URLS[s.agent_id] || null,
               install_guide: guide(INSTALL_GUIDES, s.agent_id),
@@ -2578,7 +2607,12 @@ function registerIPC() {
               kind: s.direct_only ? 'direct' : 'session' });
       }
     } catch (e) { console.error('[apps:supported] failed:', e.message); }
-    const out = [...byId.values()];
+    const out = [...byId.values()].map(r => {
+      // 有强信号只认强信号（命令/appx 卸载即变灰）；否则用弱信号（残留目录）兜底
+      r.installed = r.sStrongDefined ? r.sStrong : r.sWeak;
+      delete r.sStrongDefined; delete r.sStrong; delete r.sWeak;
+      return r;
+    });
     // 已安装靠前（彩色在左），其次有安装链接的，最后无链接的小众工具
     out.sort((a, b) => (Number(b.installed) - Number(a.installed)) || ((b.install_url ? 1 : 0) - (a.install_url ? 1 : 0)));
     return out;
