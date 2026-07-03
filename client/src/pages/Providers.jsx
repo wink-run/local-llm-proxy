@@ -2281,11 +2281,23 @@ function ProviderModelSection({ provider, userPayg, onUpdate, scrollable = false
   );
 }
 
+/** 格式化测试反馈文案；失败保留至下次测试，成功 3s 后清除 */
+function formatProviderTestMsg(result, t) {
+  if (result?.ok) return { ok: true, msg: t('providers.test.success') };
+  const detail = (result?.error && String(result.error).trim())
+    || (result?.status ? `HTTP ${result.status}` : '');
+  return {
+    ok: false,
+    msg: t('providers.test.failed', { detail: detail || t('providers.test.failedGeneric') }),
+  };
+}
+
 function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels }) {
   const { t } = useLang();
   const [showKey, setShowKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testMsg, setTestMsg] = useState('');
+  const testClearTimer = useRef(null);
 
   const displayLabel = provider.displayName || provider.label || (() => {
     try { const h = new URL(provider.base_url || '').hostname; return h || t('providers.custom.defaultName'); } catch { return t('providers.custom.defaultName'); }
@@ -2294,17 +2306,24 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
 
   async function handleTest() {
     if (!provider.base_url) { setTestMsg(t('providers.test.needBaseUrl')); return; }
-    setTesting(true); setTestMsg('');
+    if (!provider.token && provider.auth_type !== 'oauth') {
+      setTestMsg(t('providers.test.needToken'));
+      return;
+    }
+    setTesting(true);
+    if (testClearTimer.current) clearTimeout(testClearTimer.current);
+    setTestMsg('');
     try {
       const result = await onTest(provider);
       if (result.ok) onUpdate(provider.id, { test_verified: true });
       else onUpdate(provider.id, { test_verified: false });
-      setTestMsg(result.ok ? t('providers.test.success') : `✗ ${result.error || `HTTP ${result.status}`}`);
+      const { ok, msg } = formatProviderTestMsg(result, t);
+      setTestMsg(msg);
+      if (ok) testClearTimer.current = setTimeout(() => setTestMsg(''), 3000);
     } catch (e) {
       onUpdate(provider.id, { test_verified: false });
-      setTestMsg(`✗ ${e.message || t('providers.err.unknown')}`);
+      setTestMsg(t('providers.test.failed', { detail: e.message || t('providers.err.unknown') }));
     } finally {
-      setTimeout(() => setTestMsg(''), 3000);
       setTesting(false);
     }
   }
@@ -2336,7 +2355,7 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
           </div>
 
           {testMsg && (
-            <p className={`text-xs mt-1 ${testMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>{testMsg}</p>
+            <p className={`text-xs mt-1 ${testMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400 font-medium'}`} role={testMsg.startsWith('✓') ? undefined : 'alert'}>{testMsg}</p>
           )}
 
           {/* Base URL + Token inputs */}
@@ -2535,6 +2554,7 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
   const [expanded,   setExpanded]   = useState(initialExpanded);
   const [testing,    setTesting]    = useState(false);
   const [testMsg,    setTestMsg]    = useState('');
+  const testClearTimer = useRef(null);
 
   meta = meta || {};
   const isP2P    = provider.type === 'p2p';
@@ -2629,17 +2649,24 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
 
   async function handleTest() {
     if (!provider.base_url) { setTestMsg(t('providers.test.needBaseUrl')); return; }
-    setTesting(true); setTestMsg('');
+    if (!provider.token && provider.auth_type !== 'oauth') {
+      setTestMsg(t('providers.test.needToken'));
+      return;
+    }
+    setTesting(true);
+    if (testClearTimer.current) clearTimeout(testClearTimer.current);
+    setTestMsg('');
     try {
       const result = await onTest(provider);
       if (result.ok) onUpdate(provider.id, { test_verified: true });
       else onUpdate(provider.id, { test_verified: false });
-      setTestMsg(result.ok ? t('providers.test.success') : `✗ ${result.error || `HTTP ${result.status}`}`);
+      const { ok, msg } = formatProviderTestMsg(result, t);
+      setTestMsg(msg);
+      if (ok) testClearTimer.current = setTimeout(() => setTestMsg(''), 3000);
     } catch (e) {
       onUpdate(provider.id, { test_verified: false });
-      setTestMsg(`✗ ${e.message || t('providers.err.unknown')}`);
+      setTestMsg(t('providers.test.failed', { detail: e.message || t('providers.err.unknown') }));
     } finally {
-      setTimeout(() => setTestMsg(''), 3000);
       setTesting(false);
     }
   }
@@ -2684,7 +2711,7 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
 
           {/* Hint / status text */}
           {testMsg ? (
-            <p className={`text-xs mt-1 ${testMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>{testMsg}</p>
+            <p className={`text-xs mt-1 ${testMsg.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400 font-medium'}`} role={testMsg.startsWith('✓') ? undefined : 'alert'}>{testMsg}</p>
           ) : (
             <p className="text-xs text-zinc-500 mt-1">
               {forceOauth ? t('providers.card.hint.oauth') : forceApiKey ? t('providers.card.hint.apiKey') : meta.hint}
@@ -3496,7 +3523,8 @@ export default function Providers() {
 
   async function testProvider(p) {
     return getGateway().testProvider({
-      id: p.id, base_url: p.base_url, token: p.token,
+      id: p.id, base_url: p.base_url, token: p.token, api_format: p.api_format,
+      proxy: p.proxy,
       auth_type: p.auth_type, oauth_provider: p.oauth_provider, credentials: p.credentials,
     });
   }

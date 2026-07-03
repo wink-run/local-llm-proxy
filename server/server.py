@@ -432,22 +432,26 @@ async def worker_ws(ws: WebSocket):
         user_id = user["id"]
 
         worker_id = str(uuid.uuid4())[:8]
-        name = (msg.get("name") or "").strip() or f"worker-{worker_id}"
+        worker_name = (msg.get("name") or "").strip()
+        if not worker_name:
+            worker_name = (user.get("username") or "").strip()
+        if not worker_name:
+            worker_name = f"worker-{worker_id}"
         raw_models = msg.get("models", [])
         models = []
         model_types: dict[str, str] = {}
         for entry in raw_models:
             if isinstance(entry, str):
-                name = entry.strip()
-                if name:
-                    models.append(name)
-                    model_types[name] = "chat"
+                model_name = entry.strip()
+                if model_name:
+                    models.append(model_name)
+                    model_types[model_name] = "chat"
             elif isinstance(entry, dict):
-                name = (entry.get("name") or "").strip()
+                model_name = (entry.get("name") or "").strip()
                 mtype = entry.get("type", "chat")
-                if name and mtype in ("chat", "image"):
-                    models.append(name)
-                    model_types[name] = mtype
+                if model_name and mtype in ("chat", "image"):
+                    models.append(model_name)
+                    model_types[model_name] = mtype
 
         # 首次出现的模型名自动写入 model_configs（open + 默认倍率），便于计费与列表一致
         auto_models = await db.ensure_default_open_models(models, model_types)
@@ -481,7 +485,7 @@ async def worker_ws(ws: WebSocket):
             )
         worker = WorkerConnection(
             ws=ws, models=models, worker_id=worker_id,
-            name=name, user_id=user_id,
+            name=worker_name, user_id=user_id,
             model_types=model_types,
             circle_id=worker_circle_ids_list[0] if len(worker_circle_ids_list) == 1 else None,
             circle_ids=worker_circle_ids_list,
@@ -505,7 +509,7 @@ async def worker_ws(ws: WebSocket):
             "[worker/ws] online peer=%s worker_id=%s name=%s user_id=%s models=%s",
             peer,
             worker_id,
-            name,
+            worker_name,
             user_id,
             models,
         )

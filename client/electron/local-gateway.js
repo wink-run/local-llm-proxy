@@ -13,20 +13,16 @@ const oauth = require('./oauth');
 const { estimateCost } = require('./pricing');
 const { compressBody, compressionRatio } = require('./compressor');
 const { handleTts }             = require('./handlers/ttsHandler');
-const { handleImageGeneration } = require('./handlers/imageHandler');
+const { handleImageGeneration, resolveImageRequestTimeoutMs } = require('./handlers/imageHandler');
 const { handleEmbedding }       = require('./handlers/embeddingHandler');
 
 // 出站代理：境外供给源（如 Google Gemini）常需走本机代理才能连通。
 // 优先级：provider.proxy > 全局 cfg.network_proxy > 环境变量(HTTPS_PROXY/HTTP_PROXY，遵守 NO_PROXY)。
-let _HttpsProxyAgent = null, _getProxyForUrl = null;
-try { _HttpsProxyAgent = require('https-proxy-agent').HttpsProxyAgent; } catch {}
-try { _getProxyForUrl = require('proxy-from-env').getProxyForUrl; } catch {}
+const { resolveOutboundProxyAgent } = require('../shared/outbound-proxy');
 function resolveProxyAgent(provider, urlStr) {
-  if (!_HttpsProxyAgent) return undefined;
-  let proxyUrl = provider && provider.proxy;
-  if (!proxyUrl && _getConfig) { try { proxyUrl = _getConfig().network_proxy; } catch {} }
-  if (!proxyUrl && _getProxyForUrl) { try { proxyUrl = _getProxyForUrl(urlStr); } catch {} }
-  return proxyUrl ? new _HttpsProxyAgent(proxyUrl) : undefined;
+  let networkProxy;
+  try { networkProxy = _getConfig()?.network_proxy; } catch {}
+  return resolveOutboundProxyAgent({ provider, urlStr, networkProxy });
 }
 
 // ── In-memory state ───────────────────────────────────────────────────────────
@@ -2861,7 +2857,11 @@ function handleRequest(req, res) {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
-      try { handleImageGeneration(JSON.parse(body), res, enabledProviders, { skipP2P }); }
+      try { handleImageGeneration(JSON.parse(body), res, enabledProviders, {
+        skipP2P,
+        networkProxy: (() => { try { return _getConfig()?.network_proxy; } catch { return null; } })(),
+        requestTimeoutMs: resolveImageRequestTimeoutMs((() => { try { return _getConfig?.(); } catch { return null; } })()),
+      }); }
       catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); }
     });
     return;
@@ -2949,6 +2949,9 @@ function start(port, getConfig, saveConfig, bindHost = '127.0.0.1') {
   _getConfig  = getConfig;
   _saveConfig = saveConfig || null;
   _server     = http.createServer(handleRequest);
+  // 图像生成上游可能 30–120s 无响应字节（内部轮询），放宽服务端超时
+  _server.requestTimeout = 600_000;
+  _server.headersTimeout = 610_000;
   _server.listen(_port, bindHost, () => {
     console.log(`[gateway] listening on ${bindHost}:${_port}`);
   });

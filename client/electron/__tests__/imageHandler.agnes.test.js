@@ -45,11 +45,23 @@ test('text-to-image: response_format goes inside extra_body, never top-level', (
   });
   assert.equal(body.model, 'agnes-image-2.0-flash');
   assert.equal(body.prompt, 'a glass cube');
-  assert.equal(body.size, '1024x768');
+  // Agnes 用 ratio/resolution，不支持 size
+  assert.ok(!('size' in body), 'size must NOT be sent to Agnes');
+  assert.equal(body.ratio, '4:3');
+  assert.equal(body.resolution, '1k');
   // top-level response_format would cause HTTP 400 on Agnes
   assert.ok(!('response_format' in body), 'response_format must NOT be at top level');
   assert.deepEqual(body.extra_body, { response_format: 'url' });
   assert.ok(!('image' in body), 'text-to-image must not include image array');
+});
+
+test('text-to-image: explicit ratio/resolution passthrough', () => {
+  const body = getAdapter(PROVIDER).buildBody('m', {
+    prompt: 'p', ratio: '16:9', resolution: '2k', response_format: 'b64_json',
+  });
+  assert.equal(body.ratio, '16:9');
+  assert.equal(body.resolution, '2k');
+  assert.ok(!('size' in body));
 });
 
 test('return_base64 short-circuits to base64 output', () => {

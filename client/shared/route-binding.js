@@ -35,7 +35,8 @@ function modelIdFromRoute(routeId, routes = []) {
 /** 下拉框 value：场景路由用 model_key；单层模型用 tier:id；legacy 纯 id 尽量还原 */
 function routeSelectValue(routeId, availableModels = [], routes = []) {
   if (!routeId) return '';
-  if (routes.some(r => r.model_key === routeId || r.id === routeId)) return routeId;
+  const scene = routes.find(r => r.model_key === routeId || r.id === routeId);
+  if (scene) return scene.model_key || routeId;
   if (TIER_ROUTE_RE.test(routeId)) return routeId;
   const matches = availableModels.filter(m => m.id === routeId);
   if (matches.length >= 1) {

@@ -10,33 +10,225 @@
 const https = require('https');
 const http  = require('http');
 const { TIER_ROUTE_RE } = require('../../shared/route-binding');
+const { resolveOutboundProxyAgent } = require('../../shared/outbound-proxy');
+
+/** 图像生成默认超时（上游轮询型 API 常需 30–120s 才有首字节） */
+const DEFAULT_IMAGE_TIMEOUT_MS = 300_000;
+const MIN_IMAGE_TIMEOUT_MS = 180_000;
+
+/** 从网关 config.req_timeout（秒）解析图像超时，至少 3 分钟 */
+function resolveImageRequestTimeoutMs(config) {
+  const sec = Number(config?.req_timeout);
+  if (Number.isFinite(sec) && sec > 0) {
+    return Math.max(sec * 1000, MIN_IMAGE_TIMEOUT_MS);
+  }
+  return DEFAULT_IMAGE_TIMEOUT_MS;
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function postJson(url, headers, body) {
+/** 读取上游响应全文；maxLen=0 表示不截断（图像 base64 可能数 MB） */
+function readResponseText(res, maxLen = 8000) {
+  return new Promise((resolve, reject) => {
+    let d = '';
+    res.on('data', c => {
+      d += c;
+      if (maxLen > 0 && d.length > maxLen) d = d.slice(0, maxLen);
+    });
+    res.on('end', () => resolve(d));
+    res.on('error', reject);
+  });
+}
+
+async function readJson(res, maxLen = 8000) {
+  const raw = await readResponseText(res, maxLen);
+  try { return JSON.parse(raw); } catch { return raw; }
+}
+
+/** 成功响应：完整读取并解析 JSON（禁止截断，否则大图 b64 会破坏 JSON） */
+async function readJsonFull(res) {
+  const raw = await readResponseText(res, 0);
+  try { return JSON.parse(raw); } catch (e) {
+    throw new Error(`Invalid JSON from image upstream: ${e.message}`);
+  }
+}
+
+/** 从上游 JSON / 纯文本提取可读错误信息 */
+function extractErrorDetail(parsed, raw, status) {
+  if (parsed && typeof parsed === 'object') {
+    const e = parsed.error;
+    if (e && typeof e === 'object') {
+      const parts = [e.message, e.detail, e.status].filter(Boolean);
+      if (Array.isArray(e.details) && e.details.length) {
+        parts.push(e.details.map(d => d.message || JSON.stringify(d)).join('; '));
+      }
+      const joined = parts.join(' — ');
+      if (joined) return joined;
+      try { return JSON.stringify(e); } catch { /* fall through */ }
+    }
+    if (typeof e === 'string' && e.trim()) {
+      const t = e.trim();
+      // 跳过无实质内容的 "HTTP 404" 占位，继续尝试 raw 正文
+      if (!/^HTTP \d{3}$/.test(t)) return t;
+    }
+    if (parsed.message) return String(parsed.message);
+    if (parsed.detail) return String(parsed.detail);
+    try { return JSON.stringify(parsed).slice(0, 4000); } catch { /* fall through */ }
+  }
+  const text = typeof parsed === 'string' ? parsed : (typeof raw === 'string' ? raw : '');
+  if (text.trim()) return text.trim().slice(0, 4000);
+  return status ? `HTTP ${status}` : 'Unknown upstream error';
+}
+
+/** Gemini base_url 规范化（与 local-gateway geminiBase 一致） */
+function geminiBase(rawBaseUrl) {
+  const raw = (rawBaseUrl || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
+  return /\/v1beta/i.test(raw) ? raw : `${raw}/v1beta`;
+}
+
+function isGeminiImageProvider(p = {}) {
+  const fmt = String(p.api_format || p.handler || '').toLowerCase();
+  const url = String(p.base_url || '');
+  // 仅 Google 原生端点走 generateContent；OpenAI 兼容代理（apihub 等）仍走 /images/generations
+  if (/generativelanguage\.googleapis\.com/i.test(url)) return true;
+  if (fmt === 'gemini' && !/\/openai|apihub|agnes/i.test(url)) return true;
+  return false;
+}
+
+/** OpenAI size → 分辨率档位（1k / 2k / 4k） */
+function sizeToResolution(sizeStr) {
+  const [w, h] = (sizeStr || '1024x1024').split('x').map(Number);
+  const maxDim = Math.max(w || 1024, h || 1024);
+  if (maxDim >= 3840) return '4k';
+  if (maxDim >= 1920) return '2k';
+  return '1k';
+}
+
+/** 是否使用 ratio + resolution 而非 size（Agnes 等 OpenAI 兼容图像 API） */
+function needsRatioResolution(provider, model) {
+  if (provider?.image_config?.sizeParams === 'ratio_resolution') return true;
+  const url = String(provider?.base_url || '');
+  const id = String(provider?.id || '');
+  if (/apihub\.agnes-ai\.com/i.test(url) || /agnes/i.test(id)) return true;
+  if (/agnes[-_]image|^agnes-image|-image$/i.test(model || '')) return true;
+  return false;
+}
+
+/** 写入 ratio / resolution；禁止与 size 混用 */
+function applyRatioResolution(out, body, { defaultFromSize = false } = {}) {
+  const ratio = body.ratio || (defaultFromSize && body.size ? sizeToAspectRatio(body.size) : undefined);
+  const resolution = body.resolution || (defaultFromSize && body.size ? sizeToResolution(body.size) : undefined);
+  if (ratio) out.ratio = ratio;
+  if (resolution) out.resolution = resolution;
+  return !!(ratio || resolution);
+}
+
+/** OpenAI size → Gemini aspectRatio（如 1024x768 → 4:3） */
+function sizeToAspectRatio(sizeStr) {
+  const [w, h] = (sizeStr || '1024x1024').split('x').map(Number);
+  if (!w || !h) return '1:1';
+  const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+  const g = gcd(w, h);
+  return `${w / g}:${h / g}`;
+}
+
+/** Gemini generateContent 响应 → OpenAI images 格式 */
+function normalizeGeminiImageResponse(parsed) {
+  if (Array.isArray(parsed?.data) && parsed.data.length) return parsed;
+
+  const images = [];
+  for (const cand of (parsed?.candidates || [])) {
+    for (const part of (cand.content?.parts || [])) {
+      if (part.inlineData?.data) {
+        images.push({ b64_json: part.inlineData.data });
+      }
+    }
+  }
+  return {
+    created: parsed?.createTime
+      ? Math.floor(new Date(parsed.createTime).getTime() / 1000)
+      : Math.floor(Date.now() / 1000),
+    data: images,
+  };
+}
+
+/** Gemini 原生 generateContent + OpenAI 兼容端点（404 时依次尝试） */
+const GEMINI_IMAGE_ADAPTER = {
+  buildUrl: (model, p) =>
+    `${geminiBase(p.base_url)}/models/${encodeURIComponent(model)}:generateContent`,
+  buildHeaders: (p) => ({ 'x-goog-api-key': p.token || '' }),
+  buildBody: (_model, body) => {
+    const genConfig = { responseModalities: ['TEXT', 'IMAGE'] };
+    const ratio = sizeToAspectRatio(body.size);
+    if (ratio) genConfig.imageConfig = { aspectRatio: ratio };
+    const parts = [{ text: body.prompt }];
+    // 图生图：body.image 为 data-uri 或 base64 字符串数组
+    if (Array.isArray(body.image)) {
+      for (const img of body.image) {
+        if (typeof img !== 'string') continue;
+        const mm = img.match(/^data:([^;]+);base64,(.+)$/);
+        if (mm) parts.push({ inlineData: { mimeType: mm[1], data: mm[2] } });
+      }
+    }
+    return {
+      contents: [{ parts }],
+      generationConfig: genConfig,
+    };
+  },
+  normalize: normalizeGeminiImageResponse,
+  getAttempts(model, provider, body) {
+    const token = provider.token || '';
+    const nativeUrl = this.buildUrl(model, provider);
+    const nativeHeaders = this.buildHeaders(provider);
+    const nativeBody = this.buildBody(model, body);
+    const base = geminiBase(provider.base_url);
+    const openaiUrl = `${base}/openai/v1/images/generations`;
+    const openaiBody = {
+      model,
+      prompt: body.prompt,
+      n: body.n || 1,
+      size: body.size || '1024x1024',
+      response_format: body.response_format || 'b64_json',
+    };
+    return [
+      { url: nativeUrl, headers: nativeHeaders, body: nativeBody, normalize: normalizeGeminiImageResponse },
+      { url: openaiUrl, headers: { Authorization: `Bearer ${token}` }, body: openaiBody, normalize: (p) => p },
+    ];
+  },
+};
+
+function formatImageErr(err) {
+  if (!err) return 'Unknown error';
+  if (typeof err === 'string') return err;
+  const msg = err.message != null ? String(err.message).trim() : '';
+  if (msg) return msg;
+  if (err.code) return String(err.code);
+  try { return JSON.stringify(err); } catch { return String(err); }
+}
+
+function logImageError(label, detail, extra = {}) {
+  const line = `[image] ${label}: ${detail || '(empty)'}`;
+  if (Object.keys(extra).length) console.error(line, extra);
+  else console.error(line);
+}
+
+function postJson(url, headers, body, { provider, networkProxy, timeoutMs = DEFAULT_IMAGE_TIMEOUT_MS } = {}) {
   return new Promise((resolve, reject) => {
     const u    = new URL(url);
     const mod  = u.protocol === 'https:' ? https : http;
     const data = JSON.stringify(body);
+    const agent = resolveOutboundProxyAgent({ provider, urlStr: url, networkProxy });
     const req  = mod.request({
       hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80),
       path: u.pathname + (u.search || ''), method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data), ...headers },
-      timeout: 120_000,
+      timeout: timeoutMs,
+      ...(agent ? { agent } : {}),
     }, resolve);
     req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error('Image request timed out')); });
+    req.on('timeout', () => { req.destroy(); reject(new Error(`Image request timed out (${Math.round(timeoutMs / 1000)}s)`)); });
     req.write(data);
     req.end();
-  });
-}
-
-async function readJson(res) {
-  return new Promise((resolve, reject) => {
-    let d = '';
-    res.on('data', c => d += c);
-    res.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve(d); } });
-    res.on('error', reject);
   });
 }
 
@@ -49,15 +241,20 @@ const ADAPTERS = {
   openai: {
     buildUrl: (model, provider) => `${provider.base_url || 'https://api.openai.com'}/v1/images/generations`,
     buildHeaders: (provider) => ({ Authorization: `Bearer ${provider.token}` }),
-    buildBody: (model, body) => ({
-      model,
-      prompt: body.prompt,
-      n: body.n || 1,
-      size: body.size || '1024x1024',
-      ...(body.quality  ? { quality: body.quality }   : {}),
-      ...(body.style    ? { style: body.style }        : {}),
-      ...(body.response_format ? { response_format: body.response_format } : {}),
-    }),
+    buildBody: (model, body) => {
+      const out = { model, prompt: body.prompt, n: body.n || 1 };
+      // 客户端显式传 ratio/resolution 时优先使用，不发 size
+      if (body.ratio || body.resolution) {
+        if (body.ratio) out.ratio = body.ratio;
+        if (body.resolution) out.resolution = body.resolution;
+      } else {
+        out.size = body.size || '1024x1024';
+      }
+      if (body.quality) out.quality = body.quality;
+      if (body.style) out.style = body.style;
+      if (body.response_format) out.response_format = body.response_format;
+      return out;
+    },
     normalize: (parsed) => parsed,
   },
 };
@@ -111,7 +308,9 @@ const BODY_CONFIGS = [
       return `${base}/images/generations`;
     },
     buildBody: (model, body) => {
-      const out = { model, prompt: body.prompt, size: body.size || '1024x1024' };
+      const out = { model, prompt: body.prompt };
+      // Agnes 不支持 size，必须用 ratio + resolution
+      applyRatioResolution(out, body, { defaultFromSize: true });
       if (body.n && body.n > 1) out.n = body.n;
       if (Array.isArray(body.image) && body.image.length) out.image = body.image;
       // response_format must never be top-level (causes 400); route through extra_body,
@@ -174,6 +373,8 @@ function resolveProvider(modelStr, providers) {
 function getAdapter(provider) {
   // Full adapter by id — providers needing a custom request cycle
   if (ADAPTERS[provider.id]) return ADAPTERS[provider.id];
+  // Gemini 图像模型走 generateContent，不能用 /images/generations
+  if (isGeminiImageProvider(provider)) return GEMINI_IMAGE_ADAPTER;
   // OpenAI-compatible base, with per-provider overrides from BODY_CONFIGS
   // (mirrors 9router PROVIDER_MEDIA.imageConfig — detail diffs like Doubao sizing,
   //  Agnes /v1 path + extra_body.response_format).
@@ -181,6 +382,16 @@ function getAdapter(provider) {
   const base = {
     ...ADAPTERS.openai,
     buildUrl: (_model, p) => `${(p.image_config?.baseUrl || p.base_url || '').replace(/\/+$/, '')}/images/generations`,
+    buildBody: (model, body, p) => {
+      if (needsRatioResolution(p, model)) {
+        const out = { model, prompt: body.prompt };
+        applyRatioResolution(out, body, { defaultFromSize: true });
+        if (body.n) out.n = body.n;
+        if (body.response_format) out.response_format = body.response_format;
+        return out;
+      }
+      return ADAPTERS.openai.buildBody(model, body);
+    },
   };
   if (!cfg) return base;
   return {
@@ -191,7 +402,7 @@ function getAdapter(provider) {
 }
 
 // ── Public handler ────────────────────────────────────────────────────────────
-async function handleImageGeneration(body, res, getProviders, { skipP2P = false } = {}) {
+async function handleImageGeneration(body, res, getProviders, { skipP2P = false, networkProxy = null, requestTimeoutMs = DEFAULT_IMAGE_TIMEOUT_MS } = {}) {
   if (!body.prompt) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Missing required field: prompt' }));
@@ -230,33 +441,97 @@ async function handleImageGeneration(body, res, getProviders, { skipP2P = false 
   }
 
   try {
-    const url      = adapter.buildUrl(model, provider);
-    const headers  = adapter.buildHeaders(provider);
-    const reqBody  = await adapter.buildBody(model, body);
+    const attempts = typeof adapter.getAttempts === 'function'
+      ? adapter.getAttempts(model, provider, body)
+      : [{
+          url: adapter.buildUrl(model, provider),
+          headers: adapter.buildHeaders(provider),
+          body: adapter.buildBody(model, body, provider),
+          normalize: adapter.normalize.bind(adapter),
+        }];
 
     console.log(`[image] → ${provider.id}/${model} prompt="${body.prompt.slice(0, 50)}..."`);
 
-    const upstream = await postJson(url, headers, reqBody);
+    let normalized = null;
+    let lastFail = null;
 
-    if (upstream.statusCode >= 400) {
-      const errBody = await readJson(upstream);
-      const msg = errBody?.error?.message || errBody?.message || `HTTP ${upstream.statusCode}`;
-      res.writeHead(upstream.statusCode, { 'Content-Type': 'application/json' });
+    for (let i = 0; i < attempts.length; i++) {
+      const { url, headers, body: reqBody, normalize } = attempts[i];
+      const upstream = await postJson(url, headers, reqBody, { provider, networkProxy, timeoutMs: requestTimeoutMs });
+
+      if (upstream.statusCode >= 400) {
+        const raw = await readResponseText(upstream);
+        let parsed;
+        try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+        const msg = extractErrorDetail(parsed, raw, upstream.statusCode);
+        lastFail = { status: upstream.statusCode, url, msg, raw };
+        // 404 且还有备用端点时继续尝试
+        if (upstream.statusCode === 404 && i < attempts.length - 1) {
+          console.log(`[image] ${provider.id}/${model} 404 on ${url}, trying fallback...`);
+          continue;
+        }
+        logImageError('upstream HTTP error', msg, {
+          status: upstream.statusCode,
+          url,
+          provider: provider.id,
+          model,
+          body: typeof raw === 'string' ? raw.slice(0, 2000) : undefined,
+        });
+        res.writeHead(upstream.statusCode, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: msg }));
+        return;
+      }
+
+      let parsed = await readJsonFull(upstream);
+      if (typeof parsed === 'string') {
+        try { parsed = JSON.parse(parsed); } catch {
+          throw new Error('Invalid image upstream response (string body)');
+        }
+      }
+      normalized = normalize(parsed, body.prompt);
+      if (normalized?.data?.length) break;
+      lastFail = { status: 200, url, msg: 'empty image list in upstream response' };
+      if (i < attempts.length - 1) continue;
+    }
+
+    if (!normalized?.data?.length) {
+      const msg = lastFail?.msg || 'No image data in upstream response';
+      logImageError('empty result', msg, { provider: provider.id, model, url: lastFail?.url });
+      res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: msg }));
       return;
     }
-
-    let parsed = await readJson(upstream);
-    const normalized = adapter.normalize(parsed, body.prompt);
+    if (typeof normalized === 'string') {
+      // 防御：normalize 不应返回字符串；若已是 JSON 字符串则直接写出
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(normalized);
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(JSON.stringify(normalized));
   } catch (err) {
-    console.error('[image] error:', err.message);
+    logImageError('error', formatImageErr(err), {
+      provider: provider?.id,
+      model,
+    });
+    if (err?.stack) console.error('[image] stack:', err.stack);
     if (!res.headersSent) {
       res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message || 'Image generation failed' }));
+      res.end(JSON.stringify({ error: formatImageErr(err) || 'Image generation failed' }));
     }
   }
 }
 
-module.exports = { handleImageGeneration, ADAPTERS, getAdapter, resolveProvider };
+module.exports = {
+  handleImageGeneration,
+  ADAPTERS,
+  getAdapter,
+  resolveProvider,
+  geminiBase,
+  isGeminiImageProvider,
+  normalizeGeminiImageResponse,
+  needsRatioResolution,
+  sizeToResolution,
+  resolveImageRequestTimeoutMs,
+  DEFAULT_IMAGE_TIMEOUT_MS,
+};
