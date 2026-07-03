@@ -9,8 +9,10 @@ const https = require('https');
 const yaml = require('js-yaml');
 
 const configLoader = require('./config-loader');
+const { defaultServerUrlFromEnv } = require('../shared/default-server-url');
 
 const USER_REGISTRY_YAML = path.join(os.homedir(), '.tokenbank', 'providers.registry.yaml');
+const BUILTIN_REGISTRY = path.join(__dirname, 'config', 'providers.registry.yaml');
 const FETCH_TIMEOUT_MS = 12000;
 
 let _syncInFlight = null;
@@ -18,6 +20,97 @@ let _syncInFlight = null;
 function normalizeBase(url) {
   if (!url) return '';
   return String(url).trim().replace(/\/$/, '').replace(/\/(api|v\d+)(\/.*)?$/, '');
+}
+
+/** 解析同步用的服务端根地址（设置页 URL 优先于 cloud_config，避免 CLI 指向旧服务器） */
+function resolveSyncServerUrl(opts = {}) {
+  const readCfg = opts.readLocalConfig || (() => ({}));
+  return normalizeBase(
+    opts.baseUrl
+    || opts.serverUrl
+    || readCfg()?.cloud_config?.url
+    || process.env.TOKEN_SERVER_URL
+    || process.env.TOKENBANK_SERVER_URL
+    || defaultServerUrlFromEnv(),
+  );
+}
+
+/** GET /api/config/providers → registry yaml 文档（需登录 JWT） */
+function fetchRegistryYaml(baseUrl, token) {
+  const base = normalizeBase(baseUrl);
+  if (!base || !token) return Promise.resolve(null);
+  const url = `${base}/api/config/providers`;
+  const mod = url.startsWith('https') ? https : http;
+  return new Promise((resolve) => {
+    const req = mod.get(url, {
+      timeout: FETCH_TIMEOUT_MS,
+      headers: { Authorization: `Bearer ${token}` },
+    }, (res) => {
+      let data = '';
+      res.on('data', c => { data += c; });
+      res.on('end', () => {
+        if (!res.statusCode || res.statusCode >= 400) {
+          resolve(null);
+          return;
+        }
+        try { resolve(yaml.load(data) || null); } catch { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+  });
+}
+
+/** 写入完整 registry yaml（与 Electron applyRegistryDoc 对齐） */
+function applyRegistryDoc(parsed, opts = {}) {
+  if (!parsed || typeof parsed !== 'object') return false;
+  let doc = { ...parsed };
+  try {
+    const existing = fs.existsSync(USER_REGISTRY_YAML)
+      ? yaml.load(fs.readFileSync(USER_REGISTRY_YAML, 'utf8')) || {}
+      : {};
+    const builtin = fs.existsSync(BUILTIN_REGISTRY)
+      ? yaml.load(fs.readFileSync(BUILTIN_REGISTRY, 'utf8')) || {}
+      : {};
+    if (!Array.isArray(doc.billing_sources) || !doc.billing_sources.length) {
+      doc.billing_sources = (existing.billing_sources?.length && existing.billing_sources)
+        || builtin.billing_sources
+        || [];
+    }
+    // 保留 catalog 未下发的内置 provider（如 Ollama）
+    if (Array.isArray(doc.providers)) {
+      doc.providers = mergeProvidersFromCatalog(existing.providers, doc.providers);
+    }
+  } catch (e) {
+    console.warn('[catalog-sync] merge registry doc failed:', e.message);
+  }
+  writeRegistryDoc(doc);
+  return true;
+}
+
+function finishSyncSideEffects(baseUrl, opts, extra = {}) {
+  return fetchCatalogJson(baseUrl).then((catalogPayload) => {
+    if (catalogPayload) {
+      try {
+        const billingConfig = require('./billing-config');
+        billingConfig.setLiveCatalogPayload(catalogPayload);
+      } catch {}
+    }
+    try {
+      const billingConfig = require('./billing-config');
+      const readLocalConfig = opts.readLocalConfig;
+      const applyUserBillingCfg = opts.applyUserBillingCfg;
+      if (readLocalConfig && applyUserBillingCfg) {
+        const cfg = readLocalConfig();
+        const { cfg: pruned, changed } = billingConfig.pruneLocalBillingAgainstServer(cfg);
+        if (changed) applyUserBillingCfg(pruned);
+      }
+    } catch (e) {
+      console.warn('[catalog-sync] prune billing failed:', e.message);
+    }
+    if (typeof opts.onApplied === 'function') opts.onApplied();
+    return { ok: true, updated: true, ...extra };
+  });
 }
 
 /** GET /api/catalog → JSON */
@@ -199,6 +292,17 @@ function mergeCatalogIntoRegistryDoc(existingDoc, catalogPayload) {
     ? mergeProvidersFromCatalog(existing.providers, catalogProviders)
     : (existing.providers || []);
 
+  // 服务端完整 billing_sources（与 admin 发布条数一致，避免仅 payg 标记/订阅段合并丢项）
+  if (Array.isArray(catalogPayload?.billing_sources) && catalogPayload.billing_sources.length) {
+    return {
+      version: existing.version || catalogPayload?.version || 1,
+      providers,
+      billing_sources: [...catalogPayload.billing_sources].sort(
+        (a, b) => (a.sort_order || 0) - (b.sort_order || 0),
+      ),
+    };
+  }
+
   const billingByKey = {};
   const existingPayg = {};
   // 订阅源：保留本地非 payg；payg 元数据单独保留 sort_order / auth 等字段
@@ -254,41 +358,29 @@ function writeRegistryDoc(doc) {
  */
 async function syncCatalogToRegistry(opts = {}) {
   const readCfg = opts.readLocalConfig || (() => ({}));
-  const baseUrl = normalizeBase(
-    opts.baseUrl || readCfg()?.cloud_config?.url || process.env.TOKEN_SERVER_URL || '',
-  );
+  const baseUrl = resolveSyncServerUrl(opts);
   if (!baseUrl) return { ok: false, error: 'no_server_url' };
+
+  const token = opts.token || readCfg()?.user_session?.jwt || null;
+
+  // 已登录：优先拉完整 registry YAML（含全部 billing_sources，与 Electron syncRemote 一致）
+  if (token) {
+    const yamlDoc = await fetchRegistryYaml(baseUrl, token);
+    if (yamlDoc && (yamlDoc.billing_sources?.length || yamlDoc.providers?.length)) {
+      applyRegistryDoc(yamlDoc, opts);
+      return finishSyncSideEffects(baseUrl, opts, { source: 'registry_yaml' });
+    }
+  }
 
   const catalogPayload = await fetchCatalogJson(baseUrl);
   if (!catalogPayload?.providers?.length) {
-    return { ok: false, error: 'catalog_fetch_failed' };
+    return { ok: false, error: 'catalog_fetch_failed', serverUrl: baseUrl };
   }
 
   const merged = mergeCatalogIntoRegistryDoc(readExistingRegistryDoc(), catalogPayload);
   writeRegistryDoc(merged);
 
-  // 同步内存刊例价快照（billing-config 读 yaml 前可用）
-  try {
-    const billingConfig = require('./billing-config');
-    billingConfig.setLiveCatalogPayload(catalogPayload);
-  } catch {}
-
-  // 按新 registry 清理本地过期计费项
-  try {
-    const billingConfig = require('./billing-config');
-    const readLocalConfig = opts.readLocalConfig;
-    const applyUserBillingCfg = opts.applyUserBillingCfg;
-    if (readLocalConfig && applyUserBillingCfg) {
-      const cfg = readLocalConfig();
-      const { cfg: pruned, changed } = billingConfig.pruneLocalBillingAgainstServer(cfg);
-      if (changed) applyUserBillingCfg(pruned);
-    }
-  } catch (e) {
-    console.warn('[catalog-sync] prune billing failed:', e.message);
-  }
-
-  if (typeof opts.onApplied === 'function') opts.onApplied();
-  return { ok: true, updated: true };
+  return finishSyncSideEffects(baseUrl, opts, { source: 'catalog_json' });
 }
 
 /** 非阻塞后台同步（去重） */
@@ -312,8 +404,11 @@ module.exports = {
   syncCatalogToRegistry,
   scheduleBackgroundSync,
   readCatalogFromYaml,
+  resolveSyncServerUrl,
   mergeCatalogIntoRegistryDoc,
   mergeProvidersFromCatalog,
   fetchCatalogJson,
+  fetchRegistryYaml,
+  applyRegistryDoc,
   catalogProviderToBilling,
 };
