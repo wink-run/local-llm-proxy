@@ -2577,7 +2577,11 @@ function registerIPC() {
         require('child_process').exec(`${npmCmd} i -g ${pkg}@latest`, { timeout: 300000, windowsHide: true },
           (err, _stdout, stderr) => {
             if (err) resolve({ ok: false, error: (String(stderr || '') || err.message).slice(0, 400) });
-            else resolve({ ok: true, pkg });
+            else {
+              // 清命令探测缓存，使前端刷新时立即检测到刚装的工具（不等 30s TTL）
+              try { require('./shim-installer').clearCommandCache(); } catch {}
+              resolve({ ok: true, pkg });
+            }
           });
       } catch (e) { resolve({ ok: false, error: e.message }); }
     });

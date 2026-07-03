@@ -197,7 +197,7 @@ function disablePath() {
 function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 module.exports = {
-  resolveRealCommand, writeShim, removeShim, shimExists,
+  resolveRealCommand, clearCommandCache, writeShim, removeShim, shimExists,
   enablePath, disablePath,
   paths: { BIN_DIR }, MARK_BEGIN, MARK_END,
 };
