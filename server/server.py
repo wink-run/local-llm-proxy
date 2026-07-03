@@ -68,6 +68,11 @@ async def lifespan(app: FastAPI):
 _LANDING_SCREENSHOTS = frozenset({
     "dashboard.webp", "gateway.webp", "provider.webp",
     "dashboard_en.webp", "gateway_en.webp", "provider_en.webp",
+    "contribute.webp", "contribute_en.webp",
+    "circle.webp", "circle_en.webp",
+    "world.webp", "world_en.webp",
+    "device.webp", "device_en.webp",
+    "trace_en.webp",
 })
 
 
