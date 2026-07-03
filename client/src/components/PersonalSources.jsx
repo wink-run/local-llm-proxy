@@ -55,6 +55,26 @@ function SourceProviderLogo({ inst }) {
 
 const PRICE_FIELDS = ['in', 'out', 'cacheRead'];
 
+/** 从刊例价字段推断模态（图像模型仅有 image 价） */
+export function inferModalityFromPricing(rates = {}) {
+  if (!rates || typeof rates !== 'object') return 'chat';
+  if (rates.image != null && rates.in == null && rates.out == null && rates.cacheRead == null) return 'image';
+  return 'chat';
+}
+
+/** 各模态对应的刊例价字段 */
+export function priceFieldsForModality(type) {
+  if (type === 'image') return ['image'];
+  if (type === 'embedding') return ['in', 'out'];
+  return PRICE_FIELDS;
+}
+
+/** 计费表格列头/占位：图像按张，其余按百万 Token */
+export function priceFieldLabel(field, type, t) {
+  if (field === 'image') return t('providers.billing.priceImage');
+  return field;
+}
+
 /** 模型模态短标签（文/图/嵌），供供给源页与路由下拉复用 */
 export function modelTypeLabel(type, t) {
   if (type === 'image') return t('providers.models.typeImage');
@@ -72,9 +92,7 @@ export function modelTypeBtnClass(type) {
   return 'bg-blue-50 dark:bg-blue-900/20 text-blue-500 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40';
 }
 
-/** 计费表格（模型 → in/out/cacheRead）。价格框编辑中用本地草稿字符串（允许 "2." 这类小数中间态），
- *  失焦(onBlur)才把字符串交给 onCell 提交，避免「输一个字就被 Number() 吃掉/被 reload 刷回」。
- *  withModality：添加时可选取模态（文本/图像/嵌入），行内可点击切换。 */
+/** 计费表格（模型 → 模态相关刊例价字段）。图像：image（$/张）；对话：in/out/cacheRead；嵌入：in/out。 */
 export function PricingTable({
   rows, onCell, onAddModel, onRemoveModel, t,
   withModality = false, modelTypes = {}, onToggleType,
@@ -94,10 +112,87 @@ export function PricingTable({
   };
   const resolveType = (name, row) => modelTypes[name] || row?.type || 'chat';
 
-  // 模型名单独占列；模态 badge 独立列，避免长 id 被 truncate
-  const rowGrid = withModality
-    ? 'grid-cols-[minmax(0,1fr)_1.75rem_repeat(3,minmax(2.5rem,3rem))_1.25rem]'
-    : 'grid-cols-[minmax(0,1fr)_repeat(3,minmax(2.5rem,3rem))_1.25rem]';
+  // 带模态：每行按类型渲染不同价格列（与服务端 admin 表单一致）
+  if (withModality) {
+    return (
+      <div className="overflow-x-auto -mx-1 px-1">
+        <div className="min-w-[17rem] space-y-1.5">
+          <div className="flex gap-1.5 text-[10px] text-zinc-400 px-0.5">
+            <span className="flex-1 min-w-0">{t('psrc.model')}</span>
+            <span className="w-7 text-center shrink-0">{t('providers.models.modalityCol')}</span>
+            <span className="flex-[3] text-right">{t('providers.billing.priceCol')}</span>
+            <span className="w-4 shrink-0" />
+          </div>
+          {rows.length === 0 && (
+            <p className="text-xs text-zinc-400 py-1.5 text-center">{t('psrc.noModels')}</p>
+          )}
+          {rows.map(r => {
+            const mType = resolveType(r.model, r);
+            const fields = priceFieldsForModality(mType);
+            return (
+              <div key={r.model} className={`flex gap-1.5 items-start ${r._override ? 'bg-amber-50/50 dark:bg-amber-900/10 rounded px-0.5 py-0.5' : ''}`}>
+                <span className="flex-1 min-w-0 text-xs font-mono text-zinc-700 dark:text-zinc-300 break-all leading-snug px-0.5 py-0.5" title={r.model}>
+                  {r.model}
+                </span>
+                {onToggleType && (
+                  <button
+                    type="button"
+                    onClick={() => onToggleType(r.model)}
+                    title={t('providers.models.toggleType')}
+                    className={`shrink-0 w-7 h-6 flex items-center justify-center text-[10px] font-sans rounded border border-zinc-200 dark:border-zinc-700 transition-colors ${modelTypeBtnClass(mType)}`}
+                  >
+                    {modelTypeLabel(mType, t)}
+                  </button>
+                )}
+                <div className="flex flex-1 gap-1 min-w-0 justify-end">
+                  {fields.map(f => (
+                    <input
+                      key={f}
+                      type="text"
+                      inputMode="decimal"
+                      value={cellVal(r.model, f, r[f])}
+                      placeholder={priceFieldLabel(f, mType, t)}
+                      title={priceFieldLabel(f, mType, t)}
+                      onChange={e => onInput(r.model, f, e.target.value)}
+                      onBlur={e => onCommit(r.model, f, e.target.value)}
+                      className="text-xs text-right bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-1 py-1 w-full min-w-[2.5rem] max-w-[4.5rem] tabular-nums"
+                    />
+                  ))}
+                </div>
+                {onRemoveModel
+                  ? <button type="button" onClick={() => onRemoveModel(r.model)} className="shrink-0 text-xs text-red-400 hover:text-red-500 pt-1 w-4">×</button>
+                  : <span className="w-4 shrink-0" />}
+              </div>
+            );
+          })}
+          {onAddModel && (
+            <div className="flex flex-wrap gap-1.5 pt-1 items-center">
+              <input value={newModel} onChange={e => setNewModel(e.target.value)} placeholder={t('psrc.addModelPh')}
+                className="flex-1 min-w-[8rem] text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1 font-mono" />
+              <select value={inputType} onChange={e => setInputType(e.target.value)}
+                className="shrink-0 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-1.5 py-1 text-zinc-700 dark:text-zinc-300">
+                <option value="chat">{t('providers.models.chat')}</option>
+                <option value="image">{t('providers.models.image')}</option>
+                <option value="embedding">{t('providers.models.embedding')}</option>
+              </select>
+              <button type="button" disabled={!newModel.trim()}
+                onClick={() => {
+                  if (newModel.trim()) {
+                    onAddModel(newModel.trim(), inputType);
+                    setNewModel('');
+                  }
+                }}
+                className="shrink-0 text-xs px-2 py-1 rounded bg-zinc-100 dark:bg-zinc-700 disabled:opacity-50 whitespace-nowrap">
+                + {t('providers.models.add')}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const rowGrid = 'grid-cols-[minmax(0,1fr)_repeat(3,minmax(2.5rem,3rem))_1.25rem]';
 
   return (
     <div className="overflow-x-auto -mx-1 px-1">
@@ -830,9 +925,20 @@ export function buildInstancePatch(tpl, { payg = [], subs = [], planId } = {}) {
   if (isPayg) {
     const instId = uid();
     const gateway_id = allocateGatewayId(baseGatewayForPayg(key), usedGw, instId);
+    // 从服务端模板预填模型（保留模态信息）
+    const seedModels = [];
+    for (const m of tpl.models || []) {
+      if (typeof m === 'string') {
+        const mt = tpl.model_types?.[m] || 'chat';
+        seedModels.push(mt === 'chat' ? m : { name: m, type: mt });
+      } else if (m && typeof m === 'object') {
+        const name = m.name || m.id;
+        if (name) seedModels.push({ name, type: m.type || m.modality || 'chat' });
+      }
+    }
     const inst = {
       id: instId, provider_id: key, gateway_id, label: tpl.label,
-      name: nextName(payg, 'provider_id'), icon: tpl.icon, models: [], enabled: true,
+      name: nextName(payg, 'provider_id'), icon: tpl.icon, models: seedModels, enabled: true,
       added_at: addedAt,
     };
     return { user_payg_providers: [...payg, inst] };

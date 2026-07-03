@@ -45,6 +45,12 @@ function normPlan(p) {
 
 const PRICING_META_KEYS = new Set(['_excluded_models', 'excluded_models']);
 
+function inferModalityFromPricing(rates) {
+  if (!rates || typeof rates !== 'object') return 'chat';
+  if (rates.image != null && rates.in == null && rates.out == null && rates.cacheRead == null) return 'image';
+  return 'chat';
+}
+
 /** models 与 pricing 键对齐（与 server sync_catalog_models_pricing 一致） */
 function syncModelsPricing(models = [], pricing = {}) {
   const pricingOut = {};
@@ -79,14 +85,24 @@ function setLiveCatalogProviders(providers) {
   for (const p of providers || []) {
     if (!p?.id) continue;
     const names = [];
+    const modelTypes = {};
     for (const m of p.models || []) {
       const n = typeof m === 'string' ? m : (m.name || m.id || m.model);
-      if (n) names.push(String(n).trim());
+      if (!n) continue;
+      const name = String(n).trim();
+      names.push(name);
+      if (typeof m === 'object') modelTypes[name] = m.type || m.modality || 'chat';
     }
     const synced = syncModelsPricing(names, p.pricing || {});
+    for (const name of synced.models) {
+      if (!modelTypes[name]) {
+        modelTypes[name] = inferModalityFromPricing(synced.pricing[name]);
+      }
+    }
     _liveCatalogById[p.id] = {
       models: synced.models,
       pricing: synced.pricing,
+      model_types: modelTypes,
       label: p.label || p.id,
       icon: p.icon || '🔧',
       base_url: p.base_url || '',
@@ -233,17 +249,23 @@ function paygProviderCatalog() {
 function paygSourcesCatalog() {
   return configLoader.billingSourcesList()
     .filter(s => s.category === 'payg')
-    .map(s => liveCatalogPaygEntry(normPaygEntry({
-      id: s.id,
-      provider_id: s.id,
-      label: s.label,
-      icon: s.icon,
-      aliases: s.aliases,
-      models: (s.models || []).map(m => (typeof m === 'string' ? m : (m.id || m.name))),
-      pricing: s.pricing,
-      api_format: s.api_format,
-      base_url: s.base_url,
-    })))
+    .map(s => {
+      const details = configLoader.modelsFromBillingSource(s);
+      const modelTypes = {};
+      for (const m of details) modelTypes[m.id] = m.modality || 'chat';
+      const norm = normPaygEntry({
+        id: s.id,
+        provider_id: s.id,
+        label: s.label,
+        icon: s.icon,
+        aliases: s.aliases,
+        models: details.map(m => m.id),
+        pricing: s.pricing,
+        api_format: s.api_format,
+        base_url: s.base_url,
+      });
+      return liveCatalogPaygEntry({ ...norm, model_types: modelTypes });
+    })
     .filter(p => p.provider_id);
 }
 
@@ -772,7 +794,8 @@ function serverTemplatesByKey(cfg = {}) {
       m[k] = { kind: 'payg', key: k, label: p.label || k, icon: p.icon || '🔧',
         api_format: p.api_format || 'openai',
         base_url: p.base_url || registryBaseUrl(k) || '',
-        models: p.models || [], pricing: p.pricing || {} };
+        models: p.models || [], pricing: p.pricing || {},
+        model_types: p.model_types || {} };
       paygByKey[k] = m[k];
     }
   }
@@ -783,6 +806,10 @@ function serverTemplatesByKey(cfg = {}) {
     const reg = configLoader.registryProviders().find(r => r.id === id);
     if (reg?.payg === false) continue;
     if (!(live.payg || reg?.payg === true)) continue;
+    const modelTypes = { ...(live.model_types || {}) };
+    for (const name of live.models || []) {
+      if (!modelTypes[name]) modelTypes[name] = inferModalityFromPricing(live.pricing?.[name]);
+    }
     m[id] = {
       kind: 'payg', key: id,
       label: live.label || reg?.label || id,
@@ -790,6 +817,7 @@ function serverTemplatesByKey(cfg = {}) {
       api_format: live.api_format || reg?.api_format || 'openai',
       base_url: live.base_url || reg?.base_url || registryBaseUrl(id) || '',
       models: live.models || [], pricing: live.pricing || {},
+      model_types: modelTypes,
     };
     paygByKey[id] = m[id];
   }
@@ -880,6 +908,34 @@ function pruneOverrideModels(override, allowed) {
   return { next, changed };
 }
 
+/** catalog 允许集 + 用户在本机登记的模型（计费区手工添加的不应被读时裁剪） */
+function allowedModelsForProvider(cfg, providerId, catalogSet) {
+  const allowed = new Set(catalogSet || []);
+  if (!providerId) return allowed;
+  for (const p of cfg.user_payg_providers || []) {
+    if (p.provider_id !== providerId) continue;
+    for (const m of p.models || []) {
+      const n = modelEntryId(m);
+      if (n) allowed.add(n);
+    }
+  }
+  for (const s of cfg.user_subscriptions || []) {
+    const pid = s.plan_provider_id || s.source_id;
+    if (pid !== providerId) continue;
+    for (const m of s.models || []) {
+      const n = modelEntryId(m);
+      if (n) allowed.add(n);
+    }
+  }
+  const ovr = cfg.provider_pricing_overrides?.[providerId];
+  if (ovr && typeof ovr === 'object') {
+    for (const k of Object.keys(ovr)) {
+      if (!PRICING_OVERRIDE_META_KEYS.has(k)) allowed.add(k);
+    }
+  }
+  return allowed;
+}
+
 /** 裁剪 provider 级 pricing override 里已下线的模型键 */
 function prunePricingMap(map, allowed) {
   if (!map || typeof map !== 'object' || !allowed) return { next: map, changed: false };
@@ -947,17 +1003,18 @@ function pruneLocalBillingAgainstServer(cfg = {}) {
     const next = {};
     for (const [k, v] of Object.entries(cfg.provider_pricing_overrides)) {
       if (!pricingProviderIds.has(k)) { changed = true; continue; }
-      const { next: pruned, changed: c } = prunePricingMap(v, modelSets[k]);
+      const allowed = allowedModelsForProvider(cfg, k, modelSets[k]);
+      const { next: pruned, changed: c } = prunePricingMap(v, allowed);
       if (c) changed = true;
       next[k] = pruned;
     }
     cfg.provider_pricing_overrides = next;
   }
 
-  // 按量实例 / 网关 provider.models：去掉 catalog 已删除的模型
+  // 按量实例：仅去掉 catalog 已下线且用户未登记的模型
   const nextPaygWithModels = (cfg.user_payg_providers || []).map(p => {
     if (!p || p.custom || !p.provider_id || !modelSets[p.provider_id]) return p;
-    const allowed = modelSets[p.provider_id];
+    const allowed = allowedModelsForProvider(cfg, p.provider_id, modelSets[p.provider_id]);
     const ms = (p.models || []).filter(m => allowed.has(typeof m === 'string' ? m : (m.id || m.name || m.model)));
     if (ms.length === (p.models || []).length) return p;
     changed = true;
@@ -968,7 +1025,7 @@ function pruneLocalBillingAgainstServer(cfg = {}) {
   if (Array.isArray(cfg.providers)) {
     const nextProviders = cfg.providers.map(p => {
       if (!p?.id || !modelSets[p.id]) return p;
-      const allowed = modelSets[p.id];
+      const allowed = allowedModelsForProvider(cfg, p.id, modelSets[p.id]);
       const ms = (p.models || []).filter(m => {
         const n = typeof m === 'string' ? m : (m.name || m.id || m.model);
         return n && allowed.has(n);

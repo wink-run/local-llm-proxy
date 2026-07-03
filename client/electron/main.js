@@ -3400,6 +3400,14 @@ function registerIPC() {
     syncGatewayFromConfig(cfg);
     // Refresh active P2P model list using authenticated /v1/models
     fetchPeerModels(url, token);
+    // 登录后写入 cloud_config 时补拉供给源（启动时可能尚无 url）
+    if (url) {
+      catalogSync.scheduleBackgroundSync({
+        readLocalConfig,
+        applyUserBillingCfg,
+        onApplied: notifyCatalogUpdated,
+      });
+    }
     return { ok: true };
   });
 
