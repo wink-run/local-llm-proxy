@@ -496,6 +496,23 @@ async function handleRequest(req, res) {
     });
   }
 
+  // 网关测速表代理（CLI/Docker Web 无 electronAPI，前端 useSpeedMap 走这里取速）
+  if (method === 'GET' && url === '/api/gateway/speed') {
+    const st = _gateway?.getStatus?.() || {};
+    if (!st.running || !st.port) return json(res, 200, {});
+    return new Promise((resolve) => {
+      http.get(`http://127.0.0.1:${st.port}/speed`, (r) => {
+        let buf = '';
+        r.on('data', (c) => { buf += c; });
+        r.on('end', () => {
+          try { json(res, 200, JSON.parse(buf)); }
+          catch { json(res, 200, {}); }
+          resolve();
+        });
+      }).on('error', () => { json(res, 200, {}); resolve(); });
+    });
+  }
+
   if (method === 'GET' && url === '/api/gateway/log') {
     return json(res, 200, { log: _gateway.getLog() });
   }
