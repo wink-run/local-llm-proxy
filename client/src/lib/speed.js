@@ -34,15 +34,23 @@ export function speedTitle(s) {
   return `${label} · 往返 ${s.lat_ms ?? '—'}ms · ${s.samples} 次采样`;   // 供给源无 usage → 用总延迟
 }
 
+/** 拉取网关测速表：Electron 走 IPC；CLI/Docker Web 无 electronAPI 时走 admin-api 代理。 */
+function fetchSpeedMap() {
+  const ipc = window.electronAPI?.gateway?.speedMap;
+  if (ipc) return ipc().catch(() => ({}));
+  const base = import.meta.env?.VITE_ADMIN_BASE ?? '';
+  return fetch(`${base}/api/gateway/speed`)
+    .then(r => (r.ok ? r.json() : {}))
+    .catch(() => ({}));
+}
+
 /** 每 intervalMs 拉一次网关测速表；返回 [map, refresh]。refresh 可在测速后立即刷新。 */
 export function useSpeedMap(intervalMs = 15000) {
   const [map, setMap] = useState({});
-  const refresh = useCallback(() => window.electronAPI?.gateway?.speedMap?.()
-    .then(m => setMap(m || {})).catch(() => {}), []);
+  const refresh = useCallback(() => fetchSpeedMap().then(m => setMap(m || {})), []);
   useEffect(() => {
     let alive = true;
-    const load = () => window.electronAPI?.gateway?.speedMap?.()
-      .then(m => { if (alive) setMap(m || {}); }).catch(() => {});
+    const load = () => fetchSpeedMap().then(m => { if (alive) setMap(m || {}); });
     load();
     const id = setInterval(load, intervalMs);
     return () => { alive = false; clearInterval(id); };
