@@ -2632,6 +2632,8 @@ function registerIPC() {
             else {
               // 清命令探测缓存，使前端刷新时立即检测到刚装的工具（不等 30s TTL）
               try { require('./shim-installer').clearCommandCache(); } catch {}
+              // 通知前端应用列表刷新（新装的工具即时出现在应用列表虚拟条目）
+              try { mainWindow?.webContents?.send('apps:changed'); } catch {}
               resolve({ ok: true, pkg });
             }
           });
@@ -2658,6 +2660,8 @@ function registerIPC() {
                 if (cmd) require('./shim-installer').removeShim(cmd);
               } catch {}
               try { require('./shim-installer').clearCommandCache(); } catch {}
+              // 通知前端应用列表刷新（卸载后虚拟条目即时消失）
+              try { mainWindow?.webContents?.send('apps:changed'); } catch {}
               resolve({ ok: true, pkg });
             }
           });
@@ -2836,9 +2840,12 @@ function registerIPC() {
     const savedApps = getApps().filter(a => !(a.preset_id && disabledPresets.has(a.preset_id)));
     const agentTools = agentLinker.list();
 
-    // 把 yaml tools 里有、但 apps[] 里还没有 shim 记录的 agent，动态补入
+    // 把 yaml tools 里有、但 apps[] 里还没有 shim 记录的 agent，动态补入。
+    // 仅未安装则不虚拟展示（与 api-key/session 虚拟条目一致：卸载后即从应用列表消失，
+    // 装回自动出现）；已被用户显式纳管的 shim 记录在 savedApps，不受此过滤，始终保留。
     const shimIds = new Set(savedApps.filter(a => a.link_method === 'shim').map(a => a.agent_id));
     const virtualShimApps = agentTools
+      .filter(t => t.installed)
       .filter(t => !shimIds.has(t.id))
       .filter(t => toolIds.has(t.id))
       .filter(t => {
