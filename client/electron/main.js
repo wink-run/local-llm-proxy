@@ -1718,6 +1718,34 @@ function registerIPC() {
 
   ipcMain.handle('gateway:status',        () => gateway.getStatus());
   ipcMain.handle('gateway:getLog',        () => gateway.getLog());
+  ipcMain.handle('gateway:speedMap',      () => { try { return require('./provider-speed').getSpeedMap(); } catch { return {}; } });
+  // 主动测速探针：发个极小请求走本地网关（按真实模型名路由，非 claude 名不会被 keyScene 改写），
+  // 请求跑完网关内部自动 record 记速。返回 {ok,status,latencyMs}。会消耗一次真实调用（P2P 扣积分）。
+  ipcMain.handle('gateway:probeModel', (_e, model) => new Promise((resolve) => {
+    try {
+      if (!model || typeof model !== 'string') return resolve({ ok: false, error: 'no-model' });
+      const cfg = readLocalConfig();
+      const key = (cfg.apps || []).map(a => a.api_key).find(Boolean);
+      if (!key) return resolve({ ok: false, error: 'no-api-key' });
+      const gctx = require('./config-loader').gatewayCtx();
+      const [host, portStr] = String(gctx.reverse || '127.0.0.1:11430').split(':');
+      const payload = JSON.stringify({ model, max_tokens: 12, stream: true, messages: [{ role: 'user', content: 'hi' }] });
+      const start = Date.now();
+      const req = http.request({
+        host: host || '127.0.0.1', port: parseInt(portStr, 10) || 11430,
+        path: '/v1/chat/completions', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}`, 'Content-Length': Buffer.byteLength(payload) },
+        timeout: 30000,
+      }, (res) => {
+        res.on('data', () => {});   // 必须读完流，网关才会在流结束时 record 记速
+        res.on('end', () => resolve({ ok: res.statusCode < 400, status: res.statusCode, latencyMs: Date.now() - start }));
+        res.on('error', () => resolve({ ok: false, error: 'stream-error' }));
+      });
+      req.on('error', (e) => resolve({ ok: false, error: e.message }));
+      req.on('timeout', () => { try { req.destroy(); } catch {} resolve({ ok: false, error: 'timeout' }); });
+      req.end(payload);
+    } catch (e) { resolve({ ok: false, error: e.message }); }
+  }));
   ipcMain.handle('gateway:restart',       () => gateway.restart());
   ipcMain.handle('localStats:compression', (_e, days) => {
     const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));

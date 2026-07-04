@@ -10,6 +10,7 @@ import { loadUserAccounts, saveUserAccounts, syncProviderCatalog } from '../api/
 import { DirectSourceCard, PersonalSourceModelView, PricingTable, CollapsibleBillingPanel, buildInstancePatch, buildDirectSourcePatch, buildDirectSourceRemovePatch, TemplateEditModal, SyncDiffBanner, accountInstanceAddedOrder, inferModalityFromPricing, priceFieldsForModality } from '../components/PersonalSources';
 import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
 import { getGateway, getLocalConfig, getConfig, getOauth, isElectron } from '../api/adapter';
+import { speedDotClass, speedTitle, useSpeedMap, speedFor } from '../lib/speed';
 import { useLang } from '../store/lang';
 import { useAuth } from '../store/index';
 import { resolveModelsForModelView } from '../lib/personalAvailableModels';
@@ -997,6 +998,23 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled }) {
   const { user } = useAuth();
   const needsLogin = !user;
   const navigate   = useNavigate();
+  const [speedMap, refreshSpeed] = useSpeedMap();   // 测速：每模型 fast/medium/slow 圆点
+  const [probing, setProbing] = useState(null);     // null | { done, total }
+  // 全部测速：对有在线节点的模型逐个发探针（走本地网关、真实调用、消耗积分），完后刷新
+  const probeAllSpeed = async () => {
+    if (probing) return;
+    const targets = (modelStats || []).filter(m => m && (m.nodes ?? 0) > 0).map(m => m.name);
+    if (!targets.length) return;
+    setProbing({ done: 0, total: targets.length });
+    for (let i = 0; i < targets.length; i++) {
+      // 带 p2p: 层级前缀探测（与应用"测试"一致：强制走 P2P tier，可靠命中 worker；
+      // 网关按 bare 模型名记速，前端仍按 m.name 命中）。
+      try { await window.electronAPI?.gateway?.probeModel?.('p2p:' + targets[i]); } catch { /* ignore */ }
+      setProbing({ done: i + 1, total: targets.length });
+    }
+    try { await refreshSpeed?.(); } catch { /* ignore */ }
+    setProbing(null);
+  };
   const [network,        setNetwork]        = useState(null);
   const [balance,        setBalance]        = useState(null);
   const [loading,        setLoading]        = useState(true);
@@ -1257,6 +1275,11 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled }) {
           <span className="text-xs text-zinc-500">
             {t('providers.p2p.modelsTitle', { n: modelStats.length })} <span className="text-zinc-700">{t('providers.p2p.modelsSub')}</span>
           </span>
+          <button onClick={probeAllSpeed} disabled={!!probing || modelStats.length === 0}
+            title="对有在线节点的模型逐个发极小请求测速（真实调用，消耗积分）"
+            className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 disabled:opacity-50 flex items-center gap-1">
+            {probing ? `测速中 ${probing.done}/${probing.total}` : '⚡ 全部测速'}
+          </button>
           <button onClick={() => navigate('/network')}
             className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 flex items-center gap-1">
             {t('providers.p2p.globalNetwork')}
@@ -1280,7 +1303,11 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled }) {
                     }`}
                   >
                     <div className="flex items-center gap-1.5 min-w-0">
-                      <ModelDot m={m} />
+                      {(() => {
+                        const sp = speedFor(speedMap, m.name);
+                        return <span title={speedTitle(sp)}
+                          className={`w-2 h-2 rounded-full shrink-0 ${speedDotClass(sp?.bucket)}`} />;
+                      })()}
                       <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">{m.name}</span>
                       {circleModelMap?.[m.name] && (
                         <span
@@ -1580,6 +1607,7 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
   const [activeIdx, setActiveIdx] = useState(0);
   const [menuStyle, setMenuStyle] = useState(null);
   const inputRef = useRef(null);
+  const [speedMap] = useSpeedMap();   // modelId → {ttft_ms,tps,bucket,samples}
 
   const normalized = models.map(normModel);
   const existingNames = useMemo(() => new Set(normalized.map(m => m.name)), [normalized]);
@@ -1705,7 +1733,11 @@ function ModelListEditor({ models = [], onChange, scrollable = false, suggestion
           <div className="flex flex-wrap gap-1.5">
             {normalized.map(m => (
               <span key={m.name} className="inline-flex items-center gap-0 text-xs bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 rounded-lg overflow-hidden font-mono">
-                <span className="px-2 py-0.5">{m.name}</span>
+                <span className="pl-2 pr-1 py-0.5 flex items-center gap-1.5">
+                  <span title={speedTitle(speedFor(speedMap, m.name))}
+                    className={`w-1.5 h-1.5 rounded-full shrink-0 ${speedDotClass(speedFor(speedMap, m.name)?.bucket)}`} />
+                  {m.name}
+                </span>
                 <button
                   onClick={() => toggleType(m.name)}
                   title={t('providers.models.toggleType')}
