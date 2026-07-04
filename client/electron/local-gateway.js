@@ -2736,10 +2736,15 @@ function handleRequest(req, res) {
     return;
   }
 
-  // 测速表（调试/前端可用）：每模型 TTFT/TPS/bucket
+  // 测速表（调试/前端可用）：每模型 TTFT/TPS/bucket，并用历史请求延迟兜底未测速的模型
   if (method === 'GET' && cleanPath === '/speed') {
+    let latency = {};
+    try {
+      const since = _localStats?.sinceTsForDays ? _localStats.sinceTsForDays(7) : Math.floor(Date.now() / 1000) - 7 * 86400;
+      latency = _localStats?.queryModelProviderLatency ? _localStats.queryModelProviderLatency(since) : {};
+    } catch {}
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify(require('./provider-speed').getSpeedMap()));
+    res.end(JSON.stringify(require('./provider-speed').getSpeedMapWithLatency(latency)));
     return;
   }
 
