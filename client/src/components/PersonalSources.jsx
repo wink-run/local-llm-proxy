@@ -9,6 +9,7 @@ import { useCurrency } from '../store/currency';
 import { getGateway, isElectron } from '../api/adapter';
 import ServiceIcon from './ServiceIcon';
 import { resolveBrandIcon } from '../lib/brandIcons';
+import { speedFor, speedDotClass, speedTitle, useSpeedMap } from '../lib/speed';
 
 const INVALID_MODEL_NAMES = new Set(['_excluded_models', 'excluded_models']);
 
@@ -592,6 +593,7 @@ export function PersonalSourceModelView({
   const [expandedModel, setExpandedModel] = useState(null);
   const [latencyMapLocal, setLatencyMapLocal] = useState({});
   const latencyMap = latencyMapProp ?? latencyMapLocal;
+  const [speedMap] = useSpeedMap();   // 与下拉/列表视图同源的测速表，圆点颜色保持一致
 
   const loadLatency = useCallback(async () => {
     if (onRefreshLatency) {
@@ -696,6 +698,7 @@ export function PersonalSourceModelView({
       <div className="grid grid-cols-2 gap-2">
         {byModel.map(([model, srcs]) => {
           const verified = srcs.some(s => s.test_verified === true);
+          const sp = speedFor(speedMap, model);
           const mType = modelTypeMap[model];
           const ttftList = srcs.map(s => resolveAccountTtft(latencyMap, model, s)).filter(v => v > 0);
           const fastMs = ttftList.length ? Math.min(...ttftList) : null;
@@ -717,9 +720,9 @@ export function PersonalSourceModelView({
             >
               <div className="flex items-center gap-1.5 min-w-0">
                 <span
-                  className={`w-2 h-2 rounded-full shrink-0 ${verified ? 'bg-green-500' : 'bg-zinc-400 dark:bg-zinc-500'}`}
+                  className={`w-2 h-2 rounded-full shrink-0 ${speedDotClass(sp?.bucket)}`}
                   aria-hidden
-                  title={verified ? t('providers.badge.verified') : t('providers.badge.needsConfig')}
+                  title={`${speedTitle(sp)}${verified ? ` · ${t('providers.badge.verified')}` : ''}`}
                 />
                 <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate" title={model}>{model}</span>
                 {mType && mType !== 'chat' && (
