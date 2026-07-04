@@ -3735,23 +3735,64 @@ function probeModelViaGateway(model) {
   });
 }
 
-// 启动时自动测速社区源(p2p)一次：等网关+peer 模型就绪后，对每个 p2p 模型发一次探针，
-// 让社区源速度圆点开机即有数据（无需手动点「全部测速」）。每次启动只跑一次；串行+节流。
-let _communityProbedThisLaunch = false;
-async function autoProbeCommunityOnce() {
-  if (_communityProbedThisLaunch) return;
-  _communityProbedThisLaunch = true;
+// 某模型是否已有"新鲜"测速数据（有采样且 6h 内）——用于启动自动测速跳过，省积分/省真实计费。
+const SPEED_FRESH_MS = 6 * 3600 * 1000;
+function _speedNormKey(id) {
+  let s = String(id || '').trim().toLowerCase();
+  const i = s.lastIndexOf('/'); if (i >= 0) s = s.slice(i + 1);   // 与 provider-speed.normKey 一致：去厂商前缀
+  return s;
+}
+function speedIsFresh(model) {
   try {
-    let models = (gateway.getStatus() || {}).peerModels || [];
-    if (!models.length) {                    // peer 模型可能还没拉到，等一会重试一次
+    const e = require('./provider-speed').getSpeedMap()[_speedNormKey(model)];
+    return !!(e && e.samples > 0 && e.ts && (Date.now() - e.ts) < SPEED_FRESH_MS);
+  } catch { return false; }
+}
+
+// 个人源可测速模型（带 tier，用于强制路由到个人源而非 p2p）。tier 取自 ~/.llm-agent/config.json 的 provider.type。
+function collectPersonalModelsMain() {
+  try {
+    const lc = readLocalConfig();
+    const pt = {};
+    try {
+      const j = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.llm-agent', 'config.json'), 'utf8'));
+      for (const p of (j.providers || [])) pt[p.id] = p.type;
+    } catch { /* 读不到就默认 paid */ }
+    const out = new Map();   // model -> tier
+    const add = (models, gid) => {
+      const tier = pt[gid] === 'free' ? 'free' : 'paid';
+      for (const m of (models || [])) {
+        const n = typeof m === 'string' ? m : (m && (m.name || m.id));
+        if (n) out.set(n, tier);
+      }
+    };
+    for (const s of (lc.user_subscriptions || [])) add(s.models, s.gateway_id);
+    for (const p of (lc.user_payg_providers || [])) add(p.models, p.gateway_id || p.provider_id);
+    for (const [, d] of Object.entries(lc.direct_source_billing || {})) if (d && d.mode === 'api') add(d.models, d.gateway_id || d.source_id);
+    return [...out.entries()].map(([model, tier]) => ({ model, tier }));
+  } catch { return []; }
+}
+
+// 启动时自动测速一次：社区源(p2p，消耗积分) + 个人源(消耗自有供给源真实计费)。
+// 两类都只对「无测速数据 / 数据过期(>6h)」的模型发探针，省积分省真实账单。每次启动只跑一次；串行+节流。
+let _sourcesProbedThisLaunch = false;
+async function autoProbeSourcesOnce() {
+  if (_sourcesProbedThisLaunch) return;
+  _sourcesProbedThisLaunch = true;
+  try {
+    let peers = (gateway.getStatus() || {}).peerModels || [];
+    if (!peers.length) {                     // peer 模型可能还没拉到，等一会重试一次
       await new Promise(r => setTimeout(r, 8000));
-      models = (gateway.getStatus() || {}).peerModels || [];
+      peers = (gateway.getStatus() || {}).peerModels || [];
     }
-    if (!models.length) { console.log('[speed] 启动自动测速：暂无社区模型，跳过'); return; }
-    console.log(`[speed] 启动自动测速社区源 ${models.length} 个模型`);
-    for (const m of models) {
-      try { await probeModelViaGateway('p2p:' + m); } catch { /* 单个失败不阻断 */ }
-      await new Promise(r => setTimeout(r, 600));   // 节流，避免瞬时打满社区节点
+    const targets = [];
+    for (const m of peers) if (!speedIsFresh(m)) targets.push('p2p:' + m);
+    for (const { model, tier } of collectPersonalModelsMain()) if (!speedIsFresh(model)) targets.push(tier + ':' + model);
+    if (!targets.length) { console.log('[speed] 启动自动测速：均有新鲜数据，跳过'); return; }
+    console.log(`[speed] 启动自动测速 ${targets.length} 个模型（社区+个人，仅无数据/过期）`);
+    for (const t of targets) {
+      try { await probeModelViaGateway(t); } catch { /* 单个失败不阻断 */ }
+      await new Promise(r => setTimeout(r, 600));   // 节流，避免瞬时打满
     }
     console.log('[speed] 启动自动测速完成');
   } catch (e) { console.warn('[speed] 启动自动测速失败:', e.message); }
@@ -3771,8 +3812,8 @@ app.whenReady().then(() => {
   console.log('[3p-sync] ==== BOOT v2 (reconcile + 双向 watch) 已加载，开始同步 ====');
   sync3pDebugLog('==== BOOT app.whenReady, pid=' + process.pid + ' ====');
   runClaude3pSync('startup');
-  // 启动后自动测速社区源一次（延迟 12s 等网关起来 + p2p peer 模型拉到）
-  setTimeout(() => { autoProbeCommunityOnce(); }, 12000);
+  // 启动后自动测速一次（社区源+个人源，仅无数据/过期的）；延迟 12s 等网关起来 + p2p peer 模型拉到
+  setTimeout(() => { autoProbeSourcesOnce(); }, 12000);
   // 文件监听兜底：native / 3p 任一 claude-code-sessions 目录有新/变更文件就立即同步（实时）。
   // 必须双向监听——3p 建的 session 只会改 3p 目录、native 建的只改 native 目录。
   // 只监 account/org 目录（findSessionDir 动态定位）。account/org 变化靠每 60s 重建 watcher 兜底。
