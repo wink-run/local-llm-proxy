@@ -186,7 +186,8 @@ export function collectPersonalAvailableModels(cfg = {}, accounts = {}) {
       const k = `${tier}:${id}`;
       if (seen.has(k)) continue;
       seen.add(k);
-      out.push({ id, tier });
+      // personal 标识：用户显式注册的个人源模型，用于豁免 Claude 透明名 mask（只 mask 内部校验的透明名）
+      out.push({ id, tier, personal: true });
     }
   }
   return out;
