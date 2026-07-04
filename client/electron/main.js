@@ -1728,11 +1728,14 @@ function registerIPC() {
       const key = (cfg.apps || []).map(a => a.api_key).find(Boolean);
       if (!key) return resolve({ ok: false, error: 'no-api-key' });
       const gctx = require('./config-loader').gatewayCtx();
-      const [host, portStr] = String(gctx.reverse || '127.0.0.1:11430').split(':');
+      const [rawHost, portStr] = String(gctx.reverse || '127.0.0.1:11430').split(':');
+      // 客户端不能拨 0.0.0.0/::（监听地址≠可连接地址）：macOS/Linux 内核会兜到回环，Windows 直接
+      // WSAEADDRNOTAVAIL 失败 → 探针在 Windows 上永远拿不到数据。统一回退回环。
+      const host = (!rawHost || rawHost === '0.0.0.0' || rawHost === '::' || rawHost === '*') ? '127.0.0.1' : rawHost;
       const payload = JSON.stringify({ model, max_tokens: 12, stream: true, messages: [{ role: 'user', content: 'hi' }] });
       const start = Date.now();
       const req = http.request({
-        host: host || '127.0.0.1', port: parseInt(portStr, 10) || 11430,
+        host, port: parseInt(portStr, 10) || 11430,
         path: '/v1/chat/completions', method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}`, 'Content-Length': Buffer.byteLength(payload) },
         timeout: 30000,
