@@ -1718,7 +1718,14 @@ function registerIPC() {
 
   ipcMain.handle('gateway:status',        () => gateway.getStatus());
   ipcMain.handle('gateway:getLog',        () => gateway.getLog());
-  ipcMain.handle('gateway:speedMap',      () => { try { return require('./provider-speed').getSpeedMap(); } catch { return {}; } });
+  ipcMain.handle('gateway:speedMap',      () => {
+    try {
+      const ps = require('./provider-speed');
+      let latency = {};
+      try { latency = localStats.queryModelProviderLatency(localStats.sinceTsForDays(7)); } catch {}
+      return ps.getSpeedMapWithLatency(latency);   // 被动/探针测速 + 历史请求延迟兜底
+    } catch { return {}; }
+  });
   // 主动测速探针：发个极小请求走本地网关（按真实模型名路由，非 claude 名不会被 keyScene 改写），
   // 请求跑完网关内部自动 record 记速。返回 {ok,status,latencyMs}。会消耗一次真实调用（P2P 扣积分）。
   ipcMain.handle('gateway:probeModel', (_e, model) => new Promise((resolve) => {

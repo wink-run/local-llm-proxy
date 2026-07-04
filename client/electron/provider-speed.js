@@ -118,6 +118,35 @@ function getSpeedMap() {
   return out;
 }
 
+/**
+ * 用历史请求延迟补全"没被动测速也没探针"的模型（如测速功能上线前就用过的个人源）。
+ * @param latencyByModel queryModelProviderLatency 结果：{ model: { provider_id: {avg_ttft_ms,last_latency_ms,calls,last_ts} } }
+ * 已有真实测速(provider-speed)的模型不覆盖；取各 provider 最快的一档，用总延迟兜底阈值判档。
+ */
+function getSpeedMapWithLatency(latencyByModel) {
+  const out = getSpeedMap();
+  if (!latencyByModel || typeof latencyByModel !== 'object') return out;
+  for (const [rawModel, byProv] of Object.entries(latencyByModel)) {
+    const key = normKey(rawModel);
+    if (!key || out[key]) continue;   // 已有真实测速 → 不覆盖
+    let best = null, ts = 0, samples = 0;
+    for (const v of Object.values(byProv || {})) {
+      const ms = Number(v?.avg_ttft_ms ?? v?.last_ttft_ms ?? v?.last_latency_ms);
+      if (Number.isFinite(ms) && ms > 0 && (best == null || ms < best)) best = ms;
+      if (Number(v?.last_ts) > ts) ts = Number(v.last_ts);
+      samples += Number(v?.calls) || 0;
+    }
+    if (best == null) continue;
+    out[key] = {
+      ttft_ms: null, tps: null, lat_ms: Math.round(best),
+      samples: samples || 1,
+      bucket: bucketOf(null, null, best),   // 无 TTFT/TPS → 走总延迟兜底档
+      ts: (ts || 0) * 1000,
+    };
+  }
+  return out;
+}
+
 _load();   // 启动时从磁盘恢复上次的测速结果（重启不再回到"暂无"）
 
-module.exports = { record, getSpeedMap, bucketOf, THRESHOLDS: { TTFT_FAST, TTFT_SLOW, TPS_FAST, TPS_SLOW } };
+module.exports = { record, getSpeedMap, getSpeedMapWithLatency, bucketOf, THRESHOLDS: { TTFT_FAST, TTFT_SLOW, TPS_FAST, TPS_SLOW } };
