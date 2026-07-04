@@ -68,7 +68,8 @@ function record(rawModel, { firstTokenMs, outputTokens, totalMs, streaming } = {
   // 只有流式、且首字明显早于总耗时，才算拿到"真实首字延迟"；
   // 非流式整包返回时 first_token==总耗时，不是真实 TTFT，不记（否则会把总延迟当首字）。
   const hasRealTtft = !!streaming && Number.isFinite(ftt) && ftt >= 0 && (total - ftt) > 50;
-  const cur = _map.get(model) || { ttft: null, tps: null, lat: null, samples: 0, ts: 0 };
+  let cur = _map.get(model) || { ttft: null, tps: null, lat: null, samples: 0, ts: 0 };
+  if (cur.seeded) cur = { ttft: null, tps: null, lat: null, samples: 0, ts: 0 };   // 真实数据到来即丢弃随机种子
   if (hasRealTtft) cur.ttft = _ewma(cur.ttft, ftt);
   // TPS：有真实首字用"生成窗口"（total-ttft）；否则用总耗时（非流式整体吞吐，偏保守）。
   if (out > 0 && total > 0) {
@@ -82,6 +83,19 @@ function record(rawModel, { firstTokenMs, outputTokens, totalMs, streaming } = {
   cur.ts = Date.now();
   _map.set(model, cur);
   _save();
+}
+
+// 首次为某模型随机初始化测速：不发真实探针，只给圆点一个初始速率（ttft ms + tps）。
+// 已有数据（含之前随机种子或真实测速）则不动 —— 满足"第一次加时随机给一个速率，已有则不变"。
+// 真实流量/手动测速到来时，record() 会丢弃 seeded 种子、换成真实值。
+function seedIfMissing(rawModel) {
+  const model = normKey(rawModel);
+  if (!model || _map.has(model)) return false;
+  const ttft = 300 + Math.floor(Math.random() * 2200);   // 300–2500ms
+  const tps  = 15 + Math.floor(Math.random() * 75);        // 15–90 tok/s
+  _map.set(model, { ttft, tps, lat: ttft + 400, samples: 1, ts: Date.now(), seeded: true });
+  _save();
+  return true;
 }
 
 /** 由 TTFT/TPS 判快慢（细粒度优先）；两者都测不出时用总延迟兜底（对标 OmniRoute/9router 的 latency）。 */
@@ -149,4 +163,4 @@ function getSpeedMapWithLatency(latencyByModel) {
 
 _load();   // 启动时从磁盘恢复上次的测速结果（重启不再回到"暂无"）
 
-module.exports = { record, getSpeedMap, getSpeedMapWithLatency, bucketOf, THRESHOLDS: { TTFT_FAST, TTFT_SLOW, TPS_FAST, TPS_SLOW } };
+module.exports = { record, getSpeedMap, getSpeedMapWithLatency, bucketOf, seedIfMissing, THRESHOLDS: { TTFT_FAST, TTFT_SLOW, TPS_FAST, TPS_SLOW } };
