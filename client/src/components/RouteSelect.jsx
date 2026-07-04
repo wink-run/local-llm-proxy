@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { modelIdFromRoute } from '../lib/route-binding';
 import { modelTypeLabel, modelTypeBtnClass } from './PersonalSources';
+import { speedDotClass, speedTitle, useSpeedMap, speedFor } from '../lib/speed';
 
 function encodeTierModelRoute(tier, modelId) {
   if (!modelId) return '';
@@ -65,11 +66,11 @@ function buildRouteMenuItems({ routes, availableModels, t, showGatewayRoutes, is
   const remote = (availableModels || []).filter(m => m.tier === 'p2p');
   if (local.length) {
     items.push({ kind: 'group', label: t('gateway.app.tier.local') });
-    for (const m of local) items.push({ kind: 'option', value: modelTierKey(m), label: m.id, type: m.type });
+    for (const m of local) items.push({ kind: 'option', value: modelTierKey(m), label: m.id, type: m.type, modelId: m.id });
   }
   if (remote.length) {
     items.push({ kind: 'group', label: t('gateway.app.tier.remote') });
-    for (const m of remote) items.push({ kind: 'option', value: modelTierKey(m), label: m.id, type: m.type });
+    for (const m of remote) items.push({ kind: 'option', value: modelTierKey(m), label: m.id, type: m.type, modelId: m.id });
   }
   return items;
 }
@@ -288,7 +289,7 @@ function RouteCheckboxIcon({ marked, active, compact }) {
   );
 }
 
-function RouteMenuRow({ mark, label, modelType, active, theme, compact, multi, t, onEnter, onClick }) {
+function RouteMenuRow({ mark, label, modelType, active, theme, compact, multi, t, onEnter, onClick, isModel, speed }) {
   return (
     <div
       role={multi ? 'menuitemcheckbox' : 'option'}
@@ -304,6 +305,9 @@ function RouteMenuRow({ mark, label, modelType, active, theme, compact, multi, t
           ? <RouteCheckboxIcon marked={mark} active={active} compact={compact} />
           : <RouteCheckIcon marked={mark} active={active} compact={compact} />}
       </span>
+      {isModel && (
+        <span title={speedTitle(speed)} className={`w-1.5 h-1.5 rounded-full shrink-0 mr-1.5 ${speedDotClass(speed?.bucket)}`} />
+      )}
       <span className="truncate flex-1 min-w-0">{label}</span>
       <ModelTypeBadge type={modelType} t={t} active={active} compact={compact} />
     </div>
@@ -341,6 +345,7 @@ export default function RouteSelect({
   const theme = compact ? POPUP_THEME.compact : POPUP_THEME.normal;
   const cls = `${compact ? ROUTE_SELECT_COMPACT : ROUTE_SELECT_NORMAL} ${className}`.trim();
   const menuItems = buildRouteMenuItems({ routes, availableModels, t, showGatewayRoutes, isManual, showOfficial });
+  const [speedMap] = useSpeedMap();
   const selected = multi ? (values || []).filter(Boolean) : [];
   const workingSelected = multi && open ? draftSelected : selected;
   const singleValue = multi ? null : (value ?? '');
@@ -456,6 +461,8 @@ export default function RouteSelect({
             mark={isMarked(item.value)}
             label={item.label}
             modelType={item.type}
+            isModel={!!item.modelId}
+            speed={item.modelId ? speedFor(speedMap, item.modelId) : null}
             active={hoverKey === key}
             onEnter={() => setHoverKey(key)}
             onClick={() => (isOfficial ? pickOfficial() : pickRoute(item.value))}

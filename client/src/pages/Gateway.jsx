@@ -612,10 +612,19 @@ function AppTestResultHint({ ts, t }) {
       </div>
     );
   }
+  const multi = (ts.total || 1) > 1;
   if (ts.ok) {
     return (
       <div className="mt-0.5 text-right text-[10px] leading-tight font-mono text-green-500 dark:text-green-400">
-        ✓ {t('gateway.common.testFirstToken', { ms: ts.latency })}
+        ✓ {multi ? `${ts.passedCount}/${ts.total} · ` : ''}{t('gateway.common.testFirstToken', { ms: ts.latency })}
+      </div>
+    );
+  }
+  // 多选部分失败：显示 x/N 通过（失败详情走下方错误浮层）
+  if (multi && ts.passedCount > 0) {
+    return (
+      <div className="mt-0.5 text-right text-[10px] leading-tight font-mono text-amber-500 dark:text-amber-400">
+        {ts.passedCount}/{ts.total} 通过
       </div>
     );
   }
@@ -2425,45 +2434,39 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
       delete testHideTimers.current[appId];
     }, ms);
   }
-  async function runAppTest(app, routeValue) {
+  async function runAppTest(app) {
     const key = app.api_key;
     if (!key) return;   // 无 key（未托管/虚拟行）不能测
+    // 多选：逐条测试所有已绑定路由；无绑定则测一次默认/官方。只读——不改写绑定。
+    const routeIds = effectiveRouteIds(app);
+    const targets = routeIds.length ? routeIds : [''];
     setTestState(s => ({ ...s, [app.id]: { busy: true } }));
-    // 优先下拉当前值，其次已绑定 route_id（空字符串不算有效值）
-    const boundRouteId = (routeValue && String(routeValue).trim())
-      || effectiveRouteIds(app)[0]
-      || app.route_id
-      || '';
-    const { model } = exampleModelFromRoute(boundRouteId, routes, availableModels);
-    if (boundRouteId && boundRouteId !== '') {
-      try { await appsApi.update({ id: app.id, route_id: boundRouteId }); } catch {}
-    }
     const base = (localBase || resolveLocalGatewayBase()).replace(/\/$/, '');
     const url = `${base}/chat/completions`;
-    const body = { model, max_tokens: 1, messages: [{ role: 'user', content: 'Hello!' }] };
-    console.log('[route-test] POST', url, { appId: app.id, routeId: boundRouteId, model });
-    try {
-      const result = await runStreamChatTest({
-        url,
-        headers: { authorization: `Bearer ${key}` },
-        body,
-      });
-      console.log('[route-test] result', { appId: app.id, ok: result.ok, error: result.error, latency: result.latency });
-      if (!result.ok) {
-        const msg = result.error === 'timeout' ? t('gateway.common.timeout30s') : (result.error || t('gateway.common.connectFailed'));
-        setTestState(s => ({ ...s, [app.id]: { ok: false, error: msg, latency: result.latency } }));
-        scheduleTestHide(app.id, 8000);
-      } else {
-        setTestState(s => ({ ...s, [app.id]: { ok: true, latency: result.latency } }));
-        scheduleTestHide(app.id, 3000);
-        // 网关已落账 → 刷新统计（总请求数 / 总token）+ 路由明细日志
-        setTimeout(() => { load(); refresh(); }, 600);
+    const errText = (e) => e === 'timeout' ? t('gateway.common.timeout30s') : (e || t('gateway.common.connectFailed'));
+    const results = [];
+    for (const rid of targets) {
+      const { model } = exampleModelFromRoute(rid, routes, availableModels);
+      const body = { model, max_tokens: 1, messages: [{ role: 'user', content: 'Hello!' }] };
+      try {
+        const r = await runStreamChatTest({ url, headers: { authorization: `Bearer ${key}` }, body });
+        results.push({ routeId: rid, model, ok: !!r.ok, error: r.ok ? null : errText(r.error), latency: r.latency });
+      } catch (e) {
+        results.push({ routeId: rid, model, ok: false, error: e?.message || t('gateway.common.connectFailed'), latency: null });
       }
-    } catch (e) {
-      setTestState(s => ({ ...s, [app.id]: { ok: false, error: e?.message || t('gateway.common.connectFailed'), latency: null } }));
-      scheduleTestHide(app.id, 8000);
-      setTimeout(() => refresh(), 600);
     }
+    const passed = results.filter(r => r.ok);
+    const failed = results.filter(r => !r.ok);
+    const allOk = failed.length === 0;
+    console.log('[route-test] results', { appId: app.id, total: results.length, passed: passed.length, failed: failed.map(f => f.model) });
+    setTestState(s => ({ ...s, [app.id]: {
+      ok: allOk,
+      error: failed.length ? failed.map(r => `${r.model}: ${r.error}`).join('；') : null,
+      latency: passed[0]?.latency ?? null,
+      total: results.length, passedCount: passed.length, results,
+    } }));
+    scheduleTestHide(app.id, allOk ? 3000 : 8000);
+    setTimeout(() => { load(); refresh(); }, 600);
   }
   // 写入某 api-key 应用的配置文件指向网关（解析 {BASE}/{KEY}，patch_route 在 main 进程按 handler 策略改写）。
   // 返回 true=成功。onAbort：冲突取消/写入失败时的回滚回调（新建时删条目；重新纳管不删）。
@@ -2839,7 +2842,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                       {(app.api_key || isDirectOnly) && (() => {
                         const ts = testState[app.id];
                         return (
-                          <button onClick={() => runAppTest(app, currentRouteValues[0] || currentRouteValue)} disabled={ts?.busy || !isGatewayRouted}
+                          <button onClick={() => runAppTest(app)} disabled={ts?.busy || !isGatewayRouted}
                             className={`text-xs px-1.5 py-1 rounded-lg border transition-colors shrink-0 ${ts?.busy
                               ? 'border-zinc-300 dark:border-zinc-600 text-zinc-400 opacity-60 cursor-wait'
                               : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-blue-400 hover:text-blue-500'} disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-zinc-200 disabled:hover:text-zinc-500`}>

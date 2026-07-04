@@ -2448,6 +2448,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           const stepTier = _providerTier(provider);
           recordStats(provider.id, stepModel, fillMissingInputTokens(result, body), stepTier, callerKey, streaming, provider.billing_type || null);
           reportUsage(provider.id, stepModel, stepTok);
+          if (result.latency) reqRouter.recordLatency(provider.id, result.latency);
+          try { require('./provider-speed').record(stepModel, { firstTokenMs: result.first_token_ms, outputTokens: result.output_tokens, totalMs: result.latency, streaming }); } catch {}
           stepSucceeded = true;
           return;
         } catch (err) {
@@ -2559,6 +2561,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, model, res);
       // 记录延迟（供 latency 策略下次参考）
       if (result.latency) reqRouter.recordLatency(provider.id, result.latency);
+      try { require('./provider-speed').record(model, { firstTokenMs: result.first_token_ms, outputTokens: result.output_tokens, totalMs: result.latency, streaming }); } catch {}
       pushLog({
         ts: t0, requested_model: origModel, model, claude_from: claudeFrom,
         tier: provider.type, via: provider.id, via_label: provider.label,
@@ -2730,6 +2733,13 @@ function handleRequest(req, res) {
   if (method === 'GET' && cleanPath === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, port: _port }));
+    return;
+  }
+
+  // 测速表（调试/前端可用）：每模型 TTFT/TPS/bucket
+  if (method === 'GET' && cleanPath === '/speed') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify(require('./provider-speed').getSpeedMap()));
     return;
   }
 
