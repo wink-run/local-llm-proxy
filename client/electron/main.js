@@ -2618,12 +2618,28 @@ function registerIPC() {
     return out;
   });
 
+  // 稳健解析 npm 可执行文件：GUI 启动的 electron 主进程 PATH 有时不含 Node 目录，
+  // 裸 'npm.cmd' 会找不到导致一键安装静默失败 → 先 resolveRealCommand，再探常见安装位置，最后回退裸命令。
+  const resolveNpmCmd = () => {
+    const isWin = process.platform === 'win32';
+    try {
+      const p = require('./shim-installer').resolveRealCommand(isWin ? 'npm.cmd' : 'npm');
+      if (p && fs.existsSync(p)) return p;
+    } catch {}
+    const cands = isWin
+      ? ['C:\\Program Files\\nodejs\\npm.cmd', 'C:\\Program Files (x86)\\nodejs\\npm.cmd',
+         path.join(os.homedir(), 'AppData', 'Roaming', 'npm', 'npm.cmd')]
+      : ['/usr/local/bin/npm', '/opt/homebrew/bin/npm', '/usr/bin/npm'];
+    for (const c of cands) { try { if (fs.existsSync(c)) return c; } catch {} }
+    return isWin ? 'npm.cmd' : 'npm';
+  };
+
   // 一键安装/更新 CLI 工具：跑 npm i -g <包>@latest（用户级全局，无需管理员）。
   // 异步 exec，不阻塞主进程；装完前端刷新检测状态。
   ipcMain.handle('apps:npmGlobalInstall', async (_e, { id } = {}) => {
     const pkg = (require('./config-loader').appNpmPackages() || {})[id];
     if (!pkg) return { ok: false, error: 'no-npm-package' };
-    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const npmCmd = `"${resolveNpmCmd()}"`;
     return await new Promise((resolve) => {
       try {
         require('child_process').exec(`${npmCmd} i -g ${pkg}@latest`, { timeout: 300000, windowsHide: true },
@@ -2645,7 +2661,7 @@ function registerIPC() {
   ipcMain.handle('apps:npmGlobalUninstall', async (_e, { id } = {}) => {
     const pkg = (require('./config-loader').appNpmPackages() || {})[id];
     if (!pkg) return { ok: false, error: 'no-npm-package' };
-    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const npmCmd = `"${resolveNpmCmd()}"`;
     return await new Promise((resolve) => {
       try {
         require('child_process').exec(`${npmCmd} uninstall -g ${pkg}`, { timeout: 300000, windowsHide: true },
