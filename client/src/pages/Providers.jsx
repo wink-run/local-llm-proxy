@@ -3654,6 +3654,22 @@ export default function Providers() {
       ),
     };
   }), [accountInstances, providers, userPayg, userSubscriptions, pricingOverrides, directByAgent]);
+  // 个人源「全部测速」目标：每个模型带 tier 前缀（paid:/free:）强制路由到个人源而非 p2p；按 tier:model 去重
+  const personalProbeTargets = useMemo(() => {
+    const seen = new Set(); const out = [];
+    for (const inst of modelViewInstances) {
+      const prov = inst.gateway_id ? providers.find(p => p.id === inst.gateway_id) : null;
+      const tier = prov?.type === 'free' ? 'free' : 'paid';
+      for (const m of (inst.models || [])) {
+        const name = typeof m === 'string' ? m : (m?.name || m?.id);
+        if (!name) continue;
+        const key = `${tier}:${name}`;
+        if (seen.has(key)) continue;
+        seen.add(key); out.push(key);
+      }
+    }
+    return out;
+  }, [modelViewInstances, providers]);
   // 个人源模型模态（图/嵌），供按模型视图与路由下拉同源
   const personalModelTypeMap = useMemo(() => {
     const cfg = { providers, provider_pricing_overrides: pricingOverrides };
@@ -3957,6 +3973,7 @@ export default function Providers() {
             latencyMap={personalLatencyMap}
             onRefreshLatency={loadPersonalLatency}
             trailing={renderSourcesViewTabs()}
+            probeTargets={personalProbeTargets}
             onEmptyAdd={() => { setSourcesView('list'); setPickerOpen(true); }}
           />
         ) : (
