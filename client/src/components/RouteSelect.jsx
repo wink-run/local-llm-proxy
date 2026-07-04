@@ -2,7 +2,27 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { modelIdFromRoute } from '../lib/route-binding';
 import { modelTypeLabel, modelTypeBtnClass } from './PersonalSources';
-import { speedDotClass, speedTitle, useSpeedMap, speedFor } from '../lib/speed';
+import { speedDotClass, speedTitle, useSpeedMap, speedFor, bucketFromMs, normModelKey } from '../lib/speed';
+import { getNetwork } from '../api/client';
+import { buildNetworkModelStatsMap, normalizeNetworkPayload } from '../lib/networkModelStats';
+
+// 社区(p2p)模型速度：拉一次 /public/network，按模型名 → 最快 worker 的 TTFT。与供给源卡同源。
+function useCommunitySpeed() {
+  const [map, setMap] = useState({});
+  useEffect(() => {
+    let alive = true;
+    getNetwork()
+      .then(r => {
+        const stats = buildNetworkModelStatsMap(normalizeNetworkPayload(r?.data ?? r));
+        const out = {};
+        for (const [model, v] of Object.entries(stats)) out[normModelKey(model)] = v.minLatency || 0;
+        if (alive) setMap(out);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  return map;
+}
 
 function encodeTierModelRoute(tier, modelId) {
   if (!modelId) return '';
@@ -70,7 +90,7 @@ function buildRouteMenuItems({ routes, availableModels, t, showGatewayRoutes, is
   }
   if (remote.length) {
     items.push({ kind: 'group', label: t('gateway.app.tier.remote') });
-    for (const m of remote) items.push({ kind: 'option', value: modelTierKey(m), label: m.id, type: m.type, modelId: m.id });
+    for (const m of remote) items.push({ kind: 'option', value: modelTierKey(m), label: m.id, type: m.type, modelId: m.id, tier: 'p2p' });
   }
   return items;
 }
@@ -306,7 +326,7 @@ function RouteMenuRow({ mark, label, modelType, active, theme, compact, multi, t
           : <RouteCheckIcon marked={mark} active={active} compact={compact} />}
       </span>
       {isModel && (
-        <span title={speedTitle(speed)} className={`w-1.5 h-1.5 rounded-full shrink-0 mr-1.5 ${speedDotClass(speed?.bucket)}`} />
+        <span title={speed?.title || speedTitle(speed)} className={`w-1.5 h-1.5 rounded-full shrink-0 mr-1.5 ${speedDotClass(speed?.bucket)}`} />
       )}
       <span className="truncate flex-1 min-w-0">{label}</span>
       <ModelTypeBadge type={modelType} t={t} active={active} compact={compact} />
@@ -346,6 +366,16 @@ export default function RouteSelect({
   const cls = `${compact ? ROUTE_SELECT_COMPACT : ROUTE_SELECT_NORMAL} ${className}`.trim();
   const menuItems = buildRouteMenuItems({ routes, availableModels, t, showGatewayRoutes, isManual, showOfficial });
   const [speedMap] = useSpeedMap();
+  const communitySpeed = useCommunitySpeed();
+  // 每个模型项的圆点数据：社区(p2p)走服务端最快 worker 的 TTFT，其余走我们测速 speedMap。
+  const speedForItem = (item) => {
+    if (!item.modelId) return null;
+    if (item.tier === 'p2p') {
+      const ms = communitySpeed[normModelKey(item.modelId)] || 0;
+      return { bucket: bucketFromMs(ms), title: ms > 0 ? `最快 ${(ms / 1000).toFixed(1)}s` : '暂无测速' };
+    }
+    return speedFor(speedMap, item.modelId);
+  };
   const selected = multi ? (values || []).filter(Boolean) : [];
   const workingSelected = multi && open ? draftSelected : selected;
   const singleValue = multi ? null : (value ?? '');
@@ -462,7 +492,7 @@ export default function RouteSelect({
             label={item.label}
             modelType={item.type}
             isModel={!!item.modelId}
-            speed={item.modelId ? speedFor(speedMap, item.modelId) : null}
+            speed={speedForItem(item)}
             active={hoverKey === key}
             onEnter={() => setHoverKey(key)}
             onClick={() => (isOfficial ? pickOfficial() : pickRoute(item.value))}

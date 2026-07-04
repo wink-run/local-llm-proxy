@@ -18,6 +18,45 @@ export function speedFor(map, id) {
   return map[normModelKey(id)] || null;
 }
 
+// TTFT/首字延迟(ms) → 档位。阈值与后端 provider-speed 的 TTFT 档一致（首字语义）。
+// 用于社区 worker / 个人源多实例这类"每实例只有 TTFT、没有我们完整测速"的场景。
+const TTFT_FAST_MS = 800, TTFT_SLOW_MS = 2500;
+export function bucketFromMs(ms) {
+  const v = Number(ms);
+  if (!Number.isFinite(v) || v <= 0) return 'unknown';
+  if (v > TTFT_SLOW_MS) return 'slow';
+  if (v < TTFT_FAST_MS) return 'fast';
+  return 'medium';
+}
+
+// 服务端质量星级(1–5) → 档：≥4=好(绿) / 3=中(黄) / ≤2=差(红) / 无=灰。复用 speedDotClass 颜色。
+// 社区源用它上色/排序（star 含延迟+成功率+在线，且是降级依据，显示与路由口径一致）。
+export function starsBucket(stars) {
+  const s = Number(stars);
+  if (!Number.isFinite(s) || s <= 0) return 'unknown';
+  if (s >= 4) return 'fast';
+  if (s >= 2.5) return 'medium';   // 含 2.5 初始值 + 3★ → 中性(黄)
+  return 'slow';
+}
+
+// 复刻服务端质量系数 multiplier（server.py:_worker_row）：0.4×在线 + 0.4×延迟 + 0.2×成功率。
+// 个人源没有"在线时长"概念 → onlineF 取中性 1.0；avgTtftMs=平均首字，successRate=成功率(0..1)。
+export function qualityMultiplier({ avgTtftMs, successRate = 1, onlineF = 1.0 }) {
+  const latencyF = avgTtftMs > 0 ? Math.max(0.6, Math.min(1.5, 500 / avgTtftMs)) : 1.0;
+  const stabilityF = 0.5 + 0.7 * (successRate ?? 1);
+  return Math.max(0.5, Math.min(1.5, 0.4 * onlineF + 0.4 * latencyF + 0.2 * stabilityF));
+}
+
+/** multiplier → 星级 1–5（与服务端 _stars 阈值一致）；入参无效返回 null */
+export function starsFromMultiplier(m) {
+  if (m == null || !Number.isFinite(m)) return null;
+  if (m >= 1.3) return 5;
+  if (m >= 1.1) return 4;
+  if (m >= 0.9) return 3;
+  if (m >= 0.7) return 2;
+  return 1;
+}
+
 /** fast=绿 / medium=黄 / slow=红 / 无数据=灰 */
 export function speedDotClass(bucket) {
   if (bucket === 'fast')   return 'bg-green-400 shadow-[0_0_4px] shadow-green-400/50';

@@ -7,10 +7,10 @@ import { getNetwork, getProfile, listKeys, createKey, deleteKey } from '../api/c
 import { modelStatsForIds, workersForModel, normalizeNetworkPayload } from '../lib/networkModelStats';
 import { fetchServerCommunityModels } from '../lib/communityModels';
 import { loadUserAccounts, saveUserAccounts, syncProviderCatalog } from '../api/userAccounts';
-import { DirectSourceCard, PersonalSourceModelView, PricingTable, CollapsibleBillingPanel, buildInstancePatch, buildDirectSourcePatch, buildDirectSourceRemovePatch, TemplateEditModal, SyncDiffBanner, accountInstanceAddedOrder, inferModalityFromPricing, priceFieldsForModality } from '../components/PersonalSources';
+import { DirectSourceCard, PersonalSourceModelView, PricingTable, CollapsibleBillingPanel, buildInstancePatch, buildDirectSourcePatch, buildDirectSourceRemovePatch, TemplateEditModal, SyncDiffBanner, accountInstanceAddedOrder, inferModalityFromPricing, priceFieldsForModality, healthFromStatus, QualityBadge } from '../components/PersonalSources';
 import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
 import { getGateway, getLocalConfig, getConfig, getOauth, isElectron } from '../api/adapter';
-import { speedDotClass, speedTitle, useSpeedMap, speedFor } from '../lib/speed';
+import { speedDotClass, speedTitle, useSpeedMap, speedFor, bucketFromMs } from '../lib/speed';
 import { useLang } from '../store/lang';
 import { useAuth } from '../store/index';
 import { resolveModelsForModelView } from '../lib/personalAvailableModels';
@@ -1090,7 +1090,6 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled }) {
   const { user } = useAuth();
   const needsLogin = !user;
   const navigate   = useNavigate();
-  const [speedMap, refreshSpeed] = useSpeedMap();   // 测速：每模型 fast/medium/slow 圆点
   const [probing, setProbing] = useState(null);     // null | { done, total }
   // 全部测速：对有在线节点的模型逐个发探针（走本地网关、真实调用、消耗积分），完后刷新
   const probeAllSpeed = async () => {
@@ -1104,7 +1103,7 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled }) {
       try { await window.electronAPI?.gateway?.probeModel?.('p2p:' + targets[i]); } catch { /* ignore */ }
       setProbing({ done: i + 1, total: targets.length });
     }
-    try { await refreshSpeed?.(); } catch { /* ignore */ }
+    try { await loadNetwork(); } catch { /* ignore */ }   // 即刻重拉 network + 请求历史(速度/服务质量)
     setProbing(null);
   };
   const [network,        setNetwork]        = useState(null);
@@ -1113,6 +1112,7 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled }) {
   const [circleModelMap, setCircleModelMap] = useState({});
   const [communityIds,   setCommunityIds]   = useState([]);
   const [expandedModel,  setExpandedModel]  = useState(null);
+  const [latencyMap,     setLatencyMap]     = useState({});   // 我们的请求历史(含 tokenbank-p2p)：社区速度+服务质量同源
 
   // P2P gateway API key config
   const [showKeyConfig, setShowKeyConfig] = useState(false);
@@ -1206,33 +1206,29 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled }) {
     }
   }
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setLoading(true);
-      try {
-        const [netRes, profRes, communityRes] = await Promise.allSettled([
-          getNetwork(), getProfile(), fetchServerCommunityModels(),
-        ]);
-        if (cancelled) return;
-        if (netRes.status === 'fulfilled') {
-          const payload = netRes.value?.data ?? netRes.value;
-          setNetwork(normalizeNetworkPayload(payload));
-        }
-        if (profRes.status === 'fulfilled') setBalance(profRes.value?.data?.credits_balance ?? null);
-        if (communityRes.status === 'fulfilled') {
-          const v = communityRes.value;
-          setCommunityIds(Array.isArray(v?.ids) ? v.ids : []);
-          setCircleModelMap(v?.circleMap && typeof v.circleMap === 'object' ? v.circleMap : {});
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+  // 拉取 network + 余额 + 社区目录 + 我们的请求历史(速度/服务质量同源)。可被"全部测速"复用即刻刷新。
+  const loadNetwork = React.useCallback(async () => {
+    try {
+      const [netRes, profRes, communityRes, latRes] = await Promise.allSettled([
+        getNetwork(), getProfile(), fetchServerCommunityModels(),
+        getGateway().getModelProviderLatency(7).catch(() => ({})),
+      ]);
+      if (netRes.status === 'fulfilled') setNetwork(normalizeNetworkPayload(netRes.value?.data ?? netRes.value));
+      if (profRes.status === 'fulfilled') setBalance(profRes.value?.data?.credits_balance ?? null);
+      if (latRes.status === 'fulfilled' && latRes.value && typeof latRes.value === 'object') setLatencyMap(latRes.value);
+      if (communityRes.status === 'fulfilled') {
+        const v = communityRes.value;
+        setCommunityIds(Array.isArray(v?.ids) ? v.ids : []);
+        setCircleModelMap(v?.circleMap && typeof v.circleMap === 'object' ? v.circleMap : {});
       }
-    }
-    load();
-    const id = setInterval(load, 15000);
-    return () => { cancelled = true; clearInterval(id); };
+    } finally { setLoading(false); }
   }, []);
+
+  useEffect(() => {
+    loadNetwork();
+    const id = setInterval(loadNetwork, 15000);
+    return () => clearInterval(id);
+  }, [loadNetwork]);
 
   // 与 /v1/models 一致；节点数从 workers 补充
   const modelStats = React.useMemo(() => {
@@ -1243,12 +1239,26 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled }) {
     }
   }, [network, communityIds]);
 
+  // 社区某模型在"我们请求历史"里的 tokenbank-p2p 记录(速度+服务质量同源，别名兼容)
+  const commRow = (name) => {
+    const lm = latencyMap || {};
+    let byp = lm[name];
+    if (!byp) {
+      const lower = String(name || '').toLowerCase();
+      for (const k of Object.keys(lm)) {
+        if (k.toLowerCase() === lower || k.endsWith(`/${name}`) || k.toLowerCase().endsWith(`/${lower}`)) { byp = lm[k]; break; }
+      }
+    }
+    return byp?.['tokenbank-p2p'] || null;
+  };
+  // 按网络速度(最快 worker 的 ttft)升序排；无节点排后面。与折叠点/worker 点同源。
+  const sortedModelStats = React.useMemo(() => {
+    const spd = (m) => (m.minLatency > 0 ? m.minLatency : 9e9);
+    return [...modelStats].sort((a, b) => spd(a) - spd(b));
+  }, [modelStats]);
+
   const totalNodes = network?.summary?.online_workers ?? 0;
 
-  function ModelDot({ m }) {
-    if (m.nodes === 0) return <span className="w-2 h-2 rounded-full bg-zinc-600 shrink-0" />;
-    return <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />;
-  }
 
   function ModelSub({ m }) {
     if (!m || m.nodes === 0) return <span className="text-zinc-600">{t('providers.p2p.unavailable')}</span>;
@@ -1311,16 +1321,22 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled }) {
     if (!nodes.length) {
       return <p className="text-[10px] text-zinc-500 py-0.5">{t('providers.p2p.noProviderNodes')}</p>;
     }
+    // 服务质量：来自我们请求历史的模型级(tokenbank-p2p)，服务端暂不分 worker，故同模型各 worker 同值。
+    const mr = commRow(modelName);
+    const mHealth = mr?.last_status_code == null ? null : healthFromStatus(mr.last_status_code);
+    // 每行：速度点+ms+城市 · 忙闲点+文字 · 质量点+文字 · 流量。文字不着色。
     return nodes.map((w, i) => (
       <div key={`${w.worker_id || w.name || 'node'}:${i}`} className="flex items-center justify-between gap-2 text-[10px] text-zinc-500 dark:text-zinc-400">
         <div className="flex items-center gap-1.5 min-w-0">
-          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${w.status === 'busy' ? 'bg-amber-500' : 'bg-green-500'}`} />
+          <span className={`w-2 h-2 rounded-full shrink-0 ${speedDotClass(bucketFromMs(w.last_ttft_ms))}`} title="速度(节点上报)" />
+          <span className="shrink-0 tabular-nums">{Math.round(w.last_ttft_ms || 0)}ms</span>
           <span className="truncate text-zinc-700 dark:text-zinc-300">{w.name}</span>
           {w.geo?.city && <span className="truncate text-zinc-400">· {w.geo.city}</span>}
         </div>
-        <span className="shrink-0 tabular-nums">
-          {t('providers.p2p.lastTtft', { ms: Math.round(w.last_ttft_ms || 0) })}
-        </span>
+        <div className="flex items-center gap-1.5 shrink-0 tabular-nums">
+          <QualityBadge health={mHealth} />
+          {w.active_requests > 0 && <span title="在途请求(流量)">⇅{w.active_requests}</span>}
+        </div>
       </div>
     ));
   }
@@ -1384,7 +1400,7 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled }) {
         ) : (
           <>
             <div className="grid grid-cols-2 gap-2">
-            {(modelStats.length > 0 ? modelStats : Array(4).fill(null)).map((m, i) => (
+            {(sortedModelStats.length > 0 ? sortedModelStats : Array(4).fill(null)).map((m, i) => (
               m ? (
                 <div key={m.name || `model-${i}`} className="min-w-0">
                   <button
@@ -1398,9 +1414,11 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled }) {
                   >
                     <div className="flex items-center gap-1.5 min-w-0">
                       {(() => {
-                        const sp = speedFor(speedMap, m.name);
-                        return <span title={speedTitle(sp)}
-                          className={`w-2 h-2 rounded-full shrink-0 ${speedDotClass(sp?.bucket)}`} />;
+                        // 折叠点：速度=最快 worker 的网络 ttft(与展开 worker 同源，颜色一致);服务质量在展开每个 worker 上
+                        const online = m.nodes > 0;
+                        const ms = m.minLatency > 0 ? m.minLatency : (m.latencyCount > 0 ? m.totalLatency / m.latencyCount : null);
+                        return <span className={`w-2 h-2 rounded-full shrink-0 ${online ? speedDotClass(bucketFromMs(ms)) : 'bg-zinc-300 dark:bg-zinc-600'}`}
+                          title={online ? (ms ? `最快 ${Math.round(ms)}ms` : '暂无速度') : t('providers.p2p.unavailable')} />;
                       })()}
                       <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">{m.name}</span>
                       {circleModelMap?.[m.name] && (

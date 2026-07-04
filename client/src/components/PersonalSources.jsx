@@ -9,7 +9,30 @@ import { useCurrency } from '../store/currency';
 import { getGateway, isElectron } from '../api/adapter';
 import ServiceIcon from './ServiceIcon';
 import { resolveBrandIcon } from '../lib/brandIcons';
-import { speedFor, speedDotClass, speedTitle, useSpeedMap } from '../lib/speed';
+import { speedDotClass, bucketFromMs } from '../lib/speed';
+
+// 服务质量(上次转发结果)：成功=绿 / 429=红 / 失败=红 / 无请求=灰。文字区分 429 与 失败。
+export const healthDotClass = (h) => h == null ? 'bg-zinc-300 dark:bg-zinc-600' : h === 'ok' ? 'bg-green-500' : 'bg-red-500';
+export const healthWordOf = (h) => h == null ? '无请求' : h === 'ok' ? '成功' : h === 'rate' ? '429' : '失败';
+// hover 提示：说明这是"上次通过这个源转发请求"的结果，避免只看"成功/失败"不知含义。
+export const healthTitle = (h) =>
+  h == null ? '服务质量：还没通过这个源转发过请求'
+  : h === 'ok' ? '服务质量：上次转发成功（2xx）'
+  : h === 'rate' ? '服务质量：上次被限流（429）'
+  : '服务质量：上次转发失败';
+
+/** 服务质量徽标：圆点 + 文字，hover 即时弹出说明(自定义，不依赖原生 title)。 */
+export function QualityBadge({ health, note }) {
+  return (
+    <span className="relative group/q inline-flex items-center gap-1.5">
+      <span className={`w-2 h-2 rounded-full shrink-0 ${healthDotClass(health)}`} />
+      <span>{healthWordOf(health)}</span>
+      <span className="pointer-events-none invisible opacity-0 group-hover/q:visible group-hover/q:opacity-100 transition-opacity absolute bottom-full right-0 mb-1 z-50 whitespace-nowrap rounded-md bg-zinc-900 text-white px-2 py-1 text-[10px] leading-tight shadow-lg font-normal">
+        {healthTitle(health)}{note ? `（${note}）` : ''}
+      </span>
+    </span>
+  );
+}
 
 const INVALID_MODEL_NAMES = new Set(['_excluded_models', 'excluded_models']);
 
@@ -571,15 +594,25 @@ function resolveAccountLatencyRow(latencyMap, model, inst) {
     const ttft = row.last_ttft_ms > 0 ? row.last_ttft_ms : (row.avg_ttft_ms > 0 ? row.avg_ttft_ms : 0);
     if (ttft <= 0) continue;
     if (!best || ts > best.ts) {
-      best = { ts, ttft };
+      best = {
+        ts, ttft, statusCode: row.last_status_code ?? null,
+        avgTtft: row.avg_ttft_ms > 0 ? row.avg_ttft_ms : ttft,
+        calls: row.calls || 0,
+        success: row.success || 0,
+      };
     }
   }
   return best;
 }
 
-function resolveAccountTtft(latencyMap, model, inst) {
-  return resolveAccountLatencyRow(latencyMap, model, inst)?.ttft ?? null;
+/** status_code → 健康档：2xx=ok / 429=rate / 其它=fail / 无=null */
+export function healthFromStatus(code) {
+  if (code == null) return null;
+  if (code >= 200 && code < 300) return 'ok';
+  if (code === 429) return 'rate';
+  return 'fail';
 }
+
 
 function accountDisplayName(inst) {
   return inst.name || inst.label || inst.plan_label || inst.source_id || inst.gateway_id || inst.provider_id || '—';
@@ -593,7 +626,6 @@ export function PersonalSourceModelView({
   const [expandedModel, setExpandedModel] = useState(null);
   const [latencyMapLocal, setLatencyMapLocal] = useState({});
   const latencyMap = latencyMapProp ?? latencyMapLocal;
-  const [speedMap, refreshSpeed] = useSpeedMap();   // 与下拉/列表视图同源的测速表，圆点颜色保持一致
   const [probing, setProbing] = useState(null);     // null | { done, total }
   // 全部测速：对每个个人源模型带 tier 前缀（paid:/free:）逐个发探针，强制路由到个人源。
   // 注意：消耗你自己供给源的真实计费（非积分）。完后刷新圆点。
@@ -606,7 +638,7 @@ export function PersonalSourceModelView({
       try { await window.electronAPI?.gateway?.probeModel?.(targets[i]); } catch { /* ignore */ }
       setProbing({ done: i + 1, total: targets.length });
     }
-    try { await refreshSpeed?.(); } catch { /* ignore */ }
+    try { await loadLatency(); } catch { /* ignore */ }   // 探针跑完刷新延迟/质量（个人源色来自 latencyMap，非 speedMap）
     setProbing(null);
   };
 
@@ -721,16 +753,12 @@ export function PersonalSourceModelView({
       </div>
       <div className="grid grid-cols-2 gap-2">
         {byModel.map(([model, srcs]) => {
-          const verified = srcs.some(s => s.test_verified === true);
-          const sp = speedFor(speedMap, model);
           const mType = modelTypeMap[model];
-          const ttftList = srcs.map(s => resolveAccountTtft(latencyMap, model, s)).filter(v => v > 0);
-          const fastMs = ttftList.length ? Math.min(...ttftList) : null;
-          const sortedSrcs = [...srcs].sort((a, b) => {
-            const ta = resolveAccountTtft(latencyMap, model, a) ?? 999999;
-            const tb = resolveAccountTtft(latencyMap, model, b) ?? 999999;
-            return ta - tb;
-          });
+          // 速度 + 服务质量(最近成功/失败) 都来自我们的请求历史；按速度(TTFT)升序，折叠取最快源。
+          const rowOf = new Map(srcs.map(s => [s, resolveAccountLatencyRow(latencyMap, model, s)]));
+          const sortedSrcs = [...srcs].sort((a, b) => (rowOf.get(a)?.ttft ?? 9e9) - (rowOf.get(b)?.ttft ?? 9e9));
+          const fastRow = rowOf.get(sortedSrcs[0]);
+          const fastMs = fastRow?.ttft > 0 ? fastRow.ttft : null;
           return (
           <div key={model} className="min-w-0">
             <button
@@ -743,11 +771,8 @@ export function PersonalSourceModelView({
               }`}
             >
               <div className="flex items-center gap-1.5 min-w-0">
-                <span
-                  className={`w-2 h-2 rounded-full shrink-0 ${speedDotClass(sp?.bucket)}`}
-                  aria-hidden
-                  title={`${speedTitle(sp)}${verified ? ` · ${t('providers.badge.verified')}` : ''}`}
-                />
+                <span className={`w-2 h-2 rounded-full shrink-0 ${speedDotClass(bucketFromMs(fastMs))}`}
+                  title={fastMs ? `最快 ${(fastMs / 1000).toFixed(1)}s` : '暂无速度'} />
                 <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate" title={model}>{model}</span>
                 {mType && mType !== 'chat' && (
                   <span
@@ -773,21 +798,23 @@ export function PersonalSourceModelView({
             {expandedModel === model && (
               <div className="mt-1 ml-1 pl-2 border-l border-zinc-200 dark:border-zinc-700 space-y-1">
                 {sortedSrcs.map((inst, i) => {
-                  const row = resolveAccountLatencyRow(latencyMap, model, inst);
+                  const row = rowOf.get(inst);
+                  const health = row?.statusCode == null ? null : healthFromStatus(row.statusCode);
                   return (
                     <div
                       key={(inst.id || inst.agent_id || inst.source_id) + ':' + i}
                       className="flex items-center justify-between gap-2 text-[10px] text-zinc-500 dark:text-zinc-400"
                     >
                       <div className="flex items-center gap-1.5 min-w-0">
+                        {/* 第一个点 = 速度（与速度排序一致），紧跟 ms */}
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${speedDotClass(bucketFromMs(row?.ttft))}`} title="速度" />
+                        <span className="shrink-0 tabular-nums">{row?.ttft != null ? `${Math.round(row.ttft)}ms` : '—'}</span>
                         <SourceProviderLogo inst={inst} />
                         <span className="truncate text-zinc-700 dark:text-zinc-300">{accountDisplayName(inst)}</span>
                       </div>
-                      <span className="shrink-0 tabular-nums text-right">
-                        {row?.ttft != null
-                          ? t('providers.p2p.lastTtft', { ms: Math.round(row.ttft) })
-                          : t('providers.p2p.noTtftYet')}
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0 tabular-nums">
+                        <QualityBadge health={health} />
+                      </div>
                     </div>
                   );
                 })}
