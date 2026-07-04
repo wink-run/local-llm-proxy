@@ -75,13 +75,12 @@ export function workersForModel(modelName, network) {
         geo: w.geo,
         last_ttft_ms: resolveModelTtftMs(w, name),
         avg_ttft_ms: readModelLatency(w, name)?.avg_ttft_ms ?? null,
+        stars: Number(w.stars) || null,               // 服务端质量星级
+        multiplier: Number(w.multiplier) || null,     // 质量系数
+        active_requests: Number(w.active_requests) || 0, // 当前在途请求（流量）
       }))
-      .sort((a, b) => {
-        const aBusy = a.status === 'busy' ? 1 : 0;
-        const bBusy = b.status === 'busy' ? 1 : 0;
-        if (aBusy !== bBusy) return bBusy - aBusy;
-        return (a.last_ttft_ms ?? 999999) - (b.last_ttft_ms ?? 999999);
-      });
+      // 按速度(TTFT)升序——最快在前;折叠点取最快,与展开一致。
+      .sort((a, b) => (a.last_ttft_ms ?? 999999) - (b.last_ttft_ms ?? 999999));
   } catch {
     return [];
   }
@@ -107,7 +106,7 @@ export function buildNetworkModelStatsMap(network) {
       const wid = w.worker_id ?? w.name ?? '';
       for (const m of workerModelNames(w)) {
         if (!map[m]) {
-          map[m] = { name: m, nodes: 0, totalLatency: 0, latencyCount: 0, activeReqs: 0, minLatency: null, _seen: new Set() };
+          map[m] = { name: m, nodes: 0, totalLatency: 0, latencyCount: 0, activeReqs: 0, minLatency: null, bestStars: 0, bestMultiplier: 0, _seen: new Set() };
         }
         // 同一 worker 只计一次（models 数组可能含重复项）
         if (wid && !map[m]._seen.has(wid)) {
@@ -120,6 +119,9 @@ export function buildNetworkModelStatsMap(network) {
             map[m].minLatency = map[m].minLatency == null ? ttft : Math.min(map[m].minLatency, ttft);
           }
           map[m].activeReqs += w.active_requests || 0;
+          // 折叠点/排序用：该模型所有 worker 里最好的质量
+          const st = Number(w.stars); if (Number.isFinite(st)) map[m].bestStars = Math.max(map[m].bestStars, st);
+          const mult = Number(w.multiplier); if (Number.isFinite(mult)) map[m].bestMultiplier = Math.max(map[m].bestMultiplier, mult);
         }
       }
     }
@@ -139,8 +141,8 @@ export function modelStatsForIds(modelIds, network) {
       const key = String(id || '');
       if (!key) return null;
       const hit = netMap[key];
-      return hit || { name: key, nodes: 0, totalLatency: 0, latencyCount: 0, activeReqs: 0, minLatency: null };
-    }).filter(Boolean).sort((a, b) => b.nodes - a.nodes || a.name.localeCompare(b.name));
+      return hit || { name: key, nodes: 0, totalLatency: 0, latencyCount: 0, activeReqs: 0, minLatency: null, bestStars: 0, bestMultiplier: 0 };
+    }).filter(Boolean).sort((a, b) => (b.nodes - a.nodes) || a.name.localeCompare(b.name));
   } catch {
     return [];
   }

@@ -432,7 +432,8 @@ function queryModelProviderLatency(since) {
   try {
     const avgRows = db.prepare(
       'SELECT model, provider_id, ' +
-      'AVG(COALESCE(first_token_ms, latency_ms)) AS avg_ms, COUNT(*) AS calls ' +
+      'AVG(COALESCE(first_token_ms, latency_ms)) AS avg_ms, COUNT(*) AS calls, ' +
+      'SUM(CASE WHEN status_code >= 200 AND status_code < 300 THEN 1 ELSE 0 END) AS success ' +
       'FROM requests WHERE ts >= ? AND model IS NOT NULL AND provider_id IS NOT NULL ' +
       "AND data_source = 'proxy' " +
       'AND COALESCE(first_token_ms, latency_ms) IS NOT NULL ' +
@@ -444,7 +445,7 @@ function queryModelProviderLatency(since) {
     const lastRows = db.prepare(
       'SELECT r.model, r.provider_id, ' +
       'COALESCE(r.first_token_ms, r.latency_ms) AS last_ttft_ms, ' +
-      'r.latency_ms AS last_latency_ms, r.ts AS last_ts ' +
+      'r.latency_ms AS last_latency_ms, r.ts AS last_ts, r.status_code AS last_status_code ' +
       'FROM requests r INNER JOIN (' +
       '  SELECT model, provider_id, MAX(ts) AS max_ts FROM requests ' +
       '  WHERE ts >= ? AND model IS NOT NULL AND provider_id IS NOT NULL ' +
@@ -465,9 +466,11 @@ function queryModelProviderLatency(since) {
       out[r.model][r.provider_id] = {
         avg_ttft_ms: Math.round(r.avg_ms),
         calls: r.calls || 0,
+        success: r.success || 0,
         last_ttft_ms: null,
         last_latency_ms: null,
         last_ts: 0,
+        last_status_code: null,
       };
     }
     for (const r of lastRows) {
@@ -478,12 +481,14 @@ function queryModelProviderLatency(since) {
       const slot = out[r.model][r.provider_id];
       if (!slot) {
         out[r.model][r.provider_id] = {
-          avg_ttft_ms: null, calls: 0, last_ttft_ms: ttft, last_latency_ms: total, last_ts: ts,
+          avg_ttft_ms: null, calls: 0, success: 0, last_ttft_ms: ttft, last_latency_ms: total, last_ts: ts,
+          last_status_code: r.last_status_code ?? null,
         };
       } else if (!slot.last_ts || ts >= slot.last_ts) {
         slot.last_ttft_ms = ttft;
         slot.last_latency_ms = total;
         slot.last_ts = ts;
+        slot.last_status_code = r.last_status_code ?? null;
       }
     }
     return mirrorProviderLatencyAliases(out);

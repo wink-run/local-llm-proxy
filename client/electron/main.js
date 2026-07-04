@@ -3871,11 +3871,12 @@ function collectPersonalModelsMain() {
 function seedRandomSpeedForSources() {
   try {
     const speed = require('./provider-speed');
-    const peers = (gateway.getStatus() || {}).peerModels || [];
+    // 社区源不再随机初始化：颜色全走服务端 stars（前端 networkModelStats 读 /public/network）。
+    // 仅个人源保留随机种子（下拉/列表视图用 speedMap）。
     const personal = collectPersonalModelsMain();
     let n = 0;
-    for (const m of [...peers, ...personal]) if (speed.seedIfMissing(m)) n++;
-    if (n) console.log(`[speed] 首次为 ${n} 个社区/个人源模型随机初始化测速`);
+    for (const m of personal) if (speed.seedIfMissing(m)) n++;
+    if (n) console.log(`[speed] 首次为 ${n} 个个人源模型随机初始化测速`);
   } catch (e) { console.warn('[speed] 随机初始化测速失败:', e.message); }
 }
 
