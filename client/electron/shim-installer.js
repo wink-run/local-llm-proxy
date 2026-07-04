@@ -25,14 +25,32 @@ function ensureBinDir() {
 // 跑一次 where/command -v 子进程，切 tab 反复拉列表会很慢；缓存后避免重复 spawn。
 const _cmdCache = new Map();   // command -> { ts, path }
 const CMD_TTL = 30000;
+
+// 已知的 npm 全局 bin / 常见 CLI 安装目录。GUI 启动的 electron 主进程 PATH 常被精简：
+// mac（Finder/Dock 启动）不含 Homebrew 的 /opt/homebrew/bin、/usr/local/bin；
+// Windows 有时不含 %APPDATA%\npm。导致 where/command -v 找不到明明装好的 npm CLI，
+// 应用被误判"未安装"、一键装/卸按钮显示不对。这些目录追加进查询 PATH + 直接查目录兜底。
+function npmGlobalBinDirs() {
+  const home = os.homedir();
+  if (IS_WIN) {
+    return [path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'npm')];
+  }
+  return [
+    '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin',
+    path.join(home, '.npm-global', 'bin'),
+    path.join(home, '.local', 'bin'),
+  ];
+}
+
 function resolveRealCommand(command) {
   const now = Date.now();
   const cached = _cmdCache.get(command);
   if (cached && (now - cached.ts) < CMD_TTL) return cached.path;
-  // 把 BIN_DIR 从 PATH 里剔除再查，确保不命中自己的 shim
+  // 把 BIN_DIR 从 PATH 里剔除再查，确保不命中自己的 shim；并追加已知 npm 全局 bin 目录。
   const sep = IS_WIN ? ';' : ':';
-  const cleanPath = (process.env.PATH || '')
-    .split(sep).filter(p => path.resolve(p || '.') !== path.resolve(BIN_DIR)).join(sep);
+  const extraDirs = npmGlobalBinDirs();
+  const cleanPath = [...(process.env.PATH || '').split(sep), ...extraDirs]
+    .filter(p => p && path.resolve(p) !== path.resolve(BIN_DIR)).join(sep);
   let result = null;
   try {
     if (IS_WIN) {
@@ -51,6 +69,17 @@ function resolveRealCommand(command) {
       result = out.trim() || null;
     }
   } catch { result = null; }
+  // 兜底：where/command -v 没命中就直接查 npm 全局 bin 目录里有没有该命令（最可靠，不依赖进程 PATH）
+  if (!result) {
+    const exts = IS_WIN ? ['.cmd', '.exe', '.ps1', ''] : [''];
+    outer:
+    for (const dir of extraDirs) {
+      for (const ext of exts) {
+        const p = path.join(dir, command + ext);
+        try { if (fs.existsSync(p)) { result = p; break outer; } } catch {}
+      }
+    }
+  }
   _cmdCache.set(command, { ts: now, path: result });
   return result;
 }
