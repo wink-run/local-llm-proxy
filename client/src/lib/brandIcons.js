@@ -20,6 +20,7 @@ import antigravity from '@lobehub/icons-static-svg/icons/antigravity-color.svg';
 import grok from '@lobehub/icons-static-svg/icons/grok.svg';
 import hermes from '@lobehub/icons-static-svg/icons/hermesagent.svg';
 import codebuddy from '@lobehub/icons-static-svg/icons/codebuddy-color.svg';
+import trae from '@lobehub/icons-static-svg/icons/trae-color.svg';
 
 // 顺序敏感：更具体的规则在前（claude code 先于 claude；gemini cli 先于 gemini）。
 const RULES = [
@@ -41,6 +42,7 @@ const RULES = [
   [/hermes/i, hermes],
   [/grok/i, grok],
   [/workbuddy|codebuddy/i, codebuddy],   // WorkBuddy = 腾讯 CodeBuddy
+  [/trae/i, trae],
   [/volcengine|火山|volc|doubao|豆包|api-volcengine/i, volcengine],
 ];
 

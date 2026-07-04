@@ -125,6 +125,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     todaySummary: () => ipcRenderer.invoke('localStats:todaySummary'),
     compression: (days) => ipcRenderer.invoke('localStats:compression', days),
     appsUsage: (days) => ipcRenderer.invoke('localStats:appsUsage', days),
+    reassignProviderTier: (providerId, tier) =>
+      ipcRenderer.invoke('localStats:reassignProviderTier', providerId, tier),
     onChanged: (cb) => {
       const h = () => cb();
       ipcRenderer.on('localStats:changed', h);

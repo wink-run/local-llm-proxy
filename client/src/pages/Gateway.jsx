@@ -49,6 +49,12 @@ function effectiveRouteIds(app) {
   return [];
 }
 
+/** Trae Work：自定义模型由用户在 IDE 内手工配置 */
+function isTraeWorkApp(app) {
+  const id = app?.agent_id || app?.preset_id || '';
+  return id === 'trae-work' || id === 'trae' || String(id).toLowerCase() === 'trae';
+}
+
 // ── PolicyManager：策略组管理 UI ──────────────────────────────────────────────
 function strategyOptions(t) {
   return [
@@ -674,6 +680,9 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   // config-file 类 API Key 应用：两 Tab（0=配置文件写入和 API Key｜1=路由规则）
   const isCfg = app.link_method === 'api-key' && !!app.config_file;
   const isShim = app.link_method === 'shim';   // 透明托管：路由规则 + 基础信息
+  const isDirectOnly = app.link_method === 'direct'; // 官方订阅 + 会话导入（Cursor 等）
+  const isTraeManual = isTraeWorkApp(app);          // Trae：手工在 IDE 内配置自定义模型
+  const showManualGuide = isDirectOnly || isTraeManual;
   const isClaudeDesktop = !!(app.integrations?.dev_mode_check || app.integrations?.claude_3p);
   // Claude Desktop 且开发者模式未就绪 → 需引导用户先启用
   const needDevMode = isClaudeDesktop && claudeDevMode && !claudeDevMode.dev_mode_ready;
@@ -798,7 +807,8 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     </div>
   );
 
-  const apiKeyRow = isKeyApp(app.link_method) && app.api_key && (
+  // 只要有 api_key 就展示（config-file / shim / session 等写入配置时也会用到）
+  const apiKeyRow = app.api_key && (
     <div>
       <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">API Key</div>
       <div className="flex items-center gap-2">
@@ -812,6 +822,67 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
             className="text-xs px-2 py-1.5 rounded border border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-700 shrink-0">{t('gateway.common.reset')}</button>
         )}
       </div>
+    </div>
+  );
+
+  // 官方订阅类应用：纳管说明 + 可选网关接入参数
+  const directGuideBody = (() => {
+    const raw = app.install_guide || toolboxDefaultGuide(true, app.name || app.agent_id || '', t);
+    return String(raw || '')
+      .replace(/\{BASE\}/g, gwOrigin)
+      .replace(/\{KEY\}/g, app.api_key || '');
+  })();
+  const directGuideSection = showManualGuide && (
+    <div>
+      <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.manualGuideTitle')}</div>
+      <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50/80 dark:bg-zinc-900/40 px-3 py-2.5">
+        <p className="text-xs text-zinc-600 dark:text-zinc-300 whitespace-pre-wrap leading-relaxed">{directGuideBody}</p>
+      </div>
+      {app.install_url && (
+        <button type="button"
+          onClick={() => getOauth().openExternal?.(app.install_url)}
+          className="mt-2 text-xs text-blue-600 dark:text-blue-400 hover:underline">
+          {t('gateway.toolbox.openOfficialLink')}
+        </button>
+      )}
+    </div>
+  );
+  const directGatewaySection = showManualGuide && app.api_key && (
+    <div>
+      <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.manualGatewayTitle')}</div>
+      <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+        {isTraeManual ? t('gateway.app.traeGatewayHint') : t('gateway.app.directKeyHint')}
+      </div>
+      <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40 px-3 py-2 space-y-1.5">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-zinc-400 shrink-0">Base URL</span>
+          <code className="flex-1 text-[11px] font-mono text-zinc-700 dark:text-zinc-200 truncate">{gwOrigin}/v1/chat/completions</code>
+          <button type="button"
+            onClick={() => { navigator.clipboard.writeText(`${gwOrigin}/v1/chat/completions`); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+            className="text-[11px] px-2 py-0.5 rounded border border-zinc-200 dark:border-zinc-600 text-zinc-500 shrink-0">
+            {copied ? t('gateway.common.copied') : t('gateway.common.copy')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+  // Trae：展示当前所选路由对应的模型 ID（供用户在 Trae 内填写）
+  const traeRouteVal = app.route_multi_select ? routeIds[0] : routeId;
+  const traeModelId = traeRouteVal
+    ? exampleModelFromRoute(traeRouteVal, routes, availableModels).model
+    : null;
+  const traeModelSection = isTraeManual && traeModelId && (
+    <div>
+      <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.traeModelIdTitle')}</div>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 text-xs font-mono bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-2 py-1.5 text-zinc-600 dark:text-zinc-400 truncate">{traeModelId}</code>
+        <button type="button"
+          onClick={() => { navigator.clipboard.writeText(traeModelId); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+          className="text-[11px] px-2 py-0.5 rounded border border-zinc-200 dark:border-zinc-600 text-zinc-500 shrink-0">
+          {copied ? t('gateway.common.copied') : t('gateway.common.copy')}
+        </button>
+      </div>
+      <div className="text-xs text-zinc-400 mt-1">{t('gateway.app.traeModelIdHint')}</div>
     </div>
   );
 
@@ -894,7 +965,9 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
     </div>
   );
 
-  const routeSection = (isKeyApp(app.link_method) || app.link_method === 'shim') && app.route_bindable !== false && (
+  const routeSection = (isKeyApp(app.link_method) || app.link_method === 'shim'
+    || (app.link_method === 'session' && app.route_bindable !== false))
+    && app.route_bindable !== false && (
     <div className="space-y-3">
       <div>
         <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.routeRules')}</div>
@@ -961,10 +1034,30 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
         </div>
 
         {(isCfg || isShim) ? (
-          /* 纳管应用（config-file / 透明托管）：基础信息 + 路由规则 */
+          /* 纳管应用（config-file / 透明托管）：基础信息 + Key + 路由规则 */
           <>
             <div className="p-5 space-y-4">
-              {baseInfoSection}{routeSection}
+              {baseInfoSection}{apiKeyRow}{routeSection}
+            </div>
+            <div className="flex gap-2 px-5 py-4 border-t border-zinc-200 dark:border-zinc-800">
+              {btnSave}{btnCancel}
+            </div>
+          </>
+        ) : isTraeManual ? (
+          /* Trae Work：手工在 IDE 配置自定义模型 + 路由仅作参考 */
+          <>
+            <div className="p-5 space-y-4">
+              {baseInfoSection}{apiKeyRow}{routeSection}{directGuideSection}{directGatewaySection}{traeModelSection}
+            </div>
+            <div className="flex gap-2 px-5 py-4 border-t border-zinc-200 dark:border-zinc-800">
+              {btnSave}{btnCancel}
+            </div>
+          </>
+        ) : isDirectOnly ? (
+          /* 官方订阅 + 会话导入：基础信息 + Key + 手工说明 */
+          <>
+            <div className="p-5 space-y-4">
+              {baseInfoSection}{apiKeyRow}{directGuideSection}{directGatewaySection}
             </div>
             <div className="flex gap-2 px-5 py-4 border-t border-zinc-200 dark:border-zinc-800">
               {btnSave}{btnCancel}
@@ -2335,6 +2428,22 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
     }
   }
 
+  // 打开设置：虚拟 shim 先落库以生成 api_key，便于展示写入配置的 Key
+  async function openAppSettings(app) {
+    if (app._virtual && app.link_method === 'shim' && app.agent_id) {
+      const created = await appsApi.ensureShimApp?.({
+        agent_id: app.agent_id, name: app.name, icon: app.icon,
+      }).catch(() => null);
+      if (created?.id) {
+        await load();
+        const fresh = (await appsApi.list().catch(() => []) || []).find(a => a.id === created.id);
+        setSettings(fresh || created);
+        return;
+      }
+    }
+    setSettings(app);
+  }
+
   // 默认路由：新应用自动绑当前可用模型的第一个（P2P 在线 > 付费 > 免费）。
   // 否则「直连」会把客户端原始模型名（claude-*/gpt-*）直发，P2P 后端没有这些名字必 502。
   function defaultRouteId() {
@@ -2551,6 +2660,10 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
         id: app.id, route_id: primary, route_ids: routeIds.length ? routeIds : null,
         ...(primary ? { hosted: true } : {}),
       }).catch(() => {});
+      // Trae 不写配置文件，切换路由后提示用户按编辑面板说明手工改模型
+      if (isTraeWorkApp(app) && routeIds.length) {
+        showNotice(app.id, t('gateway.apps.traeManualRouteHint'), 5000);
+      }
     } else {
       await appsApi.update({
         id: app.id, route_id: primary, route_ids: routeIds.length ? routeIds : null,
@@ -2851,7 +2964,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                         );
                       })()}
                       {!app._virtual_apikey ? (
-                        <button onClick={() => setSettings(app)}
+                        <button onClick={() => openAppSettings(app)}
                           className="text-xs px-1.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0">
                           {t('gateway.common.settings')}
                         </button>

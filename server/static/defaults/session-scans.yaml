@@ -346,3 +346,35 @@ scans:
       output_tokens: usage.completion_tokens
       cache_read_tokens: usage.prompt_tokens_details.cached_tokens
       ts: startedAt
+  trae-work:
+    data_source: session-trae-work
+    agent_id: trae-work
+    provider_id: trae-work
+    tier: paid
+    billing_type: subscription
+    direct_only: true
+    app_name: Trae Work
+    app_icon: ⚡
+    models:
+    - doubao-seed-2.1-pro
+    - glm-5.2
+    - deepseek-v4-flash
+    - kimi-k2.6
+    - gpt-5.4-2026-03-05
+    root: "{TRAE_SUPPORT}"
+    glob: ''
+    format: trae-work-export
+    export_root: ~/.tokenbank/trae-sessions
+    export_glob: 'usage.jsonl'
+    record_filter:
+      field: type
+      equals: assistant
+    skip_if_zero: false
+    request_id: trae-work:{session_id}:{index}
+    fields:
+      ts: timestamp
+      model: message.model
+      session_id: session_id
+      input_tokens: message.usage.input_tokens
+      output_tokens: message.usage.output_tokens
+      cache_read_tokens: message.usage.cache_read_tokens

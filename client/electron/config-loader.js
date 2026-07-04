@@ -94,6 +94,22 @@ function resolvePlaceholders(str, ctx = {}) {
   if (ctx.reverse) s = s.replace(/\{REVERSE\}/g, ctx.reverse);
   if (ctx.mitm)    s = s.replace(/\{MITM\}/g, ctx.mitm);
   if (ctx.caPath != null) s = s.replace(/\{CA_PATH\}/g, ctx.caPath);
+  try {
+    const { traeSupportDir } = require('./trae-support');
+    const traeRoot = traeSupportDir();
+    if (traeRoot) s = s.replace(/\{TRAE_SUPPORT\}/g, traeRoot);
+    else s = s.replace(/\{TRAE_SUPPORT\}/g, '');
+  } catch { /* trae-support 不可用时保留占位符 */ }
+  try {
+    const { traeStateDbPath } = require('./trae-support');
+    const db = traeStateDbPath();
+    if (db) s = s.replace(/\{TRAE_STATE_DB\}/g, db);
+  } catch {
+    try {
+      const { traeStateDbPath } = require('./trae-config');
+      s = s.replace(/\{TRAE_STATE_DB\}/g, traeStateDbPath());
+    } catch { /* 保留占位符 */ }
+  }
   s = resolveEnvBrace(s);          // {ENV|默认}
   s = expandHome(s);               // ~
   return s;
@@ -237,8 +253,19 @@ function claudeModels() {
 function isClaudeModel(modelId) { return claudeModels().includes(modelId); }
 
 // 会话用量解析：由 app_entities + handler 展开（session-scans.yaml）
+// root/export_root 需展开 {TRAE_SUPPORT} 等占位符，供安装检测与会话扫描共用
+function resolveSessionSourcePaths(src) {
+  if (!src || typeof src !== 'object') return src;
+  const out = { ...src };
+  for (const key of ['root', 'export_root', 'db']) {
+    if (typeof out[key] === 'string' && out[key]) {
+      out[key] = resolvePlaceholders(out[key]);
+    }
+  }
+  return out;
+}
 function sessionSources() {
-  return appsRuntime().session_sources || [];
+  return (appsRuntime().session_sources || []).map(resolveSessionSourcePaths);
 }
 
 /** 从 handler-ops + app_entities 构建安装链接/说明 */

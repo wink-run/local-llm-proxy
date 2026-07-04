@@ -101,7 +101,30 @@ const TRACE_PROFILE_BY_SOURCE = {
   codex: 'codex-rollout',
   cursor: 'cursor-transcript',
   workbuddy: 'workbuddy-trace',
+  'trae-work': 'trae-work-trace',
 };
+
+/** Trae Work 标准 handler / 实体 id（旧 trae / trae-stats 仍兼容） */
+const TRAE_WORK_HANDLER = 'trae-work-stats';
+const TRAE_WORK_ENTITY = 'trae-work';
+const LEGACY_HANDLER_ALIASES = { 'trae-stats': TRAE_WORK_HANDLER };
+const LEGACY_ENTITY_ALIASES = { trae: TRAE_WORK_ENTITY, Trae: TRAE_WORK_ENTITY };
+
+function normalizeHandlerId(hid) {
+  return LEGACY_HANDLER_ALIASES[hid] || hid;
+}
+
+function normalizeEntityId(id) {
+  if (!id) return id;
+  if (LEGACY_ENTITY_ALIASES[id]) return LEGACY_ENTITY_ALIASES[id];
+  if (String(id).toLowerCase() === 'trae') return TRAE_WORK_ENTITY;
+  return id;
+}
+
+function isTraeWorkEntity(id) {
+  const n = normalizeEntityId(id);
+  return n === TRAE_WORK_ENTITY || String(id || '').toLowerCase() === 'trae';
+}
 
 function applyTraceFields(entity, session, vars, hid) {
   const traceCfg = resolveSessionTrace(session, vars, hid);
@@ -203,9 +226,35 @@ function patchRouteCodexModel(patch, cfg, ctx) {
   return { ...patch, model: modelId };
 }
 
+/** Trae IDE：每条路由 → 一个自定义 OpenAI 模型（name 唯一，custom_model_id 为实际 model id） */
+function patchRouteTraeModels(patch, cfg, ctx) {
+  const modelsKey = cfg.models_key || 'models';
+  const template = patch[modelsKey]?.[0];
+  if (!template) return patch;
+  const routeIds = ctx.routeIds?.length ? ctx.routeIds : (ctx.routeId ? [ctx.routeId] : []);
+  if (!routeIds.length) return patch;
+
+  const routes = ctx.routes || [];
+  const models = routeIds
+    .map(rid => {
+      const modelId = routeModelId(rid, routes);
+      if (!modelId) return null;
+      const label = routeLabelFor(rid, routes) || modelId;
+      return {
+        ...template,
+        name: modelId,
+        display_name: label,
+        custom_model_id: modelId,
+      };
+    })
+    .filter(Boolean);
+  return { ...patch, [modelsKey]: models };
+}
+
 const PATCH_ROUTE_STRATEGIES = {
   workbuddy_models: patchRouteWorkbuddyModels,
   marker_model_list: patchRouteWorkbuddyModels,
+  trae_models: patchRouteTraeModels,
   claude_inference_models: patchRouteClaudeInferenceModels,
   codex_model: patchRouteCodexModel,
 };
@@ -218,6 +267,7 @@ const PATCH_ROUTE_STRATEGIES = {
  */
 function applyRouteToProxyPatch(handlerId, patch, ctx = {}) {
   if (!patch) return patch;
+  handlerId = normalizeHandlerId(handlerId);
   const routeIds = ctx.routeIds?.length ? ctx.routeIds
     : (ctx.routeId ? [ctx.routeId] : []);
   if (!routeIds.length) return patch;
@@ -243,11 +293,11 @@ function resolveRouteMultiSelect(hid, vars) {
 
 /** preset_id / app.handler → handler id */
 function resolveHandlerId(appRec) {
-  if (appRec?.handler) return appRec.handler;
-  const preset = appRec?.preset_id || appRec?.agent_id || appRec?.id;
+  if (appRec?.handler) return normalizeHandlerId(appRec.handler);
+  const preset = normalizeEntityId(appRec?.preset_id || appRec?.agent_id || appRec?.id);
   if (!preset) return '';
-  const ent = (loadDoc().default_entities || []).find(e => e.id === preset);
-  return ent?.handler || '';
+  const ent = (loadDoc().default_entities || []).find(e => e.id === preset || normalizeEntityId(e.id) === preset);
+  return normalizeHandlerId(ent?.handler || '');
 }
 
 /** handler ops（安装链接等） */
@@ -496,4 +546,9 @@ module.exports = {
   resolveRouteMultiSelect,
   listHandlersMeta,
   normStrList,
+  TRAE_WORK_HANDLER,
+  TRAE_WORK_ENTITY,
+  normalizeHandlerId,
+  normalizeEntityId,
+  isTraeWorkEntity,
 };

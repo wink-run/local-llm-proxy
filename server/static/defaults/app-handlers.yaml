@@ -291,6 +291,21 @@ handlers:
       trace:
         profile: workbuddy-trace
 
+  trae-work-stats:
+    label: Trae Work
+    label_zh: Trae Work
+    default_icon: "⚡"
+    default_name: Trae Work
+    capabilities: [session_import]
+    session:
+      source_id: trae-work
+      standalone: true
+      route_bindable: true
+      activity_agent_id: trae-work
+      trace_agent_id: trae-work
+      trace:
+        profile: trae-work-trace
+
 # 默认实体清单（导入时用）
 default_entities:
   - { id: claude-code, handler: claude-code-cli }
@@ -307,6 +322,7 @@ default_entities:
   - { id: antigravity, handler: antigravity-stats }
   - { id: grok, handler: grok-stats }
   - { id: workbuddy, handler: workbuddy-stats, vars: { route_multi_select: true } }
+  - { id: trae-work, handler: trae-work-stats }
 
 # vars 可覆盖字段（管理后台运营配置，下发在 app_entities[].vars）
 var_schema:
