@@ -164,6 +164,16 @@ function isCodexDesktopApp(app_id) {
   } catch { return false; }
 }
 
+function isTraeApp(app_id) {
+  const { isTraeWorkEntity } = require('./app-handlers');
+  if (isTraeWorkEntity(app_id)) return true;
+  if (String(app_id || '').toLowerCase().includes('trae')) return true;
+  try {
+    const app = (readLocalConfig()?.apps || []).find(a => a.id === app_id);
+    return isTraeWorkEntity(app?.preset_id) || isTraeWorkEntity(app?.agent_id);
+  } catch { return false; }
+}
+
 /** 还原 config-file 应用配置（与 apps:revertConfigFile IPC 共用） */
 function revertAppConfigFile(app_id, config_file) {
   if (isClaudeDesktopApp(app_id)) runClaude3pSync('revert');
@@ -176,6 +186,10 @@ function revertAppConfigFile(app_id, config_file) {
     codexCfg.removeCodexCatalog(path.dirname(file));
     // 会话归一回 openai：threads(Desktop 列表) + rollout 一并归一，直连态也看到全部
     try { codexCfg.syncCodexSessionProvider(path.dirname(file), 'openai'); } catch {}
+    return;
+  }
+  if (isTraeApp(app_id) && file) {
+    require('./trae-config').revertTraeModels(file);
     return;
   }
   if (file) {
@@ -1182,6 +1196,24 @@ function commandInstalled(cmd) {
   catch { return false; }
 }
 
+// 解析配置文件路径（{占位}+~）
+function resolveCfgPath(p) {
+  try { const cl = require('./config-loader'); return cl.expandHome(cl.resolvePlaceholders(String(p || ''), {})); }
+  catch { return String(p || ''); }
+}
+
+/** config_file 检测：目录存在=弱信号；state.vscdb 等主配置存在=强信号（Trae 等 VS Code 系 IDE） */
+function configFileDetect(d) {
+  try {
+    const f = resolveCfgPath(d.config_file);
+    if (!f) return { hit: false, strong: false, weak: false };
+    const fileOk = fs.existsSync(f);
+    const dirOk = fs.existsSync(path.dirname(f));
+    const strong = fileOk && /state\.vscdb$/i.test(f);
+    return { hit: fileOk || dirOk, strong, weak: dirOk };
+  } catch { return { hit: false, strong: false, weak: false }; }
+}
+
 // api_key 应用是否检测到（跨平台）：
 //   Windows → appx 包 / CLI 命令
 //   macOS   → /Applications/<App>.app / CLI 命令 / 配置目录已存在
@@ -1196,10 +1228,9 @@ function apiKeyAppDetected(d) {
       try { if (fs.existsSync(path.join(base, appName + '.app'))) return true; } catch {}
     }
   }
-  // 通用回退（含 Windows）：配置文件所在目录已存在 = 该应用装过/跑过（null 路径跳过）。
-  // 命令行装的应用（如 WorkBuddy）首启会建 ~/.<app> 目录，靠这条跨平台识别。
   if (d.config_file) {
-    try { const f = resolveCfgPath(d.config_file); if (f && fs.existsSync(path.dirname(f))) return true; } catch {}
+    const cf = configFileDetect(d);
+    if (cf.strong || cf.weak) return true;
   }
   return false;
 }
@@ -1224,16 +1255,14 @@ function apiKeyDetect(d) {
   if (d.command) { strongDefined = true; if (commandInstalled(d.command)) strong = true; }
   let weak = false;
   if (d.config_file) {
-    try { const f = resolveCfgPath(d.config_file); if (f && fs.existsSync(path.dirname(f))) weak = true; } catch {}
+    const cf = configFileDetect(d);
+    if (cf.weak) weak = true;
+    // state.vscdb 已生成 → 强信号（Trae 未在 /Applications 也可能已安装使用过）
+    if (cf.strong) { strongDefined = true; strong = true; }
   }
   return { strongDefined, strong, weak };
 }
 
-// 解析配置文件路径（{占位}+~）
-function resolveCfgPath(p) {
-  try { const cl = require('./config-loader'); return cl.expandHome(cl.resolvePlaceholders(String(p || ''), {})); }
-  catch { return String(p || ''); }
-}
 // 递归解析 patch/env 中的 {BASE}/{KEY}/{REVERSE}（WorkBuddy models.json 等嵌套结构）
 function resolvePatchDeep(obj, ctx = {}) {
   const cl = require('./config-loader');
@@ -1777,6 +1806,18 @@ function registerIPC() {
     } catch (e) {
       console.error('[localStats:modelLatency]', e.message);
       return {};
+    }
+  });
+  ipcMain.handle('localStats:reassignProviderTier', (_e, providerId, tier) => {
+    try {
+      const result = localStats.reassignProviderTier(providerId, tier);
+      if (result.updated > 0) {
+        try { mainWindow?.webContents?.send('localStats:changed'); } catch {}
+      }
+      return result;
+    } catch (e) {
+      console.error('[localStats:reassignProviderTier]', e.message);
+      return { updated: 0, error: e.message };
     }
   });
   // 手动触发会话文件补录（扫 ~/.claude、~/.codex、~/.gemini），返回各来源计数
@@ -2698,6 +2739,9 @@ function registerIPC() {
 
   ipcMain.handle('apps:list', () => {
     const configLoader = require('./config-loader');
+    const INSTALL_GUIDES = configLoader.appInstallGuides();
+    const INSTALL_URLS = configLoader.appInstallUrls();
+    const guideFor = (id) => (id ? configLoader.resolveGuide(INSTALL_GUIDES[id]) : null);
     const entityMeta = (id) => {
       try { return configLoader.appEntityById(id); } catch { return null; }
     };
@@ -2791,7 +2835,12 @@ function registerIPC() {
     const directInstalled = (agentId) => {
       const src = sessionSrcOf(agentId);
       if (!src?.root) return false;
-      try { return fs.existsSync(configLoader.expandHome(src.root)); } catch { return false; }
+      try {
+        const root = configLoader.resolvePlaceholders
+          ? configLoader.resolvePlaceholders(String(src.root))
+          : configLoader.expandHome(src.root);
+        return fs.existsSync(root);
+      } catch { return false; }
     };
     try {
       const cur = getApps();
@@ -2837,7 +2886,7 @@ function registerIPC() {
             id: 'app-direct-' + s.agent_id,
             name: s.app_name || s.agent_id, icon: s.app_icon || '🖱',
             link_method: 'direct', agent_id: s.agent_id,
-            api_key: null, route_id: null,
+            api_key: 'sk-local-' + rndHex(16), route_id: null,
             route_bindable: false, direct_only: true,
             hosted: true,
             created_at: new Date().toISOString(),
@@ -2847,7 +2896,7 @@ function registerIPC() {
             id: 'app-session-' + s.agent_id,
             name: s.app_name || s.agent_id, icon: s.app_icon || '🖱',
             link_method: 'session', agent_id: s.agent_id,
-            api_key: null, route_id: null,
+            api_key: 'sk-local-' + rndHex(16), route_id: null,
             route_bindable: resolveRouteBindable({ agent_id: s.agent_id, link_method: 'session' }, true),
             direct_only: false,
             hosted: true,
@@ -2859,6 +2908,48 @@ function registerIPC() {
       }
       if (mutated) saveApps(cur);
     } catch (e) { console.error('[apps:list] materialize session failed:', e.message); }
+
+    // Trae Work：手工配置模型，统一为 session（可绑路由选参考模型，不写 state.vscdb）
+    try {
+      const { isTraeWorkEntity } = require('./app-handlers');
+      const cur = getApps();
+      let migrated = false;
+      for (const app of cur) {
+        const traeLike = isTraeWorkEntity(app.preset_id) || isTraeWorkEntity(app.agent_id)
+          || String(app.id || '').toLowerCase().includes('trae');
+        if (!traeLike) continue;
+        app.agent_id = 'trae-work';
+        app.preset_id = 'trae-work';
+        if (app.link_method === 'direct' || app.link_method === 'api-key') {
+          app.link_method = 'session';
+          app.direct_only = false;
+          app.route_bindable = true;
+          app.host_method = 'session';
+          delete app.config_file;
+          delete app.patch;
+          delete app.inject;
+          migrated = true;
+        }
+        if (!app.api_key) { app.api_key = 'sk-local-' + rndHex(16); migrated = true; }
+      }
+      if (migrated) saveApps(cur);
+    } catch (e) { console.error('[apps:list] migrate trae-work failed:', e.message); }
+
+    // direct / shim / session 应用：补全 API Key（写入配置、网关识别、手工接入）
+    try {
+      const cur = getApps();
+      let keyMutated = false;
+      for (const app of cur) {
+        if ((app.link_method === 'direct' || app.link_method === 'shim' || app.link_method === 'session') && !app.api_key) {
+          app.api_key = 'sk-local-' + rndHex(16);
+          keyMutated = true;
+        }
+      }
+      if (keyMutated) {
+        saveApps(cur);
+        try { syncGatewayFromConfig(readLocalConfig()); } catch {}
+      }
+    } catch (e) { console.error('[apps:list] backfill api_key failed:', e.message); }
 
     // 被管理员禁用（enable_3p:false）的 api_key 应用预设 id —— 这些应用整条隐藏
     const disabledPresets = new Set(
@@ -3051,7 +3142,14 @@ function registerIPC() {
         installed: true, linked: false, api_key: null, route_id: null,
       });
     }
-    return dedupedRows;
+    return dedupedRows.map(app => {
+      const aid = app.agent_id || app.preset_id;
+      return {
+        ...app,
+        install_guide: guideFor(aid) || app.install_guide || null,
+        install_url: INSTALL_URLS[aid] || app.install_url || null,
+      };
+    });
   });
 
   ipcMain.handle('apps:create', (_e, data) => {
@@ -3114,10 +3212,22 @@ function registerIPC() {
   ipcMain.handle('apps:regenKey', (_e, id) => {
     const apps = getApps();
     const idx = apps.findIndex(a => a.id === id);
-    if (idx === -1 || !(apps[idx].link_method === 'api-key' || apps[idx].link_method === 'manual')) return { ok: false };
+    const lm = idx >= 0 ? apps[idx].link_method : null;
+    const regenOk = lm === 'api-key' || lm === 'manual' || lm === 'direct' || lm === 'shim' || lm === 'session';
+    if (idx === -1 || !regenOk) return { ok: false };
     apps[idx].api_key = 'sk-local-' + rndHex(16);
     saveApps(apps);
-    return { ok: true, api_key: apps[idx].api_key };
+    try { syncGatewayFromConfig(readLocalConfig()); } catch {}
+    // shim 已接入时须重写脚本，否则 env 里仍是旧 Key
+    const app = apps[idx];
+    if (app.link_method === 'shim' && app.agent_id) {
+      try {
+        const tools = require('./config-loader').tools() || [];
+        const tool = tools.find(t => t.id === app.agent_id);
+        if (tool && agentLinker.status(tool)) agentLinker.apply(tool);
+      } catch (e) { console.warn('[apps:regenKey] shim re-apply:', e.message); }
+    }
+    return { ok: true, api_key: app.api_key };
   });
 
   // 写入环境变量到系统（让目标工具下次启动时指向网关）。
@@ -3236,6 +3346,7 @@ function registerIPC() {
         return { ok: true, file, envCount: 0, codex: true, officialLogin,
           ...(officialLogin ? {} : { warning: 'codex-no-official-login' }) };
       }
+      // Trae：模型配置由用户在 IDE 内手工填写，此处不写入 state.vscdb
       // 纳管 = 备份原配置文件（整份，仅首次），再写入我们的配置（整份替换）。
       // 不合并、不检测冲突、不预扫描内容——状态完全跟随用户操作。
       const bak = file + '.tokenbank-bak';
@@ -3317,7 +3428,7 @@ function registerIPC() {
     if (usageImport) {
       if (app && (app.link_method === 'api-key' || app.link_method === 'manual') && linked.length) {
         dataSource = linked[0];
-      } else if (app && (app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) {
+      } else if (app && (app.link_method === 'shim' || app.link_method === 'direct' || app.link_method === 'session') && app.agent_id) {
         dataSource = AGENT_DATA_SOURCE[app.agent_id] || null;
       }
     }
@@ -3473,7 +3584,7 @@ function registerIPC() {
       if (ent?.linked_data_sources?.length) return ent.linked_data_sources[0];
       return null;
     }
-    if ((app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) {
+    if ((app.link_method === 'shim' || app.link_method === 'direct' || app.link_method === 'session') && app.agent_id) {
       const aid = app.agent_id;
       const caps = configLoader.appCapabilities(aid);
       const ent = configLoader.appEntityById(aid);
@@ -3501,7 +3612,7 @@ function registerIPC() {
           dataSource: ds,
           includeSessionImport: usageImport,
         });
-      } else if ((app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) {
+      } else if ((app.link_method === 'shim' || app.link_method === 'direct' || app.link_method === 'session') && app.agent_id) {
         s = localStats.queryAppStatsToday({
           appId: app.id,
           apiKey: app.api_key,

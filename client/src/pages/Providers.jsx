@@ -342,9 +342,9 @@ function buildPersonalPaidPool(allProviders, paidIds, userPayg = [], userSubs = 
     const sub = (userSubs || []).find(s => s.custom && subInstGatewayId(s) === id);
     const displayName = sub?.app_name || payg?.label;
     if (live) {
-      // 在付费层展示；写入时仍用原 id，保留 free 层条目的 base_url 等
+      // 保留用户配置的 type/tier，不再强制 paid
       const enriched = displayName ? { ...live, displayName } : live;
-      pool.push(enriched.type === 'paid' ? enriched : { ...enriched, type: 'paid' });
+      pool.push(enriched);
       seen.add(id);
       continue;
     }
@@ -537,15 +537,17 @@ function isApiSubscriptionProviderId(id, userSubs = []) {
   );
 }
 
-/** 已启用供给源的分类 */
+/** 已启用供给源的分类（路由 Tier 以 provider.type 为准） */
 function getPersonalSourceTag(provider, metaMap, userPayg, userSubs) {
   const id = provider?.id;
   if (!id) return 'free';
+  // 用户显式 free 层：图标与路由一致，不受按量登记推断覆盖
+  if (provider.type === 'free') return 'free';
   if (isPaygManagedProvider(id, userPayg)) return 'payg';
   if (isApiSubscriptionProviderId(id, userSubs)) return 'api_sub';
   if (isCustomSubscriptionGatewayId(id, userSubs)) return 'sub_to_api';
   if (isSubscriptionProvider(provider, metaMap)) return 'sub_to_api';
-  if (provider.type === 'free' || metaMap[id]?.keyless) return 'free';
+  if (metaMap[id]?.keyless) return 'free';
   return 'payg';
 }
 
@@ -823,18 +825,108 @@ function PersonalTypeIcon({ tag, className = 'w-3 h-3 shrink-0' }) {
   }
 }
 
-/** 卡片上仅展示类型 icon（hover 显示完整类型名） */
-function PersonalSourceTypeBadge({ tag, t }) {
+/** 卡片上展示类型 icon；免费/按量源可点击切换路由 Tier（free/paid） */
+function PersonalSourceTypeBadge({ tag, t, provider, tierEditable, onTierChange }) {
   const cfg = PERSONAL_TYPE_BADGE[tag] || PERSONAL_TYPE_BADGE.payg;
   const label = t(`providers.filter.${cfg.filterKey}`);
-  return (
-    <span
-      className={`inline-flex items-center justify-center w-5 h-5 rounded-md border shrink-0 ${cfg.className}`}
-      title={label}
-      aria-label={label}
+  const [open, setOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState(null);
+  const btnRef = useRef(null);
+  const menuRef = useRef(null);
+
+  const currentTier = provider?.tier === 'paid' || provider?.type === 'paid' ? 'paid' : 'free';
+  const canEdit = tierEditable && provider && typeof onTierChange === 'function';
+
+  const closeMenu = useCallback(() => {
+    setOpen(false);
+    setMenuPos(null);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => {
+      const t = e.target;
+      if (btnRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      closeMenu();
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open, closeMenu]);
+
+  const shellClass = `inline-flex items-center justify-center w-5 h-5 rounded-md border shrink-0 ${cfg.className}`;
+
+  if (!canEdit) {
+    return (
+      <span className={shellClass} title={label} aria-label={label}>
+        <PersonalTypeIcon tag={tag} />
+      </span>
+    );
+  }
+
+  const openMenu = () => {
+    const el = btnRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setMenuPos({ top: r.bottom + 4, left: r.left });
+    setOpen(true);
+  };
+
+  const pickTier = (tier) => {
+    closeMenu();
+    if (tier !== currentTier) onTierChange(tier);
+  };
+
+  const menu = open && menuPos && createPortal(
+    <div
+      ref={menuRef}
+      className="fixed z-[9999] min-w-[7.5rem] py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 shadow-lg"
+      style={{ top: menuPos.top, left: menuPos.left }}
+      role="menu"
     >
-      <PersonalTypeIcon tag={tag} />
-    </span>
+      {(['free', 'paid']).map(tier => {
+        const tierTag = tier === 'free' ? 'free' : 'payg';
+        const tierCfg = PERSONAL_TYPE_BADGE[tierTag];
+        const active = tier === currentTier;
+        return (
+          <button
+            key={tier}
+            type="button"
+            role="menuitem"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => pickTier(tier)}
+            className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-left transition-colors ${
+              active
+                ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
+                : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700/50'
+            }`}
+          >
+            <span className={`inline-flex items-center justify-center w-5 h-5 rounded-md border shrink-0 ${tierCfg.className}`}>
+              <PersonalTypeIcon tag={tierTag} />
+            </span>
+            <span>{t(tier === 'free' ? 'providers.tierChange.free' : 'providers.tierChange.paid')}</span>
+          </button>
+        );
+      })}
+    </div>,
+    document.body,
+  );
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => (open ? closeMenu() : openMenu())}
+        className={`${shellClass} cursor-pointer hover:brightness-95 dark:hover:brightness-110 transition-[filter,box-shadow] ${open ? 'ring-2 ring-blue-400/60' : ''}`}
+        title={t('providers.tierChange.clickHint')}
+        aria-label={t('providers.tierChange.clickHint')}
+        aria-expanded={open}
+        aria-haspopup="menu"
+      >
+        <PersonalTypeIcon tag={tag} />
+      </button>
+      {menu}
+    </>
   );
 }
 
@@ -1275,15 +1367,17 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled }) {
           <span className="text-xs text-zinc-500">
             {t('providers.p2p.modelsTitle', { n: modelStats.length })} <span className="text-zinc-700">{t('providers.p2p.modelsSub')}</span>
           </span>
-          <button onClick={probeAllSpeed} disabled={!!probing || modelStats.length === 0}
-            title="对有在线节点的模型逐个发极小请求测速（真实调用，消耗积分）"
-            className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 disabled:opacity-50 flex items-center gap-1">
-            {probing ? `测速中 ${probing.done}/${probing.total}` : '⚡ 全部测速'}
-          </button>
-          <button onClick={() => navigate('/network')}
-            className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 flex items-center gap-1">
-            {t('providers.p2p.globalNetwork')}
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={probeAllSpeed} disabled={!!probing || modelStats.length === 0}
+              title="对有在线节点的模型逐个发极小请求测速（真实调用，消耗积分）"
+              className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 disabled:opacity-50 flex items-center gap-1 whitespace-nowrap">
+              {probing ? `测速中 ${probing.done}/${probing.total}` : '⚡ 全部测速'}
+            </button>
+            <button onClick={() => navigate('/network')}
+              className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 flex items-center gap-1 whitespace-nowrap">
+              {t('providers.p2p.globalNetwork')}
+            </button>
+          </div>
         </div>
         {modelStats.length === 0 && !loading ? (
           <p className="text-xs text-zinc-600 py-2">{t('providers.p2p.noNodes')}</p>
@@ -1466,7 +1560,7 @@ function patchClearsTestVerified(patch) {
 /** catalog / 账户重载时保留内存里尚未 debounce 落盘的字段，避免 base_url 等被磁盘旧值覆盖 */
 const PROVIDER_RELOAD_PRESERVE_KEYS = [
   ...CREDENTIAL_PATCH_KEYS,
-  'enabled', 'test_verified', 'billing_type', 'sub_mode',
+  'enabled', 'test_verified', 'billing_type', 'sub_mode', 'type', 'tier',
 ];
 
 function mergeProviderAfterReload(disk, mem) {
@@ -2324,7 +2418,7 @@ function formatProviderTestMsg(result, t) {
   };
 }
 
-function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels }) {
+function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels, onPersistTier }) {
   const { t } = useLang();
   const [showKey, setShowKey] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -2335,6 +2429,7 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
     try { const h = new URL(provider.base_url || '').hostname; return h || t('providers.custom.defaultName'); } catch { return t('providers.custom.defaultName'); }
   })();
   const personalTag = getPersonalSourceTag(provider, {}, userPayg, userSubscriptions);
+  const tierEditable = personalTag === 'free' || personalTag === 'payg';
 
   async function handleTest() {
     if (!provider.base_url) { setTestMsg(t('providers.test.needBaseUrl')); return; }
@@ -2371,7 +2466,13 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
                 {displayLabel}
               </span>
               <StatusBadge verified={provider.test_verified === true} />
-              <PersonalSourceTypeBadge tag={personalTag} t={t} />
+              <PersonalSourceTypeBadge
+                tag={personalTag}
+                t={t}
+                provider={provider}
+                tierEditable={tierEditable}
+                onTierChange={(tier) => (onPersistTier || ((id, t) => onUpdate(id, { type: t, tier: t })))(provider.id, tier)}
+              />
             </div>
             <div className="flex items-center gap-2 shrink-0">
               {provider.base_url && (
@@ -2580,7 +2681,7 @@ function UsageMeter({ provider }) {
   );
 }
 
-function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpanded = false, gatewayAuthMode = null, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [], displayName = null, displayIcon = null, lockTemplate = false, accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels, onPersistBaseUrl }) {
+function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpanded = false, gatewayAuthMode = null, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [], displayName = null, displayIcon = null, lockTemplate = false, accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels, onPersistBaseUrl, onPersistTier }) {
   const { t } = useLang();
   const [showKey,    setShowKey]    = useState(false);
   const [expanded,   setExpanded]   = useState(initialExpanded);
@@ -2612,6 +2713,7 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
   // 是否支持订阅计费方式：yaml subscription_apps 中有 plan_provider_id 匹配且 subscription_to_api=true
   const hasSubscriptionOption = subscriptionCatalog.some(c => c.plan_provider_id === provider.id && c.subscription_to_api === true);
   const personalTag = getPersonalSourceTag(provider, { [provider.id]: meta }, userPayg, userSubscriptions);
+  const tierEditable = !isP2P && (personalTag === 'free' || personalTag === 'payg');
 
   // 添加方式：api_key / oauth（按量可切换；订阅转 API 固定 OAuth）
   const [method, setMethod] = useState(forceOauth || isOauthCfg ? 'oauth' : 'api_key');
@@ -2724,7 +2826,13 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
                 {displayName || meta.label}
               </span>
               <StatusBadge verified={provider.test_verified === true} />
-              <PersonalSourceTypeBadge tag={personalTag} t={t} />
+              <PersonalSourceTypeBadge
+                tag={personalTag}
+                t={t}
+                provider={provider}
+                tierEditable={tierEditable}
+                onTierChange={(tier) => (onPersistTier || ((id, t) => onUpdate(id, { type: t, tier: t })))(provider.id, tier)}
+              />
             </div>
             <div className="flex items-center gap-2 shrink-0">
               {!isP2P && (
@@ -3352,6 +3460,31 @@ export default function Providers() {
     }, 500);
     return () => clearTimeout(timer);
   }, [providers, meta, catalogDefaultsById, t, userPayg, mergedProviderPricing, paygCatalog]);
+
+  /** 立即落盘 Tier，避免 debounce / catalog 重载覆盖；同步回溯盘点 tier */
+  const persistProviderTier = useCallback(async (id, tier) => {
+    const patch = { type: tier, tier };
+    setProviders(prev => {
+      const i = prev.findIndex(p => p.id === id);
+      if (i < 0) {
+        return [...prev, { id, enabled: true, token: '', base_url: '', models: [], ...patch }];
+      }
+      return prev.map(p => (p.id === id ? { ...p, ...patch } : p));
+    });
+    try {
+      const cfg = (await getConfig().read()) || {};
+      const list = [...(cfg.providers || [])];
+      const i = list.findIndex(p => p.id === id);
+      if (i >= 0) list[i] = { ...list[i], ...patch };
+      else list.push({ id, enabled: true, token: '', base_url: '', models: [], ...patch });
+      await getConfig().write({ ...cfg, providers: list });
+      lastSaved.current = list;
+      // 回溯更新 SQLite 历史请求的 tier / 费用，触发盘点页刷新
+      if (isElectron() && window.electronAPI?.localStats?.reassignProviderTier) {
+        await window.electronAPI.localStats.reassignProviderTier(id, tier);
+      }
+    } catch { /* 离线时仍保留内存态 */ }
+  }, []);
 
   const updateProvider = useCallback((id, patch) => {
     const fromBilling = patch._fromBilling === true;
@@ -3998,8 +4131,8 @@ export default function Providers() {
               const extraMeta = resolveMetaForGateway(live.id, meta, extraInst, oauthById);
               const useCustomCard = shouldUseCustomProviderCard(live.id, userSubscriptions, extraInst, extraMeta);
               return !useCustomCard
-                ? <ProviderCard key={live.id} provider={live} meta={extraMeta} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id], extraInst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} accountInst={extraInst} {...accountBillingProps} />
-                : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={extraInst} {...accountBillingProps} />;
+                ? <ProviderCard key={live.id} provider={live} meta={extraMeta} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} onPersistTier={persistProviderTier} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id], extraInst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} accountInst={extraInst} {...accountBillingProps} />
+                : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} onPersistTier={persistProviderTier} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={extraInst} {...accountBillingProps} />;
             }
             const inst = row.inst;
             const gwId = inst.gateway_id;
@@ -4007,8 +4140,8 @@ export default function Providers() {
             const cardMeta = resolveMetaForGateway(gwId, meta, inst, oauthById);
             const useCustomCard = shouldUseCustomProviderCard(gwId, userSubscriptions, inst, cardMeta);
             return !useCustomCard
-              ? <ProviderCard key={inst.id} provider={live} meta={cardMeta} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId], inst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={inst.name} displayIcon={inst.icon} lockTemplate accountInst={inst} {...accountBillingProps} />
-              : <CustomProviderCard key={inst.id} provider={live} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={inst} {...accountBillingProps} />;
+              ? <ProviderCard key={inst.id} provider={live} meta={cardMeta} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} onPersistTier={persistProviderTier} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId], inst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={inst.name} displayIcon={inst.icon} lockTemplate accountInst={inst} {...accountBillingProps} />
+              : <CustomProviderCard key={inst.id} provider={live} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} onPersistTier={persistProviderTier} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={inst} {...accountBillingProps} />;
           })}
           {personalSourceRows.length === 0 && (
             <p className="col-span-2 text-xs text-zinc-400 text-center py-6">{t('providers.filter.empty')}</p>
@@ -4053,9 +4186,9 @@ export default function Providers() {
               {!live ? (
                 <p className="text-xs text-zinc-400 py-6 text-center">{t('providers.add.loadingAccounts')}</p>
               ) : !useCustomCard ? (
-                <ProviderCard provider={live} meta={credMeta} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} initialExpanded lockTemplate gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId], acct)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={acct?.name} displayIcon={acct?.icon} accountInst={acct} {...accountBillingProps} />
+                <ProviderCard provider={live} meta={credMeta} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} onPersistTier={persistProviderTier} initialExpanded lockTemplate gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId], acct)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={acct?.name} displayIcon={acct?.icon} accountInst={acct} {...accountBillingProps} />
               ) : (
-                <CustomProviderCard provider={live} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={acct} {...accountBillingProps} />
+                <CustomProviderCard provider={live} onUpdate={updateProvider} onRemove={removeAccountSource} onTest={testProvider} onPersistTier={persistProviderTier} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={acct} {...accountBillingProps} />
               )}
               <div className="flex justify-end pt-1">
                 <button type="button" onClick={() => setCredModalKey(null)} className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 text-white">{t('providers.cred.done')}</button>

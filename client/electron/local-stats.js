@@ -42,6 +42,8 @@ function _queryPaygCostMaps(where, params) {
     const byProviderTier = {};
     let total = 0;
     for (const r of rows) {
+      // free/p2p 不计按量刊例价（与 recordStats 落账口径一致）
+      if (r.tier === 'free' || r.tier === 'p2p') continue;
       const c = estimatePaygCost(
         r.model, r.inTok || 0, r.outTok || 0, r.cCreate || 0, r.cRead || 0,
         resolvePricingProviderId(r.provider_id),
@@ -66,13 +68,14 @@ function _queryPaygCostByModelProvider(where, params) {
   if (!db) return byModelProvider;
   try {
     const rows = db.prepare(
-      `SELECT provider_id, model,
+      `SELECT provider_id, tier, model,
         SUM(input_tokens) AS inTok, SUM(output_tokens) AS outTok,
         SUM(cache_create_tokens) AS cCreate, SUM(cache_read_tokens) AS cRead
        FROM requests WHERE ${where} AND billing_type = 'api-key' AND model IS NOT NULL AND provider_id IS NOT NULL
-       GROUP BY provider_id, model`
+       GROUP BY provider_id, tier, model`
     ).all(params);
     for (const r of rows) {
+      if (r.tier === 'free' || r.tier === 'p2p') continue;
       const c = estimatePaygCost(
         r.model, r.inTok || 0, r.outTok || 0, r.cCreate || 0, r.cRead || 0,
         resolvePricingProviderId(r.provider_id),
@@ -102,6 +105,7 @@ function _fillPaygCostForBuckets(buckets, since, bucketKey) {
     ).all(since);
     const costByKey = {};
     for (const r of rows) {
+      if (r.tier === 'free' || r.tier === 'p2p') continue;
       const k = bucketKey === 'hour' ? Number(r.bucket_key) : r.bucket_key;
       const c = estimatePaygCost(
         r.model, r.inTok || 0, r.outTok || 0, r.cCreate || 0, r.cRead || 0,
@@ -314,7 +318,83 @@ function dataSourcesWithoutModelStats() {
   } catch { return []; }
 }
 
-/** Returns aggregated dashboard data for the last `days` calendar days. */
+/** 供给源 id 及其 catalog 别名（acct-* 多实例仅自身） */
+function collectProviderIdVariants(providerId) {
+  const pid = String(providerId || '');
+  if (!pid) return [];
+  if (pid.startsWith('acct-')) return [pid];
+  const ids = new Set([pid]);
+  try {
+    const bc = require('./billing-config');
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const c of (bc.apiSubscriptionCatalog?.() || [])) {
+        const plan = c.plan_provider_id && String(c.plan_provider_id);
+        const sid = c.source_id && String(c.source_id);
+        if (plan && sid && (ids.has(plan) || ids.has(sid))) {
+          if (plan && !ids.has(plan)) { ids.add(plan); changed = true; }
+          if (sid && !ids.has(sid)) { ids.add(sid); changed = true; }
+        }
+      }
+      for (const p of (bc.paygProviderCatalog?.() || [])) {
+        const canon = p.provider_id || p.id;
+        const group = [...(canon ? [String(canon)] : []), ...(p.aliases || []).map(String)];
+        if (group.some(x => ids.has(x))) {
+          for (const x of group) {
+            if (x && !ids.has(x)) { ids.add(x); changed = true; }
+          }
+        }
+      }
+    }
+  } catch { /* billing-config 不可用时仅更新主 id */ }
+  return [...ids];
+}
+
+/** 按新 tier 重算单行 cost_usd（与 local-gateway recordStats 一致） */
+function recomputeRowCostUsd(row, tier) {
+  if (tier === 'free' || tier === 'p2p') return 0;
+  return estimateCost(
+    row.model,
+    row.input_tokens || 0,
+    row.output_tokens || 0,
+    row.cache_create_tokens || 0,
+    row.cache_read_tokens || 0,
+    resolvePricingProviderId(row.provider_id),
+  );
+}
+
+/**
+ * 用户切换供给源 free/paid 后，回溯更新历史请求的 tier 与费用口径。
+ * 返回 { updated } 为受影响行数。
+ */
+function reassignProviderTier(providerId, tier) {
+  if (!db || !providerId || !['free', 'paid', 'p2p'].includes(tier)) {
+    return { updated: 0 };
+  }
+  const ids = collectProviderIdVariants(providerId);
+  if (!ids.length) return { updated: 0 };
+  const placeholders = ids.map(() => '?').join(',');
+  try {
+    const rows = db.prepare(
+      `SELECT rowid, model, provider_id, input_tokens, output_tokens,
+              cache_create_tokens, cache_read_tokens
+       FROM requests WHERE provider_id IN (${placeholders})`
+    ).all(...ids);
+    const upd = db.prepare('UPDATE requests SET tier = ?, cost_usd = ? WHERE rowid = ?');
+    const txn = db.transaction(() => {
+      for (const r of rows) {
+        upd.run(tier, recomputeRowCostUsd(r, tier), r.rowid);
+      }
+    });
+    txn();
+    return { updated: rows.length };
+  } catch (e) {
+    console.error('[local-stats] reassignProviderTier failed:', e.message);
+    return { updated: 0, error: e.message };
+  }
+}
+
 /** 将同一账户的 gateway_id / source_id / plan_provider_id 别名互相同步 */
 function mirrorProviderLatencyAliases(out) {
   try {
@@ -963,15 +1043,20 @@ function queryByDataSource(dataSource) {
 
 // 一次性迁移用：删除指定 data_source 的会话记录 + 清掉匹配文件的导入状态，
 // 让 session-import 重扫这些文件、按新规则（entrypoint）重新归属。proxy 实时记录不受影响。
+// 返回 true=已执行；false=库未就绪或失败。
 function resetSessionData(dataSources, pathLike) {
-  if (!db) return;
+  if (!db) return false;
   try {
     if (Array.isArray(dataSources) && dataSources.length) {
       const ph = dataSources.map(() => '?').join(',');
       db.prepare(`DELETE FROM requests WHERE data_source IN (${ph})`).run(...dataSources);
     }
     if (pathLike) db.prepare('DELETE FROM import_state WHERE path LIKE ?').run(pathLike);
-  } catch (e) { console.error('[local-stats] resetSessionData failed:', e.message); }
+    return true;
+  } catch (e) {
+    console.error('[local-stats] resetSessionData failed:', e.message);
+    return false;
+  }
 }
 
 /** 列出所有会话叠加层元数据（供聚合 left-join）。 */
@@ -1046,4 +1131,5 @@ module.exports = {
   getImportState, setImportState, resetSessionData, deleteZeroTokenSessionRows, close,
   listSessionMeta, getSessionMeta, setSessionMeta,
   todaySinceTs, sinceTsForDays, queryGatewayInputCostRate, queryModelProviderLatency,
+  reassignProviderTier, collectProviderIdVariants,
 };

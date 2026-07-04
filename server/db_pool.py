@@ -11,8 +11,15 @@ _pool: Optional[asyncpg.Pool] = None
 
 
 def get_database_url() -> str:
-    """从环境变量读取 DATABASE_URL。"""
+    """从环境变量读取 DATABASE_URL；未设置时由 POSTGRES_* 拼装。"""
     url = os.getenv("DATABASE_URL", "").strip()
+    if not url:
+        user = os.getenv("POSTGRES_USER", "root")
+        password = os.getenv("POSTGRES_PASSWORD", "wink123")
+        host = os.getenv("POSTGRES_HOST", "localhost")
+        port = os.getenv("POSTGRES_PORT", "5432")
+        db = os.getenv("POSTGRES_DB", "tokenbank")
+        url = f"postgresql://{user}:{password}@{host}:{port}/{db}"
     if not url:
         raise RuntimeError(
             "DATABASE_URL 未设置，例如：postgresql://user:pass@localhost:5432/proxy"

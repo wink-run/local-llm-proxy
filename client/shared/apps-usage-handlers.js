@@ -33,7 +33,7 @@ function appSessionDataSource(app) {
     if (ent?.linked_data_sources?.length) return ent.linked_data_sources[0];
     return null;
   }
-  if ((app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) {
+  if ((app.link_method === 'shim' || app.link_method === 'direct' || app.link_method === 'session') && app.agent_id) {
     const aid = app.agent_id;
     const caps = configLoader.appCapabilities(aid);
     const ent = configLoader.appEntityById(aid);
@@ -64,7 +64,7 @@ function getAppDetail(localStats, app, days) {
   if (usageImport) {
     if (app && (app.link_method === 'api-key' || app.link_method === 'manual') && linked.length) {
       dataSource = linked[0];
-    } else if (app && (app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) {
+    } else if (app && (app.link_method === 'shim' || app.link_method === 'direct' || app.link_method === 'session') && app.agent_id) {
       dataSource = AGENT_DATA_SOURCE[app.agent_id] || null;
     }
   }

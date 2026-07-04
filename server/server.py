@@ -8,6 +8,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
+# 开发环境：加载仓库根目录 .env（DATABASE_URL / ADMIN_KEY 等）
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    pass
+
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware

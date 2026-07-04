@@ -31,6 +31,9 @@ _LEGACY_ID_TO_HANDLER: dict[str, str] = {
     "antigravity": "antigravity-stats",
     "grok": "grok-stats",
     "workbuddy": "workbuddy-stats",
+    "trae": "trae-work-stats",
+    "trae-work": "trae-work-stats",
+    "Trae": "trae-work-stats",
 }
 
 

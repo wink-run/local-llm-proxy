@@ -196,3 +196,35 @@ ops:
     install_url: https://x.ai/cli
   workbuddy-stats:
     install_url: https://www.codebuddy.ai
+  trae-work-stats:
+    install_url: https://www.trae.cn
+    install_guide:
+      mac: '1. 打开 trae.cn 下载 Trae Work / TRAE SOLO CN（macOS）
+
+        2. 安装并至少启动一次、登录官方账号
+
+        3. 在 Token Bank 纳管 Trae Work（官方订阅用量自动统计）
+
+        4. 若要走网关：在 Trae 设置 → 模型 → 添加自定义模型（OpenAI 兼容），参数见下方「网关接入参数」
+        · 请求地址：{BASE}/v1/chat/completions
+        · API Key：见上方「API Key」
+        · 模型 ID：与所选路由 / 网关 /v1/models 列表一致
+        · 系统代理（Clash 等）须将 127.0.0.1、localhost 加入绕过/NO_PROXY，
+          否则经代理访问本机网关会 502（思考中卡住）
+
+        '
+      win: '1. 打开 trae.cn 下载 Trae Work / TRAE SOLO（Windows）
+
+        2. 安装并至少启动一次、登录官方账号
+
+        3. 在 Token Bank 纳管 Trae Work（官方订阅用量自动统计）
+
+        4. 若要走网关：在 Trae 设置 → 模型 → 添加自定义模型（OpenAI 兼容），参数见下方
+        · 请求地址：{BASE}/v1/chat/completions
+        · API Key：见上方「API Key」
+        · 模型 ID：与所选路由 / 网关 /v1/models 列表一致
+        · 系统代理须将 127.0.0.1、localhost 加入绕过/NO_PROXY
+
+        '
+  trae-stats:
+    install_url: https://www.trae.cn

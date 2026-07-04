@@ -120,9 +120,16 @@ function markDone(localStats, filePath, st) {
   localStats.setImportState(filePath, Math.floor(st.mtimeMs), st.size);
 }
 
-function tsSeconds(isoOrMs) {
-  if (isoOrMs == null) return Math.floor(Date.now() / 1000);
-  const ms = typeof isoOrMs === 'number' ? isoOrMs : Date.parse(isoOrMs);
+function tsSeconds(isoOrMsOrSec) {
+  if (isoOrMsOrSec == null) return Math.floor(Date.now() / 1000);
+  if (typeof isoOrMsOrSec === 'number') {
+    const n = isoOrMsOrSec;
+    // 毫秒（13 位）→ 秒；已是 Unix 秒（10 位，≥1e9）则不再除 1000
+    if (n >= 1e12) return Math.floor(n / 1000);
+    if (n >= 1e9) return Math.floor(n);
+    return Math.floor(n);
+  }
+  const ms = Date.parse(isoOrMsOrSec);
   return Number.isFinite(ms) ? Math.floor(ms / 1000) : Math.floor(Date.now() / 1000);
 }
 
@@ -469,12 +476,39 @@ function importGrokSessionsSource(localStats, src) {
   return { source: src.id || src.data_source, imported, skipped, files_scanned };
 }
 
+// ── Trae Work：从 ~/.tokenbank/trae-sessions/usage.jsonl 导入（session-sync 写入）────
+function importTraeWorkExportSource(localStats, src) {
+  const exportRoot = expandHome(src.export_root || '~/.tokenbank/trae-sessions');
+  const glob = src.export_glob || 'usage.jsonl';
+  const re = globToRe(glob);
+  const files = exportRoot ? walk(exportRoot, rel => re.test(rel)) : [];
+  let imported = 0, skipped = 0, files_scanned = 0;
+
+  for (const file of files) {
+    let st;
+    try { st = fs.statSync(file); } catch { continue; }
+    if (unchanged(localStats, file, st)) { skipped++; continue; }
+    files_scanned++;
+    const ctx = { model: undefined, session_id: undefined, seq: 0, index: 0, prev: { input: 0, output: 0, cached: 0 } };
+    eachJsonlLine(file, (rec, idx) => {
+      ctx.index = idx;
+      if (rec.session_id) ctx.session_id = rec.session_id;
+      if (rec.message?.model || rec.model) ctx.model = rec.message?.model || rec.model;
+      if (!matchFilter(rec, src.record_filter)) return;
+      if (emitRecord(localStats, src, rec, ctx, file)) imported++;
+    });
+    markDone(localStats, file, st);
+  }
+  return { source: src.id || src.data_source, imported, skipped, files_scanned };
+}
+
 // ── 单个 source 的扫描 ────────────────────────────────────────────────────────
 function importSource(localStats, src) {
   // 用户关闭 trace 分析时不扫描会话文件
   if (src.session_trace === false) {
     return { source: src.id || src.data_source, imported: 0, skipped: 0, files_scanned: 0 };
   }
+  if (src.format === 'trae-work-export') return importTraeWorkExportSource(localStats, src);
   if (src.format === 'sqlite')         return importSqliteSource(localStats, src);
   if (src.format === 'copilot-events') return importCopilotEventsSource(localStats, src);
   if (src.format === 'grok-session')   return importGrokSessionsSource(localStats, src);
@@ -609,4 +643,4 @@ function run(localStats, opts = {}) {
   return { ok: true, imported, sources };
 }
 
-module.exports = { run, importSource, emitRecord, matchFilter, getPath, recordExtras, resolveTiming, resolveBillingType, resolveDataSourceFromMap, claudeDataSourceForEntrypoint };
+module.exports = { run, importSource, emitRecord, matchFilter, getPath, recordExtras, resolveTiming, resolveBillingType, resolveDataSourceFromMap, claudeDataSourceForEntrypoint, tsSeconds };
