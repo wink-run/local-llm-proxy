@@ -23,9 +23,10 @@ async function loadClaudeMaskModelSet() {
 
 function filterClaudeMaskModels(models, maskSet) {
   if (!maskSet?.size) return models || [];
-  // 只屏蔽"透明 mask 名"的非社区条目（anthropic 透明名 / 个人误注入的同名）；
-  // 社区 P2P 真实提供的同名 claude 模型是可路由目标，必须保留，否则整批 claude 社区模型都被误删。
-  return (models || []).filter(m => m.tier === 'p2p' || !maskSet.has(m.id));
+  // 只屏蔽"透明 mask 名"：仅 Claude Desktop 内部校验用的透明名（来自 /v1/models、无 personal 标识）。
+  // 保留：① 社区 P2P 真实提供的同名 claude（可路由目标）；② 用户显式注册的个人源 claude（personal 标识），
+  // 否则个人 anthropic 源的 claude-opus-4-8 等会被同名透明名连带误删。
+  return (models || []).filter(m => m.tier === 'p2p' || m.personal || !maskSet.has(m.id));
 }
 
 /** 本地 gateway HTTP 主机名：Electron 固定 127.0.0.1；Docker/CLI Web 用浏览器 hostname，便于远程调试 */
