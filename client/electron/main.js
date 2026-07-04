@@ -1728,34 +1728,7 @@ function registerIPC() {
   });
   // 主动测速探针：发个极小请求走本地网关（按真实模型名路由，非 claude 名不会被 keyScene 改写），
   // 请求跑完网关内部自动 record 记速。返回 {ok,status,latencyMs}。会消耗一次真实调用（P2P 扣积分）。
-  ipcMain.handle('gateway:probeModel', (_e, model) => new Promise((resolve) => {
-    try {
-      if (!model || typeof model !== 'string') return resolve({ ok: false, error: 'no-model' });
-      const cfg = readLocalConfig();
-      const key = (cfg.apps || []).map(a => a.api_key).find(Boolean);
-      if (!key) return resolve({ ok: false, error: 'no-api-key' });
-      const gctx = require('./config-loader').gatewayCtx();
-      const [rawHost, portStr] = String(gctx.reverse || '127.0.0.1:11430').split(':');
-      // 客户端不能拨 0.0.0.0/::（监听地址≠可连接地址）：macOS/Linux 内核会兜到回环，Windows 直接
-      // WSAEADDRNOTAVAIL 失败 → 探针在 Windows 上永远拿不到数据。统一回退回环。
-      const host = (!rawHost || rawHost === '0.0.0.0' || rawHost === '::' || rawHost === '*') ? '127.0.0.1' : rawHost;
-      const payload = JSON.stringify({ model, max_tokens: 12, stream: true, messages: [{ role: 'user', content: 'hi' }] });
-      const start = Date.now();
-      const req = http.request({
-        host, port: parseInt(portStr, 10) || 11430,
-        path: '/v1/chat/completions', method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}`, 'Content-Length': Buffer.byteLength(payload) },
-        timeout: 30000,
-      }, (res) => {
-        res.on('data', () => {});   // 必须读完流，网关才会在流结束时 record 记速
-        res.on('end', () => resolve({ ok: res.statusCode < 400, status: res.statusCode, latencyMs: Date.now() - start }));
-        res.on('error', () => resolve({ ok: false, error: 'stream-error' }));
-      });
-      req.on('error', (e) => resolve({ ok: false, error: e.message }));
-      req.on('timeout', () => { try { req.destroy(); } catch {} resolve({ ok: false, error: 'timeout' }); });
-      req.end(payload);
-    } catch (e) { resolve({ ok: false, error: e.message }); }
-  }));
+  ipcMain.handle('gateway:probeModel', (_e, model) => probeModelViaGateway(model));
   ipcMain.handle('gateway:restart',       () => gateway.restart());
   ipcMain.handle('localStats:compression', (_e, days) => {
     const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
@@ -3729,6 +3702,61 @@ function registerIPC() {
   }, 60_000);
 }
 
+// 主动测速探针：向本地网关发一次极小流式请求，网关在流结束时 record 记速。
+// gateway:probeModel IPC 与「启动自动测速」共用。
+function probeModelViaGateway(model) {
+  return new Promise((resolve) => {
+    try {
+      if (!model || typeof model !== 'string') return resolve({ ok: false, error: 'no-model' });
+      const cfg = readLocalConfig();
+      const key = (cfg.apps || []).map(a => a.api_key).find(Boolean);
+      if (!key) return resolve({ ok: false, error: 'no-api-key' });
+      const gctx = require('./config-loader').gatewayCtx();
+      const [rawHost, portStr] = String(gctx.reverse || '127.0.0.1:11430').split(':');
+      // 客户端不能拨 0.0.0.0/::（监听地址≠可连接地址）：macOS/Linux 内核会兜到回环，Windows 直接
+      // WSAEADDRNOTAVAIL 失败 → 探针在 Windows 上永远拿不到数据。统一回退回环。
+      const host = (!rawHost || rawHost === '0.0.0.0' || rawHost === '::' || rawHost === '*') ? '127.0.0.1' : rawHost;
+      const payload = JSON.stringify({ model, max_tokens: 12, stream: true, messages: [{ role: 'user', content: 'hi' }] });
+      const start = Date.now();
+      const req = http.request({
+        host, port: parseInt(portStr, 10) || 11430,
+        path: '/v1/chat/completions', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}`, 'Content-Length': Buffer.byteLength(payload) },
+        timeout: 30000,
+      }, (res) => {
+        res.on('data', () => {});   // 必须读完流，网关才会在流结束时 record 记速
+        res.on('end', () => resolve({ ok: res.statusCode < 400, status: res.statusCode, latencyMs: Date.now() - start }));
+        res.on('error', () => resolve({ ok: false, error: 'stream-error' }));
+      });
+      req.on('error', (e) => resolve({ ok: false, error: e.message }));
+      req.on('timeout', () => { try { req.destroy(); } catch {} resolve({ ok: false, error: 'timeout' }); });
+      req.end(payload);
+    } catch (e) { resolve({ ok: false, error: e.message }); }
+  });
+}
+
+// 启动时自动测速社区源(p2p)一次：等网关+peer 模型就绪后，对每个 p2p 模型发一次探针，
+// 让社区源速度圆点开机即有数据（无需手动点「全部测速」）。每次启动只跑一次；串行+节流。
+let _communityProbedThisLaunch = false;
+async function autoProbeCommunityOnce() {
+  if (_communityProbedThisLaunch) return;
+  _communityProbedThisLaunch = true;
+  try {
+    let models = (gateway.getStatus() || {}).peerModels || [];
+    if (!models.length) {                    // peer 模型可能还没拉到，等一会重试一次
+      await new Promise(r => setTimeout(r, 8000));
+      models = (gateway.getStatus() || {}).peerModels || [];
+    }
+    if (!models.length) { console.log('[speed] 启动自动测速：暂无社区模型，跳过'); return; }
+    console.log(`[speed] 启动自动测速社区源 ${models.length} 个模型`);
+    for (const m of models) {
+      try { await probeModelViaGateway('p2p:' + m); } catch { /* 单个失败不阻断 */ }
+      await new Promise(r => setTimeout(r, 600));   // 节流，避免瞬时打满社区节点
+    }
+    console.log('[speed] 启动自动测速完成');
+  } catch (e) { console.warn('[speed] 启动自动测速失败:', e.message); }
+}
+
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 
 app.whenReady().then(() => {
@@ -3743,6 +3771,8 @@ app.whenReady().then(() => {
   console.log('[3p-sync] ==== BOOT v2 (reconcile + 双向 watch) 已加载，开始同步 ====');
   sync3pDebugLog('==== BOOT app.whenReady, pid=' + process.pid + ' ====');
   runClaude3pSync('startup');
+  // 启动后自动测速社区源一次（延迟 12s 等网关起来 + p2p peer 模型拉到）
+  setTimeout(() => { autoProbeCommunityOnce(); }, 12000);
   // 文件监听兜底：native / 3p 任一 claude-code-sessions 目录有新/变更文件就立即同步（实时）。
   // 必须双向监听——3p 建的 session 只会改 3p 目录、native 建的只改 native 目录。
   // 只监 account/org 目录（findSessionDir 动态定位）。account/org 变化靠每 60s 重建 watcher 兜底。
