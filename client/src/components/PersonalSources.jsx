@@ -588,12 +588,27 @@ function accountDisplayName(inst) {
 // ── 第3块：按模型视图（仿社区源 P2P 网格：一行两列，左模型、右供给源 logo）────────
 export function PersonalSourceModelView({
   instances, t, trailing = null, onEmptyAdd = null, modelTypeMap = {},
-  latencyMap: latencyMapProp = null, onRefreshLatency = null,
+  latencyMap: latencyMapProp = null, onRefreshLatency = null, probeTargets = [],
 }) {
   const [expandedModel, setExpandedModel] = useState(null);
   const [latencyMapLocal, setLatencyMapLocal] = useState({});
   const latencyMap = latencyMapProp ?? latencyMapLocal;
-  const [speedMap] = useSpeedMap();   // 与下拉/列表视图同源的测速表，圆点颜色保持一致
+  const [speedMap, refreshSpeed] = useSpeedMap();   // 与下拉/列表视图同源的测速表，圆点颜色保持一致
+  const [probing, setProbing] = useState(null);     // null | { done, total }
+  // 全部测速：对每个个人源模型带 tier 前缀（paid:/free:）逐个发探针，强制路由到个人源。
+  // 注意：消耗你自己供给源的真实计费（非积分）。完后刷新圆点。
+  const probeAllPersonal = async () => {
+    if (probing) return;
+    const targets = probeTargets || [];
+    if (!targets.length) return;
+    setProbing({ done: 0, total: targets.length });
+    for (let i = 0; i < targets.length; i++) {
+      try { await window.electronAPI?.gateway?.probeModel?.(targets[i]); } catch { /* ignore */ }
+      setProbing({ done: i + 1, total: targets.length });
+    }
+    try { await refreshSpeed?.(); } catch { /* ignore */ }
+    setProbing(null);
+  };
 
   const loadLatency = useCallback(async () => {
     if (onRefreshLatency) {
@@ -693,7 +708,16 @@ export function PersonalSourceModelView({
             {t('psrc.modelView.summary', { accounts: accountCount, models: byModel.length })}
           </span>
         </div>
-        {trailing}
+        <div className="flex items-center gap-2 shrink-0">
+          {probeTargets.length > 0 && (
+            <button type="button" onClick={probeAllPersonal} disabled={!!probing}
+              title="对每个个人源模型逐个发极小请求测速（真实调用，消耗你自己供给源的计费，非积分）"
+              className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 disabled:opacity-50 flex items-center gap-1 whitespace-nowrap">
+              {probing ? `测速中 ${probing.done}/${probing.total}` : '⚡ 全部测速'}
+            </button>
+          )}
+          {trailing}
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-2">
         {byModel.map(([model, srcs]) => {
