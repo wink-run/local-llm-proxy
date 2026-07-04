@@ -377,14 +377,16 @@ function reassignProviderTier(providerId, tier) {
   const placeholders = ids.map(() => '?').join(',');
   try {
     const rows = db.prepare(
-      `SELECT rowid, model, provider_id, input_tokens, output_tokens,
+      `SELECT id, model, provider_id, input_tokens, output_tokens,
               cache_create_tokens, cache_read_tokens
        FROM requests WHERE provider_id IN (${placeholders})`
     ).all(...ids);
-    const upd = db.prepare('UPDATE requests SET tier = ?, cost_usd = ? WHERE rowid = ?');
+    // 注：表主键列名是 id（= rowid 别名）；SELECT rowid 在 better-sqlite3 里会以 id 返回，
+    // r.rowid 为 undefined 会导致 WHERE rowid=? 匹配不到 → 必须按 id 更新。
+    const upd = db.prepare('UPDATE requests SET tier = ?, cost_usd = ? WHERE id = ?');
     const txn = db.transaction(() => {
       for (const r of rows) {
-        upd.run(tier, recomputeRowCostUsd(r, tier), r.rowid);
+        upd.run(tier, recomputeRowCostUsd(r, tier), r.id);
       }
     });
     txn();
