@@ -2650,6 +2650,13 @@ function registerIPC() {
           (err, _stdout, stderr) => {
             if (err) resolve({ ok: false, error: (String(stderr || '') || err.message).slice(0, 400) });
             else {
+              // 顺带清掉 Token Bank 托管的 shim，避免留下指向已删程序的失效 shim。
+              // 命令名取自该工具的 detect.command（如 claude/codex/opencode）；api_key 应用无 shim，跳过。
+              try {
+                const tool = (require('./config-loader').tools() || []).find(t => t.id === id);
+                const cmd = tool && tool.detect && tool.detect.command;
+                if (cmd) require('./shim-installer').removeShim(cmd);
+              } catch {}
               try { require('./shim-installer').clearCommandCache(); } catch {}
               resolve({ ok: true, pkg });
             }
