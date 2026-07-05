@@ -3,6 +3,9 @@ import { getConfig, getLocalConfig, getGateway } from '../api/adapter';
 import { loadGatewayAvailableModels, resolveGatewayModelType, resolveLocalGatewayBase } from '../api/gatewayModels';
 import { encodeTierModelRoute } from '../lib/route-binding';
 import { useLang } from '../store/lang';
+import AgentSelector from '../components/AgentSelector';
+import ExecutionLog from '../components/ExecutionLog';
+import ExecutionResult from '../components/ExecutionResult';
 
 /** 下拉 value：同 id 跨层时用 tier:id，避免 HTML option 重复 value 选中错位 */
 function modelSelectValue(m) {
@@ -278,6 +281,11 @@ function clearDebugPanelStorage() {
 
 export default function Debug() {
   const { t } = useLang();
+  
+  // 模式切换：'llm' | 'agent'
+  const [mode, setMode] = useState('llm');
+  
+  // LLM 模式状态
   const [cfg,            setCfg]           = useState(null);
   const [provOpts,       setProvOpts]      = useState([]);
   const [selectedId,     setSelectedId]    = useState('__local_gw__');
@@ -292,11 +300,135 @@ export default function Debug() {
   const [sending,        setSending]       = useState(false);
   const [lightbox,       setLightbox]      = useState(null);
 
+  // Agent 模式状态
+  const [agents, setAgents] = useState([]);
+  const [selectedAgent, setSelectedAgent] = useState(null);
+  const [loadingAgents, setLoadingAgents] = useState(false);
+  const [agentPrompt, setAgentPrompt] = useState('');
+  const [agentWorkingDir, setAgentWorkingDir] = useState('');
+  const [currentTask, setCurrentTask] = useState(null);
+  const [taskSteps, setTaskSteps] = useState([]);
+  const [taskResult, setTaskResult] = useState(null);
+  const [executing, setExecuting] = useState(false);
+
   const panel = panels.main;
   const { conversation, input, systemPrompt, showSystem, streamMode, imageMode, imageRatio, imageResolution } = panel;
 
   const messagesEndRef = useRef(null);
   const textareaRef    = useRef(null);
+
+  // Load Agents when switching to agent mode
+  useEffect(() => {
+    if (mode === 'agent' && agents.length === 0) {
+      loadAgents();
+    }
+  }, [mode]);
+
+  // Listen for agent events
+  useEffect(() => {
+    if (!window.electronAPI?.agent) return;
+
+    const handleStep = (stepData) => {
+      if (currentTask && stepData.taskId === currentTask.id) {
+        setTaskSteps(prev => [...prev, stepData]);
+      }
+    };
+
+    const handleCompleted = async (data) => {
+      if (currentTask && data.taskId === currentTask.id) {
+        setExecuting(false);
+        // 获取完整的任务状态
+        const statusResult = await window.electronAPI.agent.getStatus(data.taskId);
+        if (statusResult.success) {
+          setCurrentTask(statusResult.status);
+          setTaskResult(statusResult.status.result ? JSON.parse(statusResult.status.result) : null);
+        }
+      }
+    };
+
+    const handleFailed = (data) => {
+      if (currentTask && data.taskId === currentTask.id) {
+        setExecuting(false);
+      }
+    };
+
+    window.electronAPI.agent.onStep(handleStep);
+    window.electronAPI.agent.onCompleted(handleCompleted);
+    window.electronAPI.agent.onFailed(handleFailed);
+
+    return () => {
+      // Cleanup listeners
+      // Note: electronAPI doesn't provide removeListener, so we just leave them
+    };
+  }, [currentTask]);
+
+  // Load available agents
+  async function loadAgents() {
+    if (!window.electronAPI?.agent) {
+      console.warn('Agent API not available');
+      return;
+    }
+    
+    setLoadingAgents(true);
+    try {
+      const result = await window.electronAPI.agent.list();
+      if (result.success) {
+        setAgents(result.agents || []);
+      }
+    } catch (error) {
+      console.error('Failed to load agents:', error);
+    } finally {
+      setLoadingAgents(false);
+    }
+  }
+
+  // Execute agent task
+  async function executeAgent() {
+    if (!selectedAgent || !agentPrompt.trim() || !window.electronAPI?.agent) {
+      return;
+    }
+
+    setExecuting(true);
+    setTaskSteps([]);
+    setTaskResult(null);
+    setCurrentTask(null);
+
+    try {
+      const result = await window.electronAPI.agent.execute({
+        agentId: selectedAgent.id,
+        prompt: agentPrompt.trim(),
+        options: {
+          workingDir: agentWorkingDir || undefined,
+        },
+      });
+
+      if (result.success) {
+        setCurrentTask({ id: result.taskId, status: 'running' });
+      } else {
+        setExecuting(false);
+        alert('执行失败: ' + (result.error || '未知错误'));
+      }
+    } catch (error) {
+      setExecuting(false);
+      console.error('Agent execution error:', error);
+      alert('执行失败: ' + error.message);
+    }
+  }
+
+  // Cancel agent task
+  async function cancelAgent() {
+    if (!currentTask || !window.electronAPI?.agent) return;
+
+    try {
+      const result = await window.electronAPI.agent.cancel(currentTask.id);
+      if (result.success) {
+        setExecuting(false);
+        setCurrentTask(prev => ({ ...prev, status: 'cancelled' }));
+      }
+    } catch (error) {
+      console.error('Failed to cancel agent:', error);
+    }
+  }
 
   // Load config + gateway status (to get actual running port)
   useEffect(() => {
@@ -501,6 +633,39 @@ export default function Debug() {
       {/* ── Toolbar ── */}
       <div className="shrink-0 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 px-4 pt-3 pb-2 space-y-2">
 
+        {/* Mode Switcher */}
+        <div className="flex gap-2 items-center">
+          <div className="inline-flex rounded-lg border border-zinc-200 dark:border-zinc-700 p-1 bg-zinc-50 dark:bg-zinc-900">
+            <button
+              onClick={() => setMode('llm')}
+              className={`
+                px-4 py-1.5 text-sm font-medium rounded-md transition-all
+                ${mode === 'llm'
+                  ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                  : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
+                }
+              `}
+            >
+              💬 LLM 模式
+            </button>
+            <button
+              onClick={() => setMode('agent')}
+              className={`
+                px-4 py-1.5 text-sm font-medium rounded-md transition-all
+                ${mode === 'agent'
+                  ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                  : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
+                }
+              `}
+            >
+              🤖 Agent 模式
+            </button>
+          </div>
+        </div>
+
+        {/* LLM Mode Toolbar */}
+        {mode === 'llm' && (
+        <>
         {/* Row 1: provider + token */}
         <div className="flex gap-2 items-center flex-wrap">
           {/* Provider dropdown */}
@@ -624,10 +789,31 @@ export default function Debug() {
             rows={2} placeholder={t('debug.systemPh')}
             className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 resize-none" />
         )}
+        </>
+        )}
+
+        {/* Agent Mode Toolbar */}
+        {mode === 'agent' && (
+          <div className="space-y-2">
+            {/* Agent Working Directory */}
+            <div className="flex gap-2 items-center">
+              <label className="text-xs text-zinc-600 dark:text-zinc-400 shrink-0">工作目录:</label>
+              <input
+                value={agentWorkingDir}
+                onChange={e => setAgentWorkingDir(e.target.value)}
+                placeholder="留空使用默认工作目录"
+                className="flex-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500"
+              />
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* ── Message list ── */}
+      {/* ── Message list / Agent UI ── */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        {mode === 'llm' ? (
+          /* LLM Mode: Chat messages */
+          <>
         {conversation.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center text-zinc-400 dark:text-zinc-400 select-none">
             <p className="text-3xl mb-2">{imageMode ? '🎨' : '🐛'}</p>
@@ -703,22 +889,116 @@ export default function Debug() {
           </div>
         ))}
         <div ref={messagesEndRef} />
+          </>
+        ) : (
+          /* Agent Mode: Agent selector + execution */
+          <div className="grid grid-cols-12 gap-4 h-full">
+            {/* Left: Agent Selector */}
+            <div className="col-span-3 overflow-y-auto">
+              <AgentSelector
+                agents={agents}
+                selectedAgent={selectedAgent}
+                onSelect={setSelectedAgent}
+                loading={loadingAgents}
+              />
+            </div>
+
+            {/* Right: Execution Area */}
+            <div className="col-span-9 flex flex-col">
+              {!selectedAgent ? (
+                <div className="flex-1 flex items-center justify-center text-center text-zinc-400 dark:text-zinc-500">
+                  <div>
+                    <p className="text-3xl mb-2">🤖</p>
+                    <p className="text-sm">请先选择一个 Agent</p>
+                  </div>
+                </div>
+              ) : !currentTask ? (
+                <div className="flex-1 flex items-center justify-center text-center text-zinc-400 dark:text-zinc-500">
+                  <div>
+                    <p className="text-3xl mb-2">✨</p>
+                    <p className="text-sm">在下方输入任务描述开始执行</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col gap-4 overflow-hidden">
+                  {/* Execution Log */}
+                  <div className="flex-1 overflow-y-auto">
+                    <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-3">
+                      执行日志:
+                    </h3>
+                    <ExecutionLog steps={taskSteps} status={currentTask?.status} />
+                  </div>
+
+                  {/* Result Display */}
+                  {taskResult && (
+                    <div className="shrink-0 max-h-[40%] overflow-y-auto">
+                      <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-3">
+                        执行结果:
+                      </h3>
+                      <ExecutionResult result={taskResult} task={currentTask} />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Input bar ── */}
       <div className="shrink-0 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 px-4 py-3">
-        <div className="flex gap-2 items-end">
-          <textarea ref={textareaRef} value={input} onChange={handleInputChange} onKeyDown={handleKeyDown}
-            placeholder={imageMode ? t('debug.inputImagePh') : t('debug.inputChatPh')}
-            rows={1} style={{ resize: 'none' }}
-            className="flex-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 overflow-hidden" />
-          <button onClick={handleSend} disabled={sending || !input.trim() || !model || !effectiveBase}
-            className="shrink-0 w-9 h-9 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-40 rounded-xl flex items-center justify-center transition-colors">
-            {sending
-              ? <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-              : <span className="text-white text-sm">↑</span>}
-          </button>
-        </div>
+        {mode === 'llm' ? (
+          /* LLM Mode Input */
+          <div className="flex gap-2 items-end">
+            <textarea ref={textareaRef} value={input} onChange={handleInputChange} onKeyDown={handleKeyDown}
+              placeholder={imageMode ? t('debug.inputImagePh') : t('debug.inputChatPh')}
+              rows={1} style={{ resize: 'none' }}
+              className="flex-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 overflow-hidden" />
+            <button onClick={handleSend} disabled={sending || !input.trim() || !model || !effectiveBase}
+              className="shrink-0 w-9 h-9 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-40 rounded-xl flex items-center justify-center transition-colors">
+              {sending
+                ? <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                : <span className="text-white text-sm">↑</span>}
+            </button>
+          </div>
+        ) : (
+          /* Agent Mode Input */
+          <div className="flex gap-2 items-end">
+            <textarea
+              value={agentPrompt}
+              onChange={e => setAgentPrompt(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  if (!executing && selectedAgent && agentPrompt.trim()) {
+                    executeAgent();
+                  }
+                }
+              }}
+              placeholder="描述你想让 Agent 完成的任务... (Cmd/Ctrl+Enter 发送)"
+              rows={2}
+              className="flex-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 resize-none"
+            />
+            {executing ? (
+              <button
+                onClick={cancelAgent}
+                className="shrink-0 px-4 h-9 bg-red-600 hover:bg-red-500 text-white rounded-xl flex items-center justify-center gap-2 transition-colors"
+              >
+                <span className="w-3 h-3 bg-white rounded-sm"></span>
+                <span className="text-sm">停止</span>
+              </button>
+            ) : (
+              <button
+                onClick={executeAgent}
+                disabled={!selectedAgent || !agentPrompt.trim()}
+                className="shrink-0 px-4 h-9 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-40 text-white rounded-xl flex items-center justify-center gap-2 transition-colors"
+              >
+                <span className="text-sm">▶</span>
+                <span className="text-sm">执行</span>
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Lightbox ── */}

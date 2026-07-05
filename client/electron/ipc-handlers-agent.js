@@ -67,7 +67,7 @@ function registerAgentHandlers() {
   agentExecutor.on('task:step', (stepData) => {
     // 广播给所有窗口
     BrowserWindow.getAllWindows().forEach(win => {
-      win.webContents.send('agent:step', stepData);
+      win.webContents.send('agent:task:step', stepData);
     });
   });
 
@@ -76,7 +76,7 @@ function registerAgentHandlers() {
    */
   agentExecutor.on('task:completed', (data) => {
     BrowserWindow.getAllWindows().forEach(win => {
-      win.webContents.send('agent:completed', data);
+      win.webContents.send('agent:task:completed', data);
     });
   });
 
@@ -85,7 +85,7 @@ function registerAgentHandlers() {
    */
   agentExecutor.on('task:failed', (data) => {
     BrowserWindow.getAllWindows().forEach(win => {
-      win.webContents.send('agent:failed', data);
+      win.webContents.send('agent:task:failed', data);
     });
   });
 
@@ -94,7 +94,7 @@ function registerAgentHandlers() {
    */
   agentExecutor.on('task:cancelled', (data) => {
     BrowserWindow.getAllWindows().forEach(win => {
-      win.webContents.send('agent:cancelled', data);
+      win.webContents.send('agent:task:cancelled', data);
     });
   });
 
