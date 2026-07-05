@@ -204,7 +204,56 @@ const MIGRATIONS = [
   'ALTER TABLE requests ADD COLUMN app_id              TEXT',
   'ALTER TABLE requests ADD COLUMN cost_usd     REAL',
   'ALTER TABLE requests ADD COLUMN billing_type TEXT',
+  // Agent 聚合系统扩展
+  'ALTER TABLE requests ADD COLUMN agent_id TEXT',
+  'ALTER TABLE requests ADD COLUMN mcp_server_id TEXT',
+  'ALTER TABLE requests ADD COLUMN mcp_capability TEXT',
 ];
+
+// Agent 聚合系统表
+const AGENT_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS agent_tasks (
+    id                  TEXT PRIMARY KEY,
+    agent_id            TEXT NOT NULL,
+    prompt              TEXT NOT NULL,
+    context             TEXT,
+    status              TEXT NOT NULL,
+    result              TEXT,
+    error               TEXT,
+    created_at          INTEGER NOT NULL,
+    started_at          INTEGER,
+    completed_at        INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS agent_task_steps (
+    id                  TEXT PRIMARY KEY,
+    task_id             TEXT NOT NULL,
+    step_number         INTEGER NOT NULL,
+    step_type           TEXT,
+    content             TEXT,
+    tool_name           TEXT,
+    tool_input          TEXT,
+    tool_output         TEXT,
+    status              TEXT,
+    created_at          INTEGER NOT NULL,
+    FOREIGN KEY (task_id) REFERENCES agent_tasks(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS agent_modified_files (
+    id                  TEXT PRIMARY KEY,
+    task_id             TEXT NOT NULL,
+    file_path           TEXT NOT NULL,
+    operation           TEXT,
+    diff                TEXT,
+    created_at          INTEGER NOT NULL,
+    FOREIGN KEY (task_id) REFERENCES agent_tasks(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_agent_tasks_agent_id ON agent_tasks(agent_id);
+  CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(status);
+  CREATE INDEX IF NOT EXISTS idx_agent_task_steps_task_id ON agent_task_steps(task_id);
+  CREATE INDEX IF NOT EXISTS idx_agent_modified_files_task_id ON agent_modified_files(task_id);
+`;
 
 /** @param {string} dbDir  Directory that will hold local-stats.db */
 function init(dbDir) {
@@ -222,6 +271,8 @@ function init(dbDir) {
         if (!/duplicate column name/i.test(e.message)) throw e;
       }
     }
+    // Agent 聚合系统表初始化
+    db.exec(AGENT_SCHEMA);
     db.exec(POST_MIGRATION); // 列补齐后再建 request_id 唯一索引
     // INSERT OR IGNORE：命中 request_id 唯一索引时静默跳过（跨来源去重），不报错、不重复计。
     _insertStmt = db.prepare(
@@ -1139,4 +1190,5 @@ module.exports = {
   listSessionMeta, getSessionMeta, setSessionMeta,
   todaySinceTs, sinceTsForDays, queryGatewayInputCostRate, queryModelProviderLatency,
   reassignProviderTier, collectProviderIdVariants,
+  getDb: () => db,  // Agent 聚合系统使用
 };
