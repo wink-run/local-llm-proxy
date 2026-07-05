@@ -33,6 +33,30 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('agent:log', handler);
       return () => ipcRenderer.removeListener('agent:log', handler);
     },
+    // Agent 聚合系统 API
+    list: () => ipcRenderer.invoke('agent:list'),
+    execute: (params) => ipcRenderer.invoke('agent:execute', params),
+    cancel: (taskId) => ipcRenderer.invoke('agent:cancel', taskId),
+    onStep: (cb) => {
+      const handler = (_e, data) => cb(data);
+      ipcRenderer.on('agent:task:step', handler);
+      return () => ipcRenderer.removeListener('agent:task:step', handler);
+    },
+    onCompleted: (cb) => {
+      const handler = (_e, data) => cb(data);
+      ipcRenderer.on('agent:task:completed', handler);
+      return () => ipcRenderer.removeListener('agent:task:completed', handler);
+    },
+    onFailed: (cb) => {
+      const handler = (_e, data) => cb(data);
+      ipcRenderer.on('agent:task:failed', handler);
+      return () => ipcRenderer.removeListener('agent:task:failed', handler);
+    },
+    onCancelled: (cb) => {
+      const handler = (_e, data) => cb(data);
+      ipcRenderer.on('agent:task:cancelled', handler);
+      return () => ipcRenderer.removeListener('agent:task:cancelled', handler);
+    },
   },
   config: {
     read:  () => ipcRenderer.invoke('config:read'),
