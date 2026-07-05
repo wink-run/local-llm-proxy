@@ -14,35 +14,22 @@
 - ✅ 原生化到 Token Bank 的架构中
 - ✅ 统一的用户体验和数据模型
 
-### 架构定位
+### 三层架构
 
-```
-┌────────────────────────────────────────────────────────┐
-│  Token Bank（本地 LLM 中枢）                            │
-│                                                        │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐│
-│  │  资源管理    │  │  供给管理    │  │  执行引擎    ││
-│  │              │  │              │  │              ││
-│  │  • Prompt    │  │  • Provider  │  │  • Agent     ││
-│  │  • Skill     │  │  • MCP       │  │  • Executor  ││
-│  │  • Assistant │  │  • Route     │  │  • Tool      ││
-│  │  • Template  │  │  • Profile   │  │  • Workflow  ││
-│  └──────────────┘  └──────────────┘  └──────────────┘│
-│                                                        │
-│  统一的数据模型 · 统一的 UI · 统一的体验                 │
-└────────────────────────────────────────────────────────┘
+**1. 资源层**（给 Agent 用的公共资源）
+- Prompt 提示词模板
+- Skill 技能包
+- Assistant 预设配置
+- Template 工作流模板
 
-        ↑ 吸收设计思想
-        │
-┌───────┴─────────┬──────────────┬──────────────┐
-│                 │              │              │
-│  AionUi         │  aweskill    │  aweswitch   │
-│  • Office 能力  │  • Skill 管理│  • Profile   │
-│  • Agent 引擎   │  • Bundle    │  • 快速切换  │
-│  • 助手系统     │  • 投射机制  │  • 配置隔离  │
-└─────────────────┴──────────────┴──────────────┘
-    只是参考，不做直接集成
-```
+**2. 执行层**（Agent 聚合）
+- 统一调用已纳管的 Agent
+- 实时执行日志和追踪
+- 成本统计
+
+**3. 供给层**（双维度）
+- Model Provider：提供推理能力
+- MCP Server：提供工具和上下文
 
 ---
 
@@ -80,9 +67,29 @@
 
 ## 📦 一、资源管理系统
 
-### 1.1 统一的资源模型
+### 1.1 核心定位
 
-**核心思想**：Skill、Prompt、Assistant、Template 都是**资源**
+**资源 = 给 Agent 使用的公共能力**
+
+```
+Agent 使用资源的方式：
+  
+  Claude Code 调用任务时
+    ↓ 加载
+  Prompt 模板 + Skill 技能包 + Assistant 配置
+    ↓ 组合
+  增强的 Agent 能力
+```
+
+**吸收 aweskill 的核心思想**：
+- ✅ 统一管理 Skill/Prompt 等资源
+- ✅ 投射机制：资源一次配置，多 Agent 共享
+- ✅ 版本管理和更新
+- ❌ 不依赖外部 CLI
+
+### 1.2 统一的资源模型
+
+**核心思想**：Skill、Prompt、Assistant、Template 都是**资源**，统一管理，供 Agent 使用
 
 #### 数据模型
 
@@ -148,6 +155,8 @@ CREATE TABLE resource_usage (
 
 ##### 1. Prompt（提示词模板）
 
+**用途**：Agent 调用时使用的提示词模板
+
 ```javascript
 // 示例：Prompt 资源
 {
@@ -175,9 +184,14 @@ CREATE TABLE resource_usage (
   },
   source: 'builtin'
 }
+
+// Agent 使用场景：
+// claude-code --prompt "$(render-prompt code-review code=src/app.js security=true)"
 ```
 
 ##### 2. Skill（Agent 技能）
+
+**用途**：Agent 可加载的技能包，增强 Agent 能力
 
 **吸收 aweskill 的设计**：
 - SKILL.md 格式（frontmatter + 内容）
@@ -215,9 +229,17 @@ required_permissions: [read_file, write_file, run_code]
   source: 'sciskill:open-source/data/python-data-science',
   source_url: 'https://sciskillhub.org/api/skills/...'
 }
+
+// Agent 使用场景（投射）：
+// ~/.aweskill/skills/python-data-science/SKILL.md
+//   → symlink/copy 到
+// ~/.config/claude-code/skills/python-data-science/SKILL.md
+// ~/.config/codex/skills/python-data-science/SKILL.md
 ```
 
 ##### 3. Assistant（助手配置）
+
+**用途**：预设的角色和能力组合，供 Agent 快速应用
 
 **吸收 AionUi 的助手系统**：
 - 预设的角色和能力
@@ -228,13 +250,13 @@ required_permissions: [read_file, write_file, run_code]
 // 示例：Assistant 资源
 {
   type: 'assistant',
-  name: 'ppt-creator',
-  display_name: 'PPT 创建助手',
+  name: 'python-expert',
+  display_name: 'Python 专家',
   content: `{
-    "system_prompt": "你是一个专业的 PPT 制作专家...",
-    "skills": ["officecli-ppt", "design-principles"],
-    "prompts": ["ppt-structure", "slide-design"],
-    "tools": ["pptx_generator", "image_search"],
+    "system_prompt": "你是一个 Python 专家，精通数据科学和 Web 开发...",
+    "skills": ["python-data-science", "fastapi-web"],
+    "prompts": ["code-review", "refactoring"],
+    "tools": ["python_repl", "pytest_runner"],
     "model_preference": {
       "primary": "claude-sonnet-4-6",
       "fallback": ["gemini-2.0-flash-exp"]
@@ -245,15 +267,22 @@ required_permissions: [read_file, write_file, run_code]
     }
   }`,
   metadata: {
-    tags: ['office', 'ppt', 'presentation'],
-    capabilities: ['ppt-generation', 'design'],
-    category: 'productivity'
+    tags: ['python', 'expert', 'assistant'],
+    capabilities: ['coding', 'data-science', 'web'],
+    category: 'development'
   },
   source: 'builtin'
 }
+
+// Agent 使用场景：
+// Debug 页面选择 "Python 专家" Assistant
+//   → 自动加载关联的 Skill 和 Prompt
+//   → 使用预设的 system_prompt 和参数
 ```
 
 ##### 4. Template（工作流模板）
+
+**用途**：多步骤工作流配置，Agent 可按模板执行
 
 ```javascript
 // 示例：Template 资源
@@ -295,6 +324,11 @@ required_permissions: [read_file, write_file, run_code]
   },
   source: 'local'
 }
+
+// Agent 使用场景：
+// Debug 页面选择 "API 开发工作流" Template
+//   → 按步骤自动调用不同的 Assistant
+//   → 上一步的输出作为下一步的输入
 ```
 
 ---
