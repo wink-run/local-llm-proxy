@@ -172,7 +172,43 @@ function revertEverythingOnExit() {
 function applyById(id)  { const t = configLoader.tools().find(x => x.id === id); return t ? apply(t)  : { ok:false, error:'no-such-tool' }; }
 function revertById(id) { const t = configLoader.tools().find(x => x.id === id); return t ? revert(t) : { ok:false, error:'no-such-tool' }; }
 
+/** 已纳管且绑路由的应用 → 网关 env（供 Debug spawn 直调真实 CLI，不依赖 PATH shim） */
+function buildGatewayEnv(toolId) {
+  const tool = configLoader.tools().find(t => t.id === toolId);
+  if (!tool || tool.unsupported || tool.route_bindable === false) return {};
+  return resolveEnvKeys(tool.id, (tool.inject && tool.inject.env) || {});
+}
+
+function gatewayOrigin() {
+  const gw = gwHostPort();
+  return gw ? `http://${gw}` : null;
+}
+
+function isGatewayHealthy(origin) {
+  if (!origin) return false;
+  try {
+    if (process.platform === 'win32') {
+      execFileSync('curl.exe', ['-s', '-o', 'NUL', '-m', '1', `${origin}/health`], { stdio: 'ignore' });
+    } else {
+      execFileSync('curl', ['-s', '-o', '/dev/null', '-m', '1', `${origin}/health`], { stdio: 'ignore' });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** spawn 子进程时合并网关 env（网关在线且应用已纳管并绑路由） */
+function buildSpawnEnv(toolId, baseEnv = process.env) {
+  const origin = gatewayOrigin();
+  if (!origin || !isGatewayHealthy(origin)) return { ...baseEnv };
+  const injected = buildGatewayEnv(toolId);
+  if (!Object.keys(injected).length) return { ...baseEnv };
+  return { ...baseEnv, ...injected };
+}
+
 module.exports = {
   list, apply, revert, status, applyAll, revertAll,
   applyById, revertById, revertEverythingOnExit, setKeyResolver,
+  buildGatewayEnv, buildSpawnEnv,
 };

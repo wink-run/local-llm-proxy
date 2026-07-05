@@ -2,7 +2,7 @@
 // Agent 聚合系统的 IPC 处理器
 'use strict';
 
-const { ipcMain } = require('electron');
+const { ipcMain, BrowserWindow, dialog } = require('electron');
 const agentExecutor = require('./agent-executor');
 
 /**
@@ -48,6 +48,37 @@ function registerAgentHandlers() {
     }
   });
 
+  ipcMain.handle('agent:cancelAllActive', async () => {
+    try {
+      return await agentExecutor.cancelAllActive();
+    } catch (error) {
+      console.error('[IPC] agent:cancelAllActive error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  /**
+   * 选择工作目录
+   */
+  ipcMain.handle('agent:pickWorkingDir', async (_event, opts = {}) => {
+    try {
+      const win = BrowserWindow.getFocusedWindow();
+      const defaultPath = opts.defaultPath && String(opts.defaultPath).trim();
+      const result = await dialog.showOpenDialog(win, {
+        title: '选择 Agent 工作目录',
+        properties: ['openDirectory', 'createDirectory'],
+        ...(defaultPath ? { defaultPath } : {}),
+      });
+      if (result.canceled || !result.filePaths?.length) {
+        return { success: false, canceled: true };
+      }
+      return { success: true, path: result.filePaths[0] };
+    } catch (error) {
+      console.error('[IPC] agent:pickWorkingDir error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   /**
    * 获取任务状态
    */
@@ -61,6 +92,16 @@ function registerAgentHandlers() {
     }
   });
 
+  ipcMain.handle('agent:listActiveTasks', async () => {
+    try {
+      const tasks = await agentExecutor.listActiveTasks();
+      return { success: true, tasks };
+    } catch (error) {
+      console.error('[IPC] agent:listActiveTasks error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   /**
    * 监听实时步骤事件
    */
@@ -68,6 +109,12 @@ function registerAgentHandlers() {
     // 广播给所有窗口
     BrowserWindow.getAllWindows().forEach(win => {
       win.webContents.send('agent:task:step', stepData);
+    });
+  });
+
+  agentExecutor.on('task:dispatched', (data) => {
+    BrowserWindow.getAllWindows().forEach(win => {
+      win.webContents.send('agent:task:dispatched', data);
     });
   });
 
@@ -101,7 +148,7 @@ function registerAgentHandlers() {
   console.log('[IPC] Agent handlers registered');
 }
 
-// 需要 BrowserWindow
-const { BrowserWindow } = require('electron');
+// 需要 BrowserWindow（事件广播）
+// dialog / BrowserWindow 已在顶部引入
 
 module.exports = { registerAgentHandlers };

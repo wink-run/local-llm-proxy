@@ -1,0 +1,578 @@
+version: 1
+category_groups:
+  tokenbank: Token Bank 内置
+  official: 官方参考（维护中）
+  filesystem: 文件与代码
+  web: 网络与搜索
+  database: 数据库
+  browser: 浏览器自动化
+  collaboration: 协作与 SaaS
+  reasoning: 推理增强
+group_order:
+- tokenbank
+- official
+- filesystem
+- web
+- database
+- browser
+- collaboration
+- reasoning
+items:
+- catalog_id: tokenbank-agent-bridge
+  id: tokenbank-agent-bridge
+  name: tokenbank-agent-bridge
+  display_name: Token Bank Agent Bridge
+  description: 内置 Agent 派发桥：tb_list_agents / tb_dispatch_agent
+  type: stdio
+  command: __DYNAMIC_ELECTRON__
+  args: []
+  env:
+    ELECTRON_RUN_AS_NODE: '1'
+  metadata:
+    category: agent
+    categoryGroup: tokenbank
+    icon: 🔗
+    tools:
+    - tb_list_agents
+    - tb_dispatch_agent
+    tags:
+    - 内置
+    - 编排
+  config_fields: []
+  always_installed: true
+- catalog_id: filesystem
+  id: mcp-filesystem
+  name: filesystem
+  display_name: Filesystem
+  description: 读写本地文件、列目录、搜索（官方维护）
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - '@modelcontextprotocol/server-filesystem'
+  env: {}
+  metadata:
+    category: filesystem
+    categoryGroup: official
+    icon: 📁
+    tools:
+    - read_file
+    - write_file
+    - list_directory
+    - search_files
+    - get_file_info
+    package: '@modelcontextprotocol/server-filesystem'
+    tags:
+    - 官方
+    - 文件
+  config_fields:
+  - key: allowedDir
+    label: 允许访问目录
+    type: path
+    defaultValue: /Users/ully
+    appendArg: true
+  always_installed: false
+- catalog_id: memory
+  id: mcp-memory
+  name: memory
+  display_name: Memory
+  description: 跨会话知识图谱记忆（官方维护）
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - '@modelcontextprotocol/server-memory'
+  env: {}
+  metadata:
+    category: memory
+    categoryGroup: official
+    icon: 🧠
+    tools:
+    - create_entities
+    - search_nodes
+    - read_graph
+    - add_observations
+    package: '@modelcontextprotocol/server-memory'
+    tags:
+    - 官方
+    - 记忆
+  config_fields: []
+  always_installed: false
+- catalog_id: sequential-thinking
+  id: mcp-sequential-thinking
+  name: sequential-thinking
+  display_name: Sequential Thinking
+  description: 结构化分步推理（官方维护）
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - '@modelcontextprotocol/server-sequential-thinking'
+  env: {}
+  metadata:
+    category: reasoning
+    categoryGroup: official
+    icon: 💭
+    tools:
+    - sequentialthinking
+    package: '@modelcontextprotocol/server-sequential-thinking'
+    tags:
+    - 官方
+    - 推理
+  config_fields: []
+  always_installed: false
+- catalog_id: everything
+  id: mcp-everything
+  name: everything
+  display_name: Everything (Demo)
+  description: MCP 协议全能力演示服务器（官方参考）
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - '@modelcontextprotocol/server-everything'
+  env: {}
+  metadata:
+    category: demo
+    categoryGroup: official
+    icon: 🧪
+    tools:
+    - echo
+    - add
+    - longRunningOperation
+    package: '@modelcontextprotocol/server-everything'
+    tags:
+    - 官方
+    - 演示
+  config_fields: []
+  always_installed: false
+- catalog_id: git
+  id: mcp-git
+  name: git
+  display_name: Git
+  description: Git 仓库状态、diff、提交、日志（社区包 mcp-server-git）
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - mcp-server-git
+  env: {}
+  metadata:
+    category: code
+    categoryGroup: filesystem
+    icon: 🔀
+    tools:
+    - git_status
+    - git_diff
+    - git_commit
+    - git_log
+    package: mcp-server-git
+    tags:
+    - Git
+    - 代码
+  config_fields:
+  - key: repoPath
+    label: Git 仓库路径
+    type: path
+    defaultValue: /Users/ully
+    appendArg: true
+  always_installed: false
+- catalog_id: github
+  id: mcp-github
+  name: github
+  display_name: GitHub
+  description: 仓库、Issue、PR、文件内容（需 GitHub Token，参考实现已归档仍广泛使用）
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - '@modelcontextprotocol/server-github'
+  env: {}
+  metadata:
+    category: code
+    categoryGroup: filesystem
+    icon: 🐙
+    tools:
+    - search_repositories
+    - create_issue
+    - get_file_contents
+    - create_pull_request
+    package: '@modelcontextprotocol/server-github'
+    tags:
+    - GitHub
+    - 代码
+  config_fields:
+  - key: githubToken
+    label: GitHub Personal Access Token
+    type: secret
+    envKey: GITHUB_PERSONAL_ACCESS_TOKEN
+    required: true
+  always_installed: false
+- catalog_id: fetch
+  id: mcp-fetch
+  name: fetch
+  display_name: Fetch / Web
+  description: 抓取网页为 Markdown / 纯文本 / JSON（mcp-fetch-server）
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - mcp-fetch-server
+  env: {}
+  metadata:
+    category: web
+    categoryGroup: web
+    icon: 🌐
+    tools:
+    - fetch
+    - fetch_markdown
+    - fetch_json
+    package: mcp-fetch-server
+    tags:
+    - 网页
+    - 抓取
+  config_fields: []
+  always_installed: false
+- catalog_id: brave-search
+  id: mcp-brave-search
+  name: brave-search
+  display_name: Brave Search
+  description: Web 与本地搜索（需 Brave Search API Key）
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - '@modelcontextprotocol/server-brave-search'
+  env: {}
+  metadata:
+    category: web
+    categoryGroup: web
+    icon: 🦁
+    tools:
+    - brave_web_search
+    - brave_local_search
+    package: '@modelcontextprotocol/server-brave-search'
+    tags:
+    - 搜索
+    - Brave
+  config_fields:
+  - key: braveApiKey
+    label: Brave Search API Key
+    type: secret
+    envKey: BRAVE_API_KEY
+    required: true
+  always_installed: false
+- catalog_id: google-maps
+  id: mcp-google-maps
+  name: google-maps
+  display_name: Google Maps
+  description: 地点搜索、路线、详情（需 Google Maps API Key）
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - '@modelcontextprotocol/server-google-maps'
+  env: {}
+  metadata:
+    category: web
+    categoryGroup: web
+    icon: 🗺️
+    tools:
+    - search_places
+    - get_directions
+    - geocode
+    package: '@modelcontextprotocol/server-google-maps'
+    tags:
+    - 地图
+    - Google
+  config_fields:
+  - key: googleMapsKey
+    label: Google Maps API Key
+    type: secret
+    envKey: GOOGLE_MAPS_API_KEY
+    required: true
+  always_installed: false
+- catalog_id: context7
+  id: mcp-context7
+  name: context7
+  display_name: Context7
+  description: 拉取最新库/框架文档，减少幻觉（Upstash Context7）
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - '@upstash/context7-mcp'
+  env: {}
+  metadata:
+    category: docs
+    categoryGroup: web
+    icon: 📚
+    tools:
+    - resolve-library-id
+    - get-library-docs
+    package: '@upstash/context7-mcp'
+    tags:
+    - 文档
+    - Context7
+  config_fields: []
+  always_installed: false
+- catalog_id: postgres
+  id: mcp-postgres
+  name: postgres
+  display_name: PostgreSQL
+  description: 只读 SQL 查询与 schema 探查（参考实现，生产建议用 Supabase MCP）
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - '@modelcontextprotocol/server-postgres'
+  env: {}
+  metadata:
+    category: database
+    categoryGroup: database
+    icon: 🐘
+    tools:
+    - query
+    package: '@modelcontextprotocol/server-postgres'
+    tags:
+    - PostgreSQL
+    - SQL
+  config_fields:
+  - key: connectionString
+    label: PostgreSQL 连接串
+    type: secret
+    placeholder: postgresql://user:pass@localhost:5432/db
+    appendArg: true
+    required: true
+  always_installed: false
+- catalog_id: redis
+  id: mcp-redis
+  name: redis
+  display_name: Redis
+  description: Redis 键值读写（需 REDIS_URL）
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - '@modelcontextprotocol/server-redis'
+  env: {}
+  metadata:
+    category: database
+    categoryGroup: database
+    icon: 🔴
+    tools:
+    - get
+    - set
+    - list
+    - delete
+    package: '@modelcontextprotocol/server-redis'
+    tags:
+    - Redis
+    - 缓存
+  config_fields:
+  - key: redisUrl
+    label: Redis URL
+    type: secret
+    envKey: REDIS_URL
+    placeholder: redis://localhost:6379
+    required: true
+  always_installed: false
+- catalog_id: supabase
+  id: mcp-supabase
+  name: supabase
+  display_name: Supabase
+  description: Supabase 项目管理与数据库（需 Access Token）
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - '@supabase/mcp-server-supabase'
+  env: {}
+  metadata:
+    category: database
+    categoryGroup: database
+    icon: ⚡
+    tools:
+    - list_projects
+    - execute_sql
+    - apply_migration
+    package: '@supabase/mcp-server-supabase'
+    tags:
+    - Supabase
+    - BaaS
+  config_fields:
+  - key: supabaseToken
+    label: Supabase Access Token
+    type: secret
+    envKey: SUPABASE_ACCESS_TOKEN
+    required: true
+  always_installed: false
+- catalog_id: elasticsearch
+  id: mcp-elasticsearch
+  name: elasticsearch
+  display_name: Elasticsearch
+  description: Elasticsearch 索引搜索与集群信息
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - '@elastic/mcp-server-elasticsearch'
+  env: {}
+  metadata:
+    category: database
+    categoryGroup: database
+    icon: 🔍
+    tools:
+    - search
+    - list_indices
+    - get_mapping
+    package: '@elastic/mcp-server-elasticsearch'
+    tags:
+    - Elastic
+    - 搜索
+  config_fields:
+  - key: esUrl
+    label: Elasticsearch URL
+    type: text
+    envKey: ES_URL
+    placeholder: http://localhost:9200
+  always_installed: false
+- catalog_id: puppeteer
+  id: mcp-puppeteer
+  name: puppeteer
+  display_name: Puppeteer
+  description: 无头 Chrome 浏览、截图、点击（参考实现已归档）
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - '@modelcontextprotocol/server-puppeteer'
+  env: {}
+  metadata:
+    category: browser
+    categoryGroup: browser
+    icon: 🎭
+    tools:
+    - puppeteer_navigate
+    - puppeteer_screenshot
+    - puppeteer_click
+    package: '@modelcontextprotocol/server-puppeteer'
+    tags:
+    - 浏览器
+    - Puppeteer
+  config_fields: []
+  always_installed: false
+- catalog_id: playwright
+  id: mcp-playwright
+  name: playwright
+  display_name: Playwright
+  description: Microsoft 官方 Playwright 浏览器自动化 MCP
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - '@playwright/mcp'
+  env: {}
+  metadata:
+    category: browser
+    categoryGroup: browser
+    icon: 🎬
+    tools:
+    - browser_navigate
+    - browser_snapshot
+    - browser_click
+    package: '@playwright/mcp'
+    tags:
+    - 浏览器
+    - Playwright
+    - 官方
+  config_fields: []
+  always_installed: false
+- catalog_id: slack
+  id: mcp-slack
+  name: slack
+  display_name: Slack
+  description: 频道消息、搜索（需 Bot Token）
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - '@modelcontextprotocol/server-slack'
+  env: {}
+  metadata:
+    category: collaboration
+    categoryGroup: collaboration
+    icon: 💬
+    tools:
+    - slack_post_message
+    - slack_list_channels
+    package: '@modelcontextprotocol/server-slack'
+    tags:
+    - Slack
+    - 协作
+  config_fields:
+  - key: slackToken
+    label: Slack Bot Token (xoxb-...)
+    type: secret
+    envKey: SLACK_BOT_TOKEN
+    required: true
+  always_installed: false
+- catalog_id: notion
+  id: mcp-notion
+  name: notion
+  display_name: Notion
+  description: Notion 页面与数据库读写（需 Integration Token）
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - '@notionhq/notion-mcp-server'
+  env: {}
+  metadata:
+    category: collaboration
+    categoryGroup: collaboration
+    icon: 📝
+    tools:
+    - search
+    - retrieve_page
+    - create_page
+    package: '@notionhq/notion-mcp-server'
+    tags:
+    - Notion
+    - 笔记
+  config_fields:
+  - key: notionToken
+    label: Notion Integration Token
+    type: secret
+    envKey: NOTION_TOKEN
+    required: true
+  always_installed: false
+- catalog_id: sentry
+  id: mcp-sentry
+  name: sentry
+  display_name: Sentry
+  description: Sentry Issue 查询与分析
+  type: stdio
+  command: npx
+  args:
+  - -y
+  - '@sentry/mcp-server'
+  env: {}
+  metadata:
+    category: collaboration
+    categoryGroup: collaboration
+    icon: 🐛
+    tools:
+    - list_issues
+    - get_issue_details
+    package: '@sentry/mcp-server'
+    tags:
+    - Sentry
+    - 监控
+  config_fields:
+  - key: sentryToken
+    label: Sentry Auth Token
+    type: secret
+    envKey: SENTRY_AUTH_TOKEN
+    required: true
+  always_installed: false

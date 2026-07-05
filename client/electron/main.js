@@ -1542,6 +1542,10 @@ function registerIPC() {
   // Agent 聚合系统 IPC handlers
   const { registerAgentHandlers } = require('./ipc-handlers-agent');
   registerAgentHandlers();
+  const { registerMcpHandlers } = require('./ipc-handlers-mcp');
+  registerMcpHandlers();
+  const { registerResourceHandlers } = require('./ipc-handlers-resource');
+  registerResourceHandlers();
   
   const billingConfigMod = require('./billing-config');
   ipcMain.on('tray:lang',  (_e, lang)      => { _trayLang = lang === 'en' ? 'en' : 'zh'; refreshTray(); });
@@ -3934,6 +3938,12 @@ app.whenReady().then(() => {
   setInterval(watchSessions, 60000); // 每 60s 重建，覆盖 account/org 目录变化
   // Init local SQLite stats DB（与 CLI 共用 ~/.tokenbank）
   localStats.init(STATS_DIR);
+  try { require('./mcp-manager').init(); } catch (e) {
+    console.warn('[mcp-manager] init skipped:', e.message);
+  }
+  try { require('./mcp-manager').syncToClients(); } catch (e) {
+    console.warn('[mcp-client-sync] startup sync skipped:', e.message);
+  }
   try { cursorHooks.syncForApps(readLocalConfig().apps || [], process.execPath); } catch (e) {
     console.warn('[cursor-hooks] startup sync skipped:', e.message);
   }
@@ -3973,7 +3983,11 @@ app.whenReady().then(() => {
   agentLinker.setKeyResolver((toolId) => {
     const apps = readLocalConfig().apps || [];
     const a = apps.find(x => x.link_method === 'shim' && x.agent_id === toolId);
-    return a ? a.api_key : null;
+    if (!a || a.hosted === false) return null;
+    // 未绑路由 = 纳管但直连，不走网关（与 apps:list configured 口径一致）
+    const hasRoute = !!(a.route_id || (Array.isArray(a.route_ids) && a.route_ids.length));
+    if (!hasRoute) return null;
+    return a.api_key || null;
   });
   gateway.start(11430, readAgentConfig, writeAgentConfig);
 

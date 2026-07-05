@@ -34,13 +34,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener('agent:log', handler);
     },
     // Agent 聚合系统 API
-    list: () => ipcRenderer.invoke('agent:list'),
+    listAgents: () => ipcRenderer.invoke('agent:list'),
     execute: (params) => ipcRenderer.invoke('agent:execute', params),
     cancel: (taskId) => ipcRenderer.invoke('agent:cancel', taskId),
+    cancelAllActive: () => ipcRenderer.invoke('agent:cancelAllActive'),
+    getTaskStatus: (taskId) => ipcRenderer.invoke('agent:getStatus', taskId),
+    listActiveTasks: () => ipcRenderer.invoke('agent:listActiveTasks'),
+    pickWorkingDir: (opts) => ipcRenderer.invoke('agent:pickWorkingDir', opts),
+    // 兼容旧调用
+    list: () => ipcRenderer.invoke('agent:list'),
     onStep: (cb) => {
       const handler = (_e, data) => cb(data);
       ipcRenderer.on('agent:task:step', handler);
       return () => ipcRenderer.removeListener('agent:task:step', handler);
+    },
+    onDispatched: (cb) => {
+      const handler = (_e, data) => cb(data);
+      ipcRenderer.on('agent:task:dispatched', handler);
+      return () => ipcRenderer.removeListener('agent:task:dispatched', handler);
     },
     onCompleted: (cb) => {
       const handler = (_e, data) => cb(data);
@@ -57,6 +68,42 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('agent:task:cancelled', handler);
       return () => ipcRenderer.removeListener('agent:task:cancelled', handler);
     },
+  },
+  mcp: {
+    listServers: () => ipcRenderer.invoke('mcp:listServers'),
+    listCatalog: () => ipcRenderer.invoke('mcp:listCatalog'),
+    installCatalog: (params) => ipcRenderer.invoke('mcp:installCatalog', params),
+    uninstallServer: (serverId) => ipcRenderer.invoke('mcp:uninstallServer', serverId),
+    setServerStatus: (params) => ipcRenderer.invoke('mcp:setServerStatus', params),
+    saveServer: (data) => ipcRenderer.invoke('mcp:saveServer', data),
+    listProfiles: () => ipcRenderer.invoke('mcp:listProfiles'),
+    getProfile: (profileId) => ipcRenderer.invoke('mcp:getProfile', profileId),
+    saveProfile: (params) => ipcRenderer.invoke('mcp:saveProfile', params),
+    syncClients: (options) => ipcRenderer.invoke('mcp:syncClients', options || {}),
+    getSyncStatus: () => ipcRenderer.invoke('mcp:getSyncStatus'),
+    listAgentInstallations: () => ipcRenderer.invoke('mcp:listAgentInstallations'),
+    importFromClient: (params) => ipcRenderer.invoke('mcp:importFromClient', params),
+    importFromAgent: (params) => ipcRenderer.invoke('mcp:importFromAgent', params || {}),
+    setServerSyncClients: (params) => ipcRenderer.invoke('mcp:setServerSyncClients', params),
+    toggleServerSyncClient: (params) => ipcRenderer.invoke('mcp:toggleServerSyncClient', params),
+    removeFromAgent: (params) => ipcRenderer.invoke('mcp:removeFromAgent', params),
+  },
+  resource: {
+    listCatalog: (filters) => ipcRenderer.invoke('resource:listCatalog', filters || {}),
+    listResources: (filters) => ipcRenderer.invoke('resource:listResources', filters || {}),
+    installCatalog: (params) => ipcRenderer.invoke('resource:installCatalog', params || {}),
+    saveResource: (data) => ipcRenderer.invoke('resource:saveResource', data || {}),
+    pickImportPath: (options) => ipcRenderer.invoke('resource:pickImportPath', options || {}),
+    importFromPath: (params) => ipcRenderer.invoke('resource:importFromPath', params || {}),
+    deleteResource: (resourceId) => ipcRenderer.invoke('resource:deleteResource', resourceId),
+    project: (params) => ipcRenderer.invoke('resource:project', params || {}),
+    unproject: (params) => ipcRenderer.invoke('resource:unproject', params || {}),
+    listAgentTargets: () => ipcRenderer.invoke('resource:listAgentTargets'),
+    scanDiscovered: (filters) => ipcRenderer.invoke('resource:scanDiscovered', filters || {}),
+    importDiscovered: (params) => ipcRenderer.invoke('resource:importDiscovered', params || {}),
+    listAgentInstallations: () => ipcRenderer.invoke('resource:listAgentInstallations'),
+    importFromAgent: (params) => ipcRenderer.invoke('resource:importFromAgent', params || {}),
+    removeFromAgent: (params) => ipcRenderer.invoke('resource:removeFromAgent', params || {}),
   },
   config: {
     read:  () => ipcRenderer.invoke('config:read'),
