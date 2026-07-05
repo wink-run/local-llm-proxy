@@ -46,6 +46,38 @@
 
 ---
 
+## 🔀 零、供给源的双维度
+
+### 供给源 = Model Provider + MCP Server
+
+**传统供给源**：只有模型提供商（Anthropic、OpenAI、Google 等）
+
+**增强后的供给源**：
+```
+维度 1：Model Provider（提供推理能力）
+  ├─ Anthropic (Claude)
+  ├─ OpenAI (GPT)
+  ├─ Google (Gemini)
+  └─ ...
+
+维度 2：MCP Server（提供工具和上下文）
+  ├─ Filesystem MCP（文件操作）
+  ├─ GitHub MCP（代码托管）
+  ├─ Database MCP（数据库访问）
+  ├─ Web Search MCP（网络搜索）
+  └─ Custom MCP（自定义工具）
+```
+
+**吸收 MCPMate 的设计**：
+- ✅ MCP 代理和管理
+- ✅ Profile 机制（场景化工具裁剪）
+- ✅ 实时监控和日志
+- ❌ 不做独立应用，集成到 Providers 页面
+
+**详细设计**：参见 `docs/mcp-supply-source-design.md`
+
+---
+
 ## 📦 一、资源管理系统
 
 ### 1.1 统一的资源模型
@@ -1332,16 +1364,18 @@ ipcMain.handle('agent:list', async () => {
 | **AionUi Agent 聚合** | Agent 聚合系统 + Debug 页面 | 吸收架构设计，调用已纳管 Agent | **P0** |
 | **AionUi 多 Agent 协同** | AgentExecutor 统一调用接口 | 原生实现，支持多种 Agent | **P0** |
 | **AionUi 执行追踪** | agent_tasks / agent_task_steps 表 | 实时记录，可视化展示 | **P0** |
-| **aweskill Skill 管理** | Resource 系统 | 吸收数据模型和投射机制 | **P1** |
-| **aweskill 发现/更新** | ResourceDiscovery | 复用 API，原生界面 | **P1** |
-| **AionUi Assistant** | Assistant 资源类型 | 原生配置格式 | **P2** |
-| **AionUi Office 能力** | 暂不实施 | 可作为 Agent 的能力之一 | **P3** |
+| **MCPMate MCP 代理** | MCP Manager + Providers 页面 | 吸收设计，原生实现 | **P1** |
+| **MCPMate Profile 裁剪** | mcp_profiles 表 + 过滤机制 | 场景化工具管理 | **P1** |
+| **MCPMate 实时监控** | mcp_call_logs + local_stats | 日志和成本追踪 | **P1** |
+| **aweskill Skill 管理** | Resource 系统 | 吸收数据模型和投射机制 | **P2** |
+| **aweskill 发现/更新** | ResourceDiscovery | 复用 API，原生界面 | **P2** |
+| **AionUi Assistant** | Assistant 资源类型 | 原生配置格式 | **P3** |
 
 **说明**：
-- **P0**：核心功能，优先实现
-- **P1**：重要功能，第二阶段
-- **P2**：可选功能，看需求
-- **P3**：暂不考虑
+- **P0**：核心功能，优先实现（Agent 聚合）
+- **P1**：重要功能，第二阶段（MCP 供给源）
+- **P2**：次要功能，第三阶段（资源管理）
+- **P3**：可选功能，看需求（Assistant）
 
 ---
 
@@ -1350,7 +1384,8 @@ ipcMain.handle('agent:list', async () => {
 ### 核心目标
 
 1. **Agent 聚合**：统一入口调用 Gateway 已纳管的 Agent
-2. **资源管理**：Skill/Prompt 统一管理和投射
+2. **MCP 供给源**：将 MCP Server 作为第二类供给源
+3. **资源管理**：Skill/Prompt 统一管理和投射
 
 ### Phase 1：Agent 聚合系统（核心）
 
@@ -1379,41 +1414,69 @@ ipcMain.handle('agent:list', async () => {
 - [ ] 结果展示（文件/统计）
 - [ ] 与 Gateway 状态联动
 
-### Phase 2：资源管理系统
+### Phase 2：MCP 供给源（重要）
 
-**5. 数据模型**
+**5. MCP 数据模型**
+- [ ] 创建 mcp_servers / mcp_capabilities / mcp_profiles 表
+- [ ] 创建 mcp_client_bindings / mcp_call_logs 表
+- [ ] 扩展 local_stats 添加 MCP 字段
+
+**6. MCP Manager**
+- [ ] 实现 MCPManager 类
+- [ ] 支持 stdio 模式 MCP 服务器
+- [ ] 支持 HTTP 模式 MCP 服务器
+- [ ] 工具调用和日志记录
+- [ ] Profile 过滤机制
+
+**7. Providers 页面 MCP 集成**
+- [ ] MCP Server 标签页
+- [ ] 添加/编辑/删除 MCP Server
+- [ ] 启动/停止 MCP Server
+- [ ] MCP Profile 管理
+- [ ] 客户端绑定管理
+
+**8. Agent + MCP 联动**
+- [ ] Agent 执行时注入 MCP 工具
+- [ ] MCP 工具调用拦截
+- [ ] Debug 页面显示 MCP 工具
+- [ ] MCP 成本追踪
+
+### Phase 3：资源管理系统
+
+**9. 数据模型**
 - [ ] 创建 resources / resource_collections / resource_projections 表
 - [ ] 支持 Prompt / Skill / Assistant / Template 类型
 
-**6. 资源发现和管理**
+**10. 资源发现和管理**
 - [ ] ResourceDiscovery（本地 + sciskillhub）
 - [ ] ResourceManager（CRUD）
 - [ ] ResourceProjector（投射到 Agent）
 - [ ] 资源更新机制
 
-**7. Resources 页面**
+**11. Resources 页面**
 - [ ] 资源列表和搜索
 - [ ] 资源详情和编辑
 - [ ] 导入和创建
 - [ ] 投射管理
 
-**8. Gateway 集成**
+**12. Gateway 集成**
 - [ ] Agent 卡片显示已投射的资源
 - [ ] 快速投射/取消投射
 - [ ] 投射状态检查和修复
 
-### Phase 3：Assistant 系统（可选）
+### Phase 4：Assistant 系统（可选）
 
-**9. Assistant 资源**
+**13. Assistant 资源**
 - [ ] Assistant 资源类型定义
 - [ ] 与 Skill/Prompt 关联
 - [ ] Debug 页面 Assistant 选择
 - [ ] Assistant 预设模板
 
-### Phase 4：测试优化
+### Phase 5：测试优化
 
-**10. 测试和完善**
+**14. 测试和完善**
 - [ ] Agent 执行端到端测试
+- [ ] MCP 调用测试
 - [ ] 资源管理测试
 - [ ] 成本统计验证
 - [ ] 性能优化
@@ -1429,11 +1492,16 @@ ipcMain.handle('agent:list', async () => {
 - 实时执行日志和成本追踪
 
 ### P1（重要）
+- **MCP 供给源**：将 MCP Server 纳入供给源体系
+- MCP Manager 和 Providers 页面集成
+- Agent + MCP 联动
+
+### P2（次要）
 - **资源管理**：Skill/Prompt 统一管理
 - 资源投射到 Agent
 - Resources 页面
 
-### P2（可选）
+### P3（可选）
 - Assistant 系统
 - 更多 Agent 支持（Cursor/Aider）
 - 高级功能（Bundle/Workflow）
