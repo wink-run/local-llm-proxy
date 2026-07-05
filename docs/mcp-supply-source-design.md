@@ -34,6 +34,18 @@
 
 ### MCPMate 的核心价值
 
+**MCPMate 有完整的 MCP 网关/代理**：
+
+```
+AI Client (Claude Desktop)
+  ↓ stdio
+MCPMate Bridge (stdio → HTTP)
+  ↓
+MCPMate Proxy (聚合多个 MCP)
+  ↓
+MCP Servers (Filesystem, GitHub, ...)
+```
+
 **吸收的亮点**：
 
 1. **MCP 代理**：在 AI 客户端和 MCP 服务器之间做透明代理
@@ -42,13 +54,16 @@
 4. **实时监控**：日志、安全检测、资源管理
 5. **Bridge 适配**：stdio ↔ HTTP 转换
 
-**Token Bank 原生实现**：
+**Token Bank 原生实现（方案 B：轻量级）**：
 
-- ❌ 不做独立的 MCP 代理应用
-- ✅ 将 MCP 管理集成到 Token Bank 供给源体系
+- ❌ 不与 MCPMate 竞争做完整代理（避免重复造轮子）
+- ✅ 聚焦于"管理"而非"代理"
 - ✅ 在 Providers 页面统一管理 Model + MCP
-- ✅ Profile 机制融合到场景路由
-- ✅ MCP 工具纳入资源管理系统
+- ✅ 配置生成：可导出到 MCPMate 或直接配置 Agent
+- ✅ 日志监控和成本追踪
+- ✅ 与 MCPMate 互补，不竞争
+
+**详细对比**：参见 `docs/mcp-architecture-comparison.md`
 
 ---
 
