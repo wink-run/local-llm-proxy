@@ -577,162 +577,718 @@ export class ResourceUpdater {
 
 ---
 
-## 🤖 二、Agent 执行增强
+## 🤖 二、Agent 聚合系统
 
-### 2.1 内置 Agent 引擎
+### 2.1 核心理念
 
-**吸收 AionUi 的 Agent 引擎设计**，但原生到 Token Bank：
+**吸收 AionUi 的 Agent 聚合思想**：
+
+```
+传统模式：
+  用户 → Claude Desktop（单一 Agent）
+  用户 → Codex Desktop（单一 Agent）
+  用户 → Cursor（单一 Agent）
+  各自独立，无法协同
+
+AionUi 模式：
+  用户 → AionUi → 多个 Agent 协同
+              ├─ Claude Code
+              ├─ Codex
+              ├─ Cursor
+              └─ 其他 Agent
+
+Token Bank 原生实现：
+  用户 → Token Bank (Debug 聚合入口)
+              ├─ 已纳管的 Agent（Gateway 中管理）
+              ├─ 统一调用接口
+              ├─ 实时执行反馈
+              └─ 成本统一追踪
+```
+
+### 2.2 Agent 聚合架构
 
 #### 数据模型
 
 ```sql
+-- Agent 注册表（从 Gateway 已纳管的 Agent 中读取）
+CREATE TABLE managed_agents (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,      -- 'claude-code' | 'codex' | 'cursor' | 'aider' 等
+  executable_path TEXT,    -- 可执行文件路径
+  config_path TEXT,        -- 配置文件路径
+  status TEXT,             -- 'active' | 'inactive' | 'error'
+  capabilities TEXT,       -- JSON: ['code', 'chat', 'edit', 'terminal'] 等
+  version TEXT,
+  last_detected INTEGER,
+  metadata TEXT            -- JSON
+);
+
 -- Agent 执行任务
 CREATE TABLE agent_tasks (
   id TEXT PRIMARY KEY,
-  type TEXT NOT NULL,      -- 'chat' | 'office' | 'code' | 'workflow'
-  assistant_id TEXT,       -- 关联 Assistant 资源
+  agent_id TEXT NOT NULL REFERENCES managed_agents(id),
   prompt TEXT NOT NULL,
-  context TEXT,            -- JSON：文件、变量等上下文
-  status TEXT NOT NULL,    -- 'pending' | 'running' | 'completed' | 'failed'
+  context TEXT,            -- JSON：工作目录、文件等上下文
+  status TEXT NOT NULL,    -- 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
   result TEXT,             -- JSON：执行结果
-  metadata TEXT,           -- JSON：模型、Token、成本等
+  error TEXT,              -- 错误信息
   created_at INTEGER,
   started_at INTEGER,
   completed_at INTEGER
 );
 
--- 任务步骤（执行跟踪）
+-- 任务步骤（Agent 执行过程）
 CREATE TABLE agent_task_steps (
   id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL REFERENCES agent_tasks(id),
   step_number INTEGER,
-  name TEXT,
-  status TEXT,             -- 'pending' | 'running' | 'completed' | 'failed'
-  tool_calls TEXT,         -- JSON
-  result TEXT,
-  started_at INTEGER,
-  completed_at INTEGER
+  step_type TEXT,          -- 'thinking' | 'tool_call' | 'code_edit' | 'terminal' | 'result'
+  content TEXT,            -- 步骤内容
+  tool_name TEXT,          -- 工具名称（如果是 tool_call）
+  tool_input TEXT,         -- 工具输入
+  tool_output TEXT,        -- 工具输出
+  status TEXT,             -- 'running' | 'completed' | 'failed'
+  created_at INTEGER
 );
 
--- 生成的文件
-CREATE TABLE agent_generated_files (
+-- 生成/修改的文件
+CREATE TABLE agent_modified_files (
   id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL REFERENCES agent_tasks(id),
   file_path TEXT NOT NULL,
-  file_type TEXT,          -- 'pptx' | 'docx' | 'xlsx' | 'md' | 'code'
-  file_size INTEGER,
-  preview_path TEXT,       -- 预览图路径
+  operation TEXT,          -- 'create' | 'modify' | 'delete'
+  diff TEXT,               -- 文件差异
   created_at INTEGER
 );
+
+-- Agent 使用统计（复用现有 local_stats，扩展 agent_id）
+-- 已有表，只需添加 agent_id 列
+ALTER TABLE local_stats ADD COLUMN agent_id TEXT;
 ```
 
-#### Office 能力实现
+### 2.3 Agent 执行器
 
-**借鉴 AionUi 的 OfficeCLI 集成**：
+**统一的 Agent 调用接口**：
 
 ```javascript
-// client/electron/office-tools.js
-export class OfficeTools {
-  /**
-   * 生成 PPT
-   */
-  static async generatePPT(params) {
-    const { title, content, style, outputPath } = params;
-    
-    // 使用 Agent 生成 PPT 结构
-    const structure = await this.generatePPTStructure(title, content);
-    
-    // 调用 OfficeCLI 或类似工具生成实际文件
-    const result = await this.executePPTGeneration(structure, style, outputPath);
-    
-    return {
-      success: true,
-      filePath: result.path,
-      previewPath: result.preview,
-      metadata: result.metadata
-    };
+// client/electron/agent-executor.js
+import { EventEmitter } from 'events';
+import { spawn } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+
+export class AgentExecutor extends EventEmitter {
+  constructor(db) {
+    super();
+    this.db = db;
+    this.runningTasks = new Map(); // taskId → process
   }
 
   /**
-   * 生成 Word 文档
+   * 获取可用 Agent 列表
    */
-  static async generateWord(params) {
-    // 类似逻辑
+  async listAvailableAgents() {
+    const agents = await this.db.all(`
+      SELECT * FROM managed_agents 
+      WHERE status = 'active'
+      ORDER BY name
+    `);
+    
+    return agents.map(a => ({
+      id: a.id,
+      name: a.name,
+      type: a.type,
+      capabilities: JSON.parse(a.capabilities || '[]'),
+      version: a.version
+    }));
   }
 
   /**
-   * 生成 Excel 表格
+   * 执行 Agent 任务
    */
-  static async generateExcel(params) {
-    // 类似逻辑
+  async execute(agentId, prompt, options = {}) {
+    const agent = await this.db.get(
+      'SELECT * FROM managed_agents WHERE id = ?',
+      agentId
+    );
+    
+    if (!agent) {
+      throw new Error(`Agent not found: ${agentId}`);
+    }
+
+    // 创建任务记录
+    const taskId = this.generateTaskId();
+    await this.db.run(`
+      INSERT INTO agent_tasks (id, agent_id, prompt, context, status, created_at)
+      VALUES (?, ?, ?, ?, 'pending', ?)
+    `, [taskId, agentId, prompt, JSON.stringify(options), Date.now()]);
+
+    // 根据 Agent 类型调用
+    try {
+      await this.db.run(
+        'UPDATE agent_tasks SET status = ?, started_at = ? WHERE id = ?',
+        ['running', Date.now(), taskId]
+      );
+
+      let result;
+      if (agent.type === 'claude-code') {
+        result = await this.executeClaudeCode(agent, taskId, prompt, options);
+      } else if (agent.type === 'codex') {
+        result = await this.executeCodex(agent, taskId, prompt, options);
+      } else if (agent.type === 'cursor') {
+        result = await this.executeCursor(agent, taskId, prompt, options);
+      } else if (agent.type === 'aider') {
+        result = await this.executeAider(agent, taskId, prompt, options);
+      } else {
+        throw new Error(`Unsupported agent type: ${agent.type}`);
+      }
+
+      // 更新任务状态
+      await this.db.run(`
+        UPDATE agent_tasks 
+        SET status = 'completed', result = ?, completed_at = ?
+        WHERE id = ?
+      `, [JSON.stringify(result), Date.now(), taskId]);
+
+      // 记录成本
+      await this.recordCost(taskId, result);
+
+      return { taskId, result };
+    } catch (error) {
+      await this.db.run(`
+        UPDATE agent_tasks 
+        SET status = 'failed', error = ?, completed_at = ?
+        WHERE id = ?
+      `, [error.message, Date.now(), taskId]);
+      
+      throw error;
+    }
+  }
+
+  /**
+   * 执行 Claude Code
+   */
+  async executeClaudeCode(agent, taskId, prompt, options) {
+    const { workingDir = process.cwd() } = options;
+
+    return new Promise((resolve, reject) => {
+      const args = ['--prompt', prompt];
+      if (workingDir) args.push('--cwd', workingDir);
+
+      const proc = spawn(agent.executable_path, args, {
+        cwd: workingDir,
+        env: { ...process.env }
+      });
+
+      let stdout = '';
+      let stderr = '';
+      const steps = [];
+      let stepCounter = 0;
+
+      proc.stdout.on('data', async (data) => {
+        stdout += data.toString();
+        
+        // 解析实时输出，提取步骤
+        const lines = data.toString().split('\n');
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          
+          // 发送实时事件
+          this.emit('step', { taskId, content: line });
+          
+          // 记录步骤
+          await this.recordStep(taskId, {
+            step_number: stepCounter++,
+            step_type: this.detectStepType(line),
+            content: line
+          });
+        }
+      });
+
+      proc.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      proc.on('close', async (code) => {
+        this.runningTasks.delete(taskId);
+        
+        if (code === 0) {
+          // 检测修改的文件
+          const modifiedFiles = await this.detectModifiedFiles(workingDir);
+          
+          resolve({
+            success: true,
+            output: stdout,
+            files: modifiedFiles,
+            steps: steps.length
+          });
+        } else {
+          reject(new Error(`Agent exited with code ${code}: ${stderr}`));
+        }
+      });
+
+      // 保存进程引用，用于取消
+      this.runningTasks.set(taskId, proc);
+    });
+  }
+
+  /**
+   * 执行 Codex
+   */
+  async executeCodex(agent, taskId, prompt, options) {
+    // 类似 Claude Code，但使用 Codex CLI
+    // codex --prompt "..." --cwd /path
+  }
+
+  /**
+   * 执行 Cursor
+   */
+  async executeCursor(agent, taskId, prompt, options) {
+    // Cursor 可能通过 CLI 或 IPC
+  }
+
+  /**
+   * 执行 Aider
+   */
+  async executeAider(agent, taskId, prompt, options) {
+    // aider --message "..." --yes-always
+  }
+
+  /**
+   * 取消任务
+   */
+  async cancel(taskId) {
+    const proc = this.runningTasks.get(taskId);
+    if (proc) {
+      proc.kill('SIGTERM');
+      this.runningTasks.delete(taskId);
+      
+      await this.db.run(`
+        UPDATE agent_tasks 
+        SET status = 'cancelled', completed_at = ?
+        WHERE id = ?
+      `, [Date.now(), taskId]);
+    }
+  }
+
+  /**
+   * 记录步骤
+   */
+  async recordStep(taskId, step) {
+    await this.db.run(`
+      INSERT INTO agent_task_steps 
+      (id, task_id, step_number, step_type, content, status, created_at)
+      VALUES (?, ?, ?, ?, ?, 'completed', ?)
+    `, [
+      this.generateStepId(),
+      taskId,
+      step.step_number,
+      step.step_type,
+      step.content,
+      Date.now()
+    ]);
+  }
+
+  /**
+   * 检测步骤类型
+   */
+  detectStepType(line) {
+    if (line.includes('Thinking:')) return 'thinking';
+    if (line.includes('Tool:')) return 'tool_call';
+    if (line.includes('Edit:')) return 'code_edit';
+    if (line.includes('Run:')) return 'terminal';
+    return 'output';
+  }
+
+  /**
+   * 检测修改的文件
+   */
+  async detectModifiedFiles(workingDir) {
+    // 通过 git diff 或文件时间戳检测
+    // 简化实现：返回空数组
+    return [];
+  }
+
+  /**
+   * 记录成本
+   */
+  async recordCost(taskId, result) {
+    const task = await this.db.get(
+      'SELECT * FROM agent_tasks WHERE id = ?',
+      taskId
+    );
+    
+    // 从 result 中提取 token 和 cost
+    const { tokens, cost } = this.extractCostInfo(result);
+    
+    if (tokens || cost) {
+      const agent = await this.db.get(
+        'SELECT * FROM managed_agents WHERE id = ?',
+        task.agent_id
+      );
+      
+      // 写入 local_stats
+      await this.db.run(`
+        INSERT INTO local_stats 
+        (id, model, input_tokens, output_tokens, total_cost, timestamp, agent_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [
+        this.generateStatsId(),
+        `agent:${agent.type}`,
+        tokens?.input || 0,
+        tokens?.output || 0,
+        cost || 0,
+        Date.now(),
+        agent.id
+      ]);
+    }
+  }
+
+  extractCostInfo(result) {
+    // 从 Agent 输出中提取 token 和 cost
+    // 不同 Agent 格式不同，需要适配
+    return { tokens: null, cost: null };
+  }
+
+  generateTaskId() {
+    return `task_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  }
+
+  generateStepId() {
+    return `step_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  }
+
+  generateStatsId() {
+    return `stats_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
   }
 }
 ```
 
-### 2.2 Debug 页面的 Agent 模式增强
+### 2.4 Debug 页面：Agent 聚合入口
 
-**结合资源管理和 Office 能力**：
+**核心定位**：从单纯的"调试工具"升级为"Agent 统一操作台"
+
+#### UI 设计
+
+```
+┌────────────────────────────────────────────────────────┐
+│  Agent 操作台                          [模式: Agent ▼] │
+├────────────────────────────────────────────────────────┤
+│                                                        │
+│  选择 Agent:                                           │
+│  ┌──────────────────────────────────────────────────┐ │
+│  │ 🤖 Claude Code v1.2.3    [claude-code]           │ │
+│  │    能力: code, chat, edit, terminal              │ │
+│  │    状态: ✅ 已纳管 · 已配置 Token Bank 网关       │ │
+│  └──────────────────────────────────────────────────┘ │
+│                                                        │
+│  ┌──────────────────────────────────────────────────┐ │
+│  │ ▼ Codex v2.1.0          [codex]                  │ │
+│  │ ▼ Cursor Agent          [cursor]                 │ │
+│  │ ▼ Aider v0.45.0         [aider]                  │ │
+│  └──────────────────────────────────────────────────┘ │
+│                                                        │
+│  工作目录: [/Users/me/project]              [浏览...] │
+│                                                        │
+│  ┌────────────────────────────────────────────────┐   │
+│  │ 输入任务:                                       │   │
+│  │                                                 │   │
+│  │ 帮我重构 src/utils.js，提取公共函数，添加单元测试 │   │
+│  │                                                 │   │
+│  └────────────────────────────────────────────────┘   │
+│                                  [取消] [▶ 执行 Agent] │
+├────────────────────────────────────────────────────────┤
+│  执行过程 (Task: task_123456)                          │
+│  ┌──────────────────────────────────────────────────┐ │
+│  │ [10:23:45] 🤔 Thinking: 分析 utils.js 结构...    │ │
+│  │ [10:23:47] 🔧 Tool: read_file(src/utils.js)     │ │
+│  │ [10:23:48] ✏️  Edit: 提取 formatDate 函数        │ │
+│  │            - 创建 src/utils/date.js              │ │
+│  │            - 修改 src/utils.js                   │ │
+│  │ [10:23:50] 🔧 Tool: write_file(test/utils.test.js)│ │
+│  │ [10:23:52] 🏃 Run: npm test                      │ │
+│  │            ✅ All tests passed (5/5)             │ │
+│  │ [10:23:55] ✅ Completed                          │ │
+│  └──────────────────────────────────────────────────┘ │
+│                                                        │
+│  执行结果                                               │
+│  ┌──────────────────────────────────────────────────┐ │
+│  │ ✅ 任务完成                                       │ │
+│  │                                                   │ │
+│  │ 修改的文件 (3):                                   │ │
+│  │  📝 src/utils.js           -42 +15               │ │
+│  │  📝 src/utils/date.js      +58 (新建)            │ │
+│  │  📝 test/utils.test.js     +120 (新建)           │ │
+│  │                                                   │ │
+│  │ 执行统计:                                         │ │
+│  │  ⏱️  耗时: 12.3s                                  │ │
+│  │  🔤 Tokens: 3,245 (输入) + 1,892 (输出)          │ │
+│  │  💰 成本: $0.0234                                │ │
+│  │  📊 步骤: 6 个                                   │ │
+│  │                                                   │ │
+│  │ [📁 在文件管理器中打开] [🔄 查看差异]             │ │
+│  └──────────────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────┘
+```
+
+#### 与 Gateway 的联动
+
+**从 Gateway 读取已纳管的 Agent**：
+
+```javascript
+// Gateway 页面已有 Agent 检测
+const detectedAgents = [
+  { id: 'claude-code', name: 'Claude Code', status: 'linked' },
+  { id: 'codex', name: 'Codex Desktop', status: 'linked' },
+  { id: 'cursor', name: 'Cursor', status: 'detected' }
+];
+
+// Debug 页面直接使用
+const availableAgents = detectedAgents.filter(a => a.status === 'linked');
+```
+
+**Agent 状态同步**：
+- Gateway 纳管 → Debug 立即可用
+- Gateway 取消纳管 → Debug 自动移除
+- 统一的配置和状态管理
+
+#### 前端实现
 
 ```jsx
-// Agent 模式增强
-<div className="agent-mode">
-  {/* Assistant 选择 */}
-  <select value={selectedAssistant} onChange={...}>
-    <option value="">通用对话</option>
-    <optgroup label="内置助手">
-      <option value="ppt-creator">📊 PPT 创建助手</option>
-      <option value="word-creator">📝 Word 创建助手</option>
-      <option value="excel-creator">📗 Excel 创建助手</option>
-      <option value="code-reviewer">🔍 代码审查助手</option>
-    </optgroup>
-    <optgroup label="自定义助手">
-      {customAssistants.map(a => (
-        <option key={a.id} value={a.id}>{a.display_name}</option>
-      ))}
-    </optgroup>
-  </select>
+// client/src/pages/Debug.jsx
+function AgentMode({ agents }) {
+  const [selectedAgent, setSelectedAgent] = useState(null);
+  const [workingDir, setWorkingDir] = useState(process.cwd());
+  const [prompt, setPrompt] = useState('');
+  const [task, setTask] = useState(null);
+  const [steps, setSteps] = useState([]);
+  const [result, setResult] = useState(null);
 
-  {/* 关联的 Skills 显示 */}
-  {selectedAssistant && (
-    <div className="assistant-skills">
-      <span>已加载技能:</span>
-      {assistantSkills.map(s => (
-        <span key={s} className="skill-badge">{s}</span>
-      ))}
-    </div>
-  )}
+  // 执行 Agent
+  const handleExecute = async () => {
+    if (!selectedAgent || !prompt) return;
 
-  {/* 对话区增强显示 */}
-  <div className="chat-area">
-    {messages.map(msg => {
-      if (msg.type === 'office_generation') {
-        return (
-          <div className="office-result">
-            <h4>✅ {msg.fileType} 已生成</h4>
-            <div className="file-preview">
-              <img src={msg.previewPath} alt="preview" />
-            </div>
-            <div className="file-actions">
-              <button onClick={() => openFile(msg.filePath)}>
-                打开文件
-              </button>
-              <button onClick={() => showInFolder(msg.filePath)}>
-                显示位置
-              </button>
-            </div>
-            <div className="generation-stats">
-              <span>耗时: {msg.duration}s</span>
-              <span>Token: {msg.tokens}</span>
-              <span>成本: ${msg.cost}</span>
-            </div>
+    try {
+      // 调用 IPC
+      const taskId = await window.electronAPI.agent.execute({
+        agentId: selectedAgent.id,
+        prompt,
+        workingDir
+      });
+
+      setTask({ id: taskId, status: 'running' });
+      setSteps([]);
+
+      // 监听实时步骤
+      window.electronAPI.agent.onStep((step) => {
+        if (step.taskId === taskId) {
+          setSteps(prev => [...prev, step]);
+        }
+      });
+
+      // 等待完成
+      const result = await window.electronAPI.agent.waitForCompletion(taskId);
+      setResult(result);
+      setTask({ id: taskId, status: 'completed' });
+    } catch (error) {
+      console.error('Agent execution failed:', error);
+      setTask({ id: task?.id, status: 'failed', error: error.message });
+    }
+  };
+
+  return (
+    <div className="agent-mode">
+      {/* Agent 选择器 */}
+      <div className="agent-selector">
+        <h3>选择 Agent:</h3>
+        {agents.map(agent => (
+          <AgentCard
+            key={agent.id}
+            agent={agent}
+            selected={selectedAgent?.id === agent.id}
+            onClick={() => setSelectedAgent(agent)}
+          />
+        ))}
+      </div>
+
+      {/* 工作目录 */}
+      <div className="working-dir">
+        <label>工作目录:</label>
+        <input
+          type="text"
+          value={workingDir}
+          onChange={(e) => setWorkingDir(e.target.value)}
+        />
+        <button onClick={handleBrowseDir}>浏览...</button>
+      </div>
+
+      {/* 任务输入 */}
+      <div className="task-input">
+        <textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="输入任务..."
+          rows={4}
+        />
+        <div className="actions">
+          <button onClick={handleCancel} disabled={task?.status !== 'running'}>
+            取消
+          </button>
+          <button onClick={handleExecute} disabled={!selectedAgent || !prompt}>
+            ▶ 执行 Agent
+          </button>
+        </div>
+      </div>
+
+      {/* 执行过程 */}
+      {task && (
+        <div className="execution-log">
+          <h3>执行过程 (Task: {task.id})</h3>
+          <div className="steps">
+            {steps.map((step, i) => (
+              <StepDisplay key={i} step={step} />
+            ))}
           </div>
-        );
-      }
-      
-      return <NormalMessage message={msg} />;
-    })}
-  </div>
-</div>
+        </div>
+      )}
+
+      {/* 执行结果 */}
+      {result && (
+        <div className="execution-result">
+          <h3>执行结果</h3>
+          <ResultDisplay result={result} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StepDisplay({ step }) {
+  const icons = {
+    thinking: '🤔',
+    tool_call: '🔧',
+    code_edit: '✏️',
+    terminal: '🏃',
+    output: '📄'
+  };
+
+  return (
+    <div className={`step step-${step.type}`}>
+      <span className="time">[{formatTime(step.timestamp)}]</span>
+      <span className="icon">{icons[step.type] || '📄'}</span>
+      <span className="content">{step.content}</span>
+    </div>
+  );
+}
+
+function ResultDisplay({ result }) {
+  return (
+    <div className="result">
+      <div className="status">
+        {result.success ? '✅ 任务完成' : '❌ 任务失败'}
+      </div>
+
+      {result.files && result.files.length > 0 && (
+        <div className="modified-files">
+          <h4>修改的文件 ({result.files.length}):</h4>
+          {result.files.map(file => (
+            <div key={file.path} className="file-item">
+              <span className="icon">📝</span>
+              <span className="path">{file.path}</span>
+              <span className="stats">
+                {file.operation === 'create' && '(新建)'}
+                {file.operation === 'modify' && `${file.diff?.additions || 0}+ ${file.diff?.deletions || 0}-`}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="stats">
+        <h4>执行统计:</h4>
+        <div className="stat-item">
+          <span>⏱️ 耗时:</span>
+          <span>{result.duration}s</span>
+        </div>
+        <div className="stat-item">
+          <span>🔤 Tokens:</span>
+          <span>{result.tokens?.input || 0} (输入) + {result.tokens?.output || 0} (输出)</span>
+        </div>
+        <div className="stat-item">
+          <span>💰 成本:</span>
+          <span>${result.cost?.toFixed(4) || '0.0000'}</span>
+        </div>
+        <div className="stat-item">
+          <span>📊 步骤:</span>
+          <span>{result.steps} 个</span>
+        </div>
+      </div>
+
+      <div className="actions">
+        <button onClick={() => openInExplorer(result.workingDir)}>
+          📁 在文件管理器中打开
+        </button>
+        {result.files && (
+          <button onClick={() => showDiff(result.files)}>
+            🔄 查看差异
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+```
+
+#### IPC 接口
+
+```javascript
+// client/electron/main.js
+
+// Agent 执行
+ipcMain.handle('agent:execute', async (event, { agentId, prompt, workingDir }) => {
+  const executor = new AgentExecutor(db);
+  const { taskId } = await executor.execute(agentId, prompt, { workingDir });
+  
+  // 监听步骤，转发到前端
+  executor.on('step', (step) => {
+    event.sender.send('agent:step', step);
+  });
+  
+  return taskId;
+});
+
+// 等待完成
+ipcMain.handle('agent:wait', async (event, taskId) => {
+  const task = await db.get('SELECT * FROM agent_tasks WHERE id = ?', taskId);
+  
+  // 如果还在运行，等待
+  if (task.status === 'running') {
+    return new Promise((resolve) => {
+      const checkInterval = setInterval(async () => {
+        const updated = await db.get('SELECT * FROM agent_tasks WHERE id = ?', taskId);
+        if (updated.status !== 'running') {
+          clearInterval(checkInterval);
+          resolve(JSON.parse(updated.result || '{}'));
+        }
+      }, 500);
+    });
+  }
+  
+  return JSON.parse(task.result || '{}');
+});
+
+// 取消任务
+ipcMain.handle('agent:cancel', async (event, taskId) => {
+  const executor = new AgentExecutor(db);
+  await executor.cancel(taskId);
+});
+
+// 获取可用 Agent
+ipcMain.handle('agent:list', async () => {
+  const executor = new AgentExecutor(db);
+  return await executor.listAvailableAgents();
+});
 ```
 
 ---
@@ -771,96 +1327,157 @@ export class OfficeTools {
 
 ### 3.2 集成点
 
-| 外部项目能力 | Token Bank 原生实现 | 集成方式 |
-|------------|-------------------|---------|
-| aweskill Skill 管理 | Resource 系统 | 吸收数据模型和投射机制 |
-| aweskill 发现/更新 | ResourceDiscovery | 复用 API，原生界面 |
-| AionUi Office | OfficeTools | 原生工具链 |
-| AionUi Assistant | Assistant 资源 | 原生配置格式 |
-| AionUi Agent 引擎 | AgentExecutor | 吸收架构设计 |
+| 外部项目能力 | Token Bank 原生实现 | 集成方式 | 优先级 |
+|------------|-------------------|---------|-------|
+| **AionUi Agent 聚合** | Agent 聚合系统 + Debug 页面 | 吸收架构设计，调用已纳管 Agent | **P0** |
+| **AionUi 多 Agent 协同** | AgentExecutor 统一调用接口 | 原生实现，支持多种 Agent | **P0** |
+| **AionUi 执行追踪** | agent_tasks / agent_task_steps 表 | 实时记录，可视化展示 | **P0** |
+| **aweskill Skill 管理** | Resource 系统 | 吸收数据模型和投射机制 | **P1** |
+| **aweskill 发现/更新** | ResourceDiscovery | 复用 API，原生界面 | **P1** |
+| **AionUi Assistant** | Assistant 资源类型 | 原生配置格式 | **P2** |
+| **AionUi Office 能力** | 暂不实施 | 可作为 Agent 的能力之一 | **P3** |
 
-**注**：aweswitch 的 Profile 快速切换能力暂不实施
+**说明**：
+- **P0**：核心功能，优先实现
+- **P1**：重要功能，第二阶段
+- **P2**：可选功能，看需求
+- **P3**：暂不考虑
 
 ---
 
-## 📋 实施计划（暂不包含 Profile 系统）
+## 📋 实施计划
 
-### Phase 1：资源管理基础
+### 核心目标
+
+1. **Agent 聚合**：统一入口调用 Gateway 已纳管的 Agent
+2. **资源管理**：Skill/Prompt 统一管理和投射
+
+### Phase 1：Agent 聚合系统（核心）
 
 **1. 数据模型**
-- [ ] 设计并创建 resources 相关表
-- [ ] 实现 ResourceManager 基础 CRUD
-- [ ] 支持 Prompt 和 Skill 类型
+- [ ] 创建 agent_tasks / agent_task_steps / agent_modified_files 表
+- [ ] 扩展 local_stats 添加 agent_id 列
+- [ ] 创建 managed_agents 表（或复用 Gateway 数据）
 
-**2. 资源发现**
-- [ ] 实现 ResourceDiscovery（本地 + sciskill）
-- [ ] 资源导入和内容解析
-- [ ] 哈希去重机制
+**2. Agent 执行器**
+- [ ] 实现 AgentExecutor 类
+- [ ] 支持 Claude Code 调用
+- [ ] 支持 Codex 调用
+- [ ] 支持其他 Agent（Cursor/Aider）
+- [ ] 实时步骤监听和记录
 
-**3. 投射机制**
-- [ ] 实现 ResourceProjector
-- [ ] 支持 symlink/copy 投射
-- [ ] 投射状态检查和修复
+**3. IPC 接口**
+- [ ] agent:execute（执行任务）
+- [ ] agent:cancel（取消任务）
+- [ ] agent:list（获取可用 Agent）
+- [ ] agent:step（实时步骤事件）
 
-### Phase 2：界面实现
+**4. Debug 页面改造**
+- [ ] Agent 选择器（从 Gateway 读取）
+- [ ] 工作目录配置
+- [ ] 实时执行日志
+- [ ] 结果展示（文件/统计）
+- [ ] 与 Gateway 状态联动
 
-**4. Resources 页面**
+### Phase 2：资源管理系统
+
+**5. 数据模型**
+- [ ] 创建 resources / resource_collections / resource_projections 表
+- [ ] 支持 Prompt / Skill / Assistant / Template 类型
+
+**6. 资源发现和管理**
+- [ ] ResourceDiscovery（本地 + sciskillhub）
+- [ ] ResourceManager（CRUD）
+- [ ] ResourceProjector（投射到 Agent）
+- [ ] 资源更新机制
+
+**7. Resources 页面**
 - [ ] 资源列表和搜索
 - [ ] 资源详情和编辑
 - [ ] 导入和创建
+- [ ] 投射管理
 
-**5. 集成到 Gateway**
-- [ ] Agent 卡片显示投射的资源
+**8. Gateway 集成**
+- [ ] Agent 卡片显示已投射的资源
 - [ ] 快速投射/取消投射
-- [ ] 状态警告和修复
+- [ ] 投射状态检查和修复
 
-### Phase 3：Agent 增强
+### Phase 3：Assistant 系统（可选）
 
-**6. Assistant 系统**
-- [ ] Assistant 资源类型
+**9. Assistant 资源**
+- [ ] Assistant 资源类型定义
 - [ ] 与 Skill/Prompt 关联
 - [ ] Debug 页面 Assistant 选择
-
-**7. Office 能力**
-- [ ] OfficeTools 基础实现
-- [ ] PPT/Word/Excel 生成
-- [ ] 文件预览集成
-
-**8. 执行跟踪**
-- [ ] agent_tasks 表和逻辑
-- [ ] 步骤和工具调用记录
-- [ ] 成本统计集成
+- [ ] Assistant 预设模板
 
 ### Phase 4：测试优化
 
-**9. 测试和完善**
-- [ ] 端到端测试
+**10. 测试和完善**
+- [ ] Agent 执行端到端测试
+- [ ] 资源管理测试
+- [ ] 成本统计验证
 - [ ] 性能优化
 - [ ] 文档完善
 
-**注**：Profile 系统（快速切换供给源配置）暂不实施，待后续评估
+---
+
+## 🎯 优先级
+
+### P0（最高优先级）
+- **Agent 聚合系统**：Debug 页面作为统一 Agent 入口
+- 支持 Claude Code 和 Codex
+- 实时执行日志和成本追踪
+
+### P1（重要）
+- **资源管理**：Skill/Prompt 统一管理
+- 资源投射到 Agent
+- Resources 页面
+
+### P2（可选）
+- Assistant 系统
+- 更多 Agent 支持（Cursor/Aider）
+- 高级功能（Bundle/Workflow）
 
 ---
 
 ## 🎯 核心价值
 
-### 与外部项目的区别
+### 与 AionUi 的对比
 
-| 维度 | 外部项目 | Token Bank 原生方案 |
-|-----|---------|-------------------|
-| **交互方式** | CLI 命令行 | 统一的 GUI |
-| **数据存储** | 文件系统 + YAML | SQLite 关系数据库 |
-| **用户体验** | 多个工具切换 | 一个平台搞定 |
-| **数据模型** | 各自独立 | 统一资源模型 |
-| **集成深度** | 外部调用 | 原生集成 |
-| **成本追踪** | 无 | 全程追踪 |
+| 维度 | AionUi | Token Bank 原生方案 |
+|-----|--------|-------------------|
+| **交互方式** | 独立应用 | 集成到现有平台 |
+| **Agent 管理** | 内置 Agent | 调用已纳管的 Agent |
+| **成本追踪** | 无 | 全程追踪（复用 Token Bank） |
+| **配置管理** | 独立配置 | 统一网关配置 |
+| **数据存储** | 独立数据库 | 统一 SQLite |
+| **用户体验** | 需切换应用 | 一个平台搞定 |
+
+### 核心优势
+
+**1. Agent 聚合**
+- ✅ 统一入口：一个界面调用所有 Agent
+- ✅ 无缝集成：复用 Gateway 已纳管的 Agent
+- ✅ 实时反馈：执行过程可视化
+- ✅ 成本可控：每次调用都有成本追踪
+
+**2. 资源管理**
+- ✅ 统一模型：Prompt/Skill/Assistant 一致管理
+- ✅ 投射机制：一次配置，多 Agent 共享
+- ✅ 版本控制：资源更新和回滚
+- ✅ 来源多样：本地、GitHub、sciskillhub
+
+**3. 数据打通**
+- ✅ 成本统一：Agent 调用纳入 Token Bank 成本体系
+- ✅ 会话关联：Agent 任务与会话记录关联
+- ✅ 统计分析：Agent 使用情况可视化
 
 ### 用户收益
 
-- ✅ **统一体验**：不需要学习多个 CLI 工具
-- ✅ **数据打通**：资源、配置、成本全关联
-- ✅ **更强大**：在吸收外部能力基础上，增加 Token Bank 独有价值
-- ✅ **可扩展**：原生架构易于后续功能扩展
+- **开发者**：不需要在多个 Agent CLI 之间切换，统一界面完成所有操作
+- **团队**：Skill/Prompt 统一管理，团队共享最佳实践
+- **成本敏感用户**：每次 Agent 调用都有成本追踪，精确控制预算
+- **高级用户**：可扩展架构，易于添加新 Agent 和新能力
 
 ---
 
