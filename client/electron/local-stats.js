@@ -255,6 +255,78 @@ const AGENT_SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_agent_modified_files_task_id ON agent_modified_files(task_id);
 `;
 
+// MCP 供给源表（Phase 2）
+const MCP_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS mcp_servers (
+    id                  TEXT PRIMARY KEY,
+    name                TEXT NOT NULL UNIQUE,
+    display_name        TEXT,
+    type                TEXT NOT NULL DEFAULT 'stdio',
+    command             TEXT,
+    args                TEXT,
+    url                 TEXT,
+    env                 TEXT,
+    builtin             INTEGER DEFAULT 0,
+    status              TEXT DEFAULT 'active',
+    metadata            TEXT,
+    created_at          INTEGER,
+    updated_at          INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS mcp_profiles (
+    id                  TEXT PRIMARY KEY,
+    name                TEXT NOT NULL UNIQUE,
+    display_name        TEXT,
+    description         TEXT,
+    rules               TEXT,
+    created_at          INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS mcp_profile_servers (
+    profile_id          TEXT NOT NULL,
+    server_id           TEXT NOT NULL,
+    enabled             INTEGER DEFAULT 1,
+    PRIMARY KEY (profile_id, server_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_mcp_servers_status ON mcp_servers(status);
+  CREATE INDEX IF NOT EXISTS idx_mcp_profile_servers_profile ON mcp_profile_servers(profile_id);
+`;
+
+// 资源管理表（Prompt / Skill / Assistant / Template）
+const RESOURCE_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS resources (
+    id                  TEXT PRIMARY KEY,
+    type                TEXT NOT NULL,
+    name                TEXT NOT NULL,
+    display_name        TEXT,
+    description         TEXT,
+    content             TEXT,
+    metadata            TEXT,
+    source              TEXT DEFAULT 'local',
+    source_url          TEXT,
+    hash                TEXT,
+    created_at          INTEGER,
+    updated_at          INTEGER,
+    UNIQUE(type, name)
+  );
+
+  CREATE TABLE IF NOT EXISTS resource_projections (
+    id                  TEXT PRIMARY KEY,
+    resource_id         TEXT NOT NULL,
+    agent_id            TEXT NOT NULL,
+    scope               TEXT NOT NULL DEFAULT 'global',
+    projection_type     TEXT,
+    target_path         TEXT,
+    status              TEXT DEFAULT 'active',
+    created_at          INTEGER
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_resources_type ON resources(type);
+  CREATE INDEX IF NOT EXISTS idx_resource_projections_resource ON resource_projections(resource_id);
+  CREATE INDEX IF NOT EXISTS idx_resource_projections_agent ON resource_projections(agent_id);
+`;
+
 /** @param {string} dbDir  Directory that will hold local-stats.db */
 function init(dbDir) {
   if (db) return;
@@ -273,6 +345,8 @@ function init(dbDir) {
     }
     // Agent 聚合系统表初始化
     db.exec(AGENT_SCHEMA);
+    db.exec(MCP_SCHEMA);
+    db.exec(RESOURCE_SCHEMA);
     db.exec(POST_MIGRATION); // 列补齐后再建 request_id 唯一索引
     // INSERT OR IGNORE：命中 request_id 唯一索引时静默跳过（跨来源去重），不报错、不重复计。
     _insertStmt = db.prepare(

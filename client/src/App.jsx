@@ -1,6 +1,7 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { MemoryRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { MemoryRouter, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './store/index';
+import KeepAliveRoutes, { findRouteConfig } from './components/KeepAliveRoutes';
 import { ThemeProvider } from './store/theme';
 import { LangProvider, useLang } from './store/lang';
 import { CurrencyProvider } from './store/currency';
@@ -9,6 +10,7 @@ import Sidebar from './components/Sidebar';
 import TokenDashboard from './pages/TokenDashboard';
 import Gateway    from './pages/Gateway';
 import Providers  from './pages/Providers';
+import Resources  from './pages/Resources';
 import Contribute from './pages/Contribute';
 import Dashboard  from './pages/Dashboard';
 import Network    from './pages/Network';
@@ -28,20 +30,21 @@ function readSidebarCollapsed() {
   try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1'; } catch { return false; }
 }
 
-/** 个人页：仅登录用户可访问；未登录直接跳转登录页 */
-function AccountRoute() {
-  const { user } = useAuth();
-  if (user) return <TokenDashboard />;
-  return <Navigate to="/login" replace />;
-}
-
-/** 需登录的页面：未登录跳转登录页，登录后回到原路径 */
-function RequireLogin({ children }) {
-  const { user } = useAuth();
-  const location = useLocation();
-  if (user) return children;
-  return <Navigate to="/login" replace state={{ from: location.pathname }} />;
-}
+/** 侧边栏主页面：切换时保持挂载以保留 state（如 Debug Agent 会话） */
+const KEEP_ALIVE_ROUTE_CONFIGS = [
+  { path: '/circles/browse', Component: CircleBrowse, requireLogin: true },
+  { path: '/circles/:circleId', Component: CircleDetail, requireLogin: true },
+  { path: '/circles', Component: Circles, end: true, requireLogin: true },
+  { path: '/gateway', Component: Gateway, requireAuthed: true },
+  { path: '/providers', Component: Providers, requireAuthed: true },
+  { path: '/resources', Component: Resources, requireAuthed: true },
+  { path: '/contribute', Component: Contribute, requireLogin: true },
+  { path: '/dashboard', Component: Dashboard, requireAuthed: true },
+  { path: '/network', Component: Network },
+  { path: '/config', Component: Config },
+  { path: '/debug', Component: Debug },
+  { path: '/account', Component: TokenDashboard, requireUser: true },
+];
 
 function Layout() {
   const { user, guest, loading } = useAuth();
@@ -61,6 +64,12 @@ function Layout() {
     });
   }, [cliMode]);
   useDeviceReporter(user);
+
+  const location = useLocation();
+  const keepAliveMatch = useMemo(
+    () => findRouteConfig(KEEP_ALIVE_ROUTE_CONFIGS, location.pathname),
+    [location.pathname],
+  );
 
   useEffect(() => {
     if (!isElectron() || !window.electronAPI?.app?.onNavigate) return;
@@ -100,22 +109,20 @@ function Layout() {
             </svg>
           </button>
         )}
-        <Routes>
-          <Route path="/"          element={<Navigate to={authed ? '/gateway' : '/login'} replace />} />
-          <Route path="/account"   element={<AccountRoute />} />
-          <Route path="/login"     element={<Login />} />
-          <Route path="/gateway"   element={authed ? <Gateway />        : <Navigate to="/login" replace />} />
-          <Route path="/providers" element={authed ? <Providers />      : <Navigate to="/login" replace />} />
-          <Route path="/contribute" element={<RequireLogin><Contribute /></RequireLogin>} />
-          <Route path="/circles/browse" element={<RequireLogin><CircleBrowse /></RequireLogin>} />
-          <Route path="/circles"   element={<RequireLogin><Circles /></RequireLogin>} />
-          <Route path="/circles/:circleId" element={<RequireLogin><CircleDetail /></RequireLogin>} />
-          <Route path="/dashboard" element={authed ? <Dashboard />      : <Navigate to="/login" replace />} />
-          <Route path="/network"   element={<Network />} />
-          <Route path="/config"    element={<Config />} />
-          <Route path="/debug"     element={<Debug />} />
-          <Route path="*"          element={<Navigate to={authed ? '/gateway' : '/login'} replace />} />
-        </Routes>
+        {/* 缓存层始终挂载，切换菜单 / 登录页时仅 hidden，保留 Debug 等页面 state */}
+        <KeepAliveRoutes configs={KEEP_ALIVE_ROUTE_CONFIGS} user={user} guest={guest} />
+
+        {location.pathname === '/' && (
+          <Navigate to={authed ? '/gateway' : '/login'} replace />
+        )}
+        {location.pathname === '/login' && (
+          <div className="relative z-10 min-h-full bg-zinc-100 dark:bg-zinc-900">
+            <Login />
+          </div>
+        )}
+        {!keepAliveMatch && location.pathname !== '/login' && location.pathname !== '/' && (
+          <Navigate to={authed ? '/gateway' : '/login'} replace />
+        )}
       </main>
       <UpdateNotification />
     </div>

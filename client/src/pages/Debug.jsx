@@ -1,11 +1,24 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { getConfig, getLocalConfig, getGateway } from '../api/adapter';
 import { loadGatewayAvailableModels, resolveGatewayModelType, resolveLocalGatewayBase } from '../api/gatewayModels';
 import { encodeTierModelRoute } from '../lib/route-binding';
+import {
+  agentSessionKey,
+  getStoreSession,
+  mergeTaskIntoStore,
+  patchStoreSession,
+  readStoreSnapshot,
+  resolveTaskRoute,
+  routeTask,
+  setStoreSelectedAgentId,
+  getStoreSelectedAgentId,
+  releaseAllExecutingSessions,
+  clearSessionTaskState,
+} from '../lib/debug-agent-store';
 import { useLang } from '../store/lang';
-import AgentSelector from '../components/AgentSelector';
+import AgentTabBar from '../components/AgentTabBar';
 import ExecutionLog from '../components/ExecutionLog';
-import ExecutionResult from '../components/ExecutionResult';
 
 /** 下拉 value：同 id 跨层时用 tier:id，避免 HTML option 重复 value 选中错位 */
 function modelSelectValue(m) {
@@ -277,13 +290,64 @@ function clearDebugPanelStorage() {
   try { localStorage.removeItem(DEBUG_CHAT_KEY); } catch {}
 }
 
+// ── Agent 模式常量 ─────────────────────────────────────────────────────────────
+
+const MAIN_AGENT_STORAGE_KEY = 'tokenbank.mainAgentId';
+const MCP_PROFILE_STORAGE_KEY = 'tokenbank.mcpProfileId';
+const AGENT_WORKING_DIR_KEY = 'tokenbank.agentWorkingDir';
+const DEBUG_MODE_KEY = 'tokenbank.debugMode';
+
+function loadMainAgentId() {
+  try { return localStorage.getItem(MAIN_AGENT_STORAGE_KEY) || ''; } catch { return ''; }
+}
+
+function loadMcpProfileId() {
+  try { return localStorage.getItem(MCP_PROFILE_STORAGE_KEY) || 'orchestrator-default'; } catch { return 'orchestrator-default'; }
+}
+
+function saveMainAgentId(id) {
+  try {
+    if (id) localStorage.setItem(MAIN_AGENT_STORAGE_KEY, id);
+    else localStorage.removeItem(MAIN_AGENT_STORAGE_KEY);
+  } catch {}
+}
+
+function saveMcpProfileId(id) {
+  try {
+    if (id) localStorage.setItem(MCP_PROFILE_STORAGE_KEY, id);
+    else localStorage.removeItem(MCP_PROFILE_STORAGE_KEY);
+  } catch {}
+}
+
+function loadAgentWorkingDir() {
+  try { return localStorage.getItem(AGENT_WORKING_DIR_KEY) || ''; } catch { return ''; }
+}
+
+function saveAgentWorkingDir(dir) {
+  try {
+    if (dir) localStorage.setItem(AGENT_WORKING_DIR_KEY, dir);
+    else localStorage.removeItem(AGENT_WORKING_DIR_KEY);
+  } catch {}
+}
+
+function loadDebugMode() {
+  try { return localStorage.getItem(DEBUG_MODE_KEY) || 'llm'; } catch { return 'llm'; }
+}
+
+function saveDebugMode(mode) {
+  try { localStorage.setItem(DEBUG_MODE_KEY, mode); } catch {}
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function Debug() {
   const { t } = useLang();
+  const location = useLocation();
+  const isDebugRouteRef = useRef(location.pathname === '/debug');
+  isDebugRouteRef.current = location.pathname === '/debug';
   
   // 模式切换：'llm' | 'agent'
-  const [mode, setMode] = useState('llm');
+  const [mode, setMode] = useState(() => loadDebugMode());
   
   // LLM 模式状态
   const [cfg,            setCfg]           = useState(null);
@@ -305,11 +369,27 @@ export default function Debug() {
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [loadingAgents, setLoadingAgents] = useState(false);
   const [agentPrompt, setAgentPrompt] = useState('');
-  const [agentWorkingDir, setAgentWorkingDir] = useState('');
+  const [agentWorkingDir, setAgentWorkingDir] = useState(() => loadAgentWorkingDir());
+  const [dirError, setDirError] = useState('');
+  const [currentUserPrompt, setCurrentUserPrompt] = useState('');
   const [currentTask, setCurrentTask] = useState(null);
   const [taskSteps, setTaskSteps] = useState([]);
   const [taskResult, setTaskResult] = useState(null);
   const [executing, setExecuting] = useState(false);
+  const [mainAgentId, setMainAgentId] = useState(() => loadMainAgentId());
+  const [mcpProfiles, setMcpProfiles] = useState([]);
+  const [mcpProfileId, setMcpProfileId] = useState(() => loadMcpProfileId());
+  const [delegations, setDelegations] = useState({});
+  const selectedAgentRef = useRef(null);
+  selectedAgentRef.current = selectedAgent;
+  const syncSessionToStateRef = useRef(null);
+
+  // 当前生效的 Agent：直调 tab 或聚合入口的主 Agent
+  const mainAgent = agents.find(a => a.id === mainAgentId && !a.custom)
+    || agents.find(a => !a.custom)
+    || null;
+  const isHubMode = !selectedAgent;
+  const activeAgent = selectedAgent || mainAgent;
 
   const panel = panels.main;
   const { conversation, input, systemPrompt, showSystem, streamMode, imageMode, imageRatio, imageResolution } = panel;
@@ -324,43 +404,262 @@ export default function Debug() {
     }
   }, [mode]);
 
-  // Listen for agent events
+  // 加载 MCP Profile 列表（聚合入口编排用）
+  useEffect(() => {
+    if (mode !== 'agent' || !window.electronAPI?.mcp) return;
+    window.electronAPI.mcp.listProfiles()
+      .then(res => {
+        if (res.success && res.profiles?.length) {
+          setMcpProfiles(res.profiles);
+          if (!res.profiles.some(p => p.id === mcpProfileId)) {
+            const fallback = res.profiles[0].id;
+            setMcpProfileId(fallback);
+            saveMcpProfileId(fallback);
+          }
+        }
+      })
+      .catch(err => console.warn('Failed to load MCP profiles:', err));
+  }, [mode]);
+
+  // Agent 列表加载后，校验主 Agent 偏好并恢复上次选中的 Agent 标签
+  useEffect(() => {
+    if (!agents.length) return;
+    const cliAgents = agents.filter(a => !a.custom && a.type !== 'assistant');
+    if (cliAgents.length) {
+      if (!mainAgentId || !cliAgents.some(a => a.id === mainAgentId)) {
+        const fallback = cliAgents[0].id;
+        setMainAgentId(fallback);
+        saveMainAgentId(fallback);
+      }
+    }
+    const savedId = getStoreSelectedAgentId();
+    if (savedId && agents.some(a => a.id === savedId)) {
+      const agent = agents.find(a => a.id === savedId);
+      if (agent && selectedAgent?.id !== savedId) {
+        setSelectedAgent(agent);
+        selectedAgentRef.current = agent;
+        syncSessionToState(savedId);
+      }
+    }
+  }, [agents, mainAgentId]);
+
+  function setMainAgent(agent) {
+    if (!agent?.id || agent.custom || agent.type === 'assistant') return;
+    setMainAgentId(agent.id);
+    saveMainAgentId(agent.id);
+  }
+
+  function syncSessionToState(key) {
+    const saved = readStoreSnapshot(key);
+    setAgentPrompt(saved.agentPrompt || '');
+    setCurrentUserPrompt(saved.currentUserPrompt || '');
+    setCurrentTask(saved.currentTask || null);
+    setTaskSteps(saved.taskSteps || []);
+    setTaskResult(saved.taskResult || null);
+    setExecuting(!!saved.executing);
+    setDelegations(saved.delegations || {});
+  }
+  syncSessionToStateRef.current = syncSessionToState;
+
+  /** 更新模块级会话；当前在调试页且标签匹配时同步 React state */
+  function patchSession(key, patch) {
+    patchStoreSession(key, patch);
+    if (isDebugRouteRef.current && agentSessionKey(selectedAgentRef.current) === key) {
+      syncSessionToState(key);
+    }
+    return getStoreSession(key);
+  }
+
+  const recoverActiveTasks = useCallback(async (syncKey) => {
+    if (!window.electronAPI?.agent?.listActiveTasks) return;
+    try {
+      const res = await window.electronAPI.agent.listActiveTasks();
+      if (!res.success || !res.tasks?.length) return;
+      for (const task of res.tasks) mergeTaskIntoStore(task);
+      syncSessionToStateRef.current?.(syncKey);
+    } catch (err) {
+      console.warn('[Debug] recoverActiveTasks failed:', err);
+    }
+  }, []);
+
+  // 切换侧边栏回到调试页时，从 store / 后端恢复进行中的任务
+  useEffect(() => {
+    if (location.pathname !== '/debug') return;
+    const key = agentSessionKey(selectedAgent);
+    // 恢复全局工作目录（切换菜单后可能未同步到 React state）
+    const savedDir = loadAgentWorkingDir();
+    if (savedDir && savedDir !== agentWorkingDir) {
+      setAgentWorkingDir(savedDir);
+    }
+    syncSessionToState(key);
+    recoverActiveTasks(key);
+  }, [location.pathname, selectedAgent, recoverActiveTasks]);
+
+  useEffect(() => {
+    saveDebugMode(mode);
+  }, [mode]);
+
+  const agentNameMap = useMemo(
+    () => Object.fromEntries((agents || []).map(a => [a.id, a.name])),
+    [agents],
+  );
+
+  // 切换 Agent 标签时保存/恢复会话状态
+  function switchAgent(agent) {
+    const prevKey = agentSessionKey(selectedAgent);
+    patchStoreSession(prevKey, {
+      agentPrompt,
+      currentUserPrompt,
+      currentTask,
+      taskSteps,
+      taskResult,
+      executing,
+      delegations,
+    });
+
+    const key = agentSessionKey(agent);
+    setStoreSelectedAgentId(agent?.id ?? null);
+    selectedAgentRef.current = agent;
+    setSelectedAgent(agent);
+    syncSessionToState(key);
+    setDirError('');
+  }
+
+  // 监听 Agent 事件：路由到对应标签页（主 Agent / 被派发子 Agent）
   useEffect(() => {
     if (!window.electronAPI?.agent) return;
 
-    const handleStep = (stepData) => {
-      if (currentTask && stepData.taskId === currentTask.id) {
-        setTaskSteps(prev => [...prev, stepData]);
-      }
-    };
+    const finishTask = async (data) => {
+      const key = resolveTaskRoute(data.taskId);
+      if (!key) return;
 
-    const handleCompleted = async (data) => {
-      if (currentTask && data.taskId === currentTask.id) {
-        setExecuting(false);
-        // 获取完整的任务状态
-        const statusResult = await window.electronAPI.agent.getStatus(data.taskId);
-        if (statusResult.success) {
-          setCurrentTask(statusResult.status);
-          setTaskResult(statusResult.status.result ? JSON.parse(statusResult.status.result) : null);
+      const statusResult = await window.electronAPI.agent.getTaskStatus(data.taskId);
+      if (!statusResult.success) return;
+
+      const status = statusResult.status;
+      const ctx = status.context || {};
+      patchSession(key, {
+        executing: false,
+        currentTask: status,
+        taskResult: status.result || null,
+      });
+
+      if (ctx.parentTaskId) {
+        const hub = getStoreSession('__hub__');
+        const dels = { ...(hub.delegations || {}) };
+        if (dels[data.taskId]) {
+          dels[data.taskId] = {
+            ...dels[data.taskId],
+            status: status.status,
+            result: status.result,
+          };
+          patchSession('__hub__', { delegations: dels });
         }
       }
     };
 
-    const handleFailed = (data) => {
-      if (currentTask && data.taskId === currentTask.id) {
-        setExecuting(false);
+    const handleDispatched = ({ parentTaskId, childTaskId, agentId, prompt }) => {
+      if (!childTaskId || !agentId) return;
+
+      routeTask(childTaskId, agentId);
+      if (parentTaskId) routeTask(parentTaskId, '__hub__');
+
+      patchSession(agentId, {
+        currentUserPrompt: prompt,
+        currentTask: { id: childTaskId, status: 'running', parentTaskId },
+        taskSteps: [],
+        taskResult: null,
+        executing: true,
+      });
+
+      if (parentTaskId) {
+        const hub = getStoreSession('__hub__');
+        patchSession('__hub__', {
+          delegations: {
+            ...(hub.delegations || {}),
+            [childTaskId]: {
+              agentId,
+              prompt,
+              steps: [],
+              status: 'running',
+              result: null,
+            },
+          },
+        });
       }
     };
 
-    window.electronAPI.agent.onStep(handleStep);
-    window.electronAPI.agent.onCompleted(handleCompleted);
-    window.electronAPI.agent.onFailed(handleFailed);
+    const handleStep = (stepData) => {
+      const { taskId, parentTaskId, agentId, stepType } = stepData;
+
+      if (stepType === 'delegation') {
+        if (resolveTaskRoute(taskId) === '__hub__') {
+          const hub = getStoreSession('__hub__');
+          patchSession('__hub__', {
+            taskSteps: [...(hub.taskSteps || []), stepData],
+          });
+          if (stepData.phase === 'complete' && stepData.childTaskId) {
+            const dels = { ...(hub.delegations || {}) };
+            if (dels[stepData.childTaskId]) {
+              dels[stepData.childTaskId] = {
+                ...dels[stepData.childTaskId],
+                status: stepData.status || 'completed',
+              };
+            }
+            patchSession('__hub__', { delegations: dels });
+          }
+        }
+        return;
+      }
+
+      const ownerKey = resolveTaskRoute(taskId, agentId);
+      if (ownerKey) {
+        const sess = getStoreSession(ownerKey);
+        if (!sess.currentTask || sess.currentTask.id === taskId) {
+          patchSession(ownerKey, {
+            taskSteps: [...(sess.taskSteps || []), stepData],
+          });
+        }
+      }
+
+      if (parentTaskId) {
+        const hub = getStoreSession('__hub__');
+        const dels = { ...(hub.delegations || {}) };
+        const del = dels[taskId] || { agentId, prompt: '', steps: [], status: 'running' };
+        del.steps = [...(del.steps || []), stepData];
+        dels[taskId] = del;
+        patchSession('__hub__', { delegations: dels });
+      }
+    };
+
+    const handleCancelled = (data) => {
+      const key = resolveTaskRoute(data.taskId);
+      if (key) {
+        patchSession(key, {
+          executing: false,
+          currentTask: { id: data.taskId, status: 'cancelled' },
+        });
+      }
+    };
+
+    const removeStep = window.electronAPI.agent.onStep(handleStep);
+    const removeDispatched = window.electronAPI.agent.onDispatched
+      ? window.electronAPI.agent.onDispatched(handleDispatched)
+      : () => {};
+    const removeCompleted = window.electronAPI.agent.onCompleted(finishTask);
+    const removeFailed = window.electronAPI.agent.onFailed(finishTask);
+    const removeCancelled = window.electronAPI.agent.onCancelled
+      ? window.electronAPI.agent.onCancelled(handleCancelled)
+      : () => {};
 
     return () => {
-      // Cleanup listeners
-      // Note: electronAPI doesn't provide removeListener, so we just leave them
+      removeStep?.();
+      removeDispatched?.();
+      removeCompleted?.();
+      removeFailed?.();
+      removeCancelled?.();
     };
-  }, [currentTask]);
+  }, []);
 
   // Load available agents
   async function loadAgents() {
@@ -384,27 +683,65 @@ export default function Debug() {
 
   // Execute agent task
   async function executeAgent() {
-    if (!selectedAgent || !agentPrompt.trim() || !window.electronAPI?.agent) {
+    if (!activeAgent || !agentPrompt.trim() || !window.electronAPI?.agent) {
+      return;
+    }
+    if (executing) return;
+    if (activeAgent.custom && isHubMode) {
+      return;
+    }
+    if (!agentWorkingDir.trim()) {
+      setDirError('请先选择工作目录');
+      return;
+    }
+    // 聚合入口：主 Agent 须支持 MCP 编排（Claude Code / Codex）
+    const orchestratorAgents = new Set(['claude-code', 'codex']);
+    if (isHubMode && mainAgent && !orchestratorAgents.has(mainAgent.id)) {
+      alert(`聚合派发需要主 Agent 支持 MCP 编排，当前 ${mainAgent.name} 暂不支持，请切换主 Agent`);
       return;
     }
 
-    setExecuting(true);
-    setTaskSteps([]);
-    setTaskResult(null);
-    setCurrentTask(null);
+    setDirError('');
+    const prompt = agentPrompt.trim();
+    const execKey = agentSessionKey(selectedAgent);
+
+    patchSession(execKey, {
+      currentUserPrompt: prompt,
+      agentPrompt: '',
+      executing: true,
+      taskSteps: [],
+      taskResult: null,
+      currentTask: null,
+    });
+
+    // 聚合入口 = 主 Agent 编排；Agent tab = 直调
+    const execMode = isHubMode ? 'orchestrator' : 'direct';
 
     try {
       const result = await window.electronAPI.agent.execute({
-        agentId: selectedAgent.id,
-        prompt: agentPrompt.trim(),
+        agentId: activeAgent.id,
+        prompt,
         options: {
-          workingDir: agentWorkingDir || undefined,
+          workingDir: agentWorkingDir.trim(),
+          mode: execMode,
+          mainAgentId: isHubMode ? activeAgent.id : mainAgentId,
+          mcpProfile: isHubMode ? mcpProfileId : undefined,
+          sessionKey: execKey,
         },
       });
 
       if (result.success) {
-        setCurrentTask({ id: result.taskId, status: 'running' });
+        routeTask(result.taskId, execKey);
+        patchSession(execKey, {
+          currentUserPrompt: prompt,
+          executing: true,
+          taskSteps: [],
+          taskResult: null,
+          currentTask: { id: result.taskId, status: 'running' },
+          agentPrompt: '',
+        });
       } else {
+        patchSession(execKey, { executing: false });
         setExecuting(false);
         alert('执行失败: ' + (result.error || '未知错误'));
       }
@@ -415,19 +752,61 @@ export default function Debug() {
     }
   }
 
-  // Cancel agent task
+  async function pickWorkingDir() {
+    if (!window.electronAPI?.agent?.pickWorkingDir) return;
+    try {
+      const result = await window.electronAPI.agent.pickWorkingDir(
+        agentWorkingDir.trim() ? { defaultPath: agentWorkingDir.trim() } : {},
+      );
+      if (result.success && result.path) {
+        setAgentWorkingDir(result.path);
+        saveAgentWorkingDir(result.path);
+        setDirError('');
+      }
+    } catch (error) {
+      console.error('Failed to pick directory:', error);
+    }
+  }
+
   async function cancelAgent() {
-    if (!currentTask || !window.electronAPI?.agent) return;
+    if (!window.electronAPI?.agent) return;
+    const execKey = agentSessionKey(selectedAgent);
 
     try {
-      const result = await window.electronAPI.agent.cancel(currentTask.id);
-      if (result.success) {
-        setExecuting(false);
-        setCurrentTask(prev => ({ ...prev, status: 'cancelled' }));
+      if (window.electronAPI.agent.cancelAllActive) {
+        await window.electronAPI.agent.cancelAllActive();
+      } else {
+        const taskId = currentTask?.id || readStoreSnapshot(execKey).currentTask?.id;
+        if (taskId) await window.electronAPI.agent.cancel(taskId);
       }
     } catch (error) {
       console.error('Failed to cancel agent:', error);
     }
+
+    // 无论后端是否找到进程，都释放 UI 锁，避免卡死
+    releaseAllExecutingSessions();
+    patchSession(execKey, {
+      executing: false,
+      currentTask: currentTask?.id
+        ? { ...currentTask, status: 'cancelled' }
+        : readStoreSnapshot(execKey).currentTask?.id
+          ? { ...readStoreSnapshot(execKey).currentTask, status: 'cancelled' }
+          : null,
+    });
+  }
+
+  /** 清空当前标签页对话，便于开启新任务 */
+  function startNewAgentSession() {
+    const execKey = agentSessionKey(selectedAgent);
+    if (executing) {
+      cancelAgent().then(() => {
+        clearSessionTaskState(execKey);
+        syncSessionToState(execKey);
+      });
+      return;
+    }
+    clearSessionTaskState(execKey);
+    syncSessionToState(execKey);
   }
 
   // Load config + gateway status (to get actual running port)
@@ -631,12 +1010,13 @@ export default function Debug() {
     <div className="flex flex-col h-screen">
 
       {/* ── Toolbar ── */}
-      <div className="shrink-0 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 px-4 pt-3 pb-2 space-y-2">
+      <div className="shrink-0 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 px-4 pt-12 pb-2 space-y-2 electron-no-drag relative z-[60]">
 
-        {/* Mode Switcher */}
+        {/* Mode Switcher — electron-no-drag 避免被顶部拖拽条拦截点击 */}
         <div className="flex gap-2 items-center">
           <div className="inline-flex rounded-lg border border-zinc-200 dark:border-zinc-700 p-1 bg-zinc-50 dark:bg-zinc-900">
             <button
+              type="button"
               onClick={() => setMode('llm')}
               className={`
                 px-4 py-1.5 text-sm font-medium rounded-md transition-all
@@ -649,6 +1029,7 @@ export default function Debug() {
               💬 LLM 模式
             </button>
             <button
+              type="button"
               onClick={() => setMode('agent')}
               className={`
                 px-4 py-1.5 text-sm font-medium rounded-md transition-all
@@ -792,19 +1173,26 @@ export default function Debug() {
         </>
         )}
 
-        {/* Agent Mode Toolbar */}
+        {/* Agent Mode：顶部 Agent 标签条 */}
         {mode === 'agent' && (
-          <div className="space-y-2">
-            {/* Agent Working Directory */}
-            <div className="flex gap-2 items-center">
-              <label className="text-xs text-zinc-600 dark:text-zinc-400 shrink-0">工作目录:</label>
-              <input
-                value={agentWorkingDir}
-                onChange={e => setAgentWorkingDir(e.target.value)}
-                placeholder="留空使用默认工作目录"
-                className="flex-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500"
-              />
-            </div>
+          <AgentTabBar
+            agents={agents}
+            selectedAgent={selectedAgent}
+            mainAgentId={mainAgentId}
+            onSelect={switchAgent}
+            onSetMainAgent={setMainAgent}
+            loading={loadingAgents}
+          />
+        )}
+        {mode === 'agent' && (currentUserPrompt || taskSteps.length > 0 || executing) && (
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={startNewAgentSession}
+              className="text-xs px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+            >
+              新会话
+            </button>
           </div>
         )}
       </div>
@@ -891,62 +1279,87 @@ export default function Debug() {
         <div ref={messagesEndRef} />
           </>
         ) : (
-          /* Agent Mode: Agent selector + execution */
-          <div className="grid grid-cols-12 gap-4 h-full">
-            {/* Left: Agent Selector */}
-            <div className="col-span-3 overflow-y-auto">
-              <AgentSelector
-                agents={agents}
-                selectedAgent={selectedAgent}
-                onSelect={setSelectedAgent}
-                loading={loadingAgents}
-              />
-            </div>
-
-            {/* Right: Execution Area */}
-            <div className="col-span-9 flex flex-col">
-              {!selectedAgent ? (
+          /* Agent Mode：全宽对话流 */
+          <div className="h-full flex flex-col">
+            {isHubMode ? (
+              /* 聚合入口：由主 Agent 编排 */
+              !mainAgent ? (
                 <div className="flex-1 flex items-center justify-center text-center text-zinc-400 dark:text-zinc-500">
-                  <div>
-                    <p className="text-3xl mb-2">🤖</p>
-                    <p className="text-sm">请先选择一个 Agent</p>
-                  </div>
+                  <p className="text-sm">未检测到可用 Agent，请先在 Gateway 纳管</p>
                 </div>
-              ) : !currentTask ? (
-                <div className="flex-1 flex items-center justify-center text-center text-zinc-400 dark:text-zinc-500">
-                  <div>
+              ) : !currentUserPrompt && !taskSteps.length && !executing ? (
+                <div className="flex-1 flex items-center justify-center text-center text-zinc-400 dark:text-zinc-500 px-6">
+                  <div className="max-w-md">
                     <p className="text-3xl mb-2">✨</p>
-                    <p className="text-sm">在下方输入任务描述开始执行</p>
+                    <p className="text-sm mb-4">
+                      聚合入口由<strong className="text-zinc-700 dark:text-zinc-300">主 Agent</strong>接收任务，
+                      后续可协调派发至其他 Agent
+                    </p>
+                    <div className="flex items-center justify-center gap-2 text-sm">
+                      <span className="text-zinc-500">主 Agent：</span>
+                      <select
+                        value={mainAgentId}
+                        onChange={e => {
+                          const agent = agents.find(a => a.id === e.target.value);
+                          if (agent) setMainAgent(agent);
+                        }}
+                        className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1 text-zinc-900 dark:text-zinc-100"
+                      >
+                        {agents.filter(a => !a.custom).map(a => (
+                          <option key={a.id} value={a.id}>{a.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {mcpProfiles.length > 0 && (
+                      <div className="flex items-center justify-center gap-2 text-sm mt-3">
+                        <span className="text-zinc-500">MCP Profile：</span>
+                        <select
+                          value={mcpProfileId}
+                          onChange={e => {
+                            setMcpProfileId(e.target.value);
+                            saveMcpProfileId(e.target.value);
+                          }}
+                          className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1 text-zinc-900 dark:text-zinc-100 max-w-[220px]"
+                        >
+                          {mcpProfiles.map(p => (
+                            <option key={p.id} value={p.id}>{p.display_name || p.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <p className="text-xs text-zinc-400 mt-3">
+                      也可点击 Agent 标签旁的 ☆ 设为主 Agent
+                    </p>
                   </div>
                 </div>
               ) : (
-                <div className="flex-1 flex flex-col gap-4 overflow-hidden">
-                  {/* Execution Log */}
-                  <div className="flex-1 overflow-y-auto">
-                    <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-3">
-                      执行日志:
-                    </h3>
-                    <ExecutionLog steps={taskSteps} status={currentTask?.status} />
-                  </div>
-
-                  {/* Result Display */}
-                  {taskResult && (
-                    <div className="shrink-0 max-h-[40%] overflow-y-auto">
-                      <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-3">
-                        执行结果:
-                      </h3>
-                      <ExecutionResult result={taskResult} task={currentTask} />
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+                <ExecutionLog
+                  userPrompt={currentUserPrompt}
+                  steps={taskSteps}
+                  status={currentTask?.status}
+                  result={taskResult}
+                  task={currentTask}
+                  agentName={`${mainAgent.name}（主 Agent）`}
+                  delegations={delegations}
+                  agentNames={agentNameMap}
+                />
+              )
+            ) : (
+              <ExecutionLog
+                userPrompt={currentUserPrompt}
+                steps={taskSteps}
+                status={currentTask?.status}
+                result={taskResult}
+                task={currentTask}
+                agentName={selectedAgent?.name}
+              />
+            )}
           </div>
         )}
       </div>
 
       {/* ── Input bar ── */}
-      <div className="shrink-0 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 px-4 py-3">
+      <div className="shrink-0 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 px-4 py-3 electron-no-drag relative z-[60]">
         {mode === 'llm' ? (
           /* LLM Mode Input */
           <div className="flex gap-2 items-end">
@@ -963,40 +1376,95 @@ export default function Debug() {
           </div>
         ) : (
           /* Agent Mode Input */
-          <div className="flex gap-2 items-end">
-            <textarea
-              value={agentPrompt}
-              onChange={e => setAgentPrompt(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                  e.preventDefault();
-                  if (!executing && selectedAgent && agentPrompt.trim()) {
-                    executeAgent();
-                  }
-                }
-              }}
-              placeholder="描述你想让 Agent 完成的任务... (Cmd/Ctrl+Enter 发送)"
-              rows={2}
-              className="flex-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 resize-none"
-            />
-            {executing ? (
+          <div className="space-y-2">
+            {/* 工作目录：底部选择，符合常见 Agent 交互习惯 */}
+            <div className="flex items-center gap-2">
               <button
-                onClick={cancelAgent}
-                className="shrink-0 px-4 h-9 bg-red-600 hover:bg-red-500 text-white rounded-xl flex items-center justify-center gap-2 transition-colors"
+                type="button"
+                onClick={pickWorkingDir}
+                disabled={!activeAgent}
+                className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 transition-colors"
               >
-                <span className="w-3 h-3 bg-white rounded-sm"></span>
-                <span className="text-sm">停止</span>
+                📁 选择目录
               </button>
-            ) : (
-              <button
-                onClick={executeAgent}
-                disabled={!selectedAgent || !agentPrompt.trim()}
-                className="shrink-0 px-4 h-9 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-40 text-white rounded-xl flex items-center justify-center gap-2 transition-colors"
-              >
-                <span className="text-sm">▶</span>
-                <span className="text-sm">执行</span>
-              </button>
+              {isHubMode && mainAgent && (
+                <>
+                  <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                    主：{mainAgent.name}
+                  </span>
+                  {mcpProfiles.length > 0 && (
+                    <select
+                      value={mcpProfileId}
+                      onChange={e => {
+                        setMcpProfileId(e.target.value);
+                        saveMcpProfileId(e.target.value);
+                      }}
+                      className="shrink-0 text-[11px] px-2 py-0.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-300"
+                      title="MCP Profile"
+                    >
+                      {mcpProfiles.map(p => (
+                        <option key={p.id} value={p.id}>{p.display_name || p.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </>
+              )}
+              <span className={`flex-1 truncate text-xs font-mono ${
+                agentWorkingDir
+                  ? 'text-zinc-600 dark:text-zinc-400'
+                  : 'text-amber-600 dark:text-amber-400'
+              }`}>
+                {agentWorkingDir || '未选择工作目录 — 执行任务前请先选择'}
+              </span>
+            </div>
+            {dirError && (
+              <p className="text-xs text-red-500 dark:text-red-400">{dirError}</p>
             )}
+
+            <div className="flex gap-2 items-end">
+              <textarea
+                value={agentPrompt}
+                onChange={e => setAgentPrompt(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    if (!executing && activeAgent && agentPrompt.trim()) {
+                      executeAgent();
+                    }
+                  }
+                }}
+                disabled={!activeAgent}
+                placeholder={
+                  !activeAgent
+                    ? '请先纳管 Agent'
+                    : isHubMode
+                      ? `向主 Agent ${mainAgent?.name || ''} 描述协同任务… (Cmd/Ctrl+Enter)`
+                      : `向 ${selectedAgent.name} 直调任务… (Cmd/Ctrl+Enter)`
+                }
+                rows={2}
+                className="flex-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 resize-none disabled:opacity-50"
+              />
+              {executing ? (
+                <button
+                  type="button"
+                  onClick={cancelAgent}
+                  className="shrink-0 px-4 h-9 bg-red-600 hover:bg-red-500 text-white rounded-xl flex items-center justify-center gap-2 transition-colors"
+                >
+                  <span className="w-3 h-3 bg-white rounded-sm"></span>
+                  <span className="text-sm">停止</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={executeAgent}
+                  disabled={!activeAgent || !agentPrompt.trim()}
+                  className="shrink-0 px-4 h-9 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-40 text-white rounded-xl flex items-center justify-center gap-2 transition-colors"
+                >
+                  <span className="text-sm">▶</span>
+                  <span className="text-sm">执行</span>
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
