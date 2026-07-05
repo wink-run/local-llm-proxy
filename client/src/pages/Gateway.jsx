@@ -1086,7 +1086,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
 
 // 手工添加面板（内联）：未被识别的应用 —— 仅给 Key + base_url，用户自行配置指向网关。
 // 与 AppSettingsPanel（弹窗，用于编辑/桌面应用托管）是两套独立组件。
-function ManualAddPanel({ app, routes, availableModels = [], onUpdate, onRegenKey, onSave, onCancel }) {
+function ManualAddPanel({ app, routes, availableModels = [], localBase = '', onUpdate, onRegenKey, onSave, onCancel }) {
   const { t } = useLang();
   const [name,           setName]           = useState(app.name || '');
   const [icon,           setIcon]           = useState(app.icon || 'icon:cube');
@@ -2793,6 +2793,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
             {/* 手工添加 → 内联面板（ManualAddPanel，独立组件）*/}
             {manualDraft && (
               <ManualAddPanel app={manualDraft} routes={routes} availableModels={availableModels}
+                localBase={localBase}
                 onUpdate={handleUpdateApp} onRegenKey={handleRegenKey}
                 onSave={closeManualDraft} onCancel={cancelManualDraft} />
             )}
