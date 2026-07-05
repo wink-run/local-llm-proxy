@@ -577,220 +577,9 @@ export class ResourceUpdater {
 
 ---
 
-## 🔀 二、供给与配置管理
+## 🤖 二、Agent 执行增强
 
-### 2.1 Profile 系统
-
-**吸收 aweswitch 的 Profile 概念**，但集成到 Token Bank 的 Provider 体系：
-
-#### 数据模型扩展
-
-```sql
--- Provider Profiles（快速切换配置）
-CREATE TABLE provider_profiles (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
-  display_name TEXT,
-  provider_id TEXT,     -- 关联到 providers 表，可为空（跨 provider）
-  config TEXT NOT NULL, -- JSON：完整的 provider 配置
-  description TEXT,
-  is_active INTEGER DEFAULT 0,
-  created_at INTEGER,
-  updated_at INTEGER
-);
-
--- Profile 变量（安全存储敏感信息）
-CREATE TABLE profile_variables (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
-  value TEXT NOT NULL,  -- 加密存储
-  description TEXT,
-  created_at INTEGER
-);
-```
-
-#### Profile 配置示例
-
-```javascript
-// Profile 示例
-{
-  id: 'profile-glm-free',
-  name: 'glm-free',
-  display_name: 'GLM 免费版',
-  provider_id: null,  // 跨 provider
-  config: {
-    // 可以包含多个 provider 的配置
-    anthropic: {
-      base_url: 'https://open.bigmodel.cn/api/anthropic',
-      token: '${GLM_TOKEN}',  // 变量引用
-      models: ['glm-5.1', 'glm-5.2']
-    },
-    openai: {
-      base_url: 'https://open.bigmodel.cn/api/openai',
-      api_key: '${GLM_TOKEN}',
-      models: ['glm-5.1', 'glm-5.2']
-    }
-  },
-  description: '智谱 GLM 免费 API'
-}
-```
-
-### 2.2 快速切换界面
-
-**在 Providers 页面添加 Profile 管理**：
-
-```
-┌────────────────────────────────────────────────────────┐
-│  供给源管理                                             │
-├────────────────────────────────────────────────────────┤
-│  [Provider] [Profile] [Route] [MCP]                   │
-├────────────────────────────────────────────────────────┤
-│                                                        │
-│  当前 Profile: 官方配置 [切换▼]                         │
-│  ┌──────────────────────────────────────────────────┐ │
-│  │ ✓ 官方配置（默认）                                 │ │
-│  │   glm-free          [智谱 GLM 免费 API]           │ │
-│  │   gemini-vertex     [Gemini Vertex AI]           │ │
-│  │   xiaomi-mimo       [小米 Mimo API]               │ │
-│  │   openrouter-all    [OpenRouter 聚合]            │ │
-│  └──────────────────────────────────────────────────┘ │
-│                                                        │
-│  Profile 列表                                          │
-│  ┌──────────────────────────────────────────────────┐ │
-│  │ 📋 glm-free                                       │ │
-│  │    智谱 GLM 免费 API                               │ │
-│  │    Provider: Anthropic + OpenAI                   │ │
-│  │    Models: glm-5.1, glm-5.2                      │ │
-│  │    [激活] [编辑] [测试] [删除]                     │ │
-│  ├──────────────────────────────────────────────────┤ │
-│  │ 📋 gemini-vertex       ✅ 当前激活                 │ │
-│  │    Gemini Vertex AI                              │ │
-│  │    Provider: Gemini (Vertex AI)                  │ │
-│  │    Models: gemini-2.0-flash-exp                  │ │
-│  │    [停用] [编辑] [测试]                           │ │
-│  └──────────────────────────────────────────────────┘ │
-│                                                        │
-│  [➕ 新建 Profile]                                     │
-└────────────────────────────────────────────────────────┘
-```
-
-### 2.3 Profile 实现
-
-```javascript
-// client/electron/profile-manager.js
-export class ProfileManager {
-  /**
-   * 激活 Profile
-   */
-  static async activate(profileId) {
-    const profile = await db.get(
-      'SELECT * FROM provider_profiles WHERE id = ?', 
-      profileId
-    );
-    
-    if (!profile) {
-      throw new Error('Profile not found');
-    }
-    
-    // 解析配置，替换变量
-    const config = JSON.parse(profile.config);
-    const resolvedConfig = await this.resolveVariables(config);
-    
-    // 更新 providers
-    await this.applyProviderConfig(resolvedConfig);
-    
-    // 标记为激活
-    await db.run('UPDATE provider_profiles SET is_active = 0');
-    await db.run('UPDATE provider_profiles SET is_active = 1 WHERE id = ?', profileId);
-    
-    // 通知前端刷新
-    return { success: true, profile };
-  }
-
-  /**
-   * 解析变量
-   */
-  static async resolveVariables(config) {
-    const variablePattern = /\$\{(\w+)\}/g;
-    const configStr = JSON.stringify(config);
-    
-    // 查找所有变量
-    const variables = [...configStr.matchAll(variablePattern)].map(m => m[1]);
-    
-    // 从数据库获取变量值
-    const values = {};
-    for (const varName of variables) {
-      const row = await db.get(
-        'SELECT value FROM profile_variables WHERE name = ?',
-        varName
-      );
-      if (row) {
-        values[varName] = this.decrypt(row.value);
-      } else {
-        // 尝试从环境变量获取
-        values[varName] = process.env[varName] || '';
-      }
-    }
-    
-    // 替换变量
-    let resolved = configStr;
-    for (const [name, value] of Object.entries(values)) {
-      resolved = resolved.replace(new RegExp(`\\$\\{${name}\\}`, 'g'), value);
-    }
-    
-    return JSON.parse(resolved);
-  }
-
-  /**
-   * 应用 Provider 配置
-   */
-  static async applyProviderConfig(config) {
-    // 遍历配置中的 provider
-    for (const [providerKey, providerConfig] of Object.entries(config)) {
-      // 查找或创建 provider
-      let provider = await db.get(
-        'SELECT * FROM providers WHERE id = ?',
-        `profile-${providerKey}`
-      );
-      
-      if (!provider) {
-        // 创建新 provider
-        await db.run(`
-          INSERT INTO providers (id, type, base_url, token, models, enabled)
-          VALUES (?, ?, ?, ?, ?, 1)
-        `, [
-          `profile-${providerKey}`,
-          providerKey,
-          providerConfig.base_url,
-          providerConfig.token || providerConfig.api_key,
-          JSON.stringify(providerConfig.models || [])
-        ]);
-      } else {
-        // 更新现有 provider
-        await db.run(`
-          UPDATE providers 
-          SET base_url = ?, token = ?, models = ?
-          WHERE id = ?
-        `, [
-          providerConfig.base_url,
-          providerConfig.token || providerConfig.api_key,
-          JSON.stringify(providerConfig.models || []),
-          provider.id
-        ]);
-      }
-    }
-    
-    // 重新加载配置
-    await reloadConfig();
-  }
-}
-```
-
----
-
-## 🤖 三、Agent 执行增强
-
-### 3.1 内置 Agent 引擎
+### 2.1 内置 Agent 引擎
 
 **吸收 AionUi 的 Agent 引擎设计**，但原生到 Token Bank：
 
@@ -880,7 +669,7 @@ export class OfficeTools {
 }
 ```
 
-### 3.2 Debug 页面的 Agent 模式增强
+### 2.2 Debug 页面的 Agent 模式增强
 
 **结合资源管理和 Office 能力**：
 
@@ -948,15 +737,14 @@ export class OfficeTools {
 
 ---
 
-## 🔄 四、统一的数据流
+## 🔄 三、统一的数据流
 
-### 4.1 架构图
+### 3.1 架构图
 
 ```
 ┌──────────────────────────────────────────────────────┐
 │  前端 UI（统一体验）                                   │
 │  ├─ Resources 页面（资源管理）                        │
-│  ├─ Providers 页面（供给 + Profile）                 │
 │  ├─ Gateway 页面（Agent 纳管 + 投射）                │
 │  └─ Debug 页面（Agent 模式 + Assistant）             │
 └────────────┬─────────────────────────────────────────┘
@@ -967,7 +755,6 @@ export class OfficeTools {
 │  ├─ ResourceManager（资源生命周期）                  │
 │  ├─ ResourceDiscovery（资源发现）                    │
 │  ├─ ResourceProjector（资源投射）                    │
-│  ├─ ProfileManager（配置管理）                       │
 │  ├─ AgentExecutor（Agent 执行）                      │
 │  └─ OfficeTools（Office 能力）                       │
 └────────────┬─────────────────────────────────────────┘
@@ -978,93 +765,80 @@ export class OfficeTools {
 │  ├─ resources（统一资源表）                          │
 │  ├─ resource_collections（Bundle/Workflow）         │
 │  ├─ resource_projections（投射关系）                │
-│  ├─ provider_profiles（Profile 配置）               │
 │  └─ agent_tasks（执行记录）                          │
 └──────────────────────────────────────────────────────┘
 ```
 
-### 4.2 集成点
+### 3.2 集成点
 
 | 外部项目能力 | Token Bank 原生实现 | 集成方式 |
 |------------|-------------------|---------|
 | aweskill Skill 管理 | Resource 系统 | 吸收数据模型和投射机制 |
 | aweskill 发现/更新 | ResourceDiscovery | 复用 API，原生界面 |
-| aweswitch Profile | ProfileManager | 集成到 Provider 体系 |
-| aweswitch 快速切换 | Provider 页面 | 统一配置管理 |
 | AionUi Office | OfficeTools | 原生工具链 |
 | AionUi Assistant | Assistant 资源 | 原生配置格式 |
 | AionUi Agent 引擎 | AgentExecutor | 吸收架构设计 |
 
+**注**：aweswitch 的 Profile 快速切换能力暂不实施
+
 ---
 
-## 📋 实施计划
+## 📋 实施计划（暂不包含 Profile 系统）
 
-### Phase 1：资源管理基础（3 周）
+### Phase 1：资源管理基础
 
-**Week 1：数据模型**
+**1. 数据模型**
 - [ ] 设计并创建 resources 相关表
 - [ ] 实现 ResourceManager 基础 CRUD
 - [ ] 支持 Prompt 和 Skill 类型
 
-**Week 2：资源发现**
+**2. 资源发现**
 - [ ] 实现 ResourceDiscovery（本地 + sciskill）
 - [ ] 资源导入和内容解析
 - [ ] 哈希去重机制
 
-**Week 3：投射机制**
+**3. 投射机制**
 - [ ] 实现 ResourceProjector
 - [ ] 支持 symlink/copy 投射
 - [ ] 投射状态检查和修复
 
-### Phase 2：界面实现（2 周）
+### Phase 2：界面实现
 
-**Week 4：Resources 页面**
+**4. Resources 页面**
 - [ ] 资源列表和搜索
 - [ ] 资源详情和编辑
 - [ ] 导入和创建
 
-**Week 5：集成到 Gateway**
+**5. 集成到 Gateway**
 - [ ] Agent 卡片显示投射的资源
 - [ ] 快速投射/取消投射
 - [ ] 状态警告和修复
 
-### Phase 3：Profile 系统（2 周）
+### Phase 3：Agent 增强
 
-**Week 6：Profile 数据和逻辑**
-- [ ] Profile 数据模型
-- [ ] 变量管理和加密
-- [ ] 激活/停用逻辑
-
-**Week 7：Profile UI**
-- [ ] Providers 页面添加 Profile 标签
-- [ ] Profile 列表和编辑
-- [ ] 快速切换
-
-### Phase 4：Agent 增强（3 周）
-
-**Week 8：Assistant 系统**
+**6. Assistant 系统**
 - [ ] Assistant 资源类型
 - [ ] 与 Skill/Prompt 关联
 - [ ] Debug 页面 Assistant 选择
 
-**Week 9：Office 能力**
+**7. Office 能力**
 - [ ] OfficeTools 基础实现
 - [ ] PPT/Word/Excel 生成
 - [ ] 文件预览集成
 
-**Week 10：执行跟踪**
+**8. 执行跟踪**
 - [ ] agent_tasks 表和逻辑
 - [ ] 步骤和工具调用记录
 - [ ] 成本统计集成
 
-### Phase 5：测试优化（2 周）
+### Phase 4：测试优化
 
-**Week 11-12**
+**9. 测试和完善**
 - [ ] 端到端测试
 - [ ] 性能优化
 - [ ] 文档完善
 
-**总计：12 周**
+**注**：Profile 系统（快速切换供给源配置）暂不实施，待后续评估
 
 ---
 
