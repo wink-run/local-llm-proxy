@@ -1539,6 +1539,10 @@ function nodeRequest(url, method, headers, body, agentOrOpts) {
 // ── IPC handlers ──────────────────────────────────────────────────────────────
 
 function registerIPC() {
+  // Agent 聚合系统 IPC handlers
+  const { registerAgentHandlers } = require('./ipc-handlers-agent');
+  registerAgentHandlers();
+  
   const billingConfigMod = require('./billing-config');
   ipcMain.on('tray:lang',  (_e, lang)      => { _trayLang = lang === 'en' ? 'en' : 'zh'; refreshTray(); });
   ipcMain.on('tray:auth',  (_e, loggedIn)  => {
