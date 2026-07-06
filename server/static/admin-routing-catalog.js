@@ -6,6 +6,25 @@ window.initRoutingCatalogAdmin = function (api, lang, ref) {
   const rcModalOpen = ref(false)
   const rcEditId = ref(null)
   const rcForm = ref(emptyRouteForm())
+  const rcDefaultStrategy = ref('')      // 全局默认路由策略（空=客户端回落 cost）
+  const rcStrategies = ref([])           // 可选策略名（服务端下发）
+  const rcStrategiesMeta = ref([])       // 策略目录：[{name,label_zh/en,description_zh/en}]，来自 routing-strategies.yaml
+
+  const _strategyMeta = (s) => (rcStrategiesMeta.value || []).find(x => x.name === s) || null
+  const strategyLabel = (s) => { const m = _strategyMeta(s); return m ? ((lang.value === 'zh' ? m.label_zh : m.label_en) || s) : s }
+  const strategyDesc = (s) => { const m = _strategyMeta(s); return m ? ((lang.value === 'zh' ? m.description_zh : m.description_en) || '') : '' }
+
+  async function saveRcStrategy() {
+    rcMsg.value = ''
+    try {
+      const r = await api('/admin/routing/catalog/settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ default_strategy: rcDefaultStrategy.value || null }),
+      })
+      if (!r.ok) { rcMsg.value = (await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`; return }
+      rcMsg.value = lang.value === 'zh' ? '✓ 已保存（发布后下发客户端）' : '✓ Saved (publish to deliver)'
+    } catch (e) { rcMsg.value = e.message }
+  }
 
   function emptyRouteForm() {
     return { sort_order: '', id: '', scene_name: '', icon: '🔀', model_key: '', steps: [{ model: '', tier: 'paid' }] }
@@ -20,6 +39,9 @@ window.initRoutingCatalogAdmin = function (api, lang, ref) {
       if (!r.ok) { rcMsg.value = (await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`; return }
       const d = await r.json()
       rcRoutes.value = d.routes || []
+      rcDefaultStrategy.value = d.default_strategy || ''
+      rcStrategies.value = d.strategies || []
+      rcStrategiesMeta.value = d.strategies_meta || []
     } catch (e) { rcMsg.value = e.message }
   }
 
@@ -114,6 +136,7 @@ window.initRoutingCatalogAdmin = function (api, lang, ref) {
 
   return {
     rcRoutes, rcMsg, rcSaving, rcModalOpen, rcEditId, rcForm, rcSorted,
+    rcDefaultStrategy, rcStrategies, rcStrategiesMeta, strategyLabel, strategyDesc, saveRcStrategy,
     fetchRoutingCatalog, openRcModal, closeRcModal, saveRcRoute, deleteRcRoute,
     rcAddStep, rcRemoveStep, importRcDefaults, publishRcCatalog,
   }

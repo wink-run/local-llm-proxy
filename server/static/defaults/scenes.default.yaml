@@ -5,6 +5,34 @@
 version: 1
 
 scene_routes:
+  # ── 策略路由（模型无关，无 steps）：网关按请求类型扫该类型下所有(源,模型)候选、按 strategy 排序 + failover。
+  #    strategy 逻辑由客户端 routing-strategies.js 里同名 JS 实现。客户端像选场景路由一样选。
+  - id: strategy-cost
+    scene_name: 实惠优先
+    icon: 💰
+    model_key: llm-router-cost
+    strategy: cost
+  - id: strategy-speed
+    scene_name: 速度优先
+    icon: ⚡
+    model_key: llm-router-speed
+    strategy: speed
+  - id: strategy-fallback
+    scene_name: 按顺序
+    icon: 📇
+    model_key: llm-router-fallback
+    strategy: fallback
+  - id: strategy-round-robin
+    scene_name: 轮询
+    icon: 🔄
+    model_key: llm-router-round-robin
+    strategy: round-robin
+  - id: strategy-weighted
+    scene_name: 加权
+    icon: ⚖️
+    model_key: llm-router-weighted
+    strategy: weighted
+
   - id: route-code
     scene_name: 代码助手
     icon: 💻

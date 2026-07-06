@@ -136,6 +136,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sessionImport: {
     run: () => ipcRenderer.invoke('sessionImport:run'),
   },
+  routing: {
+    getStrategy: () => ipcRenderer.invoke('routing:getStrategy'),
+    setStrategy: (name) => ipcRenderer.invoke('routing:setStrategy', name),
+  },
   detectTools: {
     scan: () => ipcRenderer.invoke('detectTools:scan'),
   },

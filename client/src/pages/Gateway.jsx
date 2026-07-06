@@ -1158,7 +1158,7 @@ function ManualAddPanel({ app, routes, availableModels = [], localBase = '', onU
             <option value="" disabled>{t('gateway.app.routeRequired')}</option>
             {(() => {
               const avail = new Set(availableModels.map(m => m.id));
-              const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
+              const usable = routes.filter(r => r.strategy || (r.steps || []).some(s => avail.has(s.model || s.label)));
               return usable.length > 0 && (
                 <optgroup label={t('gateway.app.sceneRoutes')}>
                   {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon && !r.icon.startsWith('icon:') ? r.icon + ' ' : ''}{r.scene_name}</option>)}
@@ -2855,7 +2855,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                     // 场景路由始终可识别（按 model_key / id）
                     if (routes.some(r => (r.model_key || r.id) === val)) return true;
                     const avail = new Set(availableModels.map(m => m.id));
-                    const usableRoutes = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
+                    const usableRoutes = routes.filter(r => r.strategy || (r.steps || []).some(s => avail.has(s.model || s.label)));
                     return usableRoutes.some(r => (r.model_key || r.id) === val)
                       || availableModels.some(m => ['free', 'p2p', 'paid'].includes(m.tier) && modelTierKey(m) === val);
                   };
@@ -3909,6 +3909,39 @@ function autoConfigTools(t) {
     { id: 'continue',    icon: '🪟', label: t('gateway.tool.continue'),   hint: t('gateway.tool.manualConfig') },
     { id: 'other',       icon: '📋', label: t('gateway.tool.other'),      hint: t('gateway.tool.generic') },
   ];
+}
+
+// 全局路由策略下拉：读/写 local-config.routing.global_strategy（本地覆盖），空=跟随服务端默认。
+function RoutingStrategyPicker() {
+  const { t, lang } = useLang();
+  const api = (typeof window !== 'undefined' && window.electronAPI?.routing) || null;
+  const [cur, setCur] = useState('');
+  const [serverDefault, setServerDefault] = useState(null);
+  const [meta, setMeta] = useState([]);   // 下发的策略目录 [{name,label_zh/en,description_zh/en}]
+  const load = useCallback(async () => {
+    if (!api) return;
+    try {
+      const r = await api.getStrategy();
+      setCur(r?.current || ''); setServerDefault(r?.serverDefault || null); setMeta(r?.strategiesMeta || []);
+    } catch { /* ignore */ }
+  }, [api]);
+  useEffect(() => { load(); }, [load]);
+  if (!api) return null;
+  const isZh = lang === 'zh';
+  const label = (name) => { const m = meta.find(x => x.name === name); return m ? ((isZh ? m.label_zh : m.label_en) || name) : name; };
+  const desc = (name) => { const m = meta.find(x => x.name === name); return m ? ((isZh ? m.description_zh : m.description_en) || '') : ''; };
+  const onChange = async (v) => { try { await api.setStrategy(v || ''); await load(); } catch { /* ignore */ } };
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-xs text-zinc-500 dark:text-zinc-400">{t('gateway.routing.strategyLabel')}</span>
+      <select value={cur || ''} onChange={e => onChange(e.target.value)}
+        title={cur ? desc(cur) : t('gateway.routing.strategyHint')}
+        className="text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1 outline-none focus:border-blue-400 text-zinc-700 dark:text-zinc-200">
+        <option value="">{t('gateway.routing.followServer', { name: label(serverDefault || 'cost') })}</option>
+        {meta.map(m => <option key={m.name} value={m.name}>{label(m.name)}</option>)}
+      </select>
+    </div>
+  );
 }
 
 // ── Main Component ────────────────────────────────────────────────────────────

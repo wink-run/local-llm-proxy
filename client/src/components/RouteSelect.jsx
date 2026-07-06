@@ -17,7 +17,7 @@ function modelTierKey(m) {
 /** 场景路由 + 模型分层选项（供其他原生 <select> 复用） */
 export function routeSelectChildren({ routes, availableModels, t, showOfficial, showGatewayRoutes, isManual }) {
   const avail = new Set((availableModels || []).map(m => m.id));
-  const usable = (routes || []).filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
+  const usable = (routes || []).filter(r => r.strategy || (r.steps || []).some(s => avail.has(s.model || s.label)));
   const showRoutes = showGatewayRoutes !== false;
   return (
     <>
@@ -54,7 +54,7 @@ function buildRouteMenuItems({ routes, availableModels, t, showGatewayRoutes, is
   if (showGatewayRoutes === false) return items;
 
   const avail = new Set((availableModels || []).map(m => m.id));
-  const usable = (routes || []).filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
+  const usable = (routes || []).filter(r => r.strategy || (r.steps || []).some(s => avail.has(s.model || s.label)));
   if (usable.length) {
     items.push({ kind: 'group', label: t('gateway.app.sceneRoutes') });
     for (const r of usable) {

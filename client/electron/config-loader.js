@@ -10,6 +10,8 @@ const os   = require('os');
 const yaml = require('js-yaml');
 
 const DEFAULT_YAML = path.join(__dirname, 'config', 'tokenbank.default.yaml');
+// 全局路由策略目录（name + label/description）；逻辑由 routing-strategies.js 同名 JS 实现
+const ROUTING_STRATEGIES_YAML = path.join(__dirname, 'config', 'routing-strategies.yaml');
 // 供给源 registry（models / pricing / handler / billing_sources；与服务器 config.providers 同 schema）
 const REGISTRY_YAML = path.join(__dirname, 'config', 'providers.registry.yaml');
 const USER_YAML = path.join(os.homedir(), '.tokenbank', 'tokenbank.yaml');
@@ -237,6 +239,11 @@ function resolveDeep(obj, ctx) {
 }
 
 function routing()   { return get().routing || {}; }
+/** 全局路由策略目录：[{name,label_zh/en,description_zh/en}]，读自 routing-strategies.yaml（供 UI 渲染 label）。 */
+function routingStrategiesMeta() {
+  try { const doc = yaml.load(fs.readFileSync(ROUTING_STRATEGIES_YAML, 'utf8')) || {}; return Array.isArray(doc.strategies) ? doc.strategies : []; }
+  catch { return []; }
+}
 // 「添加应用」预设：占位符已解析（{CODEX_HOME|..} 等），但保留 {BASE}/{KEY}（前端按应用解析）
 function appPresets() { const ctx = gatewayCtx(); return (get().app_presets || []).map(p => resolveDeep(p, ctx)); }
 // API Key 应用（检测 appx → 写其配置文件指向网关）：同样保留 {BASE}/{KEY}，前端按应用解析
@@ -609,7 +616,7 @@ function handoffTargets() {
 module.exports = {
   load, get, setCaPath, getCaPath,
   gatewayCtx, mitmDomains, shouldMitm, tools, appPresets, apiKeyApps,
-  routing, caRef,
+  routing, routingStrategiesMeta, caRef,
   claudeModels, isClaudeModel, sessionSources, agentHasModelStats, appInstallUrls, appUninstallUrls, appNpmPackages,
   appInstallGuides, appUninstallGuides, normalizeGuide, resolveGuide,
   subscriptionApps, apiSubscriptionApps, paygProviders, registryProviders, builtinCatalogPayload,
