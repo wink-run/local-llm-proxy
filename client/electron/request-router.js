@@ -201,4 +201,7 @@ function resolveProviderOrder(body, callerKey, reqPath, getLocalConfig) {
   return { providerIds, strategy, fallthrough, features: feat, policyRef };
 }
 
-module.exports = { resolveProviderOrder, recordLatency, extractFeatures, _internal: { matchRule, selectProviders } };
+/** provider 延迟快照（providerId → 平均延迟 ms），供 speed 路由策略排序候选源。 */
+function getLatencyMap() { return Object.fromEntries(_latencyMap); }
+
+module.exports = { resolveProviderOrder, recordLatency, getLatencyMap, extractFeatures, _internal: { matchRule, selectProviders } };

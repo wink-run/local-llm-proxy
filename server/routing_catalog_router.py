@@ -15,6 +15,10 @@ class RouteBody(BaseModel):
     route: dict
 
 
+class SettingsBody(BaseModel):
+    default_strategy: str | None = None
+
+
 @router.get("/routing/catalog", dependencies=[Depends(auth_admin)])
 async def list_routing_catalog():
     doc = await rc.load_catalog_doc()
@@ -22,7 +26,19 @@ async def list_routing_catalog():
         "version": doc.get("version") or 1,
         "routes": [rc.normalize_route(r) for r in (doc.get("routes") or [])],
         "tiers": list(rc.TIERS),
+        "default_strategy": doc.get("default_strategy"),
+        "strategies": list(rc.strategy_names()),
+        "strategies_meta": rc.load_strategies_meta(),
     }
+
+
+@router.put("/routing/catalog/settings", dependencies=[Depends(auth_admin)])
+async def update_routing_settings(body: SettingsBody):
+    """设全局默认路由策略（供给源排序），保存后需 publish 才随 config.scenes 下发。"""
+    doc = await rc.load_catalog_doc()
+    doc["default_strategy"] = rc.normalize_strategy(body.default_strategy)
+    await rc.save_catalog_doc(doc)
+    return {"ok": True, "default_strategy": doc["default_strategy"]}
 
 
 @router.post("/routing/catalog/import-defaults", dependencies=[Depends(auth_admin)])

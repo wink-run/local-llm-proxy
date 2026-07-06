@@ -8,6 +8,7 @@ const os    = require('os');
 const path  = require('path');
 const codexTransform = require('./codex-transform');
 const reqRouter = require('./request-router');
+const routingStrategies = require('./routing-strategies');
 const { TIER_ROUTE_RE } = require('../shared/route-binding');
 const oauth = require('./oauth');
 const { estimateCost } = require('./pricing');
@@ -2384,6 +2385,53 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     is_llm_router: isLlmRouter,
     has_intercept: !!interceptScene,
   });
+
+  // ── 策略路由（无 steps、有 strategy 字段）：模型无关，扫该模态下所有 (源,模型) 候选按策略排序 + failover ──
+  const _stratScene = boundScene?.strategy ? boundScene
+    : (interceptScene?.strategy ? interceptScene
+    : (isLlmRouter && _routerModelMap[origModel]?.strategy ? _routerModelMap[origModel] : null));
+  if (_stratScene) {
+    const modality = modalityOf(reqPath);
+    let speedMap = {}; try { speedMap = require('./provider-speed').getSpeedMap(); } catch {}
+    const normSp = (id) => { let s = String(id || '').trim().toLowerCase(); const i = s.lastIndexOf('/'); return i >= 0 ? s.slice(i + 1) : s; };
+    const cands = [];
+    for (const p of enabledProviders()) {
+      if (skipP2P && p.type === 'p2p') continue;
+      for (const m of (p.models || [])) {
+        const name = typeof m === 'string' ? m : (m && m.name);
+        const mtype = typeof m === 'string' ? 'chat' : (m.type || 'chat');
+        if (!name || mtype !== modality) continue;
+        const sp = speedMap[normSp(name)];
+        cands.push({ providerId: p.id, provider: p, providerTier: p.type, source: p.source, model: name,
+                     speedMs: sp ? (sp.ttft_ms ?? sp.lat_ms ?? null) : null });
+      }
+    }
+    if (!cands.length) { lastErr = new Error(`no ${modality} model for strategy route`); fail(_stratScene.scene_name, null); return; }
+    const ordered = routingStrategies.orderModelCandidates(_stratScene.strategy, cands, { rrKey: _stratScene.id });
+    const routeErrors = [];
+    for (const c of ordered) {
+      if (rejectP2pIfUnconfigured(c.provider, res, isResponses)) { lastErr = p2pAbortError('api_key'); recordError(c.model, callerKey, lastErr); return; }
+      try {
+        const result = await callProvider(c.provider, isAnthropic, streaming, reqPath, body, c.model, res);
+        if (result.latency) reqRouter.recordLatency(c.provider.id, result.latency);
+        try { require('./provider-speed').record(c.model, { firstTokenMs: result.first_token_ms, outputTokens: result.output_tokens, totalMs: result.latency, streaming }); } catch {}
+        pushLog({ ts: t0, requested_model: origModel, model: c.model, scene_name: _stratScene.scene_name, claude_from: claudeFrom,
+                  tier: c.provider.type, via: c.provider.id, via_label: c.provider.label,
+                  latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok' });
+        recordStats(c.provider.id, c.model, fillMissingInputTokens(result, body), _providerTier(c.provider), callerKey, streaming, c.provider.billing_type || null);
+        reportUsage(c.provider.id, c.model, (result.input_tokens || 0) + (result.output_tokens || 0));
+        return;
+      } catch (err) {
+        if (handleP2pFatal(c.provider, err, res, isResponses)) { lastErr = err; recordError(c.model, callerKey, lastErr); return; }
+        routeErrors.push({ id: c.provider.id, err }); lastErr = err;
+        if (res.headersSent) return;
+      }
+    }
+    lastErr = pickBestRouteError(routeErrors) || lastErr;
+    fail(_stratScene.scene_name, null);
+    return;
+  }
+
   const hasScene = (s) => !!(s && (s.steps?.length || s.rules?.length));
   if (hasScene(boundScene) || isLlmRouter || hasScene(interceptScene)) {
     const scene = hasScene(boundScene) ? boundScene : (interceptScene || _routerModelMap[origModel]);
@@ -2510,7 +2558,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
                 features: { task_type: features.task_type, has_tools: features.has_tools,
                             context_length: features.context_length }, status: 'routing' });
     } else {
-      // fallthrough：策略组为空或未匹配，用原有 model 匹配逻辑
+      // fallthrough：策略组为空或未匹配，用原有 model 匹配逻辑（具体源在前）。
+      // 注：全局排序策略已改为「策略路由」(llm-router-cost 等)，直连请求不再全局重排。
       const candidates = allEnabled.filter(p => providerHasModel(p, model, modelMatch));
       sorted = [
         ...candidates.filter(p => Array.isArray(p.models) && p.models.length > 0),
@@ -2518,7 +2567,6 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       ];
     }
   } catch {
-    // 策略路由出错不影响正常请求，回退到原逻辑
     const candidates = allEnabled.filter(p => providerHasModel(p, model, modelMatch));
     sorted = [
       ...candidates.filter(p => Array.isArray(p.models) && p.models.length > 0),

@@ -1131,6 +1131,18 @@ function readLocalConfig() {
           cfg.initialized_routes = true;
         }
       }
+      // 内置策略路由（llm-router-cost 等，模型无关）随版本内置：老配置也补齐缺失的
+      try {
+        const have = new Set((cfg.scene_routes || []).map(r => r.id));
+        const stratIds = ['strategy-cost', 'strategy-speed', 'strategy-fallback', 'strategy-round-robin', 'strategy-weighted'];
+        if (!stratIds.every(id => have.has(id))) {
+          const defRoutes = loadDefaultYamlSection('tokenbank.routes.default.yaml', 'scene_routes') || [];
+          cfg.scene_routes = cfg.scene_routes || [];
+          for (const sr of defRoutes.filter(r => r.strategy && !have.has(r.id))) {
+            cfg.scene_routes.push({ ...sr, created_at: new Date().toISOString() });
+          }
+        }
+      } catch {}
       // 用户显式取消托管的 agent_id 列表（自动托管会跳过这些）
       if (!Array.isArray(cfg.auto_host_disabled)) cfg.auto_host_disabled = [];
       return applyEnvServerDefault(cfg);
@@ -1759,6 +1771,28 @@ function registerIPC() {
   // 请求跑完网关内部自动 record 记速。返回 {ok,status,latencyMs}。会消耗一次真实调用（P2P 扣积分）。
   ipcMain.handle('gateway:probeModel', (_e, model) => probeModelViaGateway(model));
   ipcMain.handle('gateway:restart',       () => gateway.restart());
+
+  // 全局路由策略：读/写 local-config.routing.global_strategy（route() 实时读，设完下次请求即生效）。
+  // 可选策略名 + 服务端下发的默认值一并返回，供 UI 下拉渲染。
+  ipcMain.handle('routing:getStrategy', () => {
+    let cur = null, serverDefault = null;
+    try { const r = readLocalConfig().routing || {}; cur = r.global_strategy || null; serverDefault = r.default_strategy || null; } catch {}
+    let meta = [];
+    try { meta = require('./config-loader').routingStrategiesMeta(); } catch {}
+    const names = meta.map(m => m.name).filter(Boolean);
+    return { current: cur, serverDefault, effective: cur || serverDefault || 'cost', names, strategiesMeta: meta };
+  });
+  ipcMain.handle('routing:setStrategy', (_e, name) => {
+    try {
+      const names = require('./routing-strategies').GLOBAL_STRATEGY_NAMES;
+      const cfg = readLocalConfig();
+      cfg.routing = cfg.routing || {};
+      if (name && names.includes(name)) cfg.routing.global_strategy = name;
+      else delete cfg.routing.global_strategy;   // 传空/非法 = 恢复跟随服务端默认
+      writeLocalConfig(cfg);
+      return { ok: true, current: cfg.routing.global_strategy || null };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
   ipcMain.handle('localStats:compression', (_e, days) => {
     const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
     try {
@@ -1983,6 +2017,19 @@ function registerIPC() {
       try { mainWindow?.webContents?.send('apps:changed'); } catch {}
     }
 
+    // 全局路由策略默认（随场景路由下发的顶层 default_strategy）→ 写入 local-config.routing.default_strategy。
+    // 本地 routing.global_strategy 仍优先于它；用户没本地覆盖时用这个服务端默认。
+    if (parsed.default_strategy) {
+      try {
+        const dcfg = readLocalConfig();
+        dcfg.routing = dcfg.routing || {};
+        if (dcfg.routing.default_strategy !== parsed.default_strategy) {
+          dcfg.routing.default_strategy = parsed.default_strategy;
+          writeLocalConfig(dcfg);
+        }
+      } catch (e) { console.warn('[config-import] default_strategy 写入失败:', e.message); }
+    }
+
     // 路由配置（scene_routes）→ 写入 local-config
     const hasScenes  = Array.isArray(parsed.scene_routes) && parsed.scene_routes.length > 0;
     const addedRoutes = [];   // 本次同步「新增」的场景路由（本地没有、server 有）
@@ -2148,9 +2195,16 @@ function registerIPC() {
   function syncGatewayFromConfig(cfg) {
     const routes = cfg.scene_routes || [];
     const apps   = cfg.apps         || [];
-    // llm-router-* → scene steps（从 scene_routes 生成）
+    // llm-router-* → scene steps / 策略路由（从 scene_routes 生成）
     const routerMap = {};
     for (const r of routes) {
+      // 策略路由：无 steps、有 strategy —— 模型无关，网关按类型扫候选 + 策略排序
+      if (r.model_key && r.strategy && !(r.steps?.length || r.rules?.length)) {
+        const entry = { strategy: r.strategy, scene_name: r.scene_name, id: r.id || r.model_key };
+        routerMap[r.model_key] = entry;
+        if (r.id && r.id !== r.model_key) routerMap[r.id] = entry;
+        continue;
+      }
       if (r.model_key && (r.steps?.length || r.rules?.length)) {
         const entry = { steps: r.steps || [], scene_name: r.scene_name, rules: r.rules || null, classifier: r.classifier || null };
         routerMap[r.model_key] = entry;
