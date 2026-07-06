@@ -82,7 +82,10 @@ function buildAssistantLaunch(runtimeAgentId, systemText) {
   const system = String(systemText || '').trim();
 
   if (runtimeAgentId === 'claude-code') {
-    const extra = ['-p', '--dangerously-skip-permissions'];
+    const extra = [
+      '-p', '--dangerously-skip-permissions',
+      '--output-format', 'stream-json', '--verbose',
+    ];
     if (system) extra.push('--append-system-prompt', system);
     return { runtimeAgentId, claudeExtraArgs: extra };
   }

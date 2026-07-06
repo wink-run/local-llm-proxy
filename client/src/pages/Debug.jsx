@@ -10,11 +10,17 @@ import {
   patchStoreSession,
   readStoreSnapshot,
   resolveTaskRoute,
+  resolveSessionKey,
   routeTask,
   setStoreSelectedAgentId,
   getStoreSelectedAgentId,
   releaseAllExecutingSessions,
+  releaseExecutingForTask,
   clearSessionTaskState,
+  inferSessionKeyFromTask,
+  stepsFromTaskStatus,
+  getCachedAgentsList,
+  setCachedAgentsList,
 } from '../lib/debug-agent-store';
 import { useLang } from '../store/lang';
 import AgentTabBar from '../components/AgentTabBar';
@@ -365,7 +371,7 @@ export default function Debug() {
   const [lightbox,       setLightbox]      = useState(null);
 
   // Agent 模式状态
-  const [agents, setAgents] = useState([]);
+  const [agents, setAgents] = useState(() => getCachedAgentsList() || []);
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [loadingAgents, setLoadingAgents] = useState(false);
   const [agentPrompt, setAgentPrompt] = useState('');
@@ -382,7 +388,10 @@ export default function Debug() {
   const [delegations, setDelegations] = useState({});
   const selectedAgentRef = useRef(null);
   selectedAgentRef.current = selectedAgent;
+  const agentsRef = useRef([]);
+  agentsRef.current = agents;
   const syncSessionToStateRef = useRef(null);
+  const finalizeTaskInUiRef = useRef(null);
 
   // 当前生效的 Agent：直调 tab 或聚合入口的主 Agent
   const mainAgent = agents.find(a => a.id === mainAgentId && !a.custom)
@@ -397,9 +406,14 @@ export default function Debug() {
   const messagesEndRef = useRef(null);
   const textareaRef    = useRef(null);
 
-  // Load Agents when switching to agent mode
+  // 进入 Debug 页即预加载 Agent 列表（切换 Agent 模式时无需再等）
   useEffect(() => {
-    if (mode === 'agent' && agents.length === 0) {
+    loadAgents();
+  }, []);
+
+  // Load Agents when switching to agent mode（缓存为空时补拉）
+  useEffect(() => {
+    if (mode === 'agent' && agents.length === 0 && !loadingAgents) {
       loadAgents();
     }
   }, [mode]);
@@ -421,6 +435,23 @@ export default function Debug() {
       .catch(err => console.warn('Failed to load MCP profiles:', err));
   }, [mode]);
 
+  /** 切换标签时从 DB 恢复最近任务（派发完成但前端未同步时） */
+  const recoverSessionHistory = useCallback(async (syncKey) => {
+    if (!syncKey || syncKey === '__hub__') return;
+    if (!window.electronAPI?.agent?.listRecentTasks) return;
+    const sess = getStoreSession(syncKey);
+    if (sess.currentUserPrompt || sess.taskSteps?.length || sess.executing) return;
+
+    try {
+      const res = await window.electronAPI.agent.listRecentTasks({ agentId: syncKey, limit: 1 });
+      if (!res.success || !res.tasks?.length) return;
+      mergeTaskIntoStore(res.tasks[0]);
+      syncSessionToStateRef.current?.(syncKey);
+    } catch (err) {
+      console.warn('[Debug] recoverSessionHistory failed:', err);
+    }
+  }, []);
+
   // Agent 列表加载后，校验主 Agent 偏好并恢复上次选中的 Agent 标签
   useEffect(() => {
     if (!agents.length) return;
@@ -439,6 +470,7 @@ export default function Debug() {
         setSelectedAgent(agent);
         selectedAgentRef.current = agent;
         syncSessionToState(savedId);
+        recoverSessionHistory(savedId);
       }
     }
   }, [agents, mainAgentId]);
@@ -464,11 +496,35 @@ export default function Debug() {
   /** 更新模块级会话；当前在调试页且标签匹配时同步 React state */
   function patchSession(key, patch) {
     patchStoreSession(key, patch);
-    if (isDebugRouteRef.current && agentSessionKey(selectedAgentRef.current) === key) {
-      syncSessionToState(key);
+    if (!isDebugRouteRef.current) return getStoreSession(key);
+
+    const activeKey = agentSessionKey(selectedAgentRef.current);
+    const activeSess = getStoreSession(activeKey);
+    const sameTab = activeKey === key;
+    const patchTaskId = patch.currentTask?.id;
+    const sameTask = patchTaskId && activeSess.currentTask?.id === patchTaskId;
+
+    if (sameTab || sameTask || (patch.executing === false && activeSess.executing && sameTask)) {
+      syncSessionToState(sameTab ? key : activeKey);
     }
     return getStoreSession(key);
   }
+
+  /** 任务结束：释放 executing 并同步当前标签页 */
+  function finalizeTaskInUi(taskId, key, patch) {
+    releaseExecutingForTask(taskId, {
+      status: patch.currentTask?.status,
+    });
+    if (key) patchStoreSession(key, { ...patch, executing: false });
+
+    if (!isDebugRouteRef.current) return;
+    const activeKey = agentSessionKey(selectedAgentRef.current);
+    const activeSess = getStoreSession(activeKey);
+    if (activeSess.currentTask?.id === taskId || activeKey === key) {
+      syncSessionToState(activeKey);
+    }
+  }
+  finalizeTaskInUiRef.current = finalizeTaskInUi;
 
   const recoverActiveTasks = useCallback(async (syncKey) => {
     if (!window.electronAPI?.agent?.listActiveTasks) return;
@@ -493,7 +549,8 @@ export default function Debug() {
     }
     syncSessionToState(key);
     recoverActiveTasks(key);
-  }, [location.pathname, selectedAgent, recoverActiveTasks]);
+    recoverSessionHistory(key);
+  }, [location.pathname, selectedAgent, recoverActiveTasks, recoverSessionHistory]);
 
   useEffect(() => {
     saveDebugMode(mode);
@@ -523,6 +580,38 @@ export default function Debug() {
     setSelectedAgent(agent);
     syncSessionToState(key);
     setDirError('');
+    recoverSessionHistory(key);
+  }
+
+  /** 将事件里的 agentId 规范化为当前标签页 session key */
+  function eventSessionKey(agentId, sessionKey) {
+    return resolveSessionKey(sessionKey, agentsRef.current)
+      || resolveSessionKey(agentId, agentsRef.current)
+      || sessionKey
+      || agentId
+      || null;
+  }
+
+  /** 从任务状态/完成事件补全步骤（DB 无步骤时用 summary/stdout 兜底） */
+  function resolveTaskSteps(status, data, key) {
+    let steps = status ? stepsFromTaskStatus(status) : [];
+    if (steps.length) return steps;
+    const stored = getStoreSession(key).taskSteps;
+    if (stored?.length) return stored;
+    const out = status?.result?.summary
+      || status?.result?.output
+      || data?.result?.summary
+      || data?.result?.output;
+    if (out && String(out).trim()) {
+      return [{
+        taskId: status?.id || data?.taskId,
+        stepType: 'output',
+        content: String(out).trim(),
+        timestamp: status?.completed_at || Date.now(),
+        agentId: status?.agent_id || data?.agentId,
+      }];
+    }
+    return [];
   }
 
   // 监听 Agent 事件：路由到对应标签页（主 Agent / 被派发子 Agent）
@@ -530,28 +619,83 @@ export default function Debug() {
     if (!window.electronAPI?.agent) return;
 
     const finishTask = async (data) => {
-      const key = resolveTaskRoute(data.taskId);
+      if (!data?.taskId) return;
+
+      // 收到 completed/failed 事件时，DB 可能仍为 running（写入延迟），需强制终态
+      const eventTerminal = data.error ? 'failed' : 'completed';
+
+      // 优先用已注册路由，确保子 Agent 标签页能正确收尾
+      let key = resolveTaskRoute(data.taskId, null, null, agentsRef.current)
+        || resolveTaskRoute(
+          data.taskId,
+          data.agentId,
+          data.sessionKey,
+          agentsRef.current,
+        );
+
+      try {
+        const statusResult = await window.electronAPI.agent.getTaskStatus(data.taskId);
+        if (statusResult.success) {
+          const status = statusResult.status;
+          key = key || inferSessionKeyFromTask(status);
+          key = resolveSessionKey(key, agentsRef.current) || key;
+          if (!key) key = data.agentId || data.sessionKey || null;
+          if (!key) return;
+
+          const steps = resolveTaskSteps(status, data, key);
+          const terminalStatus = ['completed', 'failed', 'cancelled'].includes(status.status)
+            ? status.status
+            : eventTerminal;
+
+          finalizeTaskInUiRef.current?.(data.taskId, key, {
+            currentTask: { ...status, status: terminalStatus },
+            currentUserPrompt: status.prompt || getStoreSession(key).currentUserPrompt,
+            taskResult: status.result || data.result || null,
+            taskSteps: steps,
+          });
+
+          const parentId = status.context?.parentTaskId || data.parentTaskId;
+          if (parentId) {
+            const hub = getStoreSession('__hub__');
+            const dels = { ...(hub.delegations || {}) };
+            const childId = data.taskId;
+            if (dels[childId]) {
+              dels[childId] = {
+                ...dels[childId],
+                status: terminalStatus,
+                result: status.result || data.result || null,
+                steps: steps.length ? steps : (dels[childId].steps || []),
+              };
+              patchSession('__hub__', { delegations: dels });
+            }
+          }
+          return;
+        }
+      } catch (err) {
+        console.warn('[Debug] finishTask getTaskStatus failed:', err);
+      }
+
+      // DB 不可用或查询失败时仍释放 UI 锁，避免一直「正在执行…」
+      key = key || eventSessionKey(data.agentId, data.sessionKey) || data.agentId || data.sessionKey;
       if (!key) return;
-
-      const statusResult = await window.electronAPI.agent.getTaskStatus(data.taskId);
-      if (!statusResult.success) return;
-
-      const status = statusResult.status;
-      const ctx = status.context || {};
-      patchSession(key, {
-        executing: false,
-        currentTask: status,
-        taskResult: status.result || null,
+      const steps = resolveTaskSteps(null, data, key);
+      const terminalStatus = data.error ? 'failed' : 'completed';
+      finalizeTaskInUiRef.current?.(data.taskId, key, {
+        currentUserPrompt: getStoreSession(key).currentUserPrompt || data.prompt,
+        currentTask: { id: data.taskId, status: terminalStatus, error: data.error },
+        taskResult: data.result || null,
+        taskSteps: steps.length ? steps : getStoreSession(key).taskSteps,
       });
 
-      if (ctx.parentTaskId) {
+      const parentId = data.parentTaskId;
+      if (parentId) {
         const hub = getStoreSession('__hub__');
         const dels = { ...(hub.delegations || {}) };
         if (dels[data.taskId]) {
           dels[data.taskId] = {
             ...dels[data.taskId],
-            status: status.status,
-            result: status.result,
+            status: terminalStatus,
+            result: data.result || null,
           };
           patchSession('__hub__', { delegations: dels });
         }
@@ -561,10 +705,11 @@ export default function Debug() {
     const handleDispatched = ({ parentTaskId, childTaskId, agentId, prompt }) => {
       if (!childTaskId || !agentId) return;
 
-      routeTask(childTaskId, agentId);
+      const ownerKey = eventSessionKey(agentId, agentId);
+      routeTask(childTaskId, ownerKey);
       if (parentTaskId) routeTask(parentTaskId, '__hub__');
 
-      patchSession(agentId, {
+      patchSession(ownerKey, {
         currentUserPrompt: prompt,
         currentTask: { id: childTaskId, status: 'running', parentTaskId },
         taskSteps: [],
@@ -590,7 +735,7 @@ export default function Debug() {
     };
 
     const handleStep = (stepData) => {
-      const { taskId, parentTaskId, agentId, stepType } = stepData;
+      const { taskId, parentTaskId, agentId, sessionKey, stepType } = stepData;
 
       if (stepType === 'delegation') {
         if (resolveTaskRoute(taskId) === '__hub__') {
@@ -612,12 +757,25 @@ export default function Debug() {
         return;
       }
 
-      const ownerKey = resolveTaskRoute(taskId, agentId);
+      const ownerKey = resolveTaskRoute(
+        taskId,
+        agentId,
+        sessionKey,
+        agentsRef.current,
+      ) || eventSessionKey(agentId, sessionKey);
       if (ownerKey) {
         const sess = getStoreSession(ownerKey);
-        if (!sess.currentTask || sess.currentTask.id === taskId) {
+        const sameTask = !sess.currentTask || sess.currentTask.id === taskId;
+        if (sameTask) {
+          const prev = sess.taskSteps || [];
+          const last = prev[prev.length - 1];
+          if (last && last.stepType === stepType && last.content === stepData.content) return;
+          // 仅追加步骤，不碰 executing（避免覆盖 finishTask 已释放的锁）
           patchSession(ownerKey, {
-            taskSteps: [...(sess.taskSteps || []), stepData],
+            currentTask: sess.currentTask?.id === taskId
+              ? sess.currentTask
+              : { id: taskId, status: 'running', parentTaskId: parentTaskId || sess.currentTask?.parentTaskId },
+            taskSteps: [...prev, stepData],
           });
         }
       }
@@ -633,10 +791,14 @@ export default function Debug() {
     };
 
     const handleCancelled = (data) => {
-      const key = resolveTaskRoute(data.taskId);
+      const key = resolveTaskRoute(
+        data.taskId,
+        data.agentId,
+        data.sessionKey,
+        agentsRef.current,
+      ) || eventSessionKey(data.agentId, data.sessionKey);
       if (key) {
-        patchSession(key, {
-          executing: false,
+        finalizeTaskInUiRef.current?.(data.taskId, key, {
           currentTask: { id: data.taskId, status: 'cancelled' },
         });
       }
@@ -661,23 +823,70 @@ export default function Debug() {
     };
   }, []);
 
-  // Load available agents
-  async function loadAgents() {
+  // Load available agents（有缓存则先展示，后台刷新）
+  async function loadAgents({ force = false } = {}) {
     if (!window.electronAPI?.agent) {
       console.warn('Agent API not available');
       return;
     }
-    
-    setLoadingAgents(true);
+
+    const cached = getCachedAgentsList();
+    if (cached?.length && !force) {
+      setAgents(cached);
+      setLoadingAgents(false);
+    } else {
+      setLoadingAgents(true);
+    }
+
     try {
       const result = await window.electronAPI.agent.list();
       if (result.success) {
-        setAgents(result.agents || []);
+        const list = result.agents || [];
+        setCachedAgentsList(list);
+        setAgents(list);
       }
     } catch (error) {
       console.error('Failed to load agents:', error);
     } finally {
       setLoadingAgents(false);
+    }
+  }
+
+  /** UI 展示用任务状态：executing 锁释放后不再显示 running */
+  function displayTaskStatus() {
+    if (executing) return 'running';
+    const s = currentTask?.status;
+    if (s === 'running' || s === 'pending') return 'completed';
+    return s;
+  }
+
+  /** 轮询任务状态直到终态（IPC 事件兜底） */
+  async function pollTaskUntilTerminal(taskId, execKey) {
+    const maxAttempts = 1200; // ~10min
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      const sess = getStoreSession(execKey);
+      if (!sess.executing && sess.currentTask?.id === taskId
+        && ['completed', 'failed', 'cancelled'].includes(sess.currentTask?.status)) {
+        return;
+      }
+      try {
+        const res = await window.electronAPI.agent.getTaskStatus(taskId);
+        if (!res.success) continue;
+        const status = res.status;
+        if (!['completed', 'failed', 'cancelled'].includes(status.status)) continue;
+
+        const steps = resolveTaskSteps(status, { taskId, result: status.result }, execKey);
+        finalizeTaskInUiRef.current?.(taskId, execKey, {
+          currentTask: { ...status, status: status.status },
+          currentUserPrompt: status.prompt || sess.currentUserPrompt,
+          taskResult: status.result || null,
+          taskSteps: steps.length ? steps : sess.taskSteps,
+        });
+        return;
+      } catch {
+        // 继续轮询
+      }
     }
   }
 
@@ -740,6 +949,8 @@ export default function Debug() {
           currentTask: { id: result.taskId, status: 'running' },
           agentPrompt: '',
         });
+        // IPC 完成事件丢失时的轮询兜底
+        pollTaskUntilTerminal(result.taskId, execKey);
       } else {
         patchSession(execKey, { executing: false });
         setExecuting(false);
@@ -1181,7 +1392,7 @@ export default function Debug() {
             mainAgentId={mainAgentId}
             onSelect={switchAgent}
             onSetMainAgent={setMainAgent}
-            loading={loadingAgents}
+            loading={loadingAgents && agents.length === 0}
           />
         )}
         {mode === 'agent' && (currentUserPrompt || taskSteps.length > 0 || executing) && (
@@ -1336,7 +1547,7 @@ export default function Debug() {
                 <ExecutionLog
                   userPrompt={currentUserPrompt}
                   steps={taskSteps}
-                  status={currentTask?.status}
+                  status={displayTaskStatus()}
                   result={taskResult}
                   task={currentTask}
                   agentName={`${mainAgent.name}（主 Agent）`}
@@ -1348,7 +1559,7 @@ export default function Debug() {
               <ExecutionLog
                 userPrompt={currentUserPrompt}
                 steps={taskSteps}
-                status={currentTask?.status}
+                status={displayTaskStatus()}
                 result={taskResult}
                 task={currentTask}
                 agentName={selectedAgent?.name}

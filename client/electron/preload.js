@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cancelAllActive: () => ipcRenderer.invoke('agent:cancelAllActive'),
     getTaskStatus: (taskId) => ipcRenderer.invoke('agent:getStatus', taskId),
     listActiveTasks: () => ipcRenderer.invoke('agent:listActiveTasks'),
+    listRecentTasks: (opts) => ipcRenderer.invoke('agent:listRecentTasks', opts),
     pickWorkingDir: (opts) => ipcRenderer.invoke('agent:pickWorkingDir', opts),
     // 兼容旧调用
     list: () => ipcRenderer.invoke('agent:list'),

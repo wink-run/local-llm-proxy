@@ -1790,7 +1790,7 @@ function registerIPC() {
         const st = localStats.queryAppStatsInPeriod({
           appId: app.id,
           apiKey: app.api_key,
-          dataSource: appSessionDataSource(app),
+          dataSources: resolveAppDataSources(app),
           days: d,
         });
         return {
@@ -3420,8 +3420,30 @@ function registerIPC() {
     return m;
   })();
 
+  /** 应用关联的全部会话 data_source（含 linked_data_sources，如 session-claude-desktop） */
+  function resolveAppDataSources(app) {
+    if (!app) return [];
+    const aid = app.agent_id || app.preset_id;
+    const ent = aid ? configLoader.appEntityById(aid) : null;
+    const caps = aid ? configLoader.appCapabilities(aid) : null;
+    const usageImport = app.session_usage_import ?? caps?.session_usage_import ?? ent?.session_usage_import;
+    if (!usageImport) return [];
+    const linked = app.linked_data_sources?.length ? app.linked_data_sources
+      : (ent?.linked_data_sources?.length ? ent.linked_data_sources : []);
+    if (linked.length) return linked;
+    if (app.agent_id && AGENT_DATA_SOURCE[app.agent_id]) return [AGENT_DATA_SOURCE[app.agent_id]];
+    return [];
+  }
+
+  /** @deprecated 用 resolveAppDataSources；保留兼容只取首个 */
+  function appSessionDataSource(app) {
+    const ds = resolveAppDataSources(app);
+    return ds[0] || null;
+  }
+
   ipcMain.handle('apps:detail', (_e, { app, days } = {}) => {
-    maybeSyncSessionTelemetry(localStats);
+    // 打开明细时强制增量补录，避免节流窗口内看不到会话补录
+    try { syncSessionTelemetry(localStats); } catch {}
     // Cursor：打开明细时立即清 transcript 0 token 占位（节流窗口内也能刷新列表）
     if (app?.agent_id === 'cursor') {
       try { cursorHooks.purgeTranscriptZeroTokens(localStats); } catch {}
@@ -3431,17 +3453,9 @@ function registerIPC() {
     const caps = configLoader.appCapabilities(aid);
     const usageImport = !!(caps?.session_usage_import ?? ent?.session_usage_import ?? app?.session_usage_import);
     const sessionTrace = !!(caps?.session_trace ?? ent?.session_trace ?? app?.session_trace);
-    const linked = usageImport ? (app?.linked_data_sources || ent?.linked_data_sources || []) : [];
-    let dataSource = null;
-    if (usageImport) {
-      if (app && (app.link_method === 'api-key' || app.link_method === 'manual') && linked.length) {
-        dataSource = linked[0];
-      } else if (app && (app.link_method === 'shim' || app.link_method === 'direct' || app.link_method === 'session') && app.agent_id) {
-        dataSource = AGENT_DATA_SOURCE[app.agent_id] || null;
-      }
-    }
     const detail = localStats.queryAppDetail({
-      appId: app && app.id, apiKey: app && app.api_key, dataSource,
+      appId: app && app.id, apiKey: app && app.api_key,
+      dataSources: resolveAppDataSources(app),
       days: days || 30, includeSessionImport: usageImport,
     });
     const activityAgentId = app?.activity_agent_id || ent?.activity_agent_id || app?.trace_agent_id || app?.agent_id;
@@ -3579,35 +3593,11 @@ function registerIPC() {
   });
 
   // 批量查所有应用的统计（调一次，合并进 apps:list 或单独查询）
-  /** 解析应用对应的会话补录 data_source（须启用 session_usage_import） */
-  function appSessionDataSource(app) {
-    if (!app) return null;
-    if ((app.link_method === 'api-key' || app.link_method === 'manual')) {
-      const aid = app.preset_id || app.agent_id;
-      const caps = configLoader.appCapabilities(aid);
-      const ent = configLoader.appEntityById(aid);
-      const usageImport = app.session_usage_import ?? caps?.session_usage_import ?? ent?.session_usage_import;
-      if (!usageImport) return null;
-      if (app.linked_data_sources?.length) return app.linked_data_sources[0];
-      if (ent?.linked_data_sources?.length) return ent.linked_data_sources[0];
-      return null;
-    }
-    if ((app.link_method === 'shim' || app.link_method === 'direct' || app.link_method === 'session') && app.agent_id) {
-      const aid = app.agent_id;
-      const caps = configLoader.appCapabilities(aid);
-      const ent = configLoader.appEntityById(aid);
-      const usageImport = app.session_usage_import ?? caps?.session_usage_import ?? ent?.session_usage_import;
-      if (!usageImport) return null;
-      return AGENT_DATA_SOURCE[app.agent_id] || null;
-    }
-    return null;
-  }
-
   ipcMain.handle('apps:stats', (_e, appList) => {
     try { syncSessionTelemetry(localStats); } catch {}
     const stats = {};
     for (const app of (appList || [])) {
-      const ds = appSessionDataSource(app);
+      const dataSources = resolveAppDataSources(app);
       const aid = app.agent_id || app.preset_id;
       const caps = aid ? configLoader.appCapabilities(aid) : null;
       const ent = aid ? configLoader.appEntityById(aid) : null;
@@ -3617,14 +3607,14 @@ function registerIPC() {
         s = localStats.queryAppStatsToday({
           appId: app.id,
           apiKey: app.api_key,
-          dataSource: ds,
+          dataSources,
           includeSessionImport: usageImport,
         });
       } else if ((app.link_method === 'shim' || app.link_method === 'direct' || app.link_method === 'session') && app.agent_id) {
         s = localStats.queryAppStatsToday({
           appId: app.id,
           apiKey: app.api_key,
-          dataSource: ds,
+          dataSources,
           includeSessionImport: usageImport,
         });
       } else {
@@ -3641,11 +3631,11 @@ function registerIPC() {
     try { syncSessionTelemetry(localStats); } catch {}
     const apps = getApps().filter(a => !a.draft);
     return apps.map(app => {
-      const dataSource = appSessionDataSource(app);
+      const dataSources = resolveAppDataSources(app);
       const st = localStats.queryAppStatsInPeriod({
         appId: app.id,
         apiKey: app.api_key,
-        dataSource,
+        dataSources,
         days: d,
       });
       return {
@@ -3896,6 +3886,8 @@ app.whenReady().then(() => {
   createTray();
   // IPC 须在 createWindow 之前注册，避免 preload sendSync 时 handler 未就绪导致白屏
   registerIPC();
+  // SQLite 须早于窗口与 MCP 启动同步，避免渲染进程 IPC 与 syncToClients 竞态
+  localStats.init(STATS_DIR);
   createWindow();
   repairClaude3pMetaIfNeeded();
   // Claude Desktop ↔ 3p 会话同步：启动一次 + 每 30s 一次（覆盖运行期间新建的会话，修复"新会话纳管后不同步"）
@@ -3936,8 +3928,6 @@ app.whenReady().then(() => {
   }
   watchSessions();
   setInterval(watchSessions, 60000); // 每 60s 重建，覆盖 account/org 目录变化
-  // Init local SQLite stats DB（与 CLI 共用 ~/.tokenbank）
-  localStats.init(STATS_DIR);
   try { require('./mcp-manager').init(); } catch (e) {
     console.warn('[mcp-manager] init skipped:', e.message);
   }
@@ -4003,7 +3993,10 @@ app.whenReady().then(() => {
     try {
       const { hookImported, sessionImported } = syncSessionTelemetry(localStats);
       if (hookImported > 0 || sessionImported > 0) {
-        try { mainWindow?.webContents?.send('apps:changed'); } catch {}
+        try {
+          mainWindow?.webContents?.send('apps:changed');
+          mainWindow?.webContents?.send('localStats:changed');
+        } catch {}
       }
     } catch (e) { console.error('[session-import]', e.message); }
   };
@@ -4033,6 +4026,45 @@ app.whenReady().then(() => {
       localStats.setImportState(MIG, 1, 0);
     }
   } catch (e) { console.error('[session-import] migrate desktop-3p', e.message); }
+  // 一次性迁移：Debug/聚合 spawn 的 sdk-cli 会话此前被 skip，导致纳管应用网关用量缺失
+  try {
+    const MIG = '__migrate_sdk_cli_session_import_v1__';
+    if (!localStats.getImportState(MIG)) {
+      localStats.resetSessionData(['session-claude'], '%.claude%projects%');
+      localStats.setImportState(MIG, 1, 0);
+    }
+  } catch (e) { console.error('[session-import] migrate sdk-cli import', e.message); }
+  // 一次性迁移：proxy 占位行占 request_id 导致会话补录被 IGNORE → 清 import_state 触发 enrich 重扫
+  try {
+    const MIG = '__migrate_session_enrich_rescan_v1__';
+    if (!localStats.getImportState(MIG)) {
+      localStats.resetImportState('%.claude%projects%');
+      localStats.setImportState(MIG, 1, 0);
+    }
+  } catch (e) { console.error('[session-import] migrate enrich rescan', e.message); }
+  // 一次性迁移：tokenbank.yaml 仍将 sdk-cli 列入 skip → 会话有记录但用量永不落库
+  try {
+    const MIG = '__migrate_unskip_sdk_cli_v2__';
+    if (!localStats.getImportState(MIG)) {
+      try {
+        if (fs.existsSync(TB_YAML)) {
+          const yaml = require('js-yaml');
+          const doc = yaml.load(fs.readFileSync(TB_YAML, 'utf8')) || {};
+          const cl = doc.session_scans && doc.session_scans.claude;
+          if (cl && cl.data_source_map) {
+            const dsm = cl.data_source_map;
+            dsm.map = { ...(dsm.map || {}), 'sdk-cli': 'session-claude', 'sdk-ts': 'session-claude', cli: 'session-claude' };
+            if (Array.isArray(dsm.skip)) dsm.skip = dsm.skip.filter((ep) => ep !== 'sdk-cli' && ep !== 'sdk-ts' && ep !== 'cli');
+            fs.writeFileSync(TB_YAML, yaml.dump(doc), 'utf8');
+            configLoader.load();
+            console.log('[session-import] patched tokenbank.yaml: unskip sdk-cli/cli');
+          }
+        }
+      } catch (e) { console.warn('[session-import] patch tokenbank.yaml:', e.message); }
+      localStats.resetImportState('%.claude%projects%');
+      localStats.setImportState(MIG, 1, 0);
+    }
+  } catch (e) { console.error('[session-import] migrate unskip sdk-cli', e.message); }
   runSessionImport();
   setInterval(runSessionImport, 30_000);
 

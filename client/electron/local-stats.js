@@ -5,6 +5,7 @@
 
 let db = null;
 let _insertStmt = null;
+let _enrichByRequestIdStmt = null;
 let _getImportStateStmt = null;
 let _setImportStateStmt = null;
 
@@ -360,6 +361,14 @@ function init(dbDir) {
       'INSERT INTO import_state (path, mtime, size) VALUES (?,?,?) ' +
       'ON CONFLICT(path) DO UPDATE SET mtime = excluded.mtime, size = excluded.size'
     );
+    _enrichByRequestIdStmt = db.prepare(
+      'UPDATE requests SET ' +
+      'input_tokens = @inTok, output_tokens = @outTok, cache_create_tokens = @cCreate, cache_read_tokens = @cRead, ' +
+      'tokens = @total, session_id = COALESCE(@session_id, session_id), model = COALESCE(@model, model), ' +
+      'cost_usd = @cost_usd, billing_type = COALESCE(@billing_type, billing_type), ' +
+      'data_source = COALESCE(@data_source, data_source) ' +
+      'WHERE request_id = @request_id'
+    );
   } catch (e) {
     console.error('[local-stats] failed to open DB:', e.message);
     try { db?.close(); } catch {}
@@ -368,10 +377,62 @@ function init(dbDir) {
   }
 }
 
+/** 懒初始化：Agent/MCP IPC 可能在 main 完成 init 前触发 */
+function ensureReady(dbDir) {
+  if (!db && dbDir) init(dbDir);
+  return db;
+}
+
+/** 获取 DB 实例，未就绪时抛错（供 Agent/MCP/Resources 模块使用） */
+function requireDb(dbDir) {
+  ensureReady(dbDir);
+  if (!db) throw new Error('Database not initialized');
+  return db;
+}
+
+/** 单行 token 总量（含 cache） */
+function _tokenTotal({ input_tokens, output_tokens, cache_create_tokens, cache_read_tokens, tokens } = {}) {
+  if (tokens != null && tokens > 0) return tokens;
+  return (input_tokens || 0) + (output_tokens || 0) + (cache_create_tokens || 0) + (cache_read_tokens || 0);
+}
+
 /**
- * Insert one request row. Silently ignored if init() hasn't been called.
- * Returns true if a new row was inserted, false if it was deduped (request_id
- * already present) or on error — lets the session importer count imported vs skipped.
+ * 会话补录与网关 proxy 同 request_id 冲突时：若会话侧 token 更完整则合并更新。
+ * 保留 proxy 写入的 app_id / api_key，data_source 改为会话源以便 UI 展示「会话补录」。
+ */
+function _tryEnrichFromSession(requestId, row) {
+  if (!db || !_enrichByRequestIdStmt || !requestId) return false;
+  try {
+    const ex = db.prepare(
+      'SELECT input_tokens, output_tokens, cache_create_tokens, cache_read_tokens, tokens, data_source FROM requests WHERE request_id = ?'
+    ).get(requestId);
+    if (!ex) return false;
+    const existTot = _tokenTotal(ex);
+    const newTot = (row.inTok || 0) + (row.outTok || 0) + (row.cCreate || 0) + (row.cRead || 0);
+    if (newTot <= existTot) return false;
+    _enrichByRequestIdStmt.run({
+      request_id:          requestId,
+      inTok:               row.inTok,
+      outTok:              row.outTok,
+      cCreate:             row.cCreate,
+      cRead:               row.cRead,
+      total:               newTot,
+      session_id:          row.session_id ?? null,
+      model:               row.model ?? null,
+      cost_usd:            row.cost_usd ?? null,
+      billing_type:        row.billing_type ?? null,
+      data_source:         row.data_source ?? null,
+    });
+    return true;
+  } catch (e) {
+    console.error('[local-stats] enrich from session failed:', e.message);
+    return false;
+  }
+}
+
+/**
+ * Returns true if a new row was inserted or an existing proxy row was enriched
+ * from session import; false if deduped/skipped or on error.
  *
  * New optional fields:
  *   ts            unix seconds; defaults to now (session importer passes the message time)
@@ -412,7 +473,15 @@ function record({ api_key, app_id, model, provider_id, tier, tokens,
       (cost_usd       != null) ? cost_usd       : null,
       billing_type  || null,
     );
-    return info.changes > 0; // 0 = deduped by request_id unique index
+    if (info.changes > 0) return true;
+    // proxy 先写入占位行时，会话补录用同 message.id 合并更完整的 token
+    if (request_id && data_source && String(data_source).startsWith('session')) {
+      return _tryEnrichFromSession(request_id, {
+        inTok, outTok, cCreate: cache_create_tokens || 0, cRead: cache_read_tokens || 0,
+        session_id, model, cost_usd, billing_type, data_source,
+      });
+    }
+    return false;
   } catch (e) {
     console.error('[local-stats] record failed:', e.message);
     return false;
@@ -788,13 +857,14 @@ function _empty() {
  *   - shim 应用「不走网关、直连官方」的部分按 data_source（session-claude/codex/gemini）
  * 返回：总计 / 来源拆分(网关 vs 会话) / 按模型 / 按会话(session_id) / 最近明细。
  */
-function queryAppDetail({ appId, apiKey, dataSource, days = 30, limit = 50, includeSessionImport = true } = {}) {
+function queryAppDetail({ appId, apiKey, dataSource, dataSources, days = 30, limit = 50, includeSessionImport = true } = {}) {
   const empty = { total: { calls: 0, tokens: 0, inTok: 0, outTok: 0, cached: 0, lastTs: null, totalCost: 0 }, bySource: [], byModel: [], sessions: [], recent: [] };
-  if (!db) return empty;
+  const match = _appMatchParts({ appId, apiKey, dataSource, dataSources, includeSessionImport });
+  if (!db || !match) return empty;
   // days=1 对齐本地 0 点（与 queryTodaySummary / queryDashboard 一致），其余用滚动窗口
   const since = days === 1 ? todaySinceTs() : Math.floor(Date.now() / 1000) - days * 86400;
-  const where = `${_appMatchWhere(includeSessionImport)} AND ts >= @since`;
-  const p = { appId: appId || null, apiKey: apiKey || null, dataSource: dataSource || null, since };
+  const where = `${match.where} AND ts >= @since`;
+  const p = { ...match.params, since };
   try {
     const total = db.prepare(
       `SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, ` +
@@ -942,14 +1012,14 @@ function queryByApiKey(apiKey) {
  * dataSource 可选：并入该应用的会话补录用量（如 Claude Desktop 的 Cowork/Code 本地用量
  * = session-claude-desktop）。三路 OR 互斥、SQL 一行只计一次，不会重复计。
  */
-function queryByApp(appId, apiKey, dataSource) {
-  if (!db || (!appId && !apiKey && !dataSource)) return { calls: 0, tokens: 0, lastTs: null };
+function queryByApp(appId, apiKey, dataSource, dataSources) {
+  const match = _appMatchParts({ appId, apiKey, dataSource, dataSources });
+  if (!db || !match) return { calls: 0, tokens: 0, lastTs: null };
   try {
     const r = db.prepare(
       'SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, MAX(ts) AS lastTs ' +
-      'FROM requests WHERE app_id = @appId OR (app_id IS NULL AND api_key = @apiKey)' +
-      (dataSource ? ' OR data_source = @ds' : '')
-    ).get({ appId: appId || null, apiKey: apiKey || null, ds: dataSource || null });
+      `FROM requests WHERE ${match.where}`
+    ).get(match.params);
     return { calls: r.calls || 0, tokens: r.tokens || 0, lastTs: r.lastTs || null };
   } catch { return { calls: 0, tokens: 0, lastTs: null }; }
 }
@@ -1084,29 +1154,65 @@ function queryTodaySummary() {
   }
 }
 
-/** 应用归属 WHERE（可选排除会话补录 data_source） */
+/** 归一化 dataSource / dataSources → 去重后的非空数组 */
+function _normDataSources(dataSource, dataSources) {
+  if (Array.isArray(dataSources) && dataSources.length) {
+    return [...new Set(dataSources.filter(Boolean))];
+  }
+  return dataSource ? [dataSource] : [];
+}
+
+/** 是否有 app_id / api_key / data_source 任一归属条件 */
+function _appMatchHasCriteria({ appId, apiKey, dataSource, dataSources } = {}) {
+  return !!(appId || apiKey || _normDataSources(dataSource, dataSources).length);
+}
+
+/**
+ * 应用归属 WHERE + 绑定参数。
+ * linked_data_sources 可含 session-claude + session-claude-desktop 等，须全部 OR 进查询。
+ */
+function _appMatchParts({ appId, apiKey, dataSource, dataSources, includeSessionImport = true } = {}) {
+  const dsList = _normDataSources(dataSource, dataSources);
+  if (!appId && !apiKey && !dsList.length) return null;
+
+  const parts = [
+    '(@appId IS NOT NULL AND app_id = @appId)',
+    '(@apiKey IS NOT NULL AND app_id IS NULL AND api_key = @apiKey)',
+  ];
+  const params = { appId: appId || null, apiKey: apiKey || null };
+  if (dsList.length) {
+    const ph = dsList.map((d, i) => {
+      params[`ds${i}`] = d;
+      return `@ds${i}`;
+    }).join(',');
+    parts.push(`data_source IN (${ph})`);
+  }
+  let where = '(' + parts.join(' OR ') + ')';
+  if (!includeSessionImport) where += " AND data_source = 'proxy'";
+  return { where, params };
+}
+
+/** @deprecated 使用 _appMatchParts */
 function _appMatchWhere(includeSessionImport = true) {
-  const match =
-    '(' +
+  return '(' +
     '(@appId IS NOT NULL AND app_id = @appId) OR ' +
     '(@apiKey IS NOT NULL AND app_id IS NULL AND api_key = @apiKey) OR ' +
     '(@dataSource IS NOT NULL AND data_source = @dataSource)' +
-    ')';
-  if (includeSessionImport) return match;
-  return `${match} AND data_source = 'proxy'`;
+    ')' + (includeSessionImport ? '' : " AND data_source = 'proxy'");
 }
 
 /** 时间窗口内单个应用用量（与 queryAppDetail / apps:stats 归属规则一致） */
-function queryAppStatsInPeriod({ appId, apiKey, dataSource, days = 30, since: sinceTs, includeSessionImport = true } = {}) {
+function queryAppStatsInPeriod({ appId, apiKey, dataSource, dataSources, days = 30, since: sinceTs, includeSessionImport = true } = {}) {
   const empty = {
     calls: 0, tokens: 0, cost: 0, lastTs: null,
     proxyCalls: 0, sessionCalls: 0, proxyTokens: 0, sessionTokens: 0,
     providers: {},
   };
-  if (!db || (!appId && !apiKey && !dataSource)) return empty;
+  const match = _appMatchParts({ appId, apiKey, dataSource, dataSources, includeSessionImport });
+  if (!db || !match) return empty;
   const since = sinceTs != null ? sinceTs : Math.floor(Date.now() / 1000) - days * 86400;
-  const where = `${_appMatchWhere(includeSessionImport)} AND ts >= @since`;
-  const p = { appId: appId || null, apiKey: apiKey || null, dataSource: dataSource || null, since };
+  const where = `${match.where} AND ts >= @since`;
+  const p = { ...match.params, since };
   try {
     const total = db.prepare(
       `SELECT COUNT(*) AS calls, SUM(input_tokens+output_tokens+cache_create_tokens+cache_read_tokens) AS tokens, ` +
@@ -1147,14 +1253,13 @@ function queryAppStatsInPeriod({ appId, apiKey, dataSource, days = 30, since: si
 }
 
 /** 当天（本地 0 点至今）请求/Token；lastTs 为历史最近使用时间（不限当天） */
-function queryAppStatsToday({ appId, apiKey, dataSource, includeSessionImport = true } = {}) {
-  const today = queryAppStatsInPeriod({ appId, apiKey, dataSource, since: todaySinceTs(), includeSessionImport });
+function queryAppStatsToday({ appId, apiKey, dataSource, dataSources, includeSessionImport = true } = {}) {
+  const today = queryAppStatsInPeriod({ appId, apiKey, dataSource, dataSources, since: todaySinceTs(), includeSessionImport });
   let lastTs = null;
-  if (db && (appId || apiKey || dataSource)) {
+  const match = _appMatchParts({ appId, apiKey, dataSource, dataSources, includeSessionImport });
+  if (db && match) {
     try {
-      const where = _appMatchWhere(includeSessionImport);
-      const p = { appId: appId || null, apiKey: apiKey || null, dataSource: dataSource || null };
-      const r = db.prepare(`SELECT MAX(ts) AS lastTs FROM requests WHERE ${where}`).get(p);
+      const r = db.prepare(`SELECT MAX(ts) AS lastTs FROM requests WHERE ${match.where}`).get(match.params);
       lastTs = r.lastTs || null;
     } catch { /* ignore */ }
   }
@@ -1171,6 +1276,18 @@ function queryByDataSource(dataSource) {
     ).get(dataSource);
     return { calls: r.calls || 0, tokens: r.tokens || 0, lastTs: r.lastTs || null };
   } catch { return { calls: 0, tokens: 0, lastTs: null }; }
+}
+
+// 清 import_state 让 session-import 重扫，不删 requests（proxy 行保留，靠 enrich 合并 token）
+function resetImportState(pathLike) {
+  if (!db || !pathLike) return false;
+  try {
+    db.prepare('DELETE FROM import_state WHERE path LIKE ?').run(pathLike);
+    return true;
+  } catch (e) {
+    console.error('[local-stats] resetImportState failed:', e.message);
+    return false;
+  }
 }
 
 // 一次性迁移用：删除指定 data_source 的会话记录 + 清掉匹配文件的导入状态，
@@ -1260,9 +1377,11 @@ function setSessionMeta({ agent_id, session_id, favorite, tags, note, archived }
 module.exports = {
   init, record, queryDashboard, queryTodaySummary, queryByApiKey, queryByApp, queryByDataSource,
   queryAppDetail, queryAppStatsInPeriod, queryAppStatsToday, querySessionDetail, querySessionStatsMap,
-  getImportState, setImportState, resetSessionData, deleteZeroTokenSessionRows, close,
+  getImportState, setImportState, resetSessionData, resetImportState, deleteZeroTokenSessionRows, close,
   listSessionMeta, getSessionMeta, setSessionMeta,
   todaySinceTs, sinceTsForDays, queryGatewayInputCostRate, queryModelProviderLatency,
   reassignProviderTier, collectProviderIdVariants,
   getDb: () => db,  // Agent 聚合系统使用
+  ensureReady,
+  requireDb,
 };

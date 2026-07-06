@@ -102,6 +102,16 @@ function registerAgentHandlers() {
     }
   });
 
+  ipcMain.handle('agent:listRecentTasks', async (_event, { agentId, limit } = {}) => {
+    try {
+      const tasks = await agentExecutor.listRecentTasksForAgent(agentId, limit || 3);
+      return { success: true, tasks };
+    } catch (error) {
+      console.error('[IPC] agent:listRecentTasks error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   /**
    * 监听实时步骤事件
    */

@@ -65,7 +65,8 @@ function computeImportSkip() {
     for (const app of ((readLocalConfig() || {}).apps || [])) {
       for (const ds of dataSourcesForApp(app)) {
         if (app.hosted === false) { skip.add(ds); continue; }
-        if (app.hosted && app.route_id && !PROXY_DEDUP_DS.has(ds)) skip.add(ds);
+        const hasRoute = !!(app.route_id || (Array.isArray(app.route_ids) && app.route_ids.length));
+        if (app.hosted && hasRoute && !PROXY_DEDUP_DS.has(ds)) skip.add(ds);
       }
     }
     // editor hook 纳管：由 handler.integrations.editor_hook 声明

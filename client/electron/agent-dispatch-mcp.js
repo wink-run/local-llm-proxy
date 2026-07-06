@@ -5,6 +5,7 @@
 
 const readline = require('readline');
 const agentExecutor = require('./agent-executor');
+const { summarizeAgentStdout } = require('./agent-output-parser');
 
 const PARENT_TASK_ID = process.env.TB_PARENT_TASK_ID || '';
 const WORKING_DIR = process.env.TB_WORKING_DIR || process.cwd();
@@ -69,13 +70,18 @@ async function handleToolCall(name, args = {}) {
         mode: 'worker',
       });
 
+      const canonicalId = status.agent_id || agentId;
+      const parseAs = canonicalId === 'codex' ? 'codex' : 'claude-code';
       if (status.status === 'completed') {
-        const out = status.result?.output || status.result?.summary || '(无输出)';
-        return textResult(`[${agentId}] 任务完成:\n${out}`);
+        const raw = status.result?.output || status.result?.summary || '';
+        const out = status.result?.summary
+          || summarizeAgentStdout(raw, parseAs)
+          || '(无输出)';
+        return textResult(`[${canonicalId}] 任务完成:\n${out}`);
       }
 
       const err = status.error || status.result?.output || '未知错误';
-      return textResult(`[${agentId}] 任务失败 (${status.status}):\n${err}`, true);
+      return textResult(`[${canonicalId}] 任务失败 (${status.status}):\n${err}`, true);
     } catch (e) {
       return textResult(`派发失败: ${e.message}`, true);
     }

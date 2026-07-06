@@ -6,9 +6,10 @@ const { EventEmitter } = require('events');
 const { spawn } = require('child_process');
 const { nanoid } = require('nanoid');
 const localStats = require('./local-stats');
+const { STATS_DIR } = require('../shared/telemetry');
 const shim = require('./shim-installer');
 const agentLinker = require('./agent-linker');
-const { parseAgentOutputLine } = require('./agent-output-parser');
+const { parseAgentOutputLine, summarizeAgentStdout } = require('./agent-output-parser');
 const mcpManager = require('./mcp-manager');
 const { _internal: { runProbe } } = require('./detect-tools');
 const {
@@ -20,7 +21,6 @@ const {
   ASSISTANT_ID_PREFIX,
 } = require('./resource-assistant');
 
-// Agent CLI 映射：id → 探测命令 + 非交互 spawn 参数
 const AGENT_CLI = {
   'claude-code': {
     name: 'Claude Code',
@@ -37,10 +37,24 @@ const AGENT_CLI = {
     detectCommand: 'codex',
     // codex 可能仅通过 npx 安装
     npxPackage: '@openai/codex',
-    buildArgs: (prompt) => ['exec', prompt],
+    // Debug 直调：JSONL 实时输出 + 默认信任所选工作目录
+    buildArgs: (prompt, { workingDir } = {}) => {
+      const args = ['exec', '--json', '--skip-git-repo-check'];
+      if (workingDir) args.push('--cd', workingDir);
+      args.push(prompt);
+      return args;
+    },
     capabilities: ['code', 'chat', 'edit'],
   },
 };
+
+/** Agent 列表探测缓存（避免每次进 Debug 都 spawn CLI） */
+const AGENT_LIST_CACHE = { at: 0, agents: null, ttlMs: 45_000 };
+
+function invalidateAgentListCache() {
+  AGENT_LIST_CACHE.at = 0;
+  AGENT_LIST_CACHE.agents = null;
+}
 
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
@@ -54,15 +68,15 @@ class AgentExecutor extends EventEmitter {
   constructor() {
     super();
     this.runningTasks = new Map(); // taskId → { process, agent_id }
+    // 任务元数据缓存：进程结束后仍可用于 IPC 事件路由
+    this.taskMetaCache = new Map(); // taskId → { agentId, sessionKey, parentTaskId }
   }
 
   /**
    * 获取数据库实例
    */
   _getDb() {
-    const db = localStats.getDb();
-    if (!db) throw new Error('Database not initialized');
-    return db;
+    return localStats.requireDb(STATS_DIR);
   }
 
   /**
@@ -90,36 +104,84 @@ class AgentExecutor extends EventEmitter {
   }
 
   /**
-   * 获取可用的 Agent 列表（仅返回本机已安装 CLI）
+   * 将 MCP / 用户传入的 agent_id 规范化为 listAvailableAgents 中的 id
+   * 支持 assistant:res-xxx、资源 name（如 python-expert）、显示名
    */
-  async listAvailableAgents() {
-    const agents = [];
+  async resolveAgentId(agentId) {
+    const raw = String(agentId || '').trim();
+    if (!raw) throw new Error('缺少 agent_id');
 
-    for (const [id, cfg] of Object.entries(AGENT_CLI)) {
-      let probe = await runProbe(cfg.detectCommand, ['--version']);
-      const launch = this._resolveLaunchSpec(id);
+    const agents = await this.listAvailableAgents();
+    const exact = agents.find(a => a.id === raw);
+    if (exact) return exact.id;
 
-      // Codex 常见为 npx 安装，补充探测
-      if (!probe.ok && cfg.npxPackage) {
-        probe = await runProbe('npx', ['-y', cfg.npxPackage, '--version']);
+    const lower = raw.toLowerCase();
+    const assistants = agents.filter(a => a.type === 'assistant');
+
+    for (const a of assistants) {
+      if (a.name?.toLowerCase() === lower) return a.id;
+      if (a.resourceId === raw || a.resourceId === raw.replace(/^assistant:/, '')) return a.id;
+      if (raw.startsWith(ASSISTANT_ID_PREFIX) && a.id.endsWith(raw.slice(ASSISTANT_ID_PREFIX.length))) {
+        return a.id;
       }
-
-      if (!probe.ok && !launch?.executable) continue;
-
-      agents.push({
-        id,
-        name: cfg.name,
-        type: 'cli',
-        executable: launch?.executable,
-        capabilities: cfg.capabilities,
-        version: probe.ok ? (probe.stdout.match(/[\d.]+/)?.[0] || probe.stdout) : null,
-        status: 'active',
-      });
     }
 
-    const cliIds = new Set(agents.map(a => a.id));
-    agents.push(...this._listCustomAssistants(cliIds));
+    const resourceManager = require('./resource-manager');
+    resourceManager.init();
+    const byName = resourceManager._findByTypeName('assistant', raw);
+    if (byName) return `${ASSISTANT_ID_PREFIX}${byName.id}`;
 
+    const cli = agents.find(a => a.id === lower || a.name?.toLowerCase() === lower);
+    if (cli) return cli.id;
+
+    throw new Error(`未知 Agent: ${agentId}（请用 tb_list_agents 查看可用 id）`);
+  }
+
+  /**
+   * 获取可用的 Agent 列表（仅返回本机已安装 CLI）
+   * @param {{ force?: boolean }} options - force 跳过缓存
+   */
+  async listAvailableAgents(options = {}) {
+    const now = Date.now();
+    if (!options.force && AGENT_LIST_CACHE.agents
+      && (now - AGENT_LIST_CACHE.at) < AGENT_LIST_CACHE.ttlMs) {
+      return AGENT_LIST_CACHE.agents;
+    }
+
+    // 并行探测各 CLI：先 resolve 可执行路径，避免慢速 npx 包下载探测
+    const cliAgents = (await Promise.all(
+      Object.entries(AGENT_CLI).map(async ([id, cfg]) => {
+        const launch = this._resolveLaunchSpec(id);
+        if (!launch?.executable) return null;
+
+        // 版本号仅作展示，短超时；探测失败不影响「已安装」判定
+        let version = null;
+        try {
+          const probe = await runProbe(cfg.detectCommand, ['--version'], 1800);
+          if (probe.ok) {
+            version = probe.stdout.match(/[\d.]+/)?.[0] || probe.stdout;
+          }
+        } catch {
+          // 忽略版本探测失败
+        }
+
+        return {
+          id,
+          name: cfg.name,
+          type: 'cli',
+          executable: launch.executable,
+          capabilities: cfg.capabilities,
+          version,
+          status: 'active',
+        };
+      }),
+    )).filter(Boolean);
+
+    const cliIds = new Set(cliAgents.map(a => a.id));
+    const agents = [...cliAgents, ...this._listCustomAssistants(cliIds)];
+
+    AGENT_LIST_CACHE.at = now;
+    AGENT_LIST_CACHE.agents = agents;
     return agents;
   }
 
@@ -188,17 +250,19 @@ class AgentExecutor extends EventEmitter {
    */
   async execute(agentId, prompt, options = {}) {
     const db = this._getDb();
+    const canonicalId = await this.resolveAgentId(agentId);
     const { workingDir = process.cwd(), assistantId, mcpProfile, mode = 'direct', mainAgentId } = options;
 
     // 创建任务记录
     const taskId = `task_${Date.now()}_${nanoid(8)}`;
-    
+    const sessionKey = options.sessionKey || canonicalId;
+
     db.prepare(`
       INSERT INTO agent_tasks (id, agent_id, prompt, context, status, created_at)
       VALUES (?, ?, ?, ?, 'pending', ?)
     `).run(
       taskId,
-      agentId,
+      canonicalId,
       prompt,
       JSON.stringify({
         workingDir,
@@ -207,15 +271,21 @@ class AgentExecutor extends EventEmitter {
         mode,
         mainAgentId,
         parentTaskId: options.parentTaskId || null,
-        sessionKey: options.sessionKey || null,
+        sessionKey,
       }),
       Date.now(),
     );
 
     // 异步执行
-    this._executeAsync(taskId, agentId, prompt, options).catch(err => {
+    this._executeAsync(taskId, canonicalId, prompt, { ...options, sessionKey }).catch(err => {
       console.error(`[AgentExecutor] Task ${taskId} failed:`, err);
       this._updateTaskStatus(taskId, 'failed', err.message);
+    });
+
+    this.taskMetaCache.set(taskId, {
+      agentId: canonicalId,
+      sessionKey,
+      parentTaskId: options.parentTaskId || null,
     });
 
     return { taskId };
@@ -226,17 +296,18 @@ class AgentExecutor extends EventEmitter {
    */
   async dispatchAndWait(agentId, prompt, options = {}) {
     const parentTaskId = options.parentTaskId;
-    const { taskId } = await this.execute(agentId, prompt, {
+    const canonicalId = await this.resolveAgentId(agentId);
+    const { taskId } = await this.execute(canonicalId, prompt, {
       ...options,
       mode: options.mode || 'worker',
-      sessionKey: agentId,
+      sessionKey: canonicalId,
     });
 
     // 通知前端：子任务已派发，便于各 Agent 标签页展示对应输出
     this.emit('task:dispatched', {
       parentTaskId,
       childTaskId: taskId,
-      agentId,
+      agentId: canonicalId,
       prompt,
       timestamp: Date.now(),
     });
@@ -261,20 +332,23 @@ class AgentExecutor extends EventEmitter {
         const status = await this.getTaskStatus(taskId);
         if (['completed', 'failed', 'cancelled'].includes(status.status)) {
           if (parentTaskId) {
-            const summary = status.result?.output
+            const summary = status.result?.summary
+              || status.result?.output
               || status.error
               || (status.status === 'completed' ? '(完成)' : status.status);
             this.emit('task:step', {
               taskId: parentTaskId,
               stepType: 'delegation',
               phase: 'complete',
-              agentId,
+              agentId: canonicalId,
               childTaskId: taskId,
               content: summary,
               status: status.status,
               timestamp: Date.now(),
             });
           }
+          // 兜底：确保子 Agent 标签页收到完成事件（避免 UI 卡在 executing）
+          this._notifyTaskTerminal(taskId, status);
           return status;
         }
         await sleep(400);
@@ -352,10 +426,10 @@ class AgentExecutor extends EventEmitter {
           args = [...launch.argPrefix, ...asstLaunch.claudeExtraArgs, prompt];
         } else {
           execPrompt = (asstLaunch.promptPrefix || '') + prompt;
-          args = [...launch.argPrefix, ...cfg.buildArgs(execPrompt)];
+          args = [...launch.argPrefix, ...cfg.buildArgs(execPrompt, { workingDir })];
         }
       } else {
-        args = [...launch.argPrefix, ...cfg.buildArgs(prompt)];
+        args = [...launch.argPrefix, ...cfg.buildArgs(prompt, { workingDir })];
       }
 
       const result = await this._runAgentProcess(taskId, effectiveAgentId, launch.executable, args, {
@@ -364,43 +438,98 @@ class AgentExecutor extends EventEmitter {
         onCleanup: orchestratorCleanup,
         virtualAgentId: agentId,
         gatewayAgentId: effectiveAgentId,
+        sessionKey: options.sessionKey || null,
       });
 
-      // 更新任务结果
-      db.prepare(`
-        UPDATE agent_tasks 
-        SET status = 'completed', result = ?, completed_at = ?
-        WHERE id = ?
-      `).run(JSON.stringify(result), Date.now(), taskId);
+      // 更新任务结果（失败也不阻断完成事件，避免 UI 卡在 executing）
+      try {
+        db.prepare(`
+          UPDATE agent_tasks 
+          SET status = 'completed', result = ?, completed_at = ?
+          WHERE id = ?
+        `).run(JSON.stringify(result), Date.now(), taskId);
+      } catch (e) {
+        console.warn('[AgentExecutor] task complete persist failed:', e.message);
+        try {
+          db.prepare(`
+            UPDATE agent_tasks SET status = 'completed', completed_at = ? WHERE id = ?
+          `).run(Date.now(), taskId);
+        } catch {}
+      }
 
-      // 发送完成事件（含 agent / 父任务，便于前端路由到对应标签页）
-      this.emit('task:completed', { taskId, result, ...this._taskEventMeta(taskId) });
+      this.emit('task:completed', {
+        taskId,
+        result,
+        status: 'completed',
+        ...this._taskEventMeta(taskId),
+      });
+      this.taskMetaCache.delete(taskId);
 
       // 记录成本
       await this._recordCost(taskId, effectiveAgentId, result);
     } catch (error) {
       this._updateTaskStatus(taskId, 'failed', error.message);
       this.emit('task:failed', { taskId, error: error.message, ...this._taskEventMeta(taskId) });
+      this.taskMetaCache.delete(taskId);
       throw error;
     }
   }
 
   /**
-   * 启动 Agent 子进程并收集输出
+   * 从 DB / 缓存读取任务路由元数据（进程结束后仍可用）
    */
   _taskEventMeta(taskId) {
-    const db = this._getDb();
-    const row = db.prepare('SELECT agent_id, context FROM agent_tasks WHERE id = ?').get(taskId);
-    let parentTaskId = null;
+    const cached = this.taskMetaCache.get(taskId);
+    const running = this.runningTasks.get(taskId);
     try {
-      parentTaskId = row?.context ? JSON.parse(row.context).parentTaskId : null;
+      const db = localStats.getDb();
+      if (db) {
+        const row = db.prepare('SELECT agent_id, context FROM agent_tasks WHERE id = ?').get(taskId);
+        let parentTaskId = cached?.parentTaskId || running?.parent_task_id || null;
+        let sessionKey = cached?.sessionKey || running?.session_key || null;
+        try {
+          const ctx = row?.context ? JSON.parse(row.context) : {};
+          parentTaskId = parentTaskId || ctx.parentTaskId || null;
+          sessionKey = sessionKey || ctx.sessionKey || null;
+        } catch {}
+        return {
+          agentId: row?.agent_id || cached?.agentId || running?.agent_id || null,
+          parentTaskId,
+          sessionKey,
+        };
+      }
     } catch {}
     return {
-      agentId: row?.agent_id || null,
-      parentTaskId: parentTaskId || null,
+      agentId: cached?.agentId || running?.agent_id || null,
+      parentTaskId: cached?.parentTaskId || running?.parent_task_id || null,
+      sessionKey: cached?.sessionKey || running?.session_key || null,
     };
   }
 
+  /** 向前端广播任务终态（子 Agent 派发完成兜底） */
+  _notifyTaskTerminal(taskId, status) {
+    const meta = this._taskEventMeta(taskId);
+    const payload = {
+      taskId,
+      agentId: status?.agent_id || meta.agentId,
+      sessionKey: meta.sessionKey,
+      parentTaskId: meta.parentTaskId,
+      result: status?.result || null,
+      error: status?.error || null,
+    };
+    if (status?.status === 'completed') {
+      this.emit('task:completed', payload);
+    } else if (status?.status === 'failed') {
+      this.emit('task:failed', payload);
+    } else if (status?.status === 'cancelled') {
+      this.emit('task:cancelled', payload);
+    }
+    this.taskMetaCache.delete(taskId);
+  }
+
+  /**
+   * 启动 Agent 子进程并收集输出
+   */
   async _runAgentProcess(taskId, agentId, executable, args, options) {
     const {
       workingDir = process.cwd(),
@@ -408,6 +537,7 @@ class AgentExecutor extends EventEmitter {
       virtualAgentId,
       gatewayAgentId = agentId,
       parentTaskId = null,
+      sessionKey = null,
     } = options;
 
     const spawnEnv = agentLinker.buildSpawnEnv(gatewayAgentId, process.env);
@@ -436,6 +566,12 @@ class AgentExecutor extends EventEmitter {
         agent_id: virtualAgentId || agentId,
         parent_task_id: parentTaskId,
         gateway_agent_id: gatewayAgentId,
+        session_key: sessionKey,
+      });
+      this.taskMetaCache.set(taskId, {
+        agentId: virtualAgentId || agentId,
+        sessionKey,
+        parentTaskId,
       });
 
       const cleanup = () => {
@@ -483,6 +619,8 @@ class AgentExecutor extends EventEmitter {
           resolve({
             success: true,
             output: stdout,
+            summary: summarizeAgentStdout(stdout, gatewayAgentId),
+            stderr,
             files: modifiedFiles,
             stepCount: stepCounter,
           });
@@ -503,22 +641,30 @@ class AgentExecutor extends EventEmitter {
    * 解析并发送实时步骤
    */
   _parseAndEmitSteps(taskId, line, stepNumber, agentIdForParse) {
-    const db = this._getDb();
     const running = this.runningTasks.get(taskId);
     const parseAgent = agentIdForParse || running?.gateway_agent_id || running?.agent_id;
     const steps = parseAgentOutputLine(line, parseAgent);
+    let db;
+    try { db = this._getDb(); } catch { db = null; }
 
     for (const step of steps) {
       const stepType = step.stepType || 'output';
       const content = step.content || '';
-      if (!content.trim()) continue;
+      // system_event 等结构化步骤允许无长文本 content
+      if (!content.trim() && stepType !== 'system_event') continue;
 
       const stepId = `step_${Date.now()}_${nanoid(8)}`;
-      db.prepare(`
-        INSERT INTO agent_task_steps
-        (id, task_id, step_number, step_type, content, status, created_at)
-        VALUES (?, ?, ?, ?, ?, 'completed', ?)
-      `).run(stepId, taskId, stepNumber, stepType, content, Date.now());
+      if (db) {
+        try {
+          db.prepare(`
+            INSERT INTO agent_task_steps
+            (id, task_id, step_number, step_type, content, status, created_at)
+            VALUES (?, ?, ?, ?, ?, 'completed', ?)
+          `).run(stepId, taskId, stepNumber, stepType, content, Date.now());
+        } catch (e) {
+          console.warn('[AgentExecutor] step persist failed:', e.message);
+        }
+      }
 
       this.emit('task:step', {
         taskId,
@@ -526,9 +672,15 @@ class AgentExecutor extends EventEmitter {
         stepType,
         content,
         tool_name: step.tool_name || null,
+        system_subtype: step.system_subtype || null,
+        attempt: step.attempt,
+        max_retries: step.max_retries,
+        retry_delay_ms: step.retry_delay_ms,
+        error_status: step.error_status,
         timestamp: Date.now(),
-        agentId: running?.agent_id || null,
-        parentTaskId: running?.parent_task_id || null,
+        agentId: running?.agent_id || this.taskMetaCache.get(taskId)?.agentId || null,
+        parentTaskId: running?.parent_task_id || this.taskMetaCache.get(taskId)?.parentTaskId || null,
+        sessionKey: running?.session_key || this.taskMetaCache.get(taskId)?.sessionKey || null,
       });
     }
   }
@@ -647,6 +799,30 @@ class AgentExecutor extends EventEmitter {
   }
 
   /**
+   * 列出某 Agent 最近任务（切换标签页恢复历史）
+   */
+  async listRecentTasksForAgent(agentId, limit = 3) {
+    const canonicalId = await this.resolveAgentId(agentId);
+    const db = this._getDb();
+    const rows = db.prepare(`
+      SELECT id FROM agent_tasks
+      WHERE agent_id = ?
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(canonicalId, limit);
+
+    const tasks = [];
+    for (const row of rows) {
+      try {
+        tasks.push(await this.getTaskStatus(row.id));
+      } catch {
+        // 忽略损坏记录
+      }
+    }
+    return tasks;
+  }
+
+  /**
    * 列出进行中的任务（切换页面后恢复 UI 用）
    */
   async listActiveTasks() {
@@ -738,3 +914,4 @@ class AgentExecutor extends EventEmitter {
 }
 
 module.exports = new AgentExecutor();
+module.exports.invalidateAgentListCache = invalidateAgentListCache;

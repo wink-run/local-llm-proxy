@@ -24,12 +24,13 @@ scans:
     data_source_map:
       field: entrypoint
       map:
+        # Debug/聚合 spawn 经网关时 entrypoint 为 sdk-cli，与 proxy 靠 message.id 去重
+        sdk-cli: session-claude
         claude-desktop: session-claude-desktop
         claude-desktop-3p: session-claude-desktop
       prefix_map:
         claude-desktop: session-claude-desktop
-      skip:
-      - sdk-cli
+      skip: []
       default: session-claude
     fields:
       ts: timestamp
