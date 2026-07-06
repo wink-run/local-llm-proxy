@@ -11,6 +11,7 @@
     "gen-icons": "node scripts/gen-icons.js",
     "test": "node --test electron/__tests__/*.test.js",
     "test:cli-runtime": "node --test electron/__tests__/cli-runtime-deps.test.js",
+    "postinstall": "electron-rebuild -f -w better-sqlite3",
     "rebuild": "electron-rebuild -f -w better-sqlite3"
   },
   "dependencies": {

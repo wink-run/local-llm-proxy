@@ -36,10 +36,14 @@ function syncSessionTelemetry(localStats) {
     hookImported = cursorHooks.importEvents(localStats);
     maybeFixTraeSessionTimestamps(localStats);
     try { traeSynced = syncTraeSessions(); } catch (e) { console.error('[trae-session-sync]', e.message); }
-    const r = sessionImport.run(localStats, { skip: computeImportSkip() });
+    const skip = computeImportSkip();
+    const r = sessionImport.run(localStats, { skip });
     sessionImported = (r && r.imported) || 0;
     // transcript 行常无 usage → 0 token 占位；hook 纳管后以 hook 为准，清掉 cursor:… 脏行
     cursorHooks.purgeTranscriptZeroTokens(localStats);
+    console.log('[session-telemetry]', JSON.stringify({
+      hookImported, sessionImported, traeSynced, skip: [...skip],
+    }));
   } catch (e) {
     console.error('[session-telemetry]', e.message);
   }

@@ -40,9 +40,28 @@ function loadBuiltinScans() {
   return _scansBuiltin;
 }
 
-/** 合并内置 + 云端 session_scans */
+/** 合并内置 + 云端 session_scans；Claude 纳管场景下 sdk-cli/cli 须参与补录（靠 request_id 与 proxy 去重） */
+function normalizeClaudeSessionScan(scan) {
+  if (!scan || typeof scan !== 'object' || !scan.proxy_dedup) return scan;
+  const out = { ...scan };
+  const dsm = { ...(out.data_source_map || {}) };
+  dsm.map = {
+    ...(dsm.map || {}),
+    'sdk-cli': 'session-claude',
+    'sdk-ts': 'session-claude',
+    cli: 'session-claude',
+  };
+  dsm.skip = (Array.isArray(dsm.skip) ? dsm.skip : []).filter(
+    (ep) => ep !== 'sdk-cli' && ep !== 'sdk-ts' && ep !== 'cli',
+  );
+  out.data_source_map = dsm;
+  return out;
+}
+
 function sessionScansById() {
-  return { ...loadBuiltinScans(), ...(_cloudScans || {}) };
+  const merged = { ...loadBuiltinScans(), ...(_cloudScans || {}) };
+  if (merged.claude) merged.claude = normalizeClaudeSessionScan(merged.claude);
+  return merged;
 }
 
 /**
@@ -525,6 +544,7 @@ module.exports = {
   loadDoc,
   handlersMap,
   sessionScansById,
+  normalizeClaudeSessionScan,
   applyCloudConfig,
   resolveSessionScan,
   resolveSessionTrace,

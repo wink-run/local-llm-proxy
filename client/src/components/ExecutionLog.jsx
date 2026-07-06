@@ -84,17 +84,27 @@ function buildTimeline(userPrompt, steps = [], delegations = {}, agentNames = {}
     if (type === 'system_event') {
       flushOutput();
       flushThinking();
+      const prev = systemBuf[systemBuf.length - 1];
+      // 相同系统事件不重复堆叠（如 thinking_tokens 流式上报）
+      if (prev
+        && prev.system_subtype === step.system_subtype
+        && prev.content === step.content) {
+        continue;
+      }
       systemBuf.push(step);
       continue;
     }
 
-    flushThinking();
-    flushSystem();
-
     if (type === 'output') {
+      flushThinking();
+      flushSystem();
+      const last = outputBuf[outputBuf.length - 1];
+      if (last && last.content === step.content) continue;
       outputBuf.push(step);
       continue;
     }
+    flushThinking();
+    flushSystem();
     flushOutput();
     items.push({ kind: type, ...step });
   }

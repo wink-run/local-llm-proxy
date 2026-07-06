@@ -20,28 +20,25 @@ function buildAgentDataSource() {
 
 const AGENT_DATA_SOURCE = buildAgentDataSource();
 
-/** 解析应用对应的会话补录 data_source（须启用 session_usage_import） */
+/** 应用关联的全部会话 data_source（须启用 session_usage_import） */
+function resolveAppDataSources(app) {
+  if (!app) return [];
+  const aid = app.agent_id || app.preset_id;
+  const ent = aid ? configLoader.appEntityById(aid) : null;
+  const caps = aid ? configLoader.appCapabilities(aid) : null;
+  const usageImport = app.session_usage_import ?? caps?.session_usage_import ?? ent?.session_usage_import;
+  if (!usageImport) return [];
+  const linked = app.linked_data_sources?.length ? app.linked_data_sources
+    : (ent?.linked_data_sources?.length ? ent.linked_data_sources : []);
+  if (linked.length) return linked;
+  if (app.agent_id && AGENT_DATA_SOURCE[app.agent_id]) return [AGENT_DATA_SOURCE[app.agent_id]];
+  return [];
+}
+
+/** @deprecated 用 resolveAppDataSources */
 function appSessionDataSource(app) {
-  if (!app) return null;
-  if (app.link_method === 'api-key' || app.link_method === 'manual') {
-    const aid = app.preset_id || app.agent_id;
-    const caps = configLoader.appCapabilities(aid);
-    const ent = configLoader.appEntityById(aid);
-    const usageImport = app.session_usage_import ?? caps?.session_usage_import ?? ent?.session_usage_import;
-    if (!usageImport) return null;
-    if (app.linked_data_sources?.length) return app.linked_data_sources[0];
-    if (ent?.linked_data_sources?.length) return ent.linked_data_sources[0];
-    return null;
-  }
-  if ((app.link_method === 'shim' || app.link_method === 'direct' || app.link_method === 'session') && app.agent_id) {
-    const aid = app.agent_id;
-    const caps = configLoader.appCapabilities(aid);
-    const ent = configLoader.appEntityById(aid);
-    const usageImport = app.session_usage_import ?? caps?.session_usage_import ?? ent?.session_usage_import;
-    if (!usageImport) return null;
-    return AGENT_DATA_SOURCE[app.agent_id] || null;
-  }
-  return null;
+  const ds = resolveAppDataSources(app);
+  return ds[0] || null;
 }
 
 function maybeSyncSessionTelemetry(localStats) {
@@ -59,19 +56,10 @@ function getAppDetail(localStats, app, days) {
   const caps = configLoader.appCapabilities(aid);
   const usageImport = !!(caps?.session_usage_import ?? ent?.session_usage_import ?? app?.session_usage_import);
   const sessionTrace = !!(caps?.session_trace ?? ent?.session_trace ?? app?.session_trace);
-  const linked = usageImport ? (app?.linked_data_sources || ent?.linked_data_sources || []) : [];
-  let dataSource = null;
-  if (usageImport) {
-    if (app && (app.link_method === 'api-key' || app.link_method === 'manual') && linked.length) {
-      dataSource = linked[0];
-    } else if (app && (app.link_method === 'shim' || app.link_method === 'direct' || app.link_method === 'session') && app.agent_id) {
-      dataSource = AGENT_DATA_SOURCE[app.agent_id] || null;
-    }
-  }
   const detail = localStats.queryAppDetail({
     appId: app && app.id,
     apiKey: app && app.api_key,
-    dataSource,
+    dataSources: resolveAppDataSources(app),
     days: days || 30,
     includeSessionImport: usageImport,
   });
@@ -102,7 +90,7 @@ function getAppStats(localStats, appList) {
   try { syncSessionTelemetry(localStats); } catch {}
   const stats = {};
   for (const app of (appList || [])) {
-    const ds = appSessionDataSource(app);
+    const dataSources = resolveAppDataSources(app);
     const aid = app.agent_id || app.preset_id;
     const caps = aid ? configLoader.appCapabilities(aid) : null;
     const ent = aid ? configLoader.appEntityById(aid) : null;
@@ -112,14 +100,14 @@ function getAppStats(localStats, appList) {
       s = localStats.queryAppStatsToday({
         appId: app.id,
         apiKey: app.api_key,
-        dataSource: ds,
+        dataSources,
         includeSessionImport: usageImport,
       });
     } else if ((app.link_method === 'shim' || app.link_method === 'direct') && app.agent_id) {
       s = localStats.queryAppStatsToday({
         appId: app.id,
         apiKey: app.api_key,
-        dataSource: ds,
+        dataSources,
         includeSessionImport: usageImport,
       });
     } else {
@@ -152,5 +140,6 @@ module.exports = {
   getSessionTrace,
   getHandoffTargets,
   appSessionDataSource,
+  resolveAppDataSources,
   maybeSyncSessionTelemetry,
 };

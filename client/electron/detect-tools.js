@@ -22,14 +22,14 @@ const PROBE_TIMEOUT_MS = 4000;
 
 // ── 跨平台执行命令探测可用性 ───────────────────────────────────────────────
 // 返回 { ok, stdout, code }；命令不存在/超时/非零退出都算 ok:false，但区分原因。
-function runProbe(cmd, args) {
+function runProbe(cmd, args, timeoutMs = PROBE_TIMEOUT_MS) {
   return new Promise((resolve) => {
     let done = false;
     const finish = (r) => { if (!done) { done = true; resolve(r); } };
     let child;
     try {
       // Windows 上 npm 装的 CLI 常是 .cmd，execFile 需要 shell 兜底
-      child = execFile(cmd, args, { timeout: PROBE_TIMEOUT_MS, windowsHide: true, shell: process.platform === 'win32' },
+      child = execFile(cmd, args, { timeout: timeoutMs, windowsHide: true, shell: process.platform === 'win32' },
         (err, stdout, stderr) => {
           if (err) {
             // ENOENT = 命令不存在；killed = 超时

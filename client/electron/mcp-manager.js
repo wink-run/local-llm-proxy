@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const localStats = require('./local-stats');
+const { STATS_DIR } = require('../shared/telemetry');
 const shim = require('./shim-installer');
 const { getCatalogItem, listCatalogItems, listCatalogGrouped, MCP_CATEGORY_GROUPS } = require('./mcp-catalog');
 
@@ -34,9 +35,7 @@ class MCPManager {
   }
 
   _getDb() {
-    const db = localStats.getDb();
-    if (!db) throw new Error('Database not initialized');
-    return db;
+    return localStats.requireDb(STATS_DIR);
   }
 
   /** 初始化内置 MCP Server 与默认 Profile（幂等） */
@@ -659,7 +658,8 @@ class MCPManager {
     }
 
     if (agentId === 'codex') {
-      const extraArgs = ['exec', '--enable', 'mcp'];
+      const extraArgs = ['exec', '--json', '--enable', 'mcp', '--skip-git-repo-check'];
+      if (workingDir) extraArgs.push('--cd', workingDir);
       for (const srv of servers) {
         const cfg = this._buildRuntimeServerConfig(srv, { taskId, workingDir, mainAgentId });
         const name = srv.name;

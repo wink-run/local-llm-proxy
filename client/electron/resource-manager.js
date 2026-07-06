@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const localStats = require('./local-stats');
+const { STATS_DIR } = require('../shared/telemetry');
 const {
   getCatalogItem,
   listCatalogItems,
@@ -37,9 +38,7 @@ class ResourceManager {
   }
 
   _getDb() {
-    const db = localStats.getDb();
-    if (!db) throw new Error('Database not initialized');
-    return db;
+    return localStats.requireDb(STATS_DIR);
   }
 
   init() {

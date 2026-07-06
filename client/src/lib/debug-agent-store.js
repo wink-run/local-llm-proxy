@@ -16,6 +16,36 @@ export function agentSessionKey(agent) {
   return agent?.id || '__hub__';
 }
 
+/** 将 MCP/后端 agentId 映射到 Debug 标签页 session key */
+export function resolveSessionKey(agentId, agents = []) {
+  const raw = String(agentId || '').trim();
+  if (!raw) return null;
+  if (raw === '__hub__') return raw;
+
+  const list = agents || [];
+  const exact = list.find(a => a.id === raw);
+  if (exact) return exact.id;
+
+  const lower = raw.toLowerCase();
+  const assistant = list.find(a =>
+    a.type === 'assistant' && (
+      a.name?.toLowerCase() === lower
+      || a.resourceId === raw
+      || a.resourceId === raw.replace(/^assistant:/, '')
+      || (raw.startsWith('assistant:') && a.id.includes(raw.slice('assistant:'.length)))
+    ),
+  );
+  if (assistant) return assistant.id;
+
+  const cli = list.find(a => a.id === lower || a.name?.toLowerCase() === lower);
+  if (cli) return cli.id;
+
+  // 已是 assistant: 前缀的完整 id，即使 agents 尚未加载也保留
+  if (raw.startsWith('assistant:')) return raw;
+
+  return raw;
+}
+
 const store = {
   sessions: {},
   taskRoutes: {},
@@ -37,8 +67,12 @@ export function routeTask(taskId, sessionKey) {
   if (taskId && sessionKey) store.taskRoutes[taskId] = sessionKey;
 }
 
-export function resolveTaskRoute(taskId, agentId) {
-  return store.taskRoutes[taskId] || agentId || null;
+export function resolveTaskRoute(taskId, agentId, sessionKey, agents = []) {
+  const routed = store.taskRoutes[taskId];
+  if (routed) return routed;
+  const fromSession = sessionKey || resolveSessionKey(agentId, agents);
+  if (fromSession) return fromSession;
+  return agentId || null;
 }
 
 export function setStoreSelectedAgentId(id) {
@@ -68,6 +102,11 @@ function mapDbSteps(status) {
     agentId: status.agent_id,
     parentTaskId: status.context?.parentTaskId || null,
   }));
+}
+
+/** 将 DB 步骤行转为 ExecutionLog 步骤 */
+export function stepsFromTaskStatus(status) {
+  return mapDbSteps(status);
 }
 
 /** 将后端任务状态合并进 store（用于恢复运行中任务） */
@@ -124,6 +163,25 @@ export function releaseAllExecutingSessions() {
   }
 }
 
+/** 按 taskId 释放所有标签页的 executing 锁（完成/失败事件兜底） */
+export function releaseExecutingForTask(taskId, taskPatch = {}) {
+  if (!taskId) return [];
+  const touched = [];
+  for (const key of Object.keys(store.sessions)) {
+    const s = store.sessions[key];
+    if (s.currentTask?.id !== taskId) continue;
+    store.sessions[key] = {
+      ...s,
+      executing: false,
+      currentTask: s.currentTask
+        ? { ...s.currentTask, ...taskPatch }
+        : s.currentTask,
+    };
+    touched.push(key);
+  }
+  return touched;
+}
+
 export function clearSessionTaskState(sessionKey) {
   patchStoreSession(sessionKey, {
     agentPrompt: '',
@@ -134,4 +192,15 @@ export function clearSessionTaskState(sessionKey) {
     executing: false,
     delegations: {},
   });
+}
+
+/** Debug Agent 列表前端缓存（stale-while-revalidate） */
+let agentsListCache = null;
+
+export function getCachedAgentsList() {
+  return agentsListCache;
+}
+
+export function setCachedAgentsList(agents) {
+  agentsListCache = Array.isArray(agents) ? agents : null;
 }
