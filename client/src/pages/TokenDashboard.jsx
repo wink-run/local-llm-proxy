@@ -136,7 +136,7 @@ function pickDistData(localData, devices, filterId) {
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 const SESSION_PROVIDERS = new Set([
-  'claude-cli', 'cursor', 'codex-cli', 'gemini-cli', 'opencode-cli',
+  'claude-cli', 'cursor', 'codex-cli', 'opencode-cli',
   'github-copilot', 'qwen-cli', 'antigravity', 'grok',
 ]);
 
