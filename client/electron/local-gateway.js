@@ -1779,6 +1779,7 @@ function proxyP2PSync(provider, oaiBody, model, res) {
       let buf = '', fullText = '', inputTokens = 0, outputTokens = 0, stopReason = 'end_turn', firstTokenMs = null, msgId = null;
       let settled = false;
       let streamError = null;
+      let sawFinish = false;                 // 上游是否给过 finish_reason —— 区分「干净的空完成」与「真的没响应」
       const toolCallsByIndex = new Map();   // index → { id, name, args } —— 累积流式 tool_calls 分片
 
       const settleP2pError = (oaiErr) => {
@@ -1833,7 +1834,7 @@ function proxyP2PSync(provider, oaiBody, model, res) {
               }
             }
             const finish = choice.finish_reason;
-            if (finish) stopReason = finish === 'stop' ? 'end_turn' : finish;
+            if (finish) { stopReason = finish === 'stop' ? 'end_turn' : finish; sawFinish = true; }
             if (c.usage) {
               inputTokens  = c.usage.prompt_tokens     || inputTokens;
               outputTokens = c.usage.completion_tokens || outputTokens;
@@ -1853,12 +1854,18 @@ function proxyP2PSync(provider, oaiBody, model, res) {
             return { type: 'tool_use', id: tc.id || ('toolu_' + Math.random().toString(36).slice(2, 14)), name: tc.name || '', input };
           });
         if (!fullText && !toolUseBlocks.length) {
-          settleP2pError(streamError || { message: 'Empty response from upstream', type: 'api_error' });
-          return;
+          // 上游没给 finish_reason 才当作「真的没响应」→ 报错触发 failover；
+          // 若干净结束（有 finish，比如 max_tokens 太小/模型选择不输出），返回 200 空文本完成，
+          // 免得 Claude Desktop 等客户端的连通性探测把「空完成」误判为网关故障。
+          if (streamError || !sawFinish) {
+            settleP2pError(streamError || { message: 'Empty response from upstream', type: 'api_error' });
+            return;
+          }
         }
         const content = [];
         if (fullText) content.push({ type: 'text', text: fullText });
         for (const b of toolUseBlocks) content.push(b);
+        if (!content.length) content.push({ type: 'text', text: '' }); // 干净空完成 → 给个空文本块，保证 content 合法
         // 有工具调用 → Anthropic stop_reason 用 tool_use（上游 finish 常是 tool_calls）
         if (toolUseBlocks.length && (stopReason === 'end_turn' || stopReason === 'tool_calls')) stopReason = 'tool_use';
         try {
