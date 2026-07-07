@@ -13,6 +13,7 @@
  *   - 窗口配额型：windows 带 usedPercent + resetsAt（Claude）。
  *   - 余额型：credits { total, currency, usedPercent? }（OpenRouter/DeepSeek）。
  */
+const { readCliCreds } = require('./shared');
 const { fetchClaudeUsage } = require('./claude');
 const { fetchOpenRouterUsage } = require('./openrouter');
 const { fetchDeepSeekUsage } = require('./deepseek');
@@ -20,12 +21,14 @@ const { fetchCodexUsage } = require('./codex');
 const { fetchCopilotUsage } = require('./copilot');
 const { fetchGeminiUsage } = require('./gemini');
 const { fetchGroqUsage } = require('./groq');
+const { fetchVolcengineUsage } = require('./volcengine');
 
 const USAGE_FETCHERS = {
   claude: fetchClaudeUsage, // OAuth 窗口型
-  codex: fetchCodexUsage, // OAuth 窗口型（ChatGPT wham/usage）
+  codex: fetchCodexUsage, // OAuth 窗口型（ChatGPT wham/usage；回退 ~/.codex/auth.json）
   copilot: fetchCopilotUsage, // OAuth 窗口型（用 github_token）
-  gemini: fetchGeminiUsage, // Google OAuth 窗口型（暂无自动刷新）
+  gemini: fetchGeminiUsage, // Google OAuth 窗口型（回退 ~/.gemini/oauth_creds.json + 自动刷新）
+  volcengine: fetchVolcengineUsage, // API key 探针型（Ark 响应头请求配额）
   openrouter: fetchOpenRouterUsage, // API key 余额型
   deepseek: fetchDeepSeekUsage, // API key 余额型
   groq: fetchGroqUsage, // API key 指标型（无额度概念）
@@ -41,11 +44,14 @@ function usageProviderName(provider) {
   return USAGE_FETCHERS[key] ? key : null;
 }
 
-/** provider 是否已具备可用凭证（OAuth token 或 API key）。 */
+/** provider 是否已具备可用凭证（agent config 的 OAuth token / API key，或 CLI 落盘的凭证）。 */
 function hasCredential(provider) {
   if (!provider) return false;
   const c = provider.credentials || {};
-  return !!(c.access_token || c.refresh_token || c.api_key || c.key || provider.token);
+  if (c.access_token || c.refresh_token || c.api_key || c.key || provider.token) return true;
+  // agent config 里没存凭证时，回退看对应 CLI 是否已登录（codex/gemini/claude 自维护 token 文件）。
+  const name = usageProviderName(provider);
+  return !!(name && readCliCreds(name));
 }
 
 /** 抓单个 provider 条目；失败不抛，返回 { error }，便于前端逐条展示。 */

@@ -2234,6 +2234,19 @@ function registerIPC() {
         if (!routeBindable || !toolProto[app.agent_id]) continue;
         const path = PROTOCOL_PATH[toolProto[app.agent_id]];
         if (path) appControls.push({ ...ctrl, match: { path } });
+        // Claude Code CLI（shim, anthropic 协议）：CLI 发的是自带的 claude-* 模型名（含日期快照，
+        // 如 claude-sonnet-4-5-20250929），无法像 Claude Desktop 那样改配置只发绑定名。
+        // 故把所有已知 claude 模型名都映射到该应用绑定的路由 → keyScene 透明改写到真实模型。
+        if (toolProto[app.agent_id] === 'anthropic') {
+          const appRouteIds = (Array.isArray(app.route_ids) && app.route_ids.length)
+            ? app.route_ids : (app.route_id ? [app.route_id] : []);
+          if (appRouteIds.length) {
+            const cms = (() => { try { return require('./config-loader').claudeModels(); } catch { return []; } })();
+            for (const cm of cms) bindRouteToKeyScene(keyScene, cm, appRouteIds[0], routes);
+            // 通配兜底：CLI 后台任务可能发不在已知列表里的 claude-* 名（如 claude-3-5-haiku）→ 也走该路由
+            bindRouteToKeyScene(keyScene, 'claude-*', appRouteIds[0], routes);
+          }
+        }
       }
     }
     gateway.setAppControls(appControls);

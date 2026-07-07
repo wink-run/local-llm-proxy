@@ -19,7 +19,6 @@ _SCANS_SERVER = Path(__file__).resolve().parent / "static" / "defaults" / "sessi
 _LEGACY_ID_TO_HANDLER: dict[str, str] = {
     "claude-code": "claude-code-cli",
     "codex": "codex-cli",
-    "gemini-cli": "gemini-cli",
     "opencode": "opencode-cli",
     "hermes": "hermes-cli",
     "claude-desktop": "claude-desktop-api",

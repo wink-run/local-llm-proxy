@@ -288,8 +288,7 @@ providers:
   key_prefix:
   - AIza
   signup_url: https://aistudio.google.com/app/apikey
-  aliases:
-  - gemini-cli
+  aliases: []
 - id: deepseek
   label: DeepSeek
   icon: 🐋
@@ -634,7 +633,7 @@ billing_sources:
   - id: google-one-ai
     label: Google One AI
     monthly_usd: 20.0
-  agent_id: gemini-cli
+  agent_id: ''
   plan_provider_id: gemini
   subscription_to_api: false
 - id: cursor

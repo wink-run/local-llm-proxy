@@ -72,24 +72,6 @@ ops:
         '
     pricing_provider_id: openai
     handoff_target: true
-  gemini-cli:
-    install_url: https://github.com/google-gemini/gemini-cli
-    npm_package: '@google/gemini-cli'
-    install_guide:
-      mac: '1. 打开官方 GitHub 链接，按文档安装 Gemini CLI
-
-        2. 终端执行 gemini --version 确认可用
-
-        3. 刷新百宝箱后即可在列表中纳管
-
-        '
-      win: '1. 打开官方 GitHub 链接，按 Windows 安装说明操作
-
-        2. 在 PowerShell 执行 gemini --version 确认可用
-
-        3. 刷新百宝箱后即可在列表中纳管
-
-        '
   opencode-cli:
     install_url: https://opencode.ai
     npm_package: opencode-ai
