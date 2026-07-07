@@ -67,6 +67,19 @@ function claudeDesktopDataDirs() {
   return [path.join(base, 'Claude'), path.join(base, 'Claude-3p')];
 }
 
+// 既有配置文件是否已是 tokenbank 写入的托管配置（网关配置带 _configManagedBy:tokenbank 标记）。
+// 用途：备份时绝不把"自己的托管配置"存成 .tokenbank-bak；还原时坏备份视同无备份，避免把网关配置写回。
+function isTokenbankManagedConfig(file) {
+  try {
+    if (!file || !fs.existsSync(file)) return false;
+    const txt = fs.readFileSync(file, 'utf8');
+    if (/\.json$/i.test(file)) {
+      try { return JSON.parse(txt)?._configManagedBy === 'tokenbank'; } catch { return false; }
+    }
+    return /_configManagedBy['"\s:=]+tokenbank/i.test(txt);
+  } catch { return false; }
+}
+
 // 还原 Claude Desktop 到官方 1P：除 configLibrary 外还需清 deploymentMode=3p、修补破损 _meta
 function revertClaudeDesktopOfficialExtras() {
   for (const dir of claudeDesktopDataDirs()) {
@@ -91,8 +104,14 @@ function revertClaudeDesktopOfficialExtras() {
         // 否则会清空 configLibrary，导致开发者模式被误判为「未启用」、纳管按钮回弹。
         if (c._configManagedBy !== 'tokenbank') continue;
         const bak = p + '.tokenbank-bak';
-        if (fs.existsSync(bak)) fs.copyFileSync(bak, p);
-        else fs.unlinkSync(p);
+        // 坏备份保护：备份若本身就是 tokenbank 网关配置（历史 bug：re-管理时把自己的配置备份了），
+        // 视同无原始配置 → 删除托管文件回到官方直连，并清掉坏备份，避免下次还原又写回网关。
+        if (fs.existsSync(bak) && !isTokenbankManagedConfig(bak)) {
+          fs.copyFileSync(bak, p);
+        } else {
+          try { fs.unlinkSync(p); } catch {}
+          try { if (fs.existsSync(bak)) fs.unlinkSync(bak); } catch {}
+        }
       } catch {}
     }
     // _meta.appliedId 指向已删文件时 Claude 会卡在 3P 半残状态
@@ -194,12 +213,14 @@ function revertAppConfigFile(app_id, config_file) {
   }
   if (file) {
     const bak = file + '.tokenbank-bak';
-    if (fs.existsSync(bak)) {
+    // 坏备份保护：备份本身就是 tokenbank 网关配置时，视同无备份（否则会把网关配置写回，还原后仍走网关）。
+    if (fs.existsSync(bak) && !isTokenbankManagedConfig(bak)) {
       try { fs.copyFileSync(bak, file); } catch {}
     } else {
-      // 无备份：只删 tokenbank 自己写入的配置。Claude Desktop 的 configLibrary 里可能是
-      // 用户/Claude 自建的配置（纳管前 config_file 就指向它），删了会清空 configLibrary、
-      // 让开发者模式被误判为未启用——所以未标记 _configManagedBy:tokenbank 的一律不动。
+      // 无有效原始备份（或备份是坏的 tokenbank 网关配置）：清掉坏备份，只删 tokenbank 自己写入的配置。
+      // Claude Desktop 的 configLibrary 里可能是用户/Claude 自建的配置（纳管前 config_file 就指向它），
+      // 删了会清空 configLibrary、让开发者模式被误判为未启用——所以未标记 _configManagedBy:tokenbank 的一律不动。
+      try { if (fs.existsSync(bak)) fs.unlinkSync(bak); } catch {}
       try {
         let managed = true;
         if (isClaudeDesktopApp(app_id) && fs.existsSync(file)) {
@@ -3428,7 +3449,11 @@ function registerIPC() {
       // 纳管 = 备份原配置文件（整份，仅首次），再写入我们的配置（整份替换）。
       // 不合并、不检测冲突、不预扫描内容——状态完全跟随用户操作。
       const bak = file + '.tokenbank-bak';
-      if (fs.existsSync(file) && !fs.existsSync(bak)) { try { fs.copyFileSync(file, bak); } catch {} }
+      // 只备份"真正的原始配置"：既有文件若已是 tokenbank 托管配置，绝不备份——否则会把网关配置
+      // 存成 .tokenbank-bak，还原时又写回网关配置，导致 Claude Desktop 还原后仍走网关。
+      if (fs.existsSync(file) && !fs.existsSync(bak) && !isTokenbankManagedConfig(file)) {
+        try { fs.copyFileSync(file, bak); } catch {}
+      }
       fs.mkdirSync(path.dirname(file), { recursive: true });
       if (/\.json$/i.test(file)) {
         fs.writeFileSync(file, JSON.stringify(patchToObject(resolvedPatch), null, 2), 'utf8');
