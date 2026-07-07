@@ -274,7 +274,7 @@ export default {
   'gateway.supported.clickInstall': '未安装 · 点击前往安装',
   'gateway.supported.notInstalled': '未安装',
   'gateway.apps.loading': '加载中…',
-  'gateway.apps.empty': '未检测到已识别的应用。安装 Claude Code / Codex / Gemini CLI 后会显示在这里，点「纳管」即可接入；或用上方「+ 新建应用」添加未被识别的应用。',
+  'gateway.apps.empty': '未检测到已识别的应用。安装 Claude Code / Codex 后会显示在这里，点「纳管」即可接入；或用上方「+ 新建应用」添加未被识别的应用。',
   'gateway.apps.colApp': '应用',
   'gateway.apps.colStatus': '状态',
   'gateway.apps.colLink': '接入',
