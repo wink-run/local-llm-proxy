@@ -50,27 +50,6 @@ handlers:
       activity_agent_id: codex
       trace_agent_id: codex
 
-  gemini-cli:
-    label: Gemini CLI
-    label_zh: Gemini CLI
-    default_icon: "🔮"
-    default_name: Gemini CLI
-    capabilities: [gateway_proxy, session_import]
-    proxy:
-      mode: cli
-      protocol: gemini
-      strategy: base_url-env
-      route_bindable: true
-      detect_command: gemini
-      detect_version_arg: "--version"
-      detect_config_dirs: ["~/.gemini"]
-      inject_env:
-        GEMINI_BASE_URL: "http://{REVERSE}"
-        GEMINI_API_KEY: "{KEY}"
-    session:
-      source_id: gemini
-      standalone: false
-
   opencode-cli:
     label: OpenCode CLI
     label_zh: OpenCode CLI
@@ -310,7 +289,6 @@ handlers:
 default_entities:
   - { id: claude-code, handler: claude-code-cli }
   - { id: codex, handler: codex-cli }
-  - { id: gemini-cli, handler: gemini-cli }
   - { id: opencode, handler: opencode-cli }
   - { id: hermes, handler: hermes-cli }
   - { id: claude-desktop, handler: claude-desktop-api }

@@ -2589,7 +2589,7 @@ function usageBarColor(p) {
 // 与 electron/usage 注册表 SUPPORTED_KEYS 同步：OAuth 类按 oauth_provider，其余按 id。
 // 「订阅额度」主要面向订阅账户（额度窗口）；groq 不在内 —— 它只有吞吐速率指标（无额度/余额概念），
 // 且 metrics 端点多数账户返回 404，这个块对它既报错又无可展示数据。
-const USAGE_SUPPORTED = new Set(['claude', 'codex', 'copilot', 'gemini', 'openrouter', 'deepseek']);
+const USAGE_SUPPORTED = new Set(['claude', 'codex', 'copilot', 'gemini', 'volcengine', 'openrouter', 'deepseek']);
 function usageKey(p) {
   return p?.auth_type === 'oauth' && p?.oauth_provider ? p.oauth_provider : p?.id;
 }
