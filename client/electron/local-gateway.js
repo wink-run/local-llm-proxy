@@ -2790,6 +2790,50 @@ function reportUsage(providerId, model, totalTokens) {
 
 // ── HTTP Server ───────────────────────────────────────────────────────────────
 
+// /v1/models 列表按客户端分离构建，Desktop 与 CLI/其他各走独立函数：
+// ── Claude Desktop 路径：只暴露透明 mask 名（owned_by=anthropic），供 Desktop inferenceModels 校验。
+function buildClaudeMaskModelList() {
+  const data = [];
+  for (const id of _claudeModels) {
+    if (!id) continue;
+    data.push({ id, object: 'model', created: 0, owned_by: 'anthropic' });
+  }
+  return data;
+}
+// ── CLI / 前端 / 其他路径：暴露各供给源 + 社区 p2p 的真实模型，不含 Desktop mask 名。
+function buildDefaultModelList() {
+  const data = [];
+  const seen = new Set();
+  const add = (id, owned, modelType) => {
+    if (!id) return;
+    const ob = owned || 'tokenbank';
+    const key = `${ob}\0${id}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    data.push({
+      id,
+      object: 'model',
+      created: 0,
+      owned_by: ob,
+      ...(modelType && modelType !== 'chat' ? { model_type: modelType } : {}),
+    });
+  };
+  if (isCommunityP2pEnabled()) {
+    for (const id of _peerModels) add(id, 'p2p');
+  }
+  try {
+    for (const p of enabledProviders()) {
+      if (p.type === 'p2p') continue;
+      for (const m of (p.models || [])) {
+        const id = typeof m === 'string' ? m : m.name;
+        if (_claudeModels.includes(id)) continue;   // mask 名不进通用列表，仅 Desktop 路径暴露
+        add(id, p.id, providerModelType(id, p));
+      }
+    }
+  } catch {}
+  return data;
+}
+
 function handleRequest(req, res) {
   // CORS preflight
   res.setHeader('Access-Control-Allow-Origin',  '*');
@@ -2827,40 +2871,14 @@ function handleRequest(req, res) {
   //   真实模型（在线 P2P + 各 provider）供其他客户端直接选用。
   //   Claude 发的 claude-* 请求由 keyScene（应用绑定的路由）透明改写成真实模型。
   if (method === 'GET' && (cleanPath === '/v1/models' || cleanPath === '/models')) {
-    const data = [];
-    const seen = new Set();
-    // 同名模型可分别来自社区(p2p)与个人供给源：以 owned_by + id 去重，不互相覆盖
-    const add = (id, owned, modelType) => {
-      if (!id) return;
-      const ob = owned || 'tokenbank';
-      const key = `${ob}\0${id}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      data.push({
-        id,
-        object: 'model',
-        created: 0,
-        owned_by: ob,
-        ...(modelType && modelType !== 'chat' ? { model_type: modelType } : {}),
-      });
-    };
-    // Claude 客户端模型名（透明逻辑）
-    for (const id of _claudeModels) add(id, 'anthropic');
-    if (isCommunityP2pEnabled()) {
-      for (const id of _peerModels) add(id, 'p2p');
-    }
-    try {
-      for (const p of enabledProviders()) {
-        if (p.type === 'p2p') continue;
-        for (const m of (p.models || [])) {
-          const id = typeof m === 'string' ? m : m.name;
-          // mask 名仅通过 owned_by=anthropic 暴露给 Claude Desktop，下拉不重复展示
-          if (_claudeModels.includes(id)) continue;
-          const mtype = providerModelType(id, p);
-          add(id, p.id, mtype);
-        }
-      }
-    } catch {}
+    // 按 caller 分离：Claude Desktop（按 app key 命中且 app_id 属 claude-desktop）只看透明 mask 名；
+    // CLI（OAuth）/前端/其他看真实源模型。
+    const authRaw = req.headers['authorization'] || req.headers['x-api-key'] || '';
+    const modelsKey = authRaw.startsWith('Bearer ') ? authRaw.slice(7).trim() : String(authRaw).trim();
+    const modelsCtrl = resolveAppControl(modelsKey, cleanPath);
+    const data = String(modelsCtrl?.app_id || '').includes('claude-desktop')
+      ? buildClaudeMaskModelList()
+      : buildDefaultModelList();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ object: 'list', data }));
     return;
@@ -3034,6 +3052,12 @@ function handleRequest(req, res) {
 
 function start(port, getConfig, saveConfig, bindHost = '127.0.0.1') {
   if (_server) return;
+  // 日志管道断开（stdout/stderr 被下游关闭，如 `| head`、父进程退出）不应打断网关：
+  // 否则 EPIPE 会以未捕获异常冒泡（console.log → write EPIPE）拖垮进程。吞掉即可。
+  try {
+    if (!process.stdout.__tbEpipeGuard) { process.stdout.on('error', () => {}); process.stdout.__tbEpipeGuard = true; }
+    if (!process.stderr.__tbEpipeGuard) { process.stderr.on('error', () => {}); process.stderr.__tbEpipeGuard = true; }
+  } catch {}
   _port       = port || 11430;
   _getConfig  = getConfig;
   _saveConfig = saveConfig || null;
