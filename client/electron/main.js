@@ -2191,6 +2191,7 @@ function registerIPC() {
 
     const appControls = [];
     const keyScene = {};
+    let claudeShimScene = null;    // Claude Code CLI（anthropic shim）绑定的路由（按「非 api-key 调用方」生效）
     const codexGptFallback = {};   // Codex 内建 gpt-* 辅助模型 → 兜底到该应用绑定的主路由（按 api_key）
     const { bindClaudeRoutesToKeyScene, bindRouteToKeyScene } = require('../shared/route-binding');
     for (const app of apps) {
@@ -2234,23 +2235,24 @@ function registerIPC() {
         if (!routeBindable || !toolProto[app.agent_id]) continue;
         const path = PROTOCOL_PATH[toolProto[app.agent_id]];
         if (path) appControls.push({ ...ctrl, match: { path } });
-        // Claude Code CLI（shim, anthropic 协议）：CLI 发的是自带的 claude-* 模型名（含日期快照，
-        // 如 claude-sonnet-4-5-20250929），无法像 Claude Desktop 那样改配置只发绑定名。
-        // 故把所有已知 claude 模型名都映射到该应用绑定的路由 → keyScene 透明改写到真实模型。
+        // Claude Code CLI（anthropic shim）：它用自己的 claude.ai OAuth 调用、发标准 claude-* 名，
+        // callerKey 不是 app key，无法像 Claude Desktop 那样按 key 认出。故把它绑定的路由单独记到
+        // claudeShimScene（网关只对「非 api-key 调用方」的 claude-* 请求用它），不写全局 keyScene——
+        // 否则会顶掉 Claude Desktop 等 api-key claude 应用的按模型绑定，导致 Desktop 请求被劫持。
         if (toolProto[app.agent_id] === 'anthropic') {
           const appRouteIds = (Array.isArray(app.route_ids) && app.route_ids.length)
             ? app.route_ids : (app.route_id ? [app.route_id] : []);
           if (appRouteIds.length) {
-            const cms = (() => { try { return require('./config-loader').claudeModels(); } catch { return []; } })();
-            for (const cm of cms) bindRouteToKeyScene(keyScene, cm, appRouteIds[0], routes);
-            // 通配兜底：CLI 后台任务可能发不在已知列表里的 claude-* 名（如 claude-3-5-haiku）→ 也走该路由
-            bindRouteToKeyScene(keyScene, 'claude-*', appRouteIds[0], routes);
+            const tmp = {};
+            bindRouteToKeyScene(tmp, '_shim', appRouteIds[0], routes);
+            claudeShimScene = tmp._shim || null;
           }
         }
       }
     }
     gateway.setAppControls(appControls);
     gateway.setKeySceneMap(keyScene);
+    gateway.setClaudeShimScene(claudeShimScene);
     gateway.setCodexGptFallback(codexGptFallback);
 
     // P2P backend config（登出时也要清空，避免残留 token 继续上报）
