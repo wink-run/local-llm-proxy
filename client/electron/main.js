@@ -797,6 +797,15 @@ function updateTrayMenu() { refreshTray(); }
 const _agentLogBuf = [];   // keep last 200 lines for late-mounting pages
 const AGENT_LOG_MAX = 200;
 
+// 安全给渲染层发消息：窗口/ webContents 在退出时可能已销毁（?. 只挡 null，挡不住「已销毁」），
+// 直接 send 会抛 "Object has been destroyed" 崩主进程（尤其 before-quit → agent.stop → log → onLog）。
+function safeSend(channel, ...args) {
+  try {
+    const wc = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null;
+    if (wc && !wc.isDestroyed()) wc.send(channel, ...args);
+  } catch { /* 退出时窗口已拆除，忽略 */ }
+}
+
 function startAgent() {
   console.log('[main] startAgent called, isRunning=', agent.isRunning());
   agent.start({
@@ -804,11 +813,11 @@ function startAgent() {
       console.log('[agent-log]', line);
       _agentLogBuf.push(line);
       if (_agentLogBuf.length > AGENT_LOG_MAX) _agentLogBuf.shift();
-      mainWindow?.webContents.send('agent:log', line);
+      safeSend('agent:log', line);
     },
     onStatus: (status) => {
       console.log('[main] agent status', status);
-      mainWindow?.webContents.send('agent:status', status);
+      safeSend('agent:status', status);
       updateTrayMenu();
     },
   });
