@@ -1778,6 +1778,7 @@ function proxyP2PSync(provider, oaiBody, model, res) {
       let buf = '', fullText = '', inputTokens = 0, outputTokens = 0, stopReason = 'end_turn', firstTokenMs = null, msgId = null;
       let settled = false;
       let streamError = null;
+      const toolCallsByIndex = new Map();   // index → { id, name, args } —— 累积流式 tool_calls 分片
 
       const settleP2pError = (oaiErr) => {
         if (settled) return;
@@ -1814,6 +1815,22 @@ function proxyP2PSync(provider, oaiBody, model, res) {
               }
               fullText += text;
             }
+            // 累积 tool_calls 分片（OpenAI 流式：按 index 聚合 id/name/arguments）——
+            // 否则纯工具调用响应（无文本）会被判为「空响应」而 502，Claude Code 的工具调用全挂。
+            const tcs = (choice.delta || {}).tool_calls;
+            if (Array.isArray(tcs)) {
+              if (firstTokenMs === null) { firstTokenMs = Date.now() - t0; ttftGuard?.onFirstToken(); }
+              for (const tc of tcs) {
+                const idx = tc.index != null ? tc.index : 0;
+                let cur = toolCallsByIndex.get(idx);
+                if (!cur) { cur = { id: null, name: '', args: '' }; toolCallsByIndex.set(idx, cur); }
+                if (tc.id) cur.id = tc.id;
+                if (tc.function) {
+                  if (tc.function.name) cur.name = tc.function.name;
+                  if (tc.function.arguments) cur.args += tc.function.arguments;
+                }
+              }
+            }
             const finish = choice.finish_reason;
             if (finish) stopReason = finish === 'stop' ? 'end_turn' : finish;
             if (c.usage) {
@@ -1826,15 +1843,28 @@ function proxyP2PSync(provider, oaiBody, model, res) {
       proxyRes.on('end', () => {
         ttftGuard?.dispose();
         if (settled) return;
-        if (!fullText) {
+        // 组装 tool_use 块（按 index 排序，arguments 解析为 input 对象）
+        const toolUseBlocks = [...toolCallsByIndex.entries()]
+          .sort((a, b) => a[0] - b[0])
+          .map(([, tc]) => {
+            let input = {};
+            try { input = tc.args ? JSON.parse(tc.args) : {}; } catch { input = {}; }
+            return { type: 'tool_use', id: tc.id || ('toolu_' + Math.random().toString(36).slice(2, 14)), name: tc.name || '', input };
+          });
+        if (!fullText && !toolUseBlocks.length) {
           settleP2pError(streamError || { message: 'Empty response from upstream', type: 'api_error' });
           return;
         }
+        const content = [];
+        if (fullText) content.push({ type: 'text', text: fullText });
+        for (const b of toolUseBlocks) content.push(b);
+        // 有工具调用 → Anthropic stop_reason 用 tool_use（上游 finish 常是 tool_calls）
+        if (toolUseBlocks.length && (stopReason === 'end_turn' || stopReason === 'tool_calls')) stopReason = 'tool_use';
         try {
           const resp = JSON.stringify({
             id: 'msg_' + Math.random().toString(36).slice(2, 26),
             type: 'message', role: 'assistant',
-            content: [{ type: 'text', text: fullText }],
+            content,
             model, stop_reason: stopReason, stop_sequence: null,
             usage: { input_tokens: inputTokens, output_tokens: outputTokens },
           });
@@ -2069,6 +2099,23 @@ function proxyResponsesViaAnthropic(provider, responsesBody, model, res) {
 
 // ── Route ─────────────────────────────────────────────────────────────────────
 
+// Claude Code 2.x 会在 /v1/messages body 里带较新的顶层参数（如 context_management 上下文自动编辑）。
+// 官方 api.anthropic.com 支持；三方 / p2p 的 anthropic 兼容端点多用严格 schema，遇到未知顶层字段直接 400
+// （"context_management: Extra inputs are not permitted"）。转发给非官方 anthropic 上游前剥掉这些字段。
+const ANTHROPIC_EXTRA_FIELDS = ['context_management'];
+function stripUnsupportedAnthropicFields(body, provider) {
+  if (!body || typeof body !== 'object') return body;
+  if (/api\.anthropic\.com/i.test(String(provider && provider.base_url || ''))) return body; // 官方支持，原样透传
+  let out = body;
+  for (const k of ANTHROPIC_EXTRA_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(out, k)) {
+      if (out === body) out = { ...body };
+      delete out[k];
+    }
+  }
+  return out;
+}
+
 // Call one provider with format conversion; throws on HTTP error.
 // provider is already resolved (base_url/token correct, models populated).
 async function callProvider(provider, isAnthropic, streaming, reqPath, body, attemptModel, res) {
@@ -2112,7 +2159,8 @@ async function callProvider(provider, isAnthropic, streaming, reqPath, body, att
   if (isAnthropicProvider) {
     if (isAnthropic) {
       // Anthropic client → Anthropic provider: direct proxy to /v1/messages
-      return await proxyRequest(provider, '/v1/messages', attemptBody, res);
+      // 剥掉非官方上游不认的新字段（context_management 等），避免严格 schema 400
+      return await proxyRequest(provider, '/v1/messages', stripUnsupportedAnthropicFields(attemptBody, provider), res);
     } else {
       // OpenAI client → Anthropic provider: convert request/response format
       return streaming
@@ -2307,6 +2355,12 @@ async function resolveSteps(scene, ctx) {
   return (scene && scene.steps) || [];
 }
 
+// 去掉 Claude 模型名的日期快照后缀：claude-sonnet-4-5-20250929 → claude-sonnet-4-5。
+// 仅剥形如 -YYYYMMDD 的 8 位日期尾巴，不误伤 claude-haiku-4-5 这类版本号。
+function stripModelDate(m) {
+  return String(m || '').replace(/-\d{8}$/, '');
+}
+
 async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   const t0          = Date.now();
   let lastErr       = null;
@@ -2317,7 +2371,16 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   // 保留原始请求名 origModel。Claude 客户端模型名（claude-*）经 keyScene 透明改写成
   // 应用绑定的真实模型；claudeFrom 仅用于路由明细展示「claude名 → 真实」这层透明转化。
   const origModel = model;
-  const claudeFrom = _claudeModels.includes(origModel) ? origModel : null;
+  // Claude 客户端（尤其 Claude Code CLI）会发带日期快照后缀的模型名
+  // （claude-sonnet-4-5-20250929）；去掉后缀匹配基名，命中 keyScene / _claudeModels 的绑定。
+  const claudeKey = _claudeModels.includes(origModel)
+    ? origModel
+    : (_claudeModels.includes(stripModelDate(origModel)) ? stripModelDate(origModel) : null);
+  // claude-* 通配兜底：Claude Code CLI 绑路由后，它的所有 claude-* 请求（含内建的
+  // claude-3-5-haiku 后台模型等不在已知列表里的名字）都走该应用绑定的路由。
+  const isClaudeClientName = /^claude-/i.test(origModel);
+  const claudeWildScene = !claudeKey && isClaudeClientName ? _keyScene['claude-*'] : null;
+  const claudeFrom = claudeKey || (claudeWildScene ? origModel : null);
   // 直连请求体可带 tier 前缀（p2p:deepseek-v4-flash），与 route_id 语法一致；上游只认裸模型名
   let requestTier = null;
   const tierMatch = TIER_ROUTE_RE.exec(model);
@@ -2371,7 +2434,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   // （future-proof：以后升级出新 gpt-* 也匹配）转到该 Codex 应用绑定的主路由。
   const codexGptScene = (callerKey && /^gpt/i.test(origModel)) ? _codexGptFallback[callerKey] : null;
   const boundScene =
-    (_claudeModels.includes(origModel) && _keyScene[origModel]) ||
+    (claudeKey && _keyScene[claudeKey]) ||
+    claudeWildScene ||
     codexGptScene ||
     null;
   const isLlmRouter = origModel.startsWith('llm-router-');
