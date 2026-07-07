@@ -2377,11 +2377,14 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   const claudeKey = _claudeModels.includes(origModel)
     ? origModel
     : (_claudeModels.includes(stripModelDate(origModel)) ? stripModelDate(origModel) : null);
-  // claude-* 通配兜底：Claude Code CLI 绑路由后，它的所有 claude-* 请求（含内建的
-  // claude-3-5-haiku 后台模型等不在已知列表里的名字）都走该应用绑定的路由。
+  // Claude 客户端路由区分（避免 Claude Code 与 Claude Desktop 互相顶掉）：
+  //  - Claude Code CLI（anthropic shim）用自己的 claude.ai OAuth 调用、发标准 claude-* 名，
+  //    callerKey 不在 appControls 的 key 集合里 → 它的所有 claude-* 请求走 _claudeShimScene；
+  //  - Claude Desktop 等 api-key 应用（callerKey 命中 _appKeys）→ 按各自 keyScene[模型名] 绑定。
   const isClaudeClientName = /^claude-/i.test(origModel);
-  const claudeWildScene = !claudeKey && isClaudeClientName ? _keyScene['claude-*'] : null;
-  const claudeFrom = claudeKey || (claudeWildScene ? origModel : null);
+  const isApiKeyCaller = !!(callerKey && _appKeys.has(callerKey));
+  const shimClaudeScene = (!isApiKeyCaller && isClaudeClientName) ? _claudeShimScene : null;
+  const claudeFrom = claudeKey || (shimClaudeScene ? origModel : null);
   // 直连请求体可带 tier 前缀（p2p:deepseek-v4-flash），与 route_id 语法一致；上游只认裸模型名
   let requestTier = null;
   const tierMatch = TIER_ROUTE_RE.exec(model);
@@ -2435,8 +2438,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   // （future-proof：以后升级出新 gpt-* 也匹配）转到该 Codex 应用绑定的主路由。
   const codexGptScene = (callerKey && /^gpt/i.test(origModel)) ? _codexGptFallback[callerKey] : null;
   const boundScene =
-    (claudeKey && _keyScene[claudeKey]) ||
-    claudeWildScene ||
+    shimClaudeScene ||
+    (isApiKeyCaller && claudeKey && _keyScene[claudeKey]) ||
     codexGptScene ||
     null;
   const isLlmRouter = origModel.startsWith('llm-router-');
@@ -3128,6 +3131,10 @@ function getLog() {
 // claude-* 透明名 → route 步骤（Claude Desktop inferenceModels.name）；api_key 不在此映射
 let _keyScene = {};
 function setKeySceneMap(map) { _keyScene = map && typeof map === 'object' ? map : {}; }
+// Claude Code CLI（anthropic shim）绑定的路由。它用 OAuth 调用、无 app key，故单独存放，
+// 只对「非 api-key 调用方」的 claude-* 请求生效，避免顶掉 Claude Desktop 等 api-key 应用的绑定。
+let _claudeShimScene = null;
+function setClaudeShimScene(scene) { _claudeShimScene = scene && (scene.steps?.length || scene.rules?.length) ? scene : null; }
 // Codex 内建 gpt-* 辅助模型的兜底路由（api_key → scene）
 let _codexGptFallback = {};
 function setCodexGptFallback(map) { _codexGptFallback = map && typeof map === 'object' ? map : {}; }
@@ -3140,9 +3147,12 @@ function setClaudeModels(list) { _claudeModels = Array.isArray(list) ? list.filt
 // ── 应用匹配（api-key 按 key 匹配，shim 按协议路径匹配）─────────────────────
 // 每项：{ app_id, app_name, match:{key|path} }
 let _appControls = [];
+// api-key 应用的 caller key 集合（用于区分「api-key 应用」与「shim/OAuth 调用方」）。
+let _appKeys = new Set();
 
 function setAppControls(list) {
   _appControls = Array.isArray(list) ? list : [];
+  _appKeys = new Set(_appControls.filter((c) => c && c.match && c.match.key).map((c) => c.match.key));
 }
 
 function resolveAppControl(callerKey, reqPath) {
@@ -3197,7 +3207,7 @@ function setLocalConfigReader(fn) {
 
 module.exports = {
   start, stop, restart, setStrategy, getStatus, getLog,
-  setKeySceneMap, setCodexGptFallback, setRouterModelMap, setPeerModels, setBackendConfig, setUserAuth,
+  setKeySceneMap, setClaudeShimScene, setCodexGptFallback, setRouterModelMap, setPeerModels, setBackendConfig, setUserAuth,
   setStatsRecorder, setLocalStats, setLocalConfigReader, setAppControls,
   setClaudeModels,
   // 条件路由规则引擎（供单测/复用）
