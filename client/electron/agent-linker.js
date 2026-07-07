@@ -72,6 +72,10 @@ function apply(tool) {
         if (!real) return { ok: false, error: 'real-command-not-found' };
         // route_bindable=false（如 Claude，客户端校验模型）→ 不注入，shim 纯透传走官方
         const env = tool.route_bindable === false ? {} : resolveEnvKeys(tool.id, (tool.inject && tool.inject.env) || {});
+        // Claude Code CLI（anthropic 协议）：它自带的 claude.ai OAuth 登录态即可打网关（网关不校验
+        // caller key、按模型路由），无需注入 ANTHROPIC_AUTH_TOKEN。而一旦注入任何 auth token，
+        // Claude Code 会禁用基于 claude.ai 登录的组织 connectors。故 anthropic shim 只留 base_url。
+        if (tool.protocol === 'anthropic') delete env.ANTHROPIC_AUTH_TOKEN;
         shim.writeShim(tool.detect.command, real, env);
         shim.enablePath();
         return { ok: true, strategy: tool.strategy, needsRestartShell: true };
