@@ -30,6 +30,41 @@ const CMD_TTL = 30000;
 // mac（Finder/Dock 启动）不含 Homebrew 的 /opt/homebrew/bin、/usr/local/bin；
 // Windows 有时不含 %APPDATA%\npm。导致 where/command -v 找不到明明装好的 npm CLI，
 // 应用被误判"未安装"、一键装/卸按钮显示不对。这些目录追加进查询 PATH + 直接查目录兜底。
+// Node 版本管理器（nvm/fnm/volta/asdf）的 node bin 目录。GUI 启动的 electron PATH 精简，且
+// `sh -lc` 不加载用户 zsh/bash rc（nvm 就在 rc 里初始化），故这些目录既不在 PATH 也探不到 →
+// 只装了 nvm/fnm 的用户会「找不到 npm」→ 一键装/卸报 ENOENT。这里把它们直接补进搜索目录。
+function nodeVersionManagerBinDirs() {
+  if (IS_WIN) return [];
+  const home = os.homedir();
+  const dirs = [];
+  const pushVersioned = (base, sub) => {
+    try {
+      if (!fs.existsSync(base)) return;
+      const vers = fs.readdirSync(base)
+        .filter(v => /^v?\d/.test(v))
+        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));  // 新版本优先
+      for (const v of vers) dirs.push(sub ? path.join(base, v, sub) : path.join(base, v, 'bin'));
+    } catch {}
+  };
+  // volta / asdf shims（固定路径）
+  dirs.push(path.join(home, '.volta', 'bin'), path.join(home, '.asdf', 'shims'));
+  // nvm：默认别名优先，其余按版本降序
+  const nvmNode = path.join(process.env.NVM_DIR || path.join(home, '.nvm'), 'versions', 'node');
+  pushVersioned(nvmNode);
+  try {
+    const def = fs.readFileSync(path.join(process.env.NVM_DIR || path.join(home, '.nvm'), 'alias', 'default'), 'utf8').trim();
+    const hit = dirs.find(d => d.includes(path.sep + def + path.sep) || d.includes(path.sep + 'v' + def + path.sep));
+    if (hit) { dirs.splice(dirs.indexOf(hit), 1); dirs.unshift(hit); }
+  } catch {}
+  // fnm（多个候选安装位）
+  for (const fd of [process.env.FNM_DIR, path.join(home, '.fnm'),
+                    path.join(home, 'Library', 'Application Support', 'fnm'),
+                    path.join(home, '.local', 'share', 'fnm')].filter(Boolean)) {
+    pushVersioned(path.join(fd, 'node-versions'), path.join('installation', 'bin'));
+  }
+  return dirs;
+}
+
 function npmGlobalBinDirs() {
   const home = os.homedir();
   if (IS_WIN) {
@@ -39,6 +74,7 @@ function npmGlobalBinDirs() {
     '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin',
     path.join(home, '.npm-global', 'bin'),
     path.join(home, '.local', 'bin'),
+    ...nodeVersionManagerBinDirs(),
   ];
 }
 

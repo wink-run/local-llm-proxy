@@ -2731,6 +2731,33 @@ function registerIPC() {
     return isWin ? 'npm.cmd' : 'npm';
   };
 
+  // npm 全局包安装根目录（<prefix>/lib/node_modules）。
+  const npmGlobalRoot = (npmCmd) => new Promise((resolve) => {
+    try {
+      require('child_process').exec(`${npmCmd} root -g`, { timeout: 20000, windowsHide: true },
+        (err, stdout) => resolve(err ? null : (String(stdout || '').trim() || null)));
+    } catch { resolve(null); }
+  });
+
+  // 清理 npm 原子装/卸中断留下的暂存目录：包目录的兄弟项 .<最后一段>-<hash>（scoped 与裸名都适用）。
+  // 这类残留会让下次 `npm uninstall -g` 的 rename 撞上 ENOTEMPTY。返回包目录路径供兜底删。
+  const sweepNpmStaging = (root, pkg) => {
+    try {
+      if (!root || !pkg) return null;
+      const pkgDir = path.join(root, pkg);
+      const parent = path.dirname(pkgDir);
+      const base = path.basename(pkgDir);
+      if (fs.existsSync(parent)) {
+        for (const f of fs.readdirSync(parent)) {
+          if (f.startsWith('.' + base + '-')) {
+            try { fs.rmSync(path.join(parent, f), { recursive: true, force: true }); } catch {}
+          }
+        }
+      }
+      return pkgDir;
+    } catch { return null; }
+  };
+
   // 一键安装/更新 CLI 工具：跑 npm i -g <包>@latest（用户级全局，无需管理员）。
   // 异步 exec，不阻塞主进程；装完前端刷新检测状态。
   ipcMain.handle('apps:npmGlobalInstall', async (_e, { id } = {}) => {
@@ -2755,28 +2782,51 @@ function registerIPC() {
   });
 
   // 一键卸载 CLI 工具：跑 npm uninstall -g <包>。与安装对称，装完/卸完都清命令缓存。
+  // 加固：npm 用「原子重命名到 .<name>-<hash> 暂存目录再删」的方式卸载，上次装/卸中断留下的暂存
+  // 目录会让本次 rename 撞上 ENOTEMPTY。故先清残留暂存；npm 仍失败(ENOTEMPTY/EEXIST)时兜底直接
+  // 删包目录 + npm bin 软链(目标本就是移除)。对所有 npm CLI(claude-code/codex/opencode/openclaw)统一生效。
   ipcMain.handle('apps:npmGlobalUninstall', async (_e, { id } = {}) => {
     const pkg = (require('./config-loader').appNpmPackages() || {})[id];
     if (!pkg) return { ok: false, error: 'no-npm-package' };
-    const npmCmd = `"${resolveNpmCmd()}"`;
+    const npmBin = resolveNpmCmd();
+    const npmCmd = `"${npmBin}"`;
+    const root = await npmGlobalRoot(npmCmd);
+    sweepNpmStaging(root, pkg);   // 卸载前先清残留暂存目录，避免 rename ENOTEMPTY
+
+    const toolCmd = (() => {
+      try {
+        const tool = (require('./config-loader').tools() || []).find(t => t.id === id);
+        return tool && tool.detect && tool.detect.command;
+      } catch { return null; }
+    })();
+    const afterRemoved = () => {
+      // 顺带清掉 Token Bank 托管的 shim（命令名取自 detect.command，如 claude/codex/opencode）；
+      // api_key 应用无 shim，跳过。再清命令探测缓存 + 通知前端刷新。
+      try { if (toolCmd) require('./shim-installer').removeShim(toolCmd); } catch {}
+      try { require('./shim-installer').clearCommandCache(); } catch {}
+      try { mainWindow?.webContents?.send('apps:changed'); } catch {}
+    };
+
     return await new Promise((resolve) => {
       try {
         require('child_process').exec(`${npmCmd} uninstall -g ${pkg}`, { timeout: 300000, windowsHide: true },
           (err, _stdout, stderr) => {
-            if (err) resolve({ ok: false, error: (String(stderr || '') || err.message).slice(0, 400) });
-            else {
-              // 顺带清掉 Token Bank 托管的 shim，避免留下指向已删程序的失效 shim。
-              // 命令名取自该工具的 detect.command（如 claude/codex/opencode）；api_key 应用无 shim，跳过。
+            const errText = String(stderr || '') || (err && err.message) || '';
+            if (err && /ENOTEMPTY|EEXIST|ENOENT/i.test(errText)) {
+              // 兜底：残留/树损坏导致 npm rename/unlink 失败(ENOTEMPTY/EEXIST/ENOENT) → 再清一次暂存
+              //       + 直接删包目录 + npm bin 软链（目标本就是移除，直接删最可靠）
+              const pkgDir = sweepNpmStaging(root, pkg) || (root ? path.join(root, pkg) : null);
+              try { if (pkgDir) fs.rmSync(pkgDir, { recursive: true, force: true }); } catch {}
+              // npm bin 软链(<prefix>/bin/<cmd>)：rmSync force 删软链本身，不存在则静默跳过
               try {
-                const tool = (require('./config-loader').tools() || []).find(t => t.id === id);
-                const cmd = tool && tool.detect && tool.detect.command;
-                if (cmd) require('./shim-installer').removeShim(cmd);
+                if (root && toolCmd) fs.rmSync(path.resolve(root, '..', '..', 'bin', toolCmd), { force: true });
               } catch {}
-              try { require('./shim-installer').clearCommandCache(); } catch {}
-              // 通知前端应用列表刷新（卸载后虚拟条目即时消失）
-              try { mainWindow?.webContents?.send('apps:changed'); } catch {}
-              resolve({ ok: true, pkg });
+              afterRemoved();
+              return resolve({ ok: true, pkg, note: 'removed-after-cleanup' });
             }
+            if (err) return resolve({ ok: false, error: errText.slice(0, 400) });
+            afterRemoved();
+            resolve({ ok: true, pkg });
           });
       } catch (e) { resolve({ ok: false, error: e.message }); }
     });
