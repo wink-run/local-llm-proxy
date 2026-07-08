@@ -56,19 +56,6 @@ tools:
         OPENAI_BASE_URL: http://{REVERSE}/v1
         OPENAI_API_KEY: "{KEY}"
 
-  - id: gemini-cli
-    name: Gemini CLI
-    protocol: gemini
-    detect:
-      command: gemini
-      version-arg: --version
-      config-dirs: ['~/.gemini']
-    strategy: base_url-env
-    inject:
-      env:
-        GEMINI_BASE_URL: http://{REVERSE}
-        GEMINI_API_KEY: "{KEY}"
-
   # ── OpenCode（sst/opencode）：认 OPENAI_BASE_URL/OPENAI_API_KEY，env 重定向（环境变量优先）──
   - id: opencode
     name: OpenCode

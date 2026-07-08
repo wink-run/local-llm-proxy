@@ -1778,6 +1778,8 @@ function proxyP2PSync(provider, oaiBody, model, res) {
       let buf = '', fullText = '', inputTokens = 0, outputTokens = 0, stopReason = 'end_turn', firstTokenMs = null, msgId = null;
       let settled = false;
       let streamError = null;
+      let sawFinish = false;                 // 上游是否给过 finish_reason —— 区分「干净的空完成」与「真的没响应」
+      const toolCallsByIndex = new Map();   // index → { id, name, args } —— 累积流式 tool_calls 分片
 
       const settleP2pError = (oaiErr) => {
         if (settled) return;
@@ -1814,8 +1816,24 @@ function proxyP2PSync(provider, oaiBody, model, res) {
               }
               fullText += text;
             }
+            // 累积 tool_calls 分片（OpenAI 流式：按 index 聚合 id/name/arguments）——
+            // 否则纯工具调用响应（无文本）会被判为「空响应」而 502，Claude Code 的工具调用全挂。
+            const tcs = (choice.delta || {}).tool_calls;
+            if (Array.isArray(tcs)) {
+              if (firstTokenMs === null) { firstTokenMs = Date.now() - t0; ttftGuard?.onFirstToken(); }
+              for (const tc of tcs) {
+                const idx = tc.index != null ? tc.index : 0;
+                let cur = toolCallsByIndex.get(idx);
+                if (!cur) { cur = { id: null, name: '', args: '' }; toolCallsByIndex.set(idx, cur); }
+                if (tc.id) cur.id = tc.id;
+                if (tc.function) {
+                  if (tc.function.name) cur.name = tc.function.name;
+                  if (tc.function.arguments) cur.args += tc.function.arguments;
+                }
+              }
+            }
             const finish = choice.finish_reason;
-            if (finish) stopReason = finish === 'stop' ? 'end_turn' : finish;
+            if (finish) { stopReason = finish === 'stop' ? 'end_turn' : finish; sawFinish = true; }
             if (c.usage) {
               inputTokens  = c.usage.prompt_tokens     || inputTokens;
               outputTokens = c.usage.completion_tokens || outputTokens;
@@ -1826,15 +1844,34 @@ function proxyP2PSync(provider, oaiBody, model, res) {
       proxyRes.on('end', () => {
         ttftGuard?.dispose();
         if (settled) return;
-        if (!fullText) {
-          settleP2pError(streamError || { message: 'Empty response from upstream', type: 'api_error' });
-          return;
+        // 组装 tool_use 块（按 index 排序，arguments 解析为 input 对象）
+        const toolUseBlocks = [...toolCallsByIndex.entries()]
+          .sort((a, b) => a[0] - b[0])
+          .map(([, tc]) => {
+            let input = {};
+            try { input = tc.args ? JSON.parse(tc.args) : {}; } catch { input = {}; }
+            return { type: 'tool_use', id: tc.id || ('toolu_' + Math.random().toString(36).slice(2, 14)), name: tc.name || '', input };
+          });
+        if (!fullText && !toolUseBlocks.length) {
+          // 上游没给 finish_reason 才当作「真的没响应」→ 报错触发 failover；
+          // 若干净结束（有 finish，比如 max_tokens 太小/模型选择不输出），返回 200 空文本完成，
+          // 免得 Claude Desktop 等客户端的连通性探测把「空完成」误判为网关故障。
+          if (streamError || !sawFinish) {
+            settleP2pError(streamError || { message: 'Empty response from upstream', type: 'api_error' });
+            return;
+          }
         }
+        const content = [];
+        if (fullText) content.push({ type: 'text', text: fullText });
+        for (const b of toolUseBlocks) content.push(b);
+        if (!content.length) content.push({ type: 'text', text: '' }); // 干净空完成 → 给个空文本块，保证 content 合法
+        // 有工具调用 → Anthropic stop_reason 用 tool_use（上游 finish 常是 tool_calls）
+        if (toolUseBlocks.length && (stopReason === 'end_turn' || stopReason === 'tool_calls')) stopReason = 'tool_use';
         try {
           const resp = JSON.stringify({
             id: 'msg_' + Math.random().toString(36).slice(2, 26),
             type: 'message', role: 'assistant',
-            content: [{ type: 'text', text: fullText }],
+            content,
             model, stop_reason: stopReason, stop_sequence: null,
             usage: { input_tokens: inputTokens, output_tokens: outputTokens },
           });
@@ -2069,6 +2106,23 @@ function proxyResponsesViaAnthropic(provider, responsesBody, model, res) {
 
 // ── Route ─────────────────────────────────────────────────────────────────────
 
+// Claude Code 2.x 会在 /v1/messages body 里带较新的顶层参数（如 context_management 上下文自动编辑）。
+// 官方 api.anthropic.com 支持；三方 / p2p 的 anthropic 兼容端点多用严格 schema，遇到未知顶层字段直接 400
+// （"context_management: Extra inputs are not permitted"）。转发给非官方 anthropic 上游前剥掉这些字段。
+const ANTHROPIC_EXTRA_FIELDS = ['context_management'];
+function stripUnsupportedAnthropicFields(body, provider) {
+  if (!body || typeof body !== 'object') return body;
+  if (/api\.anthropic\.com/i.test(String(provider && provider.base_url || ''))) return body; // 官方支持，原样透传
+  let out = body;
+  for (const k of ANTHROPIC_EXTRA_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(out, k)) {
+      if (out === body) out = { ...body };
+      delete out[k];
+    }
+  }
+  return out;
+}
+
 // Call one provider with format conversion; throws on HTTP error.
 // provider is already resolved (base_url/token correct, models populated).
 async function callProvider(provider, isAnthropic, streaming, reqPath, body, attemptModel, res) {
@@ -2112,7 +2166,8 @@ async function callProvider(provider, isAnthropic, streaming, reqPath, body, att
   if (isAnthropicProvider) {
     if (isAnthropic) {
       // Anthropic client → Anthropic provider: direct proxy to /v1/messages
-      return await proxyRequest(provider, '/v1/messages', attemptBody, res);
+      // 剥掉非官方上游不认的新字段（context_management 等），避免严格 schema 400
+      return await proxyRequest(provider, '/v1/messages', stripUnsupportedAnthropicFields(attemptBody, provider), res);
     } else {
       // OpenAI client → Anthropic provider: convert request/response format
       return streaming
@@ -2307,6 +2362,12 @@ async function resolveSteps(scene, ctx) {
   return (scene && scene.steps) || [];
 }
 
+// 去掉 Claude 模型名的日期快照后缀：claude-sonnet-4-5-20250929 → claude-sonnet-4-5。
+// 仅剥形如 -YYYYMMDD 的 8 位日期尾巴，不误伤 claude-haiku-4-5 这类版本号。
+function stripModelDate(m) {
+  return String(m || '').replace(/-\d{8}$/, '');
+}
+
 async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   const t0          = Date.now();
   let lastErr       = null;
@@ -2317,7 +2378,19 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   // 保留原始请求名 origModel。Claude 客户端模型名（claude-*）经 keyScene 透明改写成
   // 应用绑定的真实模型；claudeFrom 仅用于路由明细展示「claude名 → 真实」这层透明转化。
   const origModel = model;
-  const claudeFrom = _claudeModels.includes(origModel) ? origModel : null;
+  // Claude 客户端（尤其 Claude Code CLI）会发带日期快照后缀的模型名
+  // （claude-sonnet-4-5-20250929）；去掉后缀匹配基名，命中 keyScene / _claudeModels 的绑定。
+  const claudeKey = _claudeModels.includes(origModel)
+    ? origModel
+    : (_claudeModels.includes(stripModelDate(origModel)) ? stripModelDate(origModel) : null);
+  // Claude 客户端路由区分（避免 Claude Code 与 Claude Desktop 互相顶掉）：
+  //  - Claude Code CLI（anthropic shim）用自己的 claude.ai OAuth 调用、发标准 claude-* 名，
+  //    callerKey 不在 appControls 的 key 集合里 → 它的所有 claude-* 请求走 _claudeShimScene；
+  //  - Claude Desktop 等 api-key 应用（callerKey 命中 _appKeys）→ 按各自 keyScene[模型名] 绑定。
+  const isClaudeClientName = /^claude-/i.test(origModel);
+  const isApiKeyCaller = !!(callerKey && _appKeys.has(callerKey));
+  const shimClaudeScene = (!isApiKeyCaller && isClaudeClientName) ? _claudeShimScene : null;
+  const claudeFrom = claudeKey || (shimClaudeScene ? origModel : null);
   // 直连请求体可带 tier 前缀（p2p:deepseek-v4-flash），与 route_id 语法一致；上游只认裸模型名
   let requestTier = null;
   const tierMatch = TIER_ROUTE_RE.exec(model);
@@ -2371,7 +2444,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   // （future-proof：以后升级出新 gpt-* 也匹配）转到该 Codex 应用绑定的主路由。
   const codexGptScene = (callerKey && /^gpt/i.test(origModel)) ? _codexGptFallback[callerKey] : null;
   const boundScene =
-    (_claudeModels.includes(origModel) && _keyScene[origModel]) ||
+    shimClaudeScene ||
+    (isApiKeyCaller && claudeKey && _keyScene[claudeKey]) ||
     codexGptScene ||
     null;
   const isLlmRouter = origModel.startsWith('llm-router-');
@@ -2716,6 +2790,50 @@ function reportUsage(providerId, model, totalTokens) {
 
 // ── HTTP Server ───────────────────────────────────────────────────────────────
 
+// /v1/models 列表按客户端分离构建，Desktop 与 CLI/其他各走独立函数：
+// ── Claude Desktop 路径：只暴露透明 mask 名（owned_by=anthropic），供 Desktop inferenceModels 校验。
+function buildClaudeMaskModelList() {
+  const data = [];
+  for (const id of _claudeModels) {
+    if (!id) continue;
+    data.push({ id, object: 'model', created: 0, owned_by: 'anthropic' });
+  }
+  return data;
+}
+// ── CLI / 前端 / 其他路径：暴露各供给源 + 社区 p2p 的真实模型，不含 Desktop mask 名。
+function buildDefaultModelList() {
+  const data = [];
+  const seen = new Set();
+  const add = (id, owned, modelType) => {
+    if (!id) return;
+    const ob = owned || 'tokenbank';
+    const key = `${ob}\0${id}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    data.push({
+      id,
+      object: 'model',
+      created: 0,
+      owned_by: ob,
+      ...(modelType && modelType !== 'chat' ? { model_type: modelType } : {}),
+    });
+  };
+  if (isCommunityP2pEnabled()) {
+    for (const id of _peerModels) add(id, 'p2p');
+  }
+  try {
+    for (const p of enabledProviders()) {
+      if (p.type === 'p2p') continue;
+      for (const m of (p.models || [])) {
+        const id = typeof m === 'string' ? m : m.name;
+        if (_claudeModels.includes(id)) continue;   // mask 名不进通用列表，仅 Desktop 路径暴露
+        add(id, p.id, providerModelType(id, p));
+      }
+    }
+  } catch {}
+  return data;
+}
+
 function handleRequest(req, res) {
   // CORS preflight
   res.setHeader('Access-Control-Allow-Origin',  '*');
@@ -2753,40 +2871,14 @@ function handleRequest(req, res) {
   //   真实模型（在线 P2P + 各 provider）供其他客户端直接选用。
   //   Claude 发的 claude-* 请求由 keyScene（应用绑定的路由）透明改写成真实模型。
   if (method === 'GET' && (cleanPath === '/v1/models' || cleanPath === '/models')) {
-    const data = [];
-    const seen = new Set();
-    // 同名模型可分别来自社区(p2p)与个人供给源：以 owned_by + id 去重，不互相覆盖
-    const add = (id, owned, modelType) => {
-      if (!id) return;
-      const ob = owned || 'tokenbank';
-      const key = `${ob}\0${id}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      data.push({
-        id,
-        object: 'model',
-        created: 0,
-        owned_by: ob,
-        ...(modelType && modelType !== 'chat' ? { model_type: modelType } : {}),
-      });
-    };
-    // Claude 客户端模型名（透明逻辑）
-    for (const id of _claudeModels) add(id, 'anthropic');
-    if (isCommunityP2pEnabled()) {
-      for (const id of _peerModels) add(id, 'p2p');
-    }
-    try {
-      for (const p of enabledProviders()) {
-        if (p.type === 'p2p') continue;
-        for (const m of (p.models || [])) {
-          const id = typeof m === 'string' ? m : m.name;
-          // mask 名仅通过 owned_by=anthropic 暴露给 Claude Desktop，下拉不重复展示
-          if (_claudeModels.includes(id)) continue;
-          const mtype = providerModelType(id, p);
-          add(id, p.id, mtype);
-        }
-      }
-    } catch {}
+    // 按 caller 分离：Claude Desktop（按 app key 命中且 app_id 属 claude-desktop）只看透明 mask 名；
+    // CLI（OAuth）/前端/其他看真实源模型。
+    const authRaw = req.headers['authorization'] || req.headers['x-api-key'] || '';
+    const modelsKey = authRaw.startsWith('Bearer ') ? authRaw.slice(7).trim() : String(authRaw).trim();
+    const modelsCtrl = resolveAppControl(modelsKey, cleanPath);
+    const data = String(modelsCtrl?.app_id || '').includes('claude-desktop')
+      ? buildClaudeMaskModelList()
+      : buildDefaultModelList();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ object: 'list', data }));
     return;
@@ -2960,6 +3052,12 @@ function handleRequest(req, res) {
 
 function start(port, getConfig, saveConfig, bindHost = '127.0.0.1') {
   if (_server) return;
+  // 日志管道断开（stdout/stderr 被下游关闭，如 `| head`、父进程退出）不应打断网关：
+  // 否则 EPIPE 会以未捕获异常冒泡（console.log → write EPIPE）拖垮进程。吞掉即可。
+  try {
+    if (!process.stdout.__tbEpipeGuard) { process.stdout.on('error', () => {}); process.stdout.__tbEpipeGuard = true; }
+    if (!process.stderr.__tbEpipeGuard) { process.stderr.on('error', () => {}); process.stderr.__tbEpipeGuard = true; }
+  } catch {}
   _port       = port || 11430;
   _getConfig  = getConfig;
   _saveConfig = saveConfig || null;
@@ -3016,6 +3114,10 @@ function getLog() {
 // claude-* 透明名 → route 步骤（Claude Desktop inferenceModels.name）；api_key 不在此映射
 let _keyScene = {};
 function setKeySceneMap(map) { _keyScene = map && typeof map === 'object' ? map : {}; }
+// Claude Code CLI（anthropic shim）绑定的路由。它用 OAuth 调用、无 app key，故单独存放，
+// 只对「非 api-key 调用方」的 claude-* 请求生效，避免顶掉 Claude Desktop 等 api-key 应用的绑定。
+let _claudeShimScene = null;
+function setClaudeShimScene(scene) { _claudeShimScene = scene && (scene.steps?.length || scene.rules?.length) ? scene : null; }
 // Codex 内建 gpt-* 辅助模型的兜底路由（api_key → scene）
 let _codexGptFallback = {};
 function setCodexGptFallback(map) { _codexGptFallback = map && typeof map === 'object' ? map : {}; }
@@ -3028,9 +3130,12 @@ function setClaudeModels(list) { _claudeModels = Array.isArray(list) ? list.filt
 // ── 应用匹配（api-key 按 key 匹配，shim 按协议路径匹配）─────────────────────
 // 每项：{ app_id, app_name, match:{key|path} }
 let _appControls = [];
+// api-key 应用的 caller key 集合（用于区分「api-key 应用」与「shim/OAuth 调用方」）。
+let _appKeys = new Set();
 
 function setAppControls(list) {
   _appControls = Array.isArray(list) ? list : [];
+  _appKeys = new Set(_appControls.filter((c) => c && c.match && c.match.key).map((c) => c.match.key));
 }
 
 function resolveAppControl(callerKey, reqPath) {
@@ -3085,7 +3190,7 @@ function setLocalConfigReader(fn) {
 
 module.exports = {
   start, stop, restart, setStrategy, getStatus, getLog,
-  setKeySceneMap, setCodexGptFallback, setRouterModelMap, setPeerModels, setBackendConfig, setUserAuth,
+  setKeySceneMap, setClaudeShimScene, setCodexGptFallback, setRouterModelMap, setPeerModels, setBackendConfig, setUserAuth,
   setStatsRecorder, setLocalStats, setLocalConfigReader, setAppControls,
   setClaudeModels,
   // 条件路由规则引擎（供单测/复用）

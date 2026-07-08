@@ -67,6 +67,19 @@ function claudeDesktopDataDirs() {
   return [path.join(base, 'Claude'), path.join(base, 'Claude-3p')];
 }
 
+// 既有配置文件是否已是 tokenbank 写入的托管配置（网关配置带 _configManagedBy:tokenbank 标记）。
+// 用途：备份时绝不把"自己的托管配置"存成 .tokenbank-bak；还原时坏备份视同无备份，避免把网关配置写回。
+function isTokenbankManagedConfig(file) {
+  try {
+    if (!file || !fs.existsSync(file)) return false;
+    const txt = fs.readFileSync(file, 'utf8');
+    if (/\.json$/i.test(file)) {
+      try { return JSON.parse(txt)?._configManagedBy === 'tokenbank'; } catch { return false; }
+    }
+    return /_configManagedBy['"\s:=]+tokenbank/i.test(txt);
+  } catch { return false; }
+}
+
 // 还原 Claude Desktop 到官方 1P：除 configLibrary 外还需清 deploymentMode=3p、修补破损 _meta
 function revertClaudeDesktopOfficialExtras() {
   for (const dir of claudeDesktopDataDirs()) {
@@ -91,8 +104,14 @@ function revertClaudeDesktopOfficialExtras() {
         // 否则会清空 configLibrary，导致开发者模式被误判为「未启用」、纳管按钮回弹。
         if (c._configManagedBy !== 'tokenbank') continue;
         const bak = p + '.tokenbank-bak';
-        if (fs.existsSync(bak)) fs.copyFileSync(bak, p);
-        else fs.unlinkSync(p);
+        // 坏备份保护：备份若本身就是 tokenbank 网关配置（历史 bug：re-管理时把自己的配置备份了），
+        // 视同无原始配置 → 删除托管文件回到官方直连，并清掉坏备份，避免下次还原又写回网关。
+        if (fs.existsSync(bak) && !isTokenbankManagedConfig(bak)) {
+          fs.copyFileSync(bak, p);
+        } else {
+          try { fs.unlinkSync(p); } catch {}
+          try { if (fs.existsSync(bak)) fs.unlinkSync(bak); } catch {}
+        }
       } catch {}
     }
     // _meta.appliedId 指向已删文件时 Claude 会卡在 3P 半残状态
@@ -194,12 +213,14 @@ function revertAppConfigFile(app_id, config_file) {
   }
   if (file) {
     const bak = file + '.tokenbank-bak';
-    if (fs.existsSync(bak)) {
+    // 坏备份保护：备份本身就是 tokenbank 网关配置时，视同无备份（否则会把网关配置写回，还原后仍走网关）。
+    if (fs.existsSync(bak) && !isTokenbankManagedConfig(bak)) {
       try { fs.copyFileSync(bak, file); } catch {}
     } else {
-      // 无备份：只删 tokenbank 自己写入的配置。Claude Desktop 的 configLibrary 里可能是
-      // 用户/Claude 自建的配置（纳管前 config_file 就指向它），删了会清空 configLibrary、
-      // 让开发者模式被误判为未启用——所以未标记 _configManagedBy:tokenbank 的一律不动。
+      // 无有效原始备份（或备份是坏的 tokenbank 网关配置）：清掉坏备份，只删 tokenbank 自己写入的配置。
+      // Claude Desktop 的 configLibrary 里可能是用户/Claude 自建的配置（纳管前 config_file 就指向它），
+      // 删了会清空 configLibrary、让开发者模式被误判为未启用——所以未标记 _configManagedBy:tokenbank 的一律不动。
+      try { if (fs.existsSync(bak)) fs.unlinkSync(bak); } catch {}
       try {
         let managed = true;
         if (isClaudeDesktopApp(app_id) && fs.existsSync(file)) {
@@ -797,6 +818,15 @@ function updateTrayMenu() { refreshTray(); }
 const _agentLogBuf = [];   // keep last 200 lines for late-mounting pages
 const AGENT_LOG_MAX = 200;
 
+// 安全给渲染层发消息：窗口/ webContents 在退出时可能已销毁（?. 只挡 null，挡不住「已销毁」），
+// 直接 send 会抛 "Object has been destroyed" 崩主进程（尤其 before-quit → agent.stop → log → onLog）。
+function safeSend(channel, ...args) {
+  try {
+    const wc = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null;
+    if (wc && !wc.isDestroyed()) wc.send(channel, ...args);
+  } catch { /* 退出时窗口已拆除，忽略 */ }
+}
+
 function startAgent() {
   console.log('[main] startAgent called, isRunning=', agent.isRunning());
   agent.start({
@@ -804,11 +834,11 @@ function startAgent() {
       console.log('[agent-log]', line);
       _agentLogBuf.push(line);
       if (_agentLogBuf.length > AGENT_LOG_MAX) _agentLogBuf.shift();
-      mainWindow?.webContents.send('agent:log', line);
+      safeSend('agent:log', line);
     },
     onStatus: (status) => {
       console.log('[main] agent status', status);
-      mainWindow?.webContents.send('agent:status', status);
+      safeSend('agent:status', status);
       updateTrayMenu();
     },
   });
@@ -2199,6 +2229,7 @@ function registerIPC() {
 
     const appControls = [];
     const keyScene = {};
+    let claudeShimScene = null;    // Claude Code CLI（anthropic shim）绑定的路由（按「非 api-key 调用方」生效）
     const codexGptFallback = {};   // Codex 内建 gpt-* 辅助模型 → 兜底到该应用绑定的主路由（按 api_key）
     const { bindClaudeRoutesToKeyScene, bindRouteToKeyScene } = require('../shared/route-binding');
     for (const app of apps) {
@@ -2242,10 +2273,24 @@ function registerIPC() {
         if (!routeBindable || !toolProto[app.agent_id]) continue;
         const path = PROTOCOL_PATH[toolProto[app.agent_id]];
         if (path) appControls.push({ ...ctrl, match: { path } });
+        // Claude Code CLI（anthropic shim）：它用自己的 claude.ai OAuth 调用、发标准 claude-* 名，
+        // callerKey 不是 app key，无法像 Claude Desktop 那样按 key 认出。故把它绑定的路由单独记到
+        // claudeShimScene（网关只对「非 api-key 调用方」的 claude-* 请求用它），不写全局 keyScene——
+        // 否则会顶掉 Claude Desktop 等 api-key claude 应用的按模型绑定，导致 Desktop 请求被劫持。
+        if (toolProto[app.agent_id] === 'anthropic') {
+          const appRouteIds = (Array.isArray(app.route_ids) && app.route_ids.length)
+            ? app.route_ids : (app.route_id ? [app.route_id] : []);
+          if (appRouteIds.length) {
+            const tmp = {};
+            bindRouteToKeyScene(tmp, '_shim', appRouteIds[0], routes);
+            claudeShimScene = tmp._shim || null;
+          }
+        }
       }
     }
     gateway.setAppControls(appControls);
     gateway.setKeySceneMap(keyScene);
+    gateway.setClaudeShimScene(claudeShimScene);
     gateway.setCodexGptFallback(codexGptFallback);
 
     // P2P backend config（登出时也要清空，避免残留 token 继续上报）
@@ -2694,6 +2739,33 @@ function registerIPC() {
     return isWin ? 'npm.cmd' : 'npm';
   };
 
+  // npm 全局包安装根目录（<prefix>/lib/node_modules）。
+  const npmGlobalRoot = (npmCmd) => new Promise((resolve) => {
+    try {
+      require('child_process').exec(`${npmCmd} root -g`, { timeout: 20000, windowsHide: true },
+        (err, stdout) => resolve(err ? null : (String(stdout || '').trim() || null)));
+    } catch { resolve(null); }
+  });
+
+  // 清理 npm 原子装/卸中断留下的暂存目录：包目录的兄弟项 .<最后一段>-<hash>（scoped 与裸名都适用）。
+  // 这类残留会让下次 `npm uninstall -g` 的 rename 撞上 ENOTEMPTY。返回包目录路径供兜底删。
+  const sweepNpmStaging = (root, pkg) => {
+    try {
+      if (!root || !pkg) return null;
+      const pkgDir = path.join(root, pkg);
+      const parent = path.dirname(pkgDir);
+      const base = path.basename(pkgDir);
+      if (fs.existsSync(parent)) {
+        for (const f of fs.readdirSync(parent)) {
+          if (f.startsWith('.' + base + '-')) {
+            try { fs.rmSync(path.join(parent, f), { recursive: true, force: true }); } catch {}
+          }
+        }
+      }
+      return pkgDir;
+    } catch { return null; }
+  };
+
   // 一键安装/更新 CLI 工具：跑 npm i -g <包>@latest（用户级全局，无需管理员）。
   // 异步 exec，不阻塞主进程；装完前端刷新检测状态。
   ipcMain.handle('apps:npmGlobalInstall', async (_e, { id } = {}) => {
@@ -2718,28 +2790,79 @@ function registerIPC() {
   });
 
   // 一键卸载 CLI 工具：跑 npm uninstall -g <包>。与安装对称，装完/卸完都清命令缓存。
+  // 加固：npm 用「原子重命名到 .<name>-<hash> 暂存目录再删」的方式卸载，上次装/卸中断留下的暂存
+  // 目录会让本次 rename 撞上 ENOTEMPTY。故先清残留暂存；npm 仍失败(ENOTEMPTY/EEXIST)时兜底直接
+  // 删包目录 + npm bin 软链(目标本就是移除)。对所有 npm CLI(claude-code/codex/opencode/openclaw)统一生效。
   ipcMain.handle('apps:npmGlobalUninstall', async (_e, { id } = {}) => {
     const pkg = (require('./config-loader').appNpmPackages() || {})[id];
     if (!pkg) return { ok: false, error: 'no-npm-package' };
-    const npmCmd = `"${resolveNpmCmd()}"`;
+    const npmBin = resolveNpmCmd();
+    const npmCmd = `"${npmBin}"`;
+    const root = await npmGlobalRoot(npmCmd);
+    sweepNpmStaging(root, pkg);   // 卸载前先清残留暂存目录，避免 rename ENOTEMPTY
+
+    const toolCmd = (() => {
+      try {
+        const tool = (require('./config-loader').tools() || []).find(t => t.id === id);
+        return tool && tool.detect && tool.detect.command;
+      } catch { return null; }
+    })();
+    const afterRemoved = () => {
+      // 顺带清掉 Token Bank 托管的 shim（命令名取自 detect.command，如 claude/codex/opencode）；
+      // api_key 应用无 shim，跳过。再清命令探测缓存 + 通知前端刷新。
+      try { if (toolCmd) require('./shim-installer').removeShim(toolCmd); } catch {}
+      try { require('./shim-installer').clearCommandCache(); } catch {}
+      try { mainWindow?.webContents?.send('apps:changed'); } catch {}
+    };
+
+    // 卸载后校验：命令若仍能解析，说明它装在 npm 配置 prefix 够不到的位置——常见于用户设了
+    // prefix=~/.npm-global，但历史用 sudo 把 CLI 装进了默认的 /usr/local（root 所有）。`npm -g`
+    // 只动配置 prefix → 卸载成了 no-op。此时别假装成功（否则界面「点了没反应、也没卸载」），
+    // 回报真实路径 + 手动删除提示。
+    const lingeringCmdPath = () => {
+      try {
+        if (!toolCmd) return null;
+        require('./shim-installer').clearCommandCache(toolCmd);
+        return require('./shim-installer').resolveRealCommand(toolCmd) || null;
+      } catch { return null; }
+    };
+    const finish = (resolve, base) => {
+      afterRemoved();
+      const left = lingeringCmdPath();
+      if (left) {
+        return resolve({ ok: false, pkg, lingeringPath: left, error:
+          `已执行 npm 全局卸载，但命令 ${toolCmd} 仍存在于 ${left}——它装在 npm 配置 prefix 之外` +
+          `（可能是另一个 prefix 或 root/系统安装，如 /usr/local）。需手动删除：sudo rm -rf ${left}` });
+      }
+      resolve({ ok: true, pkg, ...(base || {}) });
+    };
+
     return await new Promise((resolve) => {
       try {
         require('child_process').exec(`${npmCmd} uninstall -g ${pkg}`, { timeout: 300000, windowsHide: true },
           (err, _stdout, stderr) => {
-            if (err) resolve({ ok: false, error: (String(stderr || '') || err.message).slice(0, 400) });
-            else {
-              // 顺带清掉 Token Bank 托管的 shim，避免留下指向已删程序的失效 shim。
-              // 命令名取自该工具的 detect.command（如 claude/codex/opencode）；api_key 应用无 shim，跳过。
+            const errText = String(stderr || '') || (err && err.message) || '';
+            if (err && /ENOTEMPTY|EEXIST|ENOENT/i.test(errText)) {
+              // 兜底：残留/树损坏导致 npm rename/unlink 失败(ENOTEMPTY/EEXIST/ENOENT) → 再清一次暂存
+              //       + 直接删包目录 + npm bin 软链（目标本就是移除，直接删最可靠）
+              const pkgDir = sweepNpmStaging(root, pkg) || (root ? path.join(root, pkg) : null);
+              try { if (pkgDir) fs.rmSync(pkgDir, { recursive: true, force: true }); } catch {}
+              // 删 npm 生成的 bin 入口(不存在则静默跳过)。布局按平台不同:
+              //  unix: root=<prefix>/lib/node_modules → bin 在 <prefix>/bin/<cmd>(软链)
+              //  win : root=<prefix>\node_modules      → shim 在 <prefix>\<cmd>.cmd/.ps1(及无扩展)
               try {
-                const tool = (require('./config-loader').tools() || []).find(t => t.id === id);
-                const cmd = tool && tool.detect && tool.detect.command;
-                if (cmd) require('./shim-installer').removeShim(cmd);
+                if (root && toolCmd) {
+                  const isWin = process.platform === 'win32';
+                  const files = isWin
+                    ? [toolCmd + '.cmd', toolCmd + '.ps1', toolCmd].map(f => path.join(path.resolve(root, '..'), f))
+                    : [path.join(path.resolve(root, '..', '..'), 'bin', toolCmd)];
+                  for (const f of files) { try { fs.rmSync(f, { force: true }); } catch {} }
+                }
               } catch {}
-              try { require('./shim-installer').clearCommandCache(); } catch {}
-              // 通知前端应用列表刷新（卸载后虚拟条目即时消失）
-              try { mainWindow?.webContents?.send('apps:changed'); } catch {}
-              resolve({ ok: true, pkg });
+              return finish(resolve, { note: 'removed-after-cleanup' });
             }
+            if (err) return resolve({ ok: false, error: errText.slice(0, 400) });
+            finish(resolve);
           });
       } catch (e) { resolve({ ok: false, error: e.message }); }
     });
@@ -3358,7 +3481,11 @@ function registerIPC() {
       // 纳管 = 备份原配置文件（整份，仅首次），再写入我们的配置（整份替换）。
       // 不合并、不检测冲突、不预扫描内容——状态完全跟随用户操作。
       const bak = file + '.tokenbank-bak';
-      if (fs.existsSync(file) && !fs.existsSync(bak)) { try { fs.copyFileSync(file, bak); } catch {} }
+      // 只备份"真正的原始配置"：既有文件若已是 tokenbank 托管配置，绝不备份——否则会把网关配置
+      // 存成 .tokenbank-bak，还原时又写回网关配置，导致 Claude Desktop 还原后仍走网关。
+      if (fs.existsSync(file) && !fs.existsSync(bak) && !isTokenbankManagedConfig(file)) {
+        try { fs.copyFileSync(file, bak); } catch {}
+      }
       fs.mkdirSync(path.dirname(file), { recursive: true });
       if (/\.json$/i.test(file)) {
         fs.writeFileSync(file, JSON.stringify(patchToObject(resolvedPatch), null, 2), 'utf8');

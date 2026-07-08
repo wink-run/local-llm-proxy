@@ -120,26 +120,6 @@ async function detectCodex() {
   };
 }
 
-// Gemini CLI：命令 `gemini --version`；配置 ~/.gemini。
-async function detectGemini() {
-  const probe = await runProbe('gemini', ['--version']);
-  const installed = probe.ok;
-  const version = installed ? (probe.stdout.match(/[\d.]+/)?.[0] || probe.stdout) : null;
-
-  const configDir = path.join(os.homedir(), '.gemini');
-  const hasConfig = fs.existsSync(configDir);
-  const envBase = process.env.GOOGLE_GEMINI_BASE_URL || process.env.GEMINI_BASE_URL || null;
-  const linked = pointsToGateway(envBase);
-
-  return {
-    id: 'gemini', name: 'Gemini CLI', kind: 'client', protocol: 'gemini',
-    installed, version, configDir: hasConfig ? configDir : null,
-    linked, currentBaseUrl: envBase,
-    linkVia: 'env',
-    linkHint: `export GEMINI_BASE_URL=http://localhost:${GATEWAY_PORT}`,
-  };
-}
-
 // Ollama：本地模型服务（上游，不是客户端）。命令 `ollama --version` 表示装了，
 // 但"是否在线"要探端口 11434。它应被注册为网关的 provider。
 async function detectOllama() {
@@ -176,7 +156,7 @@ function detectGenericOpenAI() {
  */
 async function scan() {
   const results = await Promise.all([
-    detectClaude(), detectCodex(), detectGemini(), detectOllama(),
+    detectClaude(), detectCodex(), detectOllama(),
   ]);
   results.push(detectGenericOpenAI());
 

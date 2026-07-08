@@ -4,6 +4,10 @@
  * 新增一家 usage 抓取器时，HTTP / 数值清洗 / 窗口结构都从这里取，避免各 provider 重复实现。
  */
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
 const ANTHROPIC_BASE = 'https://api.anthropic.com';
 const ANTHROPIC_BETA = 'oauth-2025-04-20';
 const CLAUDE_UA = 'claude-code/2.1.0';
@@ -24,6 +28,56 @@ function providerApiKey(provider) {
   if (!provider) return null;
   const c = provider.credentials || {};
   return provider.token || c.api_key || c.key || null;
+}
+
+/**
+ * 回退读取各 CLI 自维护的凭证文件 —— agent config 里没有该源的 OAuth token 时用它。
+ * CLI（claude / codex / gemini）自己负责登录与刷新，这里只读它落盘的最新凭证。
+ * 返回统一形状 { access_token, refresh_token, ... } 或 null（文件缺失/无 token）。
+ *   - claude → ~/.claude/.credentials.json（claudeAiOauth.*）
+ *   - codex  → ~/.codex/auth.json（tokens.*）
+ *   - gemini → ~/.gemini/oauth_creds.json（access_token / refresh_token / expiry_date）
+ */
+function readCliCreds(name) {
+  const home = os.homedir();
+  try {
+    if (name === 'claude') {
+      const j = JSON.parse(fs.readFileSync(path.join(home, '.claude', '.credentials.json'), 'utf8'));
+      const o = (j && j.claudeAiOauth) || {};
+      if (!o.accessToken) return null;
+      return {
+        access_token: o.accessToken,
+        refresh_token: o.refreshToken || null,
+        expires_at: o.expiresAt || null,
+        subscriptionType: o.subscriptionType || null,
+        rateLimitTier: o.rateLimitTier || null,
+      };
+    }
+    if (name === 'codex') {
+      const j = JSON.parse(fs.readFileSync(path.join(home, '.codex', 'auth.json'), 'utf8'));
+      const t = (j && j.tokens) || {};
+      if (!t.access_token) return null;
+      return {
+        access_token: t.access_token,
+        refresh_token: t.refresh_token || null,
+        account_id: t.account_id || null,
+        id_token: t.id_token || null,
+      };
+    }
+    if (name === 'gemini') {
+      const j = JSON.parse(fs.readFileSync(path.join(home, '.gemini', 'oauth_creds.json'), 'utf8'));
+      if (!j || (!j.access_token && !j.refresh_token)) return null;
+      return {
+        access_token: j.access_token || null,
+        refresh_token: j.refresh_token || null,
+        id_token: j.id_token || null,
+        expiry_date: j.expiry_date || null,
+      };
+    }
+  } catch {
+    // 文件不存在 / 解析失败 —— 回退无凭证
+  }
+  return null;
 }
 
 /** 把 4xx/5xx 状态翻译成可读中文错误（OAuth 类端点通用）。 */
@@ -59,6 +113,7 @@ module.exports = {
   num,
   toNum,
   providerApiKey,
+  readCliCreds,
   describeHttpError,
   anthropicOAuthGet,
   ANTHROPIC_BASE,
