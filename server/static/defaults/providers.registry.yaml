@@ -288,8 +288,7 @@ providers:
   key_prefix:
   - AIza
   signup_url: https://aistudio.google.com/app/apikey
-  aliases:
-  - gemini-cli
+  aliases: []
 - id: deepseek
   label: DeepSeek
   icon: 🐋
@@ -608,35 +607,6 @@ billing_sources:
   agent_id: codex
   plan_provider_id: openai
   subscription_to_api: true
-- id: gemini
-  sort_order: 3
-  category: app_sub
-  source_id: gemini
-  label: Gemini CLI
-  icon: ♊
-  tier: paid
-  base_url: https://generativelanguage.googleapis.com/v1beta/openai/
-  auth: api_key
-  api_format: gemini
-  handler: gemini
-  hint: ''
-  keyless: false
-  key_prefix: []
-  signup_url: ''
-  aliases: []
-  enabled_default: false
-  models: []
-  pricing: {}
-  plans:
-  - id: gemini-advanced
-    label: Gemini Advanced
-    monthly_usd: 20.0
-  - id: google-one-ai
-    label: Google One AI
-    monthly_usd: 20.0
-  agent_id: gemini-cli
-  plan_provider_id: gemini
-  subscription_to_api: false
 - id: cursor
   sort_order: 4
   category: app_sub

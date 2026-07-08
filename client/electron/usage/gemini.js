@@ -6,10 +6,11 @@
  * 体：{ project: <projectId> } 或 {}
  * 响应：{ buckets: [{ modelId, remainingFraction(0-1), resetTime(ISO), tokenType }] }
  *
- * ⚠️ 限制：local 的 oauth.prepare 不支持 Google，这里直接用 credentials.access_token，
- * 不做自动刷新；token 过期需重新导入 Gemini 凭证（后续可补 Google token 刷新）。
+ * 凭证来源：优先 provider.credentials.access_token，回退读 Gemini CLI 的
+ * ~/.gemini/oauth_creds.json 里的有效 access_token；过期/401 则提示重新登录 Gemini CLI。
+ * （不做 token 刷新——刷新要 gemini-cli 内置的 OAuth client secret，本仓库不便携带。）
  */
-const { num } = require('./shared');
+const { num, readCliCreds } = require('./shared');
 
 const QUOTA_URL = 'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota';
 
@@ -56,16 +57,18 @@ function mapGeminiUsage(data, provider) {
 }
 
 async function fetchGeminiUsage(provider) {
-  const creds = provider.credentials || {};
-  const token = creds.access_token;
-  if (!token) throw new Error('缺少 Google access_token；Gemini 暂不支持自动刷新，过期需重新导入凭证');
+  // 优先 agent config 凭证，回退 Gemini CLI 的 oauth_creds.json（读现成的有效 token，不刷新）。
+  let creds = (provider && provider.credentials) || {};
+  if (!creds.access_token) creds = readCliCreds('gemini') || creds;
+  const token = creds.access_token || null;
+  if (!token) throw new Error('缺少 Google access_token，请重新登录 Gemini CLI');
   const projectId = creds.project_id || creds.project || null;
   const resp = await fetch(QUOTA_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(projectId ? { project: projectId } : {}),
   });
-  if (resp.status === 401) throw new Error('401：Google token 失效，需重新导入 Gemini 凭证（暂无自动刷新）');
+  if (resp.status === 401) throw new Error('401：Google token 失效，请重新登录 Gemini CLI');
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return mapGeminiUsage(await resp.json(), provider);
 }

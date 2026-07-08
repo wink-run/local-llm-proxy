@@ -575,8 +575,8 @@ function reassignProviderTier(providerId, tier) {
               cache_create_tokens, cache_read_tokens
        FROM requests WHERE provider_id IN (${placeholders})`
     ).all(...ids);
-    // 注：表主键列名是 id（= rowid 别名）；SELECT rowid 在 better-sqlite3 里会以 id 返回，
-    // r.rowid 为 undefined 会导致 WHERE rowid=? 匹配不到 → 必须按 id 更新。
+    // 表主键列名是 id（= rowid 别名）；better-sqlite3 返回 r.id，r.rowid 为 undefined
+    // → WHERE rowid=? 匹配不到，必须按 id 更新
     const upd = db.prepare('UPDATE requests SET tier = ?, cost_usd = ? WHERE id = ?');
     const txn = db.transaction(() => {
       for (const r of rows) {

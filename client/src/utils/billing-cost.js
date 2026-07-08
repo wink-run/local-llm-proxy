@@ -30,7 +30,6 @@ const AGENT_SESSION_SOURCES = {
   'claude-code': ['session-claude'],
   'claude-desktop': ['session-claude-desktop'],
   codex: ['session-codex'],
-  'gemini-cli': ['session-gemini'],
   cursor: ['session-cursor'],
   copilot: ['session-copilot', 'session-copilot-cli'],
   'qwen-code': ['session-qwen'],

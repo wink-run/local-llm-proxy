@@ -274,7 +274,7 @@ export default {
   'gateway.supported.clickInstall': 'Not installed · click to install',
   'gateway.supported.notInstalled': 'Not installed',
   'gateway.apps.loading': 'Loading…',
-  'gateway.apps.empty': 'No recognized apps detected. Install Claude Code / Codex / Gemini CLI to see them here, or use “+ New app” above.',
+  'gateway.apps.empty': 'No recognized apps detected. Install Claude Code / Codex to see them here, or use “+ New app” above.',
   'gateway.apps.colApp': 'App',
   'gateway.apps.colStatus': 'Status',
   'gateway.apps.colLink': 'Link',
