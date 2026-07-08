@@ -2807,6 +2807,28 @@ function registerIPC() {
       try { mainWindow?.webContents?.send('apps:changed'); } catch {}
     };
 
+    // 卸载后校验：命令若仍能解析，说明它装在 npm 配置 prefix 够不到的位置——常见于用户设了
+    // prefix=~/.npm-global，但历史用 sudo 把 CLI 装进了默认的 /usr/local（root 所有）。`npm -g`
+    // 只动配置 prefix → 卸载成了 no-op。此时别假装成功（否则界面「点了没反应、也没卸载」），
+    // 回报真实路径 + 手动删除提示。
+    const lingeringCmdPath = () => {
+      try {
+        if (!toolCmd) return null;
+        require('./shim-installer').clearCommandCache(toolCmd);
+        return require('./shim-installer').resolveRealCommand(toolCmd) || null;
+      } catch { return null; }
+    };
+    const finish = (resolve, base) => {
+      afterRemoved();
+      const left = lingeringCmdPath();
+      if (left) {
+        return resolve({ ok: false, pkg, lingeringPath: left, error:
+          `已执行 npm 全局卸载，但命令 ${toolCmd} 仍存在于 ${left}——它装在 npm 配置 prefix 之外` +
+          `（可能是另一个 prefix 或 root/系统安装，如 /usr/local）。需手动删除：sudo rm -rf ${left}` });
+      }
+      resolve({ ok: true, pkg, ...(base || {}) });
+    };
+
     return await new Promise((resolve) => {
       try {
         require('child_process').exec(`${npmCmd} uninstall -g ${pkg}`, { timeout: 300000, windowsHide: true },
@@ -2817,16 +2839,22 @@ function registerIPC() {
               //       + 直接删包目录 + npm bin 软链（目标本就是移除，直接删最可靠）
               const pkgDir = sweepNpmStaging(root, pkg) || (root ? path.join(root, pkg) : null);
               try { if (pkgDir) fs.rmSync(pkgDir, { recursive: true, force: true }); } catch {}
-              // npm bin 软链(<prefix>/bin/<cmd>)：rmSync force 删软链本身，不存在则静默跳过
+              // 删 npm 生成的 bin 入口(不存在则静默跳过)。布局按平台不同:
+              //  unix: root=<prefix>/lib/node_modules → bin 在 <prefix>/bin/<cmd>(软链)
+              //  win : root=<prefix>\node_modules      → shim 在 <prefix>\<cmd>.cmd/.ps1(及无扩展)
               try {
-                if (root && toolCmd) fs.rmSync(path.resolve(root, '..', '..', 'bin', toolCmd), { force: true });
+                if (root && toolCmd) {
+                  const isWin = process.platform === 'win32';
+                  const files = isWin
+                    ? [toolCmd + '.cmd', toolCmd + '.ps1', toolCmd].map(f => path.join(path.resolve(root, '..'), f))
+                    : [path.join(path.resolve(root, '..', '..'), 'bin', toolCmd)];
+                  for (const f of files) { try { fs.rmSync(f, { force: true }); } catch {} }
+                }
               } catch {}
-              afterRemoved();
-              return resolve({ ok: true, pkg, note: 'removed-after-cleanup' });
+              return finish(resolve, { note: 'removed-after-cleanup' });
             }
             if (err) return resolve({ ok: false, error: errText.slice(0, 400) });
-            afterRemoved();
-            resolve({ ok: true, pkg });
+            finish(resolve);
           });
       } catch (e) { resolve({ ok: false, error: e.message }); }
     });

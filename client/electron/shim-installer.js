@@ -34,18 +34,31 @@ const CMD_TTL = 30000;
 // `sh -lc` 不加载用户 zsh/bash rc（nvm 就在 rc 里初始化），故这些目录既不在 PATH 也探不到 →
 // 只装了 nvm/fnm 的用户会「找不到 npm」→ 一键装/卸报 ENOENT。这里把它们直接补进搜索目录。
 function nodeVersionManagerBinDirs() {
-  if (IS_WIN) return [];
   const home = os.homedir();
   const dirs = [];
+  // sub: 非空字符串=版本目录下的子路径；'' =版本目录本身(win nvm 的 npm.cmd 就在这一级)；
+  //      undefined/null =默认 'bin'(unix 版本目录下的 bin)
   const pushVersioned = (base, sub) => {
     try {
       if (!fs.existsSync(base)) return;
       const vers = fs.readdirSync(base)
         .filter(v => /^v?\d/.test(v))
         .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));  // 新版本优先
-      for (const v of vers) dirs.push(sub ? path.join(base, v, sub) : path.join(base, v, 'bin'));
+      for (const v of vers) dirs.push(sub === '' ? path.join(base, v) : path.join(base, v, sub || 'bin'));
     } catch {}
   };
+  if (IS_WIN) {
+    // Windows：node 版本管理器的 npm.cmd 直接放在版本目录下(无 bin 子目录)。
+    const la = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+    const ad = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+    dirs.push(path.join(la, 'Volta', 'bin'));                 // volta
+    if (process.env.NVM_SYMLINK) dirs.push(process.env.NVM_SYMLINK);  // nvm-windows 当前激活软链
+    pushVersioned(process.env.NVM_HOME || path.join(ad, 'nvm'), '');  // nvm-windows 各版本目录根
+    for (const fd of [process.env.FNM_DIR, path.join(ad, 'fnm'), path.join(la, 'fnm')].filter(Boolean)) {
+      pushVersioned(path.join(fd, 'node-versions'), 'installation');  // fnm(win 无 bin 子目录)
+    }
+    return dirs.filter(Boolean);
+  }
   // volta / asdf shims（固定路径）
   dirs.push(path.join(home, '.volta', 'bin'), path.join(home, '.asdf', 'shims'));
   // nvm：默认别名优先，其余按版本降序
