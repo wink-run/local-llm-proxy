@@ -4,3 +4,6 @@ dist-app/
 build/
 assets/
 !src/assets/
+
+# 生成的 release notes（gen-changelog.js）
+release-notes.md
