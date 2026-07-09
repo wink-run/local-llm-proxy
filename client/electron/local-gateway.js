@@ -580,15 +580,18 @@ function formatHttpError(statusCode, bodyStr) {
 }
 
 function readProxyError(proxyRes, reject) {
+  // 社区(p2p)派发失败时，服务端把「最后失败的 worker」放在 X-TB-Worker 头
+  // （错误体里另有 error.worker_id / error.workers）——带回来供路由日志按 worker 归因。
+  const workerId = proxyRes.headers['x-tb-worker'] || null;
   const chunks = [];
   proxyRes.on('data', c => chunks.push(c));
   proxyRes.on('end', () => {
     const body = Buffer.concat(chunks).toString();
     const msg = formatHttpError(proxyRes.statusCode, body);
-    reject(Object.assign(new Error(msg), { status: proxyRes.statusCode, body }));
+    reject(Object.assign(new Error(msg), { status: proxyRes.statusCode, body, worker_id: workerId }));
   });
   proxyRes.on('error', () => {
-    reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode }));
+    reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode, worker_id: workerId }));
   });
 }
 
@@ -876,6 +879,9 @@ function proxyRequest(provider, reqPath, body, res) {
       });
 
       const status = proxyRes.statusCode;
+      // 社区(p2p)派发成功时服务端回 X-TB-Worker=服务此请求的 worker_id；
+      // 非 p2p 上游无此头 → null。供路由日志 join /public/network 显示「谁的节点」。
+      const workerId = proxyRes.headers['x-tb-worker'] || null;
       if (isStream) {
         // Streaming: pipe to client while sniffing SSE events for usage + upstream message id.
         // Cache tokens may appear too (Anthropic message_start / message_delta).
@@ -917,7 +923,7 @@ function proxyRequest(provider, reqPath, body, res) {
           ttftGuard?.dispose();
           return { provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0,
           input_tokens: usageIn, output_tokens: usageOut, cache_create_tokens: cacheCreate, cache_read_tokens: cacheRead,
-          message_id: msgId, status_code: status };
+          message_id: msgId, status_code: status, worker_id: workerId };
         };
         proxyRes.on('end',   () => { res.end();        resolve(done()); });
         proxyRes.on('error', (err) => { ttftGuard?.dispose(); res.destroy(err); resolve(done()); });
@@ -947,9 +953,9 @@ function proxyRequest(provider, reqPath, body, res) {
           } catch {}
           resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: Date.now() - t0,
             input_tokens: usageIn, output_tokens: usageOut, cache_create_tokens: cacheCreate, cache_read_tokens: cacheRead,
-            message_id: msgId, status_code: status });
+            message_id: msgId, status_code: status, worker_id: workerId });
         });
-        proxyRes.on('error', (err) => { ttftGuard?.dispose(); res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: Date.now() - t0, input_tokens: 0, output_tokens: 0, status_code: status }); });
+        proxyRes.on('error', (err) => { ttftGuard?.dispose(); res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: Date.now() - t0, input_tokens: 0, output_tokens: 0, status_code: status, worker_id: workerId }); });
       }
     });
 
@@ -1006,7 +1012,8 @@ function proxyConvertSync(provider, oaiBody, model, res) {
           resolve({ provider: provider.id, latency, first_token_ms: latency,
             input_tokens:  usage.prompt_tokens     || usage.input_tokens     || 0,
             output_tokens: usage.completion_tokens || usage.output_tokens    || 0,
-            message_id: oaiResp?.id || null, status_code: proxyRes.statusCode });
+            message_id: oaiResp?.id || null, status_code: proxyRes.statusCode,
+            worker_id: proxyRes.headers['x-tb-worker'] || null });
         } catch (err) { reject(err); }
       });
       proxyRes.on('error', reject);
@@ -1198,10 +1205,10 @@ function proxyConvertStream(provider, oaiBody, model, res) {
         })}\n\n`);
         res.write('event: message_stop\ndata: {"type":"message_stop"}\n\n');
         res.end();
-        resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: finalOut, message_id: msgId, status_code: proxyRes.statusCode });
+        resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: finalOut, message_id: msgId, status_code: proxyRes.statusCode, worker_id: proxyRes.headers['x-tb-worker'] || null });
       });
 
-      proxyRes.on('error', (err) => { ttftGuard?.dispose(); res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut || outputTokens, message_id: msgId, status_code: proxyRes.statusCode }); });
+      proxyRes.on('error', (err) => { ttftGuard?.dispose(); res.destroy(err); resolve({ provider: provider.id, latency: Date.now() - t0, first_token_ms: firstTokenMs ?? Date.now() - t0, input_tokens: usageIn, output_tokens: usageOut || outputTokens, message_id: msgId, status_code: proxyRes.statusCode, worker_id: proxyRes.headers['x-tb-worker'] || null }); });
     });
     ttftGuard = createP2pTtftGuard(provider, { proxyReq, res, isStream: true, reject });
     proxyReq.on('error', (err) => { ttftGuard?.dispose(); reject(err); });
@@ -2491,7 +2498,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
         try { require('./provider-speed').record(c.model, { firstTokenMs: result.first_token_ms, outputTokens: result.output_tokens, totalMs: result.latency, streaming }); } catch {}
         pushLog({ ts: t0, requested_model: origModel, model: c.model, scene_name: _stratScene.scene_name, claude_from: claudeFrom,
                   tier: c.provider.type, via: c.provider.id, via_label: c.provider.label,
-                  latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok' });
+                  latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok',
+                  worker: result.worker_id || undefined });
         recordStats(c.provider.id, c.model, fillMissingInputTokens(result, body), _providerTier(c.provider), callerKey, streaming, c.provider.billing_type || null);
         reportUsage(c.provider.id, c.model, (result.input_tokens || 0) + (result.output_tokens || 0));
         return;
@@ -2565,6 +2573,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
             tried: failedModels.length ? [...failedModels] : undefined,
             tier: provider.type, via: provider.id, via_label: provider.label,
             latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok',
+            worker: result.worker_id || undefined,
           });
           const stepTok  = (result.input_tokens || 0) + (result.output_tokens || 0);
           const stepTier = _providerTier(provider);
@@ -2582,6 +2591,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
               scene_name: scene.scene_name, claude_from: stepClaudeFrom,
               tier: provider.type, via: provider.id, via_label: provider.label,
               latency_ms: Date.now() - t0, status: 'error', error: lastErr.message,
+              worker: lastErr.worker_id || undefined,
             });
             recordError(stepModel, callerKey, lastErr);
             return;
@@ -2688,6 +2698,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
         ts: t0, requested_model: origModel, model, claude_from: claudeFrom,
         tier: provider.type, via: provider.id, via_label: provider.label,
         latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok',
+        worker: result.worker_id || undefined,
       });
       const directTok  = (result.input_tokens || 0) + (result.output_tokens || 0);
       const directTier = _providerTier(provider);
@@ -2701,6 +2712,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           ts: t0, requested_model: origModel, model, claude_from: claudeFrom,
           tier: provider.type, via: provider.id, via_label: provider.label,
           latency_ms: Date.now() - t0, status: 'error', error: lastErr.message,
+          worker: lastErr.worker_id || undefined,
         });
         recordError(model, callerKey, lastErr);
         return;

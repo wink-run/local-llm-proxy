@@ -17,6 +17,8 @@ import {
 } from '../lib/route-binding';
 import { useCurrency } from '../store/currency';
 import { runStreamChatTest } from '../lib/streamTestLatency';
+import { getNetwork } from '../api/client';
+import { normalizeNetworkPayload, workerInfo } from '../lib/networkModelStats';
 
 // tier:id 作为下拉唯一 value，避免同模型跨层选中错位
 function modelTierKey(m) {
@@ -3952,6 +3954,7 @@ export default function Gateway() {
   const [status, setStatus]     = useState(null);
   const [stats, setStats]       = useState(null);
   const [logEntries, setLog]    = useState([]);
+  const [network, setNetwork]   = useState(null);   // /public/network 快照：路由日志把 worker_id join 成分享者
   const [restarting, setRestarting] = useState(false);
   const [mainTab, setMainTab]   = useState(0);   // 0=应用列表 1=场景路由
 
@@ -4020,6 +4023,14 @@ export default function Gateway() {
     }
   }, []);
 
+  // /public/network 快照（把路由日志里的 p2p worker_id join 成分享者名/模型）。
+  // worker_id 随重连变化、网络拓扑变化慢 → 独立低频拉取（30s），仅登录后。
+  const loadNetwork = useCallback(async () => {
+    if (!user) { setNetwork(null); return; }
+    try { setNetwork(normalizeNetworkPayload(await getNetwork())); }
+    catch { /* 离线/未登录：日志侧回退成截断 worker_id */ }
+  }, [user]);
+
   useEffect(() => {
     refresh();
     loadSceneData();
@@ -4027,6 +4038,12 @@ export default function Gateway() {
     const statsId = setInterval(refresh, 5000);
     return () => { clearInterval(statsId); };
   }, [refresh, loadSceneData]);
+
+  useEffect(() => {
+    loadNetwork();
+    const netId = setInterval(loadNetwork, 30000);
+    return () => { clearInterval(netId); };
+  }, [loadNetwork]);
 
   // ── Computed stats ──────────────────────────────────────────────────────────
 
@@ -4409,6 +4426,12 @@ export default function Gateway() {
           <div className="max-h-80 overflow-y-auto space-y-1.5 pr-1">
             {logEntries.map((e, i) => {
               const isRouter = e.requested_model?.startsWith('llm-router-');
+              // 社区(p2p)派发：e.worker=服务/失败的 worker_id → join /public/network 显示分享者
+              const wi = e.worker ? workerInfo(e.worker, network) : null;
+              const workerName = wi?.name || (e.worker ? String(e.worker).slice(0, 8) : null);
+              const workerTitle = e.worker
+                ? `worker ${e.worker}${wi?.geo ? ` · ${wi.geo}` : ''}${wi?.models?.length ? ` · ${wi.models.join(', ')}` : ''}`
+                : undefined;
               return (
                 <div key={`${e.ts}-${e.via}-${i}`}
                   className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-zinc-50 dark:bg-zinc-800/60">
@@ -4460,6 +4483,17 @@ export default function Gateway() {
                   <span className={`shrink-0 font-medium ${e.status === 'ok' ? 'text-blue-600 dark:text-blue-400' : 'text-red-500'}`}>
                     {e.status === 'ok' ? (e.via_label || e.via || '—') : t('gateway.log.failed')}
                   </span>
+                  {/* 社区节点归因：哪个分享者的 worker 服务/失败了本次请求 */}
+                  {workerName && (
+                    <span title={workerTitle}
+                      className={`shrink-0 font-mono text-[11px] px-1 py-0.5 rounded truncate max-w-[7rem] ${
+                        e.status === 'ok'
+                          ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                          : 'bg-red-50 dark:bg-red-900/20 text-red-500 dark:text-red-400'
+                      }`}>
+                      👤 {workerName}
+                    </span>
+                  )}
                   {e.status === 'ok' && fmtMs(e.first_token_ms ?? e.latency_ms) && (
                     <span className="text-zinc-400 shrink-0">{fmtMs(e.first_token_ms ?? e.latency_ms)}</span>
                   )}

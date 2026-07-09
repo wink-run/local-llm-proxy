@@ -87,6 +87,30 @@ export function workersForModel(modelName, network) {
   }
 }
 
+/**
+ * worker_id → 分享者信息（用于路由日志把「哪个 worker 服务/失败」join 成人类可读）。
+ * 服务端 REAL worker_id 每次重连都会变（8 位随机），故此 join 仅对「当前在线」有效；
+ * 命中不了返回 null（日志侧回退成截断的 worker_id）。
+ */
+export function workerInfo(workerId, network) {
+  try {
+    const wid = String(workerId || '').trim();
+    if (!wid) return null;
+    const workers = Array.isArray(network?.workers) ? network.workers : [];
+    const w = workers.find(x => x && x.worker_id === wid);
+    if (!w) return null;
+    return {
+      worker_id: w.worker_id,
+      name: w.name || 'node',
+      geo: w.geo || null,
+      models: workerModelNames(w),
+      active_requests: w.active_requests || 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** 从 /public/network workers 聚合按模型统计（全球网络页用） */
 export function buildNetworkModelStats(network) {
   try {
