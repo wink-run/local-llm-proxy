@@ -3323,9 +3323,18 @@ function RuleConditionEditor({ when, onChange, categories = [] }) {
 // 路由链编辑器（默认链 + 每条规则各一个）。每步是一个 Selector：model + 可选 strategy/sharer。
 // 分享者(sharer)化名句柄来自 /public/network（服务端带盐哈希；不含用户名）。
 const STEP_STRATEGIES = ['auto', 'cost', 'speed', 'round-robin'];
-function ChainEditor({ steps, setSteps, availableModels, network }) {
+function ChainEditor({ steps, setSteps, availableModels, network, sources }) {
   const { t } = useLang();
   const list = steps || [];
+  // 该步选定模型下可用的具体源：源声明了该模型（或无 models 列表=接受任意）+ tier 匹配
+  const sourcesForStep = (step) => {
+    if (!step.model) return [];
+    return (sources || []).filter(p => {
+      if (step.tier && p.type !== step.tier) return false;
+      const ms = p.models || [];
+      return !Array.isArray(ms) || ms.length === 0 || ms.some(m => (typeof m === 'string' ? m : m?.name) === step.model);
+    });
+  };
   // 去重的分享者候选（sharer 句柄 → 打码名 + 星级）；服务端未升级时该字段缺失 → 列表为空
   const sharers = React.useMemo(() => {
     const map = new Map();
@@ -3343,12 +3352,13 @@ function ChainEditor({ steps, setSteps, availableModels, network }) {
            || availableModels.find(x => x.id === val);
     const modelId = m?.id ?? val;
     const tier = m?.tier ?? 'free';
-    patch(i, { label: modelId, model: modelId, tier });
+    patch(i, { label: modelId, model: modelId, tier, provider: '' });   // 换模型清掉旧的源钉选
   };
   return (
     <div className="space-y-1.5">
       {list.map((step, i) => {
-        const codec = encodeRoute({ strategy: step.strategy, tier: step.tier, sharer: step.sharer, model: step.model });
+        const codec = encodeRoute({ strategy: step.strategy, tier: step.tier, sharer: step.sharer, provider: step.provider, model: step.model });
+        const stepSources = sourcesForStep(step);
         return (
         <div key={i} className="group border border-zinc-200/70 dark:border-zinc-700/70 rounded-lg px-2 py-1.5">
           <div className="flex items-center gap-2">
@@ -3368,6 +3378,12 @@ function ChainEditor({ steps, setSteps, availableModels, network }) {
               <option value="">{t('gateway.route.strategyNone')}</option>
               {STEP_STRATEGIES.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
+            <select value={step.provider || ''} onChange={e => patch(i, { provider: e.target.value })}
+              disabled={!step.model || !stepSources.length} title={t('gateway.route.sourcePin')}
+              className="bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-1.5 py-1 text-[11px] text-zinc-700 dark:text-zinc-300 focus:outline-none disabled:opacity-40">
+              <option value="">{t('gateway.route.sourceNone')}</option>
+              {stepSources.map(p => <option key={p.id} value={p.id}>{p.label || p.name || p.id}</option>)}
+            </select>
             <select value={step.sharer || ''} onChange={e => patch(i, { sharer: e.target.value })}
               disabled={!sharers.length} title={t('gateway.route.sharerPin')}
               className="bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-1.5 py-1 text-[11px] text-zinc-700 dark:text-zinc-300 focus:outline-none disabled:opacity-40">
@@ -3384,7 +3400,7 @@ function ChainEditor({ steps, setSteps, availableModels, network }) {
   );
 }
 
-function SceneRouteEditor({ route, availableModels, network, onSave, onCancel }) {
+function SceneRouteEditor({ route, availableModels, network, sources, onSave, onCancel }) {
   const { t } = useLang();
   const [name, setName]   = useState(route.scene_name || '');
   const [icon, setIcon]   = useState(route.icon || 'icon:shuffle');
@@ -3402,8 +3418,9 @@ function SceneRouteEditor({ route, availableModels, network, onSave, onCancel })
   const categories = clsCats.split(/[、,，\s]+/).map(s => s.trim()).filter(Boolean);
 
   function save() {
-    const clean = (arr) => (arr || []).filter(s => s.model).map(s => ({
-      model: s.model, tier: s.tier,
+    // 保留有 model 或 strategy 或 sharer 的步（strategy-only 步无 model，不能被丢掉）
+    const clean = (arr) => (arr || []).filter(s => s.model || s.strategy || s.sharer).map(s => ({
+      ...(s.model ? { model: s.model, tier: s.tier } : {}),
       ...(s.strategy ? { strategy: s.strategy } : {}),
       ...(s.sharer   ? { sharer: s.sharer }     : {}),
       ...(s.provider ? { provider: s.provider } : {}),
@@ -3445,7 +3462,7 @@ function SceneRouteEditor({ route, availableModels, network, onSave, onCancel })
             </div>
             <div className="pl-3 border-l-2 border-zinc-200 dark:border-zinc-700">
               <div className="text-xs text-zinc-400 mb-1">{t('gateway.route.routeTo')}</div>
-              <ChainEditor steps={rule.steps} setSteps={s => setRuleAt(ri, { steps: s })} availableModels={availableModels} network={network} />
+              <ChainEditor steps={rule.steps} setSteps={s => setRuleAt(ri, { steps: s })} availableModels={availableModels} network={network} sources={sources} />
             </div>
           </div>
         ))}
@@ -3492,7 +3509,7 @@ function SceneRouteEditor({ route, availableModels, network, onSave, onCancel })
         {t('gateway.route.defaultChain')}{rules.length > 0 && <span className="text-zinc-400 dark:text-zinc-500">{t('gateway.route.defaultElse')}</span>}
         <span className="text-zinc-400 dark:text-zinc-500">{t('gateway.route.fallbackHint')}</span>
       </div>
-      <ChainEditor steps={steps} setSteps={setSteps} availableModels={availableModels} network={network} />
+      <ChainEditor steps={steps} setSteps={setSteps} availableModels={availableModels} network={network} sources={sources} />
       {steps.length === 0 && rules.length === 0 && <p className="text-xs text-zinc-500">{t('gateway.route.noSteps')}</p>}
 
       <div className="flex gap-2 pt-1">
@@ -4002,6 +4019,7 @@ export default function Gateway() {
     const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next;
   });
   const [availableModels, setAvailableModels] = useState([]);
+  const [sources, setSources] = useState([]);   // 已启用供给源（路由里"某模型下锁具体源"用）
   // 应用列表汇总（与表格「今日请求/Token」列求和一致）
   const [appTotals, setAppTotals] = useState(null);
 
@@ -4028,6 +4046,11 @@ export default function Gateway() {
     } catch (e) {
       console.error('loadAvailableModels', e);
     }
+    // 已启用供给源（供路由步"锁定某模型下的具体源"）
+    try {
+      const cfg = await getConfig().read();
+      setSources((cfg?.providers || []).filter(p => p.enabled && p.base_url));
+    } catch {}
   }, [user]);
 
   const refresh = useCallback(async () => {
@@ -4299,7 +4322,7 @@ export default function Gateway() {
         <div className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
           {/* 新建路由编辑器：放在列表最上面 */}
           {newRoute && (
-            <SceneRouteEditor key="new-route-editor" route={newRoute} availableModels={availableModels} network={network} onSave={saveRoute} onCancel={() => setNewRoute(null)} />
+            <SceneRouteEditor key="new-route-editor" route={newRoute} availableModels={availableModels} network={network} sources={sources} onSave={saveRoute} onCancel={() => setNewRoute(null)} />
           )}
           {routes.map(route => {
             const health = routeHealth[route.model_key] ?? { status: null, activeStep: null, degraded: false };
@@ -4307,7 +4330,8 @@ export default function Gateway() {
             // 本地供给源是否缺少该路由用到的模型（缺则名称前的点也标红）
             const availSet = new Set(availableModels.map(m => m.id));
             const _allSteps = [...(route.steps || []), ...(route.rules || []).flatMap(r => r.steps || [])];
-            const routeMissing = _allSteps.some(s => !availSet.has(s.model || s.label));
+            // strategy-only 步无 model，不参与"模型缺失"判定
+            const routeMissing = _allSteps.some(s => (s.model || s.label) && !availSet.has(s.model || s.label));
             const healthDot =
               routeMissing ? 'bg-red-500' :
               health.status === 'error' ? 'bg-red-500' :
@@ -4323,11 +4347,13 @@ export default function Gateway() {
                 : t('gateway.route.noRequests');
             // 折叠行：把一条链渲染成 pill 序列（带 → 连接、tier 配色、缺失/激活态）。
             const chainPills = (steps) => (steps || []).map((step, i) => {
+              // strategy-only 步（无 model）：显示「⚙ 策略」，不参与"模型缺失"判定
+              const isStrategyStep = !step.model && !!step.strategy;
               const stepTier = resolveStepTier(step.model || step.label, step, availableModels);
-              const stepName = step.model || step.label;
+              const stepName = step.model || step.label || (isStrategyStep ? step.strategy : '');
               const isActive = health.activeStep === stepName;
               const isFailed = health.triedSteps?.includes(stepName);
-              const missing = !availSet.has(stepName);
+              const missing = !isStrategyStep && !availSet.has(stepName);
               return (
                 <React.Fragment key={i}>
                   {i > 0 && <span className="text-zinc-300 dark:text-zinc-600 text-xs">→</span>}
@@ -4335,15 +4361,23 @@ export default function Gateway() {
                     className={`inline-flex items-center gap-1 text-xs font-mono px-2 py-0.5 rounded-md border transition-all ${
                       isActive
                         ? 'bg-green-100 dark:bg-green-900/40 border-green-400 dark:border-green-600 text-green-800 dark:text-green-200'
+                        : isStrategyStep
+                          ? 'bg-violet-50 dark:bg-violet-900/20 border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300'
                         : missing
                           ? 'bg-red-50 dark:bg-red-900/20 border-red-300 dark:border-red-700 text-red-600 dark:text-red-300'
                           : tierStyle(stepTier)
                     }`}>
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                      isActive ? 'bg-green-500' : (missing || isFailed) ? 'bg-red-500' : tierDot(stepTier)
-                    }`} />
-                    {step.label || step.model}
-                    <span className="opacity-40">({tierShortLabel(stepTier, t)})</span>
+                    {isStrategyStep ? (
+                      <>⚙ {step.strategy}{step.tier ? ` · ${step.tier}` : ''}{step.sharer ? ` · 👤` : ''}</>
+                    ) : (
+                      <>
+                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                          isActive ? 'bg-green-500' : (missing || isFailed) ? 'bg-red-500' : tierDot(stepTier)
+                        }`} />
+                        {step.label || step.model}
+                        <span className="opacity-40">({tierShortLabel(stepTier, t)})</span>
+                      </>
+                    )}
                   </span>
                 </React.Fragment>
               );
@@ -4432,7 +4466,7 @@ export default function Gateway() {
                 </div>
               </div>
               {expandedRoute === route.id && (
-                <SceneRouteEditor key={'editor-' + route.id} route={route} availableModels={availableModels} network={network} onSave={saveRoute} onCancel={() => setExpandedRoute(null)} />
+                <SceneRouteEditor key={'editor-' + route.id} route={route} availableModels={availableModels} network={network} sources={sources} onSave={saveRoute} onCancel={() => setExpandedRoute(null)} />
               )}
             </div>
             );

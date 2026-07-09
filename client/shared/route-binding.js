@@ -118,8 +118,12 @@ function bindRouteToKeyScene(keyScene, callerKey, routeId, routes = []) {
   const parsed = parseRouteBinding(routeId, routes);
   if (parsed.isScene && parsed.scene) {
     const route = parsed.scene;
+    // 策略路由统一表示为单步 steps:[{strategy}]；兼容旧的 route-level strategy（无 steps）。
+    const steps = route.steps?.length
+      ? route.steps
+      : (route.strategy ? [{ strategy: route.strategy }] : []);
     keyScene[callerKey] = {
-      steps: route.steps?.length ? route.steps : [],
+      steps,
       scene_name: route.scene_name,
       rules: route.rules || null,
       classifier: route.classifier || null,

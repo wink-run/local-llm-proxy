@@ -88,6 +88,9 @@ function orderModelCandidates(strategyName, cands, ctx = {}) {
   const n = (v, d) => (v == null || !Number.isFinite(Number(v)) ? d : Number(v));
   try {
     switch (strategyName) {
+      case 'auto':          // 综合最优：客户端按实测延迟排（star 的可得代理），
+                            // p2p 候选的真实 star 排序在服务端（reward_multiplier）完成
+        return stableSort(arr, (a, b) => n(a.speedMs, Infinity) - n(b.speedMs, Infinity));
       case 'cost':          // 源计费分类优先（订阅/免费在前），同类再按模型价便宜先
         return stableSort(arr, (a, b) => (_costRankCand(a) - _costRankCand(b)) || (n(a.price, Infinity) - n(b.price, Infinity)));
       case 'speed':         // 实测延迟低的先，无数据最后
@@ -101,6 +104,6 @@ function orderModelCandidates(strategyName, cands, ctx = {}) {
 }
 
 /** 已注册的全局供给源排序策略名（供 UI 下拉/校验）。scene_steps 不在此列（属模型链类）。 */
-const GLOBAL_STRATEGY_NAMES = ['cost', 'speed', 'fallback', 'round-robin', 'weighted'];
+const GLOBAL_STRATEGY_NAMES = ['auto', 'cost', 'speed', 'fallback', 'round-robin', 'weighted'];
 
 module.exports = { ROUTING_STRATEGIES, orderCandidates, orderModelCandidates, costRank, GLOBAL_STRATEGY_NAMES };
