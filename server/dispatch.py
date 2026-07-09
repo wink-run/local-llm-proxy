@@ -6,7 +6,7 @@ import os
 import time
 import uuid
 
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 
 import database as db
 from usage_utils import normalize_usage, usage_sse_chunk
@@ -109,6 +109,8 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
     )
 
     last_error: str = "No worker available"
+    tried_workers: list[str] = []       # 本次 failover 尝试过的 worker（社区源用于回传"哪个 worker"）
+    last_failed_worker: str | None = None
     for attempt_model in models_to_try:
         # 该模型下的候选账号（个人源优先 + 粘性 + 负载感知），逐个 failover
         cands = pool.candidates(attempt_model, model_type="chat",
@@ -153,6 +155,7 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                 "ttft_ms": None,
             }
             worker.active_requests += 1
+            tried_workers.append(worker.worker_id)
 
             dispatch_body = dict(body)
             dispatch_body["model"] = attempt_model
@@ -174,6 +177,7 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                 worker.pending.pop(req_id, None)
                 worker.active_requests = max(0, worker.active_requests - 1)
                 last_error = f"Failed to reach worker for '{attempt_model}'"
+                last_failed_worker = worker.worker_id
                 logger.warning(
                     "[p2p] send failed req=%s model=%s worker=%s err=%s",
                     req_id[:8], attempt_model, _p2p_worker_summary(worker), e,
@@ -202,7 +206,7 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                                     "[p2p] stream timeout req=%s model=%s worker=%s ttft=%s",
                                     rid[:8], m, _p2p_worker_summary(w), awaiting_first,
                                 )
-                                yield f"data: {json.dumps(openai_error_content(msg, 'timeout'))}\n\n"
+                                yield f"data: {json.dumps(openai_error_content(msg, 'timeout', worker_id=w.worker_id))}\n\n"
                                 return
                             if kind == "done":
                                 usage = normalize_usage(data if isinstance(data, dict) else {}, req_body)
@@ -227,7 +231,7 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                                 )
                                 if should_offline_contributor_model(err_str):
                                     await offline_contributor_model(w, m, err_str)
-                                yield f"data: {json.dumps(openai_error_content(msg, etype))}\n\n"
+                                yield f"data: {json.dumps(openai_error_content(msg, etype, worker_id=w.worker_id))}\n\n"
                                 return
                             if kind == "chunk":
                                 if awaiting_first:
@@ -245,12 +249,13 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                             "[p2p] stream timeout req=%s model=%s worker=%s",
                             rid[:8], m, _p2p_worker_summary(w),
                         )
-                        yield f"data: {json.dumps(openai_error_content('Gateway timeout', 'timeout'))}\n\n"
+                        yield f"data: {json.dumps(openai_error_content('Gateway timeout', 'timeout', worker_id=w.worker_id))}\n\n"
 
                 return StreamingResponse(
                     sse_gen(),
                     media_type="text/event-stream",
-                    headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+                    headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache",
+                             "X-TB-Worker": worker.worker_id},
                 )
 
             # 非流式：等待结果；账号出错/超时则换下一个账号
@@ -311,9 +316,11 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
             except asyncio.TimeoutError:
                 worker.pending.pop(req_id, None)
                 last_error = f"Timeout on '{attempt_model}'"
+                last_failed_worker = worker.worker_id
                 continue  # 换下一个账号
 
             if got_error:
+                last_failed_worker = worker.worker_id
                 if should_offline_contributor_model(last_error):
                     await offline_contributor_model(worker, attempt_model, last_error)
                 continue  # 换下一个账号
@@ -332,12 +339,14 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
                     )
                 if session_key:
                     pool.bind_sticky(session_key, worker.worker_id)
-                return result_data
+                # 成功：把服务的具体 worker 用响应头带回客户端（X-TB-Worker）
+                return JSONResponse(result_data, headers={"X-TB-Worker": worker.worker_id})
 
-            raise DispatchError(502, "Empty response from worker", "api_error")
+            raise DispatchError(502, "Empty response from worker", "api_error",
+                                worker_id=worker.worker_id, workers=tried_workers)
 
     logger.warning(
-        "[p2p] chat failed user=%s model=%s route=%s err=%s",
-        consumer_user_id, model, models_to_try, last_error,
+        "[p2p] chat failed user=%s model=%s route=%s err=%s workers=%s",
+        consumer_user_id, model, models_to_try, last_error, tried_workers,
     )
-    raise_dispatch_error(last_error)
+    raise_dispatch_error(last_error, worker_id=last_failed_worker, workers=tried_workers)

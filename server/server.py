@@ -121,9 +121,18 @@ def _openai_path(path: str) -> bool:
 
 @app.exception_handler(DispatchError)
 async def dispatch_error_handler(request: Request, exc: DispatchError):
+    worker_id = getattr(exc, "worker_id", None)
+    workers = getattr(exc, "workers", None)
     if _openai_path(request.url.path):
-        return openai_error_response(exc.status_code, exc.message, exc.error_type)
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
+        return openai_error_response(exc.status_code, exc.message, exc.error_type,
+                                     worker_id=worker_id, workers=workers)
+    content = {"detail": exc.message}
+    if worker_id:
+        content["worker_id"] = worker_id
+    if workers:
+        content["workers"] = workers
+    return JSONResponse(status_code=exc.status_code, content=content,
+                        headers={"X-TB-Worker": worker_id} if worker_id else None)
 
 
 @app.exception_handler(HTTPException)
@@ -795,11 +804,17 @@ async def messages(request: Request, key_info: dict = Depends(_auth_anthropic)):
                         yield f'event: message_delta\ndata: {{"type":"message_delta","delta":{{"stop_reason":"{stop_reason}","stop_sequence":null}},"usage":{{"output_tokens":{output_tokens}}}}}\n\n'
                         yield 'event: message_stop\ndata: {"type":"message_stop"}\n\n'
 
-        return StreamingResponse(
-            anthropic_sse(),
-            media_type="text/event-stream",
-            headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
-        )
+        _sh = {"X-Accel-Buffering": "no", "Cache-Control": "no-cache"}
+        _wid = resp.headers.get("X-TB-Worker") if hasattr(resp, "headers") else None
+        if _wid:
+            _sh["X-TB-Worker"] = _wid
+        return StreamingResponse(anthropic_sse(), media_type="text/event-stream", headers=_sh)
 
-    # Non-streaming: 扣费已在 dispatch.handle_chat 内完成（含个人源豁免），此处仅转换格式
-    return _openai_to_anthropic(resp, model)
+    # Non-streaming: 扣费已在 dispatch.handle_chat 内完成（含个人源豁免），此处仅转换格式。
+    # resp 现为 JSONResponse（带 X-TB-Worker 头）：取出 OpenAI dict 转 Anthropic，并透传 worker 头。
+    oai_result = json.loads(resp.body) if isinstance(resp, JSONResponse) else resp
+    worker_hdr = resp.headers.get("X-TB-Worker") if isinstance(resp, JSONResponse) else None
+    return JSONResponse(
+        _openai_to_anthropic(oai_result, model),
+        headers={"X-TB-Worker": worker_hdr} if worker_hdr else None,
+    )
