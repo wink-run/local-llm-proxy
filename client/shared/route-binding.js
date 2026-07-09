@@ -4,6 +4,50 @@
 
 const TIER_ROUTE_RE = /^(free|p2p|paid):(.+)$/;
 
+// ── 分层路由 codec：strategy:tier:sharer:provider:model（各层可省，靠取值域判定归属）──
+// 详见记忆 routing-codec-design。encode 恒按此固定顺序输出；parse「最后一段=model」+
+// 前缀按取值域分类（strategy 集 / tier 集 / sharer 的 s_ 前缀 / 其余=provider）。
+const STRATEGY_NAMES = ['auto', 'cost', 'speed', 'round-robin', 'weighted', 'fallback', 'direct'];
+const TIER_NAMES     = ['free', 'p2p', 'paid'];
+const SHARER_RE      = /^s_[a-z0-9]+$/i;   // 分享者化名句柄（服务端 user_id 带盐哈希）
+
+const _STRAT_SET = new Set(STRATEGY_NAMES);
+const _TIER_SET  = new Set(TIER_NAMES);
+
+/** 规范化编码：固定顺序 strategy:tier:sharer:provider:model，空层跳过。 */
+function encodeRoute(parts = {}) {
+  const { strategy, tier, sharer, provider, model } = parts;
+  return [strategy, tier, sharer, provider, model].filter(Boolean).join(':');
+}
+
+/**
+ * 解析规范串 → { strategy, tier, sharer, provider, model }（缺省为 null）。
+ * 规则：最后一段永远是 model（单段时若命中 strategy/tier/sharer 取值域则为纯前缀、无 model）；
+ * 前导段按取值域分类，剩下未识别的单段作 provider。model 名不得含 ':'（见设计文档限制）。
+ */
+function parseRoute(str) {
+  const out = { strategy: null, tier: null, sharer: null, provider: null, model: null };
+  const s = String(str == null ? '' : str).trim();
+  if (!s) return out;
+  const segs = s.split(':');
+  if (segs.length === 1) {
+    const seg = segs[0];
+    if (_STRAT_SET.has(seg))      out.strategy = seg;
+    else if (_TIER_SET.has(seg))  out.tier = seg;
+    else if (SHARER_RE.test(seg)) out.sharer = seg;
+    else                          out.model = seg;
+    return out;
+  }
+  out.model = segs[segs.length - 1];
+  for (const seg of segs.slice(0, -1)) {
+    if (_STRAT_SET.has(seg) && !out.strategy)      out.strategy = seg;
+    else if (_TIER_SET.has(seg) && !out.tier)      out.tier = seg;
+    else if (SHARER_RE.test(seg) && !out.sharer)   out.sharer = seg;
+    else if (!out.provider)                        out.provider = seg;
+  }
+  return out;
+}
+
 function encodeTierModelRoute(tier, modelId) {
   if (!modelId) return '';
   if (!tier) return modelId;
@@ -93,6 +137,11 @@ function bindRouteToKeyScene(keyScene, callerKey, routeId, routes = []) {
 
 module.exports = {
   TIER_ROUTE_RE,
+  STRATEGY_NAMES,
+  TIER_NAMES,
+  SHARER_RE,
+  encodeRoute,
+  parseRoute,
   encodeTierModelRoute,
   parseRouteBinding,
   modelIdFromRoute,

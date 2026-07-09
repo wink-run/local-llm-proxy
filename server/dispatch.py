@@ -54,7 +54,8 @@ def _session_key(body: dict, consumer_user_id: int | None) -> str | None:
     return f"u{consumer_user_id}:{digest}"
 
 
-async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: int | None = None):
+async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: int | None = None,
+                      strategy: str | None = None, sharer: str | None = None):
     model = body.get("model", "")
     streaming = body.get("stream", False)
 
@@ -115,7 +116,8 @@ async def handle_chat(body: dict, consumer_user_id: int | None = None, key_id: i
         # 该模型下的候选账号（个人源优先 + 粘性 + 负载感知），逐个 failover
         cands = pool.candidates(attempt_model, model_type="chat",
                                 session_key=session_key, owner_user_id=consumer_user_id,
-                                user_circle_ids=user_circles)
+                                user_circle_ids=user_circles,
+                                sharer=sharer, strategy=strategy)
         if not cands:
             last_error = f"No worker available for model '{attempt_model}'"
             logger.warning(
