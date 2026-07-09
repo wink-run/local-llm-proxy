@@ -407,6 +407,8 @@ export default {
   'gateway.route.selectModel': '-- Select model --',
   'gateway.route.strategyPin': 'Selection strategy (auto = by stars)',
   'gateway.route.strategyNone': 'Default',
+  'gateway.route.sourcePin': 'Pin a specific source (empty = all sources of this model)',
+  'gateway.route.sourceNone': 'All sources',
   'gateway.route.sharerPin': 'Pin to a specific sharer node',
   'gateway.route.sharerNone': 'Any node',
   'gateway.route.confirmDelete': 'Delete this scene route?',

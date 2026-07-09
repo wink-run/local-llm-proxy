@@ -407,6 +407,8 @@ export default {
   'gateway.route.selectModel': '-- 选择模型 --',
   'gateway.route.strategyPin': '选优策略（auto 按星级）',
   'gateway.route.strategyNone': '默认',
+  'gateway.route.sourcePin': '锁定某个源（不填=该模型所有源）',
+  'gateway.route.sourceNone': '所有源',
   'gateway.route.sharerPin': '钉到指定分享者节点',
   'gateway.route.sharerNone': '不限节点',
   'gateway.route.confirmDelete': '删除此场景路由？',

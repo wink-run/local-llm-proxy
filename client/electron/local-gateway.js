@@ -2402,6 +2402,42 @@ function stripModelDate(m) {
   return String(m || '').replace(/-\d{8}$/, '');
 }
 
+// 统一路由：解析一个 scene 是否为「策略路由」——route-level strategy（旧）或
+// 单步 strategy-only（无 model，新统一表示 steps:[{strategy}]）都算，并带出该步的 tier/provider/sharer 过滤。
+function stratStepOf(scene) {
+  if (!scene) return null;
+  if (scene.strategy) return { strategy: scene.strategy, tier: null, provider: null, sharer: null };
+  const steps = scene.steps || [];
+  if (steps.length === 1 && steps[0].strategy && !steps[0].model) {
+    const s = steps[0];
+    return { strategy: s.strategy, tier: s.tier || null, provider: s.provider || null, sharer: s.sharer || null };
+  }
+  return null;
+}
+
+// 策略路由候选：扫该模态下所有 (源,模型)，按 filters(tier/provider) 过滤，再按 strategy 排序。
+function buildStrategyCandidates(strategyName, filters, reqPath, skipP2P, rrKey) {
+  const modality = modalityOf(reqPath);
+  let speedMap = {}; try { speedMap = require('./provider-speed').getSpeedMap(); } catch {}
+  const normSp = (id) => { let s = String(id || '').trim().toLowerCase(); const i = s.lastIndexOf('/'); return i >= 0 ? s.slice(i + 1) : s; };
+  const cands = [];
+  for (const p of enabledProviders()) {
+    if (skipP2P && p.type === 'p2p') continue;
+    if (filters && filters.tier && p.type !== filters.tier) continue;
+    if (filters && filters.provider && p.id !== filters.provider) continue;
+    for (const m of (p.models || [])) {
+      const name = typeof m === 'string' ? m : (m && m.name);
+      const mtype = typeof m === 'string' ? 'chat' : (m.type || 'chat');
+      if (!name || mtype !== modality) continue;
+      const sp = speedMap[normSp(name)];
+      cands.push({ providerId: p.id, provider: p, providerTier: p.type, source: p.source, model: name,
+                   speedMs: sp ? (sp.ttft_ms ?? sp.lat_ms ?? null) : null });
+    }
+  }
+  if (!cands.length) return [];
+  return routingStrategies.orderModelCandidates(strategyName, cands, { rrKey });
+}
+
 async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   const t0          = Date.now();
   let lastErr       = null;
@@ -2504,34 +2540,23 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     has_intercept: !!interceptScene,
   });
 
-  // ── 策略路由（无 steps、有 strategy 字段）：模型无关，扫该模态下所有 (源,模型) 候选按策略排序 + failover ──
-  const _stratScene = boundScene?.strategy ? boundScene
-    : (interceptScene?.strategy ? interceptScene
-    : (isLlmRouter && _routerModelMap[origModel]?.strategy ? _routerModelMap[origModel] : null));
+  // ── 策略路由（route-level strategy 旧写法，或统一后的单步 strategy-only）：
+  //    模型无关，扫该模态下所有 (源,模型) 候选按策略排序 + failover。step 的 tier/provider/sharer 作过滤/钉选。──
+  let _stratScene = null, _stratStep = null;
+  for (const cand of [boundScene, interceptScene, (isLlmRouter ? _routerModelMap[origModel] : null)]) {
+    const st = stratStepOf(cand);
+    if (st) { _stratScene = cand; _stratStep = st; break; }
+  }
   if (_stratScene) {
-    const modality = modalityOf(reqPath);
-    let speedMap = {}; try { speedMap = require('./provider-speed').getSpeedMap(); } catch {}
-    const normSp = (id) => { let s = String(id || '').trim().toLowerCase(); const i = s.lastIndexOf('/'); return i >= 0 ? s.slice(i + 1) : s; };
-    const cands = [];
-    for (const p of enabledProviders()) {
-      if (skipP2P && p.type === 'p2p') continue;
-      for (const m of (p.models || [])) {
-        const name = typeof m === 'string' ? m : (m && m.name);
-        const mtype = typeof m === 'string' ? 'chat' : (m.type || 'chat');
-        if (!name || mtype !== modality) continue;
-        const sp = speedMap[normSp(name)];
-        cands.push({ providerId: p.id, provider: p, providerTier: p.type, source: p.source, model: name,
-                     speedMs: sp ? (sp.ttft_ms ?? sp.lat_ms ?? null) : null });
-      }
-    }
-    if (!cands.length) { lastErr = new Error(`no ${modality} model for strategy route`); fail(_stratScene.scene_name, null); return; }
-    const ordered = routingStrategies.orderModelCandidates(_stratScene.strategy, cands, { rrKey: _stratScene.id });
+    const ordered = buildStrategyCandidates(
+      _stratStep.strategy, { tier: _stratStep.tier, provider: _stratStep.provider }, reqPath, skipP2P, _stratScene.id);
+    if (!ordered.length) { lastErr = new Error(`no ${modalityOf(reqPath)} model for strategy route`); fail(_stratScene.scene_name, null); return; }
     const routeErrors = [];
     for (const c of ordered) {
       if (rejectP2pIfUnconfigured(c.provider, res, isResponses)) { lastErr = p2pAbortError('api_key'); recordError(c.model, callerKey, lastErr); return; }
       try {
-        // 策略路由：把场景策略（auto/cost…）传给 p2p 服务端，令其对该源 worker 也按策略排序
-        const stratMeta = { strategy: _stratScene.strategy || null, sharer: requestSharer };
+        // 策略路由：把场景策略（auto/cost…）+ 钉分享者传给 p2p 服务端，令其对该源 worker 也按策略排序/过滤
+        const stratMeta = { strategy: _stratStep.strategy || null, sharer: _stratStep.sharer || requestSharer };
         const result = await callProvider(c.provider, isAnthropic, streaming, reqPath, body, c.model, res,
           (stratMeta.strategy || stratMeta.sharer) ? stratMeta : null);
         if (result.latency) reqRouter.recordLatency(c.provider.id, result.latency);
@@ -2584,6 +2609,33 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       // 场景步骤就是真实模型；claudeFrom 标记原始 claude 名（路由明细展示透明转化）。
       const stepModel     = step.model;
       const stepClaudeFrom = claudeFrom;
+      // 无 model 的步 = strategy-only（统一表示；混合链里的一步）：展开成策略候选逐个 failover。
+      // 无 strategy 则跳过（避免把 model=undefined 发给上游）。单步 strategy-only 已在上面 _stratScene 处理。
+      if (!stepModel) {
+        if (!step.strategy) continue;
+        const sOrdered = buildStrategyCandidates(step.strategy, { tier: step.tier, provider: step.provider }, reqPath, skipP2P, `${scene.id}:${step.strategy}`);
+        const sMeta = { strategy: step.strategy, sharer: step.sharer || null };
+        for (const c of sOrdered) {
+          if (rejectP2pIfUnconfigured(c.provider, res, isResponses)) { lastErr = p2pAbortError('api_key'); recordError(c.model, callerKey, lastErr); return; }
+          try {
+            const result = await callProvider(c.provider, isAnthropic, streaming, reqPath, body, c.model, res, sMeta);
+            pushLog({ ts: t0, requested_model: origModel, model: c.model, scene_name: scene.scene_name, claude_from: stepClaudeFrom,
+              tried: failedModels.length ? [...failedModels] : undefined,
+              tier: c.provider.type, via: c.provider.id, via_label: c.provider.label,
+              latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok', worker: result.worker_id || undefined });
+            recordStats(c.provider.id, c.model, fillMissingInputTokens(result, body), _providerTier(c.provider), callerKey, streaming, c.provider.billing_type || null);
+            reportUsage(c.provider.id, c.model, (result.input_tokens || 0) + (result.output_tokens || 0));
+            if (result.latency) reqRouter.recordLatency(c.provider.id, result.latency);
+            return;
+          } catch (err) {
+            if (handleP2pFatal(c.provider, err, res, isResponses)) { lastErr = err; recordError(c.model, callerKey, lastErr); return; }
+            stepErrors.push({ id: c.provider.id, err }); lastErr = err;
+            if (res.headersSent) return;
+          }
+        }
+        failedModels.push(step.strategy);
+        continue;
+      }
       // Match providers by model list；step.tier 指定时只走对应供给层（同模型跨 P2P/付费）
       let stepCandidates = all.filter(p => providerHasModel(p, stepModel, { strict: skipP2P }));
       if (step.tier) stepCandidates = stepCandidates.filter(p => p.type === step.tier);
@@ -3301,6 +3353,7 @@ module.exports = {
   setClaudeModels,
   // 条件路由规则引擎（供单测/复用）
   pickSteps, evalWhen, modalityOf, estimateInputTokens, extractText, _providerTier,
+  stratStepOf, encodeRouteHeader,
   isP2pProvider, isP2pCreditsError, isP2pApiKeyError, hasP2pRelayKey, resolveFailStatus,
   // 格式转换（供单测/复用）：Anthropic ⇄ OpenAI（含 tool-calling）
   anthropicToOpenai, openaiToAnthropic, oaiRequestToAnthropic, anthropicRespToOai,
