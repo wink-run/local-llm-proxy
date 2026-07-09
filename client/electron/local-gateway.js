@@ -9,7 +9,25 @@ const path  = require('path');
 const codexTransform = require('./codex-transform');
 const reqRouter = require('./request-router');
 const routingStrategies = require('./routing-strategies');
-const { TIER_ROUTE_RE } = require('../shared/route-binding');
+const { TIER_ROUTE_RE, parseRoute } = require('../shared/route-binding');
+
+/** p2p 派发的路由指令 → X-TB-Route 头值（服务端按此做 auto 排序 / 钉分享者）。 */
+function encodeRouteHeader(meta) {
+  if (!meta) return '';
+  const parts = [];
+  if (meta.strategy) parts.push(`strategy=${meta.strategy}`);
+  if (meta.sharer)   parts.push(`sharer=${meta.sharer}`);
+  return parts.join(';');
+}
+
+/** 仅对 p2p provider 且带 _routeMeta 时注入 X-TB-Route 头（上游只收裸模型名）。 */
+function applyP2pRouteHeader(headers, provider) {
+  if (provider && provider.type === 'p2p' && provider._routeMeta) {
+    const v = encodeRouteHeader(provider._routeMeta);
+    if (v) headers['X-TB-Route'] = v;
+  }
+  return headers;
+}
 const oauth = require('./oauth');
 const { estimateCost } = require('./pricing');
 const { compressBody, compressionRatio } = require('./compressor');
@@ -844,6 +862,7 @@ function proxyRequest(provider, reqPath, body, res) {
         headers['Authorization'] = `Bearer ${provider.token}`;
       }
     }
+    applyP2pRouteHeader(headers, provider);
     const bodyStr = JSON.stringify(sendBody);
     headers['Content-Length'] = Buffer.byteLength(bodyStr);
 
@@ -984,6 +1003,7 @@ function proxyConvertSync(provider, oaiBody, model, res) {
     };
     if (provider._oauth) Object.assign(headers, provider._oauth.applyAuth({ headers, credentials: provider.credentials }).headers);
     else if (provider.token) headers['Authorization'] = `Bearer ${provider.token}`;
+    applyP2pRouteHeader(headers, provider);
 
     const t0       = Date.now();
     const proxyReq = mod.request({
@@ -1043,6 +1063,7 @@ function proxyConvertStream(provider, oaiBody, model, res) {
     };
     if (provider._oauth) Object.assign(headers, provider._oauth.applyAuth({ headers, credentials: provider.credentials }).headers);
     else if (provider.token) headers['Authorization'] = `Bearer ${provider.token}`;
+    applyP2pRouteHeader(headers, provider);
 
     const t0       = Date.now();
     let ttftGuard  = null;
@@ -1753,6 +1774,7 @@ function proxyP2PSync(provider, oaiBody, model, res) {
     };
     if (provider._oauth) Object.assign(headers, provider._oauth.applyAuth({ headers, credentials: provider.credentials }).headers);
     else if (provider.token) headers['Authorization'] = `Bearer ${provider.token}`;
+    applyP2pRouteHeader(headers, provider);
 
     const t0 = Date.now();
     let ttftGuard = null;
@@ -1923,6 +1945,7 @@ function proxyResponsesViaChat(provider, responsesBody, model, res) {
     };
     if (provider._oauth) Object.assign(headers, provider._oauth.applyAuth({ headers, credentials: provider.credentials }).headers);
     else if (provider.token) headers['Authorization'] = `Bearer ${provider.token}`;
+    applyP2pRouteHeader(headers, provider);
 
     const t0 = Date.now();
     let firstTokenMs = null;
@@ -2133,9 +2156,12 @@ function stripUnsupportedAnthropicFields(body, provider) {
 
 // Call one provider with format conversion; throws on HTTP error.
 // provider is already resolved (base_url/token correct, models populated).
-async function callProvider(provider, isAnthropic, streaming, reqPath, body, attemptModel, res) {
+async function callProvider(provider, isAnthropic, streaming, reqPath, body, attemptModel, res, routeMeta = null) {
   // OAuth 供给源：确保 access_token 有效（必要时刷新并回写 config），附加 _oauth 模块
   provider = await oauth.prepare(provider, _getConfig, _saveConfig);
+  // p2p 派发：把本次路由指令（auto 排序 / 钉分享者）挂到 provider 副本，供各 p2p 代理注入 X-TB-Route。
+  // 每次调用生成独立副本，避免并发请求间串写（provider 对象在 enabledProviders 间可能共享引用）。
+  if (routeMeta && provider.type === 'p2p') provider = { ...provider, _routeMeta: routeMeta };
 
   debugLog(`callProvider 选中 provider`, {
     provider_id: provider.id,
@@ -2399,13 +2425,24 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   const isApiKeyCaller = !!(callerKey && _appKeys.has(callerKey));
   const shimClaudeScene = (!isApiKeyCaller && isClaudeClientName) ? _claudeShimScene : null;
   const claudeFrom = claudeKey || (shimClaudeScene ? origModel : null);
-  // 直连请求体可带 tier 前缀（p2p:deepseek-v4-flash），与 route_id 语法一致；上游只认裸模型名
-  let requestTier = null;
-  const tierMatch = TIER_ROUTE_RE.exec(model);
-  if (tierMatch) {
-    requestTier = tierMatch[1];
-    model = tierMatch[2];
+  // 请求模型名可带分层 codec 前缀（strategy:tier:sharer:provider:model）；上游只认裸模型名。
+  // tier/provider 客户端过滤候选；strategy/sharer 通过 X-TB-Route 头交服务端（p2p 派发）执行。
+  let requestTier = null, requestStrategy = null, requestSharer = null, requestProvider = null;
+  {
+    const pr = parseRoute(model);
+    if (pr.model) {   // 仅当解析出裸模型时才认这些前缀（纯 tier/strategy 全局形态另走场景/策略路由）
+      if (pr.tier || pr.strategy || pr.sharer || pr.provider) {
+        requestTier     = pr.tier;
+        requestStrategy = pr.strategy;
+        requestSharer   = pr.sharer;
+        requestProvider = pr.provider;
+        model = pr.model;
+      }
+    }
   }
+  // 交给 p2p provider 的路由指令（只在有 strategy/sharer 时挂头）
+  const routeMeta = (requestStrategy || requestSharer)
+    ? { strategy: requestStrategy, sharer: requestSharer } : null;
 
   function fail(scene_name, failedModels) {
     debugLog(`<<< 路由失败 fail()`, {
@@ -2493,7 +2530,10 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     for (const c of ordered) {
       if (rejectP2pIfUnconfigured(c.provider, res, isResponses)) { lastErr = p2pAbortError('api_key'); recordError(c.model, callerKey, lastErr); return; }
       try {
-        const result = await callProvider(c.provider, isAnthropic, streaming, reqPath, body, c.model, res);
+        // 策略路由：把场景策略（auto/cost…）传给 p2p 服务端，令其对该源 worker 也按策略排序
+        const stratMeta = { strategy: _stratScene.strategy || null, sharer: requestSharer };
+        const result = await callProvider(c.provider, isAnthropic, streaming, reqPath, body, c.model, res,
+          (stratMeta.strategy || stratMeta.sharer) ? stratMeta : null);
         if (result.latency) reqRouter.recordLatency(c.provider.id, result.latency);
         try { require('./provider-speed').record(c.model, { firstTokenMs: result.first_token_ms, outputTokens: result.output_tokens, totalMs: result.latency, streaming }); } catch {}
         pushLog({ ts: t0, requested_model: origModel, model: c.model, scene_name: _stratScene.scene_name, claude_from: claudeFrom,
@@ -2547,6 +2587,10 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       // Match providers by model list；step.tier 指定时只走对应供给层（同模型跨 P2P/付费）
       let stepCandidates = all.filter(p => providerHasModel(p, stepModel, { strict: skipP2P }));
       if (step.tier) stepCandidates = stepCandidates.filter(p => p.type === step.tier);
+      if (step.provider) stepCandidates = stepCandidates.filter(p => p.id === step.provider);
+      // 该步的 p2p 路由指令：step 自带 strategy/sharer（Selector）优先，否则用请求级 routeMeta
+      const stepMeta = (step.strategy || step.sharer)
+        ? { strategy: step.strategy || null, sharer: step.sharer || null } : routeMeta;
       const stepProviders = [
         ...stepCandidates.filter(p => Array.isArray(p.models) && p.models.length > 0),
         ...stepCandidates.filter(p => !Array.isArray(p.models) || p.models.length === 0),
@@ -2566,7 +2610,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           return;
         }
         try {
-          const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, stepModel, res);
+          const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, stepModel, res, stepMeta);
           pushLog({
             ts: t0, requested_model: origModel, model: stepModel,
             scene_name: scene.scene_name, claude_from: stepClaudeFrom,
@@ -2660,6 +2704,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
 
   // 请求体指定 tier 时只走对应供给层（同模型跨 P2P/付费/免费）
   if (requestTier) sorted = sorted.filter(p => p.type === requestTier);
+  // codec 指定 provider 时锁定该供给源
+  if (requestProvider) sorted = sorted.filter(p => p.id === requestProvider);
   // P2P hop：再次确保不会选到未声明该模型的供给源（防止策略组/inPolicy 漏网）
   if (skipP2P) sorted = sorted.filter(p => providerHasModel(p, model, modelMatch));
 
@@ -2690,7 +2736,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       return;
     }
     try {
-      const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, model, res);
+      const result = await callProvider(provider, isAnthropic, streaming, reqPath, body, model, res, routeMeta);
       // 记录延迟（供 latency 策略下次参考）
       if (result.latency) reqRouter.recordLatency(provider.id, result.latency);
       try { require('./provider-speed').record(model, { firstTokenMs: result.first_token_ms, outputTokens: result.output_tokens, totalMs: result.latency, streaming }); } catch {}

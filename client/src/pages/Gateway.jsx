@@ -14,6 +14,7 @@ import {
   encodeTierModelRoute,
   parseRouteBinding,
   routeSelectValue,
+  encodeRoute,
 } from '../lib/route-binding';
 import { useCurrency } from '../store/currency';
 import { runStreamChatTest } from '../lib/streamTestLatency';
@@ -3319,42 +3320,71 @@ function RuleConditionEditor({ when, onChange, categories = [] }) {
   );
 }
 
-// 路由链编辑器（默认链 + 每条规则各一个）
-function ChainEditor({ steps, setSteps, availableModels }) {
+// 路由链编辑器（默认链 + 每条规则各一个）。每步是一个 Selector：model + 可选 strategy/sharer。
+// 分享者(sharer)化名句柄来自 /public/network（服务端带盐哈希；不含用户名）。
+const STEP_STRATEGIES = ['auto', 'cost', 'speed', 'round-robin'];
+function ChainEditor({ steps, setSteps, availableModels, network }) {
   const { t } = useLang();
-  const free = availableModels.filter(m => m.tier === 'free');
-  const p2p  = availableModels.filter(m => m.tier === 'p2p');
-  const paid = availableModels.filter(m => m.tier === 'paid');
   const list = steps || [];
-  const add    = () => setSteps([...list, { label: '', model: '', tier: 'free' }]);
+  // 去重的分享者候选（sharer 句柄 → 打码名 + 星级）；服务端未升级时该字段缺失 → 列表为空
+  const sharers = React.useMemo(() => {
+    const map = new Map();
+    for (const w of (network?.workers || [])) {
+      if (!w || !w.sharer || map.has(w.sharer)) continue;
+      map.set(w.sharer, { sharer: w.sharer, name: w.name || 'node', stars: w.stars || 0 });
+    }
+    return [...map.values()];
+  }, [network]);
+  const add    = () => setSteps([...list, { label: '', model: '', tier: 'free', strategy: '', sharer: '' }]);
   const remove = (i) => setSteps(list.filter((_, idx) => idx !== i));
-  const update = (i, val) => {
+  const patch  = (i, p) => setSteps(list.map((s, idx) => idx === i ? { ...s, ...p } : s));
+  const updateModel = (i, val) => {
     const m = availableModels.find(x => modelTierKey(x) === val)
            || availableModels.find(x => x.id === val);
     const modelId = m?.id ?? val;
     const tier = m?.tier ?? 'free';
-    setSteps(list.map((s, idx) => idx === i ? { label: modelId, model: modelId, tier } : s));
+    patch(i, { label: modelId, model: modelId, tier });
   };
   return (
     <div className="space-y-1.5">
-      {list.map((step, i) => (
-        <div key={i} className="flex items-center gap-2 group">
-          <span className="text-xs text-zinc-400 w-4 text-right shrink-0">{i + 1}</span>
-          <select value={step.model && step.tier ? modelTierKey({ id: step.model, tier: step.tier }) : (step.model || '')} onChange={e => update(i, e.target.value)}
-            className="flex-1 bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded-lg px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-blue-500">
-            <option value="">{t('gateway.route.selectModel')}</option>
-            {tierOptgroups(availableModels, t)}
-          </select>
-          <button onClick={() => remove(i)}
-            className="text-xs text-zinc-400 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity px-1">✕</button>
+      {list.map((step, i) => {
+        const codec = encodeRoute({ strategy: step.strategy, tier: step.tier, sharer: step.sharer, model: step.model });
+        return (
+        <div key={i} className="group border border-zinc-200/70 dark:border-zinc-700/70 rounded-lg px-2 py-1.5">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-zinc-400 w-4 text-right shrink-0">{i + 1}</span>
+            <select value={step.model && step.tier ? modelTierKey({ id: step.model, tier: step.tier }) : (step.model || '')} onChange={e => updateModel(i, e.target.value)}
+              className="flex-1 min-w-0 bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded-lg px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-blue-500">
+              <option value="">{t('gateway.route.selectModel')}</option>
+              {tierOptgroups(availableModels, t)}
+            </select>
+            <button onClick={() => remove(i)}
+              className="text-xs text-zinc-400 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity px-1">✕</button>
+          </div>
+          <div className="flex items-center gap-2 mt-1 pl-6">
+            <select value={step.strategy || ''} onChange={e => patch(i, { strategy: e.target.value })}
+              title={t('gateway.route.strategyPin')}
+              className="bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-1.5 py-1 text-[11px] text-zinc-700 dark:text-zinc-300 focus:outline-none">
+              <option value="">{t('gateway.route.strategyNone')}</option>
+              {STEP_STRATEGIES.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <select value={step.sharer || ''} onChange={e => patch(i, { sharer: e.target.value })}
+              disabled={!sharers.length} title={t('gateway.route.sharerPin')}
+              className="bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-1.5 py-1 text-[11px] text-zinc-700 dark:text-zinc-300 focus:outline-none disabled:opacity-40">
+              <option value="">{t('gateway.route.sharerNone')}</option>
+              {sharers.map(s => <option key={s.sharer} value={s.sharer}>{'★'.repeat(s.stars)} {s.name}</option>)}
+            </select>
+            {codec && <span className="ml-auto font-mono text-[10px] text-zinc-400 truncate">{codec}</span>}
+          </div>
         </div>
-      ))}
+        );
+      })}
       <button onClick={add} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">{t('gateway.route.addStep')}</button>
     </div>
   );
 }
 
-function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
+function SceneRouteEditor({ route, availableModels, network, onSave, onCancel }) {
   const { t } = useLang();
   const [name, setName]   = useState(route.scene_name || '');
   const [icon, setIcon]   = useState(route.icon || 'icon:shuffle');
@@ -3372,7 +3402,12 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
   const categories = clsCats.split(/[、,，\s]+/).map(s => s.trim()).filter(Boolean);
 
   function save() {
-    const clean = (arr) => (arr || []).filter(s => s.model).map(s => ({ model: s.model, tier: s.tier }));
+    const clean = (arr) => (arr || []).filter(s => s.model).map(s => ({
+      model: s.model, tier: s.tier,
+      ...(s.strategy ? { strategy: s.strategy } : {}),
+      ...(s.sharer   ? { sharer: s.sharer }     : {}),
+      ...(s.provider ? { provider: s.provider } : {}),
+    }));
     const cleanRules = (rules || [])
       .map(r => ({ when: r.when, steps: clean(r.steps) }))
       .filter(r => r.when && r.when.type && r.steps.length);
@@ -3410,7 +3445,7 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
             </div>
             <div className="pl-3 border-l-2 border-zinc-200 dark:border-zinc-700">
               <div className="text-xs text-zinc-400 mb-1">{t('gateway.route.routeTo')}</div>
-              <ChainEditor steps={rule.steps} setSteps={s => setRuleAt(ri, { steps: s })} availableModels={availableModels} />
+              <ChainEditor steps={rule.steps} setSteps={s => setRuleAt(ri, { steps: s })} availableModels={availableModels} network={network} />
             </div>
           </div>
         ))}
@@ -3457,7 +3492,7 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
         {t('gateway.route.defaultChain')}{rules.length > 0 && <span className="text-zinc-400 dark:text-zinc-500">{t('gateway.route.defaultElse')}</span>}
         <span className="text-zinc-400 dark:text-zinc-500">{t('gateway.route.fallbackHint')}</span>
       </div>
-      <ChainEditor steps={steps} setSteps={setSteps} availableModels={availableModels} />
+      <ChainEditor steps={steps} setSteps={setSteps} availableModels={availableModels} network={network} />
       {steps.length === 0 && rules.length === 0 && <p className="text-xs text-zinc-500">{t('gateway.route.noSteps')}</p>}
 
       <div className="flex gap-2 pt-1">
@@ -4264,7 +4299,7 @@ export default function Gateway() {
         <div className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
           {/* 新建路由编辑器：放在列表最上面 */}
           {newRoute && (
-            <SceneRouteEditor key="new-route-editor" route={newRoute} availableModels={availableModels} onSave={saveRoute} onCancel={() => setNewRoute(null)} />
+            <SceneRouteEditor key="new-route-editor" route={newRoute} availableModels={availableModels} network={network} onSave={saveRoute} onCancel={() => setNewRoute(null)} />
           )}
           {routes.map(route => {
             const health = routeHealth[route.model_key] ?? { status: null, activeStep: null, degraded: false };
@@ -4397,7 +4432,7 @@ export default function Gateway() {
                 </div>
               </div>
               {expandedRoute === route.id && (
-                <SceneRouteEditor key={'editor-' + route.id} route={route} availableModels={availableModels} onSave={saveRoute} onCancel={() => setExpandedRoute(null)} />
+                <SceneRouteEditor key={'editor-' + route.id} route={route} availableModels={availableModels} network={network} onSave={saveRoute} onCancel={() => setExpandedRoute(null)} />
               )}
             </div>
             );

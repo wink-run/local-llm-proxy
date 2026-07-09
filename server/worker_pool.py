@@ -1,6 +1,8 @@
 import asyncio
+import hashlib
 import json
 import logging
+import os
 import random
 import time
 from dataclasses import dataclass, field
@@ -10,6 +12,27 @@ if TYPE_CHECKING:
     from virtual_worker import VirtualWorkerConnection
 
 logger = logging.getLogger("server")
+
+# 分享者化名句柄：对 user_id 带盐哈希 → s_<8hex>。不暴露用户名/真 user_id，跨重连恒定，
+# 服务端可对候选逐个算 hash 反查匹配（无需存反查表）。SALT 从环境注入（真盐不进代码库）。
+_SHARER_SALT = os.getenv("TB_SHARER_SALT", "tokenbank-sharer-v1")
+
+
+def sharer_handle(user_id) -> Optional[str]:
+    if user_id is None:
+        return None
+    h = hashlib.sha1(f"{_SHARER_SALT}:{user_id}".encode()).hexdigest()[:8]
+    return f"s_{h}"
+
+
+def worker_owner_id(w):
+    """统一取分享者身份：虚拟源用 owner_user_id，真实节点用 user_id。"""
+    oid = getattr(w, "owner_user_id", None)
+    return oid if oid is not None else getattr(w, "user_id", None)
+
+
+def worker_sharer(w) -> Optional[str]:
+    return sharer_handle(worker_owner_id(w))
 
 
 @dataclass
@@ -76,6 +99,32 @@ class WorkerConnection:
 
     def period_online_mins(self) -> float:
         return (time.time() - self.period_start) / 60
+
+    def reward_multiplier(self) -> float:
+        """贡献/质量综合系数 0.5–1.5（在线时长 0.4 + 延迟 0.4 + 稳定性 0.2）。
+        与 server._worker_row 展示的 star 同源——auto 策略按此降序选优。"""
+        stats = self.period_stats
+        total_req = sum(s["requests"] for s in stats.values())
+        if total_req <= 0:
+            return 1.0
+        total_success = sum(s["success"] for s in stats.values())
+        total_ttft = sum(s.get("ttft_sum", 0) for s in stats.values())
+        total_ttft_count = sum(s.get("ttft_count", 0) for s in stats.values())
+        success_rate = total_success / total_req
+        online_mins = self.period_online_mins()
+        if total_ttft_count > 0:
+            avg_ttft_ms = total_ttft / total_ttft_count
+        else:
+            lat = []
+            for m in worker_model_names(self):
+                s = stats.get(m, {})
+                lat.append(int(s["last_ttft_ms"]) if s.get("last_ttft_ms") is not None
+                           else default_ttft_ms(self.worker_id, m))
+            avg_ttft_ms = sum(lat) / len(lat) if lat else 0
+        online_f = min(0.5 + 0.8 * min(online_mins / 5, 1.0), 1.3)
+        latency_f = max(0.6, min(1.5, 500 / avg_ttft_ms)) if avg_ttft_ms > 0 else 1.0
+        stability_f = 0.5 + 0.7 * success_rate
+        return round(max(0.5, min(1.5, 0.4 * online_f + 0.4 * latency_f + 0.2 * stability_f)), 3)
 
     def to_dict(self) -> dict:
         return {
@@ -248,7 +297,9 @@ class WorkerPool:
     def candidates(self, model: str, model_type: Optional[str] = None,
                    session_key: Optional[str] = None,
                    owner_user_id: Optional[int] = None,
-                   user_circle_ids: Optional[set] = None) -> list:
+                   user_circle_ids: Optional[set] = None,
+                   sharer: Optional[str] = None,
+                   strategy: Optional[str] = None) -> list:
         """返回可服务该模型的 worker 有序列表。
 
         可见性：
@@ -257,6 +308,10 @@ class WorkerPool:
                        owner is None & circle_id in user_circle_ids → 圈内可见。
         排序：本人私有源 → 公共/圈子真实 worker + 圈子虚拟 worker → 全局公开虚拟源。
         圈子 worker 与公共 P2P 等权竞争（不做额外排序分层）。
+
+        分层路由（详见 routing-codec-design）：
+          sharer 非空 → 只保留该化名句柄对应分享者的 worker（钉分享者，跨重连持久）。
+          strategy=='auto' → 共享候选按 reward_multiplier（star）降序；否则维持负载感知默认序。
         """
         circles = user_circle_ids or set()
 
@@ -285,14 +340,22 @@ class WorkerPool:
              and getattr(v, "owner_user_id", None) == owner_user_id),
             key=lambda v: v.active_requests,
         )
-        shared = sorted(
+        shared_list = (
             [w for w in self._workers if _matches(w) and _real_visible(w)]
             + [v for v in self._virtual
                if _matches(v) and getattr(v, "owner_user_id", None) != owner_user_id
-               and _virtual_visible(v)],
-            key=lambda w: w.active_requests,
+               and _virtual_visible(v)]
         )
+        if strategy == "auto":
+            # auto = 按 star（reward_multiplier）降序；同分再按负载升序（稳定次序）
+            shared = sorted(shared_list, key=lambda w: (-w.reward_multiplier(), w.active_requests))
+        else:
+            shared = sorted(shared_list, key=lambda w: w.active_requests)
         ordered = owned + shared
+
+        # 钉分享者：只保留化名句柄匹配的 worker（离线则候选为空 → 上层报 no worker）
+        if sharer:
+            ordered = [w for w in ordered if worker_sharer(w) == sharer]
 
         if session_key:
             bound = self._sticky_lookup(session_key)
