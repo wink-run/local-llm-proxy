@@ -18,6 +18,9 @@ class SceneRouteBody(BaseModel):
     icon: str = "🔀"
     steps: list
     caveman_level: Optional[str] = None
+    rules: Optional[list] = None          # 条件规则(token/关键字)——存全，不丢
+    classifier: Optional[dict] = None     # 语义分类器配置
+    flow: Optional[str] = None            # 链级流转策略
 
     @field_validator('caveman_level')
     @classmethod
@@ -32,28 +35,36 @@ class BindKeyBody(BaseModel):
     app_name: str = ""
 
 
+def _parse_route_json(r: dict) -> dict:
+    """DB 行里 steps/rules/classifier 是 JSON 文本 → 解析回对象。"""
+    for k in ("steps", "rules", "classifier"):
+        if isinstance(r.get(k), str):
+            try:
+                r[k] = json.loads(r[k])
+            except (ValueError, TypeError):
+                pass
+    return r
+
+
 @router.get("/scene-routes")
 async def list_routes(uid: int = Depends(get_current_user_id)):
-    routes = await db.list_scene_routes(uid)
-    for r in routes:
-        if isinstance(r.get("steps"), str):
-            r["steps"] = json.loads(r["steps"])
+    routes = [_parse_route_json(r) for r in await db.list_scene_routes(uid)]
     return {"routes": routes}
 
 
 @router.post("/scene-routes")
 async def create_route(body: SceneRouteBody, uid: int = Depends(get_current_user_id)):
     route = await db.create_scene_route(uid, body.scene_name, body.icon, body.steps,
-                                        caveman_level=body.caveman_level)
-    if isinstance(route.get("steps"), str):
-        route["steps"] = json.loads(route["steps"])
-    return route
+                                        caveman_level=body.caveman_level,
+                                        rules=body.rules, classifier=body.classifier, flow=body.flow)
+    return _parse_route_json(route)
 
 
 @router.put("/scene-routes/{route_id}")
 async def update_route(route_id: int, body: SceneRouteBody, uid: int = Depends(get_current_user_id)):
     ok = await db.update_scene_route(route_id, uid, body.scene_name, body.icon, body.steps,
-                                     caveman_level=body.caveman_level)
+                                     caveman_level=body.caveman_level,
+                                     rules=body.rules, classifier=body.classifier, flow=body.flow)
     if not ok:
         raise HTTPException(404, "Route not found")
     return {"ok": True}
