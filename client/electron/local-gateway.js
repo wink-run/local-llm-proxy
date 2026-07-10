@@ -2420,7 +2420,7 @@ function stratStepOf(scene) {
   return null;
 }
 
-// 策略路由候选：扫该模态下所有 (源,模型)，按 filters(tier/provider) 过滤，再按 strategy 排序。
+// 策略路由候选：扫该模态下所有 (源,模型)，按 filters(tier/provider/model) 过滤，再按 strategy 排序。
 function buildStrategyCandidates(strategyName, filters, reqPath, skipP2P, rrKey) {
   const modality = modalityOf(reqPath);
   let speedMap = {}; try { speedMap = require('./provider-speed').getSpeedMap(); } catch {}
@@ -2434,6 +2434,7 @@ function buildStrategyCandidates(strategyName, filters, reqPath, skipP2P, rrKey)
       const name = typeof m === 'string' ? m : (m && m.name);
       const mtype = typeof m === 'string' ? 'chat' : (m.type || 'chat');
       if (!name || mtype !== modality) continue;
+      if (filters && filters.model && name !== filters.model) continue;
       const sp = speedMap[normSp(name)];
       cands.push({ providerId: p.id, provider: p, providerTier: p.type, source: p.source, model: name,
                    speedMs: sp ? (sp.ttft_ms ?? sp.lat_ms ?? null) : null });
@@ -2441,6 +2442,27 @@ function buildStrategyCandidates(strategyName, filters, reqPath, skipP2P, rrKey)
   }
   if (!cands.length) return [];
   return routingStrategies.orderModelCandidates(strategyName, cands, { rrKey });
+}
+
+// 链级流转策略：决定多个匹配条件(步)之间先走哪一步。
+// fallback（默认）= 按列出顺序；cost/speed/auto = 用「每步在该策略下的最佳候选」作代表，
+// 把代表们按该策略排序，得出步序。步内候选仍由各步自身 strategy 决定（两级组合）。
+function orderStepsByFlow(steps, flow, reqPath, skipP2P) {
+  const list = steps || [];
+  if (!flow || flow === 'fallback' || list.length <= 1) return list;
+  const reps = [];
+  list.forEach((step, i) => {
+    const cands = buildStrategyCandidates(flow, { tier: step.tier, provider: step.provider, model: step.model },
+      reqPath, skipP2P, `flow:${i}`);
+    if (cands[0]) reps.push({ ...cands[0], _stepIdx: i });
+  });
+  if (reps.length <= 1) return list;
+  const ordered = routingStrategies.orderModelCandidates(flow, reps, { rrKey: 'flowsteps' });
+  const seen = new Set();
+  const out = [];
+  for (const c of ordered) { if (!seen.has(c._stepIdx)) { seen.add(c._stepIdx); out.push(list[c._stepIdx]); } }
+  list.forEach((s, i) => { if (!seen.has(i)) out.push(s); });   // 无候选的步保底追加（保持相对序）
+  return out;
 }
 
 async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
@@ -2599,7 +2621,9 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       input_tokens: estimateInputTokens(body), text: extractText(body),
       keyword_text: extractLastUserText(body), caller: callerKey,
     };
-    const steps = await resolveSteps(scene, ruleCtx);
+    let steps = await resolveSteps(scene, ruleCtx);
+    // 链级流转策略：按 scene.flow 重排步序（步之间怎么走），fallback 保持原序
+    steps = orderStepsByFlow(steps, scene.flow, reqPath, skipP2P);
     if (!steps.length) {   // 规则全不命中且无默认链
       lastErr = new Error(`no rule matched for ${ruleCtx.modality} request and route has no default chain`);
       fail(scene.scene_name, null);
@@ -3359,7 +3383,7 @@ module.exports = {
   setClaudeModels,
   // 条件路由规则引擎（供单测/复用）
   pickSteps, evalWhen, modalityOf, estimateInputTokens, extractText, _providerTier,
-  stratStepOf, encodeRouteHeader,
+  stratStepOf, encodeRouteHeader, orderStepsByFlow,
   isP2pProvider, isP2pCreditsError, isP2pApiKeyError, hasP2pRelayKey, resolveFailStatus,
   // 格式转换（供单测/复用）：Anthropic ⇄ OpenAI（含 tool-calling）
   anthropicToOpenai, openaiToAnthropic, oaiRequestToAnthropic, anthropicRespToOai,

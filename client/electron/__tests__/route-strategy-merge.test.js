@@ -2,7 +2,16 @@
 // 统一路由：策略路由检测 stratStepOf（route-level strategy 兼容 + 单步 strategy-only）。
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { stratStepOf, encodeRouteHeader } = require('../local-gateway');
+const { stratStepOf, encodeRouteHeader, orderStepsByFlow } = require('../local-gateway');
+
+test('orderStepsByFlow: fallback / 空 / 单步 → 原序不变', () => {
+  const steps = [{ model: 'a' }, { model: 'b' }];
+  assert.strictEqual(orderStepsByFlow(steps, 'fallback'), steps);
+  assert.strictEqual(orderStepsByFlow(steps, ''), steps);
+  assert.strictEqual(orderStepsByFlow(steps, undefined), steps);
+  const one = [{ model: 'a' }];
+  assert.strictEqual(orderStepsByFlow(one, 'cost'), one);
+});
 
 test('stratStepOf: route-level strategy（旧写法，兼容）', () => {
   assert.deepStrictEqual(stratStepOf({ strategy: 'cost' }),
