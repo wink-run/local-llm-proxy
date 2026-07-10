@@ -29,5 +29,29 @@ scene_routes:
     model_key: llm-router-round-robin
     flow: round-robin
 
+  # ── 纯来源/价格路由：只按 来源(scope=personal/community) 或 价格(tier=free/paid) 过滤，
+  #    层内按 auto 综合最优排序。scope 与 tier 正交，用户可在界面自由组合（如 个人+免费）。
+  - id: strategy-free
+    scene_name: 仅免费
+    icon: 🆓
+    model_key: llm-router-free
+    steps:
+      - tier: free
+        strategy: auto
+  - id: strategy-community
+    scene_name: 仅社区
+    icon: 🌐
+    model_key: llm-router-community
+    steps:
+      - scope: community
+        strategy: auto
+  - id: strategy-personal
+    scene_name: 仅个人
+    icon: 👤
+    model_key: llm-router-personal
+    steps:
+      - scope: personal
+        strategy: auto
+
   # 模型链路由（代码助手/日常对话/长上下文/快速响应等）不再作为默认铺设——
   # 它们钉死具体模型名、与用户实际拥有的源未必匹配；需要时由用户在界面自建。

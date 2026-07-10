@@ -15,40 +15,40 @@ test('orderStepsByFlow: fallback / 空 / 单步 → 原序不变', () => {
 
 test('stratStepOf: route-level strategy（旧写法，兼容）', () => {
   assert.deepStrictEqual(stratStepOf({ strategy: 'cost' }),
-    { strategy: 'cost', tier: null, provider: null, sharer: null });
+    { strategy: 'cost', scope: null, tier: null, provider: null, sharer: null });
 });
 
 test('stratStepOf: 单步 strategy-only（统一新写法）', () => {
   assert.deepStrictEqual(stratStepOf({ steps: [{ strategy: 'auto' }] }),
-    { strategy: 'auto', tier: null, provider: null, sharer: null });
+    { strategy: 'auto', scope: null, tier: null, provider: null, sharer: null });
 });
 
 test('stratStepOf: 单步 strategy 带 tier/provider/sharer 过滤', () => {
   assert.deepStrictEqual(
-    stratStepOf({ steps: [{ strategy: 'auto', tier: 'paid', provider: 'openrouter', sharer: 's_a1b2c3' }] }),
-    { strategy: 'auto', tier: 'paid', provider: 'openrouter', sharer: 's_a1b2c3' });
+    stratStepOf({ steps: [{ strategy: 'auto', scope: null, tier: 'paid', provider: 'openrouter', sharer: 's_a1b2c3' }] }),
+    { strategy: 'auto', scope: null, tier: 'paid', provider: 'openrouter', sharer: 's_a1b2c3' });
 });
 
 test('stratStepOf: 路由级 flow（默认策略路由，无 steps）→ 用 flow 作策略', () => {
   assert.deepStrictEqual(stratStepOf({ flow: 'auto', model_key: 'llm-router-auto' }),
-    { strategy: 'auto', tier: null, provider: null, sharer: null });
+    { strategy: 'auto', scope: null, tier: null, provider: null, sharer: null });
   assert.deepStrictEqual(stratStepOf({ flow: 'round-robin' }),
-    { strategy: 'round-robin', tier: null, provider: null, sharer: null });
+    { strategy: 'round-robin', scope: null, tier: null, provider: null, sharer: null });
 });
 
 test('stratStepOf: flow + 纯 tier 步 → 该层内按 flow', () => {
   assert.deepStrictEqual(stratStepOf({ flow: 'cost', steps: [{ tier: 'paid' }] }),
-    { strategy: 'cost', tier: 'paid', provider: null, sharer: null });
+    { strategy: 'cost', scope: null, tier: 'paid', provider: null, sharer: null });
 });
 
 test('stratStepOf: 纯 tier 步（无 model 无 strategy）→ fallback 顺序的开放选择', () => {
   assert.deepStrictEqual(stratStepOf({ steps: [{ tier: 'paid' }] }),
-    { strategy: 'fallback', tier: 'paid', provider: null, sharer: null });
+    { strategy: 'fallback', scope: null, tier: 'paid', provider: null, sharer: null });
 });
 
 test('stratStepOf: tier + strategy 步 → 该层内按策略', () => {
   assert.deepStrictEqual(stratStepOf({ steps: [{ tier: 'free', strategy: 'auto' }] }),
-    { strategy: 'auto', tier: 'free', provider: null, sharer: null });
+    { strategy: 'auto', scope: null, tier: 'free', provider: null, sharer: null });
 });
 
 test('stratStepOf: 有 model 的步 → 不是策略路由', () => {

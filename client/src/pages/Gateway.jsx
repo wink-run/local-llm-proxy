@@ -1161,7 +1161,7 @@ function ManualAddPanel({ app, routes, availableModels = [], localBase = '', onU
             <option value="" disabled>{t('gateway.app.routeRequired')}</option>
             {(() => {
               const avail = new Set(availableModels.map(m => m.id));
-              const usable = routes.filter(r => r.strategy || r.flow || (r.steps || []).some(s => s.strategy || s.tier || s.provider || s.sharer || avail.has(s.model || s.label)));
+              const usable = routes.filter(r => r.strategy || r.flow || (r.steps || []).some(s => s.strategy || s.scope || s.tier || s.provider || s.sharer || avail.has(s.model || s.label)));
               return usable.length > 0 && (
                 <optgroup label={t('gateway.app.sceneRoutes')}>
                   {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon && !r.icon.startsWith('icon:') ? r.icon + ' ' : ''}{r.scene_name}</option>)}
@@ -2858,7 +2858,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                     // 场景路由始终可识别（按 model_key / id）
                     if (routes.some(r => (r.model_key || r.id) === val)) return true;
                     const avail = new Set(availableModels.map(m => m.id));
-                    const usableRoutes = routes.filter(r => r.strategy || r.flow || (r.steps || []).some(s => s.strategy || s.tier || s.provider || s.sharer || avail.has(s.model || s.label)));
+                    const usableRoutes = routes.filter(r => r.strategy || r.flow || (r.steps || []).some(s => s.strategy || s.scope || s.tier || s.provider || s.sharer || avail.has(s.model || s.label)));
                     return usableRoutes.some(r => (r.model_key || r.id) === val)
                       || availableModels.some(m => ['free', 'p2p', 'paid'].includes(m.tier) && modelTierKey(m) === val);
                   };
@@ -3344,7 +3344,7 @@ function ChainEditor({ steps, setSteps, availableModels, network, sources }) {
     }
     return [...map.values()];
   }, [network]);
-  const add    = () => setSteps([...list, { label: '', model: '', tier: '', strategy: '', sharer: '' }]);
+  const add    = () => setSteps([...list, { label: '', model: '', scope: '', tier: '', strategy: '', sharer: '' }]);
   const remove = (i) => setSteps(list.filter((_, idx) => idx !== i));
   const patch  = (i, p) => setSteps(list.map((s, idx) => idx === i ? { ...s, ...p } : s));
   const updateModel = (i, val) => {
@@ -3357,7 +3357,10 @@ function ChainEditor({ steps, setSteps, availableModels, network, sources }) {
   return (
     <div className="space-y-1.5">
       {list.map((step, i) => {
-        const codec = encodeRoute({ strategy: step.strategy, tier: step.tier, sharer: step.sharer, provider: step.provider, model: step.model });
+        // 来源(scope)与价格(tier)两个正交维度；旧数据 tier=p2p 视作来源=社区（迁移显示）
+        const scopeVal = step.scope || (step.tier === 'p2p' ? 'community' : '');
+        const priceVal = (step.tier === 'free' || step.tier === 'paid') ? step.tier : '';
+        const codec = encodeRoute({ strategy: step.strategy, scope: scopeVal || undefined, tier: priceVal || undefined, sharer: step.sharer, provider: step.provider, model: step.model });
         const stepSources = sourcesForStep(step);
         // 模型下拉的选中值：优先精确 tier:model，tier 被改成"任意/其它"时退回按同名任一项，保证模型名不消失
         const modelVal = !step.model ? ''
@@ -3377,12 +3380,20 @@ function ChainEditor({ steps, setSteps, availableModels, network, sources }) {
               className="text-xs text-zinc-400 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity px-1">✕</button>
           </div>
           <div className="flex items-center gap-2 mt-1 pl-6">
-            <select value={step.tier || ''} onChange={e => patch(i, { tier: e.target.value || undefined })}
+            {/* 来源(scope)：任意 / 个人 / 社区 —— 与价格正交 */}
+            <select value={scopeVal} onChange={e => patch(i, { scope: e.target.value || undefined, ...(step.tier === 'p2p' ? { tier: undefined } : {}) })}
+              title={t('gateway.route.scopePin')}
+              className="bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-1.5 py-1 text-[11px] text-zinc-700 dark:text-zinc-300 focus:outline-none">
+              <option value="">{t('gateway.route.scopeAny')}</option>
+              <option value="personal">{t('gateway.route.scopePersonal')}</option>
+              <option value="community">{t('gateway.route.scopeCommunity')}</option>
+            </select>
+            {/* 价格(tier)：任意 / 免费 / 收费 */}
+            <select value={priceVal} onChange={e => patch(i, { tier: e.target.value || undefined })}
               title={t('gateway.route.tierPin')}
               className="bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-1.5 py-1 text-[11px] text-zinc-700 dark:text-zinc-300 focus:outline-none">
               <option value="">{t('gateway.route.tierAny')}</option>
               <option value="free">{t('gateway.route.tierFree')}</option>
-              <option value="p2p">{t('gateway.route.tierP2p')}</option>
               <option value="paid">{t('gateway.route.tierPaid')}</option>
             </select>
             <select value={step.strategy || ''} onChange={e => patch(i, { strategy: e.target.value })}
@@ -3432,9 +3443,10 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
   const categories = clsCats.split(/[、,，\s]+/).map(s => s.trim()).filter(Boolean);
 
   function save() {
-    // 保留任何有 model/tier/strategy/source/sharer 的步；各字段独立保留（纯 tier 步无 model 也不丢 tier）
-    const clean = (arr) => (arr || []).filter(s => s.model || s.tier || s.strategy || s.sharer || s.provider).map(s => ({
+    // 保留任何有 model/scope/tier/strategy/source/sharer 的步；各字段独立保留（纯 scope/tier 步无 model 也不丢）
+    const clean = (arr) => (arr || []).filter(s => s.model || s.scope || s.tier || s.strategy || s.sharer || s.provider).map(s => ({
       ...(s.model ? { model: s.model } : {}),
+      ...(s.scope ? { scope: s.scope } : {}),
       ...(s.tier ? { tier: s.tier } : {}),
       ...(s.strategy ? { strategy: s.strategy } : {}),
       ...(s.sharer   ? { sharer: s.sharer }     : {}),
@@ -4349,9 +4361,9 @@ export default function Gateway() {
             // 折叠行：把一条链渲染成 pill 序列（带 → 连接、tier 配色、缺失/激活态）。
             const chainPills = (steps) => (steps || []).map((step, i) => {
               // strategy-only 步（无 model）：显示「⚙ 策略」，不参与"模型缺失"判定
-              const isStrategyStep = !step.model && !!step.strategy;
+              const isStrategyStep = !step.model && !!(step.strategy || step.scope || step.tier || step.provider || step.sharer);
               const stepTier = resolveStepTier(step.model || step.label, step, availableModels);
-              const stepName = step.model || step.label || (isStrategyStep ? step.strategy : '');
+              const stepName = step.model || step.label || (isStrategyStep ? (step.strategy || step.scope || step.tier || 'route') : '');
               const isActive = health.activeStep === stepName;
               const isFailed = health.triedSteps?.includes(stepName);
               const missing = !isStrategyStep && !availSet.has(stepName);
@@ -4369,7 +4381,7 @@ export default function Gateway() {
                           : tierStyle(stepTier)
                     }`}>
                     {isStrategyStep ? (
-                      <>⚙ {step.strategy}{step.tier ? ` · ${step.tier}` : ''}{step.sharer ? ` · 👤` : ''}</>
+                      <>⚙ {[step.strategy, step.scope || (step.tier === 'p2p' ? 'community' : ''), (step.tier && step.tier !== 'p2p') ? step.tier : ''].filter(Boolean).join(' · ') || t('gateway.route.tierAny')}{step.sharer ? ` · 👤` : ''}</>
                     ) : (
                       <>
                         <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${

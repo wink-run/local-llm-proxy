@@ -572,6 +572,16 @@ function enabledProviders() {
     });
 }
 
+// 个人源模型名集合（路由 scope=personal 过滤用）：委托 billing-config 共享实现，
+// 与主进程 collectPersonalModelsMain / 供给源页「按模型视图」同源，保证一致。
+function collectPersonalModels() {
+  try {
+    const lc = _getLocalConfig?.() || null;
+    if (!lc) return [];
+    return require('./billing-config').collectPersonalModelNames(lc);
+  } catch { return []; }
+}
+
 // Returns true if provider can serve the given model
 // strict：P2P hop 贡献节点转发时，不接受「空 models 列表 = 任意模型」的兜底
 function providerHasModel(provider, model, { strict = false } = {}) {
@@ -2409,32 +2419,38 @@ function stratStepOf(scene) {
   // 带条件规则(rules)的路由必须走场景/规则分支(resolveSteps 评估 token/关键字条件)，
   // 不能被"单步策略"抢先短路——否则 rules 被绕过。
   if (Array.isArray(scene.rules) && scene.rules.length) return null;
-  if (scene.strategy) return { strategy: scene.strategy, tier: null, provider: null, sharer: null };
+  if (scene.strategy) return { strategy: scene.strategy, scope: null, tier: null, provider: null, sharer: null };
   const steps = scene.steps || [];
   const s = steps[0] || {};
-  // 单步(或无步)且无 model = 开放式选择：策略取 step.strategy || 路由级 flow || (有 tier/provider 时)fallback。
-  // 默认策略路由(综合最优/实惠优先…)用路由级 flow 表达，flow 即其选优策略。
+  // 单步(或无步)且无 model = 开放式选择：策略取 step.strategy || 路由级 flow || (有 scope/tier/provider 时)fallback。
+  // 默认策略路由(综合最优/实惠优先…)用路由级 flow 表达，flow 即其选优策略；纯来源/价格路由(仅个人/仅免费…)靠 scope/tier 过滤。
   if (steps.length <= 1 && !s.model) {
-    const strat = s.strategy || scene.flow || ((s.tier || s.provider) ? 'fallback' : null);
-    if (strat) return { strategy: strat, tier: s.tier || null, provider: s.provider || null, sharer: s.sharer || null };
+    const strat = s.strategy || scene.flow || ((s.scope || s.tier || s.provider) ? 'fallback' : null);
+    if (strat) return { strategy: strat, scope: s.scope || null, tier: s.tier || null, provider: s.provider || null, sharer: s.sharer || null };
   }
   return null;
 }
 
-// 策略路由候选：扫该模态下所有 (源,模型)，按 filters(tier/provider/model) 过滤，再按 strategy 排序。
+// 策略路由候选：扫该模态下所有 (源,模型)，按 filters 过滤，再按 strategy 排序。
+// filters 两组正交条件：scope=来源(personal 个人源集 / community p2p) + tier=价格(free/paid)；
+// 另有 provider(锁具体源) / model(锁具体模型)。
 function buildStrategyCandidates(strategyName, filters, reqPath, skipP2P, rrKey) {
   const modality = modalityOf(reqPath);
   let speedMap = {}; try { speedMap = require('./provider-speed').getSpeedMap(); } catch {}
   const normSp = (id) => { let s = String(id || '').trim().toLowerCase(); const i = s.lastIndexOf('/'); return i >= 0 ? s.slice(i + 1) : s; };
+  const scope = filters && filters.scope;
+  const personalSet = scope === 'personal' ? new Set(collectPersonalModels()) : null;
   const cands = [];
   for (const p of enabledProviders()) {
     if (skipP2P && p.type === 'p2p') continue;
-    if (filters && filters.tier && p.type !== filters.tier) continue;
+    if (scope === 'community' && p.type !== 'p2p') continue;          // 来源=社区
+    if (filters && filters.tier && p.type !== filters.tier) continue; // 价格层(free/paid)
     if (filters && filters.provider && p.id !== filters.provider) continue;
     for (const m of (p.models || [])) {
       const name = typeof m === 'string' ? m : (m && m.name);
       const mtype = typeof m === 'string' ? 'chat' : (m.type || 'chat');
       if (!name || mtype !== modality) continue;
+      if (personalSet && !personalSet.has(name)) continue;           // 来源=个人：模型须在个人源集
       if (filters && filters.model && name !== filters.model) continue;
       const sp = speedMap[normSp(name)];
       cands.push({ providerId: p.id, provider: p, providerTier: p.type, source: p.source, model: name,
@@ -2453,7 +2469,7 @@ function orderStepsByFlow(steps, flow, reqPath, skipP2P) {
   if (!flow || flow === 'fallback' || list.length <= 1) return list;
   const reps = [];
   list.forEach((step, i) => {
-    const cands = buildStrategyCandidates(flow, { tier: step.tier, provider: step.provider, model: step.model },
+    const cands = buildStrategyCandidates(flow, { scope: step.scope, tier: step.tier, provider: step.provider, model: step.model },
       reqPath, skipP2P, `flow:${i}`);
     if (cands[0]) reps.push({ ...cands[0], _stepIdx: i });
   });
@@ -2491,12 +2507,13 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   const claudeFrom = claudeKey || (shimClaudeScene ? origModel : null);
   // 请求模型名可带分层 codec 前缀（strategy:tier:sharer:provider:model）；上游只认裸模型名。
   // tier/provider 客户端过滤候选；strategy/sharer 通过 X-TB-Route 头交服务端（p2p 派发）执行。
-  let requestTier = null, requestStrategy = null, requestSharer = null, requestProvider = null;
+  let requestTier = null, requestScope = null, requestStrategy = null, requestSharer = null, requestProvider = null;
   {
     const pr = parseRoute(model);
-    if (pr.model) {   // 仅当解析出裸模型时才认这些前缀（纯 tier/strategy 全局形态另走场景/策略路由）
-      if (pr.tier || pr.strategy || pr.sharer || pr.provider) {
+    if (pr.model) {   // 仅当解析出裸模型时才认这些前缀（纯 scope/tier/strategy 全局形态另走场景/策略路由）
+      if (pr.tier || pr.scope || pr.strategy || pr.sharer || pr.provider) {
         requestTier     = pr.tier;
+        requestScope    = pr.scope;
         requestStrategy = pr.strategy;
         requestSharer   = pr.sharer;
         requestProvider = pr.provider;
@@ -2577,7 +2594,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   }
   if (_stratScene) {
     const ordered = buildStrategyCandidates(
-      _stratStep.strategy, { tier: _stratStep.tier, provider: _stratStep.provider }, reqPath, skipP2P, _stratScene.id);
+      _stratStep.strategy, { scope: _stratStep.scope, tier: _stratStep.tier, provider: _stratStep.provider }, reqPath, skipP2P, _stratScene.id);
     if (!ordered.length) { lastErr = new Error(`no ${modalityOf(reqPath)} model for strategy route`); fail(_stratScene.scene_name, null); return; }
     const routeErrors = [];
     for (const c of ordered) {
@@ -2642,9 +2659,9 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       // 无 model 的步 = 开放式选择（strategy / 纯 tier / 纯 provider）：展开成候选逐个 failover。
       // 无显式 strategy 但有 tier/provider 时按 fallback 顺序；都没有则跳过（避免 model=undefined 发上游）。
       if (!stepModel) {
-        const stepStrat = step.strategy || ((step.tier || step.provider) ? 'fallback' : null);
+        const stepStrat = step.strategy || ((step.scope || step.tier || step.provider) ? 'fallback' : null);
         if (!stepStrat) continue;
-        const sOrdered = buildStrategyCandidates(stepStrat, { tier: step.tier, provider: step.provider }, reqPath, skipP2P, `${scene.id}:${stepStrat}`);
+        const sOrdered = buildStrategyCandidates(stepStrat, { scope: step.scope, tier: step.tier, provider: step.provider }, reqPath, skipP2P, `${scene.id}:${stepStrat}`);
         const sMeta = { strategy: step.strategy || null, sharer: step.sharer || null };
         for (const c of sOrdered) {
           if (rejectP2pIfUnconfigured(c.provider, res, isResponses)) { lastErr = p2pAbortError('api_key'); recordError(c.model, callerKey, lastErr); return; }
@@ -2787,6 +2804,12 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
 
   // 请求体指定 tier 时只走对应供给层（同模型跨 P2P/付费/免费）
   if (requestTier) sorted = sorted.filter(p => p.type === requestTier);
+  // codec 指定 scope=来源：personal 只走个人源模型；community 只走 p2p
+  if (requestScope === 'community') sorted = sorted.filter(p => p.type === 'p2p');
+  else if (requestScope === 'personal') {
+    const personalSet = new Set(collectPersonalModels());
+    if (!personalSet.has(model)) sorted = [];
+  }
   // codec 指定 provider 时锁定该供给源
   if (requestProvider) sorted = sorted.filter(p => p.id === requestProvider);
   // P2P hop：再次确保不会选到未声明该模型的供给源（防止策略组/inPolicy 漏网）
