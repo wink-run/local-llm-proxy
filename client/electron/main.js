@@ -1803,27 +1803,7 @@ function registerIPC() {
   ipcMain.handle('gateway:probeModel', (_e, model) => probeModelViaGateway(model));
   ipcMain.handle('gateway:restart',       () => gateway.restart());
 
-  // 全局路由策略：读/写 local-config.routing.global_strategy（route() 实时读，设完下次请求即生效）。
-  // 可选策略名 + 服务端下发的默认值一并返回，供 UI 下拉渲染。
-  ipcMain.handle('routing:getStrategy', () => {
-    let cur = null, serverDefault = null;
-    try { const r = readLocalConfig().routing || {}; cur = r.global_strategy || null; serverDefault = r.default_strategy || null; } catch {}
-    let meta = [];
-    try { meta = require('./config-loader').routingStrategiesMeta(); } catch {}
-    const names = meta.map(m => m.name).filter(Boolean);
-    return { current: cur, serverDefault, effective: cur || serverDefault || 'cost', names, strategiesMeta: meta };
-  });
-  ipcMain.handle('routing:setStrategy', (_e, name) => {
-    try {
-      const names = require('./routing-strategies').GLOBAL_STRATEGY_NAMES;
-      const cfg = readLocalConfig();
-      cfg.routing = cfg.routing || {};
-      if (name && names.includes(name)) cfg.routing.global_strategy = name;
-      else delete cfg.routing.global_strategy;   // 传空/非法 = 恢复跟随服务端默认
-      writeLocalConfig(cfg);
-      return { ok: true, current: cfg.routing.global_strategy || null };
-    } catch (e) { return { ok: false, error: e.message }; }
-  });
+  // 已移除「全局路由策略」——无全局默认概念：路由由 app 绑定生效，未绑请求走直连。
   ipcMain.handle('localStats:compression', (_e, days) => {
     const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
     try {
@@ -2048,18 +2028,7 @@ function registerIPC() {
       try { mainWindow?.webContents?.send('apps:changed'); } catch {}
     }
 
-    // 全局路由策略默认（随场景路由下发的顶层 default_strategy）→ 写入 local-config.routing.default_strategy。
-    // 本地 routing.global_strategy 仍优先于它；用户没本地覆盖时用这个服务端默认。
-    if (parsed.default_strategy) {
-      try {
-        const dcfg = readLocalConfig();
-        dcfg.routing = dcfg.routing || {};
-        if (dcfg.routing.default_strategy !== parsed.default_strategy) {
-          dcfg.routing.default_strategy = parsed.default_strategy;
-          writeLocalConfig(dcfg);
-        }
-      } catch (e) { console.warn('[config-import] default_strategy 写入失败:', e.message); }
-    }
+    // （已移除全局默认策略下发：无全局默认概念）
 
     // 路由配置（scene_routes）→ 写入 local-config
     const hasScenes  = Array.isArray(parsed.scene_routes) && parsed.scene_routes.length > 0;

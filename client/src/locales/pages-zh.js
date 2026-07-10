@@ -379,9 +379,6 @@ export default {
   // ── 场景路由 SceneRouteEditor ──
   'gateway.route.new': '+ 新建路由',
   'gateway.route.hint': '定义每个场景的模型路由链，通过 llm-router-xxx 触发',
-  'gateway.routing.strategyLabel': '路由策略',
-  'gateway.routing.strategyHint': '全局供给源排序策略（本地覆盖；留空=跟随服务端默认）。请求什么模型就对能提供它的供给源按此排序，失败自动 failover 到下一个。',
-  'gateway.routing.followServer': '跟随默认（{name}）',
   'gateway.routing.strategy.cost': '实惠优先',
   'gateway.routing.strategy.speed': '速度优先',
   'gateway.routing.strategy.fallback': '按顺序',
