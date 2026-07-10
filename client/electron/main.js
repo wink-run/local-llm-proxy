@@ -4002,20 +4002,9 @@ function probeModelViaGateway(model) {
 
 // 个人源可测速模型名（用于随机初始化速率）。
 function collectPersonalModelsMain() {
-  try {
-    const lc = readLocalConfig();
-    const out = new Set();
-    const add = (models) => {
-      for (const m of (models || [])) {
-        const n = typeof m === 'string' ? m : (m && (m.name || m.id));
-        if (n) out.add(n);
-      }
-    };
-    for (const s of (lc.user_subscriptions || [])) add(s.models);
-    for (const p of (lc.user_payg_providers || [])) add(p.models);
-    for (const [, d] of Object.entries(lc.direct_source_billing || {})) if (d && d.mode === 'api') add(d.models);
-    return [...out];
-  } catch { return []; }
+  // 委托 billing-config 的共享实现 → 与网关 scope=personal 过滤、供给源页保持单一真源
+  try { return require('./billing-config').collectPersonalModelNames(readLocalConfig()); }
+  catch { return []; }
 }
 
 // 为社区源(p2p) + 个人源模型「随机初始化」一个测速速率：不发真实探针、不花积分/账单。

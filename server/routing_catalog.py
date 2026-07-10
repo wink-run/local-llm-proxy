@@ -79,9 +79,10 @@ def _sort_key(item: dict) -> int:
 
 
 def normalize_step(raw: dict) -> dict:
-    """一步 = 一个 Selector：保留 model/tier/strategy/provider/sharer（有才留），与客户端一致。"""
+    """一步 = 一个 Selector：保留 model/scope/tier/strategy/provider/sharer（有才留），与客户端一致。
+    scope=来源(personal 个人源 / community 社区)，与 tier=价格(free/paid) 正交。"""
     out: dict = {}
-    for k in ("model", "tier", "strategy", "provider", "sharer"):
+    for k in ("model", "scope", "tier", "strategy", "provider", "sharer"):
         v = str(raw.get(k) or "").strip()
         if v:
             out[k] = v

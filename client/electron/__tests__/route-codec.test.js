@@ -4,9 +4,11 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { encodeRoute, parseRoute } = require('../../shared/route-binding');
 
+const EMPTY = { strategy: null, scope: null, tier: null, sharer: null, provider: null, model: null };
+const withDefaults = (o) => ({ ...EMPTY, ...o });
+
 test('parseRoute: 单段裸模型', () => {
-  assert.deepStrictEqual(parseRoute('glm-5'),
-    { strategy: null, tier: null, sharer: null, provider: null, model: 'glm-5' });
+  assert.deepStrictEqual(parseRoute('glm-5'), withDefaults({ model: 'glm-5' }));
 });
 
 test('parseRoute: 单段纯策略（全局）', () => {
@@ -22,9 +24,15 @@ test('parseRoute: 单段纯 tier / 纯 sharer（全局）', () => {
   assert.strictEqual(parseRoute('s_a1b2c3').model, null);
 });
 
+test('parseRoute: 单段纯 scope（个人/社区，全局）', () => {
+  assert.strictEqual(parseRoute('personal').scope, 'personal');
+  assert.strictEqual(parseRoute('personal').model, null);
+  assert.strictEqual(parseRoute('community').scope, 'community');
+  assert.strictEqual(parseRoute('community').model, null);
+});
+
 test('parseRoute: tier + model', () => {
-  assert.deepStrictEqual(parseRoute('paid:glm-5'),
-    { strategy: null, tier: 'paid', sharer: null, provider: null, model: 'glm-5' });
+  assert.deepStrictEqual(parseRoute('paid:glm-5'), withDefaults({ tier: 'paid', model: 'glm-5' }));
 });
 
 test('parseRoute: strategy + model', () => {
@@ -36,7 +44,19 @@ test('parseRoute: strategy + model', () => {
 
 test('parseRoute: strategy + tier + model', () => {
   assert.deepStrictEqual(parseRoute('auto:paid:glm-5'),
-    { strategy: 'auto', tier: 'paid', sharer: null, provider: null, model: 'glm-5' });
+    withDefaults({ strategy: 'auto', tier: 'paid', model: 'glm-5' }));
+});
+
+test('parseRoute: scope + tier + model（个人收费某模型）', () => {
+  assert.deepStrictEqual(parseRoute('personal:paid:glm-5'),
+    withDefaults({ scope: 'personal', tier: 'paid', model: 'glm-5' }));
+});
+
+test('parseRoute: strategy + scope + model（社区某模型）', () => {
+  const r = parseRoute('auto:community:glm-5');
+  assert.strictEqual(r.strategy, 'auto');
+  assert.strictEqual(r.scope, 'community');
+  assert.strictEqual(r.model, 'glm-5');
 });
 
 test('parseRoute: sharer + model（钉分享者）', () => {
@@ -52,16 +72,15 @@ test('parseRoute: strategy + provider + model', () => {
   assert.strictEqual(r.model, 'glm-5');
 });
 
-test('parseRoute: 全五层', () => {
-  assert.deepStrictEqual(parseRoute('auto:paid:s_a1b2c3:openrouter:glm-5'),
-    { strategy: 'auto', tier: 'paid', sharer: 's_a1b2c3', provider: 'openrouter', model: 'glm-5' });
+test('parseRoute: 全六层', () => {
+  assert.deepStrictEqual(parseRoute('auto:personal:paid:s_a1b2c3:openrouter:glm-5'),
+    withDefaults({ strategy: 'auto', scope: 'personal', tier: 'paid', sharer: 's_a1b2c3', provider: 'openrouter', model: 'glm-5' }));
 });
 
 test('parseRoute: 空/无效输入', () => {
-  const empty = { strategy: null, tier: null, sharer: null, provider: null, model: null };
-  assert.deepStrictEqual(parseRoute(''), empty);
-  assert.deepStrictEqual(parseRoute(null), empty);
-  assert.deepStrictEqual(parseRoute(undefined), empty);
+  assert.deepStrictEqual(parseRoute(''), EMPTY);
+  assert.deepStrictEqual(parseRoute(null), EMPTY);
+  assert.deepStrictEqual(parseRoute(undefined), EMPTY);
 });
 
 test('encodeRoute: 固定顺序 + 跳过空层', () => {
@@ -71,24 +90,32 @@ test('encodeRoute: 固定顺序 + 跳过空层', () => {
   assert.strictEqual(encodeRoute({ sharer: 's_a1b2c3', model: 'glm-5' }), 's_a1b2c3:glm-5');
   assert.strictEqual(encodeRoute({ strategy: 'auto' }), 'auto');
   assert.strictEqual(encodeRoute({}), '');
-  // 顺序无关：即使乱序传入，输出仍是 strategy:tier:sharer:provider:model
+  // scope：来源段，位于 strategy 之后、tier 之前
+  assert.strictEqual(encodeRoute({ strategy: 'auto', scope: 'personal', tier: 'free' }), 'auto:personal:free');
+  assert.strictEqual(encodeRoute({ strategy: 'auto', scope: 'community' }), 'auto:community');
+  // 顺序无关：即使乱序传入，输出仍是 strategy:scope:tier:sharer:provider:model
   assert.strictEqual(
-    encodeRoute({ model: 'glm-5', provider: 'openrouter', tier: 'paid', strategy: 'auto', sharer: 's_x1' }),
-    'auto:paid:s_x1:openrouter:glm-5');
+    encodeRoute({ model: 'glm-5', provider: 'openrouter', tier: 'paid', scope: 'personal', strategy: 'auto', sharer: 's_x1' }),
+    'auto:personal:paid:s_x1:openrouter:glm-5');
 });
 
-test('round-trip: parse(encode(x)) === x（规范输入）', () => {
+test('round-trip: parse(encode(x)) === x（含 model 的规范输入）', () => {
   const cases = [
-    { strategy: null, tier: null, sharer: null, provider: null, model: 'glm-5' },
-    { strategy: 'auto', tier: 'paid', sharer: null, provider: null, model: 'glm-5' },
-    { strategy: 'cost', tier: null, sharer: null, provider: 'openrouter', model: 'glm-5' },
-    { strategy: null, tier: null, sharer: 's_a1b2c3', provider: null, model: 'glm-5' },
-    { strategy: 'auto', tier: 'paid', sharer: 's_a1b2c3', provider: 'openrouter', model: 'glm-5' },
-    { strategy: 'auto', tier: null, sharer: null, provider: null, model: null },
+    { model: 'glm-5' },
+    { strategy: 'auto', tier: 'paid', model: 'glm-5' },
+    { strategy: 'cost', provider: 'openrouter', model: 'glm-5' },
+    { sharer: 's_a1b2c3', model: 'glm-5' },
+    { scope: 'personal', tier: 'paid', model: 'glm-5' },
+    { strategy: 'auto', scope: 'community', model: 'glm-5' },
+    { strategy: 'auto', scope: 'personal', tier: 'paid', sharer: 's_a1b2c3', provider: 'openrouter', model: 'glm-5' },
   ];
   for (const c of cases) {
-    const clean = {};
-    for (const k of ['strategy', 'tier', 'sharer', 'provider', 'model']) clean[k] = c[k] || null;
-    assert.deepStrictEqual(parseRoute(encodeRoute(c)), clean, JSON.stringify(c));
+    assert.deepStrictEqual(parseRoute(encodeRoute(c)), withDefaults(c), JSON.stringify(c));
   }
+});
+
+test('legacy: 旧 codec tier=p2p 仍解析为 tier（网关兼容旧数据）', () => {
+  const r = parseRoute('auto:p2p:deepseek');
+  assert.strictEqual(r.tier, 'p2p');
+  assert.strictEqual(r.model, 'deepseek');
 });

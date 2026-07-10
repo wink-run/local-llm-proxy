@@ -1240,8 +1240,30 @@ function getUserAccounts(cfg = {}, opts = {}) {
   };
 }
 
+/**
+ * 个人源模型名集合（与供给源页「按模型视图」一致的唯一真源）：
+ * 用户订阅 + payg + direct(api) 登记的模型名。路由 scope=personal 用它过滤候选。
+ * 与 main.js 的 collectPersonalModelsMain 逻辑一致——后者委托本函数，保证单一真源。
+ */
+function collectPersonalModelNames(lc = {}) {
+  const out = new Set();
+  const add = (models) => {
+    for (const m of (models || [])) {
+      const n = typeof m === 'string' ? m : (m && (m.name || m.id));
+      if (n) out.add(n);
+    }
+  };
+  for (const s of (lc.user_subscriptions || [])) add(s.models);
+  for (const p of (lc.user_payg_providers || [])) add(p.models);
+  for (const [, d] of Object.entries(lc.direct_source_billing || {})) {
+    if (d && d.mode === 'api') add(d.models);
+  }
+  return [...out];
+}
+
 module.exports = {
   FALLBACK_SUBSCRIPTION_PLANS,
+  collectPersonalModelNames,
   getSubscriptionPlans,
   getProviderPricing,
   getBillingSettings,
