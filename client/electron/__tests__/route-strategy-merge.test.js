@@ -20,6 +20,16 @@ test('stratStepOf: 单步 strategy 带 tier/provider/sharer 过滤', () => {
     { strategy: 'auto', tier: 'paid', provider: 'openrouter', sharer: 's_a1b2c3' });
 });
 
+test('stratStepOf: 纯 tier 步（无 model 无 strategy）→ fallback 顺序的开放选择', () => {
+  assert.deepStrictEqual(stratStepOf({ steps: [{ tier: 'paid' }] }),
+    { strategy: 'fallback', tier: 'paid', provider: null, sharer: null });
+});
+
+test('stratStepOf: tier + strategy 步 → 该层内按策略', () => {
+  assert.deepStrictEqual(stratStepOf({ steps: [{ tier: 'free', strategy: 'auto' }] }),
+    { strategy: 'auto', tier: 'free', provider: null, sharer: null });
+});
+
 test('stratStepOf: 有 model 的步 → 不是策略路由', () => {
   assert.strictEqual(stratStepOf({ steps: [{ model: 'glm-5' }] }), null);
   assert.strictEqual(stratStepOf({ steps: [{ model: 'glm-5', strategy: 'auto' }] }), null);
