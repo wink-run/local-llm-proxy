@@ -79,14 +79,24 @@ def _sort_key(item: dict) -> int:
 
 
 def normalize_step(raw: dict) -> dict:
-    return {
-        "model": str(raw.get("model") or "").strip(),
-        "tier": str(raw.get("tier") or "paid").strip(),
-    }
+    """一步 = 一个 Selector：保留 model/tier/strategy/provider/sharer（有才留），与客户端一致。"""
+    out: dict = {}
+    for k in ("model", "tier", "strategy", "provider", "sharer"):
+        v = str(raw.get(k) or "").strip()
+        if v:
+            out[k] = v
+    return out
 
 
 def normalize_route(raw: dict) -> dict:
-    steps = [normalize_step(s) for s in (raw.get("steps") or []) if isinstance(s, dict) and s.get("model")]
+    # 保留任何带 model/tier/strategy/provider/sharer 的步（strategy-only / tier-only 步无 model 也保留）
+    steps = []
+    for s in (raw.get("steps") or []):
+        if not isinstance(s, dict):
+            continue
+        ns = normalize_step(s)
+        if ns:
+            steps.append(ns)
     out = {
         "sort_order": _sort_key(raw),
         "id": str(raw.get("id") or "").strip(),
@@ -97,7 +107,16 @@ def normalize_route(raw: dict) -> dict:
     }
     strategy = normalize_strategy(raw.get("strategy"))
     if strategy:
-        out["strategy"] = strategy   # 策略路由：模型无关，无需 steps
+        out["strategy"] = strategy         # 兼容旧 route-level 策略路由
+    flow = normalize_strategy(raw.get("flow"))
+    if flow:
+        out["flow"] = flow                 # 链级流转策略
+    if isinstance(raw.get("rules"), list) and raw["rules"]:
+        out["rules"] = raw["rules"]        # 条件规则(token/关键字)透传
+    if isinstance(raw.get("classifier"), dict) and raw["classifier"]:
+        out["classifier"] = raw["classifier"]
+    if raw.get("caveman_level") in ("lite", "full", "ultra"):
+        out["caveman_level"] = raw["caveman_level"]
     return out
 
 
@@ -108,10 +127,10 @@ def validate_route(r: dict) -> None:
         raise ValueError("model_key 必填")
     if not r.get("scene_name"):
         raise ValueError("scene_name 必填")
-    if r.get("strategy"):
-        return   # 策略路由无需步骤
+    if r.get("strategy") or r.get("flow"):
+        return   # 策略/流转路由无需具体步骤
     if not r.get("steps"):
-        raise ValueError("至少需要一个路由步骤")
+        raise ValueError("至少需要一个路由步骤或策略")
 
 
 def compile_route(r: dict) -> dict:
@@ -122,9 +141,12 @@ def compile_route(r: dict) -> dict:
         "model_key": r["model_key"],
     }
     if r.get("strategy"):
-        out["strategy"] = r["strategy"]   # 策略路由：只带 strategy，无 steps
-    else:
-        out["steps"] = [{"model": s["model"], "tier": s.get("tier") or "paid"} for s in (r.get("steps") or [])]
+        out["strategy"] = r["strategy"]
+    if r.get("steps"):
+        out["steps"] = [normalize_step(s) for s in r["steps"]]   # 全字段保留
+    for k in ("flow", "rules", "classifier", "caveman_level"):
+        if r.get(k):
+            out[k] = r[k]
     return out
 
 
