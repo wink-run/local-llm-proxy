@@ -889,18 +889,7 @@ select.form-input{cursor:pointer}
           ? '配置 llm-router-* 场景路由及降级步骤。发布后写入 config.scenes，客户端 syncRemote 全量合并更新本地 scene_routes。'
           : 'Configure llm-router-* scene routes and fallback steps. Publish writes config.scenes for client sync.' }}
       </p>
-      <!-- 全局路由策略（供给源排序）：目录 name+元数据来自 routing-strategies.yaml 下发，逻辑客户端 JS -->
-      <div style="margin-bottom:14px;padding:10px 12px;background:#f7f6f4;border:1px solid #ece9e6;border-radius:10px">
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <span style="font-size:13px;font-weight:600">{{ lang==='zh'?'全局路由策略':'Routing strategy' }}</span>
-          <select v-model="rcDefaultStrategy" @change="saveRcStrategy" class="form-input form-input-sm" style="width:210px">
-            <option value="">{{ lang==='zh'?'（不指定 · 客户端默认实惠优先）':'(unset · client default: cost)' }}</option>
-            <option v-for="s in rcStrategies" :key="s" :value="s">{{ strategyLabel(s) }}</option>
-          </select>
-          <span style="font-size:12px;color:#7b7b7b">{{ lang==='zh'?'「保存并发布」后随场景路由下发给所有客户端（客户端本地可覆盖）':'Delivered to all clients on publish (client can override locally)' }}</span>
-        </div>
-        <p v-if="rcDefaultStrategy && strategyDesc(rcDefaultStrategy)" style="font-size:12px;color:#888;margin:8px 0 0;line-height:1.5">{{ strategyDesc(rcDefaultStrategy) }}</p>
-      </div>
+      <!-- 已移除「全局路由策略」：无全局默认概念，路由靠 app 绑定生效 -->
       <div v-if="rcMsg" style="font-size:12px;margin-bottom:10px" :style="rcMsg.startsWith('✓')?'color:#16a34a':'color:#dc2626'">{{ rcMsg }}</div>
       <div class="panel" style="padding:0;overflow:hidden">
         <table>
