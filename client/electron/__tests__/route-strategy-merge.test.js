@@ -29,6 +29,12 @@ test('stratStepOf: 多步 → 不是（单步策略）路由，走场景链', ()
   assert.strictEqual(stratStepOf({ steps: [{ strategy: 'auto' }, { model: 'deepseek' }] }), null);
 });
 
+test('stratStepOf: 带 rules 的路由 → null（走规则分支，不被单步策略短路）', () => {
+  assert.strictEqual(
+    stratStepOf({ steps: [{ strategy: 'auto' }], rules: [{ when: { type: 'input_tokens', op: 'gt', value: 50000 }, steps: [] }] }),
+    null);
+});
+
 test('stratStepOf: 空/无效', () => {
   assert.strictEqual(stratStepOf(null), null);
   assert.strictEqual(stratStepOf({}), null);

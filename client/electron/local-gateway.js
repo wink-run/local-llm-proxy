@@ -2406,6 +2406,9 @@ function stripModelDate(m) {
 // 单步 strategy-only（无 model，新统一表示 steps:[{strategy}]）都算，并带出该步的 tier/provider/sharer 过滤。
 function stratStepOf(scene) {
   if (!scene) return null;
+  // 带条件规则(rules)的路由必须走场景/规则分支(resolveSteps 评估 token/关键字条件)，
+  // 不能被"单步策略"抢先短路——否则 rules 被绕过。
+  if (Array.isArray(scene.rules) && scene.rules.length) return null;
   if (scene.strategy) return { strategy: scene.strategy, tier: null, provider: null, sharer: null };
   const steps = scene.steps || [];
   if (steps.length === 1 && steps[0].strategy && !steps[0].model) {
