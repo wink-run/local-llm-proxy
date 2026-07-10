@@ -2411,11 +2411,12 @@ function stratStepOf(scene) {
   if (Array.isArray(scene.rules) && scene.rules.length) return null;
   if (scene.strategy) return { strategy: scene.strategy, tier: null, provider: null, sharer: null };
   const steps = scene.steps || [];
-  // 单步、无 model，但有 strategy/tier/provider 之一 = 开放式选择（策略/纯层/纯源）。
-  // 无显式 strategy 时按 fallback 顺序（"所有 paid"= 付费候选按配置序 failover）。
-  const s = steps[0];
-  if (steps.length === 1 && s && !s.model && (s.strategy || s.tier || s.provider)) {
-    return { strategy: s.strategy || 'fallback', tier: s.tier || null, provider: s.provider || null, sharer: s.sharer || null };
+  const s = steps[0] || {};
+  // 单步(或无步)且无 model = 开放式选择：策略取 step.strategy || 路由级 flow || (有 tier/provider 时)fallback。
+  // 默认策略路由(综合最优/实惠优先…)用路由级 flow 表达，flow 即其选优策略。
+  if (steps.length <= 1 && !s.model) {
+    const strat = s.strategy || scene.flow || ((s.tier || s.provider) ? 'fallback' : null);
+    if (strat) return { strategy: strat, tier: s.tier || null, provider: s.provider || null, sharer: s.sharer || null };
   }
   return null;
 }

@@ -415,6 +415,7 @@ export default {
   'gateway.route.flowAuto': '综合最优的步优先',
   'gateway.route.flowCost': '最便宜的步优先',
   'gateway.route.flowSpeed': '最快的步优先',
+  'gateway.route.flowRoundRobin': '轮询',
   'gateway.route.tierPin': '供给层：不填=任意；只选免费/社区/付费',
   'gateway.route.tierAny': '任意层',
   'gateway.route.tierFree': '仅免费',
