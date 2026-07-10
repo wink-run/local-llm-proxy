@@ -2411,9 +2411,11 @@ function stratStepOf(scene) {
   if (Array.isArray(scene.rules) && scene.rules.length) return null;
   if (scene.strategy) return { strategy: scene.strategy, tier: null, provider: null, sharer: null };
   const steps = scene.steps || [];
-  if (steps.length === 1 && steps[0].strategy && !steps[0].model) {
-    const s = steps[0];
-    return { strategy: s.strategy, tier: s.tier || null, provider: s.provider || null, sharer: s.sharer || null };
+  // 单步、无 model，但有 strategy/tier/provider 之一 = 开放式选择（策略/纯层/纯源）。
+  // 无显式 strategy 时按 fallback 顺序（"所有 paid"= 付费候选按配置序 failover）。
+  const s = steps[0];
+  if (steps.length === 1 && s && !s.model && (s.strategy || s.tier || s.provider)) {
+    return { strategy: s.strategy || 'fallback', tier: s.tier || null, provider: s.provider || null, sharer: s.sharer || null };
   }
   return null;
 }
@@ -2612,12 +2614,13 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       // 场景步骤就是真实模型；claudeFrom 标记原始 claude 名（路由明细展示透明转化）。
       const stepModel     = step.model;
       const stepClaudeFrom = claudeFrom;
-      // 无 model 的步 = strategy-only（统一表示；混合链里的一步）：展开成策略候选逐个 failover。
-      // 无 strategy 则跳过（避免把 model=undefined 发给上游）。单步 strategy-only 已在上面 _stratScene 处理。
+      // 无 model 的步 = 开放式选择（strategy / 纯 tier / 纯 provider）：展开成候选逐个 failover。
+      // 无显式 strategy 但有 tier/provider 时按 fallback 顺序；都没有则跳过（避免 model=undefined 发上游）。
       if (!stepModel) {
-        if (!step.strategy) continue;
-        const sOrdered = buildStrategyCandidates(step.strategy, { tier: step.tier, provider: step.provider }, reqPath, skipP2P, `${scene.id}:${step.strategy}`);
-        const sMeta = { strategy: step.strategy, sharer: step.sharer || null };
+        const stepStrat = step.strategy || ((step.tier || step.provider) ? 'fallback' : null);
+        if (!stepStrat) continue;
+        const sOrdered = buildStrategyCandidates(stepStrat, { tier: step.tier, provider: step.provider }, reqPath, skipP2P, `${scene.id}:${stepStrat}`);
+        const sMeta = { strategy: step.strategy || null, sharer: step.sharer || null };
         for (const c of sOrdered) {
           if (rejectP2pIfUnconfigured(c.provider, res, isResponses)) { lastErr = p2pAbortError('api_key'); recordError(c.model, callerKey, lastErr); return; }
           try {

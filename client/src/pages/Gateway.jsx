@@ -3344,7 +3344,7 @@ function ChainEditor({ steps, setSteps, availableModels, network, sources }) {
     }
     return [...map.values()];
   }, [network]);
-  const add    = () => setSteps([...list, { label: '', model: '', tier: 'free', strategy: '', sharer: '' }]);
+  const add    = () => setSteps([...list, { label: '', model: '', tier: '', strategy: '', sharer: '' }]);
   const remove = (i) => setSteps(list.filter((_, idx) => idx !== i));
   const patch  = (i, p) => setSteps(list.map((s, idx) => idx === i ? { ...s, ...p } : s));
   const updateModel = (i, val) => {
@@ -3359,11 +3359,16 @@ function ChainEditor({ steps, setSteps, availableModels, network, sources }) {
       {list.map((step, i) => {
         const codec = encodeRoute({ strategy: step.strategy, tier: step.tier, sharer: step.sharer, provider: step.provider, model: step.model });
         const stepSources = sourcesForStep(step);
+        // 模型下拉的选中值：优先精确 tier:model，tier 被改成"任意/其它"时退回按同名任一项，保证模型名不消失
+        const modelVal = !step.model ? ''
+          : (step.tier && availableModels.some(m => modelTierKey(m) === modelTierKey({ id: step.model, tier: step.tier }))
+              ? modelTierKey({ id: step.model, tier: step.tier })
+              : (availableModels.find(m => m.id === step.model) ? modelTierKey(availableModels.find(m => m.id === step.model)) : step.model));
         return (
         <div key={i} className="group border border-zinc-200/70 dark:border-zinc-700/70 rounded-lg px-2 py-1.5">
           <div className="flex items-center gap-2">
             <span className="text-xs text-zinc-400 w-4 text-right shrink-0">{i + 1}</span>
-            <select value={step.model && step.tier ? modelTierKey({ id: step.model, tier: step.tier }) : (step.model || '')} onChange={e => updateModel(i, e.target.value)}
+            <select value={modelVal} onChange={e => updateModel(i, e.target.value)}
               className="flex-1 min-w-0 bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded-lg px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-blue-500">
               <option value="">{t('gateway.route.selectModel')}</option>
               {tierOptgroups(availableModels, t)}
@@ -3372,6 +3377,14 @@ function ChainEditor({ steps, setSteps, availableModels, network, sources }) {
               className="text-xs text-zinc-400 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity px-1">✕</button>
           </div>
           <div className="flex items-center gap-2 mt-1 pl-6">
+            <select value={step.tier || ''} onChange={e => patch(i, { tier: e.target.value || undefined })}
+              title={t('gateway.route.tierPin')}
+              className="bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-1.5 py-1 text-[11px] text-zinc-700 dark:text-zinc-300 focus:outline-none">
+              <option value="">{t('gateway.route.tierAny')}</option>
+              <option value="free">{t('gateway.route.tierFree')}</option>
+              <option value="p2p">{t('gateway.route.tierP2p')}</option>
+              <option value="paid">{t('gateway.route.tierPaid')}</option>
+            </select>
             <select value={step.strategy || ''} onChange={e => patch(i, { strategy: e.target.value })}
               title={t('gateway.route.strategyPin')}
               className="bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-1.5 py-1 text-[11px] text-zinc-700 dark:text-zinc-300 focus:outline-none">
