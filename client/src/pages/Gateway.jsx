@@ -4157,10 +4157,12 @@ export default function Gateway() {
       if (route.id) {
         await getLocalConfig().updateSceneRoute({
           id: route.id, scene_name: route.scene_name, icon: route.icon, steps: route.steps, rules: route.rules, classifier: route.classifier,
+          flow: route.flow, caveman_level: route.caveman_level,
         });
       } else {
         await getLocalConfig().createSceneRoute({
           scene_name: route.scene_name, icon: route.icon, steps: route.steps, rules: route.rules, classifier: route.classifier,
+          flow: route.flow, caveman_level: route.caveman_level,
         });
       }
       setNewRoute(null);
