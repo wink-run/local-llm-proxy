@@ -2484,13 +2484,15 @@ function registerIPC() {
     return billingConfigMod.getUserAccounts(cfg, { boundDirectAgentIds: boundDirectAgentIds() });
   });
 
-  ipcMain.handle('localConfig:createSceneRoute', (_e, { scene_name, icon, steps, rules, classifier }) => {
+  ipcMain.handle('localConfig:createSceneRoute', (_e, { scene_name, icon, steps, rules, classifier, flow, caveman_level }) => {
     const cfg   = readLocalConfig();
     const route = {
       id: rndHex(8), scene_name, icon: icon || '🔀',
       steps: steps || [],
       rules: rules || null,           // 条件路由规则（when → steps）
       classifier: classifier || null, // 语义分类器配置
+      flow: flow || null,             // 链级流转策略
+      caveman_level: caveman_level || null, // 输出风格
       model_key: 'llm-router-' + rndHex(6),
       created_at: new Date().toISOString(),
     };
@@ -2500,11 +2502,11 @@ function registerIPC() {
     return route;
   });
 
-  ipcMain.handle('localConfig:updateSceneRoute', (_e, { id, scene_name, icon, steps, rules, classifier }) => {
+  ipcMain.handle('localConfig:updateSceneRoute', (_e, { id, scene_name, icon, steps, rules, classifier, flow, caveman_level }) => {
     const cfg = readLocalConfig();
     const idx = cfg.scene_routes.findIndex(r => r.id === id);
     if (idx === -1) return null;
-    cfg.scene_routes[idx] = { ...cfg.scene_routes[idx], scene_name, icon, steps, rules: rules || null, classifier: classifier || null };
+    cfg.scene_routes[idx] = { ...cfg.scene_routes[idx], scene_name, icon, steps, rules: rules || null, classifier: classifier || null, flow: flow || null, caveman_level: caveman_level || null };
     writeLocalConfig(cfg);
     syncGatewayFromConfig(cfg);
     return cfg.scene_routes[idx];
