@@ -3422,6 +3422,7 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
   const [clsModel, setClsModel] = useState(route.classifier?.model || '');
   const [clsCats,  setClsCats]  = useState((route.classifier?.categories || t('gateway.rule.defaultCategories').split(/[,、]/).map(s => s.trim()).filter(Boolean)).join('、'));
   const [cavemanLevel, setCavemanLevel] = useState(route.caveman_level || null);
+  const [flow, setFlow] = useState(route.flow || '');   // 链级流转策略（步之间怎么走）
 
   const setRuleAt  = (i, patch) => setRules(rules.map((r, idx) => idx === i ? { ...r, ...patch } : r));
   const removeRule = (i) => setRules(rules.filter((_, idx) => idx !== i));
@@ -3431,9 +3432,10 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
   const categories = clsCats.split(/[、,，\s]+/).map(s => s.trim()).filter(Boolean);
 
   function save() {
-    // 保留有 model 或 strategy 或 sharer 的步（strategy-only 步无 model，不能被丢掉）
-    const clean = (arr) => (arr || []).filter(s => s.model || s.strategy || s.sharer).map(s => ({
-      ...(s.model ? { model: s.model, tier: s.tier } : {}),
+    // 保留任何有 model/tier/strategy/source/sharer 的步；各字段独立保留（纯 tier 步无 model 也不丢 tier）
+    const clean = (arr) => (arr || []).filter(s => s.model || s.tier || s.strategy || s.sharer || s.provider).map(s => ({
+      ...(s.model ? { model: s.model } : {}),
+      ...(s.tier ? { tier: s.tier } : {}),
       ...(s.strategy ? { strategy: s.strategy } : {}),
       ...(s.sharer   ? { sharer: s.sharer }     : {}),
       ...(s.provider ? { provider: s.provider } : {}),
@@ -3443,7 +3445,7 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
       .filter(r => r.when && r.when.type && r.steps.length);
     const classifier = (usesClassifier && clsModel && categories.length)
       ? { model: clsModel, categories } : undefined;
-    onSave({ ...route, scene_name: name, icon, rules: cleanRules.length ? cleanRules : undefined, steps: clean(steps), classifier, caveman_level: cavemanLevel || null });
+    onSave({ ...route, scene_name: name, icon, rules: cleanRules.length ? cleanRules : undefined, steps: clean(steps), classifier, caveman_level: cavemanLevel || null, flow: flow || undefined });
   }
 
   return (
@@ -3501,6 +3503,22 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
           <div className="text-xs text-zinc-400">{t('gateway.route.clsHint')}</div>
         </div>
       )}
+
+      {/* 链级流转策略：多步(匹配条件)之间怎么走 */}
+      <div className="flex items-center gap-3 pt-1">
+        <span className="text-xs text-zinc-500 shrink-0">{t('gateway.route.flowLabel')}</span>
+        <select
+          value={flow || ''}
+          onChange={e => setFlow(e.target.value || '')}
+          title={t('gateway.route.flowHint')}
+          className="text-xs bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-2 py-1 text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-blue-500"
+        >
+          <option value="">{t('gateway.route.flowFallback')}</option>
+          <option value="auto">auto · {t('gateway.route.flowAuto')}</option>
+          <option value="cost">cost · {t('gateway.route.flowCost')}</option>
+          <option value="speed">speed · {t('gateway.route.flowSpeed')}</option>
+        </select>
+      </div>
 
       {/* Output style: Caveman verbosity injection */}
       <div className="flex items-center gap-3 pt-1">
