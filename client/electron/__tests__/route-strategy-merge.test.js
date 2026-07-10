@@ -29,6 +29,18 @@ test('stratStepOf: 单步 strategy 带 tier/provider/sharer 过滤', () => {
     { strategy: 'auto', tier: 'paid', provider: 'openrouter', sharer: 's_a1b2c3' });
 });
 
+test('stratStepOf: 路由级 flow（默认策略路由，无 steps）→ 用 flow 作策略', () => {
+  assert.deepStrictEqual(stratStepOf({ flow: 'auto', model_key: 'llm-router-auto' }),
+    { strategy: 'auto', tier: null, provider: null, sharer: null });
+  assert.deepStrictEqual(stratStepOf({ flow: 'round-robin' }),
+    { strategy: 'round-robin', tier: null, provider: null, sharer: null });
+});
+
+test('stratStepOf: flow + 纯 tier 步 → 该层内按 flow', () => {
+  assert.deepStrictEqual(stratStepOf({ flow: 'cost', steps: [{ tier: 'paid' }] }),
+    { strategy: 'cost', tier: 'paid', provider: null, sharer: null });
+});
+
 test('stratStepOf: 纯 tier 步（无 model 无 strategy）→ fallback 顺序的开放选择', () => {
   assert.deepStrictEqual(stratStepOf({ steps: [{ tier: 'paid' }] }),
     { strategy: 'fallback', tier: 'paid', provider: null, sharer: null });

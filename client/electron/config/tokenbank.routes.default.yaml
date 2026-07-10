@@ -7,30 +7,27 @@ version: 1
 scene_routes:
   # ── 策略路由（模型无关，无 steps）：网关按请求类型扫该类型下所有(源,模型)候选、按 strategy 排序 + failover。
   #    strategy 逻辑由客户端 routing-strategies.js 里同名 JS 实现。客户端像选场景路由一样选这几个。
+  # 默认策略路由：流转策略(flow)= 名字。模型无关、无 steps；网关按 flow 在全候选里选优。
   - id: strategy-auto
     scene_name: 综合最优
     icon: ✨
     model_key: llm-router-auto
-    steps:
-      - strategy: auto
+    flow: auto
   - id: strategy-cost
     scene_name: 实惠优先
     icon: 💰
     model_key: llm-router-cost
-    steps:
-      - strategy: cost
+    flow: cost
   - id: strategy-speed
     scene_name: 速度优先
     icon: ⚡
     model_key: llm-router-speed
-    steps:
-      - strategy: speed
+    flow: speed
   - id: strategy-round-robin
     scene_name: 轮询
     icon: 🔄
     model_key: llm-router-round-robin
-    steps:
-      - strategy: round-robin
+    flow: round-robin
 
   # 模型链路由（代码助手/日常对话/长上下文/快速响应等）不再作为默认铺设——
   # 它们钉死具体模型名、与用户实际拥有的源未必匹配；需要时由用户在界面自建。

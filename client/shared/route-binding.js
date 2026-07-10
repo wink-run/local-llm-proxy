@@ -127,6 +127,7 @@ function bindRouteToKeyScene(keyScene, callerKey, routeId, routes = []) {
       scene_name: route.scene_name,
       rules: route.rules || null,
       classifier: route.classifier || null,
+      flow: route.flow || null,
     };
     return;
   }

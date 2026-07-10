@@ -415,6 +415,7 @@ export default {
   'gateway.route.flowAuto': 'Best-overall step first',
   'gateway.route.flowCost': 'Cheapest step first',
   'gateway.route.flowSpeed': 'Fastest step first',
+  'gateway.route.flowRoundRobin': 'Round-robin',
   'gateway.route.tierPin': 'Tier: empty = any; or only free/community/paid',
   'gateway.route.tierAny': 'Any tier',
   'gateway.route.tierFree': 'Free only',

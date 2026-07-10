@@ -3504,8 +3504,7 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
         </div>
       )}
 
-      {/* 链级流转策略：仅多步(或有规则=多条链)时才有"步之间怎么走"，单步路由隐藏 */}
-      {(steps.length > 1 || rules.length > 0) && (
+      {/* 流转策略(flow)：策略路由=选优策略；多步链=步之间怎么走。默认路由的 flow 即其名字对应策略 */}
       <div className="flex items-center gap-3 pt-1">
         <span className="text-xs text-zinc-500 shrink-0">{t('gateway.route.flowLabel')}</span>
         <select
@@ -3518,9 +3517,9 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
           <option value="auto">auto · {t('gateway.route.flowAuto')}</option>
           <option value="cost">cost · {t('gateway.route.flowCost')}</option>
           <option value="speed">speed · {t('gateway.route.flowSpeed')}</option>
+          <option value="round-robin">round-robin · {t('gateway.route.flowRoundRobin')}</option>
         </select>
       </div>
-      )}
 
       {/* Output style: Caveman verbosity injection */}
       <div className="flex items-center gap-3 pt-1">
