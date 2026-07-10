@@ -1161,7 +1161,7 @@ function ManualAddPanel({ app, routes, availableModels = [], localBase = '', onU
             <option value="" disabled>{t('gateway.app.routeRequired')}</option>
             {(() => {
               const avail = new Set(availableModels.map(m => m.id));
-              const usable = routes.filter(r => r.strategy || (r.steps || []).some(s => avail.has(s.model || s.label)));
+              const usable = routes.filter(r => r.strategy || r.flow || (r.steps || []).some(s => s.strategy || s.tier || s.provider || s.sharer || avail.has(s.model || s.label)));
               return usable.length > 0 && (
                 <optgroup label={t('gateway.app.sceneRoutes')}>
                   {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon && !r.icon.startsWith('icon:') ? r.icon + ' ' : ''}{r.scene_name}</option>)}
@@ -2858,7 +2858,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                     // 场景路由始终可识别（按 model_key / id）
                     if (routes.some(r => (r.model_key || r.id) === val)) return true;
                     const avail = new Set(availableModels.map(m => m.id));
-                    const usableRoutes = routes.filter(r => r.strategy || (r.steps || []).some(s => avail.has(s.model || s.label)));
+                    const usableRoutes = routes.filter(r => r.strategy || r.flow || (r.steps || []).some(s => s.strategy || s.tier || s.provider || s.sharer || avail.has(s.model || s.label)));
                     return usableRoutes.some(r => (r.model_key || r.id) === val)
                       || availableModels.some(m => ['free', 'p2p', 'paid'].includes(m.tier) && modelTierKey(m) === val);
                   };
@@ -3504,7 +3504,8 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
         </div>
       )}
 
-      {/* 链级流转策略：多步(匹配条件)之间怎么走 */}
+      {/* 链级流转策略：仅多步(或有规则=多条链)时才有"步之间怎么走"，单步路由隐藏 */}
+      {(steps.length > 1 || rules.length > 0) && (
       <div className="flex items-center gap-3 pt-1">
         <span className="text-xs text-zinc-500 shrink-0">{t('gateway.route.flowLabel')}</span>
         <select
@@ -3519,6 +3520,7 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
           <option value="speed">speed · {t('gateway.route.flowSpeed')}</option>
         </select>
       </div>
+      )}
 
       {/* Output style: Caveman verbosity injection */}
       <div className="flex items-center gap-3 pt-1">
