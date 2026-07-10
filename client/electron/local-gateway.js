@@ -3383,7 +3383,7 @@ module.exports = {
   setClaudeModels,
   // 条件路由规则引擎（供单测/复用）
   pickSteps, evalWhen, modalityOf, estimateInputTokens, extractText, _providerTier,
-  stratStepOf, encodeRouteHeader, orderStepsByFlow,
+  stratStepOf, encodeRouteHeader, orderStepsByFlow, buildStrategyCandidates,
   isP2pProvider, isP2pCreditsError, isP2pApiKeyError, hasP2pRelayKey, resolveFailStatus,
   // 格式转换（供单测/复用）：Anthropic ⇄ OpenAI（含 tool-calling）
   anthropicToOpenai, openaiToAnthropic, oaiRequestToAnthropic, anthropicRespToOai,
