@@ -6,6 +6,7 @@ window.initRoutingCatalogAdmin = function (api, lang, ref) {
   const rcModalOpen = ref(false)
   const rcEditId = ref(null)
   const rcForm = ref(emptyRouteForm())
+  // 已移除「全局路由策略」——无全局默认概念
 
   function emptyRouteForm() {
     return { sort_order: '', id: '', scene_name: '', icon: '🔀', model_key: '', steps: [{ model: '', tier: 'paid' }] }

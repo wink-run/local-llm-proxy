@@ -657,14 +657,23 @@ function mergeProviderModelEntries(existingModels, extraNames) {
 /** 运行时合并账户登记模型到 provider.models（网关路由 /v1/models 用） */
 function enrichProvidersFromAccounts(providers, localCfg) {
   if (!localCfg || !Array.isArray(providers)) return providers || [];
+  // provider id → 计费来源（subscription/payg），供 cost 路由策略区分（实惠优先：订阅在前，超限 failover 到按量）。
+  // 同 id 既订阅又按量时以订阅为准（cost 里订阅本就排前）。
+  const srcMap = {};
+  for (const s of (localCfg.user_subscriptions || [])) { if (s.gateway_id) srcMap[s.gateway_id] = 'subscription'; }
+  for (const p of (localCfg.user_payg_providers || [])) { const g = paygGatewayId(p); if (g && !srcMap[g]) srcMap[g] = 'payg'; }
   return providers.map(p => {
+    let next = p;
     const extra = collectModelsForGatewayProvider(p.id, localCfg);
-    if (!extra.size) return p;
-    const merged = mergeProviderModelEntries(p.models, extra);
-    const before = (p.models || []).map(modelEntryId).filter(Boolean).sort().join('\0');
-    const after = merged.map(modelEntryId).filter(Boolean).sort().join('\0');
-    if (before === after) return p;
-    return { ...p, models: merged };
+    if (extra.size) {
+      const merged = mergeProviderModelEntries(p.models, extra);
+      const before = (p.models || []).map(modelEntryId).filter(Boolean).sort().join('\0');
+      const after = merged.map(modelEntryId).filter(Boolean).sort().join('\0');
+      if (before !== after) next = { ...next, models: merged };
+    }
+    const src = srcMap[p.id];
+    if (src && next.source !== src) next = { ...next, source: src };
+    return next;
   });
 }
 
@@ -1231,8 +1240,30 @@ function getUserAccounts(cfg = {}, opts = {}) {
   };
 }
 
+/**
+ * 个人源模型名集合（与供给源页「按模型视图」一致的唯一真源）：
+ * 用户订阅 + payg + direct(api) 登记的模型名。路由 scope=personal 用它过滤候选。
+ * 与 main.js 的 collectPersonalModelsMain 逻辑一致——后者委托本函数，保证单一真源。
+ */
+function collectPersonalModelNames(lc = {}) {
+  const out = new Set();
+  const add = (models) => {
+    for (const m of (models || [])) {
+      const n = typeof m === 'string' ? m : (m && (m.name || m.id));
+      if (n) out.add(n);
+    }
+  };
+  for (const s of (lc.user_subscriptions || [])) add(s.models);
+  for (const p of (lc.user_payg_providers || [])) add(p.models);
+  for (const [, d] of Object.entries(lc.direct_source_billing || {})) {
+    if (d && d.mode === 'api') add(d.models);
+  }
+  return [...out];
+}
+
 module.exports = {
   FALLBACK_SUBSCRIPTION_PLANS,
+  collectPersonalModelNames,
   getSubscriptionPlans,
   getProviderPricing,
   getBillingSettings,

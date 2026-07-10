@@ -9,21 +9,39 @@ from fastapi.responses import JSONResponse
 
 
 class DispatchError(Exception):
-    """dispatch 层统一错误，由 /v1/* 端点转为 OpenAI 风格 JSON。"""
+    """dispatch 层统一错误，由 /v1/* 端点转为 OpenAI 风格 JSON。
 
-    def __init__(self, status_code: int, message: str, error_type: str = "api_error"):
+    worker_id / workers：社区(p2p)派发时把「具体是哪个 worker 失败」带回来——
+    worker_id 为最后失败的那个，workers 为本次 failover 尝试过的全部 worker。
+    """
+
+    def __init__(self, status_code: int, message: str, error_type: str = "api_error",
+                 worker_id: str | None = None, workers: list | None = None):
         self.status_code = status_code
         self.message = message
         self.error_type = error_type
+        self.worker_id = worker_id
+        self.workers = list(workers) if workers else None
         super().__init__(message)
 
 
-def openai_error_content(message: str, error_type: str = "api_error") -> dict:
-    return {"error": {"message": message, "type": error_type}}
+def openai_error_content(message: str, error_type: str = "api_error",
+                         worker_id: str | None = None, workers: list | None = None) -> dict:
+    err = {"message": message, "type": error_type}
+    if worker_id:
+        err["worker_id"] = worker_id
+    if workers:
+        err["workers"] = list(workers)
+    return {"error": err}
 
 
-def openai_error_response(status_code: int, message: str, error_type: str = "api_error") -> JSONResponse:
-    return JSONResponse(status_code=status_code, content=openai_error_content(message, error_type))
+def openai_error_response(status_code: int, message: str, error_type: str = "api_error",
+                          worker_id: str | None = None, workers: list | None = None) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content=openai_error_content(message, error_type, worker_id, workers),
+        headers={"X-TB-Worker": worker_id} if worker_id else None,
+    )
 
 
 def _extract_message_from_json_text(text: str) -> str | None:
@@ -134,9 +152,9 @@ def parse_worker_error(err: str) -> tuple[int, str, str]:
     return 502, s, "api_error"
 
 
-def raise_dispatch_error(err: str) -> None:
+def raise_dispatch_error(err: str, worker_id: str | None = None, workers: list | None = None) -> None:
     status, msg, etype = parse_worker_error(err)
-    raise DispatchError(status, msg, etype)
+    raise DispatchError(status, msg, etype, worker_id=worker_id, workers=workers)
 
 
 def should_offline_contributor_model(err: str) -> bool:

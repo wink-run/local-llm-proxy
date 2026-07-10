@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "node scripts/gen-icons.js && concurrently \"vite\" \"wait-on http://localhost:5173 && npx electron .\"",
     "dev:vite": "vite",
-    "prebuild": "node scripts/gen-icons.js",
+    "prebuild": "node scripts/gen-icons.js && node scripts/gen-changelog.js",
     "build": "vite build && electron-builder",
     "gen-icons": "node scripts/gen-icons.js",
+    "changelog": "node scripts/gen-changelog.js",
     "test": "node --test electron/__tests__/*.test.js",
     "test:cli-runtime": "node --test electron/__tests__/cli-runtime-deps.test.js",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
@@ -66,6 +67,9 @@
       "provider": "github",
       "owner": "wink-run",
       "repo": "local-llm-proxy"
+    },
+    "releaseInfo": {
+      "releaseNotesFile": "release-notes.md"
     },
     "mac": {
       "icon": "build/icon.icns",

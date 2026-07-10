@@ -1,0 +1,36 @@
+# routing-strategies.yaml —— 全局路由策略目录（名称 + 元数据）。
+# 与 app-handlers.yaml 同理：服务端下发「名称 + label/description」，逻辑由客户端
+# routing-strategies.js 里同名 JS 函数实现（每个策略一个 JS）。加新策略 = 加 JS 函数 + 此处一条。
+version: 1
+
+strategies:
+  - name: auto
+    label_zh: 综合最优
+    label_en: Auto (best overall)
+    description_zh: 按节点综合星级（在线时长+延迟+成功率）排序，又快又稳的先选；p2p 由服务端按 star 排。
+    description_en: Order by node star rating (uptime+latency+reliability); best-overall first; p2p ranked server-side.
+  - name: cost
+    label_zh: 实惠优先
+    label_en: Cost first
+    description_zh: 订阅/免费源在前、按量付费在后；订阅超阶段限制时自动 failover 到按量。
+    description_en: Subscription/free first, pay-as-you-go last; fails over on subscription limit.
+  - name: speed
+    label_zh: 速度优先
+    label_en: Speed first
+    description_zh: 按历史延迟排序，快的先试，不通再试慢的。
+    description_en: Order by measured latency; fastest first, slower ones as fallback.
+  - name: fallback
+    label_zh: 按顺序
+    label_en: In order
+    description_zh: 按候选源原顺序依次尝试。
+    description_en: Try candidate providers in their original order.
+  - name: round-robin
+    label_zh: 轮询
+    label_en: Round-robin
+    description_zh: 每次请求轮换首选源，均摊流量，其余作 failover。
+    description_en: Rotate the primary provider each request; others as fallback.
+  - name: weighted
+    label_zh: 加权
+    label_en: Weighted
+    description_zh: 按权重随机选首选源，其余作 failover。
+    description_en: Weighted-random primary provider; others as fallback.
