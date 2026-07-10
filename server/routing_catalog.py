@@ -151,13 +151,9 @@ def compile_route(r: dict) -> dict:
 
 
 def compile_scenes_doc(doc: dict) -> dict:
+    # 无"全局默认策略"概念：路由由 app 绑定生效，未绑请求走直连；不再下发顶层 default_strategy。
     routes = [compile_route(normalize_route(r)) for r in sorted(doc.get("routes") or [], key=_sort_key)]
-    out: dict = {"version": doc.get("version") or 1}
-    ds = normalize_strategy(doc.get("default_strategy"))
-    if ds:
-        out["default_strategy"] = ds   # 顶层随 config.scenes 下发，客户端落 local-config.routing.default_strategy
-    out["scene_routes"] = routes
-    return out
+    return {"version": doc.get("version") or 1, "scene_routes": routes}
 
 
 def import_from_defaults() -> dict:
@@ -165,7 +161,7 @@ def import_from_defaults() -> dict:
         return {"version": 1, "routes": []}
     raw = yaml.safe_load(_SCENES_DEFAULT.read_text(encoding="utf-8")) or {}
     routes = [normalize_route(r) for r in (raw.get("scene_routes") or []) if isinstance(r, dict)]
-    return {"version": 1, "routes": routes, "default_strategy": normalize_strategy(raw.get("default_strategy"))}
+    return {"version": 1, "routes": routes}
 
 
 async def load_catalog_doc() -> dict:
@@ -173,15 +169,13 @@ async def load_catalog_doc() -> dict:
     if raw.strip():
         doc = _parse_json_or_yaml(raw)
         if doc:
-            return {"version": doc.get("version") or 1, "routes": doc.get("routes") or [],
-                    "default_strategy": normalize_strategy(doc.get("default_strategy"))}
-    return {"version": 1, "routes": [], "default_strategy": None}
+            return {"version": doc.get("version") or 1, "routes": doc.get("routes") or []}
+    return {"version": 1, "routes": []}
 
 
 async def save_catalog_doc(doc: dict) -> None:
     payload = {
         "version": doc.get("version") or 1,
-        "default_strategy": normalize_strategy(doc.get("default_strategy")),
         "routes": [normalize_route(r) for r in (doc.get("routes") or []) if r.get("id")],
     }
     await db.set_config(CONFIG_KEY, json.dumps(payload, ensure_ascii=False, indent=2))

@@ -3997,39 +3997,6 @@ function autoConfigTools(t) {
   ];
 }
 
-// 全局路由策略下拉：读/写 local-config.routing.global_strategy（本地覆盖），空=跟随服务端默认。
-function RoutingStrategyPicker() {
-  const { t, lang } = useLang();
-  const api = (typeof window !== 'undefined' && window.electronAPI?.routing) || null;
-  const [cur, setCur] = useState('');
-  const [serverDefault, setServerDefault] = useState(null);
-  const [meta, setMeta] = useState([]);   // 下发的策略目录 [{name,label_zh/en,description_zh/en}]
-  const load = useCallback(async () => {
-    if (!api) return;
-    try {
-      const r = await api.getStrategy();
-      setCur(r?.current || ''); setServerDefault(r?.serverDefault || null); setMeta(r?.strategiesMeta || []);
-    } catch { /* ignore */ }
-  }, [api]);
-  useEffect(() => { load(); }, [load]);
-  if (!api) return null;
-  const isZh = lang === 'zh';
-  const label = (name) => { const m = meta.find(x => x.name === name); return m ? ((isZh ? m.label_zh : m.label_en) || name) : name; };
-  const desc = (name) => { const m = meta.find(x => x.name === name); return m ? ((isZh ? m.description_zh : m.description_en) || '') : ''; };
-  const onChange = async (v) => { try { await api.setStrategy(v || ''); await load(); } catch { /* ignore */ } };
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="text-xs text-zinc-500 dark:text-zinc-400">{t('gateway.routing.strategyLabel')}</span>
-      <select value={cur || ''} onChange={e => onChange(e.target.value)}
-        title={cur ? desc(cur) : t('gateway.routing.strategyHint')}
-        className="text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1 outline-none focus:border-blue-400 text-zinc-700 dark:text-zinc-200">
-        <option value="">{t('gateway.routing.followServer', { name: label(serverDefault || 'cost') })}</option>
-        {meta.map(m => <option key={m.name} value={m.name}>{label(m.name)}</option>)}
-      </select>
-    </div>
-  );
-}
-
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function Gateway() {

@@ -379,9 +379,6 @@ export default {
   // ── Scene routes ──
   'gateway.route.new': '+ New route',
   'gateway.route.hint': 'Define model chains per scene; trigger via llm-router-xxx',
-  'gateway.routing.strategyLabel': 'Routing',
-  'gateway.routing.strategyHint': 'Global provider ordering strategy (local override; empty = follow server default). Providers that can serve the requested model are ordered by this, failing over to the next on error.',
-  'gateway.routing.followServer': 'Follow default ({name})',
   'gateway.routing.strategy.cost': 'Cost first',
   'gateway.routing.strategy.speed': 'Speed first',
   'gateway.routing.strategy.fallback': 'In order',
