@@ -1,7 +1,9 @@
-"""Config distribution endpoints.
+"""Config download endpoints.
 
-Admin uploads tool/route config YAML → stored in system_config table.
-Authenticated users GET the config YAML → client applies it locally.
+Config is written to system_config by the「应用管理 / 路由管理 / 个人源」admin
+tabs via their own publish endpoints (app_catalog / routing_catalog /
+billing_sources). Here we only serve it back: authenticated clients GET the
+config YAML and apply it locally.
 
 Keys in system_config:
   config.apps    → tokenbank.yaml content (gateway / mitm / app_entities)
@@ -12,14 +14,10 @@ Keys in system_config:
 import os
 import re
 import yaml
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
-from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException
 
 import database as db
 from auth import get_current_user_id
-from admin_router import auth_admin   # reuse existing admin bearer auth
 from config_merge import merge_apps_yaml_text, merge_providers_yaml_text, merge_sources_yaml_text
 
 router = APIRouter()
@@ -89,65 +87,9 @@ def _normalize_yaml(text: str) -> str:
         i += 1
     return '\n'.join(out)
 
-# ── Schemas ────────────────────────────────────────────────────────────────────
-
-class ConfigUploadBody(BaseModel):
-    content: str          # raw YAML text
-
-# ── Admin: upload config files ─────────────────────────────────────────────────
-
-@router.put("/config/apps", dependencies=[Depends(auth_admin)])
-async def upload_tools_config(body: ConfigUploadBody):
-    """Admin uploads the tools config YAML (tools / protocols / routing sections)."""
-    if not body.content or not body.content.strip():
-        raise HTTPException(400, "content must not be empty")
-    await db.set_config("config.apps", body.content.strip())
-    return {"ok": True, "key": "config.apps", "bytes": len(body.content)}
-
-
-@router.put("/config/scenes", dependencies=[Depends(auth_admin)])
-async def upload_routes_config(body: ConfigUploadBody):
-    """Admin uploads the routes config YAML (scene_routes section)."""
-    if not body.content or not body.content.strip():
-        raise HTTPException(400, "content must not be empty")
-    await db.set_config("config.scenes", body.content.strip())
-    return {"ok": True, "key": "config.scenes", "bytes": len(body.content)}
-
-
-@router.get("/config/info", dependencies=[Depends(auth_admin)])
-async def config_info():
-    """Admin: check which config files have been uploaded and their sizes."""
-    tools  = await db.get_config("config.apps",  "")
-    routes = await db.get_config("config.scenes", "")
-    return {
-        "tools":  {"uploaded": bool(tools),  "bytes": len(tools)},
-        "routes": {"uploaded": bool(routes), "bytes": len(routes)},
-    }
-
-
-# 管理员读取已上传的源内容（用于后台编辑器「加载」按钮，鉴权用 admin key，
-# 区别于客户端下载用的 /config/apps|scenes 需用户 JWT）
-@router.get("/config/apps/source", dependencies=[Depends(auth_admin)])
-async def get_apps_source():
-    return {"content": await db.get_config("config.apps", "")}
-
-
-@router.get("/config/scenes/source", dependencies=[Depends(auth_admin)])
-async def get_scenes_source():
-    return {"content": await db.get_config("config.scenes", "")}
-
-
-@router.delete("/config/apps", dependencies=[Depends(auth_admin)])
-async def delete_tools_config():
-    await db.set_config("config.apps", "")
-    return {"ok": True}
-
-
-@router.delete("/config/scenes", dependencies=[Depends(auth_admin)])
-async def delete_routes_config():
-    await db.set_config("config.scenes", "")
-    return {"ok": True}
-
+# 说明：config.apps / config.scenes 由「应用管理 / 路由管理」标签页各自的
+# publish 端点写入（app_catalog / routing_catalog），此处只保留客户端下载。
+# 旧的「配置下发」管理员上传/删除端点已随该标签一并移除。
 
 # ── Public / user: download config files ────────────────────────────────────────
 # GET /config/apps 为公开目录（无需登录）；sources / scenes 仍需用户 JWT。

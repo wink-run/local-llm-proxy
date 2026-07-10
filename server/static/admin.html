@@ -579,7 +579,7 @@ select.form-input{cursor:pointer}
       </div>
     </div>
 
-    <!-- Config Distribution -->
+    <!-- Personal Source Catalog（个人源） -->
     <div v-show="activeTab === 'billing'" class="tab-content">
       <div class="toolbar">
         <span style="font-size:15px;font-weight:600">{{ lang==='zh' ? '个人源目录（表单）' : 'Personal Source Catalog' }}</span>
@@ -940,82 +940,6 @@ select.form-input{cursor:pointer}
       </div>
     </div>
 
-    <div v-show="activeTab === 'distrib'" class="tab-content">
-      <!-- 状态概览 -->
-      <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap">
-        <div v-for="type in ['apps','scenes']" :key="type"
-          style="background:#fff;border:1px solid #e7e4e1;border-radius:10px;padding:14px 20px;min-width:200px;display:flex;align-items:center;gap:12px">
-          <span style="font-size:22px">{{ type==='apps' ? '🔧' : '🔀' }}</span>
-          <div>
-            <div style="font-size:13px;font-weight:600;color:#000">{{ type==='apps' ? (lang==='zh'?'应用配置':'Apps Config') : (lang==='zh'?'场景路由':'Routes Config') }}</div>
-            <div style="font-size:12px;margin-top:2px" :style="distribInfo[type].uploaded ? 'color:#16a34a' : 'color:#7b7b7b'">
-              {{ distribInfo[type].uploaded
-                ? (lang==='zh' ? `已上传 · ${distribInfo[type].bytes} 字节` : `Uploaded · ${distribInfo[type].bytes} bytes`)
-                : (lang==='zh' ? '未上传' : 'Not uploaded') }}
-            </div>
-          </div>
-        </div>
-        <div style="background:#fff;border:1px solid #e7e4e1;border-radius:10px;padding:14px 20px;flex:1;min-width:260px">
-          <div style="font-size:12px;color:#7b7b7b;margin-bottom:6px">{{ lang==='zh' ? '客户端下载地址' : 'Client Download URL' }}</div>
-          <div style="font-family:monospace;font-size:11px;color:#7b7b7b;line-height:1.8">
-            GET /api/config/apps<br>GET /api/config/scenes
-          </div>
-          <div style="font-size:11px;color:#bcbcbc;margin-top:6px">{{ lang==='zh' ? '需要用户 JWT 认证' : 'Requires user JWT' }}</div>
-        </div>
-      </div>
-
-      <!-- 两列编辑区 -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-        <div v-for="type in ['apps','scenes']" :key="type"
-          style="background:#fff;border:1px solid #e7e4e1;border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:10px">
-          <div style="display:flex;align-items:center;gap:8px">
-            <span style="font-size:15px">{{ type==='apps' ? '🔧' : '🔀' }}</span>
-            <span style="font-size:13px;font-weight:600;color:#000">
-              {{ type==='apps'
-                ? (lang==='zh' ? '应用配置 (tokenbank.yaml)' : 'Apps Config (tokenbank.yaml)')
-                : (lang==='zh' ? '场景路由配置 (tokenbank.routes.yaml)' : 'Routes Config (tokenbank.routes.yaml)') }}
-            </span>
-            <div style="margin-left:auto;display:flex;gap:6px">
-              <button class="btn-xs" @click="reloadDistribSource(type)"
-                :title="lang==='zh'?'从服务器拉取当前已发布的配置到编辑器':'Reload published config from server'">
-                {{ lang==='zh' ? '🔄 从服务器加载' : '🔄 Reload' }}
-              </button>
-              <button class="btn-xs" @click="loadLocalFile(type)"
-                :title="lang==='zh'?'从本地文件加载到编辑器':'Load from a local file'">
-                {{ lang==='zh' ? '📁 本地文件' : '📁 Local file' }}
-              </button>
-              <button v-if="distribInfo[type].uploaded" class="btn-xs btn-danger" @click="deleteDistrib(type)">
-                {{ lang==='zh' ? '删除' : 'Delete' }}
-              </button>
-            </div>
-          </div>
-          <textarea
-            v-model="distribText[type]"
-            spellcheck="false"
-            class="code-area"
-            :placeholder="type==='apps'
-              ? 'version: 1\n\ntools:\n  - id: claude-code\n    ...'
-              : 'version: 1\n\nscene_routes:\n  - id: route-code\n    scene_name: 代码助手\n    ...'">
-          </textarea>
-          <div style="display:flex;align-items:center;gap:8px">
-            <button class="btn btn-indigo" style="flex:1" :disabled="distribSaving[type]" @click="uploadDistrib(type)">
-              {{ distribSaving[type] ? (lang==='zh'?'上传中…':'Uploading…') : (lang==='zh'?'上传并发布':'Upload & Publish') }}
-            </button>
-            <span v-if="distribMsg[type]"
-              :style="distribMsg[type].startsWith('✓')||distribMsg[type].includes('已')||distribMsg[type].includes('Uploaded')||distribMsg[type].includes('Loaded')
-                ? 'color:#16a34a;font-size:12px' : 'color:#dc2626;font-size:12px'">
-              {{ distribMsg[type] }}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <div style="margin-top:12px;font-size:12px;color:#bcbcbc;line-height:1.6">
-        {{ lang==='zh'
-          ? '管理员在此上传 YAML 配置后，已登录的客户端点击「导入配置 → 🔗 服务器」即可下载并应用。两个文件格式相同（统一 schema），应用配置含 tools/protocols/routing 段，路由配置含 scene_routes 段。'
-          : 'After uploading YAML here, logged-in clients can pull it via Import Config → 🔗 Server. Both files share the same schema: tools config has tools/protocols/routing sections; routes config has scene_routes section.' }}
-      </div>
-    </div>
 
   </div>
 </div>
@@ -1035,7 +959,7 @@ const LANGS = {
     notePlaceholder: '备注（可选）', newKey: '新建 Key', note: '备注', status: '状态',
     createdAt: '创建时间', actions: '操作', noKeys: '暂无 API Key',
     copy: '复制', enabled: '启用', disabled: '禁用', enable: '启用', disable: '禁用', delete: '删除',
-    tabs: { workers:'在线 PC', keys:'API Keys', models:'模型配置', users:'用户管理', orders:'购买审批', config:'系统配置', debug:'调试', virtual:'虚拟 Agent', billing:'个人源', apps:'应用管理', routes:'路由管理', distrib:'配置下发' },
+    tabs: { workers:'在线 PC', keys:'API Keys', models:'模型配置', users:'用户管理', orders:'购买审批', config:'系统配置', debug:'调试', virtual:'虚拟 Agent', billing:'个人源', apps:'应用管理', routes:'路由管理' },
     addEditModel: '新增 / 编辑模型', modelName: '模型名称', displayName: '显示名称', tier: '类型',
     contributeRate: '贡献率（积分/千token）', consumeRate: '消费率（积分/千token）',
     yes: '是', no: '否', save: '保存', saving: '保存中', edit: '编辑',
@@ -1078,7 +1002,7 @@ const LANGS = {
     notePlaceholder: 'Note (optional)', newKey: 'New Key', note: 'Note', status: 'Status',
     createdAt: 'Created', actions: 'Actions', noKeys: 'No API keys yet',
     copy: 'Copy', enabled: 'Active', disabled: 'Disabled', enable: 'Enable', disable: 'Disable', delete: 'Delete',
-    tabs: { workers:'Workers', keys:'API Keys', models:'Models', users:'Users', orders:'Orders', config:'Config', debug:'Debug', virtual:'Virtual Agents', billing:'Sources', apps:'Apps', routes:'Routes', distrib:'Config Distrib' },
+    tabs: { workers:'Workers', keys:'API Keys', models:'Models', users:'Users', orders:'Orders', config:'Config', debug:'Debug', virtual:'Virtual Agents', billing:'Sources', apps:'Apps', routes:'Routes' },
     addEditModel: 'Add / Edit Model', modelName: 'Model Name', displayName: 'Display Name', tier: 'Tier',
     contributeRate: 'Contribute Rate (credits/K tokens)', consumeRate: 'Consume Rate (credits/K tokens)',
     yes: 'Yes', no: 'No', save: 'Save', saving: 'Saving…', edit: 'Edit',
@@ -1139,7 +1063,6 @@ createApp({
         { key:'billing', label: tl.billing },
         { key:'apps',    label: tl.apps },
         { key:'routes',  label: tl.routes },
-        { key:'distrib', label: tl.distrib },
       ]
     })
 
@@ -1161,7 +1084,9 @@ createApp({
 
     /* ── API ── */
     const ADMIN_TAB_KEY = 'admin_active_tab'
-    const activeTab = ref(localStorage.getItem(ADMIN_TAB_KEY) || 'workers')
+    const VALID_TABS = ['workers','keys','models','users','orders','config','debug','virtual','billing','apps','routes']
+    const _storedTab = localStorage.getItem(ADMIN_TAB_KEY)
+    const activeTab = ref(VALID_TABS.includes(_storedTab) ? _storedTab : 'workers')
     async function api(path, opts = {}) {
       const r = await fetch(path, { ...opts, headers: { 'Content-Type':'application/json', Authorization:`Bearer ${getKey()}`, ...(opts.headers||{}) } })
       if (r.status === 401) { logout(); throw new Error('Unauthorized') }
@@ -1446,83 +1371,6 @@ createApp({
       try { await api(`/admin/virtual-agents/${agent.id}`, {method:'DELETE'}); await fetchVirtualAgents() } catch {}
     }
 
-    /* ── Config Distribution ── */
-    // type 枚举：'apps'（应用配置）| 'scenes'（场景路由配置）
-    const distribInfo   = ref({ apps:{uploaded:false,bytes:0}, scenes:{uploaded:false,bytes:0} })
-    const distribText   = ref({ apps:'', scenes:'' })   // v-model 用可赋值的成员表达式 distribText[type]
-    const distribMsg    = ref({ apps:'', scenes:'' })
-    const distribSaving = ref({ apps:false, scenes:false })
-
-    async function fetchDistribInfo() {
-      try {
-        const d = await (await api('/api/config/info')).json()
-        // 服务端返回的 key 是 tools/routes（兼容旧版），映射到新名称
-        distribInfo.value = {
-          apps:   { uploaded: d.apps?.uploaded   ?? d.tools?.uploaded  ?? false, bytes: d.apps?.bytes   ?? d.tools?.bytes  ?? 0 },
-          scenes: { uploaded: d.scenes?.uploaded ?? d.routes?.uploaded ?? false, bytes: d.scenes?.bytes ?? d.routes?.bytes ?? 0 },
-        }
-      } catch {}
-      // 预填编辑器：编辑器为空时，已上传则用服务器内容，否则用内置默认值（与客户端一致）
-      for (const type of ['apps', 'scenes']) {
-        if (distribText.value[type]) continue   // 已有内容（编辑中/已加载）不覆盖
-        let content = ''
-        try { content = (await (await api(`/api/config/${type}/source`)).json()).content || '' } catch {}
-        if (!content) {
-          try { content = await (await fetch(`/static/defaults/${type}.default.yaml`)).text() } catch {}
-        }
-        distribText.value[type] = content
-      }
-    }
-    // 强制从服务器重新加载已发布的配置到编辑器（覆盖编辑器当前内容）
-    async function reloadDistribSource(type) {
-      let content = ''
-      try { content = (await (await api(`/api/config/${type}/source`)).json()).content || '' } catch {}
-      if (!content) {
-        try { content = await (await fetch(`/static/defaults/${type}.default.yaml`)).text() } catch {}
-      }
-      distribText.value[type] = content
-      await fetchDistribInfo()
-      distribMsg.value[type] = lang.value==='zh' ? '✓ 已从服务器加载最新' : '✓ Loaded latest from server'
-    }
-    // 从管理员本地文件加载配置到编辑器
-    function loadLocalFile(type) {
-      const input = document.createElement('input')
-      input.type = 'file'; input.accept = '.yaml,.yml,.txt'
-      input.onchange = e => {
-        const f = e.target.files && e.target.files[0]; if (!f) return
-        const reader = new FileReader()
-        reader.onload = () => {
-          distribText.value[type] = String(reader.result || '')
-          distribMsg.value[type] = lang.value==='zh' ? `已加载本地文件：${f.name}` : `Loaded: ${f.name}`
-        }
-        reader.readAsText(f)
-      }
-      input.click()
-    }
-    async function uploadDistrib(type) {
-      const content = distribText.value[type]
-      if (!content.trim()) return
-      distribSaving.value[type] = true; distribMsg.value[type] = ''
-      try {
-        const r = await api(`/api/config/${type}`, { method:'PUT', body: JSON.stringify({ content }) })
-        const d = await r.json()
-        distribMsg.value[type] = d.ok
-          ? (lang.value==='zh' ? `✓ 已上传（${d.bytes} 字节）` : `✓ Uploaded (${d.bytes} bytes)`)
-          : (d.detail || 'Error')
-        if (d.ok) await fetchDistribInfo()
-      } catch (e) { distribMsg.value[type] = e.message }
-      finally { distribSaving.value[type] = false }
-    }
-    async function deleteDistrib(type) {
-      const label = lang.value==='zh' ? (type==='apps'?'应用配置':'场景路由配置') : (type==='apps'?'apps config':'scenes config')
-      if (!confirm(lang.value==='zh' ? `确认删除${label}？客户端将无法下载。` : `Delete ${label}?`)) return
-      try {
-        await api(`/api/config/${type}`, { method:'DELETE' })
-        distribMsg.value[type] = lang.value==='zh' ? '已删除' : 'Deleted'
-        distribText.value[type] = ''
-        await fetchDistribInfo()
-      } catch (e) { distribMsg.value[type] = e.message }
-    }
     /* ── Billing Sources (个人源表单) ── */
     const billingAdmin = initBillingSourcesAdmin(api, lang, ref)
     const { fetchBillingSources } = billingAdmin
@@ -1544,7 +1392,6 @@ createApp({
       if (k === 'billing') fetchBillingSources()
       if (k === 'apps') fetchAppCatalog()
       if (k === 'routes') fetchRoutingCatalog()
-      if (k === 'distrib') fetchDistribInfo()
     }
     function switchTab(k) {
       activeTab.value = k
@@ -1579,8 +1426,6 @@ createApp({
       switchDebugMode, clearChat, sendMsg, sendImage, copyImg, saveImg,
       virtualAgents, vaModalOpen, vaEditId, vaForm, vaMsg, fetchVirtualAgents, openVaModal, closeVaModal, saveVirtualAgent, deleteVirtualAgent,
       vaAddModel, vaRemoveModel, vaSetModelType, vaModelName, vaModelType,
-      distribInfo, distribText, distribMsg, distribSaving,
-      fetchDistribInfo, uploadDistrib, deleteDistrib, loadLocalFile, reloadDistribSource,
       ...billingAdmin,
       ...appCatalogAdmin,
       ...routingCatalogAdmin,
