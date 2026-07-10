@@ -1161,16 +1161,17 @@ function readLocalConfig() {
           cfg.initialized_routes = true;
         }
       }
-      // 内置策略路由（llm-router-cost 等，模型无关）随版本内置：老配置也补齐缺失的
+      // 内置策略路由（模型无关，统一表示 steps:[{strategy}]）随版本内置：老配置也补齐缺失的。
+      // 识别策略路由：route-level strategy（旧）或单步 strategy-only（新）。
       try {
         const have = new Set((cfg.scene_routes || []).map(r => r.id));
-        const stratIds = ['strategy-cost', 'strategy-speed', 'strategy-fallback', 'strategy-round-robin', 'strategy-weighted'];
-        if (!stratIds.every(id => have.has(id))) {
-          const defRoutes = loadDefaultYamlSection('tokenbank.routes.default.yaml', 'scene_routes') || [];
+        const defRoutes = loadDefaultYamlSection('tokenbank.routes.default.yaml', 'scene_routes') || [];
+        const isStrat = (r) => !!(r.strategy
+          || (Array.isArray(r.steps) && r.steps.length === 1 && r.steps[0] && r.steps[0].strategy && !r.steps[0].model));
+        const missing = defRoutes.filter(r => isStrat(r) && !have.has(r.id));
+        if (missing.length) {
           cfg.scene_routes = cfg.scene_routes || [];
-          for (const sr of defRoutes.filter(r => r.strategy && !have.has(r.id))) {
-            cfg.scene_routes.push({ ...sr, created_at: new Date().toISOString() });
-          }
+          for (const sr of missing) cfg.scene_routes.push({ ...sr, created_at: new Date().toISOString() });
         }
       } catch {}
       // 用户显式取消托管的 agent_id 列表（自动托管会跳过这些）
