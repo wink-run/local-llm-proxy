@@ -14,9 +14,12 @@ import {
   encodeTierModelRoute,
   parseRouteBinding,
   routeSelectValue,
+  encodeRoute,
 } from '../lib/route-binding';
 import { useCurrency } from '../store/currency';
 import { runStreamChatTest } from '../lib/streamTestLatency';
+import { getNetwork } from '../api/client';
+import { normalizeNetworkPayload, workerInfo } from '../lib/networkModelStats';
 
 // tier:id 作为下拉唯一 value，避免同模型跨层选中错位
 function modelTierKey(m) {
@@ -1158,7 +1161,7 @@ function ManualAddPanel({ app, routes, availableModels = [], localBase = '', onU
             <option value="" disabled>{t('gateway.app.routeRequired')}</option>
             {(() => {
               const avail = new Set(availableModels.map(m => m.id));
-              const usable = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
+              const usable = routes.filter(r => r.strategy || r.flow || (r.steps || []).some(s => s.strategy || s.scope || s.tier || s.provider || s.sharer || avail.has(s.model || s.label)));
               return usable.length > 0 && (
                 <optgroup label={t('gateway.app.sceneRoutes')}>
                   {usable.map(r => <option key={r.id} value={r.model_key || r.id}>{r.icon && !r.icon.startsWith('icon:') ? r.icon + ' ' : ''}{r.scene_name}</option>)}
@@ -2855,7 +2858,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                     // 场景路由始终可识别（按 model_key / id）
                     if (routes.some(r => (r.model_key || r.id) === val)) return true;
                     const avail = new Set(availableModels.map(m => m.id));
-                    const usableRoutes = routes.filter(r => (r.steps || []).some(s => avail.has(s.model || s.label)));
+                    const usableRoutes = routes.filter(r => r.strategy || r.flow || (r.steps || []).some(s => s.strategy || s.scope || s.tier || s.provider || s.sharer || avail.has(s.model || s.label)));
                     return usableRoutes.some(r => (r.model_key || r.id) === val)
                       || availableModels.some(m => ['free', 'p2p', 'paid'].includes(m.tier) && modelTierKey(m) === val);
                   };
@@ -3317,42 +3320,111 @@ function RuleConditionEditor({ when, onChange, categories = [] }) {
   );
 }
 
-// 路由链编辑器（默认链 + 每条规则各一个）
-function ChainEditor({ steps, setSteps, availableModels }) {
+// 路由链编辑器（默认链 + 每条规则各一个）。每步是一个 Selector：model + 可选 strategy/sharer。
+// 分享者(sharer)化名句柄来自 /public/network（服务端带盐哈希；不含用户名）。
+const STEP_STRATEGIES = ['auto', 'cost', 'speed', 'round-robin'];
+function ChainEditor({ steps, setSteps, availableModels, network, sources }) {
   const { t } = useLang();
-  const free = availableModels.filter(m => m.tier === 'free');
-  const p2p  = availableModels.filter(m => m.tier === 'p2p');
-  const paid = availableModels.filter(m => m.tier === 'paid');
   const list = steps || [];
-  const add    = () => setSteps([...list, { label: '', model: '', tier: 'free' }]);
+  // 该步选定模型下可用的具体源：源声明了该模型（或无 models 列表=接受任意）+ tier 匹配
+  const sourcesForStep = (step) => {
+    if (!step.model) return [];
+    return (sources || []).filter(p => {
+      if (step.tier && p.type !== step.tier) return false;
+      const ms = p.models || [];
+      return !Array.isArray(ms) || ms.length === 0 || ms.some(m => (typeof m === 'string' ? m : m?.name) === step.model);
+    });
+  };
+  // 去重的分享者候选（sharer 句柄 → 打码名 + 星级）；服务端未升级时该字段缺失 → 列表为空
+  const sharers = React.useMemo(() => {
+    const map = new Map();
+    for (const w of (network?.workers || [])) {
+      if (!w || !w.sharer || map.has(w.sharer)) continue;
+      map.set(w.sharer, { sharer: w.sharer, name: w.name || 'node', stars: w.stars || 0 });
+    }
+    return [...map.values()];
+  }, [network]);
+  const add    = () => setSteps([...list, { label: '', model: '', scope: '', tier: '', strategy: '', sharer: '' }]);
   const remove = (i) => setSteps(list.filter((_, idx) => idx !== i));
-  const update = (i, val) => {
+  const patch  = (i, p) => setSteps(list.map((s, idx) => idx === i ? { ...s, ...p } : s));
+  const updateModel = (i, val) => {
     const m = availableModels.find(x => modelTierKey(x) === val)
            || availableModels.find(x => x.id === val);
     const modelId = m?.id ?? val;
     const tier = m?.tier ?? 'free';
-    setSteps(list.map((s, idx) => idx === i ? { label: modelId, model: modelId, tier } : s));
+    patch(i, { label: modelId, model: modelId, tier, provider: '' });   // 换模型清掉旧的源钉选
   };
   return (
     <div className="space-y-1.5">
-      {list.map((step, i) => (
-        <div key={i} className="flex items-center gap-2 group">
-          <span className="text-xs text-zinc-400 w-4 text-right shrink-0">{i + 1}</span>
-          <select value={step.model && step.tier ? modelTierKey({ id: step.model, tier: step.tier }) : (step.model || '')} onChange={e => update(i, e.target.value)}
-            className="flex-1 bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded-lg px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-blue-500">
-            <option value="">{t('gateway.route.selectModel')}</option>
-            {tierOptgroups(availableModels, t)}
-          </select>
-          <button onClick={() => remove(i)}
-            className="text-xs text-zinc-400 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity px-1">✕</button>
+      {list.map((step, i) => {
+        // 来源(scope)与价格(tier)两个正交维度；旧数据 tier=p2p 视作来源=社区（迁移显示）
+        const scopeVal = step.scope || (step.tier === 'p2p' ? 'community' : '');
+        const priceVal = (step.tier === 'free' || step.tier === 'paid') ? step.tier : '';
+        const codec = encodeRoute({ strategy: step.strategy, scope: scopeVal || undefined, tier: priceVal || undefined, sharer: step.sharer, provider: step.provider, model: step.model });
+        const stepSources = sourcesForStep(step);
+        // 模型下拉的选中值：优先精确 tier:model，tier 被改成"任意/其它"时退回按同名任一项，保证模型名不消失
+        const modelVal = !step.model ? ''
+          : (step.tier && availableModels.some(m => modelTierKey(m) === modelTierKey({ id: step.model, tier: step.tier }))
+              ? modelTierKey({ id: step.model, tier: step.tier })
+              : (availableModels.find(m => m.id === step.model) ? modelTierKey(availableModels.find(m => m.id === step.model)) : step.model));
+        return (
+        <div key={i} className="group border border-zinc-200/70 dark:border-zinc-700/70 rounded-lg px-2 py-1.5">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-zinc-400 w-4 text-right shrink-0">{i + 1}</span>
+            <select value={modelVal} onChange={e => updateModel(i, e.target.value)}
+              className="flex-1 min-w-0 bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded-lg px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-blue-500">
+              <option value="">{t('gateway.route.selectModel')}</option>
+              {tierOptgroups(availableModels, t)}
+            </select>
+            <button onClick={() => remove(i)}
+              className="text-xs text-zinc-400 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity px-1">✕</button>
+          </div>
+          <div className="flex items-center gap-2 mt-1 pl-6">
+            {/* 来源(scope)：任意 / 个人 / 社区 —— 与价格正交 */}
+            <select value={scopeVal} onChange={e => patch(i, { scope: e.target.value || undefined, ...(step.tier === 'p2p' ? { tier: undefined } : {}) })}
+              title={t('gateway.route.scopePin')}
+              className="bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-1.5 py-1 text-[11px] text-zinc-700 dark:text-zinc-300 focus:outline-none">
+              <option value="">{t('gateway.route.scopeAny')}</option>
+              <option value="personal">{t('gateway.route.scopePersonal')}</option>
+              <option value="community">{t('gateway.route.scopeCommunity')}</option>
+            </select>
+            {/* 价格(tier)：任意 / 免费 / 收费 */}
+            <select value={priceVal} onChange={e => patch(i, { tier: e.target.value || undefined })}
+              title={t('gateway.route.tierPin')}
+              className="bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-1.5 py-1 text-[11px] text-zinc-700 dark:text-zinc-300 focus:outline-none">
+              <option value="">{t('gateway.route.tierAny')}</option>
+              <option value="free">{t('gateway.route.tierFree')}</option>
+              <option value="paid">{t('gateway.route.tierPaid')}</option>
+            </select>
+            <select value={step.strategy || ''} onChange={e => patch(i, { strategy: e.target.value })}
+              title={t('gateway.route.strategyPin')}
+              className="bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-1.5 py-1 text-[11px] text-zinc-700 dark:text-zinc-300 focus:outline-none">
+              <option value="">{t('gateway.route.strategyNone')}</option>
+              {STEP_STRATEGIES.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <select value={step.provider || ''} onChange={e => patch(i, { provider: e.target.value })}
+              disabled={!step.model || !stepSources.length} title={t('gateway.route.sourcePin')}
+              className="bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-1.5 py-1 text-[11px] text-zinc-700 dark:text-zinc-300 focus:outline-none disabled:opacity-40">
+              <option value="">{t('gateway.route.sourceNone')}</option>
+              {stepSources.map(p => <option key={p.id} value={p.id}>{p.label || p.name || p.id}</option>)}
+            </select>
+            <select value={step.sharer || ''} onChange={e => patch(i, { sharer: e.target.value })}
+              disabled={!sharers.length} title={t('gateway.route.sharerPin')}
+              className="bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-1.5 py-1 text-[11px] text-zinc-700 dark:text-zinc-300 focus:outline-none disabled:opacity-40">
+              <option value="">{t('gateway.route.sharerNone')}</option>
+              {sharers.map(s => <option key={s.sharer} value={s.sharer}>{'★'.repeat(s.stars)} {s.name}</option>)}
+            </select>
+            {codec && <span className="ml-auto font-mono text-[10px] text-zinc-400 truncate">{codec}</span>}
+          </div>
         </div>
-      ))}
+        );
+      })}
       <button onClick={add} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">{t('gateway.route.addStep')}</button>
     </div>
   );
 }
 
-function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
+function SceneRouteEditor({ route, availableModels, network, sources, onSave, onCancel }) {
   const { t } = useLang();
   const [name, setName]   = useState(route.scene_name || '');
   const [icon, setIcon]   = useState(route.icon || 'icon:shuffle');
@@ -3361,6 +3433,7 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
   const [clsModel, setClsModel] = useState(route.classifier?.model || '');
   const [clsCats,  setClsCats]  = useState((route.classifier?.categories || t('gateway.rule.defaultCategories').split(/[,、]/).map(s => s.trim()).filter(Boolean)).join('、'));
   const [cavemanLevel, setCavemanLevel] = useState(route.caveman_level || null);
+  const [flow, setFlow] = useState(route.flow || '');   // 链级流转策略（步之间怎么走）
 
   const setRuleAt  = (i, patch) => setRules(rules.map((r, idx) => idx === i ? { ...r, ...patch } : r));
   const removeRule = (i) => setRules(rules.filter((_, idx) => idx !== i));
@@ -3370,13 +3443,21 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
   const categories = clsCats.split(/[、,，\s]+/).map(s => s.trim()).filter(Boolean);
 
   function save() {
-    const clean = (arr) => (arr || []).filter(s => s.model).map(s => ({ model: s.model, tier: s.tier }));
+    // 保留任何有 model/scope/tier/strategy/source/sharer 的步；各字段独立保留（纯 scope/tier 步无 model 也不丢）
+    const clean = (arr) => (arr || []).filter(s => s.model || s.scope || s.tier || s.strategy || s.sharer || s.provider).map(s => ({
+      ...(s.model ? { model: s.model } : {}),
+      ...(s.scope ? { scope: s.scope } : {}),
+      ...(s.tier ? { tier: s.tier } : {}),
+      ...(s.strategy ? { strategy: s.strategy } : {}),
+      ...(s.sharer   ? { sharer: s.sharer }     : {}),
+      ...(s.provider ? { provider: s.provider } : {}),
+    }));
     const cleanRules = (rules || [])
       .map(r => ({ when: r.when, steps: clean(r.steps) }))
       .filter(r => r.when && r.when.type && r.steps.length);
     const classifier = (usesClassifier && clsModel && categories.length)
       ? { model: clsModel, categories } : undefined;
-    onSave({ ...route, scene_name: name, icon, rules: cleanRules.length ? cleanRules : undefined, steps: clean(steps), classifier, caveman_level: cavemanLevel || null });
+    onSave({ ...route, scene_name: name, icon, rules: cleanRules.length ? cleanRules : undefined, steps: clean(steps), classifier, caveman_level: cavemanLevel || null, flow: flow || undefined });
   }
 
   return (
@@ -3408,7 +3489,7 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
             </div>
             <div className="pl-3 border-l-2 border-zinc-200 dark:border-zinc-700">
               <div className="text-xs text-zinc-400 mb-1">{t('gateway.route.routeTo')}</div>
-              <ChainEditor steps={rule.steps} setSteps={s => setRuleAt(ri, { steps: s })} availableModels={availableModels} />
+              <ChainEditor steps={rule.steps} setSteps={s => setRuleAt(ri, { steps: s })} availableModels={availableModels} network={network} sources={sources} />
             </div>
           </div>
         ))}
@@ -3435,6 +3516,23 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
         </div>
       )}
 
+      {/* 流转策略(flow)：策略路由=选优策略；多步链=步之间怎么走。默认路由的 flow 即其名字对应策略 */}
+      <div className="flex items-center gap-3 pt-1">
+        <span className="text-xs text-zinc-500 shrink-0">{t('gateway.route.flowLabel')}</span>
+        <select
+          value={flow || ''}
+          onChange={e => setFlow(e.target.value || '')}
+          title={t('gateway.route.flowHint')}
+          className="text-xs bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded px-2 py-1 text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-blue-500"
+        >
+          <option value="">{t('gateway.route.flowFallback')}</option>
+          <option value="auto">auto · {t('gateway.route.flowAuto')}</option>
+          <option value="cost">cost · {t('gateway.route.flowCost')}</option>
+          <option value="speed">speed · {t('gateway.route.flowSpeed')}</option>
+          <option value="round-robin">round-robin · {t('gateway.route.flowRoundRobin')}</option>
+        </select>
+      </div>
+
       {/* Output style: Caveman verbosity injection */}
       <div className="flex items-center gap-3 pt-1">
         <span className="text-xs text-zinc-500 shrink-0">{t('gateway.route.outputStyle')}</span>
@@ -3455,7 +3553,7 @@ function SceneRouteEditor({ route, availableModels, onSave, onCancel }) {
         {t('gateway.route.defaultChain')}{rules.length > 0 && <span className="text-zinc-400 dark:text-zinc-500">{t('gateway.route.defaultElse')}</span>}
         <span className="text-zinc-400 dark:text-zinc-500">{t('gateway.route.fallbackHint')}</span>
       </div>
-      <ChainEditor steps={steps} setSteps={setSteps} availableModels={availableModels} />
+      <ChainEditor steps={steps} setSteps={setSteps} availableModels={availableModels} network={network} sources={sources} />
       {steps.length === 0 && rules.length === 0 && <p className="text-xs text-zinc-500">{t('gateway.route.noSteps')}</p>}
 
       <div className="flex gap-2 pt-1">
@@ -3919,6 +4017,7 @@ export default function Gateway() {
   const [status, setStatus]     = useState(null);
   const [stats, setStats]       = useState(null);
   const [logEntries, setLog]    = useState([]);
+  const [network, setNetwork]   = useState(null);   // /public/network 快照：路由日志把 worker_id join 成分享者
   const [restarting, setRestarting] = useState(false);
   const [mainTab, setMainTab]   = useState(0);   // 0=应用列表 1=场景路由
 
@@ -3931,6 +4030,7 @@ export default function Gateway() {
     const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next;
   });
   const [availableModels, setAvailableModels] = useState([]);
+  const [sources, setSources] = useState([]);   // 已启用供给源（路由里"某模型下锁具体源"用）
   // 应用列表汇总（与表格「今日请求/Token」列求和一致）
   const [appTotals, setAppTotals] = useState(null);
 
@@ -3957,6 +4057,11 @@ export default function Gateway() {
     } catch (e) {
       console.error('loadAvailableModels', e);
     }
+    // 已启用供给源（供路由步"锁定某模型下的具体源"）
+    try {
+      const cfg = await getConfig().read();
+      setSources((cfg?.providers || []).filter(p => p.enabled && p.base_url));
+    } catch {}
   }, [user]);
 
   const refresh = useCallback(async () => {
@@ -3987,6 +4092,14 @@ export default function Gateway() {
     }
   }, []);
 
+  // /public/network 快照（把路由日志里的 p2p worker_id join 成分享者名/模型）。
+  // worker_id 随重连变化、网络拓扑变化慢 → 独立低频拉取（30s），仅登录后。
+  const loadNetwork = useCallback(async () => {
+    if (!user) { setNetwork(null); return; }
+    try { setNetwork(normalizeNetworkPayload(await getNetwork())); }
+    catch { /* 离线/未登录：日志侧回退成截断 worker_id */ }
+  }, [user]);
+
   useEffect(() => {
     refresh();
     loadSceneData();
@@ -3994,6 +4107,12 @@ export default function Gateway() {
     const statsId = setInterval(refresh, 5000);
     return () => { clearInterval(statsId); };
   }, [refresh, loadSceneData]);
+
+  useEffect(() => {
+    loadNetwork();
+    const netId = setInterval(loadNetwork, 30000);
+    return () => { clearInterval(netId); };
+  }, [loadNetwork]);
 
   // ── Computed stats ──────────────────────────────────────────────────────────
 
@@ -4050,10 +4169,12 @@ export default function Gateway() {
       if (route.id) {
         await getLocalConfig().updateSceneRoute({
           id: route.id, scene_name: route.scene_name, icon: route.icon, steps: route.steps, rules: route.rules, classifier: route.classifier,
+          flow: route.flow, caveman_level: route.caveman_level,
         });
       } else {
         await getLocalConfig().createSceneRoute({
           scene_name: route.scene_name, icon: route.icon, steps: route.steps, rules: route.rules, classifier: route.classifier,
+          flow: route.flow, caveman_level: route.caveman_level,
         });
       }
       setNewRoute(null);
@@ -4214,7 +4335,7 @@ export default function Gateway() {
         <div className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
           {/* 新建路由编辑器：放在列表最上面 */}
           {newRoute && (
-            <SceneRouteEditor key="new-route-editor" route={newRoute} availableModels={availableModels} onSave={saveRoute} onCancel={() => setNewRoute(null)} />
+            <SceneRouteEditor key="new-route-editor" route={newRoute} availableModels={availableModels} network={network} sources={sources} onSave={saveRoute} onCancel={() => setNewRoute(null)} />
           )}
           {routes.map(route => {
             const health = routeHealth[route.model_key] ?? { status: null, activeStep: null, degraded: false };
@@ -4222,7 +4343,8 @@ export default function Gateway() {
             // 本地供给源是否缺少该路由用到的模型（缺则名称前的点也标红）
             const availSet = new Set(availableModels.map(m => m.id));
             const _allSteps = [...(route.steps || []), ...(route.rules || []).flatMap(r => r.steps || [])];
-            const routeMissing = _allSteps.some(s => !availSet.has(s.model || s.label));
+            // strategy-only 步无 model，不参与"模型缺失"判定
+            const routeMissing = _allSteps.some(s => (s.model || s.label) && !availSet.has(s.model || s.label));
             const healthDot =
               routeMissing ? 'bg-red-500' :
               health.status === 'error' ? 'bg-red-500' :
@@ -4238,11 +4360,13 @@ export default function Gateway() {
                 : t('gateway.route.noRequests');
             // 折叠行：把一条链渲染成 pill 序列（带 → 连接、tier 配色、缺失/激活态）。
             const chainPills = (steps) => (steps || []).map((step, i) => {
+              // strategy-only 步（无 model）：显示「⚙ 策略」，不参与"模型缺失"判定
+              const isStrategyStep = !step.model && !!(step.strategy || step.scope || step.tier || step.provider || step.sharer);
               const stepTier = resolveStepTier(step.model || step.label, step, availableModels);
-              const stepName = step.model || step.label;
+              const stepName = step.model || step.label || (isStrategyStep ? (step.strategy || step.scope || step.tier || 'route') : '');
               const isActive = health.activeStep === stepName;
               const isFailed = health.triedSteps?.includes(stepName);
-              const missing = !availSet.has(stepName);
+              const missing = !isStrategyStep && !availSet.has(stepName);
               return (
                 <React.Fragment key={i}>
                   {i > 0 && <span className="text-zinc-300 dark:text-zinc-600 text-xs">→</span>}
@@ -4250,15 +4374,23 @@ export default function Gateway() {
                     className={`inline-flex items-center gap-1 text-xs font-mono px-2 py-0.5 rounded-md border transition-all ${
                       isActive
                         ? 'bg-green-100 dark:bg-green-900/40 border-green-400 dark:border-green-600 text-green-800 dark:text-green-200'
+                        : isStrategyStep
+                          ? 'bg-violet-50 dark:bg-violet-900/20 border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300'
                         : missing
                           ? 'bg-red-50 dark:bg-red-900/20 border-red-300 dark:border-red-700 text-red-600 dark:text-red-300'
                           : tierStyle(stepTier)
                     }`}>
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                      isActive ? 'bg-green-500' : (missing || isFailed) ? 'bg-red-500' : tierDot(stepTier)
-                    }`} />
-                    {step.label || step.model}
-                    <span className="opacity-40">({tierShortLabel(stepTier, t)})</span>
+                    {isStrategyStep ? (
+                      <>⚙ {[step.strategy, step.scope || (step.tier === 'p2p' ? 'community' : ''), (step.tier && step.tier !== 'p2p') ? step.tier : ''].filter(Boolean).join(' · ') || t('gateway.route.tierAny')}{step.sharer ? ` · 👤` : ''}</>
+                    ) : (
+                      <>
+                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                          isActive ? 'bg-green-500' : (missing || isFailed) ? 'bg-red-500' : tierDot(stepTier)
+                        }`} />
+                        {step.label || step.model}
+                        <span className="opacity-40">({tierShortLabel(stepTier, t)})</span>
+                      </>
+                    )}
                   </span>
                 </React.Fragment>
               );
@@ -4347,7 +4479,7 @@ export default function Gateway() {
                 </div>
               </div>
               {expandedRoute === route.id && (
-                <SceneRouteEditor key={'editor-' + route.id} route={route} availableModels={availableModels} onSave={saveRoute} onCancel={() => setExpandedRoute(null)} />
+                <SceneRouteEditor key={'editor-' + route.id} route={route} availableModels={availableModels} network={network} sources={sources} onSave={saveRoute} onCancel={() => setExpandedRoute(null)} />
               )}
             </div>
             );
@@ -4376,6 +4508,12 @@ export default function Gateway() {
           <div className="max-h-80 overflow-y-auto space-y-1.5 pr-1">
             {logEntries.map((e, i) => {
               const isRouter = e.requested_model?.startsWith('llm-router-');
+              // 社区(p2p)派发：e.worker=服务/失败的 worker_id → join /public/network 显示分享者
+              const wi = e.worker ? workerInfo(e.worker, network) : null;
+              const workerName = wi?.name || (e.worker ? String(e.worker).slice(0, 8) : null);
+              const workerTitle = e.worker
+                ? `worker ${e.worker}${wi?.geo ? ` · ${wi.geo}` : ''}${wi?.models?.length ? ` · ${wi.models.join(', ')}` : ''}`
+                : undefined;
               return (
                 <div key={`${e.ts}-${e.via}-${i}`}
                   className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-zinc-50 dark:bg-zinc-800/60">
@@ -4427,6 +4565,17 @@ export default function Gateway() {
                   <span className={`shrink-0 font-medium ${e.status === 'ok' ? 'text-blue-600 dark:text-blue-400' : 'text-red-500'}`}>
                     {e.status === 'ok' ? (e.via_label || e.via || '—') : t('gateway.log.failed')}
                   </span>
+                  {/* 社区节点归因：哪个分享者的 worker 服务/失败了本次请求 */}
+                  {workerName && (
+                    <span title={workerTitle}
+                      className={`shrink-0 font-mono text-[11px] px-1 py-0.5 rounded truncate max-w-[7rem] ${
+                        e.status === 'ok'
+                          ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                          : 'bg-red-50 dark:bg-red-900/20 text-red-500 dark:text-red-400'
+                      }`}>
+                      👤 {workerName}
+                    </span>
+                  )}
                   {e.status === 'ok' && fmtMs(e.first_token_ms ?? e.latency_ms) && (
                     <span className="text-zinc-400 shrink-0">{fmtMs(e.first_token_ms ?? e.latency_ms)}</span>
                   )}

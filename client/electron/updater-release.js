@@ -102,11 +102,26 @@ function fetchJson(url) {
   });
 }
 
+/** 当前平台的更新清单文件名（electron-updater 检查更新必需）。 */
+function manifestNameForPlatform(platform) {
+  const p = platform || process.platform;
+  if (p === 'darwin') return 'latest-mac.yml';
+  if (p === 'linux') return 'latest-linux.yml';
+  return 'latest.yml';
+}
+
+/** release 是否带了本平台的更新清单资产（缺了就无法自更新，跳过它，别指过去 404）。 */
+function releaseHasManifest(rel, platform) {
+  const name = manifestNameForPlatform(platform);
+  return Array.isArray(rel.assets) && rel.assets.some((a) => a && a.name === name);
+}
+
 /**
- * 查找符合通道策略的最新 release tag（含 v 前缀，如 v0.4.9-beta4）。
+ * 查找符合通道策略、且带本平台更新清单的最新 release tag（含 v 前缀，如 v0.4.9-beta4）。
  * @param {boolean} allowPrerelease 是否包含预发布
+ * @param {string} [platform] 目标平台（默认当前进程平台）
  */
-async function findLatestReleaseTag(allowPrerelease) {
+async function findLatestReleaseTag(allowPrerelease, platform = process.platform) {
   const releases = await fetchJson(
     `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/releases?per_page=50`,
   );
@@ -123,6 +138,10 @@ async function findLatestReleaseTag(allowPrerelease) {
     } else if (rel.prerelease) {
       continue;
     }
+
+    // 缺 latest-mac.yml / latest.yml 的 release（如只手动传了 dmg/exe 的坏发布）跳过——
+    // 否则会被选成「最新」再去拿不存在的清单 → 404「Cannot find channel」骚扰用户。
+    if (!releaseHasManifest(rel, platform)) continue;
 
     if (!bestTag || compareVersions(tag, bestTag) > 0) {
       bestTag = tag;
@@ -144,4 +163,6 @@ module.exports = {
   isRemoteNewer,
   findLatestReleaseTag,
   feedUrlForTag,
+  manifestNameForPlatform,
+  releaseHasManifest,
 };

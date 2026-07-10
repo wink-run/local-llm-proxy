@@ -40,7 +40,7 @@ from scene_router import router as scene_router
 from provider_router import router as provider_router
 from config_router import router as config_router
 from circle_router import router as circle_router
-from worker_pool import pool, WorkerConnection, worker_model_names, default_ttft_ms
+from worker_pool import pool, WorkerConnection, worker_model_names, default_ttft_ms, worker_sharer
 from geo_ip import client_ip_from_ws, resolve_client_ip, resolve_ip_geo, virtual_worker_geo
 from contrib_display import apply_contrib_display
 
@@ -121,9 +121,18 @@ def _openai_path(path: str) -> bool:
 
 @app.exception_handler(DispatchError)
 async def dispatch_error_handler(request: Request, exc: DispatchError):
+    worker_id = getattr(exc, "worker_id", None)
+    workers = getattr(exc, "workers", None)
     if _openai_path(request.url.path):
-        return openai_error_response(exc.status_code, exc.message, exc.error_type)
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
+        return openai_error_response(exc.status_code, exc.message, exc.error_type,
+                                     worker_id=worker_id, workers=workers)
+    content = {"detail": exc.message}
+    if worker_id:
+        content["worker_id"] = worker_id
+    if workers:
+        content["workers"] = workers
+    return JSONResponse(status_code=exc.status_code, content=content,
+                        headers={"X-TB-Worker": worker_id} if worker_id else None)
 
 
 @app.exception_handler(HTTPException)
@@ -280,12 +289,8 @@ def _worker_row(w) -> dict:
         avg_ttft_ms = sum(m["last_ttft_ms"] for m in model_latency.values()) / len(model_latency)
     else:
         avg_ttft_ms = 0
-    multiplier = 1.0
-    if total_req > 0:
-        online_f = min(0.5 + 0.8 * min(online_mins / 5, 1.0), 1.3)
-        latency_f = max(0.6, min(1.5, 500 / avg_ttft_ms)) if avg_ttft_ms > 0 else 1.0
-        stability_f = 0.5 + 0.7 * success_rate
-        multiplier = round(max(0.5, min(1.5, 0.4 * online_f + 0.4 * latency_f + 0.2 * stability_f)), 3)
+    # star 系数：抽到 WorkerConnection.reward_multiplier()，与 auto 策略选优同源
+    multiplier = w.reward_multiplier()
     status = "busy" if (w.active_requests or 0) > 0 else "idle"
     row = {
         "worker_id": w.worker_id,
@@ -296,6 +301,7 @@ def _worker_row(w) -> dict:
         "avg_latency_ms": round(avg_ttft_ms),
         "multiplier": multiplier,
         "stars": _stars(multiplier),
+        "sharer": worker_sharer(w),   # 分享者化名句柄（钉分享者用；不含用户名/真 user_id）
         "online_mins": round(online_mins, 1),
         "connected_at": w.connected_at.isoformat(),
         "status": status,
@@ -673,11 +679,28 @@ async def list_models(creds: Optional[HTTPAuthorizationCredentials] = Depends(_b
     return {"object": "list", "data": data}
 
 
+def _parse_route_header(request: Request) -> dict:
+    """解析客户端网关带外传来的路由指令 X-TB-Route: strategy=auto;sharer=s_a1b2c3。
+    社区(p2p)派发的策略/钉分享者靠此头传入，模型名保持裸名转给 worker。"""
+    raw = request.headers.get("x-tb-route") or request.headers.get("X-TB-Route") or ""
+    out: dict = {"strategy": None, "sharer": None}
+    for part in raw.split(";"):
+        if "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        k, v = k.strip().lower(), v.strip()
+        if k in out and v:
+            out[k] = v
+    return out
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request, key_info: dict = Depends(auth_user)):
     body = await request.json()
     consumer_user_id: Optional[int] = key_info.get("user_id")
-    resp = await handle_chat(body, consumer_user_id=consumer_user_id, key_id=key_info.get("id"))
+    route = _parse_route_header(request)
+    resp = await handle_chat(body, consumer_user_id=consumer_user_id, key_id=key_info.get("id"),
+                             strategy=route["strategy"], sharer=route["sharer"])
     # 扣费（含个人源豁免）统一在 dispatch.handle_chat 内完成，避免双重扣费
     return resp
 
@@ -755,7 +778,9 @@ async def messages(request: Request, key_info: dict = Depends(_auth_anthropic)):
     streaming = body.get("stream", False)
 
     oai_body = _anthropic_to_openai(body)
-    resp = await handle_chat(oai_body, consumer_user_id=consumer_user_id, key_id=key_info.get("id"))
+    route = _parse_route_header(request)
+    resp = await handle_chat(oai_body, consumer_user_id=consumer_user_id, key_id=key_info.get("id"),
+                             strategy=route["strategy"], sharer=route["sharer"])
 
     if streaming:
         msg_id = "msg_" + uuid.uuid4().hex[:24]
@@ -795,11 +820,17 @@ async def messages(request: Request, key_info: dict = Depends(_auth_anthropic)):
                         yield f'event: message_delta\ndata: {{"type":"message_delta","delta":{{"stop_reason":"{stop_reason}","stop_sequence":null}},"usage":{{"output_tokens":{output_tokens}}}}}\n\n'
                         yield 'event: message_stop\ndata: {"type":"message_stop"}\n\n'
 
-        return StreamingResponse(
-            anthropic_sse(),
-            media_type="text/event-stream",
-            headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
-        )
+        _sh = {"X-Accel-Buffering": "no", "Cache-Control": "no-cache"}
+        _wid = resp.headers.get("X-TB-Worker") if hasattr(resp, "headers") else None
+        if _wid:
+            _sh["X-TB-Worker"] = _wid
+        return StreamingResponse(anthropic_sse(), media_type="text/event-stream", headers=_sh)
 
-    # Non-streaming: 扣费已在 dispatch.handle_chat 内完成（含个人源豁免），此处仅转换格式
-    return _openai_to_anthropic(resp, model)
+    # Non-streaming: 扣费已在 dispatch.handle_chat 内完成（含个人源豁免），此处仅转换格式。
+    # resp 现为 JSONResponse（带 X-TB-Worker 头）：取出 OpenAI dict 转 Anthropic，并透传 worker 头。
+    oai_result = json.loads(resp.body) if isinstance(resp, JSONResponse) else resp
+    worker_hdr = resp.headers.get("X-TB-Worker") if isinstance(resp, JSONResponse) else None
+    return JSONResponse(
+        _openai_to_anthropic(oai_result, model),
+        headers={"X-TB-Worker": worker_hdr} if worker_hdr else None,
+    )

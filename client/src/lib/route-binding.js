@@ -3,6 +3,49 @@
 
 const TIER_ROUTE_RE = /^(free|p2p|paid):(.+)$/;
 
+// ── 分层路由 codec：strategy:scope:tier:sharer:provider:model（与 shared/route-binding.js 同步）──
+// scope=来源（personal 个人源 / community 社区），与 tier=价格（free/paid）正交、可组合。
+export const STRATEGY_NAMES = ['auto', 'cost', 'speed', 'round-robin', 'weighted', 'fallback', 'direct'];
+export const SCOPE_NAMES    = ['personal', 'community'];   // 来源维度（与 tier 价格维度正交）
+export const TIER_NAMES     = ['free', 'p2p', 'paid'];     // p2p 保留兼容旧数据；新数据社区走 scope
+export const SHARER_RE      = /^s_[a-z0-9]+$/i;
+
+const _STRAT_SET = new Set(STRATEGY_NAMES);
+const _SCOPE_SET = new Set(SCOPE_NAMES);
+const _TIER_SET  = new Set(TIER_NAMES);
+
+/** 规范化编码：固定顺序 strategy:scope:tier:sharer:provider:model，空层跳过。 */
+export function encodeRoute(parts = {}) {
+  const { strategy, scope, tier, sharer, provider, model } = parts;
+  return [strategy, scope, tier, sharer, provider, model].filter(Boolean).join(':');
+}
+
+/** 解析规范串 → { strategy, scope, tier, sharer, provider, model }（缺省 null）；最后一段=model。 */
+export function parseRoute(str) {
+  const out = { strategy: null, scope: null, tier: null, sharer: null, provider: null, model: null };
+  const s = String(str == null ? '' : str).trim();
+  if (!s) return out;
+  const segs = s.split(':');
+  if (segs.length === 1) {
+    const seg = segs[0];
+    if (_STRAT_SET.has(seg))      out.strategy = seg;
+    else if (_SCOPE_SET.has(seg)) out.scope = seg;
+    else if (_TIER_SET.has(seg))  out.tier = seg;
+    else if (SHARER_RE.test(seg)) out.sharer = seg;
+    else                          out.model = seg;
+    return out;
+  }
+  out.model = segs[segs.length - 1];
+  for (const seg of segs.slice(0, -1)) {
+    if (_STRAT_SET.has(seg) && !out.strategy)      out.strategy = seg;
+    else if (_SCOPE_SET.has(seg) && !out.scope)    out.scope = seg;
+    else if (_TIER_SET.has(seg) && !out.tier)      out.tier = seg;
+    else if (SHARER_RE.test(seg) && !out.sharer)   out.sharer = seg;
+    else if (!out.provider)                        out.provider = seg;
+  }
+  return out;
+}
+
 export function encodeTierModelRoute(tier, modelId) {
   if (!modelId) return '';
   if (!tier) return modelId;

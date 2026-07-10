@@ -22,6 +22,8 @@ async def list_routing_catalog():
         "version": doc.get("version") or 1,
         "routes": [rc.normalize_route(r) for r in (doc.get("routes") or [])],
         "tiers": list(rc.TIERS),
+        "strategies": list(rc.strategy_names()),
+        "strategies_meta": rc.load_strategies_meta(),
     }
 
 

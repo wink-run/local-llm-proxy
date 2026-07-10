@@ -5,46 +5,53 @@
 version: 1
 
 scene_routes:
-  - id: route-code
-    scene_name: 代码助手
-    icon: 💻
-    model_key: llm-router-code
-    steps:
-      - model: claude-sonnet-4-6
-        tier: paid
-      - model: gpt-4o
-        tier: paid
-      - model: deepseek-chat
-        tier: paid
-
-  - id: route-chat
-    scene_name: 日常对话
-    icon: 💬
-    model_key: llm-router-chat
-    steps:
-      - model: deepseek-chat
-        tier: paid
-      - model: gpt-4o-mini
-        tier: paid
-
-  - id: route-long
-    scene_name: 长上下文
-    icon: 📄
-    model_key: llm-router-long
-    steps:
-      - model: claude-sonnet-4-6
-        tier: paid
-      - model: gemini-2.5-pro
-        tier: paid
-
-  - id: route-fast
-    scene_name: 快速响应
+  # ── 策略路由（模型无关，无 steps）：网关按请求类型扫该类型下所有(源,模型)候选、按 strategy 排序 + failover。
+  #    strategy 逻辑由客户端 routing-strategies.js 里同名 JS 实现。客户端像选场景路由一样选这几个。
+  # 默认策略路由：流转策略(flow)= 名字。模型无关、无 steps；网关按 flow 在全候选里选优。
+  - id: strategy-auto
+    scene_name: 综合最优
+    icon: ✨
+    model_key: llm-router-auto
+    flow: auto
+  - id: strategy-cost
+    scene_name: 实惠优先
+    icon: 💰
+    model_key: llm-router-cost
+    flow: cost
+  - id: strategy-speed
+    scene_name: 速度优先
     icon: ⚡
-    model_key: llm-router-fast
+    model_key: llm-router-speed
+    flow: speed
+  - id: strategy-round-robin
+    scene_name: 轮询
+    icon: 🔄
+    model_key: llm-router-round-robin
+    flow: round-robin
+
+  # ── 纯来源/价格路由：只按 来源(scope=personal/community) 或 价格(tier=free/paid) 过滤，
+  #    层内按 auto 综合最优排序。scope 与 tier 正交，用户可在界面自由组合（如 个人+免费）。
+  - id: strategy-free
+    scene_name: 仅免费
+    icon: 🆓
+    model_key: llm-router-free
     steps:
-      - model: claude-haiku-4-5
-        tier: paid
-      - model: gpt-4o-mini
-        tier: paid
-      - model: llama-3.3-70b
-        tier: paid
+      - tier: free
+        strategy: auto
+  - id: strategy-community
+    scene_name: 仅社区
+    icon: 🌐
+    model_key: llm-router-community
+    steps:
+      - scope: community
+        strategy: auto
+  - id: strategy-personal
+    scene_name: 仅个人
+    icon: 👤
+    model_key: llm-router-personal
+    steps:
+      - scope: personal
+        strategy: auto
+
+  # 模型链路由（代码助手/日常对话/长上下文/快速响应等）不再作为默认铺设——
+  # 它们钉死具体模型名、与用户实际拥有的源未必匹配；需要时由用户在界面自建。

@@ -1161,6 +1161,19 @@ function readLocalConfig() {
           cfg.initialized_routes = true;
         }
       }
+      // 内置策略路由（模型无关，统一表示 steps:[{strategy}]）随版本内置：老配置也补齐缺失的。
+      // 识别策略路由：route-level strategy（旧）或单步 strategy-only（新）。
+      try {
+        const have = new Set((cfg.scene_routes || []).map(r => r.id));
+        const defRoutes = loadDefaultYamlSection('tokenbank.routes.default.yaml', 'scene_routes') || [];
+        const isStrat = (r) => !!(r.strategy
+          || (Array.isArray(r.steps) && r.steps.length === 1 && r.steps[0] && r.steps[0].strategy && !r.steps[0].model));
+        const missing = defRoutes.filter(r => isStrat(r) && !have.has(r.id));
+        if (missing.length) {
+          cfg.scene_routes = cfg.scene_routes || [];
+          for (const sr of missing) cfg.scene_routes.push({ ...sr, created_at: new Date().toISOString() });
+        }
+      } catch {}
       // 用户显式取消托管的 agent_id 列表（自动托管会跳过这些）
       if (!Array.isArray(cfg.auto_host_disabled)) cfg.auto_host_disabled = [];
       return applyEnvServerDefault(cfg);
@@ -1797,6 +1810,8 @@ function registerIPC() {
   // 请求跑完网关内部自动 record 记速。返回 {ok,status,latencyMs}。会消耗一次真实调用（P2P 扣积分）。
   ipcMain.handle('gateway:probeModel', (_e, model) => probeModelViaGateway(model));
   ipcMain.handle('gateway:restart',       () => gateway.restart());
+
+  // 已移除「全局路由策略」——无全局默认概念：路由由 app 绑定生效，未绑请求走直连。
   ipcMain.handle('localStats:compression', (_e, days) => {
     const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
     try {
@@ -2021,6 +2036,8 @@ function registerIPC() {
       try { mainWindow?.webContents?.send('apps:changed'); } catch {}
     }
 
+    // （已移除全局默认策略下发：无全局默认概念）
+
     // 路由配置（scene_routes）→ 写入 local-config
     const hasScenes  = Array.isArray(parsed.scene_routes) && parsed.scene_routes.length > 0;
     const addedRoutes = [];   // 本次同步「新增」的场景路由（本地没有、server 有）
@@ -2186,9 +2203,16 @@ function registerIPC() {
   function syncGatewayFromConfig(cfg) {
     const routes = cfg.scene_routes || [];
     const apps   = cfg.apps         || [];
-    // llm-router-* → scene steps（从 scene_routes 生成）
+    // llm-router-* → scene steps / 策略路由（从 scene_routes 生成）
     const routerMap = {};
     for (const r of routes) {
+      // 策略路由：无 steps、有 strategy —— 模型无关，网关按类型扫候选 + 策略排序
+      if (r.model_key && r.strategy && !(r.steps?.length || r.rules?.length)) {
+        const entry = { strategy: r.strategy, scene_name: r.scene_name, id: r.id || r.model_key };
+        routerMap[r.model_key] = entry;
+        if (r.id && r.id !== r.model_key) routerMap[r.id] = entry;
+        continue;
+      }
       if (r.model_key && (r.steps?.length || r.rules?.length)) {
         const entry = { steps: r.steps || [], scene_name: r.scene_name, rules: r.rules || null, classifier: r.classifier || null };
         routerMap[r.model_key] = entry;
@@ -2468,13 +2492,15 @@ function registerIPC() {
     return billingConfigMod.getUserAccounts(cfg, { boundDirectAgentIds: boundDirectAgentIds() });
   });
 
-  ipcMain.handle('localConfig:createSceneRoute', (_e, { scene_name, icon, steps, rules, classifier }) => {
+  ipcMain.handle('localConfig:createSceneRoute', (_e, { scene_name, icon, steps, rules, classifier, flow, caveman_level }) => {
     const cfg   = readLocalConfig();
     const route = {
       id: rndHex(8), scene_name, icon: icon || '🔀',
       steps: steps || [],
       rules: rules || null,           // 条件路由规则（when → steps）
       classifier: classifier || null, // 语义分类器配置
+      flow: flow || null,             // 链级流转策略
+      caveman_level: caveman_level || null, // 输出风格
       model_key: 'llm-router-' + rndHex(6),
       created_at: new Date().toISOString(),
     };
@@ -2484,11 +2510,11 @@ function registerIPC() {
     return route;
   });
 
-  ipcMain.handle('localConfig:updateSceneRoute', (_e, { id, scene_name, icon, steps, rules, classifier }) => {
+  ipcMain.handle('localConfig:updateSceneRoute', (_e, { id, scene_name, icon, steps, rules, classifier, flow, caveman_level }) => {
     const cfg = readLocalConfig();
     const idx = cfg.scene_routes.findIndex(r => r.id === id);
     if (idx === -1) return null;
-    cfg.scene_routes[idx] = { ...cfg.scene_routes[idx], scene_name, icon, steps, rules: rules || null, classifier: classifier || null };
+    cfg.scene_routes[idx] = { ...cfg.scene_routes[idx], scene_name, icon, steps, rules: rules || null, classifier: classifier || null, flow: flow || null, caveman_level: caveman_level || null };
     writeLocalConfig(cfg);
     syncGatewayFromConfig(cfg);
     return cfg.scene_routes[idx];
@@ -3974,20 +4000,9 @@ function probeModelViaGateway(model) {
 
 // 个人源可测速模型名（用于随机初始化速率）。
 function collectPersonalModelsMain() {
-  try {
-    const lc = readLocalConfig();
-    const out = new Set();
-    const add = (models) => {
-      for (const m of (models || [])) {
-        const n = typeof m === 'string' ? m : (m && (m.name || m.id));
-        if (n) out.add(n);
-      }
-    };
-    for (const s of (lc.user_subscriptions || [])) add(s.models);
-    for (const p of (lc.user_payg_providers || [])) add(p.models);
-    for (const [, d] of Object.entries(lc.direct_source_billing || {})) if (d && d.mode === 'api') add(d.models);
-    return [...out];
-  } catch { return []; }
+  // 委托 billing-config 的共享实现 → 与网关 scope=personal 过滤、供给源页保持单一真源
+  try { return require('./billing-config').collectPersonalModelNames(readLocalConfig()); }
+  catch { return []; }
 }
 
 // 为社区源(p2p) + 个人源模型「随机初始化」一个测速速率：不发真实探针、不花积分/账单。
