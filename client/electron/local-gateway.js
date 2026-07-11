@@ -9,7 +9,24 @@ const path  = require('path');
 const codexTransform = require('./codex-transform');
 const reqRouter = require('./request-router');
 const routingStrategies = require('./routing-strategies');
-const { TIER_ROUTE_RE, parseRoute } = require('../shared/route-binding');
+const { TIER_ROUTE_RE, parseRoute, STRATEGY_NAMES, SCOPE_NAMES, TIER_NAMES, SHARER_RE } = require('../shared/route-binding');
+const _STRAT_SET = new Set(STRATEGY_NAMES || []);
+const _SCOPE_SET = new Set(SCOPE_NAMES || []);
+const _TIER_SET  = new Set(TIER_NAMES || []);
+// 纯前缀 codec：整串都是已知 codec token(strategy/scope/tier/sharer)、无裸模型 → 当策略/过滤路由。
+function parsePureCodec(str) {
+  const segs = String(str == null ? '' : str).split(':').filter(Boolean);
+  const isTok = (s) => _STRAT_SET.has(s) || _SCOPE_SET.has(s) || _TIER_SET.has(s) || (SHARER_RE && SHARER_RE.test(s));
+  if (!segs.length || !segs.every(isTok)) return null;
+  const out = { strategy: null, scope: null, tier: null, sharer: null };
+  for (const s of segs) {
+    if (_STRAT_SET.has(s)) out.strategy = s;
+    else if (_SCOPE_SET.has(s)) out.scope = s;
+    else if (_TIER_SET.has(s)) out.tier = s;
+    else if (SHARER_RE.test(s)) out.sharer = s;
+  }
+  return out;
+}
 
 /** p2p 派发的路由指令 → X-TB-Route 头值（服务端按此做 auto 排序 / 钉分享者）。 */
 function encodeRouteHeader(meta) {
@@ -594,6 +611,14 @@ function providerHasModel(provider, model, { strict = false } = {}) {
   return list.some(m => (typeof m === 'string' ? m : m.name) === model);
 }
 
+// 源整体失效级错误（配额/鉴权/限流）：该源的其它模型也会同样失败，failover 时应跳过整个源，
+// 避免把一个 429 的源的 5-6 个模型都试一遍白白拖几秒（导致 Codex 等客户端超时"没返回"）。
+function isSourceLevelError(err) {
+  const m = String((err && err.message) || '');
+  return /HTTP_(429|401|403)\b/.test(m)
+    || /quota|rate[\s_-]?limit|invalid[\s_-]*api[\s_-]*key|unauthorized|exceeded your current quota/i.test(m);
+}
+
 /** 从上游 4xx/5xx 响应体提取可读错误信息 */
 function formatHttpError(statusCode, bodyStr) {
   let msg = `HTTP_${statusCode}`;
@@ -666,8 +691,10 @@ function writeAnthropicApiError(res, status, message, openaiType) {
 function rejectOpenaiPayloadError(reject, errObj, res, { anthropic = false } = {}) {
   const status = openaiErrorTypeToStatus(errObj.type);
   const msg = errObj.message;
-  if (anthropic && res && !res.headersSent) writeAnthropicApiError(res, status, msg, errObj.type);
-  reject(Object.assign(new Error(`HTTP_${status}: ${msg}`), { status }));
+  // 不在此处写 res：候选失败后 failover 循环可能还要试下一个源。提前 writeHead/end 会占用响应，
+  // 令 res.headersSent=true 从而阻断 failover —— Anthropic /v1/messages 只试第一个候选就 502（agnes 等根本轮不到）。
+  // 终端错误由外层 fail() 按协议（anthropic / openai / responses）统一输出。apiErrorType 透传给 fail() 复原格式。
+  reject(Object.assign(new Error(`HTTP_${status}: ${msg}`), { status, apiErrorType: errObj.type }));
 }
 
 /** 路由失败时优先展示付费/本地源错误，避免 P2P 401 掩盖上游真实原因 */
@@ -2330,14 +2357,9 @@ function evalWhen(when, ctx) {
     default: return false;
   }
 }
-// 按规则选路由链（同步，不含分类器）：第一条命中的 rule.steps；都不中 → 默认 scene.steps。
+// 统一步骤按 when 过滤（同步，不含分类器）：无条件=兜底，带条件=命中才用；保持顺序。
 function pickSteps(scene, ctx) {
-  if (Array.isArray(scene && scene.rules)) {
-    for (const rule of scene.rules) {
-      if (rule && Array.isArray(rule.steps) && rule.steps.length && evalWhen(rule.when, ctx)) return rule.steps;
-    }
-  }
-  return (scene && scene.steps) || [];
+  return unifySteps(scene).filter(s => s && (!s.when || evalWhen(s.when, ctx)));
 }
 
 // ── 语义分类器（有成本条件：先用便宜模型把输入归类，再按 label 路由）──────────────
@@ -2401,20 +2423,28 @@ async function classifyInput(text, classifier) {
   return label;
 }
 
-// 选路由链（异步）：含分类器规则时懒计算 label（每请求只分类一次）；第一条命中即用。
-async function resolveSteps(scene, ctx) {
+// 统一步骤：每步可选带 when 条件。老 rules 摊平成"带 rule.when 的步"，再接默认步(无 when)。
+function unifySteps(scene) {
+  const all = [];
   if (Array.isArray(scene && scene.rules)) {
-    let classified = false;
     for (const rule of scene.rules) {
-      if (!rule || !Array.isArray(rule.steps) || !rule.steps.length || !rule.when) continue;
-      if (rule.when.type === 'classifier' && !classified) {
-        ctx.classifier_label = await classifyInput(ctx.text, scene.classifier);
-        classified = true;
+      if (rule && Array.isArray(rule.steps)) {
+        for (const s of rule.steps) all.push({ ...s, when: s.when || rule.when || null });
       }
-      if (evalWhen(rule.when, ctx)) return rule.steps;
     }
   }
-  return (scene && scene.steps) || [];
+  for (const s of ((scene && scene.steps) || [])) all.push(s);
+  return all;
+}
+
+// 选路由链（异步）：把统一步骤按各步自己的 when 过滤——无条件=兜底，带条件=命中才用；保持顺序。
+// 含分类器条件时懒计算 label（每请求只分类一次）。
+async function resolveSteps(scene, ctx) {
+  const all = unifySteps(scene);
+  if (all.some(s => s && s.when && s.when.type === 'classifier')) {
+    ctx.classifier_label = await classifyInput(ctx.text, scene && scene.classifier);
+  }
+  return all.filter(s => s && (!s.when || evalWhen(s.when, ctx)));
 }
 
 // 去掉 Claude 模型名的日期快照后缀：claude-sonnet-4-5-20250929 → claude-sonnet-4-5。
@@ -2430,14 +2460,17 @@ function stratStepOf(scene) {
   // 带条件规则(rules)的路由必须走场景/规则分支(resolveSteps 评估 token/关键字条件)，
   // 不能被"单步策略"抢先短路——否则 rules 被绕过。
   if (Array.isArray(scene.rules) && scene.rules.length) return null;
-  if (scene.strategy) return { strategy: scene.strategy, scope: null, tier: null, provider: null, sharer: null };
+  const rScope = scene.scope || null, rTier = scene.tier || null;   // 路由级统一过滤（顶层，和 flow 并列）
+  if (scene.strategy) return { strategy: scene.strategy, scope: rScope, tier: rTier, provider: null, sharer: null };
   const steps = scene.steps || [];
   const s = steps[0] || {};
   // 单步(或无步)且无 model = 开放式选择：策略取 step.strategy || 路由级 flow || (有 scope/tier/provider 时)fallback。
   // 默认策略路由(综合最优/实惠优先…)用路由级 flow 表达，flow 即其选优策略；纯来源/价格路由(仅个人/仅免费…)靠 scope/tier 过滤。
+  // 路由级过滤(scene.scope/scene.tier)与步级合并（步级优先）。
   if (steps.length <= 1 && !s.model) {
-    const strat = s.strategy || scene.flow || ((s.scope || s.tier || s.provider) ? 'fallback' : null);
-    if (strat) return { strategy: strat, scope: s.scope || null, tier: s.tier || null, provider: s.provider || null, sharer: s.sharer || null };
+    const scope = s.scope || rScope, tier = s.tier || rTier;
+    const strat = s.strategy || scene.flow || ((scope || tier || s.provider) ? 'fallback' : null);
+    if (strat) return { strategy: strat, scope: scope || null, tier: tier || null, provider: s.provider || null, sharer: s.sharer || null };
   }
   return null;
 }
@@ -2521,7 +2554,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   let requestTier = null, requestScope = null, requestStrategy = null, requestSharer = null, requestProvider = null;
   {
     const pr = parseRoute(model);
-    if (pr.model) {   // 仅当解析出裸模型时才认这些前缀（纯 scope/tier/strategy 全局形态另走场景/策略路由）
+    // 纯前缀 codec(整串都是 token、无裸模型) 另走策略分支，这里不当 model 前缀处理
+    if (pr.model && !parsePureCodec(origModel)) {
       if (pr.tier || pr.scope || pr.strategy || pr.sharer || pr.provider) {
         requestTier     = pr.tier;
         requestScope    = pr.scope;
@@ -2569,6 +2603,12 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
         res.end(JSON.stringify(payload));
         return;
       }
+      // Anthropic 客户端（/v1/messages）：终端错误必须是 anthropic 错误体 {type:'error',error:{...}}，
+      // 否则 Claude Desktop/CLI 解析不了。之前靠 rejectOpenaiPayloadError 提前写，现改由此处统一输出。
+      if (isAnthropic && !isResponses) {
+        writeAnthropicApiError(res, status, detail, lastErr?.apiErrorType || 'api_error');
+        return;
+      }
       const payload = isResponses
         ? codexTransform.chatErrorToResponseError({ error: { message: detail, type: 'all_providers_failed' } })
         : { error: 'all_providers_failed', detail };
@@ -2606,12 +2646,26 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     const st = stratStepOf(cand);
     if (st) { _stratScene = cand; _stratStep = st; break; }
   }
+  // 纯前缀 codec 直接当 model 传（auto:free / auto:personal / community / speed:paid 等）→ 合成策略/过滤路由
+  if (!_stratScene && !boundScene && !claudeFrom && !isLlmRouter) {
+    const pc = parsePureCodec(origModel);
+    if (pc) {
+      _stratScene = { scene_name: origModel, id: origModel };
+      _stratStep  = { strategy: pc.strategy || 'round-robin', scope: pc.scope || null, tier: pc.tier || null, provider: null, sharer: pc.sharer || null };
+    }
+  }
   if (_stratScene) {
     const ordered = buildStrategyCandidates(
       _stratStep.strategy, { scope: _stratStep.scope, tier: _stratStep.tier, provider: _stratStep.provider }, reqPath, skipP2P, _stratScene.id);
-    if (!ordered.length) { lastErr = new Error(`no ${modalityOf(reqPath)} model for strategy route`); fail(_stratScene.scene_name, null); return; }
+    if (!ordered.length) {
+      const _flt = [_stratStep.scope, _stratStep.tier].filter(Boolean).join('/');
+      lastErr = new Error(`该路由过滤(${_flt || _stratStep.strategy || 'any'})下没有可用的${modalityOf(reqPath)}模型/供给源`);
+      fail(_stratScene.scene_name, null); return;
+    }
     const routeErrors = [];
+    const deadSources = new Set();   // 已发生配额/鉴权级失败(429/401/403)的源，跳过其余模型加速降级
     for (const c of ordered) {
+      if (deadSources.has(c.provider.id)) continue;
       if (rejectP2pIfUnconfigured(c.provider, res, isResponses)) { lastErr = p2pAbortError('api_key'); recordError(c.model, callerKey, lastErr); return; }
       try {
         // 策略路由：把场景策略（auto/cost…）+ 钉分享者传给 p2p 服务端，令其对该源 worker 也按策略排序/过滤
@@ -2630,6 +2684,10 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       } catch (err) {
         if (handleP2pFatal(c.provider, err, res, isResponses)) { lastErr = err; recordError(c.model, callerKey, lastErr); return; }
         routeErrors.push({ id: c.provider.id, err }); lastErr = err;
+        // 源级失效跳过：仅对「单账号多模型」的直连源有效（如 openai 一个账号下多个 gpt-* 全 429）。
+        // p2p 所有模型共享同一 provider.id(tokenbank-p2p) 但各是独立 worker，一个挂不代表其它挂，
+        // 绝不能因某个 p2p 模型源级失败就拉黑整个 p2p 池（否则会跳过后面能用的 agnes 等）。
+        if (isSourceLevelError(err) && !isP2pProvider(c.provider)) deadSources.add(c.provider.id);
         if (res.headersSent) return;
       }
     }
@@ -2673,11 +2731,14 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       // 无 model 的步 = 开放式选择（strategy / 纯 tier / 纯 provider）：展开成候选逐个 failover。
       // 无显式 strategy 但有 tier/provider 时按 fallback 顺序；都没有则跳过（避免 model=undefined 发上游）。
       if (!stepModel) {
-        const stepStrat = step.strategy || ((step.scope || step.tier || step.provider) ? 'fallback' : null);
+        const stepScope = step.scope || scene.scope, stepTier = step.tier || scene.tier;   // 合并路由级过滤
+        const stepStrat = step.strategy || ((stepScope || stepTier || step.provider) ? 'fallback' : null);
         if (!stepStrat) continue;
-        const sOrdered = buildStrategyCandidates(stepStrat, { scope: step.scope, tier: step.tier, provider: step.provider }, reqPath, skipP2P, `${scene.id}:${stepStrat}`);
+        const sOrdered = buildStrategyCandidates(stepStrat, { scope: stepScope, tier: stepTier, provider: step.provider }, reqPath, skipP2P, `${scene.id}:${stepStrat}`);
         const sMeta = { strategy: step.strategy || null, sharer: step.sharer || null };
+        const deadSources = new Set();
         for (const c of sOrdered) {
+          if (deadSources.has(c.provider.id)) continue;
           if (rejectP2pIfUnconfigured(c.provider, res, isResponses)) { lastErr = p2pAbortError('api_key'); recordError(c.model, callerKey, lastErr); return; }
           try {
             const result = await callProvider(c.provider, isAnthropic, streaming, reqPath, body, c.model, res, sMeta);
@@ -2692,6 +2753,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           } catch (err) {
             if (handleP2pFatal(c.provider, err, res, isResponses)) { lastErr = err; recordError(c.model, callerKey, lastErr); return; }
             stepErrors.push({ id: c.provider.id, err }); lastErr = err;
+            // 见上：p2p 各模型独立 worker，不能因一个源级失败拉黑整个 tokenbank-p2p 池
+            if (isSourceLevelError(err) && !isP2pProvider(c.provider)) deadSources.add(c.provider.id);
             if (res.headersSent) return;
           }
         }
@@ -2700,7 +2763,11 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       }
       // Match providers by model list；step.tier 指定时只走对应供给层（同模型跨 P2P/付费）
       let stepCandidates = all.filter(p => providerHasModel(p, stepModel, { strict: skipP2P }));
-      if (step.tier) stepCandidates = stepCandidates.filter(p => p.type === step.tier);
+      // 步级 tier/provider + 路由级过滤(scene.scope/scene.tier)
+      const mTier = step.tier || scene.tier;
+      if (mTier) stepCandidates = stepCandidates.filter(p => p.type === mTier);
+      if (scene.scope === 'community') stepCandidates = stepCandidates.filter(p => p.type === 'p2p');
+      if (scene.scope === 'personal') { const _ps = new Set(collectPersonalModels()); if (!_ps.has(stepModel)) stepCandidates = []; }
       if (step.provider) stepCandidates = stepCandidates.filter(p => p.id === step.provider);
       // 该步的 p2p 路由指令：step 自带 strategy/sharer（Selector）优先，否则用请求级 routeMeta
       const stepMeta = (step.strategy || step.sharer)
@@ -3425,7 +3492,7 @@ module.exports = {
   setClaudeModels,
   // 条件路由规则引擎（供单测/复用）
   pickSteps, evalWhen, modalityOf, estimateInputTokens, extractText, _providerTier,
-  stratStepOf, encodeRouteHeader, orderStepsByFlow, buildStrategyCandidates,
+  stratStepOf, encodeRouteHeader, orderStepsByFlow, buildStrategyCandidates, parsePureCodec, unifySteps,
   isP2pProvider, isP2pCreditsError, isP2pApiKeyError, hasP2pRelayKey, resolveFailStatus,
   // 格式转换（供单测/复用）：Anthropic ⇄ OpenAI（含 tool-calling）
   anthropicToOpenai, openaiToAnthropic, oaiRequestToAnthropic, anthropicRespToOai,

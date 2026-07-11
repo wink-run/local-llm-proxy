@@ -921,9 +921,35 @@ select.form-input{cursor:pointer}
             <div class="form-group"><label>{{ lang==='zh'?'图标':'Icon' }}</label><input v-model="rcForm.icon" class="form-input" style="width:64px" /></div>
           </div>
           <div class="form-group" style="margin-bottom:12px"><label>model_key *</label><input v-model="rcForm.model_key" class="form-input" style="width:100%" placeholder="llm-router-code" /></div>
+          <div class="form-row" style="margin-bottom:4px">
+            <div class="form-group"><label>{{ lang==='zh'?'来源':'Source' }}</label>
+              <select v-model="rcForm.scope" class="form-input form-input-sm">
+                <option value="">{{ lang==='zh'?'不限':'Any' }}</option>
+                <option value="personal">{{ lang==='zh'?'个人源':'Personal' }}</option>
+                <option value="community">{{ lang==='zh'?'社区源':'Community' }}</option>
+              </select>
+            </div>
+            <div class="form-group"><label>{{ lang==='zh'?'价格':'Price' }}</label>
+              <select v-model="rcForm.tier" class="form-input form-input-sm">
+                <option value="">{{ lang==='zh'?'不限':'Any' }}</option>
+                <option value="free">{{ lang==='zh'?'免费':'Free' }}</option>
+                <option value="paid">{{ lang==='zh'?'收费':'Paid' }}</option>
+              </select>
+            </div>
+            <div class="form-group"><label>{{ lang==='zh'?'流转策略':'Flow' }}</label>
+              <select v-model="rcForm.flow" class="form-input form-input-sm">
+                <option value="">{{ lang==='zh'?'默认':'Default' }}</option>
+                <option value="auto">auto</option>
+                <option value="cost">cost</option>
+                <option value="speed">speed</option>
+                <option value="round-robin">round-robin</option>
+              </select>
+            </div>
+          </div>
+          <p style="font-size:11px;color:#9b9b9b;margin:0 0 8px">{{ lang==='zh'?'设了 来源/价格/流转 即为策略/过滤路由，可不配具体步骤；步骤仅在需要钉死模型链时填。':'With source/price/flow set it is a strategy route — steps optional (only for pinned model chains).' }}</p>
           <div style="margin:14px 0">
             <div style="display:flex;justify-content:space-between;margin-bottom:8px">
-              <span style="font-size:13px;font-weight:600">{{ lang==='zh'?'降级步骤（按顺序）':'Fallback Steps' }}</span>
+              <span style="font-size:13px;font-weight:600">{{ lang==='zh'?'降级步骤（按顺序，可选）':'Fallback Steps (optional)' }}</span>
               <button type="button" class="btn-xs" @click="rcAddStep">＋</button>
             </div>
             <div v-for="(st, si) in rcForm.steps" :key="si" style="display:flex;gap:6px;margin-bottom:6px">
@@ -944,9 +970,9 @@ select.form-input{cursor:pointer}
   </div>
 </div>
 
-<script src="/static/admin-billing-sources.js"></script>
-<script src="/static/admin-app-catalog.js"></script>
-<script src="/static/admin-routing-catalog.js"></script>
+<script src="/static/admin-billing-sources.js?v={{JS_VER}}"></script>
+<script src="/static/admin-app-catalog.js?v={{JS_VER}}"></script>
+<script src="/static/admin-routing-catalog.js?v={{JS_VER}}"></script>
 <script>
 const { createApp, ref, computed, onMounted, onUnmounted, nextTick, reactive } = Vue
 
