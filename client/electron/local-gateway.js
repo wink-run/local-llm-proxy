@@ -2611,7 +2611,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   const codexGptScene = (callerKey && /^gpt/i.test(origModel)) ? _codexGptFallback[callerKey] : null;
   const boundScene =
     shimClaudeScene ||
-    (isApiKeyCaller && claudeKey && _keyScene[claudeKey]) ||
+    (isApiKeyCaller && claudeKey && _keyScene[callerKey] && _keyScene[callerKey][claudeKey]) ||
     codexGptScene ||
     null;
   const isLlmRouter = origModel.startsWith('llm-router-');
@@ -3396,7 +3396,12 @@ function setKeySceneMap(map) { _keyScene = map && typeof map === 'object' ? map 
 // Claude Code CLI（anthropic shim）绑定的路由。它用 OAuth 调用、无 app key，故单独存放，
 // 只对「非 api-key 调用方」的 claude-* 请求生效，避免顶掉 Claude Desktop 等 api-key 应用的绑定。
 let _claudeShimScene = null;
-function setClaudeShimScene(scene) { _claudeShimScene = scene && (scene.steps?.length || scene.rules?.length) ? scene : null; }
+function setClaudeShimScene(scene) {
+  // 接受两类有效场景：① 带 steps/rules 的模型链路由；② 空 steps 的策略/过滤路由（靠 flow/strategy/scope/tier，
+  // 如综合最优/免费源）。之前只认前者 → claude shim 绑到策略路由时 _claudeShimScene 被置 null，OAuth 兜底 404。
+  const valid = scene && (scene.steps?.length || scene.rules?.length || scene.flow || scene.strategy || scene.scope || scene.tier);
+  _claudeShimScene = valid ? scene : null;
+}
 // Codex 内建 gpt-* 辅助模型的兜底路由（api_key → scene）
 let _codexGptFallback = {};
 function setCodexGptFallback(map) { _codexGptFallback = map && typeof map === 'object' ? map : {}; }

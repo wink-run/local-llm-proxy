@@ -110,11 +110,14 @@ function claudeNameAtIndex(index, claudeModels = [], fallback = 'claude-sonnet-4
 }
 
 /** Claude Desktop 多路由：每个 claude-* 名 → 对应 route（与写入 inferenceModels 顺序一致） */
-function bindClaudeRoutesToKeyScene(keyScene, routeIds, routes = [], claudeModels = []) {
-  if (!Array.isArray(routeIds) || !routeIds.length) return;
+// keyScene 结构：{ [callerKey]: { [claude模型名]: scene } } —— 按「调用方 app key」分桶，
+// 使多个 claude 应用（Desktop / 多个 CLI 实例）能各绑各的路由，互不覆盖。
+function bindClaudeRoutesToKeyScene(keyScene, callerKey, routeIds, routes = [], claudeModels = []) {
+  if (!callerKey || !Array.isArray(routeIds) || !routeIds.length) return;
+  const sub = keyScene[callerKey] || (keyScene[callerKey] = {});
   routeIds.forEach((routeId, i) => {
     const claudeName = claudeNameAtIndex(i, claudeModels);
-    bindRouteToKeyScene(keyScene, claudeName, routeId, routes);
+    bindRouteToKeyScene(sub, claudeName, routeId, routes);
   });
 }
 
