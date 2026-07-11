@@ -2222,7 +2222,9 @@ function registerIPC() {
         continue;
       }
       if (r.model_key && (r.steps?.length || r.rules?.length)) {
-        const entry = { steps: r.steps || [], scene_name: r.scene_name, rules: r.rules || null, classifier: r.classifier || null };
+        // 带 steps/rules 的路由也要带上路由级 scope/tier/flow，否则"路由级过滤 + 模型链"会丢过滤
+        const entry = { steps: r.steps || [], scene_name: r.scene_name, rules: r.rules || null, classifier: r.classifier || null,
+          ...(r.flow ? { flow: r.flow } : {}), ...(r.scope ? { scope: r.scope } : {}), ...(r.tier ? { tier: r.tier } : {}) };
         routerMap[r.model_key] = entry;
         if (r.id && r.id !== r.model_key) routerMap[r.id] = entry;
       }
