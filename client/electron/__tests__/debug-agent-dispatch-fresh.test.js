@@ -105,6 +105,20 @@ test('子任务步骤：前端流式细节优先于 DB 摘要', () => {
   assert.ok(picked.some(s => s.stepType === 'thinking'));
 });
 
+test('Codex 场景：DB 条数更多但前端合并内容更完整时保留 stored', () => {
+  const stored = [
+    { stepType: 'thinking', content: '构思一首诗' },
+    { stepType: 'output', content: '床前明月光，疑是地上霜。', is_snapshot: true },
+  ];
+  const db = [
+    { stepType: 'output', content: '床前' },
+    { stepType: 'output', content: '床前明月光' },
+    { stepType: 'output', content: '床前明月光，疑是地上霜。' },
+  ];
+  const picked = S.preferRicherSteps(db, stored);
+  assert.equal(picked, stored);
+});
+
 test('归档轮次：delegations 随 conversationTurns 持久化', () => {
   S.clearSessionTaskState('__hub__');
   S.archiveCompletedTurn('__hub__', {
@@ -118,4 +132,26 @@ test('归档轮次：delegations 随 conversationTurns 持久化', () => {
   const turn = S.getStoreSession('__hub__').conversationTurns[0];
   assert.ok(turn.delegations?.c1, '归档应保存 delegations');
   assert.equal(turn.delegations.c1.steps[0].content, 'import poem');
+});
+
+test('归档轮次：同 taskId 以更完整步骤 upsert', () => {
+  S.clearSessionTaskState('__hub__');
+  S.archiveCompletedTurn('__hub__', {
+    user: '写首诗',
+    steps: [{ stepType: 'thinking', content: 'The user wants a poem' }],
+    taskId: 't-poem',
+    result: { summary: 'The user wants a poem' },
+  });
+  S.archiveCompletedTurn('__hub__', {
+    user: '写首诗',
+    steps: [
+      { stepType: 'thinking', content: 'The user wants a poem' },
+      { stepType: 'output', content: '床前明月光，疑是地上霜。' },
+    ],
+    taskId: 't-poem',
+    result: { summary: '床前明月光，疑是地上霜。' },
+  });
+  const turns = S.getStoreSession('__hub__').conversationTurns;
+  assert.equal(turns.length, 1);
+  assert.ok(turns[0].steps.some(s => /床前明月光/.test(s.content)));
 });

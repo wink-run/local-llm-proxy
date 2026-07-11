@@ -36,3 +36,35 @@ assert.deepStrictEqual(
 );
 
 console.log('codex-build-args.test.js OK');
+
+// 编排模式：resume 必须在 -p profile 之后（与 agent-executor injectCodexResumeArgs 一致）
+function injectCodexResumeArgs(extraArgs, { continueSession, cliSessionId } = {}) {
+  if (!continueSession) return extraArgs;
+  const out = [...extraArgs];
+  out.push('resume', cliSessionId || '--last');
+  return out;
+}
+
+function buildCodexOrchArgs(prompt, { workingDir, profileName, continueSession, cliSessionId } = {}) {
+  const extra = ['exec'];
+  if (workingDir) extra.push('--cd', workingDir);
+  extra.push('--json', '--skip-git-repo-check', '-p', profileName);
+  return [...injectCodexResumeArgs(extra, { continueSession, cliSessionId }), prompt];
+}
+
+assert.deepStrictEqual(
+  buildCodexOrchArgs('hello', { workingDir: '/tmp/proj', profileName: 'tokenbank-orch-task_1' }),
+  ['exec', '--cd', '/tmp/proj', '--json', '--skip-git-repo-check', '-p', 'tokenbank-orch-task_1', 'hello'],
+);
+
+assert.deepStrictEqual(
+  buildCodexOrchArgs('continue', {
+    workingDir: '/tmp/proj',
+    profileName: 'tokenbank-orch-task_1',
+    continueSession: true,
+    cliSessionId: 'thr_abc',
+  }),
+  ['exec', '--cd', '/tmp/proj', '--json', '--skip-git-repo-check', '-p', 'tokenbank-orch-task_1', 'resume', 'thr_abc', 'continue'],
+);
+
+console.log('codex-orchestrator-args-order.test OK');

@@ -1,6 +1,6 @@
 // Agent 对话流：典型 Agent 交互风格（用户消息 + 思考/工具/终端/回复 + 编排派发）
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { mergeStreamText, foldStreamSteps, normalizeLoose, looksLikeLeakedReasoning } from '../../shared/stream-text-merge.js';
+import { mergeStreamText, foldStreamSteps, normalizeLoose, looksLikeLeakedReasoning, looksLikeInlineReasoning } from '../../shared/stream-text-merge.js';
 import { MarkdownContent } from './RichMediaContent';
 
 const STEP_META = {
@@ -50,6 +50,34 @@ function mergeDelegationPairs(items) {
     out.push({ ...item });
   }
   return out;
+}
+
+/** 已有推理卡片时，将泄漏 reasoning 并入最后一张推理卡 */
+function mergeLeakIntoThinkingItems(items, step) {
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i].kind !== 'thinking_group') continue;
+    items[i] = {
+      ...items[i],
+      content: mergeStreamText(items[i].content, step.content, {
+        isDelta: !!step.is_delta,
+        isSnapshot: !!step.is_snapshot,
+      }),
+      count: (items[i].count || 1) + 1,
+      timestamp: step.timestamp || items[i].timestamp,
+    };
+    return true;
+  }
+  return false;
+}
+
+/** 已有推理卡时去掉重复的泄漏 assistant 气泡 */
+function stripLeakedAssistantsWhenThinking(items) {
+  const hasThinking = items.some(it => it.kind === 'thinking_group');
+  if (!hasThinking) return items;
+  return items.filter(it => {
+    if (it.kind !== 'assistant' || !looksLikeLeakedReasoning(it.content)) return true;
+    return false;
+  });
 }
 
 /** 合并连续 output / thinking 步骤，减少碎片化 */
@@ -161,18 +189,26 @@ function buildTimeline(userPrompt, steps = [], delegations = {}, agentNames = {}
 
     if (type === 'output') {
       flushSystem();
-      // 误泄漏的 reasoning 片段并入 thinking，避免拆成多张推理卡
-      if (looksLikeLeakedReasoning(step.content) && thinkingBuf.length) {
-        const last = thinkingBuf[thinkingBuf.length - 1];
-        thinkingBuf[thinkingBuf.length - 1] = {
-          ...last,
-          content: mergeStreamText(last.content, step.content, {
-            isDelta: !!step.is_delta,
-            isSnapshot: !!step.is_snapshot,
-          }),
-          timestamp: step.timestamp || last.timestamp,
-        };
-        continue;
+      // 误泄漏的 reasoning 并入 thinking，避免与最终回复重复展示
+      if (looksLikeLeakedReasoning(step.content)) {
+        if (thinkingBuf.length) {
+          const last = thinkingBuf[thinkingBuf.length - 1];
+          thinkingBuf[thinkingBuf.length - 1] = {
+            ...last,
+            content: mergeStreamText(last.content, step.content, {
+              isDelta: !!step.is_delta,
+              isSnapshot: !!step.is_snapshot,
+            }),
+            timestamp: step.timestamp || last.timestamp,
+          };
+          continue;
+        }
+        if (mergeLeakIntoThinkingItems(items, step)) continue;
+        // 尚无用户可见正文：整段当推理，不生成 assistant 气泡
+        if (looksLikeInlineReasoning(step.content)) {
+          thinkingBuf.push({ ...step, stepType: 'thinking' });
+          continue;
+        }
       }
       flushThinking();
       const last = outputBuf[outputBuf.length - 1];
@@ -200,7 +236,9 @@ function buildTimeline(userPrompt, steps = [], delegations = {}, agentNames = {}
   flushThinking();
   flushSystem();
   flushOutput();
-  return dedupeAssistantItems(collapseAdjacentThinkingGroups(pruneMixedAssistantBubbles(mergeDelegationPairs(items))));
+  return stripLeakedAssistantsWhenThinking(dedupeAssistantItems(
+    collapseAdjacentThinkingGroups(pruneMixedAssistantBubbles(mergeDelegationPairs(items))),
+  ));
 }
 
 /** 合并内容相同/互为前缀的连续推理卡片 */
@@ -245,9 +283,13 @@ function dedupeAssistantItems(items) {
       const pb = normalizeLoose(item.content);
       if (!pa || !pb) continue;
       if (pa === pb || pa.startsWith(pb) || pb.startsWith(pa)) {
-        if (String(item.content || '').length > String(out[i].content || '').length) {
-          out[i] = { ...item };
-        }
+        const prevLeaked = looksLikeLeakedReasoning(out[i].content);
+        const nextLeaked = looksLikeLeakedReasoning(item.content);
+        let keep = out[i];
+        if (prevLeaked && !nextLeaked) keep = item;
+        else if (!prevLeaked && nextLeaked) keep = out[i];
+        else if (String(item.content || '').length > String(out[i].content || '').length) keep = item;
+        out[i] = { ...keep };
         merged = true;
         break;
       }
@@ -259,8 +301,10 @@ function dedupeAssistantItems(items) {
 
 /** 去掉 thinking 卡片前后误生成的混合 assistant 气泡 */
 function pruneMixedAssistantBubbles(items) {
+  const hasThinking = items.some(x => x.kind === 'thinking_group');
   return items.filter((item, i, arr) => {
     if (item.kind !== 'assistant' || !looksLikeLeakedReasoning(item.content)) return true;
+    if (hasThinking) return false;
     const hasThinkingAfter = arr.slice(i + 1).some(x => x.kind === 'thinking_group');
     const hasCleanAfter = arr.slice(i + 1).some(x =>
       x.kind === 'assistant' && x.content?.trim() && !looksLikeLeakedReasoning(x.content),
@@ -317,13 +361,15 @@ function groupNestedSteps(steps = []) {
 
 /** 将轮次 steps 与 result 摘要合并为时间线条目 */
 function buildTurnTimeline(turn, delegations = {}, agentNames = {}) {
-  const items = buildTimeline(turn.user, turn.steps || [], delegations, agentNames);
-  const hasAssistant = items.some(it => it.kind === 'assistant' && String(it.content || '').trim());
-  if (hasAssistant) return items;
+  let items = buildTimeline(turn.user, turn.steps || [], delegations, agentNames);
+  const hasCleanAssistant = items.some(
+    it => it.kind === 'assistant' && it.content?.trim() && !looksLikeLeakedReasoning(it.content),
+  );
+  if (hasCleanAssistant) return items;
   const summary = normalizeDisplayText(
     turn.result?.summary || turn.result?.output || '',
   );
-  if (!summary) return items;
+  if (!summary || looksLikeLeakedReasoning(summary)) return items;
   items.push({
     kind: 'assistant',
     content: summary,
@@ -856,10 +902,11 @@ export default function ExecutionLog({
       items.push(...buildTurnTimeline(turn, turn.delegations || {}, agentNames));
     }
     items.push(...buildTimeline(userPrompt, steps, delegations, agentNames));
-    // 当前轮已完成但 steps 无回复时，用 result 摘要补全
-    if (status === 'completed' && result && !items.some(it => it.kind === 'assistant' && String(it.content || '').trim())) {
+    // 当前轮已完成但 steps 无干净回复时，用 result 摘要补全（跳过泄漏推理）
+    if (status === 'completed' && result
+      && !items.some(it => it.kind === 'assistant' && it.content?.trim() && !looksLikeLeakedReasoning(it.content))) {
       const summary = normalizeDisplayText(result.summary || result.output || '');
-      if (summary) {
+      if (summary && !looksLikeLeakedReasoning(summary)) {
         items.push({ kind: 'assistant', content: summary, timestamp: task?.completed_at });
       }
     }

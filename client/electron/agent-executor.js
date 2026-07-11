@@ -67,15 +67,12 @@ function buildClaudeContinueArgs({ continueSession, cliSessionId } = {}) {
   return ['-c'];
 }
 
-/** Codex 编排续接：在 exec --cd 之后注入 resume */
+/** Codex 编排续接：resume 须放在全部 exec 全局参数（含 -p profile）之后，否则 -p 会被 resume 子命令误解析 */
 function injectCodexResumeArgs(extraArgs, { continueSession, cliSessionId } = {}) {
   if (!continueSession) return extraArgs;
   const out = [...extraArgs];
-  let insertAt = 1;
-  const cdIdx = out.indexOf('--cd');
-  if (cdIdx >= 0) insertAt = cdIdx + 2;
   const sid = normalizeCliSessionId(cliSessionId);
-  out.splice(insertAt, 0, 'resume', sid || '--last');
+  out.push('resume', sid || '--last');
   return out;
 }
 

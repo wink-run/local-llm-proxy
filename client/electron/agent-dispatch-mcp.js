@@ -4,9 +4,8 @@
 'use strict';
 
 const readline = require('readline');
-const agentExecutor = require('./agent-executor');
-const resourceManager = require('./resource-manager');
 const { summarizeAgentStdout } = require('./agent-output-parser');
+const dispatchClient = require('./agent-dispatch-client');
 
 const PARENT_TASK_ID = process.env.TB_PARENT_TASK_ID || '';
 const PARENT_SESSION_KEY = process.env.TB_PARENT_SESSION_KEY || '';
@@ -64,7 +63,7 @@ function textResult(text, isError = false) {
 
 async function handleToolCall(name, args = {}) {
   if (name === 'tb_list_agents') {
-    const agents = await agentExecutor.listAvailableAgents();
+    const agents = await dispatchClient.listAgents();
     const lines = agents.map(a =>
       `- ${a.id}: ${a.name}${a.version ? ` (v${a.version})` : ''} [${(a.capabilities || []).join(', ')}]`,
     );
@@ -79,7 +78,7 @@ async function handleToolCall(name, args = {}) {
     }
 
     try {
-      const status = await agentExecutor.dispatchAndWait(agentId, prompt, {
+      const status = await dispatchClient.dispatchAndWait(agentId, prompt, {
         workingDir: WORKING_DIR,
         parentTaskId: PARENT_TASK_ID,
         parentSessionKey: PARENT_SESSION_KEY || undefined,
@@ -108,7 +107,7 @@ async function handleToolCall(name, args = {}) {
     const ref = String(args.name || args.ref || '').trim();
     const argStr = String(args.args || args.arguments || '').trim();
     if (!ref) return textResult('缺少 name', true);
-    const r = resourceManager.resolvePrompt(ref, argStr);
+    const r = await dispatchClient.resolvePrompt(ref, argStr);
     if (!r.found) return textResult(`未找到提示词: ${ref}`, true);
     return textResult(r.text);
   }
