@@ -3454,19 +3454,11 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
   const usesClassifier = steps.some(s => s.when?.type === 'classifier');
   const categories = clsCats.split(/[、,，\s]+/).map(s => s.trim()).filter(Boolean);
 
-  // ── codec 预览（默认折叠，点路由名后的按钮展开）：flow · filter 头 + 每步「[条件⇒] 模型@源」──
+  // ── codec 预览（默认折叠，点路由名后的按钮展开）：flow · filter 头 + 每步「[条件⇒] 模型@源」。
+  // 全部用英文 codec token(personal/community/free/paid、input_tokens 等)，不本地化——codec 是技术串。
   const [showCodec, setShowCodec] = useState(false);
-  const _condLabel = (w) => {
-    if (!w || !w.type) return '';
-    const tl = Object.fromEntries(ruleCondTypes(t).map(x => [x.type, x.label]));
-    const ol = ruleOpLabel(t);
-    return `${tl[w.type] || w.type} ${ol[w.op] || w.op} ${w.value ?? ''}`.trim();
-  };
-  const _filterLabel = rScope === 'personal' ? t('gateway.route.scopePersonal')
-    : rScope === 'community' ? t('gateway.route.scopeCommunity')
-    : rTier === 'free' ? t('gateway.route.tierFree')
-    : rTier === 'paid' ? t('gateway.route.tierPaid') : '';
-  const codecHead = [flow, _filterLabel].filter(Boolean).join(' · ');
+  const _condLabel = (w) => (!w || !w.type) ? '' : `${w.type} ${w.op || 'is'} ${w.value ?? ''}`.trim();
+  const codecHead = [flow, rScope || rTier].filter(Boolean).join(' · ');
   const codecSteps = (steps || [])
     .filter(s => s.model || s.scope || s.tier || s.strategy || s.sharer || s.provider)
     .map(s => {
@@ -4041,10 +4033,6 @@ export default function Gateway() {
   const [routes, setRoutes]               = useState([]);
   const [expandedRoute, setExpandedRoute] = useState(null);
   const [newRoute, setNewRoute]           = useState(null);
-  const [openChains, setOpenChains]       = useState(() => new Set());  // 哪些路由展开了链路明细（默认折叠）
-  const toggleChain = (id) => setOpenChains(prev => {
-    const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next;
-  });
   const [availableModels, setAvailableModels] = useState([]);
   const [sources, setSources] = useState([]);   // 已启用供给源（路由里"某模型下锁具体源"用）
   // 应用列表汇总（与表格「今日请求/Token」列求和一致）
@@ -4374,60 +4362,15 @@ export default function Gateway() {
               health.status === 'ok'
                 ? [health.degraded ? t('gateway.route.degradedShort') : t('gateway.route.runningOk'), ftLabel].filter(Boolean).join(' · ')
                 : t('gateway.route.noRequests');
-            // 折叠行：把一条链渲染成 pill 序列（带 → 连接、tier 配色、缺失/激活态）。
-            const chainPills = (steps) => (steps || []).map((step, i) => {
-              // strategy-only 步（无 model）：显示「⚙ 策略」，不参与"模型缺失"判定
-              const isStrategyStep = !step.model && !!(step.strategy || step.scope || step.tier || step.provider || step.sharer);
-              const stepTier = resolveStepTier(step.model || step.label, step, availableModels);
-              const stepName = step.model || step.label || (isStrategyStep ? (step.strategy || step.scope || step.tier || 'route') : '');
-              const isActive = health.activeStep === stepName;
-              const isFailed = health.triedSteps?.includes(stepName);
-              const missing = !isStrategyStep && !availSet.has(stepName);
-              return (
-                <React.Fragment key={i}>
-                  {i > 0 && <span className="text-zinc-300 dark:text-zinc-600 text-xs">→</span>}
-                  <span title={missing ? t('gateway.route.missingModelTitle') : undefined}
-                    className={`inline-flex items-center gap-1 text-xs font-mono px-2 py-0.5 rounded-md border transition-all ${
-                      isActive
-                        ? 'bg-green-100 dark:bg-green-900/40 border-green-400 dark:border-green-600 text-green-800 dark:text-green-200'
-                        : isStrategyStep
-                          ? 'bg-violet-50 dark:bg-violet-900/20 border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300'
-                        : missing
-                          ? 'bg-red-50 dark:bg-red-900/20 border-red-300 dark:border-red-700 text-red-600 dark:text-red-300'
-                          : tierStyle(stepTier)
-                    }`}>
-                    {isStrategyStep ? (
-                      <>⚙ {[step.strategy, step.scope || (step.tier === 'p2p' ? 'community' : ''), (step.tier && step.tier !== 'p2p') ? step.tier : ''].filter(Boolean).join(' · ') || t('gateway.route.tierAny')}{step.sharer ? ` · 👤` : ''}</>
-                    ) : (
-                      <>
-                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                          isActive ? 'bg-green-500' : (missing || isFailed) ? 'bg-red-500' : tierDot(stepTier)
-                        }`} />
-                        {step.label || step.model}
-                        <span className="opacity-40">({tierShortLabel(stepTier, t)})</span>
-                      </>
-                    )}
-                  </span>
-                </React.Fragment>
-              );
-            });
-            // 规则 when → 人类可读条件（如「输入Token > 50000」）。
-            const _typeLabels = Object.fromEntries(ruleCondTypes(t).map(x => [x.type, x.label]));
-            const _opLabels = ruleOpLabel(t);
-            const conditionLabel = (when) => {
-              if (!when) return '';
-              return `${_typeLabels[when.type] || when.type} ${_opLabels[when.op] || when.op} ${when.value ?? ''}`.trim();
-            };
-            const hasRules = (route.rules || []).length > 0;
             return (
             <div key={route.id}>
               <div
                 className="flex items-center gap-3 px-5 py-3 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/30 transition-colors"
-                onClick={() => toggleChain(route.id)}
-                title={t('gateway.route.toggleChain')}
+                onClick={() => setExpandedRoute(expandedRoute === route.id ? null : route.id)}
+                title={t('gateway.common.edit')}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
-                  className={`w-3.5 h-3.5 shrink-0 text-zinc-400 transition-transform ${openChains.has(route.id) ? 'rotate-90' : ''}`}>
+                  className={`w-3.5 h-3.5 shrink-0 text-zinc-400 transition-transform ${expandedRoute === route.id ? 'rotate-90' : ''}`}>
                   <path d="m8.25 4.5 7.5 7.5-7.5 7.5" />
                 </svg>
                 {isAppIcon(route.icon)
@@ -4465,31 +4408,8 @@ export default function Gateway() {
                       </span>
                     )}
                   </div>
-                  {openChains.has(route.id) && expandedRoute !== route.id && (
-                  <div className="mt-1.5 space-y-1">
-                    {/* 多规则：逐条「条件 → 链」*/}
-                    {(route.rules || []).map((rule, ri) => (
-                      <div key={ri} className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[11px] px-1.5 py-0.5 rounded bg-blue-50/70 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 shrink-0">{conditionLabel(rule.when)}</span>
-                        <span className="text-zinc-300 dark:text-zinc-600 text-xs">→</span>
-                        {rule.steps?.length ? chainPills(rule.steps) : <span className="text-xs text-zinc-400">{t('gateway.route.noStepsShort')}</span>}
-                      </div>
-                    ))}
-                    {/* 默认链（有规则时加「默认」前缀以区分）*/}
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {hasRules && <span className="text-[11px] px-1.5 py-0.5 rounded bg-zinc-100/70 dark:bg-zinc-800/60 text-zinc-400 dark:text-zinc-500 shrink-0">{t('gateway.route.defaultChain')}</span>}
-                      {(route.steps || []).length ? chainPills(route.steps)
-                        : route.flow ? <span className="inline-flex items-center gap-1 text-xs font-mono px-2 py-0.5 rounded-md border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300">⚙ {route.flow}</span>
-                        : <span className="text-xs text-zinc-400">{t('gateway.route.noStepsShort')}</span>}
-                    </div>
-                  </div>
-                  )}
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
-                  <button onClick={() => setExpandedRoute(expandedRoute === route.id ? null : route.id)}
-                    className="text-xs px-2 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
-                    {expandedRoute === route.id ? t('gateway.common.collapse') : t('gateway.common.edit')}
-                  </button>
                   <button onClick={() => removeRoute(route.id)}
                     className="text-xs px-2 py-1 rounded-lg border border-red-200 dark:border-red-800/60 text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
                     {t('gateway.common.delete')}

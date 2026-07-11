@@ -9,7 +9,7 @@ window.initRoutingCatalogAdmin = function (api, lang, ref) {
   // 已移除「全局路由策略」——无全局默认概念
 
   function emptyRouteForm() {
-    return { sort_order: '', id: '', scene_name: '', icon: '🔀', model_key: '', steps: [{ model: '', tier: 'paid' }] }
+    return { sort_order: '', id: '', scene_name: '', icon: '🔀', model_key: '', scope: '', tier: '', flow: '', steps: [{ model: '', tier: 'paid' }] }
   }
 
   const rcSorted = () => [...(rcRoutes.value || [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
@@ -33,7 +33,11 @@ window.initRoutingCatalogAdmin = function (api, lang, ref) {
         scene_name: route.scene_name || '',
         icon: route.icon || '🔀',
         model_key: route.model_key || '',
+        scope: route.scope || '',      // 路由级来源(personal/community)
+        tier: route.tier || '',        // 路由级价格(free/paid)
+        flow: route.flow || '',        // 流转策略
         steps: (route.steps || []).map(s => ({ model: s.model || '', tier: s.tier || 'paid' })),
+        _orig: route,                  // 保留高级字段(rules/classifier/caveman/步内 scope/strategy/sharer/when)不丢
       }
       if (!rcForm.value.steps.length) rcForm.value.steps.push({ model: '', tier: 'paid' })
     } else {
@@ -50,16 +54,37 @@ window.initRoutingCatalogAdmin = function (api, lang, ref) {
 
   function buildRoutePayload() {
     const f = rcForm.value
-    return {
+    const orig = f._orig || {}
+    const origSteps = Array.isArray(orig.steps) ? orig.steps : []
+    // 表单只编辑 model/tier；按 index 合并回原步骤的高级字段(scope/strategy/provider/sharer/when)不丢
+    const steps = (f.steps || []).filter(s => s.model?.trim()).map((s, i) => {
+      const os = origSteps[i]
+      const adv = (os && os.model === s.model.trim()) ? {
+        ...(os.scope ? { scope: os.scope } : {}),
+        ...(os.strategy ? { strategy: os.strategy } : {}),
+        ...(os.provider ? { provider: os.provider } : {}),
+        ...(os.sharer ? { sharer: os.sharer } : {}),
+        ...(os.when ? { when: os.when } : {}),
+      } : {}
+      return { model: s.model.trim(), tier: s.tier || 'paid', ...adv }
+    })
+    const payload = {
       sort_order: f.sort_order !== '' && f.sort_order != null ? Number(f.sort_order) : 0,
       id: (f.id || '').trim(),
       scene_name: (f.scene_name || '').trim(),
       icon: f.icon || '🔀',
       model_key: (f.model_key || '').trim(),
-      steps: (f.steps || []).filter(s => s.model?.trim()).map(s => ({
-        model: s.model.trim(), tier: s.tier || 'paid',
-      })),
+      steps,
     }
+    // 路由级来源/价格/流转（与客户端一致）
+    if (f.scope) payload.scope = f.scope
+    if (f.tier) payload.tier = f.tier
+    if (f.flow) payload.flow = f.flow
+    // 保留高级路由字段（不在表单里，但编辑时不丢）
+    if (orig.rules) payload.rules = orig.rules
+    if (orig.classifier) payload.classifier = orig.classifier
+    if (orig.caveman_level) payload.caveman_level = orig.caveman_level
+    return payload
   }
 
   async function saveRcRoute() {
