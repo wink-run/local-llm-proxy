@@ -36,7 +36,8 @@ function maybeSyncSessionTelemetry(localStats) {
 // by useDeviceReporter in the renderer (which has access to the JWT).
 
 const isDev = !app.isPackaged;
-const VITE_URL = 'http://localhost:5173';
+// 与 vite.config.js server.port 保持一致；可用环境变量覆盖
+const VITE_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
 // macOS 菜单栏显示名（dev 下系统设置里通常显示 Electron）
 if (process.platform === 'darwin') app.setName('Token Bank');
 const AGENT_CONFIG_PATH = path.join(os.homedir(), '.llm-agent', 'config.json');
@@ -459,7 +460,21 @@ function createWindow() {
   });
 
   if (isDev) {
-    mainWindow.loadURL(VITE_URL);
+    let devLoadRetries = 0;
+    const loadDevUrl = () => mainWindow.loadURL(VITE_URL);
+    // Vite 尚未就绪或端口冲突时 loadURL 会失败 → 白屏；自动重试并打日志
+    mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
+      if (!isDev || code === -3) return; // ERR_ABORTED
+      if (url !== VITE_URL && !String(url).startsWith(VITE_URL)) return;
+      if (devLoadRetries >= 8) {
+        console.error('[main] dev load failed:', code, desc, url);
+        return;
+      }
+      devLoadRetries += 1;
+      console.warn(`[main] dev load failed (${code}), retry ${devLoadRetries}/8 in 1s…`);
+      setTimeout(() => { try { loadDevUrl(); } catch {} }, 1000);
+    });
+    loadDevUrl();
   } else {
     mainWindow.loadFile(path.join(app.getAppPath(), 'dist', 'index.html'));
   }
@@ -3673,6 +3688,13 @@ function registerIPC() {
     try { return await sessionManager.continueSession(_sessionDeps, payload); }
     catch (e) { console.error('[sessions:continue]', e.message); return { error: 'continue_failed' }; }
   });
+
+  // 同工具恢复：macOS 终端执行 resume；失败则返回命令供复制
+  ipcMain.handle('sessions:resume', (_e, payload = {}) => {
+    try { return sessionManager.resumeSession(_sessionDeps, payload); }
+    catch (e) { console.error('[sessions:resume]', e.message); return { error: 'resume_failed' }; }
+  });
+
   // 知识提炼：后台异步任务。点击 start 立即返回，合成在后台跑；result 拿当前状态/结果。
   // 状态：idle（没跑过）/ running（生成中）/ ready（已完成，含成功或兜底）/ error（异常）。
   let _knowledgeJob = { status: 'idle', ok: false, content: '', model: null, scanned: 0, error: null, projectPaths: {}, finishedAt: 0 };

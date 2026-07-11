@@ -18,6 +18,8 @@ export default defineConfig(({ mode }) => {
     build: { outDir: 'dist' },
     server: {
       port: 5173,
+      // 端口被占用时直接失败，避免 Vite 静默换端口而 Electron 仍连 5173 导致白屏
+      strictPort: true,
       // 浏览器 dev 直连远程 API 会触发 CORS，经同源代理转发
       proxy: {
         [DEV_API_PROXY_PREFIX]: {

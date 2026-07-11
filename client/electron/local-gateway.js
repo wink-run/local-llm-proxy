@@ -677,6 +677,17 @@ function pickBestRouteError(errors) {
   return (nonP2p || errors[0]).err;
 }
 
+/** 路由明细：各 provider 尝试失败原因（供 UI 点击展开） */
+function serializeProviderErrors(errors) {
+  if (!errors?.length) return undefined;
+  return errors.map(({ id, err }) => ({
+    provider: id,
+    error: err?.message || String(err),
+    code: err?.code || undefined,
+    status: err?.status || undefined,
+  }));
+}
+
 /** 社区 P2P 供给源 */
 function isP2pProvider(provider) {
   return provider?.type === 'p2p' || provider?.id === 'tokenbank-p2p';
@@ -2525,7 +2536,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   const routeMeta = (requestStrategy || requestSharer)
     ? { strategy: requestStrategy, sharer: requestSharer } : null;
 
-  function fail(scene_name, failedModels) {
+  function fail(scene_name, failedModels, providerErrors) {
     debugLog(`<<< 路由失败 fail()`, {
       requested_model: origModel,
       scene_name,
@@ -2536,7 +2547,10 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     pushLog({
       ts: t0, requested_model: origModel, model, scene_name, claude_from: claudeFrom,
       tried: failedModels?.length ? [...failedModels] : undefined,
-      via: null, latency_ms: Date.now() - t0, status: 'error', error: lastErr?.message,
+      via: null, latency_ms: Date.now() - t0, status: 'error',
+      error: lastErr?.message,
+      error_code: lastErr?.code || undefined,
+      provider_errors: serializeProviderErrors(providerErrors),
     });
     recordError(model, callerKey, lastErr); // 失败也落账，保证不丢账
     if (!res.headersSent) {
@@ -2644,7 +2658,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     steps = orderStepsByFlow(steps, scene.flow, reqPath, skipP2P);
     if (!steps.length) {   // 规则全不命中且无默认链
       lastErr = new Error(`no rule matched for ${ruleCtx.modality} request and route has no default chain`);
-      fail(scene.scene_name, null);
+      fail(scene.scene_name, null, null);
       return;
     }
 
@@ -2704,7 +2718,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
             ts: t0, requested_model: origModel, model: stepModel,
             scene_name: scene.scene_name, claude_from: stepClaudeFrom,
             tier: provider.type, via: provider.id, via_label: provider.label,
-            latency_ms: Date.now() - t0, status: 'error', error: lastErr.message,
+            latency_ms: Date.now() - t0, status: 'error',
+            error: lastErr.message, error_code: lastErr.code || undefined,
           });
           recordError(stepModel, callerKey, lastErr);
           return;
@@ -2734,7 +2749,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
               ts: t0, requested_model: origModel, model: stepModel,
               scene_name: scene.scene_name, claude_from: stepClaudeFrom,
               tier: provider.type, via: provider.id, via_label: provider.label,
-              latency_ms: Date.now() - t0, status: 'error', error: lastErr.message,
+              latency_ms: Date.now() - t0, status: 'error',
+              error: lastErr.message, error_code: lastErr.code || undefined,
               worker: lastErr.worker_id || undefined,
             });
             recordError(stepModel, callerKey, lastErr);
@@ -2760,7 +2776,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       writeInsufficientCredits(res, isResponses);
       return;
     }
-    fail(scene.scene_name, failedModels);
+    fail(scene.scene_name, failedModels, stepErrors);
     return;
   }
 
@@ -2825,7 +2841,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
 
   if (!sorted.length) {
     lastErr = modelNotFoundError(model, requestTier);
-    fail(null, null);
+    fail(null, null, null);
     return;
   }
 
@@ -2836,7 +2852,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       pushLog({
         ts: t0, requested_model: origModel, model, claude_from: claudeFrom,
         tier: provider.type, via: provider.id, via_label: provider.label,
-        latency_ms: Date.now() - t0, status: 'error', error: lastErr.message,
+        latency_ms: Date.now() - t0, status: 'error',
+        error: lastErr.message, error_code: lastErr.code || undefined,
       });
       recordError(model, callerKey, lastErr);
       return;
@@ -2863,7 +2880,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
         pushLog({
           ts: t0, requested_model: origModel, model, claude_from: claudeFrom,
           tier: provider.type, via: provider.id, via_label: provider.label,
-          latency_ms: Date.now() - t0, status: 'error', error: lastErr.message,
+          latency_ms: Date.now() - t0, status: 'error',
+          error: lastErr.message, error_code: lastErr.code || undefined,
           worker: lastErr.worker_id || undefined,
         });
         recordError(model, callerKey, lastErr);
@@ -2887,7 +2905,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     writeInsufficientCredits(res, isResponses);
     return;
   }
-  fail(null, null);
+  fail(null, null, routeErrors);
 }
 
 function pushLog(entry) {

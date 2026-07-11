@@ -2,7 +2,9 @@
 // 资源管理 IPC
 'use strict';
 
-const { ipcMain, BrowserWindow, dialog } = require('electron');
+const { ipcMain, BrowserWindow, dialog, shell } = require('electron');
+const fs = require('fs');
+const path = require('path');
 const resourceManager = require('./resource-manager');
 
 function registerResourceHandlers() {
@@ -144,7 +146,7 @@ function registerResourceHandlers() {
       if (options.allowDirectory !== false) properties.push('openDirectory');
       if (options.allowFile !== false) properties.push('openFile');
       const result = await dialog.showOpenDialog(win, {
-        title: options.title || '导入资源',
+        title: options.title || '导入资产',
         properties: properties.length ? properties : ['openFile'],
         filters: options.allowFile !== false ? [
           { name: 'Markdown / Text', extensions: ['md', 'markdown', 'txt'] },
@@ -166,6 +168,27 @@ function registerResourceHandlers() {
       return resourceManager.importFromPath(params || {});
     } catch (error) {
       console.error('[IPC] resource:importFromPath error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  /** 在 Finder / 资源管理器中打开 Skill 目录或定位文件 */
+  ipcMain.handle('resource:openPath', async (_event, { targetPath } = {}) => {
+    if (!targetPath || typeof targetPath !== 'string') {
+      return { success: false, error: 'missing_path' };
+    }
+    try {
+      const resolved = path.resolve(targetPath);
+      if (!fs.existsSync(resolved)) return { success: false, error: 'not_found' };
+      if (fs.statSync(resolved).isFile()) {
+        shell.showItemInFolder(resolved);
+      } else {
+        const errMsg = await shell.openPath(resolved);
+        if (errMsg) return { success: false, error: errMsg };
+      }
+      return { success: true };
+    } catch (error) {
+      console.error('[IPC] resource:openPath error:', error);
       return { success: false, error: error.message };
     }
   });

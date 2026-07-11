@@ -21,6 +21,8 @@ import {
   stepsFromTaskStatus,
   getCachedAgentsList,
   setCachedAgentsList,
+  archiveCompletedTurn,
+  shouldContinueCliSession,
 } from '../lib/debug-agent-store';
 import { useLang } from '../store/lang';
 import AgentTabBar from '../components/AgentTabBar';
@@ -386,6 +388,7 @@ export default function Debug() {
   const [mcpProfiles, setMcpProfiles] = useState([]);
   const [mcpProfileId, setMcpProfileId] = useState(() => loadMcpProfileId());
   const [delegations, setDelegations] = useState({});
+  const [conversationTurns, setConversationTurns] = useState([]);
   const selectedAgentRef = useRef(null);
   selectedAgentRef.current = selectedAgent;
   const agentsRef = useRef([]);
@@ -440,7 +443,7 @@ export default function Debug() {
     if (!syncKey || syncKey === '__hub__') return;
     if (!window.electronAPI?.agent?.listRecentTasks) return;
     const sess = getStoreSession(syncKey);
-    if (sess.currentUserPrompt || sess.taskSteps?.length || sess.executing) return;
+    if (sess.currentUserPrompt || sess.taskSteps?.length || sess.executing || sess.conversationTurns?.length) return;
 
     try {
       const res = await window.electronAPI.agent.listRecentTasks({ agentId: syncKey, limit: 1 });
@@ -490,6 +493,7 @@ export default function Debug() {
     setTaskResult(saved.taskResult || null);
     setExecuting(!!saved.executing);
     setDelegations(saved.delegations || {});
+    setConversationTurns(saved.conversationTurns || []);
   }
   syncSessionToStateRef.current = syncSessionToState;
 
@@ -510,12 +514,41 @@ export default function Debug() {
     return getStoreSession(key);
   }
 
-  /** 任务结束：释放 executing 并同步当前标签页 */
+  /** 任务结束：释放 executing、归档对话轮次并同步当前标签页 */
   function finalizeTaskInUi(taskId, key, patch) {
     releaseExecutingForTask(taskId, {
       status: patch.currentTask?.status,
     });
-    if (key) patchStoreSession(key, { ...patch, executing: false });
+
+    const sess = getStoreSession(key);
+    const terminal = patch.currentTask?.status;
+    if (key && terminal && ['completed', 'failed', 'cancelled'].includes(terminal)) {
+      archiveCompletedTurn(key, {
+        user: patch.currentUserPrompt || sess.currentUserPrompt,
+        steps: patch.taskSteps || sess.taskSteps || [],
+        result: patch.taskResult || sess.taskResult || null,
+        status: terminal === 'cancelled' ? 'failed' : terminal,
+        taskId,
+        cliSessionId: patch.taskResult?.cliSessionId || sess.cliSessionId || null,
+        workingDir: sess.sessionWorkingDir || agentWorkingDir.trim(),
+        timestamp: patch.currentTask?.completed_at || Date.now(),
+      });
+    }
+
+    if (key) {
+      const afterArchive = getStoreSession(key);
+      patchStoreSession(key, {
+        currentTask: patch.currentTask,
+        executing: false,
+        // 已归档到 conversationTurns，避免与当前轮重复展示
+        currentUserPrompt: '',
+        taskSteps: [],
+        taskResult: null,
+        conversationTurns: afterArchive.conversationTurns,
+        cliSessionId: patch.taskResult?.cliSessionId || afterArchive.cliSessionId,
+        sessionWorkingDir: afterArchive.sessionWorkingDir,
+      });
+    }
 
     if (!isDebugRouteRef.current) return;
     const activeKey = agentSessionKey(selectedAgentRef.current);
@@ -572,6 +605,7 @@ export default function Debug() {
       taskResult,
       executing,
       delegations,
+      conversationTurns,
     });
 
     const key = agentSessionKey(agent);
@@ -913,6 +947,9 @@ export default function Debug() {
     setDirError('');
     const prompt = agentPrompt.trim();
     const execKey = agentSessionKey(selectedAgent);
+    const workDir = agentWorkingDir.trim();
+    const sess = getStoreSession(execKey);
+    const continueSession = !isHubMode && shouldContinueCliSession(execKey, workDir);
 
     patchSession(execKey, {
       currentUserPrompt: prompt,
@@ -921,6 +958,7 @@ export default function Debug() {
       taskSteps: [],
       taskResult: null,
       currentTask: null,
+      sessionWorkingDir: workDir,
     });
 
     // 聚合入口 = 主 Agent 编排；Agent tab = 直调
@@ -931,11 +969,13 @@ export default function Debug() {
         agentId: activeAgent.id,
         prompt,
         options: {
-          workingDir: agentWorkingDir.trim(),
+          workingDir: workDir,
           mode: execMode,
           mainAgentId: isHubMode ? activeAgent.id : mainAgentId,
           mcpProfile: isHubMode ? mcpProfileId : undefined,
           sessionKey: execKey,
+          continueSession,
+          cliSessionId: sess.cliSessionId || undefined,
         },
       });
 
@@ -1395,7 +1435,7 @@ export default function Debug() {
             loading={loadingAgents && agents.length === 0}
           />
         )}
-        {mode === 'agent' && (currentUserPrompt || taskSteps.length > 0 || executing) && (
+        {mode === 'agent' && (conversationTurns.length > 0 || currentUserPrompt || taskSteps.length > 0 || executing) && (
           <div className="flex justify-end">
             <button
               type="button"
@@ -1498,7 +1538,7 @@ export default function Debug() {
                 <div className="flex-1 flex items-center justify-center text-center text-zinc-400 dark:text-zinc-500">
                   <p className="text-sm">未检测到可用 Agent，请先在 Gateway 纳管</p>
                 </div>
-              ) : !currentUserPrompt && !taskSteps.length && !executing ? (
+              ) : !conversationTurns.length && !currentUserPrompt && !taskSteps.length && !executing ? (
                 <div className="flex-1 flex items-center justify-center text-center text-zinc-400 dark:text-zinc-500 px-6">
                   <div className="max-w-md">
                     <p className="text-3xl mb-2">✨</p>
@@ -1545,6 +1585,7 @@ export default function Debug() {
                 </div>
               ) : (
                 <ExecutionLog
+                  conversationTurns={conversationTurns}
                   userPrompt={currentUserPrompt}
                   steps={taskSteps}
                   status={displayTaskStatus()}
@@ -1557,6 +1598,7 @@ export default function Debug() {
               )
             ) : (
               <ExecutionLog
+                conversationTurns={conversationTurns}
                 userPrompt={currentUserPrompt}
                 steps={taskSteps}
                 status={displayTaskStatus()}

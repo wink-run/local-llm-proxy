@@ -3,6 +3,7 @@
 'use strict';
 
 const { isSignal, looksLikeNoise } = require('./learn-mine');
+const { enrichResumeCapability, resumeSession, getResumeInfo } = require('./session-resume');
 
 /** 将 {agentId: rows[]} 展平为单数组，打上 agent_id，按 (agent_id, session_id) 去重
  *  （同一会话可能被多次列出，如跨工作区/重复解析；去重保留 lastTs 最新一条），按 lastTs 倒序。
@@ -148,7 +149,9 @@ function getSessions(deps, opts = {}) {
   const dbSessions = Object.entries(dbMap).map(([session_id, s]) => ({ session_id, ...s }));
   const rows = sessionBrowser.mergeActivityWithStats(raw, dbSessions);
   const meta = localStats.listSessionMeta();
-  return enrichSessionCosts(joinSessionsWithMeta(rows, meta, { showArchived: !!opts.showArchived }));
+  return enrichResumeCapability(
+    enrichSessionCosts(joinSessionsWithMeta(rows, meta, { showArchived: !!opts.showArchived })),
+  );
 }
 
 /** 导出单会话为 JSON 包或 Markdown，写入默认目录，返回落盘信息。 */
@@ -470,4 +473,5 @@ module.exports = {
   getSessions, exportSession,
   buildSessionDigest, filePathFromInput, composeHandoffDoc, summarizeViaGateway,
   collectGitContext, continueSession, buildKnowledgeCorpus, synthesizeKnowledge,
+  getResumeInfo, resumeSession,
 };

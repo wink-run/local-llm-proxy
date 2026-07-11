@@ -295,6 +295,84 @@ function parseAgentOutputLine(rawLine, agentId) {
   }];
 }
 
+/** 判断字符串是否像文件路径（排除误匹配的 skill 正文等） */
+function isLikelyFilePath(raw) {
+  const p = String(raw || '').trim();
+  if (!p || p.length > 512) return false;
+  // 含转义换行或真实换行 → 多半是正文而非路径
+  if (/\\n|\\r|[\n\r]/.test(p)) return false;
+  if (/^#+\s|^---|\*\*/.test(p)) return false;
+  if (/^(true|false|null)$/i.test(p)) return false;
+  return /[/\\]/.test(p) || /\.[a-z0-9]{1,8}$/i.test(p) || /^[\w.-]+$/.test(p);
+}
+
+/**
+ * 从 CLI stdout 提取 Write/Edit 等工具修改的文件路径
+ * - 优先解析 stream-json 中的 tool_use
+ * - 跳过 JSON 行内的 Created: 误匹配（避免把 skill 正文当路径）
+ */
+function extractModifiedFiles(rawStdout) {
+  const files = [];
+  const seen = new Set();
+
+  const addFile = (filePath, operation) => {
+    const p = String(filePath || '').trim();
+    if (!isLikelyFilePath(p)) return;
+    const op = String(operation || 'modified').toLowerCase();
+    const key = `${op}:${p}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    files.push({ path: p, operation: op });
+  };
+
+  for (const line of String(rawStdout || '').split('\n')) {
+    const trimmed = stripAnsi(line).trim();
+    if (!trimmed) continue;
+
+    if (trimmed.startsWith('{')) {
+      try {
+        const obj = JSON.parse(trimmed);
+        if (obj.type === 'assistant' && Array.isArray(obj.message?.content)) {
+          for (const b of obj.message.content) {
+            if (b?.type !== 'tool_use') continue;
+            const name = String(b.name || '').toLowerCase();
+            const input = b.input && typeof b.input === 'object' ? b.input : {};
+            const fp = input.file_path || input.path || input.file;
+            if (!fp) continue;
+            if (name === 'write') addFile(fp, 'created');
+            else if (name === 'edit' || name === 'multiedit') addFile(fp, 'modified');
+          }
+        }
+      } catch { /* 非完整 JSON */ }
+      continue;
+    }
+
+    // 纯文本行 fallback（整行匹配，避免 JSON 子串误伤）
+    const match = trimmed.match(/^(Created|Modified|Edited):\s+(.+)$/i);
+    if (match) addFile(match[2].trim(), match[1].toLowerCase());
+  }
+
+  return files;
+}
+
+/** 从 CLI stdout 提取 session/thread id，供续接对话 */
+function extractCliSessionId(rawStdout, agentId = 'claude-code') {
+  for (const line of String(rawStdout || '').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('{')) continue;
+    try {
+      const obj = JSON.parse(trimmed);
+      if (agentId === 'codex' && obj.type === 'thread.started') {
+        return obj.thread_id || obj.threadId || null;
+      }
+      if (obj.type === 'system' && obj.subtype === 'init') {
+        return obj.session_id || obj.sessionId || null;
+      }
+    } catch { /* ignore */ }
+  }
+  return null;
+}
+
 /**
  * 将原始 stdout 解析为步骤后，拼成可读摘要（供 MCP / 任务结果展示）
  */
@@ -339,4 +417,7 @@ module.exports = {
   stripAnsi,
   parseAgentOutputLine,
   summarizeAgentStdout,
+  extractModifiedFiles,
+  isLikelyFilePath,
+  extractCliSessionId,
 };

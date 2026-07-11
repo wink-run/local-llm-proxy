@@ -4,7 +4,7 @@ import { resolveMediaUrl } from '../lib/mediaUrl';
 const IMG_RE = /!\[([^\]]*)\]\(([^)]+)\)/g;
 
 /** 行内 Markdown */
-function renderInline(text) {
+function renderInline(text, codeClassName = 'bg-gray-100 dark:bg-gray-800') {
   if (!text) return null;
   const re = /(\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_|`[^`]+`|\[[^\]]+\]\([^)]+\))/g;
   const parts = [];
@@ -29,11 +29,14 @@ function renderInline(text) {
   if (last < text.length) parts.push({ type: 'text', value: text.slice(last) });
 
   return parts.map((p, i) => {
+    const linkCls = codeClassName.includes('white')
+      ? 'text-blue-100 hover:underline break-all'
+      : 'text-blue-600 dark:text-blue-400 hover:underline break-all';
     if (p.type === 'bold') return <strong key={i} className="font-semibold">{p.value}</strong>;
     if (p.type === 'italic') return <em key={i}>{p.value}</em>;
     if (p.type === 'code') {
       return (
-        <code key={i} className="px-1 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-[0.9em] font-mono">
+        <code key={i} className={`px-1 py-0.5 rounded text-[0.9em] font-mono ${codeClassName}`}>
           {p.value}
         </code>
       );
@@ -41,7 +44,7 @@ function renderInline(text) {
     if (p.type === 'link') {
       return (
         <a key={i} href={resolveMediaUrl(p.href)} target="_blank" rel="noopener noreferrer"
-          className="text-blue-600 dark:text-blue-400 hover:underline break-all">
+          className={linkCls}>
           {p.label}
         </a>
       );
@@ -72,6 +75,20 @@ function parseMarkdownBlocks(text) {
     const trimmed = line.trim();
 
     if (!trimmed) { i++; continue; }
+
+    // 围栏代码块 ```lang
+    if (trimmed.startsWith('```')) {
+      const lang = trimmed.slice(3).trim();
+      const codeLines = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith('```')) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      if (i < lines.length) i++;
+      blocks.push({ type: 'code', lang, text: codeLines.join('\n') });
+      continue;
+    }
 
     const hm = /^(#{1,4})\s+(.+)$/.exec(trimmed);
     if (hm) {
@@ -127,52 +144,79 @@ function parseMarkdownBlocks(text) {
   return blocks;
 }
 
-function renderTextBlock(text, keyPrefix) {
+function renderTextBlock(text, keyPrefix, theme = 'default') {
   const blocks = parseMarkdownBlocks(text);
+  const isInv = theme === 'inverted';
   const headingCls = {
-    1: 'text-lg font-bold mt-1',
-    2: 'text-base font-bold mt-1',
-    3: 'text-sm font-semibold mt-1',
-    4: 'text-sm font-medium mt-0.5 text-gray-700 dark:text-gray-300',
+    1: `text-lg font-bold mt-1 ${isInv ? 'text-white' : 'text-gray-900 dark:text-gray-100'}`,
+    2: `text-base font-bold mt-1 ${isInv ? 'text-white' : 'text-gray-900 dark:text-gray-100'}`,
+    3: `text-sm font-semibold mt-1 ${isInv ? 'text-white' : 'text-gray-800 dark:text-gray-200'}`,
+    4: `text-sm font-medium mt-0.5 ${isInv ? 'text-white/90' : 'text-gray-700 dark:text-gray-300'}`,
   };
+  const bodyCls = isInv ? 'text-white/95' : 'text-gray-800 dark:text-gray-200';
+  const quoteCls = isInv
+    ? 'border-white/40 text-white/80'
+    : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400';
+  const hrCls = isInv ? 'border-white/30' : 'border-gray-200 dark:border-gray-600';
+  const codeInlineCls = isInv
+    ? 'bg-white/15 text-white'
+    : 'bg-gray-100 dark:bg-gray-800';
 
   return blocks.map((b, i) => {
     const key = `${keyPrefix}-${i}`;
     if (b.type === 'heading') {
       const cls = headingCls[b.level] || headingCls[3];
-      return <div key={key} className={cls}>{renderInline(b.text)}</div>;
+      return <div key={key} className={cls}>{renderInline(b.text, codeInlineCls)}</div>;
+    }
+    if (b.type === 'code') {
+      return (
+        <pre key={key}
+          className="text-xs font-mono overflow-x-auto rounded-lg bg-zinc-900 dark:bg-zinc-950 text-zinc-100 px-3 py-2 my-1 max-h-80 overflow-y-auto whitespace-pre-wrap break-words">
+          {b.text}
+        </pre>
+      );
     }
     if (b.type === 'hr') {
-      return <hr key={key} className="border-gray-200 dark:border-gray-600 my-2" />;
+      return <hr key={key} className={`${hrCls} my-2`} />;
     }
     if (b.type === 'quote') {
       return (
         <blockquote key={key}
-          className="border-l-2 border-gray-300 dark:border-gray-600 pl-3 text-sm text-gray-600 dark:text-gray-400 italic">
-          {renderInline(b.text)}
+          className={`border-l-2 pl-3 text-sm italic ${quoteCls}`}>
+          {renderInline(b.text, codeInlineCls)}
         </blockquote>
       );
     }
     if (b.type === 'ul') {
       return (
-        <ul key={key} className="list-disc list-inside text-sm space-y-0.5 text-gray-800 dark:text-gray-200">
-          {b.items.map((item, j) => <li key={j}>{renderInline(item)}</li>)}
+        <ul key={key} className={`list-disc list-inside text-sm space-y-0.5 ${bodyCls}`}>
+          {b.items.map((item, j) => <li key={j}>{renderInline(item, codeInlineCls)}</li>)}
         </ul>
       );
     }
     if (b.type === 'ol') {
       return (
-        <ol key={key} className="list-decimal list-inside text-sm space-y-0.5 text-gray-800 dark:text-gray-200">
-          {b.items.map((item, j) => <li key={j}>{renderInline(item)}</li>)}
+        <ol key={key} className={`list-decimal list-inside text-sm space-y-0.5 ${bodyCls}`}>
+          {b.items.map((item, j) => <li key={j}>{renderInline(item, codeInlineCls)}</li>)}
         </ol>
       );
     }
     return (
-      <p key={key} className="whitespace-pre-wrap text-sm text-gray-800 dark:text-gray-200">
-        {renderInline(b.text)}
+      <p key={key} className={`whitespace-pre-wrap text-sm ${bodyCls}`}>
+        {renderInline(b.text, codeInlineCls)}
       </p>
     );
   });
+}
+
+/** 轻量 Markdown 渲染（标题/列表/引用/代码块/行内样式） */
+export function MarkdownContent({ content, className = '', theme = 'default' }) {
+  if (!content) return null;
+  return (
+    <div className={`space-y-1.5 leading-relaxed break-words ${className}`}>
+      {renderTextBlock(content, 'md', theme)}
+    </div>
+  );
 }
 
 /** 圈子消息富媒体展示：Markdown + 图片 */
@@ -222,7 +266,7 @@ export default function RichMediaContent({
             </div>
           );
         }
-        return <React.Fragment key={i}>{renderTextBlock(seg.value, `t${i}`)}</React.Fragment>;
+        return <React.Fragment key={i}>{renderTextBlock(seg.value, `t${i}`, 'default')}</React.Fragment>;
       })}
     </div>
   );

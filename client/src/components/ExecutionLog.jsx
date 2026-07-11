@@ -1,5 +1,6 @@
 // Agent 对话流：典型 Agent 交互风格（用户消息 + 思考/工具/终端/回复 + 编排派发）
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { MarkdownContent } from './RichMediaContent';
 
 const STEP_META = {
   thinking: { icon: '🤔', label: '思考', accent: 'border-violet-200 bg-violet-50/60 dark:border-violet-800/40 dark:bg-violet-900/15' },
@@ -163,6 +164,89 @@ function groupNestedSteps(steps = []) {
 function formatTime(ts) {
   if (!ts) return '';
   return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+/** 展示前还原字面量 \\n / \\t，避免单行截断 */
+function normalizeDisplayText(text) {
+  if (text == null) return '';
+  return String(text)
+    .replace(/\\n/g, '\n')
+    .replace(/\\t/g, '\t')
+    .trim();
+}
+
+/** 判断是否为有效文件路径（过滤误写入的正文摘要） */
+function isLikelyFilePath(raw) {
+  const p = String(raw || '').trim();
+  if (!p || p.length > 512) return false;
+  if (/\\n|\\r|[\n\r]/.test(p)) return false;
+  if (/^#+\s|^---|\*\*/.test(p)) return false;
+  if (/^(true|false|null)$/i.test(p)) return false;
+  return /[/\\]/.test(p) || /\.[a-z0-9]{1,8}$/i.test(p) || /^[\w.-]+$/.test(p);
+}
+
+/** 任务完成卡片：展示摘要与修改文件，支持长内容滚动 */
+function TaskCompletionCard({ result, task }) {
+  const [summaryOpen, setSummaryOpen] = useState(true);
+  const summary = normalizeDisplayText(result?.summary || result?.output || '');
+
+  const rawFiles = result?.files || [];
+  const files = rawFiles.filter(f => isLikelyFilePath(f.path || f.file_path));
+
+  // 曾被误识别为「文件」的正文，回退到摘要区展示
+  const misfiledText = rawFiles
+    .map(f => f.path || f.file_path)
+    .filter(p => p && !isLikelyFilePath(p))
+    .map(normalizeDisplayText)
+    .join('\n\n');
+
+  const displaySummary = summary || misfiledText;
+  const duration = task?.completed_at && task?.started_at
+    ? ((task.completed_at - task.started_at) / 1000).toFixed(1)
+    : null;
+
+  return (
+    <div className="rounded-xl border border-green-200 dark:border-green-800/50 bg-green-50/60 dark:bg-green-900/15 px-4 py-3">
+      <div className="flex items-center gap-2 text-sm font-medium text-green-700 dark:text-green-400 mb-2">
+        <span>✅</span> 任务完成
+        {duration && (
+          <span className="text-xs font-normal text-green-600/80 dark:text-green-500/80">
+            · {duration}s
+          </span>
+        )}
+      </div>
+
+      {displaySummary && (
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => setSummaryOpen(v => !v)}
+            className="flex items-center gap-1.5 text-xs font-medium text-green-800/90 dark:text-green-300/90 mb-1"
+          >
+            <span>📋</span> 执行摘要
+            <span className="text-zinc-400">{summaryOpen ? '▾' : '▸'}</span>
+          </button>
+          {summaryOpen && (
+            <div className="text-xs leading-relaxed max-h-96 overflow-y-auto rounded-lg bg-white/60 dark:bg-zinc-900/40 border border-green-100 dark:border-green-900/40 px-3 py-2 text-zinc-700 dark:text-zinc-300">
+              <MarkdownContent content={displaySummary} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {files.length > 0 && (
+        <div className="space-y-1 mt-2">
+          <div className="text-xs font-medium text-green-800/80 dark:text-green-400/80 mb-1">修改的文件</div>
+          {files.map((f, idx) => (
+            <div key={idx} className="flex items-start gap-2 text-xs font-mono text-zinc-600 dark:text-zinc-400">
+              <span className="shrink-0">{f.operation === 'created' ? '📝' : '✏️'}</span>
+              <span className="break-all whitespace-pre-wrap">{f.path || f.file_path}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** 格式化重试等待时间 */
@@ -416,11 +500,17 @@ function ToolCard({ step }) {
           {collapsible && <span className="text-xs text-zinc-400 shrink-0">{open ? '▾' : '▸'}</span>}
         </button>
         {open && (
-          <pre className={`px-3 pb-3 text-xs whitespace-pre-wrap break-words font-mono leading-relaxed max-h-72 overflow-y-auto ${
-            step.kind === 'terminal' ? 'text-zinc-100' : 'text-zinc-700 dark:text-zinc-300'
-          }`}>
-            {step.content}
-          </pre>
+          step.kind === 'terminal' || step.kind === 'code_edit' ? (
+            <pre className={`px-3 pb-3 text-xs whitespace-pre-wrap break-words font-mono leading-relaxed max-h-72 overflow-y-auto ${
+              step.kind === 'terminal' ? 'text-zinc-100' : 'text-zinc-700 dark:text-zinc-300'
+            }`}>
+              {step.content}
+            </pre>
+          ) : (
+            <div className="px-3 pb-3 text-xs max-h-72 overflow-y-auto text-zinc-700 dark:text-zinc-300">
+              <MarkdownContent content={normalizeDisplayText(step.content)} />
+            </div>
+          )
         )}
       </div>
     </div>
@@ -452,9 +542,9 @@ function ThinkingGroupCard({ item }) {
           <span className="text-xs text-zinc-400 shrink-0">{open ? '▾' : '▸'}</span>
         </button>
         {open && (
-          <pre className="px-3 pb-3 text-xs whitespace-pre-wrap break-words font-mono leading-relaxed text-zinc-700 dark:text-zinc-300 max-h-80 overflow-y-auto">
-            {item.content}
-          </pre>
+          <div className="px-3 pb-3 text-xs max-h-80 overflow-y-auto text-zinc-700 dark:text-zinc-300">
+            <MarkdownContent content={normalizeDisplayText(item.content)} />
+          </div>
         )}
       </div>
     </div>
@@ -511,8 +601,9 @@ function DelegationCard({ item }) {
         {open && (
           <div className="px-3 pb-3 space-y-2">
             {isStart && item.content && (
-              <div className="text-xs text-zinc-600 dark:text-zinc-400 whitespace-pre-wrap border-l-2 border-indigo-300 dark:border-indigo-700 pl-2">
-                <span className="text-zinc-400">任务：</span>{item.content}
+              <div className="text-xs border-l-2 border-indigo-300 dark:border-indigo-700 pl-2 text-zinc-600 dark:text-zinc-400">
+                <span className="text-zinc-400">任务：</span>
+                <MarkdownContent content={normalizeDisplayText(item.content)} />
               </div>
             )}
 
@@ -534,9 +625,9 @@ function DelegationCard({ item }) {
                   }
                   if (ns.kind === 'output' || ns.stepType === 'output') {
                     return (
-                      <pre key={idx} className="text-xs whitespace-pre-wrap break-words font-mono text-zinc-700 dark:text-zinc-300">
-                        {ns.content}
-                      </pre>
+                      <div key={idx} className="text-xs text-zinc-700 dark:text-zinc-300">
+                        <MarkdownContent content={normalizeDisplayText(ns.content)} />
+                      </div>
                     );
                   }
                   return <ToolCard key={idx} step={{ kind: ns.kind || ns.stepType, ...ns }} />;
@@ -545,9 +636,9 @@ function DelegationCard({ item }) {
             )}
 
             {isComplete && item.content && (
-              <pre className="text-xs whitespace-pre-wrap break-words font-mono text-zinc-700 dark:text-zinc-300 max-h-48 overflow-y-auto">
-                {item.content}
-              </pre>
+              <div className="text-xs max-h-48 overflow-y-auto text-zinc-700 dark:text-zinc-300">
+                <MarkdownContent content={normalizeDisplayText(item.content)} />
+              </div>
             )}
 
             {isStart && !item.nestedSteps?.length && running && (
@@ -564,6 +655,7 @@ function DelegationCard({ item }) {
 }
 
 export default function ExecutionLog({
+  conversationTurns = [],
   userPrompt,
   steps,
   status,
@@ -574,16 +666,22 @@ export default function ExecutionLog({
   agentNames = {},
 }) {
   const endRef = useRef(null);
-  const timeline = useMemo(
-    () => buildTimeline(userPrompt, steps, delegations, agentNames),
-    [userPrompt, steps, delegations, agentNames],
-  );
+
+  /** 合并历史轮次 + 当前轮次为完整时间线 */
+  const timeline = useMemo(() => {
+    const items = [];
+    for (const turn of conversationTurns) {
+      items.push(...buildTimeline(turn.user, turn.steps || [], {}, agentNames));
+    }
+    items.push(...buildTimeline(userPrompt, steps, delegations, agentNames));
+    return items;
+  }, [conversationTurns, userPrompt, steps, delegations, agentNames]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [timeline, status, result]);
+  }, [timeline, status, result, conversationTurns]);
 
-  const empty = !userPrompt && timeline.length === 0;
+  const empty = !conversationTurns.length && !userPrompt && timeline.length === 0;
 
   if (empty) {
     return (
@@ -604,8 +702,11 @@ export default function ExecutionLog({
         if (item.kind === 'user') {
           return (
             <div key={`u-${i}`} className="flex justify-end">
-              <div className="max-w-[80%] rounded-2xl rounded-br-md px-4 py-2.5 text-sm bg-blue-600 text-white whitespace-pre-wrap">
-                {item.content}
+              <div className="max-w-[80%] rounded-2xl rounded-br-md px-4 py-2.5 text-sm bg-blue-600">
+                <MarkdownContent
+                  content={normalizeDisplayText(item.content)}
+                  theme="inverted"
+                />
               </div>
             </div>
           );
@@ -617,8 +718,8 @@ export default function ExecutionLog({
               <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] shrink-0 mt-0.5">
                 AI
               </div>
-              <div className="max-w-[80%] rounded-2xl rounded-bl-md px-4 py-2.5 text-sm bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 whitespace-pre-wrap">
-                {item.content}
+              <div className="max-w-[80%] rounded-2xl rounded-bl-md px-4 py-2.5 text-sm bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100">
+                <MarkdownContent content={normalizeDisplayText(item.content)} />
               </div>
             </div>
           );
@@ -657,26 +758,7 @@ export default function ExecutionLog({
       )}
 
       {result && status === 'completed' && (
-        <div className="rounded-xl border border-green-200 dark:border-green-800/50 bg-green-50/60 dark:bg-green-900/15 px-4 py-3">
-          <div className="flex items-center gap-2 text-sm font-medium text-green-700 dark:text-green-400 mb-2">
-            <span>✅</span> 任务完成
-            {task?.completed_at && task?.started_at && (
-              <span className="text-xs font-normal text-green-600/80 dark:text-green-500/80">
-                · {((task.completed_at - task.started_at) / 1000).toFixed(1)}s
-              </span>
-            )}
-          </div>
-          {result.files?.length > 0 && (
-            <div className="space-y-1 mt-2">
-              {result.files.map((f, idx) => (
-                <div key={idx} className="flex items-center gap-2 text-xs font-mono text-zinc-600 dark:text-zinc-400">
-                  <span>{f.operation === 'created' ? '📝' : '✏️'}</span>
-                  <span className="truncate">{f.path || f.file_path}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <TaskCompletionCard result={result} task={task} />
       )}
 
       <div ref={endRef} />
