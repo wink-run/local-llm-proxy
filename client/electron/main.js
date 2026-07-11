@@ -2374,8 +2374,12 @@ function registerIPC() {
   } catch {}
   syncGatewayFromConfig(_initCfg);
   fetchPeerModels(_initCfg.cloud_config?.url, _initCfg.cloud_config?.token);
+  // 启动扫描 CLI 多账号实例（迁移旧记录 + 补新账号，幂等）
+  try { const r = reconcileCliInstancesIntoApps(); if (r.changed) console.log('[cli-instances] startup reconcile: +' + r.added); } catch {}
 
   ipcMain.handle('localConfig:get', () => readLocalConfig());
+  // 手动/百宝箱装完后重扫 CLI 多账号实例
+  ipcMain.handle('cli:rescanInstances', () => reconcileCliInstancesIntoApps());
 
   // 供给源目录：后台拉 /api/catalog 写 yaml，UI 读本地 yaml
   const catalogSync = require('./catalog-sync');
@@ -2651,6 +2655,47 @@ function registerIPC() {
     cfg.apps = apps;
     writeLocalConfig(cfg);
     syncGatewayFromConfig(cfg);
+  }
+
+  // 扫描 CLI 多账号 CONFIG_DIR，与已存 app 记录对账，把新账号补成实例记录、旧记录迁移出 instance 段。
+  // 仅对「用户已纳管过的工具」(该 agent 已有 shim 记录) 自动建新实例，避免给没碰过的工具凭空造记录。
+  // 主路径：扫出即完成，默认官方订阅不走网关(route_id:null)，用户可选绑路由。返回 { added, changed }。
+  function reconcileCliInstancesIntoApps() {
+    try {
+      const cli = require('./cli-instances');
+      const apps = getApps();
+      const scanned = [...cli.scanCliInstances('claude-code'), ...cli.scanCliInstances('codex')];
+      if (!scanned.length) return { added: 0, changed: false };
+      const activeTools = new Set(apps.filter(a => a.link_method === 'shim' && a.agent_id).map(a => a.agent_id));
+      const makeRecord = (inst) => {
+        if (!activeTools.has(inst.tool)) return null;   // 该工具未纳管 → 不自动建，交给正常检测/纳管
+        const email = inst.account_email || '';
+        const label = email ? email.split('@')[0] : path.basename(inst.config_dir);
+        return {
+          id: `app-shim-${inst.tool}-${rndHex(6)}`,
+          name: `${inst.tool === 'codex' ? 'Codex' : 'Claude Code'} · ${label}`,
+          icon: 'icon:cube',
+          link_method: 'shim',
+          agent_id: inst.tool,
+          api_key: 'sk-local-' + rndHex(16),
+          route_id: null,          // 默认官方订阅不走网关
+          hosted: true,
+          instance: {
+            config_dir: inst.config_dir, is_default: inst.is_default,
+            account_email: inst.account_email, subscription: inst.subscription,
+            has_credentials: inst.has_credentials, invalid: false, dir_glob: null,
+          },
+          created_at: new Date().toISOString(),
+        };
+      };
+      const { apps: out, added } = cli.reconcileCliInstances(apps, scanned, makeRecord);
+      const changed = JSON.stringify(apps) !== JSON.stringify(out);
+      if (changed) saveApps(out);
+      return { added: added.length, changed };
+    } catch (e) {
+      console.warn('[cli-instances] reconcile error:', e && e.message);
+      return { added: 0, changed: false, error: e && e.message };
+    }
   }
   // 应用「纳管」状态完全跟随用户操作（持久化在条目里，不靠扫描/匹配配置文件内容）
   function syncCursorHookState(apps) {
