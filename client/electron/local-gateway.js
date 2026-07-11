@@ -2419,14 +2419,17 @@ function stratStepOf(scene) {
   // 带条件规则(rules)的路由必须走场景/规则分支(resolveSteps 评估 token/关键字条件)，
   // 不能被"单步策略"抢先短路——否则 rules 被绕过。
   if (Array.isArray(scene.rules) && scene.rules.length) return null;
-  if (scene.strategy) return { strategy: scene.strategy, scope: null, tier: null, provider: null, sharer: null };
+  const rScope = scene.scope || null, rTier = scene.tier || null;   // 路由级统一过滤（顶层，和 flow 并列）
+  if (scene.strategy) return { strategy: scene.strategy, scope: rScope, tier: rTier, provider: null, sharer: null };
   const steps = scene.steps || [];
   const s = steps[0] || {};
   // 单步(或无步)且无 model = 开放式选择：策略取 step.strategy || 路由级 flow || (有 scope/tier/provider 时)fallback。
   // 默认策略路由(综合最优/实惠优先…)用路由级 flow 表达，flow 即其选优策略；纯来源/价格路由(仅个人/仅免费…)靠 scope/tier 过滤。
+  // 路由级过滤(scene.scope/scene.tier)与步级合并（步级优先）。
   if (steps.length <= 1 && !s.model) {
-    const strat = s.strategy || scene.flow || ((s.scope || s.tier || s.provider) ? 'fallback' : null);
-    if (strat) return { strategy: strat, scope: s.scope || null, tier: s.tier || null, provider: s.provider || null, sharer: s.sharer || null };
+    const scope = s.scope || rScope, tier = s.tier || rTier;
+    const strat = s.strategy || scene.flow || ((scope || tier || s.provider) ? 'fallback' : null);
+    if (strat) return { strategy: strat, scope: scope || null, tier: tier || null, provider: s.provider || null, sharer: s.sharer || null };
   }
   return null;
 }
@@ -2659,9 +2662,10 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       // 无 model 的步 = 开放式选择（strategy / 纯 tier / 纯 provider）：展开成候选逐个 failover。
       // 无显式 strategy 但有 tier/provider 时按 fallback 顺序；都没有则跳过（避免 model=undefined 发上游）。
       if (!stepModel) {
-        const stepStrat = step.strategy || ((step.scope || step.tier || step.provider) ? 'fallback' : null);
+        const stepScope = step.scope || scene.scope, stepTier = step.tier || scene.tier;   // 合并路由级过滤
+        const stepStrat = step.strategy || ((stepScope || stepTier || step.provider) ? 'fallback' : null);
         if (!stepStrat) continue;
-        const sOrdered = buildStrategyCandidates(stepStrat, { scope: step.scope, tier: step.tier, provider: step.provider }, reqPath, skipP2P, `${scene.id}:${stepStrat}`);
+        const sOrdered = buildStrategyCandidates(stepStrat, { scope: stepScope, tier: stepTier, provider: step.provider }, reqPath, skipP2P, `${scene.id}:${stepStrat}`);
         const sMeta = { strategy: step.strategy || null, sharer: step.sharer || null };
         for (const c of sOrdered) {
           if (rejectP2pIfUnconfigured(c.provider, res, isResponses)) { lastErr = p2pAbortError('api_key'); recordError(c.model, callerKey, lastErr); return; }
@@ -2686,7 +2690,11 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       }
       // Match providers by model list；step.tier 指定时只走对应供给层（同模型跨 P2P/付费）
       let stepCandidates = all.filter(p => providerHasModel(p, stepModel, { strict: skipP2P }));
-      if (step.tier) stepCandidates = stepCandidates.filter(p => p.type === step.tier);
+      // 步级 tier/provider + 路由级过滤(scene.scope/scene.tier)
+      const mTier = step.tier || scene.tier;
+      if (mTier) stepCandidates = stepCandidates.filter(p => p.type === mTier);
+      if (scene.scope === 'community') stepCandidates = stepCandidates.filter(p => p.type === 'p2p');
+      if (scene.scope === 'personal') { const _ps = new Set(collectPersonalModels()); if (!_ps.has(stepModel)) stepCandidates = []; }
       if (step.provider) stepCandidates = stepCandidates.filter(p => p.id === step.provider);
       // 该步的 p2p 路由指令：step 自带 strategy/sharer（Selector）优先，否则用请求级 routeMeta
       const stepMeta = (step.strategy || step.sharer)

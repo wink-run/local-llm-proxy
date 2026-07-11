@@ -112,6 +112,13 @@ def normalize_route(raw: dict) -> dict:
     flow = normalize_strategy(raw.get("flow"))
     if flow:
         out["flow"] = flow                 # 链级流转策略
+    # 路由级统一过滤（顶层，和 flow 并列）：scope=来源(personal/community) / tier=价格(free/paid)
+    rscope = str(raw.get("scope") or "").strip()
+    if rscope in ("personal", "community"):
+        out["scope"] = rscope
+    rtier = str(raw.get("tier") or "").strip()
+    if rtier in ("free", "paid", "p2p"):
+        out["tier"] = rtier
     if isinstance(raw.get("rules"), list) and raw["rules"]:
         out["rules"] = raw["rules"]        # 条件规则(token/关键字)透传
     if isinstance(raw.get("classifier"), dict) and raw["classifier"]:

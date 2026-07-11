@@ -1173,6 +1173,15 @@ function readLocalConfig() {
           cfg.scene_routes = cfg.scene_routes || [];
           for (const sr of missing) cfg.scene_routes.push({ ...sr, created_at: new Date().toISOString() });
         }
+        // 预定义 strategy-* 路由的显示名/图标以默认 yaml 为准刷新（防止旧数据/云端同步残留旧名）
+        const defById = new Map(defRoutes.map(r => [r.id, r]));
+        for (const r of (cfg.scene_routes || [])) {
+          if (String(r.id || '').startsWith('strategy-') && defById.has(r.id)) {
+            const d = defById.get(r.id);
+            if (d.scene_name) r.scene_name = d.scene_name;
+            if (d.icon) r.icon = d.icon;
+          }
+        }
       } catch {}
       // 用户显式取消托管的 agent_id 列表（自动托管会跳过这些）
       if (!Array.isArray(cfg.auto_host_disabled)) cfg.auto_host_disabled = [];
@@ -2045,6 +2054,8 @@ function registerIPC() {
         for (const r of local) { if (r.id) byId.set(r.id, r); }
         for (const r of parsed.scene_routes) {
           if (!r.id) continue;
+          // 客户端预定义策略路由（综合最优/免费源/…）的名字与定义以本地默认 yaml 为准，云端同步不覆盖
+          if (String(r.id).startsWith('strategy-') && byId.has(r.id)) continue;
           const existing = byId.get(r.id);
           if (existing) {
             Object.assign(existing, r);
@@ -2198,9 +2209,14 @@ function registerIPC() {
     // llm-router-* → scene steps / 策略路由（从 scene_routes 生成）
     const routerMap = {};
     for (const r of routes) {
-      // 策略路由：无 steps、有 strategy —— 模型无关，网关按类型扫候选 + 策略排序
-      if (r.model_key && r.strategy && !(r.steps?.length || r.rules?.length)) {
-        const entry = { strategy: r.strategy, scene_name: r.scene_name, id: r.id || r.model_key };
+      // 策略/过滤路由：无 steps/rules，但有 strategy / flow / scope / tier —— 模型无关，
+      // 网关按类型扫候选 + 策略排序(stratStepOf 识别 flow/scope/tier)。综合最优/免费源/社区源/个人源 皆此类。
+      if (r.model_key && (r.strategy || r.flow || r.scope || r.tier) && !(r.steps?.length || r.rules?.length)) {
+        const entry = { scene_name: r.scene_name, id: r.id || r.model_key,
+          ...(r.strategy ? { strategy: r.strategy } : {}),
+          ...(r.flow ? { flow: r.flow } : {}),
+          ...(r.scope ? { scope: r.scope } : {}),
+          ...(r.tier ? { tier: r.tier } : {}) };
         routerMap[r.model_key] = entry;
         if (r.id && r.id !== r.model_key) routerMap[r.id] = entry;
         continue;
