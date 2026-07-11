@@ -72,10 +72,17 @@ function apply(tool) {
         if (!real) return { ok: false, error: 'real-command-not-found' };
         // route_bindable=false（如 Claude，客户端校验模型）→ 不注入，shim 纯透传走官方
         const env = tool.route_bindable === false ? {} : resolveEnvKeys(tool.id, (tool.inject && tool.inject.env) || {});
-        // Claude Code CLI（anthropic 协议）：它自带的 claude.ai OAuth 登录态即可打网关（网关不校验
-        // caller key、按模型路由），无需注入 ANTHROPIC_AUTH_TOKEN。而一旦注入任何 auth token，
-        // Claude Code 会禁用基于 claude.ai 登录的组织 connectors。故 anthropic shim 只留 base_url。
-        if (tool.protocol === 'anthropic') delete env.ANTHROPIC_AUTH_TOKEN;
+        // Claude Code CLI（anthropic 协议）：
+        //  - 已绑路由（有 app key）→ 注入 ANTHROPIC_AUTH_TOKEN={app key}，让 claude 成为 api-key 调用方，
+        //    网关按 key 走 per-app keyScene（多个 CLI 实例各绑各的路由）。代价：claude.ai 组织 connectors
+        //    失效——但用代理往非官方源导流时它本就不生效，故可接受。
+        //  - 未绑（无 key）→ 不注入，claude 用自己的 claude.ai OAuth 登录态打网关（claudeShimScene 兜底），
+        //    保留组织 connectors。
+        if (tool.protocol === 'anthropic') {
+          const key = _keyResolver ? (_keyResolver(tool.id) || '') : '';
+          if (key) env.ANTHROPIC_AUTH_TOKEN = key;
+          else delete env.ANTHROPIC_AUTH_TOKEN;
+        }
         shim.writeShim(tool.detect.command, real, env);
         shim.enablePath();
         return { ok: true, strategy: tool.strategy, needsRestartShell: true };

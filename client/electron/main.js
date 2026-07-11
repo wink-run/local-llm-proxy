@@ -2299,7 +2299,7 @@ function registerIPC() {
           // Claude Desktop：claude-* 名（inferenceModels.name）→ 绑定的 route；api_key 仅识别应用，不改写 model
           if (isClaudeDesktopApp(app.id)) {
             const cms = (() => { try { return require('./config-loader').claudeModels(); } catch { return []; } })();
-            bindClaudeRoutesToKeyScene(keyScene, appRouteIds, routes, cms);
+            bindClaudeRoutesToKeyScene(keyScene, app.api_key, appRouteIds, routes, cms);
           }
           // Codex Desktop：它会用自带的 gpt-* 辅助模型（标题/分类等，写死在 App 里、非用户配置）发请求，
           // 网关没有这些模型 → 401。用 gpt 前缀兜底（future-proof：以后升级出新 gpt-* 也自动匹配），
@@ -2312,10 +2312,11 @@ function registerIPC() {
         if (!routeBindable || !toolProto[app.agent_id]) continue;
         const path = PROTOCOL_PATH[toolProto[app.agent_id]];
         if (path) appControls.push({ ...ctrl, match: { path } });
-        // Claude Code CLI（anthropic shim）：它用自己的 claude.ai OAuth 调用、发标准 claude-* 名，
-        // callerKey 不是 app key，无法像 Claude Desktop 那样按 key 认出。故把它绑定的路由单独记到
-        // claudeShimScene（网关只对「非 api-key 调用方」的 claude-* 请求用它），不写全局 keyScene——
-        // 否则会顶掉 Claude Desktop 等 api-key claude 应用的按模型绑定，导致 Desktop 请求被劫持。
+        // Claude Code CLI（anthropic shim）双通道：
+        //  A) 旧行为兜底：shim 只注 base_url、claude 发自己的 claude.ai OAuth（无 app key）时，
+        //     按 claudeShimScene 绑定（网关对「非 api-key 调用方」的 claude-* 请求用它）。
+        //  B) per-app：shim 若注入了 app key（ANTHROPIC_AUTH_TOKEN={KEY}），claude 就成了 api-key 调用方，
+        //     注册 match.key + 建 keyScene[key][claude模型名] → 与 Desktop 同机制，多个 CLI 实例各绑各的。
         if (toolProto[app.agent_id] === 'anthropic') {
           const appRouteIds = (Array.isArray(app.route_ids) && app.route_ids.length)
             ? app.route_ids : (app.route_id ? [app.route_id] : []);
@@ -2323,6 +2324,11 @@ function registerIPC() {
             const tmp = {};
             bindRouteToKeyScene(tmp, '_shim', appRouteIds[0], routes);
             claudeShimScene = tmp._shim || null;
+            if (app.api_key) {
+              appControls.push({ ...ctrl, match: { key: app.api_key } });
+              const cms = (() => { try { return require('./config-loader').claudeModels(); } catch { return []; } })();
+              bindClaudeRoutesToKeyScene(keyScene, app.api_key, appRouteIds, routes, cms);
+            }
           }
         }
       }
