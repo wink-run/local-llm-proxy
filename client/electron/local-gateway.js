@@ -2627,7 +2627,11 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   if (_stratScene) {
     const ordered = buildStrategyCandidates(
       _stratStep.strategy, { scope: _stratStep.scope, tier: _stratStep.tier, provider: _stratStep.provider }, reqPath, skipP2P, _stratScene.id);
-    if (!ordered.length) { lastErr = new Error(`no ${modalityOf(reqPath)} model for strategy route`); fail(_stratScene.scene_name, null); return; }
+    if (!ordered.length) {
+      const _flt = [_stratStep.scope, _stratStep.tier].filter(Boolean).join('/');
+      lastErr = new Error(`该路由过滤(${_flt || _stratStep.strategy || 'any'})下没有可用的${modalityOf(reqPath)}模型/供给源`);
+      fail(_stratScene.scene_name, null); return;
+    }
     const routeErrors = [];
     for (const c of ordered) {
       if (rejectP2pIfUnconfigured(c.provider, res, isResponses)) { lastErr = p2pAbortError('api_key'); recordError(c.model, callerKey, lastErr); return; }
