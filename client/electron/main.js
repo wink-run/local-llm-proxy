@@ -2219,6 +2219,8 @@ function registerIPC() {
           ...(r.tier ? { tier: r.tier } : {}) };
         routerMap[r.model_key] = entry;
         if (r.id && r.id !== r.model_key) routerMap[r.id] = entry;
+        // scene_name 别名兜底：已部署的应用配置可能直接发中文显示名（如 Codex config.toml 里 model="综合最优"），无需重纳管也能解析
+        if (r.scene_name && !routerMap[r.scene_name]) routerMap[r.scene_name] = entry;
         continue;
       }
       if (r.model_key && (r.steps?.length || r.rules?.length)) {
@@ -2227,6 +2229,7 @@ function registerIPC() {
           ...(r.flow ? { flow: r.flow } : {}), ...(r.scope ? { scope: r.scope } : {}), ...(r.tier ? { tier: r.tier } : {}) };
         routerMap[r.model_key] = entry;
         if (r.id && r.id !== r.model_key) routerMap[r.id] = entry;
+        if (r.scene_name && !routerMap[r.scene_name]) routerMap[r.scene_name] = entry;
       }
     }
     // manual / api-key apps: if model_intercept is set, redirect that incoming model name to the configured route
@@ -2236,7 +2239,9 @@ function registerIPC() {
         const parsed = parseRouteBinding(app.route_id, routes);
         if (parsed.isScene && parsed.scene) {
           const s = parsed.scene;
-          routerMap[app.model_intercept] = { steps: s.steps || [], scene_name: s.scene_name, rules: s.rules || null, classifier: s.classifier || null };
+          // 带上路由级 flow/scope/tier，否则 model_intercept 绑到策略/过滤路由（收费源/个人源等）会丢过滤
+          routerMap[app.model_intercept] = { steps: s.steps || [], scene_name: s.scene_name, rules: s.rules || null, classifier: s.classifier || null,
+            ...(s.flow ? { flow: s.flow } : {}), ...(s.scope ? { scope: s.scope } : {}), ...(s.tier ? { tier: s.tier } : {}) };
         } else {
           const modelId = parsed.modelId || app.route_id;
           routerMap[app.model_intercept] = { steps: [{ model: modelId, ...(parsed.tier ? { tier: parsed.tier } : {}) }], scene_name: app.name || modelId, rules: null, classifier: null };

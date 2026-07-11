@@ -611,6 +611,14 @@ function providerHasModel(provider, model, { strict = false } = {}) {
   return list.some(m => (typeof m === 'string' ? m : m.name) === model);
 }
 
+// 源整体失效级错误（配额/鉴权/限流）：该源的其它模型也会同样失败，failover 时应跳过整个源，
+// 避免把一个 429 的源的 5-6 个模型都试一遍白白拖几秒（导致 Codex 等客户端超时"没返回"）。
+function isSourceLevelError(err) {
+  const m = String((err && err.message) || '');
+  return /HTTP_(429|401|403)\b/.test(m)
+    || /quota|rate[\s_-]?limit|invalid[\s_-]*api[\s_-]*key|unauthorized|exceeded your current quota/i.test(m);
+}
+
 /** 从上游 4xx/5xx 响应体提取可读错误信息 */
 function formatHttpError(statusCode, bodyStr) {
   let msg = `HTTP_${statusCode}`;
@@ -2633,7 +2641,9 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       fail(_stratScene.scene_name, null); return;
     }
     const routeErrors = [];
+    const deadSources = new Set();   // 已发生配额/鉴权级失败(429/401/403)的源，跳过其余模型加速降级
     for (const c of ordered) {
+      if (deadSources.has(c.provider.id)) continue;
       if (rejectP2pIfUnconfigured(c.provider, res, isResponses)) { lastErr = p2pAbortError('api_key'); recordError(c.model, callerKey, lastErr); return; }
       try {
         // 策略路由：把场景策略（auto/cost…）+ 钉分享者传给 p2p 服务端，令其对该源 worker 也按策略排序/过滤
@@ -2652,6 +2662,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       } catch (err) {
         if (handleP2pFatal(c.provider, err, res, isResponses)) { lastErr = err; recordError(c.model, callerKey, lastErr); return; }
         routeErrors.push({ id: c.provider.id, err }); lastErr = err;
+        if (isSourceLevelError(err)) deadSources.add(c.provider.id);   // 该源整体失效，别再试它其它模型
         if (res.headersSent) return;
       }
     }
@@ -2700,7 +2711,9 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
         if (!stepStrat) continue;
         const sOrdered = buildStrategyCandidates(stepStrat, { scope: stepScope, tier: stepTier, provider: step.provider }, reqPath, skipP2P, `${scene.id}:${stepStrat}`);
         const sMeta = { strategy: step.strategy || null, sharer: step.sharer || null };
+        const deadSources = new Set();
         for (const c of sOrdered) {
+          if (deadSources.has(c.provider.id)) continue;
           if (rejectP2pIfUnconfigured(c.provider, res, isResponses)) { lastErr = p2pAbortError('api_key'); recordError(c.model, callerKey, lastErr); return; }
           try {
             const result = await callProvider(c.provider, isAnthropic, streaming, reqPath, body, c.model, res, sMeta);
@@ -2715,6 +2728,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           } catch (err) {
             if (handleP2pFatal(c.provider, err, res, isResponses)) { lastErr = err; recordError(c.model, callerKey, lastErr); return; }
             stepErrors.push({ id: c.provider.id, err }); lastErr = err;
+            if (isSourceLevelError(err)) deadSources.add(c.provider.id);
             if (res.headersSent) return;
           }
         }

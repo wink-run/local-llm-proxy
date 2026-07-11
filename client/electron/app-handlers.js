@@ -154,7 +154,9 @@ function routeModelId(routeId, routes = []) {
   const parsed = parseRouteBinding(routeId, routes);
   if (parsed.isScene && parsed.scene) {
     const r = parsed.scene;
-    return String(r.scene_name || r.model_key || routeId).trim();
+    // 必须回 model_key（llm-router-auto）——这是发给网关的 wire model，网关按 model_key 解析。
+    // scene_name（"综合最优"）只是显示名，直接当 model 发会 model_not_found（Codex 表现为无返回）。
+    return String(r.model_key || r.scene_name || routeId).trim();
   }
   return String(parsed.modelId || routeId).trim();
 }

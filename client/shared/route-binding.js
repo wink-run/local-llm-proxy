@@ -133,6 +133,10 @@ function bindRouteToKeyScene(keyScene, callerKey, routeId, routes = []) {
       rules: route.rules || null,
       classifier: route.classifier || null,
       flow: route.flow || null,
+      // 路由级过滤（收费源/免费源/个人源/社区源）——不带上 scope/tier，网关就丢了过滤，
+      // 策略/过滤路由（steps 为空）会退化成无差别扫全部候选。与 routerMap 分支保持一致。
+      ...(route.scope ? { scope: route.scope } : {}),
+      ...(route.tier ? { tier: route.tier } : {}),
     };
     return;
   }
