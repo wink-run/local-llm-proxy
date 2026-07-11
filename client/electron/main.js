@@ -2667,13 +2667,20 @@ function registerIPC() {
       const scanned = [...cli.scanCliInstances('claude-code'), ...cli.scanCliInstances('codex')];
       if (!scanned.length) return { added: 0, changed: false };
       const activeTools = new Set(apps.filter(a => a.link_method === 'shim' && a.agent_id).map(a => a.agent_id));
+      const usedNames = new Set(apps.map(a => a.name).filter(Boolean));   // 全局唯一保护
       const makeRecord = (inst) => {
         if (!activeTools.has(inst.tool)) return null;   // 该工具未纳管 → 不自动建，交给正常检测/纳管
+        // 名字：前缀带 CLI（区分 Desktop）+ 标签（默认账号=默认，否则邮箱前缀/目录后缀）；全局唯一，冲突加序号
+        const prefix = inst.tool === 'codex' ? 'Codex CLI' : 'Claude Code CLI';
         const email = inst.account_email || '';
-        const label = email ? email.split('@')[0] : path.basename(inst.config_dir);
+        const suffix = path.basename(inst.config_dir).replace(/^\.(claude|codex)-?/, '');
+        const label = inst.is_default ? '默认' : (email ? email.split('@')[0] : (suffix || 'account'));
+        let name = `${prefix} · ${label}`;
+        for (let n = 2; usedNames.has(name); n++) name = `${prefix} · ${label} (${n})`;
+        usedNames.add(name);
         return {
           id: `app-shim-${inst.tool}-${rndHex(6)}`,
-          name: `${inst.tool === 'codex' ? 'Codex' : 'Claude Code'} · ${label}`,
+          name,
           icon: 'icon:cube',
           link_method: 'shim',
           agent_id: inst.tool,
