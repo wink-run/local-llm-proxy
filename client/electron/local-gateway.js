@@ -9,7 +9,24 @@ const path  = require('path');
 const codexTransform = require('./codex-transform');
 const reqRouter = require('./request-router');
 const routingStrategies = require('./routing-strategies');
-const { TIER_ROUTE_RE, parseRoute } = require('../shared/route-binding');
+const { TIER_ROUTE_RE, parseRoute, STRATEGY_NAMES, SCOPE_NAMES, TIER_NAMES, SHARER_RE } = require('../shared/route-binding');
+const _STRAT_SET = new Set(STRATEGY_NAMES || []);
+const _SCOPE_SET = new Set(SCOPE_NAMES || []);
+const _TIER_SET  = new Set(TIER_NAMES || []);
+// 纯前缀 codec：整串都是已知 codec token(strategy/scope/tier/sharer)、无裸模型 → 当策略/过滤路由。
+function parsePureCodec(str) {
+  const segs = String(str == null ? '' : str).split(':').filter(Boolean);
+  const isTok = (s) => _STRAT_SET.has(s) || _SCOPE_SET.has(s) || _TIER_SET.has(s) || (SHARER_RE && SHARER_RE.test(s));
+  if (!segs.length || !segs.every(isTok)) return null;
+  const out = { strategy: null, scope: null, tier: null, sharer: null };
+  for (const s of segs) {
+    if (_STRAT_SET.has(s)) out.strategy = s;
+    else if (_SCOPE_SET.has(s)) out.scope = s;
+    else if (_TIER_SET.has(s)) out.tier = s;
+    else if (SHARER_RE.test(s)) out.sharer = s;
+  }
+  return out;
+}
 
 /** p2p 派发的路由指令 → X-TB-Route 头值（服务端按此做 auto 排序 / 钉分享者）。 */
 function encodeRouteHeader(meta) {
@@ -2516,7 +2533,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   let requestTier = null, requestScope = null, requestStrategy = null, requestSharer = null, requestProvider = null;
   {
     const pr = parseRoute(model);
-    if (pr.model) {   // 仅当解析出裸模型时才认这些前缀（纯 scope/tier/strategy 全局形态另走场景/策略路由）
+    // 纯前缀 codec(整串都是 token、无裸模型) 另走策略分支，这里不当 model 前缀处理
+    if (pr.model && !parsePureCodec(origModel)) {
       if (pr.tier || pr.scope || pr.strategy || pr.sharer || pr.provider) {
         requestTier     = pr.tier;
         requestScope    = pr.scope;
@@ -2597,6 +2615,14 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   for (const cand of [boundScene, interceptScene, (isLlmRouter ? _routerModelMap[origModel] : null)]) {
     const st = stratStepOf(cand);
     if (st) { _stratScene = cand; _stratStep = st; break; }
+  }
+  // 纯前缀 codec 直接当 model 传（auto:free / auto:personal / community / speed:paid 等）→ 合成策略/过滤路由
+  if (!_stratScene && !boundScene && !claudeFrom && !isLlmRouter) {
+    const pc = parsePureCodec(origModel);
+    if (pc) {
+      _stratScene = { scene_name: origModel, id: origModel };
+      _stratStep  = { strategy: pc.strategy || 'round-robin', scope: pc.scope || null, tier: pc.tier || null, provider: null, sharer: pc.sharer || null };
+    }
   }
   if (_stratScene) {
     const ordered = buildStrategyCandidates(
@@ -3418,7 +3444,7 @@ module.exports = {
   setClaudeModels,
   // 条件路由规则引擎（供单测/复用）
   pickSteps, evalWhen, modalityOf, estimateInputTokens, extractText, _providerTier,
-  stratStepOf, encodeRouteHeader, orderStepsByFlow, buildStrategyCandidates,
+  stratStepOf, encodeRouteHeader, orderStepsByFlow, buildStrategyCandidates, parsePureCodec, unifySteps,
   isP2pProvider, isP2pCreditsError, isP2pApiKeyError, hasP2pRelayKey, resolveFailStatus,
   // 格式转换（供单测/复用）：Anthropic ⇄ OpenAI（含 tool-calling）
   anthropicToOpenai, openaiToAnthropic, oaiRequestToAnthropic, anthropicRespToOai,

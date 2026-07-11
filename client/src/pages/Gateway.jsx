@@ -3454,6 +3454,28 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
   const usesClassifier = steps.some(s => s.when?.type === 'classifier');
   const categories = clsCats.split(/[、,，\s]+/).map(s => s.trim()).filter(Boolean);
 
+  // ── codec 预览（默认折叠，点路由名后的按钮展开）：flow · filter 头 + 每步「[条件⇒] 模型@源」──
+  const [showCodec, setShowCodec] = useState(false);
+  const _condLabel = (w) => {
+    if (!w || !w.type) return '';
+    const tl = Object.fromEntries(ruleCondTypes(t).map(x => [x.type, x.label]));
+    const ol = ruleOpLabel(t);
+    return `${tl[w.type] || w.type} ${ol[w.op] || w.op} ${w.value ?? ''}`.trim();
+  };
+  const _filterLabel = rScope === 'personal' ? t('gateway.route.scopePersonal')
+    : rScope === 'community' ? t('gateway.route.scopeCommunity')
+    : rTier === 'free' ? t('gateway.route.tierFree')
+    : rTier === 'paid' ? t('gateway.route.tierPaid') : '';
+  const codecHead = [flow, _filterLabel].filter(Boolean).join(' · ');
+  const codecSteps = (steps || [])
+    .filter(s => s.model || s.scope || s.tier || s.strategy || s.sharer || s.provider)
+    .map(s => {
+      const cond = s.when && s.when.type ? `${_condLabel(s.when)} ⇒ ` : '';
+      const src = (s.provider || s.sharer) ? `@${s.provider || s.sharer}` : '';
+      const body = s.model ? `${s.model}${src}` : (s.scope || s.tier || s.strategy || '任意');
+      return cond + body;
+    });
+
   function save() {
     // 每步保留 model/scope/tier/strategy/source/sharer + 可选条件 when；纯过滤步(无 model)也保留
     const clean = (arr) => (arr || []).filter(s => s.model || s.scope || s.tier || s.strategy || s.sharer || s.provider).map(s => ({
@@ -3472,11 +3494,24 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
 
   return (
     <div className="border-t border-zinc-200/60 dark:border-zinc-800/60 bg-zinc-50/50 dark:bg-zinc-800/20 px-5 py-4 space-y-3">
-      <div className="flex gap-2">
+      <div className="flex gap-2 items-center">
         <input value={name} onChange={e => setName(e.target.value)}
           placeholder={t('gateway.route.namePlaceholder')}
           className="flex-1 bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded-lg px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-blue-500" />
+        {/* codec 预览：默认折叠，点击展开 */}
+        <button type="button" onClick={() => setShowCodec(v => !v)} title="codec"
+          className="shrink-0 flex items-center gap-1 text-[11px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors">
+          codec <span className={`transition-transform ${showCodec ? 'rotate-180' : ''}`}>▾</span>
+        </button>
       </div>
+      {showCodec && (
+        <div className="rounded-lg bg-zinc-100/70 dark:bg-zinc-800/40 px-3 py-2 font-mono text-[11px] text-zinc-600 dark:text-zinc-300 leading-relaxed break-words">
+          <span className="text-blue-600 dark:text-blue-400">{codecHead || 'round-robin'}</span>
+          {codecSteps.map((c, i) => (
+            <span key={i}><span className="text-zinc-400 dark:text-zinc-500">{i === 0 ? '  ‖  ' : '  ▸  '}</span>{c}</span>
+          ))}
+        </div>
+      )}
 
       {/* 路由级设置（全局，最上层）：过滤 + 流转策略 + 输出风格，一行紧凑排布（窄屏自动换行）*/}
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 pt-1 pb-2 border-b border-zinc-200/60 dark:border-zinc-700/50">
