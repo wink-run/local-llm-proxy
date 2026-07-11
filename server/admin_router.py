@@ -5,7 +5,7 @@ import secrets
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
@@ -34,7 +34,18 @@ def auth_admin(creds: HTTPAuthorizationCredentials = Depends(_bearer)):
 
 @router.get("/ui")
 async def admin_ui():
-    return FileResponse("static/admin.html")
+    # cache-bust：admin.html 不缓存（每次都重新取），并给外挂 JS 注入版本号=最新 JS mtime，
+    # 改了 JS 版本号自动变，浏览器自动拉新，无需手动硬刷新。
+    html = open("static/admin.html", encoding="utf-8").read()
+    try:
+        ver = str(int(max(
+            os.path.getmtime(f"static/{f}")
+            for f in ("admin-routing-catalog.js", "admin-app-catalog.js", "admin-billing-sources.js")
+        )))
+    except OSError:
+        ver = str(int(time.time()))
+    html = html.replace("{{JS_VER}}", ver)
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache, max-age=0"})
 
 
 # ── Worker 列表 ───────────────────────────────────────────────────────────────
