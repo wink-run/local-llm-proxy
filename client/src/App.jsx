@@ -102,7 +102,7 @@ function Layout() {
             onClick={toggleSidebar}
             title={t('sidebar.expand')}
             aria-label={t('sidebar.expand')}
-            className="fixed top-3 left-3 z-50 flex items-center justify-center w-9 h-9 rounded-lg border border-zinc-900/10 dark:border-white/10 bg-white/90 dark:bg-zinc-800/90 text-zinc-600 dark:text-zinc-300 shadow-sm hover:bg-white dark:hover:bg-zinc-800 transition-colors"
+            className="tb-press tb-material fixed top-3 left-3 z-50 flex items-center justify-center w-9 h-9 rounded-lg border border-zinc-900/10 dark:border-white/10 text-zinc-600 dark:text-zinc-300 shadow-sm hover:bg-white dark:hover:bg-zinc-800"
           >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
               <path d="M4 6h16M4 12h16M4 18h16" />

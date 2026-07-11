@@ -803,6 +803,10 @@ class VirtualWorkerConnection:
     def period_online_mins(self) -> float:
         return (time.time() - self.period_start) / 60
 
+    def reward_multiplier(self) -> float:
+        from worker_pool import compute_reward_multiplier
+        return compute_reward_multiplier(self)
+
     def to_dict(self) -> dict:
         return {
             "worker_id": self.worker_id,

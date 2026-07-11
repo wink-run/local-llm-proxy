@@ -22,6 +22,83 @@ const EXTRA_SKILL_ROOTS = [
   },
 ];
 
+/** 项目内 Skill 目录（Claude Code `npx skills` 等默认装到 `<cwd>/.agents/skills` 并软链到 `.claude/skills`） */
+const PROJECT_SKILL_DIRS = [
+  { segments: ['.agents', 'skills'], agentId: 'agents-hub', agentLabel: 'Agents Hub' },
+  { segments: ['.claude', 'skills'], agentId: 'claude-code', agentLabel: 'Claude Code' },
+  { segments: ['.codex', 'skills'], agentId: 'codex', agentLabel: 'Codex' },
+  { segments: ['.cursor', 'skills'], agentId: 'cursor', agentLabel: 'Cursor' },
+  { segments: ['.workbuddy', 'skills'], agentId: 'workbuddy', agentLabel: 'WorkBuddy' },
+];
+
+function projectRootToken(projectRoot) {
+  return crypto.createHash('sha256').update(String(projectRoot || '')).digest('hex').slice(0, 8);
+}
+
+/** 从 Debug 任务 context / 显式传入路径收集项目根目录 */
+function collectProjectRoots(options = {}) {
+  const roots = new Set();
+  const add = (p) => {
+    const resolved = path.resolve(String(p || '').trim());
+    if (!resolved) return;
+    try {
+      if (fs.existsSync(resolved)) roots.add(resolved);
+    } catch { /* ignore */ }
+  };
+
+  for (const p of options.projectRoots || []) add(p);
+  for (const ctx of options.taskContexts || []) {
+    try {
+      const parsed = typeof ctx === 'string' ? JSON.parse(ctx) : ctx;
+      if (parsed?.workingDir) add(parsed.workingDir);
+    } catch { /* ignore */ }
+  }
+  return [...roots];
+}
+
+/** 扫描单个项目下的各 Agent Skill 目录 */
+function scanProjectSkills(projectRoot) {
+  const flat = [];
+  const projLabel = path.basename(projectRoot) || projectRoot;
+  const projToken = projectRootToken(projectRoot);
+
+  for (const spec of PROJECT_SKILL_DIRS) {
+    const skillRoot = path.join(projectRoot, ...spec.segments);
+    const label = `${spec.agentLabel} · ${projLabel}`;
+    for (const item of scanSkillRoot(skillRoot, spec.agentId, label)) {
+      flat.push({
+        ...item,
+        scanKey: `${spec.agentId}::project::${projToken}::${item.name}`,
+        scope: 'project',
+        projectRoot,
+        projectLabel: projLabel,
+      });
+    }
+  }
+  return flat;
+}
+
+function decorateScanItem(item) {
+  let isSymlink = false;
+  let linkTarget = null;
+  try {
+    const st = fs.lstatSync(item.skillDir);
+    isSymlink = st.isSymbolicLink();
+    if (isSymlink) linkTarget = fs.realpathSync(item.skillDir);
+  } catch { /* ignore */ }
+  return { ...item, isSymlink, linkTarget };
+}
+
+function indexKeyForItem(item) {
+  if (item.customScanRoot) {
+    return `${item.name}::${customDirToken(item.customScanRoot)}::${customDirToken(item.skillDir)}`;
+  }
+  if (item.projectRoot) {
+    return `${item.name}::${projectRootToken(item.projectRoot)}`;
+  }
+  return item.name;
+}
+
 function hashContent(content) {
   return crypto.createHash('sha256').update(String(content || '')).digest('hex').slice(0, 16);
 }
@@ -93,8 +170,9 @@ function scanSkillRoot(skillRoot, agentId, agentLabel) {
 
     const fm = parseSkillFrontmatter(content);
     const name = fm.name || ent.name;
+    // scanKey 用目录名，避免多个文件夹 frontmatter 同名导致 scanKey 冲突
     items.push({
-      scanKey: `${agentId}::${name}`,
+      scanKey: `${agentId}::${ent.name}`,
       type: 'skill',
       name,
       display_name: fm.name || ent.name,
@@ -116,15 +194,143 @@ function scanSkillRoot(skillRoot, agentId, agentLabel) {
   return items;
 }
 
-/** 扫描所有 Agent + aweskill 目录 */
-function scanAllAgentSkills() {
-  const flat = [];
+function customDirToken(dir) {
+  return crypto.createHash('sha256').update(String(dir || '')).digest('hex').slice(0, 8);
+}
 
+/** 递归扫描时跳过的目录名 */
+const SKIP_DIR_NAMES = new Set([
+  'node_modules', '.git', 'vendor', 'dist', 'build', '.next', '__pycache__', '.cache',
+]);
+
+function skillItemFromDir(skillDir, entName, agentId, agentLabel, extra = {}) {
+  const skillPath = fs.existsSync(path.join(skillDir, 'SKILL.md'))
+    ? path.join(skillDir, 'SKILL.md')
+    : path.join(skillDir, 'skill.md');
+  const content = readSkillFile(skillPath);
+  if (content == null) return null;
+
+  const fm = parseSkillFrontmatter(content);
+  const name = fm.name || entName || path.basename(skillDir);
+  const scanKey = extra.scanKey || `${agentId}::${name}`;
+  return {
+    scanKey,
+    type: 'skill',
+    name,
+    display_name: fm.name || entName || name,
+    description: fm.description || '',
+    content,
+    hash: hashContent(content),
+    agentId,
+    agentLabel,
+    skillDir,
+    skillPath,
+    skillRoot: extra.skillRoot || path.dirname(skillDir),
+    metadata: {
+      tags: fm.tags ? String(fm.tags).split(/[,\s]+/).filter(Boolean) : [],
+      scannedFrom: skillDir,
+    },
+    ...extra,
+  };
+}
+
+/** 扫描各 Agent 全局 skills 根目录 */
+function scanGlobalSkills() {
+  const flat = [];
   for (const target of Object.values(AGENT_RESOURCE_TARGETS)) {
-    flat.push(...scanSkillRoot(target.getSkillRoot(), target.id, target.label));
+    for (const item of scanSkillRoot(target.getSkillRoot(), target.id, target.label)) {
+      flat.push({ ...item, scope: 'global' });
+    }
   }
   for (const extra of EXTRA_SKILL_ROOTS) {
-    flat.push(...scanSkillRoot(extra.getSkillRoot(), extra.agentId, extra.label));
+    for (const item of scanSkillRoot(extra.getSkillRoot(), extra.agentId, extra.label)) {
+      flat.push({ ...item, scope: 'global' });
+    }
+  }
+  return flat;
+}
+
+/**
+ * 在指定目录下递归查找 Skill（含子目录），并识别项目内 .agents/.claude 等结构
+ * @param {string} rootDir 用户指定的扫描根目录
+ */
+function scanCustomSkillTree(rootDir, options = {}) {
+  const maxDepth = options.maxDepth ?? 8;
+  const resolved = path.resolve(String(rootDir || '').trim());
+  if (!resolved || !fs.existsSync(resolved)) return [];
+
+  const flat = [];
+  const seenDirs = new Set();
+  const rootLabel = path.basename(resolved) || resolved;
+  const rootToken = customDirToken(resolved);
+
+  const addSkillDir = (skillDir, labelSuffix = '') => {
+    let real;
+    try { real = fs.realpathSync(skillDir); } catch { return; }
+    if (seenDirs.has(real)) return;
+    seenDirs.add(real);
+
+    const item = skillItemFromDir(
+      skillDir,
+      path.basename(skillDir),
+      'custom',
+      labelSuffix ? `指定目录 · ${rootLabel} · ${labelSuffix}` : `指定目录 · ${rootLabel}`,
+      {
+        scanKey: `custom::${rootToken}::${customDirToken(real)}::${path.basename(skillDir)}`,
+        scope: 'custom',
+        customScanRoot: resolved,
+        skillRoot: resolved,
+      },
+    );
+    if (item) flat.push(item);
+  };
+
+  function walk(dir, depth) {
+    if (depth > maxDepth) return;
+    if (isSkillDir(dir)) {
+      addSkillDir(dir);
+      return;
+    }
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const ent of entries) {
+      if (!ent.isDirectory() && !ent.isSymbolicLink()) continue;
+      if (SKIP_DIR_NAMES.has(ent.name)) continue;
+      walk(path.join(dir, ent.name), depth + 1);
+    }
+  }
+
+  walk(resolved, 0);
+
+  // 同时识别项目内 Agent skills 目录（如 Debug 工作区的 .claude/skills）
+  for (const item of scanProjectSkills(resolved)) {
+    let real;
+    try { real = fs.realpathSync(item.skillDir); } catch { continue; }
+    if (seenDirs.has(real)) continue;
+    seenDirs.add(real);
+    flat.push({
+      ...item,
+      scope: 'custom',
+      customScanRoot: resolved,
+      scanKey: `${item.agentId}::custom::${rootToken}::${item.name}`,
+    });
+  }
+
+  return flat;
+}
+
+/** 按 scanScope 扫描：global=全局目录；custom=指定目录（含子目录） */
+function scanAllAgentSkills(options = {}) {
+  const scope = options.scanScope === 'custom' ? 'custom' : 'global';
+  const flat = [];
+
+  if (scope === 'global') {
+    flat.push(...scanGlobalSkills());
+  } else {
+    const dirs = [...new Set((options.customDirs || []).map(d => path.resolve(String(d || '').trim())).filter(Boolean))];
+    for (const dir of dirs) {
+      flat.push(...scanCustomSkillTree(dir, options));
+    }
   }
 
   return flat;
@@ -152,13 +358,17 @@ function groupDiscoveredSkills(flatItems) {
       });
     }
     const g = groups.get(groupKey);
-    if (!g.agents.some(a => a.agentId === item.agentId)) {
+    const agentKey = `${item.agentId}::${item.projectRoot || item.customScanRoot || ''}`;
+    if (!g.agents.some(a => `${a.agentId}::${a.projectRoot || a.customScanRoot || ''}` === agentKey)) {
       g.agents.push({
         agentId: item.agentId,
         label: item.agentLabel,
         skillDir: item.skillDir,
         skillPath: item.skillPath,
         skillRoot: item.skillRoot,
+        projectRoot: item.projectRoot || null,
+        customScanRoot: item.customScanRoot || null,
+        scope: item.scope || 'global',
       });
     }
     // 优先用 scanKey 指向第一个 Agent
@@ -168,23 +378,37 @@ function groupDiscoveredSkills(flatItems) {
   return Array.from(groups.values()).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
 }
 
-/** 仅扫描可投射 Agent（不含 agents-hub / aweskill），供分 Agent Tab 使用 */
-function buildAgentSkillScanIndex() {
+/** 按 scanScope 构建 Agent 安装索引 */
+function buildAgentSkillScanIndex(options = {}) {
+  const scope = options.scanScope === 'custom' ? 'custom' : 'global';
   const index = {};
+
+  if (scope === 'global') {
+    for (const target of Object.values(AGENT_RESOURCE_TARGETS)) {
+      index[target.id] = new Map();
+      for (const item of scanSkillRoot(target.getSkillRoot(), target.id, target.label)) {
+        index[target.id].set(item.name, decorateScanItem({ ...item, scope: 'global' }));
+      }
+    }
+    return index;
+  }
+
+  // 指定目录：归入 custom 虚拟 Agent，并映射项目内 claude/codex 等目录
+  index.custom = new Map();
   for (const target of Object.values(AGENT_RESOURCE_TARGETS)) {
     index[target.id] = new Map();
-    for (const item of scanSkillRoot(target.getSkillRoot(), target.id, target.label)) {
-      let isSymlink = false;
-      let linkTarget = null;
-      try {
-        // 目录级软链：检查 skills/<name>/ 本身
-        const st = fs.lstatSync(item.skillDir);
-        isSymlink = st.isSymbolicLink();
-        if (isSymlink) linkTarget = fs.realpathSync(item.skillDir);
-      } catch {}
-      index[target.id].set(item.name, { ...item, isSymlink, linkTarget });
-    }
   }
+
+  for (const item of scanAllAgentSkills(options)) {
+    const mapKey = indexKeyForItem(item);
+    if (item.agentId === 'custom') {
+      index.custom.set(mapKey, decorateScanItem(item));
+      continue;
+    }
+    if (!index[item.agentId]) index[item.agentId] = new Map();
+    index[item.agentId].set(mapKey, decorateScanItem(item));
+  }
+
   return index;
 }
 
@@ -210,27 +434,53 @@ function removeRawAgentSkill(agentId, skillKey, options = {}) {
   return { agentId, skillKey, path: skillDir };
 }
 
-function findScanEntry(scanKey) {
-  const flat = scanAllAgentSkills();
+function findScanEntry(scanKey, options = {}) {
+  const flat = scanAllAgentSkills(options);
   const direct = flat.find(i => i.scanKey === scanKey);
   if (direct) return direct;
 
-  // scanKey 可能是分组键，取同名首条
-  const name = scanKey.includes('::') ? scanKey.split('::')[1] : scanKey;
-  return flat.find(i => i.name === name) || null;
+  // custom::token::dirToken::basename
+  if (scanKey.startsWith('custom::')) {
+    const parts = scanKey.split('::');
+    const baseName = parts[parts.length - 1];
+    return flat.find(i => i.scanKey === scanKey)
+      || flat.find(i => i.name === baseName && i.scope === 'custom') || null;
+  }
+
+  // scanKey: claude-code::project::<token>::name
+  if (scanKey.includes('::project::')) {
+    const parts = scanKey.split('::');
+    const name = parts[parts.length - 1];
+    const agentId = parts[0];
+    const projToken = parts[2];
+    return flat.find(i =>
+      i.name === name
+      && i.agentId === agentId
+      && i.projectRoot
+      && projectRootToken(i.projectRoot) === projToken,
+    ) || null;
+  }
+
+  const name = scanKey.includes('::') ? scanKey.split('::').pop() : scanKey;
+  return flat.find(i => i.name === name && !i.projectRoot) || flat.find(i => i.name === name) || null;
 }
 
 /** 按 name 查找扫描到的全部 Agent 副本（同 hash） */
-function findScanGroupByScanKey(scanKey) {
-  const entry = findScanEntry(scanKey);
+function findScanGroupByScanKey(scanKey, options = {}) {
+  const entry = findScanEntry(scanKey, options);
   if (!entry) return null;
-  const grouped = groupDiscoveredSkills(scanAllAgentSkills());
+  const grouped = groupDiscoveredSkills(scanAllAgentSkills(options));
   return grouped.find(g => g.name === entry.name && g.hash === entry.hash) || null;
 }
 
 module.exports = {
   EXTRA_SKILL_ROOTS,
+  PROJECT_SKILL_DIRS,
   parseSkillFrontmatter,
+  collectProjectRoots,
+  scanProjectSkills,
+  scanGlobalSkills,
+  scanCustomSkillTree,
   scanAllAgentSkills,
   buildAgentSkillScanIndex,
   removeRawAgentSkill,
@@ -238,4 +488,6 @@ module.exports = {
   findScanEntry,
   findScanGroupByScanKey,
   hashContent,
+  projectRootToken,
+  customDirToken,
 };

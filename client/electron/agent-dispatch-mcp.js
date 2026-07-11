@@ -5,9 +5,12 @@
 
 const readline = require('readline');
 const agentExecutor = require('./agent-executor');
+const resourceManager = require('./resource-manager');
 const { summarizeAgentStdout } = require('./agent-output-parser');
 
 const PARENT_TASK_ID = process.env.TB_PARENT_TASK_ID || '';
+const PARENT_SESSION_KEY = process.env.TB_PARENT_SESSION_KEY || '';
+const PARENT_SESSION_INSTANCE = process.env.TB_PARENT_SESSION_INSTANCE || '';
 const WORKING_DIR = process.env.TB_WORKING_DIR || process.cwd();
 
 const TOOLS = [
@@ -32,6 +35,18 @@ const TOOLS = [
         },
       },
       required: ['agent_id', 'prompt'],
+    },
+  },
+  {
+    name: 'tb_get_prompt',
+    description: '按名称或 #id 取回 Token Bank 已纳管的提示词正文（可带参数，模板里的 $ARGUMENTS 会被填充）。用于快速引用提示词模板，无需自己拼写全文。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: '提示词名称，或 #<id>' },
+        args: { type: 'string', description: '可选参数，填充模板里的 $ARGUMENTS' },
+      },
+      required: ['name'],
     },
   },
 ];
@@ -67,6 +82,8 @@ async function handleToolCall(name, args = {}) {
       const status = await agentExecutor.dispatchAndWait(agentId, prompt, {
         workingDir: WORKING_DIR,
         parentTaskId: PARENT_TASK_ID,
+        parentSessionKey: PARENT_SESSION_KEY || undefined,
+        parentSessionInstanceId: PARENT_SESSION_INSTANCE || undefined,
         mode: 'worker',
       });
 
@@ -85,6 +102,15 @@ async function handleToolCall(name, args = {}) {
     } catch (e) {
       return textResult(`派发失败: ${e.message}`, true);
     }
+  }
+
+  if (name === 'tb_get_prompt') {
+    const ref = String(args.name || args.ref || '').trim();
+    const argStr = String(args.args || args.arguments || '').trim();
+    if (!ref) return textResult('缺少 name', true);
+    const r = resourceManager.resolvePrompt(ref, argStr);
+    if (!r.found) return textResult(`未找到提示词: ${ref}`, true);
+    return textResult(r.text);
   }
 
   return textResult(`未知工具: ${name}`, true);
@@ -138,14 +164,18 @@ function handleMessage(msg) {
   }
 }
 
-// stdio JSON-RPC（每行一条消息）
-const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
-rl.on('line', (line) => {
-  const t = line.trim();
-  if (!t) return;
-  try {
-    handleMessage(JSON.parse(t));
-  } catch (e) {
-    // 忽略非法行
-  }
-});
+// stdio JSON-RPC（每行一条消息）——仅作为独立进程运行时启动，便于单测 require
+if (require.main === module) {
+  const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+  rl.on('line', (line) => {
+    const t = line.trim();
+    if (!t) return;
+    try {
+      handleMessage(JSON.parse(t));
+    } catch (e) {
+      // 忽略非法行
+    }
+  });
+}
+
+module.exports = { TOOLS, handleToolCall, handleMessage };

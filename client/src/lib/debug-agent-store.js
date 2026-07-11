@@ -15,6 +15,12 @@ export function emptyAgentSession() {
     cliSessionId: null,
     /** 当前会话绑定的工作目录 */
     sessionWorkingDir: '',
+    /** 用户点击「新会话」后，短暂跳过 DB 历史恢复 */
+    skipHistoryRecover: 0,
+    /** 当前页面会话实例 ID（新会话/新一轮执行时更新，派发绑定此 ID） */
+    sessionInstanceId: '',
+    /** 镜像派发的父会话实例 ID（子 Agent 标签用） */
+    mirroredSessionInstanceId: '',
   };
 }
 
@@ -55,6 +61,10 @@ export function resolveSessionKey(agentId, agents = []) {
 const store = {
   sessions: {},
   taskRoutes: {},
+  /** 派发子任务 → 子 Agent 标签页镜像路由 */
+  mirrorRoutes: {},
+  /** taskId → 创建时的 sessionInstanceId */
+  taskInstances: {},
   selectedAgentId: null,
 };
 
@@ -69,8 +79,71 @@ export function patchStoreSession(key, patch) {
   return store.sessions[key];
 }
 
-export function routeTask(taskId, sessionKey) {
+export function createSessionInstanceId() {
+  return `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** 开启当前标签页的新会话实例（新会话 / 新一轮执行） */
+export function beginSessionInstance(sessionKey) {
+  const id = createSessionInstanceId();
+  patchStoreSession(sessionKey, {
+    sessionInstanceId: id,
+    mirroredSessionInstanceId: '',
+  });
+  return id;
+}
+
+export function routeTask(taskId, sessionKey, sessionInstanceId) {
   if (taskId && sessionKey) store.taskRoutes[taskId] = sessionKey;
+  if (taskId && sessionInstanceId) store.taskInstances[taskId] = sessionInstanceId;
+}
+
+export function resolveTaskInstance(taskId) {
+  return store.taskInstances[taskId] || null;
+}
+
+/** 事件是否属于当前页面最新 session */
+export function eventMatchesSession(sessionKey, sessionInstanceId) {
+  if (!sessionKey || !sessionInstanceId) return true;
+  return getStoreSession(sessionKey).sessionInstanceId === sessionInstanceId;
+}
+
+/** 当前 store 会话是否接受该 task 的 sessionInstanceId */
+export function sessionTaskInstanceMatches(sess, taskId) {
+  if (!sess) return true;
+  const taskInstance = resolveTaskInstance(taskId);
+  if (!taskInstance) return true;
+  if (!sess.sessionInstanceId && !sess.mirroredSessionInstanceId) return true;
+  return sess.sessionInstanceId === taskInstance
+    || sess.mirroredSessionInstanceId === taskInstance;
+}
+
+/** 子 Agent 镜像标签是否接受该 session 实例的事件 */
+export function eventMatchesAgentMirror(agentKey, sessionInstanceId) {
+  if (!agentKey || !sessionInstanceId) return true;
+  const s = getStoreSession(agentKey);
+  return s.sessionInstanceId === sessionInstanceId
+    || s.mirroredSessionInstanceId === sessionInstanceId;
+}
+
+/** 记录子任务在子 Agent 标签页的镜像路由 */
+export function routeTaskMirror(taskId, agentTabKey) {
+  if (taskId && agentTabKey) store.mirrorRoutes[taskId] = agentTabKey;
+}
+
+export function resolveMirrorRoute(taskId) {
+  return store.mirrorRoutes[taskId] || null;
+}
+
+/** 任务收尾应落在哪个 session（镜像标签优先于父窗口路由） */
+export function resolveFinalizeKey(taskId, explicitKey, agents = []) {
+  const mirror = resolveMirrorRoute(taskId);
+  if (mirror) return mirror;
+  if (explicitKey) {
+    const s = store.sessions[explicitKey];
+    if (s?.currentTask?.id === taskId && s?.currentTask?.parentTaskId) return explicitKey;
+  }
+  return resolveTaskRoute(taskId, null, null, agents) || explicitKey || null;
 }
 
 export function resolveTaskRoute(taskId, agentId, sessionKey, agents = []) {
@@ -92,8 +165,8 @@ export function getStoreSelectedAgentId() {
 /** 从任务记录推断应展示在哪个 Agent 标签页 */
 export function inferSessionKeyFromTask(status) {
   const ctx = status.context || {};
+  // 优先用显式 sessionKey（派发子任务会继承父窗口 key）
   if (ctx.sessionKey) return ctx.sessionKey;
-  if (ctx.parentTaskId) return status.agent_id;
   if (ctx.mode === 'orchestrator') return '__hub__';
   return status.agent_id;
 }
@@ -115,15 +188,180 @@ export function stepsFromTaskStatus(status) {
   return mapDbSteps(status);
 }
 
+export function patchDelegation(parentKey, childTaskId, patch) {
+  if (!parentKey || !childTaskId) return null;
+  const parent = getStoreSession(parentKey);
+  const dels = { ...(parent.delegations || {}) };
+  dels[childTaskId] = { ...(dels[childTaskId] || {}), ...patch };
+  patchStoreSession(parentKey, { delegations: dels });
+  return dels[childTaskId];
+}
+
+/** 查找某子 Agent 标签相关的 hub 派发记录 */
+export function findDelegationsForAgentTab(agentKey, agents = []) {
+  if (!agentKey || agentKey === '__hub__') return [];
+  const hub = getStoreSession('__hub__');
+  const hubInstance = hub.sessionInstanceId;
+  const out = [];
+  for (const [childId, del] of Object.entries(hub.delegations || {})) {
+    // 只同步当前 hub 最新 session 的派发
+    if (hubInstance && del.sessionInstanceId && del.sessionInstanceId !== hubInstance) continue;
+    const tabKey = resolveSessionKey(del.agentId, agents) || del.agentId;
+    if (tabKey === agentKey) {
+      out.push({ childId, del, parentKey: '__hub__' });
+    }
+  }
+  return out;
+}
+
+/**
+ * 从聚合入口 delegations 同步镜像到子 Agent 标签
+ * （切换标签时补齐执行中/已完成状态）
+ */
+export function syncDelegatedMirrorToAgentTab(agentKey, agents = []) {
+  if (!agentKey || agentKey === '__hub__') return false;
+  const matches = findDelegationsForAgentTab(agentKey, agents);
+  if (!matches.length) return false;
+
+  // 注意：不因 isFreshAgentSession 提前退出。findDelegationsForAgentTab 已把候选限定为
+  // 「当前 hub 会话」派发给本标签的子任务——即使用户刚在本标签点了「新会话」，这类派发
+  // 也应显示到新会话中（派发到新会话）。下方补显会顺带清掉 skipHistoryRecover 认领该会话。
+  const agentSess = getStoreSession(agentKey);
+  const { childId, del } = matches[matches.length - 1];
+  const terminal = ['completed', 'failed', 'cancelled'].includes(del.status);
+  const turns = agentSess.conversationTurns || [];
+  const alreadyArchived = turns.some(t => t.taskId === childId);
+
+  routeTaskMirror(childId, agentKey);
+
+  let steps = del.steps || [];
+  if (!steps.length && del.result?.summary) {
+    steps = [{
+      stepType: 'output',
+      content: String(del.result.summary),
+      timestamp: Date.now(),
+      agentId: del.agentId,
+    }];
+  }
+
+  if (terminal) {
+    if (!alreadyArchived && del.prompt) {
+      archiveCompletedTurn(agentKey, {
+        user: del.prompt,
+        steps,
+        result: del.result || null,
+        status: del.status === 'cancelled' ? 'failed' : del.status,
+        taskId: childId,
+        timestamp: Date.now(),
+      });
+    }
+    const after = getStoreSession(agentKey);
+    patchStoreSession(agentKey, {
+      executing: false,
+      currentUserPrompt: '',
+      taskSteps: [],
+      taskResult: null,
+      conversationTurns: after.conversationTurns,
+      currentTask: agentSess.currentTask?.id === childId
+        ? { id: childId, status: del.status }
+        : agentSess.currentTask,
+      // 认领会话：清掉「新会话」跳恢复标记，避免后续 recoverSessionHistory 再次忽略
+      skipHistoryRecover: 0,
+    });
+    return true;
+  }
+
+  // 执行中：从 delegations 补齐镜像
+  patchStoreSession(agentKey, {
+    currentUserPrompt: del.prompt || agentSess.currentUserPrompt,
+    currentTask: { id: childId, status: 'running', parentTaskId: '__hub__' },
+    taskSteps: steps.length ? steps : agentSess.taskSteps,
+    executing: true,
+    taskResult: null,
+    mirroredSessionInstanceId: del.sessionInstanceId || getStoreSession('__hub__').sessionInstanceId || '',
+    skipHistoryRecover: 0,
+  });
+  return true;
+}
+
+/** 派发子任务镜像到子 Agent 标签（与父窗口 delegations 并行展示） */
+export function syncDelegatedToAgentTab(agentKey, patch) {
+  if (!agentKey || !patch?.taskId) return;
+  // 派发进来的子任务即使目标标签刚「新会话」也要显示（认领该会话）；不因 fresh 提前退出。
+  const s = getStoreSession(agentKey);
+  patchStoreSession(agentKey, {
+    currentUserPrompt: patch.prompt ?? s.currentUserPrompt,
+    currentTask: patch.currentTask ?? {
+      id: patch.taskId,
+      status: patch.executing === false ? (patch.status || 'completed') : 'running',
+      parentTaskId: patch.parentTaskId || null,
+    },
+    taskSteps: patch.steps ?? s.taskSteps,
+    taskResult: patch.taskResult ?? s.taskResult,
+    executing: patch.executing ?? true,
+    skipHistoryRecover: 0,
+  });
+}
+
 /** 将后端任务状态合并进 store（用于恢复运行中任务） */
 export function mergeTaskIntoStore(status) {
   if (!status?.id) return;
 
+  const ctx = status.context || {};
   const key = inferSessionKeyFromTask(status);
+  if (isFreshAgentSession(getStoreSession(key))) return;
+
   routeTask(status.id, key);
 
   const steps = mapDbSteps(status);
   const running = status.status === 'running' || status.status === 'pending';
+
+  // 派发子任务：更新父窗口 delegations，并镜像到子 Agent 标签
+  if (ctx.parentTaskId) {
+    const parentKey = key || '__hub__';
+    patchDelegation(parentKey, status.id, {
+      agentId: status.agent_id,
+      prompt: status.prompt,
+      steps,
+      status: status.status,
+      result: status.result,
+      sessionInstanceId: ctx.sessionInstanceId || getStoreSession(parentKey).sessionInstanceId,
+    });
+
+    const agentKey = resolveSessionKey(status.agent_id, []) || status.agent_id;
+    if (agentKey && agentKey !== parentKey) {
+      routeTaskMirror(status.id, agentKey);
+      if (running) {
+        syncDelegatedToAgentTab(agentKey, {
+          taskId: status.id,
+          parentTaskId: ctx.parentTaskId,
+          prompt: status.prompt,
+          steps,
+          executing: true,
+        });
+      } else if (status.prompt) {
+        archiveCompletedTurn(agentKey, {
+          user: status.prompt,
+          steps,
+          result: status.result || null,
+          status: status.status,
+          taskId: status.id,
+          cliSessionId: status.result?.cliSessionId || null,
+          workingDir: ctx.workingDir || getStoreSession(agentKey).sessionWorkingDir || '',
+          timestamp: status.completed_at || Date.now(),
+        });
+        const after = getStoreSession(agentKey);
+        patchStoreSession(agentKey, {
+          executing: false,
+          currentUserPrompt: '',
+          taskSteps: [],
+          taskResult: null,
+          conversationTurns: after.conversationTurns,
+        });
+      }
+    }
+    return;
+  }
 
   patchStoreSession(key, {
     currentUserPrompt: running ? (status.prompt || getStoreSession(key).currentUserPrompt) : '',
@@ -141,24 +379,17 @@ export function mergeTaskIntoStore(status) {
       status: status.status,
       taskId: status.id,
       cliSessionId: status.result?.cliSessionId || null,
-      workingDir: status.context?.workingDir || getStoreSession(key).sessionWorkingDir || '',
+      workingDir: ctx.workingDir || getStoreSession(key).sessionWorkingDir || '',
       timestamp: status.completed_at || Date.now(),
     });
-  }
-
-  if (status.context?.parentTaskId) {
-    const hub = getStoreSession('__hub__');
-    patchStoreSession('__hub__', {
-      delegations: {
-        ...(hub.delegations || {}),
-        [status.id]: {
-          agentId: status.agent_id,
-          prompt: status.prompt,
-          steps,
-          status: status.status,
-          result: status.result,
-        },
-      },
+    const afterArchive = getStoreSession(key);
+    patchStoreSession(key, {
+      executing: false,
+      currentUserPrompt: '',
+      taskSteps: [],
+      taskResult: null,
+      conversationTurns: afterArchive.conversationTurns,
+      cliSessionId: status.result?.cliSessionId || afterArchive.cliSessionId || null,
     });
   }
 }
@@ -198,10 +429,41 @@ export function releaseExecutingForTask(taskId, taskPatch = {}) {
     };
     touched.push(key);
   }
+  // currentTask 丢失时，用路由表兜底释放 executing
+  const routedKey = store.taskRoutes[taskId];
+  if (routedKey && !touched.includes(routedKey)) {
+    const s = store.sessions[routedKey];
+    if (s?.executing) {
+      store.sessions[routedKey] = {
+        ...s,
+        executing: false,
+        currentTask: s.currentTask
+          ? { ...s.currentTask, ...taskPatch, id: s.currentTask.id || taskId }
+          : { id: taskId, ...taskPatch },
+      };
+      touched.push(routedKey);
+    }
+  }
+  // 镜像标签页兜底释放
+  const mirrorKey = store.mirrorRoutes[taskId];
+  if (mirrorKey && !touched.includes(mirrorKey)) {
+    const s = store.sessions[mirrorKey];
+    if (s?.executing) {
+      store.sessions[mirrorKey] = {
+        ...s,
+        executing: false,
+        currentTask: s.currentTask
+          ? { ...s.currentTask, ...taskPatch }
+          : { id: taskId, ...taskPatch },
+      };
+      touched.push(mirrorKey);
+    }
+  }
   return touched;
 }
 
 export function clearSessionTaskState(sessionKey) {
+  const instanceId = createSessionInstanceId();
   patchStoreSession(sessionKey, {
     agentPrompt: '',
     currentUserPrompt: '',
@@ -213,7 +475,21 @@ export function clearSessionTaskState(sessionKey) {
     conversationTurns: [],
     cliSessionId: null,
     sessionWorkingDir: '',
+    skipHistoryRecover: Date.now(),
+    sessionInstanceId: instanceId,
+    mirroredSessionInstanceId: '',
   });
+}
+
+/** 用户刚点击「新会话」后的空白会话（应忽略迟到的任务收尾/恢复） */
+export function isFreshAgentSession(sess) {
+  if (!sess?.skipHistoryRecover) return false;
+  if (Date.now() - sess.skipHistoryRecover > 120_000) return false;
+  return !sess.executing
+    && !sess.currentUserPrompt
+    && !sess.taskSteps?.length
+    && !sess.currentTask
+    && !sess.conversationTurns?.length;
 }
 
 /** 任务完成后归档为一轮对话 */
@@ -234,18 +510,28 @@ export function archiveCompletedTurn(sessionKey, turn) {
   patchStoreSession(sessionKey, {
     conversationTurns: turns,
     cliSessionId: turn.cliSessionId || s.cliSessionId || null,
-    sessionWorkingDir: turn.workingDir || s.sessionWorkingDir || '',
+    sessionWorkingDir: normalizeWorkingDir(turn.workingDir || s.sessionWorkingDir || ''),
   });
+}
+
+/** 统一工作目录字符串，避免尾斜杠导致续接失败 */
+export function normalizeWorkingDir(dir) {
+  const s = String(dir || '').trim();
+  if (!s) return '';
+  return s.replace(/[\\/]+$/, '');
 }
 
 /** 同工作目录下是否可续接 CLI 会话 */
 export function shouldContinueCliSession(sessionKey, workingDir) {
   const s = getStoreSession(sessionKey);
+  const dir = normalizeWorkingDir(workingDir);
+  const bound = normalizeWorkingDir(s.sessionWorkingDir);
+  if (!dir || !bound || dir !== bound) return false;
   if (!s.conversationTurns?.length) return false;
-  const dir = String(workingDir || '').trim();
-  if (!dir || s.sessionWorkingDir !== dir) return false;
   const last = s.conversationTurns[s.conversationTurns.length - 1];
-  return last?.status === 'completed';
+  // 仅上一轮成功完成时才续接（避免失败 session 或无效 sessionId）
+  if (last?.status !== 'completed') return false;
+  return !!(s.cliSessionId || last?.result?.cliSessionId);
 }
 
 /** Debug Agent 列表前端缓存（stale-while-revalidate） */

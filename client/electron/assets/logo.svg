@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <radialGradient id="coin" cx="40%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#FFD055"/>
+      <stop offset="100%" stop-color="#E08A00"/>
+    </radialGradient>
+    <filter id="shadow" x="-8%" y="-8%" width="116%" height="116%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#A06000" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+
+  <!-- Coin base -->
+  <circle cx="60" cy="60" r="56" fill="url(#coin)" filter="url(#shadow)"/>
+  <circle cx="60" cy="60" r="56" fill="none" stroke="#C07800" stroke-width="3" opacity="0.5"/>
+  <circle cx="60" cy="60" r="51" fill="none" stroke="#FFE07A" stroke-width="1.5" opacity="0.55"/>
+
+  <!-- P2P mesh edges (drawn first, behind nodes) -->
+  <g stroke="#7A4A00" stroke-width="2.5" stroke-linecap="round" opacity="0.65">
+    <line x1="60" y1="22" x2="26" y2="72"/>
+    <line x1="60" y1="22" x2="94" y2="72"/>
+    <line x1="26" y1="72" x2="94" y2="72"/>
+    <line x1="60" y1="22" x2="60" y2="56"/>
+    <line x1="26" y1="72" x2="60" y2="56"/>
+    <line x1="94" y1="72" x2="60" y2="56"/>
+  </g>
+
+  <!-- Directional arrows suggesting data/token flow -->
+  <!-- top → bottom-right -->
+  <polygon points="80,52 88,60 74,63" fill="#7A4A00" opacity="0.55"/>
+  <!-- bottom-left → bottom-right -->
+  <polygon points="57,72 67,66 67,78" fill="#7A4A00" opacity="0.55"/>
+
+  <!-- Outer peer nodes -->
+  <circle cx="60" cy="22" r="9"  fill="#FFF0A0" stroke="#7A4A00" stroke-width="2.5"/>
+  <circle cx="26" cy="72" r="9"  fill="#FFF0A0" stroke="#7A4A00" stroke-width="2.5"/>
+  <circle cx="94" cy="72" r="9"  fill="#FFF0A0" stroke="#7A4A00" stroke-width="2.5"/>
+
+  <!-- Inner dot per peer node (model identity) -->
+  <circle cx="60" cy="22" r="3.5" fill="#7A4A00"/>
+  <circle cx="26" cy="72" r="3.5" fill="#7A4A00"/>
+  <circle cx="94" cy="72" r="3.5" fill="#7A4A00"/>
+
+  <!-- Center token node -->
+  <circle cx="60" cy="56" r="13" fill="#FFD233" stroke="#7A4A00" stroke-width="2.5"/>
+  <!-- T for Token -->
+  <text x="60" y="61.5" text-anchor="middle" font-family="Georgia, serif"
+        font-size="14" font-weight="bold" fill="#5C3600">T</text>
+</svg>

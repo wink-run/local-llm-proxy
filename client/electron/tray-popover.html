@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Token Bank</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --fg: #1d1d1f;
+      --fg-secondary: rgba(60, 60, 67, 0.68);
+      --fg-tertiary: rgba(60, 60, 67, 0.4);
+      --fill: rgba(246, 246, 248, 0.92);
+      --fill-hover: rgba(0, 0, 0, 0.05);
+      --fill-active: rgba(0, 0, 0, 0.08);
+      --chip: rgba(0, 0, 0, 0.045);
+      --chip-on: rgba(0, 122, 255, 0.12);
+      --chip-on-fg: #007aff;
+      --sep: rgba(0, 0, 0, 0.08);
+      --green: #34c759;
+      --orange: #ff9f0a;
+      --shadow: 0 10px 40px rgba(0, 0, 0, 0.18), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+      --radius: 12px;
+      --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+      --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --fg: #f5f5f7;
+        --fg-secondary: rgba(235, 235, 245, 0.58);
+        --fg-tertiary: rgba(235, 235, 245, 0.32);
+        --fill: rgba(36, 36, 38, 0.94);
+        --fill-hover: rgba(255, 255, 255, 0.07);
+        --fill-active: rgba(255, 255, 255, 0.12);
+        --chip: rgba(255, 255, 255, 0.06);
+        --chip-on: rgba(10, 132, 255, 0.22);
+        --chip-on-fg: #64b5ff;
+        --sep: rgba(255, 255, 255, 0.1);
+        --shadow: 0 14px 44px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: transparent;
+      font-family: var(--font);
+      color: var(--fg);
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+    }
+    body { padding: 8px 8px 10px; }
+
+    .shell {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      border-radius: var(--radius);
+      /* 不用 CSS backdrop-filter：与 Electron vibrancy 叠用会导致滚动每帧重绘卡顿 */
+      background: var(--fill);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    @media (prefers-reduced-transparency: reduce) {
+      .shell {
+        background: #f6f6f8;
+      }
+      @media (prefers-color-scheme: dark) {
+        .shell { background: #242426; }
+      }
+    }
+
+    /* ── Header（AIUsage：图标 + 标题/状态点 + 副标题 + 圆形测速） ── */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px 10px;
+      border-bottom: 0.5px solid var(--sep);
+    }
+    .logo {
+      width: 26px; height: 26px;
+      border-radius: 6px;
+      flex-shrink: 0;
+      object-fit: contain;
+      display: block;
+    }
+    .header-text { flex: 1; min-width: 0; }
+    .title-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .title {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--fg-tertiary);
+      flex-shrink: 0;
+    }
+    .dot.on { background: var(--green); box-shadow: 0 0 0 2px rgba(52, 199, 89, 0.22); }
+    .dot.warn { background: var(--orange); }
+    .sub {
+      font-size: 10px;
+      color: var(--fg-secondary);
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .icon-btn {
+      width: 28px; height: 28px;
+      border: none;
+      border-radius: 50%;
+      background: var(--chip);
+      color: var(--fg-secondary);
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      transition: transform 100ms ease-out, background 120ms ease, color 120ms ease;
+    }
+    .icon-btn:hover { background: var(--fill-active); color: var(--fg); }
+    .icon-btn:active { transform: scale(0.94); }
+    .icon-btn.spin svg { animation: spin 0.7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Control deck：状态胶囊行 ── */
+    .deck {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 8px 10px;
+      border-bottom: 0.5px solid var(--sep);
+    }
+    .chip {
+      flex: 1 1 calc(50% - 6px);
+      min-width: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 5px 6px;
+      border-radius: 6px;
+      background: var(--chip);
+      border: none;
+      font-size: 11px;
+      font-weight: 650;
+      color: var(--fg);
+      font-family: inherit;
+      cursor: default;
+      line-height: 1.2;
+    }
+    .chip .muted { color: var(--fg-secondary); font-weight: 500; }
+    .chip.on {
+      background: var(--chip-on);
+      color: var(--chip-on-fg);
+    }
+    .chip.on .muted { color: var(--chip-on-fg); opacity: 0.75; }
+    .chip svg { flex-shrink: 0; opacity: 0.75; }
+    .chip.btn {
+      cursor: pointer;
+      transition: background 100ms ease, color 100ms ease, transform 80ms ease;
+    }
+    .chip.btn:hover { background: var(--fill-active); }
+    .chip.btn.on:hover { background: var(--chip-on); filter: brightness(0.97); }
+    .chip.btn:active { transform: scale(0.97); }
+
+    /* ── Body：分组列表 ── */
+    .body {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 6px 8px 4px;
+      /* 独立滚动层，减轻与 vibrancy 的合成开销 */
+      -webkit-overflow-scrolling: touch;
+      contain: layout paint style;
+      transform: translateZ(0);
+    }
+    .section {
+      padding: 4px 4px 8px;
+    }
+    .section + .section {
+      border-top: 0.5px solid var(--sep);
+      margin-top: 2px;
+      padding-top: 8px;
+    }
+    .section-hd {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 6px 2px;
+    }
+    .section-icon {
+      width: 16px; height: 16px;
+      border-radius: 4px;
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+      font-size: 9px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .section-icon.gw { background: #5b5fc7; }
+    .section-icon.tok { background: #30b0c7; }
+    .section-icon.ag { background: #bf5af2; }
+    .section-name {
+      flex: 1;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .tag {
+      font-size: 9px;
+      color: var(--fg-tertiary);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 6px 5px 8px;
+      min-height: 26px;
+      border-radius: 6px;
+    }
+    .bullet {
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: var(--fg-tertiary);
+      flex-shrink: 0;
+    }
+    .row-label {
+      flex: 1;
+      font-size: 12px;
+      color: var(--fg);
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .row-label.mono { font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .row-label.secondary { color: var(--fg-secondary); }
+    .badge {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 999px;
+      line-height: 1.3;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .badge::before {
+      content: '';
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: currentColor;
+      opacity: 0.85;
+    }
+    .badge.on {
+      color: #0a7a32;
+      background: rgba(52, 199, 89, 0.16);
+    }
+    .badge.off {
+      color: var(--fg-secondary);
+      background: var(--chip);
+    }
+    .badge.off::before { opacity: 0.45; }
+    @media (prefers-color-scheme: dark) {
+      .badge.on { color: #30d158; background: rgba(52, 199, 89, 0.2); }
+    }
+
+    .apps-hd {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 8px 6px;
+    }
+    .apps-hd .name {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--fg-secondary);
+      letter-spacing: -0.01em;
+    }
+    .apps-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 0 4px 4px;
+      contain: content;
+    }
+    .app-card {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 7px 8px;
+      border-radius: 8px;
+      content-visibility: auto;
+      contain-intrinsic-size: auto 48px;
+    }
+    .app-card:hover { background: var(--fill-hover); }
+    .app-logo {
+      width: 22px; height: 22px;
+      border-radius: 5px;
+      object-fit: contain;
+      flex-shrink: 0;
+      margin-top: 1px;
+      background: var(--chip);
+    }
+    .app-logo-fallback {
+      width: 22px; height: 22px;
+      border-radius: 5px;
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+      flex-shrink: 0;
+      background: var(--chip);
+      margin-top: 1px;
+    }
+    .app-meta { flex: 1; min-width: 0; }
+    .app-top {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .app-name {
+      flex: 1;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .app-route {
+      margin-top: 2px;
+      font-size: 11px;
+      color: var(--fg-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-variant-numeric: tabular-nums;
+      border: none;
+      background: transparent;
+      padding: 0;
+      font-family: inherit;
+      text-align: left;
+      cursor: pointer;
+      max-width: 100%;
+      display: block;
+      transition: color 100ms ease;
+    }
+    .app-route:hover { color: var(--chip-on-fg); text-decoration: underline; }
+    .app-route.direct { color: var(--fg-tertiary); }
+    .app-route.direct:hover { color: var(--chip-on-fg); }
+    .app-speed {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 3px;
+      min-width: 0;
+    }
+    .speed-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: #c4c4c6;
+    }
+    .speed-dot.fast { background: #34c759; box-shadow: 0 0 4px rgba(52, 199, 89, 0.45); }
+    .speed-dot.medium { background: #ff9f0a; }
+    .speed-dot.slow { background: #ff3b30; }
+    .speed-dot.fail { background: #ff3b30; }
+    .speed-ttft {
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      color: var(--fg-secondary);
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+    .speed-ttft.muted { color: var(--fg-tertiary); }
+    .speed-ttft.fail { color: #ff3b30; }
+    .empty {
+      padding: 18px 12px;
+      text-align: center;
+      font-size: 11px;
+      color: var(--fg-tertiary);
+    }
+
+    /* 菜单项行（开关 / 启停） */
+    .menu-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      margin: 0;
+      padding: 7px 8px;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--fg);
+      font-size: 12px;
+      font-family: inherit;
+      text-align: left;
+      cursor: pointer;
+      transition: background 100ms ease, transform 100ms ease-out;
+    }
+    .menu-row:hover { background: var(--fill-hover); }
+    .menu-row:active { transform: scale(0.99); background: var(--fill-active); }
+    .menu-row:disabled {
+      color: var(--fg-tertiary);
+      cursor: default;
+      transform: none;
+      background: transparent;
+    }
+    .menu-row .check {
+      width: 14px;
+      text-align: center;
+      color: var(--chip-on-fg);
+      font-weight: 700;
+      font-size: 12px;
+    }
+    .menu-row .label { flex: 1; }
+
+    .actions {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      padding: 2px 4px 6px;
+      border-top: 0.5px solid var(--sep);
+      margin-top: 2px;
+    }
+
+    /* ── Footer（打开 | 测速 · 退出） ── */
+    .footer {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 10px 10px;
+      border-top: 0.5px solid var(--sep);
+    }
+    .fbtn {
+      border: none;
+      border-radius: 5px;
+      background: var(--chip);
+      color: var(--fg-secondary);
+      font-size: 11px;
+      font-weight: 500;
+      padding: 5px 8px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: transform 100ms ease-out, background 120ms ease, color 120ms ease;
+      font-family: inherit;
+    }
+    .fbtn:hover { background: var(--fill-active); color: var(--fg); }
+    .fbtn:active { transform: scale(0.97); }
+    .fbtn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    .fbtn:disabled:hover { background: var(--chip); color: var(--fg-secondary); }
+    .icon-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    .fbtn.grow { flex: 1; justify-content: flex-start; }
+    .footer-spacer { flex: 1; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .icon-btn.spin svg { animation: none; }
+      .icon-btn:active, .fbtn:active, .menu-row:active { transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="header">
+      <img class="logo" src="./assets/logo.svg" alt="" width="26" height="26" />
+      <div class="header-text">
+        <div class="title-row">
+          <div class="title">Token Bank</div>
+          <span id="statusDot" class="dot"></span>
+        </div>
+        <div id="subtitle" class="sub">—</div>
+      </div>
+      <button type="button" class="icon-btn" id="btnRefresh" title="测速">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>
+        </svg>
+      </button>
+    </header>
+
+    <div class="deck" id="deck"></div>
+
+    <div class="body">
+      <div class="apps-hd">
+        <span class="name" id="appsTitle">—</span>
+        <span class="tag" id="appsTag">APPS</span>
+      </div>
+      <div class="apps-list" id="appsList"></div>
+
+      <div class="actions">
+        <button type="button" class="menu-row" id="btnToggleTokens" hidden>
+          <span class="check" id="tokCheck"></span>
+          <span class="label" id="tokToggleLabel">—</span>
+        </button>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <button type="button" class="fbtn grow" id="btnOpen">
+        <span id="openLabel">—</span>
+      </button>
+      <button type="button" class="fbtn" id="btnRefreshFoot">
+        <span id="refreshLabel">—</span>
+      </button>
+      <button type="button" class="fbtn" id="btnQuit">
+        <span id="quitLabel">—</span>
+      </button>
+    </footer>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let refreshing = false;
+    let lastAppsKey = '';
+
+    function L(state) { return state.labels || {}; }
+
+    function appsSignature(apps) {
+      // 仅比对影响列表展示的字段，避免圈子/用量刷新时整表重建导致滚动卡顿
+      return (apps || []).map((a) =>
+        [a.id, a.name, a.routeLabel, a.ttftLabel, a.speedBucket, a.statusLabel, a.viaGateway ? 1 : 0, a.iconUrl || ''].join('\t')
+      ).join('\n');
+    }
+
+    function render(state) {
+      if (!state) return;
+      const labels = L(state);
+      const alive = !!(state.gatewayRunning || state.agentRunning);
+      const dot = $('statusDot');
+      dot.className = 'dot' + (alive ? ' on' : (state.gatewayRunning === false && !state.agentRunning ? '' : ''));
+
+      $('subtitle').textContent = state.subtitle || labels.notRefreshed || '—';
+
+      // Control deck：网关 / 用量 / 贡献 / 圈子
+      const deck = $('deck');
+      deck.innerHTML = '';
+      const chips = [
+        {
+          on: !!state.gatewayRunning,
+          html: `<span class="muted">${labels.pillGw || 'GW'}</span> ${state.gatewayRunning ? ':' + state.gatewayPort : '—'}`,
+        },
+        {
+          on: (state.calls || 0) > 0,
+          html: `<span class="muted">↑</span>${state.inFmt} <span class="muted">↓</span>${state.outFmt}`,
+        },
+        {
+          on: !!state.agentRunning,
+          btn: true,
+          action: 'toggleAgent',
+          title: state.agentRunning
+            ? (labels.stopAgent || '停止贡献')
+            : (labels.startAgent || '开启贡献'),
+          html: `<span class="muted">${labels.pillAgent || '贡献'}</span> ${state.agentLabel || (state.agentRunning ? (labels.contributing || '贡献中') : (labels.notContributing || '未贡献'))}`,
+        },
+        {
+          on: !!state.circlePostsOk && (state.circlePostsCount || 0) > 0,
+          html: `<span class="muted">${labels.pillCircles || 'Circles'}</span> ${state.circlePostsLabel || '—'}`,
+        },
+      ];
+      for (const c of chips) {
+        const el = document.createElement(c.btn ? 'button' : 'div');
+        if (c.btn) {
+          el.type = 'button';
+          el.className = 'chip btn' + (c.on ? ' on' : '');
+          if (c.title) el.title = c.title;
+          el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            act(c.action);
+          });
+        } else {
+          el.className = 'chip' + (c.on ? ' on' : '');
+        }
+        el.innerHTML = c.html;
+        deck.appendChild(el);
+      }
+
+      // 活跃应用列表（无变化则跳过，避免滚动中被刷新打断）
+      $('appsTitle').textContent = labels.appsTitle || 'Apps';
+      $('appsTag').textContent = labels.appsTag || 'APPS';
+      const list = $('appsList');
+      const apps = Array.isArray(state.apps) ? state.apps : [];
+      const sig = appsSignature(apps);
+      if (sig === lastAppsKey) {
+        // 列表未变，只更新了顶栏状态
+      } else {
+        lastAppsKey = sig;
+        list.innerHTML = '';
+        if (!apps.length) {
+          const empty = document.createElement('div');
+          empty.className = 'empty';
+          empty.textContent = labels.appsEmpty || '—';
+          list.appendChild(empty);
+        } else {
+          for (const app of apps) {
+            const card = document.createElement('div');
+            card.className = 'app-card';
+
+            if (app.iconUrl) {
+              const img = document.createElement('img');
+              img.className = 'app-logo';
+              img.src = app.iconUrl;
+              img.alt = '';
+              img.decoding = 'async';
+              card.appendChild(img);
+            } else {
+              const fb = document.createElement('div');
+              fb.className = 'app-logo-fallback';
+              fb.textContent = app.emoji || (app.name || '?').slice(0, 1).toUpperCase();
+              card.appendChild(fb);
+            }
+
+            const meta = document.createElement('div');
+            meta.className = 'app-meta';
+
+            const top = document.createElement('div');
+            top.className = 'app-top';
+            const name = document.createElement('div');
+            name.className = 'app-name';
+            name.textContent = app.name || app.agentId || '—';
+            top.appendChild(name);
+
+            const badge = document.createElement('span');
+            badge.className = 'badge ' + (app.viaGateway ? 'on' : 'off');
+            badge.textContent = app.statusLabel || (app.viaGateway ? 'Gateway' : 'Direct');
+            top.appendChild(badge);
+            meta.appendChild(top);
+
+            const route = document.createElement('button');
+            route.type = 'button';
+            route.className = 'app-route' + (app.viaGateway ? '' : ' direct');
+            route.textContent = app.routeLabel || '—';
+            route.title = labels.showWindow || 'Open';
+            route.addEventListener('click', (e) => {
+              e.stopPropagation();
+              act('showWindow');
+            });
+            meta.appendChild(route);
+
+            // 首 token 延迟（测速后显示；有历史测速也会显示）
+            if (app.viaGateway) {
+              const speed = document.createElement('div');
+              speed.className = 'app-speed';
+              const dotEl = document.createElement('span');
+              const bucket = app.speedBucket || 'unknown';
+              const failed = !!app.speedFailed || bucket === 'fail';
+              dotEl.className = 'speed-dot' + (
+                failed ? ' fail'
+                  : (bucket === 'fast' || bucket === 'medium' || bucket === 'slow' ? ' ' + bucket : '')
+              );
+              speed.appendChild(dotEl);
+              const ttft = document.createElement('span');
+              const label = app.ttftLabel
+                || (failed ? (labels.ttftFailed || '连接失败') : (labels.ttftPending || '—'));
+              ttft.className = 'speed-ttft'
+                + (failed ? ' fail' : (app.ttftLabel ? '' : ' muted'));
+              ttft.textContent = label;
+              speed.appendChild(ttft);
+              meta.appendChild(speed);
+            }
+
+            card.appendChild(meta);
+            list.appendChild(card);
+          }
+        }
+      }
+
+      $('openLabel').textContent = labels.showWindow || 'Open';
+      $('quitLabel').textContent = labels.quit || 'Quit';
+      // 测速中：文案保持「正在测试」，勿被 render 刷回「测速」
+      if (refreshing) {
+        $('refreshLabel').textContent = labels.speedTesting || '正在测试';
+        $('btnRefresh').title = labels.speedTesting || '正在测试';
+        $('btnRefresh').disabled = true;
+        $('btnRefreshFoot').disabled = true;
+      } else {
+        $('refreshLabel').textContent = labels.refresh || '测速';
+        $('btnRefresh').title = labels.refresh || '测速';
+        $('btnRefresh').disabled = false;
+        $('btnRefreshFoot').disabled = false;
+      }
+
+      const toggle = $('btnToggleTokens');
+      if (state.showTokenToggle) {
+        toggle.hidden = false;
+        $('tokCheck').textContent = state.showTokens ? '✓' : '';
+        $('tokToggleLabel').textContent = labels.showTokens || 'Show tokens in menu bar';
+      } else {
+        toggle.hidden = true;
+      }
+      // 无其它操作行时收起 actions 区边距
+      const actions = toggle.parentElement;
+      if (actions) actions.style.display = toggle.hidden ? 'none' : '';
+    }
+
+    async function load() {
+      try {
+        render(await window.trayAPI.getState());
+      } catch (e) {
+        $('subtitle').textContent = String(e.message || e);
+      }
+    }
+
+    async function act(name) {
+      try {
+        const state = await window.trayAPI.action(name);
+        if (state) render(state);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function doRefresh() {
+      if (refreshing) return;
+      refreshing = true;
+      const labels = L(await window.trayAPI.getState().catch(() => null) || {});
+      const testing = labels.speedTesting || '正在测试';
+      $('btnRefresh').classList.add('spin');
+      $('btnRefresh').disabled = true;
+      $('btnRefresh').title = testing;
+      $('btnRefreshFoot').disabled = true;
+      $('refreshLabel').textContent = testing;
+      $('subtitle').textContent = testing;
+      try {
+        const state = await window.trayAPI.action('speedTest');
+        if (state) {
+          render(state);
+          if ((state.speedProbeTotal || 0) === 0) {
+            $('subtitle').textContent = (state.labels && state.labels.speedNone) || '—';
+          } else if (state.speedAvgTtftMs != null && state.subtitle) {
+            // 保留测速摘要，不被相对时间覆盖
+            $('subtitle').textContent = state.subtitle;
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+      refreshing = false;
+      $('btnRefresh').classList.remove('spin');
+      $('btnRefresh').disabled = false;
+      $('btnRefreshFoot').disabled = false;
+      // 恢复按钮文案（render 可能已在 refreshing=true 时跳过）
+      try {
+        const st = await window.trayAPI.getState();
+        if (st) {
+          const lb = L(st);
+          $('refreshLabel').textContent = lb.refresh || '测速';
+          $('btnRefresh').title = lb.refresh || '测速';
+        }
+      } catch { /* ignore */ }
+    }
+
+    $('btnRefresh').addEventListener('click', doRefresh);
+    $('btnRefreshFoot').addEventListener('click', doRefresh);
+    $('btnOpen').addEventListener('click', () => act('showWindow'));
+    $('btnQuit').addEventListener('click', () => act('quit'));
+    $('btnToggleTokens').addEventListener('click', () => act('toggleTokens'));
+
+    window.trayAPI.onState(render);
+    load();
+  </script>
+</body>
+</html>

@@ -1681,29 +1681,6 @@ function SessionManager() {
     flash(t('gateway.sessions.exported').replace('{file}', res.file));
   };
 
-  /** 同工具恢复：优先 macOS 终端，否则复制 resume 命令 */
-  const doResume = async (row) => {
-    const r = await window.electronAPI.sessions.resume({
-      agent_id: row.agent_id,
-      session_id: row.session_id,
-      trace_agent_id: row.trace_agent_id,
-      project_path: row.project_path,
-      launch_terminal: true,
-    });
-    if (r?.error) { flash(t('gateway.sessions.resumeFailed')); return; }
-    if (r?.terminal) { flash(t('gateway.sessions.resumeTerminal')); return; }
-    const text = r?.full_command || r?.command;
-    if (!text) { flash(t('gateway.sessions.resumeFailed')); return; }
-    try {
-      await navigator.clipboard.writeText(text);
-      flash(r?.terminal_error
-        ? t('gateway.sessions.resumeCopiedFallback')
-        : t('gateway.sessions.resumeCopied'));
-    } catch {
-      flash(t('gateway.sessions.resumeFailed'));
-    }
-  };
-
   // 按展示客户端分组（Claude Desktop / Claude Code 等），与应用列表拆分保持一致
   const rowClient = r => r.client || r.agent_id;
   const agents = Array.from(new Set(rows.map(rowClient)));
@@ -1796,7 +1773,7 @@ function SessionManager() {
           <SessionRow key={`${row.agent_id}-${row.session_id}`} row={row} fmtN={fmtN}
             handoffTargets={handoffTargets}
             onTrace={() => setTraceRow(row)} onMeta={patch => setMeta(row, patch)} onExport={fmt => doExport(row, fmt)}
-            onContinue={target => setContState({ row, target })} onResume={() => doResume(row)} />
+            onContinue={target => setContState({ row, target })} />
         ))}
       </div>
     </div>
@@ -1809,7 +1786,7 @@ const CLIENT_LABELS = {
 };
 
 /** 单会话行 */
-function SessionRow({ row, fmtN, handoffTargets = [], onTrace, onMeta, onExport, onContinue, onResume }) {
+function SessionRow({ row, fmtN, handoffTargets = [], onTrace, onMeta, onExport, onContinue }) {
   const { t } = useLang();
   const { fmtCost } = useCurrency();
   const [exportOpen, setExportOpen] = useState(false);
@@ -1851,11 +1828,6 @@ function SessionRow({ row, fmtN, handoffTargets = [], onTrace, onMeta, onExport,
         </div>
         <div className="text-right text-zinc-400">{fmtTime(row.lastTs)}</div>
         <div className="flex gap-1.5 justify-end items-center relative">
-          {row.resume_supported && (
-            <button onClick={onResume}
-              className="px-2 py-1 rounded-md border border-emerald-200 dark:border-emerald-900/50 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 whitespace-nowrap"
-              title={t('gateway.sessions.resume')}>{t('gateway.sessions.resume')}</button>
-          )}
           <button onClick={() => { setContOpen(v => !v); setExportOpen(false); }}
             className="px-2 py-1 rounded-md border border-blue-200 dark:border-blue-900/50 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 whitespace-nowrap">{t('gateway.sessions.continue')}</button>
           <button onClick={() => { setExportOpen(v => !v); setContOpen(false); }}

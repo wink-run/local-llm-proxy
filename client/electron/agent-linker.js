@@ -180,7 +180,13 @@ function revertById(id) { const t = configLoader.tools().find(x => x.id === id);
 function buildGatewayEnv(toolId) {
   const tool = configLoader.tools().find(t => t.id === toolId);
   if (!tool || tool.unsupported || tool.route_bindable === false) return {};
-  return resolveEnvKeys(tool.id, (tool.inject && tool.inject.env) || {});
+  const env = resolveEnvKeys(tool.id, (tool.inject && tool.inject.env) || {});
+  // Claude OAuth：注入 AUTH_TOKEN 会禁用 claude.ai connectors 并干扰 CLI 行为
+  if (tool.protocol === 'anthropic') {
+    delete env.ANTHROPIC_AUTH_TOKEN;
+    delete env.ANTHROPIC_API_KEY;
+  }
+  return env;
 }
 
 function gatewayOrigin() {
@@ -188,18 +194,56 @@ function gatewayOrigin() {
   return gw ? `http://${gw}` : null;
 }
 
+/** 优先读同进程 gateway 状态，避免 spawn 时 curl health 误报导致直连官方 API */
 function isGatewayHealthy(origin) {
+  try {
+    const gw = require('./local-gateway');
+    if (gw.getStatus()?.running) return true;
+  } catch { /* ignore */ }
   if (!origin) return false;
   try {
     if (process.platform === 'win32') {
-      execFileSync('curl.exe', ['-s', '-o', 'NUL', '-m', '1', `${origin}/health`], { stdio: 'ignore' });
+      execFileSync('curl.exe', ['-s', '-o', 'NUL', '-m', '6', `${origin}/health`], { stdio: 'ignore' });
     } else {
-      execFileSync('curl', ['-s', '-o', '/dev/null', '-m', '1', `${origin}/health`], { stdio: 'ignore' });
+      execFileSync('curl', ['-s', '-o', '/dev/null', '-m', '6', `${origin}/health`], { stdio: 'ignore' });
     }
     return true;
   } catch {
     return false;
   }
+}
+
+/** 诊断 spawn 时为何未注入网关 env（供 api_retry 追踪） */
+function diagnoseGatewaySpawn(toolId, baseEnv = process.env) {
+  const tool = configLoader.tools().find(t => t.id === toolId);
+  const origin = gatewayOrigin();
+  const healthy = origin ? isGatewayHealthy(origin) : false;
+  const injectPlan = buildGatewayEnv(toolId);
+  const actualEnv = buildSpawnEnv(toolId, baseEnv);
+  const reasons = [];
+  if (!tool) reasons.push(`未找到工具配置 id=${toolId}`);
+  else if (tool.unsupported) reasons.push('工具标记为 unsupported');
+  else if (tool.route_bindable === false) reasons.push('route_bindable=false，未纳管路由');
+  if (!origin) reasons.push('gateway.reverse 未配置');
+  if (origin && !healthy) reasons.push(`网关未运行或 health 检查失败 (${origin}/health)`);
+  if (tool && !tool.unsupported && tool.route_bindable !== false && !Object.keys(injectPlan).length) {
+    reasons.push('inject.env 解析为空（可能未绑路由且 env 含 {KEY}）');
+  }
+  if (healthy && Object.keys(injectPlan).length && !actualEnv.ANTHROPIC_BASE_URL && !actualEnv.OPENAI_BASE_URL) {
+    reasons.push('网关健康但 env 未合并（异常，请查 buildSpawnEnv）');
+  }
+  return {
+    toolId,
+    gateway_origin: origin,
+    gateway_healthy: healthy,
+    inject_keys: Object.keys(injectPlan),
+    inject_plan: injectPlan,
+    actual_anthropic_base_url: actualEnv.ANTHROPIC_BASE_URL || null,
+    actual_openai_base_url: actualEnv.OPENAI_BASE_URL || actualEnv.OPENAI_API_BASE || null,
+    process_anthropic_base_url: baseEnv.ANTHROPIC_BASE_URL || null,
+    will_use_official_api: !actualEnv.ANTHROPIC_BASE_URL && !actualEnv.OPENAI_BASE_URL,
+    skip_reasons: reasons,
+  };
 }
 
 /** spawn 子进程时合并网关 env（网关在线且应用已纳管并绑路由） */
@@ -214,5 +258,5 @@ function buildSpawnEnv(toolId, baseEnv = process.env) {
 module.exports = {
   list, apply, revert, status, applyAll, revertAll,
   applyById, revertById, revertEverythingOnExit, setKeyResolver,
-  buildGatewayEnv, buildSpawnEnv,
+  buildGatewayEnv, buildSpawnEnv, diagnoseGatewaySpawn,
 };

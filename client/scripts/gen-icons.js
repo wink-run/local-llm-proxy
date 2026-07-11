@@ -21,7 +21,7 @@ function makeCirclePNG(r, g, b, size = 16) {
   return PNG.sync.write(png);
 }
 
-/** macOS 菜单栏图标：黑底白字（彩色，非 Template）。文件名不含 Template，Electron 才保留颜色。 */
+/** macOS 菜单栏图标：黑色几何 logo → PNG（main 里 setTemplateImage 适配深/浅色） */
 function makeTrayGlyphPNG(size) {
   const svg = fs.readFileSync(path.join(__dirname, '..', 'src', 'assets', 'tray-glyph.svg'), 'utf-8');
   const out = new Resvg(svg, { fitTo: { mode: 'width', value: size } });
@@ -32,7 +32,7 @@ const assetsDir = path.join(__dirname, '..', 'assets');
 fs.mkdirSync(assetsDir, { recursive: true });
 fs.writeFileSync(path.join(assetsDir, 'tray-green.png'), makeCirclePNG(34, 197, 94));
 fs.writeFileSync(path.join(assetsDir, 'tray-gray.png'), makeCirclePNG(107, 114, 128));
-// macOS 菜单栏：20@1x + 40@2x，黑底白字彩色图标（点尺寸=20pt，比默认 16 更大更醒目）
+// macOS 菜单栏：20@1x + 40@2x
 fs.writeFileSync(path.join(assetsDir, 'tray-mac.png'), makeTrayGlyphPNG(20));
 fs.writeFileSync(path.join(assetsDir, 'tray-mac@2x.png'), makeTrayGlyphPNG(40));
 console.log('Tray icons generated in assets/');

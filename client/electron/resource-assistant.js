@@ -1,5 +1,5 @@
 // client/electron/resource-assistant.js
-// Assistant 资源解析：作为 Debug 自定义 Agent 运行
+// 智能体资源解析：作为 Debug 自定义 Agent 运行
 'use strict';
 
 const ASSISTANT_ID_PREFIX = 'assistant:';
@@ -15,12 +15,12 @@ function assistantResourceId(agentId) {
   return String(agentId).slice(ASSISTANT_ID_PREFIX.length);
 }
 
-/** 解析 Assistant 配置（JSON 或纯文本 system prompt） */
+/** 解析智能体配置（JSON 或纯文本 soul） */
 function parseAssistantConfig(content) {
   const text = String(content || '').trim();
   if (!text) {
     return {
-      system_prompt: '',
+      soul: '',
       skills: [],
       prompts: [],
       parameters: {},
@@ -32,7 +32,8 @@ function parseAssistantConfig(content) {
     try {
       const raw = JSON.parse(text);
       return {
-        system_prompt: String(raw.system_prompt || raw.systemPrompt || '').trim(),
+        // soul 为主字段；兼容旧版 system_prompt / systemPrompt
+        soul: String(raw.soul || raw.system_prompt || raw.systemPrompt || '').trim(),
         skills: Array.isArray(raw.skills) ? raw.skills.map(String) : [],
         prompts: Array.isArray(raw.prompts) ? raw.prompts.map(String) : [],
         parameters: raw.parameters && typeof raw.parameters === 'object' ? raw.parameters : {},
@@ -40,12 +41,12 @@ function parseAssistantConfig(content) {
           || DEFAULT_RUNTIME_AGENT,
       };
     } catch {
-      // 回退为纯文本 system prompt
+      // 回退为纯文本 soul
     }
   }
 
   return {
-    system_prompt: text,
+    soul: text,
     skills: [],
     prompts: [],
     parameters: {},
@@ -56,7 +57,7 @@ function parseAssistantConfig(content) {
 /** 拼接关联 Prompt / Skill 说明到 system 上下文 */
 function resolveAssistantContext(config, resourceManager) {
   const parts = [];
-  if (config.system_prompt) parts.push(config.system_prompt);
+  if (config.soul) parts.push(config.soul);
 
   for (const promptName of config.prompts || []) {
     const row = resourceManager._findByTypeName('prompt', promptName);
@@ -84,7 +85,7 @@ function buildAssistantLaunch(runtimeAgentId, systemText) {
   if (runtimeAgentId === 'claude-code') {
     const extra = [
       '-p', '--dangerously-skip-permissions',
-      '--output-format', 'stream-json', '--verbose',
+      '--output-format', 'json',
     ];
     if (system) extra.push('--append-system-prompt', system);
     return { runtimeAgentId, claudeExtraArgs: extra };
@@ -97,7 +98,51 @@ function buildAssistantLaunch(runtimeAgentId, systemText) {
     };
   }
 
-  throw new Error(`Assistant 暂不支持运行时 Agent: ${runtimeAgentId}`);
+  throw new Error(`智能体暂不支持运行时 Agent: ${runtimeAgentId}`);
+}
+
+/** 将智能体 JSON 规范为 soul 字段（去掉 system_prompt / systemPrompt） */
+function formatAssistantContent(content) {
+  const text = String(content || '').trim();
+  if (!text) return text;
+  if (!text.startsWith('{')) return text;
+
+  try {
+    const raw = JSON.parse(text);
+    const config = parseAssistantConfig(text);
+    const out = {};
+    if (config.soul) out.soul = config.soul;
+    if (config.skills?.length) out.skills = config.skills;
+    if (config.prompts?.length) out.prompts = config.prompts;
+    if (config.runtime_agent && config.runtime_agent !== DEFAULT_RUNTIME_AGENT) {
+      out.runtime_agent = config.runtime_agent;
+    }
+    if (config.parameters && Object.keys(config.parameters).length) {
+      out.parameters = config.parameters;
+    }
+    // 保留其它扩展字段，但丢弃旧版 system_prompt 键
+    for (const [key, val] of Object.entries(raw)) {
+      if (key === 'system_prompt' || key === 'systemPrompt' || key === 'soul'
+        || key === 'skills' || key === 'prompts' || key === 'runtime_agent'
+        || key === 'runtimeAgent' || key === 'parameters') continue;
+      out[key] = val;
+    }
+    return `${JSON.stringify(out, null, 2)}\n`;
+  } catch {
+    return text;
+  }
+}
+
+function assistantContentNeedsMigration(content) {
+  const text = String(content || '').trim();
+  if (!text.startsWith('{')) return false;
+  try {
+    const raw = JSON.parse(text);
+    return Object.prototype.hasOwnProperty.call(raw, 'system_prompt')
+      || Object.prototype.hasOwnProperty.call(raw, 'systemPrompt');
+  } catch {
+    return false;
+  }
 }
 
 module.exports = {
@@ -108,4 +153,6 @@ module.exports = {
   parseAssistantConfig,
   resolveAssistantContext,
   buildAssistantLaunch,
+  formatAssistantContent,
+  assistantContentNeedsMigration,
 };

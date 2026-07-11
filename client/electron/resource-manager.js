@@ -1,5 +1,5 @@
 // client/electron/resource-manager.js
-// Prompt / Skill / Assistant / Template 统一纳管与投射
+// Prompt / Skill / Assistant 统一纳管与投射
 'use strict';
 
 const fs = require('fs');
@@ -13,15 +13,17 @@ const {
   listCatalogGrouped,
   RESOURCE_TYPE_LABELS,
 } = require('./resource-catalog');
-const { projectResource, unprojectResource } = require('./resource-projector');
+const { projectResource, unprojectResource, verifyProjection } = require('./resource-projector');
 const {
   resolveAuthorityDir,
   syncSkillContentToAuthority,
   normalizeSkillDirPath,
+  copyDirRecursive,
 } = require('./resource-canonical');
 const {
   AGENT_RESOURCE_TARGETS,
   listProjectableAgentIds,
+  listPromptProjectableAgentIds,
 } = require('./resource-agent-targets');
 const {
   scanAllAgentSkills,
@@ -31,10 +33,26 @@ const {
   findScanGroupByScanKey,
   hashContent: scanHashContent,
 } = require('./resource-skill-scanner');
+const { parseAssistantConfig, formatAssistantContent, assistantContentNeedsMigration } = require('./resource-assistant');
+
+/**
+ * 按模板智能填充参数：正文含 $ARGUMENTS → 全部替换为参数；不含 → 参数非空时以分隔线追加。
+ * 纯函数，供 resolvePrompt 与单测直接使用。
+ */
+function applyPromptArguments(body, argString) {
+  const text = String(body || '');
+  const args = typeof argString === 'string' ? argString.trim() : '';
+  if (text.includes('$ARGUMENTS')) {
+    return text.split('$ARGUMENTS').join(args);
+  }
+  return args ? `${text}\n\n---\n\n${args}` : text;
+}
 
 class ResourceManager {
   constructor() {
     this._ready = false;
+    /** 最近一次扫描参数，供纳管时定位 Skill */
+    this._lastScanOptions = { scanScope: 'global', customDirs: [] };
   }
 
   _getDb() {
@@ -112,7 +130,25 @@ class ResourceManager {
     if (resource.type === 'skill') {
       resource.authorityPath = resolveAuthorityDir(resource);
     }
+    if (resource.type === 'assistant') {
+      return this._ensureAssistantContentFormat(resource);
+    }
     return resource;
+  }
+
+  /** 读取时自动将 system_prompt 迁移为 soul 并写回库 */
+  _ensureAssistantContentFormat(resource) {
+    if (!resource || resource.type !== 'assistant') return resource;
+    if (!assistantContentNeedsMigration(resource.content)) return resource;
+
+    const content = formatAssistantContent(resource.content);
+    const now = Date.now();
+    const hash = this._hashContent(content);
+    this._getDb().prepare(`
+      UPDATE resources SET content = ?, hash = ?, updated_at = ? WHERE id = ?
+    `).run(content, hash, now, resource.id);
+
+    return { ...resource, content, hash, updated_at: now };
   }
 
   _getProjections(resourceId) {
@@ -160,8 +196,8 @@ class ResourceManager {
   listResources(filters = {}) {
     this.init();
     const db = this._getDb();
-    let sql = 'SELECT * FROM resources WHERE 1=1';
-    const params = [];
+    let sql = 'SELECT * FROM resources WHERE type != ?';
+    const params = ['template'];
 
     if (filters.type) {
       sql += ' AND type = ?';
@@ -190,6 +226,33 @@ class ResourceManager {
     return resource;
   }
 
+  /**
+   * 解析提示词引用（触发词后的 `name` 或 `#id`）为展开后的正文。
+   * @param {string} ref 提示词 name，或 `#<id>` / 纯 id
+   * @param {string} argString 触发词后的参数原文（可空）
+   * @returns {{ found: boolean, id?: string, name?: string, text?: string }}
+   */
+  resolvePrompt(ref, argString = '') {
+    this.init();
+    const raw = String(ref || '').trim();
+    if (!raw) return { found: false };
+
+    let resource = this._findByTypeName('prompt', raw);
+    if (!resource) {
+      const id = raw.startsWith('#') ? raw.slice(1).trim() : raw;
+      const byId = id ? this.getResource(id) : null;
+      if (byId && byId.type === 'prompt') resource = byId;
+    }
+    if (!resource || resource.type !== 'prompt') return { found: false };
+
+    return {
+      found: true,
+      id: resource.id,
+      name: resource.name,
+      text: applyPromptArguments(resource.content || '', argString),
+    };
+  }
+
   installFromCatalog(catalogId) {
     this.init();
     const item = getCatalogItem(catalogId);
@@ -202,6 +265,9 @@ class ResourceManager {
 
     const now = Date.now();
     const id = `res-${item.type}-${item.name}`;
+    const content = item.type === 'assistant'
+      ? formatAssistantContent(item.content || '')
+      : (item.content || '');
     const db = this._getDb();
     db.prepare(`
       INSERT INTO resources
@@ -213,10 +279,10 @@ class ResourceManager {
       item.name,
       item.display_name || item.name,
       item.description || '',
-      item.content || '',
+      content,
       JSON.stringify(item.metadata || {}),
       `catalog:${catalogId}`,
-      this._hashContent(item.content),
+      this._hashContent(content),
       now,
       now,
     );
@@ -234,13 +300,14 @@ class ResourceManager {
     if (!name) throw new Error('name 不能为空');
 
     const id = data.id || `res-${type}-${name.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
-    const content = data.content != null ? String(data.content) : '';
+    let content = data.content != null ? String(data.content) : '';
+    if (type === 'assistant') content = formatAssistantContent(content);
     const metadata = { ...(data.metadata || {}) };
 
     const existing = db.prepare('SELECT id, source FROM resources WHERE id = ?').get(id);
     if (!existing) {
       const nameTaken = db.prepare('SELECT id FROM resources WHERE type = ? AND name = ?').get(type, name);
-      if (nameTaken) throw new Error(`同名资源已存在: ${name}`);
+      if (nameTaken) throw new Error(`同名资产已存在: ${name}`);
     }
 
     if (existing) {
@@ -280,6 +347,9 @@ class ResourceManager {
     const saved = this.getResource(id);
     if (saved?.type === 'skill') {
       this._persistSkillAuthority(id, saved, { syncContent: true });
+    } else if (saved?.type === 'prompt') {
+      // 权威源=DB：编辑提示词后重刷所有已投射的命令文件（Claude Code / Codex）
+      this._resyncPromptProjections(saved);
     }
     return { success: true, resource: this.getResource(id) };
   }
@@ -288,20 +358,22 @@ class ResourceManager {
   syncSkillCanonical(resourceId) {
     this.init();
     const resource = this.getResource(resourceId);
-    if (!resource || resource.type !== 'skill') throw new Error('不是 Skill 资源');
+    if (!resource || resource.type !== 'skill') throw new Error('不是 Skill 资产');
     const authorityDir = resolveAuthorityDir(resource);
     if (!authorityDir) {
       throw new Error('尚未确定权威目录，请先在本机纳管或投射到某个 Agent');
     }
     this._persistSkillAuthority(resourceId, resource, { syncContent: true });
-    return { success: true, resource: this.getResource(resourceId) };
+    // 软链型投射写权威即生效；复制型不会自动同步，需重刷。
+    const resynced = this._resyncCopyProjections(this.getResource(resourceId));
+    return { success: true, resource: this.getResource(resourceId), ...resynced };
   }
 
   deleteResource(resourceId) {
     this.init();
     const db = this._getDb();
     const resource = this.getResource(resourceId);
-    if (!resource) throw new Error('资源不存在');
+    if (!resource) throw new Error('资产不存在');
 
     for (const proj of resource.projections || []) {
       try {
@@ -313,21 +385,49 @@ class ResourceManager {
     return { success: true };
   }
 
-  projectToAgents(resourceId, agentIds = [], scope = 'global') {
-    this.init();
-    const resource = this.getResource(resourceId);
-    if (!resource) throw new Error('资源不存在');
+  /** 智能体 JSON 中引用的 Prompt / Skill（须已纳管） */
+  _collectAssistantDependencies(resource) {
+    if (resource.type !== 'assistant') return { resources: [], missing: [] };
+    const config = parseAssistantConfig(resource.content);
+    const resources = [];
+    const missing = [];
+    const seen = new Set();
 
-    const allowed = new Set(listProjectableAgentIds());
-    const ids = [...new Set((agentIds || []).filter(id => allowed.has(id)))];
-    if (!ids.length) throw new Error('请至少选择一个 Agent');
+    for (const name of config.prompts || []) {
+      const row = this._findByTypeName('prompt', name);
+      if (!row) {
+        missing.push({ type: 'prompt', name });
+        continue;
+      }
+      if (!seen.has(row.id)) {
+        seen.add(row.id);
+        resources.push(this.getResource(row.id));
+      }
+    }
+    for (const name of config.skills || []) {
+      const row = this._findByTypeName('skill', name);
+      if (!row) {
+        missing.push({ type: 'skill', name });
+        continue;
+      }
+      if (!seen.has(row.id)) {
+        seen.add(row.id);
+        resources.push(this.getResource(row.id));
+      }
+    }
+    return { resources: resources.filter(Boolean), missing };
+  }
 
+  /** 将单个资产投射到多个 Agent */
+  _projectOneResourceToAgents(resource, agentIds, scope = 'global', options = {}) {
     const db = this._getDb();
     const now = Date.now();
-    const results = [];
     let workingResource = { ...resource };
+    const resourceId = resource.id;
 
-    for (const agentId of ids) {
+    // 先做文件系统投射并收集结果，再在单个事务里落库，避免中途失败留下半态 DB。
+    const pending = [];
+    for (const agentId of agentIds) {
       const existingRow = db.prepare(
         'SELECT id, projection_type, target_path FROM resource_projections WHERE resource_id = ? AND agent_id = ? AND scope = ?',
       ).get(resourceId, agentId, scope);
@@ -336,38 +436,44 @@ class ResourceManager {
         ? { projectionType: existingRow.projection_type, targetPath: existingRow.target_path }
         : null;
 
-      const proj = projectResource(workingResource, agentId, scope, { existingProjection });
-      if (proj.authorityPath) {
+      const proj = projectResource(workingResource, agentId, scope, {
+        existingProjection,
+        force: !!options.force,
+      });
+      // 冲突不改变权威元数据
+      if (proj.authorityPath && proj.projectionType !== 'conflict') {
         workingResource = this._mergeAuthorityMetadata(workingResource, {
           authorityPath: proj.authorityPath,
         });
       }
-      if (existingRow) {
-        db.prepare(`
-          UPDATE resource_projections SET
-            projection_type = ?, target_path = ?, status = ?, created_at = ?
-          WHERE id = ?
-        `).run(proj.projectionType, proj.targetPath, proj.status, now, existingRow.id);
-        results.push({ agentId, projectionId: existingRow.id, ...proj, updated: true });
-      } else {
-        const projectionId = `proj-${resourceId}-${agentId}-${scope}`;
-        db.prepare(`
-          INSERT INTO resource_projections
-          (id, resource_id, agent_id, scope, projection_type, target_path, status, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          projectionId,
-          resourceId,
-          agentId,
-          scope,
-          proj.projectionType,
-          proj.targetPath,
-          proj.status,
-          now,
-        );
-        results.push({ agentId, projectionId, ...proj, updated: false });
-      }
+      pending.push({ agentId, existingRow, proj });
     }
+
+    const results = [];
+    const persist = db.transaction((entries) => {
+      for (const { agentId, existingRow, proj } of entries) {
+        if (existingRow) {
+          db.prepare(`
+            UPDATE resource_projections SET
+              projection_type = ?, target_path = ?, status = ?, created_at = ?
+            WHERE id = ?
+          `).run(proj.projectionType, proj.targetPath, proj.status, now, existingRow.id);
+          results.push({ agentId, projectionId: existingRow.id, resourceId, ...proj, updated: true });
+        } else {
+          const projectionId = `proj-${resourceId}-${agentId}-${scope}`;
+          db.prepare(`
+            INSERT INTO resource_projections
+            (id, resource_id, agent_id, scope, projection_type, target_path, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            projectionId, resourceId, agentId, scope,
+            proj.projectionType, proj.targetPath, proj.status, now,
+          );
+          results.push({ agentId, projectionId, resourceId, ...proj, updated: false });
+        }
+      }
+    });
+    persist(pending);
 
     if (resource.type === 'skill' && workingResource.metadata?.authorityPath) {
       this._persistSkillAuthority(resourceId, workingResource, {
@@ -375,17 +481,66 @@ class ResourceManager {
       });
     }
 
+    return { results, workingResource };
+  }
+
+  projectToAgents(resourceId, agentIds = [], scope = 'global', options = {}) {
+    this.init();
+    const resource = this.getResource(resourceId);
+    if (!resource) throw new Error('资产不存在');
+
+    // 提示词只能投给支持斜杠命令的 Agent（Claude Code / Codex）；其余类型用 Skill 目标集
+    const allowed = new Set(
+      resource.type === 'prompt' ? listPromptProjectableAgentIds() : listProjectableAgentIds(),
+    );
+    const ids = [...new Set((agentIds || []).filter(id => allowed.has(id)))];
+    if (!ids.length) throw new Error('请至少选择一个可投射的 Agent');
+
+    const resourcesToProject = [resource];
+    let missingDeps = [];
+    if (resource.type === 'assistant') {
+      const { resources, missing } = this._collectAssistantDependencies(resource);
+      resourcesToProject.push(...resources);
+      missingDeps = missing;
+    }
+
+    const results = [];
+    for (const res of resourcesToProject) {
+      const batch = this._projectOneResourceToAgents(res, ids, scope, { force: !!options.force });
+      results.push(...batch.results);
+    }
+
     const symlinkCount = results.filter(r => r.projectionType === 'symlink').length;
+    const copyCount = results.filter(r => r.projectionType === 'copy').length;
     const scanCount = results.filter(r => r.projectionType === 'scan' || r.projectionType === 'origin').length;
-    let hint = '已在 Token Bank 标记为可用；Debug 编排页后续将支持选用 Prompt / Assistant / Template。';
+    const conflicts = results.filter(r => r.projectionType === 'conflict');
+    let hint = 'Prompt 已在 Token Bank 标记为可用（不落盘到 Agent 目录）；将在编排/直调时作为上下文注入。';
     if (resource.type === 'skill') {
       if (symlinkCount) {
         hint = 'Skill 已通过目录软链投射；权威目录保留在用户安装位置，修改该目录即可同步。';
       } else if (scanCount) {
         hint = '该 Agent 保留本机 Skill 目录作为权威源；其他 Agent 可软链指向此处。';
-      } else {
-        hint = 'Skill 已投射（软链不可用时已回退为复制）。请重启 Agent 或 Reload 后生效。';
+      } else if (copyCount) {
+        hint = 'Skill 已投射（软链不可用时已回退为复制，副本不会随权威目录自动更新）。请重启 Agent 或 Reload 后生效。';
       }
+    } else if (resource.type === 'assistant') {
+      const depLabels = resourcesToProject.slice(1).map(r => r.display_name || r.name);
+      // 说清楚：智能体本体不落盘到目标 Agent，仅在 Token Bank（Debug）内以 system 上下文运行；此处主要投射其关联 Skill。
+      hint = '智能体已标记可用（本体在 Token Bank 内以上下文运行，不写入目标 Agent 目录）';
+      if (depLabels.length) {
+        hint += `，已同步投射关联 Skill：${depLabels.join('、')}`;
+      }
+      if (missingDeps.length) {
+        const miss = missingDeps.map(m => `${m.name}（${RESOURCE_TYPE_LABELS[m.type] || m.type}）`).join('、');
+        hint += `。以下关联项尚未纳管，请先添加：${miss}`;
+      } else {
+        hint += '。';
+      }
+    }
+
+    if (conflicts.length) {
+      const labels = conflicts.map(c => `${c.agentId}`).join('、');
+      hint += `⚠️ ${conflicts.length} 处目标已存在同名的其他目录，为防误删未覆盖（${labels}）。确认可覆盖后可选「强制投射」。`;
     }
 
     return {
@@ -393,7 +548,93 @@ class ResourceManager {
       resource: this.getResource(resourceId),
       results,
       hint,
+      conflicts,
+      projectedDependencies: resourcesToProject.slice(1).map(r => r.id),
+      missingDependencies: missingDeps,
     };
+  }
+
+  /**
+   * 校验某资产的所有投射是否仍健康；repair=true 时尝试重建可修复的软链。
+   * @returns {{ success, resource, projections: Array }}
+   */
+  verifyProjections(resourceId, { repair = false } = {}) {
+    this.init();
+    const resource = this.getResource(resourceId);
+    if (!resource) throw new Error('资产不存在');
+    const db = this._getDb();
+    const out = [];
+
+    for (const proj of resource.projections || []) {
+      let health = verifyProjection(resource, proj.agentId, proj.projectionType, proj.targetPath);
+      let repaired = false;
+      if (!health.healthy && health.repairable && repair) {
+        try {
+          const fixed = projectResource(resource, proj.agentId, proj.scope, {});
+          db.prepare(`
+            UPDATE resource_projections SET projection_type = ?, target_path = ?, status = ?, created_at = ?
+            WHERE id = ?
+          `).run(fixed.projectionType, fixed.targetPath, fixed.status, Date.now(), proj.projectionId || proj.id);
+          health = verifyProjection(resource, proj.agentId, fixed.projectionType, fixed.targetPath);
+          repaired = true;
+        } catch (e) {
+          health = { ...health, repairError: e.message };
+        }
+      }
+      out.push({ ...proj, health, repaired });
+    }
+
+    return { success: true, resource: this.getResource(resourceId), projections: out };
+  }
+
+  /**
+   * 权威目录升级后，重刷所有「复制」型投射（软链型无需重刷，copy 型不会自动同步）。
+   */
+  _resyncCopyProjections(resource) {
+    if (!resource || resource.type !== 'skill') return { resynced: 0 };
+    const authorityDir = resolveAuthorityDir(resource);
+    if (!authorityDir) return { resynced: 0 };
+    let resynced = 0;
+    for (const proj of resource.projections || []) {
+      if (proj.projectionType !== 'copy') continue;
+      const targetDir = normalizeSkillDirPath(proj.targetPath, resource.name) || proj.targetPath;
+      if (!targetDir) continue;
+      try {
+        fs.rmSync(targetDir, { recursive: true, force: true });
+        copyDirRecursive(authorityDir, targetDir);
+        resynced += 1;
+      } catch (e) {
+        console.warn('[resource-manager] copy resync failed:', proj.agentId, e.message);
+      }
+    }
+    return { resynced };
+  }
+
+  /**
+   * 提示词编辑后，重刷所有「命令文件」型投射（权威源=DB，命令文件需重写）。
+   * 用户已用自建命令替换的目标（非 TB 生成）会被 projectResource 判为 conflict，跳过不覆盖。
+   */
+  _resyncPromptProjections(resource) {
+    if (!resource || resource.type !== 'prompt') return { resynced: 0 };
+    const db = this._getDb();
+    let resynced = 0;
+    for (const proj of resource.projections || []) {
+      if (proj.projectionType !== 'command') continue;
+      try {
+        const fresh = projectResource(resource, proj.agentId, proj.scope || 'global', {});
+        if (fresh.projectionType === 'command' && fresh.status === 'active') {
+          db.prepare(`
+            UPDATE resource_projections SET
+              projection_type = ?, target_path = ?, status = ?, created_at = ?
+            WHERE id = ?
+          `).run(fresh.projectionType, fresh.targetPath, fresh.status, Date.now(), proj.id);
+          resynced += 1;
+        }
+      } catch (e) {
+        console.warn('[resource-manager] prompt resync failed:', proj.agentId, e.message);
+      }
+    }
+    return { resynced };
   }
 
   unproject({ resourceId, agentId, projectionId }) {
@@ -425,12 +666,34 @@ class ResourceManager {
     }));
   }
 
+  /** 规范化 Skill 扫描参数 */
+  _buildSkillScanOptions(filters = {}) {
+    const scanScope = filters.scanScope === 'custom' ? 'custom' : 'global';
+    const customDirs = (filters.customDirs || [])
+      .map(d => String(d || '').trim())
+      .filter(Boolean);
+    return { scanScope, customDirs };
+  }
+
+  _applyScanOptions(filters = {}) {
+    this._lastScanOptions = this._buildSkillScanOptions(filters);
+    return this._lastScanOptions;
+  }
+
+  _getActiveScanOptions(filters = {}) {
+    if (filters.scanScope || filters.customDirs?.length) {
+      return this._applyScanOptions(filters);
+    }
+    return this._lastScanOptions;
+  }
+
   /** 扫描本机 Agent / aweskill 已有 Skill，排除已纳管项 */
   listDiscoveredSkills(filters = {}) {
     this.init();
+    const scanOptions = this._applyScanOptions(filters);
     const managed = this.listResources({ type: 'skill' });
     const managedByName = new Map(managed.map(r => [r.name, r]));
-    const grouped = groupDiscoveredSkills(scanAllAgentSkills());
+    const grouped = groupDiscoveredSkills(scanAllAgentSkills(scanOptions));
 
     let items = grouped.map(g => {
       const managedRes = managedByName.get(g.name);
@@ -461,6 +724,8 @@ class ResourceManager {
       totalOnDisk: grouped.length,
       managedCount: grouped.filter(g => managedByName.has(g.name)).length,
       pendingCount: items.filter(i => !i.managed).length,
+      scanScope: scanOptions.scanScope,
+      customDirs: scanOptions.customDirs,
     };
 
     return { items, scanStats };
@@ -469,11 +734,12 @@ class ResourceManager {
   /** 将扫描到的本机 Skill 纳管进 Token Bank（不移动原文件，记录 scan 投射） */
   importDiscoveredSkill({ scanKey, updateIfExists = false } = {}) {
     this.init();
-    const group = findScanGroupByScanKey(scanKey);
+    const scanOptions = this._lastScanOptions;
+    const group = findScanGroupByScanKey(scanKey, scanOptions);
     if (!group) throw new Error('未找到该 Skill，请重新扫描');
 
-    const entry = scanAllAgentSkills().find(i => i.scanKey === group.scanKey)
-      || scanAllAgentSkills().find(i => i.name === group.name && i.hash === group.hash);
+    const entry = scanAllAgentSkills(scanOptions).find(i => i.scanKey === group.scanKey)
+      || scanAllAgentSkills(scanOptions).find(i => i.name === group.name && i.hash === group.hash);
     if (!entry) throw new Error('无法读取 Skill 文件');
 
     const existing = this._findByTypeName('skill', group.name);
@@ -569,17 +835,18 @@ class ResourceManager {
       return 'Skill 已软链指向用户安装目录；修改该目录内容后各 Agent 自动同步。';
     }
     if (agentIds.length) {
-      return '已在 Token Bank 关联所选 Agent；Prompt / Assistant / Template 的 Debug 选用能力将在编排页接入。';
+      return '已在 Token Bank 关联所选 Agent；Prompt / Assistant 的 Debug 选用能力将在编排页接入。';
     }
     return '';
   }
 
-  /** 各 Agent skills 目录中的 Skill 安装情况（对齐 MCP listAgentInstallations） */
-  listAgentInstallations() {
+  /** 各 Agent skills 目录中的 Skill 安装情况 */
+  listAgentInstallations(filters = {}) {
     this.init();
+    const scanOptions = this._getActiveScanOptions(filters);
     const managed = this.listResources({ type: 'skill' });
     const managedByName = new Map(managed.map(r => [r.name, r]));
-    const scanIndex = buildAgentSkillScanIndex();
+    const scanIndex = buildAgentSkillScanIndex(scanOptions);
     const db = this._getDb();
 
     const projRows = db.prepare(`
@@ -593,18 +860,19 @@ class ResourceManager {
       projByAgentSkill.set(`${row.agent_id}:${row.skill_name}`, row);
     }
 
-    return Object.entries(AGENT_RESOURCE_TARGETS).map(([agentId, target]) => {
-      const skillRoot = target.getSkillRoot();
-      const keyMap = scanIndex[agentId] || new Map();
+    const buildItems = (agentId, keyMap) => {
       const items = [];
-
-      for (const [skillKey, scanItem] of keyMap) {
+      for (const [mapKey, scanItem] of keyMap) {
+        const skillKey = scanItem.name;
         const resource = managedByName.get(skillKey);
         const projRow = projByAgentSkill.get(`${agentId}:${skillKey}`);
         let source = 'client';
         let resourceId = null;
         let displayName = scanItem.display_name || skillKey;
         let projectionType = null;
+        const projectRoot = scanItem.projectRoot || null;
+        const customScanRoot = scanItem.customScanRoot || null;
+        const itemKey = mapKey;
 
         if (projRow) {
           resourceId = projRow.resource_id;
@@ -617,9 +885,17 @@ class ResourceManager {
           displayName = resource.display_name || skillKey;
         }
 
+        const descBase = scanItem.description
+          || (source === 'client' ? '客户端自配 Skill' : (resource?.description || displayName));
+        let description = descBase;
+        if (projectRoot) description = `${descBase} · 项目 ${path.basename(projectRoot)}`;
+        else if (customScanRoot) description = `${descBase} · ${customScanRoot}`;
+
         items.push({
+          itemKey,
           skillKey,
           clientKey: skillKey,
+          scanKey: scanItem.scanKey,
           displayName,
           resourceId,
           managed: !!resource || source !== 'client',
@@ -628,13 +904,19 @@ class ResourceManager {
           isSymlink: scanItem.isSymlink,
           skillDir: scanItem.skillDir,
           skillPath: scanItem.skillPath,
-          description: scanItem.description
-            || (source === 'client' ? '客户端自配 Skill' : (resource?.description || displayName)),
+          projectRoot,
+          customScanRoot,
+          scope: scanItem.scope || scanOptions.scanScope,
+          description,
         });
       }
-
       items.sort((a, b) => a.displayName.localeCompare(b.displayName, 'zh-CN'));
+      return items;
+    };
 
+    const agents = Object.entries(AGENT_RESOURCE_TARGETS).map(([agentId, target]) => {
+      const skillRoot = target.getSkillRoot();
+      const items = buildItems(agentId, scanIndex[agentId] || new Map());
       return {
         id: agentId,
         label: target.label,
@@ -645,13 +927,35 @@ class ResourceManager {
         items,
       };
     });
+
+    if (scanOptions.scanScope === 'custom' && scanIndex.custom?.size) {
+      const items = buildItems('custom', scanIndex.custom);
+      agents.unshift({
+        id: 'custom',
+        label: '指定目录',
+        path: scanOptions.customDirs.join(' · ') || '—',
+        exists: true,
+        syncEnabled: false,
+        count: items.length,
+        items,
+      });
+    }
+
+    return agents;
   }
 
   /** 将 Agent 上的自配 Skill 纳管到 Token Bank */
-  importFromAgent({ agentId, skillKey, clientKey }) {
+  importFromAgent({ agentId, skillKey, clientKey, scanKey, projectRoot }) {
     this.init();
     const key = String(skillKey || clientKey || '').trim();
     if (!agentId || !key) throw new Error('缺少 agentId 或 skillKey');
+    if (scanKey) return this.importDiscoveredSkill({ scanKey });
+    if (projectRoot) {
+      const { projectRootToken } = require('./resource-skill-scanner');
+      return this.importDiscoveredSkill({
+        scanKey: `${agentId}::project::${projectRootToken(projectRoot)}::${key}`,
+      });
+    }
     return this.importDiscoveredSkill({ scanKey: `${agentId}::${key}` });
   }
 
@@ -750,7 +1054,7 @@ class ResourceManager {
     if (!forcedType && text.startsWith('{')) {
       try {
         const obj = JSON.parse(text);
-        if (obj.system_prompt || obj.systemPrompt) type = 'assistant';
+        if (obj.soul || obj.system_prompt || obj.systemPrompt) type = 'assistant';
         else if (isSkillMd || obj.name) type = 'skill';
       } catch {
         // ignore
@@ -760,7 +1064,7 @@ class ResourceManager {
     }
 
     const name = String(fm.name || baseName).trim().replace(/[^a-zA-Z0-9_-]/g, '-');
-    if (!name) throw new Error('无法确定资源名称');
+    if (!name) throw new Error('无法确定资产名称');
 
     const existing = this._findByTypeName(type, name);
     if (existing) {
@@ -805,3 +1109,4 @@ class ResourceManager {
 }
 
 module.exports = new ResourceManager();
+module.exports.applyPromptArguments = applyPromptArguments;

@@ -1,0 +1,92 @@
+'use strict';
+
+/**
+ * Electron 侧品牌 logo 解析（与 client/src/lib/brandIcons.js 规则对齐）
+ * 返回 file:// URL 或 data: URL，供 tray-popover 沙箱窗口使用。
+ */
+const fs = require('fs');
+const path = require('path');
+const { pathToFileURL } = require('url');
+
+const ICONS_DIR = path.join(
+  __dirname,
+  '..',
+  'node_modules',
+  '@lobehub',
+  'icons-static-svg',
+  'icons',
+);
+
+// 更具体的规则在前
+const RULES = [
+  [/claude[\s_-]*code/i, 'claudecode-color.svg'],
+  [/claude|anthropic/i, 'claude-color.svg'],
+  [/codex/i, 'codex-color.svg'],
+  [/opencode/i, 'opencode.svg'],
+  [/openai|gpt|o[34]-|o1-/i, 'openai.svg'],
+  [/cursor/i, 'cursor.svg'],
+  [/openclaw/i, 'openclaw-color.svg'],
+  [/gemini[\s_-]*cli/i, 'geminicli-color.svg'],
+  [/gemini|google|palm/i, 'gemini-color.svg'],
+  [/deepseek/i, 'deepseek-color.svg'],
+  [/kimi|moonshot/i, 'kimi-color.svg'],
+  [/glm|zhipu|chatglm|智谱/i, 'glmv-color.svg'],
+  [/qwen|通义|tongyi/i, 'qwen-color.svg'],
+  [/copilot/i, 'copilot-color.svg'],
+  [/antigravity/i, 'antigravity-color.svg'],
+  [/hermes/i, 'hermesagent.svg'],
+  [/grok/i, 'grok.svg'],
+  [/workbuddy|codebuddy/i, 'codebuddy-color.svg'],
+  [/trae/i, 'trae-color.svg'],
+  [/volcengine|火山|volc|doubao|豆包/i, 'volcengine-color.svg'],
+];
+
+const cache = new Map();
+const missCache = new Set(); // 未命中的匹配串，避免反复 existsSync
+
+function resolveFile(text = '') {
+  const hay = String(text);
+  if (!hay) return null;
+  if (missCache.has(hay)) return null;
+  for (const [re, file] of RULES) {
+    if (!re.test(hay)) continue;
+    const abs = path.join(ICONS_DIR, file);
+    if (fs.existsSync(abs)) return abs;
+  }
+  missCache.add(hay);
+  return null;
+}
+
+/** 读 SVG 为 data URL（沙箱下比 file:// 更稳） */
+function toDataUrl(absPath) {
+  if (!absPath) return null;
+  if (cache.has(absPath)) return cache.get(absPath);
+  try {
+    const raw = fs.readFileSync(absPath, 'utf8');
+    const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(raw)}`;
+    cache.set(absPath, url);
+    return url;
+  } catch {
+    try {
+      const url = pathToFileURL(absPath).href;
+      cache.set(absPath, url);
+      return url;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function resolveBrandIconUrl(text = '') {
+  return toDataUrl(resolveFile(text));
+}
+
+function brandIconForApp(app = {}) {
+  return resolveBrandIconUrl(`${app.agent_id || app.preset_id || ''} ${app.name || ''}`);
+}
+
+module.exports = {
+  resolveBrandIconUrl,
+  brandIconForApp,
+  ICONS_DIR,
+};

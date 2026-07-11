@@ -120,18 +120,6 @@ function markDone(localStats, filePath, st) {
   localStats.setImportState(filePath, Math.floor(st.mtimeMs), st.size);
 }
 
-/** 会话是否已有 DB 用量行（用于避免「扫过但未写入」的文件被 import_state 永久跳过） */
-function sessionHasDbRows(localStats, sessionId) {
-  if (!sessionId) return true;
-  try {
-    const db = localStats.getDb?.();
-    if (!db) return true;
-    return !!db.prepare('SELECT 1 FROM requests WHERE session_id = ? LIMIT 1').get(String(sessionId));
-  } catch {
-    return true;
-  }
-}
-
 function tsSeconds(isoOrMsOrSec) {
   if (isoOrMsOrSec == null) return Math.floor(Date.now() / 1000);
   if (typeof isoOrMsOrSec === 'number') {
@@ -530,12 +518,8 @@ function importSource(localStats, src) {
 
   for (const file of files) {
     let st; try { st = fs.statSync(file); } catch { continue; }
-    const baseId = path.basename(file).replace(/\.[^.]+$/, '');
-    if (unchanged(localStats, file, st)) {
-      // 文件已标记处理但 DB 无该 session 用量（如 sdk-cli 曾被 skip）→ 强制重扫
-      const staleSid = src.session_id_from === 'filename' ? baseId : null;
-      if (!staleSid || sessionHasDbRows(localStats, staleSid)) { skipped++; continue; }
-    }
+    // 已处理且文件未变 → 跳过（历史 session 不反复导入；有写入会改 mtime/size）
+    if (unchanged(localStats, file, st)) { skipped++; continue; }
     files_scanned++;
 
     if ((src.format || 'jsonl') === 'json') {
@@ -547,14 +531,13 @@ function importSource(localStats, src) {
         markDone(localStats, file, st);
         continue;
       }
+      const baseId = path.basename(file).replace(/\.[^.]+$/, '');
       const session_id = getPath(doc, src.doc_session_id) || baseId;
       const arr = getPath(doc, src.iterate);
       const items = Array.isArray(arr) ? arr : [];
       const ctx = { model: undefined, session_id, seq: 0, index: 0, prev: { input: 0, output: 0, cached: 0 } };
-      let eligible = 0;
       items.forEach((item, idx) => {
         if (!matchFilter(item, src.record_filter)) return;
-        eligible++;
         let rec = item;
         // item_json_field：某字段本身是 JSON 字符串（如 WorkBuddy span.toolOutput = [OpenAI 响应]），解析后并入；
         // 解析结果若是数组（响应包在单元素数组里），取第一个对象元素。
@@ -569,11 +552,8 @@ function importSource(localStats, src) {
         ctx.session_id = session_id;   // json 每条都用整文件级 session
         if (emitRecord(localStats, src, rec, ctx, doc)) imported++;
       });
-      if (imported === 0 && eligible > 0 && !sessionHasDbRows(localStats, session_id)) {
-        console.log('[session-import] defer markDone', path.basename(file), { eligible, session_id });
-      } else {
-        markDone(localStats, file, st);
-      }
+      // 扫过即 markDone：无用量/暂写不出的历史文件也不反复重扫
+      markDone(localStats, file, st);
     } else {
       // jsonl：逐行；维护运行上下文（meta 行更新 model/session_id；accumulate 累计 prev）
       let rawText;
@@ -582,6 +562,7 @@ function importSource(localStats, src) {
       const lineCount = parsedLines.length;
       const fileT0 = st.birthtimeMs;
       const fileSpan = Math.max(st.mtimeMs - st.birthtimeMs, lineCount * 500);
+      const baseId = path.basename(file).replace(/\.[^.]+$/, '');
 
       const ctx = {
         model: undefined,
@@ -589,7 +570,6 @@ function importSource(localStats, src) {
         seq: 0, index: 0, prev: { input: 0, output: 0, cached: 0 },
       };
       let lineIdx = 0;
-      let eligible = 0;
       for (const s of parsedLines) {
         let e;
         try { e = JSON.parse(s); } catch { lineIdx++; continue; }
@@ -625,7 +605,6 @@ function importSource(localStats, src) {
           }
         }
         if (!matchFilter(e, src.record_filter)) continue;
-        eligible++;
         if (src.defer_emit) {
           ctx._deferEmit = e;
           continue;
@@ -636,12 +615,7 @@ function importSource(localStats, src) {
         if (emitRecord(localStats, src, ctx._deferEmit, ctx, null)) imported++;
         ctx._deferEmit = null;
       }
-      const sid = ctx.session_id || (src.session_id_from === 'filename' ? baseId : null);
-      if (imported === 0 && eligible > 0 && !sessionHasDbRows(localStats, sid)) {
-        console.log('[session-import] defer markDone', path.basename(file), { eligible, sid });
-      } else {
-        markDone(localStats, file, st);
-      }
+      markDone(localStats, file, st);
     }
   }
   return { source: src.id || src.data_source, imported, skipped, files_scanned };

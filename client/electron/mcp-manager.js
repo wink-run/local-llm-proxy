@@ -58,8 +58,8 @@ class MCPManager {
         JSON.stringify([DISPATCH_SCRIPT]),
         JSON.stringify({ ELECTRON_RUN_AS_NODE: '1' }),
         JSON.stringify({
-          description: '内置 Agent 派发桥：tb_list_agents / tb_dispatch_agent',
-          tools: ['tb_list_agents', 'tb_dispatch_agent'],
+          description: '内置 Agent 派发桥：tb_list_agents / tb_dispatch_agent / tb_get_prompt',
+          tools: ['tb_list_agents', 'tb_dispatch_agent', 'tb_get_prompt'],
         }),
         now,
         now,
@@ -617,7 +617,7 @@ class MCPManager {
    * 为编排任务生成 Agent 启动参数
    * @returns {{ extraArgs: string[], promptPrefix?: string, cleanup: Function }}
    */
-  buildOrchestratorLaunch({ agentId, taskId, workingDir, mainAgentId, profileId = DEFAULT_PROFILE_ID }) {
+  buildOrchestratorLaunch({ agentId, taskId, workingDir, mainAgentId, profileId = DEFAULT_PROFILE_ID, sessionKey, sessionInstanceId }) {
     this.init();
 
     if (!this.supportsOrchestrator(agentId)) {
@@ -636,7 +636,7 @@ class MCPManager {
     if (agentId === 'claude-code') {
       const mcpServers = {};
       for (const srv of servers) {
-        mcpServers[srv.name] = this._buildRuntimeServerConfig(srv, { taskId, workingDir, mainAgentId });
+        mcpServers[srv.name] = this._buildRuntimeServerConfig(srv, { taskId, workingDir, mainAgentId, sessionKey, sessionInstanceId });
       }
 
       const configPath = path.join(mcpDir, `orch-${taskId}.json`);
@@ -647,8 +647,7 @@ class MCPManager {
         extraArgs: [
           '-p',
           '--dangerously-skip-permissions',
-          '--output-format', 'stream-json',
-          '--verbose',
+          '--output-format', 'json',
           '--strict-mcp-config',
           '--mcp-config', configPath,
           '--append-system-prompt', ORCHESTRATOR_SYSTEM,
@@ -658,10 +657,11 @@ class MCPManager {
     }
 
     if (agentId === 'codex') {
-      const extraArgs = ['exec', '--json', '--enable', 'mcp', '--skip-git-repo-check'];
+      const extraArgs = ['exec'];
       if (workingDir) extraArgs.push('--cd', workingDir);
+      extraArgs.push('--json', '--enable', 'mcp', '--skip-git-repo-check');
       for (const srv of servers) {
-        const cfg = this._buildRuntimeServerConfig(srv, { taskId, workingDir, mainAgentId });
+        const cfg = this._buildRuntimeServerConfig(srv, { taskId, workingDir, mainAgentId, sessionKey, sessionInstanceId });
         const name = srv.name;
         extraArgs.push('-c', `mcp_servers.${name}.command=${JSON.stringify(cfg.command)}`);
         extraArgs.push('-c', `mcp_servers.${name}.args=${JSON.stringify(cfg.args)}`);
@@ -707,7 +707,7 @@ class MCPManager {
 
   /** 运行时 Server 配置（内置 bridge 注入 task 上下文） */
   _buildRuntimeServerConfig(serverRow, ctx) {
-    const { taskId, workingDir, mainAgentId } = ctx;
+    const { taskId, workingDir, mainAgentId, sessionKey, sessionInstanceId } = ctx;
     const baseEnv = this._parseJson(serverRow.env, {});
 
     if (serverRow.id === BUILTIN_BRIDGE_ID || serverRow.name === BUILTIN_BRIDGE_ID) {
@@ -718,6 +718,8 @@ class MCPManager {
           ...baseEnv,
           ELECTRON_RUN_AS_NODE: '1',
           TB_PARENT_TASK_ID: taskId || '',
+          TB_PARENT_SESSION_KEY: sessionKey || '',
+          TB_PARENT_SESSION_INSTANCE: sessionInstanceId || '',
           TB_WORKING_DIR: workingDir || process.cwd(),
           TB_MAIN_AGENT_ID: mainAgentId || '',
         },

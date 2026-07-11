@@ -632,20 +632,47 @@ function formatHttpError(statusCode, bodyStr) {
   return t ? `${msg}: ${t}` : msg;
 }
 
-function readProxyError(proxyRes, reject) {
+function readProxyError(proxyRes, reject, traceCtx = null) {
   // 社区(p2p)派发失败时，服务端把「最后失败的 worker」放在 X-TB-Worker 头
   // （错误体里另有 error.worker_id / error.workers）——带回来供路由日志按 worker 归因。
   const workerId = proxyRes.headers['x-tb-worker'] || null;
+  const statusCode = proxyRes.statusCode;
   const chunks = [];
   proxyRes.on('data', c => chunks.push(c));
   proxyRes.on('end', () => {
     const body = Buffer.concat(chunks).toString();
-    const msg = formatHttpError(proxyRes.statusCode, body);
-    reject(Object.assign(new Error(msg), { status: proxyRes.statusCode, body, worker_id: workerId }));
+    const msg = formatHttpError(statusCode, body);
+    if (traceCtx && statusCode >= 400) {
+      try {
+        require('./api-retry-trace').traceGatewayProviderFail({
+          source: 'readProxyError',
+          status: statusCode,
+          message: msg,
+          body_preview: body.slice(0, 400),
+          worker_id: workerId,
+          ...traceCtx,
+        });
+      } catch { /* ignore */ }
+    }
+    reject(Object.assign(new Error(msg), { status: statusCode, body, worker_id: workerId }));
   });
   proxyRes.on('error', () => {
-    reject(Object.assign(new Error(`HTTP_${proxyRes.statusCode}`), { status: proxyRes.statusCode, worker_id: workerId }));
+    reject(Object.assign(new Error(`HTTP_${statusCode}`), { status: statusCode, worker_id: workerId }));
   });
+}
+
+/** 路由 failover 中间失败（不一定写入 route log） */
+function traceRouteProviderFail(err, ctx) {
+  try {
+    require('./api-retry-trace').traceGatewayProviderFail({
+      status: err?.status,
+      message: err?.message,
+      error_code: err?.code,
+      worker_id: err?.worker_id,
+      will_failover: !!ctx?.will_failover,
+      ...ctx,
+    });
+  } catch { /* ignore */ }
 }
 
 /** 从 OpenAI 兼容 JSON（含 SSE data 行）提取 error */
@@ -681,7 +708,7 @@ function toAnthropicErrorType(openaiType) {
 /** Anthropic /v1/messages 错误体 */
 function writeAnthropicApiError(res, status, message, openaiType) {
   if (res.headersSent) return;
-  res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+  res.writeHead(status, apiErrorHeaders(status));
   res.end(JSON.stringify({
     type: 'error',
     error: { type: toAnthropicErrorType(openaiType), message },
@@ -786,6 +813,29 @@ function isP2pCreditsError(err) {
 function modelNotFoundError(model, tier) {
   const detail = `Model '${model}' is not available${tier ? ` (tier=${tier})` : ''}`;
   return Object.assign(new Error(detail), { status: 404, code: 'model_not_found' });
+}
+
+/** 客户端可重试错误的 Retry-After（秒）与 provider failover 间隔 */
+const MIN_CLIENT_RETRY_AFTER_SEC = 3;
+const MIN_FAILOVER_DELAY_MS = 2000;
+
+function isRetryableHttpStatus(status) {
+  return status === 429 || status === 502 || status === 503 || status === 504 || status === 529;
+}
+
+function apiErrorHeaders(status) {
+  const h = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+  };
+  if (isRetryableHttpStatus(status)) h['Retry-After'] = String(MIN_CLIENT_RETRY_AFTER_SEC);
+  return h;
+}
+
+function pauseBeforeNextProvider(err) {
+  const st = resolveFailStatus(err);
+  if (!isRetryableHttpStatus(st)) return Promise.resolve();
+  return new Promise(r => setTimeout(r, MIN_FAILOVER_DELAY_MS));
 }
 
 /** 客户端错误优先透传 4xx/5xx，其余维持 502 */
@@ -2586,6 +2636,18 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       error_code: lastErr?.code || undefined,
       provider_errors: serializeProviderErrors(providerErrors),
     });
+    try {
+      require('./api-retry-trace').traceGatewayClientError({
+        source: 'route_fail',
+        requested_model: origModel,
+        model,
+        scene_name,
+        status: resolveFailStatus(lastErr),
+        error: lastErr?.message,
+        error_code: lastErr?.code,
+        provider_errors: serializeProviderErrors(providerErrors),
+      });
+    } catch { /* ignore */ }
     recordError(model, callerKey, lastErr); // 失败也落账，保证不丢账
     if (!res.headersSent) {
       const detail = lastErr?.message || 'all_providers_failed';
@@ -2612,7 +2674,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       const payload = isResponses
         ? codexTransform.chatErrorToResponseError({ error: { message: detail, type: 'all_providers_failed' } })
         : { error: 'all_providers_failed', detail };
-      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.writeHead(status, apiErrorHeaders(status));
       res.end(JSON.stringify(payload));
     }
   }
@@ -2683,12 +2745,21 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
         return;
       } catch (err) {
         if (handleP2pFatal(c.provider, err, res, isResponses)) { lastErr = err; recordError(c.model, callerKey, lastErr); return; }
+        traceRouteProviderFail(err, {
+          source: 'strategy_route',
+          requested_model: origModel,
+          model: c.model,
+          provider_id: c.provider.id,
+          scene_name: _stratScene.scene_name,
+          will_failover: !res.headersSent,
+        });
         routeErrors.push({ id: c.provider.id, err }); lastErr = err;
         // 源级失效跳过：仅对「单账号多模型」的直连源有效（如 openai 一个账号下多个 gpt-* 全 429）。
         // p2p 所有模型共享同一 provider.id(tokenbank-p2p) 但各是独立 worker，一个挂不代表其它挂，
         // 绝不能因某个 p2p 模型源级失败就拉黑整个 p2p 池（否则会跳过后面能用的 agnes 等）。
         if (isSourceLevelError(err) && !isP2pProvider(c.provider)) deadSources.add(c.provider.id);
         if (res.headersSent) return;
+        await pauseBeforeNextProvider(err);
       }
     }
     lastErr = pickBestRouteError(routeErrors) || lastErr;
@@ -2752,10 +2823,19 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
             return;
           } catch (err) {
             if (handleP2pFatal(c.provider, err, res, isResponses)) { lastErr = err; recordError(c.model, callerKey, lastErr); return; }
+            traceRouteProviderFail(err, {
+              source: 'scene_strategy_step',
+              requested_model: origModel,
+              model: c.model,
+              provider_id: c.provider.id,
+              scene_name: scene.scene_name,
+              will_failover: !res.headersSent,
+            });
             stepErrors.push({ id: c.provider.id, err }); lastErr = err;
             // 见上：p2p 各模型独立 worker，不能因一个源级失败拉黑整个 tokenbank-p2p 池
             if (isSourceLevelError(err) && !isP2pProvider(c.provider)) deadSources.add(c.provider.id);
             if (res.headersSent) return;
+            await pauseBeforeNextProvider(err);
           }
         }
         failedModels.push(step.strategy);
@@ -2823,9 +2903,18 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
             recordError(stepModel, callerKey, lastErr);
             return;
           }
+          traceRouteProviderFail(err, {
+            source: 'scene_step',
+            requested_model: origModel,
+            model: stepModel,
+            provider_id: provider.id,
+            scene_name: scene.scene_name,
+            will_failover: !res.headersSent,
+          });
           stepErrors.push({ id: provider.id, err });
           lastErr = err;
           if (res.headersSent) return;
+          await pauseBeforeNextProvider(err);
         }
       }
       if (!stepSucceeded) failedModels.push(stepModel);
@@ -2954,9 +3043,17 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
         recordError(model, callerKey, lastErr);
         return;
       }
+      traceRouteProviderFail(err, {
+        source: 'direct_model',
+        requested_model: origModel,
+        model,
+        provider_id: provider.id,
+        will_failover: !res.headersSent,
+      });
       routeErrors.push({ id: provider.id, err });
       lastErr = err;
       if (res.headersSent) return;
+      await pauseBeforeNextProvider(err);
     }
   }
 
@@ -3314,6 +3411,14 @@ function handleRequest(req, res) {
     const ctrl = resolveAppControl(callerKey, cleanPath);
     debugLog(`匹配的 app control`, ctrl ? { app_name: ctrl.app_name, has_match_key: !!ctrl.match?.key } : 'null（未匹配任何应用，按默认策略路由）');
 
+    // ── 提示词宏展开 stage：最新 user 消息里的 @tbp:<name|#id> [参数] → 提示词正文 ──
+    // 单一真源=TB 库；未命中 token 原样保留；仅动最新 user 轮。
+    if (_promptResolver && Array.isArray(body.messages)) {
+      try {
+        expandPromptMacros(body.messages, _promptResolver);
+      } catch (e) { debugLog('提示词宏展开失败（跳过）', e.message); }
+    }
+
     // ── 压缩 stage（默认关闭，opt-in）──────────────────────────────────────
     // 转发前对 chat 请求做无损 JSON 压缩，减少发给上游的输入 token。
     // 开关：cfg.compress.enabled 或环境变量 TOKENBANK_COMPRESS=1。
@@ -3485,10 +3590,56 @@ function setLocalConfigReader(fn) {
   _getLocalConfig = typeof fn === 'function' ? fn : null;
 }
 
+// 注入提示词解析器：(ref, args) => { found, text }（供转发前的 @tbp: 宏展开）
+let _promptResolver = null;
+function setPromptResolver(fn) {
+  _promptResolver = typeof fn === 'function' ? fn : null;
+}
+
+// ── 提示词宏展开：@tbp:<name|#id> [参数] → 提示词正文（转发前，仅最新 user 轮）──
+const TBP_MACRO_RE = /@tbp:(\S+)([^\n]*?)(?=@tbp:|$)/gm;
+
+function _expandTbpText(text, resolve) {
+  if (typeof text !== 'string' || !text.includes('@tbp:')) return text;
+  return text.replace(TBP_MACRO_RE, (whole, ref, rest) => {
+    const r = resolve(ref, String(rest || '').trim());
+    return r && r.found ? r.text : whole;
+  });
+}
+
+function _expandTbpContent(content, resolve) {
+  if (typeof content === 'string') return _expandTbpText(content, resolve);
+  if (Array.isArray(content)) {
+    return content.map(part =>
+      part && part.type === 'text' && typeof part.text === 'string'
+        ? { ...part, text: _expandTbpText(part.text, resolve) }
+        : part);
+  }
+  return content;
+}
+
+/**
+ * 在最新一轮 user 消息里把 @tbp:<ref> [参数] 展开为提示词正文。
+ * @param {Array} messages 请求消息（Anthropic / OpenAI 皆可，按 role + text 处理）
+ * @param {(ref:string, args:string)=>{found:boolean,text?:string}} resolve 提示词解析器（注入便于单测）
+ * @returns {Array} 原数组（就地替换最新 user 消息）
+ */
+function expandPromptMacros(messages, resolve) {
+  if (!Array.isArray(messages) || typeof resolve !== 'function') return messages;
+  let lastUser = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i] && messages[i].role === 'user') { lastUser = i; break; }
+  }
+  if (lastUser < 0) return messages;
+  const msg = messages[lastUser];
+  messages[lastUser] = { ...msg, content: _expandTbpContent(msg.content, resolve) };
+  return messages;
+}
+
 module.exports = {
   start, stop, restart, setStrategy, getStatus, getLog,
   setKeySceneMap, setClaudeShimScene, setCodexGptFallback, setRouterModelMap, setPeerModels, setBackendConfig, setUserAuth,
-  setStatsRecorder, setLocalStats, setLocalConfigReader, setAppControls,
+  setStatsRecorder, setLocalStats, setLocalConfigReader, setPromptResolver, setAppControls,
   setClaudeModels,
   // 条件路由规则引擎（供单测/复用）
   pickSteps, evalWhen, modalityOf, estimateInputTokens, extractText, _providerTier,
@@ -3498,4 +3649,6 @@ module.exports = {
   anthropicToOpenai, openaiToAnthropic, oaiRequestToAnthropic, anthropicRespToOai,
   // Gemini 转换（供单测/复用，含 tool-calling）
   oaiToGeminiBody, geminiExtractParts, sanitizeGeminiSchema,
+  // 提示词宏展开（供单测/复用）
+  expandPromptMacros,
 };

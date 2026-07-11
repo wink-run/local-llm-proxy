@@ -26,9 +26,21 @@ function maybeFixTraeSessionTimestamps(localStats) {
 }
 
 /**
- * @returns {{ hookImported: number, sessionImported: number, traeSynced: number }}
+ * @param {object} localStats
+ * @param {{ force?: boolean }} [opts] force=true 跳过节流（IPC 手动触发）
+ * @returns {{ hookImported: number, sessionImported: number, traeSynced: number, skipped?: boolean }}
  */
-function syncSessionTelemetry(localStats) {
+let _lastTelemetrySyncAt = 0;
+const TELEMETRY_SYNC_MIN_MS = 30_000; // 与主进程 30s 定时导入对齐，避免托盘/多处连点反复扫
+
+function syncSessionTelemetry(localStats, opts = {}) {
+  const force = !!(opts && opts.force);
+  const now = Date.now();
+  if (!force && _lastTelemetrySyncAt && (now - _lastTelemetrySyncAt) < TELEMETRY_SYNC_MIN_MS) {
+    return { hookImported: 0, sessionImported: 0, traeSynced: 0, skipped: true };
+  }
+  _lastTelemetrySyncAt = now;
+
   let hookImported = 0;
   let sessionImported = 0;
   let traeSynced = 0;
