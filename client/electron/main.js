@@ -2500,14 +2500,16 @@ function registerIPC() {
     return billingConfigMod.getUserAccounts(cfg, { boundDirectAgentIds: boundDirectAgentIds() });
   });
 
-  ipcMain.handle('localConfig:createSceneRoute', (_e, { scene_name, icon, steps, rules, classifier, flow, caveman_level }) => {
+  ipcMain.handle('localConfig:createSceneRoute', (_e, { scene_name, icon, steps, rules, classifier, flow, caveman_level, scope, tier }) => {
     const cfg   = readLocalConfig();
     const route = {
       id: rndHex(8), scene_name, icon: icon || '🔀',
-      steps: steps || [],
-      rules: rules || null,           // 条件路由规则（when → steps）
+      steps: steps || [],             // 每步可选带 when 条件（统一后不再单独存 rules）
+      rules: rules || null,           // 兼容旧条件路由规则（when → steps）
       classifier: classifier || null, // 语义分类器配置
       flow: flow || null,             // 链级流转策略
+      scope: scope || null,           // 路由级来源过滤(personal/community)
+      tier: tier || null,             // 路由级价格过滤(free/paid)
       caveman_level: caveman_level || null, // 输出风格
       model_key: 'llm-router-' + rndHex(6),
       created_at: new Date().toISOString(),
@@ -2518,11 +2520,11 @@ function registerIPC() {
     return route;
   });
 
-  ipcMain.handle('localConfig:updateSceneRoute', (_e, { id, scene_name, icon, steps, rules, classifier, flow, caveman_level }) => {
+  ipcMain.handle('localConfig:updateSceneRoute', (_e, { id, scene_name, icon, steps, rules, classifier, flow, caveman_level, scope, tier }) => {
     const cfg = readLocalConfig();
     const idx = cfg.scene_routes.findIndex(r => r.id === id);
     if (idx === -1) return null;
-    cfg.scene_routes[idx] = { ...cfg.scene_routes[idx], scene_name, icon, steps, rules: rules || null, classifier: classifier || null, flow: flow || null, caveman_level: caveman_level || null };
+    cfg.scene_routes[idx] = { ...cfg.scene_routes[idx], scene_name, icon, steps, rules: rules || null, classifier: classifier || null, flow: flow || null, caveman_level: caveman_level || null, scope: scope || null, tier: tier || null };
     writeLocalConfig(cfg);
     syncGatewayFromConfig(cfg);
     return cfg.scene_routes[idx];

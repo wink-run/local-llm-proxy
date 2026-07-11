@@ -6,7 +6,7 @@ import { listAgents, applyAgent, revertAgent } from '../api/agents';
 import claudeDevModeImg1 from '../assets/claude-devmode-1.webp';
 import claudeDevModeImg2 from '../assets/claude-devmode-2.webp';
 import { brandIconFor, resolveBrandIcon } from '../lib/brandIcons';
-import { APP_ICONS, ROUTE_ICONS, isAppIcon, appIconSvg } from '../lib/appIcons';
+import { APP_ICONS, isAppIcon, appIconSvg } from '../lib/appIcons';
 import { useLang } from '../store/lang';
 import { useAuth } from '../store/index';
 import RouteSelect, { tierOptgroups } from '../components/RouteSelect';
@@ -3323,7 +3323,7 @@ function RuleConditionEditor({ when, onChange, categories = [] }) {
 
 // 路由链编辑器（默认链 + 每条规则各一个）。每步是一个 Selector：model + 可选 strategy/sharer。
 // 分享者(sharer)化名句柄来自 /public/network（服务端带盐哈希；不含用户名）。
-function ChainEditor({ steps, setSteps, availableModels, network, sources, fScope = '', fTier = '' }) {
+function ChainEditor({ steps, setSteps, availableModels, network, sources, fScope = '', fTier = '', categories = [] }) {
   const { t } = useLang();
   const list = steps || [];
   // 路由级过滤：顶层选了 仅免费/仅付费/仅个人/仅社区 → 顺带过滤模型菜单（个人≈非社区的本地模型）
@@ -3381,7 +3381,16 @@ function ChainEditor({ steps, setSteps, availableModels, network, sources, fScop
               ? modelTierKey({ id: step.model, tier: step.tier })
               : (availableModels.find(m => m.id === step.model) ? modelTierKey(availableModels.find(m => m.id === step.model)) : step.model));
         return (
-        <div key={i} className="group border border-zinc-200/70 dark:border-zinc-700/70 rounded-lg px-2 py-1.5">
+        <div key={i} className={`group border rounded-lg px-2 py-1.5 ${step.when ? 'border-blue-300/70 dark:border-blue-700/50 bg-blue-50/30 dark:bg-blue-900/10' : 'border-zinc-200/70 dark:border-zinc-700/70'}`}>
+          {/* 该步的条件（可选）：带条件=命中才用，无条件=兜底 */}
+          {step.when && (
+            <div className="flex items-start gap-2 mb-1.5 pb-1.5 border-b border-blue-200/50 dark:border-blue-800/40">
+              <span className="text-[11px] text-blue-500 dark:text-blue-400 shrink-0 pt-1">{t('gateway.route.conditionLabel')}</span>
+              <div className="flex-1 min-w-0"><RuleConditionEditor when={step.when} onChange={w => patch(i, { when: w })} categories={categories} /></div>
+              <button onClick={() => patch(i, { when: undefined })} title={t('gateway.route.removeCondition')}
+                className="text-[11px] text-zinc-400 hover:text-red-500 shrink-0 pt-1 px-1">✕</button>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <span className="text-xs text-zinc-400 w-4 text-right shrink-0">{i + 1}</span>
             <select value={modelVal} onChange={e => updateModel(i, e.target.value)}
@@ -3389,6 +3398,10 @@ function ChainEditor({ steps, setSteps, availableModels, network, sources, fScop
               <option value="">{t('gateway.route.selectModel')}</option>
               {tierOptgroups(filteredModels, t)}
             </select>
+            {!step.when && (
+              <button onClick={() => patch(i, { when: { type: 'input_tokens', op: 'gt', value: 50000 } })}
+                className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline shrink-0 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity">{t('gateway.route.addCondition')}</button>
+            )}
             <button onClick={() => remove(i)}
               className="text-xs text-zinc-400 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity px-1">✕</button>
           </div>
@@ -3416,8 +3429,13 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
   const { t } = useLang();
   const [name, setName]   = useState(route.scene_name || '');
   const [icon, setIcon]   = useState(route.icon || 'icon:shuffle');
-  const [steps, setSteps] = useState(route.steps || []);
-  const [rules, setRules] = useState(route.rules || []);
+  // 统一步骤：每步可选带一个条件 when；老 rules 摊平成"带 rule.when 的步" + 默认步(无 when)
+  const [steps, setSteps] = useState(() => {
+    const flat = [];
+    for (const r of (route.rules || [])) for (const s of (r.steps || [])) flat.push({ ...s, when: s.when || r.when });
+    for (const s of (route.steps || [])) flat.push(s);
+    return flat;
+  });
   const [clsModel, setClsModel] = useState(route.classifier?.model || '');
   const [clsCats,  setClsCats]  = useState((route.classifier?.categories || t('gateway.rule.defaultCategories').split(/[,、]/).map(s => s.trim()).filter(Boolean)).join('、'));
   const [cavemanLevel, setCavemanLevel] = useState(route.caveman_level || null);
@@ -3433,15 +3451,11 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
     else { setRScope(''); setRTier(''); }
   };
 
-  const setRuleAt  = (i, patch) => setRules(rules.map((r, idx) => idx === i ? { ...r, ...patch } : r));
-  const removeRule = (i) => setRules(rules.filter((_, idx) => idx !== i));
-  const addRule    = () => setRules([...rules, { when: { type: 'input_tokens', op: 'gt', value: 50000 }, steps: [] }]);
-
-  const usesClassifier = rules.some(r => r.when?.type === 'classifier');
+  const usesClassifier = steps.some(s => s.when?.type === 'classifier');
   const categories = clsCats.split(/[、,，\s]+/).map(s => s.trim()).filter(Boolean);
 
   function save() {
-    // 保留任何有 model/scope/tier/strategy/source/sharer 的步；各字段独立保留（纯 scope/tier 步无 model 也不丢）
+    // 每步保留 model/scope/tier/strategy/source/sharer + 可选条件 when；纯过滤步(无 model)也保留
     const clean = (arr) => (arr || []).filter(s => s.model || s.scope || s.tier || s.strategy || s.sharer || s.provider).map(s => ({
       ...(s.model ? { model: s.model } : {}),
       ...(s.scope ? { scope: s.scope } : {}),
@@ -3449,13 +3463,11 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
       ...(s.strategy ? { strategy: s.strategy } : {}),
       ...(s.sharer   ? { sharer: s.sharer }     : {}),
       ...(s.provider ? { provider: s.provider } : {}),
+      ...(s.when && s.when.type ? { when: s.when } : {}),
     }));
-    const cleanRules = (rules || [])
-      .map(r => ({ when: r.when, steps: clean(r.steps) }))
-      .filter(r => r.when && r.when.type && r.steps.length);
     const classifier = (usesClassifier && clsModel && categories.length)
       ? { model: clsModel, categories } : undefined;
-    onSave({ ...route, scene_name: name, icon, rules: cleanRules.length ? cleanRules : undefined, steps: clean(steps), classifier, caveman_level: cavemanLevel || null, flow: flow || undefined, scope: rScope || undefined, tier: rTier || undefined });
+    onSave({ ...route, scene_name: name, icon, rules: undefined, steps: clean(steps), classifier, caveman_level: cavemanLevel || null, flow: flow || undefined, scope: rScope || undefined, tier: rTier || undefined });
   }
 
   return (
@@ -3465,57 +3477,9 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
           placeholder={t('gateway.route.namePlaceholder')}
           className="flex-1 bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded-lg px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-blue-500" />
       </div>
-      <div className="flex flex-wrap gap-1.5">
-        {ROUTE_ICONS.map(e => (
-          <button key={e} type="button" onClick={() => setIcon(e)} title={e.replace('icon:', '')}
-            className={`p-1.5 rounded ${icon === e ? 'bg-blue-100 dark:bg-blue-900/40 ring-1 ring-blue-400' : 'hover:bg-zinc-100 dark:hover:bg-zinc-700'}`}>
-            {appIconSvg(e, 'w-5 h-5')}
-          </button>
-        ))}
-      </div>
 
-      {/* 条件规则（可选）：从上到下匹配，命中即用 */}
-      <div className="text-xs text-zinc-500 font-medium">
-        {t('gateway.route.conditionalRules')} <span className="text-zinc-400 dark:text-zinc-500">{t('gateway.route.conditionalHint')}</span>
-      </div>
-      <div className="space-y-2">
-        {rules.map((rule, ri) => (
-          <div key={ri} className="border border-zinc-200 dark:border-zinc-700 rounded-lg p-2 space-y-1.5 bg-white/60 dark:bg-zinc-900/30">
-            <div className="flex items-start justify-between gap-2">
-              <RuleConditionEditor when={rule.when} onChange={w => setRuleAt(ri, { when: w })} categories={categories} />
-              <button onClick={() => removeRule(ri)} className="text-xs text-zinc-400 hover:text-red-500 shrink-0 px-1">{t('gateway.common.delete')}</button>
-            </div>
-            <div className="pl-3 border-l-2 border-zinc-200 dark:border-zinc-700">
-              <div className="text-xs text-zinc-400 mb-1">{t('gateway.route.routeTo')}</div>
-              <ChainEditor steps={rule.steps} setSteps={s => setRuleAt(ri, { steps: s })} availableModels={availableModels} network={network} sources={sources} fScope={rScope} fTier={rTier} />
-            </div>
-          </div>
-        ))}
-        <button onClick={addRule} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">{t('gateway.route.addRule')}</button>
-      </div>
-
-      {/* 分类器配置（用到「智能分类」条件时显示）：先用便宜模型把输入归类，再按类别路由 */}
-      {usesClassifier && (
-        <div className="border border-indigo-200 dark:border-indigo-800/40 rounded-lg p-2.5 space-y-2 bg-indigo-50/40 dark:bg-indigo-900/10">
-          <div className="text-xs font-medium text-indigo-600 dark:text-indigo-400">{t('gateway.route.classifier')}</div>
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-zinc-500 w-12 shrink-0">{t('gateway.route.clsModel')}</label>
-            <select value={clsModel} onChange={e => setClsModel(e.target.value)} className={RULE_SEL + ' flex-1'}>
-              <option value="">{t('gateway.route.clsModelPlaceholder')}</option>
-              {availableModels.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}
-            </select>
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-zinc-500 w-12 shrink-0">{t('gateway.route.clsCategories')}</label>
-            <input value={clsCats} onChange={e => setClsCats(e.target.value)} placeholder={t('gateway.route.clsCategoriesPlaceholder')}
-              className={RULE_SEL + ' flex-1'} />
-          </div>
-          <div className="text-xs text-zinc-400">{t('gateway.route.clsHint')}</div>
-        </div>
-      )}
-
-      {/* 路由级设置：过滤 + 流转策略 + 输出风格，一行紧凑排布（窄屏自动换行）*/}
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 pt-1 pb-0.5 border-t border-zinc-200/60 dark:border-zinc-700/50 mt-1">
+      {/* 路由级设置（全局，最上层）：过滤 + 流转策略 + 输出风格，一行紧凑排布（窄屏自动换行）*/}
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 pt-1 pb-2 border-b border-zinc-200/60 dark:border-zinc-700/50">
         <label className="flex items-center gap-1.5">
           <span className="text-xs text-zinc-500 shrink-0">{t('gateway.route.filterLabel')}</span>
           <select value={routeFilter} onChange={e => setRouteFilter(e.target.value)}
@@ -3549,12 +3513,29 @@ function SceneRouteEditor({ route, availableModels, network, sources, onSave, on
         </label>
       </div>
 
-      {/* 默认链（else）：规则都不命中时用 */}
-      <div className="text-xs text-zinc-500 font-medium pt-1">
-        {t('gateway.route.defaultChain')}{rules.length > 0 && <span className="text-zinc-400 dark:text-zinc-500">{t('gateway.route.defaultElse')}</span>}
-      </div>
-      <ChainEditor steps={steps} setSteps={setSteps} availableModels={availableModels} network={network} sources={sources} fScope={rScope} fTier={rTier} />
-      {steps.length === 0 && rules.length === 0 && !flow && <p className="text-xs text-zinc-500">{t('gateway.route.noSteps')}</p>}
+      {/* 步骤（整合了原「条件规则」+「默认链」）：每步可选带一个条件；候选怎么选由「流转策略」决定 */}
+      <ChainEditor steps={steps} setSteps={setSteps} availableModels={availableModels} network={network} sources={sources} fScope={rScope} fTier={rTier} categories={categories} />
+      {steps.length === 0 && !flow && <p className="text-xs text-zinc-500">{t('gateway.route.noSteps')}</p>}
+
+      {/* 分类器配置（某步用「智能分类」条件时显示）：先用便宜模型把输入归类，再按类别路由 */}
+      {usesClassifier && (
+        <div className="border border-indigo-200 dark:border-indigo-800/40 rounded-lg p-2.5 space-y-2 bg-indigo-50/40 dark:bg-indigo-900/10">
+          <div className="text-xs font-medium text-indigo-600 dark:text-indigo-400">{t('gateway.route.classifier')}</div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-zinc-500 w-12 shrink-0">{t('gateway.route.clsModel')}</label>
+            <select value={clsModel} onChange={e => setClsModel(e.target.value)} className={RULE_SEL + ' flex-1'}>
+              <option value="">{t('gateway.route.clsModelPlaceholder')}</option>
+              {availableModels.map(m => <option key={modelTierKey(m)} value={modelTierKey(m)}>{m.id}</option>)}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-zinc-500 w-12 shrink-0">{t('gateway.route.clsCategories')}</label>
+            <input value={clsCats} onChange={e => setClsCats(e.target.value)} placeholder={t('gateway.route.clsCategoriesPlaceholder')}
+              className={RULE_SEL + ' flex-1'} />
+          </div>
+          <div className="text-xs text-zinc-400">{t('gateway.route.clsHint')}</div>
+        </div>
+      )}
 
       <div className="flex gap-2 pt-1">
         <button onClick={save}
@@ -4169,12 +4150,12 @@ export default function Gateway() {
       if (route.id) {
         await getLocalConfig().updateSceneRoute({
           id: route.id, scene_name: route.scene_name, icon: route.icon, steps: route.steps, rules: route.rules, classifier: route.classifier,
-          flow: route.flow, caveman_level: route.caveman_level,
+          flow: route.flow, caveman_level: route.caveman_level, scope: route.scope, tier: route.tier,
         });
       } else {
         await getLocalConfig().createSceneRoute({
           scene_name: route.scene_name, icon: route.icon, steps: route.steps, rules: route.rules, classifier: route.classifier,
-          flow: route.flow, caveman_level: route.caveman_level,
+          flow: route.flow, caveman_level: route.caveman_level, scope: route.scope, tier: route.tier,
         });
       }
       setNewRoute(null);

@@ -86,6 +86,9 @@ def normalize_step(raw: dict) -> dict:
         v = str(raw.get(k) or "").strip()
         if v:
             out[k] = v
+    w = raw.get("when")   # 每步可选条件（token/关键字/分类器等），命中才用；无=兜底
+    if isinstance(w, dict) and w.get("type"):
+        out["when"] = w
     return out
 
 

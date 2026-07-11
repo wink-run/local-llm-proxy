@@ -2319,14 +2319,9 @@ function evalWhen(when, ctx) {
     default: return false;
   }
 }
-// 按规则选路由链（同步，不含分类器）：第一条命中的 rule.steps；都不中 → 默认 scene.steps。
+// 统一步骤按 when 过滤（同步，不含分类器）：无条件=兜底，带条件=命中才用；保持顺序。
 function pickSteps(scene, ctx) {
-  if (Array.isArray(scene && scene.rules)) {
-    for (const rule of scene.rules) {
-      if (rule && Array.isArray(rule.steps) && rule.steps.length && evalWhen(rule.when, ctx)) return rule.steps;
-    }
-  }
-  return (scene && scene.steps) || [];
+  return unifySteps(scene).filter(s => s && (!s.when || evalWhen(s.when, ctx)));
 }
 
 // ── 语义分类器（有成本条件：先用便宜模型把输入归类，再按 label 路由）──────────────
@@ -2390,20 +2385,28 @@ async function classifyInput(text, classifier) {
   return label;
 }
 
-// 选路由链（异步）：含分类器规则时懒计算 label（每请求只分类一次）；第一条命中即用。
-async function resolveSteps(scene, ctx) {
+// 统一步骤：每步可选带 when 条件。老 rules 摊平成"带 rule.when 的步"，再接默认步(无 when)。
+function unifySteps(scene) {
+  const all = [];
   if (Array.isArray(scene && scene.rules)) {
-    let classified = false;
     for (const rule of scene.rules) {
-      if (!rule || !Array.isArray(rule.steps) || !rule.steps.length || !rule.when) continue;
-      if (rule.when.type === 'classifier' && !classified) {
-        ctx.classifier_label = await classifyInput(ctx.text, scene.classifier);
-        classified = true;
+      if (rule && Array.isArray(rule.steps)) {
+        for (const s of rule.steps) all.push({ ...s, when: s.when || rule.when || null });
       }
-      if (evalWhen(rule.when, ctx)) return rule.steps;
     }
   }
-  return (scene && scene.steps) || [];
+  for (const s of ((scene && scene.steps) || [])) all.push(s);
+  return all;
+}
+
+// 选路由链（异步）：把统一步骤按各步自己的 when 过滤——无条件=兜底，带条件=命中才用；保持顺序。
+// 含分类器条件时懒计算 label（每请求只分类一次）。
+async function resolveSteps(scene, ctx) {
+  const all = unifySteps(scene);
+  if (all.some(s => s && s.when && s.when.type === 'classifier')) {
+    ctx.classifier_label = await classifyInput(ctx.text, scene && scene.classifier);
+  }
+  return all.filter(s => s && (!s.when || evalWhen(s.when, ctx)));
 }
 
 // 去掉 Claude 模型名的日期快照后缀：claude-sonnet-4-5-20250929 → claude-sonnet-4-5。
