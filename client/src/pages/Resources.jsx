@@ -92,7 +92,7 @@ function getSkillLocation(resource) {
   return originProj?.targetPath || null;
 }
 
-/** 资源页：Prompt / Skill / Assistant / Template 纳管与投射 */
+/** 资产页：Prompt / Skill / Assistant / Template 纳管与投射 */
 export default function Resources() {
   const { t } = useLang();
   const [viewTab, setViewTab] = useState(readViewTab);
@@ -255,6 +255,16 @@ export default function Resources() {
       alert(e.message);
     } finally {
       setBusy('');
+    }
+  }
+
+  async function handleOpenPath(targetPath) {
+    if (!targetPath || !window.electronAPI?.resource?.openPath) return;
+    try {
+      const res = await window.electronAPI.resource.openPath({ targetPath });
+      if (!res?.success) alert(res?.error || t('resources.openPathFailed'));
+    } catch (e) {
+      alert(e.message);
     }
   }
 
@@ -487,7 +497,16 @@ export default function Resources() {
           </div>
           <p className="text-xs text-zinc-500 mt-1">{item.description}</p>
           {item.skillPath && (
-            <p className="text-[11px] text-zinc-400 mt-1 font-mono truncate" title={item.skillPath}>{item.skillPath}</p>
+            <p className="text-[11px] text-zinc-400 mt-1 font-mono truncate">
+              <button
+                type="button"
+                className="hover:text-violet-600 dark:hover:text-violet-400 hover:underline text-left truncate max-w-full"
+                title={item.skillPath}
+                onClick={() => handleOpenPath(item.skillPath)}
+              >
+                {item.skillPath}
+              </button>
+            </p>
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -621,12 +640,26 @@ export default function Resources() {
             {resource.description && (
               <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 line-clamp-2">{resource.description}</p>
             )}
-            {!catalogMode && resource.type === 'skill' && (
-              <p className="text-[11px] text-zinc-400 mt-1 font-mono truncate" title={getSkillLocation(resource) || undefined}>
-                <span className="text-zinc-500">{t('resources.skillLocation')}：</span>
-                {getSkillLocation(resource) || t('resources.skillLocationPending')}
-              </p>
-            )}
+            {!catalogMode && resource.type === 'skill' && (() => {
+              const loc = getSkillLocation(resource);
+              return (
+                <p className="text-[11px] text-zinc-400 mt-1 font-mono truncate">
+                  <span className="text-zinc-500">{t('resources.skillLocation')}：</span>
+                  {loc ? (
+                    <button
+                      type="button"
+                      className="hover:text-violet-600 dark:hover:text-violet-400 hover:underline truncate align-baseline max-w-full"
+                      title={loc}
+                      onClick={() => handleOpenPath(loc)}
+                    >
+                      {loc}
+                    </button>
+                  ) : (
+                    t('resources.skillLocationPending')
+                  )}
+                </p>
+              );
+            })()}
             {(resource.metadata?.tags || []).length > 0 && (
               <div className="flex flex-wrap gap-1 mt-1.5">
                 {resource.metadata.tags.map(tag => (

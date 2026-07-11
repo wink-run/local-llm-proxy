@@ -1682,6 +1682,29 @@ function SessionManager() {
     flash(t('gateway.sessions.exported').replace('{file}', res.file));
   };
 
+  /** 同工具恢复：优先 macOS 终端，否则复制 resume 命令 */
+  const doResume = async (row) => {
+    const r = await window.electronAPI.sessions.resume({
+      agent_id: row.agent_id,
+      session_id: row.session_id,
+      trace_agent_id: row.trace_agent_id,
+      project_path: row.project_path,
+      launch_terminal: true,
+    });
+    if (r?.error) { flash(t('gateway.sessions.resumeFailed')); return; }
+    if (r?.terminal) { flash(t('gateway.sessions.resumeTerminal')); return; }
+    const text = r?.full_command || r?.command;
+    if (!text) { flash(t('gateway.sessions.resumeFailed')); return; }
+    try {
+      await navigator.clipboard.writeText(text);
+      flash(r?.terminal_error
+        ? t('gateway.sessions.resumeCopiedFallback')
+        : t('gateway.sessions.resumeCopied'));
+    } catch {
+      flash(t('gateway.sessions.resumeFailed'));
+    }
+  };
+
   // 按展示客户端分组（Claude Desktop / Claude Code 等），与应用列表拆分保持一致
   const rowClient = r => r.client || r.agent_id;
   const agents = Array.from(new Set(rows.map(rowClient)));
@@ -1774,7 +1797,7 @@ function SessionManager() {
           <SessionRow key={`${row.agent_id}-${row.session_id}`} row={row} fmtN={fmtN}
             handoffTargets={handoffTargets}
             onTrace={() => setTraceRow(row)} onMeta={patch => setMeta(row, patch)} onExport={fmt => doExport(row, fmt)}
-            onContinue={target => setContState({ row, target })} />
+            onContinue={target => setContState({ row, target })} onResume={() => doResume(row)} />
         ))}
       </div>
     </div>
@@ -1787,7 +1810,7 @@ const CLIENT_LABELS = {
 };
 
 /** 单会话行 */
-function SessionRow({ row, fmtN, handoffTargets = [], onTrace, onMeta, onExport, onContinue }) {
+function SessionRow({ row, fmtN, handoffTargets = [], onTrace, onMeta, onExport, onContinue, onResume }) {
   const { t } = useLang();
   const { fmtCost } = useCurrency();
   const [exportOpen, setExportOpen] = useState(false);
@@ -1829,6 +1852,11 @@ function SessionRow({ row, fmtN, handoffTargets = [], onTrace, onMeta, onExport,
         </div>
         <div className="text-right text-zinc-400">{fmtTime(row.lastTs)}</div>
         <div className="flex gap-1.5 justify-end items-center relative">
+          {row.resume_supported && (
+            <button onClick={onResume}
+              className="px-2 py-1 rounded-md border border-emerald-200 dark:border-emerald-900/50 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 whitespace-nowrap"
+              title={t('gateway.sessions.resume')}>{t('gateway.sessions.resume')}</button>
+          )}
           <button onClick={() => { setContOpen(v => !v); setExportOpen(false); }}
             className="px-2 py-1 rounded-md border border-blue-200 dark:border-blue-900/50 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 whitespace-nowrap">{t('gateway.sessions.continue')}</button>
           <button onClick={() => { setExportOpen(v => !v); setContOpen(false); }}
@@ -4009,6 +4037,133 @@ function autoConfigTools(t) {
   ];
 }
 
+// ── Route log detail modal ────────────────────────────────────────────────────
+
+function RouteLogDetailModal({ entry, onClose }) {
+  const { t } = useLang();
+  const [copied, setCopied] = useState(false);
+  if (!entry) return null;
+
+  const fmtMs = n => (n != null && n > 0) ? (n >= 1000 ? (n/1000).toFixed(1)+'s' : n+'ms') : '—';
+  const isError = entry.status === 'error';
+  const errorText = entry.error || '';
+  const providerErrors = entry.provider_errors || [];
+
+  const copyError = () => {
+    const lines = [
+      errorText,
+      ...providerErrors.map(pe => `[${pe.provider}] ${pe.error}`),
+    ].filter(Boolean).join('\n');
+    navigator.clipboard?.writeText(lines).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  };
+
+  const DetailRow = ({ label, children }) => (
+    <div className="flex gap-3 text-xs">
+      <span className="text-zinc-400 shrink-0 w-20">{label}</span>
+      <span className="text-zinc-700 dark:text-zinc-300 flex-1 min-w-0 break-words">{children}</span>
+    </div>
+  );
+
+  return (
+    <div className="electron-no-drag fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="bg-white dark:bg-zinc-800 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-lg mx-4 max-h-[85vh] overflow-hidden flex flex-col"
+        onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0 flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full shrink-0 ${isError ? 'bg-red-400' : 'bg-green-400'}`} />
+          <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">{t('gateway.log.detailTitle')}</h3>
+          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-lg leading-none">×</button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-3">
+          <DetailRow label={t('gateway.log.requestTime')}>
+            {new Date(entry.ts).toLocaleString('zh-CN')}
+          </DetailRow>
+          <DetailRow label={t('gateway.log.requestedModel')}>
+            <span className="font-mono">{entry.requested_model || '—'}</span>
+          </DetailRow>
+          {entry.claude_from && (
+            <DetailRow label={t('gateway.log.claudeMap')}>
+              <span className="font-mono">{entry.claude_from}</span>
+            </DetailRow>
+          )}
+          {entry.scene_name && (
+            <DetailRow label={t('gateway.log.sceneName')}>
+              {entry.scene_name}
+            </DetailRow>
+          )}
+          {entry.tried?.length > 0 && (
+            <DetailRow label={t('gateway.log.triedModels')}>
+              <span className="font-mono text-red-400">{entry.tried.join(' → ')}</span>
+            </DetailRow>
+          )}
+          {entry.model && (
+            <DetailRow label={t('gateway.log.actualModel')}>
+              <span className="font-mono">{entry.model}</span>
+              {entry.tier && <span className="ml-1 text-zinc-400">({entry.tier})</span>}
+            </DetailRow>
+          )}
+          {(entry.via_label || entry.via) && (
+            <DetailRow label={t('gateway.log.provider')}>
+              {entry.via_label || entry.via}
+            </DetailRow>
+          )}
+          {entry.status === 'ok' && (
+            <DetailRow label={t('gateway.log.latency')}>
+              {fmtMs(entry.first_token_ms ?? entry.latency_ms)}
+            </DetailRow>
+          )}
+
+          {/* 错误详情 */}
+          {isError && errorText && (
+            <div className="mt-2">
+              <div className="text-xs text-zinc-400 mb-1.5">{t('gateway.log.errorDetail')}</div>
+              <pre className="text-xs font-mono text-red-600 dark:text-red-400 whitespace-pre-wrap break-words bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/40 rounded-lg p-3">{errorText}</pre>
+              {entry.error_code && (
+                <div className="mt-1.5 text-xs text-zinc-400">{t('gateway.log.errorCode')}: <span className="font-mono">{entry.error_code}</span></div>
+              )}
+            </div>
+          )}
+
+          {/* 各 provider 尝试失败记录 */}
+          {providerErrors.length > 0 && (
+            <div className="mt-2">
+              <div className="text-xs text-zinc-400 mb-1.5">{t('gateway.log.providerErrors')}</div>
+              <div className="space-y-1.5">
+                {providerErrors.map((pe, i) => (
+                  <div key={i} className="text-xs bg-zinc-50 dark:bg-zinc-800/60 rounded-lg px-3 py-2 border border-zinc-100 dark:border-zinc-700">
+                    <span className="font-mono text-blue-600 dark:text-blue-400">{pe.provider}</span>
+                    {pe.status && <span className="ml-2 text-zinc-400">HTTP {pe.status}</span>}
+                    <div className="mt-0.5 font-mono text-red-500 dark:text-red-400 break-words">{pe.error}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {isError && errorText && (
+          <div className="px-5 py-3 border-t border-zinc-100 dark:border-zinc-800 shrink-0 flex items-center gap-2">
+            {copied && <span className="text-xs text-green-600 dark:text-green-400">{t('gateway.log.copied')}</span>}
+            <div className="ml-auto flex gap-2">
+              <button onClick={copyError}
+                className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300">
+                {t('gateway.log.copyError')}
+              </button>
+              <button onClick={onClose}
+                className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500">
+                {t('gateway.sessions.close')}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function Gateway() {
@@ -4018,6 +4173,7 @@ export default function Gateway() {
   const [stats, setStats]       = useState(null);
   const [logEntries, setLog]    = useState([]);
   const [network, setNetwork]   = useState(null);   // /public/network 快照：路由日志把 worker_id join 成分享者
+  const [selectedLog, setSelectedLog] = useState(null);
   const [restarting, setRestarting] = useState(false);
   const [mainTab, setMainTab]   = useState(0);   // 0=应用列表 1=场景路由
 
@@ -4514,9 +4670,18 @@ export default function Gateway() {
               const workerTitle = e.worker
                 ? `worker ${e.worker}${wi?.geo ? ` · ${wi.geo}` : ''}${wi?.models?.length ? ` · ${wi.models.join(', ')}` : ''}`
                 : undefined;
+              const isError = e.status === 'error';
+              const clickable = isError || e.status === 'ok';
               return (
                 <div key={`${e.ts}-${e.via}-${i}`}
-                  className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-zinc-50 dark:bg-zinc-800/60">
+                  role={clickable ? 'button' : undefined}
+                  tabIndex={clickable ? 0 : undefined}
+                  onClick={clickable ? () => setSelectedLog(e) : undefined}
+                  onKeyDown={clickable ? (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); setSelectedLog(e); } } : undefined}
+                  title={clickable ? t('gateway.log.clickHint') : undefined}
+                  className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 ${
+                    clickable ? 'cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-700/60 transition-colors' : ''
+                  }`}>
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${e.status === 'ok' ? 'bg-green-400' : 'bg-red-400'}`} />
                   <span className="font-mono text-zinc-400 shrink-0 w-12">
                     {new Date(e.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
@@ -4576,6 +4741,9 @@ export default function Gateway() {
                       👤 {workerName}
                     </span>
                   )}
+                  {isError && (
+                    <span className="text-zinc-400 shrink-0 opacity-60">{t('gateway.log.detailShort')} ›</span>
+                  )}
                   {e.status === 'ok' && fmtMs(e.first_token_ms ?? e.latency_ms) && (
                     <span className="text-zinc-400 shrink-0">{fmtMs(e.first_token_ms ?? e.latency_ms)}</span>
                   )}
@@ -4586,6 +4754,8 @@ export default function Gateway() {
         )}
       </div>
       )}
+
+      {selectedLog && <RouteLogDetailModal entry={selectedLog} onClose={() => setSelectedLog(null)} />}
     </div>
   );
 }

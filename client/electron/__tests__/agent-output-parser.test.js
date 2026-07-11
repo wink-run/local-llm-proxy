@@ -72,12 +72,44 @@ assert.strictEqual(hookSteps.length, 1);
 assert.strictEqual(hookSteps[0].stepType, 'output');
 assert.strictEqual(hookSteps[0].content, '会话已就绪，开始工作。');
 
-const { summarizeAgentStdout } = require('../agent-output-parser');
+const { summarizeAgentStdout, extractModifiedFiles, isLikelyFilePath, extractCliSessionId } = require('../agent-output-parser');
 const summary = summarizeAgentStdout(
   JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: '你好' }] } }),
   'claude-code',
 );
 assert.strictEqual(summary, '你好');
+
+// 文件路径提取：stream-json Write
+const writeLine = JSON.stringify({
+  type: 'assistant',
+  message: {
+    content: [
+      { type: 'tool_use', name: 'Write', input: { file_path: 'skills/code-avatar/SKILL.md', content: '---\nname: x\n---' } },
+    ],
+  },
+});
+const extracted = extractModifiedFiles(`${writeLine}\n`);
+assert.strictEqual(extracted.length, 1);
+assert.strictEqual(extracted[0].path, 'skills/code-avatar/SKILL.md');
+assert.strictEqual(extracted[0].operation, 'created');
+
+// JSON 行内 Created: 子串不应误匹配 skill 正文
+const badJson = JSON.stringify({
+  type: 'user',
+  message: { content: [{ type: 'tool_result', content: 'Created: false\\n---\\n\\n# Code Avatar' }] },
+});
+assert.strictEqual(extractModifiedFiles(badJson).length, 0);
+assert.strictEqual(isLikelyFilePath('false\\n---\\n\\n# Title'), false);
+assert.ok(isLikelyFilePath('src/foo.py'));
+
+assert.strictEqual(
+  extractCliSessionId(JSON.stringify({ type: 'thread.started', thread_id: 'uuid-1' }), 'codex'),
+  'uuid-1',
+);
+assert.strictEqual(
+  extractCliSessionId(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-9' }), 'claude-code'),
+  'sess-9',
+);
 
 // Codex JSONL
 const codexSteps = parseAgentOutputLine(JSON.stringify({

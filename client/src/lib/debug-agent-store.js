@@ -9,6 +9,12 @@ export function emptyAgentSession() {
     taskResult: null,
     executing: false,
     delegations: {},
+    /** 已完成的多轮对话 */
+    conversationTurns: [],
+    /** CLI 侧 session/thread id（Codex resume 用） */
+    cliSessionId: null,
+    /** 当前会话绑定的工作目录 */
+    sessionWorkingDir: '',
   };
 }
 
@@ -120,12 +126,25 @@ export function mergeTaskIntoStore(status) {
   const running = status.status === 'running' || status.status === 'pending';
 
   patchStoreSession(key, {
-    currentUserPrompt: status.prompt || getStoreSession(key).currentUserPrompt,
+    currentUserPrompt: running ? (status.prompt || getStoreSession(key).currentUserPrompt) : '',
     currentTask: status,
     taskSteps: steps.length ? steps : getStoreSession(key).taskSteps,
     executing: running,
     taskResult: running ? null : (status.result || null),
   });
+
+  if (!running && status.prompt) {
+    archiveCompletedTurn(key, {
+      user: status.prompt,
+      steps,
+      result: status.result || null,
+      status: status.status,
+      taskId: status.id,
+      cliSessionId: status.result?.cliSessionId || null,
+      workingDir: status.context?.workingDir || getStoreSession(key).sessionWorkingDir || '',
+      timestamp: status.completed_at || Date.now(),
+    });
+  }
 
   if (status.context?.parentTaskId) {
     const hub = getStoreSession('__hub__');
@@ -191,7 +210,42 @@ export function clearSessionTaskState(sessionKey) {
     taskResult: null,
     executing: false,
     delegations: {},
+    conversationTurns: [],
+    cliSessionId: null,
+    sessionWorkingDir: '',
   });
+}
+
+/** 任务完成后归档为一轮对话 */
+export function archiveCompletedTurn(sessionKey, turn) {
+  if (!sessionKey || !turn?.user) return;
+  const s = getStoreSession(sessionKey);
+  const turns = [...(s.conversationTurns || [])];
+  // 同一 taskId 不重复归档
+  if (turn.taskId && turns.some(t => t.taskId === turn.taskId)) return;
+  turns.push({
+    user: turn.user,
+    steps: turn.steps || [],
+    result: turn.result || null,
+    status: turn.status || 'completed',
+    taskId: turn.taskId || null,
+    timestamp: turn.timestamp || Date.now(),
+  });
+  patchStoreSession(sessionKey, {
+    conversationTurns: turns,
+    cliSessionId: turn.cliSessionId || s.cliSessionId || null,
+    sessionWorkingDir: turn.workingDir || s.sessionWorkingDir || '',
+  });
+}
+
+/** 同工作目录下是否可续接 CLI 会话 */
+export function shouldContinueCliSession(sessionKey, workingDir) {
+  const s = getStoreSession(sessionKey);
+  if (!s.conversationTurns?.length) return false;
+  const dir = String(workingDir || '').trim();
+  if (!dir || s.sessionWorkingDir !== dir) return false;
+  const last = s.conversationTurns[s.conversationTurns.length - 1];
+  return last?.status === 'completed';
 }
 
 /** Debug Agent 列表前端缓存（stale-while-revalidate） */

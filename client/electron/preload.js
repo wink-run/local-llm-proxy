@@ -105,6 +105,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listAgentInstallations: () => ipcRenderer.invoke('resource:listAgentInstallations'),
     importFromAgent: (params) => ipcRenderer.invoke('resource:importFromAgent', params || {}),
     removeFromAgent: (params) => ipcRenderer.invoke('resource:removeFromAgent', params || {}),
+    openPath: (params) => ipcRenderer.invoke('resource:openPath', params || {}),
   },
   config: {
     read:  () => ipcRenderer.invoke('config:read'),
@@ -262,6 +263,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setMeta:  (payload) => ipcRenderer.invoke('sessions:setMeta', payload),
     export:   (payload) => ipcRenderer.invoke('sessions:export', payload),
     continue: (payload) => ipcRenderer.invoke('sessions:continue', payload),
+    resume:   (payload) => ipcRenderer.invoke('sessions:resume', payload),
     launch:   (payload) => ipcRenderer.invoke('sessions:launch', payload),
     knowledgeStart:  (opts)    => ipcRenderer.invoke('sessions:knowledgeStart', opts || {}),
     knowledgeResult: ()        => ipcRenderer.invoke('sessions:knowledgeResult'),
