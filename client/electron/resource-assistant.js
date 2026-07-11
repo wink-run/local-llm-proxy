@@ -6,6 +6,9 @@ const ASSISTANT_ID_PREFIX = 'assistant:';
 
 const DEFAULT_RUNTIME_AGENT = 'claude-code';
 
+/** Debug 可执行的运行时 Agent（投射目标可含 cursor 等，但智能体本体只走这些 CLI） */
+const ASSISTANT_RUNTIME_IDS = new Set(['claude-code', 'codex']);
+
 function isAssistantAgentId(agentId) {
   return String(agentId || '').startsWith(ASSISTANT_ID_PREFIX);
 }
@@ -133,6 +136,56 @@ function formatAssistantContent(content) {
   }
 }
 
+/**
+ * 解析智能体实际运行时：
+ * - 已投射到 claude-code/codex 时，以投射为准（配置中的 runtime 若仍在投射列表则保留）
+ * - 无可用投射时回退 content.runtime_agent
+ */
+function resolveAssistantRuntimeAgent(config, projections = [], availableIds = null) {
+  const configured = String(config?.runtime_agent || DEFAULT_RUNTIME_AGENT).trim() || DEFAULT_RUNTIME_AGENT;
+  const fromProj = [];
+  const seen = new Set();
+  for (const p of projections || []) {
+    const id = p?.agentId || p?.agent_id;
+    if (!ASSISTANT_RUNTIME_IDS.has(id) || seen.has(id)) continue;
+    if (availableIds && !availableIds.has(id)) continue;
+    seen.add(id);
+    fromProj.push(id);
+  }
+  if (!fromProj.length) {
+    if (availableIds && !availableIds.has(configured)) return null;
+    return configured;
+  }
+  if (fromProj.includes(configured)) return configured;
+  return fromProj[0];
+}
+
+/** 写入 runtime_agent 到智能体 content（保持 soul/skills/prompts） */
+function withAssistantRuntimeAgent(content, runtimeAgentId) {
+  const config = parseAssistantConfig(content);
+  const runtime = String(runtimeAgentId || DEFAULT_RUNTIME_AGENT).trim() || DEFAULT_RUNTIME_AGENT;
+  const payload = {};
+  if (config.soul) payload.soul = config.soul;
+  if (config.skills?.length) payload.skills = config.skills;
+  if (config.prompts?.length) payload.prompts = config.prompts;
+  if (config.parameters && Object.keys(config.parameters).length) payload.parameters = config.parameters;
+  payload.runtime_agent = runtime;
+  // 保留其它扩展字段
+  const text = String(content || '').trim();
+  if (text.startsWith('{')) {
+    try {
+      const raw = JSON.parse(text);
+      for (const [key, val] of Object.entries(raw)) {
+        if (key === 'system_prompt' || key === 'systemPrompt' || key === 'soul'
+          || key === 'skills' || key === 'prompts' || key === 'runtime_agent'
+          || key === 'runtimeAgent' || key === 'parameters') continue;
+        payload[key] = val;
+      }
+    } catch { /* ignore */ }
+  }
+  return formatAssistantContent(JSON.stringify(payload));
+}
+
 function assistantContentNeedsMigration(content) {
   const text = String(content || '').trim();
   if (!text.startsWith('{')) return false;
@@ -148,10 +201,13 @@ function assistantContentNeedsMigration(content) {
 module.exports = {
   ASSISTANT_ID_PREFIX,
   DEFAULT_RUNTIME_AGENT,
+  ASSISTANT_RUNTIME_IDS,
   isAssistantAgentId,
   assistantResourceId,
   parseAssistantConfig,
   resolveAssistantContext,
+  resolveAssistantRuntimeAgent,
+  withAssistantRuntimeAgent,
   buildAssistantLaunch,
   formatAssistantContent,
   assistantContentNeedsMigration,

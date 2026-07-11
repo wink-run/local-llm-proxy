@@ -17,6 +17,41 @@ function mergeStreamingContents(steps) {
   return foldStreamSteps(steps);
 }
 
+/** 合并同一子任务的派发 start/complete 为一张卡片，避免只露出最终摘要 */
+function mergeDelegationPairs(items) {
+  const startIdx = new Map();
+  const out = [];
+  for (const item of items) {
+    if (item.kind !== 'delegation' || !item.childTaskId) {
+      out.push(item);
+      continue;
+    }
+    if (item.phase === 'start') {
+      startIdx.set(item.childTaskId, out.length);
+      out.push({ ...item });
+      continue;
+    }
+    if (item.phase === 'complete') {
+      const idx = startIdx.get(item.childTaskId);
+      if (idx != null) {
+        const target = out[idx];
+        out[idx] = {
+          ...target,
+          phase: 'complete',
+          completeContent: item.content,
+          status: item.status || target.status,
+          delStatus: item.delStatus || target.delStatus,
+          nestedSteps: (item.nestedSteps?.length ? item.nestedSteps : target.nestedSteps) || [],
+          timestamp: item.timestamp || target.timestamp,
+        };
+        continue;
+      }
+    }
+    out.push({ ...item });
+  }
+  return out;
+}
+
 /** 合并连续 output / thinking 步骤，减少碎片化 */
 function buildTimeline(userPrompt, steps = [], delegations = {}, agentNames = {}) {
   const items = [];
@@ -165,7 +200,7 @@ function buildTimeline(userPrompt, steps = [], delegations = {}, agentNames = {}
   flushThinking();
   flushSystem();
   flushOutput();
-  return dedupeAssistantItems(collapseAdjacentThinkingGroups(pruneMixedAssistantBubbles(items)));
+  return dedupeAssistantItems(collapseAdjacentThinkingGroups(pruneMixedAssistantBubbles(mergeDelegationPairs(items))));
 }
 
 /** 合并内容相同/互为前缀的连续推理卡片 */
@@ -700,7 +735,8 @@ function DelegationCard({ item }) {
   const [open, setOpen] = useState(true);
   const isStart = item.phase === 'start';
   const isComplete = item.phase === 'complete';
-  const running = isStart && item.delStatus === 'running';
+  const resultContent = item.completeContent || (isComplete && !isStart ? item.content : '');
+  const running = (isStart || isComplete) && item.delStatus === 'running';
   const failed = isComplete && (item.status === 'failed' || item.delStatus === 'failed');
 
   const statusLabel = running
@@ -725,7 +761,7 @@ function DelegationCard({ item }) {
         >
           <span>{isComplete ? (failed ? '❌' : '✅') : '📤'}</span>
           <span className="text-xs font-semibold text-indigo-800 dark:text-indigo-300">
-            {isStart ? '派发' : '派发结果'} → {item.agentName || item.agentId}
+            {isComplete && !running ? '派发完成' : '派发'} → {item.agentName || item.agentId}
           </span>
           {statusLabel && (
             <span className={`text-[10px] px-1.5 py-0.5 rounded ${
@@ -744,14 +780,15 @@ function DelegationCard({ item }) {
 
         {open && (
           <div className="px-3 pb-3 space-y-2">
-            {isStart && item.content && (
+            {/* 派发任务描述（start 阶段保留的 prompt） */}
+            {item.content && (isStart || item.completeContent) && (
               <div className="text-xs border-l-2 border-indigo-300 dark:border-indigo-700 pl-2 text-zinc-600 dark:text-zinc-400">
                 <span className="text-zinc-400">任务：</span>
                 <MarkdownContent content={normalizeDisplayText(item.content)} />
               </div>
             )}
 
-            {/* 子 Agent 实时输出（主 Agent 视角嵌套展示） */}
+            {/* 子 Agent 执行过程（推理/工具/输出） */}
             {item.nestedSteps?.length > 0 && (
               <div className="rounded-lg border border-zinc-200/80 dark:border-zinc-700/80 bg-white/60 dark:bg-zinc-900/40 p-2 space-y-2">
                 <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
@@ -779,9 +816,10 @@ function DelegationCard({ item }) {
               </div>
             )}
 
-            {isComplete && item.content && (
+            {isComplete && resultContent && (
               <div className="text-xs max-h-48 overflow-y-auto text-zinc-700 dark:text-zinc-300">
-                <MarkdownContent content={normalizeDisplayText(item.content)} />
+                <span className="text-zinc-400 block mb-1">结果摘要：</span>
+                <MarkdownContent content={normalizeDisplayText(resultContent)} />
               </div>
             )}
 
@@ -815,7 +853,7 @@ export default function ExecutionLog({
   const timeline = useMemo(() => {
     const items = [];
     for (const turn of conversationTurns) {
-      items.push(...buildTurnTimeline(turn, {}, agentNames));
+      items.push(...buildTurnTimeline(turn, turn.delegations || {}, agentNames));
     }
     items.push(...buildTimeline(userPrompt, steps, delegations, agentNames));
     // 当前轮已完成但 steps 无回复时，用 result 摘要补全

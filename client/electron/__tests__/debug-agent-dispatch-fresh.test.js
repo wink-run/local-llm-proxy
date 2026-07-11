@@ -1,6 +1,5 @@
 'use strict';
-// 回归：聚合入口派发的子任务，必须在「刚开新会话」的子 Agent 标签里显示，
-// 不能被 isFreshAgentSession / skipHistoryRecover 守卫吞掉。
+// 回归：「新会话」后切换窗口/标签，不应回填已完成的旧对话；进行中的派发仍可镜像。
 const test = require('node:test');
 const assert = require('node:assert');
 
@@ -13,11 +12,9 @@ test('运行中的派发：子标签刚开新会话时，切过去仍能镜像�
   const agents = [{ id: 'assistant:res-poem', name: '写诗专家', type: 'assistant', resourceId: 'res-poem' }];
   const child = 'assistant:res-poem';
 
-  // 用户在子 Agent 标签点了「新会话」→ 该标签变为 fresh
   S.clearSessionTaskState(child);
   assert.equal(S.isFreshAgentSession(S.getStoreSession(child)), true, '前置：应为 fresh 会话');
 
-  // hub 当前会话派发一个仍在运行的子任务给该 Agent
   S.beginSessionInstance('__hub__');
   const hubInstance = S.getStoreSession('__hub__').sessionInstanceId;
   S.patchDelegation('__hub__', 'd1', {
@@ -28,7 +25,6 @@ test('运行中的派发：子标签刚开新会话时，切过去仍能镜像�
     sessionInstanceId: hubInstance,
   });
 
-  // 切到子 Agent 标签 → 应把派发镜像补显到「新会话」
   const ok = S.syncDelegatedMirrorToAgentTab(child, agents);
   const sess = S.getStoreSession(child);
 
@@ -37,12 +33,39 @@ test('运行中的派发：子标签刚开新会话时，切过去仍能镜像�
   assert.ok((sess.taskSteps || []).some(s => /床前明月光/.test(s.content)), '新会话应显示派发步骤');
 });
 
-test('已完成的派发：mergeTaskIntoStore 应把完成结果归档进子 Agent 标签（即便刚开新会话）', async () => {
+test('已完成的派发：新会话后切回标签，不应回填旧对话', async () => {
+  const agents = [{ id: 'assistant:res-poem2', name: '写诗专家', type: 'assistant', resourceId: 'res-poem2' }];
   const child = 'assistant:res-poem2';
+
+  S.beginSessionInstance('__hub__');
+  const hubInstance = S.getStoreSession('__hub__').sessionInstanceId;
+  S.patchDelegation('__hub__', 'd2', {
+    agentId: child,
+    prompt: '写一首诗，主题不限',
+    steps: [{ stepType: 'output', content: '《夏夜独坐》' }],
+    status: 'completed',
+    result: { summary: '《夏夜独坐》' },
+    sessionInstanceId: hubInstance,
+  });
+
+  // 用户点「新会话」
+  S.clearSessionTaskState(child);
+  assert.equal(S.isFreshAgentSession(S.getStoreSession(child)), true);
+
+  // 切换窗口再回来 → 不应把已完成派发灌进新会话
+  const ok = S.syncDelegatedMirrorToAgentTab(child, agents);
+  const sess = S.getStoreSession(child);
+  assert.equal(ok, false, 'fresh 会话不应回填已完成派发');
+  assert.equal((sess.conversationTurns || []).length, 0, '新会话应保持空白');
+  assert.equal(S.isFreshAgentSession(sess), true, '仍应保持 fresh，避免 recoverSessionHistory 回填');
+});
+
+test('已完成的派发：mergeTaskIntoStore 不污染 fresh 子标签', async () => {
+  const child = 'assistant:res-poem3';
   S.clearSessionTaskState(child);
 
   const completed = {
-    id: 'd2',
+    id: 'd3',
     agent_id: child,
     prompt: '写首诗',
     status: 'completed',
@@ -54,6 +77,45 @@ test('已完成的派发：mergeTaskIntoStore 应把完成结果归档进子 Age
   S.mergeTaskIntoStore(completed);
 
   const sess = S.getStoreSession(child);
-  assert.ok((sess.conversationTurns || []).some(tn => tn.taskId === 'd2'),
-    '完成的派发应归档为该标签的一轮对话');
+  assert.equal((sess.conversationTurns || []).length, 0, 'fresh 子标签不应被历史完成任务归档');
+});
+
+test('归档步骤：DB 步骤不能覆盖前端派发步骤', () => {
+  const stored = [
+    { stepType: 'delegation', phase: 'start', childTaskId: 'c1', content: '写 Python 诗', timestamp: 1 },
+    { stepType: 'thinking', content: '正在协调', timestamp: 2 },
+    { stepType: 'output', content: '最终汇总', timestamp: 3 },
+  ];
+  const db = [
+    { stepType: 'output', content: '最终汇总', timestamp: 3 },
+  ];
+  const merged = S.resolveArchiveSteps(db, stored);
+  assert.ok(merged.some(s => s.stepType === 'delegation'), '应保留派发步骤');
+  assert.ok(merged.some(s => s.stepType === 'thinking'), '应保留编排推理步骤');
+});
+
+test('子任务步骤：前端流式细节优先于 DB 摘要', () => {
+  const stored = [
+    { stepType: 'thinking', content: '构思诗句' },
+    { stepType: 'output', content: 'import poem' },
+  ];
+  const db = [{ stepType: 'output', content: 'import poem' }];
+  const picked = S.preferRicherSteps(db, stored);
+  assert.equal(picked.length, 2, '应保留 thinking 过程');
+  assert.ok(picked.some(s => s.stepType === 'thinking'));
+});
+
+test('归档轮次：delegations 随 conversationTurns 持久化', () => {
+  S.clearSessionTaskState('__hub__');
+  S.archiveCompletedTurn('__hub__', {
+    user: '分别写一首诗',
+    steps: [{ stepType: 'delegation', phase: 'start', childTaskId: 'c1', content: 'Python 诗' }],
+    delegations: {
+      c1: { agentId: 'assistant:py', prompt: 'Python 诗', steps: [{ stepType: 'output', content: 'import poem' }], status: 'completed' },
+    },
+    taskId: 'hub-1',
+  });
+  const turn = S.getStoreSession('__hub__').conversationTurns[0];
+  assert.ok(turn.delegations?.c1, '归档应保存 delegations');
+  assert.equal(turn.delegations.c1.steps[0].content, 'import poem');
 });

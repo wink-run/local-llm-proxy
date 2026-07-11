@@ -28,6 +28,8 @@ import {
   isFreshAgentSession,
   inferSessionKeyFromTask,
   stepsFromTaskStatus,
+  resolveArchiveSteps,
+  preferRicherSteps,
   getCachedAgentsList,
   setCachedAgentsList,
   archiveCompletedTurn,
@@ -728,14 +730,13 @@ export default function Debug() {
     if (!window.electronAPI?.agent?.listRecentTasks) return;
     const sess = getStoreSession(syncKey);
     if (sess.currentUserPrompt || sess.taskSteps?.length || sess.executing || sess.conversationTurns?.length) return;
+    // 「新会话」后切换窗口/标签，不回填任何历史（含旧派发）
+    if (sess.skipHistoryRecover && Date.now() - sess.skipHistoryRecover < 120_000) return;
 
     try {
       const res = await window.electronAPI.agent.listRecentTasks({ agentId: syncKey, limit: 1 });
       if (!res.success || !res.tasks?.length) return;
       const recent = res.tasks[0];
-      // 「新会话」只跳过恢复本标签自己的历史直调；被聚合入口派发进来的子任务仍要显示（派发到新会话）
-      const isDelegated = !!recent.context?.parentTaskId;
-      if (!isDelegated && sess.skipHistoryRecover && Date.now() - sess.skipHistoryRecover < 120_000) return;
       mergeTaskIntoStore(recent);
       syncSessionToStateRef.current?.(syncKey);
     } catch (err) {
@@ -829,6 +830,7 @@ export default function Debug() {
       archiveCompletedTurn(resolvedKey, {
         user: patch.currentUserPrompt || sess.currentUserPrompt,
         steps: patch.taskSteps || sess.taskSteps || [],
+        delegations: sess.delegations || {},
         result: patch.taskResult || sess.taskResult || null,
         status: terminal === 'cancelled' ? 'failed' : terminal,
         taskId,
@@ -847,6 +849,7 @@ export default function Debug() {
         currentUserPrompt: '',
         taskSteps: [],
         taskResult: null,
+        delegations: {},
         conversationTurns: afterArchive.conversationTurns,
         cliSessionId: terminal === 'completed'
           ? (patch.taskResult?.cliSessionId || afterArchive.cliSessionId)
@@ -972,10 +975,10 @@ export default function Debug() {
 
   /** 从任务状态/完成事件补全步骤（DB 无步骤时用 summary/stdout 兜底） */
   function resolveTaskSteps(status, data, key) {
-    let steps = status ? stepsFromTaskStatus(status) : [];
-    if (steps.length) return steps;
-    const stored = getStoreSession(key).taskSteps;
-    if (stored?.length) return stored;
+    const stored = getStoreSession(key).taskSteps || [];
+    const dbSteps = status ? stepsFromTaskStatus(status) : [];
+    const merged = resolveArchiveSteps(dbSteps, stored);
+    if (merged.length) return merged;
     const out = status?.result?.summary
       || status?.result?.output
       || data?.result?.summary
@@ -1040,7 +1043,11 @@ export default function Debug() {
       const mirrorKey = resolveMirrorRoute(childId) || agentKey;
 
       const prevDel = getStoreSession(parentKey).delegations?.[childId] || {};
-      let resolvedSteps = resolveTaskSteps(status, data, mirrorKey);
+      const mirrorStored = prevDel.steps?.length
+        ? prevDel.steps
+        : (getStoreSession(mirrorKey).taskSteps || []);
+      const dbSteps = status ? stepsFromTaskStatus(status) : [];
+      let resolvedSteps = preferRicherSteps(dbSteps, mirrorStored);
       if (!resolvedSteps.length) {
         resolvedSteps = prevDel.steps || getStoreSession(mirrorKey).taskSteps || [];
       }

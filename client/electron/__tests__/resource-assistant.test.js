@@ -33,6 +33,31 @@ test('buildAssistantLaunch for claude-code uses append-system-prompt', () => {
   assert.ok(launch.claudeExtraArgs.includes('--append-system-prompt'));
 });
 
+test('resolveAssistantRuntimeAgent prefers projection over default runtime', () => {
+  const { resolveAssistantRuntimeAgent } = require('../resource-assistant');
+  const config = parseAssistantConfig(JSON.stringify({ soul: 'x', runtime_agent: 'claude-code' }));
+  assert.equal(
+    resolveAssistantRuntimeAgent(config, [{ agentId: 'codex' }]),
+    'codex',
+  );
+});
+
+test('resolveAssistantRuntimeAgent keeps configured runtime if still projected', () => {
+  const { resolveAssistantRuntimeAgent } = require('../resource-assistant');
+  const config = parseAssistantConfig(JSON.stringify({ soul: 'x', runtime_agent: 'claude-code' }));
+  assert.equal(
+    resolveAssistantRuntimeAgent(config, [{ agentId: 'codex' }, { agentId: 'claude-code' }]),
+    'claude-code',
+  );
+});
+
+test('withAssistantRuntimeAgent writes runtime_agent', () => {
+  const { withAssistantRuntimeAgent, parseAssistantConfig: parse } = require('../resource-assistant');
+  const out = withAssistantRuntimeAgent(JSON.stringify({ soul: 'hi' }), 'codex');
+  assert.equal(parse(out).runtime_agent, 'codex');
+  assert.equal(parse(out).soul, 'hi');
+});
+
 test('formatAssistantContent migrates system_prompt to soul', () => {
   const { formatAssistantContent } = require('../resource-assistant');
   const out = formatAssistantContent(JSON.stringify({

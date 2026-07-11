@@ -33,7 +33,7 @@ const {
   findScanGroupByScanKey,
   hashContent: scanHashContent,
 } = require('./resource-skill-scanner');
-const { parseAssistantConfig, formatAssistantContent, assistantContentNeedsMigration } = require('./resource-assistant');
+const { parseAssistantConfig, formatAssistantContent, assistantContentNeedsMigration, resolveAssistantRuntimeAgent, withAssistantRuntimeAgent } = require('./resource-assistant');
 
 /**
  * 按模板智能填充参数：正文含 $ARGUMENTS → 全部替换为参数；不含 → 参数非空时以分隔线追加。
@@ -510,6 +510,11 @@ class ResourceManager {
       results.push(...batch.results);
     }
 
+    // 智能体：投射目标同步为 Debug 运行时（投到 Codex → Debug 显示 Codex）
+    if (resource.type === 'assistant') {
+      this._syncAssistantRuntimeFromProjections(resourceId);
+    }
+
     const symlinkCount = results.filter(r => r.projectionType === 'symlink').length;
     const copyCount = results.filter(r => r.projectionType === 'copy').length;
     const scanCount = results.filter(r => r.projectionType === 'scan' || r.projectionType === 'origin').length;
@@ -655,7 +660,33 @@ class ResourceManager {
     if (resource) unprojectResource(resource, row.agent_id, row.projection_type, row.target_path);
     db.prepare('DELETE FROM resource_projections WHERE id = ?').run(row.id);
 
+    if (resource?.type === 'assistant') {
+      this._syncAssistantRuntimeFromProjections(row.resource_id);
+    }
+
     return { success: true, resource: this.getResource(row.resource_id) };
+  }
+
+  /**
+   * 按当前投射列表同步智能体 content.runtime_agent，并刷新 Debug Agent 列表缓存
+   */
+  _syncAssistantRuntimeFromProjections(resourceId) {
+    const resource = this.getResource(resourceId);
+    if (!resource || resource.type !== 'assistant') return null;
+    const config = parseAssistantConfig(resource.content);
+    const nextRuntime = resolveAssistantRuntimeAgent(config, resource.projections || []);
+    if (!nextRuntime || nextRuntime === config.runtime_agent) {
+      try { require('./agent-executor').invalidateAgentListCache?.(); } catch { /* ignore */ }
+      return resource;
+    }
+    const content = withAssistantRuntimeAgent(resource.content, nextRuntime);
+    const now = Date.now();
+    const hash = this._hashContent(content);
+    this._getDb().prepare(`
+      UPDATE resources SET content = ?, hash = ?, updated_at = ? WHERE id = ?
+    `).run(content, hash, now, resourceId);
+    try { require('./agent-executor').invalidateAgentListCache?.(); } catch { /* ignore */ }
+    return this.getResource(resourceId);
   }
 
   listAgentTargets() {
