@@ -19,6 +19,7 @@ const {
   assistantResourceId,
   parseAssistantConfig,
   resolveAssistantContext,
+  resolveAssistantRuntimeAgent,
   buildAssistantLaunch,
   ASSISTANT_ID_PREFIX,
 } = require('./resource-assistant');
@@ -232,8 +233,13 @@ class AgentExecutor extends EventEmitter {
 
     for (const resource of items) {
       const config = parseAssistantConfig(resource.content);
-      const runtimeAgentId = config.runtime_agent;
-      if (!availableCliIds.has(runtimeAgentId)) continue;
+      // 投射到 Codex/Claude Code 时，Debug 运行时跟投射走（避免仍显示默认 claude-code）
+      const runtimeAgentId = resolveAssistantRuntimeAgent(
+        config,
+        resource.projections || [],
+        availableCliIds,
+      );
+      if (!runtimeAgentId || !availableCliIds.has(runtimeAgentId)) continue;
 
       list.push({
         id: `${ASSISTANT_ID_PREFIX}${resource.id}`,
@@ -265,9 +271,9 @@ class AgentExecutor extends EventEmitter {
     }
 
     const config = parseAssistantConfig(resource.content);
-    const runtimeAgentId = config.runtime_agent;
-    if (!AGENT_CLI[runtimeAgentId]) {
-      throw new Error(`Assistant 运行时 Agent 不可用: ${runtimeAgentId}`);
+    const runtimeAgentId = resolveAssistantRuntimeAgent(config, resource.projections || []);
+    if (!runtimeAgentId || !AGENT_CLI[runtimeAgentId]) {
+      throw new Error(`Assistant 运行时 Agent 不可用: ${runtimeAgentId || config.runtime_agent}`);
     }
 
     const systemText = resolveAssistantContext(config, resourceManager);

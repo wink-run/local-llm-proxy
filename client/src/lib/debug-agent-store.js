@@ -188,6 +188,42 @@ export function stepsFromTaskStatus(status) {
   return mapDbSteps(status);
 }
 
+/**
+ * 归档/收尾时选取更完整的步骤（前端流式通常比 DB 终态摘要更细）。
+ */
+export function preferRicherSteps(dbSteps = [], storedSteps = []) {
+  const stored = Array.isArray(storedSteps) ? storedSteps : [];
+  const db = Array.isArray(dbSteps) ? dbSteps : [];
+  if (!stored.length) return db;
+  if (!db.length) return stored;
+  const detailTypes = new Set(['thinking', 'tool_call', 'terminal', 'code_edit', 'system_event']);
+  const countDetail = (arr) => arr.filter(s => detailTypes.has(s.stepType)).length;
+  const storedDetail = countDetail(stored);
+  const dbDetail = countDetail(db);
+  if (storedDetail > dbDetail) return stored;
+  if (dbDetail > storedDetail) return db;
+  if (stored.length > db.length) return stored;
+  if (db.length > stored.length) return db;
+  if (stored.some(s => s.is_delta || s.is_snapshot)) return stored;
+  return db;
+}
+
+/**
+ * 归档/收尾时合并步骤：派发步骤仅存于前端 taskSteps，并与 DB 步骤合并保留编排细节。
+ */
+export function resolveArchiveSteps(dbSteps = [], storedSteps = []) {
+  const stored = Array.isArray(storedSteps) ? storedSteps : [];
+  const db = Array.isArray(dbSteps) ? dbSteps : [];
+  const delegSteps = stored.filter(s => s.stepType === 'delegation');
+  if (!delegSteps.length) {
+    return preferRicherSteps(db, stored);
+  }
+  const storedOther = stored.filter(s => s.stepType !== 'delegation');
+  const dbOther = db.filter(s => s.stepType !== 'delegation');
+  const other = preferRicherSteps(dbOther, storedOther);
+  return [...delegSteps, ...other].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+}
+
 export function patchDelegation(parentKey, childTaskId, patch) {
   if (!parentKey || !childTaskId) return null;
   const parent = getStoreSession(parentKey);
@@ -223,11 +259,15 @@ export function syncDelegatedMirrorToAgentTab(agentKey, agents = []) {
   const matches = findDelegationsForAgentTab(agentKey, agents);
   if (!matches.length) return false;
 
-  // 注意：不因 isFreshAgentSession 提前退出。findDelegationsForAgentTab 已把候选限定为
-  // 「当前 hub 会话」派发给本标签的子任务——即使用户刚在本标签点了「新会话」，这类派发
-  // 也应显示到新会话中（派发到新会话）。下方补显会顺带清掉 skipHistoryRecover 认领该会话。
   const agentSess = getStoreSession(agentKey);
-  const { childId, del } = matches[matches.length - 1];
+  // 用户点了「新会话」：不回填已完成的旧派发；仅同步仍在执行的派发
+  const fresh = isFreshAgentSession(agentSess);
+  const candidates = fresh
+    ? matches.filter(m => !['completed', 'failed', 'cancelled'].includes(m.del?.status))
+    : matches;
+  if (!candidates.length) return false;
+
+  const { childId, del } = candidates[candidates.length - 1];
   const terminal = ['completed', 'failed', 'cancelled'].includes(del.status);
   const turns = agentSess.conversationTurns || [];
   const alreadyArchived = turns.some(t => t.taskId === childId);
@@ -265,13 +305,11 @@ export function syncDelegatedMirrorToAgentTab(agentKey, agents = []) {
       currentTask: agentSess.currentTask?.id === childId
         ? { id: childId, status: del.status }
         : agentSess.currentTask,
-      // 认领会话：清掉「新会话」跳恢复标记，避免后续 recoverSessionHistory 再次忽略
-      skipHistoryRecover: 0,
     });
     return true;
   }
 
-  // 执行中：从 delegations 补齐镜像
+  // 执行中：从 delegations 补齐镜像（可落到「新会话」空白页）
   patchStoreSession(agentKey, {
     currentUserPrompt: del.prompt || agentSess.currentUserPrompt,
     currentTask: { id: childId, status: 'running', parentTaskId: '__hub__' },
@@ -340,6 +378,8 @@ export function mergeTaskIntoStore(status) {
           executing: true,
         });
       } else if (status.prompt) {
+        // 「新会话」空白页不回填已完成的历史派发
+        if (isFreshAgentSession(getStoreSession(agentKey))) return;
         archiveCompletedTurn(agentKey, {
           user: status.prompt,
           steps,
@@ -502,6 +542,7 @@ export function archiveCompletedTurn(sessionKey, turn) {
   turns.push({
     user: turn.user,
     steps: turn.steps || [],
+    delegations: turn.delegations || {},
     result: turn.result || null,
     status: turn.status || 'completed',
     taskId: turn.taskId || null,
