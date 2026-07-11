@@ -1,5 +1,20 @@
 /** Debug Agent 模式：模块级会话缓存，避免切换菜单/重挂载后任务 state 丢失 */
 
+import { mergeStreamText } from '../../shared/stream-text-merge.js';
+
+/** 将同类型步骤折叠为合并后字符数（Codex DB 按行入库会虚增条数） */
+function foldedTypeChars(steps, stepType) {
+  let acc = '';
+  for (const s of steps) {
+    if ((s.stepType || 'output') !== stepType) continue;
+    acc = mergeStreamText(acc, s.content, {
+      isDelta: !!s.is_delta,
+      isSnapshot: !!s.is_snapshot,
+    });
+  }
+  return acc.length;
+}
+
 export function emptyAgentSession() {
   return {
     agentPrompt: '',
@@ -189,23 +204,29 @@ export function stepsFromTaskStatus(status) {
 }
 
 /**
- * 归档/收尾时选取更完整的步骤（前端流式通常比 DB 终态摘要更细）。
+ * 归档/收尾时选取更完整的步骤。
+ * Codex 等流式 Agent 在 DB 按 JSONL 行入库，条数会虚高，需按折叠后内容量比较。
  */
 export function preferRicherSteps(dbSteps = [], storedSteps = []) {
   const stored = Array.isArray(storedSteps) ? storedSteps : [];
   const db = Array.isArray(dbSteps) ? dbSteps : [];
   if (!stored.length) return db;
   if (!db.length) return stored;
+
   const detailTypes = new Set(['thinking', 'tool_call', 'terminal', 'code_edit', 'system_event']);
   const countDetail = (arr) => arr.filter(s => detailTypes.has(s.stepType)).length;
   const storedDetail = countDetail(stored);
   const dbDetail = countDetail(db);
   if (storedDetail > dbDetail) return stored;
   if (dbDetail > storedDetail) return db;
-  if (stored.length > db.length) return stored;
-  if (db.length > stored.length) return db;
+
+  const storedFold = foldedTypeChars(stored, 'output') + foldedTypeChars(stored, 'thinking');
+  const dbFold = foldedTypeChars(db, 'output') + foldedTypeChars(db, 'thinking');
+  if (storedFold > dbFold) return stored;
+  if (dbFold > storedFold) return db;
+
   if (stored.some(s => s.is_delta || s.is_snapshot)) return stored;
-  return db;
+  return stored;
 }
 
 /**
@@ -532,22 +553,51 @@ export function isFreshAgentSession(sess) {
     && !sess.conversationTurns?.length;
 }
 
-/** 任务完成后归档为一轮对话 */
+/** 步骤「丰富度」评分，用于归档 upsert */
+function stepsRichnessScore(steps = []) {
+  return foldedTypeChars(steps, 'output') + foldedTypeChars(steps, 'thinking');
+}
+
+function pickRicherResult(a, b) {
+  const len = (r) => String(r?.summary || r?.output || '').length;
+  return len(b) > len(a) ? b : a;
+}
+
+/** 任务完成后归档为一轮对话（同 taskId 以更完整内容 upsert） */
 export function archiveCompletedTurn(sessionKey, turn) {
   if (!sessionKey || !turn?.user) return;
   const s = getStoreSession(sessionKey);
   const turns = [...(s.conversationTurns || [])];
-  // 同一 taskId 不重复归档
-  if (turn.taskId && turns.some(t => t.taskId === turn.taskId)) return;
-  turns.push({
-    user: turn.user,
-    steps: turn.steps || [],
-    delegations: turn.delegations || {},
-    result: turn.result || null,
-    status: turn.status || 'completed',
-    taskId: turn.taskId || null,
-    timestamp: turn.timestamp || Date.now(),
-  });
+  const existingIdx = turn.taskId ? turns.findIndex(t => t.taskId === turn.taskId) : -1;
+
+  if (existingIdx >= 0) {
+    const prev = turns[existingIdx];
+    const mergedSteps = preferRicherSteps(turn.steps || [], prev.steps || []);
+    const mergedResult = pickRicherResult(turn.result, prev.result);
+    const richer = stepsRichnessScore(mergedSteps) > stepsRichnessScore(prev.steps || [])
+      || String(mergedResult?.summary || mergedResult?.output || '').length
+        > String(prev.result?.summary || prev.result?.output || '').length;
+    if (!richer) return;
+    turns[existingIdx] = {
+      ...prev,
+      steps: mergedSteps,
+      delegations: { ...(prev.delegations || {}), ...(turn.delegations || {}) },
+      result: mergedResult,
+      status: turn.status || prev.status,
+      timestamp: turn.timestamp || prev.timestamp,
+    };
+  } else {
+    turns.push({
+      user: turn.user,
+      steps: turn.steps || [],
+      delegations: turn.delegations || {},
+      result: turn.result || null,
+      status: turn.status || 'completed',
+      taskId: turn.taskId || null,
+      timestamp: turn.timestamp || Date.now(),
+    });
+  }
+
   patchStoreSession(sessionKey, {
     conversationTurns: turns,
     cliSessionId: turn.cliSessionId || s.cliSessionId || null,

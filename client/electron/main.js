@@ -1988,6 +1988,14 @@ function registerIPC() {
   // Agent 聚合系统 IPC handlers
   const { registerAgentHandlers } = require('./ipc-handlers-agent');
   registerAgentHandlers();
+  try {
+    const agentExecutor = require('./agent-executor');
+    const resourceManager = require('./resource-manager');
+    const { startDispatchServer } = require('./agent-dispatch-server');
+    startDispatchServer(agentExecutor, resourceManager);
+  } catch (e) {
+    console.warn('[dispatch-server] start skipped:', e.message);
+  }
   const { registerMcpHandlers } = require('./ipc-handlers-mcp');
   registerMcpHandlers();
   const { registerResourceHandlers } = require('./ipc-handlers-resource');

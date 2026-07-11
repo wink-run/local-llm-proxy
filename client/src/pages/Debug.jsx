@@ -53,6 +53,8 @@ import {
 } from '../../shared/stream-text-merge.js';
 import AgentTabBar from '../components/AgentTabBar';
 import ExecutionLog from '../components/ExecutionLog';
+import AgentSessionHistoryPanel from '../components/AgentSessionHistoryPanel';
+import { saveAgentSessionSnapshot } from '../lib/debug-session-history';
 
 /** 下拉 value：同 id 跨层时用 tier:id，避免 HTML option 重复 value 选中错位 */
 function modelSelectValue(m) {
@@ -122,6 +124,13 @@ function dedupeOutputSteps(steps) {
     }
     const prevOut = [...out].reverse().find(s => s.stepType === 'output');
     if (prevOut) {
+      const prevLeaked = looksLikeLeakedReasoning(prevOut.content);
+      const nextLeaked = looksLikeLeakedReasoning(step.content);
+      // 泄漏推理与用户正文分开保留，避免合并后 sanitize 误删正文
+      if (prevLeaked !== nextLeaked) {
+        out.push(step);
+        continue;
+      }
       const merged = mergeStreamText(prevOut.content, step.content, {
         isSnapshot: !!step.is_snapshot,
         isDelta: !!step.is_delta,
@@ -229,6 +238,8 @@ function sanitizeTailOutput(steps) {
   }
 
   if (content === last.content) return steps;
+  // 剥离后为空则丢弃该 output，避免空气泡覆盖已有正文
+  if (!String(content || '').trim()) return steps.slice(0, -1);
   return [...steps.slice(0, -1), { ...last, content }];
 }
 
@@ -584,6 +595,7 @@ export default function Debug() {
   const [mcpProfileId, setMcpProfileId] = useState(() => loadMcpProfileId());
   const [delegations, setDelegations] = useState({});
   const [conversationTurns, setConversationTurns] = useState([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
   // @tbp 提示词引用自动补全
   const [tbpPrompts, setTbpPrompts] = useState([]);
   const [tbpMenu, setTbpMenu] = useState({ active: false, query: '', start: 0 });
@@ -602,7 +614,51 @@ export default function Debug() {
     || agents.find(a => !a.custom)
     || null;
   const isHubMode = !selectedAgent;
-  const activeAgent = selectedAgent || mainAgent;
+  const activeAgent = isHubMode ? mainAgent : selectedAgent;
+
+  /** 将当前标签页已完成对话写入本地历史（新会话前/归档后） */
+  function persistCurrentSessionHistory(key) {
+    if (!key) return;
+    const sess = getStoreSession(key);
+    if (!sess.conversationTurns?.length) return;
+    saveAgentSessionSnapshot(key, {
+      conversationTurns: sess.conversationTurns,
+      sessionWorkingDir: sess.sessionWorkingDir,
+      cliSessionId: sess.cliSessionId,
+    });
+  }
+
+  /** 恢复历史会话到当前标签页 */
+  function applyHistorySnapshot(execKey, snapshot) {
+    if (!execKey || !snapshot) return;
+    patchSession(execKey, {
+      conversationTurns: snapshot.conversationTurns || [],
+      currentUserPrompt: '',
+      taskSteps: [],
+      taskResult: null,
+      currentTask: null,
+      executing: false,
+      delegations: {},
+      agentPrompt: '',
+      sessionWorkingDir: snapshot.sessionWorkingDir || getStoreSession(execKey).sessionWorkingDir || '',
+      cliSessionId: snapshot.cliSessionId || null,
+      skipHistoryRecover: Date.now(),
+    });
+    if (snapshot.sessionWorkingDir) {
+      setAgentWorkingDir(snapshot.sessionWorkingDir);
+      saveAgentWorkingDir(snapshot.sessionWorkingDir);
+    }
+    syncSessionToState(execKey);
+  }
+
+  function restoreHistorySession(snapshot) {
+    const execKey = agentSessionKey(selectedAgent);
+    if (executing) {
+      cancelAgent().then(() => applyHistorySnapshot(execKey, snapshot));
+      return;
+    }
+    applyHistorySnapshot(execKey, snapshot);
+  }
 
   const panel = panels.main;
   const { conversation, input, systemPrompt, showSystem, streamMode, imageMode, imageRatio, imageResolution } = panel;
@@ -638,7 +694,8 @@ export default function Debug() {
         if (res.success && res.profiles?.length) {
           setMcpProfiles(res.profiles);
           if (!res.profiles.some(p => p.id === mcpProfileId)) {
-            const fallback = res.profiles[0].id;
+            const fallback = res.profiles.find(p => p.id === 'orchestrator-default')?.id
+              || res.profiles[0].id;
             setMcpProfileId(fallback);
             saveMcpProfileId(fallback);
           }
@@ -685,7 +742,7 @@ export default function Debug() {
             currentTask: { ...status, status: status.status },
             currentUserPrompt: status.prompt || sess.currentUserPrompt,
             taskResult: status.result || null,
-            taskSteps: steps.length ? steps : sess.taskSteps,
+            taskSteps: preferRicherSteps(steps, sess.taskSteps || []),
           });
           return;
         }
@@ -701,6 +758,12 @@ export default function Debug() {
         );
         return;
       }
+      // 尚无用户可见正文时不提前收尾（避免只归档推理过程）
+      const hasCleanOutput = sess.taskSteps.some(s =>
+        s.stepType === 'output' && s.content?.trim() && !looksLikeLeakedReasoning(s.content),
+      );
+      if (!hasCleanOutput) return;
+
       const summary = sess.taskSteps
         .filter(s => s.stepType === 'output' && s.content?.trim())
         .map(s => s.content)
@@ -827,9 +890,10 @@ export default function Debug() {
     });
     const terminal = patch.currentTask?.status;
     if (resolvedKey && terminal && ['completed', 'failed', 'cancelled'].includes(terminal)) {
+      const archiveSteps = preferRicherSteps(patch.taskSteps || [], sess.taskSteps || []);
       archiveCompletedTurn(resolvedKey, {
         user: patch.currentUserPrompt || sess.currentUserPrompt,
-        steps: patch.taskSteps || sess.taskSteps || [],
+        steps: archiveSteps,
         delegations: sess.delegations || {},
         result: patch.taskResult || sess.taskResult || null,
         status: terminal === 'cancelled' ? 'failed' : terminal,
@@ -856,6 +920,7 @@ export default function Debug() {
           : null,
         sessionWorkingDir: afterArchive.sessionWorkingDir,
       });
+      persistCurrentSessionHistory(resolvedKey);
     }
 
     if (!isDebugRouteRef.current) return;
@@ -941,6 +1006,7 @@ export default function Debug() {
   // 切换 Agent 标签时保存/恢复会话状态
   function switchAgent(agent) {
     const prevKey = agentSessionKey(selectedAgent);
+    persistCurrentSessionHistory(prevKey);
     patchStoreSession(prevKey, {
       agentPrompt,
       currentUserPrompt,
@@ -1140,7 +1206,7 @@ export default function Debug() {
             currentTask: { ...status, status: terminalStatus },
             currentUserPrompt: status.prompt || getStoreSession(key).currentUserPrompt,
             taskResult: status.result || data.result || null,
-            taskSteps: steps,
+            taskSteps: preferRicherSteps(steps, getStoreSession(key).taskSteps || []),
           });
           return;
         }
@@ -1406,34 +1472,7 @@ export default function Debug() {
         return;
       }
 
-      // 同步 JSON：步骤已到齐但完成事件丢失时，主动收尾
-      if (sess.executing && sess.taskSteps?.length >= 1 && i >= 2) {
-        const routed = resolveTaskRoute(taskId, null, null, agentsRef.current);
-        const taskMatch = !sess.currentTask?.id || sess.currentTask.id === taskId || routed === execKey;
-        const hasContent = sess.taskSteps.some(s => s.content?.trim());
-        if (taskMatch && hasContent) {
-          const summary = sess.taskSteps
-            .filter(s => s.stepType === 'output' && s.content?.trim())
-            .map(s => s.content)
-            .join('\n\n')
-            || sess.taskSteps
-              .filter(s => s.stepType === 'thinking' && s.content?.trim())
-              .map(s => s.content)
-              .join('\n\n')
-            || null;
-          finalizeTaskInUiRef.current?.(taskId, execKey, {
-            currentTask: { id: taskId, status: 'completed', completed_at: Date.now() },
-            currentUserPrompt: sess.currentUserPrompt,
-            taskResult: {
-              ...(summary ? { summary } : {}),
-              cliSessionId: sess.cliSessionId || null,
-            },
-            taskSteps: sess.taskSteps,
-          });
-          return;
-        }
-      }
-
+      // 不在此处提前收尾：1s 时往往只有推理、尚无正文，会导致归档后最终输出消失
       try {
         const res = await window.electronAPI.agent.getTaskStatus(taskId);
         if (!res.success) continue;
@@ -1619,15 +1658,16 @@ export default function Debug() {
   /** 清空当前标签页对话，便于开启新任务 */
   function startNewAgentSession() {
     const execKey = agentSessionKey(selectedAgent);
+    const doClear = () => {
+      persistCurrentSessionHistory(execKey);
+      clearSessionTaskState(execKey);
+      syncSessionToState(execKey);
+    };
     if (executing) {
-      cancelAgent().then(() => {
-        clearSessionTaskState(execKey);
-        syncSessionToState(execKey);
-      });
+      cancelAgent().then(doClear);
       return;
     }
-    clearSessionTaskState(execKey);
-    syncSessionToState(execKey);
+    doClear();
   }
 
   // Load config + gateway status (to get actual running port)
@@ -2292,15 +2332,24 @@ export default function Debug() {
                 />
               </div>
               <div className="shrink-0 flex flex-col gap-1.5 items-stretch">
-                {(conversationTurns.length > 0 || currentUserPrompt || taskSteps.length > 0 || executing) && (
+                <div className="flex flex-row gap-1.5">
                   <button
                     type="button"
-                    onClick={startNewAgentSession}
-                    className="px-4 h-7 rounded-xl border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors text-xs"
+                    onClick={() => setHistoryOpen(true)}
+                    className="flex-1 px-3 h-7 rounded-xl border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors text-xs whitespace-nowrap"
                   >
-                    新会话
+                    历史会话
                   </button>
-                )}
+                  {(conversationTurns.length > 0 || currentUserPrompt || taskSteps.length > 0 || executing) && (
+                    <button
+                      type="button"
+                      onClick={startNewAgentSession}
+                      className="flex-1 px-3 h-7 rounded-xl border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors text-xs whitespace-nowrap"
+                    >
+                      新会话
+                    </button>
+                  )}
+                </div>
                 {executing ? (
                   <button
                     type="button"
@@ -2326,6 +2375,16 @@ export default function Debug() {
           </div>
         )}
       </div>
+
+      {/* ── 历史会话 ── */}
+      <AgentSessionHistoryPanel
+        open={historyOpen && mode === 'agent'}
+        onClose={() => setHistoryOpen(false)}
+        agentKey={agentSessionKey(selectedAgent)}
+        agentLabel={isHubMode ? `聚合入口 · ${mainAgent?.name || ''}` : selectedAgent?.name}
+        listAgentId={isHubMode ? mainAgent?.id : selectedAgent?.id}
+        onRestore={restoreHistorySession}
+      />
 
       {/* ── Lightbox ── */}
       {lightbox && (

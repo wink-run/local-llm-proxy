@@ -29,6 +29,76 @@ const DEFAULT_PROFILE_ID = 'orchestrator-default';
 const DEVELOPMENT_PROFILE_ID = 'development';
 const DISPATCH_SCRIPT = path.join(__dirname, 'agent-dispatch-mcp.js');
 
+/** shell 单引号转义（用于 bridge launcher） */
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * 写入 bridge MCP 启动脚本：Codex 等外部进程拉起 Electron 时未必透传 env，
+ * 缺 ELECTRON_RUN_AS_NODE 会触发 NSApplication 注册并 SIGABRT 崩溃。
+ */
+function writeBridgeMcpLauncher({
+  taskId,
+  workingDir,
+  mainAgentId,
+  sessionKey,
+  sessionInstanceId,
+  mcpDir,
+}) {
+  const launcherPath = path.join(mcpDir, `bridge-${taskId}.sh`);
+  const dispatchLines = [];
+  try {
+    const { getDispatchEndpoint } = require('./agent-dispatch-server');
+    const ep = getDispatchEndpoint();
+    // 走主进程 HTTP 派发，避免 Codex 沙箱内子进程写 SQLite 报 readonly database
+    if (ep?.url && ep?.token) {
+      dispatchLines.push(`export TB_DISPATCH_URL=${shellQuote(ep.url)}`);
+      dispatchLines.push(`export TB_DISPATCH_TOKEN=${shellQuote(ep.token)}`);
+    }
+  } catch { /* 单测或未启动主进程时回退本地派发 */ }
+
+  const lines = [
+    '#!/bin/bash',
+    'export ELECTRON_RUN_AS_NODE=1',
+    `export TB_PARENT_TASK_ID=${shellQuote(taskId || '')}`,
+    `export TB_PARENT_SESSION_KEY=${shellQuote(sessionKey || '')}`,
+    `export TB_PARENT_SESSION_INSTANCE=${shellQuote(sessionInstanceId || '')}`,
+    `export TB_WORKING_DIR=${shellQuote(workingDir || process.cwd())}`,
+    `export TB_MAIN_AGENT_ID=${shellQuote(mainAgentId || '')}`,
+    ...dispatchLines,
+    `exec ${shellQuote(process.execPath)} ${shellQuote(DISPATCH_SCRIPT)}`,
+    '',
+  ];
+  fs.writeFileSync(launcherPath, lines.join('\n'), { mode: 0o755 });
+  return launcherPath;
+}
+
+/** 生成 Codex 编排临时 profile（完整 [mcp_servers.*] 表，避免 -c 局部覆盖导致 invalid transport） */
+function buildCodexOrchestratorProfileToml(servers, ctx, buildRuntimeConfig) {
+  const lines = ['# Token Bank orchestrator MCP profile (ephemeral)'];
+  for (const srv of servers) {
+    const cfg = buildRuntimeConfig(srv, ctx);
+    const name = srv.name;
+    const isBridge = srv.id === BUILTIN_BRIDGE_ID || srv.name === BUILTIN_BRIDGE_ID;
+    lines.push(`[mcp_servers.${name}]`);
+    lines.push(`command = ${JSON.stringify(cfg.command)}`);
+    lines.push(`args = ${JSON.stringify(cfg.args || [])}`);
+    lines.push('enabled = true');
+    // 内置 bridge 必须启动，否则编排层无法派发子 Agent
+    if (isBridge) lines.push('required = true');
+    if (cfg.env && Object.keys(cfg.env).length) {
+      lines.push('');
+      lines.push(`[mcp_servers.${name}.env]`);
+      for (const [k, v] of Object.entries(cfg.env)) {
+        lines.push(`${k} = ${JSON.stringify(String(v))}`);
+      }
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
 class MCPManager {
   constructor() {
     this._seeded = false;
@@ -44,27 +114,7 @@ class MCPManager {
     const db = this._getDb();
     const now = Date.now();
 
-    const bridge = db.prepare('SELECT id FROM mcp_servers WHERE id = ?').get(BUILTIN_BRIDGE_ID);
-    if (!bridge) {
-      db.prepare(`
-        INSERT INTO mcp_servers
-        (id, name, display_name, type, command, args, env, builtin, status, metadata, created_at, updated_at)
-        VALUES (?, ?, ?, 'stdio', ?, ?, ?, 1, 'active', ?, ?, ?)
-      `).run(
-        BUILTIN_BRIDGE_ID,
-        BUILTIN_BRIDGE_ID,
-        'Token Bank Agent Bridge',
-        '__DYNAMIC_ELECTRON__',
-        JSON.stringify([DISPATCH_SCRIPT]),
-        JSON.stringify({ ELECTRON_RUN_AS_NODE: '1' }),
-        JSON.stringify({
-          description: '内置 Agent 派发桥：tb_list_agents / tb_dispatch_agent / tb_get_prompt',
-          tools: ['tb_list_agents', 'tb_dispatch_agent', 'tb_get_prompt'],
-        }),
-        now,
-        now,
-      );
-    }
+    this._ensureBuiltinBridge(now);
 
     const profiles = [
       {
@@ -102,18 +152,63 @@ class MCPManager {
 
     // Profile ↔ Server 绑定（默认 Profile 均含 bridge）
     for (const profileId of [DEFAULT_PROFILE_ID, 'orchestrator-minimal', DEVELOPMENT_PROFILE_ID]) {
-      const link = db.prepare(
-        'SELECT profile_id FROM mcp_profile_servers WHERE profile_id = ? AND server_id = ?',
-      ).get(profileId, BUILTIN_BRIDGE_ID);
-      if (!link) {
-        db.prepare(`
-          INSERT INTO mcp_profile_servers (profile_id, server_id, enabled)
-          VALUES (?, ?, 1)
-        `).run(profileId, BUILTIN_BRIDGE_ID);
-      }
+      this._linkBuiltinBridgeToProfile(profileId);
     }
 
     this._seeded = true;
+  }
+
+  /** 确保内置 Agent Bridge 存在、启用，并绑定到编排默认 Profile */
+  _ensureBuiltinBridge(now = Date.now()) {
+    const db = this._getDb();
+    const bridge = db.prepare('SELECT id, status FROM mcp_servers WHERE id = ?').get(BUILTIN_BRIDGE_ID);
+    if (!bridge) {
+      db.prepare(`
+        INSERT INTO mcp_servers
+        (id, name, display_name, type, command, args, env, builtin, status, metadata, created_at, updated_at)
+        VALUES (?, ?, ?, 'stdio', ?, ?, ?, 1, 'active', ?, ?, ?)
+      `).run(
+        BUILTIN_BRIDGE_ID,
+        BUILTIN_BRIDGE_ID,
+        'Token Bank Agent Bridge',
+        '__DYNAMIC_ELECTRON__',
+        JSON.stringify([DISPATCH_SCRIPT]),
+        JSON.stringify({ ELECTRON_RUN_AS_NODE: '1' }),
+        JSON.stringify({
+          description: '内置 Agent 派发桥：tb_list_agents / tb_dispatch_agent / tb_get_prompt',
+          tools: ['tb_list_agents', 'tb_dispatch_agent', 'tb_get_prompt'],
+        }),
+        now,
+        now,
+      );
+    } else if (bridge.status !== 'active') {
+      db.prepare('UPDATE mcp_servers SET status = ?, updated_at = ? WHERE id = ?')
+        .run('active', now, BUILTIN_BRIDGE_ID);
+    }
+
+    for (const profileId of [DEFAULT_PROFILE_ID, 'orchestrator-minimal', DEVELOPMENT_PROFILE_ID]) {
+      this._linkBuiltinBridgeToProfile(profileId);
+    }
+
+    return db.prepare('SELECT * FROM mcp_servers WHERE id = ?').get(BUILTIN_BRIDGE_ID);
+  }
+
+  _linkBuiltinBridgeToProfile(profileId) {
+    const db = this._getDb();
+    const link = db.prepare(
+      'SELECT profile_id, enabled FROM mcp_profile_servers WHERE profile_id = ? AND server_id = ?',
+    ).get(profileId, BUILTIN_BRIDGE_ID);
+    if (!link) {
+      db.prepare(`
+        INSERT INTO mcp_profile_servers (profile_id, server_id, enabled)
+        VALUES (?, ?, 1)
+      `).run(profileId, BUILTIN_BRIDGE_ID);
+    } else if (!link.enabled) {
+      db.prepare(`
+        UPDATE mcp_profile_servers SET enabled = 1
+        WHERE profile_id = ? AND server_id = ?
+      `).run(profileId, BUILTIN_BRIDGE_ID);
+    }
   }
 
   /** 常见 MCP 目录 + 安装状态 */
@@ -619,6 +714,7 @@ class MCPManager {
    */
   buildOrchestratorLaunch({ agentId, taskId, workingDir, mainAgentId, profileId = DEFAULT_PROFILE_ID, sessionKey, sessionInstanceId }) {
     this.init();
+    this._ensureBuiltinBridge();
 
     if (!this.supportsOrchestrator(agentId)) {
       throw new Error(`编排模式暂不支持 Agent: ${agentId}`);
@@ -632,11 +728,15 @@ class MCPManager {
     const mcpDir = path.join(os.homedir(), '.tokenbank', 'mcp');
     fs.mkdirSync(mcpDir, { recursive: true });
     const cleanupFns = [];
+    const ctx = { taskId, workingDir, mainAgentId, sessionKey, sessionInstanceId };
+    // bridge 用 shell 脚本保证 ELECTRON_RUN_AS_NODE，避免 Electron 子进程 GUI 初始化崩溃
+    ctx.bridgeLauncher = writeBridgeMcpLauncher({ ...ctx, mcpDir });
+    cleanupFns.push(() => { try { fs.unlinkSync(ctx.bridgeLauncher); } catch {} });
 
     if (agentId === 'claude-code') {
       const mcpServers = {};
       for (const srv of servers) {
-        mcpServers[srv.name] = this._buildRuntimeServerConfig(srv, { taskId, workingDir, mainAgentId, sessionKey, sessionInstanceId });
+        mcpServers[srv.name] = this._buildRuntimeServerConfig(srv, ctx);
       }
 
       const configPath = path.join(mcpDir, `orch-${taskId}.json`);
@@ -657,18 +757,19 @@ class MCPManager {
     }
 
     if (agentId === 'codex') {
+      // Codex 新版 CLI 不再支持 --enable mcp（会报 Unknown feature flag: mcp 并以 code 1 退出）。
+      // MCP 通过 config.toml 的 [mcp_servers.*] 段加载；这里写入临时 profile 供 exec -p 叠加。
+      const profileName = `tokenbank-orch-${taskId}`;
+      const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+      const profilePath = path.join(codexHome, `${profileName}.config.toml`);
+      const toml = buildCodexOrchestratorProfileToml(servers, ctx, (srv) => this._buildRuntimeServerConfig(srv, ctx));
+      fs.mkdirSync(codexHome, { recursive: true });
+      fs.writeFileSync(profilePath, toml, 'utf8');
+      cleanupFns.push(() => { try { fs.unlinkSync(profilePath); } catch {} });
+
       const extraArgs = ['exec'];
       if (workingDir) extraArgs.push('--cd', workingDir);
-      extraArgs.push('--json', '--enable', 'mcp', '--skip-git-repo-check');
-      for (const srv of servers) {
-        const cfg = this._buildRuntimeServerConfig(srv, { taskId, workingDir, mainAgentId, sessionKey, sessionInstanceId });
-        const name = srv.name;
-        extraArgs.push('-c', `mcp_servers.${name}.command=${JSON.stringify(cfg.command)}`);
-        extraArgs.push('-c', `mcp_servers.${name}.args=${JSON.stringify(cfg.args)}`);
-        for (const [k, v] of Object.entries(cfg.env || {})) {
-          extraArgs.push('-c', `mcp_servers.${name}.env.${k}=${JSON.stringify(String(v))}`);
-        }
-      }
+      extraArgs.push('--json', '--skip-git-repo-check', '-p', profileName);
 
       return {
         extraArgs,
@@ -696,13 +797,20 @@ class MCPManager {
     const profile = db.prepare('SELECT id FROM mcp_profiles WHERE id = ?').get(profileId);
     const effectiveId = profile ? profileId : DEFAULT_PROFILE_ID;
 
-    return db.prepare(`
+    const servers = db.prepare(`
       SELECT s.*
       FROM mcp_profile_servers ps
       JOIN mcp_servers s ON s.id = ps.server_id
       WHERE ps.profile_id = ? AND ps.enabled = 1 AND s.status = 'active'
       ORDER BY s.builtin DESC, s.name ASC
     `).all(effectiveId);
+
+    // 编排层内置 bridge 始终默认启动（即使用户 Profile 未勾选）
+    const bridge = this._ensureBuiltinBridge();
+    if (bridge && !servers.some(s => s.id === BUILTIN_BRIDGE_ID)) {
+      return [bridge, ...servers];
+    }
+    return servers;
   }
 
   /** 运行时 Server 配置（内置 bridge 注入 task 上下文） */
@@ -711,6 +819,14 @@ class MCPManager {
     const baseEnv = this._parseJson(serverRow.env, {});
 
     if (serverRow.id === BUILTIN_BRIDGE_ID || serverRow.name === BUILTIN_BRIDGE_ID) {
+      // 编排模式优先走 shell launcher（env 写在脚本内，Codex MCP 子进程更可靠）
+      if (ctx.bridgeLauncher) {
+        return {
+          command: ctx.bridgeLauncher,
+          args: [],
+          env: {},
+        };
+      }
       return {
         command: process.execPath,
         args: [DISPATCH_SCRIPT],
@@ -767,3 +883,6 @@ module.exports.ORCHESTRATOR_SYSTEM = ORCHESTRATOR_SYSTEM;
 module.exports.DEFAULT_PROFILE_ID = DEFAULT_PROFILE_ID;
 module.exports.DEVELOPMENT_PROFILE_ID = DEVELOPMENT_PROFILE_ID;
 module.exports.BUILTIN_BRIDGE_ID = BUILTIN_BRIDGE_ID;
+module.exports.buildCodexOrchestratorProfileToml = buildCodexOrchestratorProfileToml;
+module.exports.writeBridgeMcpLauncher = writeBridgeMcpLauncher;
+module.exports.shellQuote = shellQuote;
