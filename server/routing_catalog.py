@@ -86,6 +86,9 @@ def normalize_step(raw: dict) -> dict:
         v = str(raw.get(k) or "").strip()
         if v:
             out[k] = v
+    w = raw.get("when")   # 每步可选条件（token/关键字/分类器等），命中才用；无=兜底
+    if isinstance(w, dict) and w.get("type"):
+        out["when"] = w
     return out
 
 
@@ -112,6 +115,13 @@ def normalize_route(raw: dict) -> dict:
     flow = normalize_strategy(raw.get("flow"))
     if flow:
         out["flow"] = flow                 # 链级流转策略
+    # 路由级统一过滤（顶层，和 flow 并列）：scope=来源(personal/community) / tier=价格(free/paid)
+    rscope = str(raw.get("scope") or "").strip()
+    if rscope in ("personal", "community"):
+        out["scope"] = rscope
+    rtier = str(raw.get("tier") or "").strip()
+    if rtier in ("free", "paid", "p2p"):
+        out["tier"] = rtier
     if isinstance(raw.get("rules"), list) and raw["rules"]:
         out["rules"] = raw["rules"]        # 条件规则(token/关键字)透传
     if isinstance(raw.get("classifier"), dict) and raw["classifier"]:

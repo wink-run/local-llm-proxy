@@ -1188,6 +1188,15 @@ function readLocalConfig() {
           cfg.scene_routes = cfg.scene_routes || [];
           for (const sr of missing) cfg.scene_routes.push({ ...sr, created_at: new Date().toISOString() });
         }
+        // 预定义 strategy-* 路由的显示名/图标以默认 yaml 为准刷新（防止旧数据/云端同步残留旧名）
+        const defById = new Map(defRoutes.map(r => [r.id, r]));
+        for (const r of (cfg.scene_routes || [])) {
+          if (String(r.id || '').startsWith('strategy-') && defById.has(r.id)) {
+            const d = defById.get(r.id);
+            if (d.scene_name) r.scene_name = d.scene_name;
+            if (d.icon) r.icon = d.icon;
+          }
+        }
       } catch {}
       // 用户显式取消托管的 agent_id 列表（自动托管会跳过这些）
       if (!Array.isArray(cfg.auto_host_disabled)) cfg.auto_host_disabled = [];
@@ -2068,6 +2077,8 @@ function registerIPC() {
         for (const r of local) { if (r.id) byId.set(r.id, r); }
         for (const r of parsed.scene_routes) {
           if (!r.id) continue;
+          // 客户端预定义策略路由（综合最优/免费源/…）的名字与定义以本地默认 yaml 为准，云端同步不覆盖
+          if (String(r.id).startsWith('strategy-') && byId.has(r.id)) continue;
           const existing = byId.get(r.id);
           if (existing) {
             Object.assign(existing, r);
@@ -2221,17 +2232,27 @@ function registerIPC() {
     // llm-router-* → scene steps / 策略路由（从 scene_routes 生成）
     const routerMap = {};
     for (const r of routes) {
-      // 策略路由：无 steps、有 strategy —— 模型无关，网关按类型扫候选 + 策略排序
-      if (r.model_key && r.strategy && !(r.steps?.length || r.rules?.length)) {
-        const entry = { strategy: r.strategy, scene_name: r.scene_name, id: r.id || r.model_key };
+      // 策略/过滤路由：无 steps/rules，但有 strategy / flow / scope / tier —— 模型无关，
+      // 网关按类型扫候选 + 策略排序(stratStepOf 识别 flow/scope/tier)。综合最优/免费源/社区源/个人源 皆此类。
+      if (r.model_key && (r.strategy || r.flow || r.scope || r.tier) && !(r.steps?.length || r.rules?.length)) {
+        const entry = { scene_name: r.scene_name, id: r.id || r.model_key,
+          ...(r.strategy ? { strategy: r.strategy } : {}),
+          ...(r.flow ? { flow: r.flow } : {}),
+          ...(r.scope ? { scope: r.scope } : {}),
+          ...(r.tier ? { tier: r.tier } : {}) };
         routerMap[r.model_key] = entry;
         if (r.id && r.id !== r.model_key) routerMap[r.id] = entry;
+        // scene_name 别名兜底：已部署的应用配置可能直接发中文显示名（如 Codex config.toml 里 model="综合最优"），无需重纳管也能解析
+        if (r.scene_name && !routerMap[r.scene_name]) routerMap[r.scene_name] = entry;
         continue;
       }
       if (r.model_key && (r.steps?.length || r.rules?.length)) {
-        const entry = { steps: r.steps || [], scene_name: r.scene_name, rules: r.rules || null, classifier: r.classifier || null };
+        // 带 steps/rules 的路由也要带上路由级 scope/tier/flow，否则"路由级过滤 + 模型链"会丢过滤
+        const entry = { steps: r.steps || [], scene_name: r.scene_name, rules: r.rules || null, classifier: r.classifier || null,
+          ...(r.flow ? { flow: r.flow } : {}), ...(r.scope ? { scope: r.scope } : {}), ...(r.tier ? { tier: r.tier } : {}) };
         routerMap[r.model_key] = entry;
         if (r.id && r.id !== r.model_key) routerMap[r.id] = entry;
+        if (r.scene_name && !routerMap[r.scene_name]) routerMap[r.scene_name] = entry;
       }
     }
     // manual / api-key apps: if model_intercept is set, redirect that incoming model name to the configured route
@@ -2241,7 +2262,9 @@ function registerIPC() {
         const parsed = parseRouteBinding(app.route_id, routes);
         if (parsed.isScene && parsed.scene) {
           const s = parsed.scene;
-          routerMap[app.model_intercept] = { steps: s.steps || [], scene_name: s.scene_name, rules: s.rules || null, classifier: s.classifier || null };
+          // 带上路由级 flow/scope/tier，否则 model_intercept 绑到策略/过滤路由（收费源/个人源等）会丢过滤
+          routerMap[app.model_intercept] = { steps: s.steps || [], scene_name: s.scene_name, rules: s.rules || null, classifier: s.classifier || null,
+            ...(s.flow ? { flow: s.flow } : {}), ...(s.scope ? { scope: s.scope } : {}), ...(s.tier ? { tier: s.tier } : {}) };
         } else {
           const modelId = parsed.modelId || app.route_id;
           routerMap[app.model_intercept] = { steps: [{ model: modelId, ...(parsed.tier ? { tier: parsed.tier } : {}) }], scene_name: app.name || modelId, rules: null, classifier: null };
@@ -2507,14 +2530,16 @@ function registerIPC() {
     return billingConfigMod.getUserAccounts(cfg, { boundDirectAgentIds: boundDirectAgentIds() });
   });
 
-  ipcMain.handle('localConfig:createSceneRoute', (_e, { scene_name, icon, steps, rules, classifier, flow, caveman_level }) => {
+  ipcMain.handle('localConfig:createSceneRoute', (_e, { scene_name, icon, steps, rules, classifier, flow, caveman_level, scope, tier }) => {
     const cfg   = readLocalConfig();
     const route = {
       id: rndHex(8), scene_name, icon: icon || '🔀',
-      steps: steps || [],
-      rules: rules || null,           // 条件路由规则（when → steps）
+      steps: steps || [],             // 每步可选带 when 条件（统一后不再单独存 rules）
+      rules: rules || null,           // 兼容旧条件路由规则（when → steps）
       classifier: classifier || null, // 语义分类器配置
       flow: flow || null,             // 链级流转策略
+      scope: scope || null,           // 路由级来源过滤(personal/community)
+      tier: tier || null,             // 路由级价格过滤(free/paid)
       caveman_level: caveman_level || null, // 输出风格
       model_key: 'llm-router-' + rndHex(6),
       created_at: new Date().toISOString(),
@@ -2525,11 +2550,11 @@ function registerIPC() {
     return route;
   });
 
-  ipcMain.handle('localConfig:updateSceneRoute', (_e, { id, scene_name, icon, steps, rules, classifier, flow, caveman_level }) => {
+  ipcMain.handle('localConfig:updateSceneRoute', (_e, { id, scene_name, icon, steps, rules, classifier, flow, caveman_level, scope, tier }) => {
     const cfg = readLocalConfig();
     const idx = cfg.scene_routes.findIndex(r => r.id === id);
     if (idx === -1) return null;
-    cfg.scene_routes[idx] = { ...cfg.scene_routes[idx], scene_name, icon, steps, rules: rules || null, classifier: classifier || null, flow: flow || null, caveman_level: caveman_level || null };
+    cfg.scene_routes[idx] = { ...cfg.scene_routes[idx], scene_name, icon, steps, rules: rules || null, classifier: classifier || null, flow: flow || null, caveman_level: caveman_level || null, scope: scope || null, tier: tier || null };
     writeLocalConfig(cfg);
     syncGatewayFromConfig(cfg);
     return cfg.scene_routes[idx];
