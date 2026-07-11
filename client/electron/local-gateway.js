@@ -691,8 +691,10 @@ function writeAnthropicApiError(res, status, message, openaiType) {
 function rejectOpenaiPayloadError(reject, errObj, res, { anthropic = false } = {}) {
   const status = openaiErrorTypeToStatus(errObj.type);
   const msg = errObj.message;
-  if (anthropic && res && !res.headersSent) writeAnthropicApiError(res, status, msg, errObj.type);
-  reject(Object.assign(new Error(`HTTP_${status}: ${msg}`), { status }));
+  // 不在此处写 res：候选失败后 failover 循环可能还要试下一个源。提前 writeHead/end 会占用响应，
+  // 令 res.headersSent=true 从而阻断 failover —— Anthropic /v1/messages 只试第一个候选就 502（agnes 等根本轮不到）。
+  // 终端错误由外层 fail() 按协议（anthropic / openai / responses）统一输出。apiErrorType 透传给 fail() 复原格式。
+  reject(Object.assign(new Error(`HTTP_${status}: ${msg}`), { status, apiErrorType: errObj.type }));
 }
 
 /** 路由失败时优先展示付费/本地源错误，避免 P2P 401 掩盖上游真实原因 */
@@ -2587,6 +2589,12 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
         res.end(JSON.stringify(payload));
         return;
       }
+      // Anthropic 客户端（/v1/messages）：终端错误必须是 anthropic 错误体 {type:'error',error:{...}}，
+      // 否则 Claude Desktop/CLI 解析不了。之前靠 rejectOpenaiPayloadError 提前写，现改由此处统一输出。
+      if (isAnthropic && !isResponses) {
+        writeAnthropicApiError(res, status, detail, lastErr?.apiErrorType || 'api_error');
+        return;
+      }
       const payload = isResponses
         ? codexTransform.chatErrorToResponseError({ error: { message: detail, type: 'all_providers_failed' } })
         : { error: 'all_providers_failed', detail };
@@ -2662,7 +2670,10 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       } catch (err) {
         if (handleP2pFatal(c.provider, err, res, isResponses)) { lastErr = err; recordError(c.model, callerKey, lastErr); return; }
         routeErrors.push({ id: c.provider.id, err }); lastErr = err;
-        if (isSourceLevelError(err)) deadSources.add(c.provider.id);   // 该源整体失效，别再试它其它模型
+        // 源级失效跳过：仅对「单账号多模型」的直连源有效（如 openai 一个账号下多个 gpt-* 全 429）。
+        // p2p 所有模型共享同一 provider.id(tokenbank-p2p) 但各是独立 worker，一个挂不代表其它挂，
+        // 绝不能因某个 p2p 模型源级失败就拉黑整个 p2p 池（否则会跳过后面能用的 agnes 等）。
+        if (isSourceLevelError(err) && !isP2pProvider(c.provider)) deadSources.add(c.provider.id);
         if (res.headersSent) return;
       }
     }
@@ -2728,7 +2739,8 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           } catch (err) {
             if (handleP2pFatal(c.provider, err, res, isResponses)) { lastErr = err; recordError(c.model, callerKey, lastErr); return; }
             stepErrors.push({ id: c.provider.id, err }); lastErr = err;
-            if (isSourceLevelError(err)) deadSources.add(c.provider.id);
+            // 见上：p2p 各模型独立 worker，不能因一个源级失败拉黑整个 tokenbank-p2p 池
+            if (isSourceLevelError(err) && !isP2pProvider(c.provider)) deadSources.add(c.provider.id);
             if (res.headersSent) return;
           }
         }
