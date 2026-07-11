@@ -1,8 +1,15 @@
 'use strict';
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { parseSkillFrontmatter, groupDiscoveredSkills } = require('../resource-skill-scanner');
+const {
+  parseSkillFrontmatter,
+  groupDiscoveredSkills,
+  scanAllAgentSkills,
+} = require('../resource-skill-scanner');
 
 test('parseSkillFrontmatter reads name and description', () => {
   const content = `---
@@ -47,4 +54,40 @@ test('groupDiscoveredSkills merges same skill on multiple agents', () => {
   ]);
   assert.equal(grouped.length, 1);
   assert.equal(grouped[0].agents.length, 2);
+});
+
+test('scanCustomSkillTree finds skills in project subdirs', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-skill-'));
+  const skillDir = path.join(tmp, 'nested', 'packs', 'demo-skill');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), `---
+name: nested-demo
+description: nested skill
+---
+
+# Demo
+`);
+
+  const { scanCustomSkillTree } = require('../resource-skill-scanner');
+  const flat = scanCustomSkillTree(tmp);
+  const hit = flat.find(i => i.name === 'nested-demo');
+  assert.ok(hit, 'expected nested skill');
+  assert.equal(hit.scope, 'custom');
+
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('scanAllAgentSkills global scope ignores custom dirs', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-skill-'));
+  const skillDir = path.join(tmp, '.agents', 'skills', 'only-custom');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '---\nname: only-custom\n---\n');
+
+  const globalOnly = scanAllAgentSkills({ scanScope: 'global', customDirs: [tmp] });
+  assert.ok(!globalOnly.some(i => i.name === 'only-custom'));
+
+  const customOnly = scanAllAgentSkills({ scanScope: 'custom', customDirs: [tmp] });
+  assert.ok(customOnly.some(i => i.name === 'only-custom'));
+
+  fs.rmSync(tmp, { recursive: true, force: true });
 });

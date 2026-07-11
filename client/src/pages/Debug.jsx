@@ -12,19 +12,43 @@ import {
   resolveTaskRoute,
   resolveSessionKey,
   routeTask,
+  routeTaskMirror,
+  resolveMirrorRoute,
+  resolveFinalizeKey,
+  resolveTaskInstance,
+  beginSessionInstance,
+  eventMatchesSession,
+  eventMatchesAgentMirror,
+  sessionTaskInstanceMatches,
   setStoreSelectedAgentId,
   getStoreSelectedAgentId,
   releaseAllExecutingSessions,
   releaseExecutingForTask,
   clearSessionTaskState,
+  isFreshAgentSession,
   inferSessionKeyFromTask,
   stepsFromTaskStatus,
   getCachedAgentsList,
   setCachedAgentsList,
   archiveCompletedTurn,
+  patchDelegation,
+  syncDelegatedToAgentTab,
+  syncDelegatedMirrorToAgentTab,
   shouldContinueCliSession,
+  normalizeWorkingDir,
 } from '../lib/debug-agent-store';
+import { detectTbpQuery, filterPromptSuggestions } from '../lib/tbp-autocomplete.mjs';
 import { useLang } from '../store/lang';
+import {
+  mergeStreamText,
+  splitInlineReasoning,
+  looksLikeInlineReasoning,
+  normalizeLoose,
+  stripDuplicateThinkingPrefix,
+  stripReasoningLeakage,
+  looksLikeLeakedReasoning,
+  sanitizeThinkingOutputPairs,
+} from '../../shared/stream-text-merge.js';
 import AgentTabBar from '../components/AgentTabBar';
 import ExecutionLog from '../components/ExecutionLog';
 
@@ -36,6 +60,175 @@ function modelSelectValue(m) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** 合并 Agent 流式步骤；output 去重/剥离已展示的 thinking */
+function coalesceAgentSteps(prev, stepData) {
+  const next = appendCoalescedStep(prev || [], stepData);
+  return sanitizeSteps(next);
+}
+
+/** 合并相邻/被泄漏 output 分隔的重复 thinking 步骤 */
+function dedupeThinkingSteps(steps) {
+  if (!steps?.length) return steps;
+  const out = [];
+  for (const step of steps) {
+    if (step.stepType !== 'thinking') {
+      out.push(step);
+      continue;
+    }
+    let j = out.length - 1;
+    while (j >= 0 && out[j].stepType === 'output' && looksLikeLeakedReasoning(out[j].content)) {
+      j -= 1;
+    }
+    if (j >= 0 && out[j].stepType === 'thinking') {
+      const last = out[j];
+      const merged = mergeStreamText(last.content, step.content, {
+        isSnapshot: !!step.is_snapshot,
+        isDelta: !!step.is_delta,
+      });
+      const la = normalizeLoose(last.content);
+      const lb = normalizeLoose(step.content);
+      const lm = normalizeLoose(merged);
+      if (la === lb || la === lm || lb === lm || la.startsWith(lb) || lb.startsWith(la)) {
+        out[j] = {
+          ...last,
+          content: String(merged).length >= String(last.content).length
+            ? merged
+            : last.content,
+          timestamp: step.timestamp || last.timestamp,
+        };
+        continue;
+      }
+    }
+    out.push(step);
+  }
+  return out;
+}
+
+/** 合并被重复 output 步骤（快照与 delta 交替） */
+function dedupeOutputSteps(steps) {
+  if (!steps?.length) return steps;
+  const out = [];
+  for (const step of steps) {
+    if (step.stepType !== 'output') {
+      out.push(step);
+      continue;
+    }
+    let j = out.length - 1;
+    while (j >= 0 && out[j].stepType === 'thinking' && looksLikeLeakedReasoning(out[j].content)) {
+      j -= 1;
+    }
+    const prevOut = [...out].reverse().find(s => s.stepType === 'output');
+    if (prevOut) {
+      const merged = mergeStreamText(prevOut.content, step.content, {
+        isSnapshot: !!step.is_snapshot,
+        isDelta: !!step.is_delta,
+      });
+      const pa = normalizeLoose(prevOut.content);
+      const pb = normalizeLoose(step.content);
+      const pm = normalizeLoose(merged);
+      if (pa === pb || pa === pm || pb === pm || pa.startsWith(pb) || pb.startsWith(pa)) {
+        prevOut.content = String(merged).length >= String(prevOut.content).length
+          ? merged
+          : prevOut.content;
+        prevOut.timestamp = step.timestamp || prevOut.timestamp;
+        continue;
+      }
+    }
+    out.push(step);
+  }
+  return out;
+}
+
+/** 全量清理：去掉误分类混合 output + 修复边界 + 尾部剥离 */
+function sanitizeSteps(steps) {
+  return sanitizeTailOutput(sanitizeThinkingOutputPairs(
+    dedupeOutputSteps(dedupeThinkingSteps(dropOrphanMixedOutputs(steps))),
+  ));
+}
+
+/** 已有 thinking 或后续干净 output 时，删除前面的混合 output */
+function dropOrphanMixedOutputs(steps) {
+  if (!steps?.length) return steps;
+  return steps.filter((step, i, arr) => {
+    if (step.stepType !== 'output' || !looksLikeLeakedReasoning(step.content)) return true;
+    const hasThinking = arr.some(s => s.stepType === 'thinking');
+    const hasLaterClean = arr.slice(i + 1).some(s =>
+      s.stepType === 'output' && s.content?.trim() && !looksLikeLeakedReasoning(s.content),
+    );
+    return !(hasThinking || hasLaterClean);
+  });
+}
+
+function appendCoalescedStep(steps, stepData) {
+  const last = steps[steps.length - 1];
+  const type = stepData.stepType || 'output';
+
+  if (last && last.stepType === type && (type === 'output' || type === 'thinking')) {
+    const merged = mergeStreamText(last.content, stepData.content, {
+      isDelta: !!stepData.is_delta,
+      isSnapshot: !!stepData.is_snapshot,
+    });
+    if (normalizeLoose(merged) === normalizeLoose(last.content)
+      && normalizeLoose(merged) === normalizeLoose(stepData.content)) {
+      return steps;
+    }
+    if (merged === last.content && merged === stepData.content) return steps;
+    return [
+      ...steps.slice(0, -1),
+      {
+        ...last,
+        ...stepData,
+        content: merged,
+        timestamp: stepData.timestamp || last.timestamp,
+        is_delta: undefined,
+        is_snapshot: undefined,
+      },
+    ];
+  }
+
+  // 相邻 thinking 内容相同 → 跳过重复
+  if (type === 'thinking' && last?.stepType === 'thinking'
+    && normalizeLoose(last.content) === normalizeLoose(stepData.content)) {
+    return steps;
+  }
+
+  if (last && last.stepType === type && last.content === stepData.content) return steps;
+  return [...steps, stepData];
+}
+
+/** 清理尾部 output：剥离重复推理，仅在无 thinking 步骤时才拆分 */
+function sanitizeTailOutput(steps) {
+  const last = steps[steps.length - 1];
+  if (!last || last.stepType !== 'output') return steps;
+
+  const lastThinking = [...steps].reverse().find(s => s.stepType === 'thinking');
+  let content = last.content;
+
+  if (lastThinking) {
+    content = stripReasoningLeakage(content, lastThinking.content);
+  } else if (looksLikeInlineReasoning(content)) {
+    const parts = splitInlineReasoning(content);
+    if (parts.some(p => p.stepType === 'thinking')) {
+      let acc = steps.slice(0, -1);
+      for (const part of parts) {
+        acc = appendCoalescedStep(acc, {
+          ...last,
+          stepType: part.stepType,
+          content: part.content,
+          is_delta: undefined,
+          is_snapshot: undefined,
+        });
+      }
+      return acc;
+    }
+    const outputs = parts.filter(p => p.stepType === 'output');
+    if (outputs.length) content = outputs.map(o => o.content).join('');
+  }
+
+  if (content === last.content) return steps;
+  return [...steps.slice(0, -1), { ...last, content }];
+}
 
 function isAnthropicUrl(url) {
   try { return /anthropic/i.test(new URL(url).hostname + new URL(url).pathname); } catch { return false; }
@@ -389,12 +582,18 @@ export default function Debug() {
   const [mcpProfileId, setMcpProfileId] = useState(() => loadMcpProfileId());
   const [delegations, setDelegations] = useState({});
   const [conversationTurns, setConversationTurns] = useState([]);
+  // @tbp 提示词引用自动补全
+  const [tbpPrompts, setTbpPrompts] = useState([]);
+  const [tbpMenu, setTbpMenu] = useState({ active: false, query: '', start: 0 });
+  const [tbpIndex, setTbpIndex] = useState(0);
+  const agentTextareaRef = useRef(null);
   const selectedAgentRef = useRef(null);
   selectedAgentRef.current = selectedAgent;
   const agentsRef = useRef([]);
   agentsRef.current = agents;
   const syncSessionToStateRef = useRef(null);
   const finalizeTaskInUiRef = useRef(null);
+  const finishDelegatedChildRef = useRef(null);
 
   // 当前生效的 Agent：直调 tab 或聚合入口的主 Agent
   const mainAgent = agents.find(a => a.id === mainAgentId && !a.custom)
@@ -413,6 +612,14 @@ export default function Debug() {
   useEffect(() => {
     loadAgents();
   }, []);
+
+  // 加载已纳管提示词，供输入框 @tbp 自动补全
+  useEffect(() => {
+    if (mode !== 'agent' || !window.electronAPI?.resource) return;
+    window.electronAPI.resource.listResources({ type: 'prompt' })
+      .then(r => { if (r?.success) setTbpPrompts(r.resources || []); })
+      .catch(() => {});
+  }, [mode]);
 
   // Load Agents when switching to agent mode（缓存为空时补拉）
   useEffect(() => {
@@ -438,6 +645,83 @@ export default function Debug() {
       .catch(err => console.warn('Failed to load MCP profiles:', err));
   }, [mode]);
 
+  const autoFinalizeTimersRef = useRef({});
+
+  /** 同步 JSON 步骤到齐后延迟收尾（IPC completed 丢失兜底） */
+  function scheduleAutoFinalize(taskId, key) {
+    if (!taskId || !key) return;
+    const timers = autoFinalizeTimersRef.current;
+    if (timers[taskId]) clearTimeout(timers[taskId]);
+    timers[taskId] = setTimeout(async () => {
+      delete timers[taskId];
+      const sess = getStoreSession(key);
+      if (isFreshAgentSession(sess)) return;
+      if (!sessionTaskInstanceMatches(sess, taskId)) return;
+      if (!sess.executing) return;
+      const routed = resolveTaskRoute(taskId, null, null, agentsRef.current);
+      const mirrorKey = resolveMirrorRoute(taskId);
+      const isMirrorTab = mirrorKey === key
+        || (sess.currentTask?.parentTaskId && sess.currentTask?.id === taskId);
+      if (routed && routed !== key && !isMirrorTab) return;
+      if (sess.currentTask?.id && sess.currentTask.id !== taskId) return;
+
+      try {
+        const res = await window.electronAPI.agent.getTaskStatus(taskId);
+        if (res.success && ['completed', 'failed', 'cancelled'].includes(res.status?.status)) {
+          const status = res.status;
+          const terminal = status.status;
+          if (status.context?.parentTaskId || sess.currentTask?.parentTaskId) {
+            finishDelegatedChildRef.current?.(
+              { taskId, agentId: status.agent_id, sessionInstanceId: status.context?.sessionInstanceId, result: status.result },
+              status,
+              terminal,
+            );
+            return;
+          }
+          const steps = resolveTaskSteps(status, { taskId, result: status.result }, key);
+          finalizeTaskInUiRef.current?.(taskId, key, {
+            currentTask: { ...status, status: status.status },
+            currentUserPrompt: status.prompt || sess.currentUserPrompt,
+            taskResult: status.result || null,
+            taskSteps: steps.length ? steps : sess.taskSteps,
+          });
+          return;
+        }
+      } catch { /* ignore */ }
+
+      if (!sess.taskSteps?.some(s => s.content?.trim())) return;
+      // 派发镜像：有步骤但 DB 未终态时，仍走委派收尾
+      if (sess.currentTask?.parentTaskId) {
+        finishDelegatedChildRef.current?.(
+          { taskId, sessionInstanceId: resolveTaskInstance(taskId) },
+          null,
+          'completed',
+        );
+        return;
+      }
+      const summary = sess.taskSteps
+        .filter(s => s.stepType === 'output' && s.content?.trim())
+        .map(s => s.content)
+        .join('\n\n')
+        || sess.taskSteps
+          .filter(s => s.stepType === 'thinking' && s.content?.trim())
+          .map(s => s.content)
+          .join('\n\n')
+        || null;
+      finalizeTaskInUiRef.current?.(taskId, key, {
+        currentTask: { id: taskId, status: 'completed', completed_at: Date.now() },
+        currentUserPrompt: sess.currentUserPrompt,
+        taskResult: {
+          ...(summary ? { summary } : {}),
+          cliSessionId: sess.cliSessionId || null,
+        },
+        taskSteps: sess.taskSteps,
+      });
+    }, 600);
+  }
+  const scheduleAutoFinalizeRef = useRef(scheduleAutoFinalize);
+  scheduleAutoFinalizeRef.current = scheduleAutoFinalize;
+
   /** 切换标签时从 DB 恢复最近任务（派发完成但前端未同步时） */
   const recoverSessionHistory = useCallback(async (syncKey) => {
     if (!syncKey || syncKey === '__hub__') return;
@@ -448,7 +732,11 @@ export default function Debug() {
     try {
       const res = await window.electronAPI.agent.listRecentTasks({ agentId: syncKey, limit: 1 });
       if (!res.success || !res.tasks?.length) return;
-      mergeTaskIntoStore(res.tasks[0]);
+      const recent = res.tasks[0];
+      // 「新会话」只跳过恢复本标签自己的历史直调；被聚合入口派发进来的子任务仍要显示（派发到新会话）
+      const isDelegated = !!recent.context?.parentTaskId;
+      if (!isDelegated && sess.skipHistoryRecover && Date.now() - sess.skipHistoryRecover < 120_000) return;
+      mergeTaskIntoStore(recent);
       syncSessionToStateRef.current?.(syncKey);
     } catch (err) {
       console.warn('[Debug] recoverSessionHistory failed:', err);
@@ -497,47 +785,62 @@ export default function Debug() {
   }
   syncSessionToStateRef.current = syncSessionToState;
 
-  /** 更新模块级会话；当前在调试页且标签匹配时同步 React state */
+  /** 更新模块级会话；当前标签页被修改时立即同步 React state */
   function patchSession(key, patch) {
     patchStoreSession(key, patch);
     if (!isDebugRouteRef.current) return getStoreSession(key);
 
     const activeKey = agentSessionKey(selectedAgentRef.current);
-    const activeSess = getStoreSession(activeKey);
-    const sameTab = activeKey === key;
-    const patchTaskId = patch.currentTask?.id;
-    const sameTask = patchTaskId && activeSess.currentTask?.id === patchTaskId;
+    if (activeKey === key) {
+      syncSessionToState(key);
+      return getStoreSession(key);
+    }
 
-    if (sameTab || sameTask || (patch.executing === false && activeSess.executing && sameTask)) {
-      syncSessionToState(sameTab ? key : activeKey);
+    // 子 Agent 任务完成时，若当前正在看聚合入口，同步 hub 派发状态
+    const patchTaskId = patch.currentTask?.id;
+    const routedKey = patchTaskId
+      ? resolveTaskRoute(patchTaskId, null, null, agentsRef.current)
+      : null;
+    if (activeKey === '__hub__' && (key === '__hub__' || routedKey === '__hub__')) {
+      syncSessionToState('__hub__');
+    } else if (patch.executing === false && routedKey === activeKey) {
+      syncSessionToState(activeKey);
     }
     return getStoreSession(key);
   }
 
   /** 任务结束：释放 executing、归档对话轮次并同步当前标签页 */
   function finalizeTaskInUi(taskId, key, patch) {
-    releaseExecutingForTask(taskId, {
+    const resolvedKey = resolveFinalizeKey(taskId, key, agentsRef.current);
+    if (!resolvedKey) return;
+    const sess = getStoreSession(resolvedKey);
+
+    // 用户已开新会话：仅释放 executing 锁，避免迟到事件把旧输出写回空白页
+    if (isFreshAgentSession(sess)) {
+      releaseExecutingForTask(taskId, { status: patch.currentTask?.status });
+      return;
+    }
+
+    const touched = releaseExecutingForTask(taskId, {
       status: patch.currentTask?.status,
     });
-
-    const sess = getStoreSession(key);
     const terminal = patch.currentTask?.status;
-    if (key && terminal && ['completed', 'failed', 'cancelled'].includes(terminal)) {
-      archiveCompletedTurn(key, {
+    if (resolvedKey && terminal && ['completed', 'failed', 'cancelled'].includes(terminal)) {
+      archiveCompletedTurn(resolvedKey, {
         user: patch.currentUserPrompt || sess.currentUserPrompt,
         steps: patch.taskSteps || sess.taskSteps || [],
         result: patch.taskResult || sess.taskResult || null,
         status: terminal === 'cancelled' ? 'failed' : terminal,
         taskId,
         cliSessionId: patch.taskResult?.cliSessionId || sess.cliSessionId || null,
-        workingDir: sess.sessionWorkingDir || agentWorkingDir.trim(),
+        workingDir: normalizeWorkingDir(sess.sessionWorkingDir || agentWorkingDir.trim()),
         timestamp: patch.currentTask?.completed_at || Date.now(),
       });
     }
 
-    if (key) {
-      const afterArchive = getStoreSession(key);
-      patchStoreSession(key, {
+    if (resolvedKey) {
+      const afterArchive = getStoreSession(resolvedKey);
+      patchStoreSession(resolvedKey, {
         currentTask: patch.currentTask,
         executing: false,
         // 已归档到 conversationTurns，避免与当前轮重复展示
@@ -545,17 +848,25 @@ export default function Debug() {
         taskSteps: [],
         taskResult: null,
         conversationTurns: afterArchive.conversationTurns,
-        cliSessionId: patch.taskResult?.cliSessionId || afterArchive.cliSessionId,
+        cliSessionId: terminal === 'completed'
+          ? (patch.taskResult?.cliSessionId || afterArchive.cliSessionId)
+          : null,
         sessionWorkingDir: afterArchive.sessionWorkingDir,
       });
     }
 
     if (!isDebugRouteRef.current) return;
     const activeKey = agentSessionKey(selectedAgentRef.current);
+    const routedKey = resolveTaskRoute(taskId, null, null, agentsRef.current);
+    const mirrorKey = resolveMirrorRoute(taskId);
     const activeSess = getStoreSession(activeKey);
-    if (activeSess.currentTask?.id === taskId || activeKey === key) {
-      syncSessionToState(activeKey);
-    }
+    const shouldSync = touched.includes(activeKey)
+      || activeKey === resolvedKey
+      || activeKey === mirrorKey
+      || routedKey === activeKey
+      || activeSess.currentTask?.id === taskId
+      || (activeSess.executing && (routedKey === activeKey || mirrorKey === activeKey));
+    if (shouldSync) syncSessionToState(activeKey);
   }
   finalizeTaskInUiRef.current = finalizeTaskInUi;
 
@@ -571,6 +882,33 @@ export default function Debug() {
     }
   }, []);
 
+  /** 镜像标签卡在 executing 时，从 DB 拉取子任务终态并收尾 */
+  async function recoverStuckMirrorTask(agentKey) {
+    if (!agentKey || agentKey === '__hub__' || !window.electronAPI?.agent) return;
+    const sess = getStoreSession(agentKey);
+    if (!sess.executing || !sess.currentTask?.id || !sess.currentTask?.parentTaskId) return;
+    if (!sessionTaskInstanceMatches(sess, sess.currentTask.id)) return;
+    try {
+      const res = await window.electronAPI.agent.getTaskStatus(sess.currentTask.id);
+      if (!res.success) return;
+      const status = res.status;
+      if (!['completed', 'failed', 'cancelled'].includes(status.status)) return;
+      finishDelegatedChildRef.current?.(
+        {
+          taskId: sess.currentTask.id,
+          agentId: status.agent_id,
+          sessionInstanceId: status.context?.sessionInstanceId,
+          result: status.result,
+        },
+        status,
+        status.status,
+      );
+      syncSessionToState(agentKey);
+    } catch {
+      // ignore
+    }
+  }
+
   // 切换侧边栏回到调试页时，从 store / 后端恢复进行中的任务
   useEffect(() => {
     if (location.pathname !== '/debug') return;
@@ -582,6 +920,9 @@ export default function Debug() {
     }
     syncSessionToState(key);
     recoverActiveTasks(key);
+    syncDelegatedMirrorToAgentTab(key, agentsRef.current);
+    syncSessionToState(key);
+    recoverStuckMirrorTask(key);
     recoverSessionHistory(key);
   }, [location.pathname, selectedAgent, recoverActiveTasks, recoverSessionHistory]);
 
@@ -614,6 +955,9 @@ export default function Debug() {
     setSelectedAgent(agent);
     syncSessionToState(key);
     setDirError('');
+    syncDelegatedMirrorToAgentTab(key, agentsRef.current);
+    syncSessionToState(key);
+    recoverStuckMirrorTask(key);
     recoverSessionHistory(key);
   }
 
@@ -652,6 +996,97 @@ export default function Debug() {
   useEffect(() => {
     if (!window.electronAPI?.agent) return;
 
+    const finishDelegatedChild = (data, status, terminalStatus) => {
+      const parentId = status?.context?.parentTaskId || data.parentTaskId;
+      if (!parentId) return false;
+
+      const parentKey = resolveTaskRoute(parentId, null, null, agentsRef.current) || '__hub__';
+      const childId = data.taskId;
+      const instanceId = status?.context?.sessionInstanceId
+        || data.sessionInstanceId
+        || resolveTaskInstance(childId);
+
+      // 过期 session：若镜像标签仍匹配，继续收尾镜像页
+      if (instanceId && !eventMatchesSession(parentKey, instanceId)) {
+        const agentId = status?.agent_id || data.agentId;
+        const agentKey = resolveSessionKey(agentId, agentsRef.current) || eventSessionKey(agentId, data.sessionKey);
+        if (agentKey && eventMatchesAgentMirror(agentKey, instanceId)) {
+          routeTaskMirror(childId, agentKey);
+          let resolvedSteps = resolveTaskSteps(status, data, agentKey);
+          if (!resolvedSteps.length) {
+            resolvedSteps = getStoreSession(agentKey).taskSteps || [];
+          }
+          if (!resolvedSteps.length) {
+            const summary = status?.result?.summary || data?.result?.summary;
+            if (summary) {
+              resolvedSteps = [{ stepType: 'output', content: String(summary), timestamp: Date.now(), agentId }];
+            }
+          }
+          finalizeTaskInUiRef.current?.(childId, agentKey, {
+            currentTask: status
+              ? { ...status, status: terminalStatus }
+              : { id: childId, status: terminalStatus, error: data.error },
+            currentUserPrompt: status?.prompt || data.prompt || getStoreSession(agentKey).currentUserPrompt,
+            taskResult: status?.result || data.result || null,
+            taskSteps: resolvedSteps,
+          });
+          return true;
+        }
+        releaseExecutingForTask(childId, { status: terminalStatus });
+        return true;
+      }
+      const agentId = status?.agent_id || data.agentId;
+      const agentKey = resolveSessionKey(agentId, agentsRef.current) || eventSessionKey(agentId, data.sessionKey);
+      const mirrorKey = resolveMirrorRoute(childId) || agentKey;
+
+      const prevDel = getStoreSession(parentKey).delegations?.[childId] || {};
+      let resolvedSteps = resolveTaskSteps(status, data, mirrorKey);
+      if (!resolvedSteps.length) {
+        resolvedSteps = prevDel.steps || getStoreSession(mirrorKey).taskSteps || [];
+      }
+      if (!resolvedSteps.length) {
+        const summary = status?.result?.summary || data?.result?.summary;
+        if (summary) {
+          resolvedSteps = [{
+            stepType: 'output',
+            content: String(summary),
+            timestamp: status?.completed_at || Date.now(),
+            agentId,
+          }];
+        }
+      }
+      const nextDel = {
+        ...prevDel,
+        agentId,
+        status: terminalStatus,
+        result: status?.result || data.result || null,
+        steps: resolvedSteps,
+      };
+      patchSession(parentKey, {
+        delegations: {
+          ...(getStoreSession(parentKey).delegations || {}),
+          [childId]: nextDel,
+        },
+      });
+
+      // 子 Agent 标签同步收尾归档
+      if (agentKey && agentKey !== parentKey) {
+        routeTaskMirror(childId, agentKey);
+        finalizeTaskInUiRef.current?.(childId, agentKey, {
+          currentTask: status
+            ? { ...status, status: terminalStatus }
+            : { id: childId, status: terminalStatus, error: data.error },
+          currentUserPrompt: nextDel.prompt || status?.prompt || data.prompt || '',
+          taskResult: status?.result || data.result || null,
+          taskSteps: resolvedSteps.length ? resolvedSteps : (nextDel.steps || getStoreSession(agentKey).taskSteps),
+        });
+      } else {
+        releaseExecutingForTask(childId, { status: terminalStatus });
+      }
+      return true;
+    };
+    finishDelegatedChildRef.current = finishDelegatedChild;
+
     const finishTask = async (data) => {
       if (!data?.taskId) return;
 
@@ -673,7 +1108,7 @@ export default function Debug() {
           const status = statusResult.status;
           key = key || inferSessionKeyFromTask(status);
           key = resolveSessionKey(key, agentsRef.current) || key;
-          if (!key) key = data.agentId || data.sessionKey || null;
+          if (!key) key = data.sessionKey || data.agentId || resolveTaskRoute(data.taskId) || null;
           if (!key) return;
 
           const steps = resolveTaskSteps(status, data, key);
@@ -681,28 +1116,25 @@ export default function Debug() {
             ? status.status
             : eventTerminal;
 
+          const parentId = status.context?.parentTaskId || data.parentTaskId;
+          if (parentId && finishDelegatedChild(data, status, terminalStatus)) {
+            return;
+          }
+
+          const taskInstanceId = status.context?.sessionInstanceId
+            || data.sessionInstanceId
+            || resolveTaskInstance(data.taskId);
+          if (taskInstanceId && key && !eventMatchesSession(key, taskInstanceId)) {
+            releaseExecutingForTask(data.taskId, { status: terminalStatus });
+            return;
+          }
+
           finalizeTaskInUiRef.current?.(data.taskId, key, {
             currentTask: { ...status, status: terminalStatus },
             currentUserPrompt: status.prompt || getStoreSession(key).currentUserPrompt,
             taskResult: status.result || data.result || null,
             taskSteps: steps,
           });
-
-          const parentId = status.context?.parentTaskId || data.parentTaskId;
-          if (parentId) {
-            const hub = getStoreSession('__hub__');
-            const dels = { ...(hub.delegations || {}) };
-            const childId = data.taskId;
-            if (dels[childId]) {
-              dels[childId] = {
-                ...dels[childId],
-                status: terminalStatus,
-                result: status.result || data.result || null,
-                steps: steps.length ? steps : (dels[childId].steps || []),
-              };
-              patchSession('__hub__', { delegations: dels });
-            }
-          }
           return;
         }
       } catch (err) {
@@ -714,67 +1146,92 @@ export default function Debug() {
       if (!key) return;
       const steps = resolveTaskSteps(null, data, key);
       const terminalStatus = data.error ? 'failed' : 'completed';
+
+      const parentId = data.parentTaskId;
+      if (parentId && finishDelegatedChild(data, null, terminalStatus)) {
+        return;
+      }
+
       finalizeTaskInUiRef.current?.(data.taskId, key, {
         currentUserPrompt: getStoreSession(key).currentUserPrompt || data.prompt,
         currentTask: { id: data.taskId, status: terminalStatus, error: data.error },
         taskResult: data.result || null,
         taskSteps: steps.length ? steps : getStoreSession(key).taskSteps,
       });
-
-      const parentId = data.parentTaskId;
-      if (parentId) {
-        const hub = getStoreSession('__hub__');
-        const dels = { ...(hub.delegations || {}) };
-        if (dels[data.taskId]) {
-          dels[data.taskId] = {
-            ...dels[data.taskId],
-            status: terminalStatus,
-            result: data.result || null,
-          };
-          patchSession('__hub__', { delegations: dels });
-        }
-      }
     };
 
-    const handleDispatched = ({ parentTaskId, childTaskId, agentId, prompt }) => {
+    const handleDispatched = ({ parentTaskId, childTaskId, agentId, prompt, parentSessionKey, parentSessionInstanceId }) => {
       if (!childTaskId || !agentId) return;
 
-      const ownerKey = eventSessionKey(agentId, agentId);
-      routeTask(childTaskId, ownerKey);
-      if (parentTaskId) routeTask(parentTaskId, '__hub__');
-
-      patchSession(ownerKey, {
-        currentUserPrompt: prompt,
-        currentTask: { id: childTaskId, status: 'running', parentTaskId },
-        taskSteps: [],
-        taskResult: null,
-        executing: true,
-      });
-
+      // 编排派发：子任务归属父窗口 session（当前标签页）
       if (parentTaskId) {
-        const hub = getStoreSession('__hub__');
-        patchSession('__hub__', {
+        const parentKey = resolveTaskRoute(parentTaskId, null, null, agentsRef.current)
+          || parentSessionKey
+          || '__hub__';
+        const instanceId = parentSessionInstanceId
+          || getStoreSession(parentKey).sessionInstanceId;
+        if (instanceId && !eventMatchesSession(parentKey, instanceId)) return;
+
+        routeTask(childTaskId, parentKey, instanceId);
+        routeTask(parentTaskId, parentKey, instanceId);
+
+        const parent = getStoreSession(parentKey);
+        patchSession(parentKey, {
           delegations: {
-            ...(hub.delegations || {}),
+            ...(parent.delegations || {}),
             [childTaskId]: {
               agentId,
               prompt,
               steps: [],
               status: 'running',
               result: null,
+              sessionInstanceId: instanceId,
             },
           },
         });
+
+        // 镜像到子 Agent 标签，切换过去也能看到执行过程
+        const agentKey = resolveSessionKey(agentId, agentsRef.current)
+          || eventSessionKey(agentId, agentId);
+        if (agentKey && agentKey !== parentKey) {
+          routeTaskMirror(childTaskId, agentKey);
+          patchSession(agentKey, {
+            currentUserPrompt: prompt,
+            currentTask: { id: childTaskId, status: 'running', parentTaskId },
+            taskSteps: [],
+            taskResult: null,
+            executing: true,
+            mirroredSessionInstanceId: instanceId,
+            // 认领子标签会话：即便刚点了「新会话」，派发也要落到该会话
+            skipHistoryRecover: 0,
+          });
+          scheduleAutoFinalizeRef.current?.(childTaskId, agentKey);
+        }
+        return;
       }
+
+      // 无父任务：直调子 Agent 标签
+      const ownerKey = eventSessionKey(agentId, agentId);
+      routeTask(childTaskId, ownerKey);
+      patchSession(ownerKey, {
+        currentUserPrompt: prompt,
+        currentTask: { id: childTaskId, status: 'running' },
+        taskSteps: [],
+        taskResult: null,
+        executing: true,
+      });
     };
 
     const handleStep = (stepData) => {
-      const { taskId, parentTaskId, agentId, sessionKey, stepType } = stepData;
+      const { taskId, parentTaskId, agentId, sessionKey, sessionInstanceId, stepType } = stepData;
 
       if (stepType === 'delegation') {
-        if (resolveTaskRoute(taskId) === '__hub__') {
-          const hub = getStoreSession('__hub__');
-          patchSession('__hub__', {
+        const hubKey = resolveTaskRoute(taskId, null, null, agentsRef.current) || '__hub__';
+        const instanceId = sessionInstanceId || resolveTaskInstance(taskId);
+        if (instanceId && !eventMatchesSession(hubKey, instanceId)) return;
+        if (hubKey) {
+          const hub = getStoreSession(hubKey);
+          patchSession(hubKey, {
             taskSteps: [...(hub.taskSteps || []), stepData],
           });
           if (stepData.phase === 'complete' && stepData.childTaskId) {
@@ -785,7 +1242,48 @@ export default function Debug() {
                 status: stepData.status || 'completed',
               };
             }
-            patchSession('__hub__', { delegations: dels });
+            patchSession(hubKey, { delegations: dels });
+          }
+        }
+        return;
+      }
+
+      // 派发子任务步骤：父窗口 delegations + 子 Agent 标签镜像
+      const mirrorKey = resolveMirrorRoute(taskId);
+      const isDelegatedChild = !!parentTaskId || !!mirrorKey;
+      if (isDelegatedChild) {
+        const parentKey = parentTaskId
+          ? (resolveTaskRoute(parentTaskId, null, null, agentsRef.current) || '__hub__')
+          : (resolveTaskRoute(taskId, null, null, agentsRef.current) || '__hub__');
+        const instanceId = sessionInstanceId
+          || resolveTaskInstance(taskId)
+          || resolveTaskInstance(parentTaskId);
+        if (instanceId && !eventMatchesSession(parentKey, instanceId)) return;
+        const parent = getStoreSession(parentKey);
+        const dels = { ...(parent.delegations || {}) };
+        const del = dels[taskId] || { agentId, prompt: '', steps: [], status: 'running' };
+        del.steps = coalesceAgentSteps(del.steps || [], stepData);
+        dels[taskId] = del;
+        patchSession(parentKey, { delegations: dels });
+
+        const agentKey = mirrorKey
+          || resolveSessionKey(agentId, agentsRef.current)
+          || eventSessionKey(agentId, sessionKey);
+        if (agentKey && agentKey !== parentKey) {
+          if (instanceId && !eventMatchesAgentMirror(agentKey, instanceId)) return;
+          const agentSess = getStoreSession(agentKey);
+          patchSession(agentKey, {
+            currentUserPrompt: del.prompt || agentSess.currentUserPrompt,
+            currentTask: {
+              id: taskId,
+              status: 'running',
+              parentTaskId: parentTaskId || agentSess.currentTask?.parentTaskId,
+            },
+            taskSteps: coalesceAgentSteps(agentSess.taskSteps || [], stepData),
+            executing: true,
+          });
+          if (stepData.content?.trim() || stepData.is_snapshot) {
+            scheduleAutoFinalizeRef.current?.(taskId, agentKey);
           }
         }
         return;
@@ -798,29 +1296,23 @@ export default function Debug() {
         agentsRef.current,
       ) || eventSessionKey(agentId, sessionKey);
       if (ownerKey) {
+        const instanceId = sessionInstanceId || resolveTaskInstance(taskId);
+        if (instanceId && !eventMatchesSession(ownerKey, instanceId)) return;
         const sess = getStoreSession(ownerKey);
         const sameTask = !sess.currentTask || sess.currentTask.id === taskId;
         if (sameTask) {
           const prev = sess.taskSteps || [];
-          const last = prev[prev.length - 1];
-          if (last && last.stepType === stepType && last.content === stepData.content) return;
-          // 仅追加步骤，不碰 executing（避免覆盖 finishTask 已释放的锁）
           patchSession(ownerKey, {
             currentTask: sess.currentTask?.id === taskId
               ? sess.currentTask
               : { id: taskId, status: 'running', parentTaskId: parentTaskId || sess.currentTask?.parentTaskId },
-            taskSteps: [...prev, stepData],
+            taskSteps: coalesceAgentSteps(prev, stepData),
           });
+          // 同步 JSON 批量步骤到达后延迟收尾
+          if (stepData.content?.trim() || stepData.is_snapshot) {
+            scheduleAutoFinalizeRef.current?.(taskId, ownerKey);
+          }
         }
-      }
-
-      if (parentTaskId) {
-        const hub = getStoreSession('__hub__');
-        const dels = { ...(hub.delegations || {}) };
-        const del = dels[taskId] || { agentId, prompt: '', steps: [], status: 'running' };
-        del.steps = [...(del.steps || []), stepData];
-        dels[taskId] = del;
-        patchSession('__hub__', { delegations: dels });
       }
     };
 
@@ -900,15 +1392,55 @@ export default function Debug() {
     for (let i = 0; i < maxAttempts; i++) {
       await new Promise(r => setTimeout(r, 500));
       const sess = getStoreSession(execKey);
+      if (isFreshAgentSession(sess)) return;
+      if (!sessionTaskInstanceMatches(sess, taskId)) return;
       if (!sess.executing && sess.currentTask?.id === taskId
         && ['completed', 'failed', 'cancelled'].includes(sess.currentTask?.status)) {
         return;
       }
+
+      // 同步 JSON：步骤已到齐但完成事件丢失时，主动收尾
+      if (sess.executing && sess.taskSteps?.length >= 1 && i >= 2) {
+        const routed = resolveTaskRoute(taskId, null, null, agentsRef.current);
+        const taskMatch = !sess.currentTask?.id || sess.currentTask.id === taskId || routed === execKey;
+        const hasContent = sess.taskSteps.some(s => s.content?.trim());
+        if (taskMatch && hasContent) {
+          const summary = sess.taskSteps
+            .filter(s => s.stepType === 'output' && s.content?.trim())
+            .map(s => s.content)
+            .join('\n\n')
+            || sess.taskSteps
+              .filter(s => s.stepType === 'thinking' && s.content?.trim())
+              .map(s => s.content)
+              .join('\n\n')
+            || null;
+          finalizeTaskInUiRef.current?.(taskId, execKey, {
+            currentTask: { id: taskId, status: 'completed', completed_at: Date.now() },
+            currentUserPrompt: sess.currentUserPrompt,
+            taskResult: {
+              ...(summary ? { summary } : {}),
+              cliSessionId: sess.cliSessionId || null,
+            },
+            taskSteps: sess.taskSteps,
+          });
+          return;
+        }
+      }
+
       try {
         const res = await window.electronAPI.agent.getTaskStatus(taskId);
         if (!res.success) continue;
         const status = res.status;
         if (!['completed', 'failed', 'cancelled'].includes(status.status)) continue;
+
+        if (status.context?.parentTaskId || sess.currentTask?.parentTaskId) {
+          finishDelegatedChildRef.current?.(
+            { taskId, agentId: status.agent_id, sessionInstanceId: status.context?.sessionInstanceId, result: status.result },
+            status,
+            status.status,
+          );
+          return;
+        }
 
         const steps = resolveTaskSteps(status, { taskId, result: status.result }, execKey);
         finalizeTaskInUiRef.current?.(taskId, execKey, {
@@ -922,6 +1454,33 @@ export default function Debug() {
         // 继续轮询
       }
     }
+  }
+
+  // ── @tbp 自动补全 ──────────────────────────────────────────
+  const tbpSuggestions = tbpMenu.active ? filterPromptSuggestions(tbpPrompts, tbpMenu.query) : [];
+
+  function refreshTbpMenu(text, caret) {
+    const d = detectTbpQuery(text, caret);
+    setTbpMenu(d);
+    setTbpIndex(0);
+  }
+
+  function acceptTbp(p) {
+    if (!p) return;
+    const el = agentTextareaRef.current;
+    const caret = el ? el.selectionStart : agentPrompt.length;
+    const before = agentPrompt.slice(0, tbpMenu.start);
+    const insert = `@tbp:${p.name} `;
+    const next = before + insert + agentPrompt.slice(caret);
+    setAgentPrompt(next);
+    setTbpMenu({ active: false, query: '', start: 0 });
+    requestAnimationFrame(() => {
+      if (el) {
+        const pos = before.length + insert.length;
+        el.focus();
+        el.setSelectionRange(pos, pos);
+      }
+    });
   }
 
   // Execute agent task
@@ -947,9 +1506,10 @@ export default function Debug() {
     setDirError('');
     const prompt = agentPrompt.trim();
     const execKey = agentSessionKey(selectedAgent);
-    const workDir = agentWorkingDir.trim();
+    const workDir = normalizeWorkingDir(agentWorkingDir.trim());
     const sess = getStoreSession(execKey);
-    const continueSession = !isHubMode && shouldContinueCliSession(execKey, workDir);
+    const continueSession = shouldContinueCliSession(execKey, workDir);
+    const instanceId = beginSessionInstance(execKey);
 
     patchSession(execKey, {
       currentUserPrompt: prompt,
@@ -958,7 +1518,9 @@ export default function Debug() {
       taskSteps: [],
       taskResult: null,
       currentTask: null,
+      delegations: {},
       sessionWorkingDir: workDir,
+      sessionInstanceId: instanceId,
     });
 
     // 聚合入口 = 主 Agent 编排；Agent tab = 直调
@@ -974,13 +1536,14 @@ export default function Debug() {
           mainAgentId: isHubMode ? activeAgent.id : mainAgentId,
           mcpProfile: isHubMode ? mcpProfileId : undefined,
           sessionKey: execKey,
+          sessionInstanceId: instanceId,
           continueSession,
-          cliSessionId: sess.cliSessionId || undefined,
+          cliSessionId: continueSession ? (sess.cliSessionId || undefined) : undefined,
         },
       });
 
       if (result.success) {
-        routeTask(result.taskId, execKey);
+        routeTask(result.taskId, execKey, instanceId);
         patchSession(execKey, {
           currentUserPrompt: prompt,
           executing: true,
@@ -1261,7 +1824,7 @@ export default function Debug() {
     <div className="flex flex-col h-screen">
 
       {/* ── Toolbar ── */}
-      <div className="shrink-0 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 px-4 pt-12 pb-2 space-y-2 electron-no-drag relative z-[60]">
+      <div className="shrink-0 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 px-4 pt-5 pb-2 space-y-2 electron-no-drag relative z-[60]">
 
         {/* Mode Switcher — electron-no-drag 避免被顶部拖拽条拦截点击 */}
         <div className="flex gap-2 items-center">
@@ -1435,21 +1998,10 @@ export default function Debug() {
             loading={loadingAgents && agents.length === 0}
           />
         )}
-        {mode === 'agent' && (conversationTurns.length > 0 || currentUserPrompt || taskSteps.length > 0 || executing) && (
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={startNewAgentSession}
-              className="text-xs px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-            >
-              新会话
-            </button>
-          </div>
-        )}
       </div>
 
       {/* ── Message list / Agent UI ── */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div className="flex-1 overflow-y-auto px-4 pt-2 pb-4 space-y-4">
         {mode === 'llm' ? (
           /* LLM Mode: Chat messages */
           <>
@@ -1539,7 +2091,7 @@ export default function Debug() {
                   <p className="text-sm">未检测到可用 Agent，请先在 Gateway 纳管</p>
                 </div>
               ) : !conversationTurns.length && !currentUserPrompt && !taskSteps.length && !executing ? (
-                <div className="flex-1 flex items-center justify-center text-center text-zinc-400 dark:text-zinc-500 px-6">
+                <div className="flex-1 flex items-start justify-center text-center text-zinc-400 dark:text-zinc-500 px-6 pt-4">
                   <div className="max-w-md">
                     <p className="text-3xl mb-2">✨</p>
                     <p className="text-sm mb-4">
@@ -1675,48 +2227,94 @@ export default function Debug() {
             )}
 
             <div className="flex gap-2 items-end">
-              <textarea
-                value={agentPrompt}
-                onChange={e => setAgentPrompt(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                    e.preventDefault();
-                    if (!executing && activeAgent && agentPrompt.trim()) {
-                      executeAgent();
+              <div className="relative flex-1">
+                {tbpMenu.active && tbpSuggestions.length > 0 && (
+                  <div className="absolute bottom-full mb-1 left-0 z-30 w-64 max-h-56 overflow-y-auto rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 shadow-lg py-1">
+                    <div className="px-2 py-1 text-[10px] text-zinc-400">引用提示词 · Enter/Tab 选择 · 发送时自动展开</div>
+                    {tbpSuggestions.map((p, i) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onMouseDown={e => e.preventDefault()}
+                        onClick={() => acceptTbp(p)}
+                        className={`w-full text-left px-2 py-1.5 text-xs flex flex-col ${i === tbpIndex ? 'bg-blue-50 dark:bg-blue-900/30' : 'hover:bg-zinc-50 dark:hover:bg-zinc-700/50'}`}
+                      >
+                        <span className="text-zinc-800 dark:text-zinc-100 font-mono">@tbp:{p.name}</span>
+                        {p.display_name && p.display_name !== p.name && (
+                          <span className="text-[10px] text-zinc-400 truncate">{p.display_name}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <textarea
+                  ref={agentTextareaRef}
+                  value={agentPrompt}
+                  onChange={e => { setAgentPrompt(e.target.value); refreshTbpMenu(e.target.value, e.target.selectionStart); }}
+                  onKeyUp={e => {
+                    if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
+                      refreshTbpMenu(e.currentTarget.value, e.currentTarget.selectionStart);
                     }
+                  }}
+                  onClick={e => refreshTbpMenu(e.currentTarget.value, e.currentTarget.selectionStart)}
+                  onBlur={() => setTimeout(() => setTbpMenu({ active: false, query: '', start: 0 }), 120)}
+                  onKeyDown={e => {
+                    if (tbpMenu.active && tbpSuggestions.length) {
+                      if (e.key === 'ArrowDown') { e.preventDefault(); setTbpIndex(i => (i + 1) % tbpSuggestions.length); return; }
+                      if (e.key === 'ArrowUp') { e.preventDefault(); setTbpIndex(i => (i - 1 + tbpSuggestions.length) % tbpSuggestions.length); return; }
+                      if ((e.key === 'Enter' && !e.metaKey && !e.ctrlKey) || e.key === 'Tab') { e.preventDefault(); acceptTbp(tbpSuggestions[tbpIndex]); return; }
+                      if (e.key === 'Escape') { e.preventDefault(); setTbpMenu({ active: false, query: '', start: 0 }); return; }
+                    }
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault();
+                      if (!executing && activeAgent && agentPrompt.trim()) {
+                        executeAgent();
+                      }
+                    }
+                  }}
+                  disabled={!activeAgent}
+                  placeholder={
+                    !activeAgent
+                      ? '请先纳管 Agent'
+                      : isHubMode
+                        ? `向主 Agent ${mainAgent?.name || ''} 描述协同任务…（@tbp 引用提示词，Cmd/Ctrl+Enter 发送）`
+                        : `向 ${selectedAgent.name} 直调任务…（@tbp 引用提示词，Cmd/Ctrl+Enter 发送）`
                   }
-                }}
-                disabled={!activeAgent}
-                placeholder={
-                  !activeAgent
-                    ? '请先纳管 Agent'
-                    : isHubMode
-                      ? `向主 Agent ${mainAgent?.name || ''} 描述协同任务… (Cmd/Ctrl+Enter)`
-                      : `向 ${selectedAgent.name} 直调任务… (Cmd/Ctrl+Enter)`
-                }
-                rows={2}
-                className="flex-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 resize-none disabled:opacity-50"
-              />
-              {executing ? (
-                <button
-                  type="button"
-                  onClick={cancelAgent}
-                  className="shrink-0 px-4 h-9 bg-red-600 hover:bg-red-500 text-white rounded-xl flex items-center justify-center gap-2 transition-colors"
-                >
-                  <span className="w-3 h-3 bg-white rounded-sm"></span>
-                  <span className="text-sm">停止</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={executeAgent}
-                  disabled={!activeAgent || !agentPrompt.trim()}
-                  className="shrink-0 px-4 h-9 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-40 text-white rounded-xl flex items-center justify-center gap-2 transition-colors"
-                >
-                  <span className="text-sm">▶</span>
-                  <span className="text-sm">执行</span>
-                </button>
-              )}
+                  rows={2}
+                  className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 resize-none disabled:opacity-50"
+                />
+              </div>
+              <div className="shrink-0 flex flex-col gap-1.5 items-stretch">
+                {(conversationTurns.length > 0 || currentUserPrompt || taskSteps.length > 0 || executing) && (
+                  <button
+                    type="button"
+                    onClick={startNewAgentSession}
+                    className="px-4 h-7 rounded-xl border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors text-xs"
+                  >
+                    新会话
+                  </button>
+                )}
+                {executing ? (
+                  <button
+                    type="button"
+                    onClick={cancelAgent}
+                    className="px-4 h-9 bg-red-600 hover:bg-red-500 text-white rounded-xl flex items-center justify-center gap-2 transition-colors"
+                  >
+                    <span className="w-3 h-3 bg-white rounded-sm"></span>
+                    <span className="text-sm">停止</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={executeAgent}
+                    disabled={!activeAgent || !agentPrompt.trim()}
+                    className="px-4 h-9 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-40 text-white rounded-xl flex items-center justify-center gap-2 transition-colors"
+                  >
+                    <span className="text-sm">▶</span>
+                    <span className="text-sm">执行</span>
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}

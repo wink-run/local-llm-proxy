@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   app: {
     defaultServerUrl: () => ipcRenderer.sendSync('app:defaultServerUrl'),
     getDeviceIdentity: (opts) => ipcRenderer.sendSync('app:getDeviceIdentity', opts || {}),
+    setHideDockIcon: (hide) => ipcRenderer.invoke('app:setHideDockIcon', hide),
   },
   auth: {
     request: (opts) => ipcRenderer.invoke('auth:request', opts),
@@ -99,10 +100,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteResource: (resourceId) => ipcRenderer.invoke('resource:deleteResource', resourceId),
     project: (params) => ipcRenderer.invoke('resource:project', params || {}),
     unproject: (params) => ipcRenderer.invoke('resource:unproject', params || {}),
+    verifyProjections: (params) => ipcRenderer.invoke('resource:verifyProjections', params || {}),
     listAgentTargets: () => ipcRenderer.invoke('resource:listAgentTargets'),
     scanDiscovered: (filters) => ipcRenderer.invoke('resource:scanDiscovered', filters || {}),
     importDiscovered: (params) => ipcRenderer.invoke('resource:importDiscovered', params || {}),
-    listAgentInstallations: () => ipcRenderer.invoke('resource:listAgentInstallations'),
+    listAgentInstallations: (filters) => ipcRenderer.invoke('resource:listAgentInstallations', filters || {}),
     importFromAgent: (params) => ipcRenderer.invoke('resource:importFromAgent', params || {}),
     removeFromAgent: (params) => ipcRenderer.invoke('resource:removeFromAgent', params || {}),
     openPath: (params) => ipcRenderer.invoke('resource:openPath', params || {}),
@@ -263,7 +265,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setMeta:  (payload) => ipcRenderer.invoke('sessions:setMeta', payload),
     export:   (payload) => ipcRenderer.invoke('sessions:export', payload),
     continue: (payload) => ipcRenderer.invoke('sessions:continue', payload),
-    resume:   (payload) => ipcRenderer.invoke('sessions:resume', payload),
     launch:   (payload) => ipcRenderer.invoke('sessions:launch', payload),
     knowledgeStart:  (opts)    => ipcRenderer.invoke('sessions:knowledgeStart', opts || {}),
     knowledgeResult: ()        => ipcRenderer.invoke('sessions:knowledgeResult'),

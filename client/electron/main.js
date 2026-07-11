@@ -22,6 +22,8 @@ const detectTools = require('./detect-tools');
 const agentLinker = require('./agent-linker');
 const cursorHooks = require('./cursor-hooks');
 const { syncSessionTelemetry } = require('./session-telemetry-sync');
+const trayPopover = require('./tray-popover');
+const { brandIconForApp } = require('./brand-icons');
 
 /** 会话补录节流：用量页频繁打开时不重复全量扫描 */
 let _lastSessionTelemetrySync = 0;
@@ -481,6 +483,13 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+    // 启动时按设置恢复 Dock（默认显示，避免被误藏）
+    try {
+      const cfg = readAgentConfig();
+      applyDockIconVisibility(!!cfg?.hide_dock_icon);
+    } catch {
+      applyDockIconVisibility(false);
+    }
     if (isDev) mainWindow.webContents.openDevTools({ mode: 'detach' });
     // 窗口可见后再自动启动贡献 Agent，避免拖慢应用启动
     try {
@@ -492,6 +501,7 @@ function createWindow() {
   });
 
   // 关闭 / 最小化 → 隐藏到托盘（全平台；仅「退出」才真正结束进程）
+  // 注意：不在此处隐藏 Dock，Dock 可见性仅由设置 hide_dock_icon 控制
   mainWindow.on('close', (e) => {
     if (!isQuitting) {
       e.preventDefault();
@@ -603,6 +613,7 @@ function checkTrayVisibilityAndHint() {
 
 function destroyTray() {
   if (trayStatsTimer) { clearInterval(trayStatsTimer); trayStatsTimer = null; }
+  try { trayPopover.destroy(); } catch { /* ignore */ }
   if (tray && !tray.isDestroyed?.()) {
     tray.removeAllListeners();
     tray.destroy();
@@ -623,6 +634,311 @@ function fmtTrayTokens(n) {
 function getTodayTokenSummary() {
   try { return localStats.queryTodaySummary(); }
   catch { return { inTok: 0, outTok: 0, calls: 0 }; }
+}
+
+/** 托盘悬浮窗：当前已纳管应用 + 绑定的路由/模型（logo 用 lobehub 默认品牌图） */
+function getActiveAppsForTray(lang = 'zh') {
+  const zh = lang !== 'en';
+  try {
+    const cfg = readLocalConfig();
+    const apps = (cfg.apps || []).filter(a => a && !a.draft);
+    const routes = cfg.scene_routes || [];
+    const routeByKey = new Map();
+    for (const r of routes) {
+      if (r?.id) routeByKey.set(r.id, r);
+      if (r?.model_key) routeByKey.set(r.model_key, r);
+    }
+
+    const items = [];
+    for (const app of apps) {
+      // 活跃 = 已纳管（shim 默认 hosted!==false；其余须 hosted===true）
+      const isShim = app.link_method === 'shim';
+      const managed = isShim ? app.hosted !== false : app.hosted === true;
+      if (!managed) continue;
+      if (app.needs_dev_mode) continue;
+
+      const routeIds = (Array.isArray(app.route_ids) && app.route_ids.length)
+        ? app.route_ids
+        : (app.route_id ? [app.route_id] : []);
+
+      const routeLabels = [];
+      const probeModels = [];
+      for (const rid of routeIds) {
+        const r = routeByKey.get(rid);
+        if (r) {
+          routeLabels.push(r.scene_name || r.model_key || rid);
+          probeModels.push(String(r.model_key || r.id || rid));
+          continue;
+        }
+        // tier:model 或裸模型 id
+        const raw = String(rid);
+        const colon = raw.indexOf(':');
+        routeLabels.push(colon > 0 ? raw.slice(colon + 1) : raw);
+        probeModels.push(raw);
+      }
+
+      // 取该应用绑定模型中最好（最低）的 TTFT；全失败则标连接失败
+      let bestTtft = null;
+      let bestBucket = 'unknown';
+      let anyOk = false;
+      let anyFail = false;
+      for (const mid of probeModels) {
+        const key = normSpeedKey(mid);
+        const probed = key ? _trayProbeCache.get(key) : null;
+        if (probed) {
+          if (probed.ok) anyOk = true;
+          else anyFail = true;
+        }
+        const hit = lookupModelTtft(mid);
+        if (!hit || hit.ttftMs == null) continue;
+        if (bestTtft == null || hit.ttftMs < bestTtft) {
+          bestTtft = hit.ttftMs;
+          bestBucket = hit.bucket || 'unknown';
+        }
+      }
+
+      let ttftLabel = '';
+      let speedBucket = bestBucket;
+      if (bestTtft != null) {
+        ttftLabel = formatTtftLabel(zh ? 'zh' : 'en', bestTtft);
+      } else if (anyFail && !anyOk) {
+        // 探针失败 →「连接失败」，不要显示「待测速」
+        ttftLabel = zh ? '连接失败' : 'Failed';
+        speedBucket = 'fail';
+      }
+
+      const viaGateway = routeLabels.length > 0;
+      items.push({
+        id: String(app.id || app.agent_id || app.preset_id || ''),
+        name: String(app.name || app.agent_id || app.preset_id || 'App'),
+        agentId: String(app.agent_id || app.preset_id || ''),
+        iconUrl: brandIconForApp(app) || '',
+        emoji: (typeof app.icon === 'string' && !app.icon.startsWith('icon:')) ? app.icon : '',
+        viaGateway,
+        // 路由/模型文案；无绑定则官方直连
+        routeLabel: viaGateway
+          ? routeLabels.join(' · ')
+          : (zh ? '官方直连' : 'Official'),
+        tag: viaGateway ? 'ROUTE' : 'DIRECT',
+        statusLabel: viaGateway
+          ? (zh ? '经网关' : 'Gateway')
+          : (zh ? '直连' : 'Direct'),
+        ttftMs: bestTtft != null ? Math.round(bestTtft) : null,
+        ttftLabel,
+        speedBucket,
+        speedFailed: speedBucket === 'fail',
+        active: true,
+      });
+    }
+
+    // 稳定排序：经网关优先，再按名称
+    items.sort((a, b) => {
+      if (a.viaGateway !== b.viaGateway) return a.viaGateway ? -1 : 1;
+      return a.name.localeCompare(b.name, zh ? 'zh' : 'en');
+    });
+    return items;
+  } catch (e) {
+    console.warn('[tray] getActiveAppsForTray failed:', e.message);
+    return [];
+  }
+}
+
+/** 活跃应用已选路由/模型 → 测速探针目标（去重） */
+function collectProbeModelsFromActiveApps() {
+  try {
+    const cfg = readLocalConfig();
+    const apps = (cfg.apps || []).filter(a => a && !a.draft);
+    const routes = cfg.scene_routes || [];
+    const routeByKey = new Map();
+    for (const r of routes) {
+      if (r?.id) routeByKey.set(r.id, r);
+      if (r?.model_key) routeByKey.set(r.model_key, r);
+    }
+    const models = new Set();
+    for (const app of apps) {
+      const isShim = app.link_method === 'shim';
+      const managed = isShim ? app.hosted !== false : app.hosted === true;
+      if (!managed || app.needs_dev_mode) continue;
+      const routeIds = (Array.isArray(app.route_ids) && app.route_ids.length)
+        ? app.route_ids
+        : (app.route_id ? [app.route_id] : []);
+      for (const rid of routeIds) {
+        if (!rid) continue;
+        const scene = routeByKey.get(rid);
+        if (scene) {
+          // 场景路由：网关按 model_key 拦截
+          const key = scene.model_key || scene.id;
+          if (key) models.add(String(key));
+          continue;
+        }
+        models.add(String(rid));
+      }
+    }
+    return [...models];
+  } catch (e) {
+    console.warn('[tray] collectProbeModels failed:', e.message);
+    return [];
+  }
+}
+
+/** 归一化测速 key（与 provider-speed.normKey 一致） */
+function normSpeedKey(id) {
+  if (!id) return '';
+  let s = String(id).trim().toLowerCase();
+  const slash = s.lastIndexOf('/');
+  if (slash >= 0) s = s.slice(slash + 1);
+  return s;
+}
+
+// 托盘测速结果缓存：model → { ttftMs, latencyMs, ok, ts }
+const _trayProbeCache = new Map();
+
+/** 查某模型首字延迟：优先刚测完的探针缓存，其次 gateway-speed 持久表 */
+function lookupModelTtft(modelId) {
+  const key = normSpeedKey(modelId);
+  if (!key) return null;
+  const probed = _trayProbeCache.get(key);
+  // 最近一次探针失败 → 不回落历史测速，交给上层显示「连接失败」
+  if (probed && probed.ok === false) return null;
+  if (probed && probed.ok && probed.ttftMs != null) {
+    return { ttftMs: probed.ttftMs, bucket: ttftBucket(probed.ttftMs), source: 'probe' };
+  }
+  try {
+    const map = require('./provider-speed').getSpeedMap();
+    const sp = map[key];
+    if (sp && sp.ttft_ms != null) {
+      return { ttftMs: sp.ttft_ms, bucket: sp.bucket || ttftBucket(sp.ttft_ms), source: 'speed' };
+    }
+    // 无 TTFT 时用总延迟兜底展示
+    if (sp && sp.lat_ms != null) {
+      return { ttftMs: sp.lat_ms, bucket: sp.bucket || ttftBucket(sp.lat_ms), source: 'lat' };
+    }
+  } catch { /* ignore */ }
+  if (probed && probed.ok && probed.latencyMs != null) {
+    return { ttftMs: probed.latencyMs, bucket: ttftBucket(probed.latencyMs), source: 'probe-lat' };
+  }
+  return null;
+}
+
+function ttftBucket(ms) {
+  const v = Number(ms);
+  if (!Number.isFinite(v) || v <= 0) return 'unknown';
+  if (v > 2500) return 'slow';
+  if (v < 800) return 'fast';
+  return 'medium';
+}
+
+function formatTtftLabel(lang, ttftMs) {
+  if (ttftMs == null || !Number.isFinite(ttftMs)) return '';
+  const ms = Math.round(ttftMs);
+  // 中英文统一用 TTFT，避免「首字 / TTFT」混用
+  return `TTFT ${ms}ms`;
+}
+
+/** 对活跃应用绑定的模型/路由逐个发探针测速 */
+async function probeActiveAppModels() {
+  const targets = collectProbeModelsFromActiveApps();
+  const results = [];
+  for (const model of targets) {
+    try {
+      const r = await probeModelViaGateway(model);
+      const key = normSpeedKey(model);
+      const ttftMs = (r && r.firstTokenMs != null) ? Number(r.firstTokenMs) : null;
+      const latencyMs = (r && r.latencyMs != null) ? Number(r.latencyMs) : null;
+      if (key) {
+        _trayProbeCache.set(key, {
+          ttftMs: Number.isFinite(ttftMs) ? ttftMs : null,
+          latencyMs: Number.isFinite(latencyMs) ? latencyMs : null,
+          ok: !!(r && r.ok),
+          ts: Date.now(),
+        });
+      }
+      // 探针拿到真实首字后，立刻写入 speed 表，UI 与供给源页一致
+      // record() 要求 total-ttft>50 才认作真实 TTFT，探针短回复时补一点余量
+      if (r?.ok && Number.isFinite(ttftMs) && Number.isFinite(latencyMs)) {
+        try {
+          require('./provider-speed').record(model, {
+            firstTokenMs: ttftMs,
+            outputTokens: 1,
+            totalMs: Math.max(latencyMs, ttftMs + 60),
+            streaming: true,
+          });
+        } catch { /* ignore */ }
+      }
+      results.push({ model, ...(r || {}), ttftMs });
+    } catch (e) {
+      const key = normSpeedKey(model);
+      if (key) {
+        _trayProbeCache.set(key, { ttftMs: null, latencyMs: null, ok: false, ts: Date.now() });
+      }
+      results.push({ model, ok: false, error: e.message });
+    }
+  }
+  return { ok: true, total: targets.length, results };
+}
+
+// 圈子帖子数量缓存（托盘第三胶囊）
+let _circlePostsCache = { count: 0, fetchedAt: 0, ok: false, loggedIn: false };
+
+/** 解析 nodeRequest 的 JSON body；失败返回 null */
+function parseNodeJson(res) {
+  if (!res || res.status < 200 || res.status >= 300 || !res.body) return null;
+  try { return JSON.parse(res.body); } catch { return null; }
+}
+
+/** 拉取用户已加入圈子的帖子总数（托盘第三胶囊，替代 Agent 状态） */
+async function refreshCirclePostsCache() {
+  try {
+    const cfg = readLocalConfig();
+    const base = String(cfg?.cloud_config?.url || '').replace(/\/$/, '').replace(/\/(api|v\d+)(\/.*)?$/, '');
+    const token = cfg?.cloud_config?.token || '';
+    if (!base || !token) {
+      _circlePostsCache = { count: 0, fetchedAt: Date.now(), ok: false, loggedIn: false };
+      return _circlePostsCache;
+    }
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+    const joinedRes = await nodeRequest(`${base}/user/circles/joined`, 'GET', headers, null, { timeoutMs: 8000 });
+    const joined = parseNodeJson(joinedRes);
+    if (!joined) {
+      // 401 等视为未登录
+      const loggedIn = joinedRes?.status !== 401 && joinedRes?.status !== 403;
+      _circlePostsCache = { count: 0, fetchedAt: Date.now(), ok: false, loggedIn };
+      return _circlePostsCache;
+    }
+    const circles = Array.isArray(joined.circles) ? joined.circles : [];
+    let count = 0;
+    // 限制并发：最多扫 8 个圈子，避免托盘卡顿
+    const slice = circles.slice(0, 8);
+    await Promise.all(slice.map(async (c) => {
+      if (!c?.id) return;
+      try {
+        const detailRes = await nodeRequest(`${base}/user/circles/${c.id}`, 'GET', headers, null, { timeoutMs: 8000 });
+        const detail = parseNodeJson(detailRes);
+        const posts = Array.isArray(detail?.posts) ? detail.posts : [];
+        count += posts.length;
+      } catch { /* ignore single circle */ }
+    }));
+    _circlePostsCache = { count, fetchedAt: Date.now(), ok: true, loggedIn: true };
+    return _circlePostsCache;
+  } catch (e) {
+    console.warn('[tray] circle posts fetch failed:', e.message);
+    _circlePostsCache = {
+      count: _circlePostsCache.count || 0,
+      fetchedAt: Date.now(),
+      ok: false,
+      loggedIn: !!_circlePostsCache.loggedIn,
+    };
+    return _circlePostsCache;
+  }
+}
+
+function getCirclePostsSummary() {
+  return {
+    count: _circlePostsCache.count || 0,
+    ok: !!_circlePostsCache.ok,
+    loggedIn: !!_circlePostsCache.loggedIn,
+    fetchedAt: _circlePostsCache.fetchedAt || 0,
+  };
 }
 
 function showMainWindow() {
@@ -772,7 +1088,8 @@ function refreshTray() {
   }
   const gw = gateway.getStatus?.() || {};
   const active = agent.isRunning() || gw.running;
-  tray.setContextMenu(buildTrayContextMenu());
+  // 自定义悬浮窗：不再每次 refresh 绑定原生 Context Menu（左键改为 popover）
+  try { trayPopover.refresh(); } catch { /* ignore */ }
   if (process.platform === 'darwin') {
     const { inTok, outTok } = getTodayTokenSummary();
     const k = (n) => { n = n || 0; return n >= 1e6 ? `${Math.round(n / 1e6)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : `${n}`; };
@@ -794,14 +1111,48 @@ function refreshTray() {
 }
 
 /**
- * 极简托盘（参考 clawd-on-desk）：用 Template 图标创建一次 + setContextMenu，定时刷新。
- * 不再做延迟创建 / destroy-重建 / 屏外重试——实测那些对 Tahoe「菜单栏满了放不下」
- * 无效，只增加噪音。放不下时由 checkTrayVisibilityAndHint 一次性提示用户去腾位/装 Ice。
+ * 极简托盘（参考 clawd-on-desk / AIUsage）：Template 图标 + 自定义毛玻璃悬浮窗。
+ * 左键弹出 tray-popover；右键保留原生菜单作兜底。
  */
 function createTray() {
   if (tray && !tray.isDestroyed?.()) { refreshTray(); return; }
   try { showTrayTokens = readLocalConfig().tray_show_tokens !== false; } catch {}
   try { _trayUserLoggedIn = !!readLocalConfig().cloud_config?.token; } catch {}
+
+  // 注入依赖，供悬浮窗读写状态 / 触发动作
+  trayPopover.init({
+    getGatewayStatus: () => gateway.getStatus?.() || {},
+    getTodaySummary: getTodayTokenSummary,
+    isAgentRunning: () => agent.isRunning(),
+    getLang: () => _trayLang,
+    getShowTokens: () => showTrayTokens,
+    setShowTokens: (v) => {
+      showTrayTokens = !!v;
+      try {
+        const c = readLocalConfig();
+        c.tray_show_tokens = !!v;
+        writeLocalConfig(c);
+      } catch { /* ignore */ }
+    },
+    fmtTokens: fmtTrayTokens,
+    showMainWindow,
+    quitApp: () => { isQuitting = true; app.quit(); },
+    startAgent,
+    stopAgent,
+    isUserLoggedIn: () => _trayUserLoggedIn,
+    navigateLogin: () => {
+      showMainWindow();
+      try { mainWindow?.webContents?.send('app:navigate', '/login'); } catch { /* ignore */ }
+    },
+    refreshTrayIcon: () => { try { refreshTray(); } catch { /* ignore */ } },
+    // 托盘刷新只读本地统计，不触发 session 全量导入
+    syncStats: () => {},
+    getActiveApps: () => getActiveAppsForTray(_trayLang),
+    probeActiveModels: () => probeActiveAppModels(),
+    refreshCirclePosts: () => refreshCirclePostsCache(),
+    getCirclePosts: () => getCirclePostsSummary(),
+  });
+
   try {
     // macOS：黑底白字 T 图标（左）+ 两行 Token 文字（右，可由菜单开关关掉）；其它平台：绿/灰圆点
     const icon = getTrayIcon(agent.isRunning() ? 'running' : 'stopped');
@@ -812,10 +1163,25 @@ function createTray() {
   }
   if (process.platform === 'darwin') tray.setIgnoreDoubleClickEvents(true);
   tray.on('double-click', showMainWindow);
-  if (process.platform !== 'darwin') tray.on('click', showMainWindow);
-  // macOS 点击 tray 弹出菜单前立即刷新数据，确保 token 数字是最新的
-  if (process.platform === 'darwin') tray.on('click', () => { tray.setContextMenu(buildTrayContextMenu()); });
+  // 左键：自定义悬浮窗（各平台一致）
+  tray.on('click', () => {
+    // 只弹窗 + 刷圈子；不在此处跑 session 导入（已有 30s 定时任务，避免反复扫盘）
+    trayPopover.toggle(tray);
+    setTimeout(() => {
+      refreshCirclePostsCache().then(() => { try { trayPopover.refresh(); } catch {} }).catch(() => {});
+    }, 50);
+  });
+  // 右键：原生菜单兜底
+  tray.on('right-click', (_e, bounds) => {
+    try {
+      tray.popUpContextMenu(buildTrayContextMenu(), bounds);
+    } catch {
+      try { tray.popUpContextMenu(buildTrayContextMenu()); } catch { /* ignore */ }
+    }
+  });
   refreshTray();
+  // 预热悬浮窗，消除首次打开的 loadFile 延迟
+  setTimeout(() => { try { trayPopover.warmup(); } catch {} }, 800);
   trayStatsTimer = setInterval(refreshTray, 30000);
   // 系统深/浅色切换时重画（数字颜色要跟着变）
   if (process.platform === 'darwin') {
@@ -1091,6 +1457,19 @@ function readAgentConfig() {
 function writeAgentConfig(cfg) {
   fs.mkdirSync(path.dirname(AGENT_CONFIG_PATH), { recursive: true });
   fs.writeFileSync(AGENT_CONFIG_PATH, JSON.stringify(cfg, null, 2), 'utf-8');
+  // 配置变更后立即应用 Dock 可见性（默认显示，仅用户开启时隐藏）
+  try { applyDockIconVisibility(!!cfg?.hide_dock_icon); } catch { /* ignore */ }
+}
+
+/** macOS：按用户设置显示/隐藏 Dock 图标（默认显示，不随托盘/浮窗自动隐藏） */
+function applyDockIconVisibility(hide) {
+  if (process.platform !== 'darwin' || !app.dock) return;
+  try {
+    if (hide) app.dock.hide();
+    else app.dock.show();
+  } catch (e) {
+    console.warn('[dock] apply failed:', e.message);
+  }
 }
 
 /** 账户/刊例价模型 → agent config provider.models（启动与保存账户时调用） */
@@ -1650,6 +2029,13 @@ function registerIPC() {
   ipcMain.handle('agent:getLogs', () => [..._agentLogBuf]);
   ipcMain.handle('config:read',  () => readAgentConfig());
   ipcMain.handle('config:write', (_e, cfg) => { writeAgentConfig(cfg); return { ok: true }; });
+  // 单独切换 Dock 可见性（设置页即时生效，无需等整页保存）
+  ipcMain.handle('app:setHideDockIcon', (_e, hide) => {
+    const cfg = readAgentConfig() || {};
+    cfg.hide_dock_icon = !!hide;
+    writeAgentConfig(cfg);
+    return { ok: true, hide_dock_icon: !!cfg.hide_dock_icon };
+  });
   ipcMain.handle('config:scan',  () => scanLLMConfigs());
   ipcMain.handle('config:importKeys', () => scanProviderKeys());
 
@@ -1898,7 +2284,7 @@ function registerIPC() {
     }
   });
   // 手动触发会话文件补录（扫 ~/.claude、~/.codex、~/.gemini），返回各来源计数
-  ipcMain.handle('sessionImport:run', () => syncSessionTelemetry(localStats));
+  ipcMain.handle('sessionImport:run', () => syncSessionTelemetry(localStats, { force: true }));
   // 探测本机 AI 工具/本地服务，返回是否已接入网关的清单
   ipcMain.handle('detectTools:scan', async () => {
     const r = await detectTools.scan();
@@ -3714,12 +4100,6 @@ function registerIPC() {
     catch (e) { console.error('[sessions:continue]', e.message); return { error: 'continue_failed' }; }
   });
 
-  // 同工具恢复：macOS 终端执行 resume；失败则返回命令供复制
-  ipcMain.handle('sessions:resume', (_e, payload = {}) => {
-    try { return sessionManager.resumeSession(_sessionDeps, payload); }
-    catch (e) { console.error('[sessions:resume]', e.message); return { error: 'resume_failed' }; }
-  });
-
   // 知识提炼：后台异步任务。点击 start 立即返回，合成在后台跑；result 拿当前状态/结果。
   // 状态：idle（没跑过）/ running（生成中）/ ready（已完成，含成功或兜底）/ error（异常）。
   let _knowledgeJob = { status: 'idle', ok: false, content: '', model: null, scanned: 0, error: null, projectPaths: {}, finishedAt: 0 };
@@ -4013,6 +4393,7 @@ function registerIPC() {
 }
 
 // 主动测速探针：向本地网关发一次极小流式请求，网关在流结束时 record 记速。
+// 同时在客户端侧捕获首包时间 → firstTokenMs（托盘展示用）。
 // gateway:probeModel IPC 与「启动自动测速」共用。
 function probeModelViaGateway(model) {
   return new Promise((resolve) => {
@@ -4028,14 +4409,32 @@ function probeModelViaGateway(model) {
       const host = (!rawHost || rawHost === '0.0.0.0' || rawHost === '::' || rawHost === '*') ? '127.0.0.1' : rawHost;
       const payload = JSON.stringify({ model, max_tokens: 12, stream: true, messages: [{ role: 'user', content: 'hi' }] });
       const start = Date.now();
+      let firstTokenMs = null;
+      let buf = '';
       const req = http.request({
         host, port: parseInt(portStr, 10) || 11430,
         path: '/v1/chat/completions', method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}`, 'Content-Length': Buffer.byteLength(payload) },
         timeout: 30000,
       }, (res) => {
-        res.on('data', () => {});   // 必须读完流，网关才会在流结束时 record 记速
-        res.on('end', () => resolve({ ok: res.statusCode < 400, status: res.statusCode, latencyMs: Date.now() - start }));
+        res.on('data', (chunk) => {
+          // 必须读完流，网关才会在流结束时 record 记速
+          const text = chunk.toString();
+          buf += text;
+          if (firstTokenMs != null) return;
+          // 首 token：SSE 里出现 content/text 增量，或首个 data:{...} 事件
+          if (/"(?:content|text)"\s*:\s*"[^"]/.test(buf)
+            || /"delta"\s*:\s*\{[^}]*"(?:content|text)"/.test(buf)
+            || /data:\s*\{/.test(buf)) {
+            firstTokenMs = Date.now() - start;
+          }
+        });
+        res.on('end', () => resolve({
+          ok: res.statusCode < 400,
+          status: res.statusCode,
+          latencyMs: Date.now() - start,
+          firstTokenMs: firstTokenMs != null ? firstTokenMs : null,
+        }));
         res.on('error', () => resolve({ ok: false, error: 'stream-error' }));
       });
       req.on('error', (e) => resolve({ ok: false, error: e.message }));
@@ -4143,6 +4542,11 @@ app.whenReady().then(() => {
   });
   gateway.setLocalStats(localStats);
   gateway.setLocalConfigReader(readLocalConfig);   // 供策略组调度查 policies[]
+  // 转发前把 @tbp:<name|#id> 宏展开为 TB 库里的提示词正文（懒 require 避免加载顺序问题）
+  gateway.setPromptResolver((ref, args) => {
+    try { return require('./resource-manager').resolvePrompt(ref, args); }
+    catch { return { found: false }; }
+  });
   // 清理旧版付费供给源预填数据（须在 gateway 启动前）
   try {
     const billingConfig = require('./billing-config');

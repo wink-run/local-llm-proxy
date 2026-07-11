@@ -58,13 +58,23 @@ function registerResourceHandlers() {
     }
   });
 
-  ipcMain.handle('resource:project', async (_event, { resourceId, agentIds, scope } = {}) => {
+  ipcMain.handle('resource:project', async (_event, { resourceId, agentIds, scope, force } = {}) => {
     try {
       resourceManager.init();
-      const result = resourceManager.projectToAgents(resourceId, agentIds, scope || 'global');
+      const result = resourceManager.projectToAgents(resourceId, agentIds, scope || 'global', { force: !!force });
       return result;
     } catch (error) {
       console.error('[IPC] resource:project error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('resource:verifyProjections', async (_event, { resourceId, repair } = {}) => {
+    try {
+      resourceManager.init();
+      return resourceManager.verifyProjections(resourceId, { repair: !!repair });
+    } catch (error) {
+      console.error('[IPC] resource:verifyProjections error:', error);
       return { success: false, error: error.message };
     }
   });
@@ -109,10 +119,10 @@ function registerResourceHandlers() {
     }
   });
 
-  ipcMain.handle('resource:listAgentInstallations', async () => {
+  ipcMain.handle('resource:listAgentInstallations', async (_event, filters = {}) => {
     try {
       resourceManager.init();
-      return { success: true, agents: resourceManager.listAgentInstallations() };
+      return { success: true, agents: resourceManager.listAgentInstallations(filters) };
     } catch (error) {
       console.error('[IPC] resource:listAgentInstallations error:', error);
       return { success: false, error: error.message };

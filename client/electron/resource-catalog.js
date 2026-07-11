@@ -5,8 +5,7 @@
 const RESOURCE_TYPE_LABELS = {
   prompt: '提示词',
   skill: '技能',
-  assistant: '助手',
-  template: '模板',
+  assistant: '智能体',
 };
 
 /** @type {Array<object>} */
@@ -125,26 +124,10 @@ description: 系统化调试流程，先复现与定位根因再改代码
       category: 'development',
     },
     content: JSON.stringify({
-      system_prompt: '你是 Python 专家，精通标准库、类型注解、pytest 与 FastAPI。回答简洁，代码可运行。',
+      soul: '你是 Python 专家，精通标准库、类型注解、pytest 与 FastAPI。回答简洁，代码可运行。',
       skills: ['systematic-debugging'],
       prompts: ['code-review'],
       parameters: { temperature: 0.3 },
-    }, null, 2),
-  },
-  {
-    catalogId: 'api-dev-template',
-    type: 'template',
-    name: 'api-development-workflow',
-    display_name: 'API 开发工作流',
-    description: '需求 → 设计 → 实现 → 测试 四步模板',
-    metadata: { tags: ['workflow', 'api', 'backend'], steps_count: 4, version: '1.0.0' },
-    content: JSON.stringify({
-      steps: [
-        { name: '需求分析', prompt: 'api-design', inputs: ['requirements'] },
-        { name: '接口设计', assistant: 'python-expert', inputs: ['requirements'] },
-        { name: '生成代码', skills: ['systematic-debugging'], inputs: ['api_design'] },
-        { name: '提交变更', skill: 'git-commit', inputs: ['diff'] },
-      ],
     }, null, 2),
   },
 ];
@@ -154,7 +137,7 @@ function getCatalogItem(catalogId) {
 }
 
 function listCatalogItems(filters = {}) {
-  let items = [...BUILTIN_CATALOG];
+  let items = BUILTIN_CATALOG.filter(i => i.type !== 'template');
   if (filters.type) items = items.filter(i => i.type === filters.type);
   if (filters.query) {
     const q = String(filters.query).toLowerCase();

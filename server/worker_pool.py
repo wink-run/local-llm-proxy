@@ -103,28 +103,7 @@ class WorkerConnection:
     def reward_multiplier(self) -> float:
         """贡献/质量综合系数 0.5–1.5（在线时长 0.4 + 延迟 0.4 + 稳定性 0.2）。
         与 server._worker_row 展示的 star 同源——auto 策略按此降序选优。"""
-        stats = self.period_stats
-        total_req = sum(s["requests"] for s in stats.values())
-        if total_req <= 0:
-            return 1.0
-        total_success = sum(s["success"] for s in stats.values())
-        total_ttft = sum(s.get("ttft_sum", 0) for s in stats.values())
-        total_ttft_count = sum(s.get("ttft_count", 0) for s in stats.values())
-        success_rate = total_success / total_req
-        online_mins = self.period_online_mins()
-        if total_ttft_count > 0:
-            avg_ttft_ms = total_ttft / total_ttft_count
-        else:
-            lat = []
-            for m in worker_model_names(self):
-                s = stats.get(m, {})
-                lat.append(int(s["last_ttft_ms"]) if s.get("last_ttft_ms") is not None
-                           else default_ttft_ms(self.worker_id, m))
-            avg_ttft_ms = sum(lat) / len(lat) if lat else 0
-        online_f = min(0.5 + 0.8 * min(online_mins / 5, 1.0), 1.3)
-        latency_f = max(0.6, min(1.5, 500 / avg_ttft_ms)) if avg_ttft_ms > 0 else 1.0
-        stability_f = 0.5 + 0.7 * success_rate
-        return round(max(0.5, min(1.5, 0.4 * online_f + 0.4 * latency_f + 0.2 * stability_f)), 3)
+        return compute_reward_multiplier(self)
 
     def to_dict(self) -> dict:
         return {
@@ -180,6 +159,32 @@ def default_ttft_ms(worker_id: str, model: str) -> int:
     if h >= 2**31:
         h -= 2**32
     return 1000 + (abs(h) % 1001)
+
+
+def compute_reward_multiplier(worker) -> float:
+    """贡献/质量综合系数 0.5–1.5；WorkerConnection 与 VirtualWorkerConnection 共用。"""
+    stats = getattr(worker, "period_stats", None) or {}
+    total_req = sum(s.get("requests", 0) for s in stats.values())
+    if total_req <= 0:
+        return 1.0
+    total_success = sum(s.get("success", 0) for s in stats.values())
+    total_ttft = sum(s.get("ttft_sum", 0) for s in stats.values())
+    total_ttft_count = sum(s.get("ttft_count", 0) for s in stats.values())
+    success_rate = total_success / total_req
+    online_mins = worker.period_online_mins()
+    if total_ttft_count > 0:
+        avg_ttft_ms = total_ttft / total_ttft_count
+    else:
+        lat = []
+        for m in worker_model_names(worker):
+            s = stats.get(m, {})
+            lat.append(int(s["last_ttft_ms"]) if s.get("last_ttft_ms") is not None
+                       else default_ttft_ms(worker.worker_id, m))
+        avg_ttft_ms = sum(lat) / len(lat) if lat else 0
+    online_f = min(0.5 + 0.8 * min(online_mins / 5, 1.0), 1.3)
+    latency_f = max(0.6, min(1.5, 500 / avg_ttft_ms)) if avg_ttft_ms > 0 else 1.0
+    stability_f = 0.5 + 0.7 * success_rate
+    return round(max(0.5, min(1.5, 0.4 * online_f + 0.4 * latency_f + 0.2 * stability_f)), 3)
 
 
 async def offline_contributor_model(worker, model: str, reason: str) -> bool:

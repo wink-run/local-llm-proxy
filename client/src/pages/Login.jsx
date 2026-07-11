@@ -198,7 +198,7 @@ export default function Login() {
             <Field label={t('config.password')} type="password" value={password} onChange={setPassword} placeholder="••••••" />
             {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
             <button type="submit" disabled={saving}
-              className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 disabled:opacity-50 rounded-lg text-[13px] font-semibold text-white transition-colors">
+              className="tb-press w-full py-2.5 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 disabled:opacity-50 rounded-lg text-[13px] font-semibold text-white">
               {saving ? t('config.loggingIn') : t('config.login')}
             </button>
             <p className="text-center text-sm text-zinc-600 dark:text-zinc-500">
@@ -220,7 +220,7 @@ export default function Login() {
             )}
             {error && <p className="text-red-500 dark:text-red-400 text-sm">{error}</p>}
             <button type="submit" disabled={saving}
-              className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 disabled:opacity-50 rounded-lg text-[13px] font-semibold text-white transition-colors">
+              className="tb-press w-full py-2.5 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] active:bg-blue-700 disabled:opacity-50 rounded-lg text-[13px] font-semibold text-white">
               {saving ? t('config.registering') : t('config.registerBtn')}
             </button>
             <p className="text-center text-sm text-zinc-600 dark:text-zinc-500">

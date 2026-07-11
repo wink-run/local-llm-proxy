@@ -105,6 +105,9 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
 
   // Compression settings（仅内置无损 JSON 压缩）
   const [compressEnabled, setCompressEnabled] = useState(false);
+  // macOS：是否隐藏 Dock（默认否，设置中可开）
+  const [hideDockIcon, setHideDockIcon] = useState(false);
+  const isMac = window.electronAPI?.platform === 'darwin';
 
   const [savedMsg, setSavedMsg] = useState('');
   const [saving,   setSaving]   = useState(false);
@@ -130,6 +133,8 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
       if (cfg.compress) setCompressEnabled(!!cfg.compress.enabled);
       if (cfg.currency) setDisplayCurrency(cfg.currency === 'USD' ? 'USD' : 'CNY');
       if (cfg.usd_cny_rate != null) setUsdCnyRateInput(String(cfg.usd_cny_rate));
+      // 默认 false：未设置时不隐藏 Dock
+      setHideDockIcon(!!cfg.hide_dock_icon);
     }).catch(() => {});
     // Read live gateway port from status
     getGateway().status().then(s => {
@@ -191,8 +196,12 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
         compress: { enabled: compressEnabled },
         currency: displayCurrency,
         usd_cny_rate: rate,
+        hide_dock_icon: isMac ? hideDockIcon : false,
       });
       applySettings({ currency: displayCurrency, usdCnyRate: rate });
+      if (isMac) {
+        try { await window.electronAPI?.app?.setHideDockIcon?.(hideDockIcon); } catch { /* ignore */ }
+      }
       setSavedMsg(t('settings.saved'));
       setTimeout(() => setSavedMsg(''), 2000);
     } finally {
@@ -205,6 +214,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
     setMaxConcurrent('8'); setLogLevel('warn'); setRetryCount('1');
     setHealthInterval('60'); setKeepRouteLogs(true);
     setCompressEnabled(false);
+    setHideDockIcon(false);
     const defCur = defaultCurrencyForLang(lang);
     setDisplayCurrency(defCur);
     setUsdCnyRateInput(String(DEFAULT_USD_CNY_RATE));
@@ -368,6 +378,20 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
             value={displayCurrency} onChange={handleCurrencyChange}
             options={CURRENCY_OPTIONS}
           />
+          {isMac && isDesktop && (
+            <Row label={t('settings.hideDockIcon')} hint={t('settings.hideDockIconHint')}>
+              <Toggle
+                enabled={hideDockIcon}
+                onChange={async () => {
+                  const next = !hideDockIcon;
+                  setHideDockIcon(next);
+                  try {
+                    await window.electronAPI?.app?.setHideDockIcon?.(next);
+                  } catch { /* ignore */ }
+                }}
+              />
+            </Row>
+          )}
           <Row label={t('settings.usdCnyRate')} hint={t('settings.usdCnyRateHint')}>
             <div className="flex items-center gap-2">
               <span className="text-xs text-zinc-500">1 USD =</span>

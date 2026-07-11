@@ -1,27 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <!-- 菜单栏图标：黑白，参考应用图标网络拓扑造型。Template 兼容（纯黑前景，透明背景）。-->
-
-  <!-- 外圈金币轮廓 -->
-  <circle cx="16" cy="16" r="14.5" fill="none" stroke="#000" stroke-width="1.8"/>
-  <!-- 内圈 -->
-  <circle cx="16" cy="16" r="11.5" fill="none" stroke="#000" stroke-width="0.8" opacity="0.5"/>
-
-  <!-- 三个外节点 -->
-  <circle cx="16" cy="4"  r="2" fill="#000"/>
-  <circle cx="5.5" cy="22" r="2" fill="#000"/>
-  <circle cx="26.5" cy="22" r="2" fill="#000"/>
-
-  <!-- 连线 -->
-  <g stroke="#000" stroke-width="1" stroke-linecap="round" opacity="0.7">
-    <line x1="16" y1="6"   x2="16"   y2="11.5"/>
-    <line x1="16" y1="6"   x2="7"    y2="20.5"/>
-    <line x1="16" y1="6"   x2="25"   y2="20.5"/>
-    <line x1="7"  y1="20.5" x2="25"  y2="20.5"/>
-  </g>
-
-  <!-- 中心圆 + T -->
-  <circle cx="16" cy="16" r="5.5" fill="#000"/>
-  <text x="16" y="19.5" text-anchor="middle"
-        font-family="Georgia, 'Times New Roman', serif"
-        font-size="8" font-weight="bold" fill="#fff">T</text>
+  <!-- 菜单栏 Template 图标：浮窗原黑色几何 logo（外圈 + 三角节点 + 中心 T） -->
+  <circle cx="16" cy="16" r="14.5" fill="none" stroke="#000" stroke-width="2.2"/>
+  <circle cx="16" cy="4" r="2.2" fill="#000"/>
+  <circle cx="5.5" cy="22" r="2.2" fill="#000"/>
+  <circle cx="26.5" cy="22" r="2.2" fill="#000"/>
+  <line x1="16" y1="4" x2="5.5" y2="22" stroke="#000" stroke-width="1" opacity="0.55"/>
+  <line x1="16" y1="4" x2="26.5" y2="22" stroke="#000" stroke-width="1" opacity="0.55"/>
+  <line x1="5.5" y1="22" x2="26.5" y2="22" stroke="#000" stroke-width="1" opacity="0.55"/>
+  <circle cx="16" cy="16" r="5.2" fill="#000"/>
+  <!-- 白笔 T：Template 下作镂空；非 Template 时为白字 -->
+  <path d="M13.2 14.2h5.6M16 14.2v5.2" stroke="#fff" stroke-width="1.6" stroke-linecap="round" fill="none"/>
 </svg>

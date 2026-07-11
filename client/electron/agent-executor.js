@@ -4,12 +4,14 @@
 
 const { EventEmitter } = require('events');
 const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 const { nanoid } = require('nanoid');
 const localStats = require('./local-stats');
 const { STATS_DIR } = require('../shared/telemetry');
 const shim = require('./shim-installer');
 const agentLinker = require('./agent-linker');
-const { parseAgentOutputLine, summarizeAgentStdout } = require('./agent-output-parser');
+const { parseAgentOutputLine, summarizeAgentStdout, extractModifiedFiles, extractCliSessionId, normalizeCliSessionId, detectAgentExecutionFailure, formatAgentExitError, parseClaudeSyncStdout } = require('./agent-output-parser');
 const mcpManager = require('./mcp-manager');
 const { _internal: { runProbe } } = require('./detect-tools');
 const {
@@ -25,11 +27,8 @@ const AGENT_CLI = {
   'claude-code': {
     name: 'Claude Code',
     detectCommand: 'claude',
-    buildArgs: (prompt) => [
-      '-p', '--dangerously-skip-permissions',
-      '--output-format', 'stream-json', '--verbose',
-      prompt,
-    ],
+    syncOutput: true,
+    buildArgs: (prompt, opts = {}) => buildClaudeCodeArgs(prompt, opts),
     capabilities: ['code', 'chat', 'edit', 'terminal'],
   },
   codex: {
@@ -38,11 +37,19 @@ const AGENT_CLI = {
     // codex 可能仅通过 npx 安装
     npxPackage: '@openai/codex',
     // Debug 直调：JSONL 实时输出 + 默认信任所选工作目录
-    buildArgs: (prompt, { workingDir } = {}) => {
-      const args = ['exec', '--json', '--skip-git-repo-check'];
-      if (workingDir) args.push('--cd', workingDir);
-      args.push(prompt);
-      return args;
+    buildArgs: (prompt, { workingDir, continueSession, cliSessionId } = {}) => {
+      const base = ['exec'];
+      // --cd 非 global 标志，必须放在 resume 子命令之前（否则 clap 报 code 2）
+      if (workingDir) base.push('--cd', workingDir);
+      if (continueSession) {
+        base.push('resume');
+        const sid = normalizeCliSessionId(cliSessionId);
+        if (sid) base.push(sid);
+        else base.push('--last');
+      }
+      base.push('--json', '--skip-git-repo-check');
+      base.push(prompt);
+      return base;
     },
     capabilities: ['code', 'chat', 'edit'],
   },
@@ -50,6 +57,35 @@ const AGENT_CLI = {
 
 /** Agent 列表探测缓存（避免每次进 Debug 都 spawn CLI） */
 const AGENT_LIST_CACHE = { at: 0, agents: null, ttlMs: 45_000 };
+
+/** Claude Code 续接：须 continueSession；有 sessionId 用 --resume，否则 -c */
+function buildClaudeContinueArgs({ continueSession, cliSessionId } = {}) {
+  if (!continueSession) return [];
+  const sid = normalizeCliSessionId(cliSessionId);
+  if (sid) return ['--resume', sid];
+  return ['-c'];
+}
+
+/** Codex 编排续接：在 exec --cd 之后注入 resume */
+function injectCodexResumeArgs(extraArgs, { continueSession, cliSessionId } = {}) {
+  if (!continueSession) return extraArgs;
+  const out = [...extraArgs];
+  let insertAt = 1;
+  const cdIdx = out.indexOf('--cd');
+  if (cdIdx >= 0) insertAt = cdIdx + 2;
+  const sid = normalizeCliSessionId(cliSessionId);
+  out.splice(insertAt, 0, 'resume', sid || '--last');
+  return out;
+}
+
+function buildClaudeCodeArgs(prompt, { continueSession, cliSessionId } = {}) {
+  return [
+    ...buildClaudeContinueArgs({ continueSession, cliSessionId }),
+    '-p', '--dangerously-skip-permissions',
+    '--output-format', 'json',
+    prompt,
+  ];
+}
 
 function invalidateAgentListCache() {
   AGENT_LIST_CACHE.at = 0;
@@ -70,6 +106,8 @@ class AgentExecutor extends EventEmitter {
     this.runningTasks = new Map(); // taskId → { process, agent_id }
     // 任务元数据缓存：进程结束后仍可用于 IPC 事件路由
     this.taskMetaCache = new Map(); // taskId → { agentId, sessionKey, parentTaskId }
+    /** stream-json content_block index → type（thinking / text） */
+    this._streamState = new Map(); // taskId → { blockTypes: Map }
   }
 
   /**
@@ -223,7 +261,7 @@ class AgentExecutor extends EventEmitter {
     resourceManager.init();
     const resource = resourceManager.getResource(assistantResourceId(agentId));
     if (!resource || resource.type !== 'assistant') {
-      throw new Error('Assistant 资源不存在');
+      throw new Error('Assistant 资产不存在');
     }
 
     const config = parseAssistantConfig(resource.content);
@@ -272,6 +310,7 @@ class AgentExecutor extends EventEmitter {
         mainAgentId,
         parentTaskId: options.parentTaskId || null,
         sessionKey,
+        sessionInstanceId: options.sessionInstanceId || null,
       }),
       Date.now(),
     );
@@ -286,6 +325,7 @@ class AgentExecutor extends EventEmitter {
       agentId: canonicalId,
       sessionKey,
       parentTaskId: options.parentTaskId || null,
+      sessionInstanceId: options.sessionInstanceId || null,
     });
 
     return { taskId };
@@ -297,18 +337,35 @@ class AgentExecutor extends EventEmitter {
   async dispatchAndWait(agentId, prompt, options = {}) {
     const parentTaskId = options.parentTaskId;
     const canonicalId = await this.resolveAgentId(agentId);
+
+    // 派发子任务：归属父窗口 session，继承父会话实例 ID
+    let sessionKey = options.sessionKey || canonicalId;
+    let sessionInstanceId = options.sessionInstanceId || null;
+    if (parentTaskId) {
+      const parentMeta = this._taskEventMeta(parentTaskId);
+      const parentKey = options.parentSessionKey || parentMeta.sessionKey || null;
+      if (parentKey) sessionKey = parentKey;
+      sessionInstanceId = options.parentSessionInstanceId
+        || parentMeta.sessionInstanceId
+        || sessionInstanceId;
+    }
+
     const { taskId } = await this.execute(canonicalId, prompt, {
       ...options,
       mode: options.mode || 'worker',
-      sessionKey: canonicalId,
+      sessionKey,
+      sessionInstanceId,
+      parentTaskId,
     });
 
-    // 通知前端：子任务已派发，便于各 Agent 标签页展示对应输出
+    // 通知前端：子任务已派发，便于当前窗口展示派发卡片
     this.emit('task:dispatched', {
       parentTaskId,
       childTaskId: taskId,
       agentId: canonicalId,
       prompt,
+      parentSessionKey: sessionKey,
+      parentSessionInstanceId: sessionInstanceId,
       timestamp: Date.now(),
     });
 
@@ -317,7 +374,7 @@ class AgentExecutor extends EventEmitter {
         taskId: parentTaskId,
         stepType: 'delegation',
         phase: 'start',
-        agentId,
+        agentId: canonicalId,
         childTaskId: taskId,
         content: prompt,
         timestamp: Date.now(),
@@ -389,7 +446,7 @@ class AgentExecutor extends EventEmitter {
 
     try {
       const { agentId: effectiveAgentId, assistant } = this._resolveAssistant(agentId);
-      const { mode = 'direct', workingDir = process.cwd(), mcpProfile } = options;
+      const { mode = 'direct', workingDir = process.cwd(), mcpProfile, continueSession, cliSessionId } = options;
 
       if (assistant && mode === 'orchestrator') {
         throw new Error('自定义 Assistant 请在其标签页直调使用，聚合入口请选 CLI Agent');
@@ -416,20 +473,42 @@ class AgentExecutor extends EventEmitter {
           workingDir,
           mainAgentId: options.mainAgentId,
           profileId: mcpProfile || mcpManager.DEFAULT_PROFILE_ID,
+          sessionKey: options.sessionKey || null,
+          sessionInstanceId: options.sessionInstanceId || null,
         });
         orchestratorCleanup = orch.cleanup;
         if (orch.promptPrefix) execPrompt = orch.promptPrefix + prompt;
-        args = [...launch.argPrefix, ...orch.extraArgs, execPrompt];
+        if (effectiveAgentId === 'claude-code') {
+          args = [
+            ...launch.argPrefix,
+            ...buildClaudeContinueArgs({ continueSession, cliSessionId }),
+            ...orch.extraArgs,
+            execPrompt,
+          ];
+        } else if (effectiveAgentId === 'codex') {
+          args = [
+            ...launch.argPrefix,
+            ...injectCodexResumeArgs(orch.extraArgs, { continueSession, cliSessionId }),
+            execPrompt,
+          ];
+        } else {
+          args = [...launch.argPrefix, ...orch.extraArgs, execPrompt];
+        }
       } else if (assistant) {
         const { launch: asstLaunch } = assistant;
         if (asstLaunch.claudeExtraArgs) {
-          args = [...launch.argPrefix, ...asstLaunch.claudeExtraArgs, prompt];
+          args = [
+            ...launch.argPrefix,
+            ...buildClaudeContinueArgs({ continueSession, cliSessionId }),
+            ...asstLaunch.claudeExtraArgs,
+            prompt,
+          ];
         } else {
           execPrompt = (asstLaunch.promptPrefix || '') + prompt;
           args = [...launch.argPrefix, ...cfg.buildArgs(execPrompt, { workingDir })];
         }
       } else {
-        args = [...launch.argPrefix, ...cfg.buildArgs(prompt, { workingDir })];
+        args = [...launch.argPrefix, ...cfg.buildArgs(prompt, { workingDir, continueSession, cliSessionId })];
       }
 
       const result = await this._runAgentProcess(taskId, effectiveAgentId, launch.executable, args, {
@@ -459,7 +538,14 @@ class AgentExecutor extends EventEmitter {
 
       this.emit('task:completed', {
         taskId,
-        result,
+        result: {
+          success: result.success,
+          summary: result.summary,
+          stderr: result.stderr,
+          files: result.files,
+          stepCount: result.stepCount,
+          cliSessionId: result.cliSessionId,
+        },
         status: 'completed',
         ...this._taskEventMeta(taskId),
       });
@@ -487,15 +573,18 @@ class AgentExecutor extends EventEmitter {
         const row = db.prepare('SELECT agent_id, context FROM agent_tasks WHERE id = ?').get(taskId);
         let parentTaskId = cached?.parentTaskId || running?.parent_task_id || null;
         let sessionKey = cached?.sessionKey || running?.session_key || null;
+        let sessionInstanceId = cached?.sessionInstanceId || running?.session_instance_id || null;
         try {
           const ctx = row?.context ? JSON.parse(row.context) : {};
           parentTaskId = parentTaskId || ctx.parentTaskId || null;
           sessionKey = sessionKey || ctx.sessionKey || null;
+          sessionInstanceId = sessionInstanceId || ctx.sessionInstanceId || null;
         } catch {}
         return {
           agentId: row?.agent_id || cached?.agentId || running?.agent_id || null,
           parentTaskId,
           sessionKey,
+          sessionInstanceId,
         };
       }
     } catch {}
@@ -503,6 +592,7 @@ class AgentExecutor extends EventEmitter {
       agentId: cached?.agentId || running?.agent_id || null,
       parentTaskId: cached?.parentTaskId || running?.parent_task_id || null,
       sessionKey: cached?.sessionKey || running?.session_key || null,
+      sessionInstanceId: cached?.sessionInstanceId || running?.session_instance_id || null,
     };
   }
 
@@ -513,6 +603,7 @@ class AgentExecutor extends EventEmitter {
       taskId,
       agentId: status?.agent_id || meta.agentId,
       sessionKey: meta.sessionKey,
+      sessionInstanceId: meta.sessionInstanceId,
       parentTaskId: meta.parentTaskId,
       result: status?.result || null,
       error: status?.error || null,
@@ -538,13 +629,31 @@ class AgentExecutor extends EventEmitter {
       gatewayAgentId = agentId,
       parentTaskId = null,
       sessionKey = null,
+      sessionInstanceId = null,
     } = options;
 
     const spawnEnv = agentLinker.buildSpawnEnv(gatewayAgentId, process.env);
+    const spawnDiag = agentLinker.diagnoseGatewaySpawn(gatewayAgentId, process.env);
+    try {
+      require('./api-retry-trace').traceAgentSpawnEnv({
+        taskId,
+        agentId: gatewayAgentId,
+        ...spawnDiag,
+      });
+    } catch { /* ignore */ }
+    if (spawnDiag.will_use_official_api) {
+      console.warn('[AgentExecutor] spawn 未注入网关 URL，Claude/Codex 将直连官方 API', spawnDiag.skip_reasons);
+    }
 
     return new Promise((resolve, reject) => {
+      const resolvedCwd = path.resolve(String(workingDir || process.cwd()));
+      if (!fs.existsSync(resolvedCwd)) {
+        reject(new Error(`工作目录不存在: ${resolvedCwd}`));
+        return;
+      }
+
       const proc = spawn(executable, args, {
-        cwd: workingDir,
+        cwd: resolvedCwd,
         env: spawnEnv,
         shell: process.platform === 'win32',
         // Unix：独立进程组，停止时可一并杀掉 MCP 子进程
@@ -567,11 +676,14 @@ class AgentExecutor extends EventEmitter {
         parent_task_id: parentTaskId,
         gateway_agent_id: gatewayAgentId,
         session_key: sessionKey,
+        session_instance_id: sessionInstanceId,
+        spawn_diag: spawnDiag,
       });
       this.taskMetaCache.set(taskId, {
         agentId: virtualAgentId || agentId,
         sessionKey,
         parentTaskId,
+        sessionInstanceId,
       });
 
       const cleanup = () => {
@@ -580,12 +692,22 @@ class AgentExecutor extends EventEmitter {
         }
       };
 
-      const flushLines = (buf, chunk, isErr) => {
+      const syncOutput = !!(AGENT_CLI[gatewayAgentId]?.syncOutput);
+
+      const flushLines = (buf, chunk) => {
         const combined = buf + chunk;
         const lines = combined.split('\n');
         const rest = lines.pop() ?? '';
-        for (const line of lines) {
-          this._parseAndEmitSteps(taskId, line, stepCounter++, gatewayAgentId);
+        if (!syncOutput) {
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            this._parseAndEmitSteps(taskId, line, stepCounter++, gatewayAgentId);
+            const running = this.runningTasks.get(taskId);
+            if (running && !running.cli_session_id) {
+              const sid = normalizeCliSessionId(extractCliSessionId(`${line}\n`, gatewayAgentId));
+              if (sid) running.cli_session_id = sid;
+            }
+          }
         }
         return rest;
       };
@@ -593,48 +715,92 @@ class AgentExecutor extends EventEmitter {
       proc.stdout.on('data', (data) => {
         const chunk = data.toString();
         stdout += chunk;
-        outLineBuf = flushLines(outLineBuf, chunk, false);
+        outLineBuf = flushLines(outLineBuf, chunk);
       });
 
       proc.stderr.on('data', (data) => {
         const chunk = data.toString();
         stderr += chunk;
-        errLineBuf = flushLines(errLineBuf, chunk, true);
+        errLineBuf = flushLines(errLineBuf, chunk);
       });
 
-      proc.on('close', (code) => {
-        if (outLineBuf.trim()) {
-          this._parseAndEmitSteps(taskId, outLineBuf, stepCounter++, gatewayAgentId);
-        }
-        if (errLineBuf.trim()) {
-          this._parseAndEmitSteps(taskId, errLineBuf, stepCounter++, gatewayAgentId);
-        }
-        this.runningTasks.delete(taskId);
-        cleanup();
+      proc.on('close', (code, signal) => {
+        try {
+          if (!syncOutput) {
+            if (outLineBuf.trim()) {
+              this._parseAndEmitSteps(taskId, outLineBuf, stepCounter++, gatewayAgentId);
+            }
+            if (errLineBuf.trim()) {
+              this._parseAndEmitSteps(taskId, errLineBuf, stepCounter++, gatewayAgentId);
+            }
+          } else {
+            const parsed = parseClaudeSyncStdout(stdout);
+            if (parsed.sessionId) {
+              const running = this.runningTasks.get(taskId);
+              if (running) running.cli_session_id = parsed.sessionId;
+            }
+            stepCounter = this._emitParsedSteps(taskId, stepCounter, parsed.steps, gatewayAgentId);
+          }
 
-        if (code === 0) {
-          const modifiedFiles = this._parseModifiedFiles(stdout);
-          this._recordModifiedFiles(taskId, modifiedFiles);
+          const running = this.runningTasks.get(taskId);
+          const cliSid = normalizeCliSessionId(
+            running?.cli_session_id || extractCliSessionId(stdout, gatewayAgentId),
+          );
+          this.runningTasks.delete(taskId);
+          this._clearTaskStreamState(taskId);
+          cleanup();
 
-          resolve({
-            success: true,
-            output: stdout,
-            summary: summarizeAgentStdout(stdout, gatewayAgentId),
-            stderr,
-            files: modifiedFiles,
-            stepCount: stepCounter,
-          });
-        } else {
-          reject(new Error(`Agent exited with code ${code}: ${stderr || stdout}`));
+          const execFail = detectAgentExecutionFailure(stdout);
+          if (code === 0 && !execFail) {
+            try {
+              const modifiedFiles = this._parseModifiedFiles(stdout);
+              this._recordModifiedFiles(taskId, modifiedFiles);
+            } catch (e) {
+              console.warn('[AgentExecutor] recordModifiedFiles failed:', e.message);
+            }
+
+            resolve({
+              success: true,
+              output: stdout,
+              summary: summarizeAgentStdout(stdout, gatewayAgentId),
+              stderr,
+              files: [],
+              stepCount: stepCounter,
+              cliSessionId: cliSid,
+            });
+          } else {
+            const errText = execFail || formatAgentExitError(stderr, stdout, code, gatewayAgentId, signal);
+            reject(new Error(errText));
+          }
+        } catch (err) {
+          this.runningTasks.delete(taskId);
+          this._clearTaskStreamState(taskId);
+          cleanup();
+          reject(err);
         }
       });
 
       proc.on('error', (error) => {
         this.runningTasks.delete(taskId);
+        this._clearTaskStreamState(taskId);
         cleanup();
         reject(new Error(`Failed to start agent: ${error.message}`));
       });
     });
+  }
+
+  /** 清理任务级 stream-json 块状态 */
+  _clearTaskStreamState(taskId) {
+    this._streamState.delete(taskId);
+  }
+
+  /** 将已解析步骤广播到 UI（同步 JSON 模式） */
+  _emitParsedSteps(taskId, startNumber, steps, gatewayAgentId) {
+    let n = startNumber;
+    for (const step of steps || []) {
+      this._emitSingleStep(taskId, n++, step, gatewayAgentId);
+    }
+    return n;
   }
 
   /**
@@ -643,15 +809,44 @@ class AgentExecutor extends EventEmitter {
   _parseAndEmitSteps(taskId, line, stepNumber, agentIdForParse) {
     const running = this.runningTasks.get(taskId);
     const parseAgent = agentIdForParse || running?.gateway_agent_id || running?.agent_id;
-    const steps = parseAgentOutputLine(line, parseAgent);
-    let db;
-    try { db = this._getDb(); } catch { db = null; }
+    if (!this._streamState.has(taskId)) {
+      this._streamState.set(taskId, {
+        blockTypes: new Map(),
+        blockTexts: new Map(),
+        streaming: false,
+        messageId: null,
+        lastThinking: '',
+      });
+    }
+    const steps = parseAgentOutputLine(line, parseAgent, this._streamState.get(taskId));
+    return this._emitParsedSteps(taskId, stepNumber, steps, parseAgent);
+  }
 
-    for (const step of steps) {
+  _emitSingleStep(taskId, stepNumber, step, gatewayAgentId) {
+    try {
+      const running = this.runningTasks.get(taskId);
       const stepType = step.stepType || 'output';
       const content = step.content || '';
-      // system_event 等结构化步骤允许无长文本 content
-      if (!content.trim() && stepType !== 'system_event') continue;
+      if (!content.trim() && stepType !== 'system_event') return;
+
+      if (stepType === 'system_event' && step.system_subtype === 'api_retry') {
+        try {
+          const localGateway = require('./local-gateway');
+          require('./api-retry-trace').traceCliApiRetry({
+            taskId,
+            agentId: gatewayAgentId,
+            rawLine: '',
+            step,
+            spawn_diag: running?.spawn_diag || null,
+            getRouteLog: () => localGateway.getLog(),
+          });
+        } catch (e) {
+          console.warn('[AgentExecutor] api_retry trace failed:', e.message);
+        }
+      }
+
+      let db;
+      try { db = this._getDb(); } catch { db = null; }
 
       const stepId = `step_${Date.now()}_${nanoid(8)}`;
       if (db) {
@@ -673,6 +868,8 @@ class AgentExecutor extends EventEmitter {
         content,
         tool_name: step.tool_name || null,
         system_subtype: step.system_subtype || null,
+        is_delta: !!step.is_delta,
+        is_snapshot: !!step.is_snapshot,
         attempt: step.attempt,
         max_retries: step.max_retries,
         retry_delay_ms: step.retry_delay_ms,
@@ -681,7 +878,10 @@ class AgentExecutor extends EventEmitter {
         agentId: running?.agent_id || this.taskMetaCache.get(taskId)?.agentId || null,
         parentTaskId: running?.parent_task_id || this.taskMetaCache.get(taskId)?.parentTaskId || null,
         sessionKey: running?.session_key || this.taskMetaCache.get(taskId)?.sessionKey || null,
+        sessionInstanceId: running?.session_instance_id || this.taskMetaCache.get(taskId)?.sessionInstanceId || null,
       });
+    } catch (e) {
+      console.warn('[AgentExecutor] emit step failed:', e.message);
     }
   }
 
@@ -696,26 +896,9 @@ class AgentExecutor extends EventEmitter {
     return 'output';
   }
 
-  /**
-   * 解析修改的文件
-   */
+  /** 解析修改的文件（stream-json tool_use + 纯文本 fallback） */
   _parseModifiedFiles(output) {
-    // 简化实现：查找常见的文件修改模式
-    const files = [];
-    const lines = output.split('\n');
-    
-    for (const line of lines) {
-      // 匹配: Created/Modified/Edited: path/to/file
-      const match = line.match(/(Created|Modified|Edited):\s+(.+)/i);
-      if (match) {
-        files.push({
-          path: match[2].trim(),
-          operation: match[1].toLowerCase(),
-        });
-      }
-    }
-
-    return files;
+    return extractModifiedFiles(output);
   }
 
   /**
@@ -757,6 +940,7 @@ class AgentExecutor extends EventEmitter {
     if (task?.process) {
       this._killProcess(task.process);
       this.runningTasks.delete(taskId);
+      this._clearTaskStreamState(taskId);
     }
 
     const db = this._getDb();
@@ -915,3 +1099,5 @@ class AgentExecutor extends EventEmitter {
 
 module.exports = new AgentExecutor();
 module.exports.invalidateAgentListCache = invalidateAgentListCache;
+module.exports.buildClaudeCodeArgs = buildClaudeCodeArgs;
+module.exports.buildClaudeContinueArgs = buildClaudeContinueArgs;

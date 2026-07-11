@@ -22,7 +22,7 @@ items:
   id: tokenbank-agent-bridge
   name: tokenbank-agent-bridge
   display_name: Token Bank Agent Bridge
-  description: 内置 Agent 派发桥：tb_list_agents / tb_dispatch_agent
+  description: 内置 Agent 派发桥：tb_list_agents / tb_dispatch_agent / tb_get_prompt
   type: stdio
   command: __DYNAMIC_ELECTRON__
   args: []
@@ -35,6 +35,7 @@ items:
     tools:
     - tb_list_agents
     - tb_dispatch_agent
+    - tb_get_prompt
     tags:
     - 内置
     - 编排

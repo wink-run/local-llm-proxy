@@ -62,7 +62,7 @@ export default function Sidebar({ onToggleCollapse }) {
     <button
       onClick={() => navigate('/config')}
       title={pendingVersion ? t('updater.pendingTitle', { version: pendingVersion }) : t('nav.settings')}
-      className={`relative shrink-0 flex items-center justify-center w-10 rounded-lg transition-colors ${
+      className={`tb-press relative shrink-0 flex items-center justify-center w-10 rounded-lg ${
         settingsActive
           ? 'bg-zinc-200/80 dark:bg-white/10 text-zinc-900 dark:text-white'
           : 'text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-200/60 dark:hover:bg-white/5'
@@ -96,7 +96,7 @@ export default function Sidebar({ onToggleCollapse }) {
   const LOGIN_PATHS = new Set(['/circles', '/contribute']);
 
   return (
-    <aside className="relative w-[148px] flex flex-col pb-5 bg-white/55 dark:bg-zinc-900 backdrop-blur-2xl border-r border-zinc-900/[0.06] dark:border-white/[0.06] shrink-0">
+    <aside className="tb-material relative w-[148px] flex flex-col pb-5 border-r border-zinc-900/[0.06] dark:border-white/[0.06] shrink-0">
       {/* CLI：收起侧边栏 */}
       {onToggleCollapse && (
         <button
@@ -104,7 +104,7 @@ export default function Sidebar({ onToggleCollapse }) {
           onClick={onToggleCollapse}
           title={t('sidebar.collapse')}
           aria-label={t('sidebar.collapse')}
-          className="absolute top-3 right-2 z-10 flex items-center justify-center w-7 h-7 rounded-md text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-white/10 transition-colors"
+          className="tb-press absolute top-3 right-2 z-10 flex items-center justify-center w-7 h-7 rounded-md text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-white/10"
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
             <path d="M15 18 9 12l6-6" />
@@ -124,7 +124,7 @@ export default function Sidebar({ onToggleCollapse }) {
       <nav className="electron-no-drag flex-1 flex flex-col gap-0.5 px-2">
         {NAV.map(({ to, icon, labelKey }) => {
           const navCls = (active) =>
-            'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors w-full text-left ' +
+            'tb-press flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm w-full text-left ' +
             (active
               ? 'bg-zinc-200/80 dark:bg-white/10 text-zinc-900 dark:text-white font-semibold'
               : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200/60 dark:hover:bg-white/5 hover:text-zinc-900 dark:hover:text-zinc-100');
@@ -161,7 +161,7 @@ export default function Sidebar({ onToggleCollapse }) {
                 if (user) navigate('/account');
                 else navigate('/login');
               }}
-              className={`flex-1 min-w-0 flex items-center gap-2 px-2 py-2 rounded-lg text-left transition-colors ${
+              className={`tb-press flex-1 min-w-0 flex items-center gap-2 px-2 py-2 rounded-lg text-left ${
                 profileActive
                   ? 'bg-zinc-200/80 dark:bg-white/10'
                   : 'hover:bg-zinc-200/60 dark:hover:bg-white/5'
