@@ -676,6 +676,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   const [routeIds,       setRouteIds]       = useState(() =>
     effectiveRouteIds(app).map(rid => routeSelectValue(rid, availableModels, routes)).filter(Boolean));
   const [modelIntercept, setModelIntercept] = useState(app.model_intercept || '');
+  const [dirGlob,        setDirGlob]        = useState(app.instance?.dir_glob || '');   // CLI 实例生效目录
   const [busy,           setBusy]           = useState(false);
   const [copied,         setCopied]         = useState(false);
   const [claudeDevMode, setClaudeDevMode] = useState(null); // Claude Desktop 开发者模式状态
@@ -743,6 +744,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
       route_id: ids[0] || null,
       route_ids: ids.length ? ids : null,
       model_intercept: modelIntercept.trim() || null,
+      ...(app.instance ? { instance: { ...app.instance, dir_glob: dirGlob.trim() || null } } : {}),
       ...(app.env && !app.config_file ? { env: parseEnvText(envText) } : {}),
     });
     setBusy(false);
@@ -994,6 +996,34 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
             placeholder={t('gateway.app.modelInterceptPlaceholder')}
             className="w-full text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-zinc-800 dark:text-zinc-200 font-mono" />
           <div className="text-xs text-zinc-400 mt-1">{t('gateway.app.modelInterceptHint')}</div>
+        </div>
+      )}
+      {/* CLI 多账号实例：账号信息 + 生效目录（默认账号=兜底，无需设目录） */}
+      {app.instance && (
+        <div>
+          <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-1">{t('gateway.app.instanceDir')}</div>
+          {app.instance.account_email && (
+            <div className="text-xs text-zinc-400 mb-1.5">
+              {t('gateway.app.instanceAccount')}: <span className="font-mono">{app.instance.account_email}</span>
+              {app.instance.subscription ? ` · ${app.instance.subscription}` : ''}
+            </div>
+          )}
+          {app.instance.is_default ? (
+            <div className="text-xs text-zinc-400">{t('gateway.app.instanceDefaultHint')}</div>
+          ) : (
+            <>
+              <div className="flex gap-2">
+                <input value={dirGlob} onChange={e => setDirGlob(e.target.value)}
+                  placeholder="~/code/work"
+                  className="flex-1 text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-zinc-800 dark:text-zinc-200 font-mono" />
+                <button type="button" onClick={async () => { const d = await window.electronAPI?.apps?.selectDirectory?.(); if (d) setDirGlob(d); }}
+                  className="text-xs px-2.5 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700/50 shrink-0">
+                  {t('gateway.app.browse')}
+                </button>
+              </div>
+              <div className="text-xs text-zinc-400 mt-1">{t('gateway.app.instanceDirHint')}</div>
+            </>
+          )}
         </div>
       )}
     </div>
