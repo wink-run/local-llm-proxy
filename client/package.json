@@ -10,8 +10,8 @@
     "build": "vite build && electron-builder",
     "gen-icons": "node scripts/gen-icons.js",
     "changelog": "node scripts/gen-changelog.js",
-    "test": "node --test electron/__tests__/*.test.js",
-    "test:cli-runtime": "node --test electron/__tests__/cli-runtime-deps.test.js",
+    "test": "ELECTRON_RUN_AS_NODE=1 electron --test electron/__tests__/*.test.js",
+    "test:cli-runtime": "ELECTRON_RUN_AS_NODE=1 electron --test electron/__tests__/cli-runtime-deps.test.js",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
     "rebuild": "electron-rebuild -f -w better-sqlite3"
   },
