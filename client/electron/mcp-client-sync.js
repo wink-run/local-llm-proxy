@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const shim = require('./shim-installer');
-const { BUILTIN_BRIDGE_ID, BUILTIN_PROMPTS_ID } = require('./mcp-manager');
+const { BUILTIN_BRIDGE_ID, BUILTIN_PROMPTS_ID, writeElectronAsNodeLauncher } = require('./mcp-manager');
 const { CLIENT_TARGETS } = require('./mcp-agent-targets');
 
 const STATE_PATH = path.join(os.homedir(), '.tokenbank', 'mcp', 'client-sync-state.json');
@@ -45,12 +45,18 @@ function serverToEntry(serverRow, clientId) {
     return null;
   }
 
-  // 内置提示词 MCP：物化为 Electron-as-node，并注入调用方 client 标识
+  // 内置提示词 MCP：用 shell launcher（内嵌 ELECTRON_RUN_AS_NODE），
+  // 避免 Codex 等不透传 mcp_servers.*.env 时 Electron GUI 崩溃
   if (serverRow.id === BUILTIN_PROMPTS_ID || serverRow.name === BUILTIN_PROMPTS_ID) {
+    const launcher = writeElectronAsNodeLauncher({
+      name: `prompts-${clientId || 'default'}`,
+      scriptPath: PROMPTS_SCRIPT,
+      env: { TB_CLIENT_ID: clientId || '' },
+    });
     return {
-      command: process.execPath,
-      args: [PROMPTS_SCRIPT],
-      env: { ELECTRON_RUN_AS_NODE: '1', TB_CLIENT_ID: clientId || '' },
+      command: launcher,
+      args: [],
+      env: {},
     };
   }
 

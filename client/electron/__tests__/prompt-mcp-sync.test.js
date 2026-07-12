@@ -12,12 +12,17 @@ const promptsRow = {
   command: '__DYNAMIC_ELECTRON__', args: '[]', env: '{"ELECTRON_RUN_AS_NODE":"1"}', builtin: 1,
 };
 
-test('serverToEntry: prompts server 物化为 execPath + 脚本 + TB_CLIENT_ID', () => {
+test('serverToEntry: prompts server 物化为 shell launcher（内嵌 ELECTRON_RUN_AS_NODE）', () => {
   const entry = sync.serverToEntry(promptsRow, 'claude-code');
-  assert.equal(entry.command, process.execPath);
-  assert.equal(entry.args[0], path.join(__dirname, '..', 'prompt-mcp.js'));
-  assert.equal(entry.env.ELECTRON_RUN_AS_NODE, '1');
-  assert.equal(entry.env.TB_CLIENT_ID, 'claude-code');
+  assert.ok(String(entry.command).endsWith('prompts-claude-code.sh'), entry.command);
+  assert.deepEqual(entry.args, []);
+  const sh = require('fs').readFileSync(entry.command, 'utf8');
+  assert.ok(sh.includes('ELECTRON_RUN_AS_NODE=1'));
+  assert.ok(sh.includes('prompt-mcp.js'));
+  // 即使在系统 Node 下跑测试，launcher 也应指向 Electron 二进制而非 node
+  assert.ok(/Electron(\.app|['"])|[/\\]electron['"]/i.test(sh), sh);
+  assert.ok(!/[/\\]bin[/\\]node'/.test(sh), 'launcher must not use system node');
+  assert.ok(sh.includes("TB_CLIENT_ID='claude-code'") || sh.includes('TB_CLIENT_ID=claude-code'));
 });
 
 test('serverToEntry: bridge 与其他 __DYNAMIC_ELECTRON__ 仍返回 null', () => {
