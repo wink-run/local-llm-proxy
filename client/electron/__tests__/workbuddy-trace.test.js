@@ -139,7 +139,8 @@ test('workbuddy patch_route writes custom model format', () => {
     marker: 'tokenbank',
   });
   assert.equal(out.models.length, 1);
-  assert.equal(out.models[0].id, '代码助手');
+  // id 必须是发给网关的 wire model（model_key），scene_name 只是显示名（见 812ff79）
+  assert.equal(out.models[0].id, 'code');
   assert.equal(out.models[0].name, 'tokenbank');
   assert.equal(out.models[0].vendor, 'TokenBank');
   assert.equal(out.availableModels, undefined);
@@ -159,7 +160,7 @@ test('workbuddy patch_route supports multiple routes', () => {
     routes,
   });
   assert.equal(out.models.length, 2);
-  assert.equal(out.models[0].id, '代码助手');
+  assert.equal(out.models[0].id, 'code');
   assert.equal(out.models[1].id, 'gpt-4o');
   assert.ok(out.models.every(m => m.name === 'tokenbank'));
 });
@@ -194,7 +195,7 @@ test('codex patch_route writes model from first route', () => {
     routeIds: ['code', 'paid:gpt-4o'],
     routes,
   });
-  assert.equal(out.model, '代码助手');
+  assert.equal(out.model, 'code');
 });
 
 test('workbuddy handler expands route_multi_select', () => {
