@@ -28,6 +28,7 @@ from admin_router import router as admin_router
 from billing_sources_router import router as billing_sources_router
 from app_catalog_router import router as app_catalog_router
 from routing_catalog_router import router as routing_catalog_router
+from community_catalog_router import router as community_catalog_router
 from catalog import TIERS, catalog_public_payload
 from device_router import router as device_router
 from auth import get_current_user_id
@@ -156,6 +157,7 @@ app.include_router(admin_router, prefix="/admin")
 app.include_router(billing_sources_router, prefix="/admin")
 app.include_router(app_catalog_router, prefix="/admin")
 app.include_router(routing_catalog_router, prefix="/admin")
+app.include_router(community_catalog_router, prefix="/admin")
 app.include_router(user_router, prefix="/user")
 app.include_router(scene_router, prefix="/user")
 app.include_router(provider_router, prefix="/user")   # 个人供给源 /user/providers + /user/oauth/claude/*
@@ -193,6 +195,13 @@ async def wall_page():
 async def public_catalog():
     """公开接口：供给源目录（registry providers + 个人源 APP/API 订阅模板）"""
     return await catalog_public_payload()
+
+
+@app.get("/api/community-catalog")
+async def public_community_catalog():
+    """公开接口：社区推荐目录(mcp/prompts/skills/assistants)"""
+    import community_catalog as cc
+    return await cc.community_catalog_payload()
 
 
 @app.get("/api/rates")

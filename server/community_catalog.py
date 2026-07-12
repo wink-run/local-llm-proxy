@@ -77,3 +77,33 @@ def normalize_catalog_doc(doc: dict) -> dict:
 
 def catalog_payload_from_doc(doc: dict) -> dict:
     return normalize_catalog_doc(doc)
+
+
+async def load_community_catalog_doc() -> dict:
+    raw = await db.get_config(CONFIG_KEY, "")
+    if raw.strip():
+        doc = _parse_json_or_yaml(raw)
+        if doc:
+            return normalize_catalog_doc(doc)
+    return load_default_doc()
+
+
+async def save_catalog_doc(doc: dict) -> None:
+    payload = normalize_catalog_doc(doc)
+    await db.set_config(CONFIG_KEY, json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+async def import_from_defaults() -> dict:
+    doc = load_default_doc()
+    await save_catalog_doc(doc)
+    return {"ok": True, "counts": {k: len(doc[k]) for k in _SECTIONS}}
+
+
+async def community_catalog_payload() -> dict:
+    return catalog_payload_from_doc(await load_community_catalog_doc())
+
+
+async def publish_community_catalog() -> dict:
+    doc = await load_community_catalog_doc()
+    await save_catalog_doc(doc)
+    return {"ok": True, "counts": {k: len(doc[k]) for k in _SECTIONS}}
