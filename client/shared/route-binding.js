@@ -121,6 +121,17 @@ function bindClaudeRoutesToKeyScene(keyScene, callerKey, routeIds, routes = [], 
   });
 }
 
+/** Claude Code CLI（shim 注入 api_key → 成 api-key 调用方）：客户端会发任意 claude-* 名
+ * （claude-sonnet-4-5 / claude-haiku-4-5 …，且这些名字不受我们控制），把选中的单条 route
+ * 绑到【所有】claude 客户端模型名上 —— 任何 claude-* 请求都命中该 route。
+ * 与 Desktop（bindClaudeRoutesToKeyScene 按 inferenceModels.name 顺序 1:1 绑）不同：
+ * Desktop 的名字列表由我们写入、与 route 一一对应；CLI 的名字由客户端决定，必须全绑。 */
+function bindClaudeCliRouteToKeyScene(keyScene, callerKey, routeId, routes = [], claudeModels = []) {
+  if (!callerKey || !routeId || !claudeModels.length) return;
+  const sub = keyScene[callerKey] || (keyScene[callerKey] = {});
+  for (const name of claudeModels) bindRouteToKeyScene(sub, name, routeId, routes);
+}
+
 /** 写入 keyScene（Electron main + CLI admin-api 共用） */
 function bindRouteToKeyScene(keyScene, callerKey, routeId, routes = []) {
   const parsed = parseRouteBinding(routeId, routes);
@@ -167,5 +178,6 @@ module.exports = {
   isKnownRouteSelectValue,
   claudeNameAtIndex,
   bindClaudeRoutesToKeyScene,
+  bindClaudeCliRouteToKeyScene,
   bindRouteToKeyScene,
 };

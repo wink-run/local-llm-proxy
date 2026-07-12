@@ -117,3 +117,39 @@ test('账户并集：scanned ∪ personal 按 email 去重，标 source/has_loca
   assert.equal(by['p@x.com'].has_local, false);
   assert.equal(by['p@x.com'].config_dir, null);
 });
+
+// 账号类型分类（决定纳管走 shim 还是 config-copy）：读 settings.json，备份感知。
+test('auth_mode 分类：oauth / config-file / 已托管(读备份) / 空目录', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-authmode-'));
+  const mk = (name) => { const d = path.join(home, name); fs.mkdirSync(d, { recursive: true }); return d; };
+  const w = (d, f, o) => fs.writeFileSync(path.join(d, f), JSON.stringify(o));
+
+  // 默认 = OAuth（有凭证）
+  const def = mk('.claude');
+  w(def, '.credentials.json', { claudeAiOauth: { accessToken: 'x', expiresAt: 1 } });
+  w(def, '.claude.json', { oauthAccount: { emailAddress: 'me@x.com' } });
+  // 兼容端点：settings.json 有「非网关」base_url
+  const forti = mk('.claude-fortinet');
+  w(forti, 'settings.json', { env: { ANTHROPIC_BASE_URL: 'https://fp.example.com/', ANTHROPIC_AUTH_TOKEN: 'sk-f' }, model: 'forti-coder' });
+  // 已托管：settings.json 指向网关，但 .tokenbank-bak 保留原始兼容端点 → 仍应分类为 config-file
+  const mng = mk('.claude-managed');
+  w(mng, 'settings.json', { env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:11430', ANTHROPIC_AUTH_TOKEN: 'sk-local' } });
+  w(mng, 'settings.json.tokenbank-bak', { env: { ANTHROPIC_BASE_URL: 'https://fp.example.com/', ANTHROPIC_AUTH_TOKEN: 'sk-f' }, model: 'forti-coder' });
+  // 空目录
+  mk('.claude-empty');
+
+  const by = {};
+  for (const i of scanClaudeInstances(home)) by[path.basename(i.config_dir)] = i;
+
+  assert.equal(by['.claude'].auth_mode, 'oauth');
+  assert.equal(by['.claude-fortinet'].auth_mode, 'config-file');
+  assert.equal(by['.claude-fortinet'].base_url, 'https://fp.example.com/');
+  assert.equal(by['.claude-fortinet'].model, 'forti-coder');
+  assert.equal(by['.claude-fortinet'].managed, false);
+  assert.equal(by['.claude-managed'].auth_mode, 'config-file', '已托管仍按备份还原原始类型');
+  assert.equal(by['.claude-managed'].base_url, 'https://fp.example.com/');
+  assert.equal(by['.claude-managed'].managed, true);
+  assert.equal(by['.claude-empty'].auth_mode, 'unknown');
+
+  fs.rmSync(home, { recursive: true, force: true });
+});
