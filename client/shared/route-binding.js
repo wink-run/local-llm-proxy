@@ -127,9 +127,13 @@ function bindClaudeRoutesToKeyScene(keyScene, callerKey, routeIds, routes = [], 
  * 与 Desktop（bindClaudeRoutesToKeyScene 按 inferenceModels.name 顺序 1:1 绑）不同：
  * Desktop 的名字列表由我们写入、与 route 一一对应；CLI 的名字由客户端决定，必须全绑。 */
 function bindClaudeCliRouteToKeyScene(keyScene, callerKey, routeId, routes = [], claudeModels = []) {
-  if (!callerKey || !routeId || !claudeModels.length) return;
+  if (!callerKey || !routeId) return;
   const sub = keyScene[callerKey] || (keyScene[callerKey] = {});
   for (const name of claudeModels) bindRouteToKeyScene(sub, name, routeId, routes);
+  // 通配兜底：Claude Code 会发列表外的后台/快速模型名（写死在客户端、随版本变，如
+  // claude-3-5-haiku-20241022），全部映射到该 route，避免落到直连 404。网关对「claude-* 且无
+  // 精确命中」的 api-key 调用方查 keyScene[key]['*']。Desktop 的绑定不写 '*'，故不受影响。
+  bindRouteToKeyScene(sub, '*', routeId, routes);
 }
 
 /** 写入 keyScene（Electron main + CLI admin-api 共用） */
