@@ -36,6 +36,7 @@ const ctx = {
 const launcherText = fs.readFileSync(ctx.bridgeLauncher, 'utf8');
 assert.ok(launcherText.includes('export ELECTRON_RUN_AS_NODE=1'));
 assert.ok(launcherText.includes('TB_PARENT_TASK_ID'));
+assert.ok(launcherText.includes('TB_CLIENT_ID'));
 assert.ok(launcherText.includes('agent-dispatch-mcp.js'));
 
 const buildRuntime = (srv) => {

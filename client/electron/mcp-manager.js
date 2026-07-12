@@ -68,6 +68,7 @@ function writeBridgeMcpLauncher({
     `export TB_PARENT_SESSION_INSTANCE=${shellQuote(sessionInstanceId || '')}`,
     `export TB_WORKING_DIR=${shellQuote(workingDir || process.cwd())}`,
     `export TB_MAIN_AGENT_ID=${shellQuote(mainAgentId || '')}`,
+    `export TB_CLIENT_ID=${shellQuote(mainAgentId || '')}`,
     ...dispatchLines,
     `exec ${shellQuote(process.execPath)} ${shellQuote(DISPATCH_SCRIPT)}`,
     '',
