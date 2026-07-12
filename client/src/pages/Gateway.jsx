@@ -1140,6 +1140,36 @@ function ManualAddPanel({ app, routes, availableModels = [], localBase = '', onU
     onSave();
   }
 
+  // 接入类型：api（现有手工 API 应用）| cli（新建 claude/codex 账号实例）
+  const [mode, setMode]       = useState('api');
+  const [cliTool, setCliTool] = useState('claude-code');
+  const [accounts, setAccounts] = useState([]);
+  const [acctIdx, setAcctIdx] = useState(0);
+  const [cliDir, setCliDir]   = useState('');
+  const [cliRoute, setCliRoute] = useState('');
+  const [cliBusy, setCliBusy] = useState(false);
+  const [cliErr, setCliErr]   = useState('');
+  useEffect(() => {
+    if (mode !== 'cli') return;
+    (async () => {
+      const list = await window.electronAPI?.apps?.scanAccounts?.(cliTool).catch(() => []);
+      setAccounts(Array.isArray(list) ? list : []);
+      setAcctIdx(0);
+    })();
+  }, [mode, cliTool]);
+  async function saveCli() {
+    const acct = accounts[acctIdx];
+    if (!acct || !acct.config_dir) { setCliErr(t('gateway.app.cliNeedAccount')); return; }
+    setCliBusy(true); setCliErr('');
+    const r = await window.electronAPI?.apps?.addInstance?.({
+      tool: cliTool, config_dir: acct.config_dir, account_email: acct.email,
+      subscription: acct.subscription, dir_glob: cliDir.trim() || null, route_id: cliRoute || null,
+    }).catch(e => ({ ok: false, error: e.message }));
+    setCliBusy(false);
+    if (r?.ok) { onCancel(); }   // 删占位草稿 + 刷新，新实例出现在列表
+    else setCliErr(r?.error === 'exists' ? t('gateway.app.cliAccountExists') : (r?.error || t('gateway.common.saveFailed')));
+  }
+
   return (
     <div className="mb-3 bg-white dark:bg-zinc-800 rounded-2xl border border-blue-200 dark:border-blue-800/50 shadow-sm">
       <div className="flex items-center gap-3 px-5 py-3 border-b border-zinc-200 dark:border-zinc-800">
@@ -1147,6 +1177,70 @@ function ManualAddPanel({ app, routes, availableModels = [], localBase = '', onU
         <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">{t('gateway.app.newTitle')}</h3>
         <button onClick={onCancel} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 text-lg">✕</button>
       </div>
+      {/* 接入类型选择 */}
+      <div className="px-5 pt-4">
+        <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.linkType')}</div>
+        <div className="grid grid-cols-2 gap-2">
+          {[['api', t('gateway.app.linkTypeApi'), t('gateway.app.linkTypeApiHint')], ['cli', t('gateway.app.linkTypeCli'), t('gateway.app.linkTypeCliHint')]].map(([m, label, hint]) => (
+            <button key={m} type="button" onClick={() => setMode(m)}
+              className={`text-left rounded-lg border px-3 py-2 transition-colors ${mode === m ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-600' : 'border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800/60'}`}>
+              <div className={`text-xs font-medium ${mode === m ? 'text-blue-700 dark:text-blue-300' : 'text-zinc-700 dark:text-zinc-200'}`}>{label}</div>
+              <div className="text-[11px] text-zinc-400 mt-0.5 leading-snug">{hint}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+      {mode === 'cli' ? (
+        <div className="p-5 space-y-4">
+          <div>
+            <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.cliTool')}</div>
+            <div className="flex gap-2">
+              {[['claude-code', 'Claude Code'], ['codex', 'Codex']].map(([id, label]) => (
+                <button key={id} type="button" onClick={() => setCliTool(id)}
+                  className={`flex-1 text-sm rounded-lg border px-3 py-1.5 transition-colors ${cliTool === id ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300' : 'border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60'}`}>{label}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.cliAccount')}</div>
+            {accounts.length === 0 ? (
+              <div className="text-xs text-zinc-400">{t('gateway.app.cliNoAccounts')}</div>
+            ) : (
+              <select value={acctIdx} onChange={e => setAcctIdx(Number(e.target.value))}
+                className="w-full text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none text-zinc-800 dark:text-zinc-200">
+                {accounts.map((a, i) => (
+                  <option key={i} value={i} disabled={a.already_added || !a.config_dir}>
+                    {(a.email || a.config_dir)}{a.subscription ? ` · ${a.subscription}` : ''}{a.already_added ? ` · ${t('gateway.app.cliAlreadyAdded')}` : (!a.config_dir ? ` · ${t('gateway.app.cliNoLocal')}` : '')}
+                  </option>
+                ))}
+              </select>
+            )}
+            <div className="text-[11px] text-zinc-400 mt-1">{t('gateway.app.cliAccountHint')}</div>
+          </div>
+          <div>
+            <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.instanceDir')}</div>
+            <div className="flex gap-2">
+              <input value={cliDir} onChange={e => setCliDir(e.target.value)} placeholder="~/code/work"
+                className="flex-1 text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-zinc-800 dark:text-zinc-200 font-mono" />
+              <button type="button" onClick={async () => { const d = await window.electronAPI?.apps?.selectDirectory?.(); if (d) setCliDir(d); }}
+                className="text-xs px-2.5 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700/50 shrink-0">{t('gateway.app.browse')}</button>
+            </div>
+            <div className="text-[11px] text-zinc-400 mt-1">{t('gateway.app.instanceDirHint')}</div>
+          </div>
+          <div>
+            <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.routeRules')}</div>
+            <RouteSelect value={cliRoute} onChange={v => setCliRoute(v || '')} routes={routes} availableModels={availableModels} t={t} />
+            <div className="text-[11px] text-zinc-400 mt-1">{t('gateway.app.cliRouteHint')}</div>
+          </div>
+          {cliErr && <div className="text-xs text-red-500">{cliErr}</div>}
+          <div className="flex justify-end gap-2">
+            <button onClick={onCancel} className="text-sm px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700/50">{t('gateway.common.cancel')}</button>
+            <button onClick={saveCli} disabled={cliBusy}
+              className="text-sm px-4 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50">{cliBusy ? '…' : t('gateway.app.cliAddInstance')}</button>
+          </div>
+        </div>
+      ) : (
+      <>
       <div className="p-5 space-y-4">
         {/* 基础信息 */}
         <div>
@@ -1228,6 +1322,8 @@ function ManualAddPanel({ app, routes, availableModels = [], localBase = '', onU
           {t('gateway.common.cancel')}
         </button>
       </div>
+      </>
+      )}
     </div>
   );
 }
