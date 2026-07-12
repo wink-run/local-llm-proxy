@@ -1189,5 +1189,6 @@ export default {
   'resources.badge.tbSync': '通过 TB 安装',
   'resources.badge.client': '客户端自配',
   'resources.nonSkillHint': '非 Skill 类型仅在 TB 内关联，不写 Agent 文件',
+  'resources.promptMcpHint': '投射后，该 Agent 会话可通过 MCP 工具 tb_get_prompt 按名取回此提示词',
   'resources.footerHint': 'Skill 权威目录在用户安装位置，Token Bank 仅扫描与软链投射，不复制到 ~/.tokenbank。取消纳管不会删除原文件。',
 };

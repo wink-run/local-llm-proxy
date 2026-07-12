@@ -140,6 +140,7 @@ export default function Resources() {
   const [agentInstallations, setAgentInstallations] = useState([]);
   const [agentTab, setAgentTab] = useState(() => readAgentTab());
   const [agents, setAgents] = useState([]);
+  const [promptAgents, setPromptAgents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
@@ -184,6 +185,7 @@ export default function Resources() {
       else setError(catRes.error || t('resources.loadFailed'));
       if (resRes.success) setResources(resRes.resources || []);
       if (agentRes.success) setAgents(agentRes.agents || []);
+      if (agentRes.success) setPromptAgents(agentRes.promptAgents || []);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -1017,6 +1019,7 @@ export default function Resources() {
   function renderProjectMenu() {
     if (!projectMenu) return null;
     const resource = resources.find(r => r.id === projectMenu.resourceId);
+    const targetList = resource?.type === 'prompt' ? promptAgents : agents;
     return createPortal(
       <div
         ref={projectMenuRef}
@@ -1025,12 +1028,14 @@ export default function Resources() {
       >
         <div className="px-3 py-2 border-b border-zinc-100 dark:border-zinc-700">
           <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">{t('resources.projectTo')}</p>
-          {resource?.type !== 'skill' && (
+          {resource?.type === 'prompt' ? (
+            <p className="text-[10px] text-zinc-400 mt-0.5">{t('resources.promptMcpHint')}</p>
+          ) : resource?.type !== 'skill' && (
             <p className="text-[10px] text-zinc-400 mt-0.5">{t('resources.nonSkillHint')}</p>
           )}
         </div>
         <div className="max-h-48 overflow-y-auto p-2 space-y-1">
-          {agents.map(a => (
+          {targetList.map(a => (
             <label key={a.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-700/50 cursor-pointer text-xs">
               <input
                 type="checkbox"

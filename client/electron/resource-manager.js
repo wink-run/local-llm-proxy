@@ -419,6 +419,10 @@ class ResourceManager {
     const resource = this.getResource(resourceId);
     if (!resource) throw new Error('资产不存在');
 
+    const promptClientIds = resource.type === 'prompt'
+      ? (resource.projections || []).map(p => p.agentId)
+      : [];
+
     for (const proj of resource.projections || []) {
       try {
         unprojectResource(resource, proj.agentId, proj.projectionType, proj.targetPath);
@@ -426,6 +430,7 @@ class ResourceManager {
     }
     db.prepare('DELETE FROM resource_projections WHERE resource_id = ?').run(resourceId);
     db.prepare('DELETE FROM resources WHERE id = ?').run(resourceId);
+    this._resyncPromptClients(promptClientIds);
     return { success: true };
   }
 
@@ -560,6 +565,11 @@ class ResourceManager {
       this._syncAssistantRuntimeFromProjections(resourceId);
     }
 
+    // 提示词：投射后刷新受影响 client 的 MCP 配置(下发/保持 tokenbank-prompts)
+    if (resource.type === 'prompt') {
+      this._resyncPromptClients(ids);
+    }
+
     const symlinkCount = results.filter(r => r.projectionType === 'symlink').length;
     const copyCount = results.filter(r => r.projectionType === 'copy').length;
     const scanCount = results.filter(r => r.projectionType === 'scan' || r.projectionType === 'origin').length;
@@ -682,6 +692,10 @@ class ResourceManager {
       this._syncAssistantRuntimeFromProjections(row.resource_id);
     }
 
+    if (resource?.type === 'prompt') {
+      this._resyncPromptClients([row.agent_id]);
+    }
+
     return { success: true, resource: this.getResource(row.resource_id) };
   }
 
@@ -713,6 +727,23 @@ class ResourceManager {
       label: t.label,
       skillRoot: t.getSkillRoot(),
     }));
+  }
+
+  /** prompt 投射目标 = 可写 MCP 配置的客户端(供 UI 展示) */
+  listPromptAgentTargets() {
+    const { CLIENT_TARGETS, listSyncEnabledClientIds } = require('./mcp-agent-targets');
+    return listSyncEnabledClientIds().map(id => ({ id, label: CLIENT_TARGETS[id].label }));
+  }
+
+  /** prompt 投射变更后刷新对应 client 的 MCP 配置(失败仅告警,不阻断) */
+  _resyncPromptClients(clientIds) {
+    const ids = [...new Set(clientIds || [])].filter(Boolean);
+    if (!ids.length) return;
+    try {
+      require('./mcp-manager').syncToClients({ clientIds: ids });
+    } catch (e) {
+      console.warn('[resource-manager] prompt MCP re-sync failed:', e.message);
+    }
   }
 
   /** 规范化 Skill 扫描参数 */

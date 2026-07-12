@@ -1182,5 +1182,6 @@ export default {
   'resources.badge.tbSync': 'Via TB',
   'resources.badge.client': 'Client config',
   'resources.nonSkillHint': 'Non-skill types are linked in TB only (no Agent files)',
+  'resources.promptMcpHint': 'After projecting, the agent can fetch this prompt via the MCP tool tb_get_prompt',
   'resources.footerHint': 'Skill authority stays where you installed it. Token Bank only scans and symlinks—nothing copied to ~/.tokenbank. Unmanage does not delete your files.',
 };
