@@ -37,6 +37,60 @@ function shellQuote(value) {
 }
 
 /**
+ * 解析 Electron 可执行文件路径。
+ * 主进程 / ELECTRON_RUN_AS_NODE 下用 process.execPath；
+ * 若被系统 Node 误调用（如单测、脚本同步），回退到 electron 包二进制，避免把 node 写进 launcher。
+ */
+function resolveElectronBinary() {
+  if (process.versions.electron) return process.execPath;
+  const exec = process.execPath || '';
+  if (/[/\\]Electron(\.app)?[/\\]|[/\\]electron([/\\.]|$)/i.test(exec)) return exec;
+  try {
+    // 在纯 Node 中 require('electron') 返回二进制路径字符串
+    const electronPkg = require('electron');
+    if (typeof electronPkg === 'string' && fs.existsSync(electronPkg)) return electronPkg;
+  } catch { /* ignore */ }
+  const platformRel = process.platform === 'darwin'
+    ? path.join('electron', 'dist', 'Electron.app', 'Contents', 'MacOS', 'Electron')
+    : process.platform === 'win32'
+      ? path.join('electron', 'dist', 'electron.exe')
+      : path.join('electron', 'dist', 'electron');
+  const candidates = [
+    path.join(__dirname, '..', 'node_modules', platformRel),
+    path.join(process.cwd(), 'node_modules', platformRel),
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return exec;
+}
+
+/**
+ * 写入 Electron-as-node 启动脚本。
+ * Codex 等客户端常不透传 mcp_servers.*.env，直接 spawn Electron 会进 GUI 并 SIGABRT；
+ * 脚本内固定 ELECTRON_RUN_AS_NODE，并用 env 再写一遍作双保险。
+ */
+function writeElectronAsNodeLauncher({ name, scriptPath, env = {} }) {
+  const mcpDir = path.join(os.homedir(), '.tokenbank', 'mcp');
+  fs.mkdirSync(mcpDir, { recursive: true });
+  const launcherPath = path.join(mcpDir, `${name}.sh`);
+  const electronBin = resolveElectronBinary();
+  const absScript = path.isAbsolute(scriptPath) ? scriptPath : path.resolve(scriptPath);
+  const envExports = Object.entries(env || {}).map(
+    ([k, v]) => `export ${k}=${shellQuote(String(v))}`,
+  );
+  const lines = [
+    '#!/bin/bash',
+    'export ELECTRON_RUN_AS_NODE=1',
+    ...envExports,
+    `exec env ELECTRON_RUN_AS_NODE=1 ${shellQuote(electronBin)} ${shellQuote(absScript)}`,
+    '',
+  ];
+  fs.writeFileSync(launcherPath, lines.join('\n'), { mode: 0o755 });
+  return launcherPath;
+}
+
+/**
  * 写入 bridge MCP 启动脚本：Codex 等外部进程拉起 Electron 时未必透传 env，
  * 缺 ELECTRON_RUN_AS_NODE 会触发 NSApplication 注册并 SIGABRT 崩溃。
  */
@@ -49,28 +103,35 @@ function writeBridgeMcpLauncher({
   mcpDir,
 }) {
   const launcherPath = path.join(mcpDir, `bridge-${taskId}.sh`);
-  const dispatchLines = [];
+  const dispatchEnv = {};
   try {
     const { getDispatchEndpoint } = require('./agent-dispatch-server');
     const ep = getDispatchEndpoint();
     // 走主进程 HTTP 派发，避免 Codex 沙箱内子进程写 SQLite 报 readonly database
     if (ep?.url && ep?.token) {
-      dispatchLines.push(`export TB_DISPATCH_URL=${shellQuote(ep.url)}`);
-      dispatchLines.push(`export TB_DISPATCH_TOKEN=${shellQuote(ep.token)}`);
+      dispatchEnv.TB_DISPATCH_URL = ep.url;
+      dispatchEnv.TB_DISPATCH_TOKEN = ep.token;
     }
   } catch { /* 单测或未启动主进程时回退本地派发 */ }
 
+  const env = {
+    TB_PARENT_TASK_ID: taskId || '',
+    TB_PARENT_SESSION_KEY: sessionKey || '',
+    TB_PARENT_SESSION_INSTANCE: sessionInstanceId || '',
+    TB_WORKING_DIR: workingDir || process.cwd(),
+    TB_MAIN_AGENT_ID: mainAgentId || '',
+    TB_CLIENT_ID: mainAgentId || '',
+    ...dispatchEnv,
+  };
+  const envExports = Object.entries(env).map(
+    ([k, v]) => `export ${k}=${shellQuote(String(v))}`,
+  );
+  const electronBin = resolveElectronBinary();
   const lines = [
     '#!/bin/bash',
     'export ELECTRON_RUN_AS_NODE=1',
-    `export TB_PARENT_TASK_ID=${shellQuote(taskId || '')}`,
-    `export TB_PARENT_SESSION_KEY=${shellQuote(sessionKey || '')}`,
-    `export TB_PARENT_SESSION_INSTANCE=${shellQuote(sessionInstanceId || '')}`,
-    `export TB_WORKING_DIR=${shellQuote(workingDir || process.cwd())}`,
-    `export TB_MAIN_AGENT_ID=${shellQuote(mainAgentId || '')}`,
-    `export TB_CLIENT_ID=${shellQuote(mainAgentId || '')}`,
-    ...dispatchLines,
-    `exec ${shellQuote(process.execPath)} ${shellQuote(DISPATCH_SCRIPT)}`,
+    ...envExports,
+    `exec env ELECTRON_RUN_AS_NODE=1 ${shellQuote(electronBin)} ${shellQuote(DISPATCH_SCRIPT)}`,
     '',
   ];
   fs.writeFileSync(launcherPath, lines.join('\n'), { mode: 0o755 });
@@ -755,9 +816,17 @@ class MCPManager {
     fs.mkdirSync(mcpDir, { recursive: true });
     const cleanupFns = [];
     const ctx = { taskId, workingDir, mainAgentId, sessionKey, sessionInstanceId };
-    // bridge 用 shell 脚本保证 ELECTRON_RUN_AS_NODE，避免 Electron 子进程 GUI 初始化崩溃
+    // bridge / prompts 用 shell 脚本保证 ELECTRON_RUN_AS_NODE，避免 Electron 子进程 GUI 初始化崩溃
     ctx.bridgeLauncher = writeBridgeMcpLauncher({ ...ctx, mcpDir });
     cleanupFns.push(() => { try { fs.unlinkSync(ctx.bridgeLauncher); } catch {} });
+    if (servers.some(s => s.id === BUILTIN_PROMPTS_ID || s.name === BUILTIN_PROMPTS_ID)) {
+      ctx.promptsLauncher = writeElectronAsNodeLauncher({
+        name: `prompts-orch-${taskId}`,
+        scriptPath: PROMPTS_SCRIPT,
+        env: { TB_CLIENT_ID: mainAgentId || '' },
+      });
+      cleanupFns.push(() => { try { fs.unlinkSync(ctx.promptsLauncher); } catch {} });
+    }
 
     if (agentId === 'claude-code') {
       const mcpServers = {};
@@ -870,14 +939,17 @@ class MCPManager {
     }
 
     if (serverRow.id === BUILTIN_PROMPTS_ID || serverRow.name === BUILTIN_PROMPTS_ID) {
+      if (ctx.promptsLauncher) {
+        return { command: ctx.promptsLauncher, args: [], env: {} };
+      }
       return {
-        command: process.execPath,
-        args: [PROMPTS_SCRIPT],
-        env: {
-          ...baseEnv,
-          ELECTRON_RUN_AS_NODE: '1',
-          TB_CLIENT_ID: mainAgentId || '',
-        },
+        command: writeElectronAsNodeLauncher({
+          name: `prompts-${mainAgentId || 'default'}`,
+          scriptPath: PROMPTS_SCRIPT,
+          env: { TB_CLIENT_ID: mainAgentId || '' },
+        }),
+        args: [],
+        env: {},
       };
     }
 
@@ -925,4 +997,5 @@ module.exports.BUILTIN_BRIDGE_ID = BUILTIN_BRIDGE_ID;
 module.exports.BUILTIN_PROMPTS_ID = BUILTIN_PROMPTS_ID;
 module.exports.buildCodexOrchestratorProfileToml = buildCodexOrchestratorProfileToml;
 module.exports.writeBridgeMcpLauncher = writeBridgeMcpLauncher;
+module.exports.writeElectronAsNodeLauncher = writeElectronAsNodeLauncher;
 module.exports.shellQuote = shellQuote;

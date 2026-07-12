@@ -38,6 +38,8 @@ assert.ok(launcherText.includes('export ELECTRON_RUN_AS_NODE=1'));
 assert.ok(launcherText.includes('TB_PARENT_TASK_ID'));
 assert.ok(launcherText.includes('TB_CLIENT_ID'));
 assert.ok(launcherText.includes('agent-dispatch-mcp.js'));
+assert.ok(/Electron(\.app|['"])|[/\\]electron['"]/i.test(launcherText), launcherText);
+assert.ok(!/[/\\]bin[/\\]node'/.test(launcherText), 'bridge launcher must not use system node');
 
 const buildRuntime = (srv) => {
   if (srv.name === 'tokenbank-agent-bridge') {
