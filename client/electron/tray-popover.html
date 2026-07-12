@@ -266,13 +266,19 @@
       color: #0a7a32;
       background: rgba(52, 199, 89, 0.16);
     }
+    /* 直连也是已纳管活跃态，与经网关同用绿色点；文案区分即可 */
+    .badge.direct {
+      color: #0a7a32;
+      background: rgba(52, 199, 89, 0.16);
+    }
     .badge.off {
       color: var(--fg-secondary);
       background: var(--chip);
     }
     .badge.off::before { opacity: 0.45; }
     @media (prefers-color-scheme: dark) {
-      .badge.on { color: #30d158; background: rgba(52, 199, 89, 0.2); }
+      .badge.on,
+      .badge.direct { color: #30d158; background: rgba(52, 199, 89, 0.2); }
     }
 
     .apps-hd {
@@ -385,6 +391,23 @@
     }
     .speed-ttft.muted { color: var(--fg-tertiary); }
     .speed-ttft.fail { color: #ff3b30; }
+    .speed-sep {
+      color: var(--fg-tertiary);
+      font-size: 11px;
+      opacity: 0.55;
+    }
+    .speed-tokens {
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      color: var(--fg-secondary);
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+    .speed-tokens.muted { color: var(--fg-tertiary); }
+    .speed-tokens .muted-prefix {
+      color: var(--fg-tertiary);
+      margin-right: 2px;
+    }
     .empty {
       padding: 18px 12px;
       text-align: center;
@@ -473,6 +496,15 @@
       pointer-events: none;
     }
     .fbtn.grow { flex: 1; justify-content: flex-start; }
+    /* 底部三钮宽度 2:1:1（打开 : 测速 : 退出） */
+    .footer .fbtn {
+      min-width: 0;
+      justify-content: center;
+      box-sizing: border-box;
+    }
+    .footer #btnOpen { flex: 2 1 0; }
+    .footer #btnRefreshFoot,
+    .footer #btnQuit { flex: 1 1 0; }
     .footer-spacer { flex: 1; }
 
     @media (prefers-reduced-motion: reduce) {
@@ -517,7 +549,7 @@
     </div>
 
     <footer class="footer">
-      <button type="button" class="fbtn grow" id="btnOpen">
+      <button type="button" class="fbtn" id="btnOpen">
         <span id="openLabel">—</span>
       </button>
       <button type="button" class="fbtn" id="btnRefreshFoot">
@@ -539,7 +571,7 @@
     function appsSignature(apps) {
       // 仅比对影响列表展示的字段，避免圈子/用量刷新时整表重建导致滚动卡顿
       return (apps || []).map((a) =>
-        [a.id, a.name, a.routeLabel, a.ttftLabel, a.speedBucket, a.statusLabel, a.viaGateway ? 1 : 0, a.iconUrl || ''].join('\t')
+        [a.id, a.name, a.routeLabel, a.ttftLabel, a.speedBucket, a.statusLabel, a.viaGateway ? 1 : 0, a.iconUrl || '', a.todayTokensLabel || '0', a.todayCalls || 0].join('\t')
       ).join('\n');
     }
 
@@ -641,7 +673,8 @@
             top.appendChild(name);
 
             const badge = document.createElement('span');
-            badge.className = 'badge ' + (app.viaGateway ? 'on' : 'off');
+            // 经网关 / 直连均为活跃纳管，统一绿色；未纳管才用 off（托盘列表一般不展示）
+            badge.className = 'badge ' + (app.viaGateway ? 'on' : 'direct');
             badge.textContent = app.statusLabel || (app.viaGateway ? 'Gateway' : 'Direct');
             top.appendChild(badge);
             meta.appendChild(top);
@@ -657,25 +690,52 @@
             });
             meta.appendChild(route);
 
-            // 首 token 延迟（测速后显示；有历史测速也会显示）
-            if (app.viaGateway) {
+            // 测速 TTFT + 当天 token（经网关 / 直连均显示；含 session 补录，与面板一致）
+            {
               const speed = document.createElement('div');
               speed.className = 'app-speed';
-              const dotEl = document.createElement('span');
-              const bucket = app.speedBucket || 'unknown';
-              const failed = !!app.speedFailed || bucket === 'fail';
-              dotEl.className = 'speed-dot' + (
-                failed ? ' fail'
-                  : (bucket === 'fast' || bucket === 'medium' || bucket === 'slow' ? ' ' + bucket : '')
-              );
-              speed.appendChild(dotEl);
-              const ttft = document.createElement('span');
-              const label = app.ttftLabel
-                || (failed ? (labels.ttftFailed || '连接失败') : (labels.ttftPending || '—'));
-              ttft.className = 'speed-ttft'
-                + (failed ? ' fail' : (app.ttftLabel ? '' : ' muted'));
-              ttft.textContent = label;
-              speed.appendChild(ttft);
+
+              if (app.viaGateway) {
+                const dotEl = document.createElement('span');
+                const bucket = app.speedBucket || 'unknown';
+                const failed = !!app.speedFailed || bucket === 'fail';
+                dotEl.className = 'speed-dot' + (
+                  failed ? ' fail'
+                    : (bucket === 'fast' || bucket === 'medium' || bucket === 'slow' ? ' ' + bucket : '')
+                );
+                speed.appendChild(dotEl);
+                const ttft = document.createElement('span');
+                const label = app.ttftLabel
+                  || (failed ? (labels.ttftFailed || '连接失败') : (labels.ttftPending || '—'));
+                ttft.className = 'speed-ttft'
+                  + (failed ? ' fail' : (app.ttftLabel ? '' : ' muted'));
+                ttft.textContent = label;
+                speed.appendChild(ttft);
+
+                const sep = document.createElement('span');
+                sep.className = 'speed-sep';
+                sep.textContent = '·';
+                speed.appendChild(sep);
+              } else {
+                // 直连：无 TTFT，用灰色点占位，突出今日用量
+                const dotEl = document.createElement('span');
+                dotEl.className = 'speed-dot';
+                speed.appendChild(dotEl);
+              }
+
+              const tok = document.createElement('span');
+              const tokNum = Number(app.todayTokens) || 0;
+              tok.className = 'speed-tokens' + (tokNum > 0 ? '' : ' muted');
+              const prefix = document.createElement('span');
+              prefix.className = 'muted-prefix';
+              prefix.textContent = (labels.todayTokens || '今日') + ' ';
+              tok.appendChild(prefix);
+              tok.appendChild(document.createTextNode(app.todayTokensLabel || '0'));
+              const callsHint = app.todayCalls > 0
+                ? ` · ${app.todayCalls}${labels.callsUnit || ''}`
+                : '';
+              tok.title = `${labels.todayTokens || '今日'} ${app.todayTokensLabel || '0'}${callsHint}`;
+              speed.appendChild(tok);
               meta.appendChild(speed);
             }
 
