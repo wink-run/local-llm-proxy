@@ -23,6 +23,9 @@ const GROUP_ORDER = [
   'tokenbank', 'official', 'filesystem', 'web', 'database', 'browser', 'collaboration', 'reasoning',
 ];
 
+/** 社区目录缓存路径（服务端下发，Task 5 写入） */
+const USER_CACHE = path.join(os.homedir(), '.tokenbank', 'community-catalog.yaml');
+
 /** yaml 候选路径（开发 / 打包） */
 const CATALOG_CANDIDATES = [
   path.join(__dirname, 'config', 'mcp-catalog.yaml'),
@@ -141,24 +144,47 @@ function loadCatalogMeta() {
   }
 
   const doc = readCatalogDoc();
-  if (!doc) {
-    _cachedCatalog = fallbackCatalog();
-    _cachedCategoryGroups = MCP_CATEGORY_GROUPS;
-    _cachedGroupOrder = GROUP_ORDER;
-    return { items: _cachedCatalog, categoryGroups: _cachedCategoryGroups, groupOrder: _cachedGroupOrder };
-  }
-
-  _cachedCatalog = doc.items.map(normalizeYamlItem).filter(Boolean);
-  _cachedCategoryGroups = { ...MCP_CATEGORY_GROUPS, ...(doc.category_groups || doc.categoryGroups || {}) };
-  _cachedGroupOrder = Array.isArray(doc.group_order || doc.groupOrder)
+  const baseItems = doc && Array.isArray(doc.items)
+    ? doc.items.map(normalizeYamlItem).filter(Boolean)
+    : fallbackCatalog();
+  _cachedCategoryGroups = doc
+    ? { ...MCP_CATEGORY_GROUPS, ...(doc.category_groups || doc.categoryGroups || {}) }
+    : MCP_CATEGORY_GROUPS;
+  _cachedGroupOrder = Array.isArray(doc?.group_order || doc?.groupOrder)
     ? (doc.group_order || doc.groupOrder)
     : GROUP_ORDER;
 
+  _cachedCatalog = mergeCommunityMcp(baseItems);
   return {
     items: _cachedCatalog,
     categoryGroups: _cachedCategoryGroups,
     groupOrder: _cachedGroupOrder,
   };
+}
+
+/** 用户缓存 mcp 段覆盖同 catalogId,并强制并入内置 always_installed 项 */
+function mergeCommunityMcp(baseItems) {
+  const byId = new Map();
+  for (const it of baseItems) byId.set(it.catalogId, it);
+
+  let cachedItems = [];
+  try {
+    if (fs.existsSync(USER_CACHE)) {
+      const cached = yaml.load(fs.readFileSync(USER_CACHE, 'utf8'));
+      if (cached && Array.isArray(cached.mcp)) {
+        cachedItems = cached.mcp.map(normalizeYamlItem).filter(Boolean);
+      }
+    }
+  } catch (e) {
+    console.warn('[mcp-catalog] read community cache failed:', e.message);
+  }
+  for (const it of cachedItems) byId.set(it.catalogId, it);
+
+  // 内置 always_installed 项永不被下发列表冲掉
+  for (const it of fallbackCatalog()) {
+    if (it.alwaysInstalled) byId.set(it.catalogId, it);
+  }
+  return [...byId.values()];
 }
 
 /** 测试或热重载时清空缓存 */
