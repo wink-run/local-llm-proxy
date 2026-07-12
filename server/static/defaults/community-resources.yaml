@@ -1,0 +1,122 @@
+version: 1
+prompts:
+- catalog_id: code-review-prompt
+  type: prompt
+  name: code-review
+  display_name: 代码审查
+  description: 结构化代码审查：安全、性能、可维护性
+  metadata:
+    tags: [code, review, quality]
+    version: 1.0.0
+  content: |
+    你是一个资深代码审查专家。请审查以下代码，输出：
+    1. 严重问题（必须修复）
+    2. 改进建议（可选）
+    3. 简要总结
+
+    {{#if focus_security}}重点关注安全漏洞与权限问题。{{/if}}
+    {{#if focus_performance}}重点关注性能与资源占用。{{/if}}
+
+    代码：
+    ```
+    {{code}}
+    ```
+- catalog_id: api-design-prompt
+  type: prompt
+  name: api-design
+  display_name: API 设计
+  description: REST/OpenAPI 接口设计与评审
+  metadata:
+    tags: [api, design, backend]
+    version: 1.0.0
+  content: |
+    你是 API 架构师。根据需求设计 REST API：
+    - 资源命名与 HTTP 动词
+    - 请求/响应 JSON Schema 要点
+    - 错误码与分页约定
+    - 鉴权方式建议
+
+    需求描述：
+    {{requirements}}
+skills:
+- catalog_id: git-commit-skill
+  type: skill
+  name: git-commit
+  display_name: Git 提交规范
+  description: 生成符合 Conventional Commits 的提交信息
+  metadata:
+    tags: [git, commit, workflow]
+    version: 1.0.0
+    compatible_agents: [claude-code, codex, cursor, workbuddy]
+  content: |
+    ---
+    name: git-commit
+    description: 分析 diff 并生成规范的 Git 提交信息（Conventional Commits）
+    ---
+
+    # Git Commit Skill
+
+    ## 何时使用
+    用户要求写 commit message、总结变更、或准备 git commit 时。
+
+    ## 规则
+    1. 使用 Conventional Commits：feat/fix/docs/refactor/test/chore 等
+    2. 标题 ≤ 72 字符，英文或中文均可
+    3. 正文说明 WHY，必要时列出 BREAKING CHANGE
+
+    ## 输出格式
+    ```
+    <type>(<scope>): <subject>
+
+    <body>
+    ```
+- catalog_id: systematic-debugging-skill
+  type: skill
+  name: systematic-debugging
+  display_name: 系统化调试
+  description: 遇 bug 时按步骤收集证据再修复
+  metadata:
+    tags: [debug, quality]
+    version: 1.0.0
+    compatible_agents: [claude-code, codex, cursor, workbuddy]
+  content: |
+    ---
+    name: systematic-debugging
+    description: 系统化调试流程，先复现与定位根因再改代码
+    ---
+
+    # Systematic Debugging
+
+    ## 流程
+    1. 复现：最小步骤、期望 vs 实际
+    2. 证据：日志、堆栈、最近变更
+    3. 假设：列出 2–3 个可能根因并验证
+    4. 修复：最小 diff，附带验证方式
+    5. 回归：确认未引入新问题
+
+    ## 禁止
+    - 未理解根因就大面积重写
+    - 同时改多处 unrelated 代码
+assistants:
+- catalog_id: python-expert-assistant
+  type: assistant
+  name: python-expert
+  display_name: Python 专家
+  description: Python / 数据科学 / Web 开发预设
+  metadata:
+    tags: [python, assistant, development]
+    version: 1.0.0
+    category: development
+  content: |-
+    {
+      "soul": "你是 Python 专家，精通标准库、类型注解、pytest 与 FastAPI。回答简洁，代码可运行。",
+      "skills": [
+        "systematic-debugging"
+      ],
+      "prompts": [
+        "code-review"
+      ],
+      "parameters": {
+        "temperature": 0.3
+      }
+    }
