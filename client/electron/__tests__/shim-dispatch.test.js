@@ -8,8 +8,8 @@ const shim = require('../shim-installer');
 
 const WIN = process.platform === 'win32';
 const CMD = '__tb_shim_dispatch_test__';
-function gen(dispatch, base, baseSel) {
-  const p = shim.writeShim(CMD, '/bin/echo', base, dispatch, baseSel);
+function gen(dispatch, base, baseSel, opts) {
+  const p = shim.writeShim(CMD, '/bin/echo', base, dispatch, baseSel, opts);
   const txt = fs.readFileSync(p, 'utf8');
   try { fs.unlinkSync(p); } catch {}
   return txt;
@@ -56,4 +56,17 @@ test('直连态但默认路由：TokenBank 关着时（探活失败）仍已切�
   const caseLine = lines.findIndex(l => l.includes('/h/code/'));
   const ifLine = lines.findIndex(l => l.includes('if curl'));
   assert.ok(caseLine >= 0 && ifLine >= 0 && caseLine < ifLine, '选账号必须在探活 if 之前');
+});
+
+test('默认直连(defaultDirect)：未匹配目录时兜底 *) unset 网关 env；默认路由则无兜底', { skip: WIN }, () => {
+  const disp = [{ dir: '/h/work', selectEnv: { CLAUDE_CONFIG_DIR: '/h/.claude-work' }, gatewayEnv: { ANTHROPIC_AUTH_TOKEN: 'sk-work' } }];
+  const baseSel = { CLAUDE_CONFIG_DIR: '/h/.claude' };
+  // 默认直连：base 只有 base_url(无 token)，case 里应有 *) unset 兜底
+  const direct = gen(disp, { ANTHROPIC_BASE_URL: 'http://127.0.0.1:11430' }, baseSel, { defaultDirect: true });
+  assert.match(direct, /\*\)\s*unset ANTHROPIC_BASE_URL ;;/, '默认直连应有 *) 兜底 unset 网关 env');
+  assert.ok(!direct.includes('ANTHROPIC_AUTH_TOKEN="sk-def"'), '默认直连不注默认 token');
+  // 默认路由：base 有 token，不应有 *) 兜底
+  const routed = gen(disp, { ANTHROPIC_BASE_URL: 'http://127.0.0.1:11430', ANTHROPIC_AUTH_TOKEN: 'sk-def' }, baseSel, { defaultDirect: false });
+  assert.ok(!/\*\)\s*unset/.test(routed), '默认路由不应有 *) 兜底');
+  assert.match(routed, /export ANTHROPIC_AUTH_TOKEN="sk-def"/, '默认路由注默认 token');
 });

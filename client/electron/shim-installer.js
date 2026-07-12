@@ -162,8 +162,11 @@ function probeOrigin(envMap) {
 //                 为 null 表示该实例是「直连」——在探活块里 unset 掉基础网关 env（envMap 的键），
 //                 让它退回自己 config-dir 的配置（兼容端点读 settings.json / OAuth 读登录态）。
 // baseSelectEnv —— 默认实例的「选账号」env（如自定义 CONFIG_DIR），同样永远执行。
-function writeShim(command, realPath, envMap, dispatch = [], baseSelectEnv = {}) {
+// opts.defaultDirect —— 默认实例是「直连」（未绑路由）：未匹配任何目录时（=走默认账号）
+//   在探活块的兜底处 unset 基础网关 env，让默认账号走自己 config-dir 的配置，而非被指向网关。
+function writeShim(command, realPath, envMap, dispatch = [], baseSelectEnv = {}, opts = {}) {
   ensureBinDir();
+  const defaultDirect = !!(opts && opts.defaultDirect);
   const exports = Object.entries(envMap || {});
   const baseSel = Object.entries(baseSelectEnv || {});
   const origin  = probeOrigin(envMap);
@@ -198,6 +201,8 @@ function writeShim(command, realPath, envMap, dispatch = [], baseSelectEnv = {})
             : gwKeys.map(k => `set "${k}="`).join(' & ');   // 直连：清空网关 env
           return `if /i "%_tbc:~0,${needle.length}%"=="${needle}" ( ${setEnv} & goto tbrun )`;
         }),
+        // 兜底（未匹配任何目录 = 走默认账号）：默认直连则清空网关 env，退回默认 config-dir 自身配置
+        ...(defaultDirect ? [gwKeys.map(k => `set "${k}="`).join(' & ')] : []),
         ':tbrun',
         `"${realPath}" %*`,
         'REM ' + MARK_END,
@@ -249,6 +254,8 @@ function writeShim(command, realPath, envMap, dispatch = [], baseSelectEnv = {})
             : `unset ${gwKeys.join(' ')}`;   // 直连：清掉网关 env，退回 config-dir 自身配置
           return `    "${dir}/"*) ${setEnv} ;;`;
         }),
+        // 兜底（未匹配 = 走默认账号）：默认直连则清空网关 env，退回默认 config-dir 自身配置
+        ...(defaultDirect ? [`    *) unset ${gwKeys.join(' ')} ;;`] : []),
         '  esac',
         'fi',
         `exec "${realPath}" "$@"`,

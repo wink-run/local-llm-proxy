@@ -106,10 +106,13 @@ function apply(tool) {
           .sort((a, b) => b.dir.length - a.dir.length);   // 长前缀优先
         if (dispatch.length) {
           const def = instances.find(i => i.is_default) || instances[0];
-          // 默认实例：token 进 base 网关 env(探活块)；CONFIG_DIR 进 baseSelectEnv(永远执行)
-          if (def && def.api_key) env[cliEnv.tokenVar] = def.api_key;
+          const defRouted = !!(def && def.routed && def.api_key);
+          // 默认实例(未匹配任何目录时的兜底)：routed → token 进 base 网关 env(探活块)；
+          // direct → base 不注 token，由 writeShim 的 defaultDirect 在兜底处 unset 网关 env
+          // (走默认账号自己 config-dir 的配置，而非被指向网关)。CONFIG_DIR 永远选中(baseSelectEnv)。
+          if (defRouted) env[cliEnv.tokenVar] = def.api_key;
           const baseSelectEnv = (def && def.config_dir) ? { [cliEnv.dirVar]: def.config_dir } : {};
-          shim.writeShim(tool.detect.command, real, env, dispatch, baseSelectEnv);
+          shim.writeShim(tool.detect.command, real, env, dispatch, baseSelectEnv, { defaultDirect: !defRouted });
           shim.enablePath();
           return { ok: true, strategy: tool.strategy, needsRestartShell: true };
         }
