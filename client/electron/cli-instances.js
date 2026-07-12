@@ -7,9 +7,25 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { isGatewayBaseUrl } = require('./cli-endpoint-config');
 
 function readJson(p) {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; }
+}
+
+// 读实例的「纳管前」settings.json（真实来源）：当前 settings.json 若已被 TokenBank 改写成
+// 指向网关，则用 .tokenbank-bak（原始备份）；否则当前文件本身就是原始。返回 { orig, managed }。
+// managed=true 表示该实例的 settings.json 当前正被 TokenBank 托管（指向网关）。
+function readOriginalSettings(dir) {
+  const file = path.join(dir, 'settings.json');
+  const cur = readJson(file);
+  const curManaged = isGatewayBaseUrl(cur && cur.env && cur.env.ANTHROPIC_BASE_URL);
+  if (curManaged) {
+    const bak = readJson(file + '.tokenbank-bak');
+    const bakManaged = isGatewayBaseUrl(bak && bak.env && bak.env.ANTHROPIC_BASE_URL);
+    return { orig: (bak && !bakManaged) ? bak : cur, managed: true };
+  }
+  return { orig: cur, managed: false };
 }
 
 // 枚举 home 下 base（如 .claude）本体 + 同级 base-*（如 .claude-work）目录。
@@ -51,6 +67,14 @@ function scanClaudeInstances(home = os.homedir()) {
     const cfg = readJson(path.join(dir, '.claude.json'))
       || (isDef ? readJson(path.join(home, '.claude.json')) : null);
     const acct = cfg && cfg.oauthAccount;
+    // 账号类型分类（决定纳管用 shim 还是 config-copy）：读纳管前的 settings.json，
+    // 原始里有「非网关」的 ANTHROPIC_BASE_URL → 配置文件型(兼容端点)；否则有 OAuth 凭证 → oauth；都没有 → unknown。
+    const { orig, managed } = readOriginalSettings(dir);
+    const origBase = (orig && orig.env && orig.env.ANTHROPIC_BASE_URL) || null;
+    const isCompat = !!(origBase && !isGatewayBaseUrl(origBase));
+    const authMode = isCompat ? 'config-file'
+      : ((oauth && oauth.accessToken) || acct?.emailAddress) ? 'oauth'
+      : 'unknown';
     return {
       tool: 'claude-code',
       config_dir: dir,
@@ -61,6 +85,11 @@ function scanClaudeInstances(home = os.homedir()) {
       subscription: acct?.organizationType || oauth?.subscriptionType || null,
       has_credentials: !!(oauth && oauth.accessToken),
       expires_at: oauth?.expiresAt || null,
+      // 账号类型 + 兼容端点信息（供 UI 展示 & 纳管机制选择）
+      auth_mode: authMode,                                    // 'oauth' | 'config-file' | 'unknown'
+      base_url: isCompat ? origBase : null,                   // 兼容端点原始 base_url（非网关）
+      model: isCompat ? ((orig && orig.model) || null) : null,
+      managed,                                                // 当前 settings.json 是否已被 TokenBank 改写
     };
   });
 }

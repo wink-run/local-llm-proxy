@@ -2786,8 +2786,12 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
         id: appId, route_id: primary, route_ids: routeIds.length ? routeIds : null,
         ...(primary ? { hosted: true } : {}),
       }).catch(() => {});
-      if (primary) { await window.electronAPI.agents?.apply(app.agent_id).catch(() => {}); showNotice(appId, t('gateway.apps.restartToApply')); }
-      else { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); showNotice(appId, t('gateway.apps.restartToApply')); }
+      // 选路由 → 重生成 shim（注网关）。清路由(直连)：多账号「非默认」实例保留 shim（只切账号、
+      // 不注网关，靠自己 config-dir 的配置直连；网关关着也照切账号）；默认/单账号实例 → 撤 shim 回官方。
+      const keepShimOnDirect = !!(app.instance && !app.instance.is_default);
+      if (primary || keepShimOnDirect) { await window.electronAPI.agents?.apply(app.agent_id).catch(() => {}); }
+      else { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); }
+      showNotice(appId, t('gateway.apps.restartToApply'));
     } else if (app.link_method === 'session') {
       await appsApi.update({
         id: app.id, route_id: primary, route_ids: routeIds.length ? routeIds : null,

@@ -93,15 +93,23 @@ function apply(tool) {
         // 默认实例作 base env，各 dir-bound 实例作分发项（$PWD 前缀命中即覆盖 CONFIG_DIR + token）。
         const cliEnv = CLI_ENV[tool.id];
         const instances = (cliEnv && _instancesResolver) ? (_instancesResolver(tool.id) || []) : [];
+        // 分发项：selectEnv(选账号，永远执行) + gatewayEnv(走网关，探活门控)。
+        // 路由态实例 → gatewayEnv 注 token；直连态实例 → gatewayEnv=null（探活块里 unset 网关 env，
+        // 退回该 config-dir 自身配置：兼容端点读 settings.json / OAuth 读登录态）。
         const dispatch = instances
-          .filter(i => i.dir_glob && i.config_dir && i.api_key)
-          .map(i => ({ dir: expandHome(i.dir_glob), env: { [cliEnv.dirVar]: i.config_dir, [cliEnv.tokenVar]: i.api_key } }))
+          .filter(i => i.dir_glob && i.config_dir)
+          .map(i => ({
+            dir: expandHome(i.dir_glob),
+            selectEnv: { [cliEnv.dirVar]: i.config_dir },
+            gatewayEnv: (i.routed && i.api_key) ? { [cliEnv.tokenVar]: i.api_key } : null,
+          }))
           .sort((a, b) => b.dir.length - a.dir.length);   // 长前缀优先
         if (dispatch.length) {
           const def = instances.find(i => i.is_default) || instances[0];
+          // 默认实例：token 进 base 网关 env(探活块)；CONFIG_DIR 进 baseSelectEnv(永远执行)
           if (def && def.api_key) env[cliEnv.tokenVar] = def.api_key;
-          if (def && def.config_dir) env[cliEnv.dirVar] = def.config_dir;
-          shim.writeShim(tool.detect.command, real, env, dispatch);
+          const baseSelectEnv = (def && def.config_dir) ? { [cliEnv.dirVar]: def.config_dir } : {};
+          shim.writeShim(tool.detect.command, real, env, dispatch, baseSelectEnv);
           shim.enablePath();
           return { ok: true, strategy: tool.strategy, needsRestartShell: true };
         }

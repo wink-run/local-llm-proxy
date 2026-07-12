@@ -234,6 +234,29 @@ function revertAppConfigFile(app_id, config_file) {
   if (isClaudeDesktopApp(app_id)) revertClaudeDesktopOfficialExtras();
 }
 
+// CLI「兼容端点实例」的 settings.json 托管（核心逻辑见 ./cli-endpoint-config）。
+// settings.json 的 env 压过 shim 注入 → 写死自定义 base_url 的实例只能改写 settings.json 本身。
+function syncCliInstanceEndpointConfig(app, opts = {}) {
+  try {
+    const cl = require('./config-loader');
+    return require('./cli-endpoint-config').syncCliInstanceEndpointConfig(app, {
+      expandHome: (p) => cl.expandHome(p),
+      gatewayOrigin: `http://${cl.gatewayCtx().reverse}`,
+      ...opts,
+    });
+  } catch (e) { console.warn('[cli-instance] endpoint settings sync error:', e && e.message); }
+}
+// 取消托管 / 退出：把某工具（或全部）的兼容端点实例 settings.json 强制还原回原始配置
+function revertCliInstanceEndpointConfigs(agentId) {
+  try {
+    for (const a of (readLocalConfig().apps || [])) {
+      if (a.link_method === 'shim' && a.instance && (!agentId || a.agent_id === agentId)) {
+        syncCliInstanceEndpointConfig(a, { forceDirect: true });
+      }
+    }
+  } catch (e) { console.warn('[cli-instance] revert endpoint configs:', e && e.message); }
+}
+
 function shouldUseClaude3pConfigWrite({ app_id, config_file, file }) {
   if (isClaudeDesktopApp(app_id)) return true;
   if (isClaude3pConfigLibraryFile(file)) return true;
@@ -1895,7 +1918,7 @@ function registerIPC() {
   // 手动托管：清除禁用标记后接入
   ipcMain.handle('agents:apply',   (_e, id) => { setAutoHostDisabled(id, false); return agentLinker.applyById(id); });
   // 手动取消托管：打上禁用标记，自动托管不再重新接入
-  ipcMain.handle('agents:revert',  (_e, id) => { setAutoHostDisabled(id, true); return agentLinker.revertById(id); });
+  ipcMain.handle('agents:revert',  (_e, id) => { setAutoHostDisabled(id, true); try { revertCliInstanceEndpointConfigs(id); } catch {} return agentLinker.revertById(id); });
   ipcMain.handle('agents:applyAll',  () => {
     // 一键托管：清空所有禁用标记后全部接入
     const cfg = readLocalConfig();
@@ -1908,6 +1931,7 @@ function registerIPC() {
     const cfg = readLocalConfig();
     cfg.auto_host_disabled = agentLinker.list().map(t => t.id);
     writeLocalConfig(cfg);
+    try { revertCliInstanceEndpointConfigs(); } catch {}
     return agentLinker.revertAll();
   });
 
@@ -2277,7 +2301,7 @@ function registerIPC() {
     const keyScene = {};
     let claudeShimScene = null;    // Claude Code CLI（anthropic shim）绑定的路由（按「非 api-key 调用方」生效）
     const codexGptFallback = {};   // Codex 内建 gpt-* 辅助模型 → 兜底到该应用绑定的主路由（按 api_key）
-    const { bindClaudeRoutesToKeyScene, bindRouteToKeyScene } = require('../shared/route-binding');
+    const { bindClaudeRoutesToKeyScene, bindClaudeCliRouteToKeyScene, bindRouteToKeyScene } = require('../shared/route-binding');
     for (const app of apps) {
       const ctrl = { app_id: app.id, app_name: app.name };
       const aid = app.agent_id || app.preset_id;
@@ -2323,7 +2347,9 @@ function registerIPC() {
         //  A) 旧行为兜底：shim 只注 base_url、claude 发自己的 claude.ai OAuth（无 app key）时，
         //     按 claudeShimScene 绑定（网关对「非 api-key 调用方」的 claude-* 请求用它）。
         //  B) per-app：shim 若注入了 app key（ANTHROPIC_AUTH_TOKEN={KEY}），claude 就成了 api-key 调用方，
-        //     注册 match.key + 建 keyScene[key][claude模型名] → 与 Desktop 同机制，多个 CLI 实例各绑各的。
+        //     注册 match.key + 建 keyScene[key][claude模型名]。注意：CLI 客户端会发任意 claude-* 名
+        //     （sonnet/haiku…，不受我们控制），所以把选中的单条 route 绑到【所有】claude 名上，
+        //     而非像 Desktop 那样按 inferenceModels.name 顺序 1:1 绑（否则只有 cms[0] 命中、其余 404）。
         if (toolProto[app.agent_id] === 'anthropic') {
           const appRouteIds = (Array.isArray(app.route_ids) && app.route_ids.length)
             ? app.route_ids : (app.route_id ? [app.route_id] : []);
@@ -2334,7 +2360,7 @@ function registerIPC() {
             if (app.api_key) {
               appControls.push({ ...ctrl, match: { key: app.api_key } });
               const cms = (() => { try { return require('./config-loader').claudeModels(); } catch { return []; } })();
-              bindClaudeRoutesToKeyScene(keyScene, app.api_key, appRouteIds, routes, cms);
+              bindClaudeCliRouteToKeyScene(keyScene, app.api_key, appRouteIds[0], routes, cms);
             }
           }
         }
@@ -3071,6 +3097,8 @@ function registerIPC() {
           mutated = true;
           if (app.link_method === 'shim' && app.agent_id) {
             try { agentLinker.revertById(app.agent_id); } catch {}
+            // 兼容端点实例：路由能力被取消 → 还原该实例 settings.json 回原始（兼容端点）配置
+            try { syncCliInstanceEndpointConfig(app); } catch {}
           }
           // 取消网关能力时还原 config-file 应用（如 Claude Desktop）
           if ((app.link_method === 'api-key' || app.host_method === 'config-file') && app.config_file && app.hosted) {
@@ -3387,18 +3415,36 @@ function registerIPC() {
       .filter(app => app.link_method !== 'direct' || directInstalled(app.agent_id))
       .filter(app => app.link_method !== 'session' || directInstalled(app.agent_id));
 
-    // 同一 agent_id 只保留一行：api-key(持久) > shim > session/direct
+    // 同一 agent_id 去重：api-key(持久) > shim > session/direct。
+    // 例外——多账号 shim 实例：每个独立 CONFIG_DIR 各占一行（否则两个账号会被折叠成一行）。
     const PRI = { 'api-key': 3, manual: 3, shim: 2, session: 1, direct: 1 };
-    const bestByAgent = new Map();
+    const byAgent = new Map();
     const noAgentRows = [];
     for (const app of rows) {
       const aid = app.agent_id || app.preset_id;
       if (!aid) { noAgentRows.push(app); continue; }
-      const pri = PRI[app.link_method] || 0;
-      const cur = bestByAgent.get(aid);
-      if (!cur || pri > (PRI[cur.link_method] || 0)) bestByAgent.set(aid, app);
+      if (!byAgent.has(aid)) byAgent.set(aid, []);
+      byAgent.get(aid).push(app);
     }
-    const dedupedRows = [...noAgentRows, ...bestByAgent.values()];
+    const dedupedRows = [...noAgentRows];
+    for (const group of byAgent.values()) {
+      const instanceRows = group.filter(a => a.link_method === 'shim' && a.instance && a.instance.config_dir);
+      if (instanceRows.length) {
+        // 每个 config_dir 保留一行（防重复扫描），同 agent 的非实例行让位给实例行
+        const seenDirs = new Set();
+        for (const a of instanceRows) {
+          const key = path.resolve(a.instance.config_dir);
+          if (!seenDirs.has(key)) { seenDirs.add(key); dedupedRows.push(a); }
+        }
+        continue;
+      }
+      // 其余：同 agent_id 只保留优先级最高的一行
+      let best = null;
+      for (const a of group) {
+        if (!best || (PRI[a.link_method] || 0) > (PRI[best.link_method] || 0)) best = a;
+      }
+      if (best) dedupedRows.push(best);
+    }
 
     // 追加：检测到、但还没"添加"过的 API Key 应用（虚拟行，显示「添加」）
     // 去重以「目标配置文件」为准：配置文件才是应用的真实身份（同一文件不可能托管两次）。
@@ -3489,6 +3535,11 @@ function registerIPC() {
         const cmd = (tool && tool.detect && tool.detect.command) || updated.agent_id;
         if (require('./shim-installer').shimExists(cmd)) agentLinker.applyById(updated.agent_id);
       } catch (e) { console.warn('[cli-instances] shim re-apply error:', e && e.message); }
+    }
+    // 兼容端点实例：选路由/直连切换 → 改写 or 还原该实例 settings.json（shim 压不动 settings.json）
+    if (updated.link_method === 'shim'
+      && ['route_id', 'route_ids', 'hosted', 'instance'].some(k => Object.prototype.hasOwnProperty.call(patch, k))) {
+      try { syncCliInstanceEndpointConfig(updated); } catch (e) { console.warn('[cli-instance] endpoint sync (update):', e && e.message); }
     }
     return updated;
   });
@@ -4259,7 +4310,12 @@ app.whenReady().then(() => {
     const apps = readLocalConfig().apps || [];
     return apps
       .filter(x => x.link_method === 'shim' && x.agent_id === toolId && x.instance && !x.instance.invalid)
-      .map(x => ({ config_dir: x.instance.config_dir, api_key: x.api_key, dir_glob: x.instance.dir_glob, is_default: !!x.instance.is_default }));
+      .map(x => ({
+        config_dir: x.instance.config_dir, api_key: x.api_key, dir_glob: x.instance.dir_glob,
+        is_default: !!x.instance.is_default,
+        // 路由态：已托管 + 绑了路由 → 走网关；否则直连（shim 只切账号、不注网关）
+        routed: !!(x.hosted && (x.route_id || (Array.isArray(x.route_ids) && x.route_ids.length))),
+      }));
   });
   gateway.start(11430, readAgentConfig, writeAgentConfig);
 
@@ -4324,5 +4380,6 @@ app.on('before-quit', () => {
   destroyTray();
   agent.stop(); gateway.stop(); localStats.close();
   // 退出即还原所有接入：删 shim / 还原 PATH / 还原配置文件 / 停 MITM，绝不残留
+  try { revertCliInstanceEndpointConfigs(); } catch (e) { console.error('[cli-instance] revert on exit failed:', e.message); }
   try { agentLinker.revertEverythingOnExit(); } catch (e) { console.error('[agent-linker] revert on exit failed:', e.message); }
 });
