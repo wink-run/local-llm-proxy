@@ -636,6 +636,86 @@ function getTodayTokenSummary() {
   catch { return { inTok: 0, outTok: 0, calls: 0 }; }
 }
 
+/**
+ * 托盘用：解析应用实体元数据（与 apps:list / apps:stats 一致）。
+ * 持久化 apps[] 往往没有 linked_data_sources，必须从 preset/agent 实体补齐。
+ */
+function trayResolveAppMeta(app) {
+  if (!app) return { ent: null, caps: null };
+  try {
+    const cl = require('./config-loader');
+    // preset_id 优先（Codex Desktop 等），再试 agent_id（shim CLI）
+    const ids = [...new Set([app.preset_id, app.agent_id].filter(Boolean))];
+    let ent = null;
+    let caps = null;
+    for (const id of ids) {
+      const e = cl.appEntityById(id);
+      if (!e) continue;
+      const c = cl.appCapabilities(id);
+      // 优先选带会话用量源的实体
+      if (!ent || (e.linked_data_sources || []).length > (ent.linked_data_sources || []).length) {
+        ent = e;
+        caps = c;
+      }
+      if ((e.linked_data_sources || []).length) break;
+    }
+    return { ent, caps };
+  } catch {
+    return { ent: null, caps: null };
+  }
+}
+
+/**
+ * 托盘用：应用关联的会话 data_source（与 resolveAppDataSources / apps:stats 对齐）。
+ * 含直连（仅会话补录）应用的 session-* 来源。
+ */
+function trayAppDataSources(app) {
+  if (!app) return { dataSources: [], usageImport: false };
+  const { ent, caps } = trayResolveAppMeta(app);
+  const usageImport = !!(
+    app.session_usage_import
+    ?? caps?.session_usage_import
+    ?? ent?.session_usage_import
+  );
+  if (!usageImport) return { dataSources: [], usageImport: false };
+
+  if (Array.isArray(app.linked_data_sources) && app.linked_data_sources.length) {
+    return { dataSources: app.linked_data_sources, usageImport: true };
+  }
+  if (Array.isArray(ent?.linked_data_sources) && ent.linked_data_sources.length) {
+    return { dataSources: ent.linked_data_sources, usageImport: true };
+  }
+
+  // 回退：按 agent / activity_agent 匹配 session_sources
+  try {
+    const cl = require('./config-loader');
+    const agentKey = app.agent_id || ent?.activity_agent_id || ent?.trace_agent_id;
+    if (agentKey) {
+      for (const s of (cl.sessionSources() || [])) {
+        if (s?.agent_id === agentKey && s.data_source) {
+          return { dataSources: [s.data_source], usageImport: true };
+        }
+      }
+    }
+  } catch { /* ignore */ }
+  return { dataSources: [], usageImport: true };
+}
+
+/** 单个应用当天 token / 调用次数（网关 proxy + 会话补录，与面板 apps:stats 同源） */
+function trayAppTodayStats(app) {
+  try {
+    const { dataSources, usageImport } = trayAppDataSources(app);
+    return localStats.queryAppStatsToday({
+      appId: app.id,
+      apiKey: app.api_key,
+      dataSources,
+      includeSessionImport: usageImport,
+    });
+  } catch {
+    return { calls: 0, tokens: 0, lastTs: null };
+  }
+}
+
 /** 托盘悬浮窗：当前已纳管应用 + 绑定的路由/模型（logo 用 lobehub 默认品牌图） */
 function getActiveAppsForTray(lang = 'zh') {
   const zh = lang !== 'en';
@@ -707,11 +787,17 @@ function getActiveAppsForTray(lang = 'zh') {
         speedBucket = 'fail';
       }
 
+      // 当天该应用 token 消耗（与盘点页 apps:stats 同源）
+      const today = trayAppTodayStats(app);
+      const todayTokens = today.tokens || 0;
+      const todayCalls = today.calls || 0;
+
       const viaGateway = routeLabels.length > 0;
       items.push({
         id: String(app.id || app.agent_id || app.preset_id || ''),
         name: String(app.name || app.agent_id || app.preset_id || 'App'),
         agentId: String(app.agent_id || app.preset_id || ''),
+        linkMethod: String(app.link_method || ''),
         iconUrl: brandIconForApp(app) || '',
         emoji: (typeof app.icon === 'string' && !app.icon.startsWith('icon:')) ? app.icon : '',
         viaGateway,
@@ -727,16 +813,54 @@ function getActiveAppsForTray(lang = 'zh') {
         ttftLabel,
         speedBucket,
         speedFailed: speedBucket === 'fail',
+        todayTokens,
+        todayCalls,
+        todayTokensLabel: fmtTrayTokens(todayTokens),
         active: true,
       });
     }
 
+    // 与面板 apps:list 一致：同一 agent 只保留一行（api-key/manual > shim > session/direct）
+    // 避免 WorkBuddy 等「经网关 + 直连」各一条重复展示
+    const LINK_PRI = { 'api-key': 3, manual: 3, shim: 2, session: 1, direct: 1 };
+    const bestByAgent = new Map();
+    const noAgent = [];
+    for (const item of items) {
+      const aid = item.agentId;
+      if (!aid) { noAgent.push(item); continue; }
+      const pri = LINK_PRI[item.linkMethod] || (item.viaGateway ? 3 : 0);
+      const cur = bestByAgent.get(aid);
+      if (!cur) {
+        bestByAgent.set(aid, item);
+        continue;
+      }
+      const curPri = LINK_PRI[cur.linkMethod] || (cur.viaGateway ? 3 : 0);
+      let keep = cur;
+      let drop = item;
+      if (pri > curPri
+        || (pri === curPri && item.viaGateway && !cur.viaGateway)
+        || (pri === curPri && item.viaGateway === cur.viaGateway && item.todayTokens > cur.todayTokens)) {
+        keep = item;
+        drop = cur;
+      }
+      // 合并重复行的今日用量，避免丢掉直连 session 补录的 token
+      const mergedTokens = Math.max(keep.todayTokens || 0, drop.todayTokens || 0);
+      const mergedCalls = Math.max(keep.todayCalls || 0, drop.todayCalls || 0);
+      bestByAgent.set(aid, {
+        ...keep,
+        todayTokens: mergedTokens,
+        todayCalls: mergedCalls,
+        todayTokensLabel: fmtTrayTokens(mergedTokens),
+      });
+    }
+    const deduped = [...noAgent, ...bestByAgent.values()];
+
     // 稳定排序：经网关优先，再按名称
-    items.sort((a, b) => {
+    deduped.sort((a, b) => {
       if (a.viaGateway !== b.viaGateway) return a.viaGateway ? -1 : 1;
       return a.name.localeCompare(b.name, zh ? 'zh' : 'en');
     });
-    return items;
+    return deduped;
   } catch (e) {
     console.warn('[tray] getActiveAppsForTray failed:', e.message);
     return [];
