@@ -4550,11 +4550,6 @@ app.whenReady().then(() => {
   });
   gateway.setLocalStats(localStats);
   gateway.setLocalConfigReader(readLocalConfig);   // 供策略组调度查 policies[]
-  // 转发前把 @tbp:<name|#id> 宏展开为 TB 库里的提示词正文（懒 require 避免加载顺序问题）
-  gateway.setPromptResolver((ref, args) => {
-    try { return require('./resource-manager').resolvePrompt(ref, args); }
-    catch { return { found: false }; }
-  });
   // 清理旧版付费供给源预填数据（须在 gateway 启动前）
   try {
     const billingConfig = require('./billing-config');
