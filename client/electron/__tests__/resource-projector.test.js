@@ -15,73 +15,14 @@ const {
 } = require('../resource-projector');
 const { getAgentTarget } = require('../resource-agent-targets');
 
-/** 注册一个临时「提示词投射目标」Agent（避免碰真实 ~/.claude/commands） */
-function registerTmpPromptAgent(promptRoot, withFrontmatter = true) {
-  const { AGENT_PROMPT_TARGETS } = require('../resource-agent-targets');
-  AGENT_PROMPT_TARGETS['tmp-prompt-agent'] = {
-    id: 'tmp-prompt-agent', label: 'TmpP',
-    getPromptRoot: () => promptRoot,
-    fileName: n => `${n}.md`,
-    invoke: n => `/tokenbank:${n}`,
-    withFrontmatter,
-  };
-  return () => { delete AGENT_PROMPT_TARGETS['tmp-prompt-agent']; };
-}
-
-test('projectPromptToAgent 把提示词写成原生命令文件（含调用名）', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-prompt-'));
-  const root = path.join(tmp, 'commands');
-  const cleanup = registerTmpPromptAgent(root);
-  const resource = { type: 'prompt', name: 'refactor', display_name: '重构助手', description: '帮我重构', content: '请重构下面的代码：' };
-  try {
-    const proj = projectPromptToAgent(resource, 'tmp-prompt-agent');
-    assert.equal(proj.projectionType, 'command');
-    assert.equal(proj.invoke, '/tokenbank:refactor');
-    const file = path.join(root, 'refactor.md');
-    assert.ok(fs.existsSync(file));
-    const txt = fs.readFileSync(file, 'utf8');
-    assert.ok(txt.includes('请重构下面的代码'));
-    assert.ok(txt.includes('tokenbank-managed-prompt'), '应带 TB 标记');
-
-    // verify healthy，删文件后不健康且可修复
-    assert.equal(verifyProjection(resource, 'tmp-prompt-agent', 'command', file).healthy, true);
-    fs.unlinkSync(file);
-    const v = verifyProjection(resource, 'tmp-prompt-agent', 'command', file);
-    assert.equal(v.healthy, false);
-    assert.equal(v.repairable, true);
-  } finally {
-    cleanup();
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
-});
-
-test('projectPromptToAgent 不覆盖用户自建同名命令；unproject 不删非 TB 文件', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-prompt2-'));
-  const root = path.join(tmp, 'commands');
-  fs.mkdirSync(root, { recursive: true });
-  const file = path.join(root, 'deploy.md');
-  fs.writeFileSync(file, '# 用户自己的 deploy 命令\n', 'utf8'); // 无 TB 标记
-  const cleanup = registerTmpPromptAgent(root);
-  const resource = { type: 'prompt', name: 'deploy', content: 'TB 的 deploy' };
-  try {
-    const proj = projectPromptToAgent(resource, 'tmp-prompt-agent');
-    assert.equal(proj.projectionType, 'conflict');
-    assert.equal(fs.readFileSync(file, 'utf8'), '# 用户自己的 deploy 命令\n', '用户文件未被改');
-
-    const rm = unprojectPromptFromAgent(resource, 'tmp-prompt-agent', file);
-    assert.equal(rm.removed, false);
-    assert.ok(fs.existsSync(file), 'unproject 不得删用户自建命令');
-
-    // force 才覆盖
-    const forced = projectPromptToAgent(resource, 'tmp-prompt-agent', 'global', { force: true });
-    assert.equal(forced.projectionType, 'command');
-    assert.ok(fs.readFileSync(file, 'utf8').includes('TB 的 deploy'));
-    // 现在是 TB 文件，可被 unproject 删除
-    assert.equal(unprojectPromptFromAgent(resource, 'tmp-prompt-agent', file).removed, true);
-  } finally {
-    cleanup();
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
+// 提示词投射改为 MCP 可见性标记(不落盘)：见 prompt-projection-mcp.test.js
+test('projectPromptToAgent/unprojectPromptFromAgent 不落盘,仅返回标记', () => {
+  const resource = { type: 'prompt', name: 'refactor', content: '请重构下面的代码：' };
+  const proj = projectPromptToAgent(resource, 'cursor');
+  assert.equal(proj.projectionType, 'mcp');
+  assert.equal(proj.status, 'active');
+  assert.equal(proj.targetPath, null);
+  assert.equal(unprojectPromptFromAgent(resource, 'cursor').removed, true);
 });
 
 test('replaceWithSymlink creates directory symlink to canonical', () => {

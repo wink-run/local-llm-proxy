@@ -4,7 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { getAgentTarget, getPromptTarget } = require('./resource-agent-targets');
+const { getAgentTarget } = require('./resource-agent-targets');
 const {
   resolveAuthorityDir,
   materializeSkillDir,
@@ -229,15 +229,9 @@ function verifyProjection(resource, agentId, projectionType, targetPath) {
   if (projectionType === 'reference') {
     return { healthy: true, reason: 'reference', repairable: false };
   }
-  // 提示词命令文件：健康 = TB 生成的文件仍在
-  if (projectionType === 'command' || resource?.type === 'prompt') {
-    const target = getPromptTarget(agentId);
-    const filePath = targetPath
-      || (target ? path.join(target.getPromptRoot(), target.fileName(resource.name)) : null);
-    if (!filePath) return { healthy: false, reason: 'unknown-target', repairable: false };
-    if (!pathExists(filePath)) return { healthy: false, reason: 'missing', repairable: true };
-    if (!isTbManagedPromptFile(filePath)) return { healthy: false, reason: 'overwritten', repairable: false };
-    return { healthy: true, reason: 'command', repairable: false };
+  // 提示词:投射即 DB 标记(经 MCP 暴露),行存在即健康
+  if (projectionType === 'mcp' || resource?.type === 'prompt') {
+    return { healthy: true, reason: 'mcp', repairable: false };
   }
   if (!resource || resource.type !== 'skill') {
     return { healthy: true, reason: 'reference', repairable: false };
@@ -274,74 +268,21 @@ function verifyProjection(resource, agentId, projectionType, targetPath) {
   return { healthy: true, reason: projectionType, repairable: false };
 }
 
-// ── 提示词 → 各 Agent 原生斜杠命令 ──────────────────────────────────────────
+// ── 提示词 → MCP 可见性标记(不落盘;可见集由 resource_projections 决定)────────
 
-/** TB 生成的命令文件标记：据此判断某文件是否 TB 所写（决定可否覆盖/删除） */
-const TB_PROMPT_MARKER = 'tokenbank-managed-prompt';
-
-function buildPromptFileContent(resource, target) {
-  const body = String(resource.content || '');
-  if (target.withFrontmatter) {
-    const desc = String(resource.description || resource.display_name || resource.name || '')
-      .replace(/\s+/g, ' ').trim();
-    // frontmatter 内含 TB 标记；description 供 Claude 命令列表展示
-    return `---\n${TB_PROMPT_MARKER}: true\ndescription: ${JSON.stringify(desc)}\n---\n${body}`;
-  }
-  // 纯文本 Agent（如 Codex）：首行注释作为 TB 标记
-  return `<!-- ${TB_PROMPT_MARKER} -->\n${body}`;
-}
-
-/** 文件是否为 TB 生成（含标记）；据此避免覆盖/删除用户自建的同名命令 */
-function isTbManagedPromptFile(filePath) {
-  try {
-    const head = fs.readFileSync(filePath, 'utf8').slice(0, 400);
-    return head.includes(TB_PROMPT_MARKER);
-  } catch {
-    return false;
-  }
-}
-
-function projectPromptToAgent(resource, agentId, scope = 'global', options = {}) {
-  const target = getPromptTarget(agentId);
-  // 该 Agent 不支持提示词投射（如 cursor/workbuddy）：仅标记引用，不落盘
-  if (!target) {
-    return { agentId, scope, targetPath: null, authorityPath: null, projectionType: 'reference', status: 'active' };
-  }
-
-  const root = target.getPromptRoot();
-  ensureDir(root);
-  const filePath = path.join(root, target.fileName(resource.name));
-
-  // 冲突保护：目标已有一个「非 TB 生成」的同名命令文件 → 不覆盖用户自建命令
-  if (pathExists(filePath) && !isTbManagedPromptFile(filePath) && !options.force) {
-    return {
-      agentId, scope, targetPath: filePath, authorityPath: null,
-      projectionType: 'conflict', status: 'conflict', conflict: true, conflictPath: filePath,
-      invoke: target.invoke(resource.name),
-    };
-  }
-
-  fs.writeFileSync(filePath, buildPromptFileContent(resource, target), 'utf8');
+function projectPromptToAgent(resource, agentId, scope = 'global') {
   return {
-    agentId, scope, targetPath: filePath, authorityPath: null,
-    projectionType: 'command', status: 'active',
-    invoke: target.invoke(resource.name),
+    agentId,
+    scope,
+    targetPath: null,
+    authorityPath: null,
+    projectionType: 'mcp',
+    status: 'active',
   };
 }
 
-function unprojectPromptFromAgent(resource, agentId, targetPath) {
-  const target = getPromptTarget(agentId);
-  const filePath = targetPath
-    || (target ? path.join(target.getPromptRoot(), target.fileName(resource.name)) : null);
-  if (!filePath || !pathExists(filePath)) return { removed: false };
-  // 只删 TB 生成的命令文件，绝不删用户自建的同名命令
-  if (!isTbManagedPromptFile(filePath)) return { removed: false, skipped: true, path: filePath };
-  try {
-    fs.unlinkSync(filePath);
-    return { removed: true, path: filePath };
-  } catch {
-    return { removed: false, path: filePath };
-  }
+function unprojectPromptFromAgent() {
+  return { removed: true };
 }
 
 function projectResource(resource, agentId, scope = 'global', options = {}) {
@@ -377,7 +318,6 @@ module.exports = {
   projectSkillToAgent,
   projectPromptToAgent,
   unprojectPromptFromAgent,
-  isTbManagedPromptFile,
   verifyProjection,
   isForeignRealDir,
   replaceWithSymlink,

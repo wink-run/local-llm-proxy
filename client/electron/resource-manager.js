@@ -393,8 +393,7 @@ class ResourceManager {
     if (saved?.type === 'skill') {
       this._persistSkillAuthority(id, saved, { syncContent: true });
     } else if (saved?.type === 'prompt') {
-      // 权威源=DB：编辑提示词后重刷所有已投射的命令文件（Claude Code / Codex）
-      this._resyncPromptProjections(saved);
+      // 权威源=DB:MCP 调用时实时读库,编辑后无需重刷任何文件
     }
     return { success: true, resource: this.getResource(id) };
   }
@@ -545,7 +544,8 @@ class ResourceManager {
     let missingDeps = [];
     if (resource.type === 'assistant') {
       const { resources, missing } = this._collectAssistantDependencies(resource);
-      resourcesToProject.push(...resources);
+      // prompt 依赖在运行时内联进 system 上下文(resolveAssistantContext),仅 Skill 需要落盘投射
+      resourcesToProject.push(...resources.filter(r => r.type === 'skill'));
       missingDeps = missing;
     }
 
@@ -564,7 +564,7 @@ class ResourceManager {
     const copyCount = results.filter(r => r.projectionType === 'copy').length;
     const scanCount = results.filter(r => r.projectionType === 'scan' || r.projectionType === 'origin').length;
     const conflicts = results.filter(r => r.projectionType === 'conflict');
-    let hint = 'Prompt 已在 Token Bank 标记为可用（不落盘到 Agent 目录）；将在编排/直调时作为上下文注入。';
+    let hint = '提示词已投射:目标 Agent 会话可通过 MCP 工具 tb_get_prompt 按名取回(tb_list_prompts 可列出)。';
     if (resource.type === 'skill') {
       if (symlinkCount) {
         hint = 'Skill 已通过目录软链投射；权威目录保留在用户安装位置，修改该目录即可同步。';
@@ -655,33 +655,6 @@ class ResourceManager {
         resynced += 1;
       } catch (e) {
         console.warn('[resource-manager] copy resync failed:', proj.agentId, e.message);
-      }
-    }
-    return { resynced };
-  }
-
-  /**
-   * 提示词编辑后，重刷所有「命令文件」型投射（权威源=DB，命令文件需重写）。
-   * 用户已用自建命令替换的目标（非 TB 生成）会被 projectResource 判为 conflict，跳过不覆盖。
-   */
-  _resyncPromptProjections(resource) {
-    if (!resource || resource.type !== 'prompt') return { resynced: 0 };
-    const db = this._getDb();
-    let resynced = 0;
-    for (const proj of resource.projections || []) {
-      if (proj.projectionType !== 'command') continue;
-      try {
-        const fresh = projectResource(resource, proj.agentId, proj.scope || 'global', {});
-        if (fresh.projectionType === 'command' && fresh.status === 'active') {
-          db.prepare(`
-            UPDATE resource_projections SET
-              projection_type = ?, target_path = ?, status = ?, created_at = ?
-            WHERE id = ?
-          `).run(fresh.projectionType, fresh.targetPath, fresh.status, Date.now(), proj.id);
-          resynced += 1;
-        }
-      } catch (e) {
-        console.warn('[resource-manager] prompt resync failed:', proj.agentId, e.message);
       }
     }
     return { resynced };
