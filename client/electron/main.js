@@ -4195,6 +4195,13 @@ app.whenReady().then(() => {
     const a = apps.find(x => x.link_method === 'shim' && x.agent_id === toolId);
     return a ? a.api_key : null;
   });
+  // 多账号实例列表（供 shim 目录分发）：该工具所有带 instance 段的 shim 记录
+  agentLinker.setInstancesResolver((toolId) => {
+    const apps = readLocalConfig().apps || [];
+    return apps
+      .filter(x => x.link_method === 'shim' && x.agent_id === toolId && x.instance && !x.instance.invalid)
+      .map(x => ({ config_dir: x.instance.config_dir, api_key: x.api_key, dir_glob: x.instance.dir_glob, is_default: !!x.instance.is_default }));
+  });
   gateway.start(11430, readAgentConfig, writeAgentConfig);
 
   // 注入 Claude 客户端模型名（内部透明逻辑，来自 yaml config-loader）

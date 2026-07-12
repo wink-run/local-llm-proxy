@@ -152,15 +152,37 @@ function probeOrigin(envMap) {
 
 // shim 注入网关 env，但先探活：网关 /health 通才注入（否则直接调真程序走官方）。
 // 这样网关没启动时 shim 不会把工具指向死端口 —— 透明托管对“网关未运行”自动回落。
-function writeShim(command, realPath, envMap) {
+// dispatch（可选）：[{ dir, env }]，按 $PWD 前缀匹配（首个命中胜出，调用方按 dir 长度降序传入）
+// 时用该项的 env 覆盖基础 envMap（如 CLAUDE_CONFIG_DIR/ANTHROPIC_AUTH_TOKEN）——按启动目录选不同 CLI 实例。
+// dispatch 为空 → 生成的 shim 与不带分发时字节一致（单实例/无 dir_glob 零改动）。
+function writeShim(command, realPath, envMap, dispatch = []) {
   ensureBinDir();
   const exports = Object.entries(envMap || {});
   const origin  = probeOrigin(envMap);
+  const disp = (Array.isArray(dispatch) ? dispatch : []).filter(d => d && d.dir && d.env);
   let shimPath;
   if (IS_WIN) {
     shimPath = path.join(BIN_DIR, command + '.cmd');
     let lines;
-    if (origin && exports.length) {
+    if (origin && exports.length && disp.length) {
+      // 目录分发：set 基础 env → 逐条 %CD% 前缀比较(带尾 \\ 防边界误配)，命中即覆盖并 goto 收尾
+      lines = [
+        '@echo off',
+        'REM ' + MARK_BEGIN,
+        `curl.exe -s -o NUL -m 1 "${origin}/health" >NUL 2>NUL`,
+        'if not %errorlevel%==0 goto tbrun',
+        ...exports.map(([k, v]) => `set "${k}=${v}"`),
+        'set "_tbc=%CD%\\"',
+        ...disp.map(d => {
+          const needle = d.dir.replace(/[\\/]+$/, '') + '\\';
+          const setEnv = Object.entries(d.env).map(([k, v]) => `set "${k}=${v}"`).join(' & ');
+          return `if /i "%_tbc:~0,${needle.length}%"=="${needle}" ( ${setEnv} & goto tbrun )`;
+        }),
+        ':tbrun',
+        `"${realPath}" %*`,
+        'REM ' + MARK_END,
+      ];
+    } else if (origin && exports.length) {
       lines = [
         '@echo off',
         'REM ' + MARK_BEGIN,
@@ -179,7 +201,24 @@ function writeShim(command, realPath, envMap) {
   } else {
     shimPath = path.join(BIN_DIR, command);
     let lines;
-    if (origin && exports.length) {
+    if (origin && exports.length && disp.length) {
+      lines = [
+        '#!/bin/sh',
+        MARK_BEGIN,
+        `if curl -s -o /dev/null -m 1 "${origin}/health" 2>/dev/null; then`,
+        ...exports.map(([k, v]) => `  export ${k}="${v}"`),
+        '  case "$PWD/" in',
+        ...disp.map(d => {
+          const dir = d.dir.replace(/\/+$/, '');
+          const setEnv = Object.entries(d.env).map(([k, v]) => `export ${k}="${v}"`).join('; ');
+          return `    "${dir}/"*) ${setEnv} ;;`;
+        }),
+        '  esac',
+        'fi',
+        `exec "${realPath}" "$@"`,
+        MARK_END,
+      ];
+    } else if (origin && exports.length) {
       lines = [
         '#!/bin/sh',
         MARK_BEGIN,
