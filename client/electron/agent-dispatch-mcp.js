@@ -6,6 +6,7 @@
 const readline = require('readline');
 const { summarizeAgentStdout } = require('./agent-output-parser');
 const dispatchClient = require('./agent-dispatch-client');
+const resourceManager = require('./resource-manager');
 
 const PARENT_TASK_ID = process.env.TB_PARENT_TASK_ID || '';
 const PARENT_SESSION_KEY = process.env.TB_PARENT_SESSION_KEY || '';
@@ -107,7 +108,8 @@ async function handleToolCall(name, args = {}) {
     const ref = String(args.name || args.ref || '').trim();
     const argStr = String(args.args || args.arguments || '').trim();
     if (!ref) return textResult('缺少 name', true);
-    const r = await dispatchClient.resolvePrompt(ref, argStr);
+    const clientId = process.env.TB_CLIENT_ID || process.env.TB_MAIN_AGENT_ID || '';
+    const r = resourceManager.resolvePromptForClient(ref, argStr, clientId);
     if (!r.found) return textResult(`未找到提示词: ${ref}`, true);
     return textResult(r.text);
   }
