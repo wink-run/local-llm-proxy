@@ -1,5 +1,9 @@
-version: 1
+version: 2
+# 社区推荐资源默认种子（服务器下发，可被 DB config.community_catalog 覆盖）。
+# 面向普通用户：写作 / 语言 / 学习 / 职场 / 生活 / 理财 / 决策 / 创意为主，附少量开发类。
+# 参考社区经典合集（prompts.chat / awesome-chatgpt-prompts，CC0），文案为改写精简版。
 prompts:
+# ── 开发 ──────────────────────────────────────────────
 - catalog_id: code-review-prompt
   type: prompt
   name: code-review
@@ -38,7 +42,418 @@ prompts:
 
     需求描述：
     {{requirements}}
+# ── 写作与表达 ────────────────────────────────────────
+- catalog_id: text-polish-prompt
+  type: prompt
+  name: text-polish
+  display_name: 文本润色
+  description: 让文字更通顺、专业、易读，不改原意
+  metadata:
+    tags: [writing, editing, general]
+    version: 1.0.0
+  content: |
+    你是中文写作编辑。请润色下面这段文字：更通顺、专业、易读，保持原意与语气，
+    不添加新信息。先给润色后的完整版本，再用 2-3 条要点说明主要改动。
+
+    原文：
+    {{text}}
+- catalog_id: tone-rewrite-prompt
+  type: prompt
+  name: tone-rewrite
+  display_name: 语气改写
+  description: 把一段话改成正式/亲切/简洁等指定语气
+  metadata:
+    tags: [writing, tone, general]
+    version: 1.0.0
+  content: |
+    请把下面这段话改写成「{{tone}}」的语气（如正式、亲切、简洁、热情、委婉），
+    保持核心信息不变，长度相近。只输出改写结果。
+
+    原文：
+    {{text}}
+- catalog_id: summarize-prompt
+  type: prompt
+  name: summarize
+  display_name: 内容总结
+  description: 把长文压成要点摘要
+  metadata:
+    tags: [writing, summary, productivity]
+    version: 1.0.0
+  content: |
+    请阅读下面的内容并输出：
+    1. 一句话概括
+    2. 3-5 条关键要点
+    3. 若有，列出结论或待办
+
+    内容：
+    {{content}}
+- catalog_id: proofread-prompt
+  type: prompt
+  name: proofread
+  display_name: 语法校对
+  description: 找出并修正错别字、语法与标点问题
+  metadata:
+    tags: [writing, grammar, general]
+    version: 1.0.0
+  content: |
+    请校对下面文字的错别字、语法、标点与用词问题。输出：
+    - 修正后的完整文本
+    - 一个「原→改」的修改清单
+
+    文本：
+    {{text}}
+- catalog_id: expand-outline-prompt
+  type: prompt
+  name: expand-outline
+  display_name: 提纲扩写
+  description: 把要点/提纲扩写成完整段落
+  metadata:
+    tags: [writing, general]
+    version: 1.0.0
+  content: |
+    请把下面的要点/提纲扩写成结构清晰、逻辑连贯的完整文章，语气「{{tone}}」，
+    面向「{{audience}}」读者。不要编造具体数字或事实。
+
+    提纲：
+    {{outline}}
+- catalog_id: simplify-text-prompt
+  type: prompt
+  name: simplify-text
+  display_name: 化繁为简
+  description: 把专业/复杂内容改写成人人能懂
+  metadata:
+    tags: [writing, explain, general]
+    version: 1.0.0
+  content: |
+    请把下面这段内容改写成普通人一读就懂的大白话，避免术语；
+    必须保留的专业词请用括号简单解释。
+
+    原文：
+    {{text}}
+# ── 邮件与沟通 ────────────────────────────────────────
+- catalog_id: email-compose-prompt
+  type: prompt
+  name: email-compose
+  display_name: 邮件撰写
+  description: 根据要点起草得体的邮件
+  metadata:
+    tags: [email, communication, work]
+    version: 1.0.0
+  content: |
+    请根据以下信息起草一封邮件：
+    - 收件人：{{recipient}}
+    - 目的：{{purpose}}
+    - 要点：{{points}}
+    - 语气：{{tone}}（默认：专业友好）
+
+    给出主题行 + 正文，简洁得体，可直接发送。
+- catalog_id: reply-draft-prompt
+  type: prompt
+  name: reply-draft
+  display_name: 回复起草
+  description: 针对收到的消息拟一份回复
+  metadata:
+    tags: [email, communication, work]
+    version: 1.0.0
+  content: |
+    我收到下面这条消息，想以「{{stance}}」的立场回复（如答应/婉拒/追问/致歉）。
+    请帮我拟一份得体、清晰的回复，并说明为什么这样措辞。
+
+    对方消息：
+    {{message}}
+- catalog_id: meeting-minutes-prompt
+  type: prompt
+  name: meeting-minutes
+  display_name: 会议纪要
+  description: 把零散记录整理成结构化纪要
+  metadata:
+    tags: [work, meeting, productivity]
+    version: 1.0.0
+  content: |
+    请把下面的会议记录整理成纪要，包含：
+    1. 一句话主题
+    2. 关键讨论与决定
+    3. 待办事项（负责人 + 期限，若有）
+    4. 待确认/遗留问题
+
+    记录：
+    {{notes}}
+# ── 语言与翻译 ────────────────────────────────────────
+- catalog_id: translate-prompt
+  type: prompt
+  name: translate
+  display_name: 地道翻译
+  description: 自然流畅的翻译，非逐字直译
+  metadata:
+    tags: [translation, language, general]
+    version: 1.0.0
+  content: |
+    请把下面文字翻译成「{{target_lang}}」，追求地道自然、符合母语者表达习惯，
+    而非逐字直译。保留原文格式。若有歧义或文化点，翻译后简短注明。
+
+    原文：
+    {{text}}
+- catalog_id: explain-word-prompt
+  type: prompt
+  name: explain-word
+  display_name: 词义讲解
+  description: 讲清一个词的含义、用法与例句
+  metadata:
+    tags: [language, learning, general]
+    version: 1.0.0
+  content: |
+    请讲解「{{word}}」：
+    - 含义（分常见义项）
+    - 典型用法/搭配
+    - 2-3 个例句（附翻译）
+    - 近义词及细微差别
+- catalog_id: english-oral-prompt
+  type: prompt
+  name: english-oral
+  display_name: 英语口语陪练
+  description: 模拟对话并纠正表达
+  metadata:
+    tags: [language, english, learning]
+    version: 1.0.0
+  content: |
+    你是我的英语口语陪练。请就「{{topic}}」用英语和我对话，每次只说 2-3 句并抛出一个问题。
+    当我的英语有错误或不地道时，在回复末尾用【纠错】给出更自然的说法（中文解释）。
+    从现在开始，先用英语向我打招呼。
+# ── 学习与知识 ────────────────────────────────────────
+- catalog_id: eli5-prompt
+  type: prompt
+  name: eli5
+  display_name: 通俗解释
+  description: 像给外行讲一样把概念讲明白
+  metadata:
+    tags: [learning, explain, general]
+    version: 1.0.0
+  content: |
+    请把「{{concept}}」解释给一个完全的外行听：
+    - 用一个生活中的类比开头
+    - 再讲它到底是什么、为什么重要
+    - 避免术语，必要时括号解释
+- catalog_id: study-plan-prompt
+  type: prompt
+  name: study-plan
+  display_name: 学习计划
+  description: 为一个目标定制阶段性学习路线
+  metadata:
+    tags: [learning, planning, general]
+    version: 1.0.0
+  content: |
+    我想学「{{goal}}」，目前水平「{{level}}」，每周可投入「{{hours}}」小时，目标期限「{{deadline}}」。
+    请制定阶段性学习计划：里程碑、每周任务、推荐资源类型、如何自测进度。
+- catalog_id: quiz-generator-prompt
+  type: prompt
+  name: quiz-generator
+  display_name: 出题自测
+  description: 就一段材料生成测验题
+  metadata:
+    tags: [learning, quiz, general]
+    version: 1.0.0
+  content: |
+    根据下面材料出 {{count}} 道题（混合选择题与简答题），由易到难。
+    先只给题目；我作答后你再逐题批改并解释。
+
+    材料：
+    {{material}}
+- catalog_id: concept-map-prompt
+  type: prompt
+  name: concept-map
+  display_name: 知识梳理
+  description: 把一个主题拆成结构化知识框架
+  metadata:
+    tags: [learning, structure, general]
+    version: 1.0.0
+  content: |
+    请把「{{topic}}」梳理成一张知识框架：
+    - 核心概念与它们的关系（用层级列表表示）
+    - 每个概念一句话说明
+    - 初学者最容易混淆/忽略的点
+# ── 职场与求职 ────────────────────────────────────────
+- catalog_id: resume-polish-prompt
+  type: prompt
+  name: resume-polish
+  display_name: 简历优化
+  description: 用成果导向改写简历条目
+  metadata:
+    tags: [career, resume, work]
+    version: 1.0.0
+  content: |
+    请把下面的简历经历改写得更有说服力：突出成果与量化数据（动词开头、STAR 结构），
+    删去空话套话。针对「{{target_role}}」岗位。保留真实，不编造数字。
+
+    原始经历：
+    {{experience}}
+- catalog_id: interview-prep-prompt
+  type: prompt
+  name: interview-prep
+  display_name: 面试准备
+  description: 预测问题并陪练模拟面试
+  metadata:
+    tags: [career, interview, work]
+    version: 1.0.0
+  content: |
+    你是「{{role}}」岗位的面试官。请先列出 5 个最可能被问到的问题，
+    然后逐个向我提问、等我回答后给出点评与更优答法。现在提出第一个问题。
+- catalog_id: cover-letter-prompt
+  type: prompt
+  name: cover-letter
+  display_name: 求职信
+  description: 根据岗位与背景写求职信
+  metadata:
+    tags: [career, writing, work]
+    version: 1.0.0
+  content: |
+    请为我写一封求职信：
+    - 目标岗位：{{role}} @ {{company}}
+    - 我的亮点：{{highlights}}
+    简洁真诚（250 字内），说明为何匹配、为何想加入，避免空泛。
+- catalog_id: weekly-report-prompt
+  type: prompt
+  name: weekly-report
+  display_name: 周报生成
+  description: 把零散工作项整理成清晰周报
+  metadata:
+    tags: [work, report, productivity]
+    version: 1.0.0
+  content: |
+    请把下面这周做的事整理成周报：本周完成、进行中、下周计划、需要的支持/风险。
+    条理清晰、突出成果，供汇报使用。
+
+    这周做的事：
+    {{items}}
+# ── 生活 ──────────────────────────────────────────────
+- catalog_id: travel-plan-prompt
+  type: prompt
+  name: travel-plan
+  display_name: 旅行规划
+  description: 定制每日行程与实用建议
+  metadata:
+    tags: [life, travel, planning]
+    version: 1.0.0
+  content: |
+    请为一次旅行做行程：
+    - 目的地：{{destination}}
+    - 天数：{{days}}，人数/同行：{{party}}
+    - 偏好：{{interests}}，预算：{{budget}}
+    按天给出安排（含大致时间、交通与就餐建议），标注需提前预订项，末尾附实用贴士。
+- catalog_id: recipe-suggest-prompt
+  type: prompt
+  name: recipe-suggest
+  display_name: 食谱推荐
+  description: 用现有食材给出可做的菜
+  metadata:
+    tags: [life, cooking, general]
+    version: 1.0.0
+  content: |
+    我冰箱里有：{{ingredients}}。口味偏好：{{preference}}，可接受烹饪时间：{{time}}。
+    请推荐 2-3 道能做的菜，每道给食材清单（标出还需额外购买的）与简明步骤。
+- catalog_id: workout-plan-prompt
+  type: prompt
+  name: workout-plan
+  display_name: 健身方案
+  description: 按目标和条件定制训练计划
+  metadata:
+    tags: [life, fitness, health]
+    version: 1.0.0
+  content: |
+    请为我制定一周健身计划：
+    - 目标：{{goal}}（如减脂/增肌/体能）
+    - 现状与限制：{{condition}}
+    - 每周可训练：{{days_per_week}} 天，器材：{{equipment}}
+    给出每天安排与动作组数，附热身/拉伸与循序渐进建议。提醒：如有伤病请先咨询专业人士。
+- catalog_id: gift-idea-prompt
+  type: prompt
+  name: gift-idea
+  display_name: 礼物灵感
+  description: 按对象与预算给出送礼建议
+  metadata:
+    tags: [life, general]
+    version: 1.0.0
+  content: |
+    请为我推荐礼物：
+    - 送给：{{who}}（关系/年龄/喜好：{{about}}）
+    - 场合：{{occasion}}，预算：{{budget}}
+    给 5-8 个不同价位与风格的点子，每个一句话说明为何合适，避免俗套。
+# ── 理财与决策 ────────────────────────────────────────
+- catalog_id: budget-advice-prompt
+  type: prompt
+  name: budget-advice
+  display_name: 预算建议
+  description: 分析收支给出可执行的预算方案
+  metadata:
+    tags: [finance, planning, life]
+    version: 1.0.0
+  content: |
+    我的月收入约 {{income}}，主要支出：{{expenses}}，理财目标：{{goal}}。
+    请给出一个可执行的预算分配建议（如 50/30/20 之类）、可优化的开支、以及第一步该做什么。
+    说明：这是通用信息参考，非专业投资建议。
+- catalog_id: terms-explain-prompt
+  type: prompt
+  name: terms-explain
+  display_name: 条款解读
+  description: 把合同/协议条款讲成人话并提示风险
+  metadata:
+    tags: [life, legal, general]
+    version: 1.0.0
+  content: |
+    请用大白话解读下面这段条款：它到底是什么意思、对我有什么影响、有哪些需要注意的坑或风险点。
+    说明：这是通俗解读，重大事项请咨询专业人士。
+
+    条款原文：
+    {{clause}}
+- catalog_id: pros-cons-prompt
+  type: prompt
+  name: pros-cons
+  display_name: 利弊权衡
+  description: 系统列出一个选择的优缺点
+  metadata:
+    tags: [decision, thinking, general]
+    version: 1.0.0
+  content: |
+    我在考虑：{{decision}}。请客观列出利与弊（各 4-6 条，按重要性排序），
+    指出最关键的 1-2 个权衡点，并说明哪种人更适合选它——但不替我下结论。
+- catalog_id: decision-matrix-prompt
+  type: prompt
+  name: decision-matrix
+  display_name: 决策矩阵
+  description: 多选项按加权标准打分对比
+  metadata:
+    tags: [decision, thinking, productivity]
+    version: 1.0.0
+  content: |
+    帮我做加权决策矩阵。
+    - 选项：{{options}}
+    - 我看重的标准（可带权重）：{{criteria}}
+    请用表格给每个选项按各标准打分（1-5）、算加权总分，并给出解读与提醒盲点。
+# ── 创意与效率 ────────────────────────────────────────
+- catalog_id: brainstorm-prompt
+  type: prompt
+  name: brainstorm
+  display_name: 头脑风暴
+  description: 围绕一个主题快速产出大量点子
+  metadata:
+    tags: [creative, ideation, productivity]
+    version: 1.0.0
+  content: |
+    请就「{{topic}}」做头脑风暴，产出 15+ 个点子，覆盖不同角度（常规的、省钱的、大胆的、反直觉的）。
+    先只列点子；之后我挑出感兴趣的，你再帮我展开。
+- catalog_id: daily-planner-prompt
+  type: prompt
+  name: daily-planner
+  display_name: 每日计划
+  description: 把待办排成合理的一天日程
+  metadata:
+    tags: [productivity, planning, general]
+    version: 1.0.0
+  content: |
+    这是我今天要做的事：{{tasks}}。可用时间段：{{hours}}。
+    请帮我排出一天日程：按优先级和精力曲线安排，穿插休息，标出最重要的 1-3 件（must-do），
+    并预留缓冲时间。
 skills:
+# ── 开发 ──────────────────────────────────────────────
 - catalog_id: git-commit-skill
   type: skill
   name: git-commit
@@ -97,7 +512,330 @@ skills:
     ## 禁止
     - 未理解根因就大面积重写
     - 同时改多处 unrelated 代码
+- catalog_id: explain-code-skill
+  type: skill
+  name: explain-code
+  display_name: 代码讲解
+  description: 逐段讲清一段代码在做什么
+  metadata:
+    tags: [code, learning, dev]
+    version: 1.0.0
+    compatible_agents: [claude-code, codex, cursor, workbuddy]
+  content: |
+    ---
+    name: explain-code
+    description: 为初学者逐段讲解代码的意图、流程与关键点
+    ---
+
+    # Explain Code
+
+    ## 何时使用
+    用户贴出一段代码问「这是干嘛的」「看不懂」时。
+
+    ## 讲解方式
+    1. 一句话说明整段代码的目的
+    2. 分块讲每部分做什么（不逐行念，抓关键）
+    3. 指出用到的重要概念/语法点
+    4. 提示潜在坑或可改进处
+
+    ## 风格
+    面向初学者，少术语，多类比。
+- catalog_id: sql-helper-skill
+  type: skill
+  name: sql-helper
+  display_name: SQL 助手
+  description: 用自然语言写、解释、优化 SQL
+  metadata:
+    tags: [sql, data, dev]
+    version: 1.0.0
+    compatible_agents: [claude-code, codex, cursor, workbuddy]
+  content: |
+    ---
+    name: sql-helper
+    description: 把自然语言需求转成 SQL，并能解释和优化已有查询
+    ---
+
+    # SQL Helper
+
+    ## 何时使用
+    用户描述想查的数据、或贴出一段 SQL 求解释/优化时。
+
+    ## 做法
+    1. 先确认涉及的表与字段（不清楚就问）
+    2. 给出标准 SQL，附一句注释说明思路
+    3. 若被要求优化：指出慢点（缺索引/全表扫/子查询）并给改写
+    4. 默认只读查询；涉及 UPDATE/DELETE 时提醒加 WHERE 与备份
+- catalog_id: regex-builder-skill
+  type: skill
+  name: regex-builder
+  display_name: 正则助手
+  description: 按需求构造并解释正则表达式
+  metadata:
+    tags: [regex, text, dev]
+    version: 1.0.0
+    compatible_agents: [claude-code, codex, cursor, workbuddy]
+  content: |
+    ---
+    name: regex-builder
+    description: 根据文本匹配需求生成正则，并逐部件解释
+    ---
+
+    # Regex Builder
+
+    ## 何时使用
+    用户想匹配/提取/替换某种文本模式时。
+
+    ## 输出
+    1. 正则表达式（标注适用语言/风格，如 PCRE/JS）
+    2. 逐部件解释每段的作用
+    3. 2-3 个匹配示例与 1-2 个不匹配示例
+    4. 常见变体（如是否需要转义、大小写、多行）
+- catalog_id: spreadsheet-formula-skill
+  type: skill
+  name: spreadsheet-formula
+  display_name: 表格公式助手
+  description: 生成并解释 Excel/表格公式
+  metadata:
+    tags: [spreadsheet, excel, productivity]
+    version: 1.0.0
+    compatible_agents: [claude-code, codex, cursor, workbuddy]
+  content: |
+    ---
+    name: spreadsheet-formula
+    description: 把表格计算需求转成 Excel/Google Sheets 公式并解释
+    ---
+
+    # Spreadsheet Formula
+
+    ## 何时使用
+    用户描述表格里想算什么、或问某个公式怎么写/为何报错时。
+
+    ## 做法
+    1. 确认数据在哪些列/区域（不清楚就问）
+    2. 给出公式（同时提供 Excel 与 Google Sheets 差异，若有）
+    3. 一句话解释公式逻辑
+    4. 提示常见坑：绝对/相对引用、区域范围、#REF/#VALUE 报错
+- catalog_id: proofreader-skill
+  type: skill
+  name: proofreader
+  display_name: 文字校对
+  description: 校对错别字、语法与表达并给修改清单
+  metadata:
+    tags: [writing, grammar, general]
+    version: 1.0.0
+    compatible_agents: [claude-code, codex, cursor, workbuddy]
+  content: |
+    ---
+    name: proofreader
+    description: 校对中英文文本的错别字、语法、标点与表达问题
+    ---
+
+    # Proofreader
+
+    ## 何时使用
+    用户请你检查/校对一段文字时。
+
+    ## 输出
+    1. 修正后的完整文本
+    2. 「原 → 改」的修改清单（每条一句话说明原因）
+    3. 若整体表达可提升，给 1-2 条润色建议
+
+    ## 原则
+    只改错与不通顺处，不改变作者本意与风格。
+- catalog_id: translator-skill
+  type: skill
+  name: translator
+  display_name: 翻译助手
+  description: 地道中英互译，保留语气与格式
+  metadata:
+    tags: [translation, language, general]
+    version: 1.0.0
+    compatible_agents: [claude-code, codex, cursor, workbuddy]
+  content: |
+    ---
+    name: translator
+    description: 在中英文之间地道翻译，非逐字直译
+    ---
+
+    # Translator
+
+    ## 何时使用
+    用户请你翻译一段文字时（默认中英互译，可指定其他语言）。
+
+    ## 原则
+    1. 自然地道，符合目标语言母语者习惯
+    2. 保留原文格式、语气与专有名词
+    3. 遇文化梗/双关或歧义，翻译后简短注明
+    4. 只输出译文，除非用户要对照
+- catalog_id: meeting-summarizer-skill
+  type: skill
+  name: meeting-summarizer
+  display_name: 会议总结
+  description: 把会议记录整理成纪要与待办
+  metadata:
+    tags: [work, meeting, productivity]
+    version: 1.0.0
+    compatible_agents: [claude-code, codex, cursor, workbuddy]
+  content: |
+    ---
+    name: meeting-summarizer
+    description: 从会议记录/转录中提炼决定、待办与遗留问题
+    ---
+
+    # Meeting Summarizer
+
+    ## 何时使用
+    用户贴出会议记录、录音转文字或零散笔记时。
+
+    ## 输出结构
+    1. 主题与参会背景（一句话）
+    2. 关键讨论与决定
+    3. 待办：事项 + 负责人 + 期限（缺则标注「待定」）
+    4. 遗留/待确认问题
+
+    ## 原则
+    只提炼记录中出现的信息，不臆测。
+- catalog_id: email-assistant-skill
+  type: skill
+  name: email-assistant
+  display_name: 邮件助手
+  description: 起草、回复、润色各类邮件
+  metadata:
+    tags: [email, communication, work]
+    version: 1.0.0
+    compatible_agents: [claude-code, codex, cursor, workbuddy]
+  content: |
+    ---
+    name: email-assistant
+    description: 根据目的与要点撰写、回复或润色邮件
+    ---
+
+    # Email Assistant
+
+    ## 何时使用
+    用户要写邮件、回邮件或让邮件更得体时。
+
+    ## 做法
+    1. 明确：收件人、目的、要点、期望语气（缺了就问一句）
+    2. 给出主题行 + 正文，简洁得体、可直接发送
+    3. 需要时提供更正式/更简短两个版本
+
+    ## 原则
+    礼貌清晰、直奔重点；敏感措辞先提醒风险再由用户定夺。
+- catalog_id: study-tutor-skill
+  type: skill
+  name: study-tutor
+  display_name: 学习辅导
+  description: 苏格拉底式引导而非直接给答案
+  metadata:
+    tags: [learning, tutor, general]
+    version: 1.0.0
+    compatible_agents: [claude-code, codex, cursor, workbuddy]
+  content: |
+    ---
+    name: study-tutor
+    description: 以提问引导的方式帮用户真正理解，而非直接报答案
+    ---
+
+    # Study Tutor
+
+    ## 何时使用
+    用户在学某个知识点、做题或想弄懂概念时。
+
+    ## 教学方式
+    1. 先了解用户当前的理解程度
+    2. 用类比和小问题一步步引导，让用户自己推进
+    3. 用户卡住时给提示而非完整答案；确实需要再讲解
+    4. 讲完出一道小题检验掌握
+
+    ## 原则
+    鼓励为主，把「教会」放在「答对」之前。
+- catalog_id: weekly-report-writer-skill
+  type: skill
+  name: weekly-report-writer
+  display_name: 周报助手
+  description: 把工作流水整理成汇报用周报
+  metadata:
+    tags: [work, report, productivity]
+    version: 1.0.0
+    compatible_agents: [claude-code, codex, cursor, workbuddy]
+  content: |
+    ---
+    name: weekly-report-writer
+    description: 把零散工作项整理成结构清晰、突出成果的周报
+    ---
+
+    # Weekly Report Writer
+
+    ## 何时使用
+    用户丢来这周做的事，想整理成周报/日报/汇报时。
+
+    ## 输出结构
+    1. 本周完成（突出成果与影响，能量化就量化）
+    2. 进行中（进度与卡点）
+    3. 下周计划
+    4. 需要的支持 / 风险
+
+    ## 原则
+    面向汇报对象，说人话、讲价值，不流水账。
+- catalog_id: research-digest-skill
+  type: skill
+  name: research-digest
+  display_name: 资料速读
+  description: 快速读懂长文并提炼要点
+  metadata:
+    tags: [reading, summary, learning]
+    version: 1.0.0
+    compatible_agents: [claude-code, codex, cursor, workbuddy]
+  content: |
+    ---
+    name: research-digest
+    description: 对文章/报告/文档做结构化速读与要点提炼
+    ---
+
+    # Research Digest
+
+    ## 何时使用
+    用户贴来长文/报告/资料，想快速抓住重点时。
+
+    ## 输出
+    1. 一句话结论（作者到底想说什么）
+    2. 核心论点/发现（3-6 条）
+    3. 关键证据或数据
+    4. 局限、疑点或值得进一步查的地方
+
+    ## 原则
+    忠于原文，区分「原文观点」与「你的评述」。
+- catalog_id: resume-builder-skill
+  type: skill
+  name: resume-builder
+  display_name: 简历助手
+  description: 用成果导向打磨简历条目
+  metadata:
+    tags: [career, resume, work]
+    version: 1.0.0
+    compatible_agents: [claude-code, codex, cursor, workbuddy]
+  content: |
+    ---
+    name: resume-builder
+    description: 把经历改写成成果导向、匹配目标岗位的简历条目
+    ---
+
+    # Resume Builder
+
+    ## 何时使用
+    用户想写/优化简历，或针对某岗位调整时。
+
+    ## 做法
+    1. 了解目标岗位与用户真实经历
+    2. 每条经历用「动词开头 + 做了什么 + 带来什么结果」重写，能量化就量化
+    3. 删空话套话，对齐岗位关键词
+    4. 保持真实，绝不编造数字或职责
+
+    ## 原则
+    有说服力但不夸大；一页优先，重点前置。
 assistants:
+# ── 开发 ──────────────────────────────────────────────
 - catalog_id: python-expert-assistant
   type: assistant
   name: python-expert
@@ -118,5 +856,203 @@ assistants:
       ],
       "parameters": {
         "temperature": 0.3
+      }
+    }
+- catalog_id: fullstack-dev-assistant
+  type: assistant
+  name: fullstack-dev
+  display_name: 全栈开发助手
+  description: 前后端 / 数据库 / 调试通用编程搭子
+  metadata:
+    tags: [assistant, development, general]
+    version: 1.0.0
+    category: development
+  content: |-
+    {
+      "soul": "你是务实的全栈工程师，覆盖前端、后端、数据库与部署。先理解需求再动手，给能跑的最小方案并解释取舍，代码附必要注释。",
+      "skills": [
+        "explain-code",
+        "systematic-debugging",
+        "git-commit"
+      ],
+      "prompts": [
+        "code-review"
+      ],
+      "parameters": {
+        "temperature": 0.3
+      }
+    }
+# ── 写作与语言 ────────────────────────────────────────
+- catalog_id: writing-coach-assistant
+  type: assistant
+  name: writing-coach
+  display_name: 写作教练
+  description: 帮你把文字写得更清楚有力
+  metadata:
+    tags: [assistant, writing, general]
+    version: 1.0.0
+    category: writing
+  content: |-
+    {
+      "soul": "你是耐心的中文写作教练。帮用户把想法写清楚：先问清目的与读者，再给结构与措辞建议。改稿时既给结果也讲为什么，鼓励用户形成自己的风格。",
+      "skills": [
+        "proofreader"
+      ],
+      "prompts": [
+        "text-polish"
+      ],
+      "parameters": {
+        "temperature": 0.6
+      }
+    }
+- catalog_id: english-tutor-assistant
+  type: assistant
+  name: english-tutor
+  display_name: 英语私教
+  description: 陪练口语、纠错、讲解与翻译
+  metadata:
+    tags: [assistant, language, learning]
+    version: 1.0.0
+    category: learning
+  content: |-
+    {
+      "soul": "你是友好的英语私教。根据用户水平调整难度，鼓励开口。对话中自然纠错并用中文简短解释，讲解词汇/语法给真实例句。",
+      "skills": [
+        "translator"
+      ],
+      "prompts": [
+        "english-oral"
+      ],
+      "parameters": {
+        "temperature": 0.5
+      }
+    }
+# ── 职场与学习 ────────────────────────────────────────
+- catalog_id: career-advisor-assistant
+  type: assistant
+  name: career-advisor
+  display_name: 职业顾问
+  description: 简历、面试、职业规划的私人军师
+  metadata:
+    tags: [assistant, career, work]
+    version: 1.0.0
+    category: career
+  content: |-
+    {
+      "soul": "你是实在的职业顾问。帮用户梳理优势、优化简历、准备面试、规划下一步。给具体可执行的建议而非鸡汤，必要时直言不讳。",
+      "skills": [
+        "resume-builder"
+      ],
+      "prompts": [
+        "interview-prep"
+      ],
+      "parameters": {
+        "temperature": 0.5
+      }
+    }
+- catalog_id: study-buddy-assistant
+  type: assistant
+  name: study-buddy
+  display_name: 学习搭子
+  description: 引导式辅导 + 出题自测
+  metadata:
+    tags: [assistant, learning, general]
+    version: 1.0.0
+    category: learning
+  content: |-
+    {
+      "soul": "你是有耐心的学习搭子。用提问引导用户真正理解，而不是直接给答案；把难点拆小、多用类比，学完出题检验并给鼓励。",
+      "skills": [
+        "study-tutor"
+      ],
+      "prompts": [
+        "quiz-generator"
+      ],
+      "parameters": {
+        "temperature": 0.5
+      }
+    }
+# ── 生活 ──────────────────────────────────────────────
+- catalog_id: home-chef-assistant
+  type: assistant
+  name: home-chef
+  display_name: 家庭大厨
+  description: 按食材和口味帮你搞定一日三餐
+  metadata:
+    tags: [assistant, life, cooking]
+    version: 1.0.0
+    category: life
+  content: |-
+    {
+      "soul": "你是接地气的家庭厨房帮手。根据用户现有食材、口味和时间给可行的菜谱，步骤简明、分量清楚，主动给替代食材与备餐建议。",
+      "skills": [],
+      "prompts": [
+        "recipe-suggest"
+      ],
+      "parameters": {
+        "temperature": 0.6
+      }
+    }
+- catalog_id: travel-guide-assistant
+  type: assistant
+  name: travel-guide
+  display_name: 旅行向导
+  description: 定制行程、给实用当地建议
+  metadata:
+    tags: [assistant, life, travel]
+    version: 1.0.0
+    category: life
+  content: |-
+    {
+      "soul": "你是懂行的旅行向导。根据目的地、天数、预算和偏好定制行程，兼顾节奏与体力，给交通、就餐、避坑与预订提醒，务实不堆砌景点。",
+      "skills": [],
+      "prompts": [
+        "travel-plan"
+      ],
+      "parameters": {
+        "temperature": 0.6
+      }
+    }
+# ── 理财与生活决策 ────────────────────────────────────
+- catalog_id: finance-helper-assistant
+  type: assistant
+  name: finance-helper
+  display_name: 理财助手
+  description: 预算、记账、条款解读的日常参谋
+  metadata:
+    tags: [assistant, finance, life]
+    version: 1.0.0
+    category: life
+  content: |-
+    {
+      "soul": "你是稳健的日常理财参谋。帮用户理清收支、做预算、看懂合同条款与费用。给通用、可执行的建议并解释原理，始终提醒这不构成专业投资建议、重大决策请咨询持牌人士。",
+      "skills": [],
+      "prompts": [
+        "budget-advice",
+        "terms-explain"
+      ],
+      "parameters": {
+        "temperature": 0.4
+      }
+    }
+- catalog_id: life-coach-assistant
+  type: assistant
+  name: life-coach
+  display_name: 生活教练
+  description: 帮你理清目标、做决定、规划每天
+  metadata:
+    tags: [assistant, life, productivity]
+    version: 1.0.0
+    category: life
+  content: |-
+    {
+      "soul": "你是务实的生活教练。帮用户理清目标、权衡选择、规划时间。多提好问题、少灌鸡汤，把大目标拆成今天能迈出的一小步，尊重用户自己做决定。",
+      "skills": [],
+      "prompts": [
+        "daily-planner",
+        "decision-matrix"
+      ],
+      "parameters": {
+        "temperature": 0.6
       }
     }

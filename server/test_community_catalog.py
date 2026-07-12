@@ -19,11 +19,15 @@ class TestDefaultDoc(unittest.TestCase):
 
     def test_resources_seeded_from_yaml(self):
         doc = cc.load_default_doc()
-        names = {p["name"] for p in doc["prompts"]}
-        self.assertIn("code-review", names)
-        self.assertEqual({s["name"] for s in doc["skills"]},
-                         {"git-commit", "systematic-debugging"})
-        self.assertEqual([a["name"] for a in doc["assistants"]], ["python-expert"])
+        prompt_names = {p["name"] for p in doc["prompts"]}
+        skill_names = {s["name"] for s in doc["skills"]}
+        assistant_names = {a["name"] for a in doc["assistants"]}
+        # 原始种子条目必须仍在（新增社区推荐后集合会更大，故用成员判断）
+        self.assertIn("code-review", prompt_names)
+        self.assertLessEqual({"git-commit", "systematic-debugging"}, skill_names)
+        self.assertIn("python-expert", assistant_names)
+        # 扩充后的默认推荐规模（≥50，均匀分布）
+        self.assertGreaterEqual(len(prompt_names) + len(skill_names) + len(assistant_names), 50)
 
     def test_normalize_fills_missing_sections(self):
         out = cc.normalize_catalog_doc({"mcp": [{"catalog_id": "x"}]})
