@@ -253,6 +253,51 @@ class ResourceManager {
     };
   }
 
+  /** 投射给该 client 的 prompt 轻量列表;clientId 为空 → 全部 prompt */
+  listPromptsForClient(clientId) {
+    this.init();
+    const db = this._getDb();
+    const cid = String(clientId || '').trim();
+    if (!cid) {
+      return db.prepare(`
+        SELECT id, name, display_name, description FROM resources
+        WHERE type = 'prompt' ORDER BY updated_at DESC
+      `).all();
+    }
+    return db.prepare(`
+      SELECT DISTINCT r.id, r.name, r.display_name, r.description
+      FROM resources r
+      JOIN resource_projections ps ON ps.resource_id = r.id
+      WHERE r.type = 'prompt' AND ps.agent_id = ?
+      ORDER BY r.updated_at DESC
+    `).all(cid);
+  }
+
+  /** 该 client 是否有 ≥1 条 prompt 投射(决定是否给它下发 prompt MCP) */
+  hasPromptProjections(clientId) {
+    this.init();
+    const cid = String(clientId || '').trim();
+    if (!cid) return false;
+    const row = this._getDb().prepare(`
+      SELECT 1 FROM resource_projections ps
+      JOIN resources r ON r.id = ps.resource_id
+      WHERE ps.agent_id = ? AND r.type = 'prompt' LIMIT 1
+    `).get(cid);
+    return !!row;
+  }
+
+  /** resolvePrompt + 投射校验:仅当该 prompt 投射给 clientId 才返回;clientId 为空不过滤 */
+  resolvePromptForClient(ref, argString = '', clientId = '') {
+    const r = this.resolvePrompt(ref, argString);
+    if (!r.found) return r;
+    const cid = String(clientId || '').trim();
+    if (!cid) return r;
+    const row = this._getDb().prepare(
+      'SELECT 1 FROM resource_projections WHERE resource_id = ? AND agent_id = ? LIMIT 1',
+    ).get(r.id, cid);
+    return row ? r : { found: false };
+  }
+
   installFromCatalog(catalogId) {
     this.init();
     const item = getCatalogItem(catalogId);
