@@ -13,6 +13,8 @@ const { defaultServerUrlFromEnv } = require('../shared/default-server-url');
 
 const USER_REGISTRY_YAML = path.join(os.homedir(), '.tokenbank', 'providers.registry.yaml');
 const BUILTIN_REGISTRY = path.join(__dirname, 'config', 'providers.registry.yaml');
+const USER_COMMUNITY_CATALOG = path.join(os.homedir(), '.tokenbank', 'community-catalog.yaml');
+const COMMUNITY_SECTIONS = ['mcp', 'prompts', 'skills', 'assistants'];
 const FETCH_TIMEOUT_MS = 12000;
 
 let _syncInFlight = null;
@@ -134,6 +136,57 @@ function fetchCatalogJson(baseUrl) {
     req.on('error', () => resolve(null));
     req.on('timeout', () => { req.destroy(); resolve(null); });
   });
+}
+
+/** GET /api/community-catalog → JSON(公开,失败返回 null) */
+function fetchCommunityCatalog(baseUrl) {
+  const base = normalizeBase(baseUrl);
+  if (!base) return Promise.resolve(null);
+  const url = `${base}/api/community-catalog`;
+  const mod = url.startsWith('https') ? https : http;
+  return new Promise((resolve) => {
+    const req = mod.get(url, { timeout: FETCH_TIMEOUT_MS }, (res) => {
+      let data = '';
+      res.on('data', c => { data += c; });
+      res.on('end', () => {
+        if (!res.statusCode || res.statusCode >= 400) { resolve(null); return; }
+        try { resolve(JSON.parse(data)); } catch { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+  });
+}
+
+/** payload 至少一段非空才写缓存;写成功返回 true */
+function writeCommunityCatalogCache(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  const hasContent = COMMUNITY_SECTIONS.some(k => Array.isArray(payload[k]) && payload[k].length);
+  if (!hasContent) return false;
+  const doc = {
+    version: payload.version || 1,
+    mcp: Array.isArray(payload.mcp) ? payload.mcp : [],
+    prompts: Array.isArray(payload.prompts) ? payload.prompts : [],
+    skills: Array.isArray(payload.skills) ? payload.skills : [],
+    assistants: Array.isArray(payload.assistants) ? payload.assistants : [],
+  };
+  const dir = path.dirname(USER_COMMUNITY_CATALOG);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(USER_COMMUNITY_CATALOG, yaml.dump(doc, { lineWidth: 120 }), 'utf8');
+  return true;
+}
+
+/** 后台拉社区目录并落缓存(失败静默) */
+async function syncCommunityCatalog(opts = {}) {
+  const baseUrl = resolveSyncServerUrl(opts);
+  if (!baseUrl) return { ok: false };
+  const payload = await fetchCommunityCatalog(baseUrl);
+  const wrote = writeCommunityCatalogCache(payload);
+  if (wrote) {
+    try { require('./mcp-catalog').resetCatalogCache(); } catch {}
+    try { require('./resource-catalog').resetCatalogCache(); } catch {}
+  }
+  return { ok: !!payload, wrote };
 }
 
 /** catalog provider → registry.providers 条目 */
@@ -387,6 +440,11 @@ async function syncCatalogToRegistry(opts = {}) {
 function scheduleBackgroundSync(opts = {}) {
   if (_syncInFlight) return _syncInFlight;
   _syncInFlight = syncCatalogToRegistry(opts)
+    .then(async (res) => {
+      try { await syncCommunityCatalog(opts); }
+      catch (e) { console.warn('[catalog-sync] community sync failed:', e?.message || e); }
+      return res;
+    })
     .catch(err => {
       console.warn('[catalog-sync] background sync failed:', err?.message || err);
       return { ok: false, error: String(err?.message || err) };
@@ -411,4 +469,7 @@ module.exports = {
   fetchRegistryYaml,
   applyRegistryDoc,
   catalogProviderToBilling,
+  fetchCommunityCatalog,
+  writeCommunityCatalogCache,
+  syncCommunityCatalog,
 };

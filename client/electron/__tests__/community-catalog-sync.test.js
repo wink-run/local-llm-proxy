@@ -69,3 +69,21 @@ test('resource-catalog: 无缓存回退 BUILTIN', () => {
   const names = resCatalog.listCatalogItems().map(i => i.name);
   assert.ok(names.includes('code-review'), '无缓存时用内置');
 });
+
+test('writeCommunityCatalogCache: 有内容才写,空 payload 不动缓存', () => {
+  const catalogSync = require('../catalog-sync');
+  clearCache();
+  const wrote = catalogSync.writeCommunityCatalogCache({
+    version: 1, mcp: [], prompts: [{ catalog_id: 'p', type: 'prompt', name: 'p' }],
+    skills: [], assistants: [],
+  });
+  assert.equal(wrote, true);
+  assert.ok(fs.existsSync(CACHE));
+  const back = yaml.load(fs.readFileSync(CACHE, 'utf8'));
+  assert.equal(back.prompts[0].name, 'p');
+
+  clearCache();
+  const wrote2 = catalogSync.writeCommunityCatalogCache({ mcp: [], prompts: [], skills: [], assistants: [] });
+  assert.equal(wrote2, false);
+  assert.ok(!fs.existsSync(CACHE), '空 payload 不落缓存');
+});
