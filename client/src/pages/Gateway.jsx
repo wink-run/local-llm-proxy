@@ -605,10 +605,16 @@ function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0, syncError =
 function linkMethodLabel(method, t) {
   return method === 'manual' ? t('gateway.link.api') : t('gateway.link.app');
 }
+// 把绝对家目录前缀缩写成 ~（渲染进程拿不到 home，用平台启发式：/Users/x、/home/x、C:\Users\x）
+function tildify(p) {
+  return String(p || '')
+    .replace(/^\/(?:Users|home)\/[^/]+/, '~')
+    .replace(/^[A-Za-z]:\\Users\\[^\\]+/i, '~');
+}
 // 应用列表统一栅格：固定短列 + minmax(0,fr) 弹性列，避免内容撑开导致各行列宽不一致
 // 应用列保留 modest 最小宽；不设表格 min-width，避免常态出现横向滚动条
 // 应用列加大最小宽；固定短列与路由 min 适当压缩，空间让给应用名
-const APPS_TABLE_GRID = 'grid w-full grid-cols-[1.75rem_minmax(5rem,1.5fr)_3.75rem_1.75rem_3.75rem_3.5rem_3.75rem_minmax(4.5rem,2fr)_minmax(7.75rem,auto)] gap-x-3 items-center px-4 [&>*]:min-w-0';
+const APPS_TABLE_GRID = 'grid w-full grid-cols-[1.75rem_minmax(8rem,2fr)_3.75rem_1.75rem_3.75rem_3.5rem_3.75rem_minmax(4.5rem,1.6fr)_minmax(7.75rem,auto)] gap-x-3 items-center px-4 [&>*]:min-w-0';
 
 /** 应用行测试状态：成功/进行中行内短提示；失败用浮层展示完整错误（避免窄列截断） */
 function AppTestResultHint({ ts, t }) {
@@ -2997,7 +3003,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                           <span className="truncate">{toolName}</span>
                           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-700/60 text-zinc-500 dark:text-zinc-400 shrink-0">{t('gateway.apps.instanceCount', { n: entry.count })}</span>
                         </div>
-                        <div /><div className="text-center text-[11px] text-zinc-400">shim</div><div /><div /><div />
+                        <div /><div /><div /><div /><div />
                         <div className="text-center text-[10px] text-zinc-400">{t('gateway.apps.byInstance')}</div>
                         <div className="flex justify-end">
                           <button onClick={() => rescanInstances()} title={t('gateway.apps.addAccount')}
@@ -3090,11 +3096,11 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                         return <span className={`text-base text-center shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`}>{app.icon}</span>;
                       })()}
                       {isChild ? (
-                        <div className="min-w-0 pl-4 border-l-2 border-zinc-100 dark:border-white/[0.06]" title={app.name}>
+                        <div className="min-w-0 pl-4 border-l-2 border-zinc-100 dark:border-white/[0.06]" title={app.name + (app.instance?.dir_glob ? '  ·  ' + app.instance.dir_glob : '')}>
                           <div className={`text-xs font-medium truncate ${isActive ? 'text-zinc-800 dark:text-zinc-100' : 'text-zinc-400 dark:text-zinc-500'}`}>
                             {String(app.name || '').split(' · ').slice(1).join(' · ') || app.name}
-                            {app.instance?.dir_glob && <span className="ml-1 text-[10px] font-normal text-zinc-400 font-mono">· {app.instance.dir_glob}</span>}
                           </div>
+                          {app.instance?.dir_glob && <div className="text-[10px] text-zinc-400 font-mono truncate">{tildify(app.instance.dir_glob)}</div>}
                           {app.instance?.account_email && <div className="text-[10px] text-zinc-400 truncate">{app.instance.account_email}</div>}
                         </div>
                       ) : (
