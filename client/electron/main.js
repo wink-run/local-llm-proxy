@@ -2127,6 +2127,13 @@ function registerIPC() {
     } catch (e) { return { ok: false, error: e.message }; }
   });
 
+  // 选目录（CLI 实例生效目录 dir_glob）
+  ipcMain.handle('dialog:selectDirectory', async () => {
+    const { dialog } = require('electron');
+    const r = await dialog.showOpenDialog(mainWindow, { title: '选择生效目录', properties: ['openDirectory'] });
+    return (r.canceled || !r.filePaths.length) ? null : r.filePaths[0];
+  });
+
   ipcMain.handle('toolsConfig:importFile', async () => {
     const { dialog } = require('electron');
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -3430,6 +3437,14 @@ function registerIPC() {
     // runClaude3pSync 增量去重、无变化近乎零成本，多调无害。
     if (['route_id', 'route_ids', 'hosted'].some(k => Object.prototype.hasOwnProperty.call(patch, k))) {
       try { runClaude3pSync('apps-update'); } catch (e) { console.warn('[3p-sync] apps:update trigger error:', e && e.message); }
+    }
+    // 实例 dir_glob 变化 → 该 shim 若已托管，重生成 shim 以更新目录分发（不改变托管状态）
+    if (Object.prototype.hasOwnProperty.call(patch, 'instance') && updated.link_method === 'shim' && updated.agent_id) {
+      try {
+        const tool = require('./config-loader').tools().find(t => t.id === updated.agent_id);
+        const cmd = (tool && tool.detect && tool.detect.command) || updated.agent_id;
+        if (require('./shim-installer').shimExists(cmd)) agentLinker.applyById(updated.agent_id);
+      } catch (e) { console.warn('[cli-instances] shim re-apply error:', e && e.message); }
     }
     return updated;
   });

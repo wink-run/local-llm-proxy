@@ -172,6 +172,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     delete:        (id)     => ipcRenderer.invoke('apps:delete', id),
     regenKey:      (id)     => ipcRenderer.invoke('apps:regenKey', id),
     rescanInstances: ()     => ipcRenderer.invoke('cli:rescanInstances'),
+    selectDirectory: ()     => ipcRenderer.invoke('dialog:selectDirectory'),
     ensureShimApp: (d)      => ipcRenderer.invoke('apps:ensureShimApp', d),
     writeEnv:      (env)    => ipcRenderer.invoke('apps:writeEnv', env),
     presets:       ()       => ipcRenderer.invoke('apps:presets'),
