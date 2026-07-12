@@ -92,3 +92,28 @@ test('对账幂等：二次扫描不重复追加；目录消失则标 invalid', 
   assert.equal(out.find(a => a.id === 'r1').instance.dir_glob, '~/a', '保留 dir_glob');
   assert.equal(out.find(a => a.id === 'r2').instance.invalid, true, '消失的目录标 invalid');
 });
+
+test('账户并集：scanned ∪ personal 按 email 去重，标 source/has_local/already_added', () => {
+  const path = require('path');
+  const { mergeAccountOptions } = require('../cli-instances');
+  const scanned = [
+    { account_email: 'a@x.com', config_dir: '/h/.claude', is_default: true, subscription: 'max' },
+    { account_email: 'w@x.com', config_dir: '/h/.claude-work', is_default: false },
+  ];
+  const personal = [
+    { email: 'a@x.com', subscription: 'max' },        // 与 scanned 重叠 → both
+    { email: 'p@x.com', subscription: 'pro' },        // 仅个人源，无本机登录
+  ];
+  const existing = new Set([path.resolve('/h/.claude')]);   // 默认已建记录
+  const out = mergeAccountOptions(scanned, personal, existing);
+  const by = Object.fromEntries(out.map(o => [o.email, o]));
+  assert.equal(out.length, 3, 'a(去重) + w + p');
+  assert.equal(by['a@x.com'].source, 'both');
+  assert.equal(by['a@x.com'].has_local, true);
+  assert.equal(by['a@x.com'].already_added, true);
+  assert.equal(by['w@x.com'].source, 'scanned');
+  assert.equal(by['w@x.com'].already_added, false);
+  assert.equal(by['p@x.com'].source, 'personal');
+  assert.equal(by['p@x.com'].has_local, false);
+  assert.equal(by['p@x.com'].config_dir, null);
+});

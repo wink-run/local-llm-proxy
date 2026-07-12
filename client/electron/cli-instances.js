@@ -151,7 +151,41 @@ function reconcileCliInstances(apps, scanned, makeRecord) {
   return { apps: out, added };
 }
 
+/**
+ * 账户下拉三层并集（供「手工新建 CLI 实例」的账户选择）：
+ *  1. scanned —— 本机扫到的 CONFIG_DIR 登录（事实来源，即使没登记为源也在）；
+ *  2. personal —— 已登记的个人源账户（可能没本机登录）；
+ *  按 email 去重（scanned 优先，保留其 config_dir），标 source 与 has_local。
+ * personal: [{ email, subscription?, source_id? }]，existingDirs: 已建实例记录的 config_dir 集合。
+ */
+function mergeAccountOptions(scanned = [], personal = [], existingDirs = new Set()) {
+  const byEmail = new Map();
+  for (const s of scanned) {
+    const key = (s.account_email || s.config_dir || '').toLowerCase();
+    byEmail.set(key, {
+      email: s.account_email || null,
+      config_dir: s.config_dir,
+      subscription: s.subscription || null,
+      is_default: !!s.is_default,
+      has_local: true,
+      already_added: existingDirs.has(path.resolve(s.config_dir)),
+      source: 'scanned',
+    });
+  }
+  for (const p of personal) {
+    const email = p.email || p.account_email;
+    if (!email) continue;
+    const key = String(email).toLowerCase();
+    if (byEmail.has(key)) { byEmail.get(key).source = 'both'; continue; }   // 已有本机登录 → 合并标记
+    byEmail.set(key, {
+      email, config_dir: null, subscription: p.subscription || null,
+      is_default: false, has_local: false, already_added: false, source: 'personal',
+    });
+  }
+  return [...byEmail.values()];
+}
+
 module.exports = {
   scanClaudeInstances, scanCodexInstances, scanCliInstances,
-  enumConfigDirs, reconcileCliInstances,
+  enumConfigDirs, reconcileCliInstances, mergeAccountOptions,
 };

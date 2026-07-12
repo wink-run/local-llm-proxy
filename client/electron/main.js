@@ -2387,6 +2387,50 @@ function registerIPC() {
   ipcMain.handle('localConfig:get', () => readLocalConfig());
   // 手动/百宝箱装完后重扫 CLI 多账号实例
   ipcMain.handle('cli:rescanInstances', () => reconcileCliInstancesIntoApps());
+  // 账户下拉：本机扫到的账户（标已建记录的 config_dir），供「手工新建 CLI 实例」选择
+  ipcMain.handle('cli:scanAccounts', (_e, tool) => {
+    try {
+      const cli = require('./cli-instances');
+      const apps = getApps();
+      const existing = new Set(apps.filter(a => a.link_method === 'shim' && a.agent_id === tool && a.instance)
+        .map(a => path.resolve(a.instance.config_dir || '')));
+      return cli.mergeAccountOptions(cli.scanCliInstances(tool), [], existing);
+    } catch (e) { return []; }
+  });
+  // 手工新建一个 CLI 实例记录（指定账户 config_dir + 生效目录 + 路由），并重生成 shim 分发
+  ipcMain.handle('cli:addInstance', (_e, opts = {}) => {
+    try {
+      const { tool, config_dir, account_email, subscription, dir_glob, route_id } = opts;
+      if (!tool || !config_dir) return { ok: false, error: 'missing tool/config_dir' };
+      const apps = getApps();
+      if (apps.some(a => a.link_method === 'shim' && a.agent_id === tool && a.instance
+        && path.resolve(a.instance.config_dir || '') === path.resolve(config_dir))) {
+        return { ok: false, error: 'exists' };   // 该 config_dir 已有实例
+      }
+      const label = account_email ? String(account_email).split('@')[0] : path.basename(config_dir);
+      const prefix = tool === 'codex' ? 'Codex CLI' : 'Claude Code CLI';
+      const used = new Set(apps.map(a => a.name).filter(Boolean));
+      let name = `${prefix} · ${label}`;
+      for (let n = 2; used.has(name); n++) name = `${prefix} · ${label} (${n})`;
+      const rec = {
+        id: `app-shim-${tool}-${rndHex(6)}`, name, icon: 'icon:cube',
+        link_method: 'shim', agent_id: tool, api_key: 'sk-local-' + rndHex(16),
+        route_id: route_id || null, hosted: true,
+        instance: { config_dir, is_default: false, account_email: account_email || null,
+          subscription: subscription || null, has_credentials: true, invalid: false, dir_glob: dir_glob || null },
+        created_at: new Date().toISOString(),
+      };
+      apps.push(rec);
+      saveApps(apps);
+      // 该 shim 若已托管 → 重生成以纳入新实例的目录分发
+      try {
+        const t = require('./config-loader').tools().find(x => x.id === tool);
+        const cmd = (t && t.detect && t.detect.command) || tool;
+        if (require('./shim-installer').shimExists(cmd)) agentLinker.applyById(tool);
+      } catch {}
+      return { ok: true, app: rec };
+    } catch (e) { return { ok: false, error: e && e.message }; }
+  });
 
   // 供给源目录：后台拉 /api/catalog 写 yaml，UI 读本地 yaml
   const catalogSync = require('./catalog-sync');
