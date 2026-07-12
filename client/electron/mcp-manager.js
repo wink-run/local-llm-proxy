@@ -25,9 +25,11 @@ const ORCHESTRATOR_SYSTEM = [
 const ORCHESTRATOR_AGENTS = new Set(['claude-code', 'codex']);
 
 const BUILTIN_BRIDGE_ID = 'tokenbank-agent-bridge';
+const BUILTIN_PROMPTS_ID = 'tokenbank-prompts';
 const DEFAULT_PROFILE_ID = 'orchestrator-default';
 const DEVELOPMENT_PROFILE_ID = 'development';
 const DISPATCH_SCRIPT = path.join(__dirname, 'agent-dispatch-mcp.js');
+const PROMPTS_SCRIPT = path.join(__dirname, 'prompt-mcp.js');
 
 /** shell 单引号转义（用于 bridge launcher） */
 function shellQuote(value) {
@@ -115,6 +117,29 @@ class MCPManager {
     const now = Date.now();
 
     this._ensureBuiltinBridge(now);
+
+    // 同构 seed 内置 Prompts MCP：投射门控在同步阶段（filterServersForClient）判定，这里只保证 server 存在
+    const prompts = db.prepare('SELECT id FROM mcp_servers WHERE id = ?').get(BUILTIN_PROMPTS_ID);
+    if (!prompts) {
+      db.prepare(`
+        INSERT INTO mcp_servers
+        (id, name, display_name, type, command, args, env, builtin, status, metadata, created_at, updated_at)
+        VALUES (?, ?, ?, 'stdio', ?, ?, ?, 1, 'active', ?, ?, ?)
+      `).run(
+        BUILTIN_PROMPTS_ID,
+        BUILTIN_PROMPTS_ID,
+        'Token Bank Prompts',
+        '__DYNAMIC_ELECTRON__',
+        JSON.stringify([PROMPTS_SCRIPT]),
+        JSON.stringify({ ELECTRON_RUN_AS_NODE: '1' }),
+        JSON.stringify({
+          description: '内置提示词服务：tb_get_prompt / tb_list_prompts（仅对已投射的 Agent 可见）',
+          tools: ['tb_get_prompt', 'tb_list_prompts'],
+        }),
+        now,
+        now,
+      );
+    }
 
     const profiles = [
       {
@@ -838,6 +863,19 @@ class MCPManager {
           TB_PARENT_SESSION_INSTANCE: sessionInstanceId || '',
           TB_WORKING_DIR: workingDir || process.cwd(),
           TB_MAIN_AGENT_ID: mainAgentId || '',
+          TB_CLIENT_ID: mainAgentId || '',
+        },
+      };
+    }
+
+    if (serverRow.id === BUILTIN_PROMPTS_ID || serverRow.name === BUILTIN_PROMPTS_ID) {
+      return {
+        command: process.execPath,
+        args: [PROMPTS_SCRIPT],
+        env: {
+          ...baseEnv,
+          ELECTRON_RUN_AS_NODE: '1',
+          TB_CLIENT_ID: mainAgentId || '',
         },
       };
     }
@@ -883,6 +921,7 @@ module.exports.ORCHESTRATOR_SYSTEM = ORCHESTRATOR_SYSTEM;
 module.exports.DEFAULT_PROFILE_ID = DEFAULT_PROFILE_ID;
 module.exports.DEVELOPMENT_PROFILE_ID = DEVELOPMENT_PROFILE_ID;
 module.exports.BUILTIN_BRIDGE_ID = BUILTIN_BRIDGE_ID;
+module.exports.BUILTIN_PROMPTS_ID = BUILTIN_PROMPTS_ID;
 module.exports.buildCodexOrchestratorProfileToml = buildCodexOrchestratorProfileToml;
 module.exports.writeBridgeMcpLauncher = writeBridgeMcpLauncher;
 module.exports.shellQuote = shellQuote;

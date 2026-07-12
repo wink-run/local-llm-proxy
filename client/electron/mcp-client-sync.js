@@ -6,11 +6,12 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const shim = require('./shim-installer');
-const { BUILTIN_BRIDGE_ID } = require('./mcp-manager');
+const { BUILTIN_BRIDGE_ID, BUILTIN_PROMPTS_ID } = require('./mcp-manager');
 const { CLIENT_TARGETS } = require('./mcp-agent-targets');
 
 const STATE_PATH = path.join(os.homedir(), '.tokenbank', 'mcp', 'client-sync-state.json');
 const TB_MCP_MARKER = 'tokenbank-mcp';
+const PROMPTS_SCRIPT = path.join(__dirname, 'prompt-mcp.js');
 
 function ensureDir(filePath) {
   const dir = path.dirname(filePath);
@@ -38,10 +39,19 @@ function writeState(state) {
 }
 
 /** 将 DB 中的 server 转为 MCP JSON 条目（跳过内置 bridge） */
-function serverToEntry(serverRow) {
+function serverToEntry(serverRow, clientId) {
   if (!serverRow || serverRow.status !== 'active') return null;
   if (serverRow.id === BUILTIN_BRIDGE_ID || serverRow.builtin && serverRow.id === BUILTIN_BRIDGE_ID) {
     return null;
+  }
+
+  // 内置提示词 MCP：物化为 Electron-as-node，并注入调用方 client 标识
+  if (serverRow.id === BUILTIN_PROMPTS_ID || serverRow.name === BUILTIN_PROMPTS_ID) {
+    return {
+      command: process.execPath,
+      args: [PROMPTS_SCRIPT],
+      env: { ELECTRON_RUN_AS_NODE: '1', TB_CLIENT_ID: clientId || '' },
+    };
   }
 
   let command = serverRow.command;
@@ -105,7 +115,7 @@ function syncJsonClient(clientId, filePath, servers) {
   const synced = [];
 
   for (const srv of servers) {
-    const entry = serverToEntry(srv);
+    const entry = serverToEntry(srv, clientId);
     if (!entry) continue;
     const key = clientKeyForServer(srv, existingKeys, prev);
     doc.mcpServers[key] = entry;
@@ -164,7 +174,7 @@ function buildCodexMcpSections(entries) {
   return blocks;
 }
 
-function syncCodexClient(filePath, servers, prevKeys) {
+function syncCodexClient(clientId, filePath, servers, prevKeys) {
   ensureDir(filePath);
   const original = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
   let text = stripCodexTbMcpSections(original, prevKeys);
@@ -174,7 +184,7 @@ function syncCodexClient(filePath, servers, prevKeys) {
   const newKeys = [];
 
   for (const srv of servers) {
-    const entry = serverToEntry(srv);
+    const entry = serverToEntry(srv, clientId);
     if (!entry) continue;
     const key = clientKeyForServer(srv, new Set(), prevKeys);
     entries.push({ key, entry });
@@ -220,7 +230,7 @@ function syncAll(servers, options = {}) {
       if (target.format === 'json-mcp') {
         result = syncJsonClient(clientId, filePath, clientServers);
       } else if (target.format === 'toml-mcp') {
-        result = syncCodexClient(filePath, clientServers, prevKeys);
+        result = syncCodexClient(clientId, filePath, clientServers, prevKeys);
       } else {
         continue;
       }
@@ -276,6 +286,11 @@ function filterServersForClient(servers, clientId) {
   return (servers || []).filter(s => {
     if (s.status !== 'active' || s.source === 'client') return false;
     if (s.id === BUILTIN_BRIDGE_ID) return false;
+    if (s.id === BUILTIN_PROMPTS_ID) {
+      // 只给「有 ≥1 条已投射 prompt」的 client 下发（懒 require 防循环依赖）
+      try { return require('./resource-manager').hasPromptProjections(clientId); }
+      catch { return false; }
+    }
     return getServerSyncClients(s).includes(clientId);
   });
 }
