@@ -23,7 +23,7 @@ const GROUP_ORDER = [
   'tokenbank', 'official', 'filesystem', 'web', 'database', 'browser', 'collaboration', 'reasoning',
 ];
 
-/** 社区目录缓存路径（服务端下发，Task 5 写入） */
+/** 服务端下发的社区目录缓存路径 */
 const USER_CACHE = path.join(os.homedir(), '.tokenbank', 'community-catalog.yaml');
 
 /** yaml 候选路径（开发 / 打包） */

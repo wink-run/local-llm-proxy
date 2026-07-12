@@ -70,6 +70,45 @@ test('resource-catalog: 无缓存回退 BUILTIN', () => {
   assert.ok(names.includes('code-review'), '无缓存时用内置');
 });
 
+test('resource-catalog: 缺 name 的缓存项被剔除,不抛异常', () => {
+  const resCatalog = require('../resource-catalog');
+  writeCache({
+    version: 1, mcp: [],
+    prompts: [
+      { catalog_id: 'valid-x', type: 'prompt', name: 'valid-x', description: 'ok' },
+      { catalog_id: 'no-name-x', type: 'prompt', description: 'missing name' },
+    ],
+    skills: [], assistants: [],
+  });
+  resCatalog.resetCatalogCache();
+  assert.doesNotThrow(() => resCatalog.listCatalogItems({ query: 'x' }));
+  const names = resCatalog.listCatalogItems({ query: 'x' }).map(i => i.name);
+  assert.ok(names.includes('valid-x'), '有效项应保留');
+  assert.ok(!names.includes(undefined), '缺 name 的项不应混入');
+  clearCache();
+  resCatalog.resetCatalogCache();
+});
+
+test('writeCommunityCatalogCache: 空 payload 不覆盖已存在的缓存内容', () => {
+  const catalogSync = require('../catalog-sync');
+  clearCache();
+  writeCache({
+    version: 1, mcp: [],
+    prompts: [{ catalog_id: 'existing', type: 'prompt', name: 'existing' }],
+    skills: [], assistants: [],
+  });
+  const before = fs.readFileSync(CACHE, 'utf8');
+
+  const wrote = catalogSync.writeCommunityCatalogCache({ mcp: [], prompts: [], skills: [], assistants: [] });
+
+  assert.equal(wrote, false);
+  assert.ok(fs.existsSync(CACHE), '已存在的缓存文件应保留');
+  const after = fs.readFileSync(CACHE, 'utf8');
+  assert.equal(after, before, '空 payload 不应改动已有缓存内容');
+
+  clearCache();
+});
+
 test('writeCommunityCatalogCache: 有内容才写,空 payload 不动缓存', () => {
   const catalogSync = require('../catalog-sync');
   clearCache();

@@ -37,7 +37,6 @@ class TestDefaultDoc(unittest.TestCase):
         self.assertIn("code-review", {p["name"] for p in payload["prompts"]})
 
 
-import asyncio
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -45,7 +44,6 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 import database as db
-import db_pool
 from db_pool import init_pool, close_pool
 
 
@@ -53,7 +51,6 @@ class TestAsyncLayer(unittest.IsolatedAsyncioTestCase):
     # IsolatedAsyncioTestCase 每个测试方法用独立事件循环，asyncpg 连接池绑定创建时的循环，
     # 因此不能像模块级 setUp 那样只初始化一次 —— 每个用例都要在自己的循环里重建连接池。
     async def asyncSetUp(self):
-        db_pool._pool = None
         await init_pool()
         await db.set_config(cc.CONFIG_KEY, "")
 

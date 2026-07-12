@@ -167,11 +167,13 @@ function activeCatalog() {
 /** yaml snake_case → 运行时字段(与 BUILTIN 条目结构对齐) */
 function normalizeCacheItem(raw) {
   if (!raw || !(raw.catalog_id || raw.catalogId)) return null;
+  if (!raw.name && !raw.catalog_id) return null;
+  const name = raw.name || raw.catalog_id;
   return {
     catalogId: raw.catalog_id || raw.catalogId,
     type: raw.type,
-    name: raw.name,
-    display_name: raw.display_name || raw.displayName || raw.name,
+    name,
+    display_name: raw.display_name || raw.displayName || name,
     description: raw.description || '',
     metadata: raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {},
     content: raw.content || '',
