@@ -39,7 +39,6 @@ import {
   shouldContinueCliSession,
   normalizeWorkingDir,
 } from '../lib/debug-agent-store';
-import { detectTbpQuery, filterPromptSuggestions } from '../lib/tbp-autocomplete.mjs';
 import { useLang } from '../store/lang';
 import {
   mergeStreamText,
@@ -596,10 +595,6 @@ export default function Debug() {
   const [delegations, setDelegations] = useState({});
   const [conversationTurns, setConversationTurns] = useState([]);
   const [historyOpen, setHistoryOpen] = useState(false);
-  // @tbp 提示词引用自动补全
-  const [tbpPrompts, setTbpPrompts] = useState([]);
-  const [tbpMenu, setTbpMenu] = useState({ active: false, query: '', start: 0 });
-  const [tbpIndex, setTbpIndex] = useState(0);
   const agentTextareaRef = useRef(null);
   const selectedAgentRef = useRef(null);
   selectedAgentRef.current = selectedAgent;
@@ -670,14 +665,6 @@ export default function Debug() {
   useEffect(() => {
     loadAgents();
   }, []);
-
-  // 加载已纳管提示词，供输入框 @tbp 自动补全
-  useEffect(() => {
-    if (mode !== 'agent' || !window.electronAPI?.resource) return;
-    window.electronAPI.resource.listResources({ type: 'prompt' })
-      .then(r => { if (r?.success) setTbpPrompts(r.resources || []); })
-      .catch(() => {});
-  }, [mode]);
 
   // Load Agents when switching to agent mode（缓存为空时补拉）
   useEffect(() => {
@@ -1502,33 +1489,6 @@ export default function Debug() {
     }
   }
 
-  // ── @tbp 自动补全 ──────────────────────────────────────────
-  const tbpSuggestions = tbpMenu.active ? filterPromptSuggestions(tbpPrompts, tbpMenu.query) : [];
-
-  function refreshTbpMenu(text, caret) {
-    const d = detectTbpQuery(text, caret);
-    setTbpMenu(d);
-    setTbpIndex(0);
-  }
-
-  function acceptTbp(p) {
-    if (!p) return;
-    const el = agentTextareaRef.current;
-    const caret = el ? el.selectionStart : agentPrompt.length;
-    const before = agentPrompt.slice(0, tbpMenu.start);
-    const insert = `@tbp:${p.name} `;
-    const next = before + insert + agentPrompt.slice(caret);
-    setAgentPrompt(next);
-    setTbpMenu({ active: false, query: '', start: 0 });
-    requestAnimationFrame(() => {
-      if (el) {
-        const pos = before.length + insert.length;
-        el.focus();
-        el.setSelectionRange(pos, pos);
-      }
-    });
-  }
-
   // Execute agent task
   async function executeAgent() {
     if (!activeAgent || !agentPrompt.trim() || !window.electronAPI?.agent) {
@@ -2275,43 +2235,11 @@ export default function Debug() {
 
             <div className="flex gap-2 items-end">
               <div className="relative flex-1">
-                {tbpMenu.active && tbpSuggestions.length > 0 && (
-                  <div className="absolute bottom-full mb-1 left-0 z-30 w-64 max-h-56 overflow-y-auto rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 shadow-lg py-1">
-                    <div className="px-2 py-1 text-[10px] text-zinc-400">引用提示词 · Enter/Tab 选择 · 发送时自动展开</div>
-                    {tbpSuggestions.map((p, i) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onMouseDown={e => e.preventDefault()}
-                        onClick={() => acceptTbp(p)}
-                        className={`w-full text-left px-2 py-1.5 text-xs flex flex-col ${i === tbpIndex ? 'bg-blue-50 dark:bg-blue-900/30' : 'hover:bg-zinc-50 dark:hover:bg-zinc-700/50'}`}
-                      >
-                        <span className="text-zinc-800 dark:text-zinc-100 font-mono">@tbp:{p.name}</span>
-                        {p.display_name && p.display_name !== p.name && (
-                          <span className="text-[10px] text-zinc-400 truncate">{p.display_name}</span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
                 <textarea
                   ref={agentTextareaRef}
                   value={agentPrompt}
-                  onChange={e => { setAgentPrompt(e.target.value); refreshTbpMenu(e.target.value, e.target.selectionStart); }}
-                  onKeyUp={e => {
-                    if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
-                      refreshTbpMenu(e.currentTarget.value, e.currentTarget.selectionStart);
-                    }
-                  }}
-                  onClick={e => refreshTbpMenu(e.currentTarget.value, e.currentTarget.selectionStart)}
-                  onBlur={() => setTimeout(() => setTbpMenu({ active: false, query: '', start: 0 }), 120)}
+                  onChange={e => setAgentPrompt(e.target.value)}
                   onKeyDown={e => {
-                    if (tbpMenu.active && tbpSuggestions.length) {
-                      if (e.key === 'ArrowDown') { e.preventDefault(); setTbpIndex(i => (i + 1) % tbpSuggestions.length); return; }
-                      if (e.key === 'ArrowUp') { e.preventDefault(); setTbpIndex(i => (i - 1 + tbpSuggestions.length) % tbpSuggestions.length); return; }
-                      if ((e.key === 'Enter' && !e.metaKey && !e.ctrlKey) || e.key === 'Tab') { e.preventDefault(); acceptTbp(tbpSuggestions[tbpIndex]); return; }
-                      if (e.key === 'Escape') { e.preventDefault(); setTbpMenu({ active: false, query: '', start: 0 }); return; }
-                    }
                     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                       e.preventDefault();
                       if (!executing && activeAgent && agentPrompt.trim()) {
@@ -2324,8 +2252,8 @@ export default function Debug() {
                     !activeAgent
                       ? '请先纳管 Agent'
                       : isHubMode
-                        ? `向主 Agent ${mainAgent?.name || ''} 描述协同任务…（@tbp 引用提示词，Cmd/Ctrl+Enter 发送）`
-                        : `向 ${selectedAgent.name} 直调任务…（@tbp 引用提示词，Cmd/Ctrl+Enter 发送）`
+                        ? `向主 Agent ${mainAgent?.name || ''} 描述协同任务…（Cmd/Ctrl+Enter 发送）`
+                        : `向 ${selectedAgent.name} 直调任务…（Cmd/Ctrl+Enter 发送）`
                   }
                   rows={2}
                   className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 resize-none disabled:opacity-50"

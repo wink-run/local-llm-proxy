@@ -3411,14 +3411,6 @@ function handleRequest(req, res) {
     const ctrl = resolveAppControl(callerKey, cleanPath);
     debugLog(`匹配的 app control`, ctrl ? { app_name: ctrl.app_name, has_match_key: !!ctrl.match?.key } : 'null（未匹配任何应用，按默认策略路由）');
 
-    // ── 提示词宏展开 stage：最新 user 消息里的 @tbp:<name|#id> [参数] → 提示词正文 ──
-    // 单一真源=TB 库；未命中 token 原样保留；仅动最新 user 轮。
-    if (_promptResolver && Array.isArray(body.messages)) {
-      try {
-        expandPromptMacros(body.messages, _promptResolver);
-      } catch (e) { debugLog('提示词宏展开失败（跳过）', e.message); }
-    }
-
     // ── 压缩 stage（默认关闭，opt-in）──────────────────────────────────────
     // 转发前对 chat 请求做无损 JSON 压缩，减少发给上游的输入 token。
     // 开关：cfg.compress.enabled 或环境变量 TOKENBANK_COMPRESS=1。
@@ -3590,56 +3582,10 @@ function setLocalConfigReader(fn) {
   _getLocalConfig = typeof fn === 'function' ? fn : null;
 }
 
-// 注入提示词解析器：(ref, args) => { found, text }（供转发前的 @tbp: 宏展开）
-let _promptResolver = null;
-function setPromptResolver(fn) {
-  _promptResolver = typeof fn === 'function' ? fn : null;
-}
-
-// ── 提示词宏展开：@tbp:<name|#id> [参数] → 提示词正文（转发前，仅最新 user 轮）──
-const TBP_MACRO_RE = /@tbp:(\S+)([^\n]*?)(?=@tbp:|$)/gm;
-
-function _expandTbpText(text, resolve) {
-  if (typeof text !== 'string' || !text.includes('@tbp:')) return text;
-  return text.replace(TBP_MACRO_RE, (whole, ref, rest) => {
-    const r = resolve(ref, String(rest || '').trim());
-    return r && r.found ? r.text : whole;
-  });
-}
-
-function _expandTbpContent(content, resolve) {
-  if (typeof content === 'string') return _expandTbpText(content, resolve);
-  if (Array.isArray(content)) {
-    return content.map(part =>
-      part && part.type === 'text' && typeof part.text === 'string'
-        ? { ...part, text: _expandTbpText(part.text, resolve) }
-        : part);
-  }
-  return content;
-}
-
-/**
- * 在最新一轮 user 消息里把 @tbp:<ref> [参数] 展开为提示词正文。
- * @param {Array} messages 请求消息（Anthropic / OpenAI 皆可，按 role + text 处理）
- * @param {(ref:string, args:string)=>{found:boolean,text?:string}} resolve 提示词解析器（注入便于单测）
- * @returns {Array} 原数组（就地替换最新 user 消息）
- */
-function expandPromptMacros(messages, resolve) {
-  if (!Array.isArray(messages) || typeof resolve !== 'function') return messages;
-  let lastUser = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i] && messages[i].role === 'user') { lastUser = i; break; }
-  }
-  if (lastUser < 0) return messages;
-  const msg = messages[lastUser];
-  messages[lastUser] = { ...msg, content: _expandTbpContent(msg.content, resolve) };
-  return messages;
-}
-
 module.exports = {
   start, stop, restart, setStrategy, getStatus, getLog,
   setKeySceneMap, setClaudeShimScene, setCodexGptFallback, setRouterModelMap, setPeerModels, setBackendConfig, setUserAuth,
-  setStatsRecorder, setLocalStats, setLocalConfigReader, setPromptResolver, setAppControls,
+  setStatsRecorder, setLocalStats, setLocalConfigReader, setAppControls,
   setClaudeModels,
   // 条件路由规则引擎（供单测/复用）
   pickSteps, evalWhen, modalityOf, estimateInputTokens, extractText, _providerTier,
@@ -3649,6 +3595,4 @@ module.exports = {
   anthropicToOpenai, openaiToAnthropic, oaiRequestToAnthropic, anthropicRespToOai,
   // Gemini 转换（供单测/复用，含 tool-calling）
   oaiToGeminiBody, geminiExtractParts, sanitizeGeminiSchema,
-  // 提示词宏展开（供单测/复用）
-  expandPromptMacros,
 };
