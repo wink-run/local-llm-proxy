@@ -114,7 +114,7 @@ function fallbackCatalog() {
     id: 'tokenbank-prompts',
     name: 'tokenbank-prompts',
     display_name: 'Token Bank Prompts',
-    description: '内置提示词服务:tb_get_prompt / tb_list_prompts(仅对已投射的 Agent 可见)',
+    description: '内置提示词服务：tb_get_prompt / tb_list_prompts（仅对已投射的 Agent 可见）',
     type: 'stdio',
     command: '__DYNAMIC_ELECTRON__',
     args: [],

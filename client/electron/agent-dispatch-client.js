@@ -59,12 +59,12 @@ async function dispatchAndWait(agentId, prompt, options = {}) {
   return agentExecutor.dispatchAndWait(agentId, prompt, options);
 }
 
-function resolvePrompt(ref, args) {
+function resolvePrompt(ref, args, clientId = '') {
   if (useHttpDispatch()) {
-    const q = new URLSearchParams({ name: ref, args: args || '' });
+    const q = new URLSearchParams({ name: ref, args: args || '', clientId: clientId || '' });
     return httpRequest('GET', `/prompt?${q.toString()}`);
   }
-  return resourceManager.resolvePrompt(ref, args);
+  return resourceManager.resolvePromptForClient(ref, args, clientId);
 }
 
 module.exports = {

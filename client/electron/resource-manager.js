@@ -538,7 +538,7 @@ class ResourceManager {
     const resource = this.getResource(resourceId);
     if (!resource) throw new Error('资产不存在');
 
-    // 提示词只能投给支持斜杠命令的 Agent（Claude Code / Codex）；其余类型用 Skill 目标集
+    // 提示词投给可写 MCP 配置的客户端（投射即经 MCP 暴露）；其余类型用 Skill 目标集
     const allowed = new Set(
       resource.type === 'prompt' ? listPromptProjectableAgentIds() : listProjectableAgentIds(),
     );
