@@ -51,12 +51,17 @@ test('bindClaudeCliRouteToKeyScene：单 route 绑到全部 claude 名（含 son
     assert.equal(ks['sk-CLI'][name].steps[0].model, 'minimax-m2.7');
     assert.equal(ks['sk-CLI'][name].steps[0].tier, 'p2p');
   }
+  // 通配兜底：列表外的后台/快速模型名（claude-3-5-haiku-20241022 等）靠 '*' 命中
+  assert.ok(ks['sk-CLI']['*'], "应有通配 '*' 兜底");
+  assert.equal(ks['sk-CLI']['*'].steps[0].model, 'minimax-m2.7');
 });
 
-test('bindClaudeCliRouteToKeyScene：无 key / 无 route / 无模型名 → 不写入', () => {
+test('bindClaudeCliRouteToKeyScene：无 key / 无 route → 不写入；有 key+route 即使无模型名也绑通配', () => {
   const ks = {};
-  bindClaudeCliRouteToKeyScene(ks, '', 'p2p:x', [], CMS);
-  bindClaudeCliRouteToKeyScene(ks, 'sk-X', '', [], CMS);
-  bindClaudeCliRouteToKeyScene(ks, 'sk-Y', 'p2p:x', [], []);
-  assert.deepEqual(Object.keys(ks), []);
+  bindClaudeCliRouteToKeyScene(ks, '', 'p2p:x', [], CMS);   // 无 key
+  bindClaudeCliRouteToKeyScene(ks, 'sk-X', '', [], CMS);     // 无 route
+  assert.deepEqual(Object.keys(ks), [], '无 key/无 route 不写入');
+  const ks2 = {};
+  bindClaudeCliRouteToKeyScene(ks2, 'sk-Y', 'p2p:x', [], []);   // 无模型名 → 仍绑通配 '*'
+  assert.deepEqual(Object.keys(ks2['sk-Y'] || {}), ['*']);
 });

@@ -2611,7 +2611,10 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   const codexGptScene = (callerKey && /^gpt/i.test(origModel)) ? _codexGptFallback[callerKey] : null;
   const boundScene =
     shimClaudeScene ||
-    (isApiKeyCaller && claudeKey && _keyScene[callerKey] && _keyScene[callerKey][claudeKey]) ||
+    (isApiKeyCaller && _keyScene[callerKey] &&
+      // 精确命中优先；否则 claude-* 名走通配 '*'（覆盖 Claude Code 列表外的后台/快速模型名）
+      ((claudeKey && _keyScene[callerKey][claudeKey]) ||
+       (isClaudeClientName && _keyScene[callerKey]['*']))) ||
     codexGptScene ||
     null;
   const isLlmRouter = origModel.startsWith('llm-router-');
