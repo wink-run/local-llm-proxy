@@ -95,7 +95,8 @@ function startDispatchServer(agentExecutor, resourceManager) {
       if (req.method === 'GET' && url.pathname === '/prompt') {
         const name = url.searchParams.get('name') || '';
         const args = url.searchParams.get('args') || '';
-        const result = resourceManager.resolvePrompt(name, args);
+        const clientId = url.searchParams.get('clientId') || '';
+        const result = resourceManager.resolvePromptForClient(name, args, clientId);
         sendJson(res, 200, result);
         return;
       }

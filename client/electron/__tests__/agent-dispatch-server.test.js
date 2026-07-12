@@ -53,7 +53,7 @@ function sleep(ms) {
     }),
   };
   const fakeResources = {
-    resolvePrompt: (name, args) => ({ found: true, text: `${name}/${args}` }),
+    resolvePromptForClient: (name, args, clientId) => ({ found: true, text: `${name}/${args}`, clientId }),
   };
 
   stopDispatchServer();
@@ -77,9 +77,10 @@ function sleep(ms) {
   assert.equal(agents.status, 200);
   assert.equal(agents.data.agents[0].id, 'codex');
 
-  const prompt = await requestJson(ep.url, ep.token, 'GET', '/prompt?name=hi&args=1');
+  const prompt = await requestJson(ep.url, ep.token, 'GET', '/prompt?name=hi&args=1&clientId=claude-code');
   assert.equal(prompt.status, 200);
   assert.equal(prompt.data.text, 'hi/1');
+  assert.equal(prompt.data.clientId, 'claude-code');
 
   const dispatch = await requestJson(ep.url, ep.token, 'POST', '/dispatch', {
     agentId: 'codex',
