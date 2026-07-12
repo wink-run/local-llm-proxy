@@ -92,7 +92,11 @@ function registerResourceHandlers() {
   ipcMain.handle('resource:listAgentTargets', async () => {
     try {
       resourceManager.init();
-      return { success: true, agents: resourceManager.listAgentTargets() };
+      return {
+        success: true,
+        agents: resourceManager.listAgentTargets(),
+        promptAgents: resourceManager.listPromptAgentTargets(),
+      };
     } catch (error) {
       console.error('[IPC] resource:listAgentTargets error:', error);
       return { success: false, error: error.message };
