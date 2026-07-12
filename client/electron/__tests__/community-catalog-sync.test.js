@@ -44,3 +44,28 @@ test('mcp-catalog: 无缓存时回退本地内置 yaml', () => {
   const ids = new Set(mcpCatalog.listCatalogItems().map(i => i.catalogId));
   assert.ok(ids.has('tokenbank-agent-bridge'));
 });
+
+test('resource-catalog: 缓存优先返回下发项', () => {
+  const resCatalog = require('../resource-catalog');
+  writeCache({
+    version: 1, mcp: [],
+    prompts: [{ catalogId: 'srv-prompt', type: 'prompt', name: 'srv-prompt',
+      display_name: '服务端提示词', description: 'from server', content: 'X' }],
+    skills: [], assistants: [],
+  });
+  resCatalog.resetCatalogCache();
+  const names = resCatalog.listCatalogItems().map(i => i.name);
+  assert.ok(names.includes('srv-prompt'), '应含下发 prompt');
+  assert.ok(!names.includes('code-review'), '缓存存在时不混入 BUILTIN');
+  assert.equal(resCatalog.getCatalogItem('srv-prompt').display_name, '服务端提示词');
+  clearCache();
+  resCatalog.resetCatalogCache();
+});
+
+test('resource-catalog: 无缓存回退 BUILTIN', () => {
+  const resCatalog = require('../resource-catalog');
+  clearCache();
+  resCatalog.resetCatalogCache();
+  const names = resCatalog.listCatalogItems().map(i => i.name);
+  assert.ok(names.includes('code-review'), '无缓存时用内置');
+});
