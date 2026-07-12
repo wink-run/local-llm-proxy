@@ -2,6 +2,14 @@
 // 常见 Prompt / Skill / Assistant 资源目录（参考 aweskill / 社区常见模板）
 'use strict';
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const yaml = require('js-yaml');
+
+const USER_CACHE = path.join(os.homedir(), '.tokenbank', 'community-catalog.yaml');
+let _cached = null;
+
 const RESOURCE_TYPE_LABELS = {
   prompt: '提示词',
   skill: '技能',
@@ -132,12 +140,54 @@ description: 系统化调试流程，先复现与定位根因再改代码
   },
 ];
 
+/** 缓存优先:读 ~/.tokenbank/community-catalog.yaml 的三段;无缓存回退 BUILTIN */
+function activeCatalog() {
+  if (_cached) return _cached;
+  try {
+    if (fs.existsSync(USER_CACHE)) {
+      const doc = yaml.load(fs.readFileSync(USER_CACHE, 'utf8'));
+      const merged = []
+        .concat(Array.isArray(doc?.prompts) ? doc.prompts : [])
+        .concat(Array.isArray(doc?.skills) ? doc.skills : [])
+        .concat(Array.isArray(doc?.assistants) ? doc.assistants : [])
+        .map(normalizeCacheItem)
+        .filter(Boolean);
+      if (merged.length) {
+        _cached = merged;
+        return _cached;
+      }
+    }
+  } catch (e) {
+    console.warn('[resource-catalog] read community cache failed:', e.message);
+  }
+  _cached = BUILTIN_CATALOG;
+  return _cached;
+}
+
+/** yaml snake_case → 运行时字段(与 BUILTIN 条目结构对齐) */
+function normalizeCacheItem(raw) {
+  if (!raw || !(raw.catalog_id || raw.catalogId)) return null;
+  return {
+    catalogId: raw.catalog_id || raw.catalogId,
+    type: raw.type,
+    name: raw.name,
+    display_name: raw.display_name || raw.displayName || raw.name,
+    description: raw.description || '',
+    metadata: raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {},
+    content: raw.content || '',
+  };
+}
+
+function resetCatalogCache() {
+  _cached = null;
+}
+
 function getCatalogItem(catalogId) {
-  return BUILTIN_CATALOG.find(c => c.catalogId === catalogId) || null;
+  return activeCatalog().find(c => c.catalogId === catalogId) || null;
 }
 
 function listCatalogItems(filters = {}) {
-  let items = BUILTIN_CATALOG.filter(i => i.type !== 'template');
+  let items = activeCatalog().filter(i => i.type !== 'template');
   if (filters.type) items = items.filter(i => i.type === filters.type);
   if (filters.query) {
     const q = String(filters.query).toLowerCase();
@@ -153,7 +203,7 @@ function listCatalogItems(filters = {}) {
 
 function listCatalogGrouped() {
   const groups = {};
-  for (const item of BUILTIN_CATALOG) {
+  for (const item of activeCatalog()) {
     if (!groups[item.type]) groups[item.type] = [];
     groups[item.type].push(item);
   }
@@ -166,4 +216,5 @@ module.exports = {
   getCatalogItem,
   listCatalogItems,
   listCatalogGrouped,
+  resetCatalogCache,
 };
