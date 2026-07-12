@@ -2465,6 +2465,11 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
     }).catch(() => null);
     if (created?.id) setManualDraft({ ...created, _isNew: true });
   }
+  // 重扫 CLI 多账号实例（发现新登录的 CONFIG_DIR）→ 刷新列表
+  async function rescanInstances() {
+    try { await appsApi.rescanInstances?.(); } catch {}
+    await load();
+  }
   // 手工添加面板：保存（已在面板内持久化）→ 关闭并刷新
   function closeManualDraft() { setManualDraft(null); load(); }
   // 手工添加面板：取消 → 删除这条未保存的应用再刷新
@@ -2717,6 +2722,28 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
   // 列表只显示非草稿条目（新建面板未保存的临时条目 draft:true 不进列表）
   const visibleApps = apps.filter(a => !a.draft);
 
+  // CLI 多账号分组：同 agent_id 的 shim 实例 ≥2 → 插一条父行 + 子行；单实例(或非实例)照旧一行。
+  const renderList = (() => {
+    const cnt = {};
+    for (const a of visibleApps) if (a.link_method === 'shim' && a.agent_id && a.instance) cnt[a.agent_id] = (cnt[a.agent_id] || 0) + 1;
+    const out = [];
+    const done = new Set();
+    for (const app of visibleApps) {
+      const gid = app.agent_id;
+      const grouped = app.link_method === 'shim' && app.instance && gid && cnt[gid] >= 2;
+      if (grouped) {
+        if (done.has(gid)) continue;
+        done.add(gid);
+        const members = visibleApps.filter(x => x.agent_id === gid && x.link_method === 'shim' && x.instance);
+        out.push({ __parent: true, agentId: gid, count: members.length, sample: members[0] });
+        for (const m of members) out.push({ app: m, isChild: true });
+      } else {
+        out.push({ app });
+      }
+    }
+    return out;
+  })();
+
   return (
     <>
       {/* 编辑已有应用 / 桌面应用托管 → 弹窗（AppSettingsPanel）*/}
@@ -2825,7 +2852,34 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                   <div className="text-center min-w-0">{t('gateway.apps.colRoute')}</div>
                   <div className="text-center min-w-0">{t('gateway.apps.colActions')}</div>
                 </div>
-                {visibleApps.map(app => {
+                {renderList.map(entry => {
+                  // CLI 多账号父行：轻量头行，标「N 账号」+ 添加账号（重扫）；不占状态/路由列
+                  if (entry.__parent) {
+                    const s = entry.sample;
+                    const toolName = String(s.name || '').split(' · ')[0] || s.name;
+                    const pbrand = brandIconFor(s);
+                    return (
+                      <div key={'grp-' + entry.agentId} className={`${APPS_TABLE_GRID} py-2.5 border-t border-zinc-100/80 dark:border-white/[0.05] bg-white dark:bg-zinc-800/60`}>
+                        {pbrand ? <img src={pbrand} alt="" className="w-[18px] h-[18px] mx-auto object-contain shrink-0" />
+                          : isAppIcon(s.icon) ? appIconSvg(s.icon, 'w-[18px] h-[18px] mx-auto shrink-0')
+                          : <span className="text-base text-center shrink-0">{s.icon}</span>}
+                        <div className="text-xs font-medium truncate min-w-0 flex items-center gap-1.5 text-zinc-800 dark:text-zinc-100">
+                          <span className="truncate">{toolName}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-700/60 text-zinc-500 dark:text-zinc-400 shrink-0">{t('gateway.apps.instanceCount', { n: entry.count })}</span>
+                        </div>
+                        <div /><div className="text-center text-[11px] text-zinc-400">shim</div><div /><div /><div />
+                        <div className="text-center text-[10px] text-zinc-400">{t('gateway.apps.byInstance')}</div>
+                        <div className="flex justify-end">
+                          <button onClick={() => rescanInstances()} title={t('gateway.apps.addAccount')}
+                            className="text-blue-500 hover:text-blue-600 dark:hover:text-blue-400 p-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" /></svg>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+                  const app = entry.app;
+                  const isChild = entry.isChild;
                   const st = appStats[app.id] || { calls: 0, tokens: 0, lastTs: null };
                   const fmtTokens = n => n >= 1_000_000 ? (n/1_000_000).toFixed(1)+'M'
                     : n >= 1000 ? (n/1000).toFixed(1)+'K' : String(n||0);
@@ -2905,10 +2959,20 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                         if (isAppIcon(app.icon)) return appIconSvg(app.icon, `w-[18px] h-[18px] mx-auto shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`);
                         return <span className={`text-base text-center shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`}>{app.icon}</span>;
                       })()}
-                      <div
-                        className={`text-xs font-medium truncate min-w-0 ${isActive ? 'text-zinc-800 dark:text-zinc-100' : 'text-zinc-400 dark:text-zinc-500'}`}
-                        title={app.name}
-                      >{app.name}</div>
+                      {isChild ? (
+                        <div className="min-w-0 pl-4 border-l-2 border-zinc-100 dark:border-white/[0.06]" title={app.name}>
+                          <div className={`text-xs font-medium truncate ${isActive ? 'text-zinc-800 dark:text-zinc-100' : 'text-zinc-400 dark:text-zinc-500'}`}>
+                            {String(app.name || '').split(' · ').slice(1).join(' · ') || app.name}
+                            {app.instance?.dir_glob && <span className="ml-1 text-[10px] font-normal text-zinc-400 font-mono">· {app.instance.dir_glob}</span>}
+                          </div>
+                          {app.instance?.account_email && <div className="text-[10px] text-zinc-400 truncate">{app.instance.account_email}</div>}
+                        </div>
+                      ) : (
+                        <div
+                          className={`text-xs font-medium truncate min-w-0 ${isActive ? 'text-zinc-800 dark:text-zinc-100' : 'text-zinc-400 dark:text-zinc-500'}`}
+                          title={app.name}
+                        >{app.name}</div>
+                      )}
 
                       {/* 状态列：应用=已纳管/未纳管，API=在线 */}
                       <div className="min-w-0 flex items-center gap-1.5 overflow-hidden">
