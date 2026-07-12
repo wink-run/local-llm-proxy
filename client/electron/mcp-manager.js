@@ -923,7 +923,7 @@ class MCPManager {
         };
       }
       return {
-        command: process.execPath,
+        command: resolveElectronBinary(),
         args: [DISPATCH_SCRIPT],
         env: {
           ...baseEnv,
@@ -998,4 +998,5 @@ module.exports.BUILTIN_PROMPTS_ID = BUILTIN_PROMPTS_ID;
 module.exports.buildCodexOrchestratorProfileToml = buildCodexOrchestratorProfileToml;
 module.exports.writeBridgeMcpLauncher = writeBridgeMcpLauncher;
 module.exports.writeElectronAsNodeLauncher = writeElectronAsNodeLauncher;
+module.exports.resolveElectronBinary = resolveElectronBinary;
 module.exports.shellQuote = shellQuote;
