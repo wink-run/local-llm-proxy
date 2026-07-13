@@ -288,7 +288,7 @@ export default {
   'gateway.app.instanceDir': 'Active directory',
   'gateway.app.instanceAccount': 'Account',
   'gateway.app.instanceDefaultHint': 'Default account: fallback when no directory matches, no directory needed.',
-  'gateway.app.instanceDirHint': 'Used when launching in this directory (and all subdirectories); a parent dir works, longest prefix wins. Empty = not directory-scoped.',
+  'gateway.app.instanceDirHint': 'Used when launching in this directory (and all subdirectories); a parent dir works, longest prefix wins. Empty = fallback (used when no other account directory matches).',
   'gateway.app.browse': 'Browse',
   'gateway.app.linkType': 'Link type',
   'gateway.app.linkTypeApi': 'API app',

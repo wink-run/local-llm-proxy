@@ -288,7 +288,7 @@ export default {
   'gateway.app.instanceDir': '生效目录',
   'gateway.app.instanceAccount': '账号',
   'gateway.app.instanceDefaultHint': '默认账号：匹配不到具体目录时的兜底，无需设目录。',
-  'gateway.app.instanceDirHint': '在此目录（含所有子目录）启动时用此账号；父目录即可，长前缀优先。留空=不按目录生效。',
+  'gateway.app.instanceDirHint': '在此目录（含所有子目录）启动时用此账号；父目录即可，长前缀优先。留空=作为兜底（匹配不到其它账号目录时用它）。',
   'gateway.app.browse': '浏览',
   'gateway.app.linkType': '接入类型',
   'gateway.app.linkTypeApi': 'API 应用',
