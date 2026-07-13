@@ -129,6 +129,18 @@ function scanCliInstances(tool, home = os.homedir()) {
   return [];
 }
 
+// 工具 → 其 CONFIG_DIR 基名（多账号会话补录/额度用）
+const TOOL_CONFIG_BASE = { 'claude-code': '.claude', codex: '.codex' };
+
+// 多账号会话补录的 data_source：默认账号沿用 base（如 'session-claude'，向后兼容 + 保留 data_source_map）；
+// 非默认账号追加 ':<目录名>'（如 'session-claude:claude-work'），使每个实例只匹配自己账号的会话、不重复计数。
+// session-import 打标 与 main.appSessionDataSource 归属必须用同一函数，保证两边一致。
+function cliSessionDataSource(base, configDir, cfgBase, home = os.homedir()) {
+  if (!base || !configDir || !cfgBase) return base;
+  if (path.resolve(configDir) === path.resolve(path.join(home, cfgBase))) return base;   // 默认账号
+  return `${base}:${path.basename(configDir).replace(/^\.+/, '')}`;
+}
+
 // 把一个扫描实例的账号信息合并进 app 记录的 instance 段（保留用户配的 dir_glob）。
 function mergeInstanceMeta(rec, inst) {
   rec.instance = {
@@ -217,4 +229,5 @@ function mergeAccountOptions(scanned = [], personal = [], existingDirs = new Set
 module.exports = {
   scanClaudeInstances, scanCodexInstances, scanCliInstances,
   enumConfigDirs, reconcileCliInstances, mergeAccountOptions,
+  cliSessionDataSource, TOOL_CONFIG_BASE,
 };

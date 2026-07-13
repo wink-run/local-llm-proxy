@@ -175,7 +175,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     selectDirectory: ()     => ipcRenderer.invoke('dialog:selectDirectory'),
     scanAccounts:  (tool)   => ipcRenderer.invoke('cli:scanAccounts', tool),
     addInstance:   (opts)   => ipcRenderer.invoke('cli:addInstance', opts),
-    accountsUsage: ()       => ipcRenderer.invoke('cli:accountsUsage'),
     ensureShimApp: (d)      => ipcRenderer.invoke('apps:ensureShimApp', d),
     writeEnv:      (env)    => ipcRenderer.invoke('apps:writeEnv', env),
     presets:       ()       => ipcRenderer.invoke('apps:presets'),

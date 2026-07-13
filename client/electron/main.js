@@ -1707,17 +1707,6 @@ function registerIPC() {
     return usageMod.fetchUsage(entry, usageDeps);
   });
   ipcMain.handle('usage:fetchAll', async () => usageMod.fetchAllUsage(usageDeps));
-  // 多账号 CLI 订阅额度：按本机扫到的 CLI 实例 config_dir 逐个抓（不进 providers、不加源），
-  // token 过期则刷新 + 回写该账号 .credentials.json 保活 CLI 登录。
-  ipcMain.handle('cli:accountsUsage', async () => {
-    const apps = readLocalConfig().apps || [];
-    const accounts = apps
-      .filter(a => a.link_method === 'shim' && a.instance && a.instance.config_dir && !a.instance.invalid
-        && (a.agent_id === 'claude-code' || a.agent_id === 'codex'))
-      .map(a => ({ tool: a.agent_id, config_dir: a.instance.config_dir, account_email: a.instance.account_email,
-        is_default: !!a.instance.is_default, app_id: a.id }));
-    return require('./usage/cli-accounts').fetchCliAccountsUsage(accounts, usageDeps);
-  });
   // 应用列表切换路由（纳管/还原 Claude Desktop）时前端可主动触发一次会话同步（不等 30s 定时）
   ipcMain.handle('claude3p:sync', () => { runClaude3pSync('app-switch'); return { ok: true }; });
 
@@ -3947,7 +3936,17 @@ function registerIPC() {
       const ent = configLoader.appEntityById(aid);
       const usageImport = app.session_usage_import ?? caps?.session_usage_import ?? ent?.session_usage_import;
       if (!usageImport) return null;
-      return AGENT_DATA_SOURCE[app.agent_id] || null;
+      const base = AGENT_DATA_SOURCE[app.agent_id] || null;
+      // 多账号：非默认 CONFIG_DIR 的实例用账号专属 data_source，与 session-import 打标一致，避免重复计数
+      const cfgDir = app.instance?.config_dir;
+      if (base && cfgDir) {
+        try {
+          const cli = require('./cli-instances');
+          const cfgBase = cli.TOOL_CONFIG_BASE[app.agent_id];
+          if (cfgBase) return cli.cliSessionDataSource(base, cfgDir, cfgBase);
+        } catch { /* cli-instances 不可用 → 回退 base */ }
+      }
+      return base;
     }
     return null;
   }
