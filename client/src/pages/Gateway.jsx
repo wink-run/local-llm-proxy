@@ -605,10 +605,16 @@ function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0, syncError =
 function linkMethodLabel(method, t) {
   return method === 'manual' ? t('gateway.link.api') : t('gateway.link.app');
 }
+// 把绝对家目录前缀缩写成 ~（渲染进程拿不到 home，用平台启发式：/Users/x、/home/x、C:\Users\x）
+function tildify(p) {
+  return String(p || '')
+    .replace(/^\/(?:Users|home)\/[^/]+/, '~')
+    .replace(/^[A-Za-z]:\\Users\\[^\\]+/i, '~');
+}
 // 应用列表统一栅格：固定短列 + minmax(0,fr) 弹性列，避免内容撑开导致各行列宽不一致
 // 应用列保留 modest 最小宽；不设表格 min-width，避免常态出现横向滚动条
 // 应用列加大最小宽；固定短列与路由 min 适当压缩，空间让给应用名
-const APPS_TABLE_GRID = 'grid w-full grid-cols-[1.75rem_minmax(5rem,1.5fr)_3.75rem_1.75rem_3.75rem_3.5rem_3.75rem_minmax(4.5rem,2fr)_minmax(7.75rem,auto)] gap-x-3 items-center px-4 [&>*]:min-w-0';
+const APPS_TABLE_GRID = 'grid w-full grid-cols-[1.75rem_minmax(8rem,2fr)_3.75rem_1.75rem_3.75rem_3.5rem_3.75rem_minmax(4.5rem,1.6fr)_minmax(7.75rem,auto)] gap-x-3 items-center px-4 [&>*]:min-w-0';
 
 /** 应用行测试状态：成功/进行中行内短提示；失败用浮层展示完整错误（避免窄列截断） */
 function AppTestResultHint({ ts, t }) {
@@ -676,6 +682,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
   const [routeIds,       setRouteIds]       = useState(() =>
     effectiveRouteIds(app).map(rid => routeSelectValue(rid, availableModels, routes)).filter(Boolean));
   const [modelIntercept, setModelIntercept] = useState(app.model_intercept || '');
+  const [dirGlob,        setDirGlob]        = useState(app.instance?.dir_glob || '');   // CLI 实例生效目录
   const [busy,           setBusy]           = useState(false);
   const [copied,         setCopied]         = useState(false);
   const [claudeDevMode, setClaudeDevMode] = useState(null); // Claude Desktop 开发者模式状态
@@ -743,6 +750,7 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
       route_id: ids[0] || null,
       route_ids: ids.length ? ids : null,
       model_intercept: modelIntercept.trim() || null,
+      ...(app.instance ? { instance: { ...app.instance, dir_glob: dirGlob.trim() || null } } : {}),
       ...(app.env && !app.config_file ? { env: parseEnvText(envText) } : {}),
     });
     setBusy(false);
@@ -996,6 +1004,34 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
           <div className="text-xs text-zinc-400 mt-1">{t('gateway.app.modelInterceptHint')}</div>
         </div>
       )}
+      {/* CLI 多账号实例：账号信息 + 生效目录（默认账号=兜底，无需设目录） */}
+      {app.instance && (
+        <div>
+          <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-1">{t('gateway.app.instanceDir')}</div>
+          {app.instance.account_email && (
+            <div className="text-xs text-zinc-400 mb-1.5">
+              {t('gateway.app.instanceAccount')}: <span className="font-mono">{app.instance.account_email}</span>
+              {app.instance.subscription ? ` · ${app.instance.subscription}` : ''}
+            </div>
+          )}
+          {app.instance.is_default ? (
+            <div className="text-xs text-zinc-400">{t('gateway.app.instanceDefaultHint')}</div>
+          ) : (
+            <>
+              <div className="flex gap-2">
+                <input value={dirGlob} onChange={e => setDirGlob(e.target.value)}
+                  placeholder="~/code/work"
+                  className="flex-1 text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-zinc-800 dark:text-zinc-200 font-mono" />
+                <button type="button" onClick={async () => { const d = await window.electronAPI?.apps?.selectDirectory?.(); if (d) setDirGlob(d); }}
+                  className="text-xs px-2.5 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700/50 shrink-0">
+                  {t('gateway.app.browse')}
+                </button>
+              </div>
+              <div className="text-xs text-zinc-400 mt-1">{t('gateway.app.instanceDirHint')}</div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 
@@ -1110,6 +1146,36 @@ function ManualAddPanel({ app, routes, availableModels = [], localBase = '', onU
     onSave();
   }
 
+  // 接入类型：api（现有手工 API 应用）| cli（新建 claude/codex 账号实例）
+  const [mode, setMode]       = useState('api');
+  const [cliTool, setCliTool] = useState('claude-code');
+  const [accounts, setAccounts] = useState([]);
+  const [acctIdx, setAcctIdx] = useState(0);
+  const [cliDir, setCliDir]   = useState('');
+  const [cliRoute, setCliRoute] = useState('');
+  const [cliBusy, setCliBusy] = useState(false);
+  const [cliErr, setCliErr]   = useState('');
+  useEffect(() => {
+    if (mode !== 'cli') return;
+    (async () => {
+      const list = await window.electronAPI?.apps?.scanAccounts?.(cliTool).catch(() => []);
+      setAccounts(Array.isArray(list) ? list : []);
+      setAcctIdx(0);
+    })();
+  }, [mode, cliTool]);
+  async function saveCli() {
+    const acct = accounts[acctIdx];
+    if (!acct || !acct.config_dir) { setCliErr(t('gateway.app.cliNeedAccount')); return; }
+    setCliBusy(true); setCliErr('');
+    const r = await window.electronAPI?.apps?.addInstance?.({
+      tool: cliTool, config_dir: acct.config_dir, account_email: acct.email,
+      subscription: acct.subscription, dir_glob: cliDir.trim() || null, route_id: cliRoute || null,
+    }).catch(e => ({ ok: false, error: e.message }));
+    setCliBusy(false);
+    if (r?.ok) { onCancel(); }   // 删占位草稿 + 刷新，新实例出现在列表
+    else setCliErr(r?.error === 'exists' ? t('gateway.app.cliAccountExists') : (r?.error || t('gateway.common.saveFailed')));
+  }
+
   return (
     <div className="mb-3 bg-white dark:bg-zinc-800 rounded-2xl border border-blue-200 dark:border-blue-800/50 shadow-sm">
       <div className="flex items-center gap-3 px-5 py-3 border-b border-zinc-200 dark:border-zinc-800">
@@ -1117,6 +1183,70 @@ function ManualAddPanel({ app, routes, availableModels = [], localBase = '', onU
         <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 flex-1">{t('gateway.app.newTitle')}</h3>
         <button onClick={onCancel} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 text-lg">✕</button>
       </div>
+      {/* 接入类型选择 */}
+      <div className="px-5 pt-4">
+        <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.linkType')}</div>
+        <div className="grid grid-cols-2 gap-2">
+          {[['api', t('gateway.app.linkTypeApi'), t('gateway.app.linkTypeApiHint')], ['cli', t('gateway.app.linkTypeCli'), t('gateway.app.linkTypeCliHint')]].map(([m, label, hint]) => (
+            <button key={m} type="button" onClick={() => setMode(m)}
+              className={`text-left rounded-lg border px-3 py-2 transition-colors ${mode === m ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-600' : 'border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800/60'}`}>
+              <div className={`text-xs font-medium ${mode === m ? 'text-blue-700 dark:text-blue-300' : 'text-zinc-700 dark:text-zinc-200'}`}>{label}</div>
+              <div className="text-[11px] text-zinc-400 mt-0.5 leading-snug">{hint}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+      {mode === 'cli' ? (
+        <div className="p-5 space-y-4">
+          <div>
+            <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.cliTool')}</div>
+            <div className="flex gap-2">
+              {[['claude-code', 'Claude Code'], ['codex', 'Codex']].map(([id, label]) => (
+                <button key={id} type="button" onClick={() => setCliTool(id)}
+                  className={`flex-1 text-sm rounded-lg border px-3 py-1.5 transition-colors ${cliTool === id ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300' : 'border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60'}`}>{label}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.cliAccount')}</div>
+            {accounts.length === 0 ? (
+              <div className="text-xs text-zinc-400">{t('gateway.app.cliNoAccounts')}</div>
+            ) : (
+              <select value={acctIdx} onChange={e => setAcctIdx(Number(e.target.value))}
+                className="w-full text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none text-zinc-800 dark:text-zinc-200">
+                {accounts.map((a, i) => (
+                  <option key={i} value={i} disabled={a.already_added || !a.config_dir}>
+                    {(a.email || a.config_dir)}{a.subscription ? ` · ${a.subscription}` : ''}{a.already_added ? ` · ${t('gateway.app.cliAlreadyAdded')}` : (!a.config_dir ? ` · ${t('gateway.app.cliNoLocal')}` : '')}
+                  </option>
+                ))}
+              </select>
+            )}
+            <div className="text-[11px] text-zinc-400 mt-1">{t('gateway.app.cliAccountHint')}</div>
+          </div>
+          <div>
+            <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.instanceDir')}</div>
+            <div className="flex gap-2">
+              <input value={cliDir} onChange={e => setCliDir(e.target.value)} placeholder="~/code/work"
+                className="flex-1 text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-zinc-800 dark:text-zinc-200 font-mono" />
+              <button type="button" onClick={async () => { const d = await window.electronAPI?.apps?.selectDirectory?.(); if (d) setCliDir(d); }}
+                className="text-xs px-2.5 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700/50 shrink-0">{t('gateway.app.browse')}</button>
+            </div>
+            <div className="text-[11px] text-zinc-400 mt-1">{t('gateway.app.instanceDirHint')}</div>
+          </div>
+          <div>
+            <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">{t('gateway.app.routeRules')}</div>
+            <RouteSelect value={cliRoute} onChange={v => setCliRoute(v || '')} routes={routes} availableModels={availableModels} t={t} />
+            <div className="text-[11px] text-zinc-400 mt-1">{t('gateway.app.cliRouteHint')}</div>
+          </div>
+          {cliErr && <div className="text-xs text-red-500">{cliErr}</div>}
+          <div className="flex justify-end gap-2">
+            <button onClick={onCancel} className="text-sm px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700/50">{t('gateway.common.cancel')}</button>
+            <button onClick={saveCli} disabled={cliBusy}
+              className="text-sm px-4 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50">{cliBusy ? '…' : t('gateway.app.cliAddInstance')}</button>
+          </div>
+        </div>
+      ) : (
+      <>
       <div className="p-5 space-y-4">
         {/* 基础信息 */}
         <div>
@@ -1198,6 +1328,8 @@ function ManualAddPanel({ app, routes, availableModels = [], localBase = '', onU
           {t('gateway.common.cancel')}
         </button>
       </div>
+      </>
+      )}
     </div>
   );
 }
@@ -2465,6 +2597,11 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
     }).catch(() => null);
     if (created?.id) setManualDraft({ ...created, _isNew: true });
   }
+  // 重扫 CLI 多账号实例（发现新登录的 CONFIG_DIR）→ 刷新列表
+  async function rescanInstances() {
+    try { await appsApi.rescanInstances?.(); } catch {}
+    await load();
+  }
   // 手工添加面板：保存（已在面板内持久化）→ 关闭并刷新
   function closeManualDraft() { setManualDraft(null); load(); }
   // 手工添加面板：取消 → 删除这条未保存的应用再刷新
@@ -2655,8 +2792,12 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
         id: appId, route_id: primary, route_ids: routeIds.length ? routeIds : null,
         ...(primary ? { hosted: true } : {}),
       }).catch(() => {});
-      if (primary) { await window.electronAPI.agents?.apply(app.agent_id).catch(() => {}); showNotice(appId, t('gateway.apps.restartToApply')); }
-      else { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); showNotice(appId, t('gateway.apps.restartToApply')); }
+      // 选路由 → 重生成 shim（注网关）。清路由(直连)：多账号「非默认」实例保留 shim（只切账号、
+      // 不注网关，靠自己 config-dir 的配置直连；网关关着也照切账号）；默认/单账号实例 → 撤 shim 回官方。
+      const keepShimOnDirect = !!(app.instance && !app.instance.is_default);
+      if (primary || keepShimOnDirect) { await window.electronAPI.agents?.apply(app.agent_id).catch(() => {}); }
+      else { await window.electronAPI.agents?.revert(app.agent_id).catch(() => {}); }
+      showNotice(appId, t('gateway.apps.restartToApply'));
     } else if (app.link_method === 'session') {
       await appsApi.update({
         id: app.id, route_id: primary, route_ids: routeIds.length ? routeIds : null,
@@ -2716,6 +2857,28 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
 
   // 列表只显示非草稿条目（新建面板未保存的临时条目 draft:true 不进列表）
   const visibleApps = apps.filter(a => !a.draft);
+
+  // CLI 多账号分组：同 agent_id 的 shim 实例 ≥2 → 插一条父行 + 子行；单实例(或非实例)照旧一行。
+  const renderList = (() => {
+    const cnt = {};
+    for (const a of visibleApps) if (a.link_method === 'shim' && a.agent_id && a.instance) cnt[a.agent_id] = (cnt[a.agent_id] || 0) + 1;
+    const out = [];
+    const done = new Set();
+    for (const app of visibleApps) {
+      const gid = app.agent_id;
+      const grouped = app.link_method === 'shim' && app.instance && gid && cnt[gid] >= 2;
+      if (grouped) {
+        if (done.has(gid)) continue;
+        done.add(gid);
+        const members = visibleApps.filter(x => x.agent_id === gid && x.link_method === 'shim' && x.instance);
+        out.push({ __parent: true, agentId: gid, count: members.length, sample: members[0] });
+        for (const m of members) out.push({ app: m, isChild: true });
+      } else {
+        out.push({ app });
+      }
+    }
+    return out;
+  })();
 
   return (
     <>
@@ -2825,7 +2988,34 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                   <div className="text-center min-w-0">{t('gateway.apps.colRoute')}</div>
                   <div className="text-center min-w-0">{t('gateway.apps.colActions')}</div>
                 </div>
-                {visibleApps.map(app => {
+                {renderList.map(entry => {
+                  // CLI 多账号父行：轻量头行，标「N 账号」+ 添加账号（重扫）；不占状态/路由列
+                  if (entry.__parent) {
+                    const s = entry.sample;
+                    const toolName = String(s.name || '').split(' · ')[0] || s.name;
+                    const pbrand = brandIconFor(s);
+                    return (
+                      <div key={'grp-' + entry.agentId} className={`${APPS_TABLE_GRID} py-2.5 border-t border-zinc-100/80 dark:border-white/[0.05] bg-white dark:bg-zinc-800/60`}>
+                        {pbrand ? <img src={pbrand} alt="" className="w-[18px] h-[18px] mx-auto object-contain shrink-0" />
+                          : isAppIcon(s.icon) ? appIconSvg(s.icon, 'w-[18px] h-[18px] mx-auto shrink-0')
+                          : <span className="text-base text-center shrink-0">{s.icon}</span>}
+                        <div className="text-xs font-medium truncate min-w-0 flex items-center gap-1.5 text-zinc-800 dark:text-zinc-100">
+                          <span className="truncate">{toolName}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-700/60 text-zinc-500 dark:text-zinc-400 shrink-0">{t('gateway.apps.instanceCount', { n: entry.count })}</span>
+                        </div>
+                        <div /><div /><div /><div /><div />
+                        <div className="text-center text-[10px] text-zinc-400">{t('gateway.apps.byInstance')}</div>
+                        <div className="flex justify-end">
+                          <button onClick={() => rescanInstances()} title={t('gateway.apps.addAccount')}
+                            className="text-blue-500 hover:text-blue-600 dark:hover:text-blue-400 p-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" /></svg>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+                  const app = entry.app;
+                  const isChild = entry.isChild;
                   const st = appStats[app.id] || { calls: 0, tokens: 0, lastTs: null };
                   const fmtTokens = n => n >= 1_000_000 ? (n/1_000_000).toFixed(1)+'M'
                     : n >= 1000 ? (n/1000).toFixed(1)+'K' : String(n||0);
@@ -2905,10 +3095,20 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                         if (isAppIcon(app.icon)) return appIconSvg(app.icon, `w-[18px] h-[18px] mx-auto shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`);
                         return <span className={`text-base text-center shrink-0 ${isActive ? '' : 'grayscale opacity-60'}`}>{app.icon}</span>;
                       })()}
-                      <div
-                        className={`text-xs font-medium truncate min-w-0 ${isActive ? 'text-zinc-800 dark:text-zinc-100' : 'text-zinc-400 dark:text-zinc-500'}`}
-                        title={app.name}
-                      >{app.name}</div>
+                      {isChild ? (
+                        <div className="min-w-0 pl-4 border-l-2 border-zinc-100 dark:border-white/[0.06]" title={app.name + (app.instance?.dir_glob ? '  ·  ' + app.instance.dir_glob : '')}>
+                          <div className={`text-xs font-medium truncate ${isActive ? 'text-zinc-800 dark:text-zinc-100' : 'text-zinc-400 dark:text-zinc-500'}`}>
+                            {String(app.name || '').split(' · ').slice(1).join(' · ') || app.name}
+                          </div>
+                          {app.instance?.dir_glob && <div className="text-[10px] text-zinc-400 font-mono truncate">{tildify(app.instance.dir_glob)}</div>}
+                          {app.instance?.account_email && <div className="text-[10px] text-zinc-400 truncate">{app.instance.account_email}</div>}
+                        </div>
+                      ) : (
+                        <div
+                          className={`text-xs font-medium truncate min-w-0 ${isActive ? 'text-zinc-800 dark:text-zinc-100' : 'text-zinc-400 dark:text-zinc-500'}`}
+                          title={app.name}
+                        >{app.name}</div>
+                      )}
 
                       {/* 状态列：应用=已纳管/未纳管，API=在线 */}
                       <div className="min-w-0 flex items-center gap-1.5 overflow-hidden">
