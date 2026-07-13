@@ -215,7 +215,7 @@ function claudeDataSourceForEntrypoint(entrypoint) {
 // ── 单条记录的构建与写入（jsonl/json 共用）────────────────────────────────────
 // rec=当前对象，ctx={ model, session_id, seq, index, prev } ，doc=整文件级回退源（json）。
 // 返回 true=写入了一行新数据。
-function emitRecord(localStats, src, rec, ctx, doc) {
+function emitRecord(localStats, src, rec, ctx, doc, dataSourceOverride = null) {
   // 用户关闭「用量导入」时仅扫描 trace，不写 local-stats
   if (src.session_usage_import === false) return false;
   const f = src.fields || {};
@@ -282,6 +282,9 @@ function emitRecord(localStats, src, rec, ctx, doc) {
     if (ev != null && Array.isArray(dsm.skip) && dsm.skip.includes(ev)) return false;
     dataSource = resolveDataSourceFromMap(dsm, ev, src.data_source);
   }
+  // 多账号：非默认 CONFIG_DIR 的会话用账号专属 data_source（如 'session-claude:claude-work'），
+  // 使每个实例只匹配自己账号的会话、不与其它账号重复计数（skip 判定仍按上面的 map 生效）。
+  if (dataSourceOverride) dataSource = dataSourceOverride;
 
   const timing = resolveTiming(rec, src, ctx);
   const ok = localStats.record({
@@ -503,6 +506,30 @@ function importTraeWorkExportSource(localStats, src) {
 }
 
 // ── 单个 source 的扫描 ────────────────────────────────────────────────────────
+// 多账号会话补录：claude/codex 的会话 root 若在 ~/.claude 或 ~/.codex 下，枚举同级 CONFIG_DIR
+// (~/.claude-work 等)、各拼回原 root 的子路径 → 扫所有账号的会话（而非只默认目录）。非默认账号
+// 给账号专属 dataSourceOverride，使每个实例只匹配自己的会话、不重复计数。其余源单 root、无 override。
+function resolveScanRoots(src) {
+  const root = expandHome(src.root || '');
+  if (!root) return [];
+  try {
+    const cli = require('./cli-instances');
+    const home = os.homedir();
+    for (const base of ['.claude', '.codex']) {
+      const prefix = path.join(home, base);
+      if (root === prefix || root.startsWith(prefix + path.sep)) {
+        const sub = root.slice(prefix.length);
+        return cli.enumConfigDirs(base, null, home).map(dir => ({
+          root: dir + sub,
+          dataSourceOverride: path.resolve(dir) === path.resolve(prefix) ? null
+            : cli.cliSessionDataSource(src.data_source, dir, base, home),
+        }));
+      }
+    }
+  } catch { /* cli-instances 不可用 → 回退单 root */ }
+  return [{ root, dataSourceOverride: null }];
+}
+
 function importSource(localStats, src) {
   // 用户关闭 trace 分析时不扫描会话文件
   if (src.session_trace === false) {
@@ -512,11 +539,11 @@ function importSource(localStats, src) {
   if (src.format === 'sqlite')         return importSqliteSource(localStats, src);
   if (src.format === 'copilot-events') return importCopilotEventsSource(localStats, src);
   if (src.format === 'grok-session')   return importGrokSessionsSource(localStats, src);
-  const root = expandHome(src.root || '');
   const re   = globToRe(src.glob || '**/*');
-  const files = root ? walk(root, rel => re.test(rel)) : [];
   let imported = 0, skipped = 0, files_scanned = 0;
 
+  for (const { root, dataSourceOverride } of resolveScanRoots(src)) {   // 多账号：逐个 CONFIG_DIR
+  const files = root ? walk(root, rel => re.test(rel)) : [];
   for (const file of files) {
     let st; try { st = fs.statSync(file); } catch { continue; }
     if (unchanged(localStats, file, st)) { skipped++; continue; }
@@ -551,7 +578,7 @@ function importSource(localStats, src) {
         }
         ctx.index = idx;
         ctx.session_id = session_id;   // json 每条都用整文件级 session
-        if (emitRecord(localStats, src, rec, ctx, doc)) imported++;
+        if (emitRecord(localStats, src, rec, ctx, doc, dataSourceOverride)) imported++;
       });
     } else {
       // jsonl：逐行；维护运行上下文（meta 行更新 model/session_id；accumulate 累计 prev）
@@ -594,7 +621,7 @@ function importSource(localStats, src) {
             ctx.latency_ms     = pl.duration_ms != null ? num(pl.duration_ms) : null;
             ctx.first_token_ms = pl.time_to_first_token_ms != null ? num(pl.time_to_first_token_ms) : null;
             if (ctx._deferEmit) {
-              if (emitRecord(localStats, src, ctx._deferEmit, ctx, null)) imported++;
+              if (emitRecord(localStats, src, ctx._deferEmit, ctx, null, dataSourceOverride)) imported++;
               ctx._deferEmit = null;
             }
             ctx.latency_ms = undefined;
@@ -607,15 +634,16 @@ function importSource(localStats, src) {
           ctx._deferEmit = e;
           continue;
         }
-        if (emitRecord(localStats, src, e, ctx, null)) imported++;
+        if (emitRecord(localStats, src, e, ctx, null, dataSourceOverride)) imported++;
       }
       if (src.defer_emit && ctx._deferEmit) {
-        if (emitRecord(localStats, src, ctx._deferEmit, ctx, null)) imported++;
+        if (emitRecord(localStats, src, ctx._deferEmit, ctx, null, dataSourceOverride)) imported++;
         ctx._deferEmit = null;
       }
     }
 
     markDone(localStats, file, st);
+  }
   }
   return { source: src.id || src.data_source, imported, skipped, files_scanned };
 }
