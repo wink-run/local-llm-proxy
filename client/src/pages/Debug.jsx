@@ -666,6 +666,17 @@ export default function Debug() {
     loadAgents();
   }, []);
 
+  // Debug 页保持挂载（App keep-alive），从「资产」投射智能体后返回本页时强制刷新，
+  // 纳入新投射/纳管的智能体（否则命中前端缓存看不到新 tab）。复用上方 location。
+  const prevDebugPathRef = useRef(location.pathname);
+  useEffect(() => {
+    const wasActive = prevDebugPathRef.current === '/debug';
+    prevDebugPathRef.current = location.pathname;
+    if (location.pathname === '/debug' && !wasActive) {
+      loadAgents({ force: true });
+    }
+  }, [location.pathname]);
+
   // Load Agents when switching to agent mode（缓存为空时补拉）
   useEffect(() => {
     if (mode === 'agent' && agents.length === 0 && !loadingAgents) {
