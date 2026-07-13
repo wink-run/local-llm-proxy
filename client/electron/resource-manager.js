@@ -381,6 +381,7 @@ class ResourceManager {
     );
 
     if (item.type === 'skill') this._ensureSkillOnDisk(id);
+    if (item.type === 'assistant') this._invalidateAgentList();
 
     const resource = this.getResource(id);
     return { success: true, resource, alreadyInstalled: false };
@@ -440,7 +441,9 @@ class ResourceManager {
     }
 
     const saved = this.getResource(id);
-    if (saved?.type === 'skill') {
+    if (saved?.type === 'assistant') {
+      this._invalidateAgentList();
+    } else if (saved?.type === 'skill') {
       this._ensureSkillOnDisk(id);
     } else if (saved?.type === 'prompt') {
       // 权威源=DB:MCP 调用时实时读库,编辑后无需重刷任何文件
@@ -587,7 +590,14 @@ class ResourceManager {
     db.prepare('DELETE FROM resource_projections WHERE resource_id = ?').run(resourceId);
     db.prepare('DELETE FROM resources WHERE id = ?').run(resourceId);
     this._resyncPromptClients(promptClientIds);
+    // 删除智能体后清 Debug Agent 列表缓存，避免已删智能体仍显示为 tab
+    if (resource.type === 'assistant') this._invalidateAgentList();
     return { success: true, deletedFiles };
+  }
+
+  /** 清 agent-executor 的 Agent 列表缓存（智能体增删改后 Debug 立即反映） */
+  _invalidateAgentList() {
+    try { require('./agent-executor').invalidateAgentListCache?.(); } catch { /* ignore */ }
   }
 
   /** 智能体 JSON 中引用的 Prompt / Skill（须已纳管） */

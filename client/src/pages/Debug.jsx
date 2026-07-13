@@ -1436,7 +1436,7 @@ export default function Debug() {
     }
 
     try {
-      const result = await window.electronAPI.agent.list();
+      const result = await window.electronAPI.agent.list({ force });
       if (result.success) {
         const list = result.agents || [];
         setCachedAgentsList(list);

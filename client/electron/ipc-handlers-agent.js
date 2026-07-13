@@ -12,9 +12,9 @@ function registerAgentHandlers() {
   /**
    * 获取可用的 Agent 列表
    */
-  ipcMain.handle('agent:list', async () => {
+  ipcMain.handle('agent:list', async (_event, opts = {}) => {
     try {
-      const agents = await agentExecutor.listAvailableAgents();
+      const agents = await agentExecutor.listAvailableAgents({ force: !!opts.force });
       return { success: true, agents };
     } catch (error) {
       console.error('[IPC] agent:list error:', error);
