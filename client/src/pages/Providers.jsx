@@ -2600,38 +2600,46 @@ function fmtBalance(c) {
   const sym = c.currency === 'USD' ? '$' : c.currency === 'CNY' ? '¥' : '';
   return `${sym}${v.toFixed(2)}`;
 }
-function UsageMeter({ provider }) {
+// data 传入 → 直接渲染该预取快照（供多账号 CLI 账号复用，见 Gateway 实例行/设置面板）；
+// 不传 → 走原逻辑：按 provider.id 自己 usage:fetch。onRefresh 供 data 模式的刷新按钮回调。
+export function UsageMeter({ provider, data, onRefresh }) {
+  const hasData = data !== undefined;
   const api = typeof window !== 'undefined' ? window.electronAPI?.usage : null;
   // Gemini 的「订阅额度」需 Google OAuth access_token；纯 API Key 账户拿不到，不显示该块
   // （否则会一直报「缺少 Google access_token」）。其余源（含 api-key 的 openrouter/deepseek/groq）照常。
   const k = usageKey(provider);
-  const supported = USAGE_SUPPORTED.has(k) && !(k === 'gemini' && !provider?.credentials?.access_token);
+  const supported = hasData || (USAGE_SUPPORTED.has(k) && !(k === 'gemini' && !provider?.credentials?.access_token));
   const [state, setState] = useState({ loading: false, data: null, error: '' });
   const load = useCallback(() => {
-    if (!api || !supported) return;
+    if (hasData || !api || !supported) return;   // data 模式不自拉
     setState(s => ({ ...s, loading: true, error: '' }));
     api.fetch(provider.id)
       .then(r => setState(r && r.error
         ? { loading: false, data: null, error: r.error }
         : { loading: false, data: r, error: '' }))
       .catch(e => setState({ loading: false, data: null, error: e?.message || String(e) }));
-  }, [api, supported, provider?.id]);
+  }, [api, supported, provider?.id, hasData]);
   useEffect(() => { load(); }, [load]);
-  if (!api || !supported) return null;
-  const d = state.data;
+  if (!supported) return null;
+  const d = hasData ? (data && !data.error ? data : null) : state.data;
+  const loading = hasData ? false : state.loading;
+  const error = hasData ? (data && data.error) : state.error;
+  const onRefreshClick = hasData ? onRefresh : load;
   return (
     <div className="mt-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-800/40 p-2.5 space-y-2">
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">订阅额度</span>
-        <button onClick={load} disabled={state.loading}
-          className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 disabled:opacity-50">
-          {state.loading ? '…' : '刷新'}
-        </button>
+        {onRefreshClick && (
+          <button onClick={onRefreshClick} disabled={loading}
+            className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 disabled:opacity-50">
+            {loading ? '…' : '刷新'}
+          </button>
+        )}
       </div>
-      {state.error ? (
-        <p className="text-xs text-red-500">{state.error}</p>
+      {error ? (
+        <p className="text-xs text-red-500">{{ 'need-relogin': '需重新登录', 'expired': '登录已过期', 'no-credentials': '未登录该账号' }[error] || error}</p>
       ) : !d ? (
-        <p className="text-xs text-zinc-400">{state.loading ? '加载中…' : '—'}</p>
+        <p className="text-xs text-zinc-400">{loading ? '加载中…' : '—'}</p>
       ) : (
         <div className="space-y-1.5">
           {(d.windows || []).map(w => (

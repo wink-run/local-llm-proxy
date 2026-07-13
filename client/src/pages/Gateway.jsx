@@ -10,6 +10,7 @@ import { APP_ICONS, isAppIcon, appIconSvg } from '../lib/appIcons';
 import { useLang } from '../store/lang';
 import { useAuth } from '../store/index';
 import RouteSelect, { tierOptgroups } from '../components/RouteSelect';
+import { UsageMeter } from './Providers';
 import {
   encodeTierModelRoute,
   parseRouteBinding,
@@ -605,6 +606,18 @@ function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0, syncError =
 function linkMethodLabel(method, t) {
   return method === 'manual' ? t('gateway.link.api') : t('gateway.link.app');
 }
+// 行内订阅额度指示：一小段「· 用量 X%」（按 % 变色，与 UsageMeter 进度条同规则）；出错显示状态。
+function UsagePctInline({ usage }) {
+  if (!usage) return null;
+  if (usage.error) {
+    const label = { 'need-relogin': '需重登', expired: '已过期', 'no-credentials': '未登录' }[usage.error];
+    return label ? <span className="text-[10px] text-zinc-400 shrink-0">· {label}</span> : null;
+  }
+  const pct = usage.primary && usage.primary.usedPercent;
+  if (pct == null) return null;
+  const tone = pct >= 90 ? 'text-red-500 dark:text-red-400' : pct >= 70 ? 'text-amber-500 dark:text-amber-400' : 'text-green-600 dark:text-green-400';
+  return <span className={`text-[10px] shrink-0 ${tone}`} title={`订阅额度已用 ${Math.round(pct)}%`}>· 用量 {Math.round(pct)}%</span>;
+}
 // 把绝对家目录前缀缩写成 ~（渲染进程拿不到 home，用平台启发式：/Users/x、/home/x、C:\Users\x）
 function tildify(p) {
   return String(p || '')
@@ -672,7 +685,7 @@ function strategyLabel(key, t) {
 }
 
 // 单个应用的设置面板（路由规则绑定 + 详细配置）
-function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', onUpdate, onDelete, onRegenKey, onCancelManage, onWritten, onClose, onCancel }) {
+function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', onUpdate, onDelete, onRegenKey, onCancelManage, onWritten, onClose, onCancel, accountUsage, onRefreshUsage }) {
   const { t } = useLang();
   const dismiss = onCancel || onClose;   // ✕/取消/点遮罩 → 取消（新应用未保存会被丢弃）
   const [name,           setName]           = useState(app.name || '');
@@ -1030,6 +1043,8 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
               <div className="text-xs text-zinc-400 mt-1">{t('gateway.app.instanceDirHint')}</div>
             </>
           )}
+          {/* 订阅额度：复用 Providers 页的 UsageMeter，吃预取的 cli:accountsUsage 数据 */}
+          <UsageMeter data={accountUsage || null} onRefresh={onRefreshUsage} />
         </div>
       )}
     </div>
@@ -2433,6 +2448,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
   const [devTipMsg, setDevTipMsg] = useState('');     // 引导弹窗内「刷新检测」结果提示
   const [manualDraft, setManualDraft] = useState(null); // 手工添加的内联面板对应的 app
   const [appStats, setAppStats] = useState({});     // id → {calls,tokens,lastTs}（当天用量）
+  const [acctUsage, setAcctUsage] = useState({});   // app_id → CLI 账号订阅额度快照（cli:accountsUsage）
   const [loading,  setLoading]  = useState(true);   // 首次加载中（应用检测较慢）→ 显示加载特效而非空状态
   const [toolboxOpen, setToolboxOpen] = useState(false);       // 应用百宝箱展开态
   const [toolboxBusy, setToolboxBusy] = useState(false);       // 展开前从云端拉取目录
@@ -2482,6 +2498,14 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
       }
       if (list.length && appsApi.stats) {
         appsApi.stats(list).then(s => setAppStats(s || {})).catch(() => {});
+      }
+      // 多账号 CLI 订阅额度（异步，涉及刷新 token，慢；不阻塞列表）
+      if (list.some(a => a.link_method === 'shim' && a.instance) && appsApi.accountsUsage) {
+        appsApi.accountsUsage().then(rows => {
+          const m = {};
+          for (const r of (Array.isArray(rows) ? rows : [])) if (r && r.app_id) m[r.app_id] = r;
+          setAcctUsage(m);
+        }).catch(() => {});
       }
     } finally {
       setLoading(false);
@@ -2886,7 +2910,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
       {settings && (
         <AppSettingsPanel app={settings} routes={routes} availableModels={availableModels} localBase={localBase}
           onUpdate={handleUpdateApp} onDelete={handleDeleteApp} onRegenKey={handleRegenKey}
-          onCancelManage={handleCancelManage}
+          onCancelManage={handleCancelManage} accountUsage={acctUsage[settings.id]} onRefreshUsage={load}
           onWritten={() => setSettings(s => s ? { ...s, _isNew: false, configured: true } : s)}
           onClose={closeSettings} onCancel={cancelSettings} />
       )}
@@ -3101,7 +3125,15 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
                             {String(app.name || '').split(' · ').slice(1).join(' · ') || app.name}
                           </div>
                           {app.instance?.dir_glob && <div className="text-[10px] text-zinc-400 font-mono truncate">{tildify(app.instance.dir_glob)}</div>}
-                          {app.instance?.account_email && <div className="text-[10px] text-zinc-400 truncate">{app.instance.account_email}</div>}
+                          <div className="flex items-center gap-1 min-w-0">
+                            {app.instance?.account_email && <span className="text-[10px] text-zinc-400 truncate">{app.instance.account_email}</span>}
+                            <UsagePctInline usage={acctUsage[app.id]} />
+                          </div>
+                        </div>
+                      ) : app.instance ? (
+                        <div className="min-w-0" title={app.name}>
+                          <div className={`text-xs font-medium truncate ${isActive ? 'text-zinc-800 dark:text-zinc-100' : 'text-zinc-400 dark:text-zinc-500'}`}>{app.name}</div>
+                          {acctUsage[app.id] && <div className="flex items-center"><UsagePctInline usage={acctUsage[app.id]} /></div>}
                         </div>
                       ) : (
                         <div
