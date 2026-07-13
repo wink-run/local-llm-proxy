@@ -672,7 +672,7 @@ function strategyLabel(key, t) {
 }
 
 // 单个应用的设置面板（路由规则绑定 + 详细配置）
-function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', onUpdate, onDelete, onRegenKey, onCancelManage, onWritten, onClose, onCancel }) {
+function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', instanceCount = 1, onUpdate, onDelete, onRegenKey, onCancelManage, onWritten, onClose, onCancel }) {
   const { t } = useLang();
   const dismiss = onCancel || onClose;   // ✕/取消/点遮罩 → 取消（新应用未保存会被丢弃）
   const [name,           setName]           = useState(app.name || '');
@@ -1005,7 +1005,9 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
         </div>
       )}
       {/* CLI 多账号实例：账号信息 + 生效目录（默认账号=兜底，无需设目录） */}
-      {app.instance && (
+      {/* 生效目录：仅当同一工具有 ≥2 个账号实例时才需要（按启动目录分发到不同账号）。
+          单实例 = 唯一账号全局生效，无需配目录。默认账号也给输入框，留空即作为兜底。 */}
+      {app.instance && instanceCount >= 2 && (
         <div>
           <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-1">{t('gateway.app.instanceDir')}</div>
           {app.instance.account_email && (
@@ -1014,22 +1016,16 @@ function AppSettingsPanel({ app, routes, availableModels = [], localBase = '', o
               {app.instance.subscription ? ` · ${app.instance.subscription}` : ''}
             </div>
           )}
-          {app.instance.is_default ? (
-            <div className="text-xs text-zinc-400">{t('gateway.app.instanceDefaultHint')}</div>
-          ) : (
-            <>
-              <div className="flex gap-2">
-                <input value={dirGlob} onChange={e => setDirGlob(e.target.value)}
-                  placeholder="~/code/work"
-                  className="flex-1 text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-zinc-800 dark:text-zinc-200 font-mono" />
-                <button type="button" onClick={async () => { const d = await window.electronAPI?.apps?.selectDirectory?.(); if (d) setDirGlob(d); }}
-                  className="text-xs px-2.5 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700/50 shrink-0">
-                  {t('gateway.app.browse')}
-                </button>
-              </div>
-              <div className="text-xs text-zinc-400 mt-1">{t('gateway.app.instanceDirHint')}</div>
-            </>
-          )}
+          <div className="flex gap-2">
+            <input value={dirGlob} onChange={e => setDirGlob(e.target.value)}
+              placeholder="~/code/work"
+              className="flex-1 text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 text-zinc-800 dark:text-zinc-200 font-mono" />
+            <button type="button" onClick={async () => { const d = await window.electronAPI?.apps?.selectDirectory?.(); if (d) setDirGlob(d); }}
+              className="text-xs px-2.5 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700/50 shrink-0">
+              {t('gateway.app.browse')}
+            </button>
+          </div>
+          <div className="text-xs text-zinc-400 mt-1">{t('gateway.app.instanceDirHint')}</div>
         </div>
       )}
     </div>
@@ -2885,6 +2881,7 @@ function AppManager({ externalRoutes, availableModels = [], onActivity, onAppTot
       {/* 编辑已有应用 / 桌面应用托管 → 弹窗（AppSettingsPanel）*/}
       {settings && (
         <AppSettingsPanel app={settings} routes={routes} availableModels={availableModels} localBase={localBase}
+          instanceCount={settings.agent_id ? visibleApps.filter(a => a.link_method === 'shim' && a.agent_id === settings.agent_id && a.instance).length : 1}
           onUpdate={handleUpdateApp} onDelete={handleDeleteApp} onRegenKey={handleRegenKey}
           onCancelManage={handleCancelManage}
           onWritten={() => setSettings(s => s ? { ...s, _isNew: false, configured: true } : s)}
