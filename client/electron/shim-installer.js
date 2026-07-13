@@ -152,15 +152,62 @@ function probeOrigin(envMap) {
 
 // shim 注入网关 env，但先探活：网关 /health 通才注入（否则直接调真程序走官方）。
 // 这样网关没启动时 shim 不会把工具指向死端口 —— 透明托管对“网关未运行”自动回落。
-function writeShim(command, realPath, envMap) {
+// dispatch（可选）：[{ dir, env }]，按 $PWD 前缀匹配（首个命中胜出，调用方按 dir 长度降序传入）
+// 时用该项的 env 覆盖基础 envMap（如 CLAUDE_CONFIG_DIR/ANTHROPIC_AUTH_TOKEN）——按启动目录选不同 CLI 实例。
+// dispatch 为空 → 生成的 shim 与不带分发时字节一致（单实例/无 dir_glob 零改动）。
+// dispatch 项结构（多账号）：{ dir, selectEnv, gatewayEnv }
+//   selectEnv  —— 「选账号」env（如 CLAUDE_CONFIG_DIR），【永远执行、不受探活门控】，
+//                 因为按目录选账号跟网关无关，TokenBank 没运行时也必须切对账号；
+//   gatewayEnv —— 「走网关」env（base_url + token），【探活通过才注入】；
+//                 为 null 表示该实例是「直连」——在探活块里 unset 掉基础网关 env（envMap 的键），
+//                 让它退回自己 config-dir 的配置（兼容端点读 settings.json / OAuth 读登录态）。
+// baseSelectEnv —— 默认实例的「选账号」env（如自定义 CONFIG_DIR），同样永远执行。
+// opts.defaultDirect —— 默认实例是「直连」（未绑路由）：未匹配任何目录时（=走默认账号）
+//   在探活块的兜底处 unset 基础网关 env，让默认账号走自己 config-dir 的配置，而非被指向网关。
+function writeShim(command, realPath, envMap, dispatch = [], baseSelectEnv = {}, opts = {}) {
   ensureBinDir();
+  const defaultDirect = !!(opts && opts.defaultDirect);
   const exports = Object.entries(envMap || {});
+  const baseSel = Object.entries(baseSelectEnv || {});
   const origin  = probeOrigin(envMap);
+  const disp = (Array.isArray(dispatch) ? dispatch : []).filter(d => d && d.dir && (d.selectEnv || 'gatewayEnv' in d));
+  const gwKeys = Object.keys(envMap || {});   // 直连实例要 unset 的基础网关键（base_url + token）
   let shimPath;
   if (IS_WIN) {
     shimPath = path.join(BIN_DIR, command + '.cmd');
     let lines;
-    if (origin && exports.length) {
+    if (origin && exports.length && disp.length) {
+      lines = [
+        '@echo off',
+        'REM ' + MARK_BEGIN,
+        'set "_tbc=%CD%\\"',
+        // 1) 选账号：永远执行（不受探活门控）
+        ...baseSel.map(([k, v]) => `set "${k}=${v}"`),
+        ...disp.filter(d => d.selectEnv && Object.keys(d.selectEnv).length).map(d => {
+          const needle = d.dir.replace(/[\\/]+$/, '') + '\\';
+          const setEnv = Object.entries(d.selectEnv).map(([k, v]) => `set "${k}=${v}"`).join(' & ');
+          return `if /i "%_tbc:~0,${needle.length}%"=="${needle}" ( ${setEnv} & goto tbsel )`;
+        }),
+        ':tbsel',
+        // 2) 走网关：探活通过才注入；按目录给路由态实例覆盖 token，直连态实例 unset 网关 env
+        `curl.exe -s -o NUL -m 1 "${origin}/health" >NUL 2>NUL`,
+        'if not %errorlevel%==0 goto tbrun',
+        ...exports.map(([k, v]) => `set "${k}=${v}"`),
+        ...disp.map(d => {
+          const needle = d.dir.replace(/[\\/]+$/, '') + '\\';
+          const gw = ('gatewayEnv' in d) ? d.gatewayEnv : null;
+          const setEnv = gw
+            ? Object.entries(gw).map(([k, v]) => `set "${k}=${v}"`).join(' & ')
+            : gwKeys.map(k => `set "${k}="`).join(' & ');   // 直连：清空网关 env
+          return `if /i "%_tbc:~0,${needle.length}%"=="${needle}" ( ${setEnv} & goto tbrun )`;
+        }),
+        // 兜底（未匹配任何目录 = 走默认账号）：默认直连则清空网关 env，退回默认 config-dir 自身配置
+        ...(defaultDirect ? [gwKeys.map(k => `set "${k}="`).join(' & ')] : []),
+        ':tbrun',
+        `"${realPath}" %*`,
+        'REM ' + MARK_END,
+      ];
+    } else if (origin && exports.length) {
       lines = [
         '@echo off',
         'REM ' + MARK_BEGIN,
@@ -179,7 +226,42 @@ function writeShim(command, realPath, envMap) {
   } else {
     shimPath = path.join(BIN_DIR, command);
     let lines;
-    if (origin && exports.length) {
+    if (origin && exports.length && disp.length) {
+      const selDisp = disp.filter(d => d.selectEnv && Object.keys(d.selectEnv).length);
+      lines = [
+        '#!/bin/sh',
+        MARK_BEGIN,
+        // 1) 选账号：永远执行（不受探活门控）——按目录选 CONFIG_DIR，跟网关无关
+        ...baseSel.map(([k, v]) => `export ${k}="${v}"`),
+        ...(selDisp.length ? [
+          'case "$PWD/" in',
+          ...selDisp.map(d => {
+            const dir = d.dir.replace(/\/+$/, '');
+            const setEnv = Object.entries(d.selectEnv).map(([k, v]) => `export ${k}="${v}"`).join('; ');
+            return `  "${dir}/"*) ${setEnv} ;;`;
+          }),
+          'esac',
+        ] : []),
+        // 2) 走网关：探活通过才注入；路由态实例覆盖 token，直连态实例 unset 网关 env
+        `if curl -s -o /dev/null -m 1 "${origin}/health" 2>/dev/null; then`,
+        ...exports.map(([k, v]) => `  export ${k}="${v}"`),
+        '  case "$PWD/" in',
+        ...disp.map(d => {
+          const dir = d.dir.replace(/\/+$/, '');
+          const gw = ('gatewayEnv' in d) ? d.gatewayEnv : null;
+          const setEnv = gw
+            ? Object.entries(gw).map(([k, v]) => `export ${k}="${v}"`).join('; ')
+            : `unset ${gwKeys.join(' ')}`;   // 直连：清掉网关 env，退回 config-dir 自身配置
+          return `    "${dir}/"*) ${setEnv} ;;`;
+        }),
+        // 兜底（未匹配 = 走默认账号）：默认直连则清空网关 env，退回默认 config-dir 自身配置
+        ...(defaultDirect ? [`    *) unset ${gwKeys.join(' ')} ;;`] : []),
+        '  esac',
+        'fi',
+        `exec "${realPath}" "$@"`,
+        MARK_END,
+      ];
+    } else if (origin && exports.length) {
       lines = [
         '#!/bin/sh',
         MARK_BEGIN,

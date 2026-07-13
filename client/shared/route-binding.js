@@ -110,12 +110,30 @@ function claudeNameAtIndex(index, claudeModels = [], fallback = 'claude-sonnet-4
 }
 
 /** Claude Desktop 多路由：每个 claude-* 名 → 对应 route（与写入 inferenceModels 顺序一致） */
-function bindClaudeRoutesToKeyScene(keyScene, routeIds, routes = [], claudeModels = []) {
-  if (!Array.isArray(routeIds) || !routeIds.length) return;
+// keyScene 结构：{ [callerKey]: { [claude模型名]: scene } } —— 按「调用方 app key」分桶，
+// 使多个 claude 应用（Desktop / 多个 CLI 实例）能各绑各的路由，互不覆盖。
+function bindClaudeRoutesToKeyScene(keyScene, callerKey, routeIds, routes = [], claudeModels = []) {
+  if (!callerKey || !Array.isArray(routeIds) || !routeIds.length) return;
+  const sub = keyScene[callerKey] || (keyScene[callerKey] = {});
   routeIds.forEach((routeId, i) => {
     const claudeName = claudeNameAtIndex(i, claudeModels);
-    bindRouteToKeyScene(keyScene, claudeName, routeId, routes);
+    bindRouteToKeyScene(sub, claudeName, routeId, routes);
   });
+}
+
+/** Claude Code CLI（shim 注入 api_key → 成 api-key 调用方）：客户端会发任意 claude-* 名
+ * （claude-sonnet-4-5 / claude-haiku-4-5 …，且这些名字不受我们控制），把选中的单条 route
+ * 绑到【所有】claude 客户端模型名上 —— 任何 claude-* 请求都命中该 route。
+ * 与 Desktop（bindClaudeRoutesToKeyScene 按 inferenceModels.name 顺序 1:1 绑）不同：
+ * Desktop 的名字列表由我们写入、与 route 一一对应；CLI 的名字由客户端决定，必须全绑。 */
+function bindClaudeCliRouteToKeyScene(keyScene, callerKey, routeId, routes = [], claudeModels = []) {
+  if (!callerKey || !routeId) return;
+  const sub = keyScene[callerKey] || (keyScene[callerKey] = {});
+  for (const name of claudeModels) bindRouteToKeyScene(sub, name, routeId, routes);
+  // 通配兜底：Claude Code 会发列表外的后台/快速模型名（写死在客户端、随版本变，如
+  // claude-3-5-haiku-20241022），全部映射到该 route，避免落到直连 404。网关对「claude-* 且无
+  // 精确命中」的 api-key 调用方查 keyScene[key]['*']。Desktop 的绑定不写 '*'，故不受影响。
+  bindRouteToKeyScene(sub, '*', routeId, routes);
 }
 
 /** 写入 keyScene（Electron main + CLI admin-api 共用） */
@@ -164,5 +182,6 @@ module.exports = {
   isKnownRouteSelectValue,
   claudeNameAtIndex,
   bindClaudeRoutesToKeyScene,
+  bindClaudeCliRouteToKeyScene,
   bindRouteToKeyScene,
 };
