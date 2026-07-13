@@ -39,11 +39,16 @@ test('选路由：改写 settings.json 指向网关 + 本实例 api_key，备份
   const s = rd(file);
   assert.equal(s.env.ANTHROPIC_BASE_URL, GW);
   assert.equal(s.env.ANTHROPIC_AUTH_TOKEN, 'sk-local-abc');
+  // 整段替换：env 只剩网关两项，原兼容端点的任何 env 键都不残留
+  assert.deepEqual(Object.keys(s.env).sort(), ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']);
   assert.ok(!('ANTHROPIC_SMALL_FAST_MODEL' in s.env), '去掉写死的 fast model');
+  assert.ok(!('DISABLE_TELEMETRY' in s.env), '原 env 其它键也不保留');
   assert.ok(!('model' in s), '去掉写死的 model（路由由网关决定）');
+  assert.equal(s.theme, 'dark', '顶层非 env 键保留');
   assert.ok(fs.existsSync(bak));
   assert.match(rd(bak).env.ANTHROPIC_BASE_URL, /fortinet/);
   assert.equal(rd(bak).env.ANTHROPIC_AUTH_TOKEN, 'sk-orig');
+  assert.equal(rd(bak).env.DISABLE_TELEMETRY, 'true', '备份保留原始完整 env');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -65,6 +70,7 @@ test('直连（route 清空，hosted 仍 true）：还原回原始 Fortinet 配�
   const s = rd(file);
   assert.match(s.env.ANTHROPIC_BASE_URL, /fortinet/);
   assert.equal(s.env.ANTHROPIC_AUTH_TOKEN, 'sk-orig');
+  assert.equal(s.env.DISABLE_TELEMETRY, 'true', '还原后原 env 键完整回来');
   assert.equal(s.model, 'forti-coder');
   fs.rmSync(dir, { recursive: true, force: true });
 });
