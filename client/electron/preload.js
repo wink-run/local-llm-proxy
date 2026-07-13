@@ -35,7 +35,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener('agent:log', handler);
     },
     // Agent 聚合系统 API
-    listAgents: () => ipcRenderer.invoke('agent:list'),
+    listAgents: (opts) => ipcRenderer.invoke('agent:list', opts || {}),
     execute: (params) => ipcRenderer.invoke('agent:execute', params),
     cancel: (taskId) => ipcRenderer.invoke('agent:cancel', taskId),
     cancelAllActive: () => ipcRenderer.invoke('agent:cancelAllActive'),
@@ -44,7 +44,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listRecentTasks: (opts) => ipcRenderer.invoke('agent:listRecentTasks', opts),
     pickWorkingDir: (opts) => ipcRenderer.invoke('agent:pickWorkingDir', opts),
     // 兼容旧调用
-    list: () => ipcRenderer.invoke('agent:list'),
+    list: (opts) => ipcRenderer.invoke('agent:list', opts || {}),
     onStep: (cb) => {
       const handler = (_e, data) => cb(data);
       ipcRenderer.on('agent:task:step', handler);
@@ -103,11 +103,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     verifyProjections: (params) => ipcRenderer.invoke('resource:verifyProjections', params || {}),
     listAgentTargets: () => ipcRenderer.invoke('resource:listAgentTargets'),
     scanDiscovered: (filters) => ipcRenderer.invoke('resource:scanDiscovered', filters || {}),
+    syncDiscovered: (filters) => ipcRenderer.invoke('resource:syncDiscovered', filters || {}),
     importDiscovered: (params) => ipcRenderer.invoke('resource:importDiscovered', params || {}),
     listAgentInstallations: (filters) => ipcRenderer.invoke('resource:listAgentInstallations', filters || {}),
     importFromAgent: (params) => ipcRenderer.invoke('resource:importFromAgent', params || {}),
     removeFromAgent: (params) => ipcRenderer.invoke('resource:removeFromAgent', params || {}),
     openPath: (params) => ipcRenderer.invoke('resource:openPath', params || {}),
+    listIdleSkills: (options) => ipcRenderer.invoke('resource:listIdleSkills', options || {}),
+    cleanupSkills: (params) => ipcRenderer.invoke('resource:cleanupSkills', params || {}),
   },
   config: {
     read:  () => ipcRenderer.invoke('config:read'),
