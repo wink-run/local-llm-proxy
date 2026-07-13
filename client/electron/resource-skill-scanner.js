@@ -175,8 +175,9 @@ function scanSkillRoot(skillRoot, agentId, agentLabel) {
       scanKey: `${agentId}::${ent.name}`,
       type: 'skill',
       name,
-      display_name: fm.name || ent.name,
+      display_name: fm.display_name || fm.name || ent.name,
       description: fm.description || '',
+      version: fm.version || '',
       content,
       hash: hashContent(content),
       agentId,
@@ -187,6 +188,7 @@ function scanSkillRoot(skillRoot, agentId, agentLabel) {
       metadata: {
         tags: fm.tags ? String(fm.tags).split(/[,\s]+/).filter(Boolean) : [],
         scannedFrom: skillDir,
+        version: fm.version || undefined,
       },
     });
   }
@@ -217,8 +219,9 @@ function skillItemFromDir(skillDir, entName, agentId, agentLabel, extra = {}) {
     scanKey,
     type: 'skill',
     name,
-    display_name: fm.name || entName || name,
+    display_name: fm.display_name || fm.name || entName || name,
     description: fm.description || '',
+    version: fm.version || '',
     content,
     hash: hashContent(content),
     agentId,
@@ -229,6 +232,7 @@ function skillItemFromDir(skillDir, entName, agentId, agentLabel, extra = {}) {
     metadata: {
       tags: fm.tags ? String(fm.tags).split(/[,\s]+/).filter(Boolean) : [],
       scannedFrom: skillDir,
+      version: fm.version || undefined,
     },
     ...extra,
   };
@@ -352,12 +356,17 @@ function groupDiscoveredSkills(flatItems) {
         name: item.name,
         display_name: item.display_name,
         description: item.description,
+        version: item.version || item.metadata?.version || '',
         hash: item.hash,
         contentLength: item.content.length,
         agents: [],
       });
     }
     const g = groups.get(groupKey);
+    // 同组若后续条目带版本而首条没有，补上
+    if (!g.version && (item.version || item.metadata?.version)) {
+      g.version = item.version || item.metadata.version;
+    }
     const agentKey = `${item.agentId}::${item.projectRoot || item.customScanRoot || ''}`;
     if (!g.agents.some(a => `${a.agentId}::${a.projectRoot || a.customScanRoot || ''}` === agentKey)) {
       g.agents.push({

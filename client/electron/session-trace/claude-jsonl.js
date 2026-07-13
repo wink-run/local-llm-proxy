@@ -25,6 +25,31 @@ function skillNameFromInput(input) {
   return input.skill || input.command || input.name || null;
 }
 
+// Slash 命令标签；内置 CLI 不算 Skill（对齐 tokentelemetry）
+// 用 [^<\s]+ 以支持中文 Skill 名（如 /写诗）；JS \w 不含 Unicode 字母
+const COMMAND_NAME_RE = /<command-name>\/?([^<\s]+)<\/command-name>/g;
+const BUILTIN_CLI_COMMANDS = new Set([
+  'add-dir', 'agents', 'bashes', 'bug', 'clear', 'compact', 'config',
+  'context', 'cost', 'doctor', 'exit', 'export', 'fast', 'help', 'hooks',
+  'ide', 'install-github-app', 'login', 'logout', 'mcp', 'memory',
+  'migrate-installer', 'model', 'output-style', 'permissions', 'plan', 'plugin',
+  'privacy-settings', 'quit', 'release-notes', 'resume', 'rewind', 'status',
+  'statusline', 'terminal-setup', 'theme', 'todos', 'upgrade', 'usage', 'vim',
+]);
+
+function slashSkillsFromUserText(text) {
+  const out = [];
+  if (!text) return out;
+  COMMAND_NAME_RE.lastIndex = 0;
+  let m;
+  while ((m = COMMAND_NAME_RE.exec(String(text))) !== null) {
+    const cmd = m[1];
+    if (!cmd || BUILTIN_CLI_COMMANDS.has(cmd)) continue;
+    out.push(cmd);
+  }
+  return out;
+}
+
 /** Claude / Claude-Code 风格 jsonl → trace steps（3p 沙箱复用） */
 function buildClaudeStyleSteps(rawLines, timeSpan) {
   const steps = [];
@@ -50,23 +75,47 @@ function buildClaudeStyleSteps(rawLines, timeSpan) {
               text: toolResultText(b.content).slice(0, 4000),
             });
           } else if (b?.type === 'text' && String(b.text || '').trim()) {
+            const text = String(b.text || '');
             steps.push({
               idx: steps.length, kind: 'user', label: 'User prompt', ts,
-              text: extractContext(b.text), ...(usage || {}),
+              text: extractContext(text), ...(usage || {}),
             });
+            // Slash 调用 Skill（与 tool_use Skill 并列计入）
+            for (const skill of slashSkillsFromUserText(text)) {
+              steps.push({
+                idx: steps.length, kind: 'tool',
+                label: `Skill · ${skill}`, ts,
+                tool: 'Skill', skill, signal: 'slash',
+              });
+            }
           } else if (typeof b === 'string' && b.trim()) {
             steps.push({
               idx: steps.length, kind: 'user', label: 'User prompt', ts,
               text: extractContext(b), ...(usage || {}),
             });
+            for (const skill of slashSkillsFromUserText(b)) {
+              steps.push({
+                idx: steps.length, kind: 'tool',
+                label: `Skill · ${skill}`, ts,
+                tool: 'Skill', skill, signal: 'slash',
+              });
+            }
           }
         }
       } else {
-        const text = extractContext(msgText(msg));
+        const rawText = msgText(msg);
+        const text = extractContext(rawText);
         if (text) {
           steps.push({
             idx: steps.length, kind: 'user', label: 'User prompt', ts,
             text, ...(usage || {}),
+          });
+        }
+        for (const skill of slashSkillsFromUserText(rawText)) {
+          steps.push({
+            idx: steps.length, kind: 'tool',
+            label: `Skill · ${skill}`, ts,
+            tool: 'Skill', skill, signal: 'slash',
           });
         }
       }
@@ -82,7 +131,7 @@ function buildClaudeStyleSteps(rawLines, timeSpan) {
             steps.push({
               idx: steps.length, kind: 'tool',
               label: skill ? `Skill · ${skill}` : (b.name || 'tool'), ts,
-              tool: b.name, ...(skill ? { skill } : {}), input: b.input,
+              tool: b.name, ...(skill ? { skill, signal: 'tool' } : {}), input: b.input,
             });
           } else if (b?.type === 'thinking' || b?.type === 'reasoning') {
             const think = String(b.text || b.thinking || '').trim();
@@ -110,6 +159,99 @@ function buildClaudeStyleSteps(rawLines, timeSpan) {
     lineIdx++;
   }
   return steps;
+}
+
+/**
+ * 汇总 Claude Code 子代理（Task/Agent）用量。
+ * 目录：<project>/<sessionId>/subagents/agent-*.jsonl + .meta.json
+ */
+function claudeSubagentUsage(sessionFile, sessionId) {
+  const fs = require('fs');
+  const path = require('path');
+  let estimateCost = () => 0;
+  try { estimateCost = require('../pricing').estimateCost; } catch { /* optional */ }
+
+  const subDir = path.join(path.dirname(sessionFile), sessionId, 'subagents');
+  let names;
+  try {
+    if (!fs.existsSync(subDir)) return null;
+    names = fs.readdirSync(subDir).filter(n => n.startsWith('agent-') && n.endsWith('.jsonl'));
+  } catch {
+    return null;
+  }
+  if (!names.length) return null;
+
+  const entries = [];
+  for (const name of names.sort()) {
+    const agentId = name.slice('agent-'.length, -'.jsonl'.length);
+    const jsonlPath = path.join(subDir, name);
+    const metaPath = path.join(subDir, `agent-${agentId}.meta.json`);
+    let agentType = null;
+    let description = null;
+    let toolUseId = null;
+    try {
+      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+      if (meta && typeof meta === 'object') {
+        agentType = meta.agentType || null;
+        description = meta.description || null;
+        toolUseId = meta.toolUseId || null;
+      }
+    } catch { /* ignore */ }
+
+    const tokens = { input: 0, output: 0, cached: 0, cache_creation: 0, total: 0 };
+    let model = null;
+    try {
+      for (const line of fs.readFileSync(jsonlPath, 'utf8').split('\n')) {
+        if (!line.trim()) continue;
+        let data;
+        try { data = JSON.parse(line); } catch { continue; }
+        if (data.type !== 'assistant') continue;
+        const msg = data.message && typeof data.message === 'object' ? data.message : {};
+        if (msg.model && msg.model !== '<synthetic>' && !model) model = msg.model;
+        if (!agentType && data.attributionAgent) agentType = data.attributionAgent;
+        const usage = msg.usage && typeof msg.usage === 'object' ? msg.usage : null;
+        if (!usage) continue;
+        const cr = usage.cache_read_input_tokens || 0;
+        const cc = usage.cache_creation_input_tokens || 0;
+        tokens.input += usage.input_tokens || 0;
+        tokens.output += usage.output_tokens || 0;
+        tokens.cached = Math.max(tokens.cached, cr);
+        tokens.cache_creation += cc;
+      }
+    } catch { continue; }
+    tokens.total = tokens.input + tokens.output + tokens.cached;
+    let cost = 0;
+    try {
+      cost = estimateCost(model, tokens.input, tokens.output, tokens.cache_creation, tokens.cached, 'claude-cli') || 0;
+    } catch { cost = 0; }
+    entries.push({
+      agent_id: agentId,
+      agent_type: agentType || 'unknown',
+      description,
+      tool_use_id: toolUseId,
+      model,
+      tokens,
+      cost,
+    });
+  }
+  if (!entries.length) return null;
+
+  const totals = { input: 0, output: 0, cached: 0, cache_creation: 0, total: 0 };
+  const by_type = {};
+  for (const e of entries) {
+    for (const k of Object.keys(totals)) totals[k] += e.tokens[k] || 0;
+    const bt = by_type[e.agent_type] || (by_type[e.agent_type] = { count: 0, total: 0, cost: 0 });
+    bt.count += 1;
+    bt.total += e.tokens.total || 0;
+    bt.cost = Math.round((bt.cost + (e.cost || 0)) * 1e6) / 1e6;
+  }
+  return {
+    spawn_count: entries.length,
+    subagents: entries,
+    totals,
+    by_type,
+    cost: Math.round(entries.reduce((s, e) => s + (e.cost || 0), 0) * 1e6) / 1e6,
+  };
 }
 
 function dominantEntrypoint(rawLines) {
@@ -218,6 +360,7 @@ function trace(sessionId) {
     sessionFile: file,
     agentId: AGENT_ID,
   });
+  const delegation = claudeSubagentUsage(file, sessionId);
 
   return {
     session_id: sessionId,
@@ -227,7 +370,7 @@ function trace(sessionId) {
     project, project_path,
     cwd: project_path,
     steps,
-    stats: buildTraceStats(steps, { filePath: file, rawLines }),
+    stats: buildTraceStats(steps, { filePath: file, rawLines, delegation: delegation || undefined }),
   };
 }
 
@@ -238,5 +381,7 @@ module.exports = {
   trace,
   findSessionFile,
   buildClaudeStyleSteps,
+  claudeSubagentUsage,
+  slashSkillsFromUserText,
   clientFromEntrypoint,
 };

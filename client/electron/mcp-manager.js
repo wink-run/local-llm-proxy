@@ -431,7 +431,7 @@ class MCPManager {
     return { success: true, server: this.getServer(serverId), sync };
   }
 
-  /** 保存自定义 MCP Server */
+  /** 保存自定义 / 编辑 MCP Server */
   saveServer(data) {
     this.init();
     const db = this._getDb();
@@ -439,24 +439,35 @@ class MCPManager {
     const id = data.id || `mcp-custom-${Date.now()}`;
     if (data.id === BUILTIN_BRIDGE_ID) throw new Error('不可修改内置 Bridge');
 
+    const existing = db.prepare('SELECT id, builtin, metadata, status, type FROM mcp_servers WHERE id = ?').get(id);
+    if (existing?.builtin) throw new Error('内置 Server 不可覆盖');
+
+    const prevMeta = this._parseJson(existing?.metadata, {});
+    const nextMeta = { ...prevMeta, ...(data.metadata || {}) };
+    // 未显式传入时保留原 sync_clients
+    if (data.metadata?.sync_clients === undefined && Array.isArray(prevMeta.sync_clients)) {
+      nextMeta.sync_clients = prevMeta.sync_clients;
+    }
+
+    const type = data.type || existing?.type || 'stdio';
     const payload = {
       name: String(data.name || id).trim(),
       display_name: String(data.display_name || data.name || id).trim(),
-      type: data.type || 'stdio',
-      command: String(data.command || '').trim(),
+      type,
+      command: String(data.command ?? '').trim(),
       args: JSON.stringify(Array.isArray(data.args) ? data.args : []),
-      url: data.url || null,
-      env: JSON.stringify(data.env || {}),
-      status: data.status || 'active',
-      metadata: JSON.stringify(data.metadata || { category: 'custom' }),
+      url: data.url != null && String(data.url).trim() ? String(data.url).trim() : null,
+      env: JSON.stringify(data.env && typeof data.env === 'object' ? data.env : {}),
+      status: data.status || existing?.status || 'active',
+      metadata: JSON.stringify(nextMeta),
     };
 
-    if (!payload.command && payload.type === 'stdio') {
+    if (payload.type === 'stdio' && !payload.command) {
       throw new Error('stdio 类型需填写 command');
     }
-
-    const existing = db.prepare('SELECT id, builtin FROM mcp_servers WHERE id = ?').get(id);
-    if (existing?.builtin) throw new Error('内置 Server 不可覆盖');
+    if ((payload.type === 'sse' || payload.type === 'http') && !payload.url) {
+      throw new Error('URL 类型需填写 url');
+    }
 
     if (existing) {
       db.prepare(`
@@ -479,7 +490,30 @@ class MCPManager {
       );
     }
 
-    const sync = data.skipAutoSync ? null : this._autoSyncClients();
+    let sync = null;
+    if (!data.skipAutoSync) {
+      if (data.syncInstalled) {
+        // 仅推送到已分配 / 已安装的 Agent
+        const enriched = this.listManagedServers().find(s => s.id === id);
+        const clientIds = [...new Set([
+          ...(enriched?.sync_clients || []),
+          ...(enriched?.clientTargets || []).filter(c => c.installed).map(c => c.id),
+        ])];
+        if (clientIds.length) {
+          // 保证 filterServersForClient 能下发：把目标写入 sync_clients
+          const prev = enriched?.sync_clients || [];
+          const merged = [...new Set([...prev, ...clientIds])];
+          if (merged.length !== prev.length) {
+            this._persistServerSyncClients(id, merged);
+          }
+          sync = this.syncToClients({ clientIds });
+        } else {
+          sync = { success: true, results: [], skipped: true };
+        }
+      } else {
+        sync = this._autoSyncClients();
+      }
+    }
     return { success: true, server: this.getServer(id), sync };
   }
 
@@ -542,8 +576,8 @@ class MCPManager {
     const mcpClientSync = require('./mcp-client-sync');
     const { serverIds, clientIds } = options;
 
-    // 勾选 MCP + 目标 Agent：先合并 sync_clients，再写入配置文件
-    if (Array.isArray(serverIds) && serverIds.length && Array.isArray(clientIds) && clientIds.length) {
+    // 勾选 MCP + 目标 Agent：以本次勾选为准整体替换 sync_clients（取消勾选 = 从该 Agent 移除）
+    if (Array.isArray(serverIds) && serverIds.length && Array.isArray(clientIds)) {
       const { listSyncEnabledClientIds } = require('./mcp-agent-targets');
       const allowed = new Set(listSyncEnabledClientIds());
       const agents = clientIds.filter(id => allowed.has(id));
@@ -551,9 +585,10 @@ class MCPManager {
         if (serverId === BUILTIN_BRIDGE_ID) continue;
         const server = this.getServer(serverId);
         if (!server || server.status !== 'active') continue;
-        const merged = [...new Set([...(server.sync_clients || []), ...agents])];
-        this._persistServerSyncClients(serverId, merged);
+        this._persistServerSyncClients(serverId, agents);
       }
+      // 全量重写各 Agent 配置，确保被取消勾选的 Agent 也会删掉条目
+      return mcpClientSync.syncAll(this.listManagedServers(), {});
     }
 
     return mcpClientSync.syncAll(this.listManagedServers(), options);
@@ -574,7 +609,7 @@ class MCPManager {
       .run(JSON.stringify(metadata), Date.now(), serverId);
   }
 
-  /** 设置 MCP 同步到哪些 Agent（可分别指定） */
+  /** 设置 MCP 同步到哪些 Agent（可分别指定）；未传 syncClientIds 时同步「旧+新」相关 Agent，确保取消勾选的会被移除 */
   setServerSyncClients(serverId, clientIds, options = {}) {
     this.init();
     if (serverId === BUILTIN_BRIDGE_ID) {
@@ -584,10 +619,15 @@ class MCPManager {
     const allowed = new Set(listSyncEnabledClientIds());
     const ids = [...new Set((clientIds || []).filter(id => allowed.has(id)))];
 
+    const prev = this.getServer(serverId)?.sync_clients || [];
     this._persistServerSyncClients(serverId, ids);
 
+    // 同步旧分配 ∪ 新分配，使取消勾选的 Agent 配置被重写并删掉该 MCP
+    const affected = Array.isArray(options.syncClientIds) && options.syncClientIds.length
+      ? options.syncClientIds.filter(id => allowed.has(id))
+      : [...new Set([...prev, ...ids])];
     const sync = this.syncToClients(
-      options.syncClientIds ? { clientIds: options.syncClientIds } : {},
+      affected.length ? { clientIds: affected } : {},
     );
     return { success: true, server: this.getServer(serverId), sync };
   }
@@ -654,6 +694,8 @@ class MCPManager {
   /** 各 Agent 配置文件中的 MCP 安装情况（含 TB 同步 / 扫描 / 客户端自配） */
   listAgentInstallations() {
     this.init();
+    // 与 listServers 一致：先扫描即纳管，再汇总各 Agent 安装情况
+    this.syncDiscoveredMcps();
     const agents = require('./mcp-client-sync').listAgentInstallations(this.listManagedServers());
     return { agents };
   }
@@ -680,16 +722,11 @@ class MCPManager {
     return enrichServersWithClientInstalls(rows);
   }
 
-  /** 已纳管 MCP（不含客户端自配、未纳管项） */
-  listServers() {
-    return this.listManagedServers();
-  }
-
   /**
    * 将 Agent 上扫描到的 MCP 纳管进 Token Bank（不改动该 Agent 原配置、不自动同步到其他 Agent）
    * 纳管后可在「已纳管」页选择安装到其他 Agent
    */
-  importFromAgent({ clientId, clientKey }) {
+  importFromAgent({ clientId, clientKey, originAgents }) {
     this.init();
     const key = String(clientKey || '').trim();
     if (!clientId || !key) throw new Error('缺少 clientId 或 clientKey');
@@ -716,23 +753,32 @@ class MCPManager {
       };
     }
 
+    const agents = [...new Set(
+      (Array.isArray(originAgents) && originAgents.length ? originAgents : [clientId])
+        .map(id => String(id || '').trim())
+        .filter(Boolean),
+    )];
+
     const safeId = `mcp-import-${key.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase()}`;
     const result = this.saveServer({
       id: safeId,
       name: key,
       display_name: key,
-      type: found.entry.url ? 'sse' : 'stdio',
-      command: found.entry.command,
+      type: found.entry.url ? (found.entry.type === 'http' ? 'http' : 'sse') : 'stdio',
+      command: found.entry.command || '',
       args: found.entry.args,
       env: found.entry.env,
       url: found.entry.url,
       skipAutoSync: true,
       metadata: {
         category: 'imported',
+        origin: 'client_scan',
         importedFrom: key,
-        originAgents: [clientId],
+        originAgents: agents,
+        // 空列表：不自动推送到其他 Agent，保留各客户端原配置
         sync_clients: [],
         description: inferClientMcpDescription(found.entry),
+        ...(found.entry.headers ? { headers: found.entry.headers } : {}),
       },
     });
     this._linkServerToProfile(DEVELOPMENT_PROFILE_ID, safeId);
@@ -741,6 +787,38 @@ class MCPManager {
       alreadyInstalled: false,
       hint: '已纳管客户端 MCP。本 Agent 保留原配置；可在「已纳管」页安装到其他 Agent。',
     };
+  }
+
+  /**
+   * 扫描即纳管：把各 Agent 配置里尚未入库的 MCP 静默导入 Token Bank。
+   * 不改写客户端配置、不同步到其他 Agent；用 origin=client_scan 与 TB 安装区分。
+   */
+  syncDiscoveredMcps() {
+    this.init();
+    const { discoverExternalMcps } = require('./mcp-client-sync');
+    const external = discoverExternalMcps(this.listManagedServers());
+    let imported = 0;
+    for (const ext of external) {
+      const clients = ext.clientInstalls || [];
+      if (!clients.length) continue;
+      try {
+        const res = this.importFromAgent({
+          clientId: clients[0].clientId,
+          clientKey: ext.name,
+          originAgents: clients.map(c => c.clientId),
+        });
+        if (res.success && !res.alreadyInstalled) imported += 1;
+      } catch (e) {
+        console.warn(`[mcp-manager] syncDiscovered ${ext.name}:`, e.message);
+      }
+    }
+    return { success: true, imported, total: external.length };
+  }
+
+  /** 已纳管 MCP（扫描即纳管后返回最新列表） */
+  listServers() {
+    this.syncDiscoveredMcps();
+    return this.listManagedServers();
   }
 
   /** 将客户端自配 MCP 导入 Token Bank（取首个匹配的 Agent） */

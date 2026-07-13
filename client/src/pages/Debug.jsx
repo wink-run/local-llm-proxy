@@ -576,6 +576,9 @@ export default function Debug() {
   const [panels,         setPanels]        = useState(() => ({ main: loadDebugPanel() }));
   const [sending,        setSending]       = useState(false);
   const [lightbox,       setLightbox]      = useState(null);
+  // LLM 模式：从资产加载的提示词列表，选中后填入 System
+  const [promptList,     setPromptList]    = useState([]);
+  const [selectedPromptId, setSelectedPromptId] = useState('');
 
   // Agent 模式状态
   const [agents, setAgents] = useState(() => getCachedAgentsList() || []);
@@ -661,21 +664,27 @@ export default function Debug() {
   const messagesEndRef = useRef(null);
   const textareaRef    = useRef(null);
 
-  // 进入 Debug 页即预加载 Agent 列表（切换 Agent 模式时无需再等）
+  // 进入游乐场即预加载 Agent / 提示词（切换模式时无需再等）
   useEffect(() => {
     loadAgents();
+    loadPromptList();
   }, []);
 
-  // Debug 页保持挂载（App keep-alive），从「资产」投射智能体后返回本页时强制刷新，
-  // 纳入新投射/纳管的智能体（否则命中前端缓存看不到新 tab）。复用上方 location。
+  // 游乐场 keep-alive：从「资产」返回时强制刷新智能体与提示词
   const prevDebugPathRef = useRef(location.pathname);
   useEffect(() => {
     const wasActive = prevDebugPathRef.current === '/debug';
     prevDebugPathRef.current = location.pathname;
     if (location.pathname === '/debug' && !wasActive) {
       loadAgents({ force: true });
+      loadPromptList();
     }
   }, [location.pathname]);
+
+  // 切到 LLM 模式时刷新提示词（资产页新建后可立即选用）
+  useEffect(() => {
+    if (mode === 'llm') loadPromptList();
+  }, [mode]);
 
   // Load Agents when switching to agent mode（缓存为空时补拉）
   useEffect(() => {
@@ -1449,6 +1458,36 @@ export default function Debug() {
     }
   }
 
+  /** 从资产加载已纳管的提示词，供 LLM 模式选用为 System */
+  async function loadPromptList() {
+    if (!window.electronAPI?.resource?.listResources) return;
+    try {
+      const res = await window.electronAPI.resource.listResources({ type: 'prompt' });
+      if (res.success) {
+        setPromptList(res.resources || []);
+        // 列表刷新后若原选项已删除，清空选中态（保留已填入的 system 正文）
+        setSelectedPromptId(prev => {
+          if (!prev) return '';
+          return (res.resources || []).some(p => p.id === prev) ? prev : '';
+        });
+      }
+    } catch (error) {
+      console.warn('[PlayGround] loadPromptList failed:', error);
+    }
+  }
+
+  /** 选择提示词 → 写入 System Prompt 并展开编辑区 */
+  function applyPromptSelection(promptId) {
+    setSelectedPromptId(promptId);
+    if (!promptId) return;
+    const prompt = promptList.find(p => p.id === promptId);
+    if (!prompt) return;
+    setPanel({
+      systemPrompt: prompt.content || '',
+      showSystem: true,
+    });
+  }
+
   /** UI 展示用任务状态：executing 锁释放后不再显示 running */
   function displayTaskStatus() {
     if (executing) return 'running';
@@ -1838,42 +1877,49 @@ export default function Debug() {
     if (el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 160) + 'px'; }
   }
 
-  return (
-    <div className="flex flex-col h-screen">
+  // 模式切换按钮（LLM / Agent 共用）
+  const modeSwitcher = (
+    <div className="inline-flex rounded-lg border border-zinc-200 dark:border-zinc-700 p-0.5 bg-zinc-50 dark:bg-zinc-900">
+      <button
+        type="button"
+        onClick={() => setMode('llm')}
+        className={`
+          px-3 py-1 text-sm font-medium rounded-md transition-all
+          ${mode === 'llm'
+            ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+            : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
+          }
+        `}
+      >
+        💬 LLM 模式
+      </button>
+      <button
+        type="button"
+        onClick={() => setMode('agent')}
+        className={`
+          px-3 py-1 text-sm font-medium rounded-md transition-all
+          ${mode === 'agent'
+            ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+            : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
+          }
+        `}
+      >
+        🤖 Agent 模式
+      </button>
+    </div>
+  );
 
-      {/* ── Toolbar ── */}
-      <div className="shrink-0 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 px-4 pt-5 pb-2 space-y-2 electron-no-drag relative z-[60]">
+  return (
+    /* 顶栏拉通；智能体列表仅在 Agent 模式内容区内 */
+    <div className="relative h-screen min-h-0 flex flex-col bg-white dark:bg-zinc-900">
+      {/* ── 顶栏（整宽）── */}
+      <div className={`shrink-0 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 px-4 electron-no-drag relative z-[60] ${
+        mode === 'agent' ? 'pt-4 pb-2' : 'pt-4 pb-2 space-y-2'
+      }`}>
 
         {/* Mode Switcher — electron-no-drag 避免被顶部拖拽条拦截点击 */}
         <div className="flex gap-2 items-center">
-          <div className="inline-flex rounded-lg border border-zinc-200 dark:border-zinc-700 p-1 bg-zinc-50 dark:bg-zinc-900">
-            <button
-              type="button"
-              onClick={() => setMode('llm')}
-              className={`
-                px-4 py-1.5 text-sm font-medium rounded-md transition-all
-                ${mode === 'llm'
-                  ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
-                  : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
-                }
-              `}
-            >
-              💬 LLM 模式
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode('agent')}
-              className={`
-                px-4 py-1.5 text-sm font-medium rounded-md transition-all
-                ${mode === 'agent'
-                  ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
-                  : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
-                }
-              `}
-            >
-              🤖 Agent 模式
-            </button>
-          </div>
+          {modeSwitcher}
         </div>
 
         {/* LLM Mode Toolbar */}
@@ -1980,6 +2026,22 @@ export default function Debug() {
                 <input type="checkbox" checked={streamMode} onChange={e => setPanel({ streamMode: e.target.checked })} className="w-3.5 h-3.5 accent-blue-600" />
                 {t('debug.stream')}
               </label>
+              {/* 从资产选用提示词，写入 System */}
+              <select
+                value={selectedPromptId}
+                onChange={e => applyPromptSelection(e.target.value)}
+                title={t('debug.promptSelectTitle')}
+                className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500 max-w-[160px]"
+              >
+                <option value="">
+                  {promptList.length === 0 ? t('debug.promptEmpty') : t('debug.promptNone')}
+                </option>
+                {promptList.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.display_name || p.name}
+                  </option>
+                ))}
+              </select>
               <button onClick={() => setPanel({ showSystem: !showSystem })}
                 className={`text-xs px-2 py-1 rounded-md transition-colors ${showSystem ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300' : 'text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}>
                 System
@@ -1996,16 +2058,26 @@ export default function Debug() {
           )}
         </div>
 
-        {/* System prompt */}
+        {/* System prompt：手动编辑后取消提示词选中态 */}
         {!imageMode && showSystem && (
-          <textarea value={systemPrompt} onChange={e => setPanel({ systemPrompt: e.target.value })}
-            rows={2} placeholder={t('debug.systemPh')}
-            className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 resize-none" />
+          <textarea
+            value={systemPrompt}
+            onChange={e => {
+              setSelectedPromptId('');
+              setPanel({ systemPrompt: e.target.value });
+            }}
+            rows={6}
+            placeholder={t('debug.systemPh')}
+            className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 resize-y min-h-[7.5rem] max-h-[40vh]"
+          />
         )}
         </>
         )}
 
-        {/* Agent Mode：顶部 Agent 标签条 */}
+      </div>
+
+      {/* ── 主体：Agent 模式下左侧智能体列表 + 右侧对话 ── */}
+      <div className="flex flex-1 min-h-0 min-w-0">
         {mode === 'agent' && (
           <AgentTabBar
             agents={agents}
@@ -2016,10 +2088,10 @@ export default function Debug() {
             loading={loadingAgents && agents.length === 0}
           />
         )}
-      </div>
 
+        <div className="flex flex-col flex-1 min-w-0 min-h-0">
       {/* ── Message list / Agent UI ── */}
-      <div className="flex-1 overflow-y-auto px-4 pt-2 pb-4 space-y-4">
+      <div className="flex-1 overflow-y-auto px-4 pt-3 pb-4 space-y-4">
         {mode === 'llm' ? (
           /* LLM Mode: Chat messages */
           <>
@@ -2100,7 +2172,7 @@ export default function Debug() {
         <div ref={messagesEndRef} />
           </>
         ) : (
-          /* Agent Mode：全宽对话流 */
+          /* Agent Mode：右侧对话流 */
           <div className="h-full flex flex-col">
             {isHubMode ? (
               /* 聚合入口：由主 Agent 编排 */
@@ -2149,7 +2221,7 @@ export default function Debug() {
                       </div>
                     )}
                     <p className="text-xs text-zinc-400 mt-3">
-                      也可点击 Agent 标签旁的 ☆ 设为主 Agent
+                      也可点击左侧 Agent 旁的 ☆ 设为主 Agent
                     </p>
                   </div>
                 </div>
@@ -2313,6 +2385,8 @@ export default function Debug() {
             </div>
           </div>
         )}
+      </div>
+      </div>
       </div>
 
       {/* ── 历史会话 ── */}

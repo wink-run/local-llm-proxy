@@ -219,10 +219,61 @@ function pickUsage(obj) {
   };
 }
 
-function buildTraceStats(steps, { filePath, rawLines } = {}) {
+/** 从 tool 名拆 MCP：mcp__server__tool / mcp_server_tool（对齐 tokentelemetry） */
+function mcpUsageFromToolCounts(toolCounts) {
+  const out = {};
+  for (const [name, n] of Object.entries(toolCounts || {})) {
+    if (typeof name !== 'string' || !n) continue;
+    let raw = name.startsWith('default_api:') ? name.slice('default_api:'.length) : name;
+    let serverName = null;
+    let tool = null;
+    if (raw.startsWith('mcp__')) {
+      const parts = raw.split('__');
+      if (parts.length >= 3 && parts[1] && parts[2]) {
+        serverName = parts[1];
+        tool = parts.slice(2).join('__');
+      }
+    } else if (raw.startsWith('mcp_')) {
+      const rest = raw.slice(4);
+      const i = rest.indexOf('_');
+      if (i > 0) {
+        serverName = rest.slice(0, i);
+        tool = rest.slice(i + 1);
+      }
+    }
+    if (!serverName || !tool) continue;
+    const server = out[serverName] || (out[serverName] = {});
+    server[tool] = (server[tool] || 0) + n;
+  }
+  return out;
+}
+
+/** skills_used: [{ name, count }]，按次数降序 */
+function skillsUsedFromCounts(skillCounts) {
+  return Object.entries(skillCounts || {})
+    .filter(([, c]) => c > 0)
+    .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
+    .map(([name, count]) => ({ name, count }));
+}
+
+/** mcp_servers 列表（Trace UI）：[{ name, calls, tools: [{name,count}] }] */
+function mcpServersFromUsage(mcpUsage) {
+  return Object.entries(mcpUsage || {})
+    .map(([name, tools]) => {
+      const toolList = Object.entries(tools || {})
+        .sort((a, b) => b[1] - a[1])
+        .map(([t, count]) => ({ name: t, count }));
+      const calls = toolList.reduce((s, t) => s + t.count, 0);
+      return { name, calls, tools: toolList };
+    })
+    .sort((a, b) => b.calls - a.calls);
+}
+
+function buildTraceStats(steps, { filePath, rawLines, delegation } = {}) {
   let tools = 0, turns = 0, reasoning = 0, artifacts = 0, toolResults = 0, skills = 0;
   let inTok = 0, outTok = 0, cached = 0;
   const toolCounts = {};
+  const skillCounts = {};
   const skillNames = [];
   for (const s of steps) {
     if (s.kind === 'tool') {
@@ -230,7 +281,14 @@ function buildTraceStats(steps, { filePath, rawLines } = {}) {
       const key = s.tool || s.label || 'tool';
       toolCounts[key] = (toolCounts[key] || 0) + 1;
       if (ARTIFACT_TOOLS.has(s.tool)) artifacts++;
-      if (s.tool === 'Skill') { skills++; if (s.skill) skillNames.push(s.skill); }
+      // Skill：结构化 Skill 工具，或 Codex 路径面包屑挂上的 s.skill
+      if (s.skill) {
+        skills++;
+        skillNames.push(s.skill);
+        skillCounts[s.skill] = (skillCounts[s.skill] || 0) + 1;
+      } else if (s.tool === 'Skill') {
+        skills++;
+      }
     }
     if (s.kind === 'tool_result') toolResults++;
     if (s.kind === 'user') turns++;
@@ -242,6 +300,23 @@ function buildTraceStats(steps, { filePath, rawLines } = {}) {
   const toolBreakdown = Object.entries(toolCounts)
     .sort((a, b) => b[1] - a[1])
     .map(([name, count]) => ({ name, count }));
+  const skills_used = skillsUsedFromCounts(skillCounts);
+  const mcp_usage = mcpUsageFromToolCounts(toolCounts);
+  const mcp_servers = mcpServersFromUsage(mcp_usage);
+
+  // Subagent types：按 agent_type 汇总 spawn / tokens / cost
+  let subagent_types = [];
+  if (delegation?.by_type) {
+    subagent_types = Object.entries(delegation.by_type)
+      .map(([name, row]) => ({
+        name,
+        spawns: row.count || 0,
+        tokens: row.total || 0,
+        cost: row.cost || 0,
+      }))
+      .sort((a, b) => (b.cost - a.cost) || (b.spawns - a.spawns));
+  }
+
   let durationMs = 0;
   if (filePath) {
     try {
@@ -253,13 +328,17 @@ function buildTraceStats(steps, { filePath, rawLines } = {}) {
   if (tsList.length >= 2) {
     durationMs = Math.max(durationMs, Math.max(...tsList) - Math.min(...tsList));
   }
-  return {
+  const stats = {
     steps: steps.length,
     tools,
     toolResults,
     skills,
     skillNames,
+    skills_used,
+    tool_counts: toolCounts,
     toolBreakdown,
+    mcp_usage,
+    mcp_servers,
     artifacts,
     reasoning,
     turns,
@@ -268,6 +347,11 @@ function buildTraceStats(steps, { filePath, rawLines } = {}) {
     duration: formatDuration(durationMs),
     tokens: { input: inTok, output: outTok, cached },
   };
+  if (delegation) {
+    stats.delegation = delegation;
+    stats.subagent_types = subagent_types;
+  }
+  return stats;
 }
 
 function fileTimeSpan(filePath, lineCount) {
@@ -301,6 +385,9 @@ module.exports = {
   readSessionCwd,
   pickUsage,
   buildTraceStats,
+  mcpUsageFromToolCounts,
+  skillsUsedFromCounts,
+  mcpServersFromUsage,
   fileTimeSpan,
   stepTs,
   pathFromEncodedSlug,

@@ -149,7 +149,7 @@ local-llm-proxy/
 - **导出** `exportSession`：trace → 会话包 JSON（`tokenbank.session-pack`）/ Markdown transcript / 复制到剪贴板，落盘 `~/.tokenbank/session-packs/`。
 - **跨 agent 续聊（handoff）** `continueSession`：
   1. `buildSessionDigest` 把 trace 压成摘要素材（同时保留**最早 user 消息=原始目标** 与 **最近进展**，避免只看结尾丢意图）。
-  2. `summarizeViaGateway` 经本地网关 `11430` 调模型（`HANDOFF_MODELS` 多模型 failover）生成结构化交接 brief：用户目标 / 验收标准 / 完成状态 / 已完成 / 下一步 / 关键文件 / 关键决策。
+  2. `summarizeViaGateway` 经本地网关 `11430` 调模型（`HANDOFF_MODELS` 多模型 failover）生成结构化交接 brief：任务 / 已完成 / 当前卡点 / 下一步计划 / 绝对不要再踩的坑 / 关键文件与决策。
   3. `composeHandoffDoc` 组装 → 写 `~/.tokenbank/handoffs/*.md`。
   4. 启动目标 agent 的桌面 app（`open -a` / Cursor 打开项目）+ 剪贴板提示粘贴。
 - **知识提炼** `synthesizeKnowledge`：

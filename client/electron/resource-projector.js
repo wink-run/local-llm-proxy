@@ -180,45 +180,46 @@ function projectSkillToAgent(resource, agentId, scope = 'global', options = {}) 
   };
 }
 
-/** 取消投射：仅删除软链/复制目录，不删用户权威目录 */
+/** 取消投射：删除软链/副本/非权威实体目录；权威目录本身不删（卸载时才删） */
 function unprojectSkillFromAgent(resource, agentId, projectionType = 'symlink', targetPathHint) {
-  if (projectionType === 'scan' || projectionType === 'reference' || projectionType === 'origin') {
+  if (projectionType === 'reference') {
     return { removed: false, skipped: true };
   }
 
-  const target = getAgentTarget(agentId);
-  if (!target) return { removed: false };
+  const authorityDir = resolveAuthorityDir(resource)
+    || normalizeSkillDirPath(
+      resource?.metadata?.authorityPath || resource?.metadata?.scannedFrom || resource?.authorityPath,
+      resource?.name,
+    );
 
-  const skillRoot = target.getSkillRoot();
-  const skillDir = normalizeSkillDirPath(
-    targetPathHint || path.join(skillRoot, resource.name),
-    resource.name,
-  ) || path.join(skillRoot, resource.name);
-
-  if (!pathExists(skillDir)) return { removed: false, path: skillDir };
-
-  try {
-    const st = fs.lstatSync(skillDir);
-    if (st.isSymbolicLink()) {
-      fs.unlinkSync(skillDir);
-    } else if (projectionType === 'copy') {
-      fs.rmSync(skillDir, { recursive: true, force: true });
-    } else {
-      const legacyMd = path.join(skillDir, 'SKILL.md');
-      if (pathExists(legacyMd) && fs.lstatSync(legacyMd).isSymbolicLink()) {
-        fs.unlinkSync(legacyMd);
-        try {
-          if (fs.readdirSync(skillDir).length === 0) fs.rmdirSync(skillDir);
-        } catch {}
-        return { removed: true, path: legacyMd };
-      }
-      return { removed: false, skipped: true, path: skillDir };
-    }
-  } catch {
-    return { removed: false, path: skillDir };
+  let skillDir = normalizeSkillDirPath(targetPathHint, resource?.name);
+  if (!skillDir) {
+    const target = getAgentTarget(agentId);
+    if (!target) return { removed: false };
+    skillDir = path.join(target.getSkillRoot(), resource.name);
   }
 
-  return { removed: true, path: skillDir };
+  const abs = resolvePath(skillDir);
+  // 权威源只保留一处：取消投射不得删除权威目录
+  if (authorityDir && abs === resolvePath(authorityDir)) {
+    return { removed: false, skipped: true, reason: 'authority', path: abs };
+  }
+
+  if (!pathExists(abs)) return { removed: false, path: abs };
+
+  try {
+    const st = fs.lstatSync(abs);
+    if (st.isSymbolicLink()) {
+      fs.unlinkSync(abs);
+    } else {
+      // 副本，或其它 Agent 上的多余实体（含 scan/origin）→ 删除目录
+      fs.rmSync(abs, { recursive: true, force: true });
+    }
+  } catch (e) {
+    throw new Error(`取消投射失败: ${e.message}`);
+  }
+
+  return { removed: true, path: abs };
 }
 
 /**

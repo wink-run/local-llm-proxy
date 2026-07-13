@@ -123,10 +123,11 @@ function registerMcpHandlers() {
     }
   });
 
-  ipcMain.handle('mcp:setServerSyncClients', async (_event, { serverId, clientIds }) => {
+  ipcMain.handle('mcp:setServerSyncClients', async (_event, params = {}) => {
     try {
       mcpManager.init();
-      return mcpManager.setServerSyncClients(serverId, clientIds);
+      const { serverId, clientIds, syncClientIds } = params;
+      return mcpManager.setServerSyncClients(serverId, clientIds, { syncClientIds });
     } catch (error) {
       console.error('[IPC] mcp:setServerSyncClients error:', error);
       return { success: false, error: error.message };

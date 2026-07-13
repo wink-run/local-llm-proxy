@@ -7,6 +7,9 @@ const os = require('os');
 const {
   extractContext, toolResultText, buildTraceStats, fileTimeSpan, stepTs,
 } = require('./shared');
+const {
+  extractSkillsFromWorkbuddySpan,
+} = require('../skill-signals');
 
 const AGENT_ID = 'workbuddy';
 const PROFILE = 'workbuddy-trace';
@@ -191,6 +194,7 @@ function buildStepsFromSpans(spans, timeSpan) {
         outTok,
         cached,
       });
+      // Skill 以独立 function span 记录，不在此从 tool_calls 重复计入
     } else if (type === 'assistant' || type === 'agent') {
       const text = spanText(span);
       if (!text && type === 'agent') continue; // agent 容器 span，无内容跳过
@@ -212,16 +216,34 @@ function buildStepsFromSpans(spans, timeSpan) {
       }
     } else if (type === 'tool' || type === 'tool_call' || type === 'function') {
       const toolName = span.toolName || span.name || span.tool || 'tool';
+      const toolInput = span.toolInput || span.input || span.arguments;
       const resultText = parseFunctionOutput(span.toolOutput);
-      steps.push({
-        idx: steps.length,
-        kind: 'tool',
-        label: toolName,
-        ts,
-        tool: toolName,
-        input: span.toolInput || span.input || span.arguments,
-        ...(resultText ? { text: resultText } : {}),
-      });
+      const skillHits = extractSkillsFromWorkbuddySpan(span);
+      if (skillHits.length) {
+        for (const sk of skillHits) {
+          steps.push({
+            idx: steps.length,
+            kind: 'tool',
+            label: `Skill · ${sk.raw}`,
+            ts,
+            tool: toolName,
+            skill: sk.raw,
+            signal: sk.signal,
+            input: toolInput,
+            ...(resultText ? { text: resultText } : {}),
+          });
+        }
+      } else {
+        steps.push({
+          idx: steps.length,
+          kind: 'tool',
+          label: toolName,
+          ts,
+          tool: toolName,
+          input: toolInput,
+          ...(resultText ? { text: resultText } : {}),
+        });
+      }
     } else if (type === 'tool_result' || type === 'tool_output') {
       steps.push({
         idx: steps.length,

@@ -8,6 +8,7 @@ const {
   expandHome, extractContext, toolResultText, resolveProjectName,
   readSessionCwd, buildTraceStats, fileTimeSpan, stepTs,
 } = require('./shared');
+const { extractSkillsFromToolCall } = require('../skill-signals');
 
 const AGENT_ID = 'codex';
 const PROFILE = 'codex-rollout';
@@ -254,10 +255,22 @@ function trace(sessionId) {
     } else if (data.type === 'response_item') {
       const p = data.payload || {};
       if (p.type === 'function_call') {
-        steps.push({
-          idx: steps.length, kind: 'tool', label: p.name || 'tool', ts,
-          tool: p.name, input: p.arguments,
-        });
+        const skillHits = extractSkillsFromToolCall(p.name, p.arguments, { signalPrefix: 'codex' });
+        if (skillHits.length) {
+          for (const sk of skillHits) {
+            steps.push({
+              idx: steps.length, kind: 'tool',
+              label: `Skill · ${sk.raw}`, ts,
+              tool: p.name, skill: sk.raw, signal: sk.signal,
+              input: p.arguments,
+            });
+          }
+        } else {
+          steps.push({
+            idx: steps.length, kind: 'tool', label: p.name || 'tool', ts,
+            tool: p.name, input: p.arguments,
+          });
+        }
       } else if (p.type === 'function_call_output' || p.type === 'tool_result') {
         const out = toolResultText(p.output ?? p.content);
         steps.push({

@@ -113,6 +113,16 @@ function registerResourceHandlers() {
     }
   });
 
+  ipcMain.handle('resource:syncDiscovered', async (_event, filters = {}) => {
+    try {
+      resourceManager.init();
+      return resourceManager.syncDiscoveredSkills(filters);
+    } catch (error) {
+      console.error('[IPC] resource:syncDiscovered error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   ipcMain.handle('resource:importDiscovered', async (_event, params = {}) => {
     try {
       resourceManager.init();
@@ -203,6 +213,26 @@ function registerResourceHandlers() {
       return { success: true };
     } catch (error) {
       console.error('[IPC] resource:openPath error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('resource:listIdleSkills', async (_event, options = {}) => {
+    try {
+      resourceManager.init();
+      return resourceManager.listIdleSkills(options || {});
+    } catch (error) {
+      console.error('[IPC] resource:listIdleSkills error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('resource:cleanupSkills', async (_event, params = {}) => {
+    try {
+      resourceManager.init();
+      return resourceManager.cleanupSkills(params.resourceIds || []);
+    } catch (error) {
+      console.error('[IPC] resource:cleanupSkills error:', error);
       return { success: false, error: error.message };
     }
   });

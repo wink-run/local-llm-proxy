@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { getProfile, listKeys } from '../api/client';
 import { loadUserAccounts, saveUserAccounts, syncProviderCatalog } from '../api/userAccounts';
-import { getLocalConfig, getConfig } from '../api/adapter';
+import { getLocalConfig, getConfig, isElectron } from '../api/adapter';
 import { getServerUrl, normalizeServerBase, getSyncServerBase, syncCloudConfigUrl, bootstrapServerUrl } from '../config';
 import { stopAgent } from '../api/agentControl';
 
@@ -11,9 +11,15 @@ const POLL_INTERVAL = 30_000;
 
 // 将登录 JWT 同步到网关主进程 / CLI admin-api（用量上报与设备心跳须 JWT，非 P2P Key）
 async function syncUserSession(jwt) {
-  try {
-    await window.electronAPI?.gateway?.setUserAuth?.(jwt || null);
-  } catch {}
+  // Electron：经 IPC 写入主进程即可，勿打 Vite 同源 /api（会 404）
+  if (isElectron()) {
+    try {
+      await window.electronAPI.gateway?.setUserAuth?.(jwt || null);
+    } catch {}
+    if (jwt) syncProviderCatalog().catch(() => {});
+    return;
+  }
+  // CLI / 浏览器：同源 admin-api
   try {
     if (jwt) {
       const serverUrl = normalizeServerBase(getServerUrl() || '');
