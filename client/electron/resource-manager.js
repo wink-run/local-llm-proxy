@@ -38,7 +38,7 @@ const {
   findScanGroupByScanKey,
   hashContent: scanHashContent,
 } = require('./resource-skill-scanner');
-const { parseAssistantConfig, formatAssistantContent, assistantContentNeedsMigration, resolveAssistantRuntimeAgent, withAssistantRuntimeAgent } = require('./resource-assistant');
+const { parseAssistantConfig, formatAssistantContent, assistantContentNeedsMigration, resolveAssistantRuntimeAgent, withAssistantRuntimeAgent, ASSISTANT_RUNTIME_IDS, DEFAULT_RUNTIME_AGENT } = require('./resource-assistant');
 
 /**
  * 按模板智能填充参数：正文含 $ARGUMENTS → 全部替换为参数；不含 → 参数非空时以分隔线追加。
@@ -381,10 +381,42 @@ class ResourceManager {
     );
 
     if (item.type === 'skill') this._ensureSkillOnDisk(id);
-    if (item.type === 'assistant') this._invalidateAgentList();
+    let installedDependencies = [];
+    if (item.type === 'assistant') {
+      this._invalidateAgentList();
+      installedDependencies = this._installAssistantCatalogDeps(item);
+    }
 
     const resource = this.getResource(id);
-    return { success: true, resource, alreadyInstalled: false };
+    return { success: true, resource, alreadyInstalled: false, installedDependencies };
+  }
+
+  /**
+   * 纳管智能体时，级联纳管其声明的 skill / prompt 依赖（存在于社区目录且尚未纳管者）。
+   * @returns {string[]} 新纳管依赖的 resourceId 列表
+   */
+  _installAssistantCatalogDeps(assistantItem) {
+    const config = parseAssistantConfig(assistantItem.content);
+    const deps = [
+      ...(config.skills || []).map(name => ({ type: 'skill', name })),
+      ...(config.prompts || []).map(name => ({ type: 'prompt', name })),
+    ];
+    if (!deps.length) return [];
+
+    const catalogItems = listCatalogItems();
+    const installed = [];
+    for (const dep of deps) {
+      if (this._findByTypeName(dep.type, dep.name)) continue; // 已纳管
+      const catItem = catalogItems.find(c => c.type === dep.type && c.name === dep.name);
+      if (!catItem) continue; // 目录中无此依赖，跳过
+      try {
+        const r = this.installFromCatalog(catItem.catalogId);
+        if (r?.resource && !r.alreadyInstalled) installed.push(r.resource.id);
+      } catch (e) {
+        console.warn('[resource-manager] 级联纳管依赖失败:', dep.name, e.message);
+      }
+    }
+    return installed;
   }
 
   saveResource(data = {}) {
@@ -872,7 +904,11 @@ class ResourceManager {
     const resource = this.getResource(resourceId);
     if (!resource || resource.type !== 'assistant') return null;
     const config = parseAssistantConfig(resource.content);
-    const nextRuntime = resolveAssistantRuntimeAgent(config, resource.projections || []);
+    // 无任何运行时投射时回退默认，避免取消投射后仍残留旧运行时（如仍显示 →Codex）
+    const hasRuntimeProj = (resource.projections || []).some(p => ASSISTANT_RUNTIME_IDS.has(p.agentId));
+    const nextRuntime = hasRuntimeProj
+      ? resolveAssistantRuntimeAgent(config, resource.projections || [])
+      : DEFAULT_RUNTIME_AGENT;
     if (!nextRuntime || nextRuntime === config.runtime_agent) {
       try { require('./agent-executor').invalidateAgentListCache?.(); } catch { /* ignore */ }
       return resource;
