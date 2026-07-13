@@ -22,6 +22,7 @@ const {
   resolveAssistantRuntimeAgent,
   buildAssistantLaunch,
   ASSISTANT_ID_PREFIX,
+  ASSISTANT_RUNTIME_IDS,
 } = require('./resource-assistant');
 
 const AGENT_CLI = {
@@ -229,6 +230,11 @@ class AgentExecutor extends EventEmitter {
     const list = [];
 
     for (const resource of items) {
+      // 未投射到运行时的智能体不进 Debug（投射=在 Debug 启用；取消投射即从 Debug 移除）
+      const hasRuntimeProjection = (resource.projections || [])
+        .some(p => ASSISTANT_RUNTIME_IDS.has(p.agentId));
+      if (!hasRuntimeProjection) continue;
+
       const config = parseAssistantConfig(resource.content);
       // 投射到 Codex/Claude Code 时，Debug 运行时跟投射走（避免仍显示默认 claude-code）
       const runtimeAgentId = resolveAssistantRuntimeAgent(
