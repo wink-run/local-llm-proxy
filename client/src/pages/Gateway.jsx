@@ -1350,6 +1350,24 @@ function TraceStatPill({ label, value, tone }) {
   );
 }
 
+/** Trace 里 agent_id 缩写（对齐 tokentelemetry analytics 展示） */
+function shortTraceAgent(agentId) {
+  if (!agentId) return '';
+  const id = String(agentId);
+  if (id.startsWith('claude')) return 'claude';
+  if (id === 'codex' || id.startsWith('codex')) return 'codex';
+  if (id.includes('cursor')) return 'cursor';
+  if (id.includes('workbuddy')) return 'workbuddy';
+  return id;
+}
+
+function fmtCompactTok(n) {
+  const v = Number(n) || 0;
+  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}k`;
+  return String(v);
+}
+
 // Session Trace 弹窗（参考 tokentelemetry，简化版）
 function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
   const { t } = useLang();
@@ -1431,42 +1449,136 @@ function SessionTraceModal({ app, sessionId, traceAgentId, onClose }) {
               )}
             </div>
 
-            {/* 工具调用统计（参考 tokentelemetry TOOL SUMMARY），默认折叠 */}
-            {(st.toolBreakdown?.length > 0 || st.skillNames?.length > 0) && (
+            {/* 生态用量：Subagent / Skills / MCP（对齐 tokentelemetry analytics）+ 工具汇总 */}
+            {(st.subagent_types?.length > 0 || st.skills_used?.length > 0 || st.mcp_servers?.length > 0
+              || st.toolBreakdown?.length > 0) && (
               <div className="px-5 py-2.5 border-b border-zinc-100 dark:border-zinc-800 shrink-0 space-y-2">
                 <button type="button" onClick={() => setToolsOpen(o => !o)}
                   className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
                   <span className={`transition-transform ${toolsOpen ? 'rotate-90' : ''}`}>▸</span>
-                  {t('gateway.trace.toolSummary')}
+                  {t('gateway.trace.ecosystemSummary')}
                   <span className="text-zinc-300 dark:text-zinc-600 normal-case font-normal">
-                    {st.tools ?? 0}{(st.skills ?? 0) > 0 ? ` · ${st.skills} skill` : ''}
+                    {[
+                      st.subagent_types?.length ? `${st.subagent_types.length} subagent` : null,
+                      st.skills_used?.length ? `${st.skills_used.length} skill` : null,
+                      st.mcp_servers?.length ? `${st.mcp_servers.length} mcp` : null,
+                      st.tools ? `${st.tools} tools` : null,
+                    ].filter(Boolean).join(' · ')}
                   </span>
                 </button>
-                {toolsOpen && (<>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5">
-                  {st.toolBreakdown.map(({ name, count }) => {
-                    const max = st.toolBreakdown[0]?.count || 1;
-                    const short = name.startsWith('mcp__') ? name.split('__').slice(-1)[0] : name;
-                    return (
-                      <div key={name} className="flex items-center gap-2 min-w-0" title={name}>
-                        <span className="text-xs text-zinc-600 dark:text-zinc-300 truncate flex-1">{short}</span>
-                        <span className="text-xs font-semibold tabular-nums text-zinc-400">×{count}</span>
-                        <div className="w-10 h-1 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden shrink-0">
-                          <div className="h-full bg-blue-500/70" style={{ width: `${(count / max) * 100}%` }} />
+                {toolsOpen && (
+                  <div className="space-y-3">
+                    {/* Subagent types */}
+                    {st.subagent_types?.length > 0 && (
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-violet-500/80 mb-1.5">
+                          {t('gateway.trace.subagentTypes')}
+                        </div>
+                        <ul className="space-y-1.5">
+                          {st.subagent_types.map(row => (
+                            <li key={row.name} className="flex items-center justify-between gap-2 text-[11px]">
+                              <span className="min-w-0 flex flex-col">
+                                <span className="font-mono text-zinc-800 dark:text-zinc-200 truncate" title={row.name}>{row.name}</span>
+                                <span className="text-zinc-400">
+                                  {row.spawns} spawn{row.spawns === 1 ? '' : 's'}
+                                  {trace?.agent ? ` · ${shortTraceAgent(trace.agent)}` : ''}
+                                </span>
+                              </span>
+                              <span className="text-right shrink-0 tabular-nums">
+                                {(row.cost > 0 || row.tokens > 0) ? (
+                                  <>
+                                    <span className="block font-semibold text-amber-600 dark:text-amber-400">${(row.cost || 0).toFixed(2)}</span>
+                                    <span className="block text-zinc-400">{fmtCompactTok(row.tokens)} tok</span>
+                                  </>
+                                ) : (
+                                  <span className="text-zinc-400">tokens n/a</span>
+                                )}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Skills used */}
+                    {st.skills_used?.length > 0 && (
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-emerald-600/80 mb-1.5">
+                          {t('gateway.trace.skillsUsed')}
+                        </div>
+                        <ul className="space-y-1.5">
+                          {st.skills_used.map(s => (
+                            <li key={s.name} className="flex items-center justify-between gap-2 text-[11px]">
+                              <span className="min-w-0">
+                                <span className="font-mono text-zinc-800 dark:text-zinc-200 truncate block" title={s.name}>
+                                  /{String(s.name).replace(/^\//, '')}
+                                </span>
+                                {trace?.agent && (
+                                  <span className="text-[10px] text-zinc-400">{shortTraceAgent(trace.agent)}</span>
+                                )}
+                              </span>
+                              <span className="tabular-nums text-zinc-400 whitespace-nowrap shrink-0">
+                                ×{s.count}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* MCP servers */}
+                    {st.mcp_servers?.length > 0 && (
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-cyan-600/80 mb-1.5">
+                          {t('gateway.trace.mcpServers')}
+                        </div>
+                        <ul className="space-y-2">
+                          {st.mcp_servers.map(m => (
+                            <li key={m.name} className="text-[11px]">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-mono text-zinc-800 dark:text-zinc-200 truncate" title={m.name}>{m.name}</span>
+                                <span className="tabular-nums text-zinc-400 whitespace-nowrap shrink-0">
+                                  {m.calls} calls
+                                </span>
+                              </div>
+                              {m.tools?.length > 0 && (
+                                <div className="text-[10px] text-zinc-400 mt-0.5 truncate" title={m.tools.map(x => `${x.name} ×${x.count}`).join(' · ')}>
+                                  {shortTraceAgent(trace?.agent)}
+                                  {trace?.agent ? ' · ' : ''}
+                                  {m.tools.slice(0, 4).map(x => `${x.name} ×${x.count}`).join(' · ')}
+                                </div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* 工具明细（折叠区内继续保留） */}
+                    {st.toolBreakdown?.length > 0 && (
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400 mb-1.5">
+                          {t('gateway.trace.toolSummary')}
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5">
+                          {st.toolBreakdown.map(({ name, count }) => {
+                            const max = st.toolBreakdown[0]?.count || 1;
+                            const short = name.startsWith('mcp__') ? name.split('__').slice(-1)[0] : name;
+                            return (
+                              <div key={name} className="flex items-center gap-2 min-w-0" title={name}>
+                                <span className="text-xs text-zinc-600 dark:text-zinc-300 truncate flex-1">{short}</span>
+                                <span className="text-xs font-semibold tabular-nums text-zinc-400">×{count}</span>
+                                <div className="w-10 h-1 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden shrink-0">
+                                  <div className="h-full bg-blue-500/70" style={{ width: `${(count / max) * 100}%` }} />
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-                {st.skillNames?.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                    <span className="text-[10px] uppercase tracking-wide text-zinc-400">Skills</span>
-                    {st.skillNames.map((s, i) => (
-                      <span key={i} className="text-xs px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 font-mono">{s}</span>
-                    ))}
+                    )}
                   </div>
                 )}
-                </>)}
               </div>
             )}
 

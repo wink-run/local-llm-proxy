@@ -8,6 +8,8 @@ let _insertStmt = null;
 let _enrichByRequestIdStmt = null;
 let _getImportStateStmt = null;
 let _setImportStateStmt = null;
+let _insertSkillCallStmt = null;
+let _deleteSkillCallsByPathStmt = null;
 
 // 盘点费用口径：仅 api-key 计费 + provider 刊例价（无刊例价则为 0）
 const { estimatePaygCost, estimateCost } = require('./pricing');
@@ -328,6 +330,24 @@ const RESOURCE_SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_resource_projections_agent ON resource_projections(agent_id);
 `;
 
+// Skill 调用明细（对齐 tokentelemetry skills_used，供 Trace / 闲置扫描）
+const SKILL_CALLS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS skill_calls (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts           INTEGER NOT NULL,
+    agent_id     TEXT NOT NULL,
+    session_id   TEXT,
+    skill_key    TEXT NOT NULL,
+    skill_raw    TEXT,
+    data_source  TEXT,
+    source_path  TEXT,
+    call_uid     TEXT NOT NULL UNIQUE
+  );
+  CREATE INDEX IF NOT EXISTS idx_skill_calls_key_ts ON skill_calls(skill_key, ts);
+  CREATE INDEX IF NOT EXISTS idx_skill_calls_ts ON skill_calls(ts);
+  CREATE INDEX IF NOT EXISTS idx_skill_calls_path ON skill_calls(source_path);
+`;
+
 /** @param {string} dbDir  Directory that will hold local-stats.db */
 function init(dbDir) {
   if (db) return;
@@ -348,6 +368,7 @@ function init(dbDir) {
     db.exec(AGENT_SCHEMA);
     db.exec(MCP_SCHEMA);
     db.exec(RESOURCE_SCHEMA);
+    db.exec(SKILL_CALLS_SCHEMA);
     db.exec(POST_MIGRATION); // 列补齐后再建 request_id 唯一索引
     // INSERT OR IGNORE：命中 request_id 唯一索引时静默跳过（跨来源去重），不报错、不重复计。
     _insertStmt = db.prepare(
@@ -369,6 +390,12 @@ function init(dbDir) {
       'data_source = COALESCE(@data_source, data_source) ' +
       'WHERE request_id = @request_id'
     );
+    _insertSkillCallStmt = db.prepare(
+      'INSERT OR IGNORE INTO skill_calls ' +
+      '(ts, agent_id, session_id, skill_key, skill_raw, data_source, source_path, call_uid) ' +
+      'VALUES (@ts, @agent_id, @session_id, @skill_key, @skill_raw, @data_source, @source_path, @call_uid)'
+    );
+    _deleteSkillCallsByPathStmt = db.prepare('DELETE FROM skill_calls WHERE source_path = ?');
   } catch (e) {
     console.error('[local-stats] failed to open DB:', e.message);
     try { db?.close(); } catch {}
@@ -500,6 +527,70 @@ function setImportState(filePath, mtime, size) {
   if (!db || !_setImportStateStmt) return;
   try { _setImportStateStmt.run(filePath, mtime, size); }
   catch (e) { console.error('[local-stats] setImportState failed:', e.message); }
+}
+
+/** 批量写入 Skill 调用（INSERT OR IGNORE by call_uid） */
+function recordSkillCalls(calls = []) {
+  if (!db || !_insertSkillCallStmt || !calls.length) return 0;
+  let n = 0;
+  const run = db.transaction((rows) => {
+    for (const c of rows) {
+      if (!c?.skill_key || !c?.call_uid) continue;
+      try {
+        const info = _insertSkillCallStmt.run({
+          ts: Number(c.ts) || Date.now(),
+          agent_id: c.agent_id || 'unknown',
+          session_id: c.session_id || null,
+          skill_key: c.skill_key,
+          skill_raw: c.skill_raw || c.skill_key,
+          data_source: c.data_source || null,
+          source_path: c.source_path || null,
+          call_uid: c.call_uid,
+        });
+        if (info.changes > 0) n++;
+      } catch (e) {
+        console.error('[local-stats] recordSkillCall failed:', e.message);
+      }
+    }
+  });
+  try { run(calls); } catch (e) { console.error('[local-stats] recordSkillCalls failed:', e.message); }
+  return n;
+}
+
+function deleteSkillCallsBySourcePath(sourcePath) {
+  if (!db || !_deleteSkillCallsByPathStmt || !sourcePath) return 0;
+  try {
+    const info = _deleteSkillCallsByPathStmt.run(sourcePath);
+    return info.changes || 0;
+  } catch (e) {
+    console.error('[local-stats] deleteSkillCallsBySourcePath failed:', e.message);
+    return 0;
+  }
+}
+
+/**
+ * skill_key → 最近调用时间戳(ms)
+ * @param {{ sinceMs?: number }} [opts]
+ */
+function getSkillLastUsedMap(opts = {}) {
+  const map = new Map();
+  if (!db) return map;
+  try {
+    const sinceMs = Number(opts.sinceMs) || 0;
+    const rows = sinceMs > 0
+      ? db.prepare(
+        'SELECT skill_key, MAX(ts) AS last_ts FROM skill_calls WHERE ts >= ? GROUP BY skill_key'
+      ).all(sinceMs)
+      : db.prepare(
+        'SELECT skill_key, MAX(ts) AS last_ts FROM skill_calls GROUP BY skill_key'
+      ).all();
+    for (const r of rows) {
+      if (r.skill_key) map.set(String(r.skill_key).toLowerCase(), Number(r.last_ts) || 0);
+    }
+  } catch (e) {
+    console.error('[local-stats] getSkillLastUsedMap failed:', e.message);
+  }
+  return map;
 }
 
 /** 不参与「模型排行」的 data_source（显式关闭 model_stats 的源） */
@@ -990,6 +1081,9 @@ function close() {
     _insertStmt = null;
     _getImportStateStmt = null;
     _setImportStateStmt = null;
+    _enrichByRequestIdStmt = null;
+    _insertSkillCallStmt = null;
+    _deleteSkillCallsByPathStmt = null;
   }
 }
 
@@ -1379,6 +1473,7 @@ module.exports = {
   queryAppDetail, queryAppStatsInPeriod, queryAppStatsToday, querySessionDetail, querySessionStatsMap,
   getImportState, setImportState, resetSessionData, resetImportState, deleteZeroTokenSessionRows, close,
   listSessionMeta, getSessionMeta, setSessionMeta,
+  recordSkillCalls, deleteSkillCallsBySourcePath, getSkillLastUsedMap,
   todaySinceTs, sinceTsForDays, queryGatewayInputCostRate, queryModelProviderLatency,
   reassignProviderTier, collectProviderIdVariants,
   getDb: () => db,  // Agent 聚合系统使用

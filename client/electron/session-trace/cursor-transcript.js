@@ -9,6 +9,7 @@ const {
   pathFromEncodedSlug, nameFromGithubprojectsSlug, pickUsage,
   buildTraceStats, fileTimeSpan, stepTs,
 } = require('./shared');
+const { extractSkillsFromCursorTool } = require('../skill-signals');
 
 const AGENT_ID = 'cursor';
 const PROFILE = 'cursor-transcript';
@@ -205,10 +206,24 @@ function trace(sessionId) {
           for (const item of content) {
             const t = item?.type;
             if (t === 'tool_use' || t === 'tool-call') {
-              steps.push({
-                idx: steps.length, kind: 'tool', label: item.name || 'tool', ts,
-                tool: item.name, input: item.input || item.arguments,
-              });
+              const toolInput = item.input || item.arguments;
+              const skillHits = extractSkillsFromCursorTool(item.name, toolInput);
+              // 保留原工具名，挂上 skill（与 Codex 路径面包屑一致）
+              if (skillHits.length) {
+                for (const sk of skillHits) {
+                  steps.push({
+                    idx: steps.length, kind: 'tool',
+                    label: `Skill · ${sk.raw}`, ts,
+                    tool: item.name, skill: sk.raw, signal: sk.signal,
+                    input: toolInput,
+                  });
+                }
+              } else {
+                steps.push({
+                  idx: steps.length, kind: 'tool', label: item.name || 'tool', ts,
+                  tool: item.name, input: toolInput,
+                });
+              }
             } else if (t === 'thinking' || t === 'reasoning') {
               const think = sanitizeCursorText(String(item.text || item.thinking || ''));
               if (think) {

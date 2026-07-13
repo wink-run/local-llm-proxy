@@ -29,7 +29,13 @@ const AGENT_MCP_TARGETS = {
   'claude-code': {
     id: 'claude-code',
     label: 'Claude Code',
-    getPaths: () => [path.join(os.homedir(), '.claude', 'mcp.json')],
+    // Claude Code 用户级 MCP 在 ~/.claude.json 的 mcpServers（不是 ~/.claude/mcp.json）
+    // CLAUDE_CONFIG_DIR 若设置，则写到 $CLAUDE_CONFIG_DIR/.claude.json
+    getPaths: () => {
+      const configDir = process.env.CLAUDE_CONFIG_DIR;
+      if (configDir) return [path.join(expandHome(configDir), '.claude.json')];
+      return [path.join(os.homedir(), '.claude.json')];
+    },
     format: 'json-mcp',
     sync: true,
   },
@@ -68,8 +74,11 @@ const AGENT_MCP_TARGETS = {
   workbuddy: {
     id: 'workbuddy',
     label: 'WorkBuddy',
-    // WorkBuddy 官方读取 ~/.workbuddy/mcp.json（非 .mcp.json）
-    getPaths: () => [path.join(os.homedir(), '.workbuddy', 'mcp.json')],
+    // 官方主配置为 mcp.json；.mcp.json 亦可能含 connector-proxy 等条目，扫描时一并读取
+    getPaths: () => [
+      path.join(os.homedir(), '.workbuddy', 'mcp.json'),
+      path.join(os.homedir(), '.workbuddy', '.mcp.json'),
+    ],
     format: 'json-mcp',
     sync: true,
   },

@@ -203,7 +203,8 @@ test('composeHandoffDoc wraps the brief with source + continuation instruction',
   assert.match(doc, /# 交接工作 — demo/);
   assert.match(doc, /来源：codex/);
   assert.match(doc, /BRIEF/);
-  assert.match(doc, /请在当前项目继续/);
+  assert.match(doc, /没有此前会话的上下文/);
+  assert.match(doc, /直接继续推进/);
 });
 
 test('summarizeViaGateway returns first successful model, skips failures', async () => {

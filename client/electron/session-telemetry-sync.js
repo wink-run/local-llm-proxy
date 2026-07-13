@@ -53,8 +53,17 @@ function syncSessionTelemetry(localStats, opts = {}) {
     sessionImported = (r && r.imported) || 0;
     // transcript 行常无 usage → 0 token 占位；hook 纳管后以 hook 为准，清掉 cursor:… 脏行
     cursorHooks.purgeTranscriptZeroTokens(localStats);
+    // Skill 调用增量入库（Claude Skill/slash + Codex SKILL.md 路径）
+    let skillRecorded = 0;
+    try {
+      const skillUsage = require('./session-skill-usage');
+      const sr = skillUsage.syncSkillUsage(localStats);
+      skillRecorded = (sr && sr.recorded) || 0;
+    } catch (e) {
+      console.error('[session-telemetry] skill-usage', e.message);
+    }
     console.log('[session-telemetry]', JSON.stringify({
-      hookImported, sessionImported, traeSynced, skip: [...skip],
+      hookImported, sessionImported, traeSynced, skillRecorded, skip: [...skip],
     }));
   } catch (e) {
     console.error('[session-telemetry]', e.message);

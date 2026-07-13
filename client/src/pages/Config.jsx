@@ -300,7 +300,7 @@ function Settings({ user, onLogout, serverUrl, setServerUrl }) {
               { value: 'error', label: 'Error' },
               { value: 'warn', label: 'Warn' },
               { value: 'info', label: 'Info' },
-              { value: 'debug', label: 'Debug' },
+              { value: 'debug', label: 'PlayGround' },
             ]}
           />
         </div>

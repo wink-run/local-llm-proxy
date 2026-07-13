@@ -60,6 +60,22 @@ function serverToEntry(serverRow, clientId) {
     };
   }
 
+  // URL / HTTP / SSE MCP（如 WorkBuddy connector-proxy）
+  const url = serverRow.url
+    || (serverRow.metadata && serverRow.metadata.url)
+    || null;
+  if (url) {
+    const entry = { url: String(url) };
+    const typ = String(serverRow.type || '').toLowerCase();
+    if (typ === 'http' || typ === 'sse') entry.type = typ;
+    const headers = serverRow.metadata?.headers
+      || (serverRow.headers && typeof serverRow.headers === 'object' ? serverRow.headers : null);
+    if (headers && typeof headers === 'object' && Object.keys(headers).length) {
+      entry.headers = headers;
+    }
+    return entry;
+  }
+
   let command = serverRow.command;
   if (command === '__DYNAMIC_ELECTRON__') return null;
   if (command === 'npx') {
@@ -98,11 +114,13 @@ function clientKeyForServer(serverRow, existingKeys, prevTbKeys) {
 function loadJsonMcp(filePath) {
   if (!fs.existsSync(filePath)) return { mcpServers: {} };
   const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { mcpServers: {} };
+  // 必须保留原文件其它顶层字段（如 ~/.claude.json 状态），否则同步会整文件被覆盖清空
   if (raw.mcpServers && typeof raw.mcpServers === 'object') return raw;
   if (raw.servers && typeof raw.servers === 'object') {
-    return { mcpServers: raw.servers };
+    return { ...raw, mcpServers: raw.servers };
   }
-  return { mcpServers: {} };
+  return { ...raw, mcpServers: {} };
 }
 
 function syncJsonClient(clientId, filePath, servers) {
@@ -166,13 +184,25 @@ function buildCodexMcpSections(entries) {
   const blocks = [];
   for (const { key, entry } of entries) {
     blocks.push(`[mcp_servers.${key}]`);
-    blocks.push(`command = ${tomlQuote(entry.command)}`);
-    blocks.push(`args = ${JSON.stringify(entry.args)}`);
-    if (entry.env && Object.keys(entry.env).length) {
-      blocks.push('');
-      blocks.push(`[mcp_servers.${key}.env]`);
-      for (const [k, v] of Object.entries(entry.env)) {
-        blocks.push(`${k} = ${tomlQuote(v)}`);
+    if (entry.url) {
+      // Codex 支持 url 型远程 MCP
+      blocks.push(`url = ${tomlQuote(entry.url)}`);
+      if (entry.headers && typeof entry.headers === 'object' && Object.keys(entry.headers).length) {
+        blocks.push('');
+        blocks.push(`[mcp_servers.${key}.http_headers]`);
+        for (const [hk, hv] of Object.entries(entry.headers)) {
+          blocks.push(`${hk} = ${tomlQuote(hv)}`);
+        }
+      }
+    } else {
+      blocks.push(`command = ${tomlQuote(entry.command)}`);
+      blocks.push(`args = ${JSON.stringify(entry.args || [])}`);
+      if (entry.env && Object.keys(entry.env).length) {
+        blocks.push('');
+        blocks.push(`[mcp_servers.${key}.env]`);
+        for (const [k, v] of Object.entries(entry.env)) {
+          blocks.push(`${k} = ${tomlQuote(v)}`);
+        }
       }
     }
     blocks.push('');
@@ -292,12 +322,16 @@ function filterServersForClient(servers, clientId) {
   return (servers || []).filter(s => {
     if (s.status !== 'active' || s.source === 'client') return false;
     if (s.id === BUILTIN_BRIDGE_ID) return false;
+    // 须在该 Agent 的同步分配列表中（取消勾选 = 不再下发）
+    if (!getServerSyncClients(s).includes(clientId)) return false;
     if (s.id === BUILTIN_PROMPTS_ID) {
-      // 只给「有 ≥1 条已投射 prompt」的 client 下发（懒 require 防循环依赖）
+      // 用户已在「安装到 Agent」里显式勾选 → 直接下发（否则无法先装 MCP 再投射）
+      if (Array.isArray(s.metadata?.sync_clients)) return true;
+      // 未显式配置时：懒下发，仅对已有 prompt 投射的 Agent 写入
       try { return require('./resource-manager').hasPromptProjections(clientId); }
       catch { return false; }
     }
-    return getServerSyncClients(s).includes(clientId);
+    return true;
   });
 }
 
@@ -368,8 +402,18 @@ function enrichServersWithClientInstalls(servers) {
   const allClients = Object.entries(CLIENT_TARGETS).map(([id, t]) => ({ id, label: t.label }));
 
   return (servers || []).map(s => {
-    const installs = [...(installMap[s.id] || [])];
-    const installedSet = new Set(installs.map(i => i.clientId));
+    // 以配置文件扫描为准：sync-state 残留绑定若文件已删，不算「已安装」
+    const installs = [];
+    const installedSet = new Set();
+
+    for (const inst of (installMap[s.id] || [])) {
+      const keyMap = scanIndex[inst.clientId];
+      if (!keyMap) continue;
+      const keys = [inst.clientKey, s.name].filter(Boolean);
+      if (!keys.some(k => keyMap.has(k))) continue;
+      installs.push(inst);
+      installedSet.add(inst.clientId);
+    }
 
     // 扫描匹配：按 server.name 或已绑定的 clientKey 在各 Agent 配置中查找
     const matchKeys = new Set([s.name].filter(Boolean));
@@ -613,8 +657,9 @@ function inferClientMcpDescription(entry) {
   const args = entry?.args || [];
   const pkg = args.find(a => typeof a === 'string' && (a.includes('/') || a.includes('-mcp')));
   if (pkg) return `客户端自配 · ${pkg}`;
+  if (entry?.url) return `客户端自配 · ${entry.url}`;
   if (entry?.command) return `客户端自配 · ${path.basename(entry.command)}`;
-  return 'Agent 客户端配置中的 MCP（未在 Token Bank 纳管）';
+  return '客户端自配 MCP';
 }
 
 /**
@@ -715,6 +760,28 @@ function getClientMcpEntryForAgent(clientId, clientKey) {
   return null;
 }
 
+/** 从 sync-state 去掉某 Agent 上的指定 MCP 键（与配置文件删除保持一致） */
+function pruneClientSyncStateKey(clientId, clientKey) {
+  const state = readState();
+  const client = state.clients?.[clientId];
+  if (!client) return;
+  const key = String(clientKey || '').trim();
+  if (!key) return;
+  const nextKeys = (client.keys || []).filter(k => k !== key);
+  const nextBindings = (client.bindings || []).filter(b => b.clientKey !== key);
+  if (nextKeys.length === (client.keys || []).length
+    && nextBindings.length === (client.bindings || []).length) {
+    return;
+  }
+  state.clients[clientId] = {
+    ...client,
+    keys: nextKeys,
+    bindings: nextBindings,
+    count: nextKeys.length,
+  };
+  writeState(state);
+}
+
 /** 从 Agent 配置文件删除指定 MCP 条目（用户自配或非 TB 写入） */
 function removeRawClientMcpEntry(clientId, clientKey, { ignoreMissing = false } = {}) {
   const target = CLIENT_TARGETS[clientId];
@@ -723,6 +790,7 @@ function removeRawClientMcpEntry(clientId, clientKey, { ignoreMissing = false } 
   if (!key) throw new Error('缺少 clientKey');
 
   const paths = target.getPaths ? target.getPaths() : [target.getPath()];
+  let removedPath = null;
 
   for (const filePath of paths) {
     if (!fs.existsSync(filePath)) continue;
@@ -733,7 +801,8 @@ function removeRawClientMcpEntry(clientId, clientKey, { ignoreMissing = false } 
         if (!doc.mcpServers[key]) continue;
         delete doc.mcpServers[key];
         fs.writeFileSync(filePath, JSON.stringify(doc, null, 2));
-        return { clientId, clientKey: key, path: filePath };
+        removedPath = filePath;
+        break;
       }
 
       if (target.format === 'yaml-mcp-servers') {
@@ -743,7 +812,8 @@ function removeRawClientMcpEntry(clientId, clientKey, { ignoreMissing = false } 
         delete doc.mcp_servers[key];
         if (!Object.keys(doc.mcp_servers).length) delete doc.mcp_servers;
         fs.writeFileSync(filePath, yaml.dump(doc, { lineWidth: 120 }), 'utf8');
-        return { clientId, clientKey: key, path: filePath };
+        removedPath = filePath;
+        break;
       }
 
       if (target.format === 'json-nested') {
@@ -752,7 +822,8 @@ function removeRawClientMcpEntry(clientId, clientKey, { ignoreMissing = false } 
         if (!nested || !nested[key]) continue;
         delete nested[key];
         fs.writeFileSync(filePath, JSON.stringify(doc, null, 2), 'utf8');
-        return { clientId, clientKey: key, path: filePath };
+        removedPath = filePath;
+        break;
       }
 
       if (target.format === 'toml-mcp') {
@@ -760,13 +831,18 @@ function removeRawClientMcpEntry(clientId, clientKey, { ignoreMissing = false } 
         const stripped = stripCodexMcpKey(original, key);
         if (stripped === original) continue;
         fs.writeFileSync(filePath, stripped.endsWith('\n') ? stripped : stripped + '\n', 'utf8');
-        return { clientId, clientKey: key, path: filePath };
+        removedPath = filePath;
+        break;
       }
     } catch (e) {
       console.warn(`[mcp-client-sync] remove ${clientId}/${key} from ${filePath}:`, e.message);
     }
   }
 
+  // 无论文件是否已删，都清 sync-state，避免「已安装于」残留
+  pruneClientSyncStateKey(clientId, key);
+
+  if (removedPath) return { clientId, clientKey: key, path: removedPath };
   if (ignoreMissing) return { clientId, clientKey: key, path: null, skipped: true };
   throw new Error(`未在 ${target.label} 配置中找到: ${key}`);
 }

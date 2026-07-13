@@ -79,10 +79,46 @@ test('buildTraceStats produces tool breakdown and skill counts', () => {
     { name: 'Bash', count: 2 },
     { name: 'Skill', count: 1 },
   ]);
+  assert.deepEqual(stats.skills_used, [{ name: 'superpowers:brainstorming', count: 1 }]);
 
   // token 用量累加
   assert.equal(stats.tokens.input, 100);
   assert.equal(stats.tokens.cached, 50);
+});
+
+test('slash / MCP / subagent 进入 Trace 生态统计', () => {
+  const slashLines = [
+    JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: '<command-name>/写诗</command-name>' },
+    }),
+    JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'm1', name: 'mcp__tokenbank-agent-bridge__tb_list_agents', input: {} },
+          { type: 'tool_use', id: 'm2', name: 'mcp__tokenbank-agent-bridge__tb_dispatch_agent', input: {} },
+        ],
+      },
+    }),
+  ];
+  const steps = buildClaudeStyleSteps(slashLines, span);
+  assert.ok(steps.some(s => s.skill === '写诗' && s.signal === 'slash'));
+
+  const delegation = {
+    by_type: {
+      'general-purpose': { count: 1, total: 84100, cost: 0.07 },
+    },
+  };
+  const stats = buildTraceStats(steps, { rawLines: slashLines, delegation });
+  assert.deepEqual(stats.skills_used, [{ name: '写诗', count: 1 }]);
+  assert.equal(stats.mcp_servers.length, 1);
+  assert.equal(stats.mcp_servers[0].name, 'tokenbank-agent-bridge');
+  assert.equal(stats.mcp_servers[0].calls, 2);
+  assert.deepEqual(stats.subagent_types, [
+    { name: 'general-purpose', spawns: 1, tokens: 84100, cost: 0.07 },
+  ]);
 });
 
 test('toolResultText handles string, array and object shapes', () => {
