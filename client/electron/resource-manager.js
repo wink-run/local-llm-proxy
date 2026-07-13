@@ -3,6 +3,7 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const localStats = require('./local-stats');
@@ -19,7 +20,11 @@ const {
   syncSkillContentToAuthority,
   normalizeSkillDirPath,
   copyDirRecursive,
+  materializeSkillDir,
 } = require('./resource-canonical');
+
+/** Token Bank 落盘 skill 的默认权威根（agents-hub，已被 Skill 扫描器覆盖） */
+const SKILL_HUB_ROOT = path.join(os.homedir(), '.agents', 'skills');
 const {
   AGENT_RESOURCE_TARGETS,
   listProjectableAgentIds,
@@ -102,6 +107,49 @@ class ResourceManager {
       resourceId,
     );
     return authorityDir || meta.authorityPath || null;
+  }
+
+  /**
+   * 无磁盘来源的 skill 落盘到默认权威目录（~/.agents/skills/<name>），并登记
+   * agents-hub scan 投射。使被扫描器发现（「已纳管」tab 显示）、可投射、可卸载。
+   * @returns {string} 权威目录绝对路径
+   */
+  _materializeSkillToHub(resourceId, resource) {
+    const skillDir = path.join(SKILL_HUB_ROOT, resource.name);
+    materializeSkillDir(skillDir, resource.content || '');
+    const authorityPath = path.resolve(skillDir);
+
+    const db = this._getDb();
+    const meta = { ...(resource.metadata || {}), authorityPath, scannedFrom: authorityPath };
+    delete meta.canonicalPath;
+    const now = Date.now();
+    db.prepare('UPDATE resources SET metadata = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify(meta), now, resourceId);
+
+    const existing = db.prepare(
+      'SELECT id FROM resource_projections WHERE resource_id = ? AND agent_id = ? AND scope = ?',
+    ).get(resourceId, 'agents-hub', 'global');
+    if (!existing) {
+      db.prepare(`
+        INSERT INTO resource_projections
+        (id, resource_id, agent_id, scope, projection_type, target_path, status, created_at)
+        VALUES (?, ?, 'agents-hub', 'global', 'scan', ?, 'active', ?)
+      `).run(`proj-${resourceId}-agents-hub-global`, resourceId, skillDir, now);
+    }
+    return authorityPath;
+  }
+
+  /**
+   * 保证 skill 已落盘：已有真实权威目录则同步 SKILL.md，否则物化到 agents-hub。
+   * catalog 安装 / 手动新建的 DB-only skill 经此获得磁盘存在。
+   */
+  _ensureSkillOnDisk(resourceId) {
+    const resource = this.getResource(resourceId);
+    if (!resource || resource.type !== 'skill') return null;
+    if (resolveAuthorityDir(resource)) {
+      return this._persistSkillAuthority(resourceId, resource, { syncContent: true });
+    }
+    return this._materializeSkillToHub(resourceId, resource);
   }
 
   _mergeAuthorityMetadata(resource, patch = {}) {
@@ -332,6 +380,8 @@ class ResourceManager {
       now,
     );
 
+    if (item.type === 'skill') this._ensureSkillOnDisk(id);
+
     const resource = this.getResource(id);
     return { success: true, resource, alreadyInstalled: false };
   }
@@ -391,7 +441,7 @@ class ResourceManager {
 
     const saved = this.getResource(id);
     if (saved?.type === 'skill') {
-      this._persistSkillAuthority(id, saved, { syncContent: true });
+      this._ensureSkillOnDisk(id);
     } else if (saved?.type === 'prompt') {
       // 权威源=DB:MCP 调用时实时读库,编辑后无需重刷任何文件
     }
@@ -413,11 +463,117 @@ class ResourceManager {
     return { success: true, resource: this.getResource(resourceId), ...resynced };
   }
 
+  /**
+   * 解析 Skill 权威目录（与卸载删文件逻辑一致）
+   */
+  _resolveSkillAuthorityDir(resource) {
+    if (!resource) return null;
+    const meta = resource.metadata || {};
+    let authorityDir = resolveAuthorityDir(resource)
+      || normalizeSkillDirPath(meta.authorityPath || meta.scannedFrom || meta.canonicalPath, resource.name)
+      || null;
+    if (!authorityDir) {
+      const origin = (resource.projections || []).find(p =>
+        p.projectionType === 'scan' || p.projectionType === 'origin',
+      );
+      if (origin?.targetPath) {
+        authorityDir = normalizeSkillDirPath(origin.targetPath, resource.name);
+      }
+    }
+    if (!authorityDir && resource.authorityPath) {
+      authorityDir = normalizeSkillDirPath(resource.authorityPath, resource.name);
+    }
+    return authorityDir ? path.resolve(authorityDir) : null;
+  }
+
+  /**
+   * 路径是否指向权威目录（规范化后比较）
+   */
+  _isAuthorityTarget(targetPath, authorityDir, resourceName) {
+    if (!targetPath || !authorityDir) return false;
+    const a = path.resolve(normalizeSkillDirPath(targetPath, resourceName) || targetPath);
+    const b = path.resolve(normalizeSkillDirPath(authorityDir, resourceName) || authorityDir);
+    return a === b;
+  }
+
+  /**
+   * 用户可点 × 取消的投射：软链/副本，或其它 Agent 上的多余实体。
+   * 权威源本身、公共目录（agents-hub/custom）标记不拦截卸载。
+   */
+  _isRemovableProjection(proj, authorityDir, resourceName) {
+    if (!proj) return false;
+    // 界面不展示、也无法 × 的公共目录，不造成卸载死锁
+    if (proj.agentId === 'agents-hub' || proj.agentId === 'custom' || proj.agentId === 'aweskill') {
+      return false;
+    }
+    const t = proj.projectionType;
+    if (t === 'symlink' || t === 'copy') {
+      if (authorityDir && this._isAuthorityTarget(proj.targetPath, authorityDir, resourceName)) return false;
+      return true;
+    }
+    if (t === 'scan' || t === 'origin') {
+      // 无权威路径时无法区分，不拦截（避免「只有权威源却无法卸载」死锁）
+      if (!authorityDir) return false;
+      if (this._isAuthorityTarget(proj.targetPath, authorityDir, resourceName)) return false;
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * 卸载 Skill：真实删除权威目录（须已无可取消的投射）。
+   * @returns {{ deleted: boolean, path: string|null }}
+   */
+  _deleteSkillFiles(resource) {
+    const authorityDir = this._resolveSkillAuthorityDir(resource);
+    if (!authorityDir) {
+      throw new Error('无法定位 Skill 权威目录，卸载中止');
+    }
+
+    const abs = path.resolve(authorityDir);
+    if (!fs.existsSync(abs)) {
+      return { deleted: false, path: abs, missing: true };
+    }
+
+    try {
+      const st = fs.lstatSync(abs);
+      if (st.isSymbolicLink()) {
+        fs.unlinkSync(abs);
+      } else {
+        fs.rmSync(abs, { recursive: true, force: true });
+      }
+    } catch (e) {
+      throw new Error(`删除权威目录失败: ${e.message}`);
+    }
+
+    if (fs.existsSync(abs)) {
+      throw new Error(`权威目录删除后仍存在: ${abs}`);
+    }
+    return { deleted: true, path: abs };
+  }
+
   deleteResource(resourceId) {
     this.init();
     const db = this._getDb();
     const resource = this.getResource(resourceId);
     if (!resource) throw new Error('资产不存在');
+
+    // Skill：仅当仍有「可取消」的投射时禁止卸载；只剩权威源时可直接卸载
+    if (resource.type === 'skill') {
+      const authorityDir = this._resolveSkillAuthorityDir(resource);
+      const blocking = (resource.projections || []).filter(p =>
+        this._isRemovableProjection(p, authorityDir, resource.name),
+      );
+      if (blocking.length > 0) {
+        throw new Error('请先取消所有投射后再卸载');
+      }
+    }
+
+    // Skill 卸载 = 删除权威目录
+    let deletedFiles = null;
+    if (resource.type === 'skill') {
+      deletedFiles = this._deleteSkillFiles(resource);
+    }
 
     const promptClientIds = resource.type === 'prompt'
       ? (resource.projections || []).map(p => p.agentId)
@@ -431,7 +587,7 @@ class ResourceManager {
     db.prepare('DELETE FROM resource_projections WHERE resource_id = ?').run(resourceId);
     db.prepare('DELETE FROM resources WHERE id = ?').run(resourceId);
     this._resyncPromptClients(promptClientIds);
-    return { success: true };
+    return { success: true, deletedFiles };
   }
 
   /** 智能体 JSON 中引用的 Prompt / Skill（须已纳管） */
@@ -729,10 +885,35 @@ class ResourceManager {
     }));
   }
 
-  /** prompt 投射目标 = 可写 MCP 配置的客户端(供 UI 展示) */
+  /**
+   * prompt 投射目标 = 已安装或已勾选同步 Token Bank Prompts MCP 的 Agent
+   *（未配置该 MCP 的客户端无法取回提示词，故不出现在列表中）
+   */
   listPromptAgentTargets() {
     const { CLIENT_TARGETS, listSyncEnabledClientIds } = require('./mcp-agent-targets');
-    return listSyncEnabledClientIds().map(id => ({ id, label: CLIENT_TARGETS[id].label }));
+    const mcpManager = require('./mcp-manager');
+    const { BUILTIN_PROMPTS_ID } = mcpManager;
+
+    const writable = new Set(listSyncEnabledClientIds());
+    const eligible = new Set();
+    try {
+      const prompts = mcpManager.listServers().find(s => s.id === BUILTIN_PROMPTS_ID);
+      // 配置文件中已存在
+      for (const c of prompts?.clientTargets || []) {
+        if (c.installed && writable.has(c.id)) eligible.add(c.id);
+      }
+      // 用户在「安装到 Agent」里显式勾选（metadata.sync_clients；勿用默认全量 sync_clients）
+      const explicit = prompts?.metadata?.sync_clients;
+      if (Array.isArray(explicit)) {
+        for (const id of explicit) {
+          if (writable.has(id)) eligible.add(id);
+        }
+      }
+    } catch (e) {
+      console.warn('[resource-manager] listPromptAgentTargets:', e.message);
+    }
+
+    return [...eligible].map(id => ({ id, label: CLIENT_TARGETS[id].label }));
   }
 
   /** prompt 投射变更后刷新对应 client 的 MCP 配置(失败仅告警,不阻断) */
@@ -784,6 +965,12 @@ class ResourceManager {
         managed,
         contentChanged,
         resourceId: managedRes?.id || null,
+        // 权威目录（具体 skill 路径），供前端展示
+        authorityPath: managedRes?.metadata?.authorityPath
+          || g.agents?.[0]?.skillDir
+          || (g.agents?.[0]?.skillPath ? path.dirname(g.agents[0].skillPath) : null),
+        // 附上当前投射目标（前端「已安装」页展示软链映射）
+        projections: managedRes ? this._getProjections(managedRes.id) : [],
       };
     });
 
@@ -812,19 +999,15 @@ class ResourceManager {
   }
 
   /** 将扫描到的本机 Skill 纳管进 Token Bank（不移动原文件，记录 scan 投射） */
-  importDiscoveredSkill({ scanKey, updateIfExists = false } = {}) {
-    this.init();
-    const scanOptions = this._lastScanOptions;
-    const group = findScanGroupByScanKey(scanKey, scanOptions);
-    if (!group) throw new Error('未找到该 Skill，请重新扫描');
-
-    const entry = scanAllAgentSkills(scanOptions).find(i => i.scanKey === group.scanKey)
-      || scanAllAgentSkills(scanOptions).find(i => i.name === group.name && i.hash === group.hash);
-    if (!entry) throw new Error('无法读取 Skill 文件');
-
+  /**
+   * 把单个扫描分组写入 resources 并建立 scan 投射。
+   * 单个纳管与批量同步共用；updateIfExists=false 且已存在时跳过写入。
+   * @returns {{ id: string, updated: boolean, skipped: boolean }}
+   */
+  _importDiscoveredGroup(group, entry, { updateIfExists = false } = {}) {
     const existing = this._findByTypeName('skill', group.name);
     if (existing && !updateIfExists) {
-      return { success: true, resource: this.getResource(existing.id), alreadyInstalled: true };
+      return { id: existing.id, updated: false, skipped: true };
     }
 
     const now = Date.now();
@@ -901,13 +1084,63 @@ class ResourceManager {
       }
     }
 
+    return { id, updated: !!existing, skipped: false };
+  }
+
+  importDiscoveredSkill({ scanKey, updateIfExists = false } = {}) {
+    this.init();
+    const scanOptions = this._lastScanOptions;
+    const group = findScanGroupByScanKey(scanKey, scanOptions);
+    if (!group) throw new Error('未找到该 Skill，请重新扫描');
+
+    const entry = scanAllAgentSkills(scanOptions).find(i => i.scanKey === group.scanKey)
+      || scanAllAgentSkills(scanOptions).find(i => i.name === group.name && i.hash === group.hash);
+    if (!entry) throw new Error('无法读取 Skill 文件');
+
+    const { id, updated, skipped } = this._importDiscoveredGroup(group, entry, { updateIfExists });
+    if (skipped) {
+      return { success: true, resource: this.getResource(id), alreadyInstalled: true };
+    }
+
     return {
       success: true,
       resource: this.getResource(id),
       alreadyInstalled: false,
-      updated: !!existing,
-      hint: '已纳管本机 Skill，权威目录保留在原安装位置；可在「已纳管」页软链投射到其他 Agent。',
+      updated,
+      hint: '已纳管本机 Skill，权威目录保留在原安装位置；可在「本机」页软链投射到其他 Agent。',
     };
+  }
+
+  /**
+   * 扫描即纳管：把所有本机 Skill 静默纳管（未纳管→纳管，内容变更→更新），
+   * 返回统一的本机 Skill 列表（均已纳管、带 resourceId + projections）。
+   */
+  syncDiscoveredSkills(filters = {}) {
+    this.init();
+    const scanOptions = this._applyScanOptions(filters);
+    const rawEntries = scanAllAgentSkills(scanOptions);
+    const grouped = groupDiscoveredSkills(rawEntries);
+    const managedByName = new Map(this.listResources({ type: 'skill' }).map(r => [r.name, r]));
+
+    let imported = 0;
+    let updated = 0;
+    for (const group of grouped) {
+      const managedRes = managedByName.get(group.name);
+      const contentChanged = managedRes && managedRes.hash && managedRes.hash !== group.hash;
+      if (managedRes && !contentChanged) continue;
+
+      const entry = rawEntries.find(i => i.scanKey === group.scanKey)
+        || rawEntries.find(i => i.name === group.name && i.hash === group.hash);
+      if (!entry) continue;
+
+      this._importDiscoveredGroup(group, entry, { updateIfExists: !!contentChanged });
+      if (managedRes) updated += 1;
+      else imported += 1;
+    }
+
+    // 复用 listDiscoveredSkills 得到最终列表（含刚纳管项与 projections）
+    const { items, scanStats } = this.listDiscoveredSkills({ ...filters, includeManaged: true });
+    return { success: true, imported, updated, items, scanStats };
   }
 
   getPostProjectHint(resourceType, agentIds = []) {
@@ -1184,6 +1417,81 @@ class ResourceManager {
       hint: type === 'skill'
         ? '已导入 Skill 文件；可在「已纳管」页投射到其他 Agent。'
         : '已导入到 Token Bank。',
+    };
+  }
+
+  /**
+   * 扫描闲置 Skill（默认 60 天无会话调用）
+   * @param {{ days?: number }} options
+   */
+  listIdleSkills(options = {}) {
+    this.init();
+    // 打开清理面板前尽量同步一次 Skill 调用入库
+    try {
+      const { syncSkillUsage } = require('./session-skill-usage');
+      syncSkillUsage(localStats);
+    } catch (e) {
+      console.warn('[resource-manager] syncSkillUsage:', e.message);
+    }
+    const { listIdleSkills } = require('./resource-skill-cleanup');
+    const skills = this.listResources({ type: 'skill' });
+    return { success: true, ...listIdleSkills(skills, options) };
+  }
+
+  /**
+   * 一键清理闲置 Skill：先取消可移除投射，再删除权威目录并移出纳管
+   * @param {string[]} resourceIds
+   */
+  cleanupSkills(resourceIds = []) {
+    this.init();
+    const ids = [...new Set((resourceIds || []).map(id => String(id || '').trim()).filter(Boolean))];
+    const results = [];
+
+    for (const resourceId of ids) {
+      try {
+        const resource = this.getResource(resourceId);
+        if (!resource) {
+          results.push({ id: resourceId, success: false, error: '资产不存在' });
+          continue;
+        }
+        if (resource.type !== 'skill') {
+          results.push({ id: resourceId, success: false, error: '仅支持清理 Skill' });
+          continue;
+        }
+
+        const authorityDir = this._resolveSkillAuthorityDir(resource);
+        // 清理前自动取消非权威投射，避免卸载被拦截
+        for (const proj of resource.projections || []) {
+          if (!this._isRemovableProjection(proj, authorityDir, resource.name)) continue;
+          try {
+            this.unproject({
+              resourceId,
+              agentId: proj.agentId,
+              projectionId: proj.id,
+            });
+          } catch (e) {
+            console.warn('[resource-manager] cleanup unproject:', e.message);
+          }
+        }
+
+        const del = this.deleteResource(resourceId);
+        results.push({
+          id: resourceId,
+          name: resource.name,
+          success: true,
+          deletedFiles: del.deletedFiles || null,
+        });
+      } catch (e) {
+        results.push({ id: resourceId, success: false, error: e.message });
+      }
+    }
+
+    const cleaned = results.filter(r => r.success).length;
+    return {
+      success: results.every(r => r.success),
+      cleaned,
+      failed: results.length - cleaned,
+      results,
     };
   }
 }
