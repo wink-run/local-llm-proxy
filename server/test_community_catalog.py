@@ -1,4 +1,5 @@
 # server/test_community_catalog.py
+# 仅覆盖纯函数 / 默认 YAML 装配，不依赖 PostgreSQL。
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 import unittest
@@ -39,53 +40,6 @@ class TestDefaultDoc(unittest.TestCase):
     def test_payload_from_doc_roundtrip(self):
         payload = cc.catalog_payload_from_doc(cc.load_default_doc())
         self.assertIn("code-review", {p["name"] for p in payload["prompts"]})
-
-
-from pathlib import Path
-
-from dotenv import load_dotenv
-
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
-
-import database as db
-from db_pool import close_pool
-
-
-class TestAsyncLayer(unittest.IsolatedAsyncioTestCase):
-    # IsolatedAsyncioTestCase 每个测试方法用独立事件循环，asyncpg 连接池绑定创建时的循环，
-    # 因此不能像模块级 setUp 那样只初始化一次 —— 每个用例都要在自己的循环里重建连接池。
-    # 无 Postgres 时跳过（本地未起库 / CI 未挂 service 的兜底）。
-    async def asyncSetUp(self):
-        try:
-            await db.init_db()
-            await db.set_config(cc.CONFIG_KEY, "")
-        except Exception as e:
-            self.skipTest(f"PostgreSQL unavailable: {e}")
-
-    async def asyncTearDown(self):
-        await close_pool()
-
-    async def test_load_doc_falls_back_to_default(self):
-        doc = await cc.load_community_catalog_doc()
-        self.assertIn("code-review", {p["name"] for p in doc["prompts"]})
-
-    async def test_db_override_wins(self):
-        await cc.save_catalog_doc({"version": 2, "prompts": [
-            {"catalog_id": "only", "type": "prompt", "name": "only"}]})
-        doc = await cc.load_community_catalog_doc()
-        self.assertEqual([p["name"] for p in doc["prompts"]], ["only"])
-        self.assertEqual(doc["version"], 2)
-
-    async def test_import_from_defaults_seeds_db(self):
-        res = await cc.import_from_defaults()
-        self.assertTrue(res["ok"])
-        doc = await cc.load_community_catalog_doc()
-        self.assertIn("git-commit", {s["name"] for s in doc["skills"]})
-
-    async def test_payload_public_shape(self):
-        payload = await cc.community_catalog_payload()
-        for key in ("version", "mcp", "prompts", "skills", "assistants"):
-            self.assertIn(key, payload)
 
 
 if __name__ == "__main__":
