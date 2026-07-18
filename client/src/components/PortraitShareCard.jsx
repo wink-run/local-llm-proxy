@@ -1,48 +1,200 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import logoUrl from '../assets/logo.svg';
+import { DEFAULT_TOKEN_SERVER_URL } from '../config';
 
 const W = 1080;
 const H = 1440;
+const OFFICIAL_URL = DEFAULT_TOKEN_SERVER_URL;
+const GITHUB_URL = 'https://github.com/wink-run/local-llm-proxy';
+const PRODUCT_SLOGAN = '个人AI中枢 · Token 管家';
+
+/**
+ * 四套气质互斥的海报风格(design-taste):
+ * 专业 / 可爱 / 幽默 / 简约: 布局/字族/色板/装饰语言完全不同。
+ */
+export const POSTER_STYLES = [
+  {
+    id: 'pro',
+    label: '专业',
+    layout: 'pro',
+    light: false,
+    fonts: {
+      display: '"Avenir Next","Helvetica Neue","PingFang SC",sans-serif',
+      body: '"Avenir Next","PingFang SC","Hiragino Sans GB",sans-serif',
+      meta: '"SF Mono","Menlo","Consolas",monospace',
+      quote: '"Avenir Next","PingFang SC",sans-serif',
+    },
+    bg: ['#070b14', '#0f172a', '#1e293b'],
+    panel: '#0f172a',
+    accent: '#60a5fa',
+    accent2: '#38bdf8',
+    ink: '#f1f5f9',
+    mute: 'rgba(226,232,240,0.55)',
+    tiles: ['#60a5fa', '#38bdf8', '#34d399'],
+    radius: 16,
+    tracking: -0.02,
+    grain: 0.03,
+  },
+  {
+    id: 'cute',
+    label: '可爱',
+    layout: 'cute',
+    light: true,
+    fonts: {
+      display: '"Hiragino Maru Gothic ProN","Yu Gothic UI","PingFang SC",sans-serif',
+      body: '"PingFang SC","Hiragino Maru Gothic ProN",sans-serif',
+      meta: '"PingFang SC","Hiragino Maru Gothic ProN",sans-serif',
+      quote: '"Hiragino Maru Gothic ProN","PingFang SC",sans-serif',
+    },
+    bg: ['#fff7fb', '#ffe4f0', '#e0f2fe'],
+    panel: '#ffffff',
+    accent: '#fb7185',
+    accent2: '#7dd3fc',
+    ink: '#9f1239',
+    mute: 'rgba(159,18,57,0.45)',
+    tiles: ['#fda4af', '#7dd3fc', '#fcd34d'],
+    radius: 36,
+    tracking: 0.02,
+    grain: 0.012,
+  },
+  {
+    id: 'humor',
+    label: '幽默',
+    layout: 'humor',
+    light: true,
+    fonts: {
+      display: '"Arial Black","Helvetica Neue Condensed Black","PingFang SC",sans-serif',
+      body: '"Helvetica Neue","PingFang SC",sans-serif',
+      meta: '"Chalkboard SE","PingFang SC",sans-serif',
+      quote: '"Arial Black","PingFang SC",sans-serif',
+    },
+    bg: ['#fffaf0', '#fff3d6', '#ffe8a3'],
+    panel: '#fffef8',
+    accent: '#ff5a5f',
+    accent2: '#ffd166',
+    ink: '#1a1a1a',
+    mute: 'rgba(26,26,26,0.5)',
+    tiles: ['#ff5a5f', '#06d6a0', '#ffd166'],
+    radius: 8,
+    tracking: -0.035,
+    grain: 0.02,
+  },
+  {
+    id: 'minimal',
+    label: '简约',
+    layout: 'minimal',
+    light: true,
+    fonts: {
+      display: '"Avenir Next","Helvetica Neue","PingFang SC",sans-serif',
+      body: '"Avenir Next","PingFang SC",sans-serif',
+      meta: '"Avenir Next","PingFang SC",sans-serif',
+      quote: '"Avenir Next","PingFang SC",sans-serif',
+    },
+    bg: ['#f7f7f5', '#f7f7f5', '#f0f0ec'],
+    panel: '#f7f7f5',
+    accent: '#111111',
+    accent2: '#b0b0a8',
+    ink: '#111111',
+    mute: 'rgba(17,17,17,0.4)',
+    tiles: ['#111111', '#6b6b63', '#b0b0a8'],
+    radius: 0,
+    tracking: 0.12,
+    grain: 0.006,
+  },
+];
+
+/** 取风格字族 */
+function face(theme, role = 'body') {
+  const f = theme?.fonts || {};
+  return f[role] || f.body || '"PingFang SC",system-ui,sans-serif';
+}
+
+/** canvas font 快捷拼接 */
+function fnt(theme, weight, sizePx, role = 'body') {
+  return `${weight} ${sizePx}px ${face(theme, role)}`;
+}
+
+/** 按风格施加字距(tracking 为相对字号比例) */
+function withTrack(ctx, theme, sizePx, draw) {
+  const prev = ctx.letterSpacing;
+  if (theme?.tracking != null && typeof ctx.letterSpacing !== 'undefined') {
+    ctx.letterSpacing = `${(theme.tracking * sizePx).toFixed(2)}px`;
+  }
+  try {
+    draw();
+  } finally {
+    if (typeof prev !== 'undefined') ctx.letterSpacing = prev;
+  }
+}
+
+/** 风格圆角 */
+function rad(theme, fallback = 20) {
+  return theme?.radius ?? fallback;
+}
+
+/** 缺省占位 */
+const NA = '-';
+
+export function getPosterStyle(index = 0) {
+  const n = POSTER_STYLES.length;
+  return POSTER_STYLES[((Number(index) || 0) % n + n) % n];
+}
 
 function wrapLines(ctx, text, maxWidth, maxLines = 4) {
   const raw = String(text || '').replace(/\s+/g, ' ').trim();
   if (!raw) return [];
+  const fitOne = (s) => {
+    if (ctx.measureText(s).width <= maxWidth) return s;
+    let rest = s;
+    while (rest && ctx.measureText(`${rest}…`).width > maxWidth) rest = rest.slice(0, -1);
+    return rest ? `${rest}…` : '…';
+  };
+  if (maxLines <= 1) return [fitOne(raw)];
   const lines = [];
   let line = '';
-  for (const ch of raw) {
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
     const next = line + ch;
     if (ctx.measureText(next).width > maxWidth && line) {
       lines.push(line);
       line = ch;
-      if (lines.length >= maxLines) break;
+      if (lines.length === maxLines - 1) {
+        lines.push(fitOne(raw.slice(i)));
+        return lines;
+      }
     } else line = next;
   }
-  if (lines.length < maxLines && line) lines.push(line);
-  if (lines.length === maxLines && raw.length > lines.join('').length) {
-    const last = lines[maxLines - 1];
-    lines[maxLines - 1] = `${last.slice(0, Math.max(0, last.length - 1))}…`;
-  }
+  if (line) lines.push(line);
   return lines;
 }
 
 function roundRect(ctx, x, y, w, h, r) {
-  const rr = Math.min(r, w / 2, h / 2);
+  const rr = Math.min(Math.max(0, r), w / 2, h / 2);
   ctx.beginPath();
-  ctx.moveTo(x + rr, y);
-  ctx.arcTo(x + w, y, x + w, y + h, rr);
-  ctx.arcTo(x + w, y + h, x, y + h, rr);
-  ctx.arcTo(x, y + h, x, y, rr);
-  ctx.arcTo(x, y, x + w, y, rr);
+  if (rr <= 0) {
+    ctx.rect(x, y, w, h);
+  } else {
+    ctx.moveTo(x + rr, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rr);
+    ctx.arcTo(x + w, y + h, x, y + h, rr);
+    ctx.arcTo(x, y + h, x, y, rr);
+    ctx.arcTo(x, y, x + w, y, rr);
+  }
   ctx.closePath();
 }
 
-/** 取短标题:冒号前 / 截断 */
 function headline(text, maxLen = 6) {
   const raw = String(text || '').trim();
   if (!raw) return '';
   const head = raw.split(/[:：,，。；;]/)[0].trim() || raw;
   return head.length > maxLen ? `${head.slice(0, maxLen - 1)}…` : head;
+}
+
+function phrase(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return '';
+  return raw.split(/[:：]/)[0].trim() || raw;
 }
 
 function loadImage(src) {
@@ -54,7 +206,7 @@ function loadImage(src) {
   });
 }
 
-function stampGrain(ctx, alpha = 0.045) {
+function stampGrain(ctx, alpha = 0.035) {
   const tile = document.createElement('canvas');
   tile.width = 96;
   tile.height = 96;
@@ -70,403 +222,1080 @@ function stampGrain(ctx, alpha = 0.045) {
   ctx.fillRect(0, 0, W, H);
 }
 
-/** 极简线形图标 */
+function hexAlpha(hex, a) {
+  const h = String(hex || '#ffffff').replace('#', '');
+  const n = h.length === 3
+    ? h.split('').map((c) => parseInt(c + c, 16))
+    : [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  return `rgba(${n[0]},${n[1]},${n[2]},${a})`;
+}
+
+function linkHost(url) {
+  return String(url || '').replace(/^https?:\/\//, '');
+}
+
+function fillBg(ctx, theme, x = 0, y = 0, w = W, h = H) {
+  const stops = theme.bg || ['#fafafa', '#f5f5f5'];
+  const g = ctx.createLinearGradient(x, y, x + w, y + h);
+  stops.forEach((c, i) => g.addColorStop(i / Math.max(1, stops.length - 1), c));
+  ctx.fillStyle = g;
+  ctx.fillRect(x, y, w, h);
+}
+
+/** 实色阅读板 */
+function paintCard(ctx, x, y, w, h, r, theme, alpha = 0.96) {
+  if (r > 0) {
+    roundRect(ctx, x + 3, y + 5, w, h, r);
+    ctx.fillStyle = 'rgba(15,23,42,0.08)';
+    ctx.fill();
+  }
+  roundRect(ctx, x, y, w, h, r);
+  ctx.fillStyle = hexAlpha(theme.panel, alpha);
+  ctx.fill();
+  ctx.strokeStyle = hexAlpha(theme.accent, theme.layout === 'minimal' ? 0.12 : 0.22);
+  ctx.lineWidth = theme.layout === 'humor' ? 3 : 1.25;
+  ctx.stroke();
+}
+
+function paintFooter(ctx, theme, logo, brand) {
+  ctx.textAlign = 'left';
+  ctx.fillStyle = theme.mute;
+  ctx.font = fnt(theme, '500', 13, 'meta');
+  ctx.fillText('官网', 56, H - 58);
+  ctx.fillText('GitHub', 56, H - 30);
+  ctx.fillStyle = theme.accent;
+  ctx.font = fnt(theme, '500', 15, 'body');
+  ctx.fillText(linkHost(OFFICIAL_URL), 100, H - 58);
+  ctx.fillText(linkHost(GITHUB_URL), 120, H - 30);
+  if (logo) ctx.drawImage(logo, W - 96, H - 78, 36, 36);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = theme.mute;
+  ctx.font = fnt(theme, '600', 14, 'meta');
+  ctx.fillText(brand, W - 112, H - 48);
+  ctx.textAlign = 'left';
+}
+
 function drawIcon(ctx, kind, cx, cy, color, scale = 1) {
   ctx.save();
   ctx.translate(cx, cy);
   ctx.scale(scale, scale);
   ctx.strokeStyle = color;
   ctx.fillStyle = color;
-  ctx.lineWidth = 3.2;
+  ctx.lineWidth = 3;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  if (kind === 'eye') {
+  if (kind === 'compass') {
     ctx.beginPath();
-    ctx.ellipse(0, 0, 18, 11, 0, 0, Math.PI * 2);
+    ctx.arc(0, 0, 14, 0, Math.PI * 2);
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(0, 0, 5, 0, Math.PI * 2);
+    ctx.moveTo(0, -10);
+    ctx.lineTo(4, 7);
+    ctx.lineTo(0, 3);
+    ctx.lineTo(-4, 7);
+    ctx.closePath();
     ctx.fill();
   } else if (kind === 'hex') {
     ctx.beginPath();
     for (let i = 0; i < 6; i += 1) {
       const a = (Math.PI / 3) * i - Math.PI / 6;
-      const x = Math.cos(a) * 16;
-      const y = Math.sin(a) * 16;
+      const x = Math.cos(a) * 14;
+      const y = Math.sin(a) * 14;
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
     ctx.closePath();
     ctx.stroke();
-  } else if (kind === 'nodes') {
-    const pts = [[-14, 10], [14, 10], [0, -14]];
-    pts.forEach(([x, y], i) => {
-      const [nx, ny] = pts[(i + 1) % 3];
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(nx, ny);
-      ctx.stroke();
-    });
-    pts.forEach(([x, y]) => {
-      ctx.beginPath();
-      ctx.arc(x, y, 4.5, 0, Math.PI * 2);
-      ctx.fill();
-    });
-  } else if (kind === 'bolt') {
+  } else if (kind === 'heart') {
     ctx.beginPath();
-    ctx.moveTo(2, -16);
-    ctx.lineTo(-6, 2);
-    ctx.lineTo(2, 2);
-    ctx.lineTo(-2, 16);
-    ctx.lineTo(8, -2);
-    ctx.lineTo(0, -2);
-    ctx.closePath();
+    ctx.moveTo(0, 6);
+    ctx.bezierCurveTo(-14, -4, -10, -16, 0, -10);
+    ctx.bezierCurveTo(10, -16, 14, -4, 0, 6);
     ctx.fill();
-  } else if (kind === 'compass') {
+  } else if (kind === 'star') {
     ctx.beginPath();
-    ctx.arc(0, 0, 16, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, -12);
-    ctx.lineTo(5, 8);
-    ctx.lineTo(0, 4);
-    ctx.lineTo(-5, 8);
+    for (let i = 0; i < 5; i += 1) {
+      const a = -Math.PI / 2 + (i * 2 * Math.PI) / 5;
+      const r = i % 2 === 0 ? 14 : 6;
+      const x = Math.cos(a) * r;
+      const y = Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
     ctx.closePath();
     ctx.fill();
   } else {
-    // spark
-    for (let i = 0; i < 4; i += 1) {
-      const a = (Math.PI / 2) * i;
-      ctx.beginPath();
-      ctx.moveTo(Math.cos(a) * 4, Math.sin(a) * 4);
-      ctx.lineTo(Math.cos(a) * 16, Math.sin(a) * 16);
-      ctx.stroke();
-    }
+    ctx.beginPath();
+    ctx.moveTo(2, -14);
+    ctx.lineTo(-5, 2);
+    ctx.lineTo(2, 2);
+    ctx.lineTo(-2, 14);
+    ctx.lineTo(7, -2);
+    ctx.lineTo(0, -2);
+    ctx.closePath();
+    ctx.fill();
   }
   ctx.restore();
 }
 
-/**
- * 全幅主视觉:会话星座汇聚 →「懂你」核心
- * 底部渐变蒙版留给引语叠字
- */
-function paintHero(ctx, sessions, accentTags) {
-  const hx = 0;
-  const hy = 0;
-  const hw = W;
-  const hh = 860;
+function sessText(sessions) {
+  return String(sessions != null ? sessions : NA);
+}
 
-  // 全bleed背景(石板 + 琥珀)
-  const sky = ctx.createLinearGradient(0, 0, hw, hh);
-  sky.addColorStop(0, '#0c0a09');
-  sky.addColorStop(0.35, '#1a1520');
-  sky.addColorStop(0.7, '#0f172a');
-  sky.addColorStop(1, '#1c1917');
-  ctx.fillStyle = sky;
-  ctx.fillRect(hx, hy, hw, hh);
-
-  // 大块几何色面(图感)
-  ctx.save();
-  ctx.globalAlpha = 0.55;
+/** 柔光 */
+function glow(ctx, cx, cy, r, color, a = 0.5) {
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+  g.addColorStop(0, hexAlpha(color, a));
+  g.addColorStop(0.5, hexAlpha(color, a * 0.28));
+  g.addColorStop(1, hexAlpha(color, 0));
+  ctx.fillStyle = g;
   ctx.beginPath();
-  ctx.moveTo(hw * 0.55, 0);
-  ctx.lineTo(hw, 0);
-  ctx.lineTo(hw, hh * 0.7);
-  ctx.closePath();
-  const wedge = ctx.createLinearGradient(hw * 0.55, 0, hw, hh * 0.5);
-  wedge.addColorStop(0, 'rgba(245,158,11,0.0)');
-  wedge.addColorStop(1, 'rgba(245,158,11,0.35)');
-  ctx.fillStyle = wedge;
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.fill();
-  ctx.restore();
+}
 
-  // 点阵
-  ctx.fillStyle = 'rgba(255,255,255,0.04)';
-  for (let i = 0; i < 90; i += 1) {
-    const px = ((i * 97) % hw);
-    const py = ((i * 53) % (hh * 0.75));
-    ctx.beginPath();
-    ctx.arc(px, py, (i % 3) + 0.8, 0, Math.PI * 2);
+/** 带阴影的软面板 */
+function softPanel(ctx, x, y, w, h, r, fill, shadowA = 0.14) {
+  if (shadowA > 0) {
+    roundRect(ctx, x, y + 12, w, h, r);
+    ctx.fillStyle = `rgba(15,23,42,${shadowA})`;
     ctx.fill();
   }
-
-  const cx = hw * 0.42;
-  const cy = hh * 0.42;
-
-  // 外环光
-  const glow = ctx.createRadialGradient(cx, cy, 20, cx, cy, 280);
-  glow.addColorStop(0, 'rgba(251,191,36,0.45)');
-  glow.addColorStop(0.4, 'rgba(99,102,241,0.18)');
-  glow.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(cx, cy, 280, 0, Math.PI * 2);
+  roundRect(ctx, x, y, w, h, r);
+  ctx.fillStyle = fill;
   ctx.fill();
+}
 
-  // 轨道
+/**
+ * 专业主视觉:深空光轨枢纽
+ */
+function paintArtPro(ctx, theme, sessions, x, y, w, h) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+
+  const bg = ctx.createLinearGradient(x, y, x + w * 0.2, y + h);
+  bg.addColorStop(0, '#060a12');
+  bg.addColorStop(0.5, '#0c1930');
+  bg.addColorStop(1, '#0a1628');
+  ctx.fillStyle = bg;
+  ctx.fillRect(x, y, w, h);
+
+  // 大气光斑
+  glow(ctx, x + w * 0.72, y + h * 0.28, w * 0.42, theme.accent, 0.35);
+  glow(ctx, x + w * 0.28, y + h * 0.7, w * 0.35, theme.accent2, 0.22);
+  glow(ctx, x + w * 0.55, y + h * 0.55, w * 0.2, '#34d399', 0.12);
+
+  const cx = x + w * 0.5;
+  const cy = y + h * 0.48;
+
+  // 细轨道椭圆
   for (let i = 0; i < 4; i += 1) {
     ctx.beginPath();
-    ctx.ellipse(cx, cy, 90 + i * 48, 58 + i * 32, -0.55 + i * 0.12, 0, Math.PI * 2);
-    ctx.strokeStyle = i === 2 ? 'rgba(251,191,36,0.65)' : 'rgba(255,255,255,0.12)';
-    ctx.lineWidth = i === 2 ? 3 : 1.5;
+    ctx.ellipse(cx, cy, 90 + i * 55, 48 + i * 28, -0.35 + i * 0.08, 0, Math.PI * 2);
+    ctx.strokeStyle = i === 2 ? hexAlpha(theme.accent, 0.55) : 'rgba(148,163,184,0.14)';
+    ctx.lineWidth = i === 2 ? 2.2 : 1.2;
     ctx.stroke();
   }
 
-  // 会话节点汇聚
-  const n = Math.min(12, Math.max(6, Number(sessions) || 8));
+  // 连接点
+  const n = Math.min(14, Math.max(8, Number(sessions) || 10));
   for (let i = 0; i < n; i += 1) {
     const a = (i / n) * Math.PI * 2 - 0.4;
-    const r = 150 + (i % 5) * 28;
-    const px = cx + Math.cos(a) * r * 0.95;
-    const py = cy + Math.sin(a) * r * 0.62;
+    const rr = 110 + (i % 4) * 42;
+    const px = cx + Math.cos(a) * rr;
+    const py = cy + Math.sin(a) * rr * 0.55;
     ctx.beginPath();
-    ctx.moveTo(px, py);
-    ctx.lineTo(cx, cy);
-    ctx.strokeStyle = `rgba(253,230,138,${0.08 + (i % 4) * 0.04})`;
-    ctx.lineWidth = 1.5;
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(px, py);
+    ctx.strokeStyle = hexAlpha(theme.accent, 0.1 + (i % 3) * 0.04);
+    ctx.lineWidth = 1;
     ctx.stroke();
-    const blob = ctx.createRadialGradient(px, py, 0, px, py, 18);
-    blob.addColorStop(0, i % 2 ? 'rgba(251,191,36,0.95)' : 'rgba(129,140,248,0.9)');
-    blob.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = blob;
+    glow(ctx, px, py, 18, i % 2 ? theme.accent : theme.accent2, 0.55);
     ctx.beginPath();
-    ctx.arc(px, py, 18, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(px, py, 4.5, 0, Math.PI * 2);
-    ctx.fillStyle = '#fffbeb';
+    ctx.arc(px, py, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#e2e8f0';
     ctx.fill();
   }
 
-  // 核心「透镜」
-  const core = ctx.createRadialGradient(cx - 12, cy - 14, 6, cx, cy, 70);
-  core.addColorStop(0, '#fffbeb');
-  core.addColorStop(0.4, '#fbbf24');
-  core.addColorStop(1, '#78350f');
+  // 核心透镜
+  const core = ctx.createRadialGradient(cx - 12, cy - 14, 4, cx, cy, 58);
+  core.addColorStop(0, '#e0f2fe');
+  core.addColorStop(0.35, theme.accent);
+  core.addColorStop(1, '#0f172a');
   ctx.beginPath();
-  ctx.arc(cx, cy, 64, 0, Math.PI * 2);
+  ctx.arc(cx, cy, 52, 0, Math.PI * 2);
   ctx.fillStyle = core;
   ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  // 内环高光
+  ctx.beginPath();
+  ctx.arc(cx, cy, 34, -0.8, 0.9);
   ctx.strokeStyle = 'rgba(255,255,255,0.45)';
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  drawIcon(ctx, 'eye', cx, cy, '#1c1917', 1.35);
-
-  // 右侧竖排浮层贴纸(图+短词,非段落)
-  const stickers = (accentTags || []).slice(0, 3);
-  stickers.forEach((tag, i) => {
-    const sx = hw - 320;
-    const sy = 160 + i * 118;
-    ctx.save();
-    ctx.translate(sx + 140, sy + 40);
-    ctx.rotate((i - 1) * 0.05);
-    ctx.translate(-(sx + 140), -(sy + 40));
-    // 阴影
-    roundRect(ctx, sx + 6, sy + 8, 280, 78, 22);
-    ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    ctx.fill();
-    // 卡面
-    roundRect(ctx, sx, sy, 280, 78, 22);
-    const cardG = ctx.createLinearGradient(sx, sy, sx + 280, sy + 78);
-    cardG.addColorStop(0, 'rgba(255,255,255,0.16)');
-    cardG.addColorStop(1, 'rgba(255,255,255,0.06)');
-    ctx.fillStyle = cardG;
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    // 图标色块
-    const tones = ['#fbbf24', '#38bdf8', '#a78bfa'];
-    const icons = ['compass', 'hex', 'bolt'];
-    roundRect(ctx, sx + 14, sy + 14, 50, 50, 14);
-    ctx.fillStyle = tones[i];
-    ctx.fill();
-    drawIcon(ctx, icons[i], sx + 39, sy + 39, '#0c0a09', 0.85);
-    ctx.fillStyle = '#fafaf9';
-    ctx.font = '700 28px "PingFang SC","Hiragino Sans GB",system-ui,sans-serif';
-    ctx.fillText(tag, sx + 80, sy + 50);
-    ctx.restore();
-  });
-
-  // 左下会话徽章(数字可视化)
-  roundRect(ctx, 48, hh - 200, 220, 100, 24);
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(251,191,36,0.4)';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.fillStyle = '#fde68a';
-  ctx.font = '800 52px "DIN Alternate","Avenir Next",system-ui,sans-serif';
-  ctx.fillText(String(sessions != null ? sessions : '—'), 72, hh - 140);
-  ctx.fillStyle = 'rgba(255,255,255,0.6)';
-  ctx.font = '600 18px "PingFang SC",system-ui,sans-serif';
-  ctx.fillText('会话 · 自动汇聚', 72, hh - 112);
-
-  // 底部渐变,承托引语
-  const fade = ctx.createLinearGradient(0, hh - 280, 0, hh);
-  fade.addColorStop(0, 'rgba(12,10,9,0)');
-  fade.addColorStop(0.55, 'rgba(12,10,9,0.75)');
-  fade.addColorStop(1, '#0c0a09');
-  ctx.fillStyle = fade;
-  ctx.fillRect(0, hh - 280, hw, 280);
-}
-
-/** Bento 瓷砖:大图标区 + 短标题(图文并置) */
-function paintBento(ctx, x, y, w, h, { tone, icon, label, sub }) {
-  roundRect(ctx, x, y, w, h, 28);
-  ctx.fillStyle = 'rgba(255,255,255,0.045)';
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.1)';
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
-  // 上半:纯图形色场
-  roundRect(ctx, x + 14, y + 14, w - 28, h * 0.48, 20);
-  const g = ctx.createLinearGradient(x, y, x + w, y + h);
-  g.addColorStop(0, tone);
-  g.addColorStop(1, 'rgba(0,0,0,0.25)');
-  ctx.fillStyle = g;
-  ctx.fill();
-  drawIcon(ctx, icon, x + w / 2, y + 14 + (h * 0.48) / 2, '#0c0a09', 1.4);
-
-  // 下半:短文
-  ctx.fillStyle = '#fafaf9';
-  ctx.font = '700 26px "PingFang SC",system-ui,sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText(label, x + w / 2, y + h * 0.68);
-  if (sub) {
-    ctx.fillStyle = 'rgba(255,255,255,0.45)';
-    ctx.font = '500 16px "PingFang SC",system-ui,sans-serif';
-    ctx.fillText(sub, x + w / 2, y + h * 0.82);
-  }
-  ctx.textAlign = 'left';
+  ctx.restore();
 }
 
 /**
- * 图文海报:主视觉主导(~60%) + 引语叠图 + bento 瓷砖,杜绝清单堆字。
+ * 可爱主视觉:柔光角色场景
  */
-export async function renderPortraitSharePng(portrait, labels) {
+function paintArtCute(ctx, theme, x, y, w, h) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+
+  const sky = ctx.createLinearGradient(x, y, x, y + h);
+  sky.addColorStop(0, '#ffe4f1');
+  sky.addColorStop(0.55, '#fff1f7');
+  sky.addColorStop(1, '#e0f2fe');
+  ctx.fillStyle = sky;
+  ctx.fillRect(x, y, w, h);
+
+  glow(ctx, x + w * 0.2, y + h * 0.25, 120, theme.tiles[0], 0.4);
+  glow(ctx, x + w * 0.85, y + h * 0.2, 100, theme.tiles[1], 0.35);
+  glow(ctx, x + w * 0.7, y + h * 0.75, 130, theme.tiles[2], 0.25);
+
+  // 远景云
+  const cloud = (cx, cy, s, a) => {
+    ctx.fillStyle = `rgba(255,255,255,${a})`;
+    ctx.beginPath();
+    ctx.arc(cx - s * 0.4, cy, s * 0.38, 0, Math.PI * 2);
+    ctx.arc(cx + s * 0.32, cy + 4, s * 0.34, 0, Math.PI * 2);
+    ctx.arc(cx, cy - s * 0.22, s * 0.44, 0, Math.PI * 2);
+    ctx.fill();
+  };
+  cloud(x + w * 0.18, y + h * 0.2, 58, 0.85);
+  cloud(x + w * 0.82, y + h * 0.16, 48, 0.75);
+
+  const cx = x + w * 0.5;
+  const cy = y + h * 0.54;
+
+  // 地面软影
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + 118, 100, 18, 0, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(159,18,57,0.08)';
+  ctx.fill();
+
+  // 身体
+  const bodyG = ctx.createLinearGradient(cx, cy - 20, cx, cy + 110);
+  bodyG.addColorStop(0, '#ffffff');
+  bodyG.addColorStop(1, '#ffe4ec');
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + 28, 92, 88, 0, 0, Math.PI * 2);
+  ctx.fillStyle = bodyG;
+  ctx.fill();
+  ctx.strokeStyle = hexAlpha(theme.accent, 0.25);
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // 头
+  const headG = ctx.createRadialGradient(cx - 16, cy - 95, 8, cx, cy - 72, 78);
+  headG.addColorStop(0, '#ffffff');
+  headG.addColorStop(1, '#fff1f5');
+  ctx.beginPath();
+  ctx.arc(cx, cy - 72, 72, 0, Math.PI * 2);
+  ctx.fillStyle = headG;
+  ctx.fill();
+  ctx.strokeStyle = hexAlpha(theme.accent, 0.28);
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // 耳朵
+  [[-44, -128], [44, -128]].forEach(([ex, ey], i) => {
+    ctx.beginPath();
+    ctx.moveTo(cx + ex - 14, cy + ey + 28);
+    ctx.quadraticCurveTo(cx + ex, cy + ey - 18, cx + ex + 18, cy + ey + 30);
+    ctx.closePath();
+    ctx.fillStyle = i ? hexAlpha(theme.tiles[1], 0.55) : hexAlpha(theme.tiles[0], 0.6);
+    ctx.fill();
+    ctx.strokeStyle = hexAlpha(theme.accent, 0.3);
+    ctx.stroke();
+  });
+
+  // 腮红
+  ctx.beginPath();
+  ctx.ellipse(cx - 38, cy - 58, 13, 7, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx + 38, cy - 58, 13, 7, 0, 0, Math.PI * 2);
+  ctx.fillStyle = hexAlpha(theme.tiles[0], 0.45);
+  ctx.fill();
+
+  // 眼睛(更大更润)
+  [[-26, -78], [26, -78]].forEach(([ex, ey]) => {
+    ctx.beginPath();
+    ctx.ellipse(cx + ex, cy + ey, 11, 13, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#4c0519';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(cx + ex + 3, cy + ey - 4, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+  });
+
+  // 微笑
+  ctx.beginPath();
+  ctx.arc(cx, cy - 52, 16, 0.2 * Math.PI, 0.8 * Math.PI);
+  ctx.strokeStyle = '#4c0519';
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  // 胸口心形徽章
+  ctx.beginPath();
+  ctx.arc(cx, cy + 34, 26, 0, Math.PI * 2);
+  const badge = ctx.createLinearGradient(cx - 26, cy + 8, cx + 26, cy + 60);
+  badge.addColorStop(0, theme.tiles[0]);
+  badge.addColorStop(1, theme.accent);
+  ctx.fillStyle = badge;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  drawIcon(ctx, 'heart', cx, cy + 34, '#fff', 0.95);
+
+  // 漂浮星点
+  [[0.16, 0.62], [0.84, 0.58], [0.72, 0.32]].forEach(([px, py], i) => {
+    glow(ctx, x + w * px, y + h * py, 22, theme.tiles[i % 3], 0.5);
+    drawIcon(ctx, 'star', x + w * px, y + h * py, theme.tiles[i % 3], 0.65);
+  });
+
+  ctx.restore();
+}
+
+/**
+ * 幽默主视觉:波普机器人舞台
+ */
+function paintArtHumor(ctx, theme, x, y, w, h) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+
+  // 奶油底 + 半调
+  ctx.fillStyle = '#fff8e7';
+  ctx.fillRect(x, y, w, h);
+  for (let yy = y; yy < y + h; yy += 14) {
+    for (let xx = x; xx < x + w; xx += 14) {
+      if ((xx + yy) % 28 === 0) {
+        ctx.beginPath();
+        ctx.arc(xx, yy, 1.4, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(26,26,26,0.07)';
+        ctx.fill();
+      }
+    }
+  }
+
+  const cx = x + w * 0.5;
+  const cy = y + h * 0.5;
+
+  // 背后色块舞台
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(-0.08);
+  roundRect(ctx, -150, -130, 300, 260, 20);
+  ctx.fillStyle = theme.accent2;
+  ctx.fill();
+  ctx.strokeStyle = theme.ink;
+  ctx.lineWidth = 5;
+  ctx.stroke();
+  ctx.restore();
+
+  // 放射线
+  for (let i = 0; i < 12; i += 1) {
+    const a = (i / 12) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * 30, cy + Math.sin(a) * 30);
+    ctx.lineTo(cx + Math.cos(a) * (w * 0.48), cy + Math.sin(a) * (h * 0.48));
+    ctx.strokeStyle = i % 2 ? hexAlpha(theme.accent, 0.1) : hexAlpha(theme.tiles[1], 0.12);
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+  }
+
+  // 机器人
+  softPanel(ctx, cx - 58, cy - 10, 116, 110, 14, theme.tiles[1], 0);
+  ctx.strokeStyle = theme.ink;
+  ctx.lineWidth = 4;
+  roundRect(ctx, cx - 58, cy - 10, 116, 110, 14);
+  ctx.stroke();
+
+  softPanel(ctx, cx - 68, cy - 118, 136, 96, 18, '#fff', 0);
+  roundRect(ctx, cx - 68, cy - 118, 136, 96, 18);
+  ctx.strokeStyle = theme.ink;
+  ctx.lineWidth = 4;
+  ctx.stroke();
+
+  // 天线
+  ctx.beginPath();
+  ctx.moveTo(cx - 28, cy - 118);
+  ctx.lineTo(cx - 40, cy - 158);
+  ctx.moveTo(cx + 28, cy - 118);
+  ctx.lineTo(cx + 42, cy - 152);
+  ctx.strokeStyle = theme.ink;
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx - 40, cy - 162, 9, 0, Math.PI * 2);
+  ctx.arc(cx + 42, cy - 156, 9, 0, Math.PI * 2);
+  ctx.fillStyle = theme.accent;
+  ctx.fill();
+  ctx.stroke();
+
+  // 搞怪眼
+  ctx.beginPath();
+  ctx.arc(cx - 30, cy - 72, 16, 0, Math.PI * 2);
+  ctx.fillStyle = theme.accent2;
+  ctx.fill();
+  ctx.strokeStyle = theme.ink;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  roundRect(ctx, cx + 14, cy - 88, 32, 32, 4);
+  ctx.fillStyle = theme.accent;
+  ctx.fill();
+  ctx.stroke();
+
+  // 大笑
+  ctx.beginPath();
+  ctx.ellipse(cx, cy - 42, 32, 16, 0, 0, Math.PI);
+  ctx.fillStyle = theme.ink;
+  ctx.fill();
+
+  // 手臂
+  ctx.lineWidth = 9;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = theme.ink;
+  ctx.beginPath();
+  ctx.moveTo(cx - 58, cy + 20);
+  ctx.quadraticCurveTo(cx - 110, cy - 20, cx - 125, cy + 10);
+  ctx.moveTo(cx + 58, cy + 30);
+  ctx.quadraticCurveTo(cx + 120, cy + 60, cx + 135, cy + 90);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx - 125, cy + 10, 14, 0, Math.PI * 2);
+  ctx.arc(cx + 135, cy + 90, 14, 0, Math.PI * 2);
+  ctx.fillStyle = theme.accent2;
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // 爆炸标
+  const burst = (bx, by, s, c) => {
+    ctx.beginPath();
+    for (let i = 0; i < 10; i += 1) {
+      const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
+      const r = i % 2 ? s : s * 0.42;
+      const px = bx + Math.cos(a) * r;
+      const py = by + Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fillStyle = c;
+    ctx.fill();
+    ctx.strokeStyle = theme.ink;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+  };
+  burst(x + w * 0.14, y + h * 0.22, 38, theme.accent);
+  burst(x + w * 0.88, y + h * 0.72, 32, theme.tiles[1]);
+
+  ctx.restore();
+}
+
+/**
+ * 简约主视觉:东方留白线描
+ */
+function paintArtMinimal(ctx, theme, x, y, w, h) {
+  ctx.save();
+  const cx = x + w * 0.52;
+  const cy = y + h * 0.5;
+
+  // 极淡同心圆
+  for (let i = 0; i < 4; i += 1) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, 70 + i * 52, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(17,17,17,${0.035 + i * 0.015})`;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  // 一笔肖像(更流畅的贝塞尔)
+  ctx.beginPath();
+  ctx.moveTo(cx - 20, cy - 150);
+  ctx.bezierCurveTo(cx + 90, cy - 160, cx + 120, cy - 40, cx + 95, cy + 30);
+  ctx.bezierCurveTo(cx + 80, cy + 90, cx + 30, cy + 140, cx - 20, cy + 155);
+  ctx.bezierCurveTo(cx - 70, cy + 130, cx - 95, cy + 50, cx - 75, cy);
+  ctx.bezierCurveTo(cx - 105, cy - 40, cx - 70, cy - 120, cx - 20, cy - 150);
+  ctx.strokeStyle = theme.ink;
+  ctx.lineWidth = 1.75;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  // 眼
+  ctx.beginPath();
+  ctx.moveTo(cx + 20, cy - 45);
+  ctx.bezierCurveTo(cx + 45, cy - 58, cx + 70, cy - 48, cx + 78, cy - 28);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx + 52, cy - 40, 2.5, 0, Math.PI * 2);
+  ctx.fillStyle = theme.ink;
+  ctx.fill();
+
+  // 鼻线
+  ctx.beginPath();
+  ctx.moveTo(cx + 55, cy - 20);
+  ctx.quadraticCurveTo(cx + 70, cy + 10, cx + 48, cy + 28);
+  ctx.strokeStyle = 'rgba(17,17,17,0.55)';
+  ctx.lineWidth = 1.25;
+  ctx.stroke();
+
+  // 轨道节点(稀疏)
+  for (let i = 0; i < 6; i += 1) {
+    const a = -1.1 + (i / 5) * 2.4;
+    const r = 175;
+    const px = cx + Math.cos(a) * r;
+    const py = cy + Math.sin(a) * r * 0.72;
+    ctx.beginPath();
+    ctx.arc(px, py, i === 2 ? 5 : 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = i === 2 ? theme.ink : 'rgba(17,17,17,0.28)';
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function paintHumorPanelArt(ctx, kind, x, y, w, h, color, ink) {
+  const cx = x + w / 2;
+  const cy = y + h * 0.48;
+  ctx.save();
+  glow(ctx, cx, cy, 50, color, 0.2);
+  if (kind === 0) {
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, 44, 52, 0, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = 3.5;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(cx - 14, cy - 6, 9, 12, -0.2, 0, Math.PI * 2);
+    ctx.ellipse(cx + 14, cy - 6, 9, 12, 0.2, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy + 16, 14, 0.15 * Math.PI, 0.85 * Math.PI);
+    ctx.stroke();
+  } else if (kind === 1) {
+    ctx.beginPath();
+    ctx.moveTo(cx - 45, cy + 28);
+    ctx.quadraticCurveTo(cx - 55, cy - 40, cx - 5, cy - 48);
+    ctx.quadraticCurveTo(cx + 35, cy - 15, cx + 40, cy + 38);
+    ctx.lineTo(cx - 5, cy + 42);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = 3.5;
+    ctx.stroke();
+    drawIcon(ctx, 'bolt', cx + 6, cy - 8, ink, 1.3);
+  } else {
+    ctx.beginPath();
+    ctx.arc(cx - 6, cy - 8, 34, 0, Math.PI * 2);
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = 4.5;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx - 6, cy - 8, 26, 0, Math.PI * 2);
+    ctx.fillStyle = hexAlpha(color, 0.3);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(cx + 18, cy + 16);
+    ctx.lineTo(cx + 48, cy + 50);
+    ctx.lineWidth = 7;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = ink;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* ========== 专业:深空编辑海报 ========== */
+function paintLayoutPro(ctx, d) {
+  const { theme, sessions, traits, goals, needs, quote, logo, brand, slogan, tagline, title, footer } = d;
+
+  // 全幅深空主视觉
+  paintArtPro(ctx, theme, sessions, 0, 0, W, 820);
+
+  // 顶部玻璃品牌条
+  ctx.fillStyle = 'rgba(7,11,20,0.35)';
+  ctx.fillRect(0, 0, W, 100);
+  if (logo) ctx.drawImage(logo, 48, 28, 44, 44);
+  ctx.fillStyle = theme.ink;
+  ctx.font = fnt(theme, '600', 24, 'display');
+  withTrack(ctx, theme, 24, () => ctx.fillText(brand, 108, 48));
+  ctx.fillStyle = theme.mute;
+  ctx.font = fnt(theme, '500', 13, 'meta');
+  ctx.fillText(slogan, 108, 74);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = hexAlpha(theme.accent, 0.9);
+  ctx.font = fnt(theme, '500', 12, 'meta');
+  withTrack(ctx, theme, 12, () => ctx.fillText('AI WORK PORTRAIT', W - 48, 42));
+  ctx.fillStyle = theme.ink;
+  ctx.font = fnt(theme, '300', 42, 'display');
+  ctx.fillText(sessText(sessions), W - 48, 86);
+  ctx.textAlign = 'left';
+
+  // 悬浮引语卡(压在主视觉下沿)
+  softPanel(ctx, 48, 620, W - 96, 220, 20, 'rgba(15,23,42,0.82)', 0.25);
+  ctx.strokeStyle = hexAlpha(theme.accent, 0.25);
+  ctx.lineWidth = 1;
+  roundRect(ctx, 48, 620, W - 96, 220, 20);
+  ctx.stroke();
+  ctx.fillStyle = theme.mute;
+  ctx.font = fnt(theme, '500', 12, 'meta');
+  withTrack(ctx, theme, 12, () => ctx.fillText(title.toUpperCase(), 80, 658));
+  ctx.fillStyle = theme.ink;
+  ctx.font = fnt(theme, '400', 26, 'quote');
+  wrapLines(ctx, quote, W - 180, 4).forEach((ln, i) => {
+    ctx.fillText(ln, 80, 702 + i * 36);
+  });
+
+  // 下部浅色信息层
+  ctx.fillStyle = '#f1f5f9';
+  ctx.fillRect(0, 860, W, H - 860);
+
+  const cards = [
+    { k: '风格', v: traits[0] || NA, s: traits[1] || '', c: theme.tiles[0] },
+    { k: '能力', v: goals[0] || NA, s: goals[1] || '', c: theme.tiles[1] },
+    { k: '发现', v: needs[0] || NA, s: needs[1] || '', c: theme.tiles[2] },
+  ];
+  const cw = Math.floor((W - 96 - 32) / 3);
+  cards.forEach((c, i) => {
+    const x = 48 + i * (cw + 16);
+    softPanel(ctx, x, 900, cw, 160, 16, '#ffffff', 0.08);
+    ctx.fillStyle = c.c;
+    ctx.fillRect(x, 900, 5, 160);
+    ctx.fillStyle = 'rgba(15,23,42,0.45)';
+    ctx.font = fnt(theme, '600', 12, 'meta');
+    ctx.fillText(c.k, x + 24, 934);
+    ctx.fillStyle = '#0f172a';
+    ctx.font = fnt(theme, '600', 20, 'display');
+    wrapLines(ctx, c.v, cw - 40, 2).forEach((ln, li) => {
+      ctx.fillText(ln, x + 24, 972 + li * 28);
+    });
+    if (c.s) {
+      ctx.fillStyle = 'rgba(15,23,42,0.4)';
+      ctx.font = fnt(theme, '400', 13, 'body');
+      wrapLines(ctx, c.s, cw - 40, 1).forEach((ln) => ctx.fillText(ln, x + 24, 1036));
+    }
+  });
+
+  // 宣言
+  ctx.fillStyle = '#0f172a';
+  roundRect(ctx, 48, 1090, W - 96, 88, 14);
+  ctx.fill();
+  ctx.fillStyle = '#f8fafc';
+  ctx.font = fnt(theme, '600', 20, 'display');
+  ctx.fillText(tagline, 76, 1126);
+  ctx.fillStyle = 'rgba(248,250,252,0.65)';
+  ctx.font = fnt(theme, '400', 14, 'body');
+  wrapLines(ctx, footer, W - 180, 1).forEach((ln) => ctx.fillText(ln, 76, 1156));
+
+  // footer 适配浅底
+  const lightTheme = { ...theme, ink: '#0f172a', mute: 'rgba(15,23,42,0.45)', accent: '#2563eb' };
+  paintFooter(ctx, lightTheme, logo, brand);
+}
+
+/* ========== 可爱:柔光角色海报 ========== */
+function paintLayoutCute(ctx, d) {
+  const { theme, sessions, traits, goals, needs, quote, logo, brand, slogan, tagline, title, footer } = d;
+
+  // 全页柔彩底
+  const bg = ctx.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, '#fff7fb');
+  bg.addColorStop(0.4, '#ffe4f0');
+  bg.addColorStop(1, '#e0f2fe');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+  glow(ctx, 200, 180, 220, theme.tiles[0], 0.35);
+  glow(ctx, 900, 300, 260, theme.tiles[1], 0.3);
+  glow(ctx, 540, 1100, 280, theme.tiles[2], 0.22);
+
+  // 顶品牌(轻)
+  if (logo) ctx.drawImage(logo, 48, 44, 40, 40);
+  ctx.fillStyle = theme.ink;
+  ctx.font = fnt(theme, '700', 22, 'display');
+  withTrack(ctx, theme, 22, () => ctx.fillText(brand, 104, 62));
+  ctx.fillStyle = theme.mute;
+  ctx.font = fnt(theme, '500', 13, 'meta');
+  ctx.fillText(slogan, 104, 88);
+
+  // 会话糖
+  glow(ctx, W - 100, 78, 50, theme.accent, 0.35);
+  ctx.beginPath();
+  ctx.arc(W - 100, 78, 44, 0, Math.PI * 2);
+  const sg = ctx.createLinearGradient(W - 140, 40, W - 60, 120);
+  sg.addColorStop(0, theme.tiles[0]);
+  sg.addColorStop(1, theme.accent);
+  ctx.fillStyle = sg;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#fff';
+  ctx.font = fnt(theme, '800', 24, 'display');
+  ctx.fillText(sessText(sessions), W - 100, 76);
+  ctx.font = fnt(theme, '600', 11, 'meta');
+  ctx.fillText('会话', W - 100, 98);
+  ctx.textAlign = 'left';
+
+  // 大角色区(居中英雄)
+  softPanel(ctx, 80, 130, W - 160, 460, 40, 'rgba(255,255,255,0.55)', 0.06);
+  paintArtCute(ctx, theme, 80, 130, W - 160, 460);
+
+  // 引语卡
+  softPanel(ctx, 64, 620, W - 128, 200, 28, '#ffffff', 0.1);
+  ctx.strokeStyle = hexAlpha(theme.accent, 0.18);
+  ctx.lineWidth = 1.5;
+  roundRect(ctx, 64, 620, W - 128, 200, 28);
+  ctx.stroke();
+  ctx.fillStyle = theme.mute;
+  ctx.font = fnt(theme, '600', 13, 'meta');
+  ctx.fillText(title, 96, 658);
+  drawIcon(ctx, 'heart', W - 112, 650, theme.accent, 0.85);
+  ctx.fillStyle = theme.ink;
+  ctx.font = fnt(theme, '500', 24, 'quote');
+  wrapLines(ctx, quote, W - 220, 4).forEach((ln, i) => {
+    ctx.fillText(ln, 96, 702 + i * 34);
+  });
+
+  // 三胶囊(轻盈)
+  const pills = [
+    { k: '风格', v: traits[0] || NA, c: theme.tiles[0] },
+    { k: '能力', v: goals[0] || NA, c: theme.tiles[1] },
+    { k: '发现', v: needs[0] || NA, c: theme.tiles[2] },
+  ];
+  const pw = Math.floor((W - 128 - 24) / 3);
+  pills.forEach((p, i) => {
+    const x = 64 + i * (pw + 12);
+    softPanel(ctx, x, 850, pw, 120, 24, '#ffffff', 0.08);
+    ctx.beginPath();
+    ctx.arc(x + 36, 910, 18, 0, Math.PI * 2);
+    ctx.fillStyle = p.c;
+    ctx.fill();
+    ctx.fillStyle = theme.mute;
+    ctx.font = fnt(theme, '600', 12, 'meta');
+    ctx.fillText(p.k, x + 66, 896);
+    ctx.fillStyle = theme.ink;
+    ctx.font = fnt(theme, '700', 16, 'body');
+    wrapLines(ctx, p.v, pw - 80, 2).forEach((ln, li) => {
+      ctx.fillText(ln, x + 66, 926 + li * 22);
+    });
+  });
+
+  // 底波浪色带
+  ctx.beginPath();
+  ctx.moveTo(0, 1020);
+  for (let x = 0; x <= W; x += 36) {
+    ctx.lineTo(x, 1020 + Math.sin(x * 0.035) * 10);
+  }
+  ctx.lineTo(W, H);
+  ctx.lineTo(0, H);
+  ctx.closePath();
+  const wg = ctx.createLinearGradient(0, 1020, W, H);
+  wg.addColorStop(0, '#fb7185');
+  wg.addColorStop(0.5, '#7dd3fc');
+  wg.addColorStop(1, '#fcd34d');
+  ctx.fillStyle = wg;
+  ctx.fill();
+
+  ctx.fillStyle = '#fff';
+  ctx.font = fnt(theme, '700', 24, 'display');
+  withTrack(ctx, theme, 24, () => ctx.fillText(tagline, 64, 1120));
+  ctx.fillStyle = 'rgba(255,255,255,0.88)';
+  ctx.font = fnt(theme, '500', 14, 'body');
+  wrapLines(ctx, footer, W - 160, 1).forEach((ln) => ctx.fillText(ln, 64, 1154));
+
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  roundRect(ctx, 40, H - 118, W - 80, 92, 22);
+  ctx.fill();
+  paintFooter(ctx, theme, logo, brand);
+}
+
+/* ========== 幽默:波普漫画海报 ========== */
+function paintLayoutHumor(ctx, d) {
+  const { theme, sessions, traits, goals, needs, quote, logo, brand, slogan, tagline, title, footer } = d;
+
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#fffaf0');
+  bg.addColorStop(1, '#ffe8a3');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // 外框
+  ctx.strokeStyle = theme.ink;
+  ctx.lineWidth = 8;
+  ctx.strokeRect(28, 28, W - 56, H - 56);
+
+  // 顶黄条
+  ctx.fillStyle = theme.accent2;
+  ctx.fillRect(40, 40, W - 80, 92);
+  ctx.strokeStyle = theme.ink;
+  ctx.lineWidth = 4;
+  ctx.strokeRect(42, 42, W - 84, 88);
+  if (logo) ctx.drawImage(logo, 60, 58, 48, 48);
+  ctx.fillStyle = theme.ink;
+  ctx.font = fnt(theme, '900', 28, 'display');
+  withTrack(ctx, theme, 28, () => ctx.fillText(brand.toUpperCase(), 128, 78));
+  ctx.font = fnt(theme, '700', 14, 'meta');
+  ctx.fillText(slogan, 128, 108);
+
+  // POW
+  ctx.save();
+  ctx.translate(W - 150, 86);
+  ctx.rotate(-0.14);
+  ctx.beginPath();
+  for (let i = 0; i < 10; i += 1) {
+    const a = (i / 10) * Math.PI * 2;
+    const r = i % 2 ? 58 : 38;
+    const px = Math.cos(a) * r;
+    const py = Math.sin(a) * r;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fillStyle = theme.accent;
+  ctx.fill();
+  ctx.strokeStyle = theme.ink;
+  ctx.lineWidth = 4;
+  ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.font = fnt(theme, '900', 24, 'display');
+  ctx.fillText(sessText(sessions), 0, 2);
+  ctx.font = fnt(theme, '700', 11, 'meta');
+  ctx.fillText('会话!', 0, 24);
+  ctx.restore();
+  ctx.textAlign = 'left';
+
+  // 英雄漫画格
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(48, 156, W - 96, 380);
+  ctx.strokeStyle = theme.ink;
+  ctx.lineWidth = 5;
+  ctx.strokeRect(50, 158, W - 100, 376);
+  paintArtHumor(ctx, theme, 56, 164, W - 112, 360);
+
+  // 对话框
+  softPanel(ctx, 56, 560, W - 112, 200, 10, theme.panel, 0);
+  ctx.strokeStyle = theme.ink;
+  ctx.lineWidth = 4;
+  roundRect(ctx, 56, 560, W - 112, 200, 10);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(120, 760);
+  ctx.lineTo(150, 798);
+  ctx.lineTo(190, 760);
+  ctx.fillStyle = theme.panel;
+  ctx.fill();
+  ctx.strokeStyle = theme.ink;
+  ctx.beginPath();
+  ctx.moveTo(120, 760);
+  ctx.lineTo(150, 798);
+  ctx.lineTo(190, 760);
+  ctx.stroke();
+
+  ctx.fillStyle = theme.accent;
+  ctx.font = fnt(theme, '900', 15, 'meta');
+  ctx.fillText(`【${title}】说:`, 84, 598);
+  ctx.fillStyle = theme.ink;
+  ctx.font = fnt(theme, '800', 24, 'quote');
+  wrapLines(ctx, quote, W - 180, 4).forEach((ln, i) => {
+    ctx.fillText(ln, 84, 642 + i * 32);
+  });
+
+  // 三格
+  const panels = [
+    { k: '风格!', v: traits[0] || '神秘选手', c: theme.tiles[0] },
+    { k: '能力!', v: goals[0] || '隐藏技能', c: theme.tiles[1] },
+    { k: '发现!', v: needs[0] || '彩蛋待拆', c: theme.tiles[2] },
+  ];
+  const pw = Math.floor((W - 112 - 24) / 3);
+  panels.forEach((p, i) => {
+    const x = 56 + i * (pw + 12);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(x, 830, pw, 230);
+    ctx.strokeStyle = theme.ink;
+    ctx.lineWidth = 4;
+    ctx.strokeRect(x + 2, 832, pw - 4, 226);
+    ctx.fillStyle = p.c;
+    ctx.fillRect(x + 2, 832, pw - 4, 40);
+    ctx.fillStyle = theme.ink;
+    ctx.font = fnt(theme, '900', 18, 'display');
+    ctx.fillText(p.k, x + 14, 860);
+    paintHumorPanelArt(ctx, i, x + 6, 878, pw - 12, 110, p.c, theme.ink);
+    ctx.fillStyle = theme.ink;
+    ctx.font = fnt(theme, '800', 16, 'body');
+    wrapLines(ctx, p.v, pw - 24, 2).forEach((ln, li) => {
+      ctx.fillText(ln, x + 14, 1010 + li * 22);
+    });
+  });
+
+  // 锯齿宣言
+  ctx.fillStyle = theme.accent;
+  ctx.beginPath();
+  ctx.moveTo(40, 1090);
+  for (let x = 40; x <= W - 40; x += 26) {
+    ctx.lineTo(x + 13, 1072);
+    ctx.lineTo(x + 26, 1090);
+  }
+  ctx.lineTo(W - 40, 1190);
+  ctx.lineTo(40, 1190);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = theme.ink;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.font = fnt(theme, '900', 22, 'display');
+  withTrack(ctx, theme, 22, () => ctx.fillText(tagline, 68, 1135));
+  ctx.font = fnt(theme, '700', 14, 'body');
+  wrapLines(ctx, footer, W - 160, 1).forEach((ln) => ctx.fillText(ln, 68, 1168));
+
+  ctx.fillStyle = theme.panel;
+  ctx.fillRect(40, H - 118, W - 80, 90);
+  ctx.strokeStyle = theme.ink;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(42, H - 116, W - 84, 86);
+  paintFooter(ctx, theme, logo, brand);
+}
+
+/* ========== 简约:留白海报 ========== */
+function paintLayoutMinimal(ctx, d) {
+  const { theme, sessions, traits, goals, needs, quote, logo, brand, slogan, tagline, title, footer } = d;
+
+  ctx.fillStyle = '#f7f7f5';
+  ctx.fillRect(0, 0, W, H);
+
+  // 顶细线
+  ctx.strokeStyle = 'rgba(17,17,17,0.12)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(72, 88);
+  ctx.lineTo(W - 72, 88);
+  ctx.stroke();
+
+  if (logo) {
+    ctx.globalAlpha = 0.85;
+    ctx.drawImage(logo, 72, 40, 28, 28);
+    ctx.globalAlpha = 1;
+  }
+  ctx.fillStyle = theme.ink;
+  ctx.font = fnt(theme, '500', 13, 'meta');
+  withTrack(ctx, theme, 13, () => ctx.fillText(brand.toUpperCase(), 112, 60));
+  ctx.textAlign = 'right';
+  ctx.fillStyle = theme.mute;
+  ctx.font = fnt(theme, '400', 12, 'meta');
+  ctx.fillText(slogan, W - 72, 60);
+  ctx.textAlign = 'left';
+
+  // 主插画占舞台中央
+  paintArtMinimal(ctx, theme, 120, 120, W - 240, 560);
+
+  // 会话极小
+  ctx.fillStyle = theme.mute;
+  ctx.font = fnt(theme, '400', 12, 'meta');
+  withTrack(ctx, theme, 12, () => {
+    ctx.fillText(`${sessText(sessions)}  SESSIONS`, 72, 720);
+  });
+
+  // 引语:窄栏大字
+  ctx.fillStyle = theme.mute;
+  ctx.font = fnt(theme, '500', 11, 'meta');
+  withTrack(ctx, theme, 11, () => ctx.fillText(title, 72, 770));
+  ctx.fillStyle = theme.ink;
+  ctx.font = fnt(theme, '300', 30, 'quote');
+  wrapLines(ctx, quote, W - 200, 3).forEach((ln, i) => {
+    ctx.fillText(ln, 72, 820 + i * 42);
+  });
+
+  // 三项:超疏
+  const items = [
+    { k: '风格', v: traits[0] || NA },
+    { k: '能力', v: goals[0] || NA },
+    { k: '发现', v: needs[0] || NA },
+  ];
+  items.forEach((item, i) => {
+    const x = 72 + i * 320;
+    ctx.strokeStyle = 'rgba(17,17,17,0.15)';
+    ctx.beginPath();
+    ctx.moveTo(x, 980);
+    ctx.lineTo(x + 260, 980);
+    ctx.stroke();
+    ctx.fillStyle = theme.mute;
+    ctx.font = fnt(theme, '500', 11, 'meta');
+    withTrack(ctx, theme, 11, () => ctx.fillText(item.k, x, 1010));
+    ctx.fillStyle = theme.ink;
+    ctx.font = fnt(theme, '400', 18, 'body');
+    wrapLines(ctx, item.v, 250, 1).forEach((ln) => ctx.fillText(ln, x, 1042));
+  });
+
+  ctx.fillStyle = theme.ink;
+  ctx.font = fnt(theme, '500', 16, 'display');
+  withTrack(ctx, theme, 16, () => ctx.fillText(tagline, 72, 1120));
+  ctx.fillStyle = theme.mute;
+  ctx.font = fnt(theme, '400', 13, 'body');
+  wrapLines(ctx, footer, W - 200, 1).forEach((ln) => ctx.fillText(ln, 72, 1150));
+
+  paintFooter(ctx, theme, logo, brand);
+}
+
+export async function renderPortraitSharePng(portrait, labels, styleIndex = 0) {
   const {
     brand = 'Token Bank',
+    slogan = PRODUCT_SLOGAN,
     tagline = '越用越懂你 · 自动发现',
     title = '我的 AI 工作画像',
     footer = '用 Agent 越多，Token Bank 越懂你要什么',
   } = labels || {};
+  const theme = getPosterStyle(styleIndex);
 
   const canvas = document.createElement('canvas');
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext('2d');
 
-  const traits = (portrait?.traits || []).map((t) => headline(t, 7)).filter(Boolean);
-  const goals = (portrait?.goals || []).map((g) => headline(g, 8)).filter(Boolean);
+  const traits = (portrait?.traits || []).map((t) => phrase(t)).filter(Boolean);
+  const goals = (portrait?.goals || []).map((g) => phrase(g)).filter(Boolean);
   const needs = (portrait?.needs || [])
-    .map((n) => headline(typeof n === 'string' ? n : n?.text, 7))
+    .map((n) => phrase(typeof n === 'string' ? n : n?.text))
     .filter(Boolean);
+  const extensions = (portrait?.extensions || []).map((e) => phrase(e)).filter(Boolean);
   const sessions = portrait?.digest?.sessions;
-  const persona = String(portrait?.persona || '').trim();
-
-  // 1) 全幅主视觉
-  paintHero(ctx, sessions, [
-    traits[0] || '风格透镜',
-    goals[0] || '能力域',
-    needs[0] || '自动发现',
-  ]);
+  const quote = String(portrait?.persona || '').trim() || '正在从你的 Agent 会话中形成画像…';
 
   let logo = null;
   try { logo = await loadImage(logoUrl); } catch { /* */ }
 
-  // 顶栏叠在主视觉上
-  if (logo) ctx.drawImage(logo, 48, 40, 48, 48);
-  else {
-    ctx.beginPath();
-    ctx.arc(72, 64, 22, 0, Math.PI * 2);
-    ctx.fillStyle = '#fbbf24';
-    ctx.fill();
-  }
-  ctx.fillStyle = '#fafaf9';
-  ctx.font = '700 28px "PingFang SC",system-ui,sans-serif';
-  ctx.fillText(brand, 112, 58);
-  ctx.fillStyle = 'rgba(251,191,36,0.95)';
-  ctx.font = '600 17px "PingFang SC",system-ui,sans-serif';
-  ctx.fillText(tagline, 112, 86);
+  const data = {
+    theme, sessions, traits, goals, needs, extensions, quote,
+    logo, brand, slogan, tagline, title, footer,
+  };
 
-  // 标题条(咬在图上)
-  roundRect(ctx, 48, 120, 420, 72, 18);
-  ctx.fillStyle = 'rgba(0,0,0,0.4)';
-  ctx.fill();
-  ctx.fillStyle = '#fafaf9';
-  ctx.font = '700 34px "PingFang SC",system-ui,sans-serif';
-  ctx.fillText(title, 68, 166);
+  if (theme.layout === 'cute') paintLayoutCute(ctx, data);
+  else if (theme.layout === 'humor') paintLayoutHumor(ctx, data);
+  else if (theme.layout === 'minimal') paintLayoutMinimal(ctx, data);
+  else paintLayoutPro(ctx, data);
 
-  // 2) 引语叠在主视觉底部(图文一体,不是独立字卡墙)
-  ctx.fillStyle = 'rgba(251,191,36,0.55)';
-  ctx.font = '700 72px Georgia,"Songti SC",serif';
-  ctx.fillText('“', 40, 720);
-  ctx.fillStyle = '#fafaf9';
-  ctx.font = '500 30px "PingFang SC",system-ui,sans-serif';
-  const quote = persona || '正在从你的 Agent 会话中形成画像…';
-  wrapLines(ctx, quote, W - 120, 3).forEach((ln, i) => {
-    ctx.fillText(ln, 88, 740 + i * 40);
-  });
-
-  // 3) 下半:深底 + 非对称 bento(图标主导)
-  ctx.fillStyle = '#0c0a09';
-  ctx.fillRect(0, 860, W, H - 860);
-
-  // 细分割线装饰
-  ctx.strokeStyle = 'rgba(251,191,36,0.25)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(48, 880);
-  ctx.lineTo(200, 880);
-  ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,0.4)';
-  ctx.font = '600 14px "PingFang SC",system-ui,sans-serif';
-  ctx.fillText('FROM YOUR AGENTS', 216, 886);
-
-  const gap = 16;
-  const bw = Math.floor((W - 96 - gap * 2) / 3);
-  const bh = 220;
-  const by = 920;
-  const tiles = [
-    { tone: '#38bdf8', icon: 'compass', label: traits[0] || '风格', sub: traits[1] || '性格透镜' },
-    { tone: '#fbbf24', icon: 'hex', label: goals[0] || '能力域', sub: goals[1] || '长期配备' },
-    { tone: '#a78bfa', icon: 'bolt', label: needs[0] || '发现', sub: needs[1] || '自动匹配' },
-  ];
-  tiles.forEach((tile, i) => {
-    paintBento(ctx, 48 + i * (bw + gap), by, bw, bh, tile);
-  });
-
-  // 宽幅宣言条(图标 + 一句 slogans,非段落)
-  const barY = by + bh + 28;
-  roundRect(ctx, 48, barY, W - 96, 100, 28);
-  const bar = ctx.createLinearGradient(48, barY, W - 48, barY + 100);
-  bar.addColorStop(0, 'rgba(180,83,9,0.75)');
-  bar.addColorStop(0.55, 'rgba(79,70,229,0.45)');
-  bar.addColorStop(1, 'rgba(15,23,42,0.8)');
-  ctx.fillStyle = bar;
-  ctx.fill();
-  roundRect(ctx, 68, barY + 22, 56, 56, 16);
-  ctx.fillStyle = '#fbbf24';
-  ctx.fill();
-  drawIcon(ctx, 'nodes', 96, barY + 50, '#0c0a09', 1);
-  ctx.fillStyle = '#fffbeb';
-  ctx.font = '700 28px "PingFang SC",system-ui,sans-serif';
-  ctx.fillText(tagline, 144, barY + 48);
-  ctx.fillStyle = 'rgba(255,255,255,0.7)';
-  ctx.font = '500 18px "PingFang SC",system-ui,sans-serif';
-  ctx.fillText(footer, 144, barY + 78);
-
-  // 底角品牌
-  if (logo) ctx.drawImage(logo, W - 100, H - 72, 40, 40);
-  ctx.fillStyle = 'rgba(255,255,255,0.35)';
-  ctx.font = '600 14px "PingFang SC",system-ui,sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillText(brand, W - 112, H - 46);
-  ctx.textAlign = 'left';
-
-  stampGrain(ctx, 0.04);
+  stampGrain(ctx, theme.grain != null ? theme.grain : (theme.light ? 0.02 : 0.04));
 
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
@@ -479,6 +1308,7 @@ export async function renderPortraitSharePng(portrait, labels) {
 export function buildPortraitShareText(portrait, t, typeLabel) {
   const lines = [];
   lines.push('我在 Token Bank 被自动认出了工作画像');
+  lines.push(PRODUCT_SLOGAN);
   lines.push('越用越懂你 · 自动发现技能 / 提示词 / 智能体');
   lines.push('');
   if (portrait?.persona) lines.push(`「${portrait.persona}」`);
@@ -494,11 +1324,12 @@ export function buildPortraitShareText(portrait, t, typeLabel) {
     lines.push(`配备 · ${needs.slice(0, 3).map((x) => headline(x, 8)).join(' / ')}`);
   }
   lines.push('');
+  lines.push(`官网 ${OFFICIAL_URL}`);
+  lines.push(`GitHub ${GITHUB_URL}`);
   lines.push('#TokenBank #越用越懂你 #自动发现');
   return lines.join('\n');
 }
 
-/** 页内画像可视化:图文 bento,非纯文字列表 */
 export function PortraitVisualBoard({
   persona,
   traits = [],
@@ -531,7 +1362,6 @@ export function PortraitVisualBoard({
         )}
       </div>
 
-      {/* 主视觉条:抽象图 + 引语 */}
       <div className="relative overflow-hidden rounded-2xl border border-zinc-200/80 dark:border-zinc-700/70 min-h-[140px]">
         <div
           className="absolute inset-0"
@@ -542,12 +1372,8 @@ export function PortraitVisualBoard({
               + 'linear-gradient(135deg, #0c0a09 0%, #1e1b4b 45%, #1c1917 100%)',
           }}
         />
-        {/* 装饰环 */}
         <div className="absolute left-[18%] top-1/2 -translate-y-1/2 w-28 h-28 rounded-full border border-amber-400/40" />
         <div className="absolute left-[18%] top-1/2 -translate-y-1/2 w-16 h-16 rounded-full border-2 border-amber-300/70 bg-amber-400/20" />
-        <div className="absolute left-[22%] top-[38%] w-2 h-2 rounded-full bg-amber-300 shadow-[0_0_12px_#fbbf24]" />
-        <div className="absolute left-[12%] top-[55%] w-1.5 h-1.5 rounded-full bg-indigo-300" />
-        <div className="absolute left-[30%] top-[62%] w-1.5 h-1.5 rounded-full bg-sky-300" />
 
         <div className="relative z-[1] p-4 pl-[42%] sm:pl-[38%] space-y-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -569,7 +1395,6 @@ export function PortraitVisualBoard({
         </div>
       </div>
 
-      {/* 三列图文瓷砖 */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         {[
           {
@@ -638,28 +1463,39 @@ export default function PortraitShareModal({ open, onClose, portrait, typeLabel,
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
+  const [styleIndex, setStyleIndex] = useState(0);
   const blobRef = useRef(null);
+  const styleRef = useRef(0);
 
   const labels = useMemo(() => ({
     brand: 'Token Bank',
+    slogan: PRODUCT_SLOGAN,
     tagline: t('resources.reco.shareTagline'),
     title: t('resources.reco.shareTitle'),
     footer: t('resources.reco.shareFooter'),
   }), [t]);
 
-  const regenerate = useCallback(async () => {
+  const styleLabel = getPosterStyle(styleIndex).label;
+
+  const regenerate = useCallback(async (advance = false) => {
     if (!portrait) return;
+    let idx = styleRef.current;
+    if (advance) {
+      idx = (idx + 1) % POSTER_STYLES.length;
+      styleRef.current = idx;
+      setStyleIndex(idx);
+    }
     setBusy(true);
     setErr('');
     setMsg('');
     try {
-      const blob = await renderPortraitSharePng(portrait, labels);
+      const blob = await renderPortraitSharePng(portrait, labels, idx);
       blobRef.current = blob;
       setPreviewUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
         return URL.createObjectURL(blob);
       });
-      setMsg(t('resources.reco.shareReady'));
+      setMsg(t('resources.reco.shareReadyStyle', { style: getPosterStyle(idx).label }));
     } catch (e) {
       setErr(e.message || String(e));
     } finally {
@@ -669,7 +1505,9 @@ export default function PortraitShareModal({ open, onClose, portrait, typeLabel,
 
   useEffect(() => {
     if (!open) return undefined;
-    regenerate();
+    styleRef.current = 0;
+    setStyleIndex(0);
+    regenerate(false);
     return undefined;
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -683,7 +1521,7 @@ export default function PortraitShareModal({ open, onClose, portrait, typeLabel,
     if (!previewUrl) return;
     const a = document.createElement('a');
     a.href = previewUrl;
-    a.download = `tokenbank-portrait-${Date.now()}.png`;
+    a.download = `tokenbank-portrait-${getPosterStyle(styleIndex).id}-${Date.now()}.png`;
     a.click();
     setMsg(t('resources.reco.shareSaved'));
   };
@@ -723,7 +1561,12 @@ export default function PortraitShareModal({ open, onClose, portrait, typeLabel,
               </div>
             )}
           </div>
-          <p className="text-[11px] text-zinc-500 leading-relaxed">{t('resources.reco.shareVisualHint')}</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] text-zinc-500 leading-relaxed">{t('resources.reco.shareVisualHint')}</p>
+            <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-md bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400">
+              {t('resources.reco.shareStyleBadge', { style: styleLabel, n: styleIndex + 1, total: POSTER_STYLES.length })}
+            </span>
+          </div>
           {(msg || err) && (
             <p className={`text-[11px] ${err ? 'text-red-500' : 'text-emerald-600'}`}>{err || msg}</p>
           )}
@@ -736,7 +1579,7 @@ export default function PortraitShareModal({ open, onClose, portrait, typeLabel,
               className="px-3.5 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800">
               {t('resources.reco.shareCopy')}
             </button>
-            <button type="button" disabled={busy} onClick={regenerate}
+            <button type="button" disabled={busy} onClick={() => regenerate(true)}
               className="px-3.5 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-800">
               {t('resources.reco.shareRegen')}
             </button>
