@@ -1,7 +1,76 @@
 // Agent 对话流：典型 Agent 交互风格（用户消息 + 思考/工具/终端/回复 + 编排派发）
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { mergeStreamText, foldStreamSteps, normalizeLoose, looksLikeLeakedReasoning, looksLikeInlineReasoning } from '../../shared/stream-text-merge.js';
-import { MarkdownContent } from './RichMediaContent';
+import {
+  mergeStreamText,
+  foldStreamSteps,
+  normalizeLoose,
+  looksLikeLeakedReasoning,
+  looksLikeInlineReasoning,
+  stripReasoningLeakage,
+  repairThinkingOutputBoundary,
+  hasClearReasoningBoundary,
+  findUserFacingStart,
+} from '../../shared/stream-text-merge.js';
+import { MarkdownContent, StreamMarkdownContent } from './RichMediaContent';
+
+/** 启动/Hook 类系统事件：只进「正在执行」细节，不单独占卡片 */
+function isEphemeralSystemEvent(ev) {
+  if (!ev) return false;
+  const sub = String(ev.system_subtype || '');
+  if (sub === 'process_started' || sub === 'hook_response') return true;
+  const c = String(ev.content || ev.message || '');
+  return /SessionStart|会话上下文已加载|等待模型流式/i.test(c);
+}
+
+function isEphemeralSystemItem(item) {
+  if (item?.kind === 'system_event') return isEphemeralSystemEvent(item);
+  if (item?.kind === 'system_event_group') {
+    const events = item.events || [];
+    return events.length > 0 && events.every(isEphemeralSystemEvent);
+  }
+  return false;
+}
+
+/** 回复是否已是干净用户可见正文 */
+function isCleanUserReply(text) {
+  const o = String(text || '').trim();
+  if (!o) return false;
+  if (looksLikeLeakedReasoning(o)) return false;
+  return /^(Hi|Hello|Hey|Sure|OK|Yes|No)\b/i.test(o) || /^[\u4e00-\u9fff《「]/.test(o);
+}
+
+/**
+ * 时间线重绘（截断拼回已在 repairThinkingOutputBoundary 内完成）：
+ * - 分界清晰 → 保留推理卡 + 干净回复
+ * - 分界不清 → 不展示推理，整段当输出
+ */
+function redrawThinkingOutputPairs(items) {
+  const out = items.map((x) => ({ ...x }));
+  for (let i = 0; i < out.length; i++) {
+    if (out[i]?.kind !== 'thinking_group') continue;
+    let j = i + 1;
+    while (j < out.length && (out[j]?.kind === 'system_event' || out[j]?.kind === 'system_event_group')) {
+      j += 1;
+    }
+    if (j >= out.length || out[j]?.kind !== 'assistant') continue;
+
+    const repaired = repairThinkingOutputBoundary(out[i].content, out[j].content);
+    const think = String(repaired.thinking || '').trim();
+    const reply = String(repaired.output || '').trim();
+    // repair 已处理截断拼回；此处仅决定是否还单独展示推理卡
+    const clear = !!think && isCleanUserReply(reply);
+
+    if (!clear) {
+      out[j] = { ...out[j], content: reply || [think, reply].filter(Boolean).join(' ').trim() || think };
+      out.splice(i, 1);
+      i -= 1;
+      continue;
+    }
+    out[i] = { ...out[i], content: think };
+    out[j] = { ...out[j], content: reply };
+  }
+  return out.filter(Boolean);
+}
 
 const STEP_META = {
   thinking: { icon: '💭', label: '推理', accent: 'border-amber-200 bg-amber-50/60 dark:border-amber-800/40 dark:bg-amber-900/15' },
@@ -189,42 +258,55 @@ function buildTimeline(userPrompt, steps = [], delegations = {}, agentNames = {}
 
     if (type === 'output') {
       flushSystem();
-      // 误泄漏的 reasoning 并入 thinking，避免与最终回复重复展示
+      // 误泄漏的 reasoning：仅在分界清晰时拆出推理；否则整段当输出
+      let outStep = step;
       if (looksLikeLeakedReasoning(step.content)) {
-        if (thinkingBuf.length) {
-          const last = thinkingBuf[thinkingBuf.length - 1];
-          thinkingBuf[thinkingBuf.length - 1] = {
-            ...last,
-            content: mergeStreamText(last.content, step.content, {
-              isDelta: !!step.is_delta,
-              isSnapshot: !!step.is_snapshot,
-            }),
-            timestamp: step.timestamp || last.timestamp,
-          };
-          continue;
+        const thinkHint = thinkingBuf[thinkingBuf.length - 1]?.content
+          || [...items].reverse().find((it) => it.kind === 'thinking_group')?.content
+          || '';
+        const raw = String(step.content || '');
+        const cleaned = stripReasoningLeakage(raw, thinkHint);
+        const probe = thinkHint ? `${thinkHint} ${raw}` : raw;
+        const cut = findUserFacingStart(raw);
+        const canSplit = cut > 0 && cleaned && isCleanUserReply(cleaned)
+          && hasClearReasoningBoundary(probe);
+        if (canSplit) {
+          const leakOnly = raw.slice(0, cut).trim();
+          if (leakOnly) {
+            const leakStep = { ...step, content: leakOnly, stepType: 'thinking' };
+            if (thinkingBuf.length) {
+              const last = thinkingBuf[thinkingBuf.length - 1];
+              thinkingBuf[thinkingBuf.length - 1] = {
+                ...last,
+                content: mergeStreamText(last.content, leakOnly, {
+                  isDelta: !!step.is_delta,
+                  isSnapshot: !!step.is_snapshot,
+                }),
+                timestamp: step.timestamp || last.timestamp,
+              };
+            } else if (!mergeLeakIntoThinkingItems(items, leakStep)) {
+              thinkingBuf.push(leakStep);
+            }
+          }
+          outStep = { ...step, content: cleaned };
         }
-        if (mergeLeakIntoThinkingItems(items, step)) continue;
-        // 尚无用户可见正文：整段当推理，不生成 assistant 气泡
-        if (looksLikeInlineReasoning(step.content)) {
-          thinkingBuf.push({ ...step, stepType: 'thinking' });
-          continue;
-        }
+        // else: 分界不清，outStep 保持原文输出
       }
       flushThinking();
       const last = outputBuf[outputBuf.length - 1];
       if (last) {
-        const merged = mergeStreamText(last.content, step.content, {
-          isDelta: !!step.is_delta,
-          isSnapshot: !!step.is_snapshot,
+        const merged = mergeStreamText(last.content, outStep.content, {
+          isDelta: !!outStep.is_delta,
+          isSnapshot: !!outStep.is_snapshot,
         });
-        if (merged === last.content && merged === step.content) continue;
+        if (merged === last.content && merged === outStep.content) continue;
         outputBuf[outputBuf.length - 1] = {
           ...last,
           content: merged,
-          timestamp: step.timestamp || last.timestamp,
+          timestamp: outStep.timestamp || last.timestamp,
         };
       } else {
-        outputBuf.push(step);
+        outputBuf.push(outStep);
       }
       continue;
     }
@@ -236,9 +318,10 @@ function buildTimeline(userPrompt, steps = [], delegations = {}, agentNames = {}
   flushThinking();
   flushSystem();
   flushOutput();
-  return stripLeakedAssistantsWhenThinking(dedupeAssistantItems(
+  // 重绘修正；分界不清则取消推理卡；再去重气泡
+  return dedupeAssistantItems(redrawThinkingOutputPairs(stripLeakedAssistantsWhenThinking(dedupeAssistantItems(
     collapseAdjacentThinkingGroups(pruneMixedAssistantBubbles(mergeDelegationPairs(items))),
-  ));
+  ))));
 }
 
 /** 合并内容相同/互为前缀的连续推理卡片 */
@@ -383,13 +466,45 @@ function formatTime(ts) {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+/** 若整段/尾部是 Claude result 信封 JSON，只保留可读正文（防泄漏兜底） */
+function stripResultEnvelopeLeak(raw) {
+  const s = String(raw || '');
+  if (!s.includes('"type"') || !s.includes('"result"')) return s;
+  // 整段就是信封
+  const tryParse = (chunk) => {
+    try {
+      const obj = JSON.parse(chunk);
+      if (obj?.type !== 'result') return null;
+      if (typeof obj.result === 'string') return obj.result;
+      if (obj.result && typeof obj.result === 'object') {
+        return String(obj.result.text || obj.result.content || obj.result.message || '').trim() || null;
+      }
+      return String(obj.message || '').trim() || '';
+    } catch {
+      return null;
+    }
+  };
+  const whole = tryParse(s.trim());
+  if (whole != null) return whole;
+  // 正文后面粘了整包 result JSON
+  const idx = s.search(/\n?\s*\{\s*"type"\s*:\s*"result"/);
+  if (idx >= 0) {
+    const head = s.slice(0, idx).trim();
+    const tail = tryParse(s.slice(idx).trim());
+    if (tail != null) return head || tail;
+  }
+  return s;
+}
+
 /** 展示前还原字面量 \\n / \\t，避免单行截断 */
 function normalizeDisplayText(text) {
   if (text == null) return '';
-  return String(text)
-    .replace(/\\n/g, '\n')
-    .replace(/\\t/g, '\t')
-    .trim();
+  return stripResultEnvelopeLeak(
+    String(text)
+      .replace(/\\n/g, '\n')
+      .replace(/\\t/g, '\t')
+      .trim(),
+  );
 }
 
 /** 判断是否为有效文件路径（过滤误写入的正文摘要） */
@@ -495,9 +610,25 @@ function describeSystemEvent(ev) {
       badge: null,
     };
   }
-  const label = ev.system_subtype || 'system';
+  if (ev.system_subtype === 'process_started') {
+    return {
+      title: '已启动',
+      detail: ev.message || ev.content || '等待模型流式输出…',
+      badge: null,
+    };
+  }
   const msg = ev.message || ev.content || '';
-  return { title: label, detail: msg, badge: null };
+  return { title: '系统', detail: msg, badge: null };
+}
+
+/** 供「正在执行」条展示的一行系统细节 */
+function formatSystemStatusLine(ev) {
+  if (!ev) return '';
+  const info = describeSystemEvent(ev);
+  if (ev.system_subtype === 'api_retry') {
+    return [info.title, info.detail].filter(Boolean).join(' · ');
+  }
+  return (info.detail || info.title || '').trim();
 }
 
 /** 单条系统事件 */
@@ -742,36 +873,157 @@ function ToolCard({ step }) {
   );
 }
 
-/** 合并后的思考过程：默认折叠 */
-function ThinkingGroupCard({ item }) {
+/** 执行中可展示的过程文本(推理 / 回复 / 工具 / 系统状态) */
+function extractLiveProgress(timeline = []) {
+  let thinking = '';
+  let output = '';
+  let systemStatus = '';
+  const tools = [];
+  for (const it of timeline) {
+    if (it.kind === 'thinking_group' && it.content?.trim()) {
+      thinking = String(it.content);
+    } else if (it.kind === 'assistant' && it.content?.trim() && !looksLikeLeakedReasoning(it.content)) {
+      output = String(it.content);
+    } else if (it.kind === 'system_event') {
+      const line = formatSystemStatusLine(it);
+      if (line) systemStatus = line;
+    } else if (it.kind === 'system_event_group' && it.events?.length) {
+      const line = formatSystemStatusLine(it.events[it.events.length - 1]);
+      if (line) systemStatus = line;
+    } else if (it.kind === 'tool_call' || it.kind === 'terminal' || it.kind === 'code_edit') {
+      const name = it.tool_name || it.kind;
+      if (name && !tools.includes(name)) tools.push(name);
+      if (tools.length > 6) tools.shift();
+    } else if (it.kind === 'delegation' && it.nestedSteps?.length) {
+      const nested = extractLiveProgress(
+        (it.nestedSteps || []).map((ns) => ({
+          kind: ns.kind === 'thinking_group' ? 'thinking_group'
+            : ns.kind === 'assistant' ? 'assistant'
+              : ns.kind === 'system_event' ? 'system_event'
+                : ns.kind === 'system_event_group' ? 'system_event_group'
+                  : (ns.kind || ns.stepType || 'output'),
+          content: ns.content,
+          tool_name: ns.tool_name,
+          system_subtype: ns.system_subtype,
+          message: ns.message,
+          events: ns.events,
+          attempt: ns.attempt,
+          max_retries: ns.max_retries,
+          error_status: ns.error_status,
+          retry_delay_ms: ns.retry_delay_ms,
+        })),
+      );
+      if (nested.thinking) thinking = nested.thinking;
+      if (nested.output) output = nested.output;
+      if (nested.systemStatus) systemStatus = nested.systemStatus;
+      nested.tools.forEach((t) => {
+        if (!tools.includes(t)) tools.push(t);
+      });
+    }
+  }
+  return { thinking, output, tools, systemStatus };
+}
+
+/** 取文本尾部若干行,便于过程预览 */
+function tailLines(text, maxLines = 8, maxChars = 900) {
+  const raw = String(text || '').trim();
+  if (!raw) return '';
+  const sliced = raw.length > maxChars ? `…${raw.slice(-maxChars)}` : raw;
+  const lines = sliced.split(/\n/);
+  if (lines.length <= maxLines) return sliced;
+  return `…\n${lines.slice(-maxLines).join('\n')}`;
+}
+
+/** 推理卡：默认折叠，与 AI 头像同一行 */
+function ThinkingGroupCard({ item, live = false, showAvatar = true }) {
   const [open, setOpen] = useState(false);
-  const preview = String(item.content || '').replace(/\s+/g, ' ').trim();
+  const raw = normalizeDisplayText(item.content);
+  const preview = String(raw || '').replace(/\s+/g, ' ').trim();
   const meta = STEP_META.thinking;
 
   return (
-    <div className="flex justify-start">
-      <div className={`max-w-[88%] w-full rounded-xl border ${meta.accent}`}>
+    <div className="flex justify-start gap-2 items-start">
+      {showAvatar ? (
+        <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] shrink-0 mt-0.5">
+          AI
+        </div>
+      ) : (
+        <div className="w-7 shrink-0" aria-hidden />
+      )}
+      <div className={`max-w-[80%] min-w-0 flex-1 rounded-xl border ${meta.accent}${live ? ' ring-1 ring-amber-300/40' : ''}`}>
         <button
           type="button"
-          onClick={() => setOpen(v => !v)}
-          className="w-full flex items-center gap-2 px-3 py-2 text-left"
+          onClick={() => setOpen((v) => !v)}
+          className="w-full flex items-center gap-2 px-3 py-1.5 text-left"
         >
-          <span>{meta.icon}</span>
-          <span className="text-xs font-medium text-amber-800 dark:text-amber-300">
-            推理{item.count > 1 ? ` · ${item.count} 条` : ''}
+          <span className="text-sm leading-none">{meta.icon}</span>
+          <span className="text-xs font-medium text-amber-800 dark:text-amber-300 shrink-0">
+            {live ? '推理中' : '推理'}
           </span>
           {!open && preview && (
-            <span className="flex-1 min-w-0 text-[10px] text-zinc-400 truncate">{preview.slice(0, 72)}…</span>
+            <span className="flex-1 min-w-0 text-[10px] text-zinc-400 truncate" title={preview}>
+              {preview}
+            </span>
+          )}
+          {live && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 shrink-0">
+              实时
+            </span>
           )}
           <span className="ml-auto text-[10px] text-zinc-400 shrink-0">{formatTime(item.timestamp)}</span>
           <span className="text-xs text-zinc-400 shrink-0">{open ? '▾' : '▸'}</span>
         </button>
         {open && (
-          <div className="px-3 pb-3 text-xs max-h-80 overflow-y-auto text-zinc-700 dark:text-zinc-300">
-            <MarkdownContent content={normalizeDisplayText(item.content)} />
+          <div className="px-3 pb-2.5 text-xs max-h-80 overflow-y-auto text-zinc-700 dark:text-zinc-300 border-t border-amber-100/80 dark:border-amber-900/40">
+            <StreamMarkdownContent
+              content={raw}
+              live={live}
+              preferPlainWhileLive
+            />
+            {live && (
+              <span className="inline-block animate-pulse text-amber-500 ml-0.5">▊</span>
+            )}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** 执行中底部过程面板:仅在尚无可见输出/推理气泡时展示 */
+function LiveProgressPanel({ agentName, timeline }) {
+  const { thinking, output, tools, systemStatus } = useMemo(
+    () => extractLiveProgress(timeline),
+    [timeline],
+  );
+  // 上方已有回复/推理气泡时隐藏整卡，避免与流式正文重复
+  const hasVisibleBubble = useMemo(
+    () => timeline.some((it) => (
+      ((it.kind === 'assistant' || it.kind === 'thinking_group')
+        && String(it.content || '').trim())
+      || (it.kind === 'tool_call' || it.kind === 'terminal' || it.kind === 'code_edit')
+    )),
+    [timeline],
+  );
+  if (hasVisibleBubble || output || thinking) return null;
+
+  const statusDetail = systemStatus
+    || '已发送任务，等待模型首包输出（推理 / 工具 / 回复会实时出现在上方）…';
+
+  return (
+    <div className="rounded-xl border border-blue-200/80 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-950/20 overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 text-sm text-blue-700 dark:text-blue-300">
+        <span className="w-4 h-4 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin shrink-0" />
+        <span className="font-medium shrink-0">{agentName || 'Agent'} 正在执行…</span>
+        {tools.length > 0 && (
+          <span className="text-[10px] text-blue-500/80 truncate max-w-[40%]" title={tools.join(', ')}>
+            {tools.slice(-3).join(' · ')}
+          </span>
+        )}
+      </div>
+      <p className="px-3 pb-2.5 text-[11px] leading-relaxed text-blue-600/90 dark:text-blue-300/80">
+        {statusDetail}
+      </p>
     </div>
   );
 }
@@ -840,20 +1092,32 @@ function DelegationCard({ item }) {
                 <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
                   {item.agentName} 工作输出
                 </p>
-                {groupNestedSteps(item.nestedSteps).map((ns, idx) => {
+                {groupNestedSteps(item.nestedSteps).map((ns, idx, arr) => {
                   if (ns.kind === 'thinking_group') {
-                    return <ThinkingGroupCard key={idx} item={ns} />;
+                    const lastThink = [...arr].reverse().find((x) => x.kind === 'thinking_group');
+                    return (
+                      <ThinkingGroupCard
+                        key={idx}
+                        item={ns}
+                        live={running && ns === lastThink}
+                        showAvatar={false}
+                      />
+                    );
                   }
-                  if (ns.kind === 'system_event_group') {
-                    return <SystemEventGroupCard key={idx} item={ns} />;
-                  }
-                  if (ns.kind === 'system_event') {
-                    return <SystemEventCard key={idx} step={ns} />;
+                  // 启动/Hook 或执行中：不单独出 system 卡
+                  if (ns.kind === 'system_event_group' || ns.kind === 'system_event') {
+                    if (running || isEphemeralSystemItem(ns)) return null;
+                    return ns.kind === 'system_event_group'
+                      ? <SystemEventGroupCard key={idx} item={ns} />
+                      : <SystemEventCard key={idx} step={ns} />;
                   }
                   if (ns.kind === 'output' || ns.stepType === 'output') {
                     return (
                       <div key={idx} className="text-xs text-zinc-700 dark:text-zinc-300">
-                        <MarkdownContent content={normalizeDisplayText(ns.content)} />
+                        <StreamMarkdownContent
+                          content={normalizeDisplayText(ns.content)}
+                          live={running}
+                        />
                       </div>
                     );
                   }
@@ -895,28 +1159,57 @@ export default function ExecutionLog({
 }) {
   const endRef = useRef(null);
 
-  /** 合并历史轮次 + 当前轮次为完整时间线 */
-  const timeline = useMemo(() => {
+  /** 合并历史轮次 + 当前轮次；currentStart 之后才是本轮（呼吸光标只挂这里） */
+  const { timeline, currentStart } = useMemo(() => {
     const items = [];
     for (const turn of conversationTurns) {
       items.push(...buildTurnTimeline(turn, turn.delegations || {}, agentNames));
     }
+    const currentStart = items.length;
     items.push(...buildTimeline(userPrompt, steps, delegations, agentNames));
     // 当前轮已完成但 steps 无干净回复时，用 result 摘要补全（跳过泄漏推理）
-    if (status === 'completed' && result
-      && !items.some(it => it.kind === 'assistant' && it.content?.trim() && !looksLikeLeakedReasoning(it.content))) {
-      const summary = normalizeDisplayText(result.summary || result.output || '');
-      if (summary && !looksLikeLeakedReasoning(summary)) {
-        items.push({ kind: 'assistant', content: summary, timestamp: task?.completed_at });
+    if (status === 'completed' && result) {
+      const currentSlice = items.slice(currentStart);
+      const hasClean = currentSlice.some(
+        (it) => it.kind === 'assistant' && it.content?.trim() && !looksLikeLeakedReasoning(it.content),
+      );
+      if (!hasClean) {
+        const summary = normalizeDisplayText(result.summary || result.output || '');
+        if (summary && !looksLikeLeakedReasoning(summary)) {
+          items.push({ kind: 'assistant', content: summary, timestamp: task?.completed_at });
+        }
       }
     }
-    return items;
+    return { timeline: items, currentStart };
   }, [conversationTurns, userPrompt, steps, delegations, agentNames, status, result, task?.completed_at]);
 
-  const lastAssistantIdx = useMemo(
-    () => timeline.reduce((idx, it, i) => (it.kind === 'assistant' ? i : idx), -1),
-    [timeline],
-  );
+  // 仅在本轮内找「正在流式」的气泡，避免光标粘在历史回复上
+  const lastAssistantIdx = useMemo(() => {
+    let idx = -1;
+    for (let i = currentStart; i < timeline.length; i++) {
+      if (timeline[i].kind === 'assistant') idx = i;
+    }
+    return idx;
+  }, [timeline, currentStart]);
+  const lastThinkingIdx = useMemo(() => {
+    let idx = -1;
+    for (let i = currentStart; i < timeline.length; i++) {
+      if (timeline[i].kind === 'thinking_group') idx = i;
+    }
+    return idx;
+  }, [timeline, currentStart]);
+  // 本轮尚无任何过程气泡时，用空回复承载呼吸光标
+  const waitingForReply = useMemo(() => {
+    if (status !== 'running' || !String(userPrompt || '').trim()) return false;
+    for (let i = currentStart; i < timeline.length; i++) {
+      const k = timeline[i].kind;
+      if (k === 'assistant' || k === 'thinking_group' || k === 'tool_call'
+        || k === 'terminal' || k === 'code_edit' || k === 'delegation') {
+        return false;
+      }
+    }
+    return true;
+  }, [status, userPrompt, timeline, currentStart]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -954,14 +1247,23 @@ export default function ExecutionLog({
         }
 
         if (item.kind === 'assistant') {
-          const isLive = status === 'running' && i === lastAssistantIdx;
+          const isLive = status === 'running' && i >= currentStart && i === lastAssistantIdx;
+          // 紧挨在推理卡后：头像已在推理行，回复只缩进对齐
+          const afterThinking = i > 0 && timeline[i - 1]?.kind === 'thinking_group';
           return (
             <div key={`a-${i}`} className="flex justify-start gap-2">
-              <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] shrink-0 mt-0.5">
-                AI
-              </div>
+              {afterThinking ? (
+                <div className="w-7 shrink-0" aria-hidden />
+              ) : (
+                <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] shrink-0 mt-0.5">
+                  AI
+                </div>
+              )}
               <div className="max-w-[80%] rounded-2xl rounded-bl-md px-4 py-2.5 text-sm bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100">
-                <MarkdownContent content={normalizeDisplayText(item.content)} />
+                <StreamMarkdownContent
+                  content={normalizeDisplayText(item.content)}
+                  live={isLive}
+                />
                 {isLive && (
                   <span className="inline-block animate-pulse text-blue-500 dark:text-blue-400 ml-0.5">▊</span>
                 )}
@@ -975,25 +1277,42 @@ export default function ExecutionLog({
         }
 
         if (item.kind === 'thinking_group') {
-          return <ThinkingGroupCard key={`tg-${i}`} item={item} />;
+          const isLive = status === 'running' && i >= currentStart && i === lastThinkingIdx;
+          return <ThinkingGroupCard key={`tg-${i}`} item={item} live={isLive} />;
         }
 
+        // 启动/Hook 类已在 buildTimeline 过滤；执行中其余 system 也只进底部状态条
         if (item.kind === 'system_event_group') {
+          if (status === 'running' || isEphemeralSystemItem(item)) return null;
           return <SystemEventGroupCard key={`sg-${i}`} item={item} />;
         }
 
         if (item.kind === 'system_event') {
+          if (status === 'running' || isEphemeralSystemItem(item)) return null;
           return <SystemEventCard key={`se-${i}`} step={item} />;
         }
 
         return <ToolCard key={`t-${i}`} step={item} />;
       })}
 
-      {status === 'running' && (
-        <div className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400 pl-1">
-          <span className="w-4 h-4 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
-          {agentName || 'Agent'} 正在执行…
+      {/* 本轮尚无回复/推理气泡：新开一条空回复放呼吸光标，不粘在历史消息上 */}
+      {waitingForReply && (
+        <div className="flex justify-start gap-2">
+          <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] shrink-0 mt-0.5">
+            AI
+          </div>
+          <div className="max-w-[80%] rounded-2xl rounded-bl-md px-4 py-2.5 text-sm bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 min-h-[2.25rem] flex items-center">
+            <span className="inline-block animate-pulse text-blue-500 dark:text-blue-400">▊</span>
+          </div>
         </div>
+      )}
+
+      {/* 已有本轮气泡或占位光标时不再叠「正在执行」卡 */}
+      {status === 'running' && !waitingForReply && (
+        <LiveProgressPanel
+          agentName={agentName}
+          timeline={timeline.slice(currentStart)}
+        />
       )}
 
       {status === 'failed' && task?.error && (

@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const { execFile } = require('child_process');
 const localStats = require('./local-stats');
 const { STATS_DIR } = require('../shared/telemetry');
 const {
@@ -37,6 +38,7 @@ const {
   groupDiscoveredSkills,
   findScanGroupByScanKey,
   hashContent: scanHashContent,
+  parseSkillFrontmatter,
 } = require('./resource-skill-scanner');
 const { parseAssistantConfig, formatAssistantContent, assistantContentNeedsMigration, resolveAssistantRuntimeAgent, withAssistantRuntimeAgent, ASSISTANT_RUNTIME_IDS, DEFAULT_RUNTIME_AGENT } = require('./resource-assistant');
 
@@ -96,7 +98,7 @@ class ResourceManager {
 
     const authorityDir = resolveAuthorityDir({ ...resource, metadata: meta });
     if (authorityDir && resource.content != null && options.syncContent) {
-      syncSkillContentToAuthority(authorityDir, resource.content);
+      syncSkillContentToAuthority(authorityDir, resource.content, resource.metadata?.files || null);
       meta.authorityPath = authorityDir;
     }
 
@@ -116,7 +118,7 @@ class ResourceManager {
    */
   _materializeSkillToHub(resourceId, resource) {
     const skillDir = path.join(SKILL_HUB_ROOT, resource.name);
-    materializeSkillDir(skillDir, resource.content || '');
+    materializeSkillDir(skillDir, resource.content || '', resource.metadata?.files || null);
     const authorityPath = path.resolve(skillDir);
 
     const db = this._getDb();
@@ -146,8 +148,9 @@ class ResourceManager {
   _ensureSkillOnDisk(resourceId) {
     const resource = this.getResource(resourceId);
     if (!resource || resource.type !== 'skill') return null;
+    // 已有本机权威目录：只登记路径，不回写 SKILL.md，避免改原始 skill
     if (resolveAuthorityDir(resource)) {
-      return this._persistSkillAuthority(resourceId, resource, { syncContent: true });
+      return this._persistSkillAuthority(resourceId, resource, { syncContent: false });
     }
     return this._materializeSkillToHub(resourceId, resource);
   }
@@ -165,7 +168,8 @@ class ResourceManager {
       id: row.id,
       type: row.type,
       name: row.name,
-      display_name: row.display_name || row.name,
+      // Skill 一律用 name，不套中文 display_name，避免与磁盘原文不一致
+      display_name: row.type === 'skill' ? row.name : (row.display_name || row.name),
       description: row.description || '',
       content: row.content || '',
       metadata: this._parseJson(row.metadata, {}),
@@ -256,7 +260,7 @@ class ResourceManager {
       const q = `%${filters.query}%`;
       params.push(q, q, q);
     }
-    sql += ' ORDER BY updated_at DESC';
+    sql += ' ORDER BY created_at DESC';
 
     const rows = db.prepare(sql).all(...params);
     return rows.map(row => {
@@ -353,14 +357,36 @@ class ResourceManager {
 
     const existing = this._findByTypeName(item.type, item.name);
     if (existing) {
-      return { success: true, resource: { ...existing, projections: this._getProjections(existing.id) }, alreadyInstalled: true };
+      let installedDependencies = [];
+      // 智能体「已纳管」时仍要补齐绑定的 skill/prompt,并确保 skill 落盘可扫到
+      if (item.type === 'assistant') {
+        this._invalidateAgentList();
+        installedDependencies = this._installAssistantCatalogDeps(item);
+        try { this.syncDiscoveredSkills({ includeManaged: true }); } catch (e) {
+          console.warn('[resource-manager] sync after assistant deps:', e.message);
+        }
+      } else if (item.type === 'skill') {
+        try { this._ensureSkillOnDisk(existing.id); } catch (e) {
+          console.warn('[resource-manager] ensure skill on disk:', e.message);
+        }
+      }
+      return {
+        success: true,
+        resource: this.getResource(existing.id),
+        alreadyInstalled: true,
+        installedDependencies,
+      };
     }
 
     const now = Date.now();
     const id = `res-${item.type}-${item.name}`;
+    // Skill 不改写原文；展示统一用 name，避免与磁盘 SKILL.md 不一致
     const content = item.type === 'assistant'
       ? formatAssistantContent(item.content || '')
       : (item.content || '');
+    const displayName = item.type === 'skill'
+      ? item.name
+      : (item.display_name || item.name);
     const db = this._getDb();
     db.prepare(`
       INSERT INTO resources
@@ -370,7 +396,7 @@ class ResourceManager {
       id,
       item.type,
       item.name,
-      item.display_name || item.name,
+      displayName,
       item.description || '',
       content,
       JSON.stringify(item.metadata || {}),
@@ -385,6 +411,10 @@ class ResourceManager {
     if (item.type === 'assistant') {
       this._invalidateAgentList();
       installedDependencies = this._installAssistantCatalogDeps(item);
+      // 级联 skill 落盘后刷进本机技能列表
+      try { this.syncDiscoveredSkills({ includeManaged: true }); } catch (e) {
+        console.warn('[resource-manager] sync after assistant install:', e.message);
+      }
     }
 
     const resource = this.getResource(id);
@@ -393,10 +423,30 @@ class ResourceManager {
 
   /**
    * 纳管智能体时，级联纳管其声明的 skill / prompt 依赖（存在于社区目录且尚未纳管者）。
+   * 已在库中的 skill 也会 _ensureSkillOnDisk,保证「技能」Tab 扫描可见。
    * @returns {string[]} 新纳管依赖的 resourceId 列表
    */
   _installAssistantCatalogDeps(assistantItem) {
-    const config = parseAssistantConfig(assistantItem.content);
+    const config = parseAssistantConfig(
+      (assistantItem && assistantItem.content) || '',
+    );
+
+    // MCP 依赖:装进 mcp-manager(供投射时同步给运行时 agent,给智能体绑定工具如 fetch)
+    // 若用户已具备同等能力(已装/已发现同工具的 MCP),则不重复安装。
+    for (const mcpName of config.mcp || []) {
+      try {
+        const mcpCat = require('./mcp-catalog');
+        const mcpManager = require('./mcp-manager');
+        const item = mcpCat.getCatalogItem(mcpName);
+        if (!item) continue;
+        const tools = (item.metadata && item.metadata.tools) || [];
+        if (this._hasMcpCapabilityTools(tools, mcpName)) continue; // 已有该能力,不用装
+        mcpManager.installFromCatalog(mcpName);
+      } catch (e) {
+        console.warn('[resource-manager] 级联装 MCP 失败:', mcpName, e.message);
+      }
+    }
+
     const deps = [
       ...(config.skills || []).map(name => ({ type: 'skill', name })),
       ...(config.prompts || []).map(name => ({ type: 'prompt', name })),
@@ -406,12 +456,27 @@ class ResourceManager {
     const catalogItems = listCatalogItems();
     const installed = [];
     for (const dep of deps) {
-      if (this._findByTypeName(dep.type, dep.name)) continue; // 已纳管
+      const existingDep = this._findByTypeName(dep.type, dep.name);
+      if (existingDep) {
+        // 已在库:技能必须落盘,否则「技能」列表(磁盘扫描)看不到
+        if (dep.type === 'skill') {
+          try { this._ensureSkillOnDisk(existingDep.id); } catch (e) {
+            console.warn('[resource-manager] 补落盘技能失败:', dep.name, e.message);
+          }
+        }
+        continue;
+      }
       const catItem = catalogItems.find(c => c.type === dep.type && c.name === dep.name);
-      if (!catItem) continue; // 目录中无此依赖，跳过
+      if (!catItem) {
+        console.warn('[resource-manager] 目录无依赖,跳过:', dep.type, dep.name);
+        continue;
+      }
       try {
         const r = this.installFromCatalog(catItem.catalogId);
         if (r?.resource && !r.alreadyInstalled) installed.push(r.resource.id);
+        else if (r?.resource && dep.type === 'skill') {
+          try { this._ensureSkillOnDisk(r.resource.id); } catch { /* ignore */ }
+        }
       } catch (e) {
         console.warn('[resource-manager] 级联纳管依赖失败:', dep.name, e.message);
       }
@@ -431,6 +496,8 @@ class ResourceManager {
     let content = data.content != null ? String(data.content) : '';
     if (type === 'assistant') content = formatAssistantContent(content);
     const metadata = { ...(data.metadata || {}) };
+    // Skill 入库展示名固定为 name，不改写正文
+    const displayName = type === 'skill' ? name : (data.display_name || name);
 
     const existing = db.prepare('SELECT id, source FROM resources WHERE id = ?').get(id);
     if (!existing) {
@@ -438,13 +505,14 @@ class ResourceManager {
       if (nameTaken) throw new Error(`同名资产已存在: ${name}`);
     }
 
+    const wasNew = !existing;
     if (existing) {
       db.prepare(`
         UPDATE resources SET
           display_name = ?, description = ?, content = ?, metadata = ?, hash = ?, updated_at = ?
         WHERE id = ?
       `).run(
-        data.display_name || name,
+        displayName,
         data.description || '',
         content,
         JSON.stringify(metadata),
@@ -461,7 +529,7 @@ class ResourceManager {
         id,
         type,
         name,
-        data.display_name || name,
+        displayName,
         data.description || '',
         content,
         JSON.stringify(metadata),
@@ -473,14 +541,19 @@ class ResourceManager {
     }
 
     const saved = this.getResource(id);
+    let installedDependencies = [];
     if (saved?.type === 'assistant') {
       this._invalidateAgentList();
+      // 新建智能体时级联纳管 content 中声明的目录技能/提示词,便于在技能列表可见
+      if (wasNew) {
+        installedDependencies = this._installAssistantCatalogDeps({ content });
+      }
     } else if (saved?.type === 'skill') {
       this._ensureSkillOnDisk(id);
     } else if (saved?.type === 'prompt') {
       // 权威源=DB:MCP 调用时实时读库,编辑后无需重刷任何文件
     }
-    return { success: true, resource: this.getResource(id) };
+    return { success: true, resource: this.getResource(id), installedDependencies };
   }
 
   /** 升级 Skill：同步到已有权威目录的 SKILL.md（软链自动生效） */
@@ -761,6 +834,7 @@ class ResourceManager {
     // 智能体：投射目标同步为 Debug 运行时（投到 Codex → Debug 显示 Codex）
     if (resource.type === 'assistant') {
       this._syncAssistantRuntimeFromProjections(resourceId);
+      this._syncAssistantMcpToProjections(resourceId);
     }
 
     // 提示词：投射后刷新受影响 client 的 MCP 配置(下发/保持 tokenbank-prompts)
@@ -900,6 +974,53 @@ class ResourceManager {
   /**
    * 按当前投射列表同步智能体 content.runtime_agent，并刷新 Debug Agent 列表缓存
    */
+  /** 已装/已发现的 MCP 里是否已提供这些工具(判断用户是否已具备该能力,避免重复安装) */
+  _hasMcpCapabilityTools(toolNames, hintName) {
+    try {
+      const want = new Set(toolNames || []);
+      if (!want.size && !hintName) return false;
+      const mcpManager = require('./mcp-manager');
+      const mcpCat = require('./mcp-catalog');
+      const servers = (mcpManager.listServers && mcpManager.listServers()) || [];
+      for (const s of servers) {
+        let tools = (s.metadata && s.metadata.tools) || [];
+        const cid = (s.metadata && s.metadata.catalogId) || s.catalogId;
+        if ((!tools || !tools.length) && cid) {
+          const it = mcpCat.getCatalogItem(cid);
+          tools = (it && it.metadata && it.metadata.tools) || [];
+        }
+        if (tools.some(t => want.has(t))) return true;
+        const hay = `${s.name || ''} ${s.id || ''}`.toLowerCase();
+        if (hintName && hay.includes(String(hintName).toLowerCase())) return true;
+      }
+    } catch { /* ignore */ }
+    return false;
+  }
+
+  /** 把智能体声明的 MCP(如 fetch)同步到它投射到的运行时 agent,给发现智能体绑定联网抓取能力。
+   *  已内置该能力的运行时(如 Claude Code 自带 WebFetch)跳过,不重复绑定。 */
+  _syncAssistantMcpToProjections(resourceId) {
+    const resource = this.getResource(resourceId);
+    if (!resource || resource.type !== 'assistant') return;
+    const config = parseAssistantConfig(resource.content);
+    if (!(config.mcp || []).length) return;
+    // Claude Code 内置 WebFetch,视为已有 fetch 能力
+    const BUILTIN_FETCH = new Set(['claude-code']);
+    const wantsFetch = config.mcp.includes('fetch');
+    const clientIds = [...new Set(
+      (resource.projections || [])
+        .map(p => p.agentId)
+        .filter(id => ASSISTANT_RUNTIME_IDS.has(id))
+        .filter(id => !(wantsFetch && BUILTIN_FETCH.has(id))),
+    )];
+    if (!clientIds.length) return;
+    try {
+      require('./mcp-manager').syncToClients({ clientIds });
+    } catch (e) {
+      console.warn('[resource-manager] 智能体 MCP 同步失败:', e.message);
+    }
+  }
+
   _syncAssistantRuntimeFromProjections(resourceId) {
     const resource = this.getResource(resourceId);
     if (!resource || resource.type !== 'assistant') return null;
@@ -932,34 +1053,15 @@ class ResourceManager {
   }
 
   /**
-   * prompt 投射目标 = 已安装或已勾选同步 Token Bank Prompts MCP 的 Agent
-   *（未配置该 MCP 的客户端无法取回提示词，故不出现在列表中）
+   * prompt 投射目标 = 全部可写 MCP 的 Agent（投射驱动下发 tokenbank-prompts，
+   * 不必先「安装到 Agent」，避免鸡生蛋）
    */
   listPromptAgentTargets() {
     const { CLIENT_TARGETS, listSyncEnabledClientIds } = require('./mcp-agent-targets');
-    const mcpManager = require('./mcp-manager');
-    const { BUILTIN_PROMPTS_ID } = mcpManager;
-
-    const writable = new Set(listSyncEnabledClientIds());
-    const eligible = new Set();
-    try {
-      const prompts = mcpManager.listServers().find(s => s.id === BUILTIN_PROMPTS_ID);
-      // 配置文件中已存在
-      for (const c of prompts?.clientTargets || []) {
-        if (c.installed && writable.has(c.id)) eligible.add(c.id);
-      }
-      // 用户在「安装到 Agent」里显式勾选（metadata.sync_clients；勿用默认全量 sync_clients）
-      const explicit = prompts?.metadata?.sync_clients;
-      if (Array.isArray(explicit)) {
-        for (const id of explicit) {
-          if (writable.has(id)) eligible.add(id);
-        }
-      }
-    } catch (e) {
-      console.warn('[resource-manager] listPromptAgentTargets:', e.message);
-    }
-
-    return [...eligible].map(id => ({ id, label: CLIENT_TARGETS[id].label }));
+    return listSyncEnabledClientIds().map(id => ({
+      id,
+      label: CLIENT_TARGETS[id]?.label || id,
+    }));
   }
 
   /** prompt 投射变更后刷新对应 client 的 MCP 配置(失败仅告警,不阻断) */
@@ -1006,11 +1108,24 @@ class ResourceManager {
       const managedRes = managedByName.get(g.name);
       const managed = !!managedRes;
       const contentChanged = managedRes && managedRes.hash && managedRes.hash !== g.hash;
+      // Skill 展示统一用 name，不改写原始文件、不套推荐中文名
+      const display_name = g.name;
+      // 说明:库内为空时回退扫描结果(不少 SkillHub 包无 YAML description)
+      const description = String(managedRes?.description || '').trim()
+        || String(g.description || '').trim()
+        || '';
       return {
         ...g,
+        display_name,
+        description,
+        // 预览优先库内正文,否则用扫描正文
+        content: String(managedRes?.content || g.content || '').trim(),
         managed,
         contentChanged,
         resourceId: managedRes?.id || null,
+        // 纳管时间(未纳管为 0,排序靠后)
+        created_at: managedRes?.created_at || 0,
+        updated_at: managedRes?.updated_at || 0,
         // 权威目录（具体 skill 路径），供前端展示
         authorityPath: managedRes?.metadata?.authorityPath
           || g.agents?.[0]?.skillDir
@@ -1032,6 +1147,14 @@ class ResourceManager {
         || (i.description || '').toLowerCase().includes(q),
       );
     }
+
+    // 按纳管时间倒序;未纳管的按名称排在后面
+    items.sort((a, b) => {
+      const ta = Number(a.created_at || 0);
+      const tb = Number(b.created_at || 0);
+      if (tb !== ta) return tb - ta;
+      return String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN');
+    });
 
     const scanStats = {
       totalOnDisk: grouped.length,
@@ -1069,6 +1192,13 @@ class ResourceManager {
       originAgents: group.agents.map(a => a.agentId),
     };
     const source = `agent:${entry.agentId}`;
+    // 不改写原始 Skill；展示名与入库名一律用 skill name
+    const nextDisplayName = group.name;
+    // 已有说明优先保留(推荐安装的中文说明不被扫描正文覆盖)
+    const nextDescription = String(existing?.description || '').trim()
+      || String(group.description || '').trim()
+      || '';
+    const nextContent = entry.content || '';
 
     if (existing) {
       db.prepare(`
@@ -1076,12 +1206,12 @@ class ResourceManager {
           display_name = ?, description = ?, content = ?, metadata = ?, source = ?, hash = ?, updated_at = ?
         WHERE id = ?
       `).run(
-        group.display_name || group.name,
-        group.description || '',
-        entry.content,
+        nextDisplayName,
+        nextDescription,
+        nextContent,
         JSON.stringify(metadata),
         source,
-        scanHashContent(entry.content),
+        scanHashContent(nextContent),
         now,
         id,
       );
@@ -1093,13 +1223,13 @@ class ResourceManager {
       `).run(
         id,
         group.name,
-        group.display_name || group.name,
-        group.description || '',
-        entry.content,
+        nextDisplayName,
+        nextDescription,
+        nextContent,
         JSON.stringify(metadata),
         source,
         entry.skillPath,
-        scanHashContent(entry.content),
+        scanHashContent(nextContent),
         now,
         now,
       );
@@ -1160,9 +1290,19 @@ class ResourceManager {
   /**
    * 扫描即纳管：把所有本机 Skill 静默纳管（未纳管→纳管，内容变更→更新），
    * 返回统一的本机 Skill 列表（均已纳管、带 resourceId + projections）。
+   * 同时补齐智能体 content.skills 中的目录技能落盘,避免「绑定了但技能 Tab 看不到」。
    */
   syncDiscoveredSkills(filters = {}) {
     this.init();
+    // 先按智能体声明补齐依赖 skill(库+磁盘)
+    try {
+      for (const a of this.listResources({ type: 'assistant' })) {
+        this._installAssistantCatalogDeps(a);
+      }
+    } catch (e) {
+      console.warn('[resource-manager] ensure assistant skill deps:', e.message);
+    }
+
     const scanOptions = this._applyScanOptions(filters);
     const rawEntries = scanAllAgentSkills(scanOptions);
     const grouped = groupDiscoveredSkills(rawEntries);
@@ -1173,13 +1313,17 @@ class ResourceManager {
     for (const group of grouped) {
       const managedRes = managedByName.get(group.name);
       const contentChanged = managedRes && managedRes.hash && managedRes.hash !== group.hash;
-      if (managedRes && !contentChanged) continue;
+      // 已纳管但说明为空、扫描已补出正文说明 → 回写库
+      const descMissing = managedRes
+        && !(managedRes.description || '').trim()
+        && !!(group.description || '').trim();
+      if (managedRes && !contentChanged && !descMissing) continue;
 
       const entry = rawEntries.find(i => i.scanKey === group.scanKey)
         || rawEntries.find(i => i.name === group.name && i.hash === group.hash);
       if (!entry) continue;
 
-      this._importDiscoveredGroup(group, entry, { updateIfExists: !!contentChanged });
+      this._importDiscoveredGroup(group, entry, { updateIfExists: !!(contentChanged || descMissing) });
       if (managedRes) updated += 1;
       else imported += 1;
     }
@@ -1187,6 +1331,101 @@ class ResourceManager {
     // 复用 listDiscoveredSkills 得到最终列表（含刚纳管项与 projections）
     const { items, scanStats } = this.listDiscoveredSkills({ ...filters, includeManaged: true });
     return { success: true, imported, updated, items, scanStats };
+  }
+
+  /**
+   * 用 skillhub CLI 把技能装到 ~/.agents/skills,并同步进已纳管列表。
+   * 不依赖发现智能体口头确认,以磁盘 SKILL.md 存在为准。
+   * @param {string} slug
+   * @param {{ force?: boolean, description?: string }} [opts]
+   */
+  async installSkillhubSkill(slug, { force = false, description = '' } = {}) {
+    this.init();
+    const name = String(slug || '').trim();
+    if (!name) throw new Error('slug 不能为空');
+
+    fs.mkdirSync(SKILL_HUB_ROOT, { recursive: true });
+    const targetDir = path.join(SKILL_HUB_ROOT, name);
+    const skillMd = ['SKILL.md', 'skill.md']
+      .map((f) => path.join(targetDir, f))
+      .find((p) => fs.existsSync(p));
+
+    if (!skillMd || force) {
+      await new Promise((resolve, reject) => {
+        const args = ['install', name, '--dir', SKILL_HUB_ROOT, '--json'];
+        if (force) args.push('--force');
+        execFile('skillhub', args, {
+          timeout: 180000,
+          maxBuffer: 8 * 1024 * 1024,
+          windowsHide: true,
+          shell: process.platform === 'win32',
+          env: process.env,
+        }, (err, stdout, stderr) => {
+          if (err) {
+            const detail = String(stderr || stdout || err.message || '').replace(/\s+/g, ' ').trim().slice(0, 400);
+            reject(new Error(detail || `skillhub install ${name} failed`));
+            return;
+          }
+          resolve({ stdout, stderr });
+        });
+      });
+    }
+
+    const skillMdAfter = ['SKILL.md', 'skill.md']
+      .map((f) => path.join(targetDir, f))
+      .find((p) => fs.existsSync(p));
+    if (!skillMdAfter) {
+      throw new Error(`安装后未找到 ${name}/SKILL.md,未写入技能列表`);
+    }
+
+    // 扫描即纳管,确保出现在「已纳管」技能列表
+    this.syncDiscoveredSkills({ includeManaged: true });
+
+    let resource = this._findByTypeName('skill', name);
+    if (!resource) {
+      // frontmatter name 可能与 slug 目录名不同,按路径导入
+      const imported = this.importFromPath({ sourcePath: targetDir, type: 'skill' });
+      resource = imported && imported.resource;
+    }
+    if (!resource) throw new Error(`技能 ${name} 已落盘但纳管失败`);
+
+    // 推荐卡说明写入库(SKILL.md 常无 YAML description)
+    const hint = String(description || '').trim();
+    if (hint && !(resource.description || '').trim()) {
+      const db = this._getDb();
+      db.prepare('UPDATE resources SET description = ?, updated_at = ? WHERE id = ?')
+        .run(hint, Date.now(), resource.id);
+      resource = this.getResource(resource.id);
+    }
+
+    return {
+      success: true,
+      resource: this.getResource(resource.id),
+      skillDir: targetDir,
+      alreadyInstalled: !!skillMd && !force,
+    };
+  }
+
+  /** 批量安装 SkillHub 技能(逐个;单个失败不中断后续) */
+  async installSkillhubSkills(slugs = []) {
+    const results = [];
+    for (const raw of slugs || []) {
+      const slug = String(raw || '').trim();
+      if (!slug) continue;
+      try {
+        const r = await this.installSkillhubSkill(slug);
+        results.push({ slug, success: true, resourceId: r.resource && r.resource.id, alreadyInstalled: r.alreadyInstalled });
+      } catch (e) {
+        results.push({ slug, success: false, error: e.message || String(e) });
+      }
+    }
+    const ok = results.filter((r) => r.success).length;
+    return {
+      success: ok > 0 && results.every((r) => r.success),
+      installed: ok,
+      failed: results.length - ok,
+      results,
+    };
   }
 
   getPostProjectHint(resourceType, agentIds = []) {
@@ -1227,7 +1466,8 @@ class ResourceManager {
         const projRow = projByAgentSkill.get(`${agentId}:${skillKey}`);
         let source = 'client';
         let resourceId = null;
-        let displayName = scanItem.display_name || skillKey;
+        // 展示统一用 skill name，不改写原始文件
+        let displayName = skillKey;
         let projectionType = null;
         const projectRoot = scanItem.projectRoot || null;
         const customScanRoot = scanItem.customScanRoot || null;
@@ -1235,13 +1475,13 @@ class ResourceManager {
 
         if (projRow) {
           resourceId = projRow.resource_id;
-          displayName = projRow.display_name || skillKey;
+          displayName = skillKey;
           projectionType = projRow.projection_type;
           source = projectionType === 'scan' ? 'tb_scanned' : 'tb_sync';
         } else if (resource) {
           source = 'tb_scanned';
           resourceId = resource.id;
-          displayName = resource.display_name || skillKey;
+          displayName = skillKey;
         }
 
         const descBase = scanItem.description
@@ -1364,7 +1604,7 @@ class ResourceManager {
       throw new Error('目录导入仅适用于 Skill');
     }
 
-    const { parseSkillFrontmatter } = require('./resource-skill-scanner');
+    const { parseSkillFrontmatter, extractSkillDescription } = require('./resource-skill-scanner');
     const skillMd = ['SKILL.md', 'skill.md'].map(f => path.join(dir, f)).find(p => fs.existsSync(p));
     if (!skillMd) throw new Error('目录中未找到 SKILL.md');
 
@@ -1383,8 +1623,8 @@ class ResourceManager {
     const result = this.saveResource({
       type: 'skill',
       name,
-      display_name: fm.name || name,
-      description: fm.description || '',
+      display_name: name,
+      description: extractSkillDescription(content, fm),
       content,
       source: 'imported',
       metadata: {
@@ -1403,7 +1643,7 @@ class ResourceManager {
   }
 
   _importTextFile(filePath, forcedType) {
-    const { parseSkillFrontmatter } = require('./resource-skill-scanner');
+    const { parseSkillFrontmatter, extractSkillDescription } = require('./resource-skill-scanner');
     const content = fs.readFileSync(filePath, 'utf8');
     const fm = parseSkillFrontmatter(content);
     const baseName = path.basename(filePath, path.extname(filePath));
@@ -1444,8 +1684,10 @@ class ResourceManager {
     const result = this.saveResource({
       type,
       name,
-      display_name: fm.name || baseName || name,
-      description: fm.description || '',
+      display_name: type === 'skill' ? name : (fm.name || baseName || name),
+      description: type === 'skill'
+        ? extractSkillDescription(content, fm)
+        : (fm.description || ''),
       content,
       source: 'imported',
       metadata,
@@ -1482,6 +1724,55 @@ class ResourceManager {
     const { listIdleSkills } = require('./resource-skill-cleanup');
     const skills = this.listResources({ type: 'skill' });
     return { success: true, ...listIdleSkills(skills, options) };
+  }
+
+  /**
+   * 挖掘使用需求简报：从已纳管智能体的 session_trace 抽取用户对话,
+   * 供发现智能体推测「是谁 / 追求什么目标」,再推荐资源。
+   */
+  mineDemand(options = {}) {
+    this.init();
+    // 先同步一次 Skill 调用入库，闲置判断更准
+    try {
+      const { syncSkillUsage } = require('./session-skill-usage');
+      syncSkillUsage(localStats);
+    } catch (e) {
+      console.warn('[resource-manager] mineDemand syncSkillUsage:', e.message);
+    }
+
+    const { collectWorkSignals, buildDigest, DEFAULT_MAX_SESSIONS } = require('./skill-demand-miner');
+    // 核心素材=用户与 Agent 的对话(trace),不是文件类型/命令统计
+    const workSignals = collectWorkSignals({
+      sinceDays: options.sinceDays ?? 30,
+      maxSessions: options.maxSessions ?? DEFAULT_MAX_SESSIONS,
+      apps: options.apps,
+      managedAgentIds: options.managedAgentIds,
+    });
+    const digest = buildDigest(workSignals, options.digestOpts || {});
+
+    // 已装资源(供发现智能体避免重复推荐);闲置技能(可提示替换)
+    const installed = {
+      skills: this.listResources({ type: 'skill' }).map(r => r.name),
+      prompts: this.listResources({ type: 'prompt' }).map(r => r.name),
+      assistants: this.listResources({ type: 'assistant' }).map(r => r.name),
+    };
+    let idle = [];
+    try {
+      const idleRes = this.listIdleSkills({ days: options.idleDays ?? 60 });
+      const days = idleRes.days ?? 60;
+      idle = (idleRes.items || []).filter(i => (i.idleDays || 0) >= days).map(i => i.name);
+    } catch (e) {
+      console.warn('[resource-manager] mineDemand idle:', e.message);
+    }
+
+    return {
+      success: true,
+      digest,
+      installed,
+      idle,
+      sessions: digest.sessions,
+      agents: digest.agents || [],
+    };
   }
 
   /**

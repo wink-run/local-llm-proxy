@@ -1,7 +1,110 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { resolveMediaUrl } from '../lib/mediaUrl';
 
 const IMG_RE = /!\[([^\]]*)\]\(([^)]+)\)/g;
+
+/**
+ * 流式正文尚未闭合的 Markdown 标记会把后续字吃进 code/加粗。
+ * 软化:补齐未闭合围栏;奇数反引号时暂不按行内 code 解析(改纯文本段)。
+ */
+export function softenStreamingMarkdown(text) {
+  let s = String(text || '');
+  if (!s) return s;
+
+  // 未闭合 ``` 围栏:补一个收尾,避免整段被当成代码吞掉后续
+  const fenceLines = s.split('\n').filter((ln) => ln.trim().startsWith('```'));
+  if (fenceLines.length % 2 === 1) s = `${s}\n\`\`\``;
+
+  // 行内反引号不成对:去掉末尾孤立 `,避免 `foo 吃到句末
+  const ticks = (s.match(/`/g) || []).length;
+  if (ticks % 2 === 1) {
+    const idx = s.lastIndexOf('`');
+    if (idx >= 0) s = `${s.slice(0, idx)}${s.slice(idx + 1)}`;
+  }
+
+  // 未闭合 ** / __ :去掉最后一个开标签星号对的一半,避免吞字
+  const boldStars = (s.match(/\*\*/g) || []).length;
+  if (boldStars % 2 === 1) {
+    const idx = s.lastIndexOf('**');
+    if (idx >= 0) s = `${s.slice(0, idx)}${s.slice(idx + 2)}`;
+  }
+
+  return s;
+}
+
+/** 是否适合立刻走 Markdown(闭合标记齐全);否则流式期用纯文本更稳 */
+export function isMarkdownStable(text) {
+  const s = String(text || '');
+  if (!s) return true;
+  const fences = s.split('\n').filter((ln) => ln.trim().startsWith('```')).length;
+  if (fences % 2 === 1) return false;
+  if (((s.match(/`/g) || []).length) % 2 === 1) return false;
+  if (((s.match(/\*\*/g) || []).length) % 2 === 1) return false;
+  return true;
+}
+
+/**
+ * 流式文本展示:延迟渲染 + 定期用最新内容重绘,修正先前不完整片段造成的错版。
+ * live=false 时立即用完整 Markdown。
+ */
+export function useStableStreamText(raw, {
+  live = false,
+  debounceMs = 220,
+  refreshMs = 700,
+} = {}) {
+  const [shown, setShown] = useState(() => String(raw || ''));
+  const rawRef = useRef(raw);
+  rawRef.current = raw;
+
+  useEffect(() => {
+    if (!live) {
+      setShown(String(raw || ''));
+      return undefined;
+    }
+    const t = setTimeout(() => {
+      setShown(String(rawRef.current || ''));
+    }, debounceMs);
+    return () => clearTimeout(t);
+  }, [raw, live, debounceMs]);
+
+  useEffect(() => {
+    if (!live) return undefined;
+    const id = setInterval(() => {
+      const next = String(rawRef.current || '');
+      setShown((prev) => (prev === next ? prev : next));
+    }, refreshMs);
+    return () => clearInterval(id);
+  }, [live, refreshMs]);
+
+  return shown;
+}
+
+/**
+ * 流式安全 Markdown:延迟 + 定期重绘;未闭合标记时先纯文本,稳定后再 MD。
+ */
+export function StreamMarkdownContent({
+  content,
+  live = false,
+  className = '',
+  theme = 'default',
+  preferPlainWhileLive = false,
+}) {
+  const stable = useStableStreamText(content, { live });
+  const display = live ? softenStreamingMarkdown(stable) : String(stable || '');
+  const usePlain = live && (preferPlainWhileLive || !isMarkdownStable(stable));
+
+  if (!display) return null;
+
+  if (usePlain) {
+    return (
+      <pre className={`whitespace-pre-wrap break-words text-xs leading-relaxed font-sans m-0 ${className}`}>
+        {display}
+      </pre>
+    );
+  }
+
+  return <MarkdownContent content={display} className={className} theme={theme} />;
+}
 
 /** 行内 Markdown */
 function renderInline(text, codeClassName = 'bg-gray-100 dark:bg-gray-800') {
@@ -57,8 +160,9 @@ function isBlockStart(line) {
   const t = line.trim();
   return !t
     || /^#{1,4}\s/.test(t)
-    || /^[-*+]\s+/.test(t)
+    || /^[-*+•·▪▫]\s+/.test(t)
     || /^\d+\.\s+/.test(t)
+    || /^\|.+\|/.test(t)
     || t.startsWith('>')
     || /^-{3,}$/.test(t)
     || /^\*{3,}$/.test(t);
@@ -113,10 +217,26 @@ function parseMarkdownBlocks(text) {
       continue;
     }
 
-    if (/^[-*+]\s+/.test(trimmed)) {
+    // GFM 表格：| a | b | / |---|---|
+    if (/^\|.+\|/.test(trimmed)) {
+      const rows = [];
+      while (i < lines.length && /^\|.+\|/.test(lines[i].trim())) {
+        const row = lines[i].trim();
+        i++;
+        // 跳过对齐分隔行
+        if (/^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?$/.test(row)) continue;
+        const cells = row.replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+        if (cells.length) rows.push(cells);
+      }
+      if (rows.length) blocks.push({ type: 'table', rows });
+      continue;
+    }
+
+    // 无序列表（含模型常输出的 • · 等）
+    if (/^[-*+•·▪▫]\s+/.test(trimmed)) {
       const items = [];
-      while (i < lines.length && /^[-*+]\s+/.test(lines[i].trim())) {
-        items.push(lines[i].trim().replace(/^[-*+]\s+/, ''));
+      while (i < lines.length && /^[-*+•·▪▫]\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^[-*+•·▪▫]\s+/, ''));
         i++;
       }
       blocks.push({ type: 'ul', items });
@@ -189,16 +309,55 @@ function renderTextBlock(text, keyPrefix, theme = 'default') {
     }
     if (b.type === 'ul') {
       return (
-        <ul key={key} className={`list-disc list-inside text-sm space-y-0.5 ${bodyCls}`}>
-          {b.items.map((item, j) => <li key={j}>{renderInline(item, codeInlineCls)}</li>)}
+        <ul key={key} className={`list-disc list-outside pl-5 text-sm space-y-0.5 ${bodyCls}`}>
+          {b.items.map((item, j) => <li key={j} className="pl-0.5">{renderInline(item, codeInlineCls)}</li>)}
         </ul>
       );
     }
     if (b.type === 'ol') {
       return (
-        <ol key={key} className={`list-decimal list-inside text-sm space-y-0.5 ${bodyCls}`}>
-          {b.items.map((item, j) => <li key={j}>{renderInline(item, codeInlineCls)}</li>)}
+        <ol key={key} className={`list-decimal list-outside pl-5 text-sm space-y-0.5 ${bodyCls}`}>
+          {b.items.map((item, j) => <li key={j} className="pl-0.5">{renderInline(item, codeInlineCls)}</li>)}
         </ol>
+      );
+    }
+    if (b.type === 'table') {
+      const [header, ...body] = b.rows;
+      const cellCls = isInv
+        ? 'border-white/20 px-2 py-1'
+        : 'border-zinc-200 dark:border-zinc-600 px-2 py-1';
+      const thCls = isInv
+        ? `${cellCls} text-left font-semibold bg-white/10`
+        : `${cellCls} text-left font-semibold bg-zinc-50 dark:bg-zinc-800/60`;
+      return (
+        <div key={key} className="overflow-x-auto my-1">
+          <table className={`text-xs border-collapse w-full min-w-[12rem] ${bodyCls}`}>
+            {header && (
+              <thead>
+                <tr>
+                  {header.map((c, j) => (
+                    <th key={j} className={`border ${thCls}`}>
+                      {renderInline(c, codeInlineCls)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+            )}
+            {body.length > 0 && (
+              <tbody>
+                {body.map((row, ri) => (
+                  <tr key={ri}>
+                    {row.map((c, j) => (
+                      <td key={j} className={`border ${cellCls} align-top`}>
+                        {renderInline(c, codeInlineCls)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            )}
+          </table>
+        </div>
       );
     }
     return (
@@ -209,7 +368,7 @@ function renderTextBlock(text, keyPrefix, theme = 'default') {
   });
 }
 
-/** 轻量 Markdown 渲染（标题/列表/引用/代码块/行内样式） */
+/** 轻量 Markdown 渲染（标题/列表/表格/引用/代码块/行内样式） */
 export function MarkdownContent({ content, className = '', theme = 'default' }) {
   if (!content) return null;
   return (

@@ -26,6 +26,8 @@ function parseAssistantConfig(content) {
       soul: '',
       skills: [],
       prompts: [],
+      mcp: [],
+      model: '',
       parameters: {},
       runtime_agent: DEFAULT_RUNTIME_AGENT,
     };
@@ -39,6 +41,9 @@ function parseAssistantConfig(content) {
         soul: String(raw.soul || raw.system_prompt || raw.systemPrompt || '').trim(),
         skills: Array.isArray(raw.skills) ? raw.skills.map(String) : [],
         prompts: Array.isArray(raw.prompts) ? raw.prompts.map(String) : [],
+        mcp: Array.isArray(raw.mcp) ? raw.mcp.map(String) : [],
+        // 智能体绑定的模型(可选);运行时启动时注入,不再随运行时环境默认走
+        model: String(raw.model || (raw.parameters && raw.parameters.model) || '').trim(),
         parameters: raw.parameters && typeof raw.parameters === 'object' ? raw.parameters : {},
         runtime_agent: String(raw.runtime_agent || raw.runtimeAgent || DEFAULT_RUNTIME_AGENT).trim()
           || DEFAULT_RUNTIME_AGENT,
@@ -52,6 +57,8 @@ function parseAssistantConfig(content) {
     soul: text,
     skills: [],
     prompts: [],
+    mcp: [],
+    model: '',
     parameters: {},
     runtime_agent: DEFAULT_RUNTIME_AGENT,
   };
@@ -82,19 +89,23 @@ function resolveAssistantContext(config, resourceManager) {
  * 生成底层 CLI Agent 的启动参数
  * @returns {{ runtimeAgentId: string, claudeExtraArgs?: string[], promptPrefix?: string }}
  */
-function buildAssistantLaunch(runtimeAgentId, systemText) {
+function buildAssistantLaunch(runtimeAgentId, systemText, model) {
   const system = String(systemText || '').trim();
+  const mdl = String(model || '').trim();
 
   if (runtimeAgentId === 'claude-code') {
     const extra = [
       '-p', '--dangerously-skip-permissions',
-      '--output-format', 'json',
+      '--output-format', 'stream-json',
+      '--verbose',
     ];
+    if (mdl) extra.push('--model', mdl); // 用纳管智能体绑定的模型,而非运行时环境默认
     if (system) extra.push('--append-system-prompt', system);
     return { runtimeAgentId, claudeExtraArgs: extra };
   }
 
   if (runtimeAgentId === 'codex') {
+    // codex 模型经其自身 config.toml,暂不从此处注入 -m(参数位置因版本而异,避免拼错)
     return {
       runtimeAgentId,
       promptPrefix: system ? `${system}\n\n` : '',

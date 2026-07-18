@@ -230,7 +230,7 @@ function parseClaudeJsonLine(obj, streamState) {
   // 顶层 rate_limit_event 等遥测，与 system.subtype 形式等价处理
   if (SKIP_TOP_LEVEL_JSON_TYPES.has(obj.type)) return null;
 
-  // stream-json + --include-partial-messages：token 级 text/thinking 增量
+  // stream-json：按 content_block / assistant 块推送（无 partial 时增量较少）
   if (obj.type === 'stream_event') {
     const evt = obj.event || {};
     const blocks = state?.blockTypes;
@@ -482,14 +482,20 @@ function parseClaudeJsonLine(obj, streamState) {
   }
 
   if (obj.type === 'result') {
+    // 终态信封:只取可读正文,绝不把整包 JSON(费用/usage/session_id)甩给 UI
     let text = '';
     if (typeof obj.result === 'string') text = obj.result;
     else if (obj.result && typeof obj.result === 'object') {
       text = String(obj.result.text || obj.result.content || obj.result.message || '').trim();
     }
     if (!text) text = String(obj.message || obj.output || '').trim();
-    if (!text) return null;
-    if (isRedundantOutput(state, text)) return null;
+    // 错误态可展示简短原因
+    if (!text && obj.is_error) {
+      const err = Array.isArray(obj.errors) ? obj.errors.filter(Boolean).join('; ') : '';
+      text = err || String(obj.subtype || 'error');
+    }
+    if (!text) return [];
+    if (isRedundantOutput(state, text)) return [];
     if (state) state.lastOutput = text;
     return [{ stepType: 'output', content: text, is_snapshot: true }];
   }
@@ -627,10 +633,15 @@ function parseAgentOutputLine(rawLine, agentId, streamState) {
       const obj = JSON.parse(line);
       const isCodex = agentId === 'codex';
       const parsed = isCodex ? parseCodexJsonLine(obj) : parseClaudeJsonLine(obj, streamState);
-      if (parsed?.length) return expandMixedOutputSteps(parsed);
-      // 已消费的 JSONL 行不再当纯文本展示
+      if (Array.isArray(parsed)) {
+        // 空数组 = 已消费(含 result 重复/遥测),禁止再当纯文本
+        if (!parsed.length) return [];
+        return expandMixedOutputSteps(parsed);
+      }
+      // parsed === null:仍可能是已知信封
       if (isCodex) return [];
-      if (obj.type === 'assistant' || obj.type === 'system'
+      if (obj.type === 'assistant' || obj.type === 'system' || obj.type === 'user'
+        || obj.type === 'result'
         || obj.type === 'event_msg' || obj.type === 'response_item'
         || obj.type === 'stream_event'
         || obj.type === 'streamlined_text'
@@ -639,12 +650,24 @@ function parseAgentOutputLine(rawLine, agentId, streamState) {
         return [];
       }
     } catch {
-      // 非完整 JSON，走纯文本
+      // 不完整的 stream-json 信封:等后续字节凑齐,切勿当正文展示
+      if (/^\{\s*"type"\s*:\s*"(result|assistant|system|user|stream_event|streamlined_text|streamlined_tool_use_summary)"/
+        .test(line.trim())) {
+        return [];
+      }
+      if (/^\{\s*"type"\s*:\s*"(item\.|thread\.|turn\.|event_msg|response_item)/.test(line.trim())) {
+        return [];
+      }
     }
   }
 
   const trimmed = line.trim();
   if (!trimmed || isNoise(trimmed)) return [];
+
+  // 整行已是 result 信封(极端兜底)
+  if (/^\{\s*"type"\s*:\s*"result"/.test(trimmed) && /"subtype"\s*:/.test(trimmed)) {
+    return [];
+  }
 
   return [{
     stepType: detectPlainStepType(trimmed),
@@ -914,6 +937,13 @@ function formatAgentExitError(rawStderr, rawStdout, exitCode, agentId = 'claude-
 
   if (/401 unauthorized/i.test(combined)) {
     return 'Agent 认证失败 (401 Unauthorized)。请重新登录。';
+  }
+
+  // Codex：config.toml 声明了 model_provider，但缺少对应 [model_providers.*] 段
+  const missingProvider = combined.match(/Model provider [`']([^`']+)[`'] not found/i);
+  if (missingProvider) {
+    const id = missingProvider[1];
+    return `Codex 找不到模型供应商 \`${id}\`（~/.codex/config.toml 缺少 [model_providers.${id}]）。请在 Token Bank 重新纳管 Codex，或手动恢复该段。`;
   }
 
   // 兜底：去重、去噪后取前几行

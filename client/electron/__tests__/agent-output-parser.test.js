@@ -414,4 +414,37 @@ assert.ok(syncParsed.steps.some(s => s.stepType === 'output' && s.content.includ
 assert.ok(!syncParsed.steps.some(s => String(s.content).includes('"type":"result"')));
 assert.ok(summarizeAgentStdout(syncSample, 'claude-code').includes('秋夜独坐'));
 
+// stream-json result 信封：只展示正文，绝不把整包 JSON 当 output
+const resultState = { lastOutput: '' };
+const resultEnv = {
+  type: 'result',
+  subtype: 'success',
+  is_error: false,
+  duration_ms: 6705,
+  duration_api_ms: 4475,
+  result: '我在 /Users/ully/githubprojects 目录下工作。',
+  total_cost_usd: 0.001005,
+  usage: { input_tokens: 0, output_tokens: 67 },
+  session_id: 'sess-result-1',
+};
+const resultSteps = parseAgentOutputLine(JSON.stringify(resultEnv), 'claude-code', resultState);
+assert.strictEqual(resultSteps.length, 1);
+assert.strictEqual(resultSteps[0].stepType, 'output');
+assert.strictEqual(resultSteps[0].content, '我在 /Users/ully/githubprojects 目录下工作。');
+assert.ok(!String(resultSteps[0].content).includes('"type":"result"'));
+assert.ok(!String(resultSteps[0].content).includes('duration_ms'));
+
+// 与前序流式正文重复的 result → 吞掉，避免气泡里再贴一整包 JSON
+resultState.lastOutput = '我在 /Users/ully/githubprojects 目录下工作。';
+assert.deepStrictEqual(
+  parseAgentOutputLine(JSON.stringify(resultEnv), 'claude-code', resultState),
+  [],
+);
+
+// 不完整 result JSON 行不得当纯文本泄漏
+assert.deepStrictEqual(
+  parseAgentOutputLine('{"type":"result","subtype":"success","result":"partial', 'claude-code'),
+  [],
+);
+
 console.log('agent-output-parser.test.js OK');

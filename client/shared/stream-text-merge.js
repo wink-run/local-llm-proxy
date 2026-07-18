@@ -13,6 +13,10 @@ import {
   looksLikeLeakedReasoning,
   repairThinkingOutputBoundary,
   sanitizeThinkingOutputPairs,
+  hasClearReasoningBoundary,
+  findUserFacingStart,
+  isTruncatedThinking,
+  joinThinkingOutput,
 } from './inline-reasoning-split.js';
 
 export {
@@ -27,6 +31,10 @@ export {
   looksLikeLeakedReasoning,
   repairThinkingOutputBoundary,
   sanitizeThinkingOutputPairs,
+  hasClearReasoningBoundary,
+  findUserFacingStart,
+  isTruncatedThinking,
+  joinThinkingOutput,
 };
 
 /**

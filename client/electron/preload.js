@@ -111,6 +111,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openPath: (params) => ipcRenderer.invoke('resource:openPath', params || {}),
     listIdleSkills: (options) => ipcRenderer.invoke('resource:listIdleSkills', options || {}),
     cleanupSkills: (params) => ipcRenderer.invoke('resource:cleanupSkills', params || {}),
+    mineDemand: (options) => ipcRenderer.invoke('resource:mineDemand', options || {}),
+    installSkillhub: (params) => ipcRenderer.invoke('resource:installSkillhub', params || {}),
   },
   config: {
     read:  () => ipcRenderer.invoke('config:read'),
