@@ -4,7 +4,7 @@
 >
 > Know what you're spending · Spend less · Earn from what's idle
 >
-> One-click agent onboarding · Seamless model swap · Full trace · Smart routing · Gateway compression · Multi-device sync · Local sources / community P2P
+> One-click agent onboarding · Multi-account CLI · Agent orchestration · MCP / Skill / Prompt hub · Seamless model swap · Full trace · Smart routing · Community P2P
 
 [中文文档](./README.zh-CN.md) · [Download Latest](https://github.com/wink-run/local-llm-proxy/releases/latest) · [Architecture](./DESIGN.md)
 
@@ -21,14 +21,15 @@ You've probably run into these problems:
 
 **Token Bank is a local LLM gateway** that sits between your AI tools and every LLM provider. It helps you understand your token usage, cut costs automatically, and turn idle quota into credits.
 
-**Three pillars in v0.4:**
+**Core capabilities in v0.5:**
 
 | Pillar | What you get |
 |---|---|
-| **Agent trace & onboarding** | Register Cursor, Claude Code, Codex CLI, Cherry Studio, and other agents in one gateway — proxy traffic in real time or import session logs so usage is traced even when apps bypass the gateway |
-| **Personal subscription hub** | APP / API / pay-as-you-go subscriptions in one place; cloud sync across devices; stats-only or OAuth-to-API gateway |
-| **Multi-dimensional analytics** | Dashboard slices by **app · provider · model · supply type (local / community P2P) · cost · device · time**; multi-device usage aggregated in the cloud |
-| **Dynamic supply delivery** | Tool lists, scene routes, and online community P2P models synced on login; local source catalog maintained server-side |
+| **Agent trace & onboarding** | Register Cursor, Claude Code, Codex CLI, Cherry Studio, and more — live proxy or session import so every call is traced |
+| **Multi-account CLI** | Auto-scan / manually add Claude · Codex instances; dispatch by working directory; per-account quota and usage |
+| **Agent orchestration** | Playground sets a main agent as the hub entry, then coordinates hand-offs to other agents; tool streams and stop/resume |
+| **Resource hub** | Community MCP / Skill / Prompt / Agent catalog; per-agent projection gating; prompts via `tokenbank-prompts` MCP |
+| **Subscriptions & analytics** | APP / API / PAYG in one place; dashboard slices by **app · provider · model · supply type · cost · device · time**; multi-device cloud merge |
 
 ---
 
@@ -161,6 +162,37 @@ Local gateway
 - **Community P2P models** — online contributor models pulled live; no manual local registration
 - **Env scan** — one-click import of existing Groq / GitHub Models / Anthropic keys; multi-key round-robin
 - **Offline fallback** — built-in defaults when offline; server deltas merged automatically when back online
+
+### Multi-account CLI & directory dispatch
+
+Run multiple logins of the same CLI (Claude Code / Codex). The gateway picks the right instance by **working directory** so configs never collide:
+
+| Capability | What it does |
+|---|---|
+| **Auto-scan** | Discover existing CLI account instances on startup or manual rescan |
+| **Manual add** | Gateway → “CLI instance” for accounts the scanner misses |
+| **Effective directory** | Bind each instance to a workdir; the shim injects env from `$PWD` |
+| **Quota visibility** | Claude / Codex subscription meters; tray and app list show today’s usage |
+
+### Agent orchestration (Playground)
+
+**Debug / Playground** is more than a single-model chat:
+
+- Set a **main agent** as the aggregation entry for natural-language tasks
+- The main agent can plan steps and dispatch to other onboarded agents (including Kimi / Cursor runtimes)
+- Chunked conversation stream, visible tool calls, stop then continue
+- Agent visibility is gated by **runtime projection** — only projected agents appear in Debug
+
+### Resource hub: MCP · Skill · Prompt
+
+The **Resources** tab consolidates community picks and personal assets:
+
+| Type | Capability |
+|---|---|
+| **Community catalog** | Sync recommended MCP / Skill / Prompt / Agent lists on login (cache-first, built-in offline fallback) |
+| **Projection** | Project resources onto specific agents; revoke anytime; cascade deps on onboard |
+| **Prompt MCP** | Prompts no longer materialize as slash-command files — served via `tokenbank-prompts` (`tb_get_prompt` / `tb_list_prompts`) filtered by projection set |
+| **Work-portrait posters** | Dashboard can export four poster styles (pro / cute / humor / minimal) for sharing your usage portrait |
 
 ---
 
@@ -319,13 +351,14 @@ The `gateway-data/` volume is mounted automatically; **`local-config.json` is cr
 
 | Page | What you can do |
 |---|---|
-| **Dashboard** | Multi-dimensional stats: app/agent share, **local / community P2P** mix, model rankings, hourly trend, **compression savings**, PAYG + subscription cost estimates |
-| **Gateway** | **One-click onboarding** for Claude Code / Codex / Gemini CLI / …; per-app route binding; scene routes & supply chain; gateway status & call log (trace) |
-| **Providers** | **Local sources** (Ollama / free API / subscriptions / PAYG) and **community P2P**; dynamic catalog delivery; one-click env key import |
-| **Profile** | P2P credits · **Subscriptions** (APP + API + PAYG, cloud-synced) · **Multi-device inventory** (per-device share & detail) · list prices & cost estimates |
-| **Config** | Gateway port, timeout, concurrency · **lossless compression toggle** · log level · cloud account URL |
-| **Network** | Global node map, online contributors, community P2P model supply |
-| **Contribute** | Node status, settlement history, quality multiplier trend |
+| **Dashboard** | Multi-dimensional stats: app share, **local / community P2P** mix, model rankings, compression savings, cost estimates; **work-portrait share posters** |
+| **Gateway** | **One-click onboarding** + **multi-account CLI**; per-app / per-instance routes (optional conditions per step); scene routes & supply chain; call log |
+| **Debug / Playground** | **Agent orchestration**: main agent receives tasks and dispatches; tool streams, stop/resume, chunked output |
+| **Resources** | Community **MCP / Skill / Prompt / Agent** catalog; projection gating; prompts via MCP |
+| **Providers** | **Local sources** and **community P2P**; dynamic catalog; one-click env key import |
+| **Profile** | P2P credits · subscriptions · multi-device inventory · list prices & cost estimates |
+| **Config** | Gateway port, timeout, concurrency · lossless compression · logs · cloud account URL |
+| **Network / Contribute** | Node map, online contributors, settlement & quality multipliers |
 
 ---
 
