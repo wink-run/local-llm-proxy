@@ -117,27 +117,21 @@ function releaseHasManifest(rel, platform) {
 }
 
 /**
- * 查找符合通道策略、且带本平台更新清单的最新 release tag（含 v 前缀，如 v0.4.9-beta4）。
- * @param {boolean} allowPrerelease 是否包含预发布
- * @param {string} [platform] 目标平台（默认当前进程平台）
+ * 从 release 列表中挑最新可用 tag（纯函数，便于单测）。
+ * allowPrerelease=true：稳定版 + 预发布都参与比较（semver：同号时稳定 > 预发布）。
+ * allowPrerelease=false：只看稳定版。
+ * 旧逻辑在 allowPrerelease 时「只看预发布」，导致 beta 用户看不到更高的正式版（如 0.5.0）。
  */
-async function findLatestReleaseTag(allowPrerelease, platform = process.platform) {
-  const releases = await fetchJson(
-    `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/releases?per_page=50`,
-  );
-
+function pickLatestReleaseTag(releases, allowPrerelease, platform = process.platform) {
   let bestTag = null;
 
-  for (const rel of releases) {
-    if (rel.draft) continue;
+  for (const rel of releases || []) {
+    if (!rel || rel.draft) continue;
     const tag = String(rel.tag_name || '');
     if (!parseVersionParts(tag)) continue;
 
-    if (allowPrerelease) {
-      if (!rel.prerelease) continue;
-    } else if (rel.prerelease) {
-      continue;
-    }
+    // 关闭预发布通道时跳过 prerelease；开启时两者都收
+    if (!allowPrerelease && rel.prerelease) continue;
 
     // 缺 latest-mac.yml / latest.yml 的 release（如只手动传了 dmg/exe 的坏发布）跳过——
     // 否则会被选成「最新」再去拿不存在的清单 → 404「Cannot find channel」骚扰用户。
@@ -151,6 +145,18 @@ async function findLatestReleaseTag(allowPrerelease, platform = process.platform
   return bestTag;
 }
 
+/**
+ * 查找符合通道策略、且带本平台更新清单的最新 release tag（含 v 前缀，如 v0.4.9-beta4）。
+ * @param {boolean} allowPrerelease 是否包含预发布
+ * @param {string} [platform] 目标平台（默认当前进程平台）
+ */
+async function findLatestReleaseTag(allowPrerelease, platform = process.platform) {
+  const releases = await fetchJson(
+    `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/releases?per_page=50`,
+  );
+  return pickLatestReleaseTag(releases, allowPrerelease, platform);
+}
+
 /** 指向指定 tag 目录下的 latest-mac.yml / latest.yml（GenericProvider） */
 function feedUrlForTag(tag) {
   const t = String(tag || '').startsWith('v') ? tag : `v${tag}`;
@@ -161,6 +167,7 @@ module.exports = {
   normalizeSemverVersion,
   compareVersions,
   isRemoteNewer,
+  pickLatestReleaseTag,
   findLatestReleaseTag,
   feedUrlForTag,
   manifestNameForPlatform,
