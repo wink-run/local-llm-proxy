@@ -70,6 +70,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('agent:task:cancelled', handler);
       return () => ipcRenderer.removeListener('agent:task:cancelled', handler);
     },
+    onCliSession: (cb) => {
+      const handler = (_e, data) => cb(data);
+      ipcRenderer.on('agent:task:cliSession', handler);
+      return () => ipcRenderer.removeListener('agent:task:cliSession', handler);
+    },
   },
   mcp: {
     listServers: () => ipcRenderer.invoke('mcp:listServers'),

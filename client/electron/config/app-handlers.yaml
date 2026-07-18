@@ -10,7 +10,7 @@ handlers:
     description: Anthropic CLI · env 注入网关 + 附属会话扫描
     default_icon: "🤖"
     default_name: Claude Code
-    capabilities: [gateway_proxy, session_import]
+    capabilities: [gateway_proxy, session_import, resource_project]
     proxy:
       mode: cli
       protocol: anthropic
@@ -38,7 +38,7 @@ handlers:
     label_zh: Codex CLI
     default_icon: "💻"
     default_name: Codex (CLI)
-    capabilities: [gateway_proxy, session_import]
+    capabilities: [gateway_proxy, session_import, resource_project]
     proxy:
       mode: cli
       protocol: responses
@@ -62,7 +62,7 @@ handlers:
     label_zh: OpenCode CLI
     default_icon: "📝"
     default_name: OpenCode
-    capabilities: [gateway_proxy, session_import]
+    capabilities: [gateway_proxy, session_import, resource_project]
     proxy:
       mode: cli
       protocol: openai
@@ -83,7 +83,7 @@ handlers:
     label_zh: Hermes Agent CLI
     default_icon: "🧠"
     default_name: Hermes Agent
-    capabilities: [gateway_proxy]
+    capabilities: [gateway_proxy, resource_project]
     proxy:
       mode: cli
       protocol: openai
@@ -95,6 +95,36 @@ handlers:
       inject_env:
         OPENAI_BASE_URL: "http://{REVERSE}/v1"
         OPENAI_API_KEY: "{KEY}"
+
+  # Moonshot Kimi Code CLI：通过 KIMI_MODEL_* 指到网关（Anthropic 兼容协议）
+  kimi-code-cli:
+    label: Kimi Code CLI
+    label_zh: Kimi Code CLI
+    description: Moonshot Kimi Code CLI · 经 KIMI_MODEL_* env 注入网关（Anthropic 兼容掩码路由）
+    default_icon: "🌙"
+    default_name: Kimi Code
+    capabilities: [gateway_proxy, session_import, resource_project]
+    proxy:
+      mode: cli
+      protocol: anthropic
+      strategy: base_url-env
+      route_bindable: true
+      detect_command: kimi
+      detect_version_arg: "--version"
+      detect_config_dirs: ["~/.kimi-code"]
+      inject_env:
+        KIMI_MODEL_PROVIDER_TYPE: anthropic
+        KIMI_MODEL_BASE_URL: "http://{REVERSE}"
+        KIMI_MODEL_API_KEY: "{KEY}"
+        KIMI_MODEL_NAME: claude-sonnet-4-5
+        KIMI_MODEL_DISPLAY_NAME: TokenBank Gateway
+    session:
+      source_id: kimi
+      standalone: false
+      activity_agent_id: kimi-code
+      trace_agent_id: kimi-code
+      trace:
+        profile: kimi-code-trace
 
   claude-desktop-api:
     label: Claude Desktop
@@ -173,7 +203,7 @@ handlers:
     label_zh: OpenClaw
     default_icon: "🦞"
     default_name: OpenClaw
-    capabilities: [gateway_proxy]
+    capabilities: [gateway_proxy, resource_project]
     proxy:
       mode: api_key
       route_bindable: true
@@ -191,7 +221,7 @@ handlers:
     label_zh: Cursor
     default_icon: "🖱"
     default_name: Cursor
-    capabilities: [session_import]
+    capabilities: [session_import, resource_project]
     session:
       source_id: cursor
       standalone: true
@@ -302,6 +332,7 @@ default_entities:
   - { id: codex, handler: codex-cli }
   - { id: opencode, handler: opencode-cli }
   - { id: hermes, handler: hermes-cli }
+  - { id: kimi-code, handler: kimi-code-cli }
   - { id: claude-desktop, handler: claude-desktop-api }
   - { id: codex-desktop, handler: codex-desktop-api }
   - { id: openclaw, handler: openclaw-api }
@@ -338,3 +369,6 @@ capability_catalog:
   session_usage_import:
     label_zh: 应用用量数据支持会话导入
     label_en: Session usage data import
+  resource_project:
+    label_zh: 是否可投射智能体
+    label_en: Can project assistants

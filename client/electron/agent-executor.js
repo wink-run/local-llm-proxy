@@ -22,8 +22,39 @@ const {
   resolveAssistantRuntimeAgent,
   buildAssistantLaunch,
   ASSISTANT_ID_PREFIX,
-  ASSISTANT_RUNTIME_IDS,
+  hasAssistantEnableProjection,
+  resolveAssistantDisplayRuntime,
 } = require('./resource-assistant');
+const {
+  withDeliveryPolicyPrompt,
+  withClaudeDeliverySystemArgs,
+} = require('./agent-delivery-policy');
+
+/**
+ * Cursor Agent 无交互参数（对齐 Tutti：解析 cursor-agent / agent 二进制；
+ * 游乐场用官方 -p stream-json，而非完整 ACP 会话层）。
+ */
+function buildCursorAgentArgs(prompt, {
+  workingDir, continueSession, cliSessionId, model,
+} = {}) {
+  const args = [
+    '-p',
+    '--force', // 对齐 Tutti full-access / Claude skip-permissions
+    '--approve-mcps',
+    '--output-format', 'stream-json',
+    '--sandbox', 'disabled',
+  ];
+  if (workingDir) args.push('--workspace', workingDir);
+  if (continueSession) {
+    const sid = normalizeCliSessionId(cliSessionId);
+    if (sid) args.push('--resume', sid);
+    else args.push('--continue');
+  }
+  const mdl = String(model || '').trim();
+  if (mdl) args.push('--model', mdl);
+  args.push(withDeliveryPolicyPrompt(prompt));
+  return args;
+}
 
 const AGENT_CLI = {
   'claude-code': {
@@ -41,21 +72,64 @@ const AGENT_CLI = {
     // Debug 直调：JSONL 实时输出 + 默认信任所选工作目录
     buildArgs: (prompt, { workingDir, continueSession, cliSessionId } = {}) => {
       const base = ['exec'];
-      // --cd 非 global 标志，必须放在 resume 子命令之前（否则 clap 报 code 2）
+      // exec 全局 OPTIONS 必须在 resume 子命令之前（clap 否则把后续 flag 当 COMMAND 参数）
       if (workingDir) base.push('--cd', workingDir);
+      // exec 无 --ask-for-approval；用 bypass 对齐 Claude skip-permissions（不弹窗、不沙箱）
+      base.push(
+        '--dangerously-bypass-approvals-and-sandbox',
+        '--json', '--skip-git-repo-check',
+      );
       if (continueSession) {
         base.push('resume');
         const sid = normalizeCliSessionId(cliSessionId);
         if (sid) base.push(sid);
         else base.push('--last');
       }
-      base.push('--json', '--skip-git-repo-check');
-      base.push(prompt);
+      // PPT 等产物须直接落盘，禁止让用户粘贴内部 cache 脚本
+      base.push(withDeliveryPolicyPrompt(prompt));
       return base;
     },
     capabilities: ['code', 'chat', 'edit'],
   },
+  // Tutti: cursor-agent acp；此处同二进制 + headless -p（Debug 已有 stream-json 管线）
+  // Cursor 走自有账号（login / CURSOR_API_KEY），不绑 Token Bank 网关路由
+  cursor: {
+    name: 'Cursor',
+    detectCommand: 'cursor-agent',
+    detectCommands: ['cursor-agent', 'agent'],
+    buildArgs: (prompt, opts = {}) => buildCursorAgentArgs(prompt, opts),
+    capabilities: ['code', 'chat', 'edit', 'terminal'],
+    gatewayInject: false,
+  },
+  // Kimi Code：-p 非交互 + stream-json；二进制常在 ~/.kimi-code/bin
+  'kimi-code': {
+    name: 'Kimi Code',
+    detectCommand: 'kimi',
+    buildArgs: (prompt, opts = {}) => buildKimiCodeArgs(prompt, opts),
+    capabilities: ['code', 'chat', 'edit', 'terminal'],
+  },
 };
+
+/**
+ * Kimi Code 无交互 prompt（-p / stream-json）。
+ * 注意：官方 CLI 禁止 --prompt 与 --yolo / --auto 同用。
+ */
+function buildKimiCodeArgs(prompt, {
+  continueSession, cliSessionId, model,
+} = {}) {
+  const args = ['--output-format', 'stream-json'];
+  if (continueSession) {
+    // Kimi session id 形如 session_<uuid>；-S 与提示里的 -r 等价
+    const sid = String(cliSessionId || '').trim();
+    if (sid) args.push('-S', sid);
+    else args.push('-c');
+  }
+  const mdl = String(model || '').trim();
+  if (mdl) args.push('-m', mdl);
+  // -p <prompt> 为值参，须放在 flag 之后
+  args.push('-p', withDeliveryPolicyPrompt(prompt));
+  return args;
+}
 
 /** Agent 列表探测缓存（避免每次进 Debug 都 spawn CLI） */
 const AGENT_LIST_CACHE = { at: 0, agents: null, ttlMs: 45_000 };
@@ -89,7 +163,7 @@ function buildClaudeStreamFlags() {
 function buildClaudeCodeArgs(prompt, { continueSession, cliSessionId } = {}) {
   return [
     ...buildClaudeContinueArgs({ continueSession, cliSessionId }),
-    ...buildClaudeStreamFlags(),
+    ...withClaudeDeliverySystemArgs(buildClaudeStreamFlags()),
     prompt,
   ];
 }
@@ -131,17 +205,25 @@ class AgentExecutor extends EventEmitter {
     const cfg = AGENT_CLI[agentId];
     if (!cfg) return null;
 
-    const resolved = shim.resolveRealCommand(cfg.detectCommand);
-    if (resolved) {
-      return { executable: resolved, argPrefix: [] };
+    // Cursor 等：多候选二进制（cursor-agent → agent），对齐 Tutti 解析顺序
+    const names = Array.isArray(cfg.detectCommands) && cfg.detectCommands.length
+      ? cfg.detectCommands
+      : [cfg.detectCommand].filter(Boolean);
+
+    for (const name of names) {
+      const resolved = shim.resolveRealCommand(name);
+      if (resolved) {
+        return { executable: resolved, argPrefix: [], detectCommand: name };
+      }
     }
 
     if (cfg.npxPackage) {
       const npx = shim.resolveRealCommand('npx') || 'npx';
-      return { executable: npx, argPrefix: ['-y', cfg.npxPackage] };
+      return { executable: npx, argPrefix: ['-y', cfg.npxPackage], detectCommand: 'npx' };
     }
 
-    return { executable: cfg.detectCommand, argPrefix: [] };
+    const fallback = names[0] || cfg.detectCommand;
+    return fallback ? { executable: fallback, argPrefix: [], detectCommand: fallback } : null;
   }
 
   _resolveExecutable(agentId) {
@@ -202,7 +284,8 @@ class AgentExecutor extends EventEmitter {
         // 版本号仅作展示，短超时；探测失败不影响「已安装」判定
         let version = null;
         try {
-          const probe = await runProbe(cfg.detectCommand, ['--version'], 1800);
+          const probeCmd = launch.detectCommand || cfg.detectCommand;
+          const probe = await runProbe(probeCmd, ['--version'], 1800);
           if (probe.ok) {
             version = probe.stdout.match(/[\d.]+/)?.[0] || probe.stdout;
           }
@@ -238,13 +321,10 @@ class AgentExecutor extends EventEmitter {
     const list = [];
 
     for (const resource of items) {
-      // 未投射到运行时的智能体不进 Debug（投射=在 Debug 启用；取消投射即从 Debug 移除）
-      const hasRuntimeProjection = (resource.projections || [])
-        .some(p => ASSISTANT_RUNTIME_IDS.has(p.agentId));
-      if (!hasRuntimeProjection) continue;
+      // 未投射则不进游乐场；投射目标决定运行时（Cursor 投射 → 真用 cursor-agent）
+      if (!hasAssistantEnableProjection(resource.projections)) continue;
 
       const config = parseAssistantConfig(resource.content);
-      // 投射到 Codex/Claude Code 时，Debug 运行时跟投射走（避免仍显示默认 claude-code）
       const runtimeAgentId = resolveAssistantRuntimeAgent(
         config,
         resource.projections || [],
@@ -252,13 +332,16 @@ class AgentExecutor extends EventEmitter {
       );
       if (!runtimeAgentId || !availableCliIds.has(runtimeAgentId)) continue;
 
+      const execName = AGENT_CLI[runtimeAgentId]?.name || runtimeAgentId;
+      const displayName = resolveAssistantDisplayRuntime(resource.projections, runtimeAgentId) || execName;
       list.push({
         id: `${ASSISTANT_ID_PREFIX}${resource.id}`,
         name: resource.display_name || resource.name,
         type: 'assistant',
         resourceId: resource.id,
         runtimeAgentId,
-        runtimeName: AGENT_CLI[runtimeAgentId]?.name || runtimeAgentId,
+        runtimeName: displayName,
+        execRuntimeName: execName,
         description: resource.description || '',
         custom: true,
         capabilities: AGENT_CLI[runtimeAgentId]?.capabilities || ['chat'],
@@ -332,10 +415,12 @@ class AgentExecutor extends EventEmitter {
       Date.now(),
     );
 
-    // 异步执行
+    // 异步执行（用户停止后勿再覆盖为 failed，以免丢掉 cliSessionId）
     this._executeAsync(taskId, canonicalId, prompt, { ...options, sessionKey }).catch(err => {
       console.error(`[AgentExecutor] Task ${taskId} failed:`, err);
-      this._updateTaskStatus(taskId, 'failed', err.message);
+      if (!this._isTaskCancelled(taskId)) {
+        this._updateTaskStatus(taskId, 'failed', err.message);
+      }
     });
 
     this.taskMetaCache.set(taskId, {
@@ -521,8 +606,14 @@ class AgentExecutor extends EventEmitter {
             prompt,
           ];
         } else {
+          // Codex / Cursor：soul 作前缀；续聊与模型经 buildArgs
           execPrompt = (asstLaunch.promptPrefix || '') + prompt;
-          args = [...launch.argPrefix, ...cfg.buildArgs(execPrompt, { workingDir })];
+          args = [...launch.argPrefix, ...cfg.buildArgs(execPrompt, {
+            workingDir,
+            continueSession,
+            cliSessionId,
+            model: asstLaunch.model || assistant.config?.model,
+          })];
         }
       } else {
         args = [...launch.argPrefix, ...cfg.buildArgs(prompt, { workingDir, continueSession, cliSessionId })];
@@ -536,6 +627,13 @@ class AgentExecutor extends EventEmitter {
         gatewayAgentId: effectiveAgentId,
         sessionKey: options.sessionKey || null,
       });
+
+      // 停止竞态：进程退出时任务可能已被标为 cancelled，只补写 sessionId
+      if (this._isTaskCancelled(taskId) || result?.cancelled) {
+        this._persistCancelledTask(taskId, result?.cliSessionId, { emitEvent: false });
+        this.taskMetaCache.delete(taskId);
+        return;
+      }
 
       // 更新任务结果（失败也不阻断完成事件，避免 UI 卡在 executing）
       try {
@@ -571,10 +669,23 @@ class AgentExecutor extends EventEmitter {
       // 记录成本
       await this._recordCost(taskId, effectiveAgentId, result);
     } catch (error) {
+      if (this._isTaskCancelled(taskId)) {
+        this.taskMetaCache.delete(taskId);
+        return;
+      }
       this._updateTaskStatus(taskId, 'failed', error.message);
       this.emit('task:failed', { taskId, error: error.message, ...this._taskEventMeta(taskId) });
       this.taskMetaCache.delete(taskId);
       throw error;
+    }
+  }
+
+  _isTaskCancelled(taskId) {
+    try {
+      const row = this._getDb().prepare('SELECT status FROM agent_tasks WHERE id = ?').get(taskId);
+      return row?.status === 'cancelled';
+    } catch {
+      return false;
     }
   }
 
@@ -649,8 +760,36 @@ class AgentExecutor extends EventEmitter {
       sessionInstanceId = null,
     } = options;
 
-    const spawnEnv = agentLinker.buildSpawnEnv(gatewayAgentId, process.env);
-    const spawnDiag = agentLinker.diagnoseGatewaySpawn(gatewayAgentId, process.env);
+    const cliCfg = AGENT_CLI[gatewayAgentId] || {};
+    // Cursor 等直连账号：不注入网关、不告警「未找到工具配置」
+    const useGateway = cliCfg.gatewayInject !== false;
+    let spawnEnv = useGateway
+      ? agentLinker.buildSpawnEnv(gatewayAgentId, process.env)
+      : { ...process.env };
+    const spawnDiag = useGateway
+      ? agentLinker.diagnoseGatewaySpawn(gatewayAgentId, process.env)
+      : {
+        toolId: gatewayAgentId,
+        will_use_official_api: false,
+        skip_reasons: ['direct_auth'],
+      };
+
+    // Cursor：从 IDE state.vscdb 共享登录（CURSOR_AUTH_TOKEN），不读不写钥匙串
+    if (gatewayAgentId === 'cursor') {
+      try {
+        const { buildCursorSpawnEnv } = require('./cursor-ide-auth');
+        const auth = buildCursorSpawnEnv(spawnEnv);
+        spawnEnv = auth.env;
+        if (auth.injected) {
+          console.log('[AgentExecutor] Cursor 已共享 IDE 登录', auth.email || '(no email)', auth.reason);
+        } else {
+          console.warn('[AgentExecutor] 未找到 Cursor IDE 登录，将依赖 cursor-agent 自身凭证', auth.reason);
+        }
+      } catch (e) {
+        console.warn('[AgentExecutor] Cursor IDE 登录共享失败:', e.message);
+      }
+    }
+
     try {
       require('./api-retry-trace').traceAgentSpawnEnv({
         taskId,
@@ -658,8 +797,8 @@ class AgentExecutor extends EventEmitter {
         ...spawnDiag,
       });
     } catch { /* ignore */ }
-    if (spawnDiag.will_use_official_api) {
-      console.warn('[AgentExecutor] spawn 未注入网关 URL，Claude/Codex 将直连官方 API', spawnDiag.skip_reasons);
+    if (useGateway && spawnDiag.will_use_official_api) {
+      console.warn('[AgentExecutor] spawn 未注入网关 URL，CLI 可能直连官方 API', spawnDiag.skip_reasons);
     }
 
     return new Promise((resolve, reject) => {
@@ -729,7 +868,15 @@ class AgentExecutor extends EventEmitter {
             const running = this.runningTasks.get(taskId);
             if (running && !running.cli_session_id) {
               const sid = normalizeCliSessionId(extractCliSessionId(`${line}\n`, gatewayAgentId));
-              if (sid) running.cli_session_id = sid;
+              if (sid) {
+                running.cli_session_id = sid;
+                // 尽早通知前端，停止时也能 --resume
+                this.emit('task:cliSession', {
+                  taskId,
+                  cliSessionId: sid,
+                  ...this._taskEventMeta(taskId),
+                });
+              }
             }
           }
         }
@@ -773,6 +920,21 @@ class AgentExecutor extends EventEmitter {
           this.runningTasks.delete(taskId);
           this._clearTaskStreamState(taskId);
           cleanup();
+
+          // 用户已停止：勿 reject 成 failed，保留 session 供续接
+          if (this._isTaskCancelled(taskId)) {
+            resolve({
+              success: false,
+              cancelled: true,
+              output: stdout,
+              summary: summarizeAgentStdout(stdout, gatewayAgentId),
+              stderr,
+              files: [],
+              stepCount: stepCounter,
+              cliSessionId: cliSid,
+            });
+            return;
+          }
 
           const execFail = detectAgentExecutionFailure(stdout);
           if (code === 0 && !execFail) {
@@ -877,9 +1039,9 @@ class AgentExecutor extends EventEmitter {
         try {
           db.prepare(`
             INSERT INTO agent_task_steps
-            (id, task_id, step_number, step_type, content, status, created_at)
-            VALUES (?, ?, ?, ?, ?, 'completed', ?)
-          `).run(stepId, taskId, stepNumber, stepType, content, Date.now());
+            (id, task_id, step_number, step_type, content, tool_name, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'completed', ?)
+          `).run(stepId, taskId, stepNumber, stepType, content, step.tool_name || null, Date.now());
         } catch (e) {
           console.warn('[AgentExecutor] step persist failed:', e.message);
         }
@@ -894,6 +1056,7 @@ class AgentExecutor extends EventEmitter {
         system_subtype: step.system_subtype || null,
         is_delta: !!step.is_delta,
         is_snapshot: !!step.is_snapshot,
+        is_error: !!step.is_error,
         attempt: step.attempt,
         max_retries: step.max_retries,
         retry_delay_ms: step.retry_delay_ms,
@@ -957,53 +1120,80 @@ class AgentExecutor extends EventEmitter {
   }
 
   /**
+   * 取消时写入已解析的 CLI session，便于停止后续接上下文
+   * 已是 cancelled 时仍可补写 sessionId（进程 close 竞态）
+   */
+  _persistCancelledTask(taskId, cliSessionId, { emitEvent = true } = {}) {
+    const db = this._getDb();
+    const row = db.prepare('SELECT status, result FROM agent_tasks WHERE id = ?').get(taskId);
+    if (!row) return null;
+    if (!['pending', 'running', 'cancelled'].includes(row.status)) return null;
+
+    let resultObj = {};
+    try {
+      resultObj = row.result ? JSON.parse(row.result) : {};
+    } catch {
+      resultObj = {};
+    }
+    const sid = normalizeCliSessionId(cliSessionId || resultObj.cliSessionId);
+    if (sid) resultObj.cliSessionId = sid;
+    const wasRunning = ['pending', 'running'].includes(row.status);
+
+    db.prepare(`
+      UPDATE agent_tasks
+      SET status = 'cancelled', result = ?, completed_at = COALESCE(completed_at, ?)
+      WHERE id = ?
+    `).run(JSON.stringify(resultObj), Date.now(), taskId);
+
+    const payload = {
+      taskId,
+      result: { ...resultObj, cliSessionId: sid || null },
+      ...this._taskEventMeta(taskId),
+    };
+    if (emitEvent && wasRunning) this.emit('task:cancelled', payload);
+    return payload;
+  }
+
+  /**
    * 取消单个任务（进程已退出时也更新 DB 状态）
    */
   async cancel(taskId) {
     const task = this.runningTasks.get(taskId);
+    const cliSid = normalizeCliSessionId(task?.cli_session_id);
     if (task?.process) {
       this._killProcess(task.process);
       this.runningTasks.delete(taskId);
       this._clearTaskStreamState(taskId);
     }
 
-    const db = this._getDb();
-    const row = db.prepare('SELECT status FROM agent_tasks WHERE id = ?').get(taskId);
-    if (row && ['pending', 'running'].includes(row.status)) {
-      db.prepare(`
-        UPDATE agent_tasks
-        SET status = 'cancelled', completed_at = ?
-        WHERE id = ?
-      `).run(Date.now(), taskId);
-      this.emit('task:cancelled', { taskId });
-      return { success: true };
-    }
+    const payload = this._persistCancelledTask(taskId, cliSid);
+    if (payload) return { success: true, cliSessionId: payload.result?.cliSessionId || null };
 
-    if (task) return { success: true };
+    if (task) return { success: true, cliSessionId: cliSid || null };
     return { success: false, error: 'Task not found or already finished' };
   }
 
   /** 取消所有进行中的 Agent 任务（Debug 停止按钮） */
   async cancelAllActive() {
+    const pending = [];
     for (const [taskId, task] of this.runningTasks.entries()) {
+      pending.push({ taskId, cliSid: normalizeCliSessionId(task?.cli_session_id) });
       if (task?.process) this._killProcess(task.process);
       this.runningTasks.delete(taskId);
+      this._clearTaskStreamState(taskId);
     }
 
     const db = this._getDb();
     const rows = db.prepare(`
       SELECT id FROM agent_tasks WHERE status IN ('pending', 'running')
     `).all();
-    const now = Date.now();
+    const byId = new Map(pending.map(p => [p.taskId, p.cliSid]));
+    let lastSid = null;
     for (const row of rows) {
-      db.prepare(`
-        UPDATE agent_tasks
-        SET status = 'cancelled', completed_at = ?
-        WHERE id = ?
-      `).run(now, row.id);
-      this.emit('task:cancelled', { taskId: row.id });
+      const payload = this._persistCancelledTask(row.id, byId.get(row.id));
+      if (payload?.result?.cliSessionId) lastSid = payload.result.cliSessionId;
     }
-    return { success: true, count: rows.length };
+    return { success: true, count: rows.length, cliSessionId: lastSid };
   }
 
   /**
@@ -1089,6 +1279,13 @@ class AgentExecutor extends EventEmitter {
    */
   _updateTaskStatus(taskId, status, error = null) {
     const db = this._getDb();
+    // 已取消的任务禁止被失败/完成覆盖（否则丢失 cliSessionId）
+    if (status !== 'cancelled') {
+      try {
+        const row = db.prepare('SELECT status FROM agent_tasks WHERE id = ?').get(taskId);
+        if (row?.status === 'cancelled') return;
+      } catch { /* ignore */ }
+    }
     db.prepare(`
       UPDATE agent_tasks
       SET status = ?, error = ?, completed_at = ?
@@ -1126,3 +1323,5 @@ module.exports.invalidateAgentListCache = invalidateAgentListCache;
 module.exports.buildClaudeCodeArgs = buildClaudeCodeArgs;
 module.exports.buildClaudeContinueArgs = buildClaudeContinueArgs;
 module.exports.buildClaudeStreamFlags = buildClaudeStreamFlags;
+module.exports.buildCursorAgentArgs = buildCursorAgentArgs;
+module.exports.buildKimiCodeArgs = buildKimiCodeArgs;

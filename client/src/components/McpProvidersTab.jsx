@@ -101,7 +101,16 @@ export default function McpProvidersTab() {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  const syncWritableAgents = (syncStatus?.targets || []).filter(t => t.syncEnabled);
+  // 与 Skill/Prompt 一致：只列出本机已安装的 Agent（不再用 syncEnabled 裁剪）
+  const syncWritableAgents = (syncStatus?.targets || []).filter(t => t.installed);
+
+  // 当前筛选的 Agent 已不在「已安装」列表时回退到全部
+  useEffect(() => {
+    if (!agentTab) return;
+    if (agentInstallations.some(a => a.id === agentTab && a.installed)) return;
+    setAgentTab('');
+    saveMcpAgentTab('');
+  }, [agentTab, agentInstallations]);
 
   /** 可勾选同步的 MCP（已启用、非 Bridge） */
   const syncSelectableServers = servers.filter(
@@ -187,7 +196,7 @@ export default function McpProvidersTab() {
 
   function toggleSyncSelected(id) {
     const agent = (syncStatus?.targets || []).find(t => t.id === id);
-    if (!agent?.syncEnabled) return;
+    if (!agent?.installed) return;
     setSyncSelectedIds(prev => (
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
     ));
@@ -758,8 +767,8 @@ export default function McpProvidersTab() {
   const totalCatalogCount = catalog.length;
   const managedCount = servers.length;
 
-  /** 可筛选的 Agent（可写入或配置中有 MCP）——与 Skill 应用筛选一致 */
-  const visibleAgents = agentInstallations.filter(a => a.syncEnabled || a.count > 0);
+  // 应用筛选：仅本机已安装的 Agent（有残留 MCP 配置但未装的不展示）
+  const visibleAgents = agentInstallations.filter(a => a.installed);
   const activeAgent = visibleAgents.find(a => a.id === agentTab) || null;
 
   // 按应用筛选：有选中 Agent 时只看装在该 Agent 上的纳管 MCP

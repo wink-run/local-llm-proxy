@@ -44,6 +44,50 @@ test('resolveAssistantRuntimeAgent prefers projection over default runtime', () 
   );
 });
 
+test('cursor projection uses real Cursor runtime (not Claude fallback)', () => {
+  const {
+    hasAssistantEnableProjection,
+    resolveAssistantRuntimeAgent,
+    resolveAssistantDisplayRuntime,
+    buildAssistantLaunch,
+  } = require('../resource-assistant');
+  const projs = [{ agentId: 'cursor' }];
+  assert.equal(hasAssistantEnableProjection(projs), true);
+  const config = parseAssistantConfig(JSON.stringify({ soul: 'x', runtime_agent: 'claude-code' }));
+  // 投射 Cursor → 运行时就是 cursor
+  assert.equal(resolveAssistantRuntimeAgent(config, projs), 'cursor');
+  assert.equal(
+    resolveAssistantRuntimeAgent(config, projs, new Set(['cursor', 'claude-code'])),
+    'cursor',
+  );
+  // Cursor CLI 未装时，才回退到其它可用运行时
+  assert.equal(
+    resolveAssistantRuntimeAgent(config, projs, new Set(['codex'])),
+    'codex',
+  );
+  assert.equal(resolveAssistantDisplayRuntime(projs, 'cursor'), 'Cursor');
+  const launch = buildAssistantLaunch('cursor', '你是写作教练');
+  assert.ok(launch.promptPrefix.includes('你是写作教练'));
+});
+
+test('kimi-code projection enables playground runtime', () => {
+  const {
+    hasAssistantEnableProjection,
+    resolveAssistantRuntimeAgent,
+    resolveAssistantDisplayRuntime,
+    buildAssistantLaunch,
+    ASSISTANT_RUNTIME_IDS,
+  } = require('../resource-assistant');
+  const projs = [{ agentId: 'kimi-code' }];
+  assert.ok(ASSISTANT_RUNTIME_IDS.has('kimi-code'));
+  assert.equal(hasAssistantEnableProjection(projs), true);
+  const config = parseAssistantConfig(JSON.stringify({ soul: 'x', runtime_agent: 'claude-code' }));
+  assert.equal(resolveAssistantRuntimeAgent(config, projs), 'kimi-code');
+  assert.equal(resolveAssistantDisplayRuntime(projs, 'kimi-code'), 'Kimi Code');
+  const launch = buildAssistantLaunch('kimi-code', '你是助手');
+  assert.ok(launch.promptPrefix.includes('你是助手'));
+});
+
 test('resolveAssistantRuntimeAgent keeps configured runtime if still projected', () => {
   const { resolveAssistantRuntimeAgent } = require('../resource-assistant');
   const config = parseAssistantConfig(JSON.stringify({ soul: 'x', runtime_agent: 'claude-code' }));

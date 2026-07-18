@@ -296,6 +296,38 @@ scans:
       output_tokens: usage.completion_tokens
       cache_read_tokens: usage.prompt_tokens_details.cached_tokens
       ts: startedAt
+  # Kimi Code：~/.kimi-code/sessions/**/agents/*/wire.jsonl 的 usage.record（仅 turn，避免 session 汇总双计）
+  kimi:
+    data_source: session-kimi
+    agent_id: kimi-code
+    provider_id: kimi-code-cli
+    tier: paid
+    billing_type: api-key
+    direct_only: false
+    app_name: Kimi Code
+    app_icon: 🌙
+    models:
+    - kimi-code/k3
+    - kimi-code/kimi-for-coding
+    - kimi-code/kimi-for-coding-highspeed
+    root: ~/.kimi-code/sessions
+    glob: '**/agents/*/wire.jsonl'
+    format: jsonl
+    session_id_from: path_re
+    session_id_path_re: '(session_[^/]+)'
+    record_filter:
+      all:
+      - { field: type, equals: usage.record }
+      - { field: usageScope, equals: turn }
+    skip_if_zero: true
+    request_id: kimi:{session_id}:{time}
+    fields:
+      ts: time
+      model: model
+      input_tokens: usage.inputOther
+      output_tokens: usage.output
+      cache_read_tokens: usage.inputCacheRead
+      cache_create_tokens: usage.inputCacheCreation
   trae-work:
     data_source: session-trae-work
     agent_id: trae-work

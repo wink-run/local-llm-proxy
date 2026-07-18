@@ -77,6 +77,23 @@ ops:
     npm_package: opencode-ai
   hermes-cli:
     install_url: https://hermes-agent.nousresearch.com
+  kimi-code-cli:
+    install_url: https://moonshotai.github.io/kimi-code/
+    install_guide:
+      mac: '1. 终端执行：curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash
+
+        2. 执行 kimi --version 确认安装成功
+
+        3. 刷新百宝箱后，可在下方应用列表中纳管
+
+        '
+      win: '1. PowerShell 执行：irm https://code.kimi.com/kimi-code/install.ps1 | iex
+
+        2. 执行 kimi --version 确认安装成功
+
+        3. 刷新百宝箱后，可在下方应用列表中纳管
+
+        '
   claude-desktop-api:
     install_url: https://claude.ai/download
     install_guide:

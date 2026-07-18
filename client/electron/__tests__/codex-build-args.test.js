@@ -6,24 +6,28 @@ const assert = require('assert');
 function buildCodexArgs(prompt, { workingDir, continueSession, cliSessionId } = {}) {
   const base = ['exec'];
   if (workingDir) base.push('--cd', workingDir);
+  // exec 无 --ask-for-approval；OPTIONS 须在 resume 之前
+  base.push(
+    '--dangerously-bypass-approvals-and-sandbox',
+    '--json', '--skip-git-repo-check',
+  );
   if (continueSession) {
     base.push('resume');
     if (cliSessionId) base.push(String(cliSessionId));
     else base.push('--last');
   }
-  base.push('--json', '--skip-git-repo-check');
   base.push(prompt);
   return base;
 }
 
 assert.deepStrictEqual(
   buildCodexArgs('hello', { workingDir: '/tmp/proj' }),
-  ['exec', '--cd', '/tmp/proj', '--json', '--skip-git-repo-check', 'hello'],
+  ['exec', '--cd', '/tmp/proj', '--dangerously-bypass-approvals-and-sandbox', '--json', '--skip-git-repo-check', 'hello'],
 );
 
 assert.deepStrictEqual(
   buildCodexArgs('continue task', { workingDir: '/tmp/proj', continueSession: true }),
-  ['exec', '--cd', '/tmp/proj', 'resume', '--last', '--json', '--skip-git-repo-check', 'continue task'],
+  ['exec', '--cd', '/tmp/proj', '--dangerously-bypass-approvals-and-sandbox', '--json', '--skip-git-repo-check', 'resume', '--last', 'continue task'],
 );
 
 assert.deepStrictEqual(
@@ -32,12 +36,12 @@ assert.deepStrictEqual(
     continueSession: true,
     cliSessionId: 'thr_abc123',
   }),
-  ['exec', '--cd', '/tmp/proj', 'resume', 'thr_abc123', '--json', '--skip-git-repo-check', 'fix tests'],
+  ['exec', '--cd', '/tmp/proj', '--dangerously-bypass-approvals-and-sandbox', '--json', '--skip-git-repo-check', 'resume', 'thr_abc123', 'fix tests'],
 );
 
 console.log('codex-build-args.test.js OK');
 
-// 编排模式：resume 必须在 -p profile 之后（与 agent-executor injectCodexResumeArgs 一致）
+// 编排模式：resume 必须在全部 exec OPTIONS（含 -p）之后
 function injectCodexResumeArgs(extraArgs, { continueSession, cliSessionId } = {}) {
   if (!continueSession) return extraArgs;
   const out = [...extraArgs];
@@ -48,13 +52,16 @@ function injectCodexResumeArgs(extraArgs, { continueSession, cliSessionId } = {}
 function buildCodexOrchArgs(prompt, { workingDir, profileName, continueSession, cliSessionId } = {}) {
   const extra = ['exec'];
   if (workingDir) extra.push('--cd', workingDir);
-  extra.push('--json', '--skip-git-repo-check', '-p', profileName);
+  extra.push(
+    '--dangerously-bypass-approvals-and-sandbox',
+    '--json', '--skip-git-repo-check', '-p', profileName,
+  );
   return [...injectCodexResumeArgs(extra, { continueSession, cliSessionId }), prompt];
 }
 
 assert.deepStrictEqual(
   buildCodexOrchArgs('hello', { workingDir: '/tmp/proj', profileName: 'tokenbank-orch-task_1' }),
-  ['exec', '--cd', '/tmp/proj', '--json', '--skip-git-repo-check', '-p', 'tokenbank-orch-task_1', 'hello'],
+  ['exec', '--cd', '/tmp/proj', '--dangerously-bypass-approvals-and-sandbox', '--json', '--skip-git-repo-check', '-p', 'tokenbank-orch-task_1', 'hello'],
 );
 
 assert.deepStrictEqual(
@@ -64,7 +71,7 @@ assert.deepStrictEqual(
     continueSession: true,
     cliSessionId: 'thr_abc',
   }),
-  ['exec', '--cd', '/tmp/proj', '--json', '--skip-git-repo-check', '-p', 'tokenbank-orch-task_1', 'resume', 'thr_abc', 'continue'],
+  ['exec', '--cd', '/tmp/proj', '--dangerously-bypass-approvals-and-sandbox', '--json', '--skip-git-repo-check', '-p', 'tokenbank-orch-task_1', 'resume', 'thr_abc', 'continue'],
 );
 
 console.log('codex-orchestrator-args-order.test OK');

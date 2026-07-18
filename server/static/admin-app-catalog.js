@@ -10,10 +10,15 @@ window.initAppCatalogAdmin = function (api, lang, ref) {
   const acEditId = ref(null)
   const acForm = ref(emptyEntityForm())
 
-  const CAP_KEYS = ['gateway_proxy', 'session_trace', 'session_usage_import']
+  const CAP_KEYS = ['gateway_proxy', 'session_trace', 'session_usage_import', 'resource_project']
 
   function emptyCapabilities() {
-    return { gateway_proxy: false, session_trace: false, session_usage_import: false }
+    return {
+      gateway_proxy: false,
+      session_trace: false,
+      session_usage_import: false,
+      resource_project: false,
+    }
   }
 
   function emptyEntityForm() {
@@ -50,26 +55,40 @@ window.initAppCatalogAdmin = function (api, lang, ref) {
     return lang.value === 'zh' ? (item.label_zh || item.id) : (item.label_en || item.id)
   }
 
-  /** 表格列标题（三项能力，与编辑弹窗勾选一致） */
+  /** 表格列标题（与编辑弹窗勾选一致） */
   function capColumnTitle(capId) {
     const cat = acCapabilityCatalog.value[capId] || {}
     if (lang.value === 'zh') {
       if (capId === 'gateway_proxy') return '网关路由代理'
       if (capId === 'session_trace') return '会话 trace'
       if (capId === 'session_usage_import') return '用量导入'
+      if (capId === 'resource_project') return '可投射智能体'
       return cat.label_zh || capId
     }
     if (capId === 'gateway_proxy') return 'Gateway proxy'
     if (capId === 'session_trace') return 'Session trace'
     if (capId === 'session_usage_import') return 'Usage import'
+    if (capId === 'resource_project') return 'Project assistants'
     return cat.label_en || capId
   }
 
-  /** 用户实际勾选的能力（vars.capabilities 优先） */
+  /**
+   * 能力展示：与服务端 resolve_user_capabilities 一致。
+   * 旧库 vars.capabilities 可能缺新键（如 resource_project），缺键时回落 handler 默认，
+   * 不能直接用 raw vars（否则整列显示「—」）。
+   */
   function entityCapabilities(e) {
-    const fromVars = e?.vars?.capabilities
-    if (fromVars && typeof fromVars === 'object') return fromVars
-    return e?.capabilities || {}
+    const resolved = e?.capabilities && typeof e.capabilities === 'object' ? e.capabilities : null
+    const fromVars = e?.vars?.capabilities && typeof e.vars.capabilities === 'object'
+      ? e.vars.capabilities : null
+    const defs = defaultCapabilitiesForHandler(e?.handler)
+    const out = emptyCapabilities()
+    for (const k of CAP_KEYS) {
+      if (resolved && k in resolved) out[k] = !!resolved[k]
+      else if (fromVars && k in fromVars) out[k] = !!fromVars[k]
+      else out[k] = !!defs[k]
+    }
+    return out
   }
 
   function capEnabled(e, capId) {

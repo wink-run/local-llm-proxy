@@ -192,6 +192,7 @@ function mapDbSteps(status) {
     stepNumber: s.step_number,
     stepType: s.step_type,
     content: s.content,
+    tool_name: s.tool_name || null,
     timestamp: s.created_at,
     agentId: status.agent_id,
     parentTaskId: status.context?.parentTaskId || null,
@@ -213,7 +214,7 @@ export function preferRicherSteps(dbSteps = [], storedSteps = []) {
   if (!stored.length) return db;
   if (!db.length) return stored;
 
-  const detailTypes = new Set(['thinking', 'tool_call', 'terminal', 'code_edit', 'system_event']);
+  const detailTypes = new Set(['thinking', 'tool_call', 'tool_result', 'terminal', 'code_edit', 'system_event']);
   const countDetail = (arr) => arr.filter(s => detailTypes.has(s.stepType)).length;
   const storedDetail = countDetail(stored);
   const dbDetail = countDetail(db);
@@ -424,15 +425,35 @@ export function mergeTaskIntoStore(status) {
     return;
   }
 
+  const prev = getStoreSession(key);
+  if (running) {
+    // 误归档后后端仍在跑：从 conversationTurns 撤回本 task，恢复为当前轮
+    const turns = (prev.conversationTurns || []).filter(t => t.taskId !== status.id);
+    const fromArchive = (prev.conversationTurns || []).find(t => t.taskId === status.id);
+    const restoredSteps = steps.length
+      ? steps
+      : (prev.taskSteps?.length ? prev.taskSteps : (fromArchive?.steps || []));
+    patchStoreSession(key, {
+      conversationTurns: turns,
+      currentUserPrompt: status.prompt || prev.currentUserPrompt || fromArchive?.user || '',
+      currentTask: { ...status, status: 'running' },
+      taskSteps: restoredSteps,
+      executing: true,
+      taskResult: null,
+      skipHistoryRecover: 0,
+    });
+    return;
+  }
+
   patchStoreSession(key, {
-    currentUserPrompt: running ? (status.prompt || getStoreSession(key).currentUserPrompt) : '',
+    currentUserPrompt: '',
     currentTask: status,
-    taskSteps: steps.length ? steps : getStoreSession(key).taskSteps,
-    executing: running,
-    taskResult: running ? null : (status.result || null),
+    taskSteps: steps.length ? steps : prev.taskSteps,
+    executing: false,
+    taskResult: status.result || null,
   });
 
-  if (!running && status.prompt) {
+  if (status.prompt) {
     archiveCompletedTurn(key, {
       user: status.prompt,
       steps,
@@ -553,6 +574,66 @@ export function isFreshAgentSession(sess) {
     && !sess.conversationTurns?.length;
 }
 
+/** 是否存在尚未收到 tool_result 的 tool_call */
+export function hasOpenToolCalls(steps = []) {
+  const openNamed = new Set();
+  let anonOpen = 0;
+  for (const s of steps || []) {
+    const t = s?.stepType || s?.kind;
+    const id = s?.tool_use_id || null;
+    if (t === 'tool_call') {
+      if (id) openNamed.add(id);
+      else anonOpen += 1;
+    } else if (t === 'tool_result') {
+      if (id) openNamed.delete(id);
+      else if (anonOpen > 0) anonOpen -= 1;
+    }
+  }
+  return openNamed.size > 0 || anonOpen > 0;
+}
+
+/**
+ * 任务中止/收尾时补齐未完成工具结果，避免 UI 一直显示「执行中」
+ */
+export function closePendingToolSteps(steps = [], reason = '已中断') {
+  const list = Array.isArray(steps) ? [...steps] : [];
+  const openNamed = new Map(); // id → tool_name
+  const anonStack = []; // { name }
+  for (const s of list) {
+    const t = s?.stepType || s?.kind;
+    const id = s?.tool_use_id || null;
+    if (t === 'tool_call') {
+      if (id) openNamed.set(id, s.tool_name || 'tool');
+      else anonStack.push({ name: s.tool_name || 'tool' });
+    } else if (t === 'tool_result') {
+      if (id) openNamed.delete(id);
+      else if (anonStack.length) anonStack.pop();
+    }
+  }
+  const now = Date.now();
+  for (const [id, name] of openNamed) {
+    list.push({
+      stepType: 'tool_result',
+      tool_name: name,
+      content: reason,
+      is_error: true,
+      tool_use_id: id,
+      timestamp: now,
+    });
+  }
+  for (const item of anonStack) {
+    list.push({
+      stepType: 'tool_result',
+      tool_name: item.name,
+      content: reason,
+      is_error: true,
+      tool_use_id: null,
+      timestamp: now,
+    });
+  }
+  return list;
+}
+
 /** 步骤「丰富度」评分，用于归档 upsert */
 function stepsRichnessScore(steps = []) {
   return foldedTypeChars(steps, 'output') + foldedTypeChars(steps, 'thinking');
@@ -618,11 +699,51 @@ export function shouldContinueCliSession(sessionKey, workingDir) {
   const dir = normalizeWorkingDir(workingDir);
   const bound = normalizeWorkingDir(s.sessionWorkingDir);
   if (!dir || !bound || dir !== bound) return false;
-  if (!s.conversationTurns?.length) return false;
-  const last = s.conversationTurns[s.conversationTurns.length - 1];
-  // 仅上一轮成功完成时才续接（避免失败 session 或无效 sessionId）
-  if (last?.status !== 'completed') return false;
-  return !!(s.cliSessionId || last?.result?.cliSessionId);
+  const last = s.conversationTurns?.length
+    ? s.conversationTurns[s.conversationTurns.length - 1]
+    : null;
+  const sid = s.cliSessionId || last?.cliSessionId || last?.result?.cliSessionId || null;
+  // 有明确 sessionId：中止/失败后也可 --resume，避免「停止再继续」丢上下文
+  if (sid) return true;
+  // 无 id 时仅上一轮成功才盲续接（--continue / resume --last）
+  if (!last || last.status !== 'completed') return false;
+  return true;
+}
+
+/** 上一轮是否为中止/失败且仍可续接 */
+export function canResumeInterruptedSession(sessionKey, workingDir) {
+  if (!shouldContinueCliSession(sessionKey, workingDir)) return false;
+  const s = getStoreSession(sessionKey);
+  const last = s.conversationTurns?.length
+    ? s.conversationTurns[s.conversationTurns.length - 1]
+    : null;
+  if (!last) return !!(s.cliSessionId);
+  return ['cancelled', 'failed'].includes(last.status) || !!last?.result?.cancelled;
+}
+
+/**
+ * 无 CLI sessionId 时的续接提示：附带上次工具/输出摘要，降低失忆
+ */
+export function buildInterruptedContinuePrompt(userPrompt, lastTurn) {
+  const base = String(userPrompt || '').trim()
+    || '请从上次中断处继续，不要重复已完成的步骤。';
+  const steps = lastTurn?.steps || [];
+  if (!steps.length) return base;
+  const bits = [];
+  for (const s of steps) {
+    const t = s?.stepType || s?.kind;
+    if (t === 'tool_call') {
+      const name = s.tool_name || 'tool';
+      const arg = String(s.content || '').replace(/\s+/g, ' ').slice(0, 140);
+      bits.push(`· 已调用 ${name}${arg ? `: ${arg}` : ''}`);
+    } else if (t === 'tool_result' && s.is_error) {
+      bits.push(`· 工具失败: ${String(s.content || '').slice(0, 100)}`);
+    } else if (t === 'output' && String(s.content || '').trim()) {
+      bits.push(`· 输出摘要: ${String(s.content).replace(/\s+/g, ' ').slice(0, 180)}`);
+    }
+  }
+  if (!bits.length) return base;
+  return `${base}\n\n【上次中断前进度】\n${bits.slice(-10).join('\n')}`;
 }
 
 /** Debug Agent 列表前端缓存（stale-while-revalidate） */

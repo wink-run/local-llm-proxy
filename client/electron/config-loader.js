@@ -178,12 +178,20 @@ function appEntityById(id) {
   return null;
 }
 
-/** 用户勾选的三项能力（紧凑 vars 或展开实体） */
+/** 用户勾选的能力（与 expandEntity / resolveUserCapabilities 一致，缺键回落 handler 默认） */
 function appCapabilities(id) {
-  const compact = appEntities().find(e => e.id === id);
-  if (compact?.vars?.capabilities) return compact.vars.capabilities;
   const ent = appEntityById(id);
-  return ent?.capabilities || null;
+  if (ent?.capabilities) return ent.capabilities;
+  const compact = appEntities().find(e => e.id === id);
+  if (compact?.handler) {
+    try {
+      return require('./app-handlers').resolveUserCapabilities(
+        require('./app-handlers').handlersMap()[compact.handler] || {},
+        compact.vars || {},
+      );
+    } catch { /* ignore */ }
+  }
+  return compact?.vars?.capabilities || null;
 }
 
 // 由 ca-manager 在 CA 就绪后调用，供 {CA_PATH} 解析

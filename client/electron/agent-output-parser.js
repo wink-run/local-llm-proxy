@@ -183,11 +183,44 @@ function ensureStreamState(streamState) {
   if (!streamState) return null;
   if (!streamState.blockTypes) streamState.blockTypes = new Map();
   if (!streamState.blockTexts) streamState.blockTexts = new Map();
+  if (!streamState.toolNamesById) streamState.toolNamesById = new Map();
+  if (!streamState.toolBlockMeta) streamState.toolBlockMeta = new Map();
+  if (!streamState.emittedToolUseIds) streamState.emittedToolUseIds = new Set();
   if (streamState.streaming == null) streamState.streaming = false;
   if (streamState.messageId == null) streamState.messageId = null;
   if (streamState.lastThinking == null) streamState.lastThinking = '';
   if (streamState.lastOutput == null) streamState.lastOutput = '';
   return streamState;
+}
+
+/** 从 tool_use content_block 生成工具调用步骤（按 id 去重，避免 stream_event + assistant 双发） */
+function toolUseStepFromBlock(b, state) {
+  if (!b || b.type !== 'tool_use') return null;
+  const id = b.id || null;
+  if (id && state?.emittedToolUseIds?.has(id)) return null;
+  const name = String(b.name || '').trim() || 'tool';
+  if (state?.toolNamesById && id) state.toolNamesById.set(id, name);
+  if (id) state?.emittedToolUseIds?.add(id);
+  const inputStr = b.input && typeof b.input === 'object'
+    ? JSON.stringify(b.input, null, 2)
+    : String(b.input || '');
+  return {
+    stepType: 'tool_call',
+    tool_name: name,
+    content: inputStr || '(无参数)',
+    tool_use_id: id,
+  };
+}
+
+/** 格式化 tool_use 累积的 partial JSON */
+function formatToolInputJson(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return '(无参数)';
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch {
+    return text;
+  }
 }
 
 /**
@@ -255,6 +288,8 @@ function parseClaudeJsonLine(obj, streamState) {
           const t = String(text || '').trim();
           if (!t) continue;
           const blockType = blocks?.get(idx);
+          // tool_use 参数 JSON 不应当回复正文刷出
+          if (blockType === 'tool_use') continue;
           if (blockType === 'thinking' || blockType === 'redacted_thinking') {
             if (isRedundantThinking(state, t)) continue;
             if (state) state.lastThinking = t;
@@ -266,6 +301,7 @@ function parseClaudeJsonLine(obj, streamState) {
           }
         }
       }
+      state?.toolBlockMeta?.clear();
       blocks?.clear();
       state?.blockTexts?.clear();
       if (state) {
@@ -279,12 +315,38 @@ function parseClaudeJsonLine(obj, streamState) {
     }
 
     if (evt.type === 'content_block_start') {
-      const bt = evt.content_block?.type || 'text';
+      const cb = evt.content_block || {};
+      const bt = cb.type || 'text';
       blocks?.set(evt.index, bt);
+      // tool_use：记录名称，等 stop 时带完整参数发出（stream_event 不走 assistant 快照）
+      if (bt === 'tool_use') {
+        const name = String(cb.name || '').trim() || 'tool';
+        if (state?.toolNamesById && cb.id) state.toolNamesById.set(cb.id, name);
+        state?.toolBlockMeta?.set(evt.index, { id: cb.id || null, name });
+        const seed = cb.input && typeof cb.input === 'object' && Object.keys(cb.input).length
+          ? JSON.stringify(cb.input)
+          : '';
+        state?.blockTexts?.set(evt.index, seed);
+      }
       return [];
     }
     // 保留 block 类型直到 message_stop（不在 stop 时 delete，避免后续 delta 误判）
     if (evt.type === 'content_block_stop') {
+      const meta = state?.toolBlockMeta?.get(evt.index);
+      if (meta) {
+        const raw = state.blockTexts?.get(evt.index) || '';
+        state.toolBlockMeta.delete(evt.index);
+        state.blockTexts?.delete(evt.index);
+        // 与 assistant.tool_use 去重
+        if (meta.id && state?.emittedToolUseIds?.has(meta.id)) return [];
+        if (meta.id) state?.emittedToolUseIds?.add(meta.id);
+        return [{
+          stepType: 'tool_call',
+          tool_name: meta.name || 'tool',
+          content: formatToolInputJson(raw),
+          tool_use_id: meta.id || null,
+        }];
+      }
       return [];
     }
 
@@ -292,7 +354,15 @@ function parseClaudeJsonLine(obj, streamState) {
       const delta = evt.delta || {};
       const blockType = blocks?.get(evt.index);
 
-      if (delta.type === 'signature_delta' || delta.type === 'input_json_delta') return [];
+      if (delta.type === 'signature_delta') return [];
+      // 累积 tool_use 参数 JSON 片段
+      if (delta.type === 'input_json_delta') {
+        if (blockType === 'tool_use') {
+          const prev = state?.blockTexts?.get(evt.index) || '';
+          state?.blockTexts?.set(evt.index, prev + String(delta.partial_json || ''));
+        }
+        return [];
+      }
 
       // thinking 块：thinking_delta（CC claude.ts 严格校验 block.type === 'thinking'）
       const isThinkingBlock = blockType === 'thinking' || blockType === 'redacted_thinking';
@@ -396,20 +466,24 @@ function parseClaudeJsonLine(obj, streamState) {
   }
 
   if (obj.type === 'assistant') {
-    // partial-messages 流式快照与 stream_event 重复，streaming 期间跳过
-    if (state?.streaming) return null;
-
     const msg = obj.message || {};
     const blocks = Array.isArray(msg.content) ? msg.content : [];
     const parts = [];
     const steps = [];
 
+    // streaming 期间 text/thinking 已由 stream_event 推送；仍须提取 tool_use（避免整包跳过丢工具名）
+    if (state?.streaming) {
+      for (const b of blocks) {
+        const tu = toolUseStepFromBlock(b, state);
+        if (tu) steps.push(tu);
+      }
+      return steps.length ? steps : null;
+    }
+
     // CC content_block_stop 逐块产出 assistant（thinking-only / text-only 分离）
     if (blocks.length) {
       for (const b of blocks) {
         if (b?.type === 'thinking' || b?.type === 'reasoning' || b?.type === 'redacted_thinking') {
-          // --include-partial-messages 下与 stream_event 重复
-          if (state?.streaming) continue;
           if (parts.length) {
             steps.push({ stepType: 'output', content: parts.join('\n'), is_snapshot: true });
             parts.length = 0;
@@ -427,14 +501,8 @@ function parseClaudeJsonLine(obj, streamState) {
             steps.push({ stepType: 'output', content: parts.join('\n') });
             parts.length = 0;
           }
-          const inputStr = b.input && typeof b.input === 'object'
-            ? JSON.stringify(b.input, null, 2)
-            : String(b.input || '');
-          steps.push({
-            stepType: 'tool_call',
-            tool_name: b.name || 'tool',
-            content: inputStr || '(无参数)',
-          });
+          const tu = toolUseStepFromBlock(b, state);
+          if (tu) steps.push(tu);
         }
       }
     } else {
@@ -469,14 +537,23 @@ function parseClaudeJsonLine(obj, streamState) {
   if (obj.type === 'user') {
     const msg = obj.message || {};
     if (Array.isArray(msg.content)) {
+      const steps = [];
       for (const b of msg.content) {
         if (b?.type === 'tool_result') {
           const text = toolResultText(b.content).trim();
-          if (text) {
-            return [{ stepType: b.is_error ? 'terminal' : 'output', content: text }];
-          }
+          if (!text) continue;
+          const toolName = (b.tool_use_id && state?.toolNamesById?.get(b.tool_use_id))
+            || null;
+          steps.push({
+            stepType: 'tool_result',
+            tool_name: toolName,
+            content: text,
+            is_error: !!b.is_error,
+            tool_use_id: b.tool_use_id || null,
+          });
         }
       }
+      if (steps.length) return steps;
     }
     return null;
   }
@@ -535,43 +612,178 @@ function parseClaudeJsonLine(obj, streamState) {
   return null;
 }
 
-/** 解析 Codex exec --json JSONL 单行（含新版 item.completed 格式） */
-function parseCodexJsonLine(obj) {
+/** 统一工具步骤：与 Claude tool_use / tool_result 同构，供 ExecutionLog 一致渲染 */
+function emitUnifiedToolSteps(state, {
+  id, name, input, output, isError = false, callOnly = false,
+}) {
+  const steps = [];
+  const toolName = String(name || 'tool').trim() || 'tool';
+  const tid = id || null;
+  const already = tid && state?.emittedToolUseIds?.has(tid);
+  const inputStr = typeof input === 'string'
+    ? input
+    : JSON.stringify(input && typeof input === 'object' ? input : {}, null, 2);
+
+  if (!already) {
+    if (tid) state?.emittedToolUseIds?.add(tid);
+    if (state?.toolNamesById && tid) state.toolNamesById.set(tid, toolName);
+    steps.push({
+      stepType: 'tool_call',
+      tool_name: toolName,
+      content: inputStr || '(无参数)',
+      tool_use_id: tid,
+    });
+  }
+  if (callOnly) return steps;
+
+  const outText = toolResultText(output).trim();
+  steps.push({
+    stepType: 'tool_result',
+    tool_name: toolName,
+    content: outText || (isError ? '(失败)' : '(无输出)'),
+    is_error: !!isError,
+    tool_use_id: tid,
+  });
+  return steps;
+}
+
+function mcpResultText(result, error) {
+  if (error?.message) return String(error.message);
+  if (!result) return '';
+  if (typeof result === 'string') return result;
+  if (Array.isArray(result.content)) return toolResultText(result.content);
+  if (result.structured_content != null) {
+    try { return JSON.stringify(result.structured_content, null, 2); } catch { /* ignore */ }
+  }
+  try { return JSON.stringify(result, null, 2); } catch { return String(result); }
+}
+
+/** 解析 Codex exec --json JSONL（归一到 thinking/output/tool_call/tool_result） */
+function parseCodexJsonLine(obj, streamState) {
   if (!obj || typeof obj !== 'object') return null;
+  const state = ensureStreamState(streamState);
 
   // 会话/轮次元数据，UI 不展示
   const SKIP_TYPES = new Set([
     'thread.started', 'turn.started', 'turn.completed', 'turn.failed',
-    'item.started',
   ]);
   if (SKIP_TYPES.has(obj.type)) return [];
 
-  // 新版 Codex JSONL：item.completed 携带 reasoning / agent_message
-  if (obj.type === 'item.completed') {
-    const item = obj.item || {};
-    const text = String(item.text || item.message || msgText(item) || '').trim();
-    if (!text) return [];
+  // 瞬态重连提示不当错误气泡
+  if (obj.type === 'error') {
+    const msg = String(obj.message || '').trim();
+    if (!msg) return [];
+    if (/^Reconnecting/i.test(msg)) {
+      return [{ stepType: 'system_event', content: msg, system_subtype: 'reconnect' }];
+    }
+    return [{ stepType: 'terminal', content: msg }];
+  }
 
-    if (item.type === 'reasoning') {
-      return [{ stepType: 'thinking', content: text }];
+  // item.started / updated / completed
+  if (obj.type === 'item.started' || obj.type === 'item.updated' || obj.type === 'item.completed') {
+    const item = obj.item || {};
+    const itemType = item.type || item.item_type || '';
+    const id = item.id || null;
+    const done = obj.type === 'item.completed';
+    const failed = item.status === 'failed' || !!item.is_error;
+
+    if (itemType === 'reasoning') {
+      const text = String(item.text || item.message || '').trim();
+      return text ? [{ stepType: 'thinking', content: text }] : [];
     }
-    if (item.type === 'agent_message' || item.type === 'message') {
-      return [{ stepType: 'output', content: text }];
+    if (itemType === 'agent_message' || itemType === 'assistant_message' || itemType === 'message') {
+      const text = String(item.text || item.message || msgText(item) || '').trim();
+      return text ? [{ stepType: 'output', content: text, is_snapshot: true }] : [];
     }
-    if (item.type === 'function_call' || item.type === 'tool_call') {
+    if (itemType === 'command_execution') {
+      return emitUnifiedToolSteps(state, {
+        id,
+        name: 'Bash',
+        input: { command: item.command || '', description: '执行命令' },
+        output: item.aggregated_output ?? '',
+        isError: failed || (item.exit_code != null && item.exit_code !== 0),
+        callOnly: !done,
+      });
+    }
+    if (itemType === 'mcp_tool_call') {
+      const server = item.server || 'mcp';
+      const tool = item.tool || item.name || 'tool';
+      return emitUnifiedToolSteps(state, {
+        id,
+        name: `mcp__${server}__${tool}`,
+        input: item.arguments ?? {},
+        output: mcpResultText(item.result, item.error),
+        isError: failed || !!item.error,
+        callOnly: !done,
+      });
+    }
+    if (itemType === 'file_change' && done) {
+      const changes = Array.isArray(item.changes) ? item.changes : [];
+      const paths = changes.map(c => c.path).filter(Boolean);
+      const kinds = new Set(changes.map(c => c.kind));
+      let name = 'Edit';
+      if (kinds.size === 1 && kinds.has('add')) name = 'Write';
+      if (kinds.size === 1 && kinds.has('delete')) name = 'Edit';
+      const summary = changes.map(c => `${c.kind || 'update'} ${c.path || ''}`).join('\n');
+      return emitUnifiedToolSteps(state, {
+        id,
+        name,
+        input: { files: paths, changes },
+        output: summary || (failed ? '文件变更失败' : '文件已变更'),
+        isError: failed,
+      });
+    }
+    if (itemType === 'web_search' && done) {
+      return emitUnifiedToolSteps(state, {
+        id,
+        name: 'WebSearch',
+        input: { query: item.query || '' },
+        output: item.query ? `已搜索：${item.query}` : '(无查询)',
+        isError: false,
+      });
+    }
+    if (itemType === 'todo_list') {
+      const todos = Array.isArray(item.items) ? item.items : [];
+      return emitUnifiedToolSteps(state, {
+        id,
+        name: 'TodoWrite',
+        input: { todos },
+        output: todos.map(t => `${t.completed ? '✓' : '○'} ${t.text || ''}`).join('\n'),
+        isError: false,
+        callOnly: !done && obj.type === 'item.started',
+      });
+    }
+    if (itemType === 'error' && done) {
+      const msg = String(item.message || '').trim();
+      return msg ? [{ stepType: 'system_event', content: msg, system_subtype: 'codex_item_error' }] : [];
+    }
+    if (itemType === 'function_call' || itemType === 'tool_call') {
       const inputStr = typeof item.arguments === 'string'
         ? item.arguments
         : JSON.stringify(item.arguments || item.input || {}, null, 2);
+      return emitUnifiedToolSteps(state, {
+        id,
+        name: item.name || 'tool',
+        input: inputStr,
+        output: '',
+        callOnly: !done,
+        isError: failed,
+      });
+    }
+    if (itemType === 'function_call_output' || itemType === 'tool_result') {
+      const out = toolResultText(item.output ?? item.content ?? item.text).trim();
+      const name = (id && state?.toolNamesById?.get(id)) || item.name || null;
       return [{
-        stepType: 'tool_call',
-        tool_name: item.name || 'tool',
-        content: inputStr || text || '(无参数)',
+        stepType: 'tool_result',
+        tool_name: name,
+        content: out || '(无输出)',
+        is_error: failed,
+        tool_use_id: id,
       }];
     }
-    if (item.type === 'function_call_output' || item.type === 'tool_result') {
-      return [{ stepType: 'output', content: toolResultText(item.output ?? item.content ?? text).trim() }];
-    }
-    return [{ stepType: 'output', content: text }];
+    // 未知 item：有正文才当 output，避免空数组误丢
+    const fallback = String(item.text || item.message || '').trim();
+    return fallback ? [{ stepType: 'output', content: fallback }] : [];
   }
 
   if (obj.type === 'event_msg') {
@@ -587,18 +799,24 @@ function parseCodexJsonLine(obj) {
   if (obj.type === 'response_item') {
     const p = obj.payload || {};
     if (p.type === 'function_call') {
-      const inputStr = typeof p.arguments === 'string'
-        ? p.arguments
-        : JSON.stringify(p.arguments || {}, null, 2);
-      return [{
-        stepType: 'tool_call',
-        tool_name: p.name || 'tool',
-        content: inputStr || '(无参数)',
-      }];
+      return emitUnifiedToolSteps(state, {
+        id: p.id || p.call_id || null,
+        name: p.name || 'tool',
+        input: typeof p.arguments === 'string' ? p.arguments : (p.arguments || {}),
+        callOnly: true,
+      });
     }
     if (p.type === 'function_call_output' || p.type === 'tool_result') {
       const text = toolResultText(p.output ?? p.content).trim();
-      if (text) return [{ stepType: 'output', content: text }];
+      if (text) {
+        return [{
+          stepType: 'tool_result',
+          tool_name: p.name || null,
+          content: text,
+          is_error: !!p.is_error,
+          tool_use_id: p.call_id || p.id || null,
+        }];
+      }
     }
     if (p.type === 'message' && p.role === 'assistant') {
       const text = msgText({ content: p.content }).trim();
@@ -613,12 +831,368 @@ function parseCodexJsonLine(obj) {
   return null;
 }
 
+/** Cursor call_id 偶发带换行，取首段 */
+function normalizeCursorCallId(raw) {
+  const s = String(raw || '').split(/[\r\n]/)[0].trim();
+  return s || null;
+}
+
+/** shellToolCall → Bash；readToolCall → Read */
+function cursorToolDisplayName(toolKey) {
+  const short = String(toolKey || '').replace(/ToolCall$/i, '');
+  const key = short.charAt(0).toLowerCase() + short.slice(1);
+  const map = {
+    shell: 'Bash',
+    bash: 'Bash',
+    read: 'Read',
+    write: 'Write',
+    edit: 'Edit',
+    delete: 'Delete',
+    grep: 'Grep',
+    glob: 'Glob',
+    ls: 'LS',
+    semSearch: 'SemSearch',
+    mcp: 'MCP',
+    todo: 'Todo',
+  };
+  if (map[key]) return map[key];
+  if (map[short.toLowerCase()]) return map[short.toLowerCase()];
+  return short || 'tool';
+}
+
+/** 从 Cursor tool_call.*ToolCall.args 提取展示用入参 */
+function cursorToolArgsInput(args) {
+  if (args == null) return {};
+  if (typeof args === 'string') return args;
+  if (typeof args !== 'object') return String(args);
+  if (typeof args.command === 'string') return args.command;
+  return args;
+}
+
+/** 从 Cursor tool_call.*ToolCall.result 提取 stdout / content */
+function cursorToolResultText(result) {
+  if (result == null) return { text: '', isError: false };
+  if (typeof result === 'string') return { text: result, isError: false };
+  if (typeof result !== 'object') return { text: String(result), isError: false };
+
+  if (result.failure) {
+    const f = result.failure;
+    const text = [f.stderr, f.stdout, f.message, f.error]
+      .map(x => (x == null ? '' : String(x)))
+      .filter(Boolean)
+      .join('\n')
+      || JSON.stringify(f, null, 2);
+    return { text, isError: true };
+  }
+
+  const success = result.success != null ? result.success : result;
+  if (typeof success === 'string') return { text: success, isError: false };
+  if (success && typeof success === 'object') {
+    if (success.stdout != null || success.stderr != null) {
+      return {
+        text: [success.stdout, success.stderr].filter(x => x != null && String(x)).join('\n'),
+        isError: Number(success.exitCode) > 0,
+      };
+    }
+    if (success.content != null) return { text: String(success.content), isError: false };
+    // write/read 元数据
+    if (success.path || success.linesCreated != null || success.totalLines != null) {
+      return { text: JSON.stringify(success, null, 2), isError: false };
+    }
+    return { text: JSON.stringify(success, null, 2), isError: false };
+  }
+  return { text: JSON.stringify(result, null, 2), isError: false };
+}
+
+/**
+ * Cursor stream-json：type=tool_call subtype=started|completed
+ * → tool_call / tool_result（与 Claude/Codex 同构）
+ */
+function parseCursorToolCallEvent(obj, streamState) {
+  if (obj?.type !== 'tool_call') return null;
+  const state = ensureStreamState(streamState);
+  const subtype = String(obj.subtype || '');
+  const callId = normalizeCursorCallId(obj.call_id || obj.toolCallId);
+  const wrap = obj.tool_call && typeof obj.tool_call === 'object' ? obj.tool_call : {};
+
+  // 官方：tool_call.readToolCall / shellToolCall / writeToolCall …
+  let toolKey = null;
+  let toolBody = null;
+  for (const [k, v] of Object.entries(wrap)) {
+    if (/ToolCall$/i.test(k) && v && typeof v === 'object') {
+      toolKey = k;
+      toolBody = v;
+      break;
+    }
+  }
+  // 兼容：tool_call.function = { name, arguments }
+  if (!toolBody && wrap.function && typeof wrap.function === 'object') {
+    toolKey = 'functionToolCall';
+    toolBody = {
+      args: (() => {
+        const a = wrap.function.arguments;
+        if (typeof a === 'string') {
+          try { return JSON.parse(a); } catch { return { raw: a }; }
+        }
+        return a && typeof a === 'object' ? a : {};
+      })(),
+      result: wrap.function.result,
+      _name: wrap.function.name,
+    };
+  }
+  if (!toolBody) return [];
+
+  const name = toolBody._name
+    ? String(toolBody._name)
+    : cursorToolDisplayName(toolKey);
+  const args = toolBody.args || {};
+  const input = cursorToolArgsInput(args);
+
+  if (subtype === 'started') {
+    return emitUnifiedToolSteps(state, {
+      id: callId,
+      name,
+      input,
+      callOnly: true,
+    });
+  }
+
+  if (subtype === 'completed') {
+    const { text, isError } = cursorToolResultText(toolBody.result);
+    return emitUnifiedToolSteps(state, {
+      id: callId,
+      name,
+      input,
+      output: text || (isError ? '(失败)' : '(无输出)'),
+      isError,
+      callOnly: false,
+    });
+  }
+
+  // 未知 subtype：忽略，避免原始 JSON 当正文
+  return [];
+}
+
+/**
+ * Cursor agent transcript / JSONL → 与 Claude/Codex 同构步骤
+ * 兼容：stream-json tool_call 事件、{ role, message.content[] }、type=assistant
+ */
+function parseCursorJsonLine(obj, streamState) {
+  if (!obj || typeof obj !== 'object') return null;
+
+  // 官方 stream-json tool 生命周期
+  if (obj.type === 'tool_call') {
+    return parseCursorToolCallEvent(obj, streamState);
+  }
+
+  // 系统/用户事件不进对话步骤
+  if (obj.type === 'system' || obj.type === 'user') return [];
+
+  // stream-json assistant：{ type:"assistant", message:{ content:[{type:text}] } }
+  if (obj.type === 'assistant' && obj.message) {
+    const msg = obj.message;
+    const blocks = Array.isArray(msg.content) ? msg.content : null;
+    if (blocks) {
+      const steps = [];
+      for (const b of blocks) {
+        if (b?.type === 'text' && b.text?.trim()) {
+          steps.push({ stepType: 'output', content: b.text.trim(), is_snapshot: true });
+        } else if (b?.type === 'thinking' || b?.type === 'reasoning') {
+          const think = String(b.thinking || b.text || '').trim();
+          if (think) steps.push({ stepType: 'thinking', content: think, is_snapshot: true });
+        }
+      }
+      return steps;
+    }
+    const text = msgText(msg).trim();
+    return text ? [{ stepType: 'output', content: text, is_snapshot: true }] : [];
+  }
+
+  // 终态 result：全文已在 assistant 事件展示过，跳过避免重复
+  if (obj.type === 'result') return [];
+
+  // Cursor 会话 JSONL：role + message.content blocks
+  if (obj.role === 'assistant' || obj.role === 'user') {
+    const msg = obj.message || {};
+    const blocks = Array.isArray(msg.content) ? msg.content : null;
+    if (!blocks) {
+      const text = msgText(msg).trim();
+      if (!text) return [];
+      if (obj.role === 'user') return []; // 用户输入由 UI 侧维护
+      return [{ stepType: 'output', content: text, is_snapshot: true }];
+    }
+    const steps = [];
+    const state = ensureStreamState(streamState);
+    for (const b of blocks) {
+      const t = b?.type;
+      if (t === 'tool_use' || t === 'tool-call') {
+        const tu = toolUseStepFromBlock(
+          { type: 'tool_use', id: b.id, name: b.name, input: b.input || b.arguments },
+          state,
+        );
+        if (tu) steps.push(tu);
+      } else if (t === 'tool_result') {
+        const text = toolResultText(b.content).trim();
+        if (text) {
+          steps.push({
+            stepType: 'tool_result',
+            tool_name: (b.tool_use_id && state?.toolNamesById?.get(b.tool_use_id)) || b.name || null,
+            content: text,
+            is_error: !!b.is_error,
+            tool_use_id: b.tool_use_id || null,
+          });
+        }
+      } else if (t === 'thinking' || t === 'reasoning' || t === 'redacted_thinking') {
+        const think = String(b.thinking || b.text || '').trim();
+        if (think) steps.push({ stepType: 'thinking', content: think, is_snapshot: true });
+      } else if (t === 'text' && b.text?.trim()) {
+        steps.push({ stepType: 'output', content: b.text.trim(), is_snapshot: true });
+      }
+    }
+    return steps.length ? steps : [];
+  }
+
+  // 部分 Cursor 导出直接给 tool 角色
+  if (obj.role === 'tool' || obj.type === 'tool_result') {
+    const text = toolResultText(obj.content ?? obj.message?.content).trim();
+    if (!text) return [];
+    return [{
+      stepType: 'tool_result',
+      tool_name: obj.name || null,
+      content: text,
+      is_error: !!obj.is_error,
+      tool_use_id: obj.tool_use_id || obj.toolCallId || null,
+    }];
+  }
+
+  return null; // 交给 Claude stream-json 兜底
+}
+
 function detectPlainStepType(line) {
   if (/thinking|analyzing|reasoning/i.test(line)) return 'thinking';
   if (/tool use|using tool|calling tool|tool:|^\s*⎿/i.test(line)) return 'tool_call';
   if (/edit:|modif|wrote|created|updated file/i.test(line)) return 'code_edit';
   if (/^\$\s|run:|execut|bash:|shell:/i.test(line)) return 'terminal';
   return 'output';
+}
+
+/** 提取 Kimi assistant.content 为纯文本 */
+function kimiContentText(content) {
+  if (content == null) return '';
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.map(p => (typeof p === 'string' ? p : p?.text || '')).join('');
+  }
+  return String(content || '');
+}
+
+/**
+ * Kimi 常把推理与回复粘在同一 content（无 thinking 块）。
+ * 归一为 thinking / output，与 Claude / Codex 展示一致。
+ */
+function splitKimiAssistantContent(text) {
+  const raw = dedupeRepeatedText(String(text || '')).trim();
+  if (!raw) return [];
+
+  const shared = splitInlineReasoning(raw);
+  if (shared.length >= 2) return shared;
+
+  // "...answer.4" / "...tools.1\n\n2\n\n3"
+  const gluedNum = raw.match(/^(The user[\s\S]*?[.!?])(\d[\s\S]*)$/);
+  if (gluedNum && (looksLikeInlineReasoning(gluedNum[1]) || /\bThe user\b/i.test(gluedNum[1]))) {
+    return [
+      { stepType: 'thinking', content: gluedNum[1].trim() },
+      { stepType: 'output', content: gluedNum[2].trim() },
+    ];
+  }
+
+  // "...lines.The file ... **2 lines**" / markdown 正文
+  const gluedMd = raw.match(
+    /^(The user[\s\S]+?)((?:The |Here |Sure |I |[\u4e00-\u9fff]).{0,120}\*\*[\s\S]+)$/,
+  );
+  if (gluedMd) {
+    return [
+      { stepType: 'thinking', content: gluedMd[1].trim() },
+      { stepType: 'output', content: gluedMd[2].trim() },
+    ];
+  }
+
+  // 无 The user 前缀但「短句.Markdown 重述」
+  const dupMd = raw.match(/^((?:The |I )[^.!?\n]+[.!?])((?:The |I |Here ).*\*\*[\s\S]+)$/);
+  if (dupMd) {
+    return [
+      { stepType: 'thinking', content: dupMd[1].trim() },
+      { stepType: 'output', content: dupMd[2].trim() },
+    ];
+  }
+
+  // 纯推理（随后通常跟 tool_calls）
+  if (looksLikeInlineReasoning(raw) || /^The user\b/i.test(raw) || hasReasoningMeta(raw)) {
+    return [{ stepType: 'thinking', content: raw }];
+  }
+
+  return shared.length ? shared : [{ stepType: 'output', content: raw }];
+}
+
+/**
+ * Kimi stream-json → thinking / output / tool_call / tool_result（与 Claude 同构）
+ */
+function parseKimiJsonLine(obj, streamState) {
+  const state = ensureStreamState(streamState);
+  if (!obj || typeof obj !== 'object') return [];
+
+  if (obj.role === 'meta') return [];
+
+  if (obj.role === 'tool') {
+    const tid = obj.tool_call_id || obj.tool_use_id || null;
+    const name = (tid && state?.toolNamesById?.get(tid)) || 'tool';
+    return [{
+      stepType: 'tool_result',
+      tool_name: name,
+      content: kimiContentText(obj.content).trim() || '(无输出)',
+      tool_use_id: tid,
+    }];
+  }
+
+  if (obj.role !== 'assistant') return [];
+
+  const steps = [];
+  const text = kimiContentText(obj.content).trim();
+  const toolCalls = Array.isArray(obj.tool_calls) ? obj.tool_calls : [];
+
+  if (text) {
+    if (toolCalls.length) {
+      // 有工具调用时 content 多为推理
+      steps.push({ stepType: 'thinking', content: text });
+    } else {
+      steps.push(...splitKimiAssistantContent(text));
+    }
+  }
+
+  for (const tc of toolCalls) {
+    if (!tc || typeof tc !== 'object') continue;
+    const id = tc.id || null;
+    const fn = tc.function && typeof tc.function === 'object' ? tc.function : {};
+    const name = String(fn.name || tc.name || 'tool').trim() || 'tool';
+    let args = fn.arguments != null ? fn.arguments : tc.arguments;
+    if (typeof args === 'string') {
+      try { args = JSON.parse(args); } catch { /* 保留原字符串 */ }
+    }
+    const inputStr = typeof args === 'string'
+      ? args
+      : JSON.stringify(args && typeof args === 'object' ? args : {}, null, 2);
+    if (id && state?.emittedToolUseIds?.has(id)) continue;
+    if (id) state?.emittedToolUseIds?.add(id);
+    if (state?.toolNamesById && id) state.toolNamesById.set(id, name);
+    steps.push({
+      stepType: 'tool_call',
+      tool_name: name,
+      content: inputStr || '(无参数)',
+      tool_use_id: id,
+    });
+  }
+
+  return steps;
 }
 
 /**
@@ -631,8 +1205,24 @@ function parseAgentOutputLine(rawLine, agentId, streamState) {
   if (line.startsWith('{')) {
     try {
       const obj = JSON.parse(line);
-      const isCodex = agentId === 'codex';
-      const parsed = isCodex ? parseCodexJsonLine(obj) : parseClaudeJsonLine(obj, streamState);
+      const aid = String(agentId || '');
+      const isCodex = aid === 'codex';
+      const isCursor = aid === 'cursor' || aid === 'cursor-agent';
+      const isKimi = aid === 'kimi-code';
+
+      let parsed = null;
+      if (isCodex) {
+        parsed = parseCodexJsonLine(obj, streamState);
+      } else if (isCursor) {
+        // Cursor transcript 优先；否则与 Claude stream-json 同构
+        parsed = parseCursorJsonLine(obj, streamState);
+        if (parsed == null) parsed = parseClaudeJsonLine(obj, streamState);
+      } else if (isKimi) {
+        parsed = parseKimiJsonLine(obj, streamState);
+      } else {
+        parsed = parseClaudeJsonLine(obj, streamState);
+      }
+
       if (Array.isArray(parsed)) {
         // 空数组 = 已消费(含 result 重复/遥测),禁止再当纯文本
         if (!parsed.length) return [];
@@ -646,16 +1236,20 @@ function parseAgentOutputLine(rawLine, agentId, streamState) {
         || obj.type === 'stream_event'
         || obj.type === 'streamlined_text'
         || obj.type === 'streamlined_tool_use_summary'
+        || obj.role === 'assistant' || obj.role === 'user' || obj.role === 'tool'
         || SKIP_TOP_LEVEL_JSON_TYPES.has(obj.type)) {
         return [];
       }
     } catch {
       // 不完整的 stream-json 信封:等后续字节凑齐,切勿当正文展示
-      if (/^\{\s*"type"\s*:\s*"(result|assistant|system|user|stream_event|streamlined_text|streamlined_tool_use_summary)"/
+      if (/^\{\s*"type"\s*:\s*"(result|assistant|system|user|tool_call|stream_event|streamlined_text|streamlined_tool_use_summary)"/
         .test(line.trim())) {
         return [];
       }
       if (/^\{\s*"type"\s*:\s*"(item\.|thread\.|turn\.|event_msg|response_item)/.test(line.trim())) {
+        return [];
+      }
+      if (/^\{\s*"role"\s*:\s*"(assistant|user|tool)"/.test(line.trim())) {
         return [];
       }
     }
@@ -797,12 +1391,30 @@ function normalizeCliSessionId(raw) {
     : null;
 }
 
+function normalizeKimiSessionId(raw) {
+  const s = String(raw || '').trim();
+  // kimi: session_<uuid> 或裸 uuid
+  if (/^session_[0-9a-f-]{36}$/i.test(s)) return s;
+  const uuid = normalizeCliSessionId(s);
+  return uuid ? `session_${uuid}` : null;
+}
+
 function extractCliSessionId(rawStdout, agentId = 'claude-code') {
   for (const line of String(rawStdout || '').split('\n')) {
     const trimmed = line.trim();
     if (!trimmed.startsWith('{')) continue;
     try {
       const obj = JSON.parse(trimmed);
+      if (agentId === 'kimi-code') {
+        // {"role":"meta","type":"session.resume_hint","session_id":"session_..."}
+        if (obj.role === 'meta' && obj.session_id) {
+          return normalizeKimiSessionId(obj.session_id);
+        }
+        if (obj.type === 'session.resume_hint' && obj.session_id) {
+          return normalizeKimiSessionId(obj.session_id);
+        }
+        continue;
+      }
       if (agentId === 'codex' && obj.type === 'thread.started') {
         return normalizeCliSessionId(obj.thread_id || obj.threadId);
       }
@@ -905,6 +1517,9 @@ function formatAgentExitError(rawStderr, rawStdout, exitCode, agentId = 'claude-
     if (exitCode == null) {
       return 'Agent 进程异常结束（无输出），可能被中断、工作目录无效或 CLI 未正常启动';
     }
+    if (agentId === 'cursor' || agentId === 'cursor-agent') {
+      return `Cursor 异常退出 (code ${exitCode})。若刚开始使用，请先在终端执行 \`cursor-agent login\` 或设置 CURSOR_API_KEY。`;
+    }
     return `Agent 异常退出 (code ${exitCode})`;
   }
 
@@ -919,6 +1534,12 @@ function formatAgentExitError(rawStderr, rawStdout, exitCode, agentId = 'claude-
   if (/token_expired|authentication token is expired/i.test(combined)) {
     const hint = agentId === 'codex' ? '请执行 `codex login` 重新登录。' : '请重新登录对应 Agent CLI。';
     return `Agent 访问令牌已过期。${hint}`;
+  }
+
+  // Cursor Agent：headless 需 login 或 CURSOR_API_KEY（与网关无关）
+  if (/authentication required|not logged in|please run ['"]?agent login|CURSOR_API_KEY/i.test(combined)
+    && (agentId === 'cursor' || agentId === 'cursor-agent' || /agent login|CURSOR_API_KEY/i.test(combined))) {
+    return 'Cursor 未登录或凭证无效。请先登录 Cursor IDE（Token Bank 会自动共享会话），或执行 `cursor-agent login` / 设置 CURSOR_API_KEY。';
   }
 
   if (/failed to refresh token/i.test(combined)) {

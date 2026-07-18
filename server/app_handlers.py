@@ -86,11 +86,11 @@ def resolve_session_scan(
     return {}
 
 
-CAP_KEYS = ("gateway_proxy", "session_trace", "session_usage_import")
+CAP_KEYS = ("gateway_proxy", "session_trace", "session_usage_import", "resource_project")
 
 
 def _capability_items(h: dict) -> list[dict]:
-    """管理后台：三项能力对所有 handler 均可勾选，由运营自主决定。"""
+    """管理后台：能力项对所有 handler 均可勾选，由运营自主决定。"""
     catalog = load_handlers_doc().get("capability_catalog") or {}
     out: list[dict] = []
     for key in CAP_KEYS:
@@ -116,6 +116,7 @@ def default_user_capabilities(h: dict) -> dict[str, bool]:
         "gateway_proxy": "gateway_proxy" in caps,
         "session_trace": "session_import" in caps or "session_trace" in caps,
         "session_usage_import": "session_import" in caps,
+        "resource_project": "resource_project" in caps,
     }
 
 
@@ -297,6 +298,7 @@ def expand_entity(compact: dict) -> dict:
         "session_import": session_import,
         "session_trace": session_trace,
         "session_usage_import": session_usage_import,
+        "resource_project": bool(user_caps.get("resource_project")),
     }
 
     if gateway_proxy and proxy:

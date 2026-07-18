@@ -51,7 +51,7 @@ const AGENT_MCP_TARGETS = {
     label: 'Hermes',
     getPaths: () => [path.join(os.homedir(), '.hermes', 'config.yaml')],
     format: 'yaml-mcp-servers',
-    sync: false,
+    sync: true,
   },
   openclaw: {
     id: 'openclaw',
@@ -69,7 +69,7 @@ const AGENT_MCP_TARGETS = {
     },
     format: 'json-nested',
     nestedKey: 'mcp.servers',
-    sync: false,
+    sync: true,
   },
   workbuddy: {
     id: 'workbuddy',
@@ -87,7 +87,7 @@ const AGENT_MCP_TARGETS = {
     label: 'Gemini CLI',
     getPaths: () => [path.join(os.homedir(), '.gemini', 'settings.json')],
     format: 'json-mcp',
-    sync: false,
+    sync: true,
   },
   opencode: {
     id: 'opencode',
@@ -97,7 +97,15 @@ const AGENT_MCP_TARGETS = {
       path.join(os.homedir(), '.opencode', 'opencode.json'),
     ],
     format: 'json-mcp',
-    sync: false,
+    sync: true,
+  },
+  'kimi-code': {
+    id: 'kimi-code',
+    label: 'Kimi Code',
+    // 独立 mcp.json，避免改写 config.toml
+    getPaths: () => [path.join(os.homedir(), '.kimi-code', 'mcp.json')],
+    format: 'json-mcp',
+    sync: true,
   },
 };
 
@@ -128,10 +136,17 @@ function listSyncEnabledClientIds() {
     .map(([id]) => id);
 }
 
+/** 本机已安装、可作为 MCP 同步目标的 Agent */
+function listInstalledClientIds() {
+  const { isAgentInstalled } = require('./resource-agent-targets');
+  return listSyncEnabledClientIds().filter(id => isAgentInstalled(id));
+}
+
 module.exports = {
   AGENT_MCP_TARGETS,
   CLIENT_TARGETS,
   listAgentMcpTargets,
   listSyncEnabledClientIds,
+  listInstalledClientIds,
   expandHome,
 };

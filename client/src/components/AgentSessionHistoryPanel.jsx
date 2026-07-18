@@ -155,10 +155,18 @@ export default function AgentSessionHistoryPanel({
               <ul className="space-y-1">
                 {localItems.map(item => (
                   <li key={item.id}>
-                    <button
-                      type="button"
+                    {/* 外层用 div，避免嵌套 button 触发 validateDOMNesting */}
+                    <div
+                      role="button"
+                      tabIndex={0}
                       onClick={() => handleRestore(item)}
-                      className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors group"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleRestore(item);
+                        }
+                      }}
+                      className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors group cursor-pointer"
                     >
                       <div className="flex items-start gap-2">
                         <div className="flex-1 min-w-0">
@@ -177,7 +185,7 @@ export default function AgentSessionHistoryPanel({
                           删除
                         </button>
                       </div>
-                    </button>
+                    </div>
                   </li>
                 ))}
               </ul>

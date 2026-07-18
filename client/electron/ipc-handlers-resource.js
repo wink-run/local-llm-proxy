@@ -94,8 +94,10 @@ function registerResourceHandlers() {
       resourceManager.init();
       return {
         success: true,
+        // skill / prompt / assistant 三套目标分开
         agents: resourceManager.listAgentTargets(),
         promptAgents: resourceManager.listPromptAgentTargets(),
+        assistantAgents: resourceManager.listAssistantAgentTargets(),
       };
     } catch (error) {
       console.error('[IPC] resource:listAgentTargets error:', error);
@@ -196,15 +198,19 @@ function registerResourceHandlers() {
     }
   });
 
-  /** 在 Finder / 资源管理器中打开 Skill 目录或定位文件 */
-  ipcMain.handle('resource:openPath', async (_event, { targetPath } = {}) => {
+  /**
+   * 打开路径：目录始终用系统打开；文件默认在资源管理器中定位（reveal），
+   * action=open 时用默认应用预览/打开（聊天里点路径预览 PPT 等）。
+   */
+  ipcMain.handle('resource:openPath', async (_event, { targetPath, action } = {}) => {
     if (!targetPath || typeof targetPath !== 'string') {
       return { success: false, error: 'missing_path' };
     }
     try {
       const resolved = path.resolve(targetPath);
       if (!fs.existsSync(resolved)) return { success: false, error: 'not_found' };
-      if (fs.statSync(resolved).isFile()) {
+      const isFile = fs.statSync(resolved).isFile();
+      if (isFile && action !== 'open') {
         shell.showItemInFolder(resolved);
       } else {
         const errMsg = await shell.openPath(resolved);

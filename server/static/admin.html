@@ -791,7 +791,7 @@ select.form-input{cursor:pointer}
       </div>
       <p style="font-size:12px;color:#7b7b7b;margin-bottom:12px;line-height:1.6">
         {{ lang==='zh'
-          ? '一行 = 百宝箱里用户看到的一个应用。选择 Handler 并勾选三项能力（网关路由代理 / 会话 trace / 用量导入），发布后由客户端 handler 展开并下发。'
+          ? '一行 = 百宝箱里用户看到的一个应用。选择 Handler 并勾选能力（网关路由代理 / 会话 trace / 用量导入 / 可投射智能体），发布后由客户端 handler 展开并下发。'
           : 'One row = one user-visible app. Pick a handler and enable capabilities; client expands via built-in handlers.' }}
       </p>
       <div v-if="acMsg" style="font-size:12px;margin-bottom:10px" :style="acMsg.startsWith('✓')?'color:#16a34a':'color:#dc2626'">{{ acMsg }}</div>
@@ -803,6 +803,7 @@ select.form-input{cursor:pointer}
             <th>{{ capColumnTitle('gateway_proxy') }}</th>
             <th>{{ capColumnTitle('session_trace') }}</th>
             <th>{{ capColumnTitle('session_usage_import') }}</th>
+            <th>{{ capColumnTitle('resource_project') }}</th>
             <th>{{ lang==='zh'?'操作':'Actions' }}</th>
           </tr></thead>
           <tbody>
@@ -814,12 +815,13 @@ select.form-input{cursor:pointer}
               <td style="text-align:center">{{ capCell(e, 'gateway_proxy') }}</td>
               <td style="text-align:center">{{ capCell(e, 'session_trace') }}</td>
               <td style="text-align:center">{{ capCell(e, 'session_usage_import') }}</td>
+              <td style="text-align:center">{{ capCell(e, 'resource_project') }}</td>
               <td>
                 <button class="btn-xs" @click="openAcModal(e)">{{ lang==='zh'?'编辑':'Edit' }}</button>
                 <button class="btn-xs btn-danger" @click="deleteAcEntity(e)">{{ lang==='zh'?'删':'Del' }}</button>
               </td>
             </tr>
-            <tr v-if="!acEntities.length" class="empty-row"><td colspan="8">{{ lang==='zh'?'暂无，可「从默认导入」':'No entries' }}</td></tr>
+            <tr v-if="!acEntities.length" class="empty-row"><td colspan="9">{{ lang==='zh'?'暂无，可「从默认导入」':'No entries' }}</td></tr>
           </tbody>
         </table>
       </div>
@@ -857,7 +859,7 @@ select.form-input{cursor:pointer}
                 </label>
               </li>
             </ul>
-            <p style="font-size:11px;color:#999;line-height:1.5;margin:4px 0 0">{{ lang==='zh' ? '三项能力均可自由勾选；发布时按选项展开，具体代理/扫描逻辑由内置 handler 实现。' : 'All capabilities are optional; publish applies your selections via built-in handlers.' }}</p>
+            <p style="font-size:11px;color:#999;line-height:1.5;margin:4px 0 0">{{ lang==='zh' ? '各项能力均可自由勾选；「是否可投射智能体」仅控制智能体资源的投射目标；Prompt / Skill 对已安装 Agent 默认均可投射。发布时按选项展开，具体代理/扫描逻辑由内置 handler 实现。' : 'All capabilities are optional; "Can project assistants" only gates assistant projection targets. Prompt/Skill default to any installed agent. Publish applies your selections via built-in handlers.' }}</p>
           </div>
           <div v-if="showRouteMultiSelect()" class="form-group" style="margin-bottom:12px">
             <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px">

@@ -9,7 +9,7 @@ const { parseRouteBinding, claudeNameAtIndex } = require('../shared/route-bindin
 const HANDLERS_YAML = path.join(__dirname, 'config', 'app-handlers.yaml');
 const SCANS_YAML = path.join(__dirname, 'config', 'session-scans.yaml');
 const OPS_YAML = path.join(__dirname, 'config', 'handler-ops.yaml');
-const CAP_KEYS = ['gateway_proxy', 'session_trace', 'session_usage_import'];
+const CAP_KEYS = ['gateway_proxy', 'session_trace', 'session_usage_import', 'resource_project'];
 
 let _doc = null;
 let _scansBuiltin = null;
@@ -84,7 +84,14 @@ function handlersMap() {
   if (!_cloudHandlers) return base;
   const out = { ...base };
   for (const [id, h] of Object.entries(_cloudHandlers)) {
-    out[id] = { ...(base[id] || {}), ...h };
+    const merged = { ...(base[id] || {}), ...h };
+    // capabilities 取并集：避免旧版云端快照缺新能力位（如 resource_project）冲掉内置默认
+    const baseCaps = Array.isArray(base[id]?.capabilities) ? base[id].capabilities : [];
+    const cloudCaps = Array.isArray(h?.capabilities) ? h.capabilities : [];
+    if (baseCaps.length || cloudCaps.length) {
+      merged.capabilities = [...new Set([...baseCaps, ...cloudCaps])];
+    }
+    out[id] = merged;
   }
   return out;
 }
@@ -121,6 +128,7 @@ const TRACE_PROFILE_BY_SOURCE = {
   cursor: 'cursor-transcript',
   workbuddy: 'workbuddy-trace',
   'trae-work': 'trae-work-trace',
+  kimi: 'kimi-code-trace',
 };
 
 /** Trae Work 标准 handler / 实体 id（旧 trae / trae-stats 仍兼容） */
@@ -342,7 +350,12 @@ function normStrList(val) {
 
 function handlerMaxCapabilities() {
   // 运营可勾选任意能力；运行时能否生效由 handler 内置 proxy/session 决定
-  return { gateway_proxy: true, session_trace: true, session_usage_import: true };
+  return {
+    gateway_proxy: true,
+    session_trace: true,
+    session_usage_import: true,
+    resource_project: true,
+  };
 }
 
 /** handler.yaml capabilities 字段决定「未显式配置时」的默认勾选建议 */
@@ -352,6 +365,8 @@ function defaultUserCapabilities(h) {
     gateway_proxy: caps.has('gateway_proxy'),
     session_trace: caps.has('session_import') || caps.has('session_trace'),
     session_usage_import: caps.has('session_import'),
+    // 资源投射目标：handler 声明 resource_project 时默认开启
+    resource_project: caps.has('resource_project'),
   };
 }
 
@@ -412,6 +427,8 @@ function expandEntity(compact) {
     session_import: sessionImport,
     session_trace: sessionTrace,
     session_usage_import: sessionUsageImport,
+    // 可作为「投射到 Agent」目标（不依赖 proxy/session 基础设施）
+    resource_project: !!userCaps.resource_project,
     ops,
     integrations: { ...(ops.integrations || {}), ...(vars.integrations || {}) },
     handoff_target: ops.handoff_target === true || vars.handoff_target === true,

@@ -75,6 +75,7 @@ function redrawThinkingOutputPairs(items) {
 const STEP_META = {
   thinking: { icon: '💭', label: '推理', accent: 'border-amber-200 bg-amber-50/60 dark:border-amber-800/40 dark:bg-amber-900/15' },
   tool_call: { icon: '🔧', label: '工具调用', accent: 'border-amber-200 bg-amber-50/60 dark:border-amber-800/40 dark:bg-amber-900/15' },
+  tool_result: { icon: '📤', label: '工具结果', accent: 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-800/40 dark:bg-emerald-900/15' },
   code_edit: { icon: '✏️', label: '代码编辑', accent: 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-800/40 dark:bg-emerald-900/15' },
   terminal: { icon: '🏃', label: '终端', accent: 'border-zinc-300 bg-zinc-900/90 dark:border-zinc-600 text-zinc-100' },
   system_event: { icon: '🔄', label: '系统', accent: 'border-sky-200 bg-sky-50/50 dark:border-sky-800/40 dark:bg-sky-900/15' },
@@ -318,10 +319,102 @@ function buildTimeline(userPrompt, steps = [], delegations = {}, agentNames = {}
   flushThinking();
   flushSystem();
   flushOutput();
-  // 重绘修正；分界不清则取消推理卡；再去重气泡
-  return dedupeAssistantItems(redrawThinkingOutputPairs(stripLeakedAssistantsWhenThinking(dedupeAssistantItems(
+  // 重绘修正 → 按 tool_use_id / 相邻关系合并 call+result（Tutti upsert 思路）
+  return mergeToolCallResultPairs(dedupeAssistantItems(redrawThinkingOutputPairs(stripLeakedAssistantsWhenThinking(dedupeAssistantItems(
     collapseAdjacentThinkingGroups(pruneMixedAssistantBubbles(mergeDelegationPairs(items))),
-  ))));
+  )))));
+}
+
+/**
+ * 合并 tool_call + tool_result → tool_group
+ * 优先按 tool_use_id upsert（中间可夹其它事件）；否则回退相邻配对
+ */
+function mergeToolCallResultPairs(items = []) {
+  const out = [];
+  // id → 在 out 中的下标
+  const pendingById = new Map();
+
+  const pushGroup = (g) => {
+    out.push(g);
+    if (g.tool_use_id && g.resultContent == null) {
+      pendingById.set(g.tool_use_id, out.length - 1);
+    }
+  };
+
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it.kind === 'tool_call') {
+      const next = items[i + 1];
+      if (next?.kind === 'tool_result'
+        && (!it.tool_use_id || !next.tool_use_id || it.tool_use_id === next.tool_use_id)) {
+        pushGroup({
+          kind: 'tool_group',
+          tool_name: it.tool_name || next.tool_name,
+          callContent: it.content,
+          resultContent: next.content,
+          is_error: !!next.is_error,
+          timestamp: next.timestamp || it.timestamp,
+          tool_use_id: it.tool_use_id || next.tool_use_id || null,
+        });
+        if (it.tool_use_id) pendingById.delete(it.tool_use_id);
+        i += 1;
+        continue;
+      }
+      pushGroup({
+        kind: 'tool_group',
+        tool_name: it.tool_name,
+        callContent: it.content,
+        resultContent: null,
+        is_error: false,
+        pending: true,
+        timestamp: it.timestamp,
+        tool_use_id: it.tool_use_id || null,
+      });
+      continue;
+    }
+    if (it.kind === 'tool_result') {
+      const id = it.tool_use_id || null;
+      const idx = id != null ? pendingById.get(id) : undefined;
+      if (idx != null && out[idx]?.kind === 'tool_group') {
+        out[idx] = {
+          ...out[idx],
+          tool_name: out[idx].tool_name || it.tool_name,
+          resultContent: it.content,
+          is_error: !!it.is_error,
+          pending: false,
+          timestamp: it.timestamp || out[idx].timestamp,
+        };
+        pendingById.delete(id);
+        continue;
+      }
+      // 无匹配 call：与前一条未完成的 tool_group 相邻合并
+      const prev = out[out.length - 1];
+      if (prev?.kind === 'tool_group' && prev.resultContent == null) {
+        out[out.length - 1] = {
+          ...prev,
+          tool_name: prev.tool_name || it.tool_name,
+          resultContent: it.content,
+          is_error: !!it.is_error,
+          pending: false,
+          timestamp: it.timestamp || prev.timestamp,
+        };
+        if (prev.tool_use_id) pendingById.delete(prev.tool_use_id);
+        continue;
+      }
+      pushGroup({
+        kind: 'tool_group',
+        tool_name: it.tool_name,
+        callContent: null,
+        resultContent: it.content,
+        is_error: !!it.is_error,
+        timestamp: it.timestamp,
+        tool_use_id: id,
+      });
+      continue;
+    }
+    out.push(it);
+  }
+  return out;
 }
 
 /** 合并内容相同/互为前缀的连续推理卡片 */
@@ -439,7 +532,7 @@ function groupNestedSteps(steps = []) {
   }
   flushThinking();
   flushSystem();
-  return groups;
+  return mergeToolCallResultPairs(groups);
 }
 
 /** 将轮次 steps 与 result 摘要合并为时间线条目 */
@@ -713,22 +806,95 @@ function SystemEventGroupCard({ item }) {
   );
 }
 
+/** Claude / Codex 常见工具 → 中文友好名（对齐 Tutti TOOL_NAME_TRANSLATION_KEYS） */
+const TOOL_FRIENDLY_LABELS = {
+  bash: '执行命令',
+  shell: '执行命令',
+  read: '读取文件',
+  write: '写入文件',
+  edit: '编辑文件',
+  multiedit: '批量编辑',
+  grep: '搜索内容',
+  glob: '查找文件',
+  ls: '列出目录',
+  askuserquestion: '询问用户',
+  todowrite: '更新待办',
+  todoread: '读取待办',
+  skill: 'Skill',
+  task: '子任务',
+  webfetch: '抓取网页',
+  websearch: '网页搜索',
+  notebookedit: '编辑 Notebook',
+};
+
+/** 从参数 JSON 推断常见 Claude Code 内置工具名（DB 旧数据缺 tool_name 时兜底） */
+function inferBuiltinToolName(content) {
+  try {
+    const obj = JSON.parse(String(content || ''));
+    if (!obj || typeof obj !== 'object') return null;
+    if (typeof obj.command === 'string') return 'Bash';
+    if (obj.file_path && obj.old_string != null) return 'Edit';
+    if (obj.file_path && obj.content != null) return 'Write';
+    if (obj.file_path && obj.command == null) return 'Read';
+    if (obj.pattern != null && obj.path != null) return 'Grep';
+    if (obj.pattern != null || obj.glob != null) return 'Glob';
+  } catch { /* ignore */ }
+  return null;
+}
+
+function friendlyToolLabel(name) {
+  const key = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return TOOL_FRIENDLY_LABELS[key] || null;
+}
+
+/** 折叠头一行摘要：命令 / 路径 / 描述 */
+function toolCompactSummary(callContent) {
+  const text = String(callContent || '').trim();
+  if (!text || text === '(无参数)') return '';
+  try {
+    const obj = JSON.parse(text);
+    if (!obj || typeof obj !== 'object') return '';
+    if (typeof obj.command === 'string') {
+      return obj.command.replace(/\s+/g, ' ').trim().slice(0, 72);
+    }
+    if (typeof obj.file_path === 'string') return obj.file_path.slice(0, 72);
+    if (typeof obj.path === 'string' && obj.pattern) {
+      return `${obj.pattern} @ ${obj.path}`.slice(0, 72);
+    }
+    if (typeof obj.pattern === 'string') return obj.pattern.slice(0, 72);
+    if (typeof obj.glob === 'string') return obj.glob.slice(0, 72);
+    if (typeof obj.description === 'string') return obj.description.slice(0, 72);
+    if (typeof obj.skill === 'string') return obj.skill.slice(0, 72);
+  } catch { /* ignore */ }
+  return text.replace(/\s+/g, ' ').slice(0, 72);
+}
+
 /** 解析 MCP / 派发工具名，便于展示 */
-function parseToolName(raw) {
-  if (!raw) return { display: '未知工具', server: null };
+function parseToolName(raw, content) {
+  if (!raw) {
+    const inferred = inferBuiltinToolName(content);
+    const label = friendlyToolLabel(inferred) || inferred;
+    return { display: label || '未知工具', server: null, rawName: inferred };
+  }
   if (raw.startsWith('dispatch:')) {
-    return { display: raw.slice('dispatch:'.length), server: 'Agent 派发' };
+    return { display: raw.slice('dispatch:'.length), server: 'Agent 派发', rawName: raw };
   }
   if (raw.startsWith('mcp__')) {
     const parts = raw.split('__').filter(Boolean);
     if (parts.length >= 3) {
+      const tool = parts[parts.length - 1];
       return {
-        display: parts[parts.length - 1],
+        display: friendlyToolLabel(tool) || tool,
         server: parts.slice(1, -1).join(' · '),
+        rawName: tool,
       };
     }
   }
-  return { display: raw, server: null };
+  return {
+    display: friendlyToolLabel(raw) || raw,
+    server: null,
+    rawName: raw,
+  };
 }
 
 /** 格式化工具参数（JSON 美化） */
@@ -749,79 +915,127 @@ function formatToolPayload(content) {
   }
 }
 
-/** 工具调用卡片（MCP / 派发） */
-function ToolCallCard({ step }) {
-  const { display, server } = parseToolName(step.tool_name);
-  const payload = formatToolPayload(step.content);
-  // 空参数默认折叠，减少 `{}` 刷屏
-  const [open, setOpen] = useState(!payload.empty);
+/** 按工具类型选图标（对齐 Tutti AgentToolCallHeader 分流） */
+function toolRowIcon(rawName, { err, pending } = {}) {
+  if (err) return '⚠️';
+  const key = String(rawName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (pending) {
+    if (/read|notebook/.test(key)) return '📄';
+    if (/write|edit|multiedit|patch/.test(key)) return '📝';
+    return '🔨';
+  }
+  if (/bash|shell/.test(key)) return '⚙';
+  if (/read|ls|list/.test(key)) return '📄';
+  if (/write/.test(key)) return '📝';
+  if (/edit|multiedit|patch/.test(key)) return '✏';
+  if (/grep|search/.test(key)) return '🔍';
+  if (/glob|find/.test(key)) return '🗂';
+  if (/web/.test(key)) return '🌐';
+  if (/todo/.test(key)) return '☑';
+  if (/askuser|question/.test(key)) return '❓';
+  if (/skill/.test(key)) return '✨';
+  if (/task|agent/.test(key)) return '↗';
+  return '🛠';
+}
+
+/**
+ * 单次工具行（Tutti AgentToolCallCard 风格）：
+ * 图标 + 友好名 + 状态 + 一行摘要；默认折叠，展开才见参数/输出
+ */
+function ToolGroupCard({ step, live = false }) {
+  const callContent = step.callContent ?? (step.kind === 'tool_call' ? step.content : null);
+  const resultContent = step.resultContent ?? (step.kind === 'tool_result' ? step.content : null);
+  const { display, server, rawName } = parseToolName(step.tool_name, callContent);
+  const payload = formatToolPayload(callContent || '');
+  const summary = toolCompactSummary(callContent);
+  const err = !!step.is_error;
+  // 仅任务仍在跑时显示「执行中」；已收尾但无结果 → 未完成
+  const pending = !!step.pending && resultContent == null && live;
+  const incomplete = !!step.pending && resultContent == null && !live;
+  const hasDetail = (!payload.empty && callContent != null)
+    || (resultContent != null && String(resultContent).trim());
+  const [open, setOpen] = useState(false);
+
+  let status = '';
+  if (err) status = '失败';
+  else if (pending) status = '执行中';
+  else if (incomplete) status = '未完成';
+  else if (resultContent != null) status = '已完成';
+
+  const icon = toolRowIcon(rawName || step.tool_name, { err, pending });
 
   return (
-    <div className="flex justify-start w-full">
-      <div className="max-w-[92%] w-full rounded-xl border border-amber-200/70 dark:border-amber-700/35 bg-gradient-to-br from-amber-50/95 via-white to-orange-50/50 dark:from-amber-950/25 dark:via-zinc-900/60 dark:to-zinc-900/40 shadow-sm overflow-hidden">
-        <div className="flex min-w-0">
-          <div className="w-1 shrink-0 bg-gradient-to-b from-amber-400 to-orange-500 dark:from-amber-500 dark:to-orange-600" />
-          <div className="flex-1 min-w-0">
-            <button
-              type="button"
-              onClick={() => setOpen(v => !v)}
-              className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-amber-100/40 dark:hover:bg-amber-900/20 transition-colors"
-            >
-              <div className="w-8 h-8 shrink-0 rounded-lg bg-amber-100 dark:bg-amber-900/45 border border-amber-200/60 dark:border-amber-700/40 flex items-center justify-center text-sm shadow-sm">
-                ⚡
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <code className="text-xs font-semibold text-amber-950 dark:text-amber-100 tracking-tight">
-                    {display}
-                  </code>
-                  {server && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/80 dark:bg-zinc-800/80 border border-amber-200/60 dark:border-amber-800/50 text-amber-800/80 dark:text-amber-300/90 truncate max-w-[200px]">
-                      {server}
-                    </span>
-                  )}
-                  {payload.empty && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400">
-                      无参数
-                    </span>
-                  )}
-                </div>
-                <p className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">
-                  工具调用 · {formatTime(step.timestamp)}
-                </p>
-              </div>
-              <span className="text-zinc-400 dark:text-zinc-500 text-xs shrink-0 mt-1">{open ? '▾' : '▸'}</span>
-            </button>
+    <div className="flex justify-start w-full max-w-[92%]">
+      <div className="w-full min-w-0">
+        <button
+          type="button"
+          disabled={!hasDetail}
+          onClick={() => hasDetail && setOpen(v => !v)}
+          className={`w-full flex items-center gap-1.5 px-1 py-1 text-left rounded-md transition-colors ${
+            hasDetail ? 'hover:bg-zinc-100/80 dark:hover:bg-zinc-800/50 cursor-pointer' : 'cursor-default'
+          }`}
+          aria-expanded={hasDetail ? open : undefined}
+        >
+          {/* 工具行整体缩小一档，避免压过正文回复 */}
+          <span className={`shrink-0 text-[11px] leading-none w-3.5 text-center ${pending ? 'animate-pulse' : ''}`}>
+            {icon}
+          </span>
+          <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300 shrink-0">
+            {display}
+          </span>
+          {server && (
+            <span className="text-[9px] text-zinc-400 dark:text-zinc-500 truncate max-w-[100px] shrink-0">
+              {server}
+            </span>
+          )}
+          {status && (
+            <span className={`text-[10px] shrink-0 ${
+              err ? 'text-red-500 dark:text-red-400'
+                : pending ? 'text-zinc-400 dark:text-zinc-500'
+                  : 'text-zinc-400 dark:text-zinc-500'
+            }`}>
+              {status}{pending ? '…' : ''}
+            </span>
+          )}
+          {summary && (
+            <span className="min-w-0 flex-1 truncate text-[10px] text-zinc-400 dark:text-zinc-500 font-mono">
+              {summary}
+            </span>
+          )}
+          {!summary && <span className="flex-1" />}
+          {hasDetail && (
+            <span className="text-zinc-400 dark:text-zinc-500 text-[10px] shrink-0">
+              {open ? '▾' : '▸'}
+            </span>
+          )}
+        </button>
 
-            {open && (
-              <div className="px-3 pb-3 pt-0">
-                <div className="rounded-lg overflow-hidden border border-zinc-800/10 dark:border-zinc-700/60 bg-zinc-900 dark:bg-zinc-950 shadow-inner">
-                  <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-zinc-700/40 bg-zinc-800/80">
-                    <span className="flex gap-1">
-                      <span className="w-2 h-2 rounded-full bg-red-400/90" />
-                      <span className="w-2 h-2 rounded-full bg-amber-400/90" />
-                      <span className="w-2 h-2 rounded-full bg-emerald-400/90" />
-                    </span>
-                    <span className="text-[10px] font-medium text-zinc-400">
-                      {payload.isJson ? 'JSON 参数' : '输入内容'}
-                    </span>
-                  </div>
-                  <pre className="px-3 py-2.5 text-[11px] leading-relaxed font-mono text-emerald-300/95 whitespace-pre-wrap break-all max-h-52 overflow-y-auto">
-                    {payload.formatted}
-                  </pre>
-                </div>
-              </div>
+        {open && hasDetail && (
+          <div className="ml-5 mt-0.5 mb-1 space-y-1 border-l border-zinc-200 dark:border-zinc-700 pl-2.5">
+            {callContent != null && !payload.empty && (
+              <pre className="text-[10px] leading-relaxed font-mono text-zinc-500 dark:text-zinc-400 whitespace-pre-wrap break-all max-h-36 overflow-y-auto bg-zinc-100/80 dark:bg-zinc-900/60 rounded px-2 py-1.5">
+                {payload.formatted}
+              </pre>
+            )}
+            {resultContent != null && String(resultContent).trim() && (
+              <pre className={`text-[10px] leading-relaxed font-mono whitespace-pre-wrap break-words max-h-48 overflow-y-auto rounded px-2 py-1.5 ${
+                err
+                  ? 'text-red-700 dark:text-red-300 bg-red-50/80 dark:bg-red-950/25'
+                  : 'text-zinc-500 dark:text-zinc-400 bg-zinc-100/80 dark:bg-zinc-900/60'
+              }`}>
+                {String(resultContent)}
+              </pre>
             )}
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
 }
 
-function ToolCard({ step }) {
-  if (step.kind === 'tool_call') {
-    return <ToolCallCard step={step} />;
+function ToolCard({ step, live = false }) {
+  if (step.kind === 'tool_group' || step.kind === 'tool_call' || step.kind === 'tool_result') {
+    return <ToolGroupCard step={step} live={live} />;
   }
   if (step.kind === 'system_event') {
     return <SystemEventCard step={step} />;
@@ -890,7 +1104,8 @@ function extractLiveProgress(timeline = []) {
     } else if (it.kind === 'system_event_group' && it.events?.length) {
       const line = formatSystemStatusLine(it.events[it.events.length - 1]);
       if (line) systemStatus = line;
-    } else if (it.kind === 'tool_call' || it.kind === 'terminal' || it.kind === 'code_edit') {
+    } else if (it.kind === 'tool_group' || it.kind === 'tool_call' || it.kind === 'tool_result'
+      || it.kind === 'terminal' || it.kind === 'code_edit') {
       const name = it.tool_name || it.kind;
       if (name && !tools.includes(name)) tools.push(name);
       if (tools.length > 6) tools.shift();
@@ -934,39 +1149,92 @@ function tailLines(text, maxLines = 8, maxChars = 900) {
   return `…\n${lines.slice(-maxLines).join('\n')}`;
 }
 
-/** 推理卡：默认折叠，与 AI 头像同一行 */
+/** 折叠预览取最后一行（流式时看最新进度）；过长则截尾部 */
+function lastThinkingPreview(text, maxChars = 140) {
+  const lines = String(text || '')
+    .split(/\n/)
+    .map((l) => l.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  const last = lines.length
+    ? lines[lines.length - 1]
+    : String(text || '').replace(/\s+/g, ' ').trim();
+  if (!last) return '';
+  if (last.length <= maxChars) return last;
+  return `…${last.slice(-maxChars)}`;
+}
+
+/** 推理卡：默认折叠，与 AI 头像同一行；live 时用动效提示仍在执行 */
 function ThinkingGroupCard({ item, live = false, showAvatar = true }) {
   const [open, setOpen] = useState(false);
   const raw = normalizeDisplayText(item.content);
-  const preview = String(raw || '').replace(/\s+/g, ' ').trim();
+  const preview = lastThinkingPreview(raw);
   const meta = STEP_META.thinking;
 
   return (
     <div className="flex justify-start gap-2 items-start">
       {showAvatar ? (
-        <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] shrink-0 mt-0.5">
-          AI
+        <div className="relative w-7 h-7 shrink-0 mt-0.5">
+          {live && (
+            <span className="absolute inset-0 rounded-full bg-amber-400/35 animate-ping" aria-hidden />
+          )}
+          <div className={`relative w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px]${live ? ' ring-2 ring-amber-300/70' : ''}`}>
+            AI
+          </div>
         </div>
       ) : (
         <div className="w-7 shrink-0" aria-hidden />
       )}
-      <div className={`max-w-[80%] min-w-0 flex-1 rounded-xl border ${meta.accent}${live ? ' ring-1 ring-amber-300/40' : ''}`}>
+      <div
+        className={[
+          'max-w-[80%] min-w-0 flex-1 rounded-xl border overflow-hidden',
+          meta.accent,
+          live ? 'ring-1 ring-amber-400/50 shadow-[0_0_0_1px_rgba(251,191,36,0.12)]' : '',
+        ].filter(Boolean).join(' ')}
+      >
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="w-full flex items-center gap-2 px-3 py-1.5 text-left"
+          className="w-full flex items-center gap-2 px-3 py-1.5 text-left relative"
         >
-          <span className="text-sm leading-none">{meta.icon}</span>
-          <span className="text-xs font-medium text-amber-800 dark:text-amber-300 shrink-0">
+          {/* 执行中底部扫光（内联 keyframes，避免被 truncate 裁掉观感） */}
+          {live && (
+            <>
+              <style>{'@keyframes tb-think-scan{0%{transform:translateX(-120%)}100%{transform:translateX(420%)}}'}</style>
+              <span
+                className="pointer-events-none absolute inset-x-0 bottom-0 h-[2px] overflow-hidden"
+                aria-hidden
+              >
+                <span
+                  className="block h-full w-1/3 bg-amber-500/90"
+                  style={{ animation: 'tb-think-scan 1.35s ease-in-out infinite' }}
+                />
+              </span>
+            </>
+          )}
+          {live ? (
+            <span className="w-3.5 h-3.5 border-2 border-amber-300/50 border-t-amber-600 dark:border-t-amber-400 rounded-full animate-spin shrink-0" />
+          ) : (
+            <span className="text-sm leading-none">{meta.icon}</span>
+          )}
+          <span className={`text-xs font-medium shrink-0 ${live ? 'text-amber-700 dark:text-amber-300 animate-pulse' : 'text-amber-800 dark:text-amber-300'}`}>
             {live ? '推理中' : '推理'}
           </span>
-          {!open && preview && (
-            <span className="flex-1 min-w-0 text-[10px] text-zinc-400 truncate" title={preview}>
-              {preview}
+          {/* 预览截断与光标分离，保证尾部呼吸光标始终可见 */}
+          {!open && (preview || live) && (
+            <span className="flex-1 min-w-0 flex items-center gap-0.5 overflow-hidden">
+              <span
+                className={`min-w-0 flex-1 truncate text-[10px] ${preview ? 'text-zinc-400' : 'text-amber-600/80 dark:text-amber-400/80'}`}
+                title={preview || undefined}
+              >
+                {preview || '正在思考…'}
+              </span>
+              {live && (
+                <span className="inline-block animate-pulse text-amber-500 shrink-0 leading-none">▊</span>
+              )}
             </span>
           )}
           {live && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 shrink-0">
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 shrink-0 animate-pulse">
               实时
             </span>
           )}
@@ -1001,7 +1269,8 @@ function LiveProgressPanel({ agentName, timeline }) {
     () => timeline.some((it) => (
       ((it.kind === 'assistant' || it.kind === 'thinking_group')
         && String(it.content || '').trim())
-      || (it.kind === 'tool_call' || it.kind === 'terminal' || it.kind === 'code_edit')
+      || (it.kind === 'tool_group' || it.kind === 'tool_call'
+        || it.kind === 'tool_result' || it.kind === 'terminal' || it.kind === 'code_edit')
     )),
     [timeline],
   );
@@ -1203,7 +1472,8 @@ export default function ExecutionLog({
     if (status !== 'running' || !String(userPrompt || '').trim()) return false;
     for (let i = currentStart; i < timeline.length; i++) {
       const k = timeline[i].kind;
-      if (k === 'assistant' || k === 'thinking_group' || k === 'tool_call'
+      if (k === 'assistant' || k === 'thinking_group' || k === 'tool_group'
+        || k === 'tool_call' || k === 'tool_result'
         || k === 'terminal' || k === 'code_edit' || k === 'delegation') {
         return false;
       }
@@ -1292,16 +1562,27 @@ export default function ExecutionLog({
           return <SystemEventCard key={`se-${i}`} step={item} />;
         }
 
-        return <ToolCard key={`t-${i}`} step={item} />;
+        return (
+          <ToolCard
+            key={`t-${i}`}
+            step={item}
+            live={status === 'running' && i >= currentStart}
+          />
+        );
       })}
 
       {/* 本轮尚无回复/推理气泡：新开一条空回复放呼吸光标，不粘在历史消息上 */}
       {waitingForReply && (
-        <div className="flex justify-start gap-2">
-          <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] shrink-0 mt-0.5">
-            AI
+        <div className="flex justify-start gap-2 items-start">
+          <div className="relative w-7 h-7 shrink-0 mt-0.5">
+            <span className="absolute inset-0 rounded-full bg-blue-400/40 animate-ping" aria-hidden />
+            <div className="relative w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] ring-2 ring-blue-300/50">
+              AI
+            </div>
           </div>
-          <div className="max-w-[80%] rounded-2xl rounded-bl-md px-4 py-2.5 text-sm bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 min-h-[2.25rem] flex items-center">
+          <div className="max-w-[80%] rounded-2xl rounded-bl-md px-4 py-2.5 text-sm bg-white dark:bg-zinc-800 border border-blue-200/70 dark:border-blue-800/50 text-zinc-900 dark:text-zinc-100 min-h-[2.25rem] flex items-center gap-2">
+            <span className="w-3.5 h-3.5 border-2 border-blue-300/40 border-t-blue-500 rounded-full animate-spin shrink-0" />
+            <span className="text-xs text-blue-600/90 dark:text-blue-300/90 animate-pulse">正在执行…</span>
             <span className="inline-block animate-pulse text-blue-500 dark:text-blue-400">▊</span>
           </div>
         </div>
