@@ -574,7 +574,7 @@ class AgentExecutor extends EventEmitter {
           taskId,
           workingDir,
           mainAgentId: options.mainAgentId,
-          profileId: mcpProfile || mcpManager.DEFAULT_PROFILE_ID,
+          profileId: mcpProfile || mcpManager.DEVELOPMENT_PROFILE_ID || mcpManager.DEFAULT_PROFILE_ID,
           sessionKey: options.sessionKey || null,
           sessionInstanceId: options.sessionInstanceId || null,
         });

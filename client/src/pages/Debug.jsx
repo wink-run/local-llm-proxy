@@ -510,7 +510,8 @@ function clearDebugPanelStorage() {
 // ── Agent 模式常量 ─────────────────────────────────────────────────────────────
 
 const MAIN_AGENT_STORAGE_KEY = 'tokenbank.mainAgentId';
-const MCP_PROFILE_STORAGE_KEY = 'tokenbank.mcpProfileId';
+/** 聚合入口固定使用开发模式 Profile（含 Agent 桥 + 已纳管 MCP） */
+const MCP_PROFILE_DEVELOPMENT = 'development'; // fixed: no multi-profile UI
 const AGENT_WORKING_DIR_KEY = 'tokenbank.agentWorkingDir';
 const DEBUG_MODE_KEY = 'tokenbank.debugMode';
 
@@ -518,21 +519,10 @@ function loadMainAgentId() {
   try { return localStorage.getItem(MAIN_AGENT_STORAGE_KEY) || ''; } catch { return ''; }
 }
 
-function loadMcpProfileId() {
-  try { return localStorage.getItem(MCP_PROFILE_STORAGE_KEY) || 'orchestrator-default'; } catch { return 'orchestrator-default'; }
-}
-
 function saveMainAgentId(id) {
   try {
     if (id) localStorage.setItem(MAIN_AGENT_STORAGE_KEY, id);
     else localStorage.removeItem(MAIN_AGENT_STORAGE_KEY);
-  } catch {}
-}
-
-function saveMcpProfileId(id) {
-  try {
-    if (id) localStorage.setItem(MCP_PROFILE_STORAGE_KEY, id);
-    else localStorage.removeItem(MCP_PROFILE_STORAGE_KEY);
   } catch {}
 }
 
@@ -597,8 +587,6 @@ export default function Debug() {
   const [taskResult, setTaskResult] = useState(null);
   const [executing, setExecuting] = useState(false);
   const [mainAgentId, setMainAgentId] = useState(() => loadMainAgentId());
-  const [mcpProfiles, setMcpProfiles] = useState([]);
-  const [mcpProfileId, setMcpProfileId] = useState(() => loadMcpProfileId());
   const [delegations, setDelegations] = useState({});
   const [conversationTurns, setConversationTurns] = useState([]);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -697,24 +685,6 @@ export default function Debug() {
     if (mode === 'agent' && agents.length === 0 && !loadingAgents) {
       loadAgents();
     }
-  }, [mode]);
-
-  // 加载 MCP Profile 列表（聚合入口编排用）
-  useEffect(() => {
-    if (mode !== 'agent' || !window.electronAPI?.mcp) return;
-    window.electronAPI.mcp.listProfiles()
-      .then(res => {
-        if (res.success && res.profiles?.length) {
-          setMcpProfiles(res.profiles);
-          if (!res.profiles.some(p => p.id === mcpProfileId)) {
-            const fallback = res.profiles.find(p => p.id === 'orchestrator-default')?.id
-              || res.profiles[0].id;
-            setMcpProfileId(fallback);
-            saveMcpProfileId(fallback);
-          }
-        }
-      })
-      .catch(err => console.warn('Failed to load MCP profiles:', err));
   }, [mode]);
 
   const autoFinalizeTimersRef = useRef({});
@@ -1738,7 +1708,7 @@ export default function Debug() {
           workingDir: workDir,
           mode: execMode,
           mainAgentId: isHubMode ? activeAgent.id : mainAgentId,
-          mcpProfile: isHubMode ? mcpProfileId : undefined,
+          mcpProfile: isHubMode ? MCP_PROFILE_DEVELOPMENT : undefined,
           sessionKey: execKey,
           sessionInstanceId: instanceId,
           continueSession,
@@ -2103,19 +2073,19 @@ export default function Debug() {
   return (
     /* 顶栏拉通；智能体列表仅在 Agent 模式内容区内 */
     <div className="relative h-screen min-h-0 flex flex-col bg-white dark:bg-zinc-900">
-      {/* ── 顶栏（整宽）── */}
-      <div className={`shrink-0 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 px-4 electron-no-drag relative z-[60] ${
+      {/* ── 顶栏（整宽）── 空白区可拖窗；控件单独 no-drag */}
+      <div className={`shrink-0 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 px-4 electron-drag relative z-[60] ${
         mode === 'agent' ? 'pt-4 pb-2' : 'pt-4 pb-2 space-y-2'
       }`}>
 
-        {/* Mode Switcher — electron-no-drag 避免被顶部拖拽条拦截点击 */}
-        <div className="flex gap-2 items-center">
+        {/* Mode Switcher */}
+        <div className="flex gap-2 items-center electron-no-drag">
           {modeSwitcher}
         </div>
 
         {/* LLM Mode Toolbar */}
         {mode === 'llm' && (
-        <>
+        <div className="electron-no-drag space-y-2">
         {/* Row 1: provider + token */}
         <div className="flex gap-2 items-center flex-wrap">
           {/* Provider dropdown */}
@@ -2262,7 +2232,7 @@ export default function Debug() {
             className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 resize-y min-h-[7.5rem] max-h-[40vh]"
           />
         )}
-        </>
+        </div>
         )}
 
       </div>
@@ -2395,23 +2365,6 @@ export default function Debug() {
                         ))}
                       </select>
                     </div>
-                    {mcpProfiles.length > 0 && (
-                      <div className="flex items-center justify-center gap-2 text-sm mt-3">
-                        <span className="text-zinc-500">MCP Profile：</span>
-                        <select
-                          value={mcpProfileId}
-                          onChange={e => {
-                            setMcpProfileId(e.target.value);
-                            saveMcpProfileId(e.target.value);
-                          }}
-                          className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1 text-zinc-900 dark:text-zinc-100 max-w-[220px]"
-                        >
-                          {mcpProfiles.map(p => (
-                            <option key={p.id} value={p.id}>{p.display_name || p.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
                     <p className="text-xs text-zinc-400 mt-3">
                       也可点击左侧 Agent 旁的 ☆ 设为主 Agent
                     </p>
@@ -2475,26 +2428,9 @@ export default function Debug() {
                 📁 选择目录
               </button>
               {isHubMode && mainAgent && (
-                <>
-                  <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
-                    主：{mainAgent.name}
-                  </span>
-                  {mcpProfiles.length > 0 && (
-                    <select
-                      value={mcpProfileId}
-                      onChange={e => {
-                        setMcpProfileId(e.target.value);
-                        saveMcpProfileId(e.target.value);
-                      }}
-                      className="shrink-0 text-[11px] px-2 py-0.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-300"
-                      title="MCP Profile"
-                    >
-                      {mcpProfiles.map(p => (
-                        <option key={p.id} value={p.id}>{p.display_name || p.name}</option>
-                      ))}
-                    </select>
-                  )}
-                </>
+                <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                  主：{mainAgent.name}
+                </span>
               )}
               <span className={`flex-1 truncate text-xs font-mono ${
                 agentWorkingDir

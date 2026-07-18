@@ -185,6 +185,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # 需要完整 tag 历史，才能生成「上一 tag → 当前 tag」changelog
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       # Download each artifact into its own subdirectory to avoid merge conflicts
       - uses: actions/download-artifact@v4
         with:
@@ -199,6 +204,54 @@ jobs:
       - name: List downloaded files
         run: find artifacts -type f | sort
 
+      - name: Generate changelog (prev tag → current tag)
+        working-directory: client
+        env:
+          CHANGELOG_TO: ${{ github.ref_name }}
+        run: node scripts/gen-changelog.js
+
+      - name: Compose release body
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # changelog 在前，下载/Docker 说明在后
+          cp client/release-notes.md release-body.md
+          cat >> release-body.md <<EOF
+
+          ## 下载
+
+          | 平台 | 文件 | 说明 |
+          |---|---|---|
+          | macOS | \`.dmg\` | 双击安装，支持自动更新 |
+          | Windows | \`.exe\` | NSIS 安装包，支持自动更新 |
+          | Docker | 见下方 | 命令行/服务器无界面部署 |
+
+          ## Docker 快速启动
+
+          \`\`\`bash
+          # 拉取镜像
+          docker pull ${IMAGE}:${TAG}
+
+          # 持久化目录（local-config.json 由网关首次启动自动创建）
+          mkdir -p gateway-data
+
+          # 启动
+          docker run -d \\
+            --name llm-gateway \\
+            -p 11430:11430 \\
+            -p 11431:11431 \\
+            -v ./gateway-data:/data/.llm-agent \\
+            ${IMAGE}:${TAG}
+          \`\`\`
+
+          Web UI: \`http://localhost:11431\`
+          LLM 入口: \`OPENAI_BASE_URL=http://localhost:11430/v1\`
+          EOF
+          echo "----- release-body.md -----"
+          cat release-body.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -206,38 +259,10 @@ jobs:
           # electron-updater 稳定版客户端会拉 beta 元数据又因 allowPrerelease=false 跳过 → 永不更新
           prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-rc') }}
           make_latest: ${{ !(contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-rc')) }}
+          body_path: release-body.md
           files: |
             artifacts/mac/*.dmg
             artifacts/mac/*.zip
             artifacts/mac/*.yml
             artifacts/win/*.exe
             artifacts/win/*.yml
-          body: |
-            ## 下载
-
-            | 平台 | 文件 | 说明 |
-            |---|---|---|
-            | macOS | `.dmg` | 双击安装，支持自动更新 |
-            | Windows | `.exe` | NSIS 安装包，支持自动更新 |
-            | Docker | 见下方 | 命令行/服务器无界面部署 |
-
-            ## Docker 快速启动
-
-            ```bash
-            # 拉取镜像
-            docker pull ${{ env.IMAGE }}:${{ github.ref_name }}
-
-            # 持久化目录（local-config.json 由网关首次启动自动创建）
-            mkdir -p gateway-data
-
-            # 启动
-            docker run -d \
-              --name llm-gateway \
-              -p 11430:11430 \
-              -p 11431:11431 \
-              -v ./gateway-data:/data/.llm-agent \
-              ${{ env.IMAGE }}:${{ github.ref_name }}
-            ```
-
-            Web UI: `http://localhost:11431`
-            LLM 入口: `OPENAI_BASE_URL=http://localhost:11430/v1`

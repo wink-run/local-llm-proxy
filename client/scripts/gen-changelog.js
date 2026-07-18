@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 /**
- * 生成 release notes：上一个 tag → 当前 HEAD 的提交，按 conventional-commit 前缀分组。
- * 写到 client/release-notes.md，供 electron-builder 的 releaseInfo.releaseNotesFile 用作
- * GitHub release 正文（build 前由 prebuild 自动跑）。也可单独 `node scripts/gen-changelog.js` 预览。
+ * 生成 release notes：上一个 tag → 当前 tag/HEAD 的提交，按 conventional-commit 前缀分组。
+ * 写到 client/release-notes.md，供 electron-builder 与 GitHub Release 正文使用。
  *
- * 说明：构建时新 tag 通常还没打，所以用「最近可达 tag → HEAD」= 本次待发布的更新内容。
+ * 用法：
+ *   node scripts/gen-changelog.js
+ *   node scripts/gen-changelog.js --from v0.4.9 --to v0.5.0
+ *   CHANGELOG_FROM=v0.4.9 CHANGELOG_TO=v0.5.0 node scripts/gen-changelog.js
+ *
+ * 默认：上一可达 tag → 当前 tag（HEAD 在 tag 上）或 HEAD（尚未打 tag 时）。
  */
 'use strict';
 
@@ -20,18 +24,40 @@ function git(args) {
   }
 }
 
+function parseArgs(argv) {
+  const out = {};
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--from' && argv[i + 1]) out.from = argv[++i];
+    else if (argv[i] === '--to' && argv[i + 1]) out.to = argv[++i];
+  }
+  return out;
+}
+
 const pkg = require('../package.json');
+const args = parseArgs(process.argv.slice(2));
 
-// 上一个 tag：HEAD 可达的最近 tag（若 HEAD 正好在某 tag 上，取它的上一个）。
-// 用 ~1 不用 ^：Windows 上 execSync 走 cmd.exe，^ 是转义符会被吃掉。
-const headTag = git('describe --tags --exact-match HEAD'); // HEAD 若就在 tag 上
-// 版本号：HEAD 在 tag 上就用该 tag（预览更准），否则用 package.json（构建时通常还没打 tag）。
-const version = headTag ? headTag.replace(/^v/i, '') : (pkg.version || '');
-let prevTag = headTag
-  ? git(`describe --tags --abbrev=0 ${headTag}~1`)
-  : (git('describe --tags --abbrev=0 HEAD~1') || git('describe --tags --abbrev=0'));
+// 当前版本锚点：显式 --to / env > HEAD 精确 tag > GITHUB_REF_NAME（CI push tag）> package.json
+const envTo = process.env.CHANGELOG_TO || '';
+const githubTag = (process.env.GITHUB_REF_NAME || '').match(/^v[\w.-]+$/)
+  ? process.env.GITHUB_REF_NAME
+  : '';
+const headTag = git('describe --tags --exact-match HEAD');
+const currentRef = args.to || envTo || headTag || githubTag || 'HEAD';
+const version = (currentRef !== 'HEAD' ? currentRef : (pkg.version || '')).replace(/^v/i, '');
 
-const range = prevTag ? `${prevTag}..HEAD` : 'HEAD';
+// 上一 tag：显式 --from / env > currentRef~1 最近 tag > HEAD~1
+const envFrom = process.env.CHANGELOG_FROM || '';
+let prevTag = args.from || envFrom;
+if (!prevTag) {
+  // 用 ~1 不用 ^：Windows 上 execSync 走 cmd.exe，^ 是转义符会被吃掉
+  const base = currentRef !== 'HEAD' ? currentRef : 'HEAD';
+  prevTag = git(`describe --tags --abbrev=0 ${base}~1`)
+    || (currentRef === 'HEAD' ? git('describe --tags --abbrev=0') : '');
+}
+
+const range = prevTag
+  ? `${prevTag}..${currentRef === 'HEAD' ? 'HEAD' : currentRef}`
+  : (currentRef === 'HEAD' ? 'HEAD' : currentRef);
 const raw = git(`log ${range} --no-merges --pretty=format:%s`);
 const lines = raw ? raw.split('\n').filter(Boolean) : [];
 
@@ -48,8 +74,8 @@ for (const subj of lines) {
   }
 }
 
-const today = git('log -1 --pretty=format:%cs') || ''; // 提交日期 YYYY-MM-DD（不用 Date，构建可复现）
-const header = `## v${version}${today ? ` (${today})` : ''}`;
+const today = git(`log -1 --pretty=format:%cs ${currentRef === 'HEAD' ? '' : currentRef}`.trim()) || '';
+const header = `## Changelog — v${version}${today ? ` (${today})` : ''}`;
 const body = [];
 for (const key of ['feat', 'fix', 'perf', 'refactor', 'other']) {
   if (!groups[key].length) continue;
@@ -58,7 +84,8 @@ for (const key of ['feat', 'fix', 'perf', 'refactor', 'other']) {
 }
 if (!body.length) body.push('\n_No notable changes._');
 
-const md = `${header}\n${body.join('\n')}\n${prevTag ? `\n**Full changelog**: ${prevTag}...v${version}\n` : ''}`;
+const compare = prevTag ? `${prevTag}...v${version}` : '';
+const md = `${header}\n${body.join('\n')}\n${compare ? `\n**Full changelog**: ${compare}\n` : ''}`;
 
 const outPath = path.join(__dirname, '..', 'release-notes.md');
 fs.writeFileSync(outPath, md);

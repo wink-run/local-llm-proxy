@@ -32,8 +32,9 @@ const ORCHESTRATOR_AGENTS = new Set(['claude-code', 'codex']);
 
 const BUILTIN_BRIDGE_ID = 'tokenbank-agent-bridge';
 const BUILTIN_PROMPTS_ID = 'tokenbank-prompts';
-const DEFAULT_PROFILE_ID = 'orchestrator-default';
+/** 默认即开发模式（含 Agent 桥 + 已纳管工具 MCP），不再做多 Profile 选择 */
 const DEVELOPMENT_PROFILE_ID = 'development';
+const DEFAULT_PROFILE_ID = DEVELOPMENT_PROFILE_ID;
 const DISPATCH_SCRIPT = path.join(__dirname, 'agent-dispatch-mcp.js');
 const PROMPTS_SCRIPT = path.join(__dirname, 'prompt-mcp.js');
 

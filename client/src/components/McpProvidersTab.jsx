@@ -39,13 +39,11 @@ export default function McpProvidersTab() {
   const [catalogFilter, setCatalogFilter] = useState('');
   const [mcpViewTab, setMcpViewTab] = useState(() => readMcpViewTab());
   const [servers, setServers] = useState([]);
-  const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [installTarget, setInstallTarget] = useState(null);
   const [installConfig, setInstallConfig] = useState({});
-  const [profileEdit, setProfileEdit] = useState(null);
   const [showCustom, setShowCustom] = useState(false);
   const [customForm, setCustomForm] = useState({
     name: '', display_name: '', command: 'npx', args: '-y mcp-fetch-server',
@@ -73,10 +71,9 @@ export default function McpProvidersTab() {
     setLoading(true);
     setError('');
     try {
-      const [catRes, srvRes, profRes, syncRes, agentRes] = await Promise.all([
+      const [catRes, srvRes, syncRes, agentRes] = await Promise.all([
         window.electronAPI.mcp.listCatalog(),
         window.electronAPI.mcp.listServers(),
-        window.electronAPI.mcp.listProfiles(),
         window.electronAPI.mcp.getSyncStatus(),
         window.electronAPI.mcp.listAgentInstallations(),
       ]);
@@ -86,7 +83,6 @@ export default function McpProvidersTab() {
       }
       else setError(catRes.error || '加载目录失败');
       if (srvRes.success) setServers(srvRes.servers || []);
-      if (profRes.success) setProfiles(profRes.profiles || []);
       if (syncRes.success) setSyncStatus(syncRes);
       if (agentRes.success) {
         const agents = agentRes.agents || [];
@@ -665,37 +661,6 @@ export default function McpProvidersTab() {
     }
   }
 
-  function openProfileEdit(profile) {
-    setProfileEdit({
-      ...profile,
-      selectedIds: (profile.servers || []).map(s => s.id),
-    });
-  }
-
-  async function saveProfileEdit() {
-    if (!profileEdit) return;
-    setBusy(profileEdit.id);
-    const res = await window.electronAPI.mcp.saveProfile({
-      profileId: profileEdit.id,
-      serverIds: profileEdit.selectedIds,
-    });
-    setBusy('');
-    if (!res.success) alert(res.error);
-    else {
-      setProfileEdit(null);
-      loadAll();
-    }
-  }
-
-  function toggleProfileServer(serverId) {
-    setProfileEdit(prev => {
-      const set = new Set(prev.selectedIds);
-      if (set.has(serverId)) set.delete(serverId);
-      else set.add(serverId);
-      return { ...prev, selectedIds: [...set] };
-    });
-  }
-
   function matchFilter(item) {
     if (!catalogFilter.trim()) return true;
     const q = catalogFilter.trim().toLowerCase();
@@ -1103,36 +1068,6 @@ export default function McpProvidersTab() {
             ) : filteredManagedServers.map(renderManagedRow)}
           </div>
 
-          {/* Profile：编排场景 MCP 组合 */}
-          <section className="space-y-2 pt-1">
-            <p className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">{t('providers.mcp.profileTitle')}</p>
-            <p className="text-[11px] text-zinc-400 -mt-1">{t('providers.mcp.profileHint')}</p>
-            <div className="grid sm:grid-cols-2 gap-3">
-              {profiles.map(p => (
-                <div
-                  key={p.id}
-                  className="rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-4"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{p.display_name || p.name}</p>
-                      <p className="text-xs text-zinc-500 mt-0.5">{p.description}</p>
-                      <p className="text-[11px] text-zinc-400 mt-2">
-                        {(p.servers || []).map(s => s.display_name || s.name).join(' · ') || '（空）'}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => openProfileEdit(p)}
-                      className="text-xs px-2 py-1 rounded-lg border border-zinc-200 dark:border-zinc-600 shrink-0"
-                    >
-                      编辑
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
           </>
           )}
         </>
@@ -1158,32 +1093,6 @@ export default function McpProvidersTab() {
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setInstallTarget(null)} className="text-xs px-3 py-1.5 rounded-lg border">取消</button>
               <button type="button" onClick={confirmInstall} disabled={!!busy} className="text-xs px-3 py-1.5 rounded-lg bg-violet-600 text-white">确认纳管</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Profile 编辑 */}
-      {profileEdit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setProfileEdit(null)}>
-          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-md p-5 space-y-3 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold">编辑 Profile: {profileEdit.display_name}</h3>
-            <p className="text-xs text-zinc-400">勾选此场景启用的 MCP Server</p>
-            {servers.filter(s => s.status === 'active' || profileEdit.selectedIds.includes(s.id)).map(s => (
-              <label key={s.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={profileEdit.selectedIds.includes(s.id)}
-                  disabled={s.id === 'tokenbank-agent-bridge'}
-                  onChange={() => toggleProfileServer(s.id)}
-                />
-                <span>{s.display_name || s.name}</span>
-                {s.id === 'tokenbank-agent-bridge' && <span className="text-[10px] text-zinc-400">（必选）</span>}
-              </label>
-            ))}
-            <div className="flex justify-end gap-2 pt-2">
-              <button type="button" onClick={() => setProfileEdit(null)} className="text-xs px-3 py-1.5 rounded-lg border">取消</button>
-              <button type="button" onClick={saveProfileEdit} disabled={!!busy} className="text-xs px-3 py-1.5 rounded-lg bg-violet-600 text-white">保存</button>
             </div>
           </div>
         </div>
