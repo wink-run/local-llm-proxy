@@ -27,15 +27,22 @@ TokenBank 现有的会话源（Claude Code / Codex / Cursor / Kimi / Trae Work�
 
 ## 能力边界
 
-实体 `capabilities`：
+豆包是**一个独立 app**（不并入任何现有 app、不塞进用量扫描表）。声明为独立的 `<id>-stats` 型会话源 handler，与 `cursor-stats`/`trae-work-stats`/`copilot-stats` 同一范式。
+
+派生后的实体 `capabilities`：
 | 能力 | 值 |
 |---|---|
 | `session_trace` | ✅ true |
 | `gateway_proxy` | ❌ false |
 | `session_usage_import` | ❌ false |
-| 智能体投射 / MCP / Skill | ❌ 无 |
+| `resource_project`（投射 Skill/Agent） | ❌ false |
+| MCP | ❌ 无 |
 
-`billing_type: subscription`。在 `app_catalog.py` 中合法：`validate_entity` 只要求 `gateway_proxy` 或 `session_import`（= trace 或 usage）其一，trace-only 满足；`entity_summary_fields` 的 `has_session = session_trace or session_usage_import` 为 true，`session_usage_import=false` 使其不进用量口径。
+**关键：capability 关键字用 `session_trace` 而非 `session_import`。** 依 `server/app_handlers.py:112-120` 的映射：
+- `session_import` ∈ caps → `session_trace=true` **且** `session_usage_import=true`（会连带打开用量导入）；
+- `session_trace` ∈ caps → `session_trace=true`，`session_usage_import=false`（**豆包要的 trace-only**）。
+
+所以 `capabilities: [session_trace]` 精确产出「只 trace、无用量、无投射、无网关」。`billing_type: subscription`。在 `app_catalog.py` 合法：`validate_entity` 只要求 `gateway_proxy` 或 `session_import`（=trace 或 usage）其一，trace-only 满足；`session_usage_import=false` 使其不进用量/账单口径。
 
 ## 数据链路
 
@@ -85,7 +92,27 @@ TokenBank 现有的会话源（Claude Code / Codex / Cursor / Kimi / Trae Work�
 ### ④ 接线
 - `session-trace/registry.js`：`require('./doubao-trace')`，加进 `PROFILE_ADAPTERS` 和 `AGENT_ID_TO_PROFILE`。
 - `session-telemetry-sync.js`：在 `syncTraeSessions()` 旁调 `syncDoubaoSessions()`（同一 pass，含 `force` 透传）。
-- defaults YAML（**两份镜像同步**：`client/electron/config/session-scans.yaml` 或对应 apps 声明处 + `server/static/defaults/*`）：加豆包实体，声明 `agent_id: doubao`、`app_name: 豆包`、`app_icon: 🫘`（或合适 emoji）、`billing_type: subscription`、`session_trace: true`、检测根 `~/Library/Application Support/Doubao`。具体落在 session-scans 还是 apps 声明，实现时对齐 Trae Work 的声明位置。
+- **独立 app handler**（**两份镜像同步**：`client/electron/config/app-handlers.yaml` + `server/static/defaults/app-handlers.yaml`）：新增 `doubao-stats` handler，仿 `cursor-stats`：
+  ```yaml
+  doubao-stats:
+    label: 豆包
+    label_zh: 豆包
+    default_icon: "🫘"        # 实现时定 emoji
+    default_name: 豆包
+    capabilities: [session_trace]      # 只 trace，不含 session_import（=不导用量）、无 resource_project
+    session:
+      standalone: true
+      route_bindable: false
+      activity_agent_id: doubao
+      trace_agent_id: doubao
+      trace:
+        profile: doubao-trace
+      # 注意：不声明 source_id（无用量扫描）
+  ```
+  `billing_type: subscription` 由 handler-ops 或实体默认给。
+
+### 检测（app 是否「已安装」）
+其它 standalone 会话源用 `session.source_id` → session-scans 的 `root` 存在性做检测；豆包无用量扫描，故检测根来源需在实现计划中定：以 `~/Library/Application Support/Doubao/Default/Cookies` 存在性作为「豆包已安装并登录」信号。落地方式二选一（计划阶段定）：(a) 给 `doubao-stats` 加一个**仅用于检测的** session-scans 条目（`root` 指向豆包目录，无 usage `fields`，配 `capabilities: [session_trace]` 不产用量）；(b) 在 handler 里加轻量 `detect`（路径存在性），不经 scan。倾向 (a)——与既有 standalone app 检测口径一致。
 
 ## 增量与失败处理
 
