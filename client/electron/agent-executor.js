@@ -4,10 +4,15 @@
 
 const { EventEmitter } = require('events');
 const { spawn } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { nanoid } = require('nanoid');
 const localStats = require('./local-stats');
+
+/** 短随机 id（不用 nanoid：该包在 Vite 树里是 devDep，打进 asar 会缺模块导致打包版起不来） */
+function nanoid(size = 8) {
+  return crypto.randomBytes(Math.ceil(size / 2)).toString('hex').slice(0, size);
+}
 const { STATS_DIR } = require('../shared/telemetry');
 const shim = require('./shim-installer');
 const agentLinker = require('./agent-linker');
