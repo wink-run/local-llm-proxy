@@ -400,6 +400,15 @@ assert.strictEqual(
 const nullExitMsg = formatAgentExitError('', '', null, 'claude-code', 'SIGTERM');
 assert.ok(nullExitMsg.includes('SIGTERM'));
 
+const cursorAuthErr = formatAgentExitError(
+  "Error: Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY environment variable.\n",
+  '',
+  1,
+  'cursor',
+);
+assert.ok(cursorAuthErr.includes('cursor-agent login'));
+assert.ok(cursorAuthErr.includes('CURSOR_API_KEY'));
+
 const { parseClaudeSyncStdout } = require('../agent-output-parser');
 const syncSample = JSON.stringify({
   type: 'result',
@@ -446,5 +455,252 @@ assert.deepStrictEqual(
   parseAgentOutputLine('{"type":"result","subtype":"success","result":"partial', 'claude-code'),
   [],
 );
+
+// tool_result 不得当成 AI 回复 output
+const toolState = { blockTypes: new Map(), blockTexts: new Map(), toolNamesById: new Map(), emittedToolUseIds: new Set(), streaming: false };
+const bashCall = parseAgentOutputLine(JSON.stringify({
+  type: 'assistant',
+  message: {
+    content: [{
+      type: 'tool_use',
+      id: 'tu_bash_1',
+      name: 'Bash',
+      input: { command: 'ls /tmp', description: 'List tmp' },
+    }],
+  },
+}), 'claude-code', toolState);
+assert.strictEqual(bashCall[0]?.stepType, 'tool_call');
+assert.strictEqual(bashCall[0]?.tool_name, 'Bash');
+
+const bashResult = parseAgentOutputLine(JSON.stringify({
+  type: 'user',
+  message: {
+    content: [{
+      type: 'tool_result',
+      tool_use_id: 'tu_bash_1',
+      content: 'a\nb\nc',
+      is_error: false,
+    }],
+  },
+}), 'claude-code', toolState);
+assert.strictEqual(bashResult.length, 1);
+assert.strictEqual(bashResult[0].stepType, 'tool_result');
+assert.strictEqual(bashResult[0].tool_name, 'Bash');
+assert.strictEqual(bashResult[0].content, 'a\nb\nc');
+
+// streaming 期间仍提取 tool_use（不再整包丢弃）
+const streamToolState = {
+  blockTypes: new Map(), blockTexts: new Map(), toolNamesById: new Map(),
+  emittedToolUseIds: new Set(), streaming: true, lastThinking: '', lastOutput: '',
+};
+const streamTool = parseAgentOutputLine(JSON.stringify({
+  type: 'assistant',
+  message: {
+    content: [
+      { type: 'text', text: 'ignore during stream' },
+      { type: 'tool_use', id: 'tu_w', name: 'Write', input: { file_path: 'a.txt', content: 'x' } },
+    ],
+  },
+}), 'claude-code', streamToolState);
+assert.strictEqual(streamTool.length, 1);
+assert.strictEqual(streamTool[0].stepType, 'tool_call');
+assert.strictEqual(streamTool[0].tool_name, 'Write');
+
+// stream_event content_block_stop 产出 tool_call
+const seState = {
+  blockTypes: new Map(), blockTexts: new Map(), toolNamesById: new Map(),
+  toolBlockMeta: new Map(), emittedToolUseIds: new Set(), streaming: true,
+};
+parseAgentOutputLine(JSON.stringify({
+  type: 'stream_event',
+  event: {
+    type: 'content_block_start',
+    index: 0,
+    content_block: { type: 'tool_use', id: 'tu_se', name: 'Bash', input: {} },
+  },
+}), 'claude-code', seState);
+parseAgentOutputLine(JSON.stringify({
+  type: 'stream_event',
+  event: {
+    type: 'content_block_delta',
+    index: 0,
+    delta: { type: 'input_json_delta', partial_json: '{"command":"pwd"}' },
+  },
+}), 'claude-code', seState);
+const seStop = parseAgentOutputLine(JSON.stringify({
+  type: 'stream_event',
+  event: { type: 'content_block_stop', index: 0 },
+}), 'claude-code', seState);
+assert.strictEqual(seStop[0]?.stepType, 'tool_call');
+assert.strictEqual(seStop[0]?.tool_name, 'Bash');
+assert.ok(seStop[0]?.content.includes('pwd'));
+
+// Codex command_execution → 与 Claude Bash 同构 tool_call / tool_result
+const codexToolState = { emittedToolUseIds: new Set(), toolNamesById: new Map() };
+const cmdStart = parseAgentOutputLine(JSON.stringify({
+  type: 'item.started',
+  item: {
+    id: 'item_cmd',
+    type: 'command_execution',
+    command: 'bash -lc ls',
+    aggregated_output: '',
+    status: 'in_progress',
+  },
+}), 'codex', codexToolState);
+assert.strictEqual(cmdStart[0]?.stepType, 'tool_call');
+assert.strictEqual(cmdStart[0]?.tool_name, 'Bash');
+assert.ok(cmdStart[0]?.content.includes('bash -lc ls'));
+
+const cmdDone = parseAgentOutputLine(JSON.stringify({
+  type: 'item.completed',
+  item: {
+    id: 'item_cmd',
+    type: 'command_execution',
+    command: 'bash -lc ls',
+    aggregated_output: 'a\nb\n',
+    exit_code: 0,
+    status: 'completed',
+  },
+}), 'codex', codexToolState);
+assert.strictEqual(cmdDone.length, 1);
+assert.strictEqual(cmdDone[0].stepType, 'tool_result');
+assert.ok(cmdDone[0].content.includes('a') && cmdDone[0].content.includes('b'));
+assert.strictEqual(cmdDone[0].tool_use_id, 'item_cmd');
+
+// Codex mcp_tool_call → mcp__server__tool
+const mcpDone = parseAgentOutputLine(JSON.stringify({
+  type: 'item.completed',
+  item: {
+    id: 'item_mcp',
+    type: 'mcp_tool_call',
+    server: 'docs',
+    tool: 'search',
+    arguments: { q: 'exec' },
+    result: { content: [{ type: 'text', text: 'Found 3' }] },
+    status: 'completed',
+  },
+}), 'codex', { emittedToolUseIds: new Set(), toolNamesById: new Map() });
+assert.ok(mcpDone.some(s => s.stepType === 'tool_call' && s.tool_name === 'mcp__docs__search'));
+assert.ok(mcpDone.some(s => s.stepType === 'tool_result' && s.content.includes('Found 3')));
+
+// Cursor transcript → 同构步骤
+const cursorSteps = parseAgentOutputLine(JSON.stringify({
+  role: 'assistant',
+  message: {
+    content: [
+      { type: 'thinking', thinking: 'Need to list files' },
+      { type: 'tool_use', id: 'cu_1', name: 'Bash', input: { command: 'ls' } },
+      { type: 'text', text: 'Listing…' },
+    ],
+  },
+}), 'cursor', { emittedToolUseIds: new Set(), toolNamesById: new Map() });
+assert.ok(cursorSteps.some(s => s.stepType === 'thinking'));
+assert.ok(cursorSteps.some(s => s.stepType === 'tool_call' && s.tool_name === 'Bash'));
+assert.ok(cursorSteps.some(s => s.stepType === 'output' && s.content.includes('Listing')));
+
+// Kimi stream-json → thinking / output / tool_call / tool_result（与其它 Agent 同构）
+const kimiState = { emittedToolUseIds: new Set(), toolNamesById: new Map() };
+const kimiThinkTool = parseAgentOutputLine(JSON.stringify({
+  role: 'assistant',
+  content: 'The user wants me to read a file and count its lines. Let me use Bash.',
+  tool_calls: [{
+    type: 'function',
+    id: 'call_kimi_1',
+    function: { name: 'Bash', arguments: '{"command":"wc -l /tmp/x"}' },
+  }],
+}), 'kimi-code', kimiState);
+assert.ok(kimiThinkTool.some(s => s.stepType === 'thinking' && /The user wants/.test(s.content)));
+assert.ok(kimiThinkTool.some(s => s.stepType === 'tool_call' && s.tool_name === 'Bash'));
+assert.ok(kimiThinkTool.some(s => s.stepType === 'tool_call' && s.content.includes('wc -l')));
+
+const kimiToolRes = parseAgentOutputLine(JSON.stringify({
+  role: 'tool',
+  tool_call_id: 'call_kimi_1',
+  content: '2 /tmp/x\n',
+}), 'kimi-code', kimiState);
+assert.equal(kimiToolRes.length, 1);
+assert.equal(kimiToolRes[0].stepType, 'tool_result');
+assert.equal(kimiToolRes[0].tool_name, 'Bash');
+assert.ok(kimiToolRes[0].content.includes('2 /tmp/x'));
+
+const kimiGlued = parseAgentOutputLine(JSON.stringify({
+  role: 'assistant',
+  content: 'The user is asking a simple math question: what is 2+2? They want just the number answer.4',
+}), 'kimi-code', { emittedToolUseIds: new Set(), toolNamesById: new Map() });
+assert.ok(kimiGlued.some(s => s.stepType === 'thinking'));
+assert.ok(kimiGlued.some(s => s.stepType === 'output' && s.content.trim() === '4'));
+
+const kimiMd = parseAgentOutputLine(JSON.stringify({
+  role: 'assistant',
+  content: 'The file has 2 lines.The file `/tmp/x` has **2 lines**.',
+}), 'kimi-code', { emittedToolUseIds: new Set(), toolNamesById: new Map() });
+assert.ok(kimiMd.some(s => s.stepType === 'output' && s.content.includes('**2 lines**')));
+
+const kimiMeta = parseAgentOutputLine(JSON.stringify({
+  role: 'meta',
+  type: 'session.resume_hint',
+  session_id: 'session_abc',
+  content: 'To resume…',
+}), 'kimi-code');
+assert.deepStrictEqual(kimiMeta, []);
+
+// Cursor stream-json tool_call started/completed → Bash tool_call / tool_result
+const cursorTcState = { emittedToolUseIds: new Set(), toolNamesById: new Map() };
+const cursorStarted = parseAgentOutputLine(JSON.stringify({
+  type: 'tool_call',
+  subtype: 'started',
+  call_id: 'call-abc\nfc_extra',
+  tool_call: {
+    shellToolCall: {
+      args: {
+        command: 'curl -s "https://example.com" | head -c 100',
+        workingDirectory: '',
+        timeout: 30000,
+      },
+    },
+  },
+  session_id: 'sess-1',
+}), 'cursor', cursorTcState);
+assert.equal(cursorStarted.length, 1);
+assert.equal(cursorStarted[0].stepType, 'tool_call');
+assert.equal(cursorStarted[0].tool_name, 'Bash');
+assert.ok(cursorStarted[0].content.includes('curl -s'));
+assert.equal(cursorStarted[0].tool_use_id, 'call-abc');
+
+const cursorDone = parseAgentOutputLine(JSON.stringify({
+  type: 'tool_call',
+  subtype: 'completed',
+  call_id: 'call-abc',
+  tool_call: {
+    shellToolCall: {
+      args: { command: 'curl -s "https://example.com" | head -c 100' },
+      result: {
+        success: { stdout: '{"ok":true}\n', stderr: '', exitCode: 0 },
+      },
+    },
+  },
+}), 'cursor', cursorTcState);
+assert.equal(cursorDone.length, 1);
+assert.equal(cursorDone[0].stepType, 'tool_result');
+assert.equal(cursorDone[0].tool_name, 'Bash');
+assert.ok(cursorDone[0].content.includes('{"ok":true}'));
+
+const cursorRead = parseAgentOutputLine(JSON.stringify({
+  type: 'tool_call',
+  subtype: 'started',
+  call_id: 'toolu_read_1',
+  tool_call: { readToolCall: { args: { path: 'README.md' } } },
+}), 'cursor', { emittedToolUseIds: new Set(), toolNamesById: new Map() });
+assert.ok(cursorRead.some(s => s.stepType === 'tool_call' && s.tool_name === 'Read'));
+
+const cursorAssist = parseAgentOutputLine(JSON.stringify({
+  type: 'assistant',
+  message: {
+    role: 'assistant',
+    content: [{ type: 'text', text: 'I will run curl next.' }],
+  },
+  session_id: 'sess-1',
+}), 'cursor');
+assert.ok(cursorAssist.some(s => s.stepType === 'output' && s.content.includes('curl')));
 
 console.log('agent-output-parser.test.js OK');

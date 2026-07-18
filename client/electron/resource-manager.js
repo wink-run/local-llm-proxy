@@ -29,6 +29,8 @@ const SKILL_HUB_ROOT = path.join(os.homedir(), '.agents', 'skills');
 const {
   AGENT_RESOURCE_TARGETS,
   listProjectableAgentIds,
+  listSkillProjectableAgentIds,
+  listAssistantProjectableAgentIds,
   listPromptProjectableAgentIds,
 } = require('./resource-agent-targets');
 const {
@@ -40,7 +42,16 @@ const {
   hashContent: scanHashContent,
   parseSkillFrontmatter,
 } = require('./resource-skill-scanner');
-const { parseAssistantConfig, formatAssistantContent, assistantContentNeedsMigration, resolveAssistantRuntimeAgent, withAssistantRuntimeAgent, ASSISTANT_RUNTIME_IDS, DEFAULT_RUNTIME_AGENT } = require('./resource-assistant');
+const {
+  parseAssistantConfig,
+  formatAssistantContent,
+  assistantContentNeedsMigration,
+  resolveAssistantRuntimeAgent,
+  withAssistantRuntimeAgent,
+  hasAssistantEnableProjection,
+  ASSISTANT_RUNTIME_IDS,
+  DEFAULT_RUNTIME_AGENT,
+} = require('./resource-assistant');
 
 /**
  * 按模板智能填充参数：正文含 $ARGUMENTS → 全部替换为参数；不含 → 参数非空时以分隔线追加。
@@ -809,10 +820,13 @@ class ResourceManager {
     const resource = this.getResource(resourceId);
     if (!resource) throw new Error('资产不存在');
 
-    // 提示词投给可写 MCP 配置的客户端（投射即经 MCP 暴露）；其余类型用 Skill 目标集
-    const allowed = new Set(
-      resource.type === 'prompt' ? listPromptProjectableAgentIds() : listProjectableAgentIds(),
-    );
+    // prompt / skill：已安装即可；assistant：需勾选「可投射智能体」
+    const allowedIds = resource.type === 'prompt'
+      ? listPromptProjectableAgentIds()
+      : resource.type === 'assistant'
+        ? listAssistantProjectableAgentIds()
+        : listSkillProjectableAgentIds();
+    const allowed = new Set(allowedIds);
     const ids = [...new Set((agentIds || []).filter(id => allowed.has(id)))];
     if (!ids.length) throw new Error('请至少选择一个可投射的 Agent');
 
@@ -1025,11 +1039,17 @@ class ResourceManager {
     const resource = this.getResource(resourceId);
     if (!resource || resource.type !== 'assistant') return null;
     const config = parseAssistantConfig(resource.content);
-    // 无任何运行时投射时回退默认，避免取消投射后仍残留旧运行时（如仍显示 →Codex）
     const hasRuntimeProj = (resource.projections || []).some(p => ASSISTANT_RUNTIME_IDS.has(p.agentId));
-    const nextRuntime = hasRuntimeProj
-      ? resolveAssistantRuntimeAgent(config, resource.projections || [])
-      : DEFAULT_RUNTIME_AGENT;
+    const hasEnableProj = hasAssistantEnableProjection(resource.projections);
+    // CLI 投射 → 跟投射；仅 Cursor 等启用投射 → 保留配置运行时；全取消 → 回默认
+    let nextRuntime;
+    if (hasRuntimeProj) {
+      nextRuntime = resolveAssistantRuntimeAgent(config, resource.projections || []);
+    } else if (hasEnableProj) {
+      nextRuntime = config.runtime_agent || DEFAULT_RUNTIME_AGENT;
+    } else {
+      nextRuntime = DEFAULT_RUNTIME_AGENT;
+    }
     if (!nextRuntime || nextRuntime === config.runtime_agent) {
       try { require('./agent-executor').invalidateAgentListCache?.(); } catch { /* ignore */ }
       return resource;
@@ -1044,23 +1064,39 @@ class ResourceManager {
     return this.getResource(resourceId);
   }
 
+  /** Skill 投射目标：已安装且有 Skill 根目录的 Agent */
   listAgentTargets() {
-    return Object.values(AGENT_RESOURCE_TARGETS).map(t => ({
-      id: t.id,
-      label: t.label,
-      skillRoot: t.getSkillRoot(),
-    }));
+    const allowed = new Set(listSkillProjectableAgentIds());
+    return Object.values(AGENT_RESOURCE_TARGETS)
+      .filter(t => allowed.has(t.id))
+      .map(t => ({
+        id: t.id,
+        label: t.label,
+        skillRoot: t.getSkillRoot(),
+      }));
+  }
+
+  /** 智能体投射目标：勾选 resource_project 且已安装 */
+  listAssistantAgentTargets() {
+    const allowed = new Set(listAssistantProjectableAgentIds());
+    return Object.values(AGENT_RESOURCE_TARGETS)
+      .filter(t => allowed.has(t.id))
+      .map(t => ({
+        id: t.id,
+        label: t.label,
+        skillRoot: t.getSkillRoot(),
+      }));
   }
 
   /**
-   * prompt 投射目标 = 全部可写 MCP 的 Agent（投射驱动下发 tokenbank-prompts，
-   * 不必先「安装到 Agent」，避免鸡生蛋）
+   * prompt 投射目标 = 本机已安装的 Agent（与 Skill 一致）
+   * （投射驱动下发 tokenbank-prompts，不必先「安装到 Agent」，避免鸡生蛋）
    */
   listPromptAgentTargets() {
-    const { CLIENT_TARGETS, listSyncEnabledClientIds } = require('./mcp-agent-targets');
-    return listSyncEnabledClientIds().map(id => ({
+    const { CLIENT_TARGETS } = require('./mcp-agent-targets');
+    return listPromptProjectableAgentIds().map(id => ({
       id,
-      label: CLIENT_TARGETS[id]?.label || id,
+      label: AGENT_RESOURCE_TARGETS[id]?.label || CLIENT_TARGETS[id]?.label || id,
     }));
   }
 

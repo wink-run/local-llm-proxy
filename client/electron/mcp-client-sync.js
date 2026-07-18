@@ -348,6 +348,8 @@ function buildScanIndex() {
 function getSyncStatus() {
   const state = readState();
   const scanIndex = buildScanIndex();
+  let isAgentInstalled = () => false;
+  try { isAgentInstalled = require('./resource-agent-targets').isAgentInstalled; } catch { /* ignore */ }
 
   return {
     state,
@@ -357,6 +359,7 @@ function getSyncStatus() {
       const existingPath = paths.find(p => fs.existsSync(p)) || paths[0];
       const scannedKeys = scanIndex[id] ? [...scanIndex[id].keys()] : [];
       const syncedCount = state.clients[id]?.count || 0;
+      const installed = !!isAgentInstalled(id);
 
       return {
         id,
@@ -369,6 +372,8 @@ function getSyncStatus() {
         scannedCount: scannedKeys.length,
         syncedCount,
         syncEnabled: t.sync !== false,
+        // 与 Skill/Prompt 一致：仅展示本机已安装的 Agent
+        installed,
         bindings: state.clients[id]?.bindings || [],
         scannedKeys,
       };
@@ -866,12 +871,16 @@ function listAgentInstallations(managedServers = []) {
     return null;
   }
 
+  let isAgentInstalled = () => false;
+  try { isAgentInstalled = require('./resource-agent-targets').isAgentInstalled; } catch { /* ignore */ }
+
   return Object.entries(CLIENT_TARGETS).map(([agentId, target]) => {
     const paths = target.getPaths ? target.getPaths() : [target.getPath()];
     const existingPath = paths.find(p => fs.existsSync(p)) || paths[0];
     const keyMap = scanIndex[agentId] || new Map();
     const bindings = state.clients[agentId]?.bindings || [];
     const bindingByKey = new Map(bindings.map(b => [b.clientKey, b]));
+    const installed = !!isAgentInstalled(agentId);
 
     const items = [];
     for (const [clientKey, scanItem] of keyMap) {
@@ -916,6 +925,7 @@ function listAgentInstallations(managedServers = []) {
       paths,
       exists: paths.some(p => fs.existsSync(p)),
       syncEnabled: target.sync !== false,
+      installed,
       count: items.length,
       items,
     };

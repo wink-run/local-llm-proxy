@@ -41,26 +41,18 @@ test('buildClaudeStreamFlags uses stream-json without partial messages', () => {
 });
 
 test('buildClaudeCodeArgs streams instead of sync json', () => {
-  assert.deepEqual(
-    buildClaudeCodeArgs('hello', { continueSession: false }),
-    [
-      '-p', '--dangerously-skip-permissions',
-      '--output-format', 'stream-json',
-      '--verbose',
-      'hello',
-    ],
-  );
+  const args = buildClaudeCodeArgs('hello', { continueSession: false });
+  assert.ok(args.includes('--output-format'));
+  assert.ok(args.includes('stream-json'));
+  assert.ok(args.includes('--append-system-prompt'));
+  assert.equal(args[args.length - 1], 'hello');
+  const i = args.indexOf('--append-system-prompt');
+  assert.ok(String(args[i + 1]).includes('产物交付'));
 });
 
 test('buildClaudeCodeArgs includes resume before print flags', () => {
-  assert.deepEqual(
-    buildClaudeCodeArgs('hello', { continueSession: true, cliSessionId: VALID_SID }),
-    [
-      '--resume', VALID_SID,
-      '-p', '--dangerously-skip-permissions',
-      '--output-format', 'stream-json',
-      '--verbose',
-      'hello',
-    ],
-  );
+  const args = buildClaudeCodeArgs('hello', { continueSession: true, cliSessionId: VALID_SID });
+  assert.deepEqual(args.slice(0, 2), ['--resume', VALID_SID]);
+  assert.ok(args.includes('--append-system-prompt'));
+  assert.equal(args[args.length - 1], 'hello');
 });

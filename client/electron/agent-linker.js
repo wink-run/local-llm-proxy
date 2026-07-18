@@ -268,6 +268,20 @@ function isGatewayHealthy(origin) {
   }
 }
 
+/** 实际 env 是否已带上 inject 计划中的网关 URL（兼容 Anthropic / OpenAI / Kimi） */
+function hasInjectedGatewayUrl(actualEnv, injectPlan) {
+  if (actualEnv.ANTHROPIC_BASE_URL || actualEnv.OPENAI_BASE_URL || actualEnv.OPENAI_API_BASE) {
+    return true;
+  }
+  if (actualEnv.KIMI_MODEL_BASE_URL) return true;
+  // 通用：inject 里任意 *BASE_URL 已出现在 actualEnv
+  for (const [k, v] of Object.entries(injectPlan || {})) {
+    if (!/BASE_URL$/i.test(k) || !v) continue;
+    if (actualEnv[k]) return true;
+  }
+  return false;
+}
+
 /** 诊断 spawn 时为何未注入网关 env（供 api_retry 追踪） */
 function diagnoseGatewaySpawn(toolId, baseEnv = process.env) {
   const tool = configLoader.tools().find(t => t.id === toolId);
@@ -284,7 +298,8 @@ function diagnoseGatewaySpawn(toolId, baseEnv = process.env) {
   if (tool && !tool.unsupported && tool.route_bindable !== false && !Object.keys(injectPlan).length) {
     reasons.push('inject.env 解析为空（可能未绑路由且 env 含 {KEY}）');
   }
-  if (healthy && Object.keys(injectPlan).length && !actualEnv.ANTHROPIC_BASE_URL && !actualEnv.OPENAI_BASE_URL) {
+  const injectedOk = hasInjectedGatewayUrl(actualEnv, injectPlan);
+  if (healthy && Object.keys(injectPlan).length && !injectedOk) {
     reasons.push('网关健康但 env 未合并（异常，请查 buildSpawnEnv）');
   }
   return {
@@ -295,8 +310,9 @@ function diagnoseGatewaySpawn(toolId, baseEnv = process.env) {
     inject_plan: injectPlan,
     actual_anthropic_base_url: actualEnv.ANTHROPIC_BASE_URL || null,
     actual_openai_base_url: actualEnv.OPENAI_BASE_URL || actualEnv.OPENAI_API_BASE || null,
+    actual_kimi_model_base_url: actualEnv.KIMI_MODEL_BASE_URL || null,
     process_anthropic_base_url: baseEnv.ANTHROPIC_BASE_URL || null,
-    will_use_official_api: !actualEnv.ANTHROPIC_BASE_URL && !actualEnv.OPENAI_BASE_URL,
+    will_use_official_api: !injectedOk,
     skip_reasons: reasons,
   };
 }

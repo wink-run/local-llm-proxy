@@ -10,7 +10,8 @@ import openclaw from '@lobehub/icons-static-svg/icons/openclaw-color.svg';
 import gemini from '@lobehub/icons-static-svg/icons/gemini-color.svg';
 import geminicli from '@lobehub/icons-static-svg/icons/geminicli-color.svg';
 import deepseek from '@lobehub/icons-static-svg/icons/deepseek-color.svg';
-import kimi from '@lobehub/icons-static-svg/icons/kimi-color.svg';
+// Kimi 用 Avatar data URL（对齐 Kimi.Avatar），避免外部 svg 资源加载失败
+import { KIMI_AVATAR_DATA_URL as kimi } from '../components/KimiAvatar';
 import glm from '@lobehub/icons-static-svg/icons/glmv-color.svg';
 import qwen from '@lobehub/icons-static-svg/icons/qwen-color.svg';
 import copilot from '@lobehub/icons-static-svg/icons/copilot-color.svg';

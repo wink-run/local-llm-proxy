@@ -70,6 +70,43 @@ describe('apps-compiler', () => {
     assert.equal(rt.tools[0].id, 'hermes');
   });
 
+  // kimi-code-cli：云端实体依赖内置 handler，避免「未知 handler」被 skip
+  test('kimi-code-cli compiles to tools with KIMI_MODEL_* inject', () => {
+    const rt = resolveAppsRuntime({
+      app_entities: [{
+        id: 'kimi-code',
+        handler: 'kimi-code-cli',
+        vars: { capabilities: { gateway_proxy: true, session_trace: false, session_usage_import: false } },
+      }],
+    });
+    assert.equal(rt.tools.length, 1);
+    assert.equal(rt.tools[0].id, 'kimi-code');
+    assert.equal(rt.tools[0].detect.command, 'kimi');
+    assert.equal(rt.tools[0].protocol, 'anthropic');
+    assert.equal(rt.tools[0].inject.env.KIMI_MODEL_PROVIDER_TYPE, 'anthropic');
+    assert.ok(rt.tools[0].inject.env.KIMI_MODEL_BASE_URL);
+    assert.ok(rt.tools[0].inject.env.KIMI_MODEL_API_KEY);
+  });
+
+  test('kimi-code-cli with session caps emits session_sources', () => {
+    const rt = resolveAppsRuntime({
+      app_entities: [{
+        id: 'kimi-code',
+        handler: 'kimi-code-cli',
+        vars: {
+          capabilities: {
+            gateway_proxy: true,
+            session_trace: true,
+            session_usage_import: true,
+          },
+        },
+      }],
+    });
+    assert.equal(rt.session_sources.length, 1);
+    assert.equal(rt.session_sources[0].id, 'kimi');
+    assert.equal(rt.entities_expanded[0].trace_profile, 'kimi-code-trace');
+  });
+
   test('vars provider_id overlays session source', () => {
     const doc = compileAppsDoc({
       app_entities: [{

@@ -80,13 +80,19 @@ function nodeVersionManagerBinDirs() {
 
 function npmGlobalBinDirs() {
   const home = os.homedir();
+  // Kimi Code 默认装到 ~/.kimi-code/bin（仅写进 shell rc，GUI 进程 PATH 常没有）
+  const kimiBin = path.join(home, '.kimi-code', 'bin');
   if (IS_WIN) {
-    return [path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'npm')];
+    return [
+      path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'npm'),
+      kimiBin,
+    ];
   }
   return [
     '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin',
     path.join(home, '.npm-global', 'bin'),
     path.join(home, '.local', 'bin'),
+    kimiBin,
     ...nodeVersionManagerBinDirs(),
   ];
 }

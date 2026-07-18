@@ -37,7 +37,11 @@ import {
   syncDelegatedToAgentTab,
   syncDelegatedMirrorToAgentTab,
   shouldContinueCliSession,
+  canResumeInterruptedSession,
+  buildInterruptedContinuePrompt,
   normalizeWorkingDir,
+  hasOpenToolCalls,
+  closePendingToolSteps,
 } from '../lib/debug-agent-store';
 import { useLang } from '../store/lang';
 import {
@@ -598,6 +602,8 @@ export default function Debug() {
   const [delegations, setDelegations] = useState({});
   const [conversationTurns, setConversationTurns] = useState([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  // 任意会话 executing 变化时递增，驱动侧栏运行绿点刷新
+  const [runningRev, setRunningRev] = useState(0);
   const agentTextareaRef = useRef(null);
   const selectedAgentRef = useRef(null);
   selectedAgentRef.current = selectedAgent;
@@ -843,9 +849,16 @@ export default function Debug() {
     saveMainAgentId(agent.id);
   }
 
-  function syncSessionToState(key) {
+  /**
+   * @param {string} key
+   * @param {{ preserveAgentPrompt?: boolean }} [opts]
+   *   preserveAgentPrompt：保留输入框正文（轮询/步骤推送时勿用 store 空串覆盖）
+   */
+  function syncSessionToState(key, opts = {}) {
     const saved = readStoreSnapshot(key);
-    setAgentPrompt(saved.agentPrompt || '');
+    if (!opts.preserveAgentPrompt) {
+      setAgentPrompt(saved.agentPrompt || '');
+    }
     setCurrentUserPrompt(saved.currentUserPrompt || '');
     setCurrentTask(saved.currentTask || null);
     setTaskSteps(saved.taskSteps || []);
@@ -858,12 +871,17 @@ export default function Debug() {
 
   /** 更新模块级会话；当前标签页被修改时立即同步 React state */
   function patchSession(key, patch) {
+    const prevExec = !!getStoreSession(key).executing;
     patchStoreSession(key, patch);
+    if ('executing' in patch && !!patch.executing !== prevExec) {
+      setRunningRev(r => r + 1);
+    }
     if (!isDebugRouteRef.current) return getStoreSession(key);
 
     const activeKey = agentSessionKey(selectedAgentRef.current);
     if (activeKey === key) {
-      syncSessionToState(key);
+      // 未显式改 agentPrompt 时保留输入框，避免步骤/轮询把正在输入的内容清掉
+      syncSessionToState(key, { preserveAgentPrompt: !('agentPrompt' in patch) });
       return getStoreSession(key);
     }
 
@@ -873,9 +891,9 @@ export default function Debug() {
       ? resolveTaskRoute(patchTaskId, null, null, agentsRef.current)
       : null;
     if (activeKey === '__hub__' && (key === '__hub__' || routedKey === '__hub__')) {
-      syncSessionToState('__hub__');
+      syncSessionToState('__hub__', { preserveAgentPrompt: !('agentPrompt' in patch) });
     } else if (patch.executing === false && routedKey === activeKey) {
-      syncSessionToState(activeKey);
+      syncSessionToState(activeKey, { preserveAgentPrompt: true });
     }
     return getStoreSession(key);
   }
@@ -897,7 +915,11 @@ export default function Debug() {
     });
     const terminal = patch.currentTask?.status;
     if (resolvedKey && terminal && ['completed', 'failed', 'cancelled'].includes(terminal)) {
-      const archiveSteps = preferRicherSteps(patch.taskSteps || [], sess.taskSteps || []);
+      const rawSteps = preferRicherSteps(patch.taskSteps || [], sess.taskSteps || []);
+      const archiveSteps = closePendingToolSteps(
+        rawSteps,
+        terminal === 'cancelled' ? '已中止' : '未收到结果',
+      );
       archiveCompletedTurn(resolvedKey, {
         user: patch.currentUserPrompt || sess.currentUserPrompt,
         steps: archiveSteps,
@@ -913,6 +935,7 @@ export default function Debug() {
 
     if (resolvedKey) {
       const afterArchive = getStoreSession(resolvedKey);
+      const wasRunning = !!afterArchive.executing;
       patchStoreSession(resolvedKey, {
         currentTask: patch.currentTask,
         executing: false,
@@ -922,11 +945,11 @@ export default function Debug() {
         taskResult: null,
         delegations: {},
         conversationTurns: afterArchive.conversationTurns,
-        cliSessionId: terminal === 'completed'
-          ? (patch.taskResult?.cliSessionId || afterArchive.cliSessionId)
-          : null,
+        // 中止也保留 sessionId，便于停止后续接
+        cliSessionId: patch.taskResult?.cliSessionId || afterArchive.cliSessionId || null,
         sessionWorkingDir: afterArchive.sessionWorkingDir,
       });
+      if (wasRunning) setRunningRev(r => r + 1);
       persistCurrentSessionHistory(resolvedKey);
     }
 
@@ -946,14 +969,48 @@ export default function Debug() {
   finalizeTaskInUiRef.current = finalizeTaskInUi;
 
   const recoverActiveTasks = useCallback(async (syncKey) => {
-    if (!window.electronAPI?.agent?.listActiveTasks) return;
+    if (!window.electronAPI?.agent?.listActiveTasks) return false;
     try {
       const res = await window.electronAPI.agent.listActiveTasks();
-      if (!res.success || !res.tasks?.length) return;
-      for (const task of res.tasks) mergeTaskIntoStore(task);
-      syncSessionToStateRef.current?.(syncKey);
+      if (!res.success) return false;
+      const tasks = res.tasks || [];
+      for (const task of tasks) mergeTaskIntoStore(task);
+
+      // 当前标签：后端仍在跑但 UI 已空闲 → 强制拉回进行中
+      const key = syncKey || agentSessionKey(selectedAgentRef.current);
+      const activeForKey = tasks.find((t) => {
+        const k = inferSessionKeyFromTask(t);
+        return k === key && ['running', 'pending'].includes(t.status);
+      });
+      const sess = getStoreSession(key);
+      if (activeForKey && !sess.executing) {
+        mergeTaskIntoStore(activeForKey);
+        setRunningRev(r => r + 1);
+      }
+      // 后端已无进行中任务，但 UI 仍锁着 → 用状态收尾（避免假「执行中」）
+      if (!activeForKey && sess.executing && sess.currentTask?.id) {
+        try {
+          const st = await window.electronAPI.agent.getTaskStatus(sess.currentTask.id);
+          if (st.success && ['completed', 'failed', 'cancelled'].includes(st.status?.status)) {
+            finalizeTaskInUiRef.current?.(sess.currentTask.id, key, {
+              currentTask: { ...st.status, status: st.status.status },
+              currentUserPrompt: st.status.prompt || sess.currentUserPrompt,
+              taskResult: st.status.result || null,
+              taskSteps: preferRicherSteps(
+                stepsFromTaskStatus(st.status),
+                sess.taskSteps || [],
+              ),
+            });
+          }
+        } catch { /* ignore */ }
+      }
+
+      // 对账只刷新任务态，绝不覆盖输入框
+      syncSessionToStateRef.current?.(key, { preserveAgentPrompt: true });
+      return tasks.some(t => ['running', 'pending'].includes(t.status));
     } catch (err) {
       console.warn('[Debug] recoverActiveTasks failed:', err);
+      return false;
     }
   }, []);
 
@@ -1001,6 +1058,23 @@ export default function Debug() {
     recoverSessionHistory(key);
   }, [location.pathname, selectedAgent, recoverActiveTasks, recoverSessionHistory]);
 
+  // 定期与后端对账：避免 UI 已显示「执行」而进程仍在跑
+  useEffect(() => {
+    if (location.pathname !== '/debug' || mode !== 'agent') return undefined;
+    let alive = true;
+    const tick = async () => {
+      if (!alive || !isDebugRouteRef.current) return;
+      const key = agentSessionKey(selectedAgentRef.current);
+      await recoverActiveTasks(key);
+    };
+    tick();
+    const id = setInterval(tick, 2000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [location.pathname, mode, selectedAgent, recoverActiveTasks]);
+
   useEffect(() => {
     saveDebugMode(mode);
   }, [mode]);
@@ -1009,6 +1083,17 @@ export default function Debug() {
     () => Object.fromEntries((agents || []).map(a => [a.id, a.name])),
     [agents],
   );
+
+  // 侧栏呼吸绿点：扫描各 Agent / 聚合入口会话是否在执行
+  const runningAgentKeys = useMemo(() => {
+    const keys = new Set();
+    if (getStoreSession('__hub__').executing) keys.add('__hub__');
+    for (const a of agents || []) {
+      if (a?.id && getStoreSession(a.id).executing) keys.add(a.id);
+    }
+    return keys;
+    // executing / runningRev：覆盖当前页与后台标签的启停
+  }, [agents, executing, runningRev]);
 
   // 切换 Agent 标签时保存/恢复会话状态
   function switchAgent(agent) {
@@ -1382,11 +1467,13 @@ export default function Debug() {
         const sameTask = !sess.currentTask || sess.currentTask.id === taskId;
         if (sameTask) {
           const prev = sess.taskSteps || [];
+          // 收到步骤时拉回 executing，避免锁被误释放后无法停止/继续
           patchSession(ownerKey, {
             currentTask: sess.currentTask?.id === taskId
-              ? sess.currentTask
+              ? { ...sess.currentTask, status: 'running' }
               : { id: taskId, status: 'running', parentTaskId: parentTaskId || sess.currentTask?.parentTaskId },
             taskSteps: coalesceAgentSteps(prev, stepData),
+            executing: true,
           });
           // 同步 JSON 批量步骤到达后延迟收尾
           if (stepData.content?.trim() || stepData.is_snapshot) {
@@ -1404,10 +1491,35 @@ export default function Debug() {
         agentsRef.current,
       ) || eventSessionKey(data.agentId, data.sessionKey);
       if (key) {
+        const sess = getStoreSession(key);
+        const cliSid = data.result?.cliSessionId || sess.cliSessionId || null;
         finalizeTaskInUiRef.current?.(data.taskId, key, {
           currentTask: { id: data.taskId, status: 'cancelled' },
+          currentUserPrompt: sess.currentUserPrompt,
+          taskSteps: closePendingToolSteps(sess.taskSteps || [], '已中止'),
+          taskResult: {
+            ...(sess.taskResult || {}),
+            ...(data.result || {}),
+            cliSessionId: cliSid,
+            cancelled: true,
+          },
         });
       }
+    };
+
+    /** 流式阶段尽早记住 sessionId，停止后即可 --resume */
+    const handleCliSession = (data) => {
+      if (!data?.taskId || !data?.cliSessionId) return;
+      const key = resolveTaskRoute(
+        data.taskId,
+        data.agentId,
+        data.sessionKey,
+        agentsRef.current,
+      ) || eventSessionKey(data.agentId, data.sessionKey);
+      if (!key) return;
+      const sess = getStoreSession(key);
+      if (sess.currentTask?.id && sess.currentTask.id !== data.taskId) return;
+      patchSession(key, { cliSessionId: data.cliSessionId });
     };
 
     const removeStep = window.electronAPI.agent.onStep(handleStep);
@@ -1419,6 +1531,9 @@ export default function Debug() {
     const removeCancelled = window.electronAPI.agent.onCancelled
       ? window.electronAPI.agent.onCancelled(handleCancelled)
       : () => {};
+    const removeCliSession = window.electronAPI.agent.onCliSession
+      ? window.electronAPI.agent.onCliSession(handleCliSession)
+      : () => {};
 
     return () => {
       removeStep?.();
@@ -1426,6 +1541,7 @@ export default function Debug() {
       removeCompleted?.();
       removeFailed?.();
       removeCancelled?.();
+      removeCliSession?.();
     };
   }, []);
 
@@ -1488,9 +1604,27 @@ export default function Debug() {
     });
   }
 
-  /** UI 展示用任务状态：executing 锁释放后不再显示 running */
+  /** 当前轮仍有未闭合工具 / 任务未终态 → 视为进行中（可停止） */
+  const taskCanStop = !!(
+    executing
+    || ['running', 'pending'].includes(currentTask?.status)
+    || (currentUserPrompt && hasOpenToolCalls(taskSteps))
+  );
+
+  /** 停止后可一键续接（同工作目录 + 有 session / 中止轮） */
+  const canResumeContinue = !taskCanStop && !!activeAgent && !!agentWorkingDir.trim()
+    && canResumeInterruptedSession(agentSessionKey(selectedAgent), normalizeWorkingDir(agentWorkingDir.trim()));
+
+  /** 停止后点「继续」：带 --resume / 进度摘要续跑 */
+  function continueInterruptedAgent() {
+    if (taskCanStop || !activeAgent) return;
+    const text = agentPrompt.trim() || '请从上次中断处继续，不要重复已完成的步骤。';
+    executeAgent(text);
+  }
+
+  /** UI 展示用任务状态：与停止按钮同源，避免假「已完成」 */
   function displayTaskStatus() {
-    if (executing) return 'running';
+    if (taskCanStop) return 'running';
     const s = currentTask?.status;
     if (s === 'running' || s === 'pending') return 'completed';
     return s;
@@ -1539,12 +1673,13 @@ export default function Debug() {
     }
   }
 
-  // Execute agent task
-  async function executeAgent() {
-    if (!activeAgent || !agentPrompt.trim() || !window.electronAPI?.agent) {
+  // Execute agent task（promptOverride 供「继续」一键续接，避免等 setState）
+  async function executeAgent(promptOverride) {
+    const prompt = String(promptOverride != null ? promptOverride : agentPrompt).trim();
+    if (!activeAgent || !prompt || !window.electronAPI?.agent) {
       return;
     }
-    if (executing) return;
+    if (executing || taskCanStop) return;
     if (activeAgent.custom && isHubMode) {
       return;
     }
@@ -1560,11 +1695,22 @@ export default function Debug() {
     }
 
     setDirError('');
-    const prompt = agentPrompt.trim();
+    setAgentPrompt(prompt);
     const execKey = agentSessionKey(selectedAgent);
     const workDir = normalizeWorkingDir(agentWorkingDir.trim());
     const sess = getStoreSession(execKey);
     const continueSession = shouldContinueCliSession(execKey, workDir);
+    const lastTurn = sess.conversationTurns?.length
+      ? sess.conversationTurns[sess.conversationTurns.length - 1]
+      : null;
+    const resumeCliSessionId = continueSession
+      ? (sess.cliSessionId || lastTurn?.cliSessionId || lastTurn?.result?.cliSessionId || undefined)
+      : undefined;
+    // 无 sessionId 时把上次进度写进 prompt，避免停止后续接「失忆」
+    const execPrompt = (continueSession && !resumeCliSessionId
+      && ['cancelled', 'failed'].includes(lastTurn?.status))
+      ? buildInterruptedContinuePrompt(prompt, lastTurn)
+      : prompt;
     const instanceId = beginSessionInstance(execKey);
 
     patchSession(execKey, {
@@ -1577,6 +1723,8 @@ export default function Debug() {
       delegations: {},
       sessionWorkingDir: workDir,
       sessionInstanceId: instanceId,
+      // 续接时保留 id，避免新一轮开始前被清空
+      cliSessionId: resumeCliSessionId || sess.cliSessionId || null,
     });
 
     // 聚合入口 = 主 Agent 编排；Agent tab = 直调
@@ -1585,7 +1733,7 @@ export default function Debug() {
     try {
       const result = await window.electronAPI.agent.execute({
         agentId: activeAgent.id,
-        prompt,
+        prompt: execPrompt,
         options: {
           workingDir: workDir,
           mode: execMode,
@@ -1594,7 +1742,7 @@ export default function Debug() {
           sessionKey: execKey,
           sessionInstanceId: instanceId,
           continueSession,
-          cliSessionId: continueSession ? (sess.cliSessionId || undefined) : undefined,
+          cliSessionId: resumeCliSessionId,
         },
       });
 
@@ -1641,28 +1789,71 @@ export default function Debug() {
   async function cancelAgent() {
     if (!window.electronAPI?.agent) return;
     const execKey = agentSessionKey(selectedAgent);
+    const snap = readStoreSnapshot(execKey);
+    const closedSteps = closePendingToolSteps(snap.taskSteps || [], '已中止');
+    const taskId = currentTask?.id || snap.currentTask?.id;
+    // 停止前记下 session，取消接口也会回传已解析的 id
+    let cliSid = snap.cliSessionId || snap.taskResult?.cliSessionId || null;
 
     try {
       if (window.electronAPI.agent.cancelAllActive) {
-        await window.electronAPI.agent.cancelAllActive();
-      } else {
-        const taskId = currentTask?.id || readStoreSnapshot(execKey).currentTask?.id;
-        if (taskId) await window.electronAPI.agent.cancel(taskId);
+        const res = await window.electronAPI.agent.cancelAllActive();
+        if (res?.cliSessionId) cliSid = res.cliSessionId;
+      } else if (taskId) {
+        const res = await window.electronAPI.agent.cancel(taskId);
+        if (res?.cliSessionId) cliSid = res.cliSessionId;
+      }
+      if (taskId && !cliSid) {
+        const st = await window.electronAPI.agent.getTaskStatus(taskId);
+        cliSid = st?.status?.result?.cliSessionId || cliSid;
       }
     } catch (error) {
       console.error('Failed to cancel agent:', error);
     }
 
-    // 无论后端是否找到进程，都释放 UI 锁，避免卡死
+    // 无论后端是否找到进程，都释放 UI 锁并闭合未完成工具，避免卡死
     releaseAllExecutingSessions();
-    patchSession(execKey, {
-      executing: false,
-      currentTask: currentTask?.id
-        ? { ...currentTask, status: 'cancelled' }
-        : readStoreSnapshot(execKey).currentTask?.id
-          ? { ...readStoreSnapshot(execKey).currentTask, status: 'cancelled' }
-          : null,
-    });
+    const task = currentTask?.id
+      ? { ...currentTask, status: 'cancelled' }
+      : snap.currentTask?.id
+        ? { ...snap.currentTask, status: 'cancelled' }
+        : null;
+    const resultWithSession = {
+      ...(snap.taskResult || {}),
+      cliSessionId: cliSid || snap.taskResult?.cliSessionId || null,
+      cancelled: true,
+    };
+    // 有用户输入时归档本轮；保留 cliSessionId 供下一轮 --resume
+    if (snap.currentUserPrompt) {
+      archiveCompletedTurn(execKey, {
+        user: snap.currentUserPrompt,
+        steps: closedSteps,
+        delegations: snap.delegations || {},
+        result: resultWithSession,
+        status: 'cancelled',
+        taskId: task?.id || null,
+        cliSessionId: cliSid || null,
+        workingDir: normalizeWorkingDir(snap.sessionWorkingDir || agentWorkingDir.trim()),
+        timestamp: Date.now(),
+      });
+      patchSession(execKey, {
+        executing: false,
+        currentTask: task,
+        currentUserPrompt: '',
+        taskSteps: [],
+        taskResult: null,
+        delegations: {},
+        cliSessionId: cliSid || getStoreSession(execKey).cliSessionId || null,
+        conversationTurns: getStoreSession(execKey).conversationTurns,
+      });
+    } else {
+      patchSession(execKey, {
+        executing: false,
+        currentTask: task,
+        taskSteps: closedSteps,
+        cliSessionId: cliSid || snap.cliSessionId || null,
+      });
+    }
   }
 
   /** 清空当前标签页对话，便于开启新任务 */
@@ -1673,7 +1864,7 @@ export default function Debug() {
       clearSessionTaskState(execKey);
       syncSessionToState(execKey);
     };
-    if (executing) {
+    if (executing || taskCanStop) {
       cancelAgent().then(doClear);
       return;
     }
@@ -2086,6 +2277,7 @@ export default function Debug() {
             onSelect={switchAgent}
             onSetMainAgent={setMainAgent}
             loading={loadingAgents && agents.length === 0}
+            runningKeys={runningAgentKeys}
           />
         )}
 
@@ -2325,7 +2517,7 @@ export default function Debug() {
                   onKeyDown={e => {
                     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                       e.preventDefault();
-                      if (!executing && activeAgent && agentPrompt.trim()) {
+                      if (!taskCanStop && activeAgent && agentPrompt.trim()) {
                         executeAgent();
                       }
                     }
@@ -2351,7 +2543,7 @@ export default function Debug() {
                   >
                     历史会话
                   </button>
-                  {(conversationTurns.length > 0 || currentUserPrompt || taskSteps.length > 0 || executing) && (
+                  {(conversationTurns.length > 0 || currentUserPrompt || taskSteps.length > 0 || executing || taskCanStop) && (
                     <button
                       type="button"
                       onClick={startNewAgentSession}
@@ -2361,7 +2553,7 @@ export default function Debug() {
                     </button>
                   )}
                 </div>
-                {executing ? (
+                {taskCanStop ? (
                   <button
                     type="button"
                     onClick={cancelAgent}
@@ -2370,10 +2562,20 @@ export default function Debug() {
                     <span className="w-3 h-3 bg-white rounded-sm"></span>
                     <span className="text-sm">停止</span>
                   </button>
+                ) : canResumeContinue ? (
+                  <button
+                    type="button"
+                    onClick={continueInterruptedAgent}
+                    title="从上次中断处续接（保留 CLI 会话上下文）"
+                    className="px-4 h-9 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white rounded-xl flex items-center justify-center gap-2 transition-colors"
+                  >
+                    <span className="text-sm">▶</span>
+                    <span className="text-sm">继续</span>
+                  </button>
                 ) : (
                   <button
                     type="button"
-                    onClick={executeAgent}
+                    onClick={() => executeAgent()}
                     disabled={!activeAgent || !agentPrompt.trim()}
                     className="px-4 h-9 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-40 text-white rounded-xl flex items-center justify-center gap-2 transition-colors"
                   >

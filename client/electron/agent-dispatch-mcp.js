@@ -15,18 +15,18 @@ const WORKING_DIR = process.env.TB_WORKING_DIR || process.cwd();
 const TOOLS = [
   {
     name: 'tb_list_agents',
-    description: '列出 Token Bank 已纳管、可派发的 Agent（不要用 shell which 探测）',
+    description: '列出 Token Bank 已纳管、可派发的目标：专业智能体（assistant:*）与通用 CLI Agent。派发前必先调用，优先选专业智能体。',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'tb_dispatch_agent',
-    description: '向指定 Agent 派发子任务并等待完成。禁止自己在终端运行 codex/claude 等 CLI，必须用此工具。',
+    description: '向指定 Agent/专业智能体派发子任务并等待完成。优先派发给匹配的专业智能体（assistant:*）；无匹配时再派发通用 CLI（codex/claude-code）。禁止自己在终端运行 CLI。',
     inputSchema: {
       type: 'object',
       properties: {
         agent_id: {
           type: 'string',
-          description: '目标 Agent ID，如 codex、claude-code',
+          description: '目标 ID：优先 assistant:<resourceId>；兜底可用 codex、claude-code',
         },
         prompt: {
           type: 'string',
@@ -64,10 +64,21 @@ function textResult(text, isError = false) {
 async function handleToolCall(name, args = {}) {
   if (name === 'tb_list_agents') {
     const agents = await dispatchClient.listAgents();
-    const lines = agents.map(a =>
-      `- ${a.id}: ${a.name}${a.version ? ` (v${a.version})` : ''} [${(a.capabilities || []).join(', ')}]`,
-    );
-    return textResult(lines.length ? lines.join('\n') : '（无可用 Agent）');
+    // 专业智能体优先展示，便于编排层匹配后派发
+    const sorted = [...agents].sort((a, b) => {
+      const wa = a.type === 'assistant' ? 0 : 1;
+      const wb = b.type === 'assistant' ? 0 : 1;
+      return wa - wb || String(a.name || '').localeCompare(String(b.name || ''));
+    });
+    const lines = sorted.map((a) => {
+      const kind = a.type === 'assistant' ? '专业智能体' : 'CLI';
+      const caps = (a.capabilities || []).join(', ');
+      const desc = a.description ? ` — ${String(a.description).slice(0, 160)}` : '';
+      const ver = a.version ? ` (v${a.version})` : '';
+      return `- ${a.id}: ${a.name}${ver} [${kind}]${caps ? ` (${caps})` : ''}${desc}`;
+    });
+    const hint = '提示：有匹配的专业智能体时优先 tb_dispatch_agent 派发；无匹配再自行执行或派发 CLI。';
+    return textResult(lines.length ? `${hint}\n${lines.join('\n')}` : '（无可用 Agent）');
   }
 
   if (name === 'tb_dispatch_agent') {

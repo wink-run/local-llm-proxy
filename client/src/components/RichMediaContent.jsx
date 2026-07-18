@@ -106,6 +106,82 @@ export function StreamMarkdownContent({
   return <MarkdownContent content={display} className={className} theme={theme} />;
 }
 
+/** 本地绝对路径（含扩展名），用于聊天内点击预览 */
+function looksLikeLocalPath(s) {
+  const t = String(s || '').trim();
+  if (t.length < 4 || t.length > 600) return false;
+  if (/[\n\r\s]/.test(t)) return false;
+  if (/^(https?:|mailto:|file:)/i.test(t)) return false;
+  if (!/^(\/|~\/|[A-Za-z]:[\\/])/.test(t)) return false;
+  // 文件产物优先；目录路径也允许（无扩展名但含分隔符）
+  return /\.[A-Za-z0-9]{1,12}$/.test(t) || /[/\\]/.test(t.slice(1));
+}
+
+async function openLocalPath(filePath) {
+  const api = typeof window !== 'undefined' ? window.electronAPI?.resource?.openPath : null;
+  if (!api) return;
+  try {
+    await api({ targetPath: String(filePath).trim(), action: 'open' });
+  } catch (err) {
+    console.warn('[RichMedia] openPath failed:', err);
+  }
+}
+
+/** 可点击本地路径（用 code/span，避免嵌套 button） */
+function PathLink({ path, className }) {
+  return (
+    <code
+      role="link"
+      tabIndex={0}
+      title="点击预览"
+      className={`px-1 py-0.5 rounded text-[0.9em] font-mono cursor-pointer hover:underline break-all ${className}`}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openLocalPath(path);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          e.stopPropagation();
+          openLocalPath(path);
+        }
+      }}
+    >
+      {path}
+    </code>
+  );
+}
+
+/** 纯文本中的本地路径拆成可点击片段 */
+function renderTextWithPaths(text, keyPrefix, pathClassName) {
+  const s = String(text || '');
+  if (!s) return null;
+  // 匹配绝对路径到常见文件扩展名（PPT/文档/图片等）
+  const re = /(?:^|[\s「『"'(=:：])((?:\/(?:Users|home|tmp|var|opt|private|Volumes)|~\/|[A-Za-z]:[\\/])[^\s`'"<>|]+?\.[A-Za-z0-9]{1,12})(?=[\s」』"'.,;:：!)\]}]|$)/g;
+  const nodes = [];
+  let last = 0;
+  let m;
+  let i = 0;
+  while ((m = re.exec(s)) !== null) {
+    const full = m[1];
+    const start = m.index + (m[0].length - full.length);
+    if (start > last) {
+      nodes.push(<React.Fragment key={`${keyPrefix}-t${i++}`}>{s.slice(last, start)}</React.Fragment>);
+    }
+    if (looksLikeLocalPath(full)) {
+      nodes.push(<PathLink key={`${keyPrefix}-p${i++}`} path={full} className={pathClassName} />);
+    } else {
+      nodes.push(<React.Fragment key={`${keyPrefix}-t${i++}`}>{full}</React.Fragment>);
+    }
+    last = start + full.length;
+  }
+  if (last < s.length) {
+    nodes.push(<React.Fragment key={`${keyPrefix}-t${i++}`}>{s.slice(last)}</React.Fragment>);
+  }
+  return nodes.length ? nodes : s;
+}
+
 /** 行内 Markdown */
 function renderInline(text, codeClassName = 'bg-gray-100 dark:bg-gray-800') {
   if (!text) return null;
@@ -131,6 +207,10 @@ function renderInline(text, codeClassName = 'bg-gray-100 dark:bg-gray-800') {
   }
   if (last < text.length) parts.push({ type: 'text', value: text.slice(last) });
 
+  const pathCodeCls = codeClassName.includes('white')
+    ? `${codeClassName} text-blue-100`
+    : `${codeClassName} text-blue-600 dark:text-blue-400`;
+
   return parts.map((p, i) => {
     const linkCls = codeClassName.includes('white')
       ? 'text-blue-100 hover:underline break-all'
@@ -138,6 +218,9 @@ function renderInline(text, codeClassName = 'bg-gray-100 dark:bg-gray-800') {
     if (p.type === 'bold') return <strong key={i} className="font-semibold">{p.value}</strong>;
     if (p.type === 'italic') return <em key={i}>{p.value}</em>;
     if (p.type === 'code') {
+      if (looksLikeLocalPath(p.value)) {
+        return <PathLink key={i} path={p.value.trim()} className={pathCodeCls} />;
+      }
       return (
         <code key={i} className={`px-1 py-0.5 rounded text-[0.9em] font-mono ${codeClassName}`}>
           {p.value}
@@ -145,6 +228,29 @@ function renderInline(text, codeClassName = 'bg-gray-100 dark:bg-gray-800') {
       );
     }
     if (p.type === 'link') {
+      const href = String(p.href || '').trim();
+      // file:/// 或裸本地路径的 markdown 链接 → 本地预览
+      if (looksLikeLocalPath(href) || /^file:\/\//i.test(href)) {
+        const local = href.replace(/^file:\/\//i, '');
+        return (
+          <span
+            key={i}
+            role="link"
+            tabIndex={0}
+            title="点击预览"
+            className={`${linkCls} cursor-pointer`}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); openLocalPath(local); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                openLocalPath(local);
+              }
+            }}
+          >
+            {p.label}
+          </span>
+        );
+      }
       return (
         <a key={i} href={resolveMediaUrl(p.href)} target="_blank" rel="noopener noreferrer"
           className={linkCls}>
@@ -152,7 +258,7 @@ function renderInline(text, codeClassName = 'bg-gray-100 dark:bg-gray-800') {
         </a>
       );
     }
-    return <React.Fragment key={i}>{p.value}</React.Fragment>;
+    return <React.Fragment key={i}>{renderTextWithPaths(p.value, `tx${i}`, pathCodeCls)}</React.Fragment>;
   });
 }
 
@@ -289,6 +395,28 @@ function renderTextBlock(text, keyPrefix, theme = 'default') {
       return <div key={key} className={cls}>{renderInline(b.text, codeInlineCls)}</div>;
     }
     if (b.type === 'code') {
+      const trimmedCode = String(b.text || '').trim();
+      // 单行本地路径代码块：点击用默认应用预览
+      if (looksLikeLocalPath(trimmedCode)) {
+        return (
+          <pre
+            key={key}
+            role="link"
+            tabIndex={0}
+            title="点击预览"
+            className="text-xs font-mono overflow-x-auto rounded-lg bg-zinc-900 dark:bg-zinc-950 text-blue-200 px-3 py-2 my-1 max-h-80 overflow-y-auto whitespace-pre-wrap break-words cursor-pointer hover:underline"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); openLocalPath(trimmedCode); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                openLocalPath(trimmedCode);
+              }
+            }}
+          >
+            {b.text}
+          </pre>
+        );
+      }
       return (
         <pre key={key}
           className="text-xs font-mono overflow-x-auto rounded-lg bg-zinc-900 dark:bg-zinc-950 text-zinc-100 px-3 py-2 my-1 max-h-80 overflow-y-auto whitespace-pre-wrap break-words">

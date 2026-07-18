@@ -6,8 +6,56 @@ const ASSISTANT_ID_PREFIX = 'assistant:';
 
 const DEFAULT_RUNTIME_AGENT = 'claude-code';
 
-/** Debug 可执行的运行时 Agent（投射目标可含 cursor 等，但智能体本体只走这些 CLI） */
-const ASSISTANT_RUNTIME_IDS = new Set(['claude-code', 'codex']);
+/**
+ * 投射到这些 Agent 后，智能体进入游乐场（Debug）可选。
+ * WorkBuddy 仅标记启用；其余可作真实运行时 CLI。
+ */
+const ASSISTANT_ENABLE_AGENT_IDS = new Set([
+  'claude-code', 'codex', 'cursor', 'kimi-code', 'workbuddy',
+]);
+
+/** Debug 实际可 spawn 的运行时 CLI */
+const ASSISTANT_RUNTIME_IDS = new Set([
+  'claude-code', 'codex', 'cursor', 'kimi-code',
+]);
+
+/** 游乐场副标题用的可读名 */
+const ASSISTANT_ENABLE_LABELS = {
+  'claude-code': 'Claude Code',
+  codex: 'Codex',
+  cursor: 'Cursor',
+  'kimi-code': 'Kimi Code',
+  workbuddy: 'WorkBuddy',
+};
+
+/** 是否已投射到可启用 Debug 的目标 */
+function hasAssistantEnableProjection(projections = []) {
+  return (projections || []).some((p) => {
+    const id = p?.agentId || p?.agent_id;
+    return ASSISTANT_ENABLE_AGENT_IDS.has(id);
+  });
+}
+
+/**
+ * 游乐场「→ xxx」展示名：跟实际运行时一致（Cursor 投射即 Cursor 执行）。
+ */
+function resolveAssistantDisplayRuntime(projections = [], runtimeAgentId = '') {
+  if (runtimeAgentId && ASSISTANT_ENABLE_LABELS[runtimeAgentId]) {
+    return ASSISTANT_ENABLE_LABELS[runtimeAgentId];
+  }
+  const enableIds = [];
+  const seen = new Set();
+  for (const p of projections || []) {
+    const id = p?.agentId || p?.agent_id;
+    if (!ASSISTANT_ENABLE_AGENT_IDS.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    enableIds.push(id);
+  }
+  if (enableIds.length) {
+    return enableIds.map((id) => ASSISTANT_ENABLE_LABELS[id] || id).join(' · ');
+  }
+  return runtimeAgentId || '';
+}
 
 function isAssistantAgentId(agentId) {
   return String(agentId || '').startsWith(ASSISTANT_ID_PREFIX);
@@ -90,25 +138,50 @@ function resolveAssistantContext(config, resourceManager) {
  * @returns {{ runtimeAgentId: string, claudeExtraArgs?: string[], promptPrefix?: string }}
  */
 function buildAssistantLaunch(runtimeAgentId, systemText, model) {
-  const system = String(systemText || '').trim();
+  const { DELIVERY_POLICY, withClaudeDeliverySystemArgs } = require('./agent-delivery-policy');
+  const soul = String(systemText || '').trim();
+  // soul + 产物落盘规则（Claude/Codex 智能体直调共用）
+  const system = soul
+    ? (soul.includes('【Token Bank 产物交付】') ? soul : `${soul}\n\n${DELIVERY_POLICY}`)
+    : DELIVERY_POLICY;
   const mdl = String(model || '').trim();
 
   if (runtimeAgentId === 'claude-code') {
-    const extra = [
+    let extra = [
       '-p', '--dangerously-skip-permissions',
       '--output-format', 'stream-json',
       '--verbose',
     ];
     if (mdl) extra.push('--model', mdl); // 用纳管智能体绑定的模型,而非运行时环境默认
     if (system) extra.push('--append-system-prompt', system);
+    else extra = withClaudeDeliverySystemArgs(extra);
     return { runtimeAgentId, claudeExtraArgs: extra };
   }
 
   if (runtimeAgentId === 'codex') {
     // codex 模型经其自身 config.toml,暂不从此处注入 -m(参数位置因版本而异,避免拼错)
+    // system 已含落盘规则，直接作前缀即可
     return {
       runtimeAgentId,
-      promptPrefix: system ? `${system}\n\n` : '',
+      promptPrefix: system ? `${system}\n\n` : `${DELIVERY_POLICY}\n\n`,
+    };
+  }
+
+  if (runtimeAgentId === 'cursor') {
+    // Cursor CLI 无 --append-system-prompt：soul 作 prompt 前缀；模型经 buildArgs --model
+    return {
+      runtimeAgentId,
+      promptPrefix: system ? `${system}\n\n` : `${DELIVERY_POLICY}\n\n`,
+      model: mdl || undefined,
+    };
+  }
+
+  if (runtimeAgentId === 'kimi-code') {
+    // Kimi 无 append-system-prompt：soul 作前缀；模型经 -m
+    return {
+      runtimeAgentId,
+      promptPrefix: system ? `${system}\n\n` : `${DELIVERY_POLICY}\n\n`,
+      model: mdl || undefined,
     };
   }
 
@@ -149,7 +222,8 @@ function formatAssistantContent(content) {
 
 /**
  * 解析智能体实际运行时：
- * - 已投射到 claude-code/codex 时，以投射为准（配置中的 runtime 若仍在投射列表则保留）
+ * - 已投射到 claude-code / codex / cursor / kimi-code 时，以投射为准
+ * - 仅投射到 workbuddy 等非运行时目标时，回退 content.runtime_agent
  * - 无可用投射时回退 content.runtime_agent
  */
 function resolveAssistantRuntimeAgent(config, projections = [], availableIds = null) {
@@ -164,8 +238,13 @@ function resolveAssistantRuntimeAgent(config, projections = [], availableIds = n
     fromProj.push(id);
   }
   if (!fromProj.length) {
-    if (availableIds && !availableIds.has(configured)) return null;
-    return configured;
+    // 仅 WorkBuddy 等启用投射：优先配置的运行时；未安装则任选可用 CLI
+    if (!availableIds) return configured;
+    if (availableIds.has(configured)) return configured;
+    for (const id of ASSISTANT_RUNTIME_IDS) {
+      if (availableIds.has(id)) return id;
+    }
+    return null;
   }
   if (fromProj.includes(configured)) return configured;
   return fromProj[0];
@@ -212,7 +291,10 @@ function assistantContentNeedsMigration(content) {
 module.exports = {
   ASSISTANT_ID_PREFIX,
   DEFAULT_RUNTIME_AGENT,
+  ASSISTANT_ENABLE_AGENT_IDS,
   ASSISTANT_RUNTIME_IDS,
+  hasAssistantEnableProjection,
+  resolveAssistantDisplayRuntime,
   isAssistantAgentId,
   assistantResourceId,
   parseAssistantConfig,

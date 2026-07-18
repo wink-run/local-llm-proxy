@@ -155,6 +155,13 @@ function registerAgentHandlers() {
     });
   });
 
+  /** 流式解析到 CLI sessionId 时尽早同步前端（停止后续接用） */
+  agentExecutor.on('task:cliSession', (data) => {
+    BrowserWindow.getAllWindows().forEach(win => {
+      win.webContents.send('agent:task:cliSession', data);
+    });
+  });
+
   console.log('[IPC] Agent handlers registered');
 }
 

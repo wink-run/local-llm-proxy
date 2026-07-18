@@ -516,10 +516,26 @@ def _compile_session_source(e: dict, defaults: dict[str, dict]) -> dict | None:
     return merged
 
 
+def _materialize_entity_capabilities(entities: list[dict]) -> list[dict]:
+    """把 resolve 后的 capabilities 写回 vars，避免旧库缺新键导致客户端与后台不一致。"""
+    hmap = ah.handlers_map()
+    out: list[dict] = []
+    for e in entities or []:
+        norm = normalize_entity(e)
+        if not norm.get("id") or not norm.get("handler"):
+            continue
+        vars_ = dict(norm.get("vars") or {})
+        h = hmap.get(norm["handler"]) or {}
+        vars_["capabilities"] = ah.resolve_user_capabilities(h, vars_)
+        norm["vars"] = vars_
+        out.append(norm)
+    return out
+
+
 def compile_apps_doc(doc: dict) -> dict:
     """实体列表 → 客户端 config.apps（基础设施 + app_entities + 按需附带的 handlers/session_scans）。"""
     defaults = _apps_default_doc()
-    entities = doc.get("entities") or []
+    entities = _materialize_entity_capabilities(doc.get("entities") or [])
 
     out: dict[str, Any] = {"version": doc.get("version") or defaults.get("version") or 1}
     for key in ("gateway", "mitm", "claude_models"):
@@ -587,12 +603,15 @@ async def save_catalog_doc(doc: dict) -> None:
 async def publish_catalog(doc: dict | None = None) -> dict:
     if doc is None:
         doc = await load_catalog_doc()
+    # 能力位写回目录再编译，保证发布内容与后台勾选一致（含新增 resource_project）
+    entities = _materialize_entity_capabilities(doc.get("entities") or [])
+    doc = {**(doc or {}), "version": (doc or {}).get("version") or 1, "entities": entities}
+    await save_catalog_doc(doc)
     compiled = compile_apps_doc(doc)
     yaml_text = yaml.dump(
         compiled, allow_unicode=True, sort_keys=False, default_flow_style=False,
     ).rstrip()
     await db.set_config("config.apps", yaml_text)
-    entities = doc.get("entities") or []
     return {
         "apps_bytes": len(yaml_text.encode("utf-8")),
         "entities_count": len(entities),

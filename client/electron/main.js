@@ -1811,16 +1811,32 @@ function configFileDetect(d) {
 //   Windows → appx 包 / CLI 命令
 //   macOS   → /Applications/<App>.app / CLI 命令 / 配置目录已存在
 //   Linux   → CLI 命令 / 配置目录已存在
+/** macOS：按 appx 末段探测桌面应用是否已装（.app / Application Support / 嵌入式 Framework） */
+function macDesktopAppPresent(appx) {
+  if (process.platform !== 'darwin' || !appx) return false;
+  const appName = String(appx).split('.').pop();
+  if (!appName) return false;
+  for (const base of ['/Applications', path.join(os.homedir(), 'Applications')]) {
+    try { if (fs.existsSync(path.join(base, `${appName}.app`))) return true; } catch {}
+  }
+  // Electron 系：无独立 .app 时，user-data 目录是强信号（区别于 CLI 的 ~/.<name>）
+  // Codex Desktop 现嵌入 ChatGPT.app，数据在 ~/Library/Application Support/Codex
+  try {
+    if (fs.existsSync(path.join(os.homedir(), 'Library', 'Application Support', appName))) return true;
+  } catch {}
+  // Codex Desktop 嵌在 ChatGPT.app 内的 Framework
+  if (/codex/i.test(appName)) {
+    try {
+      if (fs.existsSync('/Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework')) return true;
+    } catch {}
+  }
+  return false;
+}
+
 function apiKeyAppDetected(d) {
   if (d.appx && appxInstalled(d.appx)) return true;            // Windows Store 包
   if (d.command && commandInstalled(d.command)) return true;   // CLI 命令（跨平台，含 npm 全局 bin）
-  // macOS：按 appx 末段名探测 /Applications/<App>.app（OpenAI.Codex→Codex；Claude→Claude）
-  if (process.platform === 'darwin' && d.appx) {
-    const appName = String(d.appx).split('.').pop();
-    for (const base of ['/Applications', path.join(os.homedir(), 'Applications')]) {
-      try { if (fs.existsSync(path.join(base, appName + '.app'))) return true; } catch {}
-    }
-  }
+  if (d.appx && macDesktopAppPresent(d.appx)) return true;
   if (d.config_file) {
     const cf = configFileDetect(d);
     if (cf.strong || cf.weak) return true;
@@ -1838,12 +1854,7 @@ function apiKeyDetect(d) {
   if (d.appx) {
     strongDefined = true;
     if (appxInstalled(d.appx)) strong = true;
-    if (!strong && process.platform === 'darwin') {
-      const appName = String(d.appx).split('.').pop();
-      for (const base of ['/Applications', path.join(os.homedir(), 'Applications')]) {
-        try { if (fs.existsSync(path.join(base, appName + '.app'))) strong = true; } catch {}
-      }
-    }
+    if (!strong && macDesktopAppPresent(d.appx)) strong = true;
   }
   if (d.command) { strongDefined = true; if (commandInstalled(d.command)) strong = true; }
   let weak = false;

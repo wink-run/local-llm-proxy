@@ -169,6 +169,8 @@ const isEmpty = (v) => v === undefined || v === null || v === '';
 // in 配合 allow_missing:true 时「字段缺省」也算命中。
 function matchFilter(obj, f) {
   if (!f) return true;
+  // all: 多条件 AND（如 Kimi usage.record + usageScope=turn）
+  if (Array.isArray(f.all)) return f.all.every(sub => matchFilter(obj, sub));
   const v = getPath(obj, f.field);
   if ('equals' in f) return v === f.equals;
   if ('in' in f) {
@@ -177,6 +179,21 @@ function matchFilter(obj, f) {
   }
   if ('present' in f) return !isEmpty(v);
   return true;
+}
+
+/** jsonl 会话 id：filename / path_re（捕获组 1，如 session_xxx） */
+function resolveJsonlSessionId(src, file) {
+  const mode = src.session_id_from;
+  if (mode === 'filename') {
+    return path.basename(file).replace(/\.[^.]+$/, '');
+  }
+  if (mode === 'path_re' && src.session_id_path_re) {
+    try {
+      const m = String(file).replace(/\\/g, '/').match(new RegExp(src.session_id_path_re));
+      if (m) return m[1] || m[0];
+    } catch { /* 无效正则则忽略 */ }
+  }
+  return undefined;
 }
 
 // 模板 request_id：{session_id} {index} {seq}，其余 {x} 从当前记录按 dot-path 取。
@@ -589,11 +606,9 @@ function importSource(localStats, src) {
       const lineCount = parsedLines.length;
       const fileT0 = st.birthtimeMs;
       const fileSpan = Math.max(st.mtimeMs - st.birthtimeMs, lineCount * 500);
-      const baseId = path.basename(file).replace(/\.[^.]+$/, '');
-
       const ctx = {
         model: undefined,
-        session_id: src.session_id_from === 'filename' ? baseId : undefined,
+        session_id: resolveJsonlSessionId(src, file),
         seq: 0, index: 0, prev: { input: 0, output: 0, cached: 0 },
       };
       let lineIdx = 0;

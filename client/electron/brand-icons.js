@@ -29,7 +29,8 @@ const RULES = [
   [/gemini[\s_-]*cli/i, 'geminicli-color.svg'],
   [/gemini|google|palm/i, 'gemini-color.svg'],
   [/deepseek/i, 'deepseek-color.svg'],
-  [/kimi|moonshot/i, 'kimi-color.svg'],
+  // Kimi → brand-assets/kimi-avatar.svg（见 resolveFile 特殊处理）
+  [/kimi|moonshot/i, 'kimi-avatar.svg'],
   [/glm|zhipu|chatglm|智谱/i, 'glmv-color.svg'],
   [/qwen|通义|tongyi/i, 'qwen-color.svg'],
   [/copilot/i, 'copilot-color.svg'],
@@ -44,12 +45,17 @@ const RULES = [
 const cache = new Map();
 const missCache = new Set(); // 未命中的匹配串，避免反复 existsSync
 
+const BRAND_ASSETS_DIR = path.join(__dirname, 'brand-assets');
+
 function resolveFile(text = '') {
   const hay = String(text);
   if (!hay) return null;
   if (missCache.has(hay)) return null;
   for (const [re, file] of RULES) {
     if (!re.test(hay)) continue;
+    // Kimi Avatar 等本地资产优先于 lobehub static-svg
+    const local = path.join(BRAND_ASSETS_DIR, file);
+    if (fs.existsSync(local)) return local;
     const abs = path.join(ICONS_DIR, file);
     if (fs.existsSync(abs)) return abs;
   }

@@ -10,15 +10,21 @@ const { STATS_DIR } = require('../shared/telemetry');
 const shim = require('./shim-installer');
 const { getCatalogItem, listCatalogItems, listCatalogGrouped, MCP_CATEGORY_GROUPS } = require('./mcp-catalog');
 
+const { DELIVERY_POLICY } = require('./agent-delivery-policy');
+
 /** 编排层系统提示（Claude / Codex 共用） */
 const ORCHESTRATOR_SYSTEM = [
   '你是 Token Bank 聚合入口的主 Agent（编排层）。',
-  '协调其他已纳管 Agent 完成用户任务。',
+  '协调其他已纳管 Agent / 专业智能体完成用户任务。',
   '规则：',
   '1. 禁止在 shell 中直接运行 codex/claude/gemini 等 CLI（which/npm install 都不行）。',
-  '2. 必须使用 MCP 工具 tb_list_agents 查看可派发 Agent。',
-  '3. 必须使用 tb_dispatch_agent(agent_id, prompt) 派发子任务并等待结果。',
-  '4. 汇总子 Agent 输出后回复用户。',
+  '2. 先用 tb_list_agents 查看可派发目标（含专业智能体 assistant:*）。',
+  '3. 优先按名称/能力/描述匹配最合适的专业智能体（type=assistant），用 tb_dispatch_agent 派发；',
+  '   仅当没有匹配的专业智能体时，才自行用工具完成，或派发给通用 CLI Agent（claude-code / codex）。',
+  '4. 派发后等待结果，汇总后回复用户；不要把本可派发的专业任务自己做完。',
+  '5. 涉及 PPT/文件产物时，要求子 Agent / 自身直接写入工作目录，禁止让用户粘贴一键保存脚本。',
+  '',
+  DELIVERY_POLICY,
 ].join('\n');
 
 /** 支持 MCP 编排的主 Agent */
@@ -945,7 +951,11 @@ class MCPManager {
 
       const extraArgs = ['exec'];
       if (workingDir) extraArgs.push('--cd', workingDir);
-      extraArgs.push('--json', '--skip-git-repo-check', '-p', profileName);
+      // exec 无 --ask-for-approval；bypass 对齐 Claude skip-permissions
+      extraArgs.push(
+        '--dangerously-bypass-approvals-and-sandbox',
+        '--json', '--skip-git-repo-check', '-p', profileName,
+      );
 
       return {
         extraArgs,

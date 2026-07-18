@@ -11,6 +11,7 @@ import ResourceAssetCard, {
   resourceDescription,
 } from '../components/ResourceAssetCard';
 import { useLang } from '../store/lang';
+import { getSyncServerBase } from '../config';
 
 const VIEW_TAB_KEY = 'tokenbank.resources.viewTab';
 const TYPE_FILTER_KEY = 'tokenbank.resources.typeFilter';
@@ -193,6 +194,7 @@ export default function Resources() {
   const [agentInstallations, setAgentInstallations] = useState([]);
   const [agents, setAgents] = useState([]);
   const [promptAgents, setPromptAgents] = useState([]);
+  const [assistantAgents, setAssistantAgents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
@@ -242,8 +244,11 @@ export default function Resources() {
       if (catRes.success) setCatalog(catRes.items || []);
       else setError(catRes.error || t('resources.loadFailed'));
       if (resRes.success) setResources(resRes.resources || []);
-      if (agentRes.success) setAgents(agentRes.agents || []);
-      if (agentRes.success) setPromptAgents(agentRes.promptAgents || []);
+      if (agentRes.success) {
+        setAgents(agentRes.agents || []);
+        setPromptAgents(agentRes.promptAgents || []);
+        setAssistantAgents(agentRes.assistantAgents || []);
+      }
     } catch (e) {
       setError(e.message);
     } finally {
@@ -277,7 +282,6 @@ export default function Resources() {
         setError(scanRes.error || t('resources.scanFailed'));
       }
       if (installRes.success) {
-        // agentInstallations 仅用于「来源应用筛选」选项聚合
         setAgentInstallations(installRes.agents || []);
       }
       // 扫描成功不弹「扫描完成」提示，避免刷屏干扰
@@ -351,7 +355,7 @@ export default function Resources() {
     }
     if (left === projectMenu.x && top === projectMenu.y) return;
     setProjectMenu(prev => (prev ? { ...prev, x: left, y: top } : null));
-  }, [projectMenu, agents, promptAgents]);
+  }, [projectMenu, agents, promptAgents, assistantAgents]);
 
   function changeViewTab(tab) {
     setViewTab(tab);
@@ -744,13 +748,24 @@ export default function Resources() {
       anchor: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right },
     });
 
-    // 打开时刷新可投射 Agent（MCP 可能刚在供给源页安装，避免列表过期）
+    // 先拉最新应用目录（服务端发布后无需重启），再刷新可投射 Agent 列表
     if (!window.electronAPI?.resource?.listAgentTargets) return;
     try {
+      try {
+        const base = await getSyncServerBase();
+        if (base && window.electronAPI.toolsConfig?.importUrl) {
+          await window.electronAPI.toolsConfig.importUrl(
+            `${base}/api/config/apps`,
+            localStorage.getItem('token'),
+            { replace: true },
+          );
+        }
+      } catch { /* 离线时沿用本地 yaml */ }
       const agentRes = await window.electronAPI.resource.listAgentTargets();
       if (!agentRes.success) return;
       setAgents(agentRes.agents || []);
       setPromptAgents(agentRes.promptAgents || []);
+      setAssistantAgents(agentRes.assistantAgents || []);
     } catch { /* ignore */ }
   }
 
@@ -922,34 +937,37 @@ export default function Resources() {
       ? managedCount
       : resources.filter(r => r.type !== 'skill').length + discoveredCount;
 
-  // 从扫描结果汇总可选应用，供「应用筛选」使用（排除公共 skill 目录）
+  // 应用筛选：仅本机已安装 Agent（Skill / Prompt 与 MCP 一致；有残留目录未装的不展示）
+  const installedFilterAgents = typeFilter === 'prompt' ? promptAgents : agents;
+  const installedFilterIds = new Set(installedFilterAgents.map(a => a.id));
   const appFilterOptions = (() => {
     const map = new Map();
-    for (const item of discovered) {
-      for (const a of item.agents || []) {
-        if (!isAgentAppId(a.agentId)) continue;
-        if (!map.has(a.agentId)) map.set(a.agentId, a.label || a.agentId);
-      }
-    }
-    for (const inst of agentInstallations) {
-      if (!isAgentAppId(inst.id)) continue;
-      if (!map.has(inst.id)) map.set(inst.id, inst.label || inst.id);
+    for (const a of installedFilterAgents) {
+      if (!isAgentAppId(a.id)) continue;
+      map.set(a.id, a.label || a.id);
     }
     return [{ id: '', label: t('resources.appFilterAll') }, ...[...map.entries()]
       .sort((a, b) => a[1].localeCompare(b[1], undefined, { sensitivity: 'base' }))
       .map(([id, label]) => ({ id, label }))];
   })();
 
-  // 若上次筛到了已隐藏的公共目录，回退到全部应用
-  const effectiveAppFilter = isAgentAppId(appFilter) || !appFilter ? appFilter : '';
+  // 若上次筛到了未安装/公共目录，回退到全部应用
+  const effectiveAppFilter = (() => {
+    if (!appFilter) return '';
+    if (!isAgentAppId(appFilter)) return '';
+    if (!installedFilterIds.has(appFilter)) return '';
+    return appFilter;
+  })();
 
   const filteredDiscovered = effectiveAppFilter
     ? discovered.filter(item => (item.agents || []).some(a => a.agentId === effectiveAppFilter))
     : discovered;
 
-  /** 本机 Skill 列表上方的应用筛选：图标 + 名称 */
+  const showAppFilterBar = !typeFilter || typeFilter === 'skill' || typeFilter === 'prompt';
+
+  /** 本机 Skill / Prompt 列表上方的应用筛选：图标 + 名称 */
   function renderAppFilter() {
-    if (!showSkillTabs || appFilterOptions.length <= 1) return null;
+    if (!showAppFilterBar || appFilterOptions.length <= 1) return null;
     return (
       <div className="flex flex-wrap gap-2">
           {appFilterOptions.map(opt => {
@@ -1253,13 +1271,18 @@ export default function Resources() {
     const managedRows = (typeFilter === 'skill'
       ? []
       : (typeFilter ? resources : resources.filter(r => r.type !== 'skill')))
+      .filter(r => {
+        if (!effectiveAppFilter) return true;
+        // Prompt / 智能体：按已投射到的 Agent 筛选
+        return (r.projections || []).some(p => p.agentId === effectiveAppFilter);
+      })
       .slice()
       .sort(byManagedAt);
     const skillRows = (showSkills ? filteredDiscovered : []).slice().sort(byManagedAt);
 
     if (managedRows.length + skillRows.length === 0) {
-      // 有本机 skill,但被来源应用筛选过滤空了
-      if (showSkills && effectiveAppFilter && discovered.length > 0) {
+      // 有本机 skill / 资源,但被来源应用筛选过滤空了
+      if (showAppFilterBar && effectiveAppFilter && (discovered.length > 0 || resources.length > 0)) {
         return (
           <div className="space-y-3">
             {renderAppFilter()}
@@ -1284,7 +1307,7 @@ export default function Resources() {
 
     return (
       <div className="space-y-3">
-        {showSkills && renderAppFilter()}
+        {showAppFilterBar && renderAppFilter()}
         {showSkills && scanStats && (
           <p className="text-[11px] text-zinc-400">
             {t('resources.syncSummary', { n: scanStats.totalOnDisk })}
@@ -1308,7 +1331,12 @@ export default function Resources() {
     // 本机 Skill 行可能只在 discovered 里，需两边查找类型
     const resource = resources.find(r => r.id === projectMenu.resourceId)
       || discovered.find(i => i.resourceId === projectMenu.resourceId);
-    const targetList = resource?.type === 'prompt' ? promptAgents : agents;
+    // prompt/skill：已安装即可；assistant：需勾选「可投射智能体」
+    const targetList = resource?.type === 'prompt'
+      ? promptAgents
+      : resource?.type === 'assistant'
+        ? assistantAgents
+        : agents;
     const maxMenuH = Math.max(160, window.innerHeight - 16);
     return createPortal(
       <div
