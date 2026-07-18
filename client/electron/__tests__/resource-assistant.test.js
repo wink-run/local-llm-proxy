@@ -28,9 +28,11 @@ test('parseAssistantConfig accepts legacy system_prompt', () => {
   assert.equal(config.soul, 'legacy prompt');
 });
 
-test('buildAssistantLaunch for claude-code uses append-system-prompt', () => {
+test('buildAssistantLaunch for claude-code uses stream-json and append-system-prompt', () => {
   const launch = buildAssistantLaunch('claude-code', 'hello');
   assert.ok(launch.claudeExtraArgs.includes('--append-system-prompt'));
+  assert.ok(launch.claudeExtraArgs.includes('stream-json'));
+  assert.ok(!launch.claudeExtraArgs.includes('--include-partial-messages'));
 });
 
 test('resolveAssistantRuntimeAgent prefers projection over default runtime', () => {

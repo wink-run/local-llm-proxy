@@ -123,6 +123,36 @@ function parseSkillFrontmatter(content) {
   return meta;
 }
 
+/**
+ * 技能说明:优先 frontmatter.description;否则取正文首段非标题散文(很多 SkillHub 包没有 YAML 说明)。
+ */
+function extractSkillDescription(content, fm = null) {
+  const meta = fm || parseSkillFrontmatter(content);
+  const fromFm = String(meta.description || '').trim();
+  if (fromFm) return fromFm;
+
+  const body = String(content || '').replace(/^---\r?\n[\s\S]*?\r?\n---\s*/, '');
+  const buf = [];
+  for (const line of body.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t) {
+      if (buf.length) break;
+      continue;
+    }
+    if (/^#+\s/.test(t)) {
+      if (buf.length) break;
+      continue;
+    }
+    if (/^```/.test(t)) break;
+    if (/^[-*]\s/.test(t) && !buf.length) continue;
+    buf.push(t);
+    if (buf.join(' ').length >= 48) break;
+  }
+  let desc = buf.join(' ').replace(/\s+/g, ' ').trim();
+  if (desc.length > 180) desc = `${desc.slice(0, 177)}…`;
+  return desc;
+}
+
 function readSkillFile(skillPath) {
   try {
     return fs.readFileSync(skillPath, 'utf8');
@@ -171,12 +201,13 @@ function scanSkillRoot(skillRoot, agentId, agentLabel) {
     const fm = parseSkillFrontmatter(content);
     const name = fm.name || ent.name;
     // scanKey 用目录名，避免多个文件夹 frontmatter 同名导致 scanKey 冲突
+    // 展示统一用 name，不改写原始 SKILL.md
     items.push({
       scanKey: `${agentId}::${ent.name}`,
       type: 'skill',
       name,
-      display_name: fm.display_name || fm.name || ent.name,
-      description: fm.description || '',
+      display_name: name,
+      description: extractSkillDescription(content, fm),
       version: fm.version || '',
       content,
       hash: hashContent(content),
@@ -219,8 +250,8 @@ function skillItemFromDir(skillDir, entName, agentId, agentLabel, extra = {}) {
     scanKey,
     type: 'skill',
     name,
-    display_name: fm.display_name || fm.name || entName || name,
-    description: fm.description || '',
+    display_name: name,
+    description: extractSkillDescription(content, fm),
     version: fm.version || '',
     content,
     hash: hashContent(content),
@@ -358,6 +389,8 @@ function groupDiscoveredSkills(flatItems) {
         description: item.description,
         version: item.version || item.metadata?.version || '',
         hash: item.hash,
+        // 预览用正文(与推荐卡一致)
+        content: item.content || '',
         contentLength: item.content.length,
         agents: [],
       });
@@ -486,6 +519,7 @@ module.exports = {
   EXTRA_SKILL_ROOTS,
   PROJECT_SKILL_DIRS,
   parseSkillFrontmatter,
+  extractSkillDescription,
   collectProjectRoots,
   scanProjectSkills,
   scanGlobalSkills,

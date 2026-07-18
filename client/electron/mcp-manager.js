@@ -195,7 +195,7 @@ class MCPManager {
         JSON.stringify([PROMPTS_SCRIPT]),
         JSON.stringify({ ELECTRON_RUN_AS_NODE: '1' }),
         JSON.stringify({
-          description: '内置提示词服务：tb_get_prompt / tb_list_prompts（仅对已投射的 Agent 可见）',
+          description: '内置提示词服务：tb_get_prompt / tb_list_prompts（须先投射提示词到该 Agent）',
           tools: ['tb_get_prompt', 'tb_list_prompts'],
         }),
         now,
@@ -248,7 +248,11 @@ class MCPManager {
   /** 确保内置 Agent Bridge 存在、启用，并绑定到编排默认 Profile */
   _ensureBuiltinBridge(now = Date.now()) {
     const db = this._getDb();
-    const bridge = db.prepare('SELECT id, status FROM mcp_servers WHERE id = ?').get(BUILTIN_BRIDGE_ID);
+    const bridge = db.prepare('SELECT id, status, metadata FROM mcp_servers WHERE id = ?').get(BUILTIN_BRIDGE_ID);
+    const bridgeMeta = JSON.stringify({
+      description: '内置 Agent 派发桥：tb_list_agents / tb_dispatch_agent',
+      tools: ['tb_list_agents', 'tb_dispatch_agent'],
+    });
     if (!bridge) {
       db.prepare(`
         INSERT INTO mcp_servers
@@ -261,16 +265,14 @@ class MCPManager {
         '__DYNAMIC_ELECTRON__',
         JSON.stringify([DISPATCH_SCRIPT]),
         JSON.stringify({ ELECTRON_RUN_AS_NODE: '1' }),
-        JSON.stringify({
-          description: '内置 Agent 派发桥：tb_list_agents / tb_dispatch_agent / tb_get_prompt',
-          tools: ['tb_list_agents', 'tb_dispatch_agent', 'tb_get_prompt'],
-        }),
+        bridgeMeta,
         now,
         now,
       );
-    } else if (bridge.status !== 'active') {
-      db.prepare('UPDATE mcp_servers SET status = ?, updated_at = ? WHERE id = ?')
-        .run('active', now, BUILTIN_BRIDGE_ID);
+    } else {
+      // 刷新元数据（去掉误挂在 bridge 上的 tb_get_prompt）并确保 active
+      db.prepare('UPDATE mcp_servers SET status = ?, metadata = ?, updated_at = ? WHERE id = ?')
+        .run('active', bridgeMeta, now, BUILTIN_BRIDGE_ID);
     }
 
     for (const profileId of [DEFAULT_PROFILE_ID, 'orchestrator-minimal', DEVELOPMENT_PROFILE_ID]) {
@@ -920,7 +922,8 @@ class MCPManager {
         extraArgs: [
           '-p',
           '--dangerously-skip-permissions',
-          '--output-format', 'json',
+          '--output-format', 'stream-json',
+          '--verbose',
           '--strict-mcp-config',
           '--mcp-config', configPath,
           '--append-system-prompt', ORCHESTRATOR_SYSTEM,

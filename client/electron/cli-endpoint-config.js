@@ -56,12 +56,12 @@ function syncCliInstanceEndpointConfig(app, opts = {}) {
     // 备份原始（仅首次；当前文件若已是托管配置则不备份，避免把网关配置存成 bak）
     if (curObj && !curManaged && !fs.existsSync(bak)) { try { fs.copyFileSync(file, bak); } catch {} }
     const next = { ...(orig || {}) };
-    next.env = { ...((orig && orig.env) || {}) };
-    next.env.ANTHROPIC_BASE_URL = opts.gatewayOrigin || 'http://127.0.0.1:11430';
+    // 托管路由：整个 env 段替换成「只有网关这两项」，不保留原兼容端点 env 里的任何键
+    // （尤其写死的 ANTHROPIC_MODEL / ANTHROPIC_DEFAULT_*_MODEL / SMALL_FAST_MODEL 等，会泄漏到
+    // 网关变成上游不认的模型名；路由一律交给网关 keyScene）。原始整份已备份 .tokenbank-bak，还原时整份恢复。
+    next.env = { ANTHROPIC_BASE_URL: opts.gatewayOrigin || 'http://127.0.0.1:11430' };
     if (app.api_key) next.env.ANTHROPIC_AUTH_TOKEN = app.api_key;
-    // 路由由网关 keyScene 决定 → 去掉写死的 model 提示，避免请求网关没有的兼容端点模型名
-    delete next.env.ANTHROPIC_SMALL_FAST_MODEL;
-    delete next.model;
+    delete next.model;   // 顶层写死的 model 也去掉
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(file, JSON.stringify(next, null, 2), 'utf8');
     return 'routed';

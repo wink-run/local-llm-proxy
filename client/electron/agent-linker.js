@@ -27,6 +27,13 @@ function setKeyResolver(fn) { _keyResolver = typeof fn === 'function' ? fn : nul
 let _instancesResolver = null;
 function setInstancesResolver(fn) { _instancesResolver = typeof fn === 'function' ? fn : null; }
 
+// 多账号兜底实例（未匹配任何 dir_glob 目录时用它）：优先「用户显式留空 dir_glob 的实例」，
+// 否则回落默认 CONFIG_DIR(~/.claude)实例，最后取第一个。不再把兜底硬绑 is_default。
+function pickFallbackInstance(instances) {
+  const list = Array.isArray(instances) ? instances : [];
+  return list.find(i => i && !i.dir_glob) || list.find(i => i && i.is_default) || list[0] || null;
+}
+
 // 支持目录分发的 CLI 工具 → 其「配置目录」与「鉴权 token」环境变量名
 const CLI_ENV = {
   'claude-code': { dirVar: 'CLAUDE_CONFIG_DIR', tokenVar: 'ANTHROPIC_AUTH_TOKEN' },
@@ -105,7 +112,7 @@ function apply(tool) {
           }))
           .sort((a, b) => b.dir.length - a.dir.length);   // 长前缀优先
         if (dispatch.length) {
-          const def = instances.find(i => i.is_default) || instances[0];
+          const def = pickFallbackInstance(instances);
           const defRouted = !!(def && def.routed && def.api_key);
           // 默认实例(未匹配任何目录时的兜底)：routed → token 进 base 网关 env(探活块)；
           // direct → base 不注 token，由 writeShim 的 defaultDirect 在兜底处 unset 网关 env
@@ -307,4 +314,5 @@ module.exports = {
   list, apply, revert, status, applyAll, revertAll,
   applyById, revertById, revertEverythingOnExit, setKeyResolver, setInstancesResolver,
   buildGatewayEnv, buildSpawnEnv, diagnoseGatewaySpawn,
+  pickFallbackInstance,
 };

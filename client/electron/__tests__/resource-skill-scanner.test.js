@@ -7,6 +7,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   parseSkillFrontmatter,
+  extractSkillDescription,
   groupDiscoveredSkills,
   scanAllAgentSkills,
 } = require('../resource-skill-scanner');
@@ -23,6 +24,53 @@ tags: git, workflow
   const meta = parseSkillFrontmatter(content);
   assert.equal(meta.name, 'git-commit');
   assert.equal(meta.description, 'Generate commit messages');
+});
+
+test('extractSkillDescription falls back to body prose when YAML missing', () => {
+  const content = `---
+name: agent-memory
+---
+
+# Agent Memory
+
+为AI智能体提供持久记忆，跨会话存储事实、学习行动、回忆信息和追踪实体。
+
+## Usage
+`;
+  assert.equal(
+    extractSkillDescription(content),
+    '为AI智能体提供持久记忆，跨会话存储事实、学习行动、回忆信息和追踪实体。',
+  );
+});
+
+test('extractSkillDescription prefers frontmatter over body', () => {
+  const content = `---
+name: x
+description: from yaml
+---
+
+# Title
+body text that should be ignored
+`;
+  assert.equal(extractSkillDescription(content), 'from yaml');
+});
+
+test('scanSkillRoot display_name uses skill name only', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-skill-name-'));
+  const skillDir = path.join(tmp, 'json-pretty');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), `---
+name: json-pretty
+description: format json
+---
+
+# JSON 美化
+`);
+  const { scanCustomSkillTree } = require('../resource-skill-scanner');
+  const hit = scanCustomSkillTree(tmp).find(i => i.name === 'json-pretty');
+  assert.ok(hit);
+  assert.equal(hit.display_name, 'json-pretty');
+  fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 test('groupDiscoveredSkills merges same skill on multiple agents', () => {

@@ -29,7 +29,7 @@ const AGENT_CLI = {
   'claude-code': {
     name: 'Claude Code',
     detectCommand: 'claude',
-    syncOutput: true,
+    // 用 stream-json 实时推送;勿用 syncOutput+json(进程结束才有步骤,UI 全程黑盒)
     buildArgs: (prompt, opts = {}) => buildClaudeCodeArgs(prompt, opts),
     capabilities: ['code', 'chat', 'edit', 'terminal'],
   },
@@ -77,11 +77,19 @@ function injectCodexResumeArgs(extraArgs, { continueSession, cliSessionId } = {}
   return out;
 }
 
+/** Claude Code 非交互启动公共参数:stream-json 按块推送(不用 partial,降低半截文本解析复杂度) */
+function buildClaudeStreamFlags() {
+  return [
+    '-p', '--dangerously-skip-permissions',
+    '--output-format', 'stream-json',
+    '--verbose',
+  ];
+}
+
 function buildClaudeCodeArgs(prompt, { continueSession, cliSessionId } = {}) {
   return [
     ...buildClaudeContinueArgs({ continueSession, cliSessionId }),
-    '-p', '--dangerously-skip-permissions',
-    '--output-format', 'json',
+    ...buildClaudeStreamFlags(),
     prompt,
   ];
 }
@@ -280,7 +288,7 @@ class AgentExecutor extends EventEmitter {
     }
 
     const systemText = resolveAssistantContext(config, resourceManager);
-    const launch = buildAssistantLaunch(runtimeAgentId, systemText);
+    const launch = buildAssistantLaunch(runtimeAgentId, systemText, config.model);
 
     return {
       agentId: runtimeAgentId,
@@ -694,6 +702,13 @@ class AgentExecutor extends EventEmitter {
         parentTaskId,
         sessionInstanceId,
       });
+
+      // 进程一启动就给 UI 一条系统事件,避免首包前纯黑盒
+      this._emitSingleStep(taskId, stepCounter++, {
+        stepType: 'system_event',
+        content: `已启动 ${AGENT_CLI[gatewayAgentId]?.name || gatewayAgentId}，等待模型流式输出…`,
+        system_subtype: 'process_started',
+      }, gatewayAgentId);
 
       const cleanup = () => {
         if (typeof onCleanup === 'function') {
@@ -1110,3 +1125,4 @@ module.exports = new AgentExecutor();
 module.exports.invalidateAgentListCache = invalidateAgentListCache;
 module.exports.buildClaudeCodeArgs = buildClaudeCodeArgs;
 module.exports.buildClaudeContinueArgs = buildClaudeContinueArgs;
+module.exports.buildClaudeStreamFlags = buildClaudeStreamFlags;

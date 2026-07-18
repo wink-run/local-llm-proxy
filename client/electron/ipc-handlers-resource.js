@@ -236,6 +236,33 @@ function registerResourceHandlers() {
       return { success: false, error: error.message };
     }
   });
+
+  ipcMain.handle('resource:mineDemand', async (_event, options = {}) => {
+    try {
+      resourceManager.init();
+      return resourceManager.mineDemand(options || {});
+    } catch (error) {
+      console.error('[IPC] resource:mineDemand error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('resource:installSkillhub', async (_event, params = {}) => {
+    try {
+      resourceManager.init();
+      const slugs = Array.isArray(params.slugs) ? params.slugs : [params.slug];
+      if (slugs.filter(Boolean).length > 1) {
+        return await resourceManager.installSkillhubSkills(slugs);
+      }
+      return await resourceManager.installSkillhubSkill(slugs[0] || params.slug, {
+        force: !!params.force,
+        description: params.description || '',
+      });
+    } catch (error) {
+      console.error('[IPC] resource:installSkillhub error:', error);
+      return { success: false, error: error.message };
+    }
+  });
 }
 
 module.exports = { registerResourceHandlers };
