@@ -48,15 +48,19 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 import database as db
-from db_pool import init_pool, close_pool
+from db_pool import close_pool
 
 
 class TestAsyncLayer(unittest.IsolatedAsyncioTestCase):
     # IsolatedAsyncioTestCase 每个测试方法用独立事件循环，asyncpg 连接池绑定创建时的循环，
     # 因此不能像模块级 setUp 那样只初始化一次 —— 每个用例都要在自己的循环里重建连接池。
+    # 无 Postgres 时跳过（本地未起库 / CI 未挂 service 的兜底）。
     async def asyncSetUp(self):
-        await init_pool()
-        await db.set_config(cc.CONFIG_KEY, "")
+        try:
+            await db.init_db()
+            await db.set_config(cc.CONFIG_KEY, "")
+        except Exception as e:
+            self.skipTest(f"PostgreSQL unavailable: {e}")
 
     async def asyncTearDown(self):
         await close_pool()
