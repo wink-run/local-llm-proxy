@@ -363,69 +363,69 @@ docker compose up gateway -d
 
 应用列表、今日用量，以及 App toolbox 一键安装 / 卸载 Claude Code、Kimi Code、Cursor、Codex 等。
 
-![网关 · 应用与工具箱](docs/screenshots/gateway-apps.png)
+![网关 · 应用与工具箱](server/static/screenshots/gateway-apps.webp)
 
 ### 会话 · 跨应用统一追溯
 
 按 Claude Desktop / Cursor / Kimi Code / Codex 等过滤，查看会话 Token、费用，支持交接与导出。
 
-![网关 · 会话列表](docs/screenshots/gateway-sessions.png)
+![网关 · 会话列表](server/static/screenshots/gateway-sessions.webp)
 
 ### Session Trace · 步骤级可观测
 
 单次会话的步骤、工具调用、Skill 使用与 Token 明细（含推理密封展示）。
 
-![Session Trace](docs/screenshots/session-trace.png)
+![Session Trace](server/static/screenshots/session-trace.webp)
 
 ### 供给源 · 个人算力 + 社区 P2P
 
 个人账户模型测速与状态灯；社区共享模型按积分调用。
 
-![供给源](docs/screenshots/providers.png)
+![供给源](server/static/screenshots/providers.webp)
 
 ### 资源 · Agent / Skill / Prompt
 
 纳管智能体、投射到运行时 Agent；社区「为你推荐」与工作画像。
 
-![资源 · 智能体](docs/screenshots/assets-agents.png)
+![资源 · 智能体](server/static/screenshots/assets-agents.webp)
 
-![资源 · 为你推荐与画像](docs/screenshots/assets-for-you.png)
+![资源 · 为你推荐与画像](server/static/screenshots/assets-for-you.webp)
 
 ### 游乐场 · Agent 聚合编排
 
 主 Agent 接任务、工具流与终端协同；左侧可选 Claude Code / Codex / Cursor / Kimi Code 等运行时。
 
-![游乐场 · Agent 模式](docs/screenshots/playground.png)
+![游乐场 · Agent 模式](server/static/screenshots/playground.webp)
 
 ### 盘点 · 用量与费用
 
 请求 / Token / 免费命中率 / 费用估算；按应用分布与今日趋势。
 
-![盘点](docs/screenshots/usage.png)
+![盘点](server/static/screenshots/usage.webp)
 
 ### 圈子 · 同好共享算力
 
 创建或加入圈子，邀请好友共享模型与积分。
 
-![圈子](docs/screenshots/circles.png)
+![圈子](server/static/screenshots/circles.webp)
 
 ### 贡献 · 闲置额度生息
 
 把本地模型贡献到社区网络赚积分；密钥不上云。
 
-![贡献](docs/screenshots/contribute.png)
+![贡献](server/static/screenshots/contribute.webp)
 
 ### 全球网络 · 节点地图
 
 在线节点、可用模型与地理分布一览。
 
-![全球社区网络](docs/screenshots/network.png)
+![全球社区网络](server/static/screenshots/network.webp)
 
 ### 托盘 · 常驻速览
 
 网关状态、各应用 TTFT / 今日用量，一键打开主面板。
 
-![托盘悬浮窗](docs/screenshots/tray.png)
+![托盘悬浮窗](server/static/screenshots/tray.webp)
 
 | 页面 | 功能 |
 |---|---|

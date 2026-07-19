@@ -353,69 +353,69 @@ The `gateway-data/` volume is mounted automatically; **`local-config.json` is cr
 
 App list with today's usage, plus the App toolbox to install / remove Claude Code, Kimi Code, Cursor, Codex, and more.
 
-![Gateway · apps & toolbox](docs/screenshots/gateway-apps.png)
+![Gateway · apps & toolbox](server/static/screenshots/gateway-apps.webp)
 
 ### Sessions · unified cross-app trace
 
 Filter by Claude Desktop / Cursor / Kimi Code / Codex, inspect tokens and cost, hand off or export.
 
-![Gateway · sessions](docs/screenshots/gateway-sessions.png)
+![Gateway · sessions](server/static/screenshots/gateway-sessions.webp)
 
 ### Session Trace · step-level observability
 
 Per-session steps, tool calls, skills used, and token breakdown (sealed reasoning when required by the API).
 
-![Session Trace](docs/screenshots/session-trace.png)
+![Session Trace](server/static/screenshots/session-trace.webp)
 
 ### Providers · personal compute + community P2P
 
 Speed-test personal models with status lights; spend credits on community-shared models.
 
-![Providers](docs/screenshots/providers.png)
+![Providers](server/static/screenshots/providers.webp)
 
 ### Assets · Agents / Skills / Prompts
 
 Manage agents and project them onto runtime CLIs; community “For You” picks and work portrait.
 
-![Assets · agents](docs/screenshots/assets-agents.png)
+![Assets · agents](server/static/screenshots/assets-agents.webp)
 
-![Assets · For You & portrait](docs/screenshots/assets-for-you.png)
+![Assets · For You & portrait](server/static/screenshots/assets-for-you.webp)
 
 ### Playground · agent orchestration
 
 Main agent receives tasks with tool streams and terminal collaboration; runtimes include Claude Code / Codex / Cursor / Kimi Code.
 
-![Playground · Agent mode](docs/screenshots/playground.png)
+![Playground · Agent mode](server/static/screenshots/playground.webp)
 
 ### Usage · spend visibility
 
 Requests / tokens / free-hit rate / estimated cost; per-app mix and daily trend.
 
-![Usage](docs/screenshots/usage.png)
+![Usage](server/static/screenshots/usage.webp)
 
 ### Circles · share compute with friends
 
 Create or join circles; invite friends to share models and credits.
 
-![Circles](docs/screenshots/circles.png)
+![Circles](server/static/screenshots/circles.webp)
 
 ### Contribute · earn from idle quota
 
 Contribute local models to the community network for credits; keys never leave the machine.
 
-![Contribute](docs/screenshots/contribute.png)
+![Contribute](server/static/screenshots/contribute.webp)
 
 ### Global network · node map
 
 Online nodes, available models, and geographic distribution.
 
-![Global community network](docs/screenshots/network.png)
+![Global community network](server/static/screenshots/network.webp)
 
 ### Tray · always-on glance
 
 Gateway status, per-app TTFT / today’s usage; open the main panel in one click.
 
-![Tray panel](docs/screenshots/tray.png)
+![Tray panel](server/static/screenshots/tray.webp)
 
 | Page | What you can do |
 |---|---|
