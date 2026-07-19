@@ -670,7 +670,7 @@ function deleteToolCallsBySourcePath(sourcePath) {
 function querySkillUsageStats(opts = {}) {
   const days = Math.max(1, Math.min(365, parseInt(opts.days, 10) || 1));
   const limit = Math.max(1, Math.min(100, parseInt(opts.limit, 10) || 20));
-  const since = sinceTsForDays(days);
+  const since = sinceMsForDays(days); // skill_calls.ts 为毫秒
   if (!db) return { total: 0, items: [] };
   try {
     const totalRow = db.prepare(
@@ -689,6 +689,128 @@ function querySkillUsageStats(opts = {}) {
   }
 }
 
+/** 从工具名解析 MCP server / tool（与 session-skill-usage.classifyToolName 对齐） */
+function parseMcpToolName(rawName) {
+  let raw = String(rawName || '').trim();
+  if (!raw) return null;
+  if (raw.startsWith('default_api:')) raw = raw.slice('default_api:'.length);
+  let server = null;
+  let tool = null;
+  if (raw.startsWith('mcp__')) {
+    const parts = raw.split('__');
+    if (parts.length >= 3 && parts[1] && parts[2]) {
+      server = parts[1];
+      tool = parts.slice(2).join('__');
+    }
+  } else if (raw.startsWith('mcp_')) {
+    const rest = raw.slice(4);
+    const i = rest.indexOf('_');
+    if (i > 0) {
+      server = rest.slice(0, i);
+      tool = rest.slice(i + 1);
+    }
+  }
+  if (!server || !tool) return null;
+  return { server, tool, key: `${server}::${String(tool).toLowerCase()}` };
+}
+
+/**
+ * 盘点：MCP 调用统计（按 Server 汇总，附 Top 工具）
+ * @param {{ days?: number, limit?: number, toolLimit?: number }} [opts]
+ */
+function queryMcpUsageStats(opts = {}) {
+  const days = Math.max(1, Math.min(365, parseInt(opts.days, 10) || 1));
+  const limit = Math.max(1, Math.min(100, parseInt(opts.limit, 10) || 20));
+  const toolLimit = Math.max(1, Math.min(50, parseInt(opts.toolLimit, 10) || 8));
+  const since = sinceMsForDays(days); // tool_calls / agent_task_steps 为毫秒
+  if (!db) return { total: 0, servers: [], items: [] };
+
+  try {
+    // server → { key, name, calls, tools: Map }
+    const servers = new Map();
+    const bump = (server, tool, calls, lastTs) => {
+      const sKey = String(server || '').trim();
+      const tName = String(tool || '').trim();
+      if (!sKey || !tName) return;
+      const n = Number(calls) || 0;
+      if (n <= 0) return;
+      let row = servers.get(sKey);
+      if (!row) {
+        row = { key: sKey, name: sKey, calls: 0, last_ts: 0, tools: new Map() };
+        servers.set(sKey, row);
+      }
+      row.calls += n;
+      row.last_ts = Math.max(row.last_ts, Number(lastTs) || 0);
+      const tKey = tName.toLowerCase();
+      const prev = row.tools.get(tKey) || { key: tKey, name: tName, calls: 0 };
+      prev.calls += n;
+      if (tName !== tKey) prev.name = tName;
+      row.tools.set(tKey, prev);
+    };
+
+    // tool_calls 表：kind=mcp 或带 mcp_server
+    const fromTable = db.prepare(
+      "SELECT mcp_server AS server, tool_raw AS tool, tool_key AS tool_key, " +
+      'COUNT(*) AS calls, MAX(ts) AS last_ts FROM tool_calls ' +
+      "WHERE ts >= ? AND (tool_kind = 'mcp' OR (mcp_server IS NOT NULL AND mcp_server != '')) " +
+      'GROUP BY mcp_server, tool_key'
+    ).all(since);
+    for (const r of fromTable) {
+      bump(r.server, r.tool || r.tool_key, r.calls, r.last_ts);
+    }
+
+    // 游乐场步骤里的 mcp__ / mcp_ 工具名
+    try {
+      const fromSteps = db.prepare(
+        "SELECT tool_name AS name, COUNT(*) AS calls, MAX(created_at) AS last_ts " +
+        "FROM agent_task_steps WHERE step_type = 'tool_call' AND tool_name IS NOT NULL " +
+        "AND tool_name != '' AND created_at >= ? " +
+        "AND (tool_name LIKE 'mcp__%' OR tool_name LIKE 'mcp_%' OR tool_name LIKE 'default_api:mcp%') " +
+        'GROUP BY tool_name'
+      ).all(since);
+      for (const r of fromSteps) {
+        const parsed = parseMcpToolName(r.name);
+        if (parsed) bump(parsed.server, parsed.tool, r.calls, r.last_ts);
+      }
+    } catch { /* ignore */ }
+
+    const serverList = [...servers.values()]
+      .map(s => ({
+        key: s.key,
+        name: s.name,
+        calls: s.calls,
+        last_ts: s.last_ts,
+        tools: [...s.tools.values()]
+          .sort((a, b) => b.calls - a.calls || String(a.name).localeCompare(String(b.name)))
+          .slice(0, toolLimit),
+      }))
+      .sort((a, b) => b.calls - a.calls || String(a.name).localeCompare(String(b.name)))
+      .slice(0, limit);
+
+    // 扁平 Top 工具（跨 server）
+    const flat = [];
+    for (const s of servers.values()) {
+      for (const t of s.tools.values()) {
+        flat.push({
+          key: `${s.key}::${t.key}`,
+          name: t.name,
+          mcp_server: s.name,
+          calls: t.calls,
+          kind: 'mcp',
+        });
+      }
+    }
+    flat.sort((a, b) => b.calls - a.calls || String(a.name).localeCompare(String(b.name)));
+    // 总数按全部 server 汇总（不受 limit 截断影响）
+    const total = [...servers.values()].reduce((n, s) => n + s.calls, 0);
+
+    return { total, servers: serverList, items: flat.slice(0, limit) };
+  } catch (e) {
+    console.error('[local-stats] queryMcpUsageStats failed:', e.message);
+    return { total: 0, servers: [], items: [] };
+  }
+}
+
 /**
  * 盘点：工具调用排行（会话补录 + 游乐场 agent_task_steps）
  * @param {{ days?: number, limit?: number }} [opts]
@@ -696,7 +818,7 @@ function querySkillUsageStats(opts = {}) {
 function queryToolUsageStats(opts = {}) {
   const days = Math.max(1, Math.min(365, parseInt(opts.days, 10) || 1));
   const limit = Math.max(1, Math.min(100, parseInt(opts.limit, 10) || 20));
-  const since = sinceTsForDays(days);
+  const since = sinceMsForDays(days); // tool_calls / agent_task_steps 为毫秒
   if (!db) return { total: 0, items: [] };
   try {
     const counts = new Map(); // key → { key, name, calls, kind, mcp_server, last_ts }
@@ -725,12 +847,32 @@ function queryToolUsageStats(opts = {}) {
     // 游乐场执行步骤（未入库 tool_calls 时仍可统计）
     try {
       const fromSteps = db.prepare(
-        "SELECT LOWER(tool_name) AS key, tool_name AS name, COUNT(*) AS calls, " +
-        "NULL AS kind, NULL AS mcp_server, MAX(created_at) AS last_ts " +
+        "SELECT tool_name AS name, COUNT(*) AS calls, MAX(created_at) AS last_ts " +
         "FROM agent_task_steps WHERE step_type = 'tool_call' AND tool_name IS NOT NULL " +
-        "AND tool_name != '' AND created_at >= ? GROUP BY LOWER(tool_name)"
+        "AND tool_name != '' AND created_at >= ? GROUP BY tool_name"
       ).all(since);
-      for (const r of fromSteps) bump(r);
+      for (const r of fromSteps) {
+        const mcp = parseMcpToolName(r.name);
+        if (mcp) {
+          bump({
+            key: mcp.tool.toLowerCase(),
+            name: mcp.tool,
+            calls: r.calls,
+            kind: 'mcp',
+            mcp_server: mcp.server,
+            last_ts: r.last_ts,
+          });
+        } else {
+          bump({
+            key: String(r.name).toLowerCase(),
+            name: r.name,
+            calls: r.calls,
+            kind: 'builtin',
+            mcp_server: null,
+            last_ts: r.last_ts,
+          });
+        }
+      }
     } catch { /* 表可能为空 */ }
 
     const all = [...counts.values()];
@@ -1279,10 +1421,18 @@ function todaySinceTs() {
   return Math.floor(midnight.getTime() / 1000);
 }
 
-/** 与 queryDashboard 一致的时间窗口起点 */
+/** 与 queryDashboard 一致的时间窗口起点（秒，对齐 requests.ts） */
 function sinceTsForDays(days) {
   const d = Math.max(1, parseInt(days, 10) || 1);
   return d === 1 ? todaySinceTs() : Math.floor(Date.now() / 1000) - d * 86400;
+}
+
+/**
+ * skill_calls / tool_calls / agent_task_steps 写入的是毫秒时间戳，
+ * 查询窗口需换算，否则「今日」会把全历史都算进去（虚高）。
+ */
+function sinceMsForDays(days) {
+  return sinceTsForDays(days) * 1000;
 }
 
 /**
@@ -1628,8 +1778,9 @@ module.exports = {
   getImportState, setImportState, resetSessionData, resetImportState, deleteZeroTokenSessionRows, close,
   listSessionMeta, getSessionMeta, setSessionMeta,
   recordSkillCalls, deleteSkillCallsBySourcePath, getSkillLastUsedMap,
-  recordToolCalls, deleteToolCallsBySourcePath, querySkillUsageStats, queryToolUsageStats,
-  todaySinceTs, sinceTsForDays, queryGatewayInputCostRate, queryModelProviderLatency,
+  recordToolCalls, deleteToolCallsBySourcePath,
+  querySkillUsageStats, queryToolUsageStats, queryMcpUsageStats,
+  todaySinceTs, sinceTsForDays, sinceMsForDays, queryGatewayInputCostRate, queryModelProviderLatency,
   reassignProviderTier, collectProviderIdVariants,
   getDb: () => db,  // Agent 聚合系统使用
   ensureReady,

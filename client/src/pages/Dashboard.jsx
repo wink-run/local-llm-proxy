@@ -92,14 +92,17 @@ function AppShareStrip({ rows, metric = 'tokens' }) {
   );
 }
 
-/** Skill / 工具调用排行（双栏） */
-function SkillToolUsageSection({ skillUsage, toolUsage, rangeLabel, loading, t }) {
+/** Skill / 工具 / MCP 调用排行 */
+function SkillToolUsageSection({ skillUsage, toolUsage, mcpUsage, rangeLabel, loading, t }) {
   const skillItems = skillUsage?.items || [];
   const toolItems = toolUsage?.items || [];
+  const mcpServers = mcpUsage?.servers || [];
   const skillTotal = skillUsage?.total || 0;
   const toolTotal = toolUsage?.total || 0;
+  const mcpTotal = mcpUsage?.total || 0;
   const maxSkill = Math.max(...skillItems.map(r => r.calls), 1);
   const maxTool = Math.max(...toolItems.map(r => r.calls), 1);
+  const maxMcp = Math.max(...mcpServers.map(r => r.calls), 1);
 
   const kindLabel = (kind) => {
     if (kind === 'mcp') return t('dashboard.toolKind.mcp');
@@ -144,42 +147,85 @@ function SkillToolUsageSection({ skillUsage, toolUsage, rangeLabel, loading, t }
     );
   };
 
+  /** MCP：按 Server 汇总，展开 Top 工具名 */
+  const McpServerList = () => {
+    if (loading) {
+      return <div className="py-8 text-center text-xs text-zinc-400">…</div>;
+    }
+    if (!mcpServers.length) {
+      return <div className="py-8 text-center text-xs text-zinc-400">{t('dashboard.mcpUsageEmpty')}</div>;
+    }
+    return (
+      <div className="space-y-3">
+        {mcpServers.map((srv, i) => {
+          const pct = Math.round((srv.calls / maxMcp) * 100);
+          const topTools = (srv.tools || []).slice(0, 3).map((tool) => tool.name).join(', ');
+          return (
+            <div key={srv.key || srv.name || i} className="space-y-1">
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="min-w-0 truncate font-medium text-zinc-700 dark:text-zinc-200" title={srv.name}>
+                  {srv.name}
+                  {topTools && (
+                    <span className="ml-1.5 font-normal text-zinc-400 truncate">· {topTools}</span>
+                  )}
+                </span>
+                <span className="shrink-0 tabular-nums text-zinc-500">{srv.calls}</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+                <div className="h-full rounded-full bg-violet-500" style={{ width: `${Math.max(pct, 2)}%` }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // 始终三栏：窄窗口靠压缩内边距/间距撑住，避免堆叠换行
+  const Card = ({ title, hint, totalClass, total, children }) => (
+    <div className="min-w-0 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden">
+      <div className="px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 flex items-start justify-between gap-1.5">
+        <div className="min-w-0">
+          <h2 className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate">{title}</h2>
+          <p className="text-[10px] leading-snug text-zinc-500 mt-0.5 line-clamp-2" title={hint}>{hint}</p>
+        </div>
+        <div className="text-right shrink-0">
+          <div className="text-[10px] text-zinc-400">{rangeLabel}</div>
+          <div className={`text-[10px] mt-0.5 ${totalClass}`}>
+            {t('dashboard.skillToolTotal', { n: total })}
+          </div>
+        </div>
+      </div>
+      <div className="px-3 py-3">{children}</div>
+    </div>
+  );
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('dashboard.skillUsage')}</h2>
-            <p className="text-xs text-zinc-500 mt-0.5">{t('dashboard.skillUsageHint')}</p>
-          </div>
-          <div className="text-right shrink-0">
-            <div className="text-xs text-zinc-400">{rangeLabel}</div>
-            <div className="text-xs text-emerald-600 dark:text-emerald-400 mt-0.5">
-              {t('dashboard.skillToolTotal', { n: skillTotal })}
-            </div>
-          </div>
-        </div>
-        <div className="px-5 py-4">
-          <RankList items={skillItems} max={maxSkill} emptyKey="dashboard.skillUsageEmpty" accent="bg-emerald-500" />
-        </div>
-      </div>
-      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('dashboard.toolUsage')}</h2>
-            <p className="text-xs text-zinc-500 mt-0.5">{t('dashboard.toolUsageHint')}</p>
-          </div>
-          <div className="text-right shrink-0">
-            <div className="text-xs text-zinc-400">{rangeLabel}</div>
-            <div className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
-              {t('dashboard.skillToolTotal', { n: toolTotal })}
-            </div>
-          </div>
-        </div>
-        <div className="px-5 py-4">
-          <RankList items={toolItems} max={maxTool} emptyKey="dashboard.toolUsageEmpty" accent="bg-amber-500" />
-        </div>
-      </div>
+    <div className="grid grid-cols-3 gap-2">
+      <Card
+        title={t('dashboard.skillUsage')}
+        hint={t('dashboard.skillUsageHint')}
+        totalClass="text-emerald-600 dark:text-emerald-400"
+        total={skillTotal}
+      >
+        <RankList items={skillItems} max={maxSkill} emptyKey="dashboard.skillUsageEmpty" accent="bg-emerald-500" />
+      </Card>
+      <Card
+        title={t('dashboard.toolUsage')}
+        hint={t('dashboard.toolUsageHint')}
+        totalClass="text-amber-600 dark:text-amber-400"
+        total={toolTotal}
+      >
+        <RankList items={toolItems} max={maxTool} emptyKey="dashboard.toolUsageEmpty" accent="bg-amber-500" />
+      </Card>
+      <Card
+        title={t('dashboard.mcpUsage')}
+        hint={t('dashboard.mcpUsageHint')}
+        totalClass="text-violet-600 dark:text-violet-400"
+        total={mcpTotal}
+      >
+        <McpServerList />
+      </Card>
     </div>
   );
 }
@@ -551,6 +597,7 @@ export default function Dashboard() {
   const [appsUsage, setAppsUsage] = useState([]);
   const [skillUsage, setSkillUsage] = useState({ total: 0, items: [] });
   const [toolUsage, setToolUsage] = useState({ total: 0, items: [] });
+  const [mcpUsage, setMcpUsage] = useState({ total: 0, servers: [], items: [] });
   const [billableSubs, setBillableSubs] = useState([]);
   const [billingAccounts, setBillingAccounts] = useState({});
   const [usageSort, setUsageSort] = useState('calls');
@@ -585,6 +632,7 @@ export default function Dashboard() {
         }
         setSkillUsage(data.skill_usage || { total: 0, items: [] });
         setToolUsage(data.tool_usage || { total: 0, items: [] });
+        setMcpUsage(data.mcp_usage || { total: 0, servers: [], items: [] });
       } else {
         const r = await fetch(`/api/local-stats?days=${days}`);
         if (!r.ok) throw new Error(`local-stats ${r.status}`);
@@ -592,6 +640,7 @@ export default function Dashboard() {
         setAppsUsage([]);
         setSkillUsage(data.skill_usage || { total: 0, items: [] });
         setToolUsage(data.tool_usage || { total: 0, items: [] });
+        setMcpUsage(data.mcp_usage || { total: 0, servers: [], items: [] });
       }
 
       setLocalData(enrichDashboardBilling(data, payg, days, billableSubsList, catalog));
@@ -747,6 +796,7 @@ export default function Dashboard() {
       <SkillToolUsageSection
         skillUsage={skillUsage}
         toolUsage={toolUsage}
+        mcpUsage={mcpUsage}
         rangeLabel={rangeLabel}
         loading={loading}
         t={t}

@@ -212,6 +212,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     appsUsage: (days) => ipcRenderer.invoke('localStats:appsUsage', days),
     skillUsage: (days) => ipcRenderer.invoke('localStats:skillUsage', days),
     toolUsage: (days) => ipcRenderer.invoke('localStats:toolUsage', days),
+    mcpUsage: (days) => ipcRenderer.invoke('localStats:mcpUsage', days),
     reassignProviderTier: (providerId, tier) =>
       ipcRenderer.invoke('localStats:reassignProviderTier', providerId, tier),
     onChanged: (cb) => {

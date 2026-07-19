@@ -2429,9 +2429,11 @@ function registerIPC() {
     try {
       data.skill_usage = localStats.querySkillUsageStats({ days: d, limit: 20 });
       data.tool_usage = localStats.queryToolUsageStats({ days: d, limit: 20 });
+      data.mcp_usage = localStats.queryMcpUsageStats({ days: d, limit: 20 });
     } catch {
       data.skill_usage = { total: 0, items: [] };
       data.tool_usage = { total: 0, items: [] };
+      data.mcp_usage = { total: 0, servers: [], items: [] };
     }
     return data;
   });
@@ -2444,6 +2446,11 @@ function registerIPC() {
     const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
     try { return localStats.queryToolUsageStats({ days: d, limit: 20 }); }
     catch (e) { console.error('[localStats:toolUsage]', e.message); return { total: 0, items: [] }; }
+  });
+  ipcMain.handle('localStats:mcpUsage', (_e, days) => {
+    const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
+    try { return localStats.queryMcpUsageStats({ days: d, limit: 20 }); }
+    catch (e) { console.error('[localStats:mcpUsage]', e.message); return { total: 0, servers: [], items: [] }; }
   });
   ipcMain.handle('localStats:modelLatency', (_e, days) => {
     const d = Math.max(1, Math.min(365, parseInt(days, 10) || 7));
