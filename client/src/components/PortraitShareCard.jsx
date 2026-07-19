@@ -342,6 +342,108 @@ function sessText(sessions) {
   return String(sessions != null ? sessions : NA);
 }
 
+/** 从画像快照抽出海报可用的丰富字段 */
+function buildSharePayload(portrait) {
+  const traits = (portrait?.traits || []).map((t) => phrase(t)).filter(Boolean);
+  const goals = (portrait?.goals || []).map((g) => phrase(g)).filter(Boolean);
+  const needs = (portrait?.needs || [])
+    .map((n) => phrase(typeof n === 'string' ? n : n?.text))
+    .filter(Boolean);
+  const extensions = (portrait?.extensions || []).map((e) => phrase(e)).filter(Boolean);
+  const digest = portrait?.digest || {};
+  const sessions = digest.sessions;
+  const agents = Array.isArray(digest.agents) ? digest.agents.filter(Boolean) : [];
+  const projects = (digest.projects || [])
+    .map((p) => (typeof p === 'string' ? p : p?.name))
+    .filter(Boolean)
+    .slice(0, 4);
+  const installed = portrait?.installed || null;
+  const instSkills = Array.isArray(installed?.skills) ? installed.skills.length : 0;
+  const instPrompts = Array.isArray(installed?.prompts) ? installed.prompts.length : 0;
+  const instAssist = Array.isArray(installed?.assistants) ? installed.assistants.length : 0;
+  const metaParts = [];
+  if (sessions != null) metaParts.push(`${sessions} 会话`);
+  if (agents.length) metaParts.push(`${agents.length} 智能体`);
+  if (projects.length) metaParts.push(`项目 ${projects.slice(0, 3).join(' / ')}`);
+  if (instSkills || instPrompts || instAssist) {
+    const bits = [];
+    if (instSkills) bits.push(`Skill ${instSkills}`);
+    if (instPrompts) bits.push(`Prompt ${instPrompts}`);
+    if (instAssist) bits.push(`Agent ${instAssist}`);
+    metaParts.push(`已装 ${bits.join(' · ')}`);
+  }
+  return {
+    traits,
+    goals,
+    needs,
+    extensions,
+    sessions,
+    agents,
+    projects,
+    installed,
+    metaLine: metaParts.join('  ·  ') || '',
+    quote: String(portrait?.persona || '').trim() || '正在从你的 Agent 会话中形成画像…',
+    columns: [
+      { k: '风格', items: traits.slice(0, 3) },
+      { k: '能力', items: goals.slice(0, 3) },
+      { k: '延伸', items: extensions.slice(0, 3) },
+      { k: '发现', items: needs.slice(0, 3) },
+    ],
+  };
+}
+
+/** 信息栏：摘要一行 */
+function paintMetaStrip(ctx, theme, x, y, w, metaLine, ink = null) {
+  if (!metaLine) return;
+  ctx.fillStyle = ink || theme.mute;
+  ctx.font = fnt(theme, '500', 13, 'meta');
+  const lines = wrapLines(ctx, metaLine, w, 2);
+  lines.forEach((ln, i) => ctx.fillText(ln, x, y + i * 18));
+}
+
+/**
+ * 多栏要点列表（每栏标题 + 最多 3 条）
+ * @returns {number} 占用高度
+ */
+function paintInfoColumns(ctx, theme, x, y, totalW, columns, {
+  gap = 14,
+  cardH = 168,
+  fill = '#ffffff',
+  ink = '#0f172a',
+  mute = 'rgba(15,23,42,0.45)',
+  accentBar = true,
+  radius: r = 14,
+} = {}) {
+  const cols = (columns || []).filter((c) => c && (c.items?.length || c.k));
+  if (!cols.length) return 0;
+  const cw = Math.floor((totalW - gap * (cols.length - 1)) / cols.length);
+  cols.forEach((col, i) => {
+    const cx = x + i * (cw + gap);
+    const color = theme.tiles[i % theme.tiles.length];
+    softPanel(ctx, cx, y, cw, cardH, rad(theme, r), fill, 0.08);
+    if (accentBar) {
+      ctx.fillStyle = color;
+      ctx.fillRect(cx, y, 4, cardH);
+    }
+    ctx.fillStyle = mute;
+    ctx.font = fnt(theme, '600', 12, 'meta');
+    ctx.fillText(col.k, cx + 18, y + 28);
+    const items = (col.items && col.items.length) ? col.items : [NA];
+    ctx.fillStyle = ink;
+    ctx.font = fnt(theme, '600', 15, 'body');
+    let yy = y + 56;
+    items.slice(0, 3).forEach((raw) => {
+      const lines = wrapLines(ctx, `· ${raw}`, cw - 36, 2);
+      lines.forEach((ln) => {
+        ctx.fillText(ln, cx + 18, yy);
+        yy += 20;
+      });
+      yy += 4;
+    });
+  });
+  return cardH;
+}
+
 /** 柔光 */
 function glow(ctx, cx, cy, r, color, a = 0.5) {
   const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
@@ -828,10 +930,10 @@ function paintHumorPanelArt(ctx, kind, x, y, w, h, color, ink) {
 
 /* ========== 专业:深空编辑海报 ========== */
 function paintLayoutPro(ctx, d) {
-  const { theme, sessions, traits, goals, needs, quote, logo, brand, slogan, tagline, title, footer } = d;
+  const { theme, sessions, quote, logo, brand, slogan, tagline, title, footer, columns, metaLine } = d;
 
-  // 全幅深空主视觉
-  paintArtPro(ctx, theme, sessions, 0, 0, W, 820);
+  // 全幅深空主视觉（略收，给信息区更多空间）
+  paintArtPro(ctx, theme, sessions, 0, 0, W, 760);
 
   // 顶部玻璃品牌条
   ctx.fillStyle = 'rgba(7,11,20,0.35)';
@@ -852,70 +954,47 @@ function paintLayoutPro(ctx, d) {
   ctx.fillText(sessText(sessions), W - 48, 86);
   ctx.textAlign = 'left';
 
-  // 悬浮引语卡(压在主视觉下沿)
-  softPanel(ctx, 48, 620, W - 96, 220, 20, 'rgba(15,23,42,0.82)', 0.25);
+  // 悬浮引语卡
+  softPanel(ctx, 48, 560, W - 96, 200, 20, 'rgba(15,23,42,0.82)', 0.25);
   ctx.strokeStyle = hexAlpha(theme.accent, 0.25);
   ctx.lineWidth = 1;
-  roundRect(ctx, 48, 620, W - 96, 220, 20);
+  roundRect(ctx, 48, 560, W - 96, 200, 20);
   ctx.stroke();
   ctx.fillStyle = theme.mute;
   ctx.font = fnt(theme, '500', 12, 'meta');
-  withTrack(ctx, theme, 12, () => ctx.fillText(title.toUpperCase(), 80, 658));
+  withTrack(ctx, theme, 12, () => ctx.fillText(title.toUpperCase(), 80, 596));
   ctx.fillStyle = theme.ink;
-  ctx.font = fnt(theme, '400', 26, 'quote');
+  ctx.font = fnt(theme, '400', 24, 'quote');
   wrapLines(ctx, quote, W - 180, 4).forEach((ln, i) => {
-    ctx.fillText(ln, 80, 702 + i * 36);
+    ctx.fillText(ln, 80, 640 + i * 32);
   });
 
-  // 下部浅色信息层
+  // 下部浅色信息层：摘要 + 四栏要点
   ctx.fillStyle = '#f1f5f9';
-  ctx.fillRect(0, 860, W, H - 860);
-
-  const cards = [
-    { k: '风格', v: traits[0] || NA, s: traits[1] || '', c: theme.tiles[0] },
-    { k: '能力', v: goals[0] || NA, s: goals[1] || '', c: theme.tiles[1] },
-    { k: '发现', v: needs[0] || NA, s: needs[1] || '', c: theme.tiles[2] },
-  ];
-  const cw = Math.floor((W - 96 - 32) / 3);
-  cards.forEach((c, i) => {
-    const x = 48 + i * (cw + 16);
-    softPanel(ctx, x, 900, cw, 160, 16, '#ffffff', 0.08);
-    ctx.fillStyle = c.c;
-    ctx.fillRect(x, 900, 5, 160);
-    ctx.fillStyle = 'rgba(15,23,42,0.45)';
-    ctx.font = fnt(theme, '600', 12, 'meta');
-    ctx.fillText(c.k, x + 24, 934);
-    ctx.fillStyle = '#0f172a';
-    ctx.font = fnt(theme, '600', 20, 'display');
-    wrapLines(ctx, c.v, cw - 40, 2).forEach((ln, li) => {
-      ctx.fillText(ln, x + 24, 972 + li * 28);
-    });
-    if (c.s) {
-      ctx.fillStyle = 'rgba(15,23,42,0.4)';
-      ctx.font = fnt(theme, '400', 13, 'body');
-      wrapLines(ctx, c.s, cw - 40, 1).forEach((ln) => ctx.fillText(ln, x + 24, 1036));
-    }
+  ctx.fillRect(0, 780, W, H - 780);
+  paintMetaStrip(ctx, theme, 52, 812, W - 104, metaLine, 'rgba(15,23,42,0.5)');
+  paintInfoColumns(ctx, theme, 48, 848, W - 96, columns, {
+    cardH: 200, fill: '#ffffff', ink: '#0f172a', mute: 'rgba(15,23,42,0.45)',
   });
 
   // 宣言
   ctx.fillStyle = '#0f172a';
-  roundRect(ctx, 48, 1090, W - 96, 88, 14);
+  roundRect(ctx, 48, 1072, W - 96, 88, 14);
   ctx.fill();
   ctx.fillStyle = '#f8fafc';
   ctx.font = fnt(theme, '600', 20, 'display');
-  ctx.fillText(tagline, 76, 1126);
+  ctx.fillText(tagline, 76, 1108);
   ctx.fillStyle = 'rgba(248,250,252,0.65)';
   ctx.font = fnt(theme, '400', 14, 'body');
-  wrapLines(ctx, footer, W - 180, 1).forEach((ln) => ctx.fillText(ln, 76, 1156));
+  wrapLines(ctx, footer, W - 180, 1).forEach((ln) => ctx.fillText(ln, 76, 1138));
 
-  // footer 适配浅底
   const lightTheme = { ...theme, ink: '#0f172a', mute: 'rgba(15,23,42,0.45)', accent: '#2563eb' };
   paintFooter(ctx, lightTheme, logo, brand);
 }
 
 /* ========== 可爱:柔光角色海报 ========== */
 function paintLayoutCute(ctx, d) {
-  const { theme, sessions, traits, goals, needs, quote, logo, brand, slogan, tagline, title, footer } = d;
+  const { theme, sessions, quote, logo, brand, slogan, tagline, title, footer, columns, metaLine } = d;
 
   // 全页柔彩底
   const bg = ctx.createLinearGradient(0, 0, W, H);
@@ -957,60 +1036,41 @@ function paintLayoutCute(ctx, d) {
   ctx.fillText('会话', W - 100, 98);
   ctx.textAlign = 'left';
 
-  // 大角色区(居中英雄)
-  softPanel(ctx, 80, 130, W - 160, 460, 40, 'rgba(255,255,255,0.55)', 0.06);
-  paintArtCute(ctx, theme, 80, 130, W - 160, 460);
+  // 角色区略收，给信息腾位
+  softPanel(ctx, 80, 120, W - 160, 380, 40, 'rgba(255,255,255,0.55)', 0.06);
+  paintArtCute(ctx, theme, 80, 120, W - 160, 380);
 
   // 引语卡
-  softPanel(ctx, 64, 620, W - 128, 200, 28, '#ffffff', 0.1);
+  softPanel(ctx, 64, 520, W - 128, 170, 28, '#ffffff', 0.1);
   ctx.strokeStyle = hexAlpha(theme.accent, 0.18);
   ctx.lineWidth = 1.5;
-  roundRect(ctx, 64, 620, W - 128, 200, 28);
+  roundRect(ctx, 64, 520, W - 128, 170, 28);
   ctx.stroke();
   ctx.fillStyle = theme.mute;
   ctx.font = fnt(theme, '600', 13, 'meta');
-  ctx.fillText(title, 96, 658);
-  drawIcon(ctx, 'heart', W - 112, 650, theme.accent, 0.85);
+  ctx.fillText(title, 96, 556);
+  drawIcon(ctx, 'heart', W - 112, 548, theme.accent, 0.85);
   ctx.fillStyle = theme.ink;
-  ctx.font = fnt(theme, '500', 24, 'quote');
-  wrapLines(ctx, quote, W - 220, 4).forEach((ln, i) => {
-    ctx.fillText(ln, 96, 702 + i * 34);
+  ctx.font = fnt(theme, '500', 22, 'quote');
+  wrapLines(ctx, quote, W - 220, 3).forEach((ln, i) => {
+    ctx.fillText(ln, 96, 596 + i * 30);
   });
 
-  // 三胶囊(轻盈)
-  const pills = [
-    { k: '风格', v: traits[0] || NA, c: theme.tiles[0] },
-    { k: '能力', v: goals[0] || NA, c: theme.tiles[1] },
-    { k: '发现', v: needs[0] || NA, c: theme.tiles[2] },
-  ];
-  const pw = Math.floor((W - 128 - 24) / 3);
-  pills.forEach((p, i) => {
-    const x = 64 + i * (pw + 12);
-    softPanel(ctx, x, 850, pw, 120, 24, '#ffffff', 0.08);
-    ctx.beginPath();
-    ctx.arc(x + 36, 910, 18, 0, Math.PI * 2);
-    ctx.fillStyle = p.c;
-    ctx.fill();
-    ctx.fillStyle = theme.mute;
-    ctx.font = fnt(theme, '600', 12, 'meta');
-    ctx.fillText(p.k, x + 66, 896);
-    ctx.fillStyle = theme.ink;
-    ctx.font = fnt(theme, '700', 16, 'body');
-    wrapLines(ctx, p.v, pw - 80, 2).forEach((ln, li) => {
-      ctx.fillText(ln, x + 66, 926 + li * 22);
-    });
+  paintMetaStrip(ctx, theme, 68, 712, W - 136, metaLine, theme.mute);
+  paintInfoColumns(ctx, theme, 56, 740, W - 112, columns, {
+    cardH: 188, fill: '#ffffff', ink: theme.ink, mute: theme.mute, radius: 22,
   });
 
   // 底波浪色带
   ctx.beginPath();
-  ctx.moveTo(0, 1020);
+  ctx.moveTo(0, 960);
   for (let x = 0; x <= W; x += 36) {
-    ctx.lineTo(x, 1020 + Math.sin(x * 0.035) * 10);
+    ctx.lineTo(x, 960 + Math.sin(x * 0.035) * 10);
   }
   ctx.lineTo(W, H);
   ctx.lineTo(0, H);
   ctx.closePath();
-  const wg = ctx.createLinearGradient(0, 1020, W, H);
+  const wg = ctx.createLinearGradient(0, 960, W, H);
   wg.addColorStop(0, '#fb7185');
   wg.addColorStop(0.5, '#7dd3fc');
   wg.addColorStop(1, '#fcd34d');
@@ -1018,11 +1078,11 @@ function paintLayoutCute(ctx, d) {
   ctx.fill();
 
   ctx.fillStyle = '#fff';
-  ctx.font = fnt(theme, '700', 24, 'display');
-  withTrack(ctx, theme, 24, () => ctx.fillText(tagline, 64, 1120));
+  ctx.font = fnt(theme, '700', 22, 'display');
+  withTrack(ctx, theme, 22, () => ctx.fillText(tagline, 64, 1060));
   ctx.fillStyle = 'rgba(255,255,255,0.88)';
   ctx.font = fnt(theme, '500', 14, 'body');
-  wrapLines(ctx, footer, W - 160, 1).forEach((ln) => ctx.fillText(ln, 64, 1154));
+  wrapLines(ctx, footer, W - 160, 1).forEach((ln) => ctx.fillText(ln, 64, 1094));
 
   ctx.fillStyle = 'rgba(255,255,255,0.95)';
   roundRect(ctx, 40, H - 118, W - 80, 92, 22);
@@ -1032,7 +1092,7 @@ function paintLayoutCute(ctx, d) {
 
 /* ========== 幽默:波普漫画海报 ========== */
 function paintLayoutHumor(ctx, d) {
-  const { theme, sessions, traits, goals, needs, quote, logo, brand, slogan, tagline, title, footer } = d;
+  const { theme, sessions, quote, logo, brand, slogan, tagline, title, footer, columns, metaLine } = d;
 
   const bg = ctx.createLinearGradient(0, 0, 0, H);
   bg.addColorStop(0, '#fffaf0');
@@ -1086,89 +1146,82 @@ function paintLayoutHumor(ctx, d) {
   ctx.restore();
   ctx.textAlign = 'left';
 
-  // 英雄漫画格
+  // 英雄漫画格（略矮）
   ctx.fillStyle = '#fff';
-  ctx.fillRect(48, 156, W - 96, 380);
+  ctx.fillRect(48, 150, W - 96, 300);
   ctx.strokeStyle = theme.ink;
   ctx.lineWidth = 5;
-  ctx.strokeRect(50, 158, W - 100, 376);
-  paintArtHumor(ctx, theme, 56, 164, W - 112, 360);
+  ctx.strokeRect(50, 152, W - 100, 296);
+  paintArtHumor(ctx, theme, 56, 158, W - 112, 280);
 
   // 对话框
-  softPanel(ctx, 56, 560, W - 112, 200, 10, theme.panel, 0);
+  softPanel(ctx, 56, 470, W - 112, 160, 10, theme.panel, 0);
   ctx.strokeStyle = theme.ink;
   ctx.lineWidth = 4;
-  roundRect(ctx, 56, 560, W - 112, 200, 10);
+  roundRect(ctx, 56, 470, W - 112, 160, 10);
   ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(120, 760);
-  ctx.lineTo(150, 798);
-  ctx.lineTo(190, 760);
-  ctx.fillStyle = theme.panel;
-  ctx.fill();
-  ctx.strokeStyle = theme.ink;
-  ctx.beginPath();
-  ctx.moveTo(120, 760);
-  ctx.lineTo(150, 798);
-  ctx.lineTo(190, 760);
-  ctx.stroke();
-
   ctx.fillStyle = theme.accent;
   ctx.font = fnt(theme, '900', 15, 'meta');
-  ctx.fillText(`【${title}】说:`, 84, 598);
+  ctx.fillText(`【${title}】说:`, 84, 508);
   ctx.fillStyle = theme.ink;
-  ctx.font = fnt(theme, '800', 24, 'quote');
-  wrapLines(ctx, quote, W - 180, 4).forEach((ln, i) => {
-    ctx.fillText(ln, 84, 642 + i * 32);
+  ctx.font = fnt(theme, '800', 22, 'quote');
+  wrapLines(ctx, quote, W - 180, 3).forEach((ln, i) => {
+    ctx.fillText(ln, 84, 548 + i * 28);
   });
 
-  // 三格
-  const panels = [
-    { k: '风格!', v: traits[0] || '神秘选手', c: theme.tiles[0] },
-    { k: '能力!', v: goals[0] || '隐藏技能', c: theme.tiles[1] },
-    { k: '发现!', v: needs[0] || '彩蛋待拆', c: theme.tiles[2] },
-  ];
-  const pw = Math.floor((W - 112 - 24) / 3);
+  paintMetaStrip(ctx, theme, 60, 658, W - 120, metaLine, theme.mute);
+
+  // 四格：标题条 + 多条要点（保留漫画边框）
+  const panels = (columns || []).map((c, i) => ({
+    k: `${c.k}!`,
+    items: (c.items && c.items.length) ? c.items : [i === 0 ? '神秘选手' : i === 1 ? '隐藏技能' : i === 2 ? '兴趣外挂' : '彩蛋待拆'],
+    c: theme.tiles[i % theme.tiles.length],
+  }));
+  const gap = 12;
+  const pw = Math.floor((W - 112 - gap * (panels.length - 1)) / panels.length);
   panels.forEach((p, i) => {
-    const x = 56 + i * (pw + 12);
+    const x = 56 + i * (pw + gap);
     ctx.fillStyle = '#fff';
-    ctx.fillRect(x, 830, pw, 230);
+    ctx.fillRect(x, 688, pw, 230);
     ctx.strokeStyle = theme.ink;
     ctx.lineWidth = 4;
-    ctx.strokeRect(x + 2, 832, pw - 4, 226);
+    ctx.strokeRect(x + 2, 690, pw - 4, 226);
     ctx.fillStyle = p.c;
-    ctx.fillRect(x + 2, 832, pw - 4, 40);
+    ctx.fillRect(x + 2, 690, pw - 4, 36);
     ctx.fillStyle = theme.ink;
-    ctx.font = fnt(theme, '900', 18, 'display');
-    ctx.fillText(p.k, x + 14, 860);
-    paintHumorPanelArt(ctx, i, x + 6, 878, pw - 12, 110, p.c, theme.ink);
-    ctx.fillStyle = theme.ink;
-    ctx.font = fnt(theme, '800', 16, 'body');
-    wrapLines(ctx, p.v, pw - 24, 2).forEach((ln, li) => {
-      ctx.fillText(ln, x + 14, 1010 + li * 22);
+    ctx.font = fnt(theme, '900', 15, 'display');
+    ctx.fillText(p.k, x + 12, 716);
+    ctx.font = fnt(theme, '800', 14, 'body');
+    let yy = 752;
+    p.items.slice(0, 3).forEach((raw) => {
+      wrapLines(ctx, `· ${raw}`, pw - 28, 2).forEach((ln) => {
+        ctx.fillText(ln, x + 12, yy);
+        yy += 20;
+      });
+      yy += 6;
     });
   });
 
   // 锯齿宣言
   ctx.fillStyle = theme.accent;
   ctx.beginPath();
-  ctx.moveTo(40, 1090);
+  ctx.moveTo(40, 950);
   for (let x = 40; x <= W - 40; x += 26) {
-    ctx.lineTo(x + 13, 1072);
-    ctx.lineTo(x + 26, 1090);
+    ctx.lineTo(x + 13, 932);
+    ctx.lineTo(x + 26, 950);
   }
-  ctx.lineTo(W - 40, 1190);
-  ctx.lineTo(40, 1190);
+  ctx.lineTo(W - 40, 1050);
+  ctx.lineTo(40, 1050);
   ctx.closePath();
   ctx.fill();
   ctx.strokeStyle = theme.ink;
   ctx.lineWidth = 3;
   ctx.stroke();
   ctx.fillStyle = '#fff';
-  ctx.font = fnt(theme, '900', 22, 'display');
-  withTrack(ctx, theme, 22, () => ctx.fillText(tagline, 68, 1135));
-  ctx.font = fnt(theme, '700', 14, 'body');
-  wrapLines(ctx, footer, W - 160, 1).forEach((ln) => ctx.fillText(ln, 68, 1168));
+  ctx.font = fnt(theme, '900', 20, 'display');
+  withTrack(ctx, theme, 20, () => ctx.fillText(tagline, 68, 992));
+  ctx.font = fnt(theme, '700', 13, 'body');
+  wrapLines(ctx, footer, W - 160, 1).forEach((ln) => ctx.fillText(ln, 68, 1024));
 
   ctx.fillStyle = theme.panel;
   ctx.fillRect(40, H - 118, W - 80, 90);
@@ -1180,7 +1233,7 @@ function paintLayoutHumor(ctx, d) {
 
 /* ========== 简约:留白海报 ========== */
 function paintLayoutMinimal(ctx, d) {
-  const { theme, sessions, traits, goals, needs, quote, logo, brand, slogan, tagline, title, footer } = d;
+  const { theme, sessions, quote, logo, brand, slogan, tagline, title, footer, columns, metaLine } = d;
 
   ctx.fillStyle = '#f7f7f5';
   ctx.fillRect(0, 0, W, H);
@@ -1207,45 +1260,50 @@ function paintLayoutMinimal(ctx, d) {
   ctx.fillText(slogan, W - 72, 60);
   ctx.textAlign = 'left';
 
-  // 主插画占舞台中央
-  paintArtMinimal(ctx, theme, 120, 120, W - 240, 560);
+  // 主插画略收
+  paintArtMinimal(ctx, theme, 160, 110, W - 320, 420);
 
-  // 会话极小
   ctx.fillStyle = theme.mute;
   ctx.font = fnt(theme, '400', 12, 'meta');
   withTrack(ctx, theme, 12, () => {
-    ctx.fillText(`${sessText(sessions)}  SESSIONS`, 72, 720);
+    ctx.fillText(`${sessText(sessions)}  SESSIONS`, 72, 560);
   });
+  paintMetaStrip(ctx, theme, 72, 586, W - 144, metaLine, theme.mute);
 
-  // 引语:窄栏大字
+  // 引语
   ctx.fillStyle = theme.mute;
   ctx.font = fnt(theme, '500', 11, 'meta');
-  withTrack(ctx, theme, 11, () => ctx.fillText(title, 72, 770));
+  withTrack(ctx, theme, 11, () => ctx.fillText(title, 72, 640));
   ctx.fillStyle = theme.ink;
-  ctx.font = fnt(theme, '300', 30, 'quote');
+  ctx.font = fnt(theme, '300', 26, 'quote');
   wrapLines(ctx, quote, W - 200, 3).forEach((ln, i) => {
-    ctx.fillText(ln, 72, 820 + i * 42);
+    ctx.fillText(ln, 72, 682 + i * 36);
   });
 
-  // 三项:超疏
-  const items = [
-    { k: '风格', v: traits[0] || NA },
-    { k: '能力', v: goals[0] || NA },
-    { k: '发现', v: needs[0] || NA },
-  ];
-  items.forEach((item, i) => {
-    const x = 72 + i * 320;
+  // 四栏要点（细线分隔，多条）
+  const cols = columns || [];
+  const colW = Math.floor((W - 144 - 24 * 3) / 4);
+  cols.forEach((col, i) => {
+    const x = 72 + i * (colW + 24);
     ctx.strokeStyle = 'rgba(17,17,17,0.15)';
     ctx.beginPath();
-    ctx.moveTo(x, 980);
-    ctx.lineTo(x + 260, 980);
+    ctx.moveTo(x, 820);
+    ctx.lineTo(x + colW, 820);
     ctx.stroke();
     ctx.fillStyle = theme.mute;
     ctx.font = fnt(theme, '500', 11, 'meta');
-    withTrack(ctx, theme, 11, () => ctx.fillText(item.k, x, 1010));
+    withTrack(ctx, theme, 11, () => ctx.fillText(col.k, x, 848));
     ctx.fillStyle = theme.ink;
-    ctx.font = fnt(theme, '400', 18, 'body');
-    wrapLines(ctx, item.v, 250, 1).forEach((ln) => ctx.fillText(ln, x, 1042));
+    ctx.font = fnt(theme, '400', 15, 'body');
+    let yy = 878;
+    const items = (col.items && col.items.length) ? col.items : [NA];
+    items.slice(0, 3).forEach((raw) => {
+      wrapLines(ctx, raw, colW, 2).forEach((ln) => {
+        ctx.fillText(ln, x, yy);
+        yy += 22;
+      });
+      yy += 8;
+    });
   });
 
   ctx.fillStyle = theme.ink;
@@ -1273,20 +1331,14 @@ export async function renderPortraitSharePng(portrait, labels, styleIndex = 0) {
   canvas.height = H;
   const ctx = canvas.getContext('2d');
 
-  const traits = (portrait?.traits || []).map((t) => phrase(t)).filter(Boolean);
-  const goals = (portrait?.goals || []).map((g) => phrase(g)).filter(Boolean);
-  const needs = (portrait?.needs || [])
-    .map((n) => phrase(typeof n === 'string' ? n : n?.text))
-    .filter(Boolean);
-  const extensions = (portrait?.extensions || []).map((e) => phrase(e)).filter(Boolean);
-  const sessions = portrait?.digest?.sessions;
-  const quote = String(portrait?.persona || '').trim() || '正在从你的 Agent 会话中形成画像…';
+  const payload = buildSharePayload(portrait);
 
   let logo = null;
   try { logo = await loadImage(logoUrl); } catch { /* */ }
 
   const data = {
-    theme, sessions, traits, goals, needs, extensions, quote,
+    theme,
+    ...payload,
     logo, brand, slogan, tagline, title, footer,
   };
 
@@ -1306,22 +1358,44 @@ export async function renderPortraitSharePng(portrait, labels, styleIndex = 0) {
 }
 
 export function buildPortraitShareText(portrait, t, typeLabel) {
+  const p = buildSharePayload(portrait);
   const lines = [];
   lines.push('我在 Token Bank 被自动认出了工作画像');
   lines.push(PRODUCT_SLOGAN);
   lines.push('越用越懂你 · 自动发现技能 / 提示词 / 智能体');
   lines.push('');
-  if (portrait?.persona) lines.push(`「${portrait.persona}」`);
+  if (p.quote && !p.quote.startsWith('正在从')) lines.push(`「${portrait?.persona || p.quote}」`);
+  if (p.metaLine) {
+    lines.push('');
+    lines.push(p.metaLine);
+  }
   lines.push('');
-  if (portrait?.traits?.length) {
-    lines.push(`风格 · ${portrait.traits.slice(0, 3).map((x) => headline(x, 8)).join(' / ')}`);
+  if (p.traits.length) {
+    lines.push(`风格 · ${p.traits.slice(0, 4).map((x) => headline(x, 12)).join(' / ')}`);
   }
-  if (portrait?.goals?.length) {
-    lines.push(`能力 · ${portrait.goals.slice(0, 3).map((x) => headline(x, 8)).join(' / ')}`);
+  if (p.goals.length) {
+    lines.push(`能力 · ${p.goals.slice(0, 4).map((x) => headline(x, 12)).join(' / ')}`);
   }
-  const needs = (portrait?.needs || []).map((n) => (typeof n === 'string' ? n : n?.text)).filter(Boolean);
-  if (needs.length) {
-    lines.push(`配备 · ${needs.slice(0, 3).map((x) => headline(x, 8)).join(' / ')}`);
+  if (p.extensions.length) {
+    lines.push(`延伸 · ${p.extensions.slice(0, 4).map((x) => headline(x, 12)).join(' / ')}`);
+  }
+  if (p.needs.length) {
+    const label = typeLabel ? `建议配备的${typeLabel}` : '发现';
+    lines.push(`${label} · ${p.needs.slice(0, 4).map((x) => headline(x, 14)).join(' / ')}`);
+  }
+  if (p.agents.length) {
+    lines.push(`纳管智能体 · ${p.agents.slice(0, 6).join(' · ')}`);
+  }
+  if (p.projects.length) {
+    lines.push(`常涉项目 · ${p.projects.join(' · ')}`);
+  }
+  const inst = portrait?.installed;
+  if (inst) {
+    const bits = [];
+    if (inst.skills?.length) bits.push(`Skill ${inst.skills.length}`);
+    if (inst.prompts?.length) bits.push(`Prompt ${inst.prompts.length}`);
+    if (inst.assistants?.length) bits.push(`Agent ${inst.assistants.length}`);
+    if (bits.length) lines.push(`本地已装 · ${bits.join(' · ')}`);
   }
   lines.push('');
   lines.push(`官网 ${OFFICIAL_URL}`);

@@ -1176,6 +1176,8 @@ export default function PersonalizedRecommend({ typeFilter, LogoComp, onNeedProj
       extensions,
       needs,
       digest: digest || sharedPortrait?.digest || null,
+      // 海报披露已装资源体量
+      installed: installed || sharedPortrait?.installed || null,
     }
     : (sharedPortrait || null);
   const canShare = !!(sharePortrait && (sharePortrait.persona || (sharePortrait.goals && sharePortrait.goals.length)));
