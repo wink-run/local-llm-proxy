@@ -1,5 +1,5 @@
-import pagesZh from './locales/pages-zh';
-import pagesEn from './locales/pages-en';
+import pagesZh from './locales/pages-zh.js';
+import pagesEn from './locales/pages-en.js';
 
 const locales = {
   zh: {

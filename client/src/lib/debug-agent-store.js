@@ -1,7 +1,7 @@
 /** Debug Agent 模式：模块级会话缓存，避免切换菜单/重挂载后任务 state 丢失 */
 
 import { mergeStreamText } from '../../shared/stream-text-merge.js';
-import { makeT } from '../i18n';
+import { makeT } from '../i18n.js';
 
 /** 非 React 路径按 localStorage 语言取文案 */
 function uiT(key, vars) {

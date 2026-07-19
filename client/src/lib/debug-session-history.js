@@ -1,6 +1,6 @@
 /** Debug Agent 模式：历史会话本地持久化（新会话清空后仍可恢复） */
 
-import { makeT } from '../i18n';
+import { makeT } from '../i18n.js';
 
 const STORAGE_KEY = 'tokenbank.debug.agentSessions';
 const MAX_PER_AGENT = 40;
