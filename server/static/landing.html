@@ -42,11 +42,6 @@
   #tb-tabs { overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
   #tb-tabs::-webkit-scrollbar { display: none; }
   #tb-tabs [data-tab] { flex-shrink: 0; white-space: nowrap; }
-  .tb-gallery-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-  @media (max-width: 720px) {
-    .tb-gallery-grid { grid-template-columns: 1fr; }
-    #gallery h2 { font-size: 32px !important; }
-  }
   .tb-faq[open] .tb-faq-mark { transform: rotate(45deg); background: #FFD055; }
   @keyframes tbPacket { 0% { top: -6px; opacity: 0; } 12% { opacity: 1; } 88% { opacity: 1; } 100% { top: 44px; opacity: 0; } }
   @keyframes tbPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(224,138,0,0); } 50% { box-shadow: 0 0 0 8px rgba(224,138,0,0.10); } }
@@ -86,7 +81,6 @@
       <nav style="display:flex;gap:26px;align-items:center;">
         <a href="#pillars" data-i18n="nav.features" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">Features</a>
         <a href="#hub" data-i18n="nav.hub" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">Hub</a>
-        <a href="#gallery" data-i18n="nav.gallery" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">Tour</a>
         <a href="#onboarding" data-i18n="nav.connect" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">Connect</a>
         <a href="#routing" data-i18n="nav.routing" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">Routing</a>
         <a href="#network" data-i18n="nav.network" style="text-decoration:none;color:#333;font-size:15px;font-weight:500;">Network</a>
@@ -160,8 +154,20 @@
             </div>
             <span style="margin-left:auto;font-family:'Space Mono',monospace;font-size:12px;color:#bcbcbc;">localhost:11430</span>
           </div>
-          <div style="aspect-ratio:1600/1269;overflow:hidden;background:#f5f2f0;position:relative;">
-            <img id="tb-hero-dashboard" src="/static/img_cache/gateway_en.webp" data-src-en="/static/img_cache/gateway_en.webp" data-src-zh="/static/img_cache/gateway.webp" alt="Token Bank Gateway" style="display:block;width:100%;height:100%;object-fit:cover;object-position:top center;">
+          <!-- 外层留白底铺满；内框按 860×600，截图 contain 不拉伸 -->
+          <div style="display:flex;justify-content:center;align-items:center;padding:0 12px;position:relative;background:
+            radial-gradient(120% 80% at 50% 0%, rgba(255,208,85,0.14) 0%, transparent 55%),
+            radial-gradient(90% 70% at 50% 100%, rgba(224,138,0,0.08) 0%, transparent 50%),
+            linear-gradient(165deg, #faf8f6 0%, #f3efe9 48%, #ebe6df 100%);">
+            <div aria-hidden="true" style="position:absolute;inset:0;pointer-events:none;opacity:0.35;background-image:radial-gradient(rgba(0,0,0,0.045) 0.6px, transparent 0.7px);background-size:11px 11px;"></div>
+            <div style="position:relative;z-index:1;width:100%;max-width:860px;aspect-ratio:860/600;overflow:hidden;">
+              <img id="tb-hero-dashboard" src="/static/img_cache/gateway_en.webp" data-src-en="/static/img_cache/gateway_en.webp" data-src-zh="/static/img_cache/gateway.webp" alt="Token Bank Gateway" style="display:block;width:100%;height:100%;object-fit:contain;object-position:center center;">
+            </div>
+            <!-- 截图底部浮层说明，随 tab 切换 -->
+            <div id="tb-hero-caption" style="position:absolute;left:0;right:0;bottom:0;z-index:2;padding:28px 22px 18px;background:linear-gradient(180deg,transparent 0%,rgba(0,0,0,0.55) 55%,rgba(0,0,0,0.72) 100%);pointer-events:none;text-align:center;">
+              <div id="tb-hero-cap-h" style="font-size:16px;font-weight:600;color:#fff;margin-bottom:4px;text-shadow:0 1px 2px rgba(0,0,0,0.35);">Gateway · App toolbox</div>
+              <div id="tb-hero-cap-b" style="font-size:13.5px;line-height:1.5;color:rgba(255,255,255,0.88);margin:0 auto;max-width:640px;text-shadow:0 1px 2px rgba(0,0,0,0.3);">One-click install Claude Code, Kimi Code, Cursor, Codex and more.</div>
+            </div>
           </div>
         </div>
       </div>
@@ -328,104 +334,6 @@
           <h3 data-i18n="hub.feat4.h" style="margin:0 0 10px;font-size:18px;font-weight:600;color:#000;">Portrait posters</h3>
           <p data-i18n="hub.feat4.b" style="margin:0;font-size:14px;line-height:1.55;color:#555;">Export four poster styles from your work portrait. Tray and app lists also surface today’s token usage at a glance.</p>
         </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ PRODUCT GALLERY ============ -->
-  <section id="gallery" style="padding:72px 0 40px;scroll-margin-top:80px;">
-    <div style="max-width:1200px;margin:0 auto;padding:0 24px;">
-      <div style="text-align:center;margin-bottom:48px;">
-        <div data-reveal data-i18n="gal.kicker" style="display:inline-block;background:#f5f2f0;color:#000;border-radius:10px;padding:6px 14px;font-size:13px;font-weight:500;letter-spacing:0.04em;margin-bottom:18px;">Product tour</div>
-        <h2 data-reveal data-reveal-delay="60" data-i18n="gal.title" style="margin:0 auto 14px;max-width:720px;font-family:'Playfair Display','Noto Serif SC',serif;font-weight:400;font-size:42px;line-height:1.22;letter-spacing:-0.01em;color:#000;">See every surface of the hub.</h2>
-        <p data-reveal data-reveal-delay="120" data-i18n="gal.sub" style="margin:0 auto;max-width:560px;font-size:16px;line-height:1.55;color:#333;">From gateway onboarding and session trace to agent playground, usage, circles, and the always-on tray.</p>
-      </div>
-
-      <div class="tb-gallery-grid">
-        <figure data-reveal style="margin:0;background:#f5f2f0;border-radius:24px;overflow:hidden;border:1px solid #ececec;">
-          <img src="/static/screenshots/gateway-apps.webp" alt="Gateway apps" loading="lazy" style="display:block;width:100%;aspect-ratio:16/10;object-fit:cover;object-position:top;background:#fff;">
-          <figcaption style="padding:18px 20px 20px;">
-            <div data-i18n="gal.1.h" style="font-size:16px;font-weight:600;color:#000;margin-bottom:4px;">Gateway · App toolbox</div>
-            <div data-i18n="gal.1.b" style="font-size:13.5px;line-height:1.5;color:#555;">One-click install Claude Code, Kimi Code, Cursor, Codex and more.</div>
-          </figcaption>
-        </figure>
-        <figure data-reveal data-reveal-delay="60" style="margin:0;background:#f5f2f0;border-radius:24px;overflow:hidden;border:1px solid #ececec;">
-          <img src="/static/screenshots/gateway-sessions.webp" alt="Gateway sessions" loading="lazy" style="display:block;width:100%;aspect-ratio:16/10;object-fit:cover;object-position:top;background:#fff;">
-          <figcaption style="padding:18px 20px 20px;">
-            <div data-i18n="gal.2.h" style="font-size:16px;font-weight:600;color:#000;margin-bottom:4px;">Sessions · cross-app trace</div>
-            <div data-i18n="gal.2.b" style="font-size:13.5px;line-height:1.5;color:#555;">Filter by app, inspect tokens and cost, hand off or export.</div>
-          </figcaption>
-        </figure>
-        <figure data-reveal data-reveal-delay="80" style="margin:0;background:#f5f2f0;border-radius:24px;overflow:hidden;border:1px solid #ececec;">
-          <img src="/static/screenshots/session-trace.webp" alt="Session Trace" loading="lazy" style="display:block;width:100%;aspect-ratio:16/10;object-fit:cover;object-position:top;background:#fff;">
-          <figcaption style="padding:18px 20px 20px;">
-            <div data-i18n="gal.3.h" style="font-size:16px;font-weight:600;color:#000;margin-bottom:4px;">Session Trace</div>
-            <div data-i18n="gal.3.b" style="font-size:13.5px;line-height:1.5;color:#555;">Step-level tools, skills, reasoning, and token breakdown.</div>
-          </figcaption>
-        </figure>
-        <figure data-reveal data-reveal-delay="100" style="margin:0;background:#f5f2f0;border-radius:24px;overflow:hidden;border:1px solid #ececec;">
-          <img src="/static/screenshots/providers.webp" alt="Providers" loading="lazy" style="display:block;width:100%;aspect-ratio:16/10;object-fit:cover;object-position:top;background:#fff;">
-          <figcaption style="padding:18px 20px 20px;">
-            <div data-i18n="gal.4.h" style="font-size:16px;font-weight:600;color:#000;margin-bottom:4px;">Providers · personal + P2P</div>
-            <div data-i18n="gal.4.b" style="font-size:13.5px;line-height:1.5;color:#555;">Speed-test personal models; spend credits on community compute.</div>
-          </figcaption>
-        </figure>
-        <figure data-reveal data-reveal-delay="120" style="margin:0;background:#f5f2f0;border-radius:24px;overflow:hidden;border:1px solid #ececec;">
-          <img src="/static/screenshots/assets-agents.webp" alt="Assets agents" loading="lazy" style="display:block;width:100%;aspect-ratio:16/10;object-fit:cover;object-position:top;background:#fff;">
-          <figcaption style="padding:18px 20px 20px;">
-            <div data-i18n="gal.5.h" style="font-size:16px;font-weight:600;color:#000;margin-bottom:4px;">Assets · Agents / Skills / Prompts</div>
-            <div data-i18n="gal.5.b" style="font-size:13.5px;line-height:1.5;color:#555;">Manage resources and project them onto runtime agents.</div>
-          </figcaption>
-        </figure>
-        <figure data-reveal data-reveal-delay="140" style="margin:0;background:#f5f2f0;border-radius:24px;overflow:hidden;border:1px solid #ececec;">
-          <img src="/static/screenshots/assets-for-you.webp" alt="Assets For You" loading="lazy" style="display:block;width:100%;aspect-ratio:16/10;object-fit:cover;object-position:top;background:#fff;">
-          <figcaption style="padding:18px 20px 20px;">
-            <div data-i18n="gal.6.h" style="font-size:16px;font-weight:600;color:#000;margin-bottom:4px;">For You · work portrait</div>
-            <div data-i18n="gal.6.b" style="font-size:13.5px;line-height:1.5;color:#555;">Session-derived profile with agent recommendations and shareable posters.</div>
-          </figcaption>
-        </figure>
-        <figure data-reveal data-reveal-delay="160" style="margin:0;background:#f5f2f0;border-radius:24px;overflow:hidden;border:1px solid #ececec;">
-          <img src="/static/screenshots/playground.webp" alt="Playground" loading="lazy" style="display:block;width:100%;aspect-ratio:16/10;object-fit:cover;object-position:top;background:#fff;">
-          <figcaption style="padding:18px 20px 20px;">
-            <div data-i18n="gal.7.h" style="font-size:16px;font-weight:600;color:#000;margin-bottom:4px;">Playground · orchestration</div>
-            <div data-i18n="gal.7.b" style="font-size:13.5px;line-height:1.5;color:#555;">Main agent receives tasks, runs tools, and collaborates with peer agents.</div>
-          </figcaption>
-        </figure>
-        <figure data-reveal data-reveal-delay="180" style="margin:0;background:#f5f2f0;border-radius:24px;overflow:hidden;border:1px solid #ececec;">
-          <img src="/static/screenshots/usage.webp" alt="Usage" loading="lazy" style="display:block;width:100%;aspect-ratio:16/10;object-fit:cover;object-position:top;background:#fff;">
-          <figcaption style="padding:18px 20px 20px;">
-            <div data-i18n="gal.8.h" style="font-size:16px;font-weight:600;color:#000;margin-bottom:4px;">Usage · spend visibility</div>
-            <div data-i18n="gal.8.b" style="font-size:13.5px;line-height:1.5;color:#555;">Requests, tokens, free-hit rate, cost estimates, and per-app mix.</div>
-          </figcaption>
-        </figure>
-        <figure data-reveal data-reveal-delay="200" style="margin:0;background:#f5f2f0;border-radius:24px;overflow:hidden;border:1px solid #ececec;">
-          <img src="/static/screenshots/circles.webp" alt="Circles" loading="lazy" style="display:block;width:100%;aspect-ratio:16/10;object-fit:cover;object-position:top;background:#fff;">
-          <figcaption style="padding:18px 20px 20px;">
-            <div data-i18n="gal.9.h" style="font-size:16px;font-weight:600;color:#000;margin-bottom:4px;">Circles</div>
-            <div data-i18n="gal.9.b" style="font-size:13.5px;line-height:1.5;color:#555;">Create or join circles to share models and credits with friends.</div>
-          </figcaption>
-        </figure>
-        <figure data-reveal data-reveal-delay="220" style="margin:0;background:#f5f2f0;border-radius:24px;overflow:hidden;border:1px solid #ececec;">
-          <img src="/static/screenshots/contribute.webp" alt="Contribute" loading="lazy" style="display:block;width:100%;aspect-ratio:16/10;object-fit:cover;object-position:top;background:#fff;">
-          <figcaption style="padding:18px 20px 20px;">
-            <div data-i18n="gal.10.h" style="font-size:16px;font-weight:600;color:#000;margin-bottom:4px;">Contribute</div>
-            <div data-i18n="gal.10.b" style="font-size:13.5px;line-height:1.5;color:#555;">Share local models to the network; keys never leave your machine.</div>
-          </figcaption>
-        </figure>
-        <figure data-reveal data-reveal-delay="240" style="margin:0;background:#f5f2f0;border-radius:24px;overflow:hidden;border:1px solid #ececec;">
-          <img src="/static/screenshots/network.webp" alt="Network" loading="lazy" style="display:block;width:100%;aspect-ratio:16/10;object-fit:cover;object-position:top;background:#fff;">
-          <figcaption style="padding:18px 20px 20px;">
-            <div data-i18n="gal.11.h" style="font-size:16px;font-weight:600;color:#000;margin-bottom:4px;">Global network</div>
-            <div data-i18n="gal.11.b" style="font-size:13.5px;line-height:1.5;color:#555;">Online nodes, available models, and a live geographic map.</div>
-          </figcaption>
-        </figure>
-        <figure data-reveal data-reveal-delay="260" style="margin:0;background:#f5f2f0;border-radius:24px;overflow:hidden;border:1px solid #ececec;">
-          <img src="/static/screenshots/tray.webp" alt="Tray" loading="lazy" style="display:block;width:100%;aspect-ratio:16/10;object-fit:cover;object-position:top;background:#fff;">
-          <figcaption style="padding:18px 20px 20px;">
-            <div data-i18n="gal.12.h" style="font-size:16px;font-weight:600;color:#000;margin-bottom:4px;">Tray · always-on glance</div>
-            <div data-i18n="gal.12.b" style="font-size:13.5px;line-height:1.5;color:#555;">Gateway status, TTFT, and today’s usage without opening the full app.</div>
-          </figcaption>
-        </figure>
       </div>
     </div>
   </section>
@@ -964,7 +872,6 @@
           <div style="display:flex;flex-direction:column;gap:10px;">
             <a href="#pillars" data-i18n="ft.l1" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Core features</a>
             <a href="#hub" data-i18n="ft.lHub" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Agent hub</a>
-            <a href="#gallery" data-i18n="ft.lGal" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Product tour</a>
             <a href="#onboarding" data-i18n="ft.l2" style="text-decoration:none;color:#9a9a9a;font-size:14px;">One-click connect</a>
             <a href="#routing" data-i18n="ft.l3" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Smart routing</a>
             <a href="#network" data-i18n="ft.l4" style="text-decoration:none;color:#9a9a9a;font-size:14px;">Community P2P</a>
@@ -1001,7 +908,7 @@ class Component extends DCLogic {
   state = { lang: 'en' };
 
   dict = {
-    'nav.features': '能力', 'nav.hub': '中枢', 'nav.gallery': '界面', 'nav.connect': '接入', 'nav.routing': '路由', 'nav.network': '社区',
+    'nav.features': '能力', 'nav.hub': '中枢', 'nav.connect': '接入', 'nav.routing': '路由', 'nav.network': '社区',
     'nav.circles': '圈子', 'nav.langLabel': 'EN', 'nav.signin': '登录', 'nav.download': '免费下载', 'nav.faq': '常见问题',
     'hero.badge': '你的个人 AI 中枢 · 不止是本地 LLM 网关',
     'hero.title': '看清每个 Token 的去向，<br>花得更少，<br><span style="background:linear-gradient(90deg,#FFD055 0%,#FFF0A0 45%,#FFE07A 55%,#FFD055 100%);background-size:220% 100%;animation:tbShimmer 4.5s ease-in-out infinite;padding:0 0.14em;border-radius:6px;">闲置也生息</span>。',
@@ -1011,21 +918,6 @@ class Component extends DCLogic {
     'hero.tab.dashboard': '盘点', 'hero.tab.gateway': '网关', 'hero.tab.sessions': '会话', 'hero.tab.trace': 'Trace',
     'hero.tab.provider': '供给源', 'hero.tab.assets': '资源', 'hero.tab.portrait': '画像', 'hero.tab.playground': '游乐场',
     'hero.tab.contribute': '贡献', 'hero.tab.circle': '圈子', 'hero.tab.world': '网络', 'hero.tab.device': '托盘',
-    'gal.kicker': '产品巡礼 · TOUR',
-    'gal.title': '看清中枢的每一面。',
-    'gal.sub': '从网关纳管、会话 Trace，到游乐场编排、盘点、圈子与托盘速览。',
-    'gal.1.h': '网关 · App 工具箱', 'gal.1.b': '一键安装 Claude Code、Kimi Code、Cursor、Codex 等。',
-    'gal.2.h': '会话 · 跨应用追溯', 'gal.2.b': '按应用过滤，查看 Token 与费用，支持交接与导出。',
-    'gal.3.h': 'Session Trace', 'gal.3.b': '步骤级工具、Skill、推理与 Token 明细。',
-    'gal.4.h': '供给源 · 个人 + P2P', 'gal.4.b': '个人模型测速；社区算力按积分调用。',
-    'gal.5.h': '资源 · Agent / Skill / Prompt', 'gal.5.b': '管理资源并投射到运行时智能体。',
-    'gal.6.h': '为你推荐 · 工作画像', 'gal.6.b': '基于会话的画像、智能体推荐与可分享海报。',
-    'gal.7.h': '游乐场 · 聚合编排', 'gal.7.b': '主 Agent 接任务、跑工具，并与其他智能体协同。',
-    'gal.8.h': '盘点 · 看清花费', 'gal.8.b': '请求、Token、免费命中率、费用估算与应用分布。',
-    'gal.9.h': '圈子', 'gal.9.b': '创建或加入圈子，与好友共享模型与积分。',
-    'gal.10.h': '贡献', 'gal.10.b': '把本地模型贡献到网络；密钥永不离开本机。',
-    'gal.11.h': '全球网络', 'gal.11.b': '在线节点、可用模型与地理分布地图。',
-    'gal.12.h': '托盘 · 常驻速览', 'gal.12.b': '网关状态、TTFT 与今日用量，无需打开主面板。',
     'trust.label': '已与你正在用的主流 AI 应用协同',
     'trust.new': '新支持',
     'stat.1': '一个本地端口<br>接管全部 AI 应用',
@@ -1122,7 +1014,7 @@ class Component extends DCLogic {
     'cta.sub': '一个本地地址接管全部 AI 应用与 Agent 编排，下载即用。macOS / Windows 双击安装，Linux 命令行启动。',
     'cta.primary': '免费下载', 'cta.secondary': '在 GitHub 查看',
     'ft.tag': '你的个人 AI 中枢——集本地 LLM 网关、Agent 编排与 Token 管家于一身。看清花费，花得更少，闲置也能生息。',
-    'ft.col1': '产品', 'ft.l1': '核心能力', 'ft.lHub': 'Agent 中枢', 'ft.lGal': '界面巡礼', 'ft.l2': '一键接入', 'ft.l3': '智能路由', 'ft.l4': '社区 P2P', 'ft.l5': '圈子',
+    'ft.col1': '产品', 'ft.l1': '核心能力', 'ft.lHub': 'Agent 中枢', 'ft.l2': '一键接入', 'ft.l3': '智能路由', 'ft.l4': '社区 P2P', 'ft.l5': '圈子',
     'ft.col3': '平台',
     'ft.col4': 'Wink Studio 出品', 'ft.friends.pings': 'Pings', 'ft.friends.memwink': 'Memwink',
     'faq.kicker': '常见问题',
@@ -1180,6 +1072,8 @@ class Component extends DCLogic {
     try { root.setAttribute('lang', lang === 'zh' ? 'zh-CN' : 'en'); } catch (e) {}
     const heroImg = root.querySelector('#tb-hero-dashboard[data-src-zh]');
     if (heroImg) heroImg.src = lang === 'zh' ? heroImg.dataset.srcZh : heroImg.dataset.srcEn;
+    // 预览区说明随语言刷新（保持当前 tab）
+    if (typeof this._applyHeroCaption === 'function') this._applyHeroCaption();
   }
 
   componentDidMount() {
@@ -1197,6 +1091,70 @@ class Component extends DCLogic {
     const tabs = root.querySelector('#tb-tabs');
     const TAB_KEYS = Array.from(tabs?.querySelectorAll('[data-tab]') || []).map((t) => t.dataset.tab);
     const heroImgPath = (key, lang) => `/static/img_cache/${key}${lang === 'en' ? '_en' : ''}.webp`;
+    // 各预览 tab 的标题/说明（中英）
+    const HERO_CAPS = {
+      gateway: {
+        en: { h: 'Gateway · App toolbox', b: 'One-click install Claude Code, Kimi Code, Cursor, Codex and more.' },
+        zh: { h: '网关 · App 工具箱', b: '一键安装 Claude Code、Kimi Code、Cursor、Codex 等。' },
+      },
+      sessions: {
+        en: { h: 'Sessions · cross-app trace', b: 'Filter by app, inspect tokens and cost, hand off or export.' },
+        zh: { h: '会话 · 跨应用追溯', b: '按应用过滤，查看 Token 与费用，支持交接与导出。' },
+      },
+      trace: {
+        en: { h: 'Session Trace', b: 'Step-level tools, skills, reasoning, and token breakdown.' },
+        zh: { h: 'Session Trace', b: '步骤级工具、Skill、推理与 Token 明细。' },
+      },
+      provider: {
+        en: { h: 'Providers · personal + P2P', b: 'Speed-test personal models; spend credits on community compute.' },
+        zh: { h: '供给源 · 个人 + P2P', b: '个人模型测速；社区算力按积分调用。' },
+      },
+      assets: {
+        en: { h: 'Assets · Agents / Skills / Prompts', b: 'Manage resources and project them onto runtime agents.' },
+        zh: { h: '资源 · Agent / Skill / Prompt', b: '管理资源并投射到运行时智能体。' },
+      },
+      portrait: {
+        en: { h: 'For You · work portrait', b: 'Session-derived profile with agent recommendations and shareable posters.' },
+        zh: { h: '为你推荐 · 工作画像', b: '基于会话的画像、智能体推荐与可分享海报。' },
+      },
+      playground: {
+        en: { h: 'Playground · orchestration', b: 'Main agent receives tasks, runs tools, and collaborates with peer agents.' },
+        zh: { h: '游乐场 · 聚合编排', b: '主 Agent 接任务、跑工具，并与其他智能体协同。' },
+      },
+      dashboard: {
+        en: { h: 'Usage · spend visibility', b: 'Requests, tokens, free-hit rate, cost estimates, and per-app mix.' },
+        zh: { h: '盘点 · 看清花费', b: '请求、Token、免费命中率、费用估算与应用分布。' },
+      },
+      circle: {
+        en: { h: 'Circles', b: 'Create or join circles to share models and credits with friends.' },
+        zh: { h: '圈子', b: '创建或加入圈子，与好友共享模型与积分。' },
+      },
+      contribute: {
+        en: { h: 'Contribute', b: 'Share local models to the network; keys never leave your machine.' },
+        zh: { h: '贡献', b: '把本地模型贡献到网络；密钥永不离开本机。' },
+      },
+      world: {
+        en: { h: 'Global network', b: 'Online nodes, available models, and a live geographic map.' },
+        zh: { h: '全球网络', b: '在线节点、可用模型与地理分布地图。' },
+      },
+      device: {
+        en: { h: 'Tray · always-on glance', b: "Gateway status, TTFT, and today's usage without opening the full app." },
+        zh: { h: '托盘 · 常驻速览', b: '网关状态、TTFT 与今日用量，无需打开主面板。' },
+      },
+    };
+    let currentHeroTab = TAB_KEYS[0] || 'gateway';
+    const applyHeroCaption = (key) => {
+      const k = key || currentHeroTab;
+      currentHeroTab = k;
+      const lang = this.state.lang === 'zh' ? 'zh' : 'en';
+      const cap = (HERO_CAPS[k] && HERO_CAPS[k][lang]) || (HERO_CAPS[k] && HERO_CAPS[k].en);
+      const hEl = root.querySelector('#tb-hero-cap-h');
+      const bEl = root.querySelector('#tb-hero-cap-b');
+      if (!cap) return;
+      if (hEl) hEl.textContent = cap.h;
+      if (bEl) bEl.textContent = cap.b;
+    };
+    this._applyHeroCaption = applyHeroCaption;
     const switchHeroTab = (key) => {
       if (!tabs) return;
       const lang = this.state.lang || 'en';
@@ -1219,6 +1177,7 @@ class Component extends DCLogic {
         t.style.color = active ? '#000' : '#7b7b7b';
         t.style.background = active ? '#f5f2f0' : 'transparent';
       });
+      applyHeroCaption(key);
     };
 
     let heroTabIdx = 0;
@@ -1253,6 +1212,20 @@ class Component extends DCLogic {
         heroPreview.addEventListener('mouseenter', stopHeroCarousel);
         heroPreview.addEventListener('mouseleave', startHeroCarousel);
       }
+      // ← → 切换预览 tab（输入框内不拦截）
+      const onHeroKey = (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        const tag = (e.target && e.target.tagName) || '';
+        if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag) || e.target?.isContentEditable) return;
+        if (!TAB_KEYS.length) return;
+        e.preventDefault();
+        const dir = e.key === 'ArrowRight' ? 1 : -1;
+        const next = (heroTabIdx + dir + TAB_KEYS.length) % TAB_KEYS.length;
+        switchHeroTab(TAB_KEYS[next]);
+        resetHeroCarousel(TAB_KEYS[next]);
+      };
+      window.addEventListener('keydown', onHeroKey);
+      this._heroKeyHandler = onHeroKey;
     }
 
     // language: default EN, restore saved
