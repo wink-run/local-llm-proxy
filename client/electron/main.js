@@ -2425,7 +2425,25 @@ function registerIPC() {
         };
       }).filter(a => a.calls > 0).sort((a, b) => b.calls - a.calls);
     } catch { data.app_usage = []; }
+    // Skill / 工具调用排行（会话补录）
+    try {
+      data.skill_usage = localStats.querySkillUsageStats({ days: d, limit: 20 });
+      data.tool_usage = localStats.queryToolUsageStats({ days: d, limit: 20 });
+    } catch {
+      data.skill_usage = { total: 0, items: [] };
+      data.tool_usage = { total: 0, items: [] };
+    }
     return data;
+  });
+  ipcMain.handle('localStats:skillUsage', (_e, days) => {
+    const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
+    try { return localStats.querySkillUsageStats({ days: d, limit: 20 }); }
+    catch (e) { console.error('[localStats:skillUsage]', e.message); return { total: 0, items: [] }; }
+  });
+  ipcMain.handle('localStats:toolUsage', (_e, days) => {
+    const d = Math.max(1, Math.min(365, parseInt(days, 10) || 1));
+    try { return localStats.queryToolUsageStats({ days: d, limit: 20 }); }
+    catch (e) { console.error('[localStats:toolUsage]', e.message); return { total: 0, items: [] }; }
   });
   ipcMain.handle('localStats:modelLatency', (_e, days) => {
     const d = Math.max(1, Math.min(365, parseInt(days, 10) || 7));
@@ -4389,15 +4407,21 @@ function registerIPC() {
 
   ipcMain.handle('sessions:listAll', (_e, opts = {}) => {
     try {
-      // 与 apps:detail 一致：列表前先增量补录会话文件，否则 DB 无 session_id / cost 可对账
-      try { syncSessionTelemetry(localStats); } catch {}
+      // 列表优先返回；telemetry 后台补录，避免扫盘挡住首屏
+      setImmediate(() => {
+        try { syncSessionTelemetry(localStats); } catch {}
+      });
       return sessionManager.getSessions(_sessionDeps, opts);
     }
     catch (e) { console.error('[sessions:listAll]', e.message); return []; }
   });
 
   ipcMain.handle('sessions:setMeta', (_e, payload = {}) => {
-    try { return localStats.setSessionMeta(payload); }
+    try {
+      const r = localStats.setSessionMeta(payload);
+      try { sessionManager.invalidateSessionsCache(); } catch {}
+      return r;
+    }
     catch (e) { console.error('[sessions:setMeta]', e.message); return null; }
   });
 

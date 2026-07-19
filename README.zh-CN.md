@@ -359,16 +359,83 @@ docker compose up gateway -d
 
 ## 界面预览
 
+### 网关 · 一键纳管与工具箱
+
+应用列表、今日用量，以及 App toolbox 一键安装 / 卸载 Claude Code、Kimi Code、Cursor、Codex 等。
+
+![网关 · 应用与工具箱](docs/screenshots/gateway-apps.png)
+
+### 会话 · 跨应用统一追溯
+
+按 Claude Desktop / Cursor / Kimi Code / Codex 等过滤，查看会话 Token、费用，支持交接与导出。
+
+![网关 · 会话列表](docs/screenshots/gateway-sessions.png)
+
+### Session Trace · 步骤级可观测
+
+单次会话的步骤、工具调用、Skill 使用与 Token 明细（含推理密封展示）。
+
+![Session Trace](docs/screenshots/session-trace.png)
+
+### 供给源 · 个人算力 + 社区 P2P
+
+个人账户模型测速与状态灯；社区共享模型按积分调用。
+
+![供给源](docs/screenshots/providers.png)
+
+### 资源 · Agent / Skill / Prompt
+
+纳管智能体、投射到运行时 Agent；社区「为你推荐」与工作画像。
+
+![资源 · 智能体](docs/screenshots/assets-agents.png)
+
+![资源 · 为你推荐与画像](docs/screenshots/assets-for-you.png)
+
+### 游乐场 · Agent 聚合编排
+
+主 Agent 接任务、工具流与终端协同；左侧可选 Claude Code / Codex / Cursor / Kimi Code 等运行时。
+
+![游乐场 · Agent 模式](docs/screenshots/playground.png)
+
+### 盘点 · 用量与费用
+
+请求 / Token / 免费命中率 / 费用估算；按应用分布与今日趋势。
+
+![盘点](docs/screenshots/usage.png)
+
+### 圈子 · 同好共享算力
+
+创建或加入圈子，邀请好友共享模型与积分。
+
+![圈子](docs/screenshots/circles.png)
+
+### 贡献 · 闲置额度生息
+
+把本地模型贡献到社区网络赚积分；密钥不上云。
+
+![贡献](docs/screenshots/contribute.png)
+
+### 全球网络 · 节点地图
+
+在线节点、可用模型与地理分布一览。
+
+![全球社区网络](docs/screenshots/network.png)
+
+### 托盘 · 常驻速览
+
+网关状态、各应用 TTFT / 今日用量，一键打开主面板。
+
+![托盘悬浮窗](docs/screenshots/tray.png)
+
 | 页面 | 功能 |
 |---|---|
 | **盘点** | 多维统计：应用占比、**本地源 / 社区 P2P** 分布、模型排行、压缩节省、费用估算；**工作画像分享海报** |
-| **网关** | **一键纳管** + **CLI 多账号**；按应用 / 实例绑定路由（步骤可带条件）；场景路由与供给链；调用日志 |
-| **调试 / 游乐场** | **Agent 聚合编排**：主 Agent 接任务并派发；工具流、停止续接、按块输出 |
-| **资源** | 社区推荐 **MCP / Skill / Prompt / Agent**；投射门控；Prompt 经 MCP 下发 |
-| **供给源** | **本地源**与 **社区 P2P 源**；动态目录下发；环境变量一键导入 |
-| **个人** | P2P 积分 · 订阅账户 · 多设备盘点 · 刊例价与费用估算 |
-| **配置** | 网关端口、超时、并发 · 无损压缩 · 日志 · 云端账号地址 |
-| **社区网络 / 贡献** | 节点分布、在线贡献者、结算与质量系数 |
+| **网关** | **一键纳管** + **CLI 多账号**；会话 Trace；场景路由与供给链 |
+| **调试 / 游乐场** | **Agent 聚合编排**：主 Agent 接任务并派发；工具流、停止续接 |
+| **资源** | 社区推荐 **MCP / Skill / Prompt / Agent**；投射门控；画像推荐 |
+| **供给源** | **本地源**与 **社区 P2P 源**；测速与动态目录 |
+| **圈子 / 贡献 / 网络** | 圈子共享 · 贡献节点 · 全球节点地图 |
+| **配置** | 网关端口、超时、并发 · 无损压缩 · 云端账号 |
 
 ---
 

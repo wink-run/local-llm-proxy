@@ -10,6 +10,8 @@ let _getImportStateStmt = null;
 let _setImportStateStmt = null;
 let _insertSkillCallStmt = null;
 let _deleteSkillCallsByPathStmt = null;
+let _insertToolCallStmt = null;
+let _deleteToolCallsByPathStmt = null;
 
 // 盘点费用口径：仅 api-key 计费 + provider 刊例价（无刊例价则为 0）
 const { estimatePaygCost, estimateCost } = require('./pricing');
@@ -348,6 +350,26 @@ const SKILL_CALLS_SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_skill_calls_path ON skill_calls(source_path);
 `;
 
+// 工具调用明细（会话补录 + 游乐场步骤），供盘点页 Skill / 工具统计
+const TOOL_CALLS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS tool_calls (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts           INTEGER NOT NULL,
+    agent_id     TEXT NOT NULL,
+    session_id   TEXT,
+    tool_key     TEXT NOT NULL,
+    tool_raw     TEXT,
+    tool_kind    TEXT,
+    mcp_server   TEXT,
+    data_source  TEXT,
+    source_path  TEXT,
+    call_uid     TEXT NOT NULL UNIQUE
+  );
+  CREATE INDEX IF NOT EXISTS idx_tool_calls_key_ts ON tool_calls(tool_key, ts);
+  CREATE INDEX IF NOT EXISTS idx_tool_calls_ts ON tool_calls(ts);
+  CREATE INDEX IF NOT EXISTS idx_tool_calls_path ON tool_calls(source_path);
+`;
+
 /** @param {string} dbDir  Directory that will hold local-stats.db */
 function init(dbDir) {
   if (db) return;
@@ -369,6 +391,7 @@ function init(dbDir) {
     db.exec(MCP_SCHEMA);
     db.exec(RESOURCE_SCHEMA);
     db.exec(SKILL_CALLS_SCHEMA);
+    db.exec(TOOL_CALLS_SCHEMA);
     db.exec(POST_MIGRATION); // 列补齐后再建 request_id 唯一索引
     // INSERT OR IGNORE：命中 request_id 唯一索引时静默跳过（跨来源去重），不报错、不重复计。
     _insertStmt = db.prepare(
@@ -396,6 +419,12 @@ function init(dbDir) {
       'VALUES (@ts, @agent_id, @session_id, @skill_key, @skill_raw, @data_source, @source_path, @call_uid)'
     );
     _deleteSkillCallsByPathStmt = db.prepare('DELETE FROM skill_calls WHERE source_path = ?');
+    _insertToolCallStmt = db.prepare(
+      'INSERT OR IGNORE INTO tool_calls ' +
+      '(ts, agent_id, session_id, tool_key, tool_raw, tool_kind, mcp_server, data_source, source_path, call_uid) ' +
+      'VALUES (@ts, @agent_id, @session_id, @tool_key, @tool_raw, @tool_kind, @mcp_server, @data_source, @source_path, @call_uid)'
+    );
+    _deleteToolCallsByPathStmt = db.prepare('DELETE FROM tool_calls WHERE source_path = ?');
   } catch (e) {
     console.error('[local-stats] failed to open DB:', e.message);
     try { db?.close(); } catch {}
@@ -591,6 +620,129 @@ function getSkillLastUsedMap(opts = {}) {
     console.error('[local-stats] getSkillLastUsedMap failed:', e.message);
   }
   return map;
+}
+
+/** 批量写入工具调用（INSERT OR IGNORE by call_uid） */
+function recordToolCalls(calls = []) {
+  if (!db || !_insertToolCallStmt || !calls.length) return 0;
+  let n = 0;
+  const run = db.transaction((rows) => {
+    for (const c of rows) {
+      if (!c?.tool_key || !c?.call_uid) continue;
+      try {
+        const info = _insertToolCallStmt.run({
+          ts: Number(c.ts) || Date.now(),
+          agent_id: c.agent_id || 'unknown',
+          session_id: c.session_id || null,
+          tool_key: c.tool_key,
+          tool_raw: c.tool_raw || c.tool_key,
+          tool_kind: c.tool_kind || null,
+          mcp_server: c.mcp_server || null,
+          data_source: c.data_source || null,
+          source_path: c.source_path || null,
+          call_uid: c.call_uid,
+        });
+        if (info.changes > 0) n++;
+      } catch (e) {
+        console.error('[local-stats] recordToolCall failed:', e.message);
+      }
+    }
+  });
+  try { run(calls); } catch (e) { console.error('[local-stats] recordToolCalls failed:', e.message); }
+  return n;
+}
+
+function deleteToolCallsBySourcePath(sourcePath) {
+  if (!db || !_deleteToolCallsByPathStmt || !sourcePath) return 0;
+  try {
+    const info = _deleteToolCallsByPathStmt.run(sourcePath);
+    return info.changes || 0;
+  } catch (e) {
+    console.error('[local-stats] deleteToolCallsBySourcePath failed:', e.message);
+    return 0;
+  }
+}
+
+/**
+ * 盘点：Skill 调用排行
+ * @param {{ days?: number, limit?: number }} [opts]
+ */
+function querySkillUsageStats(opts = {}) {
+  const days = Math.max(1, Math.min(365, parseInt(opts.days, 10) || 1));
+  const limit = Math.max(1, Math.min(100, parseInt(opts.limit, 10) || 20));
+  const since = sinceTsForDays(days);
+  if (!db) return { total: 0, items: [] };
+  try {
+    const totalRow = db.prepare(
+      'SELECT COUNT(*) AS n FROM skill_calls WHERE ts >= ?'
+    ).get(since);
+    const items = db.prepare(
+      'SELECT skill_key AS key, COALESCE(MAX(skill_raw), skill_key) AS name, ' +
+      'COUNT(*) AS calls, COUNT(DISTINCT agent_id) AS agents, MAX(ts) AS last_ts ' +
+      'FROM skill_calls WHERE ts >= ? GROUP BY skill_key ' +
+      'ORDER BY calls DESC, name ASC LIMIT ?'
+    ).all(since, limit);
+    return { total: Number(totalRow?.n) || 0, items };
+  } catch (e) {
+    console.error('[local-stats] querySkillUsageStats failed:', e.message);
+    return { total: 0, items: [] };
+  }
+}
+
+/**
+ * 盘点：工具调用排行（会话补录 + 游乐场 agent_task_steps）
+ * @param {{ days?: number, limit?: number }} [opts]
+ */
+function queryToolUsageStats(opts = {}) {
+  const days = Math.max(1, Math.min(365, parseInt(opts.days, 10) || 1));
+  const limit = Math.max(1, Math.min(100, parseInt(opts.limit, 10) || 20));
+  const since = sinceTsForDays(days);
+  if (!db) return { total: 0, items: [] };
+  try {
+    const counts = new Map(); // key → { key, name, calls, kind, mcp_server, last_ts }
+    const bump = (row) => {
+      const key = String(row.key || '').toLowerCase();
+      if (!key) return;
+      const prev = counts.get(key) || {
+        key, name: row.name || key, calls: 0, kind: row.kind || null,
+        mcp_server: row.mcp_server || null, last_ts: 0,
+      };
+      prev.calls += Number(row.calls) || 0;
+      prev.last_ts = Math.max(prev.last_ts, Number(row.last_ts) || 0);
+      if (!prev.name || prev.name === key) prev.name = row.name || prev.name;
+      if (!prev.kind && row.kind) prev.kind = row.kind;
+      if (!prev.mcp_server && row.mcp_server) prev.mcp_server = row.mcp_server;
+      counts.set(key, prev);
+    };
+
+    const fromTable = db.prepare(
+      'SELECT tool_key AS key, COALESCE(MAX(tool_raw), tool_key) AS name, ' +
+      'COUNT(*) AS calls, MAX(tool_kind) AS kind, MAX(mcp_server) AS mcp_server, MAX(ts) AS last_ts ' +
+      'FROM tool_calls WHERE ts >= ? GROUP BY tool_key'
+    ).all(since);
+    for (const r of fromTable) bump(r);
+
+    // 游乐场执行步骤（未入库 tool_calls 时仍可统计）
+    try {
+      const fromSteps = db.prepare(
+        "SELECT LOWER(tool_name) AS key, tool_name AS name, COUNT(*) AS calls, " +
+        "NULL AS kind, NULL AS mcp_server, MAX(created_at) AS last_ts " +
+        "FROM agent_task_steps WHERE step_type = 'tool_call' AND tool_name IS NOT NULL " +
+        "AND tool_name != '' AND created_at >= ? GROUP BY LOWER(tool_name)"
+      ).all(since);
+      for (const r of fromSteps) bump(r);
+    } catch { /* 表可能为空 */ }
+
+    const all = [...counts.values()];
+    const total = all.reduce((s, r) => s + r.calls, 0);
+    const items = all
+      .sort((a, b) => b.calls - a.calls || String(a.name).localeCompare(String(b.name)))
+      .slice(0, limit);
+    return { total, items };
+  } catch (e) {
+    console.error('[local-stats] queryToolUsageStats failed:', e.message);
+    return { total: 0, items: [] };
+  }
 }
 
 /** 不参与「模型排行」的 data_source（显式关闭 model_stats 的源） */
@@ -1084,6 +1236,8 @@ function close() {
     _enrichByRequestIdStmt = null;
     _insertSkillCallStmt = null;
     _deleteSkillCallsByPathStmt = null;
+    _insertToolCallStmt = null;
+    _deleteToolCallsByPathStmt = null;
   }
 }
 
@@ -1474,6 +1628,7 @@ module.exports = {
   getImportState, setImportState, resetSessionData, resetImportState, deleteZeroTokenSessionRows, close,
   listSessionMeta, getSessionMeta, setSessionMeta,
   recordSkillCalls, deleteSkillCallsBySourcePath, getSkillLastUsedMap,
+  recordToolCalls, deleteToolCallsBySourcePath, querySkillUsageStats, queryToolUsageStats,
   todaySinceTs, sinceTsForDays, queryGatewayInputCostRate, queryModelProviderLatency,
   reassignProviderTier, collectProviderIdVariants,
   getDb: () => db,  // Agent 聚合系统使用

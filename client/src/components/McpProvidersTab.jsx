@@ -7,6 +7,62 @@ const SUPPLY_TAB_KEY = 'tokenbank.providers.supplyTab';
 const MCP_VIEW_TAB_KEY = 'tokenbank.providers.mcpViewTab';
 const MCP_AGENT_TAB_KEY = 'tokenbank.providers.mcpAgentTab';
 
+/** 目录分组 id → i18n key（无词条时回退后端 label） */
+function localizeGroupLabel(group, t) {
+  if (!group?.id) return group?.label || '';
+  const key = `providers.mcp.group.${group.id}`;
+  const v = t(key);
+  return v === key ? (group.label || group.id) : v;
+}
+
+/** 目录项描述：按 catalogId 取词条 */
+function localizeCatalogDesc(item, t) {
+  const id = item?.catalogId || item?.id || item?.name;
+  if (!id) return item?.description || '';
+  const key = `providers.mcp.catalog.${id}.desc`;
+  const v = t(key);
+  return v === key ? (item?.description || '') : v;
+}
+
+/** 中文标签 → slug（品牌名保持原样） */
+const MCP_TAG_SLUG = {
+  内置: 'builtin',
+  编排: 'orchestrate',
+  提示词: 'prompt',
+  官方: 'official',
+  文件: 'file',
+  记忆: 'memory',
+  推理: 'reasoning',
+  演示: 'demo',
+  代码: 'code',
+  搜索: 'search',
+  抓取: 'fetch',
+  网页: 'web',
+  地图: 'maps',
+  文档: 'docs',
+  浏览器: 'browser',
+  协作: 'collab',
+  笔记: 'notes',
+  监控: 'monitor',
+  缓存: 'cache',
+};
+
+function localizeCatalogTag(tag, t) {
+  const slug = MCP_TAG_SLUG[tag];
+  if (!slug) return tag;
+  const key = `providers.mcp.tag.${slug}`;
+  const v = t(key);
+  return v === key ? tag : v;
+}
+
+/** 纳管表单字段 label */
+function localizeFieldLabel(field, t) {
+  if (!field?.key) return field?.label || '';
+  const key = `providers.mcp.field.${field.key}`;
+  const v = t(key);
+  return v === key ? (field.label || field.key) : v;
+}
+
 function readMcpAgentTab() {
   try {
     const v = localStorage.getItem(MCP_AGENT_TAB_KEY);
@@ -81,7 +137,7 @@ export default function McpProvidersTab() {
         setCatalog(catRes.catalog || []);
         setCatalogGroups(catRes.grouped || []);
       }
-      else setError(catRes.error || '加载目录失败');
+      else setError(catRes.error || t('providers.mcp.loadCatalogFailed'));
       if (srvRes.success) setServers(srvRes.servers || []);
       if (syncRes.success) setSyncStatus(syncRes);
       if (agentRes.success) {
@@ -93,7 +149,7 @@ export default function McpProvidersTab() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -220,7 +276,7 @@ export default function McpProvidersTab() {
     const singleId = installMenuServerId;
     const serverIds = singleId ? [singleId] : selectedSyncableIds;
     if (!serverIds.length) {
-      alert(singleId ? '无法安装该 MCP' : '请至少勾选一个 MCP');
+      alert(singleId ? t('providers.mcp.cannotInstall') : t('providers.mcp.selectMcpFirst'));
       return;
     }
 
@@ -254,15 +310,15 @@ export default function McpProvidersTab() {
         }
       } else {
         if (!ids.length) {
-          alert('请至少选择一个 Agent');
+          alert(t('providers.mcp.selectAgentFirst'));
           return;
         }
         res = await window.electronAPI.mcp.syncClients({ clientIds: ids, serverIds });
       }
 
       if (!res.success) {
-        setSyncMsg(res.error || '安装失败');
-        alert(res.error || '安装失败');
+        setSyncMsg(res.error || t('providers.mcp.installFailed'));
+        alert(res.error || t('providers.mcp.installFailed'));
         return;
       }
 
@@ -277,15 +333,15 @@ export default function McpProvidersTab() {
           .map(id => syncStatus?.targets?.find(t => t.id === id)?.label || id)
           .join('、');
         const parts = [];
-        if (selected.length) parts.push(`已安装到 ${addedLabels}`);
-        if (removed.length) parts.push(`已从 ${removedLabels} 移除`);
-        if (!parts.length) parts.push('未安装到任何 Agent');
+        if (selected.length) parts.push(t('providers.mcp.installedTo', { agents: addedLabels }));
+        if (removed.length) parts.push(t('providers.mcp.removedFrom', { agents: removedLabels }));
+        if (!parts.length) parts.push(t('providers.mcp.notInstalledAny'));
         alert(`${singleName}：${parts.join('；')}`);
       } else {
         const labels = ids
           .map(id => syncStatus?.targets?.find(t => t.id === id)?.label || id)
           .join('、');
-        alert(res.hint || `已将 ${serverIds.length} 个 MCP 安装到 ${labels}`);
+        alert(res.hint || t('providers.mcp.installedBatch', { n: serverIds.length, agents: labels }));
         setSelectedServerIds([]);
       }
       setSyncMsg('');
@@ -317,16 +373,16 @@ export default function McpProvidersTab() {
         }}
       >
         <div className="px-3 py-2 border-b border-zinc-100 dark:border-zinc-700">
-          <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">选择安装的 Agent</p>
+          <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">{t('providers.mcp.pickAgentsTitle')}</p>
           <p className="text-[10px] text-zinc-400 mt-0.5">
             {singleServer
-              ? `勾选=安装 ${singleServer.display_name || singleServer.name}；取消勾选=从该 Agent 移除`
-              : `已勾选 ${selectedSyncableIds.length} 个 MCP，选择目标 Agent 后安装`}
+              ? t('providers.mcp.installHintSingle', { name: singleServer.display_name || singleServer.name })
+              : t('providers.mcp.installHintBatch', { n: selectedSyncableIds.length })}
           </p>
         </div>
         <div className="py-1 max-h-56 overflow-y-auto">
           {syncWritableAgents.length === 0 ? (
-            <p className="text-xs text-zinc-400 px-3 py-2">暂无可安装的 Agent</p>
+            <p className="text-xs text-zinc-400 px-3 py-2">{t('providers.mcp.noAgents')}</p>
           ) : syncWritableAgents.map(agent => {
             const checked = syncSelectedIds.includes(agent.id);
             return (
@@ -354,7 +410,7 @@ export default function McpProvidersTab() {
             onClick={() => setSyncSelectedIds(syncWritableAgents.map(t => t.id))}
             className="text-[10px] text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
           >
-            全选
+            {t('providers.mcp.selectAll')}
           </button>
           <button
             type="button"
@@ -363,10 +419,10 @@ export default function McpProvidersTab() {
             className="text-xs px-2.5 py-1 rounded-lg bg-violet-600 text-white disabled:opacity-40 hover:bg-violet-500"
           >
             {busy
-              ? '处理中…'
+              ? t('providers.mcp.processing')
               : installMenuServerId
-                ? `确认 (${syncSelectedIds.length})`
-                : `安装 (${syncSelectedIds.length})`}
+                ? t('providers.mcp.confirmN', { n: syncSelectedIds.length })
+                : t('providers.mcp.installN', { n: syncSelectedIds.length })}
           </button>
         </div>
       </div>,
@@ -384,7 +440,11 @@ export default function McpProvidersTab() {
           disabled={!!busy || syncWritableAgents.length === 0 || selectedSyncableIds.length === 0}
           className="text-xs px-3 py-1.5 rounded-lg border border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-900/30 whitespace-nowrap disabled:opacity-40 inline-flex items-center gap-1"
         >
-          {busy === 'sync' ? '安装中…' : `安装到 Agent${selectedSyncableIds.length ? ` (${selectedSyncableIds.length})` : ''}`}
+          {busy === 'sync' ? t('providers.mcp.installing') : (
+            selectedSyncableIds.length
+              ? t('providers.mcp.installToAgentN', { n: selectedSyncableIds.length })
+              : t('providers.mcp.installToAgent')
+          )}
           <span className="text-[10px] opacity-70">▾</span>
         </button>
       </>
@@ -405,7 +465,7 @@ export default function McpProvidersTab() {
     setBusy(item.catalogId);
     const res = await window.electronAPI.mcp.installCatalog({ catalogId: item.catalogId });
     setBusy('');
-    if (!res.success) alert(res.error || '纳管失败');
+    if (!res.success) alert(res.error || t('providers.mcp.importFailed'));
     else {
       setMcpViewTab('managed');
       saveMcpViewTab('managed');
@@ -422,7 +482,7 @@ export default function McpProvidersTab() {
     });
     setBusy('');
     if (!res.success) {
-      alert(res.error || '纳管失败');
+      alert(res.error || t('providers.mcp.importFailed'));
       return;
     }
     setInstallTarget(null);
@@ -444,7 +504,7 @@ export default function McpProvidersTab() {
 
   async function handleUninstall(server) {
     if (server.builtin) return;
-    if (!confirm(`确定卸载 ${server.display_name || server.name}？`)) return;
+    if (!confirm(t('providers.mcp.uninstallConfirm', { name: server.display_name || server.name }))) return;
     setBusy(server.id);
     const res = await window.electronAPI.mcp.uninstallServer(server.id);
     setBusy('');
@@ -460,11 +520,11 @@ export default function McpProvidersTab() {
       display_name: customForm.display_name.trim() || customForm.name.trim(),
       command: customForm.command.trim(),
       args,
-      metadata: { category: 'custom', description: '自定义 MCP Server' },
+      metadata: { category: 'custom', description: t('providers.mcp.customServerDesc') },
     });
     setBusy('');
     if (!res.success) {
-      alert(res.error || '保存失败');
+      alert(res.error || t('providers.mcp.saveFailed'));
       return;
     }
     setShowCustom(false);
@@ -537,7 +597,7 @@ export default function McpProvidersTab() {
   function applyRawJsonToForm(form, text) {
     const doc = JSON.parse(text);
     if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
-      throw new Error('须为 JSON 对象');
+      throw new Error(t('providers.mcp.jsonObjectRequired'));
     }
     const hasUrl = !!(doc.url || doc.type === 'sse' || doc.type === 'http');
     const type = doc.type === 'http' || doc.type === 'sse'
@@ -568,7 +628,7 @@ export default function McpProvidersTab() {
       try {
         return { ...applyRawJsonToForm(prev, prev.rawJson), editMode: 'form' };
       } catch (e) {
-        alert(`原始 JSON 无效，无法切换到表单：${e.message}`);
+        alert(t('providers.mcp.rawJsonInvalidSwitch', { msg: e.message }));
         return prev;
       }
     });
@@ -582,7 +642,7 @@ export default function McpProvidersTab() {
       try {
         form = { ...applyRawJsonToForm(editServer, editServer.rawJson), editMode: 'json' };
       } catch (e) {
-        alert(`原始 JSON 无效：${e.message}`);
+        alert(t('providers.mcp.rawJsonInvalid', { msg: e.message }));
         return;
       }
     }
@@ -591,32 +651,36 @@ export default function McpProvidersTab() {
     let headers = {};
     try {
       env = form.envText.trim() ? JSON.parse(form.envText) : {};
-      if (!env || typeof env !== 'object' || Array.isArray(env)) throw new Error('env 须为 JSON 对象');
+      if (!env || typeof env !== 'object' || Array.isArray(env)) {
+        alert(t('providers.mcp.envObjectRequired'));
+        return;
+      }
     } catch (e) {
-      alert(`环境变量 JSON 无效：${e.message}`);
+      alert(t('providers.mcp.envJsonInvalid', { msg: e.message }));
       return;
     }
     try {
       headers = form.headersText.trim() ? JSON.parse(form.headersText) : {};
       if (!headers || typeof headers !== 'object' || Array.isArray(headers)) {
-        throw new Error('headers 须为 JSON 对象');
+        alert(t('providers.mcp.headersObjectRequired'));
+        return;
       }
     } catch (e) {
-      alert(`Headers JSON 无效：${e.message}`);
+      alert(t('providers.mcp.headersJsonInvalid', { msg: e.message }));
       return;
     }
 
     const isUrl = form.type === 'sse' || form.type === 'http';
     if (!form.name.trim()) {
-      alert('请填写 name');
+      alert(t('providers.mcp.nameRequired'));
       return;
     }
     if (isUrl && !form.url.trim()) {
-      alert('URL 类型需填写 url');
+      alert(t('providers.mcp.urlRequired'));
       return;
     }
     if (!isUrl && !form.command.trim()) {
-      alert('stdio 类型需填写 command');
+      alert(t('providers.mcp.commandRequired'));
       return;
     }
 
@@ -643,14 +707,14 @@ export default function McpProvidersTab() {
         syncInstalled: !!form.syncToAgents,
       });
       if (!res.success) {
-        alert(res.error || '保存失败');
+        alert(res.error || t('providers.mcp.saveFailed'));
         return;
       }
       const synced = (res.sync?.results || []).filter(r => r.success).map(r => r.label || r.clientId);
       if (form.syncToAgents && synced.length) {
-        alert(`已保存，并同步到：${synced.join('、')}`);
+        alert(t('providers.mcp.savedSynced', { agents: synced.join('、') }));
       } else if (form.syncToAgents && !synced.length) {
-        alert('已保存（当前无已安装 Agent，未同步）');
+        alert(t('providers.mcp.savedNoAgents'));
       }
       setEditServer(null);
       loadAll();
@@ -664,12 +728,15 @@ export default function McpProvidersTab() {
   function matchFilter(item) {
     if (!catalogFilter.trim()) return true;
     const q = catalogFilter.trim().toLowerCase();
+    const tags = item.metadata?.tags || [];
     const hay = [
       item.display_name,
       item.name,
       item.description,
+      localizeCatalogDesc(item, t),
       item.metadata?.package,
-      ...(item.metadata?.tags || []),
+      ...tags,
+      ...tags.map(tag => localizeCatalogTag(tag, t)),
       ...(item.metadata?.tools || []),
     ].filter(Boolean).join(' ').toLowerCase();
     return hay.includes(q);
@@ -691,22 +758,23 @@ export default function McpProvidersTab() {
           </div>
           {item.installed ? (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 shrink-0">
-              {item.alwaysInstalled ? '内置' : '已纳管'}
+              {item.alwaysInstalled ? t('providers.mcp.builtin') : t('providers.mcp.managedTag')}
             </span>
           ) : null}
         </div>
-        <p className="text-xs text-zinc-500 flex-1">{item.description}</p>
+        <p className="text-xs text-zinc-500 flex-1">{localizeCatalogDesc(item, t)}</p>
         {item.metadata?.tools?.length > 0 && (
           <p className="text-[10px] text-zinc-400 truncate">
-            工具: {item.metadata.tools.slice(0, 4).join(', ')}
-            {item.metadata.tools.length > 4 ? '…' : ''}
+            {t('providers.mcp.toolsLabel', {
+              tools: `${item.metadata.tools.slice(0, 4).join(', ')}${item.metadata.tools.length > 4 ? '…' : ''}`,
+            })}
           </p>
         )}
         {item.metadata?.tags?.length > 0 && (
           <div className="flex flex-wrap gap-1">
             {item.metadata.tags.map(tag => (
               <span key={tag} className="text-[10px] px-1 py-0.5 rounded bg-zinc-100 dark:bg-zinc-700 text-zinc-500">
-                {tag}
+                {localizeCatalogTag(tag, t)}
               </span>
             ))}
           </div>
@@ -718,7 +786,7 @@ export default function McpProvidersTab() {
             onClick={() => handleInstall(item)}
             className="mt-1 text-xs px-3 py-1.5 rounded-lg bg-violet-600 text-white disabled:opacity-40 hover:bg-violet-500"
           >
-            {item.installed ? '已纳管' : busy === item.catalogId ? '纳管中…' : '一键纳管'}
+            {item.installed ? t('providers.mcp.managedTag') : busy === item.catalogId ? t('providers.mcp.importing') : t('providers.mcp.oneClickImport')}
           </button>
         )}
       </div>
@@ -758,9 +826,9 @@ export default function McpProvidersTab() {
       client: 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300',
     };
     const labels = {
-      tb_sync: '通过 TB 安装',
-      tb_scanned: '客户端自配',
-      client: '客户端自配',
+      tb_sync: t('providers.mcp.sourceTb'),
+      tb_scanned: t('providers.mcp.sourceClient'),
+      client: t('providers.mcp.sourceClient'),
     };
     return (
       <span className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 ${styles[source] || styles.client}`}>
@@ -819,12 +887,14 @@ export default function McpProvidersTab() {
   function renderInstalledAgentBadges(server) {
     const installed = (server.clientTargets || []).filter(c => c.installed);
     if (!installed.length) {
-      return <span className="text-[10px] text-zinc-400">未安装到 Agent</span>;
+      return <span className="text-[10px] text-zinc-400">{t('providers.mcp.notInstalledOnAgent')}</span>;
     }
     return installed.map(c => (
       <span
         key={c.id}
-        title={`${c.label}${c.synced ? ' · 通过 TB 安装' : ' · 客户端自配'}`}
+        title={c.synced
+          ? t('providers.mcp.sourceTitleTb', { label: c.label })
+          : t('providers.mcp.sourceTitleClient', { label: c.label })}
         className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-emerald-50 dark:bg-emerald-900/30 ring-1 ring-emerald-200 dark:ring-emerald-700/60 shrink-0"
       >
         <ServiceIcon
@@ -850,7 +920,7 @@ export default function McpProvidersTab() {
               disabled={!!busy}
               onChange={() => toggleServerSelected(s.id)}
               className="mt-1 rounded border-zinc-300 dark:border-zinc-600 shrink-0"
-              title="勾选后通过「安装到 Agent」写入"
+              title={t('providers.mcp.checkToInstall')}
             />
           ) : (
             <span className="w-4 shrink-0" />
@@ -861,7 +931,7 @@ export default function McpProvidersTab() {
                 type="button"
                 disabled={!!s.builtin}
                 onClick={() => openEditServer(s)}
-                title={s.builtin ? undefined : '点击编辑配置'}
+                title={s.builtin ? undefined : t('providers.mcp.clickToEdit')}
                 className={`text-sm font-medium text-left truncate max-w-full ${
                   s.builtin
                     ? 'text-zinc-800 dark:text-zinc-200'
@@ -871,7 +941,7 @@ export default function McpProvidersTab() {
                 {s.display_name || s.name}
               </button>
               {s.builtin && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">内置</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">{t('providers.mcp.builtin')}</span>
               )}
               {managedOriginSource(s) && renderMcpSourceBadge(managedOriginSource(s))}
               <span className={`text-[10px] px-1.5 py-0.5 rounded ${
@@ -879,19 +949,26 @@ export default function McpProvidersTab() {
                   ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
                   : 'bg-zinc-100 text-zinc-500'
               }`}>
-                {s.status === 'active' ? '已启用' : '已停用'}
+                {s.status === 'active' ? t('providers.mcp.enabled') : t('providers.mcp.disabled')}
               </span>
             </div>
             {s.id !== 'tokenbank-agent-bridge' && (
               <div className="flex items-center gap-2 mt-2 flex-wrap">
-                <span className="text-[10px] text-zinc-400 shrink-0">已安装于</span>
+                <span className="text-[10px] text-zinc-400 shrink-0">{t('providers.mcp.installedOn')}</span>
                 {renderInstalledAgentBadges(s)}
               </div>
             )}
             {s.id === 'tokenbank-agent-bridge' && (
-              <p className="text-[10px] text-zinc-400 mt-2">仅游乐场编排</p>
+              <p className="text-[10px] text-zinc-400 mt-2">{t('providers.mcp.playgroundOnly')}</p>
             )}
-            <p className="text-xs text-zinc-500 mt-1">{s.metadata?.description || s.metadata?.category || s.type}</p>
+            <p className="text-xs text-zinc-500 mt-1">
+              {localizeCatalogDesc({
+                catalogId: s.name || s.id,
+                id: s.id,
+                name: s.name,
+                description: s.metadata?.description || s.metadata?.category || s.type,
+              }, t)}
+            </p>
             {s.metadata?.tools?.length > 0 && (
               <p className="text-[11px] text-zinc-400 mt-1 font-mono truncate">{s.metadata.tools.join(', ')}</p>
             )}
@@ -907,17 +984,17 @@ export default function McpProvidersTab() {
                 onClick={(e) => openRowInstallMenu(s, e)}
                 className="text-xs px-2.5 py-1 rounded-lg border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-900/30 disabled:opacity-40"
               >
-                {busy === s.id ? '安装中…' : '安装到 Agent'}
+                {busy === s.id ? t('providers.mcp.installing') : t('providers.mcp.installToAgent')}
               </button>
             )}
             <button type="button" disabled={!!busy} onClick={() => toggleStatus(s)}
               className="text-xs px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-600 hover:bg-zinc-50 dark:hover:bg-zinc-700">
-              {s.status === 'active' ? '停用' : '启用'}
+              {s.status === 'active' ? t('providers.mcp.disable') : t('providers.mcp.enable')}
             </button>
             {!s.builtin && (
               <button type="button" disabled={!!busy} onClick={() => handleUninstall(s)}
                 className="text-xs px-2.5 py-1 rounded-lg text-red-600 border border-red-200 dark:border-red-900/50 hover:bg-red-50 dark:hover:bg-red-900/20">
-                卸载
+                {t('providers.mcp.uninstall')}
               </button>
             )}
           </div>
@@ -953,7 +1030,7 @@ export default function McpProvidersTab() {
 
   if (!window.electronAPI?.mcp) {
     return (
-      <p className="text-sm text-zinc-400 py-8 text-center">MCP 管理仅桌面版可用</p>
+      <p className="text-sm text-zinc-400 py-8 text-center">{t('providers.mcp.desktopOnly')}</p>
     );
   }
 
@@ -988,7 +1065,7 @@ export default function McpProvidersTab() {
                     className="w-44 sm:w-52 text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800"
                   />
                   <span className="text-[11px] text-zinc-400 whitespace-nowrap hidden sm:inline">
-                    共 {totalCatalogCount} 项
+                    {t('providers.mcp.catalogCount', { n: totalCatalogCount })}
                   </span>
                 </>
               )}
@@ -1000,7 +1077,7 @@ export default function McpProvidersTab() {
                     onClick={() => setShowCustom(true)}
                     className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 whitespace-nowrap"
                   >
-                    + 自定义 MCP
+                    {t('providers.mcp.customMcp')}
                   </button>
                 </>
               )}
@@ -1010,12 +1087,12 @@ export default function McpProvidersTab() {
           {mcpViewTab === 'catalog' ? (
           <section className="space-y-3">
             {filteredGroups.length === 0 ? (
-              <p className="text-xs text-zinc-400 text-center py-6">无匹配项</p>
+              <p className="text-xs text-zinc-400 text-center py-6">{t('providers.mcp.noMatch')}</p>
             ) : filteredGroups.map(group => (
               <div key={group.id} className="space-y-2">
                 <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
                   <span className="w-1 h-3 rounded-full bg-violet-400" />
-                  {group.label}
+                  {localizeGroupLabel(group, t)}
                   <span className="text-zinc-400 font-normal">({group.items.length})</span>
                 </h3>
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -1031,7 +1108,7 @@ export default function McpProvidersTab() {
             <p className="text-xs text-violet-600 dark:text-violet-400 -mt-1 whitespace-pre-line">{syncMsg}</p>
           )}
           <p className="text-[11px] text-zinc-400 -mt-1 flex flex-wrap items-center gap-3">
-            <span>勾选 MCP，点击「安装到 Agent」选择目标并写入配置文件。</span>
+            <span>{t('providers.mcp.managedHint')}</span>
             {syncSelectableServers.length > 0 && (
               <label className="inline-flex items-center gap-1.5 cursor-pointer text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
                 <input
@@ -1040,7 +1117,7 @@ export default function McpProvidersTab() {
                   onChange={toggleSelectAllServers}
                   className="rounded border-zinc-300 dark:border-zinc-600"
                 />
-                全选
+                {t('providers.mcp.selectAll')}
               </label>
             )}
           </p>
@@ -1049,7 +1126,7 @@ export default function McpProvidersTab() {
               <div className="p-5 text-center space-y-2">
                 <p className="text-xs text-zinc-400">
                   {agentTab
-                    ? (activeAgent ? `${activeAgent.label} 上暂无已纳管 MCP` : t('providers.mcp.noManaged'))
+                    ? (activeAgent ? t('providers.mcp.noManagedOnAgent', { agent: activeAgent.label }) : t('providers.mcp.noManaged'))
                     : t('providers.mcp.noManaged')}
                 </p>
                 {!agentTab && (
@@ -1077,10 +1154,10 @@ export default function McpProvidersTab() {
       {installTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setInstallTarget(null)}>
           <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-md p-5 space-y-4" onClick={e => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold">纳管 {installTarget.display_name}</h3>
+            <h3 className="text-sm font-semibold">{t('providers.mcp.importTitle', { name: installTarget.display_name })}</h3>
             {(installTarget.configFields || []).map(field => (
               <div key={field.key}>
-                <label className="text-xs text-zinc-500 block mb-1">{field.label}</label>
+                <label className="text-xs text-zinc-500 block mb-1">{localizeFieldLabel(field, t)}</label>
                 <input
                   type={field.type === 'secret' ? 'password' : 'text'}
                   value={installConfig[field.key] ?? ''}
@@ -1091,8 +1168,8 @@ export default function McpProvidersTab() {
               </div>
             ))}
             <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setInstallTarget(null)} className="text-xs px-3 py-1.5 rounded-lg border">取消</button>
-              <button type="button" onClick={confirmInstall} disabled={!!busy} className="text-xs px-3 py-1.5 rounded-lg bg-violet-600 text-white">确认纳管</button>
+              <button type="button" onClick={() => setInstallTarget(null)} className="text-xs px-3 py-1.5 rounded-lg border">{t('providers.mcp.cancel')}</button>
+              <button type="button" onClick={confirmInstall} disabled={!!busy} className="text-xs px-3 py-1.5 rounded-lg bg-violet-600 text-white">{t('providers.mcp.confirmImport')}</button>
             </div>
           </div>
         </div>
@@ -1107,8 +1184,8 @@ export default function McpProvidersTab() {
           >
             <div className="flex items-center justify-between gap-2">
               <div>
-                <h3 className="text-sm font-semibold">编辑 MCP 配置</h3>
-                <p className="text-[10px] text-zinc-400 mt-0.5">修改后可同步到已安装的 Agent</p>
+                <h3 className="text-sm font-semibold">{t('providers.mcp.editTitle')}</h3>
+                <p className="text-[10px] text-zinc-400 mt-0.5">{t('providers.mcp.editHint')}</p>
               </div>
               <div className="inline-flex rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden text-[10px] shrink-0">
                 <button
@@ -1120,7 +1197,7 @@ export default function McpProvidersTab() {
                       : 'text-zinc-400 hover:text-zinc-600'
                   }`}
                 >
-                  表单
+                  {t('providers.mcp.formMode')}
                 </button>
                 <button
                   type="button"
@@ -1131,7 +1208,7 @@ export default function McpProvidersTab() {
                       : 'text-zinc-400 hover:text-zinc-600'
                   }`}
                 >
-                  原始 JSON
+                  {t('providers.mcp.rawJsonMode')}
                 </button>
               </div>
             </div>
@@ -1139,7 +1216,7 @@ export default function McpProvidersTab() {
             {editServer.editMode === 'json' ? (
               <label className="block space-y-1">
                 <span className="text-[10px] text-zinc-500">
-                  MCP 配置 JSON（含 name / type / command·args·env 或 url·headers）
+                  {t('providers.mcp.rawJsonLabel')}
                 </span>
                 <textarea
                   value={editServer.rawJson}
@@ -1152,7 +1229,7 @@ export default function McpProvidersTab() {
             ) : (
               <>
             <label className="block space-y-1">
-              <span className="text-[10px] text-zinc-500">显示名称</span>
+              <span className="text-[10px] text-zinc-500">{t('providers.mcp.displayName')}</span>
               <input
                 value={editServer.display_name}
                 onChange={e => setEditServer(f => ({ ...f, display_name: e.target.value }))}
@@ -1160,7 +1237,7 @@ export default function McpProvidersTab() {
               />
             </label>
             <label className="block space-y-1">
-              <span className="text-[10px] text-zinc-500">配置键名 (name)</span>
+              <span className="text-[10px] text-zinc-500">{t('providers.mcp.configName')}</span>
               <input
                 value={editServer.name}
                 onChange={e => setEditServer(f => ({ ...f, name: e.target.value }))}
@@ -1168,15 +1245,15 @@ export default function McpProvidersTab() {
               />
             </label>
             <label className="block space-y-1">
-              <span className="text-[10px] text-zinc-500">类型</span>
+              <span className="text-[10px] text-zinc-500">{t('providers.mcp.type')}</span>
               <select
                 value={editServer.type}
                 onChange={e => setEditServer(f => ({ ...f, type: e.target.value }))}
                 className="w-full text-sm px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800"
               >
-                <option value="stdio">stdio（command）</option>
-                <option value="sse">SSE / HTTP（url）</option>
-                <option value="http">HTTP（url）</option>
+                <option value="stdio">{t('providers.mcp.typeStdio')}</option>
+                <option value="sse">{t('providers.mcp.typeSse')}</option>
+                <option value="http">{t('providers.mcp.typeHttp')}</option>
               </select>
             </label>
             {(editServer.type === 'sse' || editServer.type === 'http') ? (
@@ -1191,7 +1268,7 @@ export default function McpProvidersTab() {
                   />
                 </label>
                 <label className="block space-y-1">
-                  <span className="text-[10px] text-zinc-500">Headers（JSON）</span>
+                  <span className="text-[10px] text-zinc-500">{t('providers.mcp.headersJson')}</span>
                   <textarea
                     value={editServer.headersText}
                     onChange={e => setEditServer(f => ({ ...f, headersText: e.target.value }))}
@@ -1211,7 +1288,7 @@ export default function McpProvidersTab() {
                   />
                 </label>
                 <label className="block space-y-1">
-                  <span className="text-[10px] text-zinc-500">args（空格分隔）</span>
+                  <span className="text-[10px] text-zinc-500">{t('providers.mcp.argsHint')}</span>
                   <input
                     value={editServer.args}
                     onChange={e => setEditServer(f => ({ ...f, args: e.target.value }))}
@@ -1219,7 +1296,7 @@ export default function McpProvidersTab() {
                   />
                 </label>
                 <label className="block space-y-1">
-                  <span className="text-[10px] text-zinc-500">env（JSON）</span>
+                  <span className="text-[10px] text-zinc-500">{t('providers.mcp.envJson')}</span>
                   <textarea
                     value={editServer.envText}
                     onChange={e => setEditServer(f => ({ ...f, envText: e.target.value }))}
@@ -1230,7 +1307,7 @@ export default function McpProvidersTab() {
               </>
             )}
             <label className="block space-y-1">
-              <span className="text-[10px] text-zinc-500">描述</span>
+              <span className="text-[10px] text-zinc-500">{t('providers.mcp.description')}</span>
               <input
                 value={editServer.description}
                 onChange={e => setEditServer(f => ({ ...f, description: e.target.value }))}
@@ -1247,20 +1324,20 @@ export default function McpProvidersTab() {
                 onChange={e => setEditServer(f => ({ ...f, syncToAgents: e.target.checked }))}
                 className="rounded border-zinc-300 dark:border-zinc-600"
               />
-              同步到已安装的 Agent
+              {t('providers.mcp.syncToAgents')}
               {editServer.installedCount > 0 && (
-                <span className="text-[10px] text-zinc-400">（{editServer.installedCount} 个）</span>
+                <span className="text-[10px] text-zinc-400">{t('providers.mcp.syncCount', { n: editServer.installedCount })}</span>
               )}
             </label>
             <div className="flex justify-end gap-2 pt-1">
-              <button type="button" onClick={() => setEditServer(null)} className="text-xs px-3 py-1.5 rounded-lg border">取消</button>
+              <button type="button" onClick={() => setEditServer(null)} className="text-xs px-3 py-1.5 rounded-lg border">{t('providers.mcp.cancel')}</button>
               <button
                 type="button"
                 onClick={saveEditServer}
                 disabled={!!busy || (editServer.editMode !== 'json' && (!editServer.name.trim() || (editServer.type !== 'stdio' ? !editServer.url.trim() : !editServer.command.trim())))}
                 className="text-xs px-3 py-1.5 rounded-lg bg-violet-600 text-white disabled:opacity-40"
               >
-                {busy === editServer.id ? '保存中…' : '保存'}
+                {busy === editServer.id ? t('providers.mcp.saving') : t('providers.mcp.save')}
               </button>
             </div>
           </div>
@@ -1271,15 +1348,15 @@ export default function McpProvidersTab() {
       {showCustom && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowCustom(false)}>
           <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-700 w-full max-w-md p-5 space-y-3" onClick={e => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold">添加自定义 MCP Server</h3>
+            <h3 className="text-sm font-semibold">{t('providers.mcp.addCustomTitle')}</h3>
             <input
-              placeholder="名称 (name)"
+              placeholder={t('providers.mcp.namePh')}
               value={customForm.name}
               onChange={e => setCustomForm(f => ({ ...f, name: e.target.value }))}
               className="w-full text-sm px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800"
             />
             <input
-              placeholder="显示名称"
+              placeholder={t('providers.mcp.displayNamePh')}
               value={customForm.display_name}
               onChange={e => setCustomForm(f => ({ ...f, display_name: e.target.value }))}
               className="w-full text-sm px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800"
@@ -1291,14 +1368,14 @@ export default function McpProvidersTab() {
               className="w-full text-sm px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 font-mono"
             />
             <input
-              placeholder="args（空格分隔）"
+              placeholder={t('providers.mcp.argsPh')}
               value={customForm.args}
               onChange={e => setCustomForm(f => ({ ...f, args: e.target.value }))}
               className="w-full text-sm px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 font-mono"
             />
             <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setShowCustom(false)} className="text-xs px-3 py-1.5 rounded-lg border">取消</button>
-              <button type="button" onClick={saveCustomServer} disabled={!!busy || !customForm.name.trim()} className="text-xs px-3 py-1.5 rounded-lg bg-violet-600 text-white">保存</button>
+              <button type="button" onClick={() => setShowCustom(false)} className="text-xs px-3 py-1.5 rounded-lg border">{t('providers.mcp.cancel')}</button>
+              <button type="button" onClick={saveCustomServer} disabled={!!busy || !customForm.name.trim()} className="text-xs px-3 py-1.5 rounded-lg bg-violet-600 text-white">{t('providers.mcp.save')}</button>
             </div>
           </div>
         </div>

@@ -2,6 +2,7 @@
 import React from 'react';
 import { resolveBrandIcon } from '../lib/brandIcons';
 import KimiAvatar from './KimiAvatar';
+import { useLang } from '../store/lang';
 
 /** 未命中品牌时的 emoji 回退 */
 const FALLBACK_ICON = {
@@ -36,7 +37,7 @@ function AgentBrandIcon({ agent, isCustom }) {
 }
 
 /** 运行中提示：呼吸绿点 */
-function RunningDot({ label = '运行中' }) {
+function RunningDot({ label }) {
   return (
     <span className="relative inline-flex w-2 h-2 shrink-0" title={label} aria-label={label}>
       <span className="absolute inset-0 rounded-full bg-emerald-400/80 animate-ping" />
@@ -55,6 +56,7 @@ export default function AgentTabBar({
   /** Set / 数组：正在执行的 session key（含 __hub__） */
   runningKeys,
 }) {
+  const { t } = useLang();
   const running = runningKeys instanceof Set
     ? runningKeys
     : new Set(Array.isArray(runningKeys) ? runningKeys : []);
@@ -72,7 +74,7 @@ export default function AgentTabBar({
     return (
       <aside className="w-44 shrink-0 border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-3">
         <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-          未检测到可用 Agent CLI，请先在 Gateway 纳管
+          {t('debug.tabs.noAgents')}
         </p>
       </aside>
     );
@@ -84,7 +86,7 @@ export default function AgentTabBar({
     <aside className="w-44 shrink-0 border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 flex flex-col min-h-0">
       <div className="shrink-0 px-3 pt-2.5 pb-1">
         <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
-          智能体
+          {t('debug.tabs.agents')}
         </p>
       </div>
 
@@ -101,12 +103,12 @@ export default function AgentTabBar({
             }
           `}
         >
-          <span className="min-w-0 flex-1 truncate">✨ 聚合入口</span>
-          {running.has('__hub__') && <RunningDot label="编排运行中" />}
+          <span className="min-w-0 flex-1 truncate">{t('debug.tabs.hub')}</span>
+          {running.has('__hub__') && <RunningDot label={t('debug.tabs.orchestrating')} />}
         </button>
         {mainAgent && !selectedAgent && (
           <p className="px-2.5 pb-1 text-[10px] text-zinc-400 dark:text-zinc-500 leading-snug">
-            主：{mainAgent.name} · 编排派发
+            {t('debug.tabs.mainDispatch', { name: mainAgent.name })}
           </p>
         )}
 
@@ -125,8 +127,8 @@ export default function AgentTabBar({
                 title={
                   isCustom && agent.runtimeName
                     ? (agent.execRuntimeName && agent.execRuntimeName !== agent.runtimeName
-                      ? `投射：${agent.runtimeName}（执行：${agent.execRuntimeName}）`
-                      : `投射：${agent.runtimeName}`)
+                      ? t('debug.tabs.projectExec', { name: agent.runtimeName, exec: agent.execRuntimeName })
+                      : t('debug.tabs.projectTo', { name: agent.runtimeName }))
                     : agent.description
                 }
                 className={`
@@ -144,7 +146,7 @@ export default function AgentTabBar({
                   <span className="flex items-center gap-1 min-w-0 leading-tight">
                     <span className="truncate">{agent.name}</span>
                     {isMain && (
-                      <span className="shrink-0 text-[10px] text-amber-500" title="主 Agent">★</span>
+                      <span className="shrink-0 text-[10px] text-amber-500" title={t('debug.tabs.mainAgent')}>★</span>
                     )}
                   </span>
                   {(isCustom && agent.runtimeName) || (!isCustom && agent.version) ? (
@@ -153,12 +155,12 @@ export default function AgentTabBar({
                     </span>
                   ) : null}
                 </span>
-                {isRunning && <RunningDot label={`${agent.name} 运行中`} />}
+                {isRunning && <RunningDot label={t('debug.tabs.runningNamed', { name: agent.name })} />}
               </button>
               {!isMain && !isCustom && onSetMainAgent && (
                 <button
                   type="button"
-                  title={`设 ${agent.name} 为主 Agent`}
+                  title={t('debug.tabs.setMain', { name: agent.name })}
                   onClick={(e) => {
                     e.stopPropagation();
                     onSetMainAgent(agent);
@@ -176,7 +178,7 @@ export default function AgentTabBar({
       {/* 紧凑底栏：仅在直调其他 Agent 时提示主 Agent */}
       {mainAgent && selectedAgent && (
         <div className="shrink-0 px-2.5 py-2 border-t border-zinc-200/80 dark:border-zinc-800 text-[10px] text-zinc-400 dark:text-zinc-500">
-          主 Agent · {mainAgent.name}
+          {t('debug.tabs.mainFooter', { name: mainAgent.name })}
         </div>
       )}
     </aside>

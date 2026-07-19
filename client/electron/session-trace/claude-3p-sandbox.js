@@ -26,26 +26,35 @@ function coworkSessionRoots() {
   ];
 }
 
-function findSessionFile(sessionId) {
-  let found = null;
+/** 一次 walk 建 sid → jsonl 路径，避免 list 时对每个会话重复树扫 */
+function buildSessionFileIndex() {
+  const map = new Map();
   const walk = (dir, depth) => {
-    if (found || depth > 7) return;
+    if (depth > 7) return;
     let entries;
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const ent of entries) {
-      if (found) return;
       const full = path.join(dir, ent.name);
       if (ent.isDirectory()) walk(full, depth + 1);
-      else if (ent.name === `${sessionId}.jsonl`) found = full;
+      else if (ent.name.endsWith('.jsonl')) {
+        const sid = ent.name.slice(0, -'.jsonl'.length);
+        if (sid && !map.has(sid)) map.set(sid, full);
+      }
     }
   };
-  for (const root of coworkSessionRoots()) { walk(root, 0); if (found) break; }
-  return found;
+  for (const root of coworkSessionRoots()) walk(root, 0);
+  return map;
+}
+
+function findSessionFile(sessionId, index) {
+  if (index?.has(sessionId)) return index.get(sessionId);
+  const built = index || buildSessionFileIndex();
+  return built.get(sessionId) || null;
 }
 
 /** 从 session jsonl 汇总 token（list 用；索引 JSON 不含 usage） */
-function scanSessionJsonlUsage(sessionId) {
-  const file = findSessionFile(sessionId);
+function scanSessionJsonlUsage(sessionId, index) {
+  const file = findSessionFile(sessionId, index);
   if (!file) return { calls: 0, inTok: 0, outTok: 0, tokens: 0 };
   let calls = 0;
   let inTok = 0;
@@ -76,7 +85,7 @@ function scanSessionJsonlUsage(sessionId) {
 
 function list({ limit = 50, sinceDays = 30 } = {}) {
   const since = Date.now() / 1000 - (sinceDays || 30) * 86400;
-  const out = [];
+  const candidates = [];
   const seen = new Set();
   for (const root of coworkSessionRoots()) {
     let accounts;
@@ -99,16 +108,16 @@ function list({ limit = 50, sinceDays = 30 } = {}) {
           seen.add(sid);
           const lastTs = Math.floor((idx.lastActivityAt || idx.createdAt || 0) / 1000);
           if (lastTs && lastTs < since) continue;
-          const usage = scanSessionJsonlUsage(sid);
-          out.push({
+          // 列表阶段先不扫 jsonl；排序截断后再补 usage
+          candidates.push({
             session_id: sid,
             project: idx.title || '(无标题)',
             project_path: null,
             context: extractContext(String(idx.initialMessage || idx.title || '')) || '(无用户消息)',
-            calls: usage.calls,
-            tokens: usage.tokens,
-            inTok: usage.inTok,
-            outTok: usage.outTok,
+            calls: 0,
+            tokens: 0,
+            inTok: 0,
+            outTok: 0,
             lastTs: lastTs || 0,
             agent: AGENT_ID,
             client: 'claude-desktop',
@@ -118,8 +127,19 @@ function list({ limit = 50, sinceDays = 30 } = {}) {
       }
     }
   }
-  out.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
-  return out.slice(0, limit);
+  candidates.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
+  const out = candidates.slice(0, limit);
+  if (!out.length) return out;
+  // 仅对展示的 Top-N 建一次路径索引并补 token
+  const fileIndex = buildSessionFileIndex();
+  for (const row of out) {
+    const usage = scanSessionJsonlUsage(row.session_id, fileIndex);
+    row.calls = usage.calls;
+    row.tokens = usage.tokens;
+    row.inTok = usage.inTok;
+    row.outTok = usage.outTok;
+  }
+  return out;
 }
 
 function trace(sessionId) {

@@ -888,7 +888,7 @@ export default function Debug() {
       const rawSteps = preferRicherSteps(patch.taskSteps || [], sess.taskSteps || []);
       const archiveSteps = closePendingToolSteps(
         rawSteps,
-        terminal === 'cancelled' ? '已中止' : '未收到结果',
+        terminal === 'cancelled' ? t('debug.agent.aborted') : t('debug.agent.noResult'),
       );
       archiveCompletedTurn(resolvedKey, {
         user: patch.currentUserPrompt || sess.currentUserPrompt,
@@ -1466,7 +1466,7 @@ export default function Debug() {
         finalizeTaskInUiRef.current?.(data.taskId, key, {
           currentTask: { id: data.taskId, status: 'cancelled' },
           currentUserPrompt: sess.currentUserPrompt,
-          taskSteps: closePendingToolSteps(sess.taskSteps || [], '已中止'),
+          taskSteps: closePendingToolSteps(sess.taskSteps || [], t('debug.agent.aborted')),
           taskResult: {
             ...(sess.taskResult || {}),
             ...(data.result || {}),
@@ -1588,7 +1588,7 @@ export default function Debug() {
   /** 停止后点「继续」：带 --resume / 进度摘要续跑 */
   function continueInterruptedAgent() {
     if (taskCanStop || !activeAgent) return;
-    const text = agentPrompt.trim() || '请从上次中断处继续，不要重复已完成的步骤。';
+    const text = agentPrompt.trim() || t('debug.agent.resumePrompt');
     executeAgent(text);
   }
 
@@ -1654,13 +1654,13 @@ export default function Debug() {
       return;
     }
     if (!agentWorkingDir.trim()) {
-      setDirError('请先选择工作目录');
+      setDirError(t('debug.agent.needWorkingDir'));
       return;
     }
     // 聚合入口：主 Agent 须支持 MCP 编排（Claude Code / Codex）
     const orchestratorAgents = new Set(['claude-code', 'codex']);
     if (isHubMode && mainAgent && !orchestratorAgents.has(mainAgent.id)) {
-      alert(`聚合派发需要主 Agent 支持 MCP 编排，当前 ${mainAgent.name} 暂不支持，请切换主 Agent`);
+      alert(t('debug.agent.hubNeedsMcp', { name: mainAgent.name }));
       return;
     }
 
@@ -1731,12 +1731,12 @@ export default function Debug() {
       } else {
         patchSession(execKey, { executing: false });
         setExecuting(false);
-        alert('执行失败: ' + (result.error || '未知错误'));
+        alert(t('debug.agent.execFailed', { msg: result.error || t('debug.agent.unknownError') }));
       }
     } catch (error) {
       setExecuting(false);
       console.error('Agent execution error:', error);
-      alert('执行失败: ' + error.message);
+      alert(t('debug.agent.execFailed', { msg: error.message }));
     }
   }
 
@@ -1760,7 +1760,7 @@ export default function Debug() {
     if (!window.electronAPI?.agent) return;
     const execKey = agentSessionKey(selectedAgent);
     const snap = readStoreSnapshot(execKey);
-    const closedSteps = closePendingToolSteps(snap.taskSteps || [], '已中止');
+    const closedSteps = closePendingToolSteps(snap.taskSteps || [], t('debug.agent.aborted'));
     const taskId = currentTask?.id || snap.currentTask?.id;
     // 停止前记下 session，取消接口也会回传已解析的 id
     let cliSid = snap.cliSessionId || snap.taskResult?.cliSessionId || null;
@@ -2052,7 +2052,7 @@ export default function Debug() {
           }
         `}
       >
-        💬 LLM 模式
+        {t('debug.modeLlm')}
       </button>
       <button
         type="button"
@@ -2065,7 +2065,7 @@ export default function Debug() {
           }
         `}
       >
-        🤖 Agent 模式
+        {t('debug.modeAgent')}
       </button>
     </div>
   );
@@ -2340,18 +2340,15 @@ export default function Debug() {
               /* 聚合入口：由主 Agent 编排 */
               !mainAgent ? (
                 <div className="flex-1 flex items-center justify-center text-center text-zinc-400 dark:text-zinc-500">
-                  <p className="text-sm">未检测到可用 Agent，请先在 Gateway 纳管</p>
+                  <p className="text-sm">{t('debug.agent.noAgents')}</p>
                 </div>
               ) : !conversationTurns.length && !currentUserPrompt && !taskSteps.length && !executing ? (
                 <div className="flex-1 flex items-start justify-center text-center text-zinc-400 dark:text-zinc-500 px-6 pt-4">
                   <div className="max-w-md">
                     <p className="text-3xl mb-2">✨</p>
-                    <p className="text-sm mb-4">
-                      聚合入口由<strong className="text-zinc-700 dark:text-zinc-300">主 Agent</strong>接收任务，
-                      后续可协调派发至其他 Agent
-                    </p>
+                    <p className="text-sm mb-4">{t('debug.agent.hubEmpty')}</p>
                     <div className="flex items-center justify-center gap-2 text-sm">
-                      <span className="text-zinc-500">主 Agent：</span>
+                      <span className="text-zinc-500">{t('debug.agent.mainAgentColon')}</span>
                       <select
                         value={mainAgentId}
                         onChange={e => {
@@ -2366,7 +2363,7 @@ export default function Debug() {
                       </select>
                     </div>
                     <p className="text-xs text-zinc-400 mt-3">
-                      也可点击左侧 Agent 旁的 ☆ 设为主 Agent
+                      {t('debug.agent.setMainHint')}
                     </p>
                   </div>
                 </div>
@@ -2378,7 +2375,7 @@ export default function Debug() {
                   status={displayTaskStatus()}
                   result={taskResult}
                   task={currentTask}
-                  agentName={`${mainAgent.name}（主 Agent）`}
+                  agentName={t('debug.agent.mainSuffix', { name: mainAgent.name })}
                   delegations={delegations}
                   agentNames={agentNameMap}
                 />
@@ -2425,11 +2422,11 @@ export default function Debug() {
                 disabled={!activeAgent}
                 className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 transition-colors"
               >
-                📁 选择目录
+                {t('debug.agent.pickDir')}
               </button>
               {isHubMode && mainAgent && (
                 <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
-                  主：{mainAgent.name}
+                  {t('debug.agent.mainShort', { name: mainAgent.name })}
                 </span>
               )}
               <span className={`flex-1 truncate text-xs font-mono ${
@@ -2437,7 +2434,7 @@ export default function Debug() {
                   ? 'text-zinc-600 dark:text-zinc-400'
                   : 'text-amber-600 dark:text-amber-400'
               }`}>
-                {agentWorkingDir || '未选择工作目录 — 执行任务前请先选择'}
+                {agentWorkingDir || t('debug.agent.noWorkingDir')}
               </span>
             </div>
             {dirError && (
@@ -2461,10 +2458,10 @@ export default function Debug() {
                   disabled={!activeAgent}
                   placeholder={
                     !activeAgent
-                      ? '请先纳管 Agent'
+                      ? t('debug.agent.needAgent')
                       : isHubMode
-                        ? `向主 Agent ${mainAgent?.name || ''} 描述协同任务…（Cmd/Ctrl+Enter 发送）`
-                        : `向 ${selectedAgent.name} 直调任务…（Cmd/Ctrl+Enter 发送）`
+                        ? t('debug.agent.hubPlaceholder', { name: mainAgent?.name || '' })
+                        : t('debug.agent.directPlaceholder', { name: selectedAgent.name })
                   }
                   rows={2}
                   className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 resize-none disabled:opacity-50"
@@ -2477,7 +2474,7 @@ export default function Debug() {
                     onClick={() => setHistoryOpen(true)}
                     className="flex-1 px-3 h-7 rounded-xl border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors text-xs whitespace-nowrap"
                   >
-                    历史会话
+                    {t('debug.agent.history')}
                   </button>
                   {(conversationTurns.length > 0 || currentUserPrompt || taskSteps.length > 0 || executing || taskCanStop) && (
                     <button
@@ -2485,7 +2482,7 @@ export default function Debug() {
                       onClick={startNewAgentSession}
                       className="flex-1 px-3 h-7 rounded-xl border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors text-xs whitespace-nowrap"
                     >
-                      新会话
+                      {t('debug.agent.newSession')}
                     </button>
                   )}
                 </div>
@@ -2496,17 +2493,17 @@ export default function Debug() {
                     className="px-4 h-9 bg-red-600 hover:bg-red-500 text-white rounded-xl flex items-center justify-center gap-2 transition-colors"
                   >
                     <span className="w-3 h-3 bg-white rounded-sm"></span>
-                    <span className="text-sm">停止</span>
+                    <span className="text-sm">{t('debug.agent.stop')}</span>
                   </button>
                 ) : canResumeContinue ? (
                   <button
                     type="button"
                     onClick={continueInterruptedAgent}
-                    title="从上次中断处续接（保留 CLI 会话上下文）"
+                    title={t('debug.agent.continueTitle')}
                     className="px-4 h-9 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white rounded-xl flex items-center justify-center gap-2 transition-colors"
                   >
                     <span className="text-sm">▶</span>
-                    <span className="text-sm">继续</span>
+                    <span className="text-sm">{t('debug.agent.continue')}</span>
                   </button>
                 ) : (
                   <button
@@ -2516,7 +2513,7 @@ export default function Debug() {
                     className="px-4 h-9 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-40 text-white rounded-xl flex items-center justify-center gap-2 transition-colors"
                   >
                     <span className="text-sm">▶</span>
-                    <span className="text-sm">执行</span>
+                    <span className="text-sm">{t('debug.agent.execute')}</span>
                   </button>
                 )}
               </div>
@@ -2532,7 +2529,7 @@ export default function Debug() {
         open={historyOpen && mode === 'agent'}
         onClose={() => setHistoryOpen(false)}
         agentKey={agentSessionKey(selectedAgent)}
-        agentLabel={isHubMode ? `聚合入口 · ${mainAgent?.name || ''}` : selectedAgent?.name}
+        agentLabel={isHubMode ? t('debug.agent.hubLabel', { name: mainAgent?.name || '' }) : selectedAgent?.name}
         listAgentId={isHubMode ? mainAgent?.id : selectedAgent?.id}
         onRestore={restoreHistorySession}
       />

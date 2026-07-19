@@ -6,6 +6,7 @@ import {
   listAgentSessionSnapshots,
 } from '../lib/debug-session-history';
 import { stepsFromTaskStatus } from '../lib/debug-agent-store';
+import { useLang } from '../store/lang';
 
 function taskMatchesSessionKey(task, sessionKey) {
   const ctx = task?.context || {};
@@ -24,6 +25,7 @@ export default function AgentSessionHistoryPanel({
   listAgentId,
   onRestore,
 }) {
+  const { t } = useLang();
   const [localItems, setLocalItems] = useState([]);
   const [dbItems, setDbItems] = useState([]);
   const [loadingDb, setLoadingDb] = useState(false);
@@ -44,22 +46,23 @@ export default function AgentSessionHistoryPanel({
         setDbItems([]);
         return;
       }
+      const untitled = t('debug.history.untitled');
       const localTaskIds = new Set(
         listAgentSessionSnapshots(agentKey).flatMap(
-          it => (it.conversationTurns || []).map(t => t.taskId).filter(Boolean),
+          it => (it.conversationTurns || []).map(tr => tr.taskId).filter(Boolean),
         ),
       );
       const rows = res.tasks
-        .filter(t => taskMatchesSessionKey(t, agentKey))
-        .filter(t => !localTaskIds.has(t.id))
-        .map(t => ({
-          id: `db_${t.id}`,
+        .filter(task => taskMatchesSessionKey(task, agentKey))
+        .filter(task => !localTaskIds.has(task.id))
+        .map(task => ({
+          id: `db_${task.id}`,
           source: 'db',
-          taskId: t.id,
-          title: String(t.prompt || '未命名任务').trim().slice(0, 52) || '未命名任务',
-          savedAt: t.completed_at || t.created_at || Date.now(),
+          taskId: task.id,
+          title: String(task.prompt || untitled).trim().slice(0, 52) || untitled,
+          savedAt: task.completed_at || task.created_at || Date.now(),
           turnCount: 1,
-          status: t.status,
+          status: task.status,
         }));
       setDbItems(rows);
     } catch {
@@ -67,7 +70,7 @@ export default function AgentSessionHistoryPanel({
     } finally {
       setLoadingDb(false);
     }
-  }, [open, agentKey, listAgentId]);
+  }, [open, agentKey, listAgentId, t]);
 
   useEffect(() => {
     if (!open) return;
@@ -132,7 +135,7 @@ export default function AgentSessionHistoryPanel({
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
           <div>
-            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">历史会话</h3>
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{t('debug.history.title')}</h3>
             <p className="text-[11px] text-zinc-500 mt-0.5">{agentLabel || agentKey}</p>
           </div>
           <button
@@ -146,12 +149,12 @@ export default function AgentSessionHistoryPanel({
 
         <div className="flex-1 overflow-y-auto px-2 py-2">
           {empty && (
-            <p className="text-center text-sm text-zinc-400 py-10">暂无历史会话</p>
+            <p className="text-center text-sm text-zinc-400 py-10">{t('debug.history.empty')}</p>
           )}
 
           {localItems.length > 0 && (
             <section className="mb-3">
-              <p className="px-2 py-1 text-[10px] font-medium text-zinc-400 uppercase tracking-wide">已保存</p>
+              <p className="px-2 py-1 text-[10px] font-medium text-zinc-400 uppercase tracking-wide">{t('debug.history.saved')}</p>
               <ul className="space-y-1">
                 {localItems.map(item => (
                   <li key={item.id}>
@@ -173,16 +176,16 @@ export default function AgentSessionHistoryPanel({
                           <p className="text-sm text-zinc-800 dark:text-zinc-200 truncate">{item.title}</p>
                           <p className="text-[11px] text-zinc-400 mt-0.5">
                             {formatSessionTime(item.savedAt)}
-                            {item.turnCount > 1 ? ` · ${item.turnCount} 轮` : ''}
+                            {item.turnCount > 1 ? t('debug.history.turns', { n: item.turnCount }) : ''}
                           </p>
                         </div>
                         <button
                           type="button"
-                          title="删除"
+                          title={t('debug.history.delete')}
                           onClick={e => handleDelete(e, item.id)}
                           className="opacity-0 group-hover:opacity-100 shrink-0 text-zinc-400 hover:text-red-500 text-xs px-1"
                         >
-                          删除
+                          {t('debug.history.delete')}
                         </button>
                       </div>
                     </div>
@@ -195,7 +198,7 @@ export default function AgentSessionHistoryPanel({
           {(loadingDb || dbItems.length > 0) && (
             <section>
               <p className="px-2 py-1 text-[10px] font-medium text-zinc-400 uppercase tracking-wide">
-                最近任务{loadingDb ? '（加载中…）' : ''}
+                {t('debug.history.recent')}{loadingDb ? t('debug.history.loading') : ''}
               </p>
               <ul className="space-y-1">
                 {dbItems.map(item => (

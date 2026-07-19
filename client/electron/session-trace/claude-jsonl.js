@@ -284,7 +284,8 @@ function findSessionFile(sessionId) {
 function list({ limit = 50, sinceDays = 30, entrypointMatch } = {}) {
   const root = ROOT();
   const since = Date.now() / 1000 - (sinceDays || 30) * 86400;
-  const out = [];
+  // 先按 mtime 收集候选，再只解析最近一批，避免 30 天窗口内全量读大 jsonl
+  const candidates = [];
 
   function scanDir(dir, projectPath) {
     let entries;
@@ -298,51 +299,60 @@ function list({ limit = 50, sinceDays = 30, entrypointMatch } = {}) {
         try { st = fs.statSync(full); } catch { continue; }
         const lastTs = Math.floor(st.mtimeMs / 1000);
         if (lastTs < since) continue;
-
-        let context = '', calls = 0, inTok = 0, outTok = 0, cwdHint = null;
-        const epCounts = {};
-        try {
-          for (const line of fs.readFileSync(full, 'utf8').split('\n')) {
-            const s = line.trim();
-            if (!s) continue;
-            let data;
-            try { data = JSON.parse(s); } catch { continue; }
-            if (!cwdHint && data.cwd) cwdHint = data.cwd;
-            if (data.type === 'user' && !context) {
-              context = extractContext(msgText(data.message || {}));
-            }
-            if (data.type === 'assistant') {
-              if (data.entrypoint) epCounts[data.entrypoint] = (epCounts[data.entrypoint] || 0) + 1;
-              calls++;
-              const u = (data.message || {}).usage || {};
-              inTok += u.input_tokens || 0;
-              outTok += u.output_tokens || 0;
-            }
-          }
-        } catch {}
-
-        const entrypoint = Object.entries(epCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
-        if (entrypointMatch && !entrypointMatch(entrypoint)) continue;
-
-        const { project, project_path } = resolveProjectName({
-          projectPath: projectPath || dir,
-          sessionFile: full,
-          agentId: AGENT_ID,
-          cwdHint,
-        });
-
-        out.push({
-          session_id: sid, project, project_path,
-          context: context || '(无用户消息)',
-          calls, tokens: inTok + outTok, inTok, outTok, lastTs,
-          agent: AGENT_ID, entrypoint,
-          client: clientFromEntrypoint(entrypoint),
-        });
+        candidates.push({ full, sid, lastTs, projectPath: projectPath || dir });
       }
     }
   }
 
   scanDir(root, null);
+  candidates.sort((a, b) => b.lastTs - a.lastTs);
+  // 有 entrypoint 过滤时多解析一些，保证筛后仍够 limit
+  const parseBudget = entrypointMatch ? Math.max(limit * 8, 80) : Math.max(limit * 3, limit);
+  const out = [];
+
+  for (const c of candidates.slice(0, parseBudget)) {
+    let context = '', calls = 0, inTok = 0, outTok = 0, cwdHint = null;
+    const epCounts = {};
+    try {
+      for (const line of fs.readFileSync(c.full, 'utf8').split('\n')) {
+        const s = line.trim();
+        if (!s) continue;
+        let data;
+        try { data = JSON.parse(s); } catch { continue; }
+        if (!cwdHint && data.cwd) cwdHint = data.cwd;
+        if (data.type === 'user' && !context) {
+          context = extractContext(msgText(data.message || {}));
+        }
+        if (data.type === 'assistant') {
+          if (data.entrypoint) epCounts[data.entrypoint] = (epCounts[data.entrypoint] || 0) + 1;
+          calls++;
+          const u = (data.message || {}).usage || {};
+          inTok += u.input_tokens || 0;
+          outTok += u.output_tokens || 0;
+        }
+      }
+    } catch {}
+
+    const entrypoint = Object.entries(epCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+    if (entrypointMatch && !entrypointMatch(entrypoint)) continue;
+
+    const { project, project_path } = resolveProjectName({
+      projectPath: c.projectPath,
+      sessionFile: c.full,
+      agentId: AGENT_ID,
+      cwdHint,
+    });
+
+    out.push({
+      session_id: c.sid, project, project_path,
+      context: context || '(无用户消息)',
+      calls, tokens: inTok + outTok, inTok, outTok, lastTs: c.lastTs,
+      agent: AGENT_ID, entrypoint,
+      client: clientFromEntrypoint(entrypoint),
+    });
+    if (out.length >= limit) break;
+  }
+
   out.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
   return out.slice(0, limit);
 }

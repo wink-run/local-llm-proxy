@@ -1,8 +1,10 @@
 // client/src/components/ExecutionResult.jsx
 // Agent 执行结果组件
 import React from 'react';
+import { useLang } from '../store/lang';
 
 export default function ExecutionResult({ result, task }) {
+  const { t } = useLang();
   if (!result) return null;
 
   const success = result.success !== false;
@@ -21,14 +23,14 @@ export default function ExecutionResult({ result, task }) {
         }
       `}>
         <span className="text-2xl">{success ? '✅' : '❌'}</span>
-        <span className="font-medium">{success ? '任务完成' : '任务失败'}</span>
+        <span className="font-medium">{success ? t('debug.result.success') : t('debug.result.failed')}</span>
       </div>
 
       {/* 错误信息 */}
       {!success && task?.error && (
         <div className="p-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
           <div className="text-sm font-medium text-red-700 dark:text-red-400 mb-2">
-            错误信息:
+            {t('debug.result.error')}
           </div>
           <div className="text-sm text-red-600 dark:text-red-400 whitespace-pre-wrap">
             {task.error}
@@ -40,7 +42,7 @@ export default function ExecutionResult({ result, task }) {
       {result.files && result.files.length > 0 && (
         <div className="p-4 rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700">
           <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-3">
-            修改的文件 ({result.files.length}):
+            {t('debug.result.files', { n: result.files.length })}
           </div>
           <div className="space-y-2">
             {result.files.map((file, index) => (
@@ -59,7 +61,7 @@ export default function ExecutionResult({ result, task }) {
                       : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
                     }
                   `}>
-                    {file.operation === 'created' ? '新建' : '修改'}
+                    {file.operation === 'created' ? t('debug.result.created') : t('debug.result.modified')}
                   </span>
                 )}
               </div>
@@ -71,13 +73,13 @@ export default function ExecutionResult({ result, task }) {
       {/* 执行统计 */}
       <div className="p-4 rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700">
         <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-3">
-          执行统计:
+          {t('debug.result.stats')}
         </div>
         <div className="grid grid-cols-2 gap-3">
           {duration && (
             <div className="flex items-center gap-2">
               <span className="text-zinc-500 dark:text-zinc-400">⏱️</span>
-              <span className="text-sm text-zinc-600 dark:text-zinc-400">耗时:</span>
+              <span className="text-sm text-zinc-600 dark:text-zinc-400">{t('debug.result.duration')}</span>
               <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
                 {duration}s
               </span>
@@ -97,7 +99,7 @@ export default function ExecutionResult({ result, task }) {
           {result.cost && (
             <div className="flex items-center gap-2">
               <span className="text-zinc-500 dark:text-zinc-400">💰</span>
-              <span className="text-sm text-zinc-600 dark:text-zinc-400">成本:</span>
+              <span className="text-sm text-zinc-600 dark:text-zinc-400">{t('debug.result.cost')}</span>
               <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
                 ${result.cost.toFixed(4)}
               </span>
@@ -107,9 +109,9 @@ export default function ExecutionResult({ result, task }) {
           {result.stepCount && (
             <div className="flex items-center gap-2">
               <span className="text-zinc-500 dark:text-zinc-400">📊</span>
-              <span className="text-sm text-zinc-600 dark:text-zinc-400">步骤:</span>
+              <span className="text-sm text-zinc-600 dark:text-zinc-400">{t('debug.result.steps')}</span>
               <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                {result.stepCount} 个
+                {t('debug.result.stepsCount', { n: result.stepCount })}
               </span>
             </div>
           )}

@@ -107,9 +107,9 @@ function list({ limit = 50, sinceDays = 30 } = {}) {
   const root = ROOT();
   const projMap = buildCursorProjectMap();
   const since = Date.now() / 1000 - (sinceDays || 30) * 86400;
-  const out = [];
+  const candidates = [];
   let projectDirs;
-  try { projectDirs = fs.readdirSync(root, { withFileTypes: true }).filter(d => d.isDirectory()); } catch { return out; }
+  try { projectDirs = fs.readdirSync(root, { withFileTypes: true }).filter(d => d.isDirectory()); } catch { return []; }
 
   for (const pd of projectDirs) {
     const { project: projectName, project_path: projectPath } = resolveCursorProject(pd.name, projMap);
@@ -120,38 +120,44 @@ function list({ limit = 50, sinceDays = 30 } = {}) {
     for (const sd of sessDirs) {
       const sid = sd.name;
       const cf = path.join(transRoot, sid, `${sid}.jsonl`);
-      if (!fs.existsSync(cf)) continue;
       let st;
       try { st = fs.statSync(cf); } catch { continue; }
       const lastTs = Math.floor(st.mtimeMs / 1000);
       if (lastTs < since) continue;
-
-      let context = '', calls = 0, inTok = 0, outTok = 0;
-      try {
-        for (const line of fs.readFileSync(cf, 'utf8').split('\n')) {
-          const s = line.trim();
-          if (!s) continue;
-          let data;
-          try { data = JSON.parse(s); } catch { continue; }
-          const role = data.role;
-          const msg = data.message || {};
-          if (role === 'user' && !context) context = extractContext(msgText(msg));
-          else if (role === 'assistant') {
-            calls++;
-            const u = msg.usage || {};
-            inTok += u.input_tokens || 0;
-            outTok += u.output_tokens || 0;
-          }
-        }
-      } catch {}
-
-      out.push({
-        session_id: sid, project: projectName, project_path: projectPath,
-        context: context || '(无用户消息)',
-        calls, tokens: inTok + outTok, inTok, outTok, lastTs,
-        agent: AGENT_ID,
-      });
+      candidates.push({ sid, cf, lastTs, projectName, projectPath });
     }
+  }
+
+  candidates.sort((a, b) => b.lastTs - a.lastTs);
+  const parseBudget = Math.max(limit * 3, limit);
+  const out = [];
+  for (const c of candidates.slice(0, parseBudget)) {
+    let context = '', calls = 0, inTok = 0, outTok = 0;
+    try {
+      for (const line of fs.readFileSync(c.cf, 'utf8').split('\n')) {
+        const s = line.trim();
+        if (!s) continue;
+        let data;
+        try { data = JSON.parse(s); } catch { continue; }
+        const role = data.role;
+        const msg = data.message || {};
+        if (role === 'user' && !context) context = extractContext(msgText(msg));
+        else if (role === 'assistant') {
+          calls++;
+          const u = msg.usage || {};
+          inTok += u.input_tokens || 0;
+          outTok += u.output_tokens || 0;
+        }
+      }
+    } catch {}
+
+    out.push({
+      session_id: c.sid, project: c.projectName, project_path: c.projectPath,
+      context: context || '(无用户消息)',
+      calls, tokens: inTok + outTok, inTok, outTok, lastTs: c.lastTs,
+      agent: AGENT_ID,
+    });
+    if (out.length >= limit) break;
   }
   out.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
   return out.slice(0, limit);

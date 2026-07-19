@@ -1,6 +1,14 @@
 /** Debug Agent 模式：模块级会话缓存，避免切换菜单/重挂载后任务 state 丢失 */
 
 import { mergeStreamText } from '../../shared/stream-text-merge.js';
+import { makeT } from '../i18n';
+
+/** 非 React 路径按 localStorage 语言取文案 */
+function uiT(key, vars) {
+  let lang = 'zh';
+  try { lang = localStorage.getItem('lang') || 'zh'; } catch { /* ignore */ }
+  return makeT(lang)(key, vars);
+}
 
 /** 将同类型步骤折叠为合并后字符数（Codex DB 按行入库会虚增条数） */
 function foldedTypeChars(steps, stepType) {
@@ -595,7 +603,8 @@ export function hasOpenToolCalls(steps = []) {
 /**
  * 任务中止/收尾时补齐未完成工具结果，避免 UI 一直显示「执行中」
  */
-export function closePendingToolSteps(steps = [], reason = '已中断') {
+export function closePendingToolSteps(steps = [], reason) {
+  const closeReason = reason || uiT('debug.agent.interrupted');
   const list = Array.isArray(steps) ? [...steps] : [];
   const openNamed = new Map(); // id → tool_name
   const anonStack = []; // { name }
@@ -615,7 +624,7 @@ export function closePendingToolSteps(steps = [], reason = '已中断') {
     list.push({
       stepType: 'tool_result',
       tool_name: name,
-      content: reason,
+      content: closeReason,
       is_error: true,
       tool_use_id: id,
       timestamp: now,
@@ -625,7 +634,7 @@ export function closePendingToolSteps(steps = [], reason = '已中断') {
     list.push({
       stepType: 'tool_result',
       tool_name: item.name,
-      content: reason,
+      content: closeReason,
       is_error: true,
       tool_use_id: null,
       timestamp: now,
@@ -726,24 +735,26 @@ export function canResumeInterruptedSession(sessionKey, workingDir) {
  */
 export function buildInterruptedContinuePrompt(userPrompt, lastTurn) {
   const base = String(userPrompt || '').trim()
-    || '请从上次中断处继续，不要重复已完成的步骤。';
+    || uiT('debug.agent.resumePrompt');
   const steps = lastTurn?.steps || [];
   if (!steps.length) return base;
   const bits = [];
   for (const s of steps) {
-    const t = s?.stepType || s?.kind;
-    if (t === 'tool_call') {
+    const stepType = s?.stepType || s?.kind;
+    if (stepType === 'tool_call') {
       const name = s.tool_name || 'tool';
       const arg = String(s.content || '').replace(/\s+/g, ' ').slice(0, 140);
-      bits.push(`· 已调用 ${name}${arg ? `: ${arg}` : ''}`);
-    } else if (t === 'tool_result' && s.is_error) {
-      bits.push(`· 工具失败: ${String(s.content || '').slice(0, 100)}`);
-    } else if (t === 'output' && String(s.content || '').trim()) {
-      bits.push(`· 输出摘要: ${String(s.content).replace(/\s+/g, ' ').slice(0, 180)}`);
+      bits.push(uiT('debug.agent.calledTool', { name, arg: arg ? `: ${arg}` : '' }));
+    } else if (stepType === 'tool_result' && s.is_error) {
+      bits.push(uiT('debug.agent.toolFailed', { msg: String(s.content || '').slice(0, 100) }));
+    } else if (stepType === 'output' && String(s.content || '').trim()) {
+      bits.push(uiT('debug.agent.outputSummary', {
+        msg: String(s.content).replace(/\s+/g, ' ').slice(0, 180),
+      }));
     }
   }
   if (!bits.length) return base;
-  return `${base}\n\n【上次中断前进度】\n${bits.slice(-10).join('\n')}`;
+  return `${base}\n\n${uiT('debug.agent.progressHeader')}\n${bits.slice(-10).join('\n')}`;
 }
 
 /** Debug Agent 列表前端缓存（stale-while-revalidate） */

@@ -1,7 +1,15 @@
 /** Debug Agent 模式：历史会话本地持久化（新会话清空后仍可恢复） */
 
+import { makeT } from '../i18n';
+
 const STORAGE_KEY = 'tokenbank.debug.agentSessions';
 const MAX_PER_AGENT = 40;
+
+function uiT(key, vars) {
+  let lang = 'zh';
+  try { lang = localStorage.getItem('lang') || 'zh'; } catch { /* ignore */ }
+  return makeT(lang)(key, vars);
+}
 
 function readStore() {
   try {
@@ -28,7 +36,7 @@ function writeStore(data) {
 /** 用首轮用户输入生成会话标题 */
 export function buildSessionTitle(turns = []) {
   const first = turns.find(t => t?.user)?.user;
-  if (!first) return '未命名会话';
+  if (!first) return uiT('debug.history.untitledSession');
   const s = String(first).trim().replace(/\s+/g, ' ');
   return s.length > 52 ? `${s.slice(0, 52)}…` : s;
 }

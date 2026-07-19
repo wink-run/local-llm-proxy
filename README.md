@@ -349,16 +349,83 @@ The `gateway-data/` volume is mounted automatically; **`local-config.json` is cr
 
 ## What's in the UI
 
+### Gateway · one-click onboarding & toolbox
+
+App list with today's usage, plus the App toolbox to install / remove Claude Code, Kimi Code, Cursor, Codex, and more.
+
+![Gateway · apps & toolbox](docs/screenshots/gateway-apps.png)
+
+### Sessions · unified cross-app trace
+
+Filter by Claude Desktop / Cursor / Kimi Code / Codex, inspect tokens and cost, hand off or export.
+
+![Gateway · sessions](docs/screenshots/gateway-sessions.png)
+
+### Session Trace · step-level observability
+
+Per-session steps, tool calls, skills used, and token breakdown (sealed reasoning when required by the API).
+
+![Session Trace](docs/screenshots/session-trace.png)
+
+### Providers · personal compute + community P2P
+
+Speed-test personal models with status lights; spend credits on community-shared models.
+
+![Providers](docs/screenshots/providers.png)
+
+### Assets · Agents / Skills / Prompts
+
+Manage agents and project them onto runtime CLIs; community “For You” picks and work portrait.
+
+![Assets · agents](docs/screenshots/assets-agents.png)
+
+![Assets · For You & portrait](docs/screenshots/assets-for-you.png)
+
+### Playground · agent orchestration
+
+Main agent receives tasks with tool streams and terminal collaboration; runtimes include Claude Code / Codex / Cursor / Kimi Code.
+
+![Playground · Agent mode](docs/screenshots/playground.png)
+
+### Usage · spend visibility
+
+Requests / tokens / free-hit rate / estimated cost; per-app mix and daily trend.
+
+![Usage](docs/screenshots/usage.png)
+
+### Circles · share compute with friends
+
+Create or join circles; invite friends to share models and credits.
+
+![Circles](docs/screenshots/circles.png)
+
+### Contribute · earn from idle quota
+
+Contribute local models to the community network for credits; keys never leave the machine.
+
+![Contribute](docs/screenshots/contribute.png)
+
+### Global network · node map
+
+Online nodes, available models, and geographic distribution.
+
+![Global community network](docs/screenshots/network.png)
+
+### Tray · always-on glance
+
+Gateway status, per-app TTFT / today’s usage; open the main panel in one click.
+
+![Tray panel](docs/screenshots/tray.png)
+
 | Page | What you can do |
 |---|---|
-| **Dashboard** | Multi-dimensional stats: app share, **local / community P2P** mix, model rankings, compression savings, cost estimates; **work-portrait share posters** |
-| **Gateway** | **One-click onboarding** + **multi-account CLI**; per-app / per-instance routes (optional conditions per step); scene routes & supply chain; call log |
-| **Debug / Playground** | **Agent orchestration**: main agent receives tasks and dispatches; tool streams, stop/resume, chunked output |
-| **Resources** | Community **MCP / Skill / Prompt / Agent** catalog; projection gating; prompts via MCP |
-| **Providers** | **Local sources** and **community P2P**; dynamic catalog; one-click env key import |
-| **Profile** | P2P credits · subscriptions · multi-device inventory · list prices & cost estimates |
-| **Config** | Gateway port, timeout, concurrency · lossless compression · logs · cloud account URL |
-| **Network / Contribute** | Node map, online contributors, settlement & quality multipliers |
+| **Usage** | Multi-dimensional stats: app share, **local / community P2P** mix, cost estimates; **work-portrait posters** |
+| **Gateway** | **One-click onboarding** + **multi-account CLI**; session Trace; scene routes & supply chain |
+| **Playground** | **Agent orchestration**: main agent receives tasks and dispatches; tool streams, stop/resume |
+| **Assets** | Community **MCP / Skill / Prompt / Agent** catalog; projection gating; portrait recommendations |
+| **Providers** | **Local sources** and **community P2P**; speed tests & dynamic catalog |
+| **Circles / Contribute / Network** | Circles · contributor nodes · global node map |
+| **Config** | Gateway port, timeout, concurrency · lossless compression · cloud account URL |
 
 ---
 

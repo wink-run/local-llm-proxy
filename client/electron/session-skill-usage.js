@@ -34,7 +34,120 @@ const BUILTIN_CLI_COMMANDS = new Set([
 // Codex：无结构化 Skill 事件，靠读 SKILL.md 路径面包屑
 const CODEX_SKILL_RE = /skills[/\\]+([\w.-]+)[/\\]+SKILL\.md/gi;
 
-const IMPORT_PREFIX = 'skill-usage::';
+// v2：同一次扫盘同时写入 skill_calls + tool_calls（换前缀以便已扫文件补录工具）
+const IMPORT_PREFIX = 'agent-usage::v2::';
+
+/** 解析工具名 → key / kind / mcp_server */
+function classifyToolName(rawName) {
+  let raw = String(rawName || '').trim();
+  if (!raw) return null;
+  if (raw.startsWith('default_api:')) raw = raw.slice('default_api:'.length);
+  // Skill 工具本身计入 skill_calls，不重复进工具榜
+  if (raw === 'Skill' || raw.toLowerCase() === 'skill' || raw === 'activate_skill') return null;
+
+  let mcpServer = null;
+  let tool = raw;
+  let kind = 'builtin';
+  if (raw.startsWith('mcp__')) {
+    const parts = raw.split('__');
+    if (parts.length >= 3 && parts[1] && parts[2]) {
+      mcpServer = parts[1];
+      tool = parts.slice(2).join('__');
+      kind = 'mcp';
+    }
+  } else if (raw.startsWith('mcp_')) {
+    const rest = raw.slice(4);
+    const i = rest.indexOf('_');
+    if (i > 0) {
+      mcpServer = rest.slice(0, i);
+      tool = rest.slice(i + 1);
+      kind = 'mcp';
+    }
+  } else if (raw.startsWith('dispatch:')) {
+    kind = 'dispatch';
+    tool = raw.slice('dispatch:'.length) || raw;
+  }
+  const key = String(tool).toLowerCase();
+  if (!key) return null;
+  return { tool_key: key, tool_raw: tool, tool_kind: kind, mcp_server: mcpServer };
+}
+
+function extractToolsFromClaudeRecord(data) {
+  const out = [];
+  if (!data || data.type !== 'assistant') return out;
+  const blocks = data.message?.content;
+  if (!Array.isArray(blocks)) return out;
+  for (const b of blocks) {
+    if (b?.type !== 'tool_use' || !b.name) continue;
+    const c = classifyToolName(b.name);
+    if (c) out.push(c);
+  }
+  return out;
+}
+
+function extractToolsFromCodexRecord(data) {
+  if (!data || data.type !== 'response_item') return [];
+  const p = data.payload || {};
+  if (p.type !== 'function_call' || !p.name) return [];
+  const c = classifyToolName(p.name);
+  return c ? [c] : [];
+}
+
+function extractToolsFromCursorRecord(data) {
+  const out = [];
+  if (!data || typeof data !== 'object') return out;
+  // Cursor transcript：assistant message 内 tool_calls / content tool_use
+  const msg = data.message || data;
+  const tcs = Array.isArray(msg.tool_calls) ? msg.tool_calls
+    : (Array.isArray(data.tool_calls) ? data.tool_calls : []);
+  for (const tc of tcs) {
+    const name = tc?.function?.name || tc?.name;
+    const c = classifyToolName(name);
+    if (c) out.push(c);
+  }
+  const blocks = msg.content;
+  if (Array.isArray(blocks)) {
+    for (const b of blocks) {
+      if (b?.type === 'tool_use' && b.name) {
+        const c = classifyToolName(b.name);
+        if (c) out.push(c);
+      }
+    }
+  }
+  // Cursor stream 形态：toolCallName / tool_name
+  const streamName = data.toolCallName || data.tool_name || data.name;
+  if (data.type === 'tool_call' || data.subtype === 'started' || data.subtype === 'completed') {
+    const c = classifyToolName(streamName);
+    if (c) out.push(c);
+  }
+  return out;
+}
+
+function extractToolsFromWorkbuddySpan(span) {
+  const type = String(span?.type || '').toLowerCase();
+  if (type !== 'tool' && type !== 'tool_call' && type !== 'function') return [];
+  const name = span.name || span.toolName || span.function?.name || span.attributes?.name;
+  const c = classifyToolName(name);
+  return c ? [c] : [];
+}
+
+function pushToolRows(acc, tools, meta) {
+  for (let i = 0; i < tools.length; i++) {
+    const t = tools[i];
+    acc.push({
+      ts: meta.ts,
+      agent_id: meta.agent_id,
+      session_id: meta.session_id,
+      tool_key: t.tool_key,
+      tool_raw: t.tool_raw,
+      tool_kind: t.tool_kind,
+      mcp_server: t.mcp_server,
+      data_source: meta.data_source,
+      source_path: meta.source_path,
+      call_uid: `${meta.uidPrefix}:${i}:${t.tool_key}`,
+    });
+  }
+}
 
 function skillNameFromInput(input) {
   if (!input || typeof input !== 'object') return null;
@@ -130,14 +243,15 @@ function sessionIdFromCodexFile(filePath) {
 }
 
 /**
- * 扫描单个 Claude jsonl，返回 skill_calls 行
- * @returns {{ calls: object[], sessionId: string }}
+ * 扫描单个 Claude jsonl
+ * @returns {{ calls: object[], tools: object[], sessionId: string }}
  */
 function scanClaudeJsonlFile(filePath, st) {
   const calls = [];
+  const tools = [];
   let sessionId = null;
   let text;
-  try { text = fs.readFileSync(filePath, 'utf8'); } catch { return { calls, sessionId: '' }; }
+  try { text = fs.readFileSync(filePath, 'utf8'); } catch { return { calls, tools, sessionId: '' }; }
   const lines = text.split(/\r?\n/);
   const fileT0 = st?.birthtimeMs || Date.now();
   const fileSpan = Math.max((st?.mtimeMs || fileT0) - fileT0, lines.length * 500);
@@ -149,10 +263,10 @@ function scanClaudeJsonlFile(filePath, st) {
     if (data.sessionId && !sessionId) sessionId = data.sessionId;
     const estTs = fileT0 + (lineIdx / Math.max(lines.length, 1)) * fileSpan;
     const ts = tsFromRecord(data, estTs);
+    const sid = sessionIdFromClaudeFile(filePath, sessionId);
     const extracted = extractSkillsFromClaudeRecord(data);
     for (let i = 0; i < extracted.length; i++) {
       const sk = extracted[i];
-      const sid = sessionIdFromClaudeFile(filePath, sessionId);
       calls.push({
         ts,
         agent_id: 'claude-code',
@@ -165,16 +279,22 @@ function scanClaudeJsonlFile(filePath, st) {
         signal: sk.signal,
       });
     }
+    pushToolRows(tools, extractToolsFromClaudeRecord(data), {
+      ts, agent_id: 'claude-code', session_id: sid,
+      data_source: 'session-claude', source_path: filePath,
+      uidPrefix: `claude-tool:${sid}:${lineIdx}`,
+    });
     lineIdx++;
   }
-  return { calls, sessionId: sessionIdFromClaudeFile(filePath, sessionId) };
+  return { calls, tools, sessionId: sessionIdFromClaudeFile(filePath, sessionId) };
 }
 
 function scanCodexJsonlFile(filePath, st) {
   const calls = [];
+  const tools = [];
   const sessionId = sessionIdFromCodexFile(filePath);
   let text;
-  try { text = fs.readFileSync(filePath, 'utf8'); } catch { return { calls, sessionId }; }
+  try { text = fs.readFileSync(filePath, 'utf8'); } catch { return { calls, tools, sessionId }; }
   const lines = text.split(/\r?\n/);
   const fileT0 = st?.birthtimeMs || Date.now();
   const fileSpan = Math.max((st?.mtimeMs || fileT0) - fileT0, lines.length * 500);
@@ -200,9 +320,14 @@ function scanCodexJsonlFile(filePath, st) {
         signal: sk.signal,
       });
     }
+    pushToolRows(tools, extractToolsFromCodexRecord(data), {
+      ts, agent_id: 'codex', session_id: sessionId,
+      data_source: 'session-codex', source_path: filePath,
+      uidPrefix: `codex-tool:${sessionId}:${lineIdx}`,
+    });
     lineIdx++;
   }
-  return { calls, sessionId };
+  return { calls, tools, sessionId };
 }
 
 function walkCursorTranscriptFiles(root, depth = 0, acc = []) {
@@ -230,9 +355,10 @@ function sessionIdFromCursorFile(filePath) {
 
 function scanCursorJsonlFile(filePath, st) {
   const calls = [];
+  const tools = [];
   const sessionId = sessionIdFromCursorFile(filePath);
   let text;
-  try { text = fs.readFileSync(filePath, 'utf8'); } catch { return { calls, sessionId }; }
+  try { text = fs.readFileSync(filePath, 'utf8'); } catch { return { calls, tools, sessionId }; }
   const lines = text.split(/\r?\n/);
   const fileT0 = st?.birthtimeMs || Date.now();
   const fileSpan = Math.max((st?.mtimeMs || fileT0) - fileT0, lines.length * 500);
@@ -258,9 +384,14 @@ function scanCursorJsonlFile(filePath, st) {
         signal: sk.signal,
       });
     }
+    pushToolRows(tools, extractToolsFromCursorRecord(data), {
+      ts, agent_id: 'cursor', session_id: sessionId,
+      data_source: 'session-cursor', source_path: filePath,
+      uidPrefix: `cursor-tool:${sessionId}:${lineIdx}`,
+    });
     lineIdx++;
   }
-  return { calls, sessionId };
+  return { calls, tools, sessionId };
 }
 
 function walkWorkbuddyTraceFiles(root, depth = 0, acc = []) {
@@ -287,9 +418,10 @@ function sessionIdFromWorkbuddyFile(filePath, doc) {
 
 function scanWorkbuddyTraceFile(filePath, st) {
   const calls = [];
+  const tools = [];
   let doc;
   try { doc = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch {
-    return { calls, sessionId: '' };
+    return { calls, tools, sessionId: '' };
   }
   const sessionId = sessionIdFromWorkbuddyFile(filePath, doc);
   const spans = Array.isArray(doc?.spans) ? doc.spans : [];
@@ -300,8 +432,6 @@ function scanWorkbuddyTraceFile(filePath, st) {
     if (!span || typeof span !== 'object') return;
     const type = String(span.type || '').toLowerCase();
     if (type !== 'tool' && type !== 'tool_call' && type !== 'function') return;
-    const extracted = extractSkillsFromWorkbuddySpan(span);
-    if (!extracted.length) return;
 
     let ts = fileT0 + (idx / Math.max(spans.length, 1)) * fileSpan;
     const rawTs = span.startedAt || span.startTime || span.timestamp;
@@ -312,6 +442,7 @@ function scanWorkbuddyTraceFile(filePath, st) {
       ts = rawTs > 1e12 ? rawTs : rawTs * 1000;
     }
 
+    const extracted = extractSkillsFromWorkbuddySpan(span);
     extracted.forEach((sk, i) => {
       calls.push({
         ts,
@@ -325,13 +456,18 @@ function scanWorkbuddyTraceFile(filePath, st) {
         signal: sk.signal,
       });
     });
+    pushToolRows(tools, extractToolsFromWorkbuddySpan(span), {
+      ts, agent_id: 'workbuddy', session_id: sessionId,
+      data_source: 'session-workbuddy', source_path: filePath,
+      uidPrefix: `workbuddy-tool:${sessionId}:${idx}`,
+    });
   });
 
-  return { calls, sessionId };
+  return { calls, tools, sessionId };
 }
 
 /**
- * 增量同步 Claude / Codex / Cursor / WorkBuddy 会话中的 Skill 调用
+ * 增量同步 Claude / Codex / Cursor / WorkBuddy 会话中的 Skill + 工具调用
  */
 function syncSkillUsage(localStats) {
   if (!localStats || typeof localStats.recordSkillCalls !== 'function') {
@@ -347,6 +483,7 @@ function syncSkillUsage(localStats) {
 
   let scanned = 0;
   let recorded = 0;
+  let toolsRecorded = 0;
   let skipped = 0;
 
   for (const { root, kind, listFiles } of roots) {
@@ -361,25 +498,31 @@ function syncSkillUsage(localStats) {
         continue;
       }
       scanned++;
-      let calls = [];
-      if (kind === 'codex') calls = scanCodexJsonlFile(file, st).calls;
-      else if (kind === 'cursor') calls = scanCursorJsonlFile(file, st).calls;
-      else if (kind === 'workbuddy') calls = scanWorkbuddyTraceFile(file, st).calls;
-      else calls = scanClaudeJsonlFile(file, st).calls;
+      let scannedFile = { calls: [], tools: [] };
+      if (kind === 'codex') scannedFile = scanCodexJsonlFile(file, st);
+      else if (kind === 'cursor') scannedFile = scanCursorJsonlFile(file, st);
+      else if (kind === 'workbuddy') scannedFile = scanWorkbuddyTraceFile(file, st);
+      else scannedFile = scanClaudeJsonlFile(file, st);
 
       // 文件变更时先清该路径旧记录，再写入，避免重复
       if (typeof localStats.deleteSkillCallsBySourcePath === 'function') {
         localStats.deleteSkillCallsBySourcePath(file);
       }
-      if (calls.length) {
-        recorded += localStats.recordSkillCalls(calls) || 0;
+      if (typeof localStats.deleteToolCallsBySourcePath === 'function') {
+        localStats.deleteToolCallsBySourcePath(file);
+      }
+      if (scannedFile.calls?.length) {
+        recorded += localStats.recordSkillCalls(scannedFile.calls) || 0;
+      }
+      if (scannedFile.tools?.length && typeof localStats.recordToolCalls === 'function') {
+        toolsRecorded += localStats.recordToolCalls(scannedFile.tools) || 0;
       }
       localStats.setImportState?.(stateKey, Math.floor(st.mtimeMs), st.size);
     }
   }
 
-  console.log('[skill-usage]', JSON.stringify({ scanned, skipped, recorded }));
-  return { ok: true, scanned, skipped, recorded };
+  console.log('[skill-usage]', JSON.stringify({ scanned, skipped, recorded, toolsRecorded }));
+  return { ok: true, scanned, skipped, recorded, toolsRecorded };
 }
 
 /** 供 Trace 统计：skills_used 形态 [{ name, count }] */
@@ -401,9 +544,12 @@ module.exports = {
   COMMAND_NAME_RE,
   BUILTIN_CLI_COMMANDS,
   CODEX_SKILL_RE,
+  classifyToolName,
   extractSkillsFromClaudeRecord,
   extractSkillsFromCodexRecord,
   extractSkillsFromCursorRecord,
+  extractToolsFromClaudeRecord,
+  extractToolsFromCodexRecord,
   scanClaudeJsonlFile,
   scanCodexJsonlFile,
   scanCursorJsonlFile,

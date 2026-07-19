@@ -189,7 +189,8 @@ function list({ limit = 50, sinceDays = 30 } = {}) {
   const root = ROOT();
   const threadNames = loadCodexThreadNames();
   const since = Date.now() / 1000 - (sinceDays || 30) * 86400;
-  const bySid = new Map();
+  // 先收集候选并按 mtime 排序，再 parse，避免旧 rollout 全量读盘
+  const candidates = [];
 
   function walk(dir) {
     let entries;
@@ -198,14 +199,25 @@ function list({ limit = 50, sinceDays = 30 } = {}) {
       const full = path.join(dir, ent.name);
       if (ent.isDirectory()) walk(full);
       else if (ent.name.startsWith('rollout-') && ent.name.endsWith('.jsonl')) {
-        const parsed = parseCodexRolloutFile(full, threadNames);
-        if ((parsed.lastTs || 0) < since) continue;
-        const prev = bySid.get(parsed.sid);
-        bySid.set(parsed.sid, prev ? mergeCodexParsed(prev, parsed) : parsed);
+        let st;
+        try { st = fs.statSync(full); } catch { continue; }
+        const lastTs = Math.floor(st.mtimeMs / 1000);
+        if (lastTs < since) continue;
+        candidates.push({ full, lastTs });
       }
     }
   }
   walk(root);
+
+  candidates.sort((a, b) => b.lastTs - a.lastTs);
+  const parseBudget = Math.max(limit * 4, limit);
+  const bySid = new Map();
+  for (const c of candidates.slice(0, parseBudget)) {
+    const parsed = parseCodexRolloutFile(c.full, threadNames);
+    if ((parsed.lastTs || 0) < since) continue;
+    const prev = bySid.get(parsed.sid);
+    bySid.set(parsed.sid, prev ? mergeCodexParsed(prev, parsed) : parsed);
+  }
 
   const out = [...bySid.values()].map(p => {
     const { project, project_path } = resolveProjectName({

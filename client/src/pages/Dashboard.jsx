@@ -92,6 +92,98 @@ function AppShareStrip({ rows, metric = 'tokens' }) {
   );
 }
 
+/** Skill / 工具调用排行（双栏） */
+function SkillToolUsageSection({ skillUsage, toolUsage, rangeLabel, loading, t }) {
+  const skillItems = skillUsage?.items || [];
+  const toolItems = toolUsage?.items || [];
+  const skillTotal = skillUsage?.total || 0;
+  const toolTotal = toolUsage?.total || 0;
+  const maxSkill = Math.max(...skillItems.map(r => r.calls), 1);
+  const maxTool = Math.max(...toolItems.map(r => r.calls), 1);
+
+  const kindLabel = (kind) => {
+    if (kind === 'mcp') return t('dashboard.toolKind.mcp');
+    if (kind === 'dispatch') return t('dashboard.toolKind.dispatch');
+    if (kind === 'builtin') return t('dashboard.toolKind.builtin');
+    return null;
+  };
+
+  const RankList = ({ items, max, emptyKey, accent }) => {
+    if (loading) {
+      return <div className="py-8 text-center text-xs text-zinc-400">…</div>;
+    }
+    if (!items.length) {
+      return <div className="py-8 text-center text-xs text-zinc-400">{t(emptyKey)}</div>;
+    }
+    return (
+      <div className="space-y-2.5">
+        {items.map((row, i) => {
+          const pct = Math.round((row.calls / max) * 100);
+          const kind = kindLabel(row.kind);
+          return (
+            <div key={row.key || row.name || i} className="space-y-1">
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="min-w-0 truncate font-medium text-zinc-700 dark:text-zinc-200" title={row.name}>
+                  {row.name}
+                  {row.mcp_server && (
+                    <span className="ml-1.5 font-normal text-zinc-400">· {row.mcp_server}</span>
+                  )}
+                  {kind && !row.mcp_server && (
+                    <span className="ml-1.5 font-normal text-zinc-400">· {kind}</span>
+                  )}
+                </span>
+                <span className="shrink-0 tabular-nums text-zinc-500">{row.calls}</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+                <div className={`h-full rounded-full ${accent}`} style={{ width: `${Math.max(pct, 2)}%` }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('dashboard.skillUsage')}</h2>
+            <p className="text-xs text-zinc-500 mt-0.5">{t('dashboard.skillUsageHint')}</p>
+          </div>
+          <div className="text-right shrink-0">
+            <div className="text-xs text-zinc-400">{rangeLabel}</div>
+            <div className="text-xs text-emerald-600 dark:text-emerald-400 mt-0.5">
+              {t('dashboard.skillToolTotal', { n: skillTotal })}
+            </div>
+          </div>
+        </div>
+        <div className="px-5 py-4">
+          <RankList items={skillItems} max={maxSkill} emptyKey="dashboard.skillUsageEmpty" accent="bg-emerald-500" />
+        </div>
+      </div>
+      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('dashboard.toolUsage')}</h2>
+            <p className="text-xs text-zinc-500 mt-0.5">{t('dashboard.toolUsageHint')}</p>
+          </div>
+          <div className="text-right shrink-0">
+            <div className="text-xs text-zinc-400">{rangeLabel}</div>
+            <div className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+              {t('dashboard.skillToolTotal', { n: toolTotal })}
+            </div>
+          </div>
+        </div>
+        <div className="px-5 py-4">
+          <RankList items={toolItems} max={maxTool} emptyKey="dashboard.toolUsageEmpty" accent="bg-amber-500" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AppUsageSection({ rows, rangeLabel, loading, sortBy, onSortBy, t }) {
   const { fmtCost } = useCurrency();
   const maxCalls = Math.max(...(rows || []).map(r => r.calls), 1);
@@ -457,6 +549,8 @@ export default function Dashboard() {
   const [range, setRange]         = useState('today');
   const [localData, setLocalData] = useState(null);
   const [appsUsage, setAppsUsage] = useState([]);
+  const [skillUsage, setSkillUsage] = useState({ total: 0, items: [] });
+  const [toolUsage, setToolUsage] = useState({ total: 0, items: [] });
   const [billableSubs, setBillableSubs] = useState([]);
   const [billingAccounts, setBillingAccounts] = useState({});
   const [usageSort, setUsageSort] = useState('calls');
@@ -489,11 +583,15 @@ export default function Dashboard() {
         } else {
           setAppsUsage([]);
         }
+        setSkillUsage(data.skill_usage || { total: 0, items: [] });
+        setToolUsage(data.tool_usage || { total: 0, items: [] });
       } else {
         const r = await fetch(`/api/local-stats?days=${days}`);
         if (!r.ok) throw new Error(`local-stats ${r.status}`);
         data = await r.json();
         setAppsUsage([]);
+        setSkillUsage(data.skill_usage || { total: 0, items: [] });
+        setToolUsage(data.tool_usage || { total: 0, items: [] });
       }
 
       setLocalData(enrichDashboardBilling(data, payg, days, billableSubsList, catalog));
@@ -643,6 +741,14 @@ export default function Dashboard() {
         loading={loading}
         sortBy={usageSort}
         onSortBy={setUsageSort}
+        t={t}
+      />
+
+      <SkillToolUsageSection
+        skillUsage={skillUsage}
+        toolUsage={toolUsage}
+        rangeLabel={rangeLabel}
+        loading={loading}
         t={t}
       />
 

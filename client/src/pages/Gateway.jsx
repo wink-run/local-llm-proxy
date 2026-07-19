@@ -1899,10 +1899,15 @@ function SessionManager() {
   }, [kStatus]);
 
   const setMeta = async (row, patch) => {
+    // 乐观更新本地行，避免收藏/标签每次触发全量扫盘
+    setRows(prev => prev.map(r => (
+      r.agent_id === row.agent_id && r.session_id === row.session_id
+        ? { ...r, ...patch }
+        : r
+    )));
     await window.electronAPI.sessions.setMeta({
       agent_id: row.agent_id, session_id: row.session_id, ...patch,
     });
-    reload();
   };
 
   const flash = msg => { setNotice(msg); setTimeout(() => setNotice(''), 2500); };
@@ -4464,7 +4469,8 @@ export default function Gateway() {
   const [network, setNetwork]   = useState(null);   // /public/network 快照：路由日志把 worker_id join 成分享者
   const [selectedLog, setSelectedLog] = useState(null);
   const [restarting, setRestarting] = useState(false);
-  const [mainTab, setMainTab]   = useState(0);   // 0=应用列表 1=场景路由
+  const [mainTab, setMainTab]   = useState(0);   // 0=应用列表 1=场景路由 2=会话
+  const [sessionsMounted, setSessionsMounted] = useState(false); // 首次进入会话 Tab 后保持挂载
 
   // Scene routing
   const [routes, setRoutes]               = useState([]);
@@ -4739,7 +4745,10 @@ export default function Gateway() {
               </svg>
             )},
           ].map(({ label, icon }, i) => (
-            <button key={i} onClick={() => setMainTab(i)}
+            <button key={i} onClick={() => {
+              setMainTab(i);
+              if (i === 2) setSessionsMounted(true);
+            }}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-xs font-medium transition-all ${mainTab === i
                 ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-sm'
                 : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'}`}>
@@ -4866,8 +4875,12 @@ export default function Gateway() {
         </div>
         )}
 
-        {/* Tab2: 会话管理 */}
-        {mainTab === 2 && <SessionManager />}
+        {/* Tab2: 会话管理 — 首次进入后保持挂载，避免切 Tab 反复扫盘 */}
+        {sessionsMounted && (
+          <div className={mainTab === 2 ? '' : 'hidden'}>
+            <SessionManager />
+          </div>
+        )}
       </div>
 
       {/* 路由明细 — 仅在「场景路由」Tab 显示，应用列表 Tab 不显示 */}

@@ -210,6 +210,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     todaySummary: () => ipcRenderer.invoke('localStats:todaySummary'),
     compression: (days) => ipcRenderer.invoke('localStats:compression', days),
     appsUsage: (days) => ipcRenderer.invoke('localStats:appsUsage', days),
+    skillUsage: (days) => ipcRenderer.invoke('localStats:skillUsage', days),
+    toolUsage: (days) => ipcRenderer.invoke('localStats:toolUsage', days),
     reassignProviderTier: (providerId, tier) =>
       ipcRenderer.invoke('localStats:reassignProviderTier', providerId, tier),
     onChanged: (cb) => {

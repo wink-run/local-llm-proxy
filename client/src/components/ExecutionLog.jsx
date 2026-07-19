@@ -12,6 +12,7 @@ import {
   findUserFacingStart,
 } from '../../shared/stream-text-merge.js';
 import { MarkdownContent, StreamMarkdownContent } from './RichMediaContent';
+import { useLang } from '../store/lang';
 
 /** 启动/Hook 类系统事件：只进「正在执行」细节，不单独占卡片 */
 function isEphemeralSystemEvent(ev) {
@@ -72,15 +73,18 @@ function redrawThinkingOutputPairs(items) {
   return out.filter(Boolean);
 }
 
-const STEP_META = {
-  thinking: { icon: '💭', label: '推理', accent: 'border-amber-200 bg-amber-50/60 dark:border-amber-800/40 dark:bg-amber-900/15' },
-  tool_call: { icon: '🔧', label: '工具调用', accent: 'border-amber-200 bg-amber-50/60 dark:border-amber-800/40 dark:bg-amber-900/15' },
-  tool_result: { icon: '📤', label: '工具结果', accent: 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-800/40 dark:bg-emerald-900/15' },
-  code_edit: { icon: '✏️', label: '代码编辑', accent: 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-800/40 dark:bg-emerald-900/15' },
-  terminal: { icon: '🏃', label: '终端', accent: 'border-zinc-300 bg-zinc-900/90 dark:border-zinc-600 text-zinc-100' },
-  system_event: { icon: '🔄', label: '系统', accent: 'border-sky-200 bg-sky-50/50 dark:border-sky-800/40 dark:bg-sky-900/15' },
-  output: { icon: '💬', label: '回复', accent: '' },
-};
+/** 步骤类型元数据（标签随语言切换） */
+function getStepMeta(t) {
+  return {
+    thinking: { icon: '💭', label: t('debug.log.thinking'), accent: 'border-amber-200 bg-amber-50/60 dark:border-amber-800/40 dark:bg-amber-900/15' },
+    tool_call: { icon: '🔧', label: t('debug.log.toolCall'), accent: 'border-amber-200 bg-amber-50/60 dark:border-amber-800/40 dark:bg-amber-900/15' },
+    tool_result: { icon: '📤', label: t('debug.log.toolResult'), accent: 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-800/40 dark:bg-emerald-900/15' },
+    code_edit: { icon: '✏️', label: t('debug.log.codeEdit'), accent: 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-800/40 dark:bg-emerald-900/15' },
+    terminal: { icon: '🏃', label: t('debug.log.terminal'), accent: 'border-zinc-300 bg-zinc-900/90 dark:border-zinc-600 text-zinc-100' },
+    system_event: { icon: '🔄', label: t('debug.log.system'), accent: 'border-sky-200 bg-sky-50/50 dark:border-sky-800/40 dark:bg-sky-900/15' },
+    output: { icon: '💬', label: t('debug.log.reply'), accent: '' },
+  };
+}
 
 /** 合并连续流式 output/thinking 片段 */
 function mergeStreamingContents(steps) {
@@ -612,6 +616,7 @@ function isLikelyFilePath(raw) {
 
 /** 任务完成卡片：展示摘要与修改文件，支持长内容滚动 */
 function TaskCompletionCard({ result, task }) {
+  const { t } = useLang();
   const [summaryOpen, setSummaryOpen] = useState(false);
   const summary = normalizeDisplayText(result?.summary || result?.output || '');
 
@@ -633,7 +638,7 @@ function TaskCompletionCard({ result, task }) {
   return (
     <div className="rounded-xl border border-green-200 dark:border-green-800/50 bg-green-50/60 dark:bg-green-900/15 px-4 py-3">
       <div className="flex items-center gap-2 text-sm font-medium text-green-700 dark:text-green-400 mb-2">
-        <span>✅</span> 任务完成
+        <span>✅</span> {t('debug.log.taskDone')}
         {duration && (
           <span className="text-xs font-normal text-green-600/80 dark:text-green-500/80">
             · {duration}s
@@ -648,7 +653,7 @@ function TaskCompletionCard({ result, task }) {
             onClick={() => setSummaryOpen(v => !v)}
             className="flex items-center gap-1.5 text-xs font-medium text-green-800/90 dark:text-green-300/90 mb-1"
           >
-            <span>📋</span> 执行摘要
+            <span>📋</span> {t('debug.log.summary')}
             <span className="text-zinc-400">{summaryOpen ? '▾' : '▸'}</span>
           </button>
           {summaryOpen && (
@@ -661,7 +666,7 @@ function TaskCompletionCard({ result, task }) {
 
       {files.length > 0 && (
         <div className="space-y-1 mt-2">
-          <div className="text-xs font-medium text-green-800/80 dark:text-green-400/80 mb-1">修改的文件</div>
+          <div className="text-xs font-medium text-green-800/80 dark:text-green-400/80 mb-1">{t('debug.log.changedFiles')}</div>
           {files.map((f, idx) => (
             <div key={idx} className="flex items-start gap-2 text-xs font-mono text-zinc-600 dark:text-zinc-400">
               <span className="shrink-0">{f.operation === 'created' ? '📝' : '✏️'}</span>
@@ -684,40 +689,40 @@ function formatRetryDelay(ms) {
 }
 
 /** 系统事件文案（api_retry 等） */
-function describeSystemEvent(ev) {
-  if (!ev) return { title: '系统事件', detail: '' };
+function describeSystemEvent(ev, t) {
+  if (!ev) return { title: t('debug.log.systemEvent'), detail: '' };
   if (ev.system_subtype === 'api_retry') {
     const attempt = ev.attempt ?? '?';
     const max = ev.max_retries ?? '?';
     const status = ev.error_status != null ? String(ev.error_status) : '—';
     return {
-      title: `API 重试 ${attempt}/${max}`,
-      detail: `HTTP ${status} · ${formatRetryDelay(ev.retry_delay_ms)} 后重试`,
+      title: t('debug.log.apiRetry', { attempt, max }),
+      detail: t('debug.log.apiRetryDetail', { status, delay: formatRetryDelay(ev.retry_delay_ms) }),
       badge: status,
     };
   }
   if (ev.system_subtype === 'claude_connector_warning') {
     return {
-      title: 'Claude 连接器提示',
+      title: t('debug.log.connectorHint'),
       detail: ev.content || ev.message || '',
       badge: null,
     };
   }
   if (ev.system_subtype === 'process_started') {
     return {
-      title: '已启动',
-      detail: ev.message || ev.content || '等待模型流式输出…',
+      title: t('debug.log.started'),
+      detail: ev.message || ev.content || t('debug.log.waitStream'),
       badge: null,
     };
   }
   const msg = ev.message || ev.content || '';
-  return { title: '系统', detail: msg, badge: null };
+  return { title: t('debug.log.system'), detail: msg, badge: null };
 }
 
 /** 供「正在执行」条展示的一行系统细节 */
-function formatSystemStatusLine(ev) {
+function formatSystemStatusLine(ev, t) {
   if (!ev) return '';
-  const info = describeSystemEvent(ev);
+  const info = describeSystemEvent(ev, t);
   if (ev.system_subtype === 'api_retry') {
     return [info.title, info.detail].filter(Boolean).join(' · ');
   }
@@ -726,7 +731,8 @@ function formatSystemStatusLine(ev) {
 
 /** 单条系统事件 */
 function SystemEventRow({ ev, index }) {
-  const info = describeSystemEvent(ev);
+  const { t } = useLang();
+  const info = describeSystemEvent(ev, t);
   return (
     <div className="flex items-center gap-2.5 py-1.5 px-2 rounded-lg bg-white/70 dark:bg-zinc-900/50 border border-sky-100/80 dark:border-sky-800/30">
       <span className="w-5 h-5 shrink-0 rounded-full bg-sky-100 dark:bg-sky-900/50 text-[10px] font-semibold text-sky-700 dark:text-sky-300 flex items-center justify-center">
@@ -749,8 +755,9 @@ function SystemEventRow({ ev, index }) {
 
 /** 系统事件卡片（单条） */
 function SystemEventCard({ step }) {
-  const info = describeSystemEvent(step);
-  const meta = STEP_META.system_event;
+  const { t } = useLang();
+  const info = describeSystemEvent(step, t);
+  const meta = getStepMeta(t).system_event;
 
   return (
     <div className="flex justify-start w-full">
@@ -770,13 +777,14 @@ function SystemEventCard({ step }) {
 
 /** 合并连续系统事件（如多次 API 重试） */
 function SystemEventGroupCard({ item }) {
+  const { t } = useLang();
   const events = item.events || [];
   const retries = events.filter(e => e.system_subtype === 'api_retry');
   const title = retries.length
-    ? `API 重试 · ${retries.length} 次`
-    : `系统事件 · ${events.length} 条`;
+    ? t('debug.log.apiRetryGroup', { n: retries.length })
+    : t('debug.log.systemGroup', { n: events.length });
   const [open, setOpen] = useState(true);
-  const meta = STEP_META.system_event;
+  const meta = getStepMeta(t).system_event;
 
   return (
     <div className="flex justify-start w-full">
@@ -789,7 +797,7 @@ function SystemEventGroupCard({ item }) {
           <span>{meta.icon}</span>
           <span className="text-xs font-medium text-sky-800 dark:text-sky-200">{title}</span>
           <span className="text-[10px] text-sky-600/70 dark:text-sky-400/70">
-            上游暂时不可用，约 3s 后自动重试
+            {t('debug.log.retryHint')}
           </span>
           <span className="ml-auto text-[10px] text-zinc-400 shrink-0">{formatTime(item.timestamp)}</span>
           <span className="text-xs text-zinc-400 shrink-0">{open ? '▾' : '▸'}</span>
@@ -806,26 +814,28 @@ function SystemEventGroupCard({ item }) {
   );
 }
 
-/** Claude / Codex 常见工具 → 中文友好名（对齐 Tutti TOOL_NAME_TRANSLATION_KEYS） */
-const TOOL_FRIENDLY_LABELS = {
-  bash: '执行命令',
-  shell: '执行命令',
-  read: '读取文件',
-  write: '写入文件',
-  edit: '编辑文件',
-  multiedit: '批量编辑',
-  grep: '搜索内容',
-  glob: '查找文件',
-  ls: '列出目录',
-  askuserquestion: '询问用户',
-  todowrite: '更新待办',
-  todoread: '读取待办',
-  skill: 'Skill',
-  task: '子任务',
-  webfetch: '抓取网页',
-  websearch: '网页搜索',
-  notebookedit: '编辑 Notebook',
-};
+/** Claude / Codex 常见工具 → 友好名（对齐 Tutti TOOL_NAME_TRANSLATION_KEYS） */
+function getToolFriendlyLabels(t) {
+  return {
+    bash: t('debug.log.tool.bash'),
+    shell: t('debug.log.tool.bash'),
+    read: t('debug.log.tool.read'),
+    write: t('debug.log.tool.write'),
+    edit: t('debug.log.tool.edit'),
+    multiedit: t('debug.log.tool.multiedit'),
+    grep: t('debug.log.tool.grep'),
+    glob: t('debug.log.tool.glob'),
+    ls: t('debug.log.tool.ls'),
+    askuserquestion: t('debug.log.tool.ask'),
+    todowrite: t('debug.log.tool.todoWrite'),
+    todoread: t('debug.log.tool.todoRead'),
+    skill: 'Skill',
+    task: t('debug.log.tool.task'),
+    webfetch: t('debug.log.tool.webfetch'),
+    websearch: t('debug.log.tool.websearch'),
+    notebookedit: t('debug.log.tool.notebook'),
+  };
+}
 
 /** 从参数 JSON 推断常见 Claude Code 内置工具名（DB 旧数据缺 tool_name 时兜底） */
 function inferBuiltinToolName(content) {
@@ -842,15 +852,16 @@ function inferBuiltinToolName(content) {
   return null;
 }
 
-function friendlyToolLabel(name) {
+function friendlyToolLabel(name, t) {
   const key = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  return TOOL_FRIENDLY_LABELS[key] || null;
+  return getToolFriendlyLabels(t)[key] || null;
 }
 
 /** 折叠头一行摘要：命令 / 路径 / 描述 */
-function toolCompactSummary(callContent) {
+function toolCompactSummary(callContent, t) {
   const text = String(callContent || '').trim();
-  if (!text || text === '(无参数)') return '';
+  const noArgs = t('debug.log.noArgs');
+  if (!text || text === '(无参数)' || text === noArgs) return '';
   try {
     const obj = JSON.parse(text);
     if (!obj || typeof obj !== 'object') return '';
@@ -870,28 +881,28 @@ function toolCompactSummary(callContent) {
 }
 
 /** 解析 MCP / 派发工具名，便于展示 */
-function parseToolName(raw, content) {
+function parseToolName(raw, content, t) {
   if (!raw) {
     const inferred = inferBuiltinToolName(content);
-    const label = friendlyToolLabel(inferred) || inferred;
-    return { display: label || '未知工具', server: null, rawName: inferred };
+    const label = friendlyToolLabel(inferred, t) || inferred;
+    return { display: label || t('debug.log.unknownTool'), server: null, rawName: inferred };
   }
   if (raw.startsWith('dispatch:')) {
-    return { display: raw.slice('dispatch:'.length), server: 'Agent 派发', rawName: raw };
+    return { display: raw.slice('dispatch:'.length), server: t('debug.log.dispatchServer'), rawName: raw };
   }
   if (raw.startsWith('mcp__')) {
     const parts = raw.split('__').filter(Boolean);
     if (parts.length >= 3) {
       const tool = parts[parts.length - 1];
       return {
-        display: friendlyToolLabel(tool) || tool,
+        display: friendlyToolLabel(tool, t) || tool,
         server: parts.slice(1, -1).join(' · '),
         rawName: tool,
       };
     }
   }
   return {
-    display: friendlyToolLabel(raw) || raw,
+    display: friendlyToolLabel(raw, t) || raw,
     server: null,
     rawName: raw,
   };
@@ -943,11 +954,12 @@ function toolRowIcon(rawName, { err, pending } = {}) {
  * 图标 + 友好名 + 状态 + 一行摘要；默认折叠，展开才见参数/输出
  */
 function ToolGroupCard({ step, live = false }) {
+  const { t } = useLang();
   const callContent = step.callContent ?? (step.kind === 'tool_call' ? step.content : null);
   const resultContent = step.resultContent ?? (step.kind === 'tool_result' ? step.content : null);
-  const { display, server, rawName } = parseToolName(step.tool_name, callContent);
+  const { display, server, rawName } = parseToolName(step.tool_name, callContent, t);
   const payload = formatToolPayload(callContent || '');
-  const summary = toolCompactSummary(callContent);
+  const summary = toolCompactSummary(callContent, t);
   const err = !!step.is_error;
   // 仅任务仍在跑时显示「执行中」；已收尾但无结果 → 未完成
   const pending = !!step.pending && resultContent == null && live;
@@ -957,10 +969,10 @@ function ToolGroupCard({ step, live = false }) {
   const [open, setOpen] = useState(false);
 
   let status = '';
-  if (err) status = '失败';
-  else if (pending) status = '执行中';
-  else if (incomplete) status = '未完成';
-  else if (resultContent != null) status = '已完成';
+  if (err) status = t('debug.log.failed');
+  else if (pending) status = t('debug.log.running');
+  else if (incomplete) status = t('debug.log.incomplete');
+  else if (resultContent != null) status = t('debug.log.completed');
 
   const icon = toolRowIcon(rawName || step.tool_name, { err, pending });
 
@@ -1034,6 +1046,7 @@ function ToolGroupCard({ step, live = false }) {
 }
 
 function ToolCard({ step, live = false }) {
+  const { t } = useLang();
   if (step.kind === 'tool_group' || step.kind === 'tool_call' || step.kind === 'tool_result') {
     return <ToolGroupCard step={step} live={live} />;
   }
@@ -1041,7 +1054,8 @@ function ToolCard({ step, live = false }) {
     return <SystemEventCard step={step} />;
   }
 
-  const meta = STEP_META[step.kind] || STEP_META.output;
+  const stepMeta = getStepMeta(t);
+  const meta = stepMeta[step.kind] || stepMeta.output;
   // 思考过程默认折叠，避免刷屏
   const collapsible = step.kind === 'thinking' || (step.content || '').length > 280;
   const [open, setOpen] = useState(step.kind !== 'thinking');
@@ -1088,7 +1102,7 @@ function ToolCard({ step, live = false }) {
 }
 
 /** 执行中可展示的过程文本(推理 / 回复 / 工具 / 系统状态) */
-function extractLiveProgress(timeline = []) {
+function extractLiveProgress(timeline = [], t) {
   let thinking = '';
   let output = '';
   let systemStatus = '';
@@ -1099,10 +1113,10 @@ function extractLiveProgress(timeline = []) {
     } else if (it.kind === 'assistant' && it.content?.trim() && !looksLikeLeakedReasoning(it.content)) {
       output = String(it.content);
     } else if (it.kind === 'system_event') {
-      const line = formatSystemStatusLine(it);
+      const line = formatSystemStatusLine(it, t);
       if (line) systemStatus = line;
     } else if (it.kind === 'system_event_group' && it.events?.length) {
-      const line = formatSystemStatusLine(it.events[it.events.length - 1]);
+      const line = formatSystemStatusLine(it.events[it.events.length - 1], t);
       if (line) systemStatus = line;
     } else if (it.kind === 'tool_group' || it.kind === 'tool_call' || it.kind === 'tool_result'
       || it.kind === 'terminal' || it.kind === 'code_edit') {
@@ -1127,6 +1141,7 @@ function extractLiveProgress(timeline = []) {
           error_status: ns.error_status,
           retry_delay_ms: ns.retry_delay_ms,
         })),
+        t,
       );
       if (nested.thinking) thinking = nested.thinking;
       if (nested.output) output = nested.output;
@@ -1165,10 +1180,11 @@ function lastThinkingPreview(text, maxChars = 140) {
 
 /** 推理卡：默认折叠，与 AI 头像同一行；live 时用动效提示仍在执行 */
 function ThinkingGroupCard({ item, live = false, showAvatar = true }) {
+  const { t } = useLang();
   const [open, setOpen] = useState(false);
   const raw = normalizeDisplayText(item.content);
   const preview = lastThinkingPreview(raw);
-  const meta = STEP_META.thinking;
+  const meta = getStepMeta(t).thinking;
 
   return (
     <div className="flex justify-start gap-2 items-start">
@@ -1217,7 +1233,7 @@ function ThinkingGroupCard({ item, live = false, showAvatar = true }) {
             <span className="text-sm leading-none">{meta.icon}</span>
           )}
           <span className={`text-xs font-medium shrink-0 ${live ? 'text-amber-700 dark:text-amber-300 animate-pulse' : 'text-amber-800 dark:text-amber-300'}`}>
-            {live ? '推理中' : '推理'}
+            {live ? t('debug.log.thinkingLive') : t('debug.log.thinking')}
           </span>
           {/* 预览截断与光标分离，保证尾部呼吸光标始终可见 */}
           {!open && (preview || live) && (
@@ -1226,7 +1242,7 @@ function ThinkingGroupCard({ item, live = false, showAvatar = true }) {
                 className={`min-w-0 flex-1 truncate text-[10px] ${preview ? 'text-zinc-400' : 'text-amber-600/80 dark:text-amber-400/80'}`}
                 title={preview || undefined}
               >
-                {preview || '正在思考…'}
+                {preview || t('debug.log.thinkingHint')}
               </span>
               {live && (
                 <span className="inline-block animate-pulse text-amber-500 shrink-0 leading-none">▊</span>
@@ -1235,7 +1251,7 @@ function ThinkingGroupCard({ item, live = false, showAvatar = true }) {
           )}
           {live && (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 shrink-0 animate-pulse">
-              实时
+              {t('debug.log.live')}
             </span>
           )}
           <span className="ml-auto text-[10px] text-zinc-400 shrink-0">{formatTime(item.timestamp)}</span>
@@ -1260,9 +1276,10 @@ function ThinkingGroupCard({ item, live = false, showAvatar = true }) {
 
 /** 执行中底部过程面板:仅在尚无可见输出/推理气泡时展示 */
 function LiveProgressPanel({ agentName, timeline }) {
+  const { t } = useLang();
   const { thinking, output, tools, systemStatus } = useMemo(
-    () => extractLiveProgress(timeline),
-    [timeline],
+    () => extractLiveProgress(timeline, t),
+    [timeline, t],
   );
   // 上方已有回复/推理气泡时隐藏整卡，避免与流式正文重复
   const hasVisibleBubble = useMemo(
@@ -1276,14 +1293,13 @@ function LiveProgressPanel({ agentName, timeline }) {
   );
   if (hasVisibleBubble || output || thinking) return null;
 
-  const statusDetail = systemStatus
-    || '已发送任务，等待模型首包输出（推理 / 工具 / 回复会实时出现在上方）…';
+  const statusDetail = systemStatus || t('debug.log.waitStream');
 
   return (
     <div className="rounded-xl border border-blue-200/80 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-950/20 overflow-hidden">
       <div className="flex items-center gap-2 px-3 py-2 text-sm text-blue-700 dark:text-blue-300">
         <span className="w-4 h-4 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin shrink-0" />
-        <span className="font-medium shrink-0">{agentName || 'Agent'} 正在执行…</span>
+        <span className="font-medium shrink-0">{agentName || 'Agent'} {t('debug.log.executing')}</span>
         {tools.length > 0 && (
           <span className="text-[10px] text-blue-500/80 truncate max-w-[40%]" title={tools.join(', ')}>
             {tools.slice(-3).join(' · ')}
@@ -1299,6 +1315,7 @@ function LiveProgressPanel({ agentName, timeline }) {
 
 /** 编排派发卡片：主 Agent 视角展示子 Agent 工作形态 */
 function DelegationCard({ item }) {
+  const { t } = useLang();
   const [open, setOpen] = useState(true);
   const isStart = item.phase === 'start';
   const isComplete = item.phase === 'complete';
@@ -1307,11 +1324,11 @@ function DelegationCard({ item }) {
   const failed = isComplete && (item.status === 'failed' || item.delStatus === 'failed');
 
   const statusLabel = running
-    ? '执行中…'
+    ? t('debug.log.executing')
     : failed
-      ? '失败'
+      ? t('debug.log.failed')
       : isComplete
-        ? '已完成'
+        ? t('debug.log.completed')
         : '';
 
   return (
@@ -1328,7 +1345,7 @@ function DelegationCard({ item }) {
         >
           <span>{isComplete ? (failed ? '❌' : '✅') : '📤'}</span>
           <span className="text-xs font-semibold text-indigo-800 dark:text-indigo-300">
-            {isComplete && !running ? '派发完成' : '派发'} → {item.agentName || item.agentId}
+            {isComplete && !running ? t('debug.log.dispatchDone') : t('debug.log.dispatch')} → {item.agentName || item.agentId}
           </span>
           {statusLabel && (
             <span className={`text-[10px] px-1.5 py-0.5 rounded ${
@@ -1350,7 +1367,7 @@ function DelegationCard({ item }) {
             {/* 派发任务描述（start 阶段保留的 prompt） */}
             {item.content && (isStart || item.completeContent) && (
               <div className="text-xs border-l-2 border-indigo-300 dark:border-indigo-700 pl-2 text-zinc-600 dark:text-zinc-400">
-                <span className="text-zinc-400">任务：</span>
+                <span className="text-zinc-400">{t('debug.log.taskColon')}</span>
                 <MarkdownContent content={normalizeDisplayText(item.content)} />
               </div>
             )}
@@ -1359,7 +1376,7 @@ function DelegationCard({ item }) {
             {item.nestedSteps?.length > 0 && (
               <div className="rounded-lg border border-zinc-200/80 dark:border-zinc-700/80 bg-white/60 dark:bg-zinc-900/40 p-2 space-y-2">
                 <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-                  {item.agentName} 工作输出
+                  {t('debug.log.agentOutput', { name: item.agentName || item.agentId || 'Agent' })}
                 </p>
                 {groupNestedSteps(item.nestedSteps).map((ns, idx, arr) => {
                   if (ns.kind === 'thinking_group') {
@@ -1397,7 +1414,7 @@ function DelegationCard({ item }) {
 
             {isComplete && resultContent && (
               <div className="text-xs max-h-48 overflow-y-auto text-zinc-700 dark:text-zinc-300">
-                <span className="text-zinc-400 block mb-1">结果摘要：</span>
+                <span className="text-zinc-400 block mb-1">{t('debug.log.resultSummary')}</span>
                 <MarkdownContent content={normalizeDisplayText(resultContent)} />
               </div>
             )}
@@ -1405,7 +1422,7 @@ function DelegationCard({ item }) {
             {isStart && !item.nestedSteps?.length && running && (
               <div className="flex items-center gap-2 text-xs text-blue-600 dark:text-blue-400">
                 <span className="w-3 h-3 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
-                等待 {item.agentName} 输出…（可切换到对应 Agent 标签查看详情）
+                {t('debug.log.waitAgent', { name: item.agentName || item.agentId || 'Agent' })}
               </div>
             )}
           </div>
@@ -1426,6 +1443,7 @@ export default function ExecutionLog({
   delegations = {},
   agentNames = {},
 }) {
+  const { t } = useLang();
   const endRef = useRef(null);
 
   /** 合并历史轮次 + 当前轮次；currentStart 之后才是本轮（呼吸光标只挂这里） */
@@ -1493,8 +1511,8 @@ export default function ExecutionLog({
         <p className="text-3xl mb-2">{agentName ? '✨' : '🤖'}</p>
         <p className="text-sm">
           {agentName
-            ? `向 ${agentName} 描述任务，在底部选择工作目录后发送`
-            : '选择 Agent 标签，在底部输入任务开始协作'}
+            ? t('debug.log.emptyNamed', { name: agentName })
+            : t('debug.log.empty')}
         </p>
       </div>
     );
@@ -1582,7 +1600,7 @@ export default function ExecutionLog({
           </div>
           <div className="max-w-[80%] rounded-2xl rounded-bl-md px-4 py-2.5 text-sm bg-white dark:bg-zinc-800 border border-blue-200/70 dark:border-blue-800/50 text-zinc-900 dark:text-zinc-100 min-h-[2.25rem] flex items-center gap-2">
             <span className="w-3.5 h-3.5 border-2 border-blue-300/40 border-t-blue-500 rounded-full animate-spin shrink-0" />
-            <span className="text-xs text-blue-600/90 dark:text-blue-300/90 animate-pulse">正在执行…</span>
+            <span className="text-xs text-blue-600/90 dark:text-blue-300/90 animate-pulse">{t('debug.log.executing')}</span>
             <span className="inline-block animate-pulse text-blue-500 dark:text-blue-400">▊</span>
           </div>
         </div>

@@ -137,9 +137,34 @@ function enrichSessionCosts(rows = []) {
   });
 }
 
+/** 列表结果短缓存：切 Tab / 收藏后重载不再每次全盘扫 */
+let _sessionsCache = null; // { key, at, rows }
+const SESSIONS_CACHE_TTL_MS = 15_000;
+
+function sessionsCacheKey(opts = {}) {
+  return JSON.stringify({
+    showArchived: !!opts.showArchived,
+    limit: opts.limit ?? 50,
+    sinceDays: opts.sinceDays ?? 30,
+  });
+}
+
+function invalidateSessionsCache() {
+  _sessionsCache = null;
+}
+
 /** 聚合会话 + 叠加层 + 过滤。返回供 UI 渲染的会话数组。 */
 function getSessions(deps, opts = {}) {
   const { sessionBrowser, localStats } = deps;
+  const key = sessionsCacheKey(opts);
+  const now = Date.now();
+  if (
+    _sessionsCache
+    && _sessionsCache.key === key
+    && (now - _sessionsCache.at) < SESSIONS_CACHE_TTL_MS
+  ) {
+    return _sessionsCache.rows;
+  }
   const raw = sessionBrowser.listAllSessions(opts);
   // 合并本地网关记录的用量/费用（经代理的请求才有 cost_usd）
   const dbMap = typeof localStats.querySessionStatsMap === 'function'
@@ -148,7 +173,9 @@ function getSessions(deps, opts = {}) {
   const dbSessions = Object.entries(dbMap).map(([session_id, s]) => ({ session_id, ...s }));
   const rows = sessionBrowser.mergeActivityWithStats(raw, dbSessions);
   const meta = localStats.listSessionMeta();
-  return enrichSessionCosts(joinSessionsWithMeta(rows, meta, { showArchived: !!opts.showArchived }));
+  const out = enrichSessionCosts(joinSessionsWithMeta(rows, meta, { showArchived: !!opts.showArchived }));
+  _sessionsCache = { key, at: now, rows: out };
+  return out;
 }
 
 /** 导出单会话为 JSON 包或 Markdown，写入默认目录，返回落盘信息。 */
@@ -472,7 +499,7 @@ async function synthesizeKnowledge(deps, opts = {}) {
 
 module.exports = {
   mergeAgentRows, joinSessionsWithMeta, buildSessionPackJSON, renderSessionPackMarkdown,
-  getSessions, exportSession,
+  getSessions, invalidateSessionsCache, exportSession,
   buildSessionDigest, filePathFromInput, composeHandoffDoc, summarizeViaGateway,
   collectGitContext, continueSession, buildKnowledgeCorpus, synthesizeKnowledge,
 };
