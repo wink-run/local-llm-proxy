@@ -79,6 +79,23 @@ test('noteFailure：非硬失败(500)不纳入冷却', () => {
   assert.ok(!cd.isCooling('prov-500', NOW));
 });
 
+test('noteTransient(社区源)：即便带 reset 也只短瞬时、不落盘、忽略 reset', () => {
+  const k = 'tokenbank-p2p::sonnet-5';
+  const e = cd.noteTransient(k, { status: 429, message: 'quota. It will reset at 2026-07-20 00:00:00 +0800' }, NOW);
+  assert.equal(e.reason, 'transient');
+  assert.equal(e.persist, false);
+  assert.equal(e.until, NOW + 45_000);             // 固定瞬时，不用 reset 的远期时刻
+  assert.ok(cd.isCooling(k, NOW + 10_000));
+  assert.ok(!cd.isCooling(k, NOW + 60_000));        // 45s 后自愈
+  cd.clear(k);
+});
+
+test('noteTransient：5xx/网络等非硬失败不冷却（交给单次 failover 自愈）', () => {
+  assert.equal(cd.noteTransient('p2p-500', { status: 500, message: 'boom' }, NOW), null);
+  assert.equal(cd.noteTransient('p2p-net', { message: 'socket hang up' }, NOW), null);
+  assert.ok(!cd.isCooling('p2p-500', NOW));
+});
+
 test('sink：冷却候选下沉末尾、保序，不删除任何项', () => {
   const items = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
   cd.noteFailure('b', { status: 429, message: 'HTTP_429' }, NOW);

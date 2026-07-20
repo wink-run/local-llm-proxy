@@ -124,6 +124,19 @@ function noteFailure(key, err, now = Date.now()) {
   return { ...entry, _new: !wasCooling };
 }
 
+// 记一次「只短瞬时」冷却（社区源用）：无视 reset、不落盘、固定 TRANSIENT_MS。
+// 仅当 err 是硬失败(429/鉴权/欠费)才记；5xx/网络等瞬时错误不记（交给单次 failover，且会自愈）。
+// 目的：社区池此刻满了时避免连续空跑，但绝不长冷却/拉黑动态池里的 worker。
+function noteTransient(key, err, now = Date.now()) {
+  if (!key) return null;
+  const c = classify(err, now);
+  if (!c) return null;
+  const wasCooling = isCooling(key, now);
+  const entry = { until: now + TRANSIENT_MS, status: c.status, reason: 'transient', persist: false };
+  _map.set(key, entry);
+  return { ...entry, _new: !wasCooling };
+}
+
 function isCooling(key, now = Date.now()) {
   const e = _map.get(key);
   if (!e) return false;
@@ -180,4 +193,4 @@ function _save() {
 }
 _load();
 
-module.exports = { noteFailure, isCooling, entryOf, clear, sink, list, parseResetMs, parseResetFromHeaders, classify, FILE };
+module.exports = { noteFailure, noteTransient, isCooling, entryOf, clear, sink, list, parseResetMs, parseResetFromHeaders, classify, FILE };

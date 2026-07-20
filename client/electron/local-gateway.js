@@ -749,20 +749,20 @@ function isP2pProvider(provider) {
   return provider?.type === 'p2p' || provider?.id === 'tokenbank-p2p';
 }
 
-// 失败冷却键：仅个人源(直连)——单账号整源冷却（provider.id）。
-// 社区源(p2p)不参与客户端冷却（见 noteCooldown 说明），coolKey 对 p2p 返回 null。
+// 失败冷却键：个人源(直连)整源冷却（provider.id）；社区源(p2p)按 provider.id::model（池+模型级）。
 function coolKey(provider, model) {
-  return isP2pProvider(provider) ? null : provider.id;
+  return isP2pProvider(provider) ? `${provider.id}::${model}` : provider.id;
 }
-// failover catch 里记冷却 + 首次进入冷却时打一条日志（便于观察"某源被冷却到 X"）。
-// 只冷却个人源(直连)：那是你自己的账号，429/配额是确定性的、reset 权威，值得记住+下沉。
-// 社区源(p2p)不冷却——worker 由服务端在池里动态挑、客户端左右不了，且失败可能只是网络抖动；
-// 服务端已做单次跨 worker failover、只对「确实不能服务该模型」下线。客户端再冷却池/worker 会误伤好 worker、
-// 且下次请求「可能又碰到它」在网络恢复场景恰恰是对的（该重试而非拉黑）。故此处 p2p 直接跳过。
+// failover catch 里记冷却 + 首次进入冷却时打一条日志。个人源与社区源用不同策略：
+//  - 个人源(直连)：你自己的账号，429/配额确定性、reset 权威 → noteFailure（reset 感知、可落盘、整源）。
+//  - 社区源(p2p)：worker 由服务端在池里动态挑、客户端左右不了，失败可能只是网络抖动，reset 只是单个
+//    worker 的、不代表池子 → noteTransient（只极短瞬时冷却，防止池此刻满时连续空跑；绝不长冷却/落盘/信 reset，
+//    几十秒自愈，不误杀动态池里的好 worker）。服务端仍照旧做单次跨 worker failover 与「不能服务该模型」才下线。
 function noteCooldown(provider, model, err) {
-  if (isP2pProvider(provider)) return null;
   const key = coolKey(provider, model);
-  const e = cooldown.noteFailure(key, err);
+  const e = isP2pProvider(provider)
+    ? cooldown.noteTransient(key, err)
+    : cooldown.noteFailure(key, err);
   if (e && e._new) {
     const until = new Date(e.until).toLocaleString();
     console.log(`[gateway-cooldown] ${key} 冷却至 ${until}（${e.reason}）→ 后续请求将下沉此候选`);
