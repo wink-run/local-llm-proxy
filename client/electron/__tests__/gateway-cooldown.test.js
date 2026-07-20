@@ -52,6 +52,22 @@ test('classify：优先读响应头 Retry-After / *-ratelimit-*-reset', () => {
   assert.equal(shortRa.reason, 'rate-limit');
 });
 
+test('worker reset 直通契约：头解析→规范 ISO→parseResetMs 解回同一时刻', () => {
+  // agent-worker 把上游 reset 头规范成 " (reset at <ISO+00:00>)" 追加进错误文本，
+  // 经 p2p 多跳原样透传后，消费端必须能用 parseResetMs 解回（否则钉选 worker 退化成退避档）。
+  const fmt = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, '+00:00');   // 与 worker 同一格式
+  for (const headers of [
+    { 'retry-after': '600' },
+    { 'anthropic-ratelimit-unified-reset': '2026-07-15T23:59:59+08:00' },
+    { 'x-ratelimit-reset-requests': '6m0s' },
+  ]) {
+    const ms = cd.parseResetFromHeaders(headers, NOW);
+    assert.ok(ms, 'header 应解析出 reset');
+    const errText = `HTTP 429: limited (reset at ${fmt(ms)})`;
+    assert.equal(cd.parseResetMs(errText, NOW), ms, `round-trip 失败: ${JSON.stringify(headers)}`);
+  }
+});
+
 test('parseResetFromHeaders：openai 时长串 / unix 秒', () => {
   assert.equal(cd.parseResetFromHeaders({ 'x-ratelimit-reset-requests': '6m0s' }, NOW), NOW + 6 * 60_000);
   const unix = Math.floor(Date.parse('2026-07-13T00:00:00+08:00') / 1000);

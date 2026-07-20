@@ -13,6 +13,19 @@ const os = require('os');
 const CONFIG_PATH = path.join(os.homedir(), '.llm-agent', 'config.json');
 const { normalizeAgentForwardCfg } = require('../shared/agent-forward-url');
 
+// 贡献者 worker 回传上游错误时，把上游的限流/配额重置时刻从响应头(Retry-After / *-ratelimit-*-reset)
+// 解析出来、规范成 " (reset at <ISO+00:00>)" 追加到错误文本——这些头在 p2p 多跳中会丢，但错误文本
+// 会原样透传回消费端（dispatch.py last_error=str(data)），消费端 gateway-cooldown.parseResetMs 即可捡到，
+// 让「钉选具体 worker」也能精确冷却到重置点（否则只能落到退避档）。
+function resetSuffixFromHeaders(headers) {
+  try {
+    const { parseResetFromHeaders } = require('./gateway-cooldown');
+    const ms = parseResetFromHeaders(headers);
+    if (ms) return ` (reset at ${new Date(ms).toISOString().replace(/\.\d{3}Z$/, '+00:00')})`;
+  } catch { /* 解析失败/模块不可用 → 不追加 */ }
+  return '';
+}
+
 let ws = null;
 let running = false;
 let _onLog = null;
@@ -297,7 +310,7 @@ function forwardRequest(reqId, payload, cfg) {
           res.on('data', (d) => chunks.push(d));
           res.on('end', () => {
             const raw = Buffer.concat(chunks).toString();
-            send({ type: 'error', req_id: reqId, error: `HTTP ${res.statusCode}: ${raw.slice(0, 500)}` });
+            send({ type: 'error', req_id: reqId, error: `HTTP ${res.statusCode}: ${raw.slice(0, 500)}${resetSuffixFromHeaders(res.headers)}` });
             resolve();
           });
           res.on('error', (e) => { send({ type: 'error', req_id: reqId, error: e.message }); resolve(); });
@@ -358,7 +371,7 @@ function forwardRequest(reqId, payload, cfg) {
             try {
               const json = JSON.parse(rawBody);
               if (json?.error) {
-                send({ type: 'error', req_id: reqId, error: `HTTP ${res.statusCode}: ${rawBody.slice(0, 500)}` });
+                send({ type: 'error', req_id: reqId, error: `HTTP ${res.statusCode}: ${rawBody.slice(0, 500)}${resetSuffixFromHeaders(res.headers)}` });
                 resolve();
                 return;
               }
