@@ -90,6 +90,15 @@ test('noteTransient(社区源)：即便带 reset 也只短瞬时、不落盘、�
   cd.clear(k);
 });
 
+test('noPersist：钉选 worker 用——reset 感知冷到重置点但不落盘', () => {
+  const k = 'tokenbank-p2p::sonnet-5::sharerX';
+  const e = cd.noteFailure(k, { status: 429, message: 'quota. It will reset at 2026-07-15 23:59:59 +0800' }, NOW, { noPersist: true });
+  assert.equal(e.reason, 'quota-reset');           // 仍 reset 感知（到重置点，不是 45s）
+  assert.equal(e.persist, false);                  // 但不落盘（社区池动态）
+  assert.ok(e.until > Date.parse('2026-07-15T23:59:59+08:00'));
+  cd.clear(k);
+});
+
 test('noteTransient：5xx/网络等非硬失败不冷却（交给单次 failover 自愈）', () => {
   assert.equal(cd.noteTransient('p2p-500', { status: 500, message: 'boom' }, NOW), null);
   assert.equal(cd.noteTransient('p2p-net', { message: 'socket hang up' }, NOW), null);

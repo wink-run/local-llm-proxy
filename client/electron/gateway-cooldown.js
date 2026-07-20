@@ -113,12 +113,14 @@ function classify(err, now = Date.now()) {
 }
 
 // 记一次失败。返回冷却 entry（附 _new=该键此前不在冷却，供调用方决定是否打日志）或 null（不纳入冷却）。
-function noteFailure(key, err, now = Date.now()) {
+// opts.noPersist：保留 reset 感知的时长，但强制不落盘（社区源钉选 worker 用——池动态，不跨重启保留）。
+function noteFailure(key, err, now = Date.now(), opts = {}) {
   if (!key) return null;
   const c = classify(err, now);
   if (!c) return null;
   const wasCooling = isCooling(key, now);
-  const entry = { until: c.until, status: c.status, reason: c.reason, persist: !!c.persist };
+  const persist = opts.noPersist ? false : !!c.persist;
+  const entry = { until: c.until, status: c.status, reason: c.reason, persist };
   _map.set(key, entry);
   if (entry.persist) _save();
   return { ...entry, _new: !wasCooling };

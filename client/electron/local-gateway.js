@@ -749,20 +749,25 @@ function isP2pProvider(provider) {
   return provider?.type === 'p2p' || provider?.id === 'tokenbank-p2p';
 }
 
-// 失败冷却键：个人源(直连)整源冷却（provider.id）；社区源(p2p)按 provider.id::model（池+模型级）。
-function coolKey(provider, model) {
-  return isP2pProvider(provider) ? `${provider.id}::${model}` : provider.id;
+// 失败冷却键：个人源(直连)整源冷却（provider.id）；社区源(p2p)按 provider.id::model（池级），
+// 若钉选了具体 worker(sharer) 则细到 provider.id::model::sharer（该 worker 独立冷却，不误伤池）。
+function coolKey(provider, model, sharer) {
+  if (!isP2pProvider(provider)) return provider.id;
+  return sharer ? `${provider.id}::${model}::${sharer}` : `${provider.id}::${model}`;
 }
-// failover catch 里记冷却 + 首次进入冷却时打一条日志。个人源与社区源用不同策略：
-//  - 个人源(直连)：你自己的账号，429/配额确定性、reset 权威 → noteFailure（reset 感知、可落盘、整源）。
-//  - 社区源(p2p)：worker 由服务端在池里动态挑、客户端左右不了，失败可能只是网络抖动，reset 只是单个
-//    worker 的、不代表池子 → noteTransient（只极短瞬时冷却，防止池此刻满时连续空跑；绝不长冷却/落盘/信 reset，
-//    几十秒自愈，不误杀动态池里的好 worker）。服务端仍照旧做单次跨 worker failover 与「不能服务该模型」才下线。
-function noteCooldown(provider, model, err) {
-  const key = coolKey(provider, model);
-  const e = isP2pProvider(provider)
-    ? cooldown.noteTransient(key, err)
-    : cooldown.noteFailure(key, err);
+// failover catch 里记冷却 + 首次进入冷却时打一条日志。三档策略：
+//  - 个人源(直连)：你自己的账号，配额确定性、reset 权威 → noteFailure（reset 感知、可落盘、整源）。
+//  - 社区源·钉选了具体 worker(sharer)：re-request 会再打同一个 worker，其账号配额 reset 权威 →
+//    noteFailure + noPersist（reset 感知冷到重置点，避免每 45s 反复空跑同一个死 worker；但池动态，不落盘）。
+//  - 社区源·未钉选的池路由：worker 由服务端在池里动态挑、客户端左右不了，失败可能只是网络抖动 →
+//    noteTransient（只 45s 极短瞬时，防连续空跑，几十秒自愈，不长冷却/落盘/信 reset）。
+function noteCooldown(provider, model, err, sharer) {
+  const p2p = isP2pProvider(provider);
+  const key = coolKey(provider, model, sharer);
+  let e;
+  if (!p2p)          e = cooldown.noteFailure(key, err);
+  else if (sharer)   e = cooldown.noteFailure(key, err, Date.now(), { noPersist: true });
+  else               e = cooldown.noteTransient(key, err);
   if (e && e._new) {
     const until = new Date(e.until).toLocaleString();
     console.log(`[gateway-cooldown] ${key} 冷却至 ${until}（${e.reason}）→ 后续请求将下沉此候选`);
@@ -2743,9 +2748,10 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     }
   }
   if (_stratScene) {
+    const stratSharer = _stratStep.sharer || requestSharer;   // 有效钉选 worker（与 stratMeta.sharer 一致）
     const ordered = cooldown.sink(buildStrategyCandidates(
       _stratStep.strategy, { scope: _stratStep.scope, tier: _stratStep.tier, provider: _stratStep.provider }, reqPath, skipP2P, _stratScene.id),
-      (c) => coolKey(c.provider, c.model));   // 冷却中的候选下沉到末尾（fresh 先试，成功即返回，省空跑）
+      (c) => coolKey(c.provider, c.model, stratSharer));   // 冷却中的候选下沉到末尾（fresh 先试，成功即返回，省空跑）
     if (!ordered.length) {
       const _flt = [_stratStep.scope, _stratStep.tier].filter(Boolean).join('/');
       lastErr = new Error(`该路由过滤(${_flt || _stratStep.strategy || 'any'})下没有可用的${modalityOf(reqPath)}模型/供给源`);
@@ -2769,7 +2775,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
                   worker: result.worker_id || undefined });
         recordStats(c.provider.id, c.model, fillMissingInputTokens(result, body), _providerTier(c.provider), callerKey, streaming, c.provider.billing_type || null);
         reportUsage(c.provider.id, c.model, (result.input_tokens || 0) + (result.output_tokens || 0));
-        cooldown.clear(coolKey(c.provider, c.model));   // 成功 → 源已恢复，清除冷却
+        cooldown.clear(coolKey(c.provider, c.model, stratSharer));   // 成功 → 源已恢复，清除冷却
         return;
       } catch (err) {
         if (handleP2pFatal(c.provider, err, res, isResponses)) { lastErr = err; recordError(c.model, callerKey, lastErr); return; }
@@ -2782,7 +2788,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           will_failover: !res.headersSent,
         });
         routeErrors.push({ id: c.provider.id, err }); lastErr = err;
-        noteCooldown(c.provider, c.model, err);   // 硬失败(429/401/403/402)记冷却，下次请求下沉此候选
+        noteCooldown(c.provider, c.model, err, stratSharer);   // 硬失败(429/401/403/402)记冷却，下次请求下沉此候选
         // 源级失效跳过：仅对「单账号多模型」的直连源有效（如 openai 一个账号下多个 gpt-* 全 429）。
         // p2p 所有模型共享同一 provider.id(tokenbank-p2p) 但各是独立 worker，一个挂不代表其它挂，
         // 绝不能因某个 p2p 模型源级失败就拉黑整个 p2p 池（否则会跳过后面能用的 agnes 等）。
@@ -2834,10 +2840,11 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
         const stepScope = step.scope || scene.scope, stepTier = step.tier || scene.tier;   // 合并路由级过滤
         const stepStrat = step.strategy || ((stepScope || stepTier || step.provider) ? 'fallback' : null);
         if (!stepStrat) continue;
+        const stepSharer = step.sharer || null;   // 有效钉选 worker（与 sMeta.sharer 一致）
         const sOrdered = cooldown.sink(
           buildStrategyCandidates(stepStrat, { scope: stepScope, tier: stepTier, provider: step.provider }, reqPath, skipP2P, `${scene.id}:${stepStrat}`),
-          (c) => coolKey(c.provider, c.model));   // 冷却候选下沉
-        const sMeta = { strategy: step.strategy || null, sharer: step.sharer || null };
+          (c) => coolKey(c.provider, c.model, stepSharer));   // 冷却候选下沉
+        const sMeta = { strategy: step.strategy || null, sharer: stepSharer };
         const deadSources = new Set();
         for (const c of sOrdered) {
           if (deadSources.has(c.provider.id)) continue;
@@ -2851,7 +2858,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
             recordStats(c.provider.id, c.model, fillMissingInputTokens(result, body), _providerTier(c.provider), callerKey, streaming, c.provider.billing_type || null);
             reportUsage(c.provider.id, c.model, (result.input_tokens || 0) + (result.output_tokens || 0));
             if (result.latency) reqRouter.recordLatency(c.provider.id, result.latency);
-            cooldown.clear(coolKey(c.provider, c.model));   // 成功 → 清除冷却
+            cooldown.clear(coolKey(c.provider, c.model, stepSharer));   // 成功 → 清除冷却
             return;
           } catch (err) {
             if (handleP2pFatal(c.provider, err, res, isResponses)) { lastErr = err; recordError(c.model, callerKey, lastErr); return; }
@@ -2864,7 +2871,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
               will_failover: !res.headersSent,
             });
             stepErrors.push({ id: c.provider.id, err }); lastErr = err;
-            noteCooldown(c.provider, c.model, err);   // 硬失败记冷却
+            noteCooldown(c.provider, c.model, err, stepSharer);   // 硬失败记冷却
             // 见上：p2p 各模型独立 worker，不能因一个源级失败拉黑整个 tokenbank-p2p 池
             if (isSourceLevelError(err) && !isP2pProvider(c.provider)) deadSources.add(c.provider.id);
             if (res.headersSent) return;
@@ -2885,10 +2892,11 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       // 该步的 p2p 路由指令：step 自带 strategy/sharer（Selector）优先，否则用请求级 routeMeta
       const stepMeta = (step.strategy || step.sharer)
         ? { strategy: step.strategy || null, sharer: step.sharer || null } : routeMeta;
+      const stepMetaSharer = stepMeta && stepMeta.sharer;   // 有效钉选 worker（与发给服务端的 meta 一致）
       const stepProviders = cooldown.sink([
         ...stepCandidates.filter(p => Array.isArray(p.models) && p.models.length > 0),
         ...stepCandidates.filter(p => !Array.isArray(p.models) || p.models.length === 0),
-      ], (p) => coolKey(p, stepModel));   // 冷却中的源下沉到末尾（fresh 先试，省对必失败源的空跑）
+      ], (p) => coolKey(p, stepModel, stepMetaSharer));   // 冷却中的源下沉到末尾（fresh 先试，省对必失败源的空跑）
       let   stepSucceeded = false;
 
       for (const provider of stepProviders) {
@@ -2920,7 +2928,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           reportUsage(provider.id, stepModel, stepTok);
           if (result.latency) reqRouter.recordLatency(provider.id, result.latency);
           try { require('./provider-speed').record(stepModel, { firstTokenMs: result.first_token_ms, outputTokens: result.output_tokens, totalMs: result.latency, streaming }); } catch {}
-          cooldown.clear(coolKey(provider, stepModel));   // 成功 → 清除冷却
+          cooldown.clear(coolKey(provider, stepModel, stepMetaSharer));   // 成功 → 清除冷却
           stepSucceeded = true;
           return;
         } catch (err) {
@@ -2947,7 +2955,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           });
           stepErrors.push({ id: provider.id, err });
           lastErr = err;
-          noteCooldown(provider, stepModel, err);   // 硬失败记冷却，下次请求下沉此源
+          noteCooldown(provider, stepModel, err, stepMetaSharer);   // 硬失败记冷却，下次请求下沉此源
           if (res.headersSent) return;
           await pauseBeforeNextProvider(err);
         }
