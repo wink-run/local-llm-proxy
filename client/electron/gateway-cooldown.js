@@ -24,7 +24,22 @@ const RESET_BUFFER_MS  = 30_000;               // reset 时刻 + 缓冲，避免
 const PERSIST_MIN_MS   = 2 * 60_000;           // reset 距今 > 2min 才算配额级并落盘；短 Retry-After 视为瞬时
 const MAX_MS           = 35 * 24 * 60 * 60_000; // 冷却上限 35 天，覆盖月度配额 reset，同时防解析出离谱时间把源永久拉黑
 
-const _map = new Map();   // key -> { until, status, reason, persist }
+// 滑动窗口退避（仅作用于「无 reset 时间的固定时长档」：社区瞬时 / 配额无 reset / 鉴权 / 欠费）：
+// 连续失败逐次翻倍(base·2^level)，各有封顶；成功即重置；距上次失败超窗口也视为已恢复、重置等级。
+const ESCALATION_MAX_LEVEL = 4;                // 2^4=16x 封顶
+const ESCALATION_WINDOW_MS = 15 * 60_000;      // 距上次失败 >15min 无新失败 → 视为已恢复，等级归 0
+const CAP = { transient: 10 * 60_000, quota: 60 * 60_000, auth: 2 * 60 * 60_000, credit: 2 * 60 * 60_000 };
+
+const _map = new Map();      // key -> { until, status, reason, persist }
+const _levels = new Map();   // key -> { level, ts }：退避等级（内存态，不落盘）
+
+// 计算退避后的冷却时长：base·2^level（封顶 capMs），并把该键等级 +1。距上次失败超窗口则从 0 起。
+function _escalate(key, baseMs, capMs, now) {
+  const prev = _levels.get(key);
+  const level = (prev && (now - prev.ts) <= ESCALATION_WINDOW_MS) ? prev.level : 0;
+  _levels.set(key, { level: level + 1, ts: now });
+  return Math.min(baseMs * (2 ** Math.min(level, ESCALATION_MAX_LEVEL)), capMs);
+}
 
 // 从上游错误消息解析配额重置时刻 → epoch ms。识别形如 "reset at 2026-07-15 23:59:59 +0800 CST"。
 function parseResetMs(message, now = Date.now()) {
@@ -96,45 +111,47 @@ function classify(err, now = Date.now()) {
   const is = (code) => status === code || new RegExp(`HTTP_${code}\\b`).test(msg);
   const isRate  = is(429) || /rate[\s_-]?limit|too many requests|overloaded/i.test(msg);
   const isQuota = /quota|exceeded your current quota|usage limit|monthly|daily|out of (?:quota|credit)/i.test(msg);
+  // 带 reset 时间 → resetDerived（冷到确切重置点，不退避）；否则返回 baseMs/cap（由 note 函数按等级退避）。
   if (isRate || isQuota) {
     const reset = parseResetFromHeaders(err && err.headers, now) || parseResetMs(msg, now);
     if (reset) {
       const persist = (reset - now) > PERSIST_MIN_MS;   // 远期 reset → 配额级、落盘；近期 → 当瞬时
-      return { until: reset + RESET_BUFFER_MS, status: 429, reason: persist ? 'quota-reset' : 'rate-limit', persist };
+      return { until: reset + RESET_BUFFER_MS, status: 429, reason: persist ? 'quota-reset' : 'rate-limit', persist, resetDerived: true };
     }
-    if (isQuota) return { until: now + QUOTA_DEFAULT_MS, status: 429, reason: 'quota', persist: false };
-    return { until: now + TRANSIENT_MS, status: 429, reason: 'rate-limit', persist: false };
+    if (isQuota) return { until: now + QUOTA_DEFAULT_MS, baseMs: QUOTA_DEFAULT_MS, cap: CAP.quota, status: 429, reason: 'quota', persist: false };
+    return { until: now + TRANSIENT_MS, baseMs: TRANSIENT_MS, cap: CAP.transient, status: 429, reason: 'rate-limit', persist: false };
   }
   if (is(401) || is(403) || /invalid[\s_-]*api[\s_-]*key|unauthorized/i.test(msg))
-    return { until: now + AUTH_MS, status: status || 401, reason: 'auth', persist: false };
+    return { until: now + AUTH_MS, baseMs: AUTH_MS, cap: CAP.auth, status: status || 401, reason: 'auth', persist: false };
   if (is(402) || /insufficient[\s_-]*credit/i.test(msg))
-    return { until: now + CREDIT_MS, status: 402, reason: 'credit', persist: false };
+    return { until: now + CREDIT_MS, baseMs: CREDIT_MS, cap: CAP.credit, status: 402, reason: 'credit', persist: false };
   return null;
 }
 
 // 记一次失败。返回冷却 entry（附 _new=该键此前不在冷却，供调用方决定是否打日志）或 null（不纳入冷却）。
 // opts.noPersist：保留 reset 感知的时长，但强制不落盘（社区源钉选 worker 用——池动态，不跨重启保留）。
+// 无 reset 的档走滑动窗口退避（_escalate）：连续失败逐次拉长；reset 感知档冷到确切重置点、不退避。
 function noteFailure(key, err, now = Date.now(), opts = {}) {
   if (!key) return null;
   const c = classify(err, now);
   if (!c) return null;
   const wasCooling = isCooling(key, now);
   const persist = opts.noPersist ? false : !!c.persist;
-  const entry = { until: c.until, status: c.status, reason: c.reason, persist };
+  const until = c.resetDerived ? c.until : now + _escalate(key, c.baseMs, c.cap, now);
+  const entry = { until, status: c.status, reason: c.reason, persist };
   _map.set(key, entry);
   if (entry.persist) _save();
   return { ...entry, _new: !wasCooling };
 }
 
-// 记一次「只短瞬时」冷却（社区源用）：无视 reset、不落盘、固定 TRANSIENT_MS。
+// 记一次「瞬时」冷却（社区池用）：无视 reset、不落盘，从 TRANSIENT_MS 起按等级退避（连续满载逐次拉长）。
 // 仅当 err 是硬失败(429/鉴权/欠费)才记；5xx/网络等瞬时错误不记（交给单次 failover，且会自愈）。
-// 目的：社区池此刻满了时避免连续空跑，但绝不长冷却/拉黑动态池里的 worker。
 function noteTransient(key, err, now = Date.now()) {
   if (!key) return null;
   const c = classify(err, now);
   if (!c) return null;
   const wasCooling = isCooling(key, now);
-  const entry = { until: now + TRANSIENT_MS, status: c.status, reason: 'transient', persist: false };
+  const entry = { until: now + _escalate(key, TRANSIENT_MS, CAP.transient, now), status: c.status, reason: 'transient', persist: false };
   _map.set(key, entry);
   return { ...entry, _new: !wasCooling };
 }
@@ -150,8 +167,9 @@ function entryOf(key, now = Date.now()) {
   return isCooling(key, now) ? _map.get(key) : null;
 }
 
-// 成功后清除冷却（源已恢复）。
+// 成功后清除冷却（源已恢复）：同时重置退避等级，下次失败从最短起。
 function clear(key) {
+  _levels.delete(key);
   const e = _map.get(key);
   if (!e) return;
   _map.delete(key);
