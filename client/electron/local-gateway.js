@@ -749,17 +749,23 @@ function isP2pProvider(provider) {
   return provider?.type === 'p2p' || provider?.id === 'tokenbank-p2p';
 }
 
-// 失败冷却键：单账号直连源整源冷却（provider.id）；p2p 各 worker 独立，按 provider.id::model 冷却，
-// 与 deadSources 的 isSourceLevelError && !isP2pProvider 语义对齐（一个 p2p 模型挂不拉黑整个池）。
+// 失败冷却键：仅个人源(直连)——单账号整源冷却（provider.id）。
+// 社区源(p2p)不参与客户端冷却（见 noteCooldown 说明），coolKey 对 p2p 返回 null。
 function coolKey(provider, model) {
-  return isP2pProvider(provider) ? `${provider.id}::${model}` : provider.id;
+  return isP2pProvider(provider) ? null : provider.id;
 }
 // failover catch 里记冷却 + 首次进入冷却时打一条日志（便于观察"某源被冷却到 X"）。
+// 只冷却个人源(直连)：那是你自己的账号，429/配额是确定性的、reset 权威，值得记住+下沉。
+// 社区源(p2p)不冷却——worker 由服务端在池里动态挑、客户端左右不了，且失败可能只是网络抖动；
+// 服务端已做单次跨 worker failover、只对「确实不能服务该模型」下线。客户端再冷却池/worker 会误伤好 worker、
+// 且下次请求「可能又碰到它」在网络恢复场景恰恰是对的（该重试而非拉黑）。故此处 p2p 直接跳过。
 function noteCooldown(provider, model, err) {
-  const e = cooldown.noteFailure(coolKey(provider, model), err);
+  if (isP2pProvider(provider)) return null;
+  const key = coolKey(provider, model);
+  const e = cooldown.noteFailure(key, err);
   if (e && e._new) {
     const until = new Date(e.until).toLocaleString();
-    console.log(`[gateway-cooldown] ${coolKey(provider, model)} 冷却至 ${until}（${e.reason}）→ 后续请求将下沉此候选`);
+    console.log(`[gateway-cooldown] ${key} 冷却至 ${until}（${e.reason}）→ 后续请求将下沉此候选`);
   }
   return e;
 }
