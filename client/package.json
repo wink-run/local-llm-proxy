@@ -8,6 +8,7 @@
     "dev:vite": "vite",
     "prebuild": "node scripts/gen-icons.js && node scripts/gen-changelog.js",
     "build": "vite build && electron-builder",
+    "build:mas": "npm run prebuild && vite build && electron-builder --mac mas",
     "gen-icons": "node scripts/gen-icons.js",
     "changelog": "node scripts/gen-changelog.js",
     "test": "ELECTRON_RUN_AS_NODE=1 electron --test electron/__tests__/*.test.js",
@@ -83,6 +84,17 @@
       "gatekeeperAssess": false,
       "entitlements": "electron/entitlements.mac.plist",
       "entitlementsInherit": "electron/entitlements.mac.plist"
+    },
+    "mas": {
+      "type": "distribution",
+      "category": "public.app-category.utilities",
+      "hardenedRuntime": false,
+      "entitlements": "electron/entitlements.mas.plist",
+      "entitlementsInherit": "electron/entitlements.mas.inherit.plist",
+      "provisioningProfile": "embedded.provisionprofile"
+    },
+    "dmg": {
+      "sign": false
     },
     "win": {
       "icon": "build/icon.ico",
