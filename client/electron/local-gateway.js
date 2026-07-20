@@ -9,6 +9,7 @@ const path  = require('path');
 const codexTransform = require('./codex-transform');
 const reqRouter = require('./request-router');
 const routingStrategies = require('./routing-strategies');
+const cooldown = require('./gateway-cooldown');
 const { TIER_ROUTE_RE, parseRoute, STRATEGY_NAMES, SCOPE_NAMES, TIER_NAMES, SHARER_RE } = require('../shared/route-binding');
 const _STRAT_SET = new Set(STRATEGY_NAMES || []);
 const _SCOPE_SET = new Set(SCOPE_NAMES || []);
@@ -654,10 +655,11 @@ function readProxyError(proxyRes, reject, traceCtx = null) {
         });
       } catch { /* ignore */ }
     }
-    reject(Object.assign(new Error(msg), { status: statusCode, body, worker_id: workerId }));
+    // 带上响应头：限流/配额重置时刻常在 Retry-After / *-ratelimit-*-reset 头里（供失败冷却精确解析）
+    reject(Object.assign(new Error(msg), { status: statusCode, body, worker_id: workerId, headers: proxyRes.headers }));
   });
   proxyRes.on('error', () => {
-    reject(Object.assign(new Error(`HTTP_${statusCode}`), { status: statusCode, worker_id: workerId }));
+    reject(Object.assign(new Error(`HTTP_${statusCode}`), { status: statusCode, worker_id: workerId, headers: proxyRes.headers }));
   });
 }
 
@@ -745,6 +747,21 @@ function serializeProviderErrors(errors) {
 /** 社区 P2P 供给源 */
 function isP2pProvider(provider) {
   return provider?.type === 'p2p' || provider?.id === 'tokenbank-p2p';
+}
+
+// 失败冷却键：单账号直连源整源冷却（provider.id）；p2p 各 worker 独立，按 provider.id::model 冷却，
+// 与 deadSources 的 isSourceLevelError && !isP2pProvider 语义对齐（一个 p2p 模型挂不拉黑整个池）。
+function coolKey(provider, model) {
+  return isP2pProvider(provider) ? `${provider.id}::${model}` : provider.id;
+}
+// failover catch 里记冷却 + 首次进入冷却时打一条日志（便于观察"某源被冷却到 X"）。
+function noteCooldown(provider, model, err) {
+  const e = cooldown.noteFailure(coolKey(provider, model), err);
+  if (e && e._new) {
+    const until = new Date(e.until).toLocaleString();
+    console.log(`[gateway-cooldown] ${coolKey(provider, model)} 冷却至 ${until}（${e.reason}）→ 后续请求将下沉此候选`);
+  }
+  return e;
 }
 
 /** 用户是否在供给源页启用了社区分享网络 */
@@ -2720,8 +2737,9 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     }
   }
   if (_stratScene) {
-    const ordered = buildStrategyCandidates(
-      _stratStep.strategy, { scope: _stratStep.scope, tier: _stratStep.tier, provider: _stratStep.provider }, reqPath, skipP2P, _stratScene.id);
+    const ordered = cooldown.sink(buildStrategyCandidates(
+      _stratStep.strategy, { scope: _stratStep.scope, tier: _stratStep.tier, provider: _stratStep.provider }, reqPath, skipP2P, _stratScene.id),
+      (c) => coolKey(c.provider, c.model));   // 冷却中的候选下沉到末尾（fresh 先试，成功即返回，省空跑）
     if (!ordered.length) {
       const _flt = [_stratStep.scope, _stratStep.tier].filter(Boolean).join('/');
       lastErr = new Error(`该路由过滤(${_flt || _stratStep.strategy || 'any'})下没有可用的${modalityOf(reqPath)}模型/供给源`);
@@ -2745,6 +2763,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
                   worker: result.worker_id || undefined });
         recordStats(c.provider.id, c.model, fillMissingInputTokens(result, body), _providerTier(c.provider), callerKey, streaming, c.provider.billing_type || null);
         reportUsage(c.provider.id, c.model, (result.input_tokens || 0) + (result.output_tokens || 0));
+        cooldown.clear(coolKey(c.provider, c.model));   // 成功 → 源已恢复，清除冷却
         return;
       } catch (err) {
         if (handleP2pFatal(c.provider, err, res, isResponses)) { lastErr = err; recordError(c.model, callerKey, lastErr); return; }
@@ -2757,6 +2776,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           will_failover: !res.headersSent,
         });
         routeErrors.push({ id: c.provider.id, err }); lastErr = err;
+        noteCooldown(c.provider, c.model, err);   // 硬失败(429/401/403/402)记冷却，下次请求下沉此候选
         // 源级失效跳过：仅对「单账号多模型」的直连源有效（如 openai 一个账号下多个 gpt-* 全 429）。
         // p2p 所有模型共享同一 provider.id(tokenbank-p2p) 但各是独立 worker，一个挂不代表其它挂，
         // 绝不能因某个 p2p 模型源级失败就拉黑整个 p2p 池（否则会跳过后面能用的 agnes 等）。
@@ -2808,7 +2828,9 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
         const stepScope = step.scope || scene.scope, stepTier = step.tier || scene.tier;   // 合并路由级过滤
         const stepStrat = step.strategy || ((stepScope || stepTier || step.provider) ? 'fallback' : null);
         if (!stepStrat) continue;
-        const sOrdered = buildStrategyCandidates(stepStrat, { scope: stepScope, tier: stepTier, provider: step.provider }, reqPath, skipP2P, `${scene.id}:${stepStrat}`);
+        const sOrdered = cooldown.sink(
+          buildStrategyCandidates(stepStrat, { scope: stepScope, tier: stepTier, provider: step.provider }, reqPath, skipP2P, `${scene.id}:${stepStrat}`),
+          (c) => coolKey(c.provider, c.model));   // 冷却候选下沉
         const sMeta = { strategy: step.strategy || null, sharer: step.sharer || null };
         const deadSources = new Set();
         for (const c of sOrdered) {
@@ -2823,6 +2845,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
             recordStats(c.provider.id, c.model, fillMissingInputTokens(result, body), _providerTier(c.provider), callerKey, streaming, c.provider.billing_type || null);
             reportUsage(c.provider.id, c.model, (result.input_tokens || 0) + (result.output_tokens || 0));
             if (result.latency) reqRouter.recordLatency(c.provider.id, result.latency);
+            cooldown.clear(coolKey(c.provider, c.model));   // 成功 → 清除冷却
             return;
           } catch (err) {
             if (handleP2pFatal(c.provider, err, res, isResponses)) { lastErr = err; recordError(c.model, callerKey, lastErr); return; }
@@ -2835,6 +2858,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
               will_failover: !res.headersSent,
             });
             stepErrors.push({ id: c.provider.id, err }); lastErr = err;
+            noteCooldown(c.provider, c.model, err);   // 硬失败记冷却
             // 见上：p2p 各模型独立 worker，不能因一个源级失败拉黑整个 tokenbank-p2p 池
             if (isSourceLevelError(err) && !isP2pProvider(c.provider)) deadSources.add(c.provider.id);
             if (res.headersSent) return;
@@ -2855,10 +2879,10 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       // 该步的 p2p 路由指令：step 自带 strategy/sharer（Selector）优先，否则用请求级 routeMeta
       const stepMeta = (step.strategy || step.sharer)
         ? { strategy: step.strategy || null, sharer: step.sharer || null } : routeMeta;
-      const stepProviders = [
+      const stepProviders = cooldown.sink([
         ...stepCandidates.filter(p => Array.isArray(p.models) && p.models.length > 0),
         ...stepCandidates.filter(p => !Array.isArray(p.models) || p.models.length === 0),
-      ];
+      ], (p) => coolKey(p, stepModel));   // 冷却中的源下沉到末尾（fresh 先试，省对必失败源的空跑）
       let   stepSucceeded = false;
 
       for (const provider of stepProviders) {
@@ -2890,6 +2914,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           reportUsage(provider.id, stepModel, stepTok);
           if (result.latency) reqRouter.recordLatency(provider.id, result.latency);
           try { require('./provider-speed').record(stepModel, { firstTokenMs: result.first_token_ms, outputTokens: result.output_tokens, totalMs: result.latency, streaming }); } catch {}
+          cooldown.clear(coolKey(provider, stepModel));   // 成功 → 清除冷却
           stepSucceeded = true;
           return;
         } catch (err) {
@@ -2916,6 +2941,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           });
           stepErrors.push({ id: provider.id, err });
           lastErr = err;
+          noteCooldown(provider, stepModel, err);   // 硬失败记冷却，下次请求下沉此源
           if (res.headersSent) return;
           await pauseBeforeNextProvider(err);
         }
