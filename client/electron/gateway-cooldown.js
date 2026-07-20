@@ -38,6 +38,7 @@ function _escalate(key, baseMs, capMs, now) {
   const prev = _levels.get(key);
   const level = (prev && (now - prev.ts) <= ESCALATION_WINDOW_MS) ? prev.level : 0;
   _levels.set(key, { level: level + 1, ts: now });
+  if (_levels.size > 4096) for (const [k, v] of _levels) if (now - v.ts > ESCALATION_WINDOW_MS) _levels.delete(k);  // 防无界增长：清理陈旧等级
   return Math.min(baseMs * (2 ** Math.min(level, ESCALATION_MAX_LEVEL)), capMs);
 }
 

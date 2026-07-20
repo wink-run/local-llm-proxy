@@ -17,10 +17,10 @@ const { normalizeAgentForwardCfg } = require('../shared/agent-forward-url');
 // 解析出来、规范成 " (reset at <ISO+00:00>)" 追加到错误文本——这些头在 p2p 多跳中会丢，但错误文本
 // 会原样透传回消费端（dispatch.py last_error=str(data)），消费端 gateway-cooldown.parseResetMs 即可捡到，
 // 让「钉选具体 worker」也能精确冷却到重置点（否则只能落到退避档）。
-function resetSuffixFromHeaders(headers) {
+function resetSuffixFromHeaders(headers, now = Date.now()) {
   try {
     const { parseResetFromHeaders } = require('./gateway-cooldown');
-    const ms = parseResetFromHeaders(headers);
+    const ms = parseResetFromHeaders(headers, now);
     if (ms) return ` (reset at ${new Date(ms).toISOString().replace(/\.\d{3}Z$/, '+00:00')})`;
   } catch { /* 解析失败/模块不可用 → 不追加 */ }
   return '';
@@ -696,4 +696,4 @@ function stop() {
 
 function isRunning() { return running; }
 
-module.exports = { start, stop, isRunning, getStats };
+module.exports = { start, stop, isRunning, getStats, resetSuffixFromHeaders };
