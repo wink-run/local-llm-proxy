@@ -27,7 +27,7 @@ Token Bank 是个人 AI 中枢与 Token 管家。把 Claude Code、Codex、Curso
 • Agent 编排：主 Agent 接任务并派发；CLI 多账号按目录分发
 • MCP 资源：目录推荐 + 基于画像的个性化发现、沉淀与迭代
 • 多设备盘点：按应用/模型/费用切片；订阅与按量统一管理
-• 社区 P2P：贡献闲置算力赚积分，圈子共享与网络地图
+• 社区分享：贡献闲置算力赚积分，圈子共享与网络地图
 
 网关本机运行，Key 默认不上云。请遵守当地法规与上游条款。
 ```
@@ -35,7 +35,7 @@ Token Bank 是个人 AI 中枢与 Token 管家。把 Claude Code、Codex、Curso
 ### 关键词
 
 ```
-AI中枢,Token,Claude,Cursor,Codex,智能路由,MCP,Agent,画像,P2P
+AI中枢,Token,Claude,Cursor,Codex,智能路由,MCP,Agent,画像,社区分享
 ```
 
 ---
@@ -61,7 +61,7 @@ Highlights
 • Agent orchestration: main agent hand-offs; multi-account CLI by directory
 • MCP resources: catalog + portrait-based discover, accumulate, iterate
 • Multi-device analytics: slice by app/model/cost; subscriptions & PAYG in one place
-• Community P2P: contribute idle capacity for credits; circles & network map
+• Community sharing: contribute idle capacity for credits; circles & network map
 
 Gateway runs on your Mac; keys stay local by default. Follow local laws and upstream terms.
 ```
@@ -69,5 +69,5 @@ Gateway runs on your Mac; keys stay local by default. Follow local laws and upst
 ### Keywords
 
 ```
-AI hub,Token,Claude,Cursor,Codex,routing,MCP,Agent,portrait,P2P
+AI hub,Token,Claude,Cursor,Codex,routing,MCP,Agent,portrait,sharing
 ```
