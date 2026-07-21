@@ -95,16 +95,13 @@ test('noteFailure：非硬失败(500)不纳入冷却', () => {
   assert.ok(!cd.isCooling('prov-500', NOW));
 });
 
-test('list：返回 level(退避等级) 与 note(最近错误)，供 UI 展示', () => {
+test('list：返回 reason 与 note(最近错误)，供 UI 展示', () => {
   const k = 'list-fields';
   cd.noteFailure(k, { status: 401, message: 'HTTP_401: invalid api key xyz' }, NOW);
   const row = cd.list(NOW + 1000).find(e => e.key === k);
   assert.ok(row, '应在冷却列表里');
   assert.equal(row.reason, 'auth');
-  assert.equal(row.level, 0);                                   // 首次失败等级 0
   assert.match(row.note, /invalid api key/);                   // 最近错误文本
-  cd.noteFailure(k, { status: 401, message: 'HTTP_401 again' }, NOW + 2000);
-  assert.equal(cd.list(NOW + 3000).find(e => e.key === k).level, 1);   // 连续失败 → 等级 1
   cd.clear(k);
 });
 
@@ -119,11 +116,11 @@ test('noteTransient(社区源)：即便带 reset 也只短瞬时、不落盘、�
   cd.clear(k);
 });
 
-test('noPersist：钉选 worker 用——reset 感知冷到重置点但不落盘', () => {
+test('钉选 worker 与个人源同走 noteFailure：远期 reset → reset 感知 + 落盘（key 稳定不再特判）', () => {
   const k = 'tokenbank-p2p::sonnet-5::sharerX';
-  const e = cd.noteFailure(k, { status: 429, message: 'quota. It will reset at 2026-07-15 23:59:59 +0800' }, NOW, { noPersist: true });
-  assert.equal(e.reason, 'quota-reset');           // 仍 reset 感知（到重置点，不是 45s）
-  assert.equal(e.persist, false);                  // 但不落盘（社区池动态）
+  const e = cd.noteFailure(k, { status: 429, message: 'quota. It will reset at 2026-07-15 23:59:59 +0800' }, NOW);
+  assert.equal(e.reason, 'quota-reset');           // reset 感知（冷到重置点）
+  assert.equal(e.persist, true);                   // 远期 reset → 落盘（和个人源一样，不按源类型分）
   assert.ok(e.until > Date.parse('2026-07-15T23:59:59+08:00'));
   cd.clear(k);
 });
@@ -134,42 +131,23 @@ test('noteTransient：5xx/网络等非硬失败不冷却（交给单次 failover
   assert.ok(!cd.isCooling('p2p-500', NOW));
 });
 
-test('滑动窗口退避：连续失败逐次翻倍，成功(clear)即重置回最短', () => {
-  const k = 'esc-transient';
-  const err = { status: 429, message: 'HTTP_429: rate limit' };   // 无 reset → 走退避
-  assert.equal(cd.noteTransient(k, err, NOW).until,                    NOW + 45_000);            // 1st 45s
-  assert.equal(cd.noteTransient(k, err, NOW + 50_000).until,          NOW + 50_000 + 90_000);   // 2nd 90s
-  assert.equal(cd.noteTransient(k, err, NOW + 150_000).until,         NOW + 150_000 + 180_000); // 3rd 180s
-  cd.clear(k);                                                          // 成功 → 等级重置
-  assert.equal(cd.noteTransient(k, err, NOW + 200_000).until,         NOW + 200_000 + 45_000);  // 回到 45s
+test('无 reset → 固定兜底，连续失败不翻倍（已去掉滑动窗口）', () => {
+  const k = 'fixed-fallback';
+  const err = { status: 429, message: 'HTTP_429: rate limit' };   // 无 reset
+  assert.equal(cd.noteFailure(k, err, NOW).until,          NOW + 45_000);            // 限流固定 45s
+  assert.equal(cd.noteFailure(k, err, NOW + 50_000).until, NOW + 50_000 + 45_000);   // 再失败还是 45s，不翻倍
   cd.clear(k);
+  assert.equal(cd.noteFailure('q', { status: 429, message: 'monthly quota' }, NOW).until, NOW + 10 * 60_000);   // 配额无reset 10min
+  assert.equal(cd.noteFailure('a', { status: 401, message: 'HTTP_401' }, NOW).until,       NOW + 30 * 60_000);   // 鉴权 30min
+  cd.clear('q'); cd.clear('a');
 });
 
-test('退避封顶：连续失败到顶后不再翻倍（transient 封顶 10min）', () => {
-  const k = 'esc-cap';
-  const err = { status: 429, message: 'HTTP_429' };
-  let t = NOW;
-  for (let i = 0; i < 8; i++) { cd.noteTransient(k, err, t); t += 60_000; }   // 连续失败到封顶
-  const e = cd.noteTransient(k, err, t);
-  assert.ok(e.until - t <= 10 * 60_000, '不超过 transient 封顶 10min');
-  cd.clear(k);
-});
-
-test('退避窗口：距上次失败超 15min → 视为已恢复，等级归 0', () => {
-  const k = 'esc-window';
-  const err = { status: 429, message: 'HTTP_429' };
-  cd.noteTransient(k, err, NOW);                                         // level→1
-  const e = cd.noteTransient(k, err, NOW + 16 * 60_000);                 // 超窗口 → 从 0 起
-  assert.equal(e.until, NOW + 16 * 60_000 + 45_000);
-  cd.clear(k);
-});
-
-test('reset 感知档不退避：带 reset 的直接冷到重置点', () => {
-  const k = 'esc-reset';
+test('有 reset → 冷到确切点，连续失败也是同一点（不翻倍）', () => {
+  const k = 'reset-fixed';
   const err = { status: 429, message: 'quota. It will reset at 2026-07-15 23:59:59 +0800' };
   const e1 = cd.noteFailure(k, err, NOW);
   const e2 = cd.noteFailure(k, err, NOW + 1000);
-  assert.equal(e1.until, e2.until);   // 两次都到同一重置点，不因连续失败翻倍
+  assert.equal(e1.until, e2.until);
   cd.clear(k);
 });
 

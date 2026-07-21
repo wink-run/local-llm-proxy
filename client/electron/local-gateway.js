@@ -757,17 +757,15 @@ function coolKey(provider, model, sharer) {
 }
 // failover catch 里记冷却 + 首次进入冷却时打一条日志。三档策略：
 //  - 个人源(直连)：你自己的账号，配额确定性、reset 权威 → noteFailure（reset 感知、可落盘、整源）。
-//  - 社区源·钉选了具体 worker(sharer)：re-request 会再打同一个 worker，其账号配额 reset 权威 →
-//    noteFailure + noPersist（reset 感知冷到重置点，避免每 45s 反复空跑同一个死 worker；但池动态，不落盘）。
-//  - 社区源·未钉选的池路由：worker 由服务端在池里动态挑、客户端左右不了，失败可能只是网络抖动 →
-//    noteTransient（只 45s 极短瞬时，防连续空跑，几十秒自愈，不长冷却/落盘/信 reset）。
+//  - 社区源·钉选了具体 worker(sharer)：re-request 会再打同一个 worker，是确定性单账号目标，
+//    和个人源同一套 noteFailure（有 reset 就冷到点、reset 远才落盘；key 稳定按 sharer，落盘也合法）。
+//  - 社区源·未钉选的池路由：worker 由服务端动态挑、客户端左右不了，池的 reset 是单 worker 的不代表池 →
+//    noteTransient（忽略 reset，只 45s 短兜底防连续空跑）。
 function noteCooldown(provider, model, err, sharer) {
   const p2p = isP2pProvider(provider);
   const key = coolKey(provider, model, sharer);
-  let e;
-  if (!p2p)          e = cooldown.noteFailure(key, err);
-  else if (sharer)   e = cooldown.noteFailure(key, err, Date.now(), { noPersist: true });
-  else               e = cooldown.noteTransient(key, err);
+  // 个人源 与 钉选 worker(有 sharer) 同走 noteFailure；仅未钉选的池走 noteTransient。
+  const e = (p2p && !sharer) ? cooldown.noteTransient(key, err) : cooldown.noteFailure(key, err);
   if (e && e._new) {
     const until = new Date(e.until).toLocaleString();
     console.log(`[gateway-cooldown] ${key} 冷却至 ${until}（${e.reason}）→ 后续请求将下沉此候选`);

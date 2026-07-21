@@ -7,7 +7,7 @@ import { getNetwork, getProfile, listKeys, createKey, deleteKey } from '../api/c
 import { modelStatsForIds, workersForModel, normalizeNetworkPayload } from '../lib/networkModelStats';
 import { fetchServerCommunityModels } from '../lib/communityModels';
 import { loadUserAccounts, saveUserAccounts, syncProviderCatalog } from '../api/userAccounts';
-import { DirectSourceCard, PersonalSourceModelView, PricingTable, CollapsibleBillingPanel, buildInstancePatch, buildDirectSourcePatch, buildDirectSourceRemovePatch, TemplateEditModal, SyncDiffBanner, accountInstanceAddedOrder, inferModalityFromPricing, priceFieldsForModality, healthFromStatus, QualityBadge } from '../components/PersonalSources';
+import { DirectSourceCard, PersonalSourceModelView, PricingTable, CollapsibleBillingPanel, buildInstancePatch, buildDirectSourcePatch, buildDirectSourceRemovePatch, TemplateEditModal, SyncDiffBanner, accountInstanceAddedOrder, inferModalityFromPricing, priceFieldsForModality, healthFromStatus, QualityBadge, fmtCooldownRemain, cooldownMeta } from '../components/PersonalSources';
 import { getServerUrl, normalizeServerBase, syncCloudConfigUrl } from '../config';
 import { getGateway, getLocalConfig, getConfig, getOauth, isElectron } from '../api/adapter';
 import { speedDotClass, speedTitle, useSpeedMap, speedFor, bucketFromMs } from '../lib/speed';
@@ -1086,7 +1086,17 @@ function Toggle({ enabled, onChange, disabled = false }) {
 
 // ── P2P Network Card ──────────────────────────────────────────────────────────
 
-function P2PNetworkCard({ provider, onUpdate, onPersistEnabled }) {
+function P2PNetworkCard({ provider, onUpdate, onPersistEnabled, cooldowns = [], onRetryCooldown = null }) {
+  // 钉选 worker 冷却：只取 tokenbank-p2p 带 sharer 的条目，键 `${model}::${sharer}`（对齐 /public/network 的 w.sharer）。
+  // 未钉选的池条目（无 sharer）是 45s 瞬时，不在这展示。
+  const workerCooldowns = useMemo(() => {
+    const m = {};
+    for (const c of (cooldowns || [])) {
+      if (c.provider_id === 'tokenbank-p2p' && c.sharer && c.model) m[`${c.model}::${c.sharer}`] = c;
+    }
+    return m;
+  }, [cooldowns]);
+  const workerCd = (modelName, sharer) => (sharer ? workerCooldowns[`${modelName}::${sharer}`] : null) || null;
   const { t } = useLang();
   const { user } = useAuth();
   const needsLogin = !user;
@@ -1308,6 +1318,10 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled }) {
         ) : (
           <span className="text-green-600 dark:text-green-400 text-[10px] shrink-0">{t('providers.p2p.idle')}</span>
         )}
+        {(() => {
+          const n = Object.keys(workerCooldowns).filter(k => k.startsWith(`${m.name}::`)).length;
+          return n > 0 ? <span title={t('psrc.cooldown.workerCoolingHint')} className="text-blue-600 dark:text-blue-400 text-[10px] shrink-0">❄{n}</span> : null;
+        })()}
       </span>
     );
   }
@@ -1326,20 +1340,34 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled }) {
     const mr = commRow(modelName);
     const mHealth = mr?.last_status_code == null ? null : healthFromStatus(mr.last_status_code);
     // 每行：速度点+ms+城市 · 忙闲点+文字 · 质量点+文字 · 流量。文字不着色。
-    return nodes.map((w, i) => (
-      <div key={`${w.worker_id || w.name || 'node'}:${i}`} className="flex items-center justify-between gap-2 text-[10px] text-zinc-500 dark:text-zinc-400">
+    return nodes.map((w, i) => {
+      const cd = workerCd(modelName, w.sharer);   // 钉选该 worker 且在冷却
+      const cm = cd ? cooldownMeta(cd.reason) : null;
+      return (
+      <div key={`${w.worker_id || w.name || 'node'}:${i}`}
+        className={`flex items-center justify-between gap-2 text-[10px] text-zinc-500 dark:text-zinc-400 ${cd ? 'opacity-60' : ''}`}>
         <div className="flex items-center gap-1.5 min-w-0">
           <span className={`w-2 h-2 rounded-full shrink-0 ${speedDotClass(bucketFromMs(w.last_ttft_ms))}`} title="速度(节点上报)" />
           <span className="shrink-0 tabular-nums">{Math.round(w.last_ttft_ms || 0)}ms</span>
           <span className="truncate text-zinc-700 dark:text-zinc-300">{w.name}</span>
           {w.geo?.city && <span className="truncate text-zinc-400">· {w.geo.city}</span>}
+          {cd && (
+            <span title={`${t(cm.label)} · ${cd.note || ''}`}
+              className={`shrink-0 inline-flex items-center gap-0.5 px-1 rounded ${cm.blue ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20'}`}>
+              <span aria-hidden>{cm.icon}</span>{fmtCooldownRemain(cd.until, t)}
+            </span>
+          )}
+          {cd && onRetryCooldown && (
+            <button type="button" onClick={() => onRetryCooldown(cd.key)}
+              className="shrink-0 text-blue-500 hover:text-blue-600 dark:text-blue-400">{t('psrc.cooldown.retry')}</button>
+          )}
         </div>
         <div className="flex items-center gap-1.5 shrink-0 tabular-nums">
           <QualityBadge health={mHealth} />
           {w.active_requests > 0 && <span title="在途请求(流量)">⇅{w.active_requests}</span>}
         </div>
       </div>
-    ));
+    );});
   }
 
   return (
@@ -4252,7 +4280,8 @@ export default function Providers() {
         />
         <div className={`grid ${tierConfig.p2p.cols} gap-3`}>
           {providers.filter(p => p.type === 'p2p').map(p => (
-            <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} onPersistEnabled={persistProviderEnabled} />
+            <P2PNetworkCard key={p.id} provider={p} onUpdate={updateProvider} onPersistEnabled={persistProviderEnabled}
+              cooldowns={cooldowns} onRetryCooldown={handleRetryCooldown} />
           ))}
         </div>
       </section>

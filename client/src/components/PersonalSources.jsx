@@ -392,7 +392,6 @@ function CooldownDetail({ cooldown, t, onRetry }) {
           <span aria-hidden>{m.icon}</span>
           <span>{t('psrc.cooldown.detailTitle', { reason: t(m.label) })}</span>
           {m.resetAware && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-800/40">{t('psrc.cooldown.resetAware')}</span>}
-          {!m.resetAware && cooldown.level > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-800/40">{t('psrc.cooldown.backoff', { n: cooldown.level + 1 })}</span>}
         </div>
         {onRetry && (
           <button type="button" onClick={() => onRetry(cooldown.key)}
