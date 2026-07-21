@@ -35,17 +35,22 @@
 
 ### 第 4 步: 构建应用
 
+> **必须在 macOS 上构建并签名。** Linux / Windows 只能打出未签名的 `.app`，无法上传 App Store。
+
 ```bash
 cd client
 
-# 方法 A: 使用脚本(推荐)
+# 首次务必先安装依赖（否则会报 Cannot find module 'pngjs'）
+npm install
+
+# 方法 A: 使用脚本(推荐，会自动检查依赖)
 chmod +x scripts/build-mas.sh
 ./scripts/build-mas.sh
 
 # 方法 B: 使用 npm 命令
 npm run build:mas
 
-# 输出: dist-app/Token-Bank-0.5.0.pkg
+# 输出: dist-app/Token-Bank-0.5.0.pkg（仅 macOS 签名后才有）
 ```
 
 ### 第 5 步: 上传和提交

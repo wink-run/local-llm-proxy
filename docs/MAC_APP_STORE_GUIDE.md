@@ -123,14 +123,19 @@ export CSC_KEY_PASSWORD="certificate-password"  # 可选
 ```bash
 cd client
 
-# 仅构建 Mac App Store 版本
-npm run build -- --mac mas
+# 首次务必先安装依赖（否则 gen-icons 会报 Cannot find module 'pngjs'）
+npm install
+
+# 仅构建 Mac App Store 版本（必须在 macOS 上签名）
+npm run build:mas
 
 # 或同时构建多个版本
 npm run build -- --mac mas dmg
 
 # 输出目录: client/dist-app/
 ```
+
+> **注意**: `electron-builder --mac mas` 的代码签名仅在 macOS 上执行。Linux/Windows 会跳过签名，不会生成可上传的 `.pkg`。
 
 构建后会生成:
 - `Token-Bank-0.5.0.pkg` - 可上传到 App Store 的安装包

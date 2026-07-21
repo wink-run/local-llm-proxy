@@ -12,16 +12,36 @@ if [ ! -f "package.json" ]; then
   exit 1
 fi
 
+# 依赖未安装时自动 npm install（避免 pngjs 等 MODULE_NOT_FOUND）
+if [ ! -d "node_modules/pngjs" ] || [ ! -d "node_modules/electron-builder" ]; then
+  echo "📥 检测到依赖未安装，正在执行 npm install..."
+  npm install
+  echo ""
+fi
+
+# MAS 签名 / 上传只能在 macOS 完成；Linux 仅能打出未签名的 .app
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "⚠️  当前系统不是 macOS ($(uname -s))"
+  echo "   electron-builder 会跳过代码签名，无法生成可上传的 .pkg"
+  echo "   请在 Mac 上完成最终签名与 Transporter 上传"
+  echo ""
+fi
+
 # 检查 embedded.provisionprofile 是否存在
 if [ ! -f "embedded.provisionprofile" ]; then
   echo "⚠️  警告: 未找到 embedded.provisionprofile"
   echo "   请从 Apple Developer Portal 下载 Provisioning Profile"
   echo "   并重命名为 embedded.provisionprofile 放在 client 目录"
   echo ""
-  read -p "是否继续构建? (y/N) " -n 1 -r
-  echo
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    exit 1
+  # 非交互环境（CI / 云端）直接继续；本机交互则询问
+  if [ -t 0 ]; then
+    read -p "是否继续构建? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+      exit 1
+    fi
+  else
+    echo "   （非交互环境，继续构建）"
   fi
 fi
 
