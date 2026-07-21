@@ -347,7 +347,7 @@ npm run build -- --mac mas --publish always
 3. 回答内容版权问题
 4. 点击"提交以供审核"
 
-## 五、审核注意事项
+## 六、审核注意事项
 
 ### 1. 常见拒审原因
 
@@ -380,7 +380,7 @@ npm run build -- --mac mas --publish always
 - 更新版本: 通常 1-2 天
 - 如被拒: 修改后重新提交,1-2 天
 
-## 六、版本更新
+## 七、版本更新
 
 ### 1. 修改版本号
 
@@ -412,7 +412,7 @@ npm run build -- --mac mas
 4. 填写"此版本的新增内容"
 5. 提交审核
 
-## 七、测试
+## 八、测试
 
 ### 1. TestFlight 测试(可选)
 
@@ -435,7 +435,7 @@ open "/Applications/Token Bank.app"
 log stream --predicate 'process == "Token Bank"' --level debug
 ```
 
-## 八、常见问题
+## 九、常见问题
 
 ### Q1: 构建时提示找不到证书
 **A**: 确保已正确安装证书到钥匙串,可以在终端运行:
@@ -469,14 +469,14 @@ if (!isMAS) {
 }
 ```
 
-## 九、参考资源
+## 十、参考资源
 
 - [Electron Mac App Store 指南](https://www.electronjs.org/docs/latest/tutorial/mac-app-store-submission-guide)
 - [Apple 提交指南](https://developer.apple.com/app-store/submitting/)
 - [App Store 审核指南](https://developer.apple.com/app-store/review/guidelines/)
 - [electron-builder MAS 配置](https://www.electron.build/configuration/mas)
 
-## 十、自动化脚本
+## 十一、自动化脚本
 
 创建一个便捷的构建脚本 `scripts/build-mas.sh`:
 
