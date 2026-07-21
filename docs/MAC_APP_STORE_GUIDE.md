@@ -175,7 +175,100 @@ codesign -dv --verbose=4 "dist-app/mac-mas/Token Bank.app"
 codesign -d --entitlements - "dist-app/mac-mas/Token Bank.app"
 ```
 
-## 四、提交到 App Store Connect
+## 四、用 Xcode / Transporter 上传
+
+Electron 项目**不是** `.xcodeproj`，不要试图用 Xcode 打开仓库源码来 Archive。  
+正确做法：**先打出签名好的 `.pkg`，再用 Transporter（或 Xcode Organizer）上传到 App Store Connect**。
+
+### 1. 在 Xcode 里登录开发者账号（证书）
+
+1. 打开 **Xcode**
+2. 菜单 **Xcode → Settings…（设置）→ Accounts**
+3. 点左下角 **+**，登录 Apple ID（团队 `8D9KVXVWQ5` / lee wink）
+4. 选中团队 → **Manage Certificates…**
+5. 点左下角 **+**，创建：
+   - **Apple Distribution**（MAS 应用签名，必需）
+   - 若列表里没有 Installer，到 [Certificates 网页](https://developer.apple.com/account/resources/certificates/list) 创建 **Mac Installer Distribution**，下载双击装入钥匙串
+
+验证：
+
+```bash
+security find-identity -v -p codesigning | grep -E 'Apple Distribution|Mac Developer'
+```
+
+应能看到 `Apple Distribution: … (8D9KVXVWQ5)`。
+
+### 2. 准备 Provisioning Profile
+
+1. [Profiles](https://developer.apple.com/account/resources/profiles/list) → **+**
+2. 选 **Mac** → **App Store Connect**
+3. App ID 选 `com.tokenbank.app`
+4. 选刚建的 Distribution 证书 → 下载
+5. 重命名为 `embedded.provisionprofile`，放到 `client/` 目录
+
+也可双击 profile 装入 Xcode，再在终端复制：
+
+```bash
+# 常见位置（文件名因机器而异，用 ls 确认）
+ls ~/Library/MobileDevice/Provisioning\ Profiles/
+cp "~/Library/MobileDevice/Provisioning Profiles/某UUID.provisionprofile" \
+  client/embedded.provisionprofile
+```
+
+### 3. 构建可上传的 pkg
+
+```bash
+cd client
+npm install
+npm run build:mas
+# 成功后应有：dist-app/Token-Bank-*.pkg
+```
+
+若只有 `dist-app/mas-arm64/Token Bank.app` 而没有 `.pkg`，说明签名未完成（缺 Distribution 证书或 profile）。
+
+### 4. 用 Transporter 上传（推荐，可从 Xcode 打开）
+
+**打开方式任选其一：**
+
+- App Store 搜索安装 **Transporter**
+- 或 Xcode 菜单：**Xcode → Open Developer Tool → Transporter**（部分 Xcode 版本有此入口）
+
+**上传步骤：**
+
+1. 用构建同一 Apple ID 登录 Transporter  
+2. 把 `client/dist-app/Token-Bank-0.5.0.pkg` **拖进** Transporter  
+3. 点 **交付（Deliver）**  
+4. 等待校验 + 上传完成（通常几分钟）
+
+### 5. 用 Xcode Organizer 上传（备选）
+
+若你已有 `.xcarchive`（原生项目 Archive 产物）：
+
+1. Xcode → **Window → Organizer**
+2. 选 **Archives** → 选中该 archive
+3. **Distribute App** → **App Store Connect** → **Upload**
+
+Electron + electron-builder 默认产出的是 **`.pkg`，不是 `.xcarchive`**，因此日常请用 **Transporter**，不必强行走 Organizer。
+
+### 6. 在 App Store Connect 选构建并提交
+
+1. 打开 [App Store Connect](https://appstoreconnect.apple.com/) → 我的 App → Token Bank  
+2. 创建/编辑 macOS 版本  
+3. **构建版本** 里刷新，选中刚上传的 build（处理约 5–15 分钟）  
+4. 填截图、描述、隐私后 → **提交以供审核**
+
+### 常见卡点
+
+| 现象 | 处理 |
+|------|------|
+| Transporter 校验失败：缺少签名 | 先装好 Apple Distribution + Installer，再 `npm run build:mas` |
+| 没有 `.pkg` 只有 `.app` | 同上，签名阶段被跳过 |
+| Organizer 里看不到包 | Electron 不会自动进 Organizer，改用 Transporter 拖 `.pkg` |
+| 构建版本一直不出现 | 等邮件/通知里的处理结果；检查 Bundle ID 是否为 `com.tokenbank.app` |
+
+---
+
+## 五、提交到 App Store Connect（元数据）
 
 ### 1. 创建应用记录
 
