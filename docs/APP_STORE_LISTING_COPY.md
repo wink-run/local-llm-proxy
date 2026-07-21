@@ -19,6 +19,12 @@
 ```
 Token Bank 是个人 AI 中枢与 Token 管家。把 Claude Code、Codex、Cursor、Gemini CLI 等接入本地网关，不改客户端习惯，也能看清用量、省下 Token，并按使用习惯沉淀与发现资源——越用越懂你。
 
+你可能正被这些问题困扰
+• 订了多家模型，却说不清 Token 每天花在哪、花了多少
+• 免费额度用不完，付费账单却一直涨；本地模型闲着，工具仍直连付费接口
+• 月末套餐额度清零白浪费；多工具、多账号、多设备用量对不齐
+• Skill / MCP / Prompt 越装越乱，找不到真正适合自己工作流的那批
+
 核心能力
 • 纳管：一键接入主流 Agent；仅统计 / 走网关 / 还原
 • 换模：原生模型名不变，透明路由到本地或第三方模型
@@ -52,6 +58,12 @@ Personal AI hub: onboard · swap · trace · smart route · agent orchestration 
 
 ```
 Token Bank is a personal AI hub and token manager. Plug Claude Code, Codex, Cursor, Gemini CLI and more into a local gateway—keep familiar clients, see usage clearly, spend less, and grow MCP / Skill / Prompt / Agent from your habits—getting smarter the more you use it.
+
+Pain points it tackles
+• Multiple model subscriptions, but no clear view of where tokens go each day
+• Free quotas sit unused while paid bills rise; local models idle as tools still hit paid APIs
+• Month-end plan credits expire; usage across tools, accounts, and devices never lines up
+• Skills / MCP / prompts pile up—hard to find what actually fits your workflow
 
 Highlights
 • Onboard: one-click agents; stats-only / via gateway / restore
