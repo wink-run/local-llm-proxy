@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Mac App Store 沙箱 - 继承给子进程 -->
+  <key>com.apple.security.app-sandbox</key>
+  <true/>
+  
+  <!-- 子进程继承的网络权限 -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+  
+  <!-- 允许子进程继承父进程权限 -->
+  <key>com.apple.security.inherit</key>
+  <true/>
+</dict>
+</plist>

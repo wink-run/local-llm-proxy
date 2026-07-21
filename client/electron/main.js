@@ -1537,6 +1537,13 @@ async function checkForUpdatesAndWait(timeoutMs = 60000) {
 }
 
 function setupAutoUpdater() {
+  // Mac App Store 版本不支持自动更新,仅通过 App Store 更新
+  const isMAS = process.mas || (process.platform === 'darwin' && process.execPath.includes('App Store'));
+  if (isMAS) {
+    console.info('[updater] Mac App Store build detected, auto-update disabled');
+    return;
+  }
+
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.logger = console;

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Mac App Store 沙箱 - 必须启用 -->
+  <key>com.apple.security.app-sandbox</key>
+  <true/>
+  
+  <!-- 网络访问权限 -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <key>com.apple.security.network.server</key>
+  <true/>
+  
+  <!-- 文件访问权限 -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+  <key>com.apple.security.files.downloads.read-write</key>
+  <true/>
+  
+  <!-- 如需访问用户主目录,取消以下注释 -->
+  <!-- <key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key>
+  <array>
+    <string>/.tokenbank/</string>
+    <string>/.claude/</string>
+    <string>/.codex/</string>
+  </array> -->
+</dict>
+</plist>

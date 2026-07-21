@@ -8,6 +8,9 @@
     "dev:vite": "vite",
     "prebuild": "node scripts/gen-icons.js && node scripts/gen-changelog.js",
     "build": "vite build && electron-builder",
+    "build:mas": "node -e \"try{require('pngjs')}catch(e){console.error('依赖未安装，请先执行: npm install');process.exit(1)}\" && npm run prebuild && vite build && npm run electron:mas",
+    "electron:mas": "ELECTRON_MIRROR=https://cdn.npmmirror.com/binaries/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ electron-builder --mac mas",
+    "upload:mas": "bash scripts/upload-mas.sh",
     "gen-icons": "node scripts/gen-icons.js",
     "changelog": "node scripts/gen-changelog.js",
     "test": "ELECTRON_RUN_AS_NODE=1 electron --test electron/__tests__/*.test.js",
@@ -48,7 +51,7 @@
     "wait-on": "^7.2.0"
   },
   "build": {
-    "appId": "com.tokenbank.app",
+    "appId": "run.wink.tokenbank.app",
     "productName": "Token Bank",
     "directories": {
       "output": "dist-app"
@@ -83,6 +86,17 @@
       "gatekeeperAssess": false,
       "entitlements": "electron/entitlements.mac.plist",
       "entitlementsInherit": "electron/entitlements.mac.plist"
+    },
+    "mas": {
+      "type": "distribution",
+      "category": "public.app-category.utilities",
+      "hardenedRuntime": false,
+      "entitlements": "electron/entitlements.mas.plist",
+      "entitlementsInherit": "electron/entitlements.mas.inherit.plist",
+      "provisioningProfile": "embedded.provisionprofile"
+    },
+    "dmg": {
+      "sign": false
     },
     "win": {
       "icon": "build/icon.ico",
