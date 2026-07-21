@@ -95,6 +95,19 @@ test('noteFailure：非硬失败(500)不纳入冷却', () => {
   assert.ok(!cd.isCooling('prov-500', NOW));
 });
 
+test('list：返回 level(退避等级) 与 note(最近错误)，供 UI 展示', () => {
+  const k = 'list-fields';
+  cd.noteFailure(k, { status: 401, message: 'HTTP_401: invalid api key xyz' }, NOW);
+  const row = cd.list(NOW + 1000).find(e => e.key === k);
+  assert.ok(row, '应在冷却列表里');
+  assert.equal(row.reason, 'auth');
+  assert.equal(row.level, 0);                                   // 首次失败等级 0
+  assert.match(row.note, /invalid api key/);                   // 最近错误文本
+  cd.noteFailure(k, { status: 401, message: 'HTTP_401 again' }, NOW + 2000);
+  assert.equal(cd.list(NOW + 3000).find(e => e.key === k).level, 1);   // 连续失败 → 等级 1
+  cd.clear(k);
+});
+
 test('noteTransient(社区源)：即便带 reset 也只短瞬时、不落盘、忽略 reset', () => {
   const k = 'tokenbank-p2p::sonnet-5';
   const e = cd.noteTransient(k, { status: 429, message: 'quota. It will reset at 2026-07-20 00:00:00 +0800' }, NOW);

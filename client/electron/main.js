@@ -2374,6 +2374,26 @@ function registerIPC() {
 
   ipcMain.handle('gateway:status',        () => gateway.getStatus());
   ipcMain.handle('gateway:getLog',        () => gateway.getLog());
+  // 失败候选冷却表（供供给源页展示「冷却中」）。key 拆成 provider_id::model::sharer；
+  // 个人直连源冷却键就是 provider_id（整源），故 model/sharer 为空。
+  ipcMain.handle('gateway:cooldowns',     () => {
+    try {
+      const byId = {};
+      try { for (const p of (readLocalConfig().providers || [])) byId[p.id] = p; } catch {}
+      const parts = (k) => String(k || '').split('::');
+      return require('./gateway-cooldown').list().map(e => {
+        const [provider_id, model = null, sharer = null] = parts(e.key);
+        const p = byId[provider_id] || {};
+        // 联 provider 补展示/匹配字段：个人直连源按 agent_id/source_id 归卡，其余按 provider_id
+        return { ...e, provider_id, model, sharer,
+                 label: p.label || p.name || provider_id, agent_id: p.agent_id || null, source_id: p.source_id || null };
+      });
+    } catch { return []; }
+  });
+  ipcMain.handle('gateway:clearCooldown', (_e, key) => {
+    try { require('./gateway-cooldown').clear(key); return { ok: true }; }
+    catch (e) { return { ok: false, error: e && e.message }; }
+  });
   ipcMain.handle('gateway:speedMap',      () => {
     try {
       const ps = require('./provider-speed');

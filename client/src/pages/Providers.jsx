@@ -1987,7 +1987,7 @@ function pricingRowsForProvider(providerId, models, merged, overrides, excludedM
 function ProviderCardBillingSection({
   billingTag, accountInst, provider, userPayg, userSubscriptions,
   providerPricing, pricingOverrides, onSaveAccounts, onOverridesChange, onUpdate, onPersistModels, t,
-  standalone = false, paygCatalog = [],
+  standalone = false, paygCatalog = [], cooldown = null, onRetryCooldown = null,
 }) {
   const isPayg = billingTag === 'payg';
   const isSubBilling = billingTag === 'api_sub' || billingTag === 'sub_to_api';
@@ -2328,7 +2328,7 @@ function ProviderCardBillingSection({
   })();
 
   return (
-    <CollapsibleBillingPanel t={t} hint={t(hintKey)} summary={billingSummary}>
+    <CollapsibleBillingPanel t={t} hint={t(hintKey)} summary={billingSummary} cooldown={cooldown} onRetryCooldown={onRetryCooldown}>
       {isSubBilling && (
         <div className="flex flex-wrap items-center gap-2">
           <label className="text-xs text-zinc-500 dark:text-zinc-400">{t('providers.billing.subMonthly')}</label>
@@ -2437,7 +2437,7 @@ function formatProviderTestMsg(result, t) {
   };
 }
 
-function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels, onPersistTier }) {
+function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels, onPersistTier, cooldown = null, onRetryCooldown = null }) {
   const { t } = useLang();
   const [showKey, setShowKey] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -2572,6 +2572,8 @@ function CustomProviderCard({ provider, onUpdate, onRemove, onTest, userPayg = [
           onPersistModels={onPersistModels}
           standalone={!accountInst}
           paygCatalog={paygCatalog}
+          cooldown={cooldown}
+          onRetryCooldown={onRetryCooldown}
           t={t}
         />
       ) : accountInst ? (
@@ -2700,7 +2702,7 @@ function UsageMeter({ provider }) {
   );
 }
 
-function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpanded = false, gatewayAuthMode = null, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [], displayName = null, displayIcon = null, lockTemplate = false, accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels, onPersistBaseUrl, onPersistTier }) {
+function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpanded = false, gatewayAuthMode = null, userPayg = [], userSubscriptions = [], onEditPricing, providerPricing = {}, paygCatalog = [], subscriptionCatalog = [], displayName = null, displayIcon = null, lockTemplate = false, accountInst = null, pricingOverrides = {}, onSaveAccounts, onOverridesChange, onPersistModels, onPersistBaseUrl, onPersistTier, cooldown = null, onRetryCooldown = null }) {
   const { t } = useLang();
   const [showKey,    setShowKey]    = useState(false);
   const [expanded,   setExpanded]   = useState(initialExpanded);
@@ -3096,6 +3098,8 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
           onPersistModels={onPersistModels}
           standalone={!accountInst}
           paygCatalog={paygCatalog}
+          cooldown={cooldown}
+          onRetryCooldown={onRetryCooldown}
           t={t}
         />
       ) : !isP2P && accountInst ? (
@@ -3951,12 +3955,45 @@ export default function Providers() {
   }
 
   // 「添加供给源」入口在下方「个人源」区
+  // 失败候选冷却：网关按 provider.id（个人直连源为整源）冷却，主进程联表补了 agent_id/source_id，
+  // 卡片按 provider_id 或 agent_id 匹配。低频轮询（10s，倒计时用粗粒度显示，无需秒级）。
+  const [cooldowns, setCooldowns] = useState([]);
+  const loadCooldowns = useCallback(async () => {
+    try { setCooldowns((await window.electronAPI?.gateway?.cooldowns?.()) || []); } catch { /* ignore */ }
+  }, []);
+  useEffect(() => {
+    loadCooldowns();
+    const id = setInterval(loadCooldowns, 10000);
+    return () => clearInterval(id);
+  }, [loadCooldowns]);
+  const cooldownMaps = useMemo(() => {
+    const byProv = {}, byAgent = {};
+    for (const c of cooldowns) {
+      if (c.provider_id && !byProv[c.provider_id]) byProv[c.provider_id] = c;
+      if (c.agent_id && !byAgent[c.agent_id]) byAgent[c.agent_id] = c;
+    }
+    return { byProv, byAgent };
+  }, [cooldowns]);
+  const cooldownFor = useCallback((...ids) => {
+    for (const id of ids) {
+      if (!id) continue;
+      const c = cooldownMaps.byProv[id] || cooldownMaps.byAgent[id];
+      if (c) return c;
+    }
+    return null;
+  }, [cooldownMaps]);
+  const handleRetryCooldown = useCallback(async (key) => {
+    try { await window.electronAPI?.gateway?.clearCooldown?.(key); } catch { /* ignore */ }
+    loadCooldowns();
+  }, [loadCooldowns]);
+
   const accountBillingProps = {
     pricingOverrides,
     onSaveAccounts: saveAccountsPatch,
     onOverridesChange: setPricingOverrides,
     onPersistModels: persistProviderModels,
     onPersistBaseUrl: persistProviderBaseUrl,
+    onRetryCooldown: handleRetryCooldown,
   };
 
   function renderAddSourcePicker() {
@@ -4171,6 +4208,8 @@ export default function Providers() {
                   allowApiBilling={d.allow_api_billing === true}
                   canConvertToApi={d.can_convert_to_api === true}
                   onConvertToApi={convertDirectToApi}
+                  cooldown={cooldownFor(d.agent_id, d.source_id, d.id)}
+                  onRetryCooldown={handleRetryCooldown}
                   onSave={async (patch) => { await saveUserAccounts(patch); loadUserPaidAccounts(); }}
                   onRemove={removeDirectSource} />
               );
@@ -4182,8 +4221,8 @@ export default function Providers() {
               const extraMeta = resolveMetaForGateway(live.id, meta, extraInst, oauthById);
               const useCustomCard = shouldUseCustomProviderCard(live.id, userSubscriptions, extraInst, extraMeta);
               return !useCustomCard
-                ? <ProviderCard key={live.id} provider={live} meta={extraMeta} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} onPersistTier={persistProviderTier} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id], extraInst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} accountInst={extraInst} {...accountBillingProps} />
-                : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} onPersistTier={persistProviderTier} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={extraInst} {...accountBillingProps} />;
+                ? <ProviderCard key={live.id} provider={live} meta={extraMeta} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} onPersistTier={persistProviderTier} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[live.id], extraInst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} accountInst={extraInst} cooldown={cooldownFor(live.id, extraInst?.gateway_id, extraInst?.source_id)} {...accountBillingProps} />
+                : <CustomProviderCard key={live.id} provider={live} onUpdate={updateProvider} onRemove={removePersonalProvider} onTest={testProvider} onPersistTier={persistProviderTier} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={extraInst} cooldown={cooldownFor(live.id, extraInst?.gateway_id, extraInst?.source_id)} {...accountBillingProps} />;
             }
             const inst = row.inst;
             const gwId = inst.gateway_id;
@@ -4191,8 +4230,8 @@ export default function Providers() {
             const cardMeta = resolveMetaForGateway(gwId, meta, inst, oauthById);
             const useCustomCard = shouldUseCustomProviderCard(gwId, userSubscriptions, inst, cardMeta);
             return !useCustomCard
-              ? <ProviderCard key={inst.id} provider={live} meta={cardMeta} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} onPersistTier={persistProviderTier} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId], inst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={inst.name} displayIcon={inst.icon} lockTemplate accountInst={inst} {...accountBillingProps} />
-              : <CustomProviderCard key={inst.id} provider={live} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} onPersistTier={persistProviderTier} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={inst} {...accountBillingProps} />;
+              ? <ProviderCard key={inst.id} provider={live} meta={cardMeta} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} onPersistTier={persistProviderTier} gatewayAuthMode={resolveCardAuthMode(live, providerGatewayAuth[gwId], inst)} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} subscriptionCatalog={subscriptionCatalog} displayName={inst.name} displayIcon={inst.icon} lockTemplate accountInst={inst} cooldown={cooldownFor(gwId, live.id, inst.source_id)} {...accountBillingProps} />
+              : <CustomProviderCard key={inst.id} provider={live} onUpdate={updateProvider} onRemove={() => removeAccountInstance(inst)} onTest={testProvider} onPersistTier={persistProviderTier} userPayg={userPayg} userSubscriptions={userSubscriptions} onEditPricing={openTemplateEditForProvider} providerPricing={mergedProviderPricing} paygCatalog={paygCatalog} accountInst={inst} cooldown={cooldownFor(gwId, live.id, inst.source_id)} {...accountBillingProps} />;
           })}
           {personalSourceRows.length === 0 && (
             <p className="col-span-2 text-xs text-zinc-400 text-center py-6">{t('providers.filter.empty')}</p>

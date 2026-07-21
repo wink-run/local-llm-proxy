@@ -332,7 +332,84 @@ export function AccountStatsView({ data, t, filter = 'all', onFilter }) {
 }
 
 /** 可折叠「模型和计费」区块，默认收起 */
-export function CollapsibleBillingPanel({ hint, summary, t, children }) {
+// 冷却展示辅助：reason → 图标/配色/标签；剩余时长/恢复时刻格式化。
+// reset 感知(冷到确切重置点)用蓝雪花；退避档(鉴权/欠费/限流)用橙时钟。
+const COOLDOWN_META = {
+  'quota-reset': { icon: '❄', blue: true,  label: 'psrc.cooldown.reason.quota',    resetAware: true },
+  quota:         { icon: '❄', blue: true,  label: 'psrc.cooldown.reason.quota' },
+  'rate-limit':  { icon: '⚡', blue: false, label: 'psrc.cooldown.reason.rateLimit' },
+  transient:     { icon: '⚡', blue: false, label: 'psrc.cooldown.reason.rateLimit' },
+  auth:          { icon: '⏱', blue: false, label: 'psrc.cooldown.reason.auth' },
+  credit:        { icon: '⏱', blue: false, label: 'psrc.cooldown.reason.credit' },
+};
+export function cooldownMeta(reason) { return COOLDOWN_META[reason] || COOLDOWN_META.quota; }
+export function fmtCooldownRemain(untilMs, t) {
+  const ms = untilMs - Date.now();
+  if (ms <= 0) return t('psrc.cooldown.soon');
+  const m = Math.round(ms / 60000);
+  if (m < 1)  return t('psrc.cooldown.lt1min');
+  if (m < 60) return t('psrc.cooldown.mins', { n: m });
+  const h = Math.round(m / 60);
+  if (h < 24) return t('psrc.cooldown.hours', { n: h });
+  return t('psrc.cooldown.days', { n: Math.round(h / 24) });
+}
+export function fmtCooldownUntil(untilMs) {
+  const d = new Date(untilMs);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// 折叠态：跟在计费摘要后的一小段冷却文字（+重试链接）。
+export function CooldownInline({ cooldown, t, onRetry }) {
+  if (!cooldown) return null;
+  const m = cooldownMeta(cooldown.reason);
+  const color = m.blue ? 'text-blue-600 dark:text-blue-400' : 'text-amber-600 dark:text-amber-400';
+  return (
+    <>
+      <span className="text-[11px] text-zinc-400">·</span>
+      <span className={`text-[11px] inline-flex items-center gap-1 ${color}`}>
+        <span aria-hidden>{m.icon}</span>
+        {t('psrc.cooldown.chip', { reason: t(m.label), remain: fmtCooldownRemain(cooldown.until, t) })}
+      </span>
+      {onRetry && (
+        <button type="button" onClick={(e) => { e.stopPropagation(); onRetry(cooldown.key); }}
+          className="text-[11px] text-blue-500 hover:text-blue-600 dark:text-blue-400">{t('psrc.cooldown.retry')}</button>
+      )}
+    </>
+  );
+}
+
+// 展开态：刊例价表格上方的冷却详情块。
+function CooldownDetail({ cooldown, t, onRetry }) {
+  if (!cooldown) return null;
+  const m = cooldownMeta(cooldown.reason);
+  const bg = m.blue ? 'bg-blue-50 dark:bg-blue-900/20' : 'bg-amber-50 dark:bg-amber-900/20';
+  const fg = m.blue ? 'text-blue-700 dark:text-blue-300' : 'text-amber-700 dark:text-amber-300';
+  return (
+    <div className={`rounded-lg px-3 py-2.5 ${bg}`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className={`flex items-center gap-1.5 text-xs font-medium ${fg}`}>
+          <span aria-hidden>{m.icon}</span>
+          <span>{t('psrc.cooldown.detailTitle', { reason: t(m.label) })}</span>
+          {m.resetAware && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-800/40">{t('psrc.cooldown.resetAware')}</span>}
+          {!m.resetAware && cooldown.level > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-800/40">{t('psrc.cooldown.backoff', { n: cooldown.level + 1 })}</span>}
+        </div>
+        {onRetry && (
+          <button type="button" onClick={() => onRetry(cooldown.key)}
+            className="text-[11px] px-2 py-1 rounded-md border border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/30 shrink-0">
+            {t('psrc.cooldown.retryNow')}
+          </button>
+        )}
+      </div>
+      <div className={`text-[11px] mt-1.5 leading-relaxed ${m.blue ? 'text-blue-600 dark:text-blue-400' : 'text-amber-600 dark:text-amber-400'}`}>
+        {t('psrc.cooldown.recoverAt', { time: fmtCooldownUntil(cooldown.until), remain: fmtCooldownRemain(cooldown.until, t) })}
+        {cooldown.note && <><br />{t('psrc.cooldown.lastError')}: <span className="text-rose-500 dark:text-rose-400 break-all">{cooldown.note}</span></>}
+      </div>
+    </div>
+  );
+}
+
+export function CollapsibleBillingPanel({ hint, summary, t, children, cooldown = null, onRetryCooldown = null }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="border-t border-zinc-100 dark:border-zinc-800 px-4 py-3">
@@ -342,6 +419,7 @@ export function CollapsibleBillingPanel({ hint, summary, t, children }) {
           {!open && summary && (
             <span className="text-[11px] text-zinc-400 truncate">{summary}</span>
           )}
+          {!open && <CooldownInline cooldown={cooldown} t={t} onRetry={onRetryCooldown} />}
         </div>
         <button type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}
           className="text-xs px-2.5 py-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors shrink-0">
@@ -350,6 +428,7 @@ export function CollapsibleBillingPanel({ hint, summary, t, children }) {
       </div>
       {open && (
         <div className="space-y-3 mt-3">
+          <CooldownDetail cooldown={cooldown} t={t} onRetry={onRetryCooldown} />
           {hint && <p className="text-[11px] text-zinc-400">{hint}</p>}
           {children}
         </div>
@@ -361,6 +440,7 @@ export function CollapsibleBillingPanel({ hint, summary, t, children }) {
 // ── 第3块：直连源卡（与其它供给源卡片同风格，编辑自动保存）────────────────────────
 export function DirectSourceCard({
   instance, onSave, onRemove, allowApiBilling = false, canConvertToApi = false, onConvertToApi, t,
+  cooldown = null, onRetryCooldown = null,
 }) {
   const baseMonthly = instance.monthly_usd != null ? String(instance.monthly_usd) : '';
   const basePricing = instance.pricing || {};
@@ -508,6 +588,8 @@ export function DirectSourceCard({
       <CollapsibleBillingPanel
         t={t}
         summary={billingSummary}
+        cooldown={cooldown}
+        onRetryCooldown={onRetryCooldown}
         hint={isDirectAppSub ? t('psrc.direct.officialModelsHint') : (isApi ? t('psrc.direct.apiTitle') : t('psrc.direct.subTitle'))}
       >
         <div className="flex flex-wrap items-center gap-2">

@@ -196,6 +196,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   gateway: {
     status:          () => ipcRenderer.invoke('gateway:status'),
     getLog:          () => ipcRenderer.invoke('gateway:getLog'),
+    cooldowns:       () => ipcRenderer.invoke('gateway:cooldowns'),
+    clearCooldown:   (key) => ipcRenderer.invoke('gateway:clearCooldown', key),
     speedMap:        () => ipcRenderer.invoke('gateway:speedMap'),
     probeModel:      (model) => ipcRenderer.invoke('gateway:probeModel', model),
     setStrategy:     (s) => ipcRenderer.invoke('gateway:setStrategy', s),

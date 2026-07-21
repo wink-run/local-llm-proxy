@@ -132,6 +132,10 @@ function classify(err, now = Date.now()) {
 // 记一次失败。返回冷却 entry（附 _new=该键此前不在冷却，供调用方决定是否打日志）或 null（不纳入冷却）。
 // opts.noPersist：保留 reset 感知的时长，但强制不落盘（社区源钉选 worker 用——池动态，不跨重启保留）。
 // 无 reset 的档走滑动窗口退避（_escalate）：连续失败逐次拉长；reset 感知档冷到确切重置点、不退避。
+function _errNote(err) {
+  return String((err && err.message) || '').replace(/\s+/g, ' ').trim().slice(0, 140) || null;
+}
+
 function noteFailure(key, err, now = Date.now(), opts = {}) {
   if (!key) return null;
   const c = classify(err, now);
@@ -139,7 +143,8 @@ function noteFailure(key, err, now = Date.now(), opts = {}) {
   const wasCooling = isCooling(key, now);
   const persist = opts.noPersist ? false : !!c.persist;
   const until = c.resetDerived ? c.until : now + _escalate(key, c.baseMs, c.cap, now);
-  const entry = { until, status: c.status, reason: c.reason, persist };
+  const level = c.resetDerived ? 0 : Math.max(0, (_levels.get(key)?.level || 1) - 1);   // 已生效的退避等级
+  const entry = { until, status: c.status, reason: c.reason, persist, level, note: _errNote(err) };
   _map.set(key, entry);
   if (entry.persist) _save();
   return { ...entry, _new: !wasCooling };
@@ -152,7 +157,8 @@ function noteTransient(key, err, now = Date.now()) {
   const c = classify(err, now);
   if (!c) return null;
   const wasCooling = isCooling(key, now);
-  const entry = { until: now + _escalate(key, TRANSIENT_MS, CAP.transient, now), status: c.status, reason: 'transient', persist: false };
+  const entry = { until: now + _escalate(key, TRANSIENT_MS, CAP.transient, now), status: c.status, reason: 'transient', persist: false,
+                  level: Math.max(0, (_levels.get(key)?.level || 1) - 1), note: _errNote(err) };
   _map.set(key, entry);
   return { ...entry, _new: !wasCooling };
 }
@@ -189,7 +195,7 @@ function sink(items, keyFn, now = Date.now()) {
 // 当前冷却中的条目（供 UI/日志展示）。
 function list(now = Date.now()) {
   const out = [];
-  for (const [key, e] of _map) if (e.until > now) out.push({ key, until: e.until, status: e.status, reason: e.reason });
+  for (const [key, e] of _map) if (e.until > now) out.push({ key, until: e.until, status: e.status, reason: e.reason, level: e.level || 0, note: e.note || null });
   return out;
 }
 
@@ -200,7 +206,7 @@ function _load() {
     const arr = JSON.parse(fs.readFileSync(FILE, 'utf8'));
     const now = Date.now();
     if (Array.isArray(arr)) for (const e of arr)
-      if (e && e.key && e.until > now) _map.set(e.key, { until: e.until, status: e.status, reason: e.reason, persist: true });
+      if (e && e.key && e.until > now) _map.set(e.key, { until: e.until, status: e.status, reason: e.reason, persist: true, level: e.level || 0, note: e.note || null });
   } catch {}
 }
 function _save() {
@@ -208,7 +214,7 @@ function _save() {
     fs.mkdirSync(path.dirname(FILE), { recursive: true });
     const now = Date.now();
     const persistArr = [];
-    for (const [key, e] of _map) if (e.persist && e.until > now) persistArr.push({ key, until: e.until, status: e.status, reason: e.reason });
+    for (const [key, e] of _map) if (e.persist && e.until > now) persistArr.push({ key, until: e.until, status: e.status, reason: e.reason, level: e.level || 0, note: e.note || null });
     fs.writeFileSync(FILE, JSON.stringify(persistArr));
   } catch {}
 }
