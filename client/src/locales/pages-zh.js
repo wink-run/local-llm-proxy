@@ -787,6 +787,7 @@ export default {
   'providers.p2p.nodeCount': '{n} 节点',
   'providers.p2p.nodesTotal': '共 {n} 个节点',
   'providers.p2p.idle': ' · 空闲',
+  'providers.p2p.offline': '离线',
   'providers.p2p.lastTtft': '首token {ms}ms',
   'providers.p2p.ttftShort': '{s}s',
   'providers.p2p.totalLatencyShort': '总{s}s',

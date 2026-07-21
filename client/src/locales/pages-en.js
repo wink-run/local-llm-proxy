@@ -787,6 +787,7 @@ export default {
   'providers.p2p.nodeCount': '{n} nodes',
   'providers.p2p.nodesTotal': '{n} nodes total',
   'providers.p2p.idle': ' · idle',
+  'providers.p2p.offline': 'offline',
   'providers.p2p.lastTtft': 'TTFT {ms}ms',
   'providers.p2p.ttftShort': '{s}s',
   'providers.p2p.totalLatencyShort': 'tot {s}s',

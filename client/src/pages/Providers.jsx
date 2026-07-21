@@ -1326,6 +1326,23 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled, cooldowns = [], 
     );
   }
 
+  // 冷却标记（在线行与离线合成行共用）：❄倒计时 + 解冻链接。
+  function cooldownMark(cd) {
+    if (!cd) return null;
+    const cm = cooldownMeta(cd.reason);
+    return (
+      <>
+        <span title={`${t(cm.label)} · ${cd.note || ''}`}
+          className={`shrink-0 inline-flex items-center gap-0.5 px-1 rounded ${cm.blue ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20'}`}>
+          <span aria-hidden>{cm.icon}</span>{fmtCooldownRemain(cd.until, t)}
+        </span>
+        {onRetryCooldown && (
+          <button type="button" onClick={() => onRetryCooldown(cd.key)}
+            className="shrink-0 text-blue-500 hover:text-blue-600 dark:text-blue-400">{t('psrc.cooldown.retry')}</button>
+        )}
+      </>
+    );
+  }
   function ModelNodeList({ modelName }) {
     let nodes = [];
     try {
@@ -1333,41 +1350,47 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled, cooldowns = [], 
     } catch {
       nodes = [];
     }
-    if (!nodes.length) {
+    // 冷却中但当前不在在线列表的钉选 worker（掉线/未上报）→ 合成离线行，冷却态仍可见+可解冻。
+    const onlineSharers = new Set(nodes.map(w => w.sharer).filter(Boolean));
+    const offlineCooled = Object.entries(workerCooldowns)
+      .filter(([k]) => k.startsWith(`${modelName}::`))
+      .map(([, cd]) => cd)
+      .filter(cd => !onlineSharers.has(cd.sharer));
+    if (!nodes.length && !offlineCooled.length) {
       return <p className="text-[10px] text-zinc-500 py-0.5">{t('providers.p2p.noProviderNodes')}</p>;
     }
     // 服务质量：来自我们请求历史的模型级(tokenbank-p2p)，服务端暂不分 worker，故同模型各 worker 同值。
     const mr = commRow(modelName);
     const mHealth = mr?.last_status_code == null ? null : healthFromStatus(mr.last_status_code);
     // 每行：速度点+ms+城市 · 忙闲点+文字 · 质量点+文字 · 流量。文字不着色。
-    return nodes.map((w, i) => {
-      const cd = workerCd(modelName, w.sharer);   // 钉选该 worker 且在冷却
-      const cm = cd ? cooldownMeta(cd.reason) : null;
-      return (
-      <div key={`${w.worker_id || w.name || 'node'}:${i}`}
-        className={`flex items-center justify-between gap-2 text-[10px] text-zinc-500 dark:text-zinc-400 ${cd ? 'opacity-60' : ''}`}>
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className={`w-2 h-2 rounded-full shrink-0 ${speedDotClass(bucketFromMs(w.last_ttft_ms))}`} title="速度(节点上报)" />
-          <span className="shrink-0 tabular-nums">{Math.round(w.last_ttft_ms || 0)}ms</span>
-          <span className="truncate text-zinc-700 dark:text-zinc-300">{w.name}</span>
-          {w.geo?.city && <span className="truncate text-zinc-400">· {w.geo.city}</span>}
-          {cd && (
-            <span title={`${t(cm.label)} · ${cd.note || ''}`}
-              className={`shrink-0 inline-flex items-center gap-0.5 px-1 rounded ${cm.blue ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20'}`}>
-              <span aria-hidden>{cm.icon}</span>{fmtCooldownRemain(cd.until, t)}
-            </span>
-          )}
-          {cd && onRetryCooldown && (
-            <button type="button" onClick={() => onRetryCooldown(cd.key)}
-              className="shrink-0 text-blue-500 hover:text-blue-600 dark:text-blue-400">{t('psrc.cooldown.retry')}</button>
-          )}
+    return (<>
+      {nodes.map((w, i) => {
+        const cd = workerCd(modelName, w.sharer);   // 钉选该 worker 且在冷却
+        return (
+        <div key={`${w.worker_id || w.name || 'node'}:${i}`}
+          className={`flex items-center justify-between gap-2 text-[10px] text-zinc-500 dark:text-zinc-400 ${cd ? 'opacity-60' : ''}`}>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${speedDotClass(bucketFromMs(w.last_ttft_ms))}`} title="速度(节点上报)" />
+            <span className="shrink-0 tabular-nums">{Math.round(w.last_ttft_ms || 0)}ms</span>
+            <span className="truncate text-zinc-700 dark:text-zinc-300">{w.name}</span>
+            {w.geo?.city && <span className="truncate text-zinc-400">· {w.geo.city}</span>}
+            {cooldownMark(cd)}
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0 tabular-nums">
+            <QualityBadge health={mHealth} />
+            {w.active_requests > 0 && <span title="在途请求(流量)">⇅{w.active_requests}</span>}
+          </div>
         </div>
-        <div className="flex items-center gap-1.5 shrink-0 tabular-nums">
-          <QualityBadge health={mHealth} />
-          {w.active_requests > 0 && <span title="在途请求(流量)">⇅{w.active_requests}</span>}
+      );})}
+      {offlineCooled.map((cd, i) => (
+        <div key={`offc:${cd.sharer}:${i}`} className="flex items-center gap-1.5 text-[10px] text-zinc-500 dark:text-zinc-400 opacity-60">
+          <span className="w-2 h-2 rounded-full shrink-0 bg-zinc-300 dark:bg-zinc-600" title="离线" />
+          <span className="truncate text-zinc-700 dark:text-zinc-300">{cd.sharer}</span>
+          <span className="shrink-0 text-zinc-400">· {t('providers.p2p.offline') || '离线'}</span>
+          {cooldownMark(cd)}
         </div>
-      </div>
-    );});
+      ))}
+    </>);
   }
 
   return (
