@@ -1,35 +1,35 @@
 # Token Bank
 
-> **Local LLM Gateway · Token Manager**
+> **Personal AI Hub · Token Manager**
 >
-> Know what you're spending · Spend less · Earn from what's idle
+> See clearly · Spend less · Stay simple · Get smarter with you · Earn from idle
 >
-> One-click agent onboarding · Multi-account CLI · Agent orchestration · MCP / Skill / Prompt hub · Seamless model swap · Full trace · Smart routing · Community P2P
+> One-click Claude / Cursor / Codex onboarding · one-stop trace & routing · portrait-driven discovery · community sharing
 
-[中文文档](./README.zh-CN.md) · [Download Latest](https://github.com/wink-run/local-llm-proxy/releases/latest) · [Architecture](./DESIGN.md)
+[中文文档](./README.zh-CN.md) · [Download Latest](https://github.com/wink-run/local-llm-proxy/releases/latest) · [Architecture](./DESIGN.md) · [Privacy Policy](./docs/PRIVACY_POLICY.md)
 
 ---
 
 ## Why Token Bank
 
-You've probably run into these problems:
+Pain points it tackles:
 
-- Subscribed to multiple LLM providers with no clear view of where tokens actually go
-- Groq free tier and GitHub Models quota go unused every month, yet the OpenAI bill keeps climbing
-- Ollama is running locally, but AI tools still call the paid API by default
-- Month-end API plan credits expire and reset to zero — wasted
+- Many model plans, little clarity on where tokens go each day
+- Free quotas sit unused while paid bills rise; local models idle
+- Tools, accounts, and devices don’t line up; Skills / MCP / prompts pile up
+- Month-end plan credits expire unused
 
-**Token Bank is a local LLM gateway** that sits between your AI tools and every LLM provider. It helps you understand your token usage, cut costs automatically, and turn idle quota into credits.
+**Token Bank is your personal AI hub.** Plug Claude Code, Codex, Cursor, Gemini CLI and more into a local gateway—keep familiar clients, **see clearly, spend less, stay simple**, grow resources from your habits (**get smarter with you**), and turn idle capacity into credits via **community sharing** (**earn from idle**).
 
-**Core capabilities in v0.5:**
+**Five pillars:**
 
 | Pillar | What you get |
 |---|---|
-| **Agent trace & onboarding** | Register Cursor, Claude Code, Codex CLI, Cherry Studio, and more — live proxy or session import so every call is traced |
-| **Multi-account CLI** | Auto-scan / manually add Claude · Codex instances; dispatch by working directory; per-account quota and usage |
-| **Agent orchestration** | Playground sets a main agent as the hub entry, then coordinates hand-offs to other agents; tool streams and stop/resume |
-| **Resource hub** | Community MCP / Skill / Prompt / Agent catalog; per-agent projection gating; prompts via `tokenbank-prompts` MCP |
-| **Subscriptions & analytics** | APP / API / PAYG in one place; dashboard slices by **app · provider · model · supply type · cost · device · time**; multi-device cloud merge |
+| **See clearly** | One-click onboard; full trace; multi-device analytics; subscriptions vs PAYG side by side |
+| **Spend less** | Seamless model swap; smart local-first routing; scene strategies; optional lossless compression |
+| **Stay simple** | One-click onboard/restore; multi-account CLI by directory; tray status; one local address |
+| **Get smarter with you** | Work portrait; personalized MCP / Skill / Prompt / Agent discover · accumulate · iterate |
+| **Earn from idle** | Contribute idle capacity for credits; circles & network map |
 
 ---
 
@@ -86,7 +86,7 @@ Trace data appears on the **Dashboard** sliced by **app · provider · model · 
 
 ### Smart routing
 
-Supply is organized into **local sources** and **community P2P sources**. Each app can bind its own route; a global supply chain acts as fallback:
+Supply is organized into **local sources** and **community sharing sources**. Each app can bind its own route; a global supply chain acts as fallback:
 
 ```
 Per-app binding (keyScene / scene routes)
@@ -94,7 +94,7 @@ Per-app binding (keyScene / scene routes)
 Smart supply chain
     Local: Ollama → free API (Groq / GitHub Models) → subscription / PAYG API
     ↓ local unavailable or need extra compute
-    Community P2P (spend credits on shared community compute)
+    Community sharing (spend credits on shared community compute)
     ↓ policy groups
 fallback · round-robin · weighted · latency · direct
 ```
@@ -102,11 +102,11 @@ fallback · round-robin · weighted · latency · direct
 | Supply type | Includes | Notes |
 |---|---|---|
 | **Local sources** | Ollama, free API, APP/API subscriptions, pay-as-you-go | Forwarded by your local gateway; keys never leave the machine |
-| **Community P2P** | Shared community compute network | Spend credits on remote nodes; model list synced dynamically |
+| **Community sharing** | Shared community compute network | Spend credits on remote nodes; model list synced dynamically |
 
 - **Scene routes** — daily chat, code completion, long-doc analysis each get their own chain
 - **Policy groups** — pick provider order from task features (tool calls, context length, …)
-- **Failover** — local source down? try community P2P automatically; fully transparent to the agent
+- **Failover** — local source down? try community sharing automatically; fully transparent to the agent
 
 ### Gateway lossless compression
 
@@ -124,7 +124,7 @@ Desktop, CLI, and server gateways each register as a device — **usage is repor
 | Capability | What it does |
 |---|---|
 | **Device registration** | Each machine gets a persistent device_id; 60s heartbeat tracks online status |
-| **Inventory snapshots** | Reports calls, tokens, cost, local / community P2P mix, top models/apps for 1 / 7 / 30 day windows |
+| **Inventory snapshots** | Reports calls, tokens, cost, local / community sharing mix, top models/apps for 1 / 7 / 30 day windows |
 | **Cloud merge** | **Profile** and **Dashboard** show per-device share, online status, detail vs aggregate views |
 | **Cross-device sync** | Subscriptions, PAYG config, and tool lists sync on login — no re-setup when switching machines |
 
@@ -154,12 +154,12 @@ Server-maintained
          ↓  auto-fetched on login / startup
 Local gateway
     ├── Merged into ~/.tokenbank/tokenbank.yaml
-    ├── Community P2P online models refreshed periodically (/v1/models → route candidates)
+    ├── Community sharing online models refreshed periodically (/v1/models → route candidates)
     └── One-click env scan — import existing free keys with round-robin
 ```
 
 - **Local catalog delivery** — Groq, Cerebras, GitHub Models, NVIDIA NIM, etc. listed under **Local sources**; admins hot-update via YAML upload
-- **Community P2P models** — online contributor models pulled live; no manual local registration
+- **Community sharing models** — online contributor models pulled live; no manual local registration
 - **Env scan** — one-click import of existing Groq / GitHub Models / Anthropic keys; multi-key round-robin
 - **Offline fallback** — built-in defaults when offline; server deltas merged automatically when back online
 
@@ -196,94 +196,56 @@ The **Resources** tab consolidates community picks and personal assets:
 
 ---
 
-## Three things it does
+## Five things it does
 
-### 1 — Know what you're spending
+### 1 — See clearly
 
-Token Bank logs every request: which route it took, which model answered, how many tokens it used, and how long it took.
+Token Bank logs every request: which route it took, which model answered, how many tokens, how long it took.
 
-- **Agent-aware inventory**: onboard common agents in the Gateway tab; see per-app calls, tokens, cost, and proxy vs session-import mix
-- **Daily dashboard**: total calls, local-source hit rate, provider breakdown, model distribution (by calls / tokens / cost)
-- **Call log**: route result, status, and latency for every request
-- **Multi-device view**: today's usage per device (desktop + CLI + server), aggregated in the cloud when signed in
-- **Billing overlay**: subscription plans amortized by day + pay-as-you-go list-price estimates alongside raw token stats
-- **Credit history**: every earn and spend is recorded; balance is always up to date
-
----
-
-### Personal subscription & PAYG (Profile)
-
-Keep subscriptions and metered providers in one place — separate from the raw provider key store:
-
-| Type | Purpose |
-|---|---|
-| **APP subscription** | ChatGPT, Claude, Gemini, etc. — stats-only, or convert to API gateway via OAuth |
-| **API subscription** | Vendor API plans (e.g. Volcengine Coding Plan) — API Key gateway, independent catalog |
-| **Pay-as-you-go** | OpenAI, Anthropic, custom providers — register models and USD/M-token list prices; gateway only allows models you configured here |
-
-The **Providers** page wires keys and routes; the **Profile → Subscriptions / PAYG** tabs define what counts toward billing analytics and which models each PAYG source may expose.
-
----
+- **One-click onboard & inventory**: stats-only / via gateway / restore; per-app calls, tokens, cost
+- **Full trace**: live proxy + session import with auto-dedupe
+- **Multi-device analytics**: app · provider · model · cost · device · time; cloud merge when signed in
+- **Subscriptions vs PAYG**: APP / API / metered side by side with daily accrual and list-price estimates
 
 ### 2 — Spend less
 
-Token Bank runs a **smart routing chain** locally. Each request works down the chain until one source succeeds:
+A **smart local-first routing chain**, with community sharing as fallback:
 
 ```
-Local sources
-    Ollama / free API (Groq / GitHub Models) / subscriptions / pay-as-you-go API
-    ↓ unavailable or need extra compute
-Community P2P (spend credits on shared community compute)
+Local: Ollama → free APIs → subscription / PAYG
+    ↓ unavailable or need extra capacity
+Community sharing (spend credits on shared compute)
 ```
 
-**Your AI tools point at one local address.** Routing is completely transparent to them.
+- **Seamless model swap**: native model names unchanged; protocols adapted automatically
+- **Scene strategies**: different chains for chat / completion / long docs; failover transparent to agents
+- **Lossless compression**: fewer upstream input tokens, meaning unchanged
 
-#### Scene routes
+### 3 — Stay simple
 
-Different use cases can be mapped to different supply chains:
+- **One-click onboard/restore** on the Gateway page
+- **Multi-account CLI** by working directory; menu-bar tray for status and today’s usage
+- **OpenAI-compatible endpoint**: point existing tools at one local address
+- **Playground orchestration**: main agent takes tasks and hands off; tool streams visible
 
-| Scene | Strategy |
-|---|---|
-| Daily chat | Local free API first, community P2P as fallback |
-| Code completion | Local Ollama — zero latency, zero cost |
-| Long document analysis | Local PAYG API — quality guaranteed |
+### 4 — Get smarter with you
 
-#### Quick local source setup
+- **Work portrait** mined from real calls and habits; reusable across skills, prompts, agents
+- **For You**: personalized MCP / Skill / Prompt / Agent discovery
+- **Accumulate & iterate**: keep assets in your library; reuse portrait to rediscover, or remine; compose when the catalog falls short
 
-One-click scan of your environment variables and tool configs. Existing LLM keys (Groq, GitHub Models, Anthropic, etc.) are imported as local sources. Multiple keys are round-robined to fully use each provider's free quota.
+### 5 — Earn from idle
 
----
+Contribute unused compute or API quota to **community sharing**, earn credits, spend them on shared models.
 
-### 3 — Earn from what's idle
-
-Contribute your unused compute or API quota to the **community P2P network**. Earn credits. Spend those credits on shared community models.
-
-**What you can contribute:**
-
-- Local Ollama / inference server (contribute compute)
-- Unused upstream API paths (contribute quota)
-- Private models behind a corporate LAN (the agent dials out over WebSocket — no inbound port required)
-
-**How credits are earned (settled every ~5 minutes):**
+**You can contribute:** local Ollama, unused upstream quota, private LAN models (outbound WebSocket—no inbound port)
 
 ```
-credits = (output_tokens / 1000) × model_contribute_rate × quality_multiplier
+credits = (output_tokens / 1000) × contribute_rate × quality_multiplier (0.5–1.5)
+spend   = ((prompt + completion tokens) / 1000) × consume_rate
 ```
 
-The quality multiplier (0.5–1.5×) is calculated from uptime, response latency, and success rate. Nodes that are consistently online and fast earn more.
-
-**Other credit sources:**
-- Daily check-in
-- Daily spin wheel
-- Referrals
-
-**How credits are spent:**
-
-```
-cost = ((prompt + completion tokens) / 1000) × model_consume_rate
-```
-
-By design, contribute rate > consume rate — long-term contributors come out ahead.
+Contribute rate > consume rate; plus check-in, wheel, and referrals. Circles share models and credits.
 
 ---
 
@@ -367,7 +329,7 @@ Per-session steps, tool calls, skills used, and token breakdown (sealed reasonin
 
 ![Session Trace](server/static/screenshots/session-trace.webp)
 
-### Providers · personal compute + community P2P
+### Providers · personal compute + community sharing
 
 Speed-test personal models with status lights; spend credits on community-shared models.
 
@@ -419,11 +381,11 @@ Gateway status, per-app TTFT / today’s usage; open the main panel in one click
 
 | Page | What you can do |
 |---|---|
-| **Usage** | Multi-dimensional stats: app share, **local / community P2P** mix, cost estimates; **work-portrait posters** |
+| **Usage** | Multi-dimensional stats: app share, **local / community sharing** mix, cost estimates; **work-portrait posters** |
 | **Gateway** | **One-click onboarding** + **multi-account CLI**; session Trace; scene routes & supply chain |
 | **Playground** | **Agent orchestration**: main agent receives tasks and dispatches; tool streams, stop/resume |
 | **Assets** | Community **MCP / Skill / Prompt / Agent** catalog; projection gating; portrait recommendations |
-| **Providers** | **Local sources** and **community P2P**; speed tests & dynamic catalog |
+| **Providers** | **Local sources** and **community sharing**; speed tests & dynamic catalog |
 | **Circles / Contribute / Network** | Circles · contributor nodes · global node map |
 | **Config** | Gateway port, timeout, concurrency · lossless compression · cloud account URL |
 
