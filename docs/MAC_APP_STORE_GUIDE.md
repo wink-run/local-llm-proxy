@@ -29,18 +29,39 @@
 
 #### 2.2 创建证书
 
-需要创建两个证书:
+需要创建两个证书（**注意：不能用 Developer ID，那是站外分发用的**）：
 
-**Mac App Distribution 证书** (用于签名应用):
+**Apple Distribution**（或旧名 3rd Party Mac Developer Application）:
 1. Certificates → 点击 **+**
-2. 选择 **Mac App Distribution**
-3. 按照提示上传 CSR 文件(使用 Keychain Access 生成)
+2. 选择 **Apple Distribution**（Mac App Store 与 iOS 共用）
+3. 按照提示上传 CSR 文件（使用 Keychain Access 生成）
 4. 下载并双击安装到钥匙串
 
-**Mac Installer Distribution 证书** (用于签名安装包):
+**Mac Installer Distribution**（或旧名 3rd Party Mac Developer Installer）:
 1. Certificates → 点击 **+**
 2. 选择 **Mac Installer Distribution**
 3. 按照提示操作并安装
+
+验证本机是否已有正确证书：
+
+```bash
+security find-identity -v -p codesigning
+# MAS 构建需要看到类似：
+# "Apple Distribution: Your Name (TEAMID)"
+# 仅有 "Developer ID Application" 或 "Apple Development" 不够
+```
+
+### 2.2.1 下载 Electron 失败（`dial tcp 127.0.0.1:443`）
+
+若本机代理把 `github.com` Fake-IP 到 `127.0.0.1`，`electron-builder` 会下载失败。
+`npm run build:mas` / `scripts/build-mas.sh` 已默认使用 npmmirror：
+
+```bash
+export ELECTRON_MIRROR=https://cdn.npmmirror.com/binaries/electron/
+export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
+```
+
+也可手动指定后重试。
 
 #### 2.3 创建 Provisioning Profile
 

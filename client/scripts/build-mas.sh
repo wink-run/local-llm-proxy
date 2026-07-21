@@ -45,6 +45,12 @@ if [ ! -f "embedded.provisionprofile" ]; then
   fi
 fi
 
+# GitHub 在国内常被本地代理 Fake-IP 解析到 127.0.0.1，导致 app-builder 下载失败
+# 使用 npmmirror 镜像拉取 electron mas 产物（可用环境变量覆盖）
+export ELECTRON_MIRROR="${ELECTRON_MIRROR:-https://cdn.npmmirror.com/binaries/electron/}"
+export ELECTRON_BUILDER_BINARIES_MIRROR="${ELECTRON_BUILDER_BINARIES_MIRROR:-https://npmmirror.com/mirrors/electron-builder-binaries/}"
+echo "🌐 Electron 镜像: $ELECTRON_MIRROR"
+
 # 1. 清理旧构建
 echo "📦 清理旧构建..."
 rm -rf dist-app
