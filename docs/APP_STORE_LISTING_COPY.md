@@ -95,59 +95,59 @@ Personal AI hub: onboard, swap, trace, route & orchestrate—plus habit-based re
 ```
 Token Bank — Personal AI Hub · Token Manager
 
-Bring Claude Code, Codex, Cursor, Gemini CLI, Copilot and more under one local gateway. Keep familiar clients while you gain usage visibility, seamless model switching, and cost control. From real usage habits it builds a work portrait, then discovers and iterates MCP / Skill / Prompt / Agent for you—getting smarter the more you use it. Idle capacity can also join the community P2P network for credits.
+Unify Claude Code, Codex, Cursor, Gemini CLI, Copilot and more under one local gateway. Keep familiar clients while you get usage visibility, seamless model swaps, and cost control. From real habits it builds a work portrait, then discovers and iterates MCP / Skill / Prompt / Agent—getting smarter the more you use it. Idle capacity can join community P2P for credits.
 
 ━━━━━━━━━━━━━━━━
 1. KNOW WHAT YOU SPEND
 ━━━━━━━━━━━━━━━━
-• One-click onboarding with three clear modes: stats-only / via gateway / restore
-• Full trace: live proxy + session import with auto-dedupe—routing chain, real model, tokens, latency, cost
-• Multi-dimensional analytics by app · provider · model · supply type · cost · device · time
-• Today dashboard & call logs: hit rate, source mix, model rankings, per-request status
-• Subscription center: APP / API / pay-as-you-go; daily subscription accrual + list-price estimates side by side
-• Multi-device merge: desktop / CLI / server register separately; cloud usage rollup and config sync after sign-in
+• One-click onboarding: stats-only / via gateway / restore
+• Full trace: live proxy + session import with auto-dedupe—route, real model, tokens, latency, cost
+• Analytics by app · provider · model · supply type · cost · device · time
+• Today dashboard & call logs: hit rate, source mix, rankings, per-request status
+• Subscription center: APP / API / PAYG; daily accrual + list-price estimates side by side
+• Multi-device merge: desktop / CLI / server; cloud usage rollup and config sync after sign-in
 
 ━━━━━━━━━━━━━━━━
 2. SPEND LESS
 ━━━━━━━━━━━━━━━━
-• Seamless model swap: keep native model names; auto protocol adapt for Anthropic / OpenAI / Codex
-• Per-app routing: bind different supply chains per tool; switch back to official direct anytime
-• Smart supply chain: local first (Ollama → free APIs → subscription / PAYG), then community P2P fallback
-• Scene routes & strategy groups: different chains for chat / completion / long docs; fallback · round-robin · weighted · latency
-• Lossless gateway compression: shrink JSON whitespace in tool payloads to save input tokens without changing meaning
-• Env-var scan: import existing keys with multi-key rotation; catalogs sync on login and update while online
-• Provider speed tests & dynamic catalogs for local + live community models
+• Seamless model swap with native model names; Anthropic / OpenAI / Codex protocol adapt
+• Per-app routing; switch back to official direct anytime
+• Smart chain: local first (Ollama → free APIs → subscription / PAYG), then community P2P
+• Scene routes & strategies: fallback · round-robin · weighted · latency
+• Lossless JSON compression to save input tokens without changing meaning
+• Env-var key scan with rotation; catalogs sync on login and update online
+• Provider speed tests & dynamic local + community model catalogs
 
 ━━━━━━━━━━━━━━━━
 3. GETS SMARTER WITH YOU (accumulate · discover · iterate)
 ━━━━━━━━━━━━━━━━
-• Work portrait: mine a stable identity and capability domains from real calls and session habits—reusable across skills, prompts, and agents
-• Personalized “For You”: auto-discover MCP / Skill / Prompt / Agent matched to your portrait—not a random catalog dump
-• Resource accumulation: keep used, projected, and fitting assets in your personal library so context survives device changes
-• Continuous iteration: reuse an existing portrait to discover again, or remine from scratch; when the catalog falls short, compose full personas and skills from your portrait
-• Projection gating: discovered resources activate only after projecting to a runtime; onboarding cascades dependencies cleanly
-• Shareable portrait posters: show “gets smarter with you · auto-discover” outwardly
+• Work portrait: mine stable identity & capability domains from real calls/habits—reuse across skills, prompts, agents
+• Personalized “For You”: auto-discover MCP / Skill / Prompt / Agent matched to your portrait
+• Resource accumulation: keep used, projected, and fitting assets so context survives device changes
+• Continuous iteration: reuse portrait to rediscover, or remine; if catalog falls short, compose personas & skills from portrait
+• Projection gating: resources activate after projecting to a runtime; onboarding cascades dependencies
+• Shareable portrait posters: “gets smarter with you · auto-discover”
 
 ━━━━━━━━━━━━━━━━
 4. EARN FROM WHAT’S IDLE
 ━━━━━━━━━━━━━━━━
-• Contribute nodes: share local Ollama / unused API quota / private models into the community network for credits
-• Credits: contribution settlement, check-in, wheel, invites—spend credits on shared models
-• Circles: create or join groups to share models and credits with friends
-• Global network map: online nodes, available models, geographic overview
+• Contribute local Ollama / unused API quota / private models for credits
+• Credits: contribution settlement, check-in, wheel, invites—spend on shared models
+• Circles: share models and credits with friends
+• Global network map: nodes, models, geography
 
 ━━━━━━━━━━━━━━━━
 5. AGENT ORCHESTRATION & DAILY ENTRY
 ━━━━━━━━━━━━━━━━
-• Multi-account CLI: auto-scan / manual add; dispatch Claude · Codex by working directory with per-account quotas
-• Agent orchestration (Playground): a main agent takes tasks and hands off to onboarded agents; visible tool streams, stop & resume
-• Resource hub: community catalog + personalized recommendations; prompts delivered via MCP
-• Menu-bar tray: gateway status, per-app TTFT / today’s usage, open the main panel in one click
-• OpenAI-compatible endpoint: point any compatible client at the local gateway
+• Multi-account CLI: scan/add; dispatch Claude · Codex by working directory
+• Playground orchestration: main agent hands off to onboarded agents; tool streams, stop & resume
+• Resource hub: community catalog + personalized recommendations; prompts via MCP
+• Menu-bar tray: gateway status, TTFT / today’s usage
+• OpenAI-compatible local endpoint for any compatible client
 
-Built for developers and teams who juggle multiple AI coding / agent tools—and want tokens you can see, save, put to work, plus a stack that evolves with how you actually work.
+For developers and teams who juggle AI coding/agent tools—and want tokens you can see, save, put to work, plus a stack that evolves with how you work.
 
-Notes: The gateway runs on your Mac; API keys stay local by default. Follow local laws and upstream terms. Support and privacy policy are in-app and on the project site.
+Notes: Gateway runs on your Mac; API keys stay local by default. Follow local laws and upstream terms.
 ```
 
 ### Keywords
