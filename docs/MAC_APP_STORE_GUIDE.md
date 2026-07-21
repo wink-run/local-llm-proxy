@@ -21,7 +21,7 @@
 3. 选择 **Identifiers** → 点击 **+** 创建新的 App ID
 4. 填写信息:
    - **Description**: Token Bank
-   - **Bundle ID**: `com.tokenbank.app` (必须与 package.json 中的 appId 一致)
+   - **Bundle ID**: `run.wink.tokenbank.app` (必须与 package.json 中的 appId 一致)
    - **Capabilities**: 根据应用需求勾选:
      - ✅ Network Extensions (如果需要)
      - ✅ Outgoing Connections (允许)
@@ -67,7 +67,7 @@ export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-b
 
 1. Profiles → 点击 **+**
 2. 选择 **Mac App Store** 下的 **Mac**
-3. 选择刚才创建的 App ID: `com.tokenbank.app`
+3. 选择刚才创建的 App ID: `run.wink.tokenbank.app`
 4. 选择 Mac App Distribution 证书
 5. 命名为 `Token Bank Mac App Store`
 6. 下载 Provisioning Profile 文件
@@ -202,7 +202,7 @@ security find-identity -v -p codesigning | grep -E 'Apple Distribution|Mac Devel
 
 1. [Profiles](https://developer.apple.com/account/resources/profiles/list) → **+**
 2. 选 **Mac** → **App Store Connect**
-3. App ID 选 `com.tokenbank.app`
+3. App ID 选 `run.wink.tokenbank.app`
 4. 选刚建的 Distribution 证书 → 下载
 5. 重命名为 `embedded.provisionprofile`，放到 `client/` 目录
 
@@ -264,7 +264,7 @@ Electron + electron-builder 默认产出的是 **`.pkg`，不是 `.xcarchive`**�
 | Transporter 校验失败：缺少签名 | 先装好 Apple Distribution + Installer，再 `npm run build:mas` |
 | 没有 `.pkg` 只有 `.app` | 同上，签名阶段被跳过 |
 | Organizer 里看不到包 | Electron 不会自动进 Organizer，改用 Transporter 拖 `.pkg` |
-| 构建版本一直不出现 | 等邮件/通知里的处理结果；检查 Bundle ID 是否为 `com.tokenbank.app` |
+| 构建版本一直不出现 | 等邮件/通知里的处理结果；检查 Bundle ID 是否为 `run.wink.tokenbank.app` |
 
 ---
 
@@ -278,7 +278,7 @@ Electron + electron-builder 默认产出的是 **`.pkg`，不是 `.xcarchive`**�
    - **平台**: macOS
    - **名称**: Token Bank
    - **主要语言**: 简体中文
-   - **Bundle ID**: 选择 `com.tokenbank.app`
+   - **Bundle ID**: 选择 `run.wink.tokenbank.app`
    - **SKU**: 自定义唯一标识,如 `tokenbank-mac-001`
    - **用户访问权限**: 完全访问权限
 

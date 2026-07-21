@@ -15,7 +15,7 @@
 1. 访问 [Apple Developer Portal](https://developer.apple.com/account/)
 2. 进入 **Certificates, Identifiers & Profiles**
 3. 创建 App ID:
-   - Bundle ID: `com.tokenbank.app`
+   - Bundle ID: `run.wink.tokenbank.app`
    - 启用 App Sandbox
 
 ### 第 2 步: 创建证书
@@ -29,7 +29,7 @@
 ### 第 3 步: 创建 Provisioning Profile
 
 1. 在开发者门户创建 Mac App Store Provisioning Profile
-2. 关联 App ID: `com.tokenbank.app`
+2. 关联 App ID: `run.wink.tokenbank.app`
 3. 下载后重命名为 `embedded.provisionprofile`
 4. 放在 `client/` 目录下
 
@@ -69,7 +69,7 @@ npm run build:mas
 
 上传前请确认:
 
-- [ ] Bundle ID 匹配: `com.tokenbank.app`
+- [ ] Bundle ID 匹配: `run.wink.tokenbank.app`
 - [ ] 版本号已更新
 - [ ] 已放置 `embedded.provisionprofile`
 - [ ] 证书已正确安装

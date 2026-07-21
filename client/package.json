@@ -50,7 +50,7 @@
     "wait-on": "^7.2.0"
   },
   "build": {
-    "appId": "com.tokenbank.app",
+    "appId": "run.wink.tokenbank.app",
     "productName": "Token Bank",
     "directories": {
       "output": "dist-app"
