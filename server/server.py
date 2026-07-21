@@ -191,6 +191,12 @@ async def wall_page():
     return FileResponse("static/wall.html")
 
 
+@app.get("/privacy")
+async def privacy_policy():
+    """App Store / 公开可访问的隐私政策页"""
+    return FileResponse("static/privacy.html")
+
+
 @app.get("/api/catalog")
 async def public_catalog():
     """公开接口：供给源目录（registry providers + 个人源 APP/API 订阅模板）"""
