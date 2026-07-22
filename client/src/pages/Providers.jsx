@@ -3593,6 +3593,17 @@ export default function Providers() {
       await getConfig().write({ ...cfg, providers: list });
       lastSaved.current = list;
       setProviders(prev => prev.map(p => (p.id === id ? { ...p, enabled: !!enabled } : p)));
+      // 启用 openrouter：立刻拉一次免费模型目录，写进配置状态（前端主导，正常 debounce 落盘）
+      if (id === 'openrouter' && enabled) {
+        try {
+          const r = await window.electronAPI?.gateway?.refreshOpenrouterModels?.();
+          const names = (r && r.models) || [];
+          if (names.length) {
+            setProviders(prev => prev.map(p => (p.id === 'openrouter'
+              ? { ...p, models: names.map(n => ({ name: n, type: 'chat' })) } : p)));
+          }
+        } catch { /* ignore */ }
+      }
     } catch { /* 离线时仍保留内存态 */ }
   }, []);
 

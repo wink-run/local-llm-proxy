@@ -2401,14 +2401,17 @@ function registerIPC() {
     try { require('./gateway-cooldown').clear(key); return { ok: true }; }
     catch (e) { return { ok: false, error: e && e.message }; }
   });
-  // OpenRouter 模型目录：手动刷新 / 查状态（供给源页 openrouter 卡可用）
+  // OpenRouter 模型目录：手动刷新 / 查状态（供给源页 openrouter 卡：启用时拉一次、把模型写进配置状态）
   ipcMain.handle('openrouter:refreshModels', async () => {
-    try { return await require('./openrouter-catalog').refresh(); }
-    catch (e) { return { ok: false, error: e && e.message }; }
+    try {
+      const oc = require('./openrouter-catalog');
+      const r = await oc.refresh();
+      return { ...r, models: oc.getModels().map(m => m.name) };
+    } catch (e) { return { ok: false, error: e && e.message, models: [] }; }
   });
   ipcMain.handle('openrouter:modelsStatus', () => {
-    try { const oc = require('./openrouter-catalog'); return { count: oc.getModels().length, fetched_at: oc.getFetchedAt() }; }
-    catch { return { count: 0, fetched_at: 0 }; }
+    try { const oc = require('./openrouter-catalog'); return { count: oc.getModels().length, fetched_at: oc.getFetchedAt(), models: oc.getModels().map(m => m.name) }; }
+    catch { return { count: 0, fetched_at: 0, models: [] }; }
   });
   ipcMain.handle('gateway:speedMap',      () => {
     try {
@@ -4959,7 +4962,8 @@ app.whenReady().then(() => {
   });
   gateway.start(11430, readAgentConfig, writeAgentConfig);
 
-  // OpenRouter 模型目录：启动拉一次(无缓存/过期时) + 每 1h 定时刷新，供网关合并进 openrouter 源模型
+  // OpenRouter 模型目录：启动拉一次(无缓存/过期时) + 每 1h 定时刷新，供网关合并进 openrouter 源模型。
+  // 前端源卡显示由前端主导（启用时 refresh + 拿模型写进自己的配置状态，见 Providers.persistProviderEnabled）。
   try { require('./openrouter-catalog').start(); } catch {}
 
   // OAuth token 后台定时刷新：之前只在"用 Claude/看用量卡片"时懒刷新，不用就会过期。
