@@ -3607,6 +3607,23 @@ export default function Providers() {
     } catch { /* 离线时仍保留内存态 */ }
   }, []);
 
+  // 启动/进入供给源页时：openrouter 若已启用，拉一次免费模型目录并写进配置状态（保持最新，覆盖旧的持久值）。
+  const orSyncedRef = useRef(false);
+  useEffect(() => {
+    if (orSyncedRef.current) return;
+    const or = providers.find(p => p.id === 'openrouter');
+    if (!or || !or.enabled) return;
+    orSyncedRef.current = true;
+    (async () => {
+      try {
+        const r = await window.electronAPI?.gateway?.refreshOpenrouterModels?.();
+        const names = (r && r.models) || [];
+        if (names.length) setProviders(prev => prev.map(p => (p.id === 'openrouter'
+          ? { ...p, models: names.map(n => ({ name: n, type: 'chat' })) } : p)));
+      } catch { /* ignore */ }
+    })();
+  }, [providers]);
+
   /** 立即落盘 provider.models，避免 saveAccounts 触发重载时被 debounce 旧配置覆盖 */
   const persistProviderModels = useCallback(async (id, models) => {
     const normalized = (models || []).map(normModel).filter(m => m.name);

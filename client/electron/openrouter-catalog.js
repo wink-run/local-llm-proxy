@@ -82,10 +82,11 @@ function refresh() {
   });
 }
 
-// 启动：读缓存；无缓存或过期(> REFRESH_MS)则立刻拉一次；挂定时器按 REFRESH_MS 周期刷新。
+// 启动：读缓存兜底(离线时先有旧数据) → 立刻拉一次(启动必同步) → 挂定时器按 REFRESH_MS 周期刷新。
+// CF 缓存 5min，启动重复拉也便宜；拉失败保留缓存旧数据。
 function start() {
   _load();
-  if (!_models.length || (Date.now() - _fetchedAt) > REFRESH_MS) refresh().catch(() => {});
+  refresh().catch(() => {});
   if (!_timer) { _timer = setInterval(() => refresh().catch(() => {}), REFRESH_MS); if (_timer.unref) _timer.unref(); }
 }
 function stop() { if (_timer) { clearInterval(_timer); _timer = null; } }
