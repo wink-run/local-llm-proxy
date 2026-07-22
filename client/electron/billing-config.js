@@ -662,15 +662,21 @@ function enrichProvidersFromAccounts(providers, localCfg) {
   const srcMap = {};
   for (const s of (localCfg.user_subscriptions || [])) { if (s.gateway_id) srcMap[s.gateway_id] = 'subscription'; }
   for (const p of (localCfg.user_payg_providers || [])) { const g = paygGatewayId(p); if (g && !srcMap[g]) srcMap[g] = 'payg'; }
+  // OpenRouter：定期拉取的完整目录作为模型基底（registry 只硬编码 2 个），预构建数组 O(1) 引用、不在热路径重算。
+  let orModels = null, orPricing = null;
+  try { const oc = require('./openrouter-catalog'); const m = oc.getModels(); if (m && m.length) { orModels = m; orPricing = oc.getPricing(); } } catch {}
   return providers.map(p => {
     let next = p;
+    const baseModels = (p.id === 'openrouter' && orModels) ? orModels : p.models;
     const extra = collectModelsForGatewayProvider(p.id, localCfg);
-    if (extra.size) {
-      const merged = mergeProviderModelEntries(p.models, extra);
+    if (extra.size || baseModels !== p.models) {
+      const merged = extra.size ? mergeProviderModelEntries(baseModels, extra) : baseModels;
       const before = (p.models || []).map(modelEntryId).filter(Boolean).sort().join('\0');
       const after = merged.map(modelEntryId).filter(Boolean).sort().join('\0');
       if (before !== after) next = { ...next, models: merged };
     }
+    // openrouter 目录价并进 pricing（用户/registry 覆盖优先）
+    if (p.id === 'openrouter' && orPricing && Object.keys(orPricing).length) next = { ...next, pricing: { ...orPricing, ...(next.pricing || {}) } };
     const src = srcMap[p.id];
     if (src && next.source !== src) next = { ...next, source: src };
     return next;

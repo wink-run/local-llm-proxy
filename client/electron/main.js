@@ -2401,6 +2401,15 @@ function registerIPC() {
     try { require('./gateway-cooldown').clear(key); return { ok: true }; }
     catch (e) { return { ok: false, error: e && e.message }; }
   });
+  // OpenRouter 模型目录：手动刷新 / 查状态（供给源页 openrouter 卡可用）
+  ipcMain.handle('openrouter:refreshModels', async () => {
+    try { return await require('./openrouter-catalog').refresh(); }
+    catch (e) { return { ok: false, error: e && e.message }; }
+  });
+  ipcMain.handle('openrouter:modelsStatus', () => {
+    try { const oc = require('./openrouter-catalog'); return { count: oc.getModels().length, fetched_at: oc.getFetchedAt() }; }
+    catch { return { count: 0, fetched_at: 0 }; }
+  });
   ipcMain.handle('gateway:speedMap',      () => {
     try {
       const ps = require('./provider-speed');
@@ -4949,6 +4958,9 @@ app.whenReady().then(() => {
       }));
   });
   gateway.start(11430, readAgentConfig, writeAgentConfig);
+
+  // OpenRouter 模型目录：启动拉一次(无缓存/过期时) + 每 12h 定时刷新，供网关合并进 openrouter 源模型
+  try { require('./openrouter-catalog').start(); } catch {}
 
   // 注入 Claude 客户端模型名（内部透明逻辑，来自 yaml config-loader）
   try { gateway.setClaudeModels(require('./config-loader').claudeModels()); } catch {}
