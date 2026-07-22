@@ -3366,6 +3366,28 @@ export default function Providers() {
     saveAccountsPatch({ source_template_overrides: next });
   }
 
+  // 同步 openrouter 免费模型目录：openrouter 若是 payg 账户源，模型列表由 payg 账户 models 决定
+  // （直接写 provider.models 会被 filterPaygModels 裁掉），故写进 payg 账户 models——合并去重、不覆盖
+  // 用户已注册的付费模型；非 payg 源才写 provider.models。
+  async function syncOpenrouterModels() {
+    try {
+      const r = await window.electronAPI?.gateway?.refreshOpenrouterModels?.();
+      const names = (r && r.models) || [];
+      if (!names.length) return;
+      const acct = resolvePaygAccount('openrouter', userPayg);
+      if (acct) {
+        const have = new Set((acct.models || []).map(m => (typeof m === 'string' ? m : (m && m.name))).filter(Boolean));
+        const add = names.filter(n => !have.has(n));
+        if (!add.length) return;
+        const nextPayg = userPayg.map(p => (p.id === acct.id ? { ...p, models: [...(p.models || []), ...add] } : p));
+        await saveAccountsPatch({ user_payg_providers: nextPayg });
+      } else {
+        setProviders(prev => prev.map(p => (p.id === 'openrouter'
+          ? { ...p, models: names.map(n => ({ name: n, type: 'chat' })) } : p)));
+      }
+    } catch { /* ignore */ }
+  }
+
   useEffect(() => {
     let cancelled = false;
     const emptySeed = {
@@ -3593,36 +3615,22 @@ export default function Providers() {
       await getConfig().write({ ...cfg, providers: list });
       lastSaved.current = list;
       setProviders(prev => prev.map(p => (p.id === id ? { ...p, enabled: !!enabled } : p)));
-      // 启用 openrouter：立刻拉一次免费模型目录，写进配置状态（前端主导，正常 debounce 落盘）
-      if (id === 'openrouter' && enabled) {
-        try {
-          const r = await window.electronAPI?.gateway?.refreshOpenrouterModels?.();
-          const names = (r && r.models) || [];
-          if (names.length) {
-            setProviders(prev => prev.map(p => (p.id === 'openrouter'
-              ? { ...p, models: names.map(n => ({ name: n, type: 'chat' })) } : p)));
-          }
-        } catch { /* ignore */ }
-      }
+      // 启用 openrouter 的模型同步由下方 effect 统一处理（providers 变化触发，能拿到 fresh userPayg）
     } catch { /* 离线时仍保留内存态 */ }
   }, []);
 
-  // 启动/进入供给源页时：openrouter 若已启用，拉一次免费模型目录并写进配置状态（保持最新，覆盖旧的持久值）。
+  // openrouter 若已启用：进页(启动)或刚启用时，拉一次免费模型目录同步（payg 感知，见 syncOpenrouterModels）。
+  // 一次性(ref 守卫)：openrouter 从未启用→启用时 providers 变化会重跑此 effect，拿到 fresh userPayg。
   const orSyncedRef = useRef(false);
   useEffect(() => {
     if (orSyncedRef.current) return;
+    if (!accountsData) return;   // 等账户(userPayg)加载完再判 payg，否则会走错分支
     const or = providers.find(p => p.id === 'openrouter');
     if (!or || !or.enabled) return;
     orSyncedRef.current = true;
-    (async () => {
-      try {
-        const r = await window.electronAPI?.gateway?.refreshOpenrouterModels?.();
-        const names = (r && r.models) || [];
-        if (names.length) setProviders(prev => prev.map(p => (p.id === 'openrouter'
-          ? { ...p, models: names.map(n => ({ name: n, type: 'chat' })) } : p)));
-      } catch { /* ignore */ }
-    })();
-  }, [providers]);
+    syncOpenrouterModels();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providers, accountsData]);
 
   /** 立即落盘 provider.models，避免 saveAccounts 触发重载时被 debounce 旧配置覆盖 */
   const persistProviderModels = useCallback(async (id, models) => {
