@@ -21,14 +21,19 @@ let _pricing = {};     // { name: { in, out } } 每 MTok（美元），供成本
 let _fetchedAt = 0;
 let _timer = null;
 
-// 把 /models 响应解析成 { models, pricing }。pricing.prompt/completion 是「每 token 美元」字符串 → 转每 MTok。
+// 免费判据：OpenRouter 免费模型 id 带 :free 后缀（约定，且价格全 0）。这正是 registry 里 openrouter
+// 定位为「含 :free 免费模型」的那一批；价 0 的边角(google/lyria 预览、openrouter/free 元路由)不算真·免费聊天模型。
+function _isFree(id) { return /:free$/i.test(id); }
+
+// 把 /models 响应解析成 { models, pricing }。只保留免费模型（openrouter 是免费源）。
+// pricing.prompt/completion 是「每 token 美元」字符串 → 转每 MTok（免费模型全 0）。
 function _parse(json) {
   const data = (json && json.data) || [];
   const models = [];
   const pricing = {};
   for (const m of data) {
     const name = String((m && m.id) || '').trim();
-    if (!name) continue;
+    if (!name || !_isFree(name)) continue;   // 只同步免费模型
     models.push({ name, type: 'chat' });
     const pr = (m && m.pricing) || {};
     const inTok = parseFloat(pr.prompt), outTok = parseFloat(pr.completion);
