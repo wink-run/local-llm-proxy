@@ -370,12 +370,15 @@ function isOauthProvider(provider) {
  * 代理前调用：确保 access_token 有效（必要时统一刷新并回写 config），
  * 返回带 `_oauth`（含 applyAuth）与最新 credentials 的 provider 克隆；非 OAuth 原样返回。
  */
-async function prepare(provider, getConfig, saveConfig) {
+// opts.skew：额外的提前量(秒)——后台定时刷新用，在过期前 skew 秒就主动刷新（叠加在常规判定之上），
+// 保证 token 不断供、不依赖"被使用/被查看"才刷。
+async function prepare(provider, getConfig, saveConfig, opts = {}) {
   if (!isOauthProvider(provider)) return provider;
   const name = provider.oauth_provider;
   const cfg = PROVIDERS[name];
   let creds = provider.credentials || {};
-  const stale = typeof cfg.needsRefresh === 'function' ? cfg.needsRefresh(creds) : needsRefresh(creds);
+  let stale = typeof cfg.needsRefresh === 'function' ? cfg.needsRefresh(creds) : needsRefresh(creds);
+  if (!stale && opts.skew != null) stale = needsRefresh(creds, opts.skew);   // 后台提前刷新
   if (stale) {
     creds = await refresh(name, creds);
     try {

@@ -4959,8 +4959,27 @@ app.whenReady().then(() => {
   });
   gateway.start(11430, readAgentConfig, writeAgentConfig);
 
-  // OpenRouter 模型目录：启动拉一次(无缓存/过期时) + 每 12h 定时刷新，供网关合并进 openrouter 源模型
+  // OpenRouter 模型目录：启动拉一次(无缓存/过期时) + 每 1h 定时刷新，供网关合并进 openrouter 源模型
   try { require('./openrouter-catalog').start(); } catch {}
+
+  // OAuth token 后台定时刷新：之前只在"用 Claude/看用量卡片"时懒刷新，不用就会过期。
+  // 每 30min 扫一遍 oauth 源，过期前 45min 主动刷新回写，保证 token 不断供（Claude/Gemini 等）。
+  try {
+    const oauthMod = require('./oauth');
+    const AHEAD_SEC = 45 * 60;
+    const tickOauthRefresh = async () => {
+      let cfg; try { cfg = readAgentConfig(); } catch { return; }
+      for (const p of (cfg.providers || [])) {
+        if (p && p.auth_type === 'oauth' && p.oauth_provider && p.credentials) {
+          try { await oauthMod.prepare(p, readAgentConfig, writeAgentConfig, { skew: AHEAD_SEC }); }
+          catch (e) { console.warn('[oauth-refresh]', p.id, e && e.message); }
+        }
+      }
+    };
+    tickOauthRefresh();
+    const _oauthTimer = setInterval(tickOauthRefresh, 30 * 60 * 1000);
+    if (_oauthTimer.unref) _oauthTimer.unref();
+  } catch (e) { console.warn('[oauth-refresh] init:', e && e.message); }
 
   // 注入 Claude 客户端模型名（内部透明逻辑，来自 yaml config-loader）
   try { gateway.setClaudeModels(require('./config-loader').claudeModels()); } catch {}
