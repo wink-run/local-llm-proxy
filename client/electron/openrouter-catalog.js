@@ -1,6 +1,6 @@
 'use strict';
 // OpenRouter 模型目录定期刷新：公开端点 GET https://openrouter.ai/api/v1/models（无需 API key）拉全量，
-// 缓存到磁盘(~/.tokenbank/openrouter-models.json) + 内存；启动时(无缓存/过期才拉) + 每 12h 定时刷新。
+// 缓存到磁盘(~/.tokenbank/openrouter-models.json) + 内存；启动时(无缓存/过期才拉) + 每 1h 定时刷新。
 // registry 里 openrouter 只硬编码了 2 个模型，路由/UI 想认全部 300+ 个就靠这个目录。
 // 网关侧合并见 billing-config.enrichProvidersFromAccounts（用本模块预构建的数组，热路径 O(1) 引用，不重算）。
 //
@@ -14,7 +14,7 @@ const https = require('https');
 
 const URL_MODELS = 'https://openrouter.ai/api/v1/models';
 const FILE = path.join(os.homedir(), '.tokenbank', 'openrouter-models.json');
-const REFRESH_MS = 12 * 60 * 60 * 1000;   // 12h：模型列表变化慢
+const REFRESH_MS = 60 * 60 * 1000;        // 1h：免费模型会增删，1 小时跟一次；端点 CF 缓存仅 5min，别比这更勤（拿同一份）
 
 let _models = [];      // [{ name, type:'chat' }]（预构建，供网关 O(1) 引用合并）
 let _pricing = {};     // { name: { in, out } } 每 MTok（美元），供成本估算
@@ -82,7 +82,7 @@ function refresh() {
   });
 }
 
-// 启动：读缓存；无缓存或过期(>12h)则立刻拉一次；挂 12h 定时器。
+// 启动：读缓存；无缓存或过期(> REFRESH_MS)则立刻拉一次；挂定时器按 REFRESH_MS 周期刷新。
 function start() {
   _load();
   if (!_models.length || (Date.now() - _fetchedAt) > REFRESH_MS) refresh().catch(() => {});
