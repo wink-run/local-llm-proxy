@@ -25,7 +25,7 @@ TIERS = ("free", "paid", "p2p")
 AUTH_METHODS = ("api_key", "oauth")
 API_FORMATS = ("openai", "anthropic", "gemini")
 MODALITIES = ("chat", "image", "embedding")
-HANDLERS = ("local", "openai", "anthropic", "gemini", "p2p", "agnes-image")
+HANDLERS = ("local", "openai", "anthropic", "gemini", "p2p", "agnes-image", "jimeng-api")
 
 
 def _registry_default_doc() -> dict:

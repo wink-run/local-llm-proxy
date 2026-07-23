@@ -12,7 +12,7 @@ CONFIG_KEY = "config.providers"
 
 TIERS = ("free", "p2p", "paid")
 # 客户端须预置对应 adapter；不含已移除的 BFL / fal / stability / elevenlabs / deepgram 等
-HANDLERS = ("local", "openai", "anthropic", "gemini", "p2p", "agnes-image")
+HANDLERS = ("local", "openai", "anthropic", "gemini", "p2p", "agnes-image", "jimeng-api")
 API_FORMATS = ("openai", "anthropic", "gemini")
 
 

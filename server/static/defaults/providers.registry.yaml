@@ -142,6 +142,44 @@ providers:
   - sk-
   signup_url: https://platform.agnes-ai.com/settings/apiKeys
   payg: true
+- id: jimeng-api
+  label: 即梦 API
+  icon: 🎨
+  tier: free
+  hint: 自建即梦 / NanoBanana 图像 API，见 https://github.com/iptag/jimeng-api
+  base_url: http://localhost:5100/v1
+  modalities:
+    language: false
+    image: true
+  models:
+  - name: jimeng-5.0
+    type: image
+  - name: jimeng-4.5
+    type: image
+  - name: nanobanana
+    type: image
+  - name: nanobananapro
+    type: image
+  pricing:
+    jimeng-5.0:
+      in: 0
+      out: 0
+    jimeng-4.5:
+      in: 0
+      out: 0
+    nanobanana:
+      in: 0
+      out: 0
+    nanobananapro:
+      in: 0
+      out: 0
+  handler: jimeng-api
+  api_format: openai
+  enabled_default: false
+  keyless: false
+  key_prefix: []
+  signup_url: https://github.com/iptag/jimeng-api
+  payg: true
 - id: openai-compatible
   label: OpenAI Compatible
   icon: 🔗
@@ -383,6 +421,38 @@ providers:
   keyless: false
   key_prefix: []
   signup_url: ''
+- id: kimi-code
+  label: Kimi Code
+  icon: 🌙
+  tier: paid
+  hint: Kimi Code 会员 API，见 https://www.kimi.com/code/docs/
+  base_url: https://api.kimi.com/coding/v1
+  modalities:
+    language: true
+  models:
+  - name: kimi-for-coding
+    type: chat
+  - name: kimi-for-coding-highspeed
+    type: chat
+  - name: k3
+    type: chat
+  pricing:
+    kimi-for-coding:
+      in: 0
+      out: 0
+    kimi-for-coding-highspeed:
+      in: 0
+      out: 0
+    k3:
+      in: 0
+      out: 0
+  handler: openai
+  api_format: openai
+  enabled_default: false
+  keyless: false
+  key_prefix:
+  - sk-
+  signup_url: https://www.kimi.com/code/docs/
 - id: xai
   label: xAI Grok
   icon: ✖️
@@ -763,8 +833,68 @@ billing_sources:
   agent_id: ''
   plan_provider_id: volcengine
   subscription_to_api: false
-- id: openai
+- id: api-kimi-code
   sort_order: 8
+  category: api_sub
+  source_id: api-kimi-code
+  label: Kimi Code
+  icon: 🌙
+  tier: paid
+  base_url: https://api.kimi.com/coding/v1
+  auth: api_key
+  api_format: openai
+  handler: openai
+  hint: Kimi Code 会员 API，见 https://www.kimi.com/code/docs/
+  keyless: false
+  key_prefix:
+  - sk-
+  signup_url: https://www.kimi.com/code/docs/
+  aliases: []
+  enabled_default: false
+  models:
+  - id: kimi-for-coding
+    modality: chat
+    pricing:
+      in: 0
+      out: 0
+  - id: kimi-for-coding-highspeed
+    modality: chat
+    pricing:
+      in: 0
+      out: 0
+  - id: k3
+    modality: chat
+    pricing:
+      in: 0
+      out: 0
+  pricing:
+    kimi-for-coding:
+      in: 0
+      out: 0
+    kimi-for-coding-highspeed:
+      in: 0
+      out: 0
+    k3:
+      in: 0
+      out: 0
+  plans:
+  - id: andante
+    label: Andante · 日常使用 · ¥49/月
+    monthly_usd: 7.0
+  - id: moderato
+    label: Moderato · 效率升级 · ¥99/月
+    monthly_usd: 14.14
+  - id: allegretto
+    label: Allegretto · 专业优选 · ¥199/月
+    monthly_usd: 28.43
+  - id: allegro
+    label: Allegro · 全能尊享 · ¥699/月
+    monthly_usd: 99.86
+  agent_id: ''
+  plan_provider_id: kimi-code
+  subscription_to_api: false
+- id: openai
+  sort_order: 9
   category: payg
   source_id: openai
   label: OpenAI
@@ -790,7 +920,7 @@ billing_sources:
   plan_provider_id: null
   subscription_to_api: false
 - id: anthropic-paid
-  sort_order: 9
+  sort_order: 10
   category: payg
   source_id: anthropic-paid
   label: Anthropic
@@ -1046,8 +1176,63 @@ billing_sources:
   agent_id: ''
   plan_provider_id: null
   subscription_to_api: false
-- id: ollama
+- id: jimeng-api
   sort_order: 14
+  category: payg
+  source_id: jimeng-api
+  label: 即梦 API
+  icon: 🎨
+  tier: free
+  base_url: http://localhost:5100/v1
+  auth: api_key
+  api_format: openai
+  handler: jimeng-api
+  hint: 自建即梦 / NanoBanana 图像 API，见 https://github.com/iptag/jimeng-api
+  keyless: false
+  key_prefix: []
+  signup_url: https://github.com/iptag/jimeng-api
+  aliases: []
+  enabled_default: false
+  models:
+  - id: jimeng-5.0
+    modality: image
+    pricing:
+      in: 0
+      out: 0
+  - id: jimeng-4.5
+    modality: image
+    pricing:
+      in: 0
+      out: 0
+  - id: nanobanana
+    modality: image
+    pricing:
+      in: 0
+      out: 0
+  - id: nanobananapro
+    modality: image
+    pricing:
+      in: 0
+      out: 0
+  pricing:
+    jimeng-5.0:
+      in: 0
+      out: 0
+    jimeng-4.5:
+      in: 0
+      out: 0
+    nanobanana:
+      in: 0
+      out: 0
+    nanobananapro:
+      in: 0
+      out: 0
+  plans: []
+  agent_id: ''
+  plan_provider_id: null
+  subscription_to_api: false
+- id: ollama
+  sort_order: 15
   category: payg
   source_id: ollama
   label: Ollama

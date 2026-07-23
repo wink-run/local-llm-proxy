@@ -514,7 +514,7 @@ function AppToolbox({ open, busy, onToggle, onClose, refreshKey = 0, syncError =
           maxHeight: pos.maxH,
         }}
         className={`fixed z-[55] w-[min(calc(100vw-1rem),280px)] flex flex-col
-          origin-top-right transition-[opacity,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]
+          origin-top-right transition-[opacity,transform] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]
           ${open ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto' : 'opacity-0 -translate-y-1.5 scale-[0.97] pointer-events-none'}`}>
         <div className="bg-white dark:bg-zinc-800 rounded-xl shadow-xl shadow-black/10 dark:shadow-black/40 border border-zinc-200/80 dark:border-zinc-700 flex flex-col min-h-0 flex-1 overflow-hidden">
           <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-zinc-200 dark:border-zinc-700 shrink-0">
@@ -4673,8 +4673,7 @@ export default function Gateway() {
 
       {/* Header */}
       <div className="flex items-center gap-3">
-        <span className="relative flex h-2.5 w-2.5">
-          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${status?.running ? 'bg-green-400' : 'bg-zinc-400'}`} />
+        <span className="relative flex h-2.5 w-2.5" aria-hidden>
           <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${status?.running ? 'bg-green-500' : 'bg-zinc-400'}`} />
         </span>
         <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">{t('gateway.title')}</h1>
@@ -4749,7 +4748,7 @@ export default function Gateway() {
               setMainTab(i);
               if (i === 2) setSessionsMounted(true);
             }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-xs font-medium transition-all ${mainTab === i
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-xs font-medium transition-[background-color,color,box-shadow] duration-150 ease-out ${mainTab === i
                 ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-sm'
                 : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'}`}>
               {icon}

@@ -24,7 +24,7 @@ const BUILTIN_CATALOG = [
     name: 'code-review',
     display_name: '代码审查',
     description: '结构化代码审查：安全、性能、可维护性',
-    metadata: { tags: ['code', 'review', 'quality'], version: '1.0.0' },
+    metadata: { tags: ['code', 'review', 'quality'], version: '1.0.0', promptKind: 'text' },
     content: `你是一个资深代码审查专家。请审查以下代码，输出：
 1. 严重问题（必须修复）
 2. 改进建议（可选）
@@ -45,7 +45,7 @@ const BUILTIN_CATALOG = [
     name: 'api-design',
     display_name: 'API 设计',
     description: 'REST/OpenAPI 接口设计与评审',
-    metadata: { tags: ['api', 'design', 'backend'], version: '1.0.0' },
+    metadata: { tags: ['api', 'design', 'backend'], version: '1.0.0', promptKind: 'text' },
     content: `你是 API 架构师。根据需求设计 REST API：
 - 资源命名与 HTTP 动词
 - 请求/响应 JSON Schema 要点
@@ -138,7 +138,81 @@ description: 系统化调试流程，先复现与定位根因再改代码
       parameters: { temperature: 0.3 },
     }, null, 2),
   },
+  // 内置：资产发现（个性化推荐）
+  {
+    catalogId: 'resource-finder-assistant',
+    type: 'assistant',
+    name: 'resource-finder',
+    display_name: '资产发现智能体',
+    description: '根据画像与诉求检索并推荐真实存在的 Skill / Prompt / Assistant',
+    metadata: {
+      tags: ['assistant', 'system', 'builtin', 'discover'],
+      version: '1.0.0',
+      category: 'ai-agent',
+      builtin: true,
+    },
+    content: JSON.stringify({
+      soul: '你是 Token Bank「资产发现智能体」。根据用户画像与诉求，检索并推荐真实存在的 Skill / Prompt / Assistant。\n\n职责：\n1. 技能：用 skillhub search --json / find-skill 检索，只推荐检索结果里真实存在的 slug，禁止编造；\n2. 智能体：优先 Token Bank 社区目录真实条目；目录没有合适项时可自建完整 soul，并搭配客观存在的技能；\n3. 提示词：可参考公开合集，内容须完整可用；\n4. 严格按用户要求的 JSON 结构输出；不做与发现无关的长篇解释。',
+      skills: [],
+      prompts: [],
+      parameters: { temperature: 0.3 },
+    }, null, 2),
+  },
+  // 内置：资产安装（Assets「安装」入口）
+  {
+    catalogId: 'resource-installer-assistant',
+    type: 'assistant',
+    name: 'resource-installer',
+    display_name: '资产安装智能体',
+    description: '根据命令或说明在本机安装 Skill（默认 ~/.tokenbank/skills）',
+    metadata: {
+      tags: ['assistant', 'system', 'builtin', 'install'],
+      version: '1.0.0',
+      category: 'ai-agent',
+      builtin: true,
+    },
+    content: JSON.stringify({
+      soul: '你是 Token Bank「资产安装智能体」。用户会给出 Skill 安装命令或说明（如 skillhub install <slug>、npx skills add …、GitHub 地址、技能 slug）。\n\n职责：\n1. 理解意图，提取要安装的 skill 名称/slug/来源；\n2. 在本机执行安装：优先 `skillhub install <slug> --dir ~/.tokenbank/skills --json`（Windows 用 %USERPROFILE%\\.tokenbank\\skills）；也可在安全前提下执行用户给出的原生命令；\n3. 安装完成后确认目录下存在 SKILL.md（或 skill.md），用简短中文汇报：成功/失败、技能名、路径；\n4. 禁止编造已安装成功；失败时给出可操作的错误原因；\n5. 不做与安装无关的长篇解释。',
+      skills: [],
+      prompts: [],
+      parameters: { temperature: 0.2 },
+    }, null, 2),
+  },
 ];
+
+/** 内置智能体目录 ID（默认自动纳管 + 投射，不可删除） */
+const BUILTIN_ASSISTANT_CATALOG_IDS = [
+  'resource-finder-assistant',
+  'resource-installer-assistant',
+];
+
+function isBuiltinAssistantCatalogId(catalogId) {
+  return BUILTIN_ASSISTANT_CATALOG_IDS.includes(String(catalogId || ''));
+}
+
+function listBuiltinAssistantCatalogItems() {
+  return BUILTIN_ASSISTANT_CATALOG_IDS
+    .map((id) => BUILTIN_CATALOG.find((c) => c.catalogId === id))
+    .filter(Boolean);
+}
+
+/** 社区缓存里强制合并/覆盖内置智能体，避免旧缓存缺项或文案过期 */
+function mergeBuiltinAssistants(items) {
+  const list = Array.isArray(items) ? items.slice() : [];
+  for (const builtin of listBuiltinAssistantCatalogItems()) {
+    const idx = list.findIndex((i) => i.catalogId === builtin.catalogId);
+    if (idx >= 0) {
+      list[idx] = {
+        ...list[idx],
+        ...builtin,
+        metadata: { ...(list[idx].metadata || {}), ...(builtin.metadata || {}), builtin: true },
+      };
+    } else {
+      list.push({ ...builtin, metadata: { ...(builtin.metadata || {}), builtin: true } });
+    }
+  }
+  return list;
+}
 
 /** 缓存优先:读 ~/.tokenbank/community-catalog.yaml 的三段;无缓存回退 BUILTIN */
 function activeCatalog() {
@@ -153,14 +227,14 @@ function activeCatalog() {
         .map(normalizeCacheItem)
         .filter(Boolean);
       if (merged.length) {
-        _cached = merged;
+        _cached = mergeBuiltinAssistants(merged);
         return _cached;
       }
     }
   } catch (e) {
     console.warn('[resource-catalog] read community cache failed:', e.message);
   }
-  _cached = BUILTIN_CATALOG;
+  _cached = mergeBuiltinAssistants(BUILTIN_CATALOG.slice());
   return _cached;
 }
 
@@ -185,7 +259,10 @@ function resetCatalogCache() {
 }
 
 function getCatalogItem(catalogId) {
-  return activeCatalog().find(c => c.catalogId === catalogId) || null;
+  // 社区缓存优先；内置兜底（如系统智能体 resource-installer，避免旧缓存缺项）
+  return activeCatalog().find(c => c.catalogId === catalogId)
+    || BUILTIN_CATALOG.find(c => c.catalogId === catalogId)
+    || null;
 }
 
 function listCatalogItems(filters = {}) {
@@ -215,6 +292,9 @@ function listCatalogGrouped() {
 module.exports = {
   RESOURCE_TYPE_LABELS,
   BUILTIN_CATALOG,
+  BUILTIN_ASSISTANT_CATALOG_IDS,
+  isBuiltinAssistantCatalogId,
+  listBuiltinAssistantCatalogItems,
   getCatalogItem,
   listCatalogItems,
   listCatalogGrouped,

@@ -6,12 +6,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const shim = require('./shim-installer');
-const { BUILTIN_BRIDGE_ID, BUILTIN_PROMPTS_ID, writeElectronAsNodeLauncher } = require('./mcp-manager');
+const { BUILTIN_BRIDGE_ID, BUILTIN_PROMPTS_ID, BUILTIN_MODELS_ID, BUILTIN_RESOURCES_ID, writeElectronAsNodeLauncher } = require('./mcp-manager');
 const { CLIENT_TARGETS } = require('./mcp-agent-targets');
 
 const STATE_PATH = path.join(os.homedir(), '.tokenbank', 'mcp', 'client-sync-state.json');
 const TB_MCP_MARKER = 'tokenbank-mcp';
 const PROMPTS_SCRIPT = path.join(__dirname, 'prompt-mcp.js');
+const MODELS_SCRIPT = path.join(__dirname, 'models-mcp.js');
+const RESOURCES_SCRIPT = path.join(__dirname, 'resources-mcp.js');
 
 function ensureDir(filePath) {
   const dir = path.dirname(filePath);
@@ -52,6 +54,34 @@ function serverToEntry(serverRow, clientId) {
       name: `prompts-${clientId || 'default'}`,
       scriptPath: PROMPTS_SCRIPT,
       env: { TB_CLIENT_ID: clientId || '' },
+    });
+    return {
+      command: launcher,
+      args: [],
+      env: {},
+    };
+  }
+
+  // 内置模型资源 MCP：始终可查网关可用模型
+  if (serverRow.id === BUILTIN_MODELS_ID || serverRow.name === BUILTIN_MODELS_ID) {
+    const launcher = writeElectronAsNodeLauncher({
+      name: `models-${clientId || 'default'}`,
+      scriptPath: MODELS_SCRIPT,
+      env: {},
+    });
+    return {
+      command: launcher,
+      args: [],
+      env: {},
+    };
+  }
+
+  // 内置资源发现 MCP：能力总览 + skill/assistant/社区目录
+  if (serverRow.id === BUILTIN_RESOURCES_ID || serverRow.name === BUILTIN_RESOURCES_ID) {
+    const launcher = writeElectronAsNodeLauncher({
+      name: `resources-${clientId || 'default'}`,
+      scriptPath: RESOURCES_SCRIPT,
+      env: {},
     });
     return {
       command: launcher,

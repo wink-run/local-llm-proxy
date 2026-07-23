@@ -72,6 +72,28 @@ test('parseRoute: strategy + provider + model', () => {
   assert.strictEqual(r.model, 'glm-5');
 });
 
+// OpenRouter 免费模型 id 带 :free，且含 org/name → 不能把末段 free 当 model
+test('parseRoute: tier + OpenRouter :free 模型（含斜杠）', () => {
+  assert.deepStrictEqual(
+    parseRoute('free:openai/gpt-oss-20b:free'),
+    withDefaults({ tier: 'free', model: 'openai/gpt-oss-20b:free' }),
+  );
+});
+
+test('parseRoute: 裸 OpenRouter :free 模型', () => {
+  assert.deepStrictEqual(
+    parseRoute('openai/gpt-oss-20b:free'),
+    withDefaults({ model: 'openai/gpt-oss-20b:free' }),
+  );
+});
+
+test('parseRoute: strategy + tier + OpenRouter :free 模型', () => {
+  const r = parseRoute('auto:free:meta-llama/llama-3.3-70b-instruct:free');
+  assert.strictEqual(r.strategy, 'auto');
+  assert.strictEqual(r.tier, 'free');
+  assert.strictEqual(r.model, 'meta-llama/llama-3.3-70b-instruct:free');
+});
+
 test('parseRoute: 全六层', () => {
   assert.deepStrictEqual(parseRoute('auto:personal:paid:s_a1b2c3:openrouter:glm-5'),
     withDefaults({ strategy: 'auto', scope: 'personal', tier: 'paid', sharer: 's_a1b2c3', provider: 'openrouter', model: 'glm-5' }));

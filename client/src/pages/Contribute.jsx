@@ -176,8 +176,7 @@ function ContributionConfigCard({ onStart, onStop, running, stats, agentError })
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pb-4 border-b border-zinc-100 dark:border-zinc-700/80">
         <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200 shrink-0">{t('contribute.configTitle')}</span>
         <div className="flex items-center gap-2 shrink-0">
-          <span className="relative flex h-2.5 w-2.5">
-            {running && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />}
+          <span className="relative flex h-2.5 w-2.5" aria-hidden>
             <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${running ? 'bg-green-500' : 'bg-zinc-400 dark:bg-zinc-600'}`} />
           </span>
           <span className="text-sm text-zinc-700 dark:text-zinc-300 whitespace-nowrap">

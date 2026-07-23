@@ -63,6 +63,53 @@ items:
     - 提示词
   config_fields: []
   always_installed: true
+- catalog_id: tokenbank-models
+  id: tokenbank-models
+  name: tokenbank-models
+  display_name: Token Bank Models
+  description: 内置模型资源：tb_list_models / tb_resolve_model（查询网关可用模型，skill 模型不存在时可动态切换）
+  type: stdio
+  command: __DYNAMIC_ELECTRON__
+  args: []
+  env:
+    ELECTRON_RUN_AS_NODE: '1'
+  metadata:
+    category: agent
+    categoryGroup: tokenbank
+    icon: 🧩
+    tools:
+    - tb_list_models
+    - tb_resolve_model
+    tags:
+    - 内置
+    - 模型
+  config_fields: []
+  always_installed: true
+- catalog_id: tokenbank-resources
+  id: tokenbank-resources
+  name: tokenbank-resources
+  display_name: Token Bank Resources
+  description: 内置资源发现：tb_capabilities 能力总览、已纳管 skill/assistant、社区目录、网关 API
+  type: stdio
+  command: __DYNAMIC_ELECTRON__
+  args: []
+  env:
+    ELECTRON_RUN_AS_NODE: '1'
+  metadata:
+    category: agent
+    categoryGroup: tokenbank
+    icon: 📚
+    tools:
+    - tb_capabilities
+    - tb_list_resources
+    - tb_get_resource
+    - tb_list_catalog
+    - tb_list_gateway
+    tags:
+    - 内置
+    - 资源
+  config_fields: []
+  always_installed: true
 - catalog_id: filesystem
   id: mcp-filesystem
   name: filesystem

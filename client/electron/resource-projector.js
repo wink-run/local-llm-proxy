@@ -12,6 +12,7 @@ const {
   normalizeSkillDirPath,
   resolvePath,
   pathExists,
+  pathsEqual,
   isRealSkillDir,
 } = require('./resource-canonical');
 
@@ -22,8 +23,9 @@ function ensureDir(dir) {
 function isSymlinkTo(targetPath, authorityDir) {
   try {
     const st = fs.lstatSync(targetPath);
+    // Windows junction 在 lstat 上也表现为 symlink
     if (!st.isSymbolicLink()) return false;
-    return fs.realpathSync(targetPath) === fs.realpathSync(authorityDir);
+    return pathsEqual(fs.realpathSync(targetPath), fs.realpathSync(authorityDir));
   } catch {
     return false;
   }
@@ -56,6 +58,16 @@ function replaceWithSymlink(targetDir, authorityDir) {
   }
 
   try {
+    // Windows：优先 junction（无需管理员）；失败再试 dir symlink，最后回退复制
+    if (process.platform === 'win32') {
+      try {
+        fs.symlinkSync(resolvePath(authorityDir), targetDir, 'junction');
+        return 'symlink';
+      } catch (junctionErr) {
+        fs.symlinkSync(resolvePath(authorityDir), targetDir, 'dir');
+        return 'symlink';
+      }
+    }
     fs.symlinkSync(resolvePath(authorityDir), targetDir, 'dir');
     return 'symlink';
   } catch (e) {
@@ -70,11 +82,11 @@ function shouldKeepAsAuthority(resource, agentId, skillDir, existingProjection) 
   const skillDirResolved = resolvePath(skillDir);
   const authorityDir = resolveAuthorityDir(resource);
 
-  if (authorityDir && skillDirResolved === authorityDir) return true;
+  if (authorityDir && pathsEqual(skillDirResolved, authorityDir)) return true;
 
   if (existingProjection?.projectionType === 'scan' || existingProjection?.projectionType === 'origin') {
     const projDir = normalizeSkillDirPath(existingProjection.targetPath, resource.name);
-    if (projDir && resolvePath(projDir) === skillDirResolved && pathExists(skillDir) && !fs.lstatSync(skillDir).isSymbolicLink()) {
+    if (projDir && pathsEqual(projDir, skillDirResolved) && pathExists(skillDir) && !fs.lstatSync(skillDir).isSymbolicLink()) {
       return true;
     }
   }

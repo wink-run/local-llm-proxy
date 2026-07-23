@@ -8,17 +8,18 @@ const os = require('os');
 const path = require('path');
 const { AGENT_RESOURCE_TARGETS } = require('./resource-agent-targets');
 
-/** aweskill / 通用 skills 目录（存在才扫描） */
+/** 通用 skills 目录（与各 Agent 默认目录并列扫描并展示；不含 aweskill） */
 const EXTRA_SKILL_ROOTS = [
   {
     agentId: 'agents-hub',
-    label: 'Agents Hub',
+    // 界面展示为 .agents，路径为 ~/.agents/skills
+    label: '.agents',
     getSkillRoot: () => path.join(os.homedir(), '.agents', 'skills'),
   },
   {
-    agentId: 'aweskill',
-    label: 'Aweskill',
-    getSkillRoot: () => path.join(os.homedir(), '.aweskill', 'skills'),
+    agentId: 'tokenbank',
+    label: '.tokenbank',
+    getSkillRoot: () => path.join(os.homedir(), '.tokenbank', 'skills'),
   },
 ];
 
@@ -354,20 +355,42 @@ function scanCustomSkillTree(rootDir, options = {}) {
   return flat;
 }
 
-/** 按 scanScope 扫描：global=全局目录；custom=指定目录（含子目录） */
-function scanAllAgentSkills(options = {}) {
-  const scope = options.scanScope === 'custom' ? 'custom' : 'global';
-  const flat = [];
-
-  if (scope === 'global') {
-    flat.push(...scanGlobalSkills());
-  } else {
-    const dirs = [...new Set((options.customDirs || []).map(d => path.resolve(String(d || '').trim())).filter(Boolean))];
-    for (const dir of dirs) {
-      flat.push(...scanCustomSkillTree(dir, options));
-    }
+/** 默认监控目录（各 Agent 全局 skills + Hub） */
+function listDefaultSkillScanRoots() {
+  const roots = [];
+  for (const target of Object.values(AGENT_RESOURCE_TARGETS)) {
+    const p = target.getSkillRoot();
+    roots.push({
+      id: target.id,
+      label: target.label,
+      path: p,
+      kind: 'default',
+      exists: (() => { try { return fs.existsSync(p); } catch { return false; } })(),
+    });
   }
+  for (const extra of EXTRA_SKILL_ROOTS) {
+    const p = extra.getSkillRoot();
+    roots.push({
+      id: extra.agentId,
+      label: extra.label,
+      path: p,
+      kind: 'default',
+      exists: (() => { try { return fs.existsSync(p); } catch { return false; } })(),
+    });
+  }
+  return roots;
+}
 
+/**
+ * 扫描全部监控目录：默认全局目录 ∪ 用户添加的目录（并列补充，非互斥）
+ */
+function scanAllAgentSkills(options = {}) {
+  const flat = [];
+  flat.push(...scanGlobalSkills());
+  const dirs = [...new Set((options.customDirs || []).map(d => path.resolve(String(d || '').trim())).filter(Boolean))];
+  for (const dir of dirs) {
+    flat.push(...scanCustomSkillTree(dir, options));
+  }
   return flat;
 }
 
@@ -420,35 +443,31 @@ function groupDiscoveredSkills(flatItems) {
   return Array.from(groups.values()).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
 }
 
-/** 按 scanScope 构建 Agent 安装索引 */
+/** 构建 Agent 安装索引：默认目录 + 用户添加目录（并列） */
 function buildAgentSkillScanIndex(options = {}) {
-  const scope = options.scanScope === 'custom' ? 'custom' : 'global';
   const index = {};
 
-  if (scope === 'global') {
-    for (const target of Object.values(AGENT_RESOURCE_TARGETS)) {
-      index[target.id] = new Map();
-      for (const item of scanSkillRoot(target.getSkillRoot(), target.id, target.label)) {
-        index[target.id].set(item.name, decorateScanItem({ ...item, scope: 'global' }));
-      }
-    }
-    return index;
-  }
-
-  // 指定目录：归入 custom 虚拟 Agent，并映射项目内 claude/codex 等目录
-  index.custom = new Map();
   for (const target of Object.values(AGENT_RESOURCE_TARGETS)) {
     index[target.id] = new Map();
+    for (const item of scanSkillRoot(target.getSkillRoot(), target.id, target.label)) {
+      index[target.id].set(item.name, decorateScanItem({ ...item, scope: 'global' }));
+    }
   }
 
-  for (const item of scanAllAgentSkills(options)) {
-    const mapKey = indexKeyForItem(item);
-    if (item.agentId === 'custom') {
-      index.custom.set(mapKey, decorateScanItem(item));
-      continue;
+  const dirs = [...new Set((options.customDirs || []).map(d => path.resolve(String(d || '').trim())).filter(Boolean))];
+  if (dirs.length) {
+    index.custom = new Map();
+    for (const dir of dirs) {
+      for (const item of scanCustomSkillTree(dir, options)) {
+        const mapKey = indexKeyForItem(item);
+        if (item.agentId === 'custom') {
+          index.custom.set(mapKey, decorateScanItem(item));
+          continue;
+        }
+        if (!index[item.agentId]) index[item.agentId] = new Map();
+        index[item.agentId].set(mapKey, decorateScanItem(item));
+      }
     }
-    if (!index[item.agentId]) index[item.agentId] = new Map();
-    index[item.agentId].set(mapKey, decorateScanItem(item));
   }
 
   return index;
@@ -524,6 +543,7 @@ module.exports = {
   scanProjectSkills,
   scanGlobalSkills,
   scanCustomSkillTree,
+  listDefaultSkillScanRoots,
   scanAllAgentSkills,
   buildAgentSkillScanIndex,
   removeRawAgentSkill,

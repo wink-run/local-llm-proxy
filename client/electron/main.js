@@ -2332,6 +2332,23 @@ function registerIPC() {
     };
     const send = (ch, data) => { if (!event.sender.isDestroyed()) event.sender.send(ch, data); };
     const req = mod.request(opts, (res) => {
+      const status = res.statusCode || 0;
+      // 非 2xx：缓冲后以 stream-error 上报，避免前端当成空成功回复
+      if (status >= 400) {
+        let errBuf = '';
+        res.on('data', (chunk) => { errBuf += chunk.toString(); });
+        res.on('end', () => {
+          let detail = errBuf.slice(0, 400).trim() || `status ${status}`;
+          try {
+            const j = JSON.parse(errBuf);
+            const raw = j.error?.message || j.message || j.detail || detail;
+            detail = typeof raw === 'string' ? raw : JSON.stringify(raw).slice(0, 400);
+          } catch { /* 非 JSON 错误体，沿用原文 */ }
+          send('llm:stream-error', { reqId, error: `HTTP ${status}: ${detail}` });
+        });
+        res.on('error', (e) => send('llm:stream-error', { reqId, error: e.message }));
+        return;
+      }
       res.on('data', (chunk) => send('llm:stream-chunk', { reqId, data: chunk.toString() }));
       res.on('end', () => send('llm:stream-done', { reqId }));
       res.on('error', (e) => send('llm:stream-error', { reqId, error: e.message }));
@@ -4397,7 +4414,7 @@ function registerIPC() {
 
   ipcMain.handle('apps:detail', (_e, { app, days } = {}) => {
     // 打开明细时强制增量补录，避免节流窗口内看不到会话补录
-    try { syncSessionTelemetry(localStats); } catch {}
+    try { syncSessionTelemetry(localStats, { force: true }); } catch {}
     // Cursor：打开明细时立即清 transcript 0 token 占位（节流窗口内也能刷新列表）
     if (app?.agent_id === 'cursor') {
       try { cursorHooks.purgeTranscriptZeroTokens(localStats); } catch {}

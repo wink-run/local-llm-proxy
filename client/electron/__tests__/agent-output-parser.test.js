@@ -488,6 +488,49 @@ assert.strictEqual(bashResult[0].stepType, 'tool_result');
 assert.strictEqual(bashResult[0].tool_name, 'Bash');
 assert.strictEqual(bashResult[0].content, 'a\nb\nc');
 
+// Read PNG：tool_result 仅含 image 块时不得丢弃（否则 UI 补「未收到结果」）
+const imgState = {
+  blockTypes: new Map(), blockTexts: new Map(),
+  toolNamesById: new Map([['tu_read_img', 'Read']]),
+  emittedToolUseIds: new Set(['tu_read_img']),
+  streaming: false,
+};
+const imgResult = parseAgentOutputLine(JSON.stringify({
+  type: 'user',
+  message: {
+    content: [{
+      type: 'tool_result',
+      tool_use_id: 'tu_read_img',
+      content: [{
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' },
+      }],
+      is_error: false,
+    }],
+  },
+}), 'claude-code', imgState);
+assert.strictEqual(imgResult.length, 1);
+assert.strictEqual(imgResult[0].stepType, 'tool_result');
+assert.strictEqual(imgResult[0].tool_name, 'Read');
+assert.strictEqual(imgResult[0].tool_use_id, 'tu_read_img');
+assert.ok(/图片|image\/png/i.test(imgResult[0].content), `expected image placeholder, got: ${imgResult[0].content}`);
+assert.strictEqual(imgResult[0].is_error, false);
+
+// 完全空的 tool_result 也应发出占位，保证配对
+const emptyResult = parseAgentOutputLine(JSON.stringify({
+  type: 'user',
+  message: {
+    content: [{
+      type: 'tool_result',
+      tool_use_id: 'tu_read_img',
+      content: [],
+      is_error: false,
+    }],
+  },
+}), 'claude-code', imgState);
+assert.strictEqual(emptyResult.length, 1);
+assert.strictEqual(emptyResult[0].content, '(无输出)');
+
 // streaming 期间仍提取 tool_use（不再整包丢弃）
 const streamToolState = {
   blockTypes: new Map(), blockTexts: new Map(), toolNamesById: new Map(),

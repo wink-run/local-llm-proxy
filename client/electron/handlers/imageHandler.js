@@ -104,7 +104,7 @@ function sizeToResolution(sizeStr) {
   return '1k';
 }
 
-/** 是否使用 ratio + resolution 而非 size（Agnes 等 OpenAI 兼容图像 API） */
+/** 是否使用 ratio + resolution 而非 size（Agnes 等；jimeng-api 走独立 BODY_CONFIGS） */
 function needsRatioResolution(provider, model) {
   if (provider?.image_config?.sizeParams === 'ratio_resolution') return true;
   const url = String(provider?.base_url || '');
@@ -320,6 +320,26 @@ const BODY_CONFIGS = [
       return out;
     },
   },
+  {
+    // 即梦 / NanoBanana（handler: jimeng-api）— 独立适配，不走 OpenAI size 默认体
+    //  · 上游拒绝 size，仅接受 ratio + resolution（或二者皆省略）
+    //  · response_format 顶层透传；base_url 可省略 /v1
+    match: (provider) => isJimengProvider(provider),
+    buildUrl: (_model, p) => {
+      let base = (p.base_url || '').replace(/\/+$/, '');
+      if (!base) return '/v1/images/generations';
+      if (!/\/v\d+$/.test(base)) base += '/v1';
+      return `${base}/images/generations`;
+    },
+    buildBody: (model, body) => {
+      const out = { model, prompt: body.prompt };
+      // 显式 size → ratio/resolution；未传则不带尺寸字段（与上游直连 curl 一致）
+      applyRatioResolution(out, body, { defaultFromSize: true });
+      if (body.n) out.n = body.n;
+      if (body.response_format) out.response_format = body.response_format;
+      return out;
+    },
+  },
 ];
 
 // ── Provider lookup ───────────────────────────────────────────────────────────
@@ -349,6 +369,18 @@ function isAgnesProvider(p) {
     || /apihub\.agnes-ai\.com/i.test(p.base_url || '');
 }
 
+/** 即梦专用供给源：按 handler / id 识别，避免与通用 OpenAI 图像路径耦合 */
+function isJimengProvider(p) {
+  if (!p) return false;
+  return p.handler === 'jimeng-api'
+    || p.id === 'jimeng-api'
+    || /^jimeng-api$/i.test(p.id || '');
+}
+
+function isJimengImageModel(modelStr) {
+  return /^jimeng[-_.]/i.test(modelStr || '') || /^nanobanana/i.test(modelStr || '');
+}
+
 function resolveProvider(modelStr, providers) {
   if (!modelStr) return null;
   const slash = modelStr.indexOf('/');
@@ -363,6 +395,11 @@ function resolveProvider(modelStr, providers) {
   // agnes-image-* 必须走 Agnes 供给源，避免误选 volcengine 等首个 BODY_CONFIGS 命中项
   if (isAgnesImageModel(modelStr)) {
     const p = providers.find(isAgnesProvider);
+    if (p) return { provider: p, model: modelStr };
+  }
+  // jimeng / nanobanana 必须走 jimeng-api，避免误选通用 OpenAI / Doubao 适配
+  if (isJimengImageModel(modelStr)) {
+    const p = providers.find(isJimengProvider);
     if (p) return { provider: p, model: modelStr };
   }
   // Fall back: provider with image_config, a known adapter, or a matching body config
@@ -487,6 +524,16 @@ async function handleImageGeneration(body, res, getProviders, { skipP2P = false,
         try { parsed = JSON.parse(parsed); } catch {
           throw new Error('Invalid image upstream response (string body)');
         }
+      }
+      // 部分上游 HTTP 200 但 data=null，并在 message/code 中说明（如拒绝 size）
+      if (parsed && typeof parsed === 'object' && parsed.data == null
+          && (parsed.message || parsed.error || (parsed.code != null && Number(parsed.code) !== 0))) {
+        const msg = extractErrorDetail(parsed, null, upstream.statusCode);
+        lastFail = { status: upstream.statusCode, url, msg };
+        logImageError('upstream logical error', msg, { status: upstream.statusCode, url, provider: provider.id, model });
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: msg }));
+        return;
       }
       normalized = normalize(parsed, body.prompt);
       if (normalized?.data?.length) break;

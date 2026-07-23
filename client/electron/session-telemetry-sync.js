@@ -10,6 +10,8 @@ const { syncTraeSessions } = require('./trae-session-sync');
 const { computeImportSkip } = require('../shared/telemetry');
 
 const TRAE_TS_FIX_MARKER = path.join(os.homedir(), '.tokenbank', 'trae-sessions', '.ts-seconds-fix-v1');
+// Claude Code shim/OAuth 经网关时 request_id 已占 proxy 坑，旧 enrich 因 token 不大跳过 → 概要为 0
+const CLAUDE_PROXY_RELINK_MARKER = path.join(os.homedir(), '.tokenbank', '.claude-proxy-session-relink-v1');
 
 /** 一次性修复：tsSeconds 曾误把 Unix 秒再除 1000，导致 session-trae-work 落在 1970 无法进今日窗口 */
 function maybeFixTraeSessionTimestamps(localStats) {
@@ -22,6 +24,20 @@ function maybeFixTraeSessionTimestamps(localStats) {
     console.log('[session-telemetry] trae-work session rows reset for timestamp re-import');
   } catch (e) {
     console.warn('[session-telemetry] trae ts fix marker:', e.message);
+  }
+}
+
+/** 一次性：清 Claude 会话 import_state，重扫后把 proxy 行挂到 session-claude（不删用量） */
+function maybeRelinkClaudeProxySessions(localStats) {
+  if (fs.existsSync(CLAUDE_PROXY_RELINK_MARKER)) return;
+  const ok = localStats.resetImportState('%/.claude/projects/%')
+    || localStats.resetImportState('%\\.claude\\projects\\%');
+  try {
+    fs.mkdirSync(path.dirname(CLAUDE_PROXY_RELINK_MARKER), { recursive: true });
+    fs.writeFileSync(CLAUDE_PROXY_RELINK_MARKER, ok ? 'ok' : 'skip');
+    console.log('[session-telemetry] claude proxy→session relink import_state cleared:', ok);
+  } catch (e) {
+    console.warn('[session-telemetry] claude proxy relink marker:', e.message);
   }
 }
 
@@ -47,6 +63,7 @@ function syncSessionTelemetry(localStats, opts = {}) {
   try {
     hookImported = cursorHooks.importEvents(localStats);
     maybeFixTraeSessionTimestamps(localStats);
+    maybeRelinkClaudeProxySessions(localStats);
     try { traeSynced = syncTraeSessions(); } catch (e) { console.error('[trae-session-sync]', e.message); }
     const skip = computeImportSkip();
     const r = sessionImport.run(localStats, { skip });

@@ -18,15 +18,18 @@ import { buildPersonalModelTypeMap, inferModelTypeFromName } from '../api/gatewa
 import { avatarColor } from '../components/UserAvatar';
 import McpProvidersTab, { readSupplyTab, saveSupplyTab } from '../components/McpProvidersTab';
 
-/** 按当前语言覆盖 meta 中的 label / hint / oauth.label */
+/** 按当前语言覆盖 meta 中的 label / hint / getKey / oauth.label */
 function localizeProviderMeta(metaMap, t) {
   const out = { ...metaMap };
   for (const [id, m] of Object.entries(out)) {
     const next = { ...m };
     const labelKey = `providers.meta.${id}.label`;
     const hintKey = `providers.meta.${id}.hint`;
+    const getKeyKey = `providers.meta.${id}.getKey`;
     if (t(labelKey) !== labelKey) next.label = t(labelKey);
     if (t(hintKey) !== hintKey) next.hint = t(hintKey);
+    // 覆盖「去领 key」链接文案（如 jimeng-api 指向说明文档）
+    if (t(getKeyKey) !== getKeyKey) next.getKeyLabel = t(getKeyKey);
     if (m.oauth?.provider) {
       const oauthKey = `providers.oauth.${m.oauth.provider}`;
       if (t(oauthKey) !== oauthKey) next.oauth = { ...m.oauth, label: t(oauthKey) };
@@ -552,7 +555,14 @@ function getPersonalSourceTag(provider, metaMap, userPayg, userSubs) {
   return 'payg';
 }
 
+/** 目录声明的免费层（tier=free），用于选择器「免费」标识与筛选 */
+function isFreeTierTemplate(tpl) {
+  return tpl?.tier === 'free';
+}
+
 function getPickerEntryTag(entry) {
+  // 免费账户优先归入 free，便于筛选与发现（即使 kind=payg）
+  if (isFreeTierTemplate(entry.template) || entry.personalTag === 'free') return 'free';
   if (entry.personalTag) return entry.personalTag;
   if (entry.source === 'payg') return 'payg';
   if (entry.source === 'subscription') return 'sub_to_api';
@@ -574,6 +584,7 @@ function buildPickerEntryFromTemplate(tpl, subscriptionCatalog = []) {
   );
 
   if (tpl.kind === 'payg') {
+    const free = isFreeTierTemplate(tpl);
     return {
       providerId: tpl.key,
       pickerKey: `payg:${tpl.key}`,
@@ -581,7 +592,8 @@ function buildPickerEntryFromTemplate(tpl, subscriptionCatalog = []) {
       icon: tpl.icon || '🔧',
       authMode: 'api_key',
       source: 'payg',
-      personalTag: 'payg',
+      // 免费账户单独打标，选择器显示「免费」并参与免费筛选
+      personalTag: free ? 'free' : 'payg',
       templateKey: tpl.key,
       template: tpl,
       gatewayAddable: true,
@@ -1437,9 +1449,9 @@ function P2PNetworkCard({ provider, onUpdate, onPersistEnabled, cooldowns = [], 
           </span>
           <div className="flex items-center gap-2 shrink-0">
             <button onClick={probeAllSpeed} disabled={!!probing || modelStats.length === 0}
-              title="对有在线节点的模型逐个发极小请求测速（真实调用，消耗积分）"
+              title={t('providers.probe.titleP2p')}
               className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 disabled:opacity-50 flex items-center gap-1 whitespace-nowrap">
-              {probing ? `测速中 ${probing.done}/${probing.total}` : '⚡ 全部测速'}
+              {probing ? t('providers.probe.running', { done: probing.done, total: probing.total }) : t('providers.probe.all')}
             </button>
             <button onClick={() => navigate('/network')}
               className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 flex items-center gap-1 whitespace-nowrap">
@@ -2716,7 +2728,7 @@ function UsageMeter({ provider }) {
                 </span>
               </div>
               <div className="mt-0.5 h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-700 overflow-hidden">
-                <div className={`h-full ${usageBarColor(w.usedPercent)} transition-all`}
+                <div className={`h-full ${usageBarColor(w.usedPercent)} transition-[width] duration-200 ease-out`}
                   style={{ width: `${Math.min(100, Math.max(0, w.usedPercent))}%` }} />
               </div>
             </div>
@@ -3020,7 +3032,7 @@ function ProviderCard({ provider, meta, onUpdate, onRemove, onTest, initialExpan
                   <div className="flex items-center gap-3">
                     {meta.signup_url && (
                       <a href={meta.signup_url} target="_blank" rel="noreferrer"
-                        className="text-xs text-blue-600 dark:text-blue-400 hover:underline">{t('providers.card.getKey')}</a>
+                        className="text-xs text-blue-600 dark:text-blue-400 hover:underline">{meta.getKeyLabel || t('providers.card.getKey')}</a>
                     )}
                   </div>
                 </>
@@ -3318,24 +3330,28 @@ export default function Providers() {
         const sub = userSubscriptions.find(s => subInstGatewayId(s) === gid);
         const catalogId = payg?.provider_id || sub?.source_id || sub?.plan_provider_id || gid;
         const tpl = resolveTemplateForProvider(gid, accountsData?.source_templates, userSubscriptions, userPayg);
+        const catDef = catalogDefaultsById?.[catalogId] || catalogDefaultsById?.[gid];
         const fb = FALLBACK_PROVIDERS.find(p => p.id === gid) || FALLBACK_PROVIDERS.find(p => p.id === catalogId);
         const sibling = next.find(p => p.id === catalogId);
         const instModels = seedModelsFromNames(payg?.models || sub?.models || []);
+        // 目录 tier=free 时默认进免费层（如 jimeng-api），避免个人页按量登记强制 paid
+        const seedType = catDef?.type || tpl?.tier || fb?.type || 'paid';
         next.push({
-          ...(fb || { type: 'paid', enabled: true, base_url: '', models: [] }),
+          ...(fb || { type: seedType, enabled: true, base_url: '', models: [] }),
           id: gid,
-          type: fb?.type || 'paid',
+          type: seedType,
+          tier: seedType,
           enabled: true,
           ...FRESH_PROVIDER_CREDENTIALS,
           models: instModels,
-          base_url: fb?.base_url || tpl?.base_url || sibling?.base_url || '',
-          api_format: fb?.api_format || tpl?.api_format || sibling?.api_format || 'openai',
+          base_url: fb?.base_url || tpl?.base_url || catDef?.base_url || sibling?.base_url || '',
+          api_format: fb?.api_format || tpl?.api_format || catDef?.api_format || sibling?.api_format || 'openai',
         });
         changed = true;
       }
       return changed ? next : prev;
     });
-  }, [paidAllowlist, userPayg, userSubscriptions, accountsData?.source_templates]);
+  }, [paidAllowlist, userPayg, userSubscriptions, accountsData?.source_templates, catalogDefaultsById]);
 
   const openTemplateEdit = useCallback((tplOrKey) => {
     const tpl = typeof tplOrKey === 'string'
@@ -3795,11 +3811,14 @@ export default function Providers() {
   const hasGatewayPaid = paidAccountsLoaded && paidAllowlist.length > 0;
 
   async function testProvider(p) {
-    return getGateway().testProvider({
+    const result = await getGateway().testProvider({
       id: p.id, base_url: p.base_url, token: p.token, api_format: p.api_format,
       proxy: p.proxy,
       auth_type: p.auth_type, oauth_provider: p.oauth_provider, credentials: p.credentials,
     });
+    // OpenRouter：点击测试后顺带同步一次免费模型目录（公开端点，不依赖测试成败）
+    if (p.id === 'openrouter') syncOpenrouterModels().catch(() => {});
+    return result;
   }
 
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -4033,9 +4052,10 @@ export default function Providers() {
       kind: 'free', tag: 'free', provider: pr, key: `free:${pr.id}`,
     }))),
   ];
-  const pickerItemsFiltered = pickerItems.filter(item =>
-    pickerItemMatchesFilter(item.tag, personalFilter),
-  );
+  // 免费账户置顶，便于发现
+  const pickerItemsFiltered = pickerItems
+    .filter(item => pickerItemMatchesFilter(item.tag, personalFilter))
+    .sort((a, b) => Number(b.tag === 'free') - Number(a.tag === 'free'));
 
   function togglePicker() {
     setPickerOpen(v => !v);
@@ -4158,13 +4178,18 @@ export default function Providers() {
 
   function renderPickerButton(entry) {
     const count = pickerInstanceCount(entry);
+    const isFree = isFreeTierTemplate(entry.template) || entry.personalTag === 'free';
     const authTag = entry.authMode === 'oauth' ? 'OAuth'
       : entry.authMode === 'stats' ? t('providers.add.statsTag')
       : entry.authMode === 'sub' ? t('psrc.direct.subTag')
       : 'Key';
     return (
       <button key={entry.pickerKey} type="button" onClick={() => selectPickerEntry(entry)}
-        className="w-full flex items-center gap-2.5 px-3 py-3 rounded-xl border text-left transition-colors border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:border-blue-300 dark:hover:border-blue-700">
+        className={`w-full flex items-center gap-2.5 px-3 py-3 rounded-xl border text-left transition-colors bg-white dark:bg-zinc-800 hover:border-blue-300 dark:hover:border-blue-700 ${
+          isFree
+            ? 'border-teal-300/80 dark:border-teal-700/70 ring-1 ring-teal-200/70 dark:ring-teal-800/40'
+            : 'border-zinc-200 dark:border-zinc-700'
+        }`}>
         <ServiceIcon
           id={entry.providerId || entry.templateKey}
           name={entry.label}
@@ -4177,6 +4202,12 @@ export default function Providers() {
             {entry.label}
           </span>
           <span className="flex flex-wrap items-center gap-1 mt-0.5">
+            {/* 免费账户醒目标识（青绿，区别于 Key/OAuth/Stats） */}
+            {isFree && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-200">
+                {t('providers.add.freeTag')}
+              </span>
+            )}
             <span className={`text-[10px] px-1.5 py-0.5 rounded ${
               entry.authMode === 'oauth'
                 ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'

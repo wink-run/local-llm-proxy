@@ -14,7 +14,12 @@ const {
   listCatalogItems,
   listCatalogGrouped,
   RESOURCE_TYPE_LABELS,
+  BUILTIN_ASSISTANT_CATALOG_IDS,
+  isBuiltinAssistantCatalogId,
 } = require('./resource-catalog');
+
+/** 内置智能体自动投射时的优先运行时 */
+const BUILTIN_ASSISTANT_PREFERRED_AGENTS = ['codex', 'claude-code', 'cursor', 'workbuddy'];
 const { projectResource, unprojectResource, verifyProjection } = require('./resource-projector');
 const {
   resolveAuthorityDir,
@@ -70,7 +75,7 @@ class ResourceManager {
   constructor() {
     this._ready = false;
     /** 最近一次扫描参数，供纳管时定位 Skill */
-    this._lastScanOptions = { scanScope: 'global', customDirs: [] };
+    this._lastScanOptions = { customDirs: [] };
   }
 
   _getDb() {
@@ -81,6 +86,111 @@ class ResourceManager {
     if (this._ready) return;
     this._getDb();
     this._ready = true;
+  }
+
+  /** 是否内置智能体（不可删除；source=builtin） */
+  _isBuiltinAssistant(resource, catalogId) {
+    if (catalogId && isBuiltinAssistantCatalogId(catalogId)) return true;
+    if (!resource) return false;
+    if (resource.source === 'builtin') return true;
+    if (resource.metadata && resource.metadata.builtin) return true;
+    const url = String(resource.source_url || '');
+    if (url.startsWith('builtin:')) return true;
+    if (url.startsWith('catalog:')) {
+      return isBuiltinAssistantCatalogId(url.slice('catalog:'.length));
+    }
+    return BUILTIN_ASSISTANT_CATALOG_IDS.some((cid) => {
+      const item = getCatalogItem(cid);
+      return item && item.name === resource.name && resource.type === 'assistant';
+    });
+  }
+
+  _markBuiltinSource(resourceId, catalogId) {
+    const db = this._getDb();
+    const now = Date.now();
+    const sourceUrl = `builtin:${catalogId || resourceId}`;
+    db.prepare(`
+      UPDATE resources
+      SET source = 'builtin', source_url = ?, updated_at = ?
+      WHERE id = ?
+    `).run(sourceUrl, now, resourceId);
+    // metadata.builtin 标记，便于 UI 识别
+    const row = db.prepare('SELECT metadata FROM resources WHERE id = ?').get(resourceId);
+    if (!row) return;
+    let meta = {};
+    try { meta = JSON.parse(row.metadata || '{}') || {}; } catch { meta = {}; }
+    if (meta.builtin) return;
+    meta.builtin = true;
+    db.prepare('UPDATE resources SET metadata = ? WHERE id = ?')
+      .run(JSON.stringify(meta), resourceId);
+  }
+
+  _pickBuiltinProjectAgentId(allowedIds) {
+    const ids = Array.isArray(allowedIds) ? allowedIds : [];
+    for (const pref of BUILTIN_ASSISTANT_PREFERRED_AGENTS) {
+      if (ids.includes(pref)) return pref;
+    }
+    return ids[0] || null;
+  }
+
+  /**
+   * 确保内置智能体已纳管，并在有可投射 Agent 时自动投射（幂等）。
+   * 无可投射 Agent 时仅纳管，不抛错。
+   */
+  ensureBuiltinAssistants() {
+    // 注意：不可再调 init()，避免递归；由 init / IPC 保证 DB 就绪
+    if (!this._ready) {
+      this._getDb();
+      this._ready = true;
+    }
+    const results = [];
+    for (const catalogId of BUILTIN_ASSISTANT_CATALOG_IDS) {
+      try {
+        const item = getCatalogItem(catalogId);
+        if (!item) {
+          results.push({ catalogId, status: 'missingCatalog' });
+          continue;
+        }
+        const installed = this.installFromCatalog(catalogId);
+        const resourceId = installed?.resource?.id
+          || this._findByTypeName(item.type, item.name)?.id;
+        if (!resourceId) {
+          results.push({ catalogId, status: 'installFailed' });
+          continue;
+        }
+        this._markBuiltinSource(resourceId, catalogId);
+        let resource = this.getResource(resourceId);
+        if ((resource.projections || []).length > 0) {
+          results.push({ catalogId, status: 'ready', resourceId, agentId: resource.projections[0].agentId });
+          continue;
+        }
+        const allowed = listAssistantProjectableAgentIds();
+        const agentId = this._pickBuiltinProjectAgentId(allowed);
+        if (!agentId) {
+          results.push({ catalogId, status: 'needAgent', resourceId });
+          continue;
+        }
+        let proj = this.projectToAgents(resourceId, [agentId], 'global', { force: false });
+        if (proj && proj.conflicts && proj.conflicts.length) {
+          proj = this.projectToAgents(resourceId, [agentId], 'global', { force: true });
+        }
+        if (!proj || !proj.success) {
+          results.push({
+            catalogId,
+            status: 'projectFailed',
+            resourceId,
+            error: (proj && proj.error) || 'project failed',
+          });
+          continue;
+        }
+        resource = this.getResource(resourceId);
+        results.push({ catalogId, status: 'projected', resourceId, agentId });
+      } catch (e) {
+        console.warn('[resource-manager] builtin assistant ensure failed:', catalogId, e.message);
+        results.push({ catalogId, status: 'error', error: e.message });
+      }
+    }
+    return { success: true, results };
   }
 
   _parseJson(raw, fallback = {}) {
@@ -369,6 +479,10 @@ class ResourceManager {
     const existing = this._findByTypeName(item.type, item.name);
     if (existing) {
       let installedDependencies = [];
+      // 内置智能体：纠正 source / metadata
+      if (this._isBuiltinAssistant(existing, catalogId) || isBuiltinAssistantCatalogId(catalogId)) {
+        this._markBuiltinSource(existing.id, catalogId);
+      }
       // 智能体「已纳管」时仍要补齐绑定的 skill/prompt,并确保 skill 落盘可扫到
       if (item.type === 'assistant') {
         this._invalidateAgentList();
@@ -398,11 +512,17 @@ class ResourceManager {
     const displayName = item.type === 'skill'
       ? item.name
       : (item.display_name || item.name);
+    const builtin = !!(item.metadata && item.metadata.builtin)
+      || isBuiltinAssistantCatalogId(catalogId);
+    const meta = { ...(item.metadata || {}) };
+    if (builtin) meta.builtin = true;
+    const source = builtin ? 'builtin' : 'catalog';
+    const sourceUrl = builtin ? `builtin:${catalogId}` : `catalog:${catalogId}`;
     const db = this._getDb();
     db.prepare(`
       INSERT INTO resources
       (id, type, name, display_name, description, content, metadata, source, source_url, hash, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'catalog', ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       item.type,
@@ -410,8 +530,9 @@ class ResourceManager {
       displayName,
       item.description || '',
       content,
-      JSON.stringify(item.metadata || {}),
-      `catalog:${catalogId}`,
+      JSON.stringify(meta),
+      source,
+      sourceUrl,
       this._hashContent(content),
       now,
       now,
@@ -610,9 +731,10 @@ class ResourceManager {
    */
   _isAuthorityTarget(targetPath, authorityDir, resourceName) {
     if (!targetPath || !authorityDir) return false;
-    const a = path.resolve(normalizeSkillDirPath(targetPath, resourceName) || targetPath);
-    const b = path.resolve(normalizeSkillDirPath(authorityDir, resourceName) || authorityDir);
-    return a === b;
+    const { pathsEqual } = require('./resource-canonical');
+    const a = normalizeSkillDirPath(targetPath, resourceName) || targetPath;
+    const b = normalizeSkillDirPath(authorityDir, resourceName) || authorityDir;
+    return pathsEqual(a, b);
   }
 
   /**
@@ -622,7 +744,7 @@ class ResourceManager {
   _isRemovableProjection(proj, authorityDir, resourceName) {
     if (!proj) return false;
     // 界面不展示、也无法 × 的公共目录，不造成卸载死锁
-    if (proj.agentId === 'agents-hub' || proj.agentId === 'custom' || proj.agentId === 'aweskill') {
+    if (proj.agentId === 'agents-hub' || proj.agentId === 'tokenbank' || proj.agentId === 'custom' || proj.agentId === 'aweskill') {
       return false;
     }
     const t = proj.projectionType;
@@ -676,6 +798,9 @@ class ResourceManager {
     const db = this._getDb();
     const resource = this.getResource(resourceId);
     if (!resource) throw new Error('资产不存在');
+    if (this._isBuiltinAssistant(resource)) {
+      throw new Error('内置智能体不可删除');
+    }
 
     // Skill：仅当仍有「可取消」的投射时禁止卸载；只剩权威源时可直接卸载
     if (resource.type === 'skill') {
@@ -1111,13 +1236,12 @@ class ResourceManager {
     }
   }
 
-  /** 规范化 Skill 扫描参数 */
+  /** 规范化 Skill 扫描参数（默认目录始终扫；customDirs 为用户补充目录） */
   _buildSkillScanOptions(filters = {}) {
-    const scanScope = filters.scanScope === 'custom' ? 'custom' : 'global';
     const customDirs = (filters.customDirs || [])
       .map(d => String(d || '').trim())
       .filter(Boolean);
-    return { scanScope, customDirs };
+    return { customDirs };
   }
 
   _applyScanOptions(filters = {}) {
@@ -1126,10 +1250,29 @@ class ResourceManager {
   }
 
   _getActiveScanOptions(filters = {}) {
-    if (filters.scanScope || filters.customDirs?.length) {
+    if (filters.customDirs || filters.scanScope) {
       return this._applyScanOptions(filters);
     }
     return this._lastScanOptions;
+  }
+
+  /** 列出当前全部扫描监控目录（默认 + 用户添加） */
+  listScanRoots(filters = {}) {
+    this.init();
+    const { listDefaultSkillScanRoots } = require('./resource-skill-scanner');
+    const opts = this._getActiveScanOptions(filters);
+    const defaults = listDefaultSkillScanRoots();
+    const customs = (opts.customDirs || []).map((d) => {
+      const p = path.resolve(String(d || '').trim());
+      return {
+        id: `custom:${p}`,
+        label: path.basename(p) || p,
+        path: p,
+        kind: 'custom',
+        exists: (() => { try { return fs.existsSync(p); } catch { return false; } })(),
+      };
+    });
+    return { success: true, roots: [...defaults, ...customs] };
   }
 
   /** 扫描本机 Agent / aweskill 已有 Skill，排除已纳管项 */
@@ -1192,12 +1335,14 @@ class ResourceManager {
       return String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN');
     });
 
+    const { listDefaultSkillScanRoots } = require('./resource-skill-scanner');
     const scanStats = {
       totalOnDisk: grouped.length,
       managedCount: grouped.filter(g => managedByName.has(g.name)).length,
       pendingCount: items.filter(i => !i.managed).length,
-      scanScope: scanOptions.scanScope,
       customDirs: scanOptions.customDirs,
+      // 供前端列出全部监控目录（默认 + 自添）
+      defaultRoots: listDefaultSkillScanRoots(),
     };
 
     return { items, scanStats };
@@ -1541,7 +1686,7 @@ class ResourceManager {
           skillPath: scanItem.skillPath,
           projectRoot,
           customScanRoot,
-          scope: scanItem.scope || scanOptions.scanScope,
+          scope: scanItem.scope || (scanItem.customScanRoot ? 'custom' : 'global'),
           description,
         });
       }
@@ -1563,11 +1708,11 @@ class ResourceManager {
       };
     });
 
-    if (scanOptions.scanScope === 'custom' && scanIndex.custom?.size) {
+    if (scanOptions.customDirs?.length && scanIndex.custom?.size) {
       const items = buildItems('custom', scanIndex.custom);
       agents.unshift({
         id: 'custom',
-        label: '指定目录',
+        label: '用户添加的目录',
         path: scanOptions.customDirs.join(' · ') || '—',
         exists: true,
         syncEnabled: false,

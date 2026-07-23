@@ -178,6 +178,8 @@ function normPaygEntry(p) {
     api_format: p.api_format || 'openai',
     handler: p.handler || 'openai',
     base_url: p.base_url || '',
+    // 目录默认路由层（free/paid/p2p）
+    tier: p.tier === 'free' || p.tier === 'p2p' || p.tier === 'paid' ? p.tier : undefined,
     models: synced.models,
     pricing: synced.pricing,
   };
@@ -263,8 +265,9 @@ function paygSourcesCatalog() {
         pricing: s.pricing,
         api_format: s.api_format,
         base_url: s.base_url,
+        tier: s.tier,
       });
-      return liveCatalogPaygEntry({ ...norm, model_types: modelTypes });
+      return liveCatalogPaygEntry({ ...norm, tier: s.tier, model_types: modelTypes });
     })
     .filter(p => p.provider_id);
 }
@@ -807,6 +810,8 @@ function serverTemplatesByKey(cfg = {}) {
     const k = p.provider_id || p.id;
     if (k) {
       m[k] = { kind: 'payg', key: k, label: p.label || k, icon: p.icon || '🔧',
+        // 目录 tier（free/paid）供供给源 stub 默认路由层使用
+        tier: p.tier === 'free' || p.tier === 'p2p' ? p.tier : 'paid',
         api_format: p.api_format || 'openai',
         base_url: p.base_url || registryBaseUrl(k) || '',
         models: p.models || [], pricing: p.pricing || {},
@@ -825,10 +830,12 @@ function serverTemplatesByKey(cfg = {}) {
     for (const name of live.models || []) {
       if (!modelTypes[name]) modelTypes[name] = inferModalityFromPricing(live.pricing?.[name]);
     }
+    const liveTier = live.type || reg?.tier;
     m[id] = {
       kind: 'payg', key: id,
       label: live.label || reg?.label || id,
       icon: live.icon || reg?.icon || '🔧',
+      tier: liveTier === 'free' || liveTier === 'p2p' ? liveTier : 'paid',
       api_format: live.api_format || reg?.api_format || 'openai',
       base_url: live.base_url || reg?.base_url || registryBaseUrl(id) || '',
       models: live.models || [], pricing: live.pricing || {},

@@ -13,6 +13,10 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+    /* 动效 token：与 AUDIT / Emil Kowalski 曲线对齐 */
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+    --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   }
 
   body {
@@ -51,10 +55,20 @@
 @layer components {
   /* 按压反馈：pointer-down 即时缩放（Apple Response） */
   .tb-press {
-    transition: transform 100ms ease-out, background-color 150ms ease, color 150ms ease, border-color 150ms ease, opacity 150ms ease, box-shadow 150ms ease;
+    transition: transform 100ms var(--ease-out, ease-out), background-color 150ms ease, color 150ms ease, border-color 150ms ease, opacity 150ms ease, box-shadow 150ms ease;
   }
   .tb-press:active:not(:disabled) {
     transform: scale(0.97);
+  }
+
+  /* 运行态指示：实心点，无 ping（高频监控不抢注意力） */
+  .tb-live-dot {
+    display: inline-flex;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 9999px;
+    background-color: rgb(16 185 129); /* emerald-500 */
+    flex-shrink: 0;
   }
 
   /* 半透明材料层：侧栏 / 浮动 chrome */
@@ -89,7 +103,7 @@
 
   /* 短 critically-damped 入场（无 overshoot） */
   .tb-enter {
-    animation: tb-materialize 0.32s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+    animation: tb-materialize 0.32s var(--ease-out) both;
   }
 }
 
@@ -112,7 +126,7 @@
   -webkit-app-region: no-drag;
 }
 
-/* 无障碍：减弱动效 → 交叉淡入，去掉位移/缩放 */
+/* 无障碍：减弱动效 → 交叉淡入，去掉位移/缩放/无限环 */
 @media (prefers-reduced-motion: reduce) {
   .tb-press,
   .tb-press:active:not(:disabled) {
@@ -124,6 +138,12 @@
   }
   body {
     transition: none;
+  }
+  /* Tailwind 无限动画：保留可读状态，去掉运动 */
+  .animate-ping,
+  .animate-pulse,
+  .animate-spin {
+    animation: none !important;
   }
 }
 

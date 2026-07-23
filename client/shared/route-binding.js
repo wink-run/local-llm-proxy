@@ -26,7 +26,8 @@ function encodeRoute(parts = {}) {
 /**
  * 解析规范串 → { strategy, scope, tier, sharer, provider, model }（缺省为 null）。
  * 规则：最后一段永远是 model（单段时若命中 strategy/scope/tier/sharer 取值域则为纯前缀、无 model）；
- * 前导段按取值域分类，剩下未识别的单段作 provider。model 名不得含 ':'（见设计文档限制）。
+ * 前导段按取值域分类，剩下未识别的单段作 provider。
+ * 例外：模型 ID 含冒号时（OpenRouter `org/name:free`），从「带 / 的段」起整段作为 model。
  */
 function parseRoute(str) {
   const out = { strategy: null, scope: null, tier: null, sharer: null, provider: null, model: null };
@@ -42,6 +43,24 @@ function parseRoute(str) {
     else                          out.model = seg;
     return out;
   }
+
+  // OpenRouter 等：模型段含 org/name，后缀可再带 :free → 不能「末段=model」
+  let modelStart = -1;
+  for (let i = 0; i < segs.length; i++) {
+    if (segs[i].includes('/')) { modelStart = i; break; }
+  }
+  if (modelStart >= 0) {
+    out.model = segs.slice(modelStart).join(':');
+    for (const seg of segs.slice(0, modelStart)) {
+      if (_STRAT_SET.has(seg) && !out.strategy)      out.strategy = seg;
+      else if (_SCOPE_SET.has(seg) && !out.scope)    out.scope = seg;
+      else if (_TIER_SET.has(seg) && !out.tier)      out.tier = seg;
+      else if (SHARER_RE.test(seg) && !out.sharer)   out.sharer = seg;
+      else if (!out.provider)                        out.provider = seg;
+    }
+    return out;
+  }
+
   out.model = segs[segs.length - 1];
   for (const seg of segs.slice(0, -1)) {
     if (_STRAT_SET.has(seg) && !out.strategy)      out.strategy = seg;

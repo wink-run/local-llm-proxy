@@ -30,6 +30,27 @@ test('serverToEntry: bridge 与其他 __DYNAMIC_ELECTRON__ 仍返回 null', () =
   assert.equal(sync.serverToEntry({ id: 'other', status: 'active', command: '__DYNAMIC_ELECTRON__' }, 'codex'), null);
 });
 
+test('serverToEntry: models server 物化为 shell launcher', () => {
+  const entry = sync.serverToEntry({
+    id: 'tokenbank-models', name: 'tokenbank-models', status: 'active',
+    command: '__DYNAMIC_ELECTRON__', args: '[]', env: '{"ELECTRON_RUN_AS_NODE":"1"}', builtin: 1,
+  }, 'cursor');
+  assert.ok(String(entry.command).endsWith('models-cursor.sh'), entry.command);
+  const sh = require('fs').readFileSync(entry.command, 'utf8');
+  assert.ok(sh.includes('models-mcp.js'));
+  assert.ok(sh.includes('ELECTRON_RUN_AS_NODE=1'));
+});
+
+test('serverToEntry: resources server 物化为 shell launcher', () => {
+  const entry = sync.serverToEntry({
+    id: 'tokenbank-resources', name: 'tokenbank-resources', status: 'active',
+    command: '__DYNAMIC_ELECTRON__', args: '[]', env: '{"ELECTRON_RUN_AS_NODE":"1"}', builtin: 1,
+  }, 'codex');
+  assert.ok(String(entry.command).endsWith('resources-codex.sh'), entry.command);
+  const sh = require('fs').readFileSync(entry.command, 'utf8');
+  assert.ok(sh.includes('resources-mcp.js'));
+});
+
 test('serverToEntry: URL/SSE MCP 可写出 url 条目', () => {
   const entry = sync.serverToEntry({
     id: 'mcp-import-connector-proxy',

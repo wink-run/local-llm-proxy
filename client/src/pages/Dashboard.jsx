@@ -479,7 +479,7 @@ function TrendBars({ mode = 'hourly', data = [], t, fmtCost, fmtN }) {
             return (
               <div key={key} className="flex-1 min-w-0 flex items-end justify-center h-full">
                 <div
-                  className={`w-full max-w-[10px] rounded-sm transition-all duration-300 ${
+                  className={`w-full max-w-[10px] rounded-sm transition-[background-color,height] duration-200 ease-out ${
                     highlight ? 'bg-blue-500' : 'bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-400 dark:hover:bg-zinc-500'
                   }`}
                   style={{ height: `${barH(item.calls || 0)}px` }}
@@ -849,7 +849,7 @@ export default function Dashboard() {
                     <span className="text-xs text-zinc-600 dark:text-zinc-400 shrink-0 ml-2">{m.calls} {t('common.times')}</span>
                   </div>
                   <div className="h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
-                    <div className="h-full rounded-full transition-all duration-500 bg-green-500"
+                    <div className="h-full rounded-full transition-[width] duration-200 ease-out bg-green-500"
                       style={{ width: `${Math.round(m.calls / maxModel * 100)}%` }} />
                   </div>
                 </div>
@@ -872,7 +872,7 @@ export default function Dashboard() {
                     <span className="text-xs text-purple-600 dark:text-purple-400 shrink-0 ml-2">{fmtN(m.tokens)} tok</span>
                   </div>
                   <div className="h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
-                    <div className="h-full rounded-full transition-all duration-500 bg-purple-500"
+                    <div className="h-full rounded-full transition-[width] duration-200 ease-out bg-purple-500"
                       style={{ width: `${Math.round((m.tokens||0) / maxModelTokens * 100)}%` }} />
                   </div>
                 </div>
@@ -895,7 +895,7 @@ export default function Dashboard() {
                     <span className="text-xs text-emerald-600 dark:text-emerald-400 shrink-0 ml-2">{fmtCost(m.cost_usd)}</span>
                   </div>
                   <div className="h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
-                    <div className="h-full rounded-full transition-all duration-500 bg-emerald-500"
+                    <div className="h-full rounded-full transition-[width] duration-200 ease-out bg-emerald-500"
                       style={{ width: `${Math.round((m.cost_usd||0) / maxModelCost * 100)}%` }} />
                   </div>
                 </div>

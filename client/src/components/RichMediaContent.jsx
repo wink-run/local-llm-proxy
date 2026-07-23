@@ -117,23 +117,36 @@ function looksLikeLocalPath(s) {
   return /\.[A-Za-z0-9]{1,12}$/.test(t) || /[/\\]/.test(t.slice(1));
 }
 
-async function openLocalPath(filePath) {
+/** 优先应用内预览文件夹 / 文本 / 图片；其它类型回退系统默认应用 */
+export async function openLocalPath(filePath) {
+  const target = String(filePath || '').trim().replace(/^file:\/\//i, '');
+  if (!target) return;
+  // 动态导入，避免与 LocalFilePreview ↔ MarkdownContent 循环依赖
+  try {
+    const { looksLikeAbsoluteLocalPath, openLocalFilePreview } = await import('./LocalFilePreview');
+    if (looksLikeAbsoluteLocalPath(target)) {
+      const handled = await openLocalFilePreview(target);
+      if (handled) return;
+    }
+  } catch (err) {
+    console.warn('[RichMedia] preview failed:', err);
+  }
   const api = typeof window !== 'undefined' ? window.electronAPI?.resource?.openPath : null;
   if (!api) return;
   try {
-    await api({ targetPath: String(filePath).trim(), action: 'open' });
+    await api({ targetPath: target, action: 'open' });
   } catch (err) {
     console.warn('[RichMedia] openPath failed:', err);
   }
 }
 
 /** 可点击本地路径（用 code/span，避免嵌套 button） */
-function PathLink({ path, className }) {
+export function PathLink({ path, className, title }) {
   return (
     <code
       role="link"
       tabIndex={0}
-      title="点击预览"
+      title={title || '点击预览'}
       className={`px-1 py-0.5 rounded text-[0.9em] font-mono cursor-pointer hover:underline break-all ${className}`}
       onClick={(e) => {
         e.preventDefault();
@@ -157,8 +170,8 @@ function PathLink({ path, className }) {
 function renderTextWithPaths(text, keyPrefix, pathClassName) {
   const s = String(text || '');
   if (!s) return null;
-  // 匹配绝对路径到常见文件扩展名（PPT/文档/图片等）
-  const re = /(?:^|[\s「『"'(=:：])((?:\/(?:Users|home|tmp|var|opt|private|Volumes)|~\/|[A-Za-z]:[\\/])[^\s`'"<>|]+?\.[A-Za-z0-9]{1,12})(?=[\s」』"'.,;:：!)\]}]|$)/g;
+  // 匹配绝对路径：带扩展名文件，或目录（可无扩展名 / 以 / 结尾）
+  const re = /(?:^|[\s「『"'(=:：])((?:\/(?:Users|home|tmp|var|opt|private|Volumes)|~\/|[A-Za-z]:[\\/])[^\s`'"<>|]+?)(?=[\s」』"'.,;:：!)\]}]|$)/g;
   const nodes = [];
   let last = 0;
   let m;

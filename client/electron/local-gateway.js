@@ -2674,7 +2674,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
         provider_errors: serializeProviderErrors(providerErrors),
       });
     } catch { /* ignore */ }
-    recordError(model, callerKey, lastErr); // 失败也落账，保证不丢账
+    recordError(model, callerKey, lastErr, reqPath); // 失败也落账，保证不丢账
     if (!res.headersSent) {
       const detail = lastErr?.message || 'all_providers_failed';
       const status = resolveFailStatus(lastErr);
@@ -2759,7 +2759,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     const deadSources = new Set();   // 已发生配额/鉴权级失败(429/401/403)的源，跳过其余模型加速降级
     for (const c of ordered) {
       if (deadSources.has(c.provider.id)) continue;
-      if (rejectP2pIfUnconfigured(c.provider, res, isResponses)) { lastErr = p2pAbortError('api_key'); recordError(c.model, callerKey, lastErr); return; }
+      if (rejectP2pIfUnconfigured(c.provider, res, isResponses)) { lastErr = p2pAbortError('api_key'); recordError(c.model, callerKey, lastErr, reqPath); return; }
       try {
         // 策略路由：把场景策略（auto/cost…）+ 钉分享者传给 p2p 服务端，令其对该源 worker 也按策略排序/过滤
         const stratMeta = { strategy: _stratStep.strategy || null, sharer: _stratStep.sharer || requestSharer };
@@ -2771,12 +2771,12 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
                   tier: c.provider.type, via: c.provider.id, via_label: c.provider.label,
                   latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok',
                   worker: result.worker_id || undefined });
-        recordStats(c.provider.id, c.model, fillMissingInputTokens(result, body), _providerTier(c.provider), callerKey, streaming, c.provider.billing_type || null);
+        recordStats(c.provider.id, c.model, fillMissingInputTokens(result, body), _providerTier(c.provider), callerKey, streaming, c.provider.billing_type || null, reqPath);
         reportUsage(c.provider.id, c.model, (result.input_tokens || 0) + (result.output_tokens || 0));
         cooldown.clear(coolKey(c.provider, c.model, stratSharer));   // 成功 → 源已恢复，清除冷却
         return;
       } catch (err) {
-        if (handleP2pFatal(c.provider, err, res, isResponses)) { lastErr = err; recordError(c.model, callerKey, lastErr); return; }
+        if (handleP2pFatal(c.provider, err, res, isResponses)) { lastErr = err; recordError(c.model, callerKey, lastErr, reqPath); return; }
         traceRouteProviderFail(err, {
           source: 'strategy_route',
           requested_model: origModel,
@@ -2846,20 +2846,20 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
         const deadSources = new Set();
         for (const c of sOrdered) {
           if (deadSources.has(c.provider.id)) continue;
-          if (rejectP2pIfUnconfigured(c.provider, res, isResponses)) { lastErr = p2pAbortError('api_key'); recordError(c.model, callerKey, lastErr); return; }
+          if (rejectP2pIfUnconfigured(c.provider, res, isResponses)) { lastErr = p2pAbortError('api_key'); recordError(c.model, callerKey, lastErr, reqPath); return; }
           try {
             const result = await callProvider(c.provider, isAnthropic, streaming, reqPath, body, c.model, res, sMeta);
             pushLog({ ts: t0, requested_model: origModel, model: c.model, scene_name: scene.scene_name, claude_from: stepClaudeFrom,
               tried: failedModels.length ? [...failedModels] : undefined,
               tier: c.provider.type, via: c.provider.id, via_label: c.provider.label,
               latency_ms: result.latency, first_token_ms: result.first_token_ms, status: 'ok', worker: result.worker_id || undefined });
-            recordStats(c.provider.id, c.model, fillMissingInputTokens(result, body), _providerTier(c.provider), callerKey, streaming, c.provider.billing_type || null);
+            recordStats(c.provider.id, c.model, fillMissingInputTokens(result, body), _providerTier(c.provider), callerKey, streaming, c.provider.billing_type || null, reqPath);
             reportUsage(c.provider.id, c.model, (result.input_tokens || 0) + (result.output_tokens || 0));
             if (result.latency) reqRouter.recordLatency(c.provider.id, result.latency);
             cooldown.clear(coolKey(c.provider, c.model, stepSharer));   // 成功 → 清除冷却
             return;
           } catch (err) {
-            if (handleP2pFatal(c.provider, err, res, isResponses)) { lastErr = err; recordError(c.model, callerKey, lastErr); return; }
+            if (handleP2pFatal(c.provider, err, res, isResponses)) { lastErr = err; recordError(c.model, callerKey, lastErr, reqPath); return; }
             traceRouteProviderFail(err, {
               source: 'scene_strategy_step',
               requested_model: origModel,
@@ -2907,7 +2907,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
             latency_ms: Date.now() - t0, status: 'error',
             error: lastErr.message, error_code: lastErr.code || undefined,
           });
-          recordError(stepModel, callerKey, lastErr);
+          recordError(stepModel, callerKey, lastErr, reqPath);
           return;
         }
         try {
@@ -2922,7 +2922,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           });
           const stepTok  = (result.input_tokens || 0) + (result.output_tokens || 0);
           const stepTier = _providerTier(provider);
-          recordStats(provider.id, stepModel, fillMissingInputTokens(result, body), stepTier, callerKey, streaming, provider.billing_type || null);
+          recordStats(provider.id, stepModel, fillMissingInputTokens(result, body), stepTier, callerKey, streaming, provider.billing_type || null, reqPath);
           reportUsage(provider.id, stepModel, stepTok);
           if (result.latency) reqRouter.recordLatency(provider.id, result.latency);
           try { require('./provider-speed').record(stepModel, { firstTokenMs: result.first_token_ms, outputTokens: result.output_tokens, totalMs: result.latency, streaming }); } catch {}
@@ -2940,7 +2940,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
               error: lastErr.message, error_code: lastErr.code || undefined,
               worker: lastErr.worker_id || undefined,
             });
-            recordError(stepModel, callerKey, lastErr);
+            recordError(stepModel, callerKey, lastErr, reqPath);
             return;
           }
           traceRouteProviderFail(err, {
@@ -2964,12 +2964,12 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
     lastErr = pickBestRouteError(stepErrors) || lastErr;
     if (isNoWorkerError(lastErr) && lastErr && !lastErr.code) lastErr.code = 'model_not_found';
     if (isP2pApiKeyError(lastErr)) {
-      recordError(model, callerKey, lastErr);
+      recordError(model, callerKey, lastErr, reqPath);
       writeP2pApiKeyRequired(res, isResponses);
       return;
     }
     if (isP2pCreditsError(lastErr)) {
-      recordError(model, callerKey, lastErr);
+      recordError(model, callerKey, lastErr, reqPath);
       writeInsufficientCredits(res, isResponses);
       return;
     }
@@ -3052,7 +3052,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
         latency_ms: Date.now() - t0, status: 'error',
         error: lastErr.message, error_code: lastErr.code || undefined,
       });
-      recordError(model, callerKey, lastErr);
+      recordError(model, callerKey, lastErr, reqPath);
       return;
     }
     try {
@@ -3068,7 +3068,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
       });
       const directTok  = (result.input_tokens || 0) + (result.output_tokens || 0);
       const directTier = _providerTier(provider);
-      recordStats(provider.id, model, fillMissingInputTokens(result, body), directTier, callerKey, streaming, provider.billing_type || null);
+      recordStats(provider.id, model, fillMissingInputTokens(result, body), directTier, callerKey, streaming, provider.billing_type || null, reqPath);
       reportUsage(provider.id, model, directTok);
       return;
     } catch (err) {
@@ -3081,7 +3081,7 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
           error: lastErr.message, error_code: lastErr.code || undefined,
           worker: lastErr.worker_id || undefined,
         });
-        recordError(model, callerKey, lastErr);
+        recordError(model, callerKey, lastErr, reqPath);
         return;
       }
       traceRouteProviderFail(err, {
@@ -3101,12 +3101,12 @@ async function route(model, reqPath, body, res, callerKey, skipP2P = false) {
   lastErr = pickBestRouteError(routeErrors) || lastErr;
   if (isNoWorkerError(lastErr) && lastErr && !lastErr.code) lastErr.code = 'model_not_found';
   if (isP2pApiKeyError(lastErr)) {
-    recordError(model, callerKey, lastErr);
+    recordError(model, callerKey, lastErr, reqPath);
     writeP2pApiKeyRequired(res, isResponses);
     return;
   }
   if (isP2pCreditsError(lastErr)) {
-    recordError(model, callerKey, lastErr);
+    recordError(model, callerKey, lastErr, reqPath);
     writeInsufficientCredits(res, isResponses);
     return;
   }
@@ -3127,14 +3127,19 @@ function pushLog(entry) {
 // 唯一 → 每条独立记录、不会误去重；成功响应仍优先用真实上游 msg_id（保证跨源去重）。
 function synthReqId() { return 'gw-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); }
 
-function recordStats(providerId, model, usage, tier, apiKey, streaming, billingType) {
+/** api-key 命中优先；否则按协议路径挂到 shim 应用（Claude Code OAuth 无 app key） */
+function resolveStatsAppId(apiKey, reqPath) {
+  return appIdForKey(apiKey) || (reqPath && resolveAppControl(apiKey, reqPath)?.app_id) || null;
+}
+
+function recordStats(providerId, model, usage, tier, apiKey, streaming, billingType, reqPath) {
   const inTok   = usage?.input_tokens        || 0;
   const outTok  = usage?.output_tokens       || 0;
   const cCreate = usage?.cache_create_tokens || 0;
   const cRead   = usage?.cache_read_tokens   || 0;
   _statsRecorder?.({
     api_key:     apiKey     || null,
-    app_id:      appIdForKey(apiKey),
+    app_id:      resolveStatsAppId(apiKey, reqPath),
     model:       model      || null,
     provider_id: providerId || null,
     tier:        tier       || null,
@@ -3158,10 +3163,10 @@ function recordStats(providerId, model, usage, tier, apiKey, streaming, billingT
 
 // 失败也落账：所有 provider 都失败时记一条 0-token 的错误行（不丢账）。
 // request_id 用合成唯一 id（强制非空）→ 每次失败独立记录、不会误去重。
-function recordError(model, apiKey, err) {
+function recordError(model, apiKey, err, reqPath) {
   _statsRecorder?.({
     api_key:     apiKey || null,
-    app_id:      appIdForKey(apiKey),
+    app_id:      resolveStatsAppId(apiKey, reqPath),
     model:       model  || null,
     provider_id: null,
     tier:        null,

@@ -162,7 +162,7 @@ const POPUP_THEME = {
       'shadow-[inset_0_1px_0_rgba(255,255,255,0.72),0_0_0_0.5px_rgba(255,255,255,0.35),0_8px_32px_rgba(0,0,0,0.12),0_2px_8px_rgba(0,0,0,0.06)]',
       'py-1.5',
     ].join(' '),
-    row: 'flex items-center min-h-[22px] py-[3px] pl-2 pr-2.5 mx-1 rounded-[7px] cursor-default select-none transition-all duration-100',
+    row: 'flex items-center min-h-[22px] py-[3px] pl-2 pr-2.5 mx-1 rounded-[7px] cursor-default select-none transition-[background-color,color,box-shadow] duration-100 ease-out',
     rowActive: 'bg-[#007AFF]/75 backdrop-blur-md text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.28)]',
     rowIdle: 'text-zinc-800/90 dark:text-zinc-100/90',
     check: 'w-[15px] shrink-0 flex items-center justify-center',
@@ -185,7 +185,7 @@ const POPUP_THEME = {
       'shadow-[inset_0_1px_0_rgba(255,255,255,0.72),0_0_0_0.5px_rgba(255,255,255,0.35),0_12px_40px_rgba(0,0,0,0.14),0_4px_12px_rgba(0,0,0,0.06)]',
       'py-2',
     ].join(' '),
-    row: 'flex items-center min-h-[28px] py-[4px] pl-2.5 pr-3 mx-1.5 rounded-[8px] cursor-default select-none transition-all duration-100',
+    row: 'flex items-center min-h-[28px] py-[4px] pl-2.5 pr-3 mx-1.5 rounded-[8px] cursor-default select-none transition-[background-color,color,box-shadow] duration-100 ease-out',
     rowActive: 'bg-[#007AFF]/75 backdrop-blur-md text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.28)]',
     rowIdle: 'text-zinc-800/90 dark:text-zinc-100/90',
     check: 'w-[18px] shrink-0 flex items-center justify-center',
@@ -248,7 +248,7 @@ function resolveTriggerLabel({ multi, value, values, routes, t, isManual, displa
 function RouteChevron({ className, open }) {
   return (
     <svg
-      className={`${className} transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${open ? 'rotate-180' : ''}`}
+      className={`${className} transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] ${open ? 'rotate-180' : ''}`}
       viewBox="0 0 12 12"
       fill="none"
       aria-hidden="true"
@@ -460,7 +460,7 @@ export default function RouteSelect({
         'electron-no-drag fixed pointer-events-auto flex flex-col overflow-hidden',
         theme.panel,
         '!pb-0',
-        'transition-[opacity,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]',
+        'transition-[opacity,transform] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]',
         panelVisible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-[0.97] translate-y-[-3px]',
         panelPos.openUp ? 'origin-bottom' : 'origin-top',
       ].join(' ')}

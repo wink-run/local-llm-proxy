@@ -57,7 +57,10 @@ import {
 import AgentTabBar from '../components/AgentTabBar';
 import ExecutionLog from '../components/ExecutionLog';
 import AgentSessionHistoryPanel from '../components/AgentSessionHistoryPanel';
-import { saveAgentSessionSnapshot } from '../lib/debug-session-history';
+import LlmSessionHistoryPanel from '../components/LlmSessionHistoryPanel';
+import LocalFilePreviewHost from '../components/LocalFilePreview';
+import { openLocalPath, StreamMarkdownContent } from '../components/RichMediaContent';
+import { saveAgentSessionSnapshot, saveLlmSessionSnapshot } from '../lib/debug-session-history';
 
 /** 下拉 value：同 id 跨层时用 tier:id，避免 HTML option 重复 value 选中错位 */
 function modelSelectValue(m) {
@@ -297,7 +300,20 @@ function parseSseLines(lines, anthropic, firstTokenTime, onChunk, evRef) {
   }
 }
 
-async function doStreamChat({ baseUrl, token, model, messages, stream, anthropic, onChunk, onDone, onError }) {
+/** 从非 SSE / 错误 JSON 体中提取可读错误信息 */
+function extractStreamError(raw, fallback) {
+  const text = String(raw || '').trim();
+  if (!text) return fallback;
+  try {
+    const j = JSON.parse(text);
+    const msg = j.error?.message || j.message || j.detail;
+    if (typeof msg === 'string' && msg.trim()) return msg.trim();
+  } catch { /* 非 JSON */ }
+  // 截断过长原文，避免把整段 HTML/堆栈塞进气泡
+  return text.length > 400 ? `${text.slice(0, 400)}…` : text;
+}
+
+async function doStreamChat({ baseUrl, token, model, messages, stream, anthropic, onChunk, onDone, onError, emptyError }) {
   const url = buildChatUrl(baseUrl, anthropic);
   const headers = { 'Content-Type': 'application/json' };
   if (token) {
@@ -307,6 +323,15 @@ async function doStreamChat({ baseUrl, token, model, messages, stream, anthropic
   const body = JSON.stringify(anthropic ? toAnthropicBody(messages, model, stream) : { model, messages, stream });
   const startTime = Date.now();
   const firstTokenTime = { v: null };
+  const emptyMsg = emptyError || 'Empty response from model';
+
+  const finishEmptyOrDone = (gotContent, rawBuf) => {
+    if (gotContent) {
+      onDone({ firstTokenMs: firstTokenTime.v ? firstTokenTime.v - startTime : null, totalMs: Date.now() - startTime });
+      return;
+    }
+    onError(extractStreamError(rawBuf, emptyMsg));
+  };
 
   const useIpc = !!window.electronAPI?.llm;
   if (useIpc) {
@@ -318,20 +343,23 @@ async function doStreamChat({ baseUrl, token, model, messages, stream, anthropic
         const content = anthropic
           ? (data.content || []).map(b => b.text || '').join('')
           : (data.choices?.[0]?.message?.content ?? '');
+        if (!String(content || '').trim()) { onError(extractStreamError(r.body, emptyMsg)); return; }
         onChunk(content);
         onDone({ firstTokenMs: Date.now() - startTime, totalMs: Date.now() - startTime });
       } catch (e) { onError(e.message); }
       return;
     }
     await new Promise(resolve => {
-      let buf = ''; const evRef = { v: null };
+      let buf = ''; let full = ''; const evRef = { v: null }; let gotContent = false;
+      const wrapChunk = (text) => { if (text) gotContent = true; onChunk(text); };
       window.electronAPI.llm.stream({ url, method: 'POST', headers, body },
         raw => {
+          full += raw;
           buf += raw;
           const lines = buf.split('\n'); buf = lines.pop();
-          parseSseLines(lines, anthropic, firstTokenTime, onChunk, evRef);
+          parseSseLines(lines, anthropic, firstTokenTime, wrapChunk, evRef);
         },
-        () => { onDone({ firstTokenMs: firstTokenTime.v ? firstTokenTime.v - startTime : null, totalMs: Date.now() - startTime }); resolve(); },
+        () => { finishEmptyOrDone(gotContent, full + buf); resolve(); },
         err => { onError(err); resolve(); }
       );
     });
@@ -342,23 +370,28 @@ async function doStreamChat({ baseUrl, token, model, messages, stream, anthropic
     const resp = await fetch(url, { method: 'POST', headers, body });
     if (!resp.ok) { onError(`HTTP ${resp.status}: ${await resp.text()}`); return; }
     if (!stream) {
-      const data = await resp.json();
+      const text = await resp.text();
+      const data = JSON.parse(text);
       const content = anthropic
         ? (data.content || []).map(b => b.text || '').join('')
         : (data.choices?.[0]?.message?.content ?? '');
+      if (!String(content || '').trim()) { onError(extractStreamError(text, emptyMsg)); return; }
       onChunk(content);
       onDone({ firstTokenMs: Date.now() - startTime, totalMs: Date.now() - startTime });
       return;
     }
     const reader = resp.body.getReader(); const decoder = new TextDecoder();
-    let buf = ''; const evRef = { v: null };
+    let buf = ''; let full = ''; const evRef = { v: null }; let gotContent = false;
+    const wrapChunk = (text) => { if (text) gotContent = true; onChunk(text); };
     while (true) {
       const { done, value } = await reader.read(); if (done) break;
-      buf += decoder.decode(value, { stream: true });
+      const raw = decoder.decode(value, { stream: true });
+      full += raw;
+      buf += raw;
       const lines = buf.split('\n'); buf = lines.pop();
-      parseSseLines(lines, anthropic, firstTokenTime, onChunk, evRef);
+      parseSseLines(lines, anthropic, firstTokenTime, wrapChunk, evRef);
     }
-    onDone({ firstTokenMs: firstTokenTime.v ? firstTokenTime.v - startTime : null, totalMs: Date.now() - startTime });
+    finishEmptyOrDone(gotContent, full + buf);
   } catch (e) { onError(e.message); }
 }
 
@@ -451,6 +484,23 @@ const defaultPanel = () => ({ conversation: [], input: '', systemPrompt: '', sho
 const DEBUG_CHAT_KEY = 'tokenbank.debug.chat';
 const DEBUG_CHAT_MAX = 200;
 const B64_OMITTED = '__b64_omitted__';
+
+/** 底部对话栏输入框高度（拖中间框线调整） */
+const COMPOSER_H_KEY = 'tokenbank.debug.composerTextH';
+const COMPOSER_H_MIN = 56;
+const COMPOSER_H_MAX = 360;
+
+function clampComposerTextH(h) {
+  return Math.min(COMPOSER_H_MAX, Math.max(COMPOSER_H_MIN, Math.round(Number(h) || COMPOSER_H_MIN)));
+}
+
+function readComposerTextH() {
+  try {
+    const n = Number(localStorage.getItem(COMPOSER_H_KEY));
+    if (Number.isFinite(n)) return clampComposerTextH(n);
+  } catch { /* ignore */ }
+  return COMPOSER_H_MIN;
+}
 
 /** 持久化前清洗：去掉流式态；图片 base64 过大则仅存占位符 */
 function serializeDebugMessage(msg) {
@@ -570,6 +620,7 @@ export default function Debug() {
   const [panels,         setPanels]        = useState(() => ({ main: loadDebugPanel() }));
   const [sending,        setSending]       = useState(false);
   const [lightbox,       setLightbox]      = useState(null);
+  const [copiedMsgIdx,   setCopiedMsgIdx]  = useState(null);
   // LLM 模式：从资产加载的提示词列表，选中后填入 System
   const [promptList,     setPromptList]    = useState([]);
   const [selectedPromptId, setSelectedPromptId] = useState('');
@@ -590,6 +641,12 @@ export default function Debug() {
   const [delegations, setDelegations] = useState({});
   const [conversationTurns, setConversationTurns] = useState([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [llmHistoryOpen, setLlmHistoryOpen] = useState(false);
+  // 底部输入框高度（拖中间框线调整，持久化）
+  const [composerTextH, setComposerTextH] = useState(readComposerTextH);
+  const composerTextHRef = useRef(composerTextH);
+  composerTextHRef.current = composerTextH;
+  const [composerResizing, setComposerResizing] = useState(false);
   // 任意会话 executing 变化时递增，驱动侧栏运行绿点刷新
   const [runningRev, setRunningRev] = useState(0);
   const agentTextareaRef = useRef(null);
@@ -653,7 +710,7 @@ export default function Debug() {
   }
 
   const panel = panels.main;
-  const { conversation, input, systemPrompt, showSystem, streamMode, imageMode, imageRatio, imageResolution } = panel;
+  const { conversation, input, systemPrompt, streamMode, imageMode, imageRatio, imageResolution } = panel;
 
   const messagesEndRef = useRef(null);
   const textareaRef    = useRef(null);
@@ -1562,16 +1619,13 @@ export default function Debug() {
     }
   }
 
-  /** 选择提示词 → 写入 System Prompt 并展开编辑区 */
+  /** 选择提示词 → 填入底部对话框（输入框） */
   function applyPromptSelection(promptId) {
     setSelectedPromptId(promptId);
     if (!promptId) return;
     const prompt = promptList.find(p => p.id === promptId);
     if (!prompt) return;
-    setPanel({
-      systemPrompt: prompt.content || '',
-      showSystem: true,
-    });
+    setPanel({ input: prompt.content || '' });
   }
 
   /** 当前轮仍有未闭合工具 / 任务未终态 → 视为进行中（可停止） */
@@ -1942,6 +1996,15 @@ export default function Debug() {
     }
   }, [imageMode]);
 
+  // 切换对话/图像时，清空与当前模式不符的提示词选中（保留已填入的正文）
+  useEffect(() => {
+    if (!selectedPromptId) return;
+    const p = promptList.find(x => x.id === selectedPromptId);
+    if (!p) return;
+    const kind = p?.metadata?.promptKind === 'image' ? 'image' : 'text';
+    if (imageMode ? kind !== 'image' : kind !== 'text') setSelectedPromptId('');
+  }, [imageMode, promptList, selectedPromptId]);
+
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [conversation]);
 
   // 聊天记录落盘：流式/生成中不写，避免频繁 IO
@@ -1959,6 +2022,46 @@ export default function Debug() {
     clearDebugPanelStorage();
   }
 
+  /** 归档当前对话后开新会话 */
+  function startNewLlmSession() {
+    if (sending) return;
+    const msgs = conversation || [];
+    if (msgs.some(m => m.role === 'user' && String(m.content || '').trim())) {
+      saveLlmSessionSnapshot({
+        conversation: msgs,
+        systemPrompt,
+        imageMode,
+      });
+    }
+    setPanel({ conversation: [], input: '' });
+    clearDebugPanelStorage();
+  }
+
+  /** 恢复历史：先归档当前，再载入快照 */
+  function restoreLlmSession(snapshot) {
+    if (sending) return;
+    const msgs = conversation || [];
+    if (msgs.some(m => m.role === 'user' && String(m.content || '').trim())) {
+      saveLlmSessionSnapshot({
+        conversation: msgs,
+        systemPrompt,
+        imageMode,
+      });
+    }
+    const nextConv = (snapshot.conversation || []).map(m => ({
+      ...m,
+      streaming: false,
+      generating: false,
+    }));
+    setPanel({
+      conversation: nextConv,
+      input: '',
+      systemPrompt: snapshot.systemPrompt != null ? snapshot.systemPrompt : systemPrompt,
+      imageMode: snapshot.imageMode != null ? !!snapshot.imageMode : imageMode,
+      showSystem: !!(snapshot.systemPrompt && String(snapshot.systemPrompt).trim()),
+    });
+  }
+
   const effectiveBase = selectedId === '__custom__' ? manualBaseUrl : (provOpts.find(o => o.id === selectedId)?.base_url || '');
   const anthropic     = isAnthropicUrl(effectiveBase);
   const filteredModels = models.filter(m => imageMode ? m.type === 'image' : m.type !== 'image');
@@ -1969,10 +2072,14 @@ export default function Debug() {
 
     if (imageMode) {
       const idx = conversation.length + 1;
+      // 图像 API 无独立 system：将系统提示词前缀拼进最终 prompt
+      const imagePrompt = systemPrompt.trim()
+        ? `${systemPrompt.trim()}\n\n${text}`
+        : text;
       setPanel({ input: '', conversation: [...conversation, { role: 'user', content: text }, { role: 'assistant', images: null, generating: true }] });
       setSending(true);
       await doGenerateImage({
-        baseUrl: effectiveBase, token, model, prompt: text,
+        baseUrl: effectiveBase, token, model, prompt: imagePrompt,
         ratio: imageRatio || undefined, resolution: imageResolution || undefined, t,
         onDone: ({ images, totalMs }) => {
           setPanels(prev => {
@@ -1996,7 +2103,13 @@ export default function Debug() {
 
     const apiMessages = [];
     if (systemPrompt.trim()) apiMessages.push({ role: 'system', content: systemPrompt.trim() });
-    conversation.forEach(m => { if (m.role === 'user' || m.role === 'assistant') apiMessages.push({ role: m.role, content: m.content }); });
+    // 跳过空/失败的 assistant，避免上游报 messages.content 为空
+    conversation.forEach(m => {
+      if (m.role === 'user') apiMessages.push({ role: 'user', content: m.content });
+      else if (m.role === 'assistant' && !m.error && String(m.content || '').trim()) {
+        apiMessages.push({ role: 'assistant', content: m.content });
+      }
+    });
     apiMessages.push({ role: 'user', content: text });
 
     const assistantIdx = conversation.length + 1;
@@ -2005,6 +2118,7 @@ export default function Debug() {
 
     await doStreamChat({
       baseUrl: effectiveBase, token, model, messages: apiMessages, stream: streamMode, anthropic,
+      emptyError: t('debug.emptyReply'),
       onChunk: delta => {
         setPanels(prev => {
           const p = prev.main; const next = [...p.conversation];
@@ -2034,37 +2148,62 @@ export default function Debug() {
   function handleKeyDown(e) { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSend(); } }
   function handleInputChange(e) {
     setPanel({ input: e.target.value });
-    const el = textareaRef.current;
-    if (el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 160) + 'px'; }
   }
 
-  // 模式切换按钮（LLM / Agent 共用）
+  // 向上拖中间框线 → 增高底部输入区
+  const onComposerResizeStart = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startY = e.clientY;
+    const startH = composerTextHRef.current;
+    setComposerResizing(true);
+    const prevCursor = document.body.style.cursor;
+    const prevSelect = document.body.style.userSelect;
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMove = (ev) => {
+      const next = clampComposerTextH(startH + (startY - ev.clientY));
+      composerTextHRef.current = next;
+      setComposerTextH(next);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevSelect;
+      setComposerResizing(false);
+      try { localStorage.setItem(COMPOSER_H_KEY, String(composerTextHRef.current)); } catch { /* ignore */ }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, []);
+
+  // 共用：分段控件 / 主按钮 / 毛玻璃条
+  const segTrack = 'inline-flex rounded-lg border border-zinc-200/80 dark:border-zinc-700/80 p-0.5 bg-zinc-100/80 dark:bg-zinc-900/80';
+  const segItem = (on) => `
+    px-3 py-1 text-sm font-medium rounded-lg transition-colors active:scale-[0.97]
+    ${on
+      ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+      : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
+    }`;
+  const segItemXs = (on) => `
+    px-3 py-1.5 text-xs font-medium rounded-lg transition-colors active:scale-[0.97]
+    ${on
+      ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+      : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/60 dark:hover:bg-zinc-800'
+    }`;
+  const primaryBtn = 'shrink-0 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-lg flex items-center justify-center gap-2 transition-[transform,colors,opacity] duration-100 active:scale-[0.97]';
+  const chromeTop = 'shrink-0 border-b border-zinc-200/50 dark:border-zinc-800/50 bg-white/70 dark:bg-zinc-900/70 backdrop-blur-xl backdrop-saturate-150 relative z-40';
+  const chromeBottom = 'shrink-0 border-t border-zinc-200/50 dark:border-zinc-800/50 bg-white/70 dark:bg-zinc-900/70 backdrop-blur-xl backdrop-saturate-150 electron-no-drag relative z-40';
+  const fieldCls = 'bg-zinc-100/90 dark:bg-zinc-800/90 border border-zinc-200/80 dark:border-zinc-700/80 rounded-lg text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500';
+
   const modeSwitcher = (
-    <div className="inline-flex rounded-lg border border-zinc-200 dark:border-zinc-700 p-0.5 bg-zinc-50 dark:bg-zinc-900">
-      <button
-        type="button"
-        onClick={() => setMode('llm')}
-        className={`
-          px-3 py-1 text-sm font-medium rounded-md transition-all
-          ${mode === 'llm'
-            ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
-            : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
-          }
-        `}
-      >
+    <div className={segTrack}>
+      <button type="button" onClick={() => setMode('llm')} className={segItem(mode === 'llm')}>
         {t('debug.modeLlm')}
       </button>
-      <button
-        type="button"
-        onClick={() => setMode('agent')}
-        className={`
-          px-3 py-1 text-sm font-medium rounded-md transition-all
-          ${mode === 'agent'
-            ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
-            : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
-          }
-        `}
-      >
+      <button type="button" onClick={() => setMode('agent')} className={segItem(mode === 'agent')}>
         {t('debug.modeAgent')}
       </button>
     </div>
@@ -2072,167 +2211,106 @@ export default function Debug() {
 
   return (
     /* 顶栏拉通；智能体列表仅在 Agent 模式内容区内 */
-    <div className="relative h-screen min-h-0 flex flex-col bg-white dark:bg-zinc-900">
-      {/* ── 顶栏（整宽）── 空白区可拖窗；控件单独 no-drag */}
-      <div className={`shrink-0 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 px-4 electron-drag relative z-[60] ${
-        mode === 'agent' ? 'pt-4 pb-2' : 'pt-4 pb-2 space-y-2'
-      }`}>
+    <div className="relative h-full min-h-0 flex flex-col bg-white dark:bg-zinc-900">
+      {/* ── 顶栏两层：模式+连接 / 模型（对话选项下沉到输入区上方）── */}
+      <div className={`${chromeTop} px-4 pt-3 pb-2 electron-drag ${mode === 'llm' ? 'space-y-2' : ''}`}>
 
-        {/* Mode Switcher */}
-        <div className="flex gap-2 items-center electron-no-drag">
-          {modeSwitcher}
+        {/* 第 1 层：LLM|Agent + 供给源 + URL + API Key */}
+        <div className="flex gap-2 items-center flex-wrap min-h-[2rem]">
+          <div className="electron-no-drag shrink-0">
+            {modeSwitcher}
+          </div>
+          {mode === 'llm' && (
+            <div className="electron-no-drag flex gap-2 items-center flex-wrap flex-1 min-w-0">
+              <select value={selectedId} onChange={e => setSelectedId(e.target.value)}
+                className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500 shrink-0">
+                {provOpts.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+              </select>
+              {selectedId === '__custom__' ? (
+                <input value={manualBaseUrl} onChange={e => setManualBaseUrl(e.target.value)}
+                  placeholder={t('debug.baseUrlPh')}
+                  className="flex-1 min-w-[160px] bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500" />
+              ) : (
+                <code className="text-xs font-mono text-zinc-500 dark:text-zinc-400 truncate max-w-[220px]">{effectiveBase}</code>
+              )}
+              <div className="flex gap-1 items-center ml-auto">
+                {anthropic && effectiveBase && (
+                  <span className="text-xs px-1.5 py-0.5 rounded-lg border border-zinc-200 dark:border-zinc-600 text-zinc-500 dark:text-zinc-400 shrink-0">{t('debug.protocolAnthropic')}</span>
+                )}
+                <input value={token} onChange={e => setToken(e.target.value)}
+                  type={showToken ? 'text' : 'password'} placeholder={t('debug.apiKeyPh')} autoComplete="off"
+                  className="w-36 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500" />
+                <button onClick={() => setShowToken(v => !v)}
+                  className="text-xs px-2 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors shrink-0">
+                  {showToken ? t('debug.hide') : t('debug.show')}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* LLM Mode Toolbar */}
+        {/* 第 2 层：对话/图像 → 模型 → 流式 */}
         {mode === 'llm' && (
-        <div className="electron-no-drag space-y-2">
-        {/* Row 1: provider + token */}
-        <div className="flex gap-2 items-center flex-wrap">
-          {/* Provider dropdown */}
-          <select value={selectedId} onChange={e => setSelectedId(e.target.value)}
-            className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500 shrink-0">
-            {provOpts.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-          </select>
-
-          {/* Base URL (custom or display) */}
-          {selectedId === '__custom__' ? (
-            <input value={manualBaseUrl} onChange={e => setManualBaseUrl(e.target.value)}
-              placeholder={t('debug.baseUrlPh')}
-              className="flex-1 min-w-[200px] bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500" />
-          ) : (
-            <code className="text-xs font-mono text-zinc-500 dark:text-zinc-400 truncate max-w-[260px]">{effectiveBase}</code>
-          )}
-
-          {/* API Key/Token */}
-          <div className="flex gap-1 items-center ml-auto">
-            {anthropic && effectiveBase && (
-              <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-800/40 shrink-0">Anthropic</span>
+          <div className="electron-no-drag flex gap-2 items-center flex-wrap">
+            <div className={`${segTrack} shrink-0`}>
+              {[{ v: false, l: t('debug.modeChat') }, { v: true, l: t('debug.modeImage') }].map(({ v, l }) => (
+                <button key={String(v)} type="button" onClick={() => setPanel({ imageMode: v })}
+                  className={segItemXs(imageMode === v)}>{l}</button>
+              ))}
+            </div>
+            {loadingModels ? (
+              <span className="text-xs text-zinc-400 dark:text-zinc-500 flex items-center gap-1.5">
+                <span className="inline-block h-3 w-16 rounded bg-zinc-200 dark:bg-zinc-700 animate-pulse" />
+                {t('debug.loadingModels')}
+              </span>
+            ) : !manualModel && filteredModels.length > 0 ? (
+              <select value={model} onChange={e => setModel(e.target.value)}
+                className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500 max-w-[280px]">
+                {filteredModels.some(m => m.tier)
+                  ? [{ key: 'local', tiers: ['free', 'paid'] }, { key: 'remote', tiers: ['p2p'] }].map(g => {
+                      const tms = filteredModels.filter(m => g.tiers.includes(m.tier));
+                      return tms.length ? (
+                        <optgroup key={g.key} label={t(`debug.tier.${g.key}`)}>
+                          {tms.map(m => <option key={modelSelectValue(m)} value={modelSelectValue(m)}>{m.name}</option>)}
+                        </optgroup>
+                      ) : null;
+                    })
+                  : filteredModels.map(m => <option key={m.name} value={m.name}>{m.name}</option>)
+                }
+              </select>
+            ) : (
+              <input value={model} onChange={e => setModel(e.target.value)}
+                placeholder={t('debug.modelPh')}
+                className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 w-44" />
             )}
-            <input value={token} onChange={e => setToken(e.target.value)}
-              type={showToken ? 'text' : 'password'} placeholder={t('debug.apiKeyPh')} autoComplete="off"
-              className="w-36 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500" />
-            <button onClick={() => setShowToken(v => !v)}
-              className="text-xs px-2 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors shrink-0">
-              {showToken ? t('debug.hide') : t('debug.show')}
-            </button>
-          </div>
-        </div>
-
-        {/* Row 2: model + mode + options */}
-        <div className="flex gap-2 items-center flex-wrap">
-          {/* Model selector */}
-          {loadingModels ? (
-            <span className="text-xs text-zinc-400 dark:text-zinc-500 flex items-center gap-1.5">
-              <span className="w-3 h-3 border border-zinc-700 border-t-blue-400 rounded-full animate-spin" />
-              {t('debug.loadingModels')}
-            </span>
-          ) : !manualModel && filteredModels.length > 0 ? (
-            <select value={model} onChange={e => setModel(e.target.value)}
-              className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500 max-w-[220px]">
-              {filteredModels.some(m => m.tier)
-                ? [{ key: 'local', tiers: ['free', 'paid'] }, { key: 'remote', tiers: ['p2p'] }].map(g => {
-                    const tms = filteredModels.filter(m => g.tiers.includes(m.tier));
-                    return tms.length ? (
-                      <optgroup key={g.key} label={t(`debug.tier.${g.key}`)}>
-                        {tms.map(m => <option key={modelSelectValue(m)} value={modelSelectValue(m)}>{m.name}</option>)}
-                      </optgroup>
-                    ) : null;
-                  })
-                : filteredModels.map(m => <option key={m.name} value={m.name}>{m.name}</option>)
-              }
-            </select>
-          ) : (
-            <input value={model} onChange={e => setModel(e.target.value)}
-              placeholder={t('debug.modelPh')}
-              className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 w-44" />
-          )}
-          {/* Toggle dropdown ↔ manual */}
-          {!loadingModels && models.length > 0 && (
-            <button onClick={() => setManualModel(v => !v)}
-              className="text-xs text-zinc-400 hover:text-blue-500 transition-colors shrink-0">
-              {manualModel ? t('debug.pickFromList') : t('debug.manualInput')}
-            </button>
-          )}
-
-          {/* Mode toggle */}
-          <div className="flex rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-700 shrink-0">
-            {[{ v: false, l: t('debug.modeChat') }, { v: true, l: t('debug.modeImage') }].map(({ v, l }) => (
-              <button key={String(v)} onClick={() => setPanel({ imageMode: v })}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  imageMode === v ? 'bg-indigo-600 text-white' : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'
-                }`}>{l}</button>
-            ))}
-          </div>
-
-          {/* Image-only controls */}
-          {imageMode && (
-            <>
-              <select value={imageRatio} onChange={e => setPanel({ imageRatio: e.target.value })}
-                className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none">
-                <option value="">{t('debug.ratioDefault')}</option>
-                {['1:1','4:3','3:4','16:9','9:16','3:2','2:3','21:9'].map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
-              <select value={imageResolution} onChange={e => setPanel({ imageResolution: e.target.value })}
-                className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none">
-                <option value="">{t('debug.resolutionDefault')}</option>
-                {['1k','2k','4k'].map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
-            </>
-          )}
-
-          {/* Chat-only controls */}
-          {!imageMode && (
-            <>
+            {!loadingModels && models.length > 0 && (
+              <button onClick={() => setManualModel(v => !v)}
+                className="text-xs text-zinc-400 hover:text-blue-500 transition-colors shrink-0">
+                {manualModel ? t('debug.pickFromList') : t('debug.manualInput')}
+              </button>
+            )}
+            {!imageMode && (
               <label className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400 cursor-pointer select-none">
                 <input type="checkbox" checked={streamMode} onChange={e => setPanel({ streamMode: e.target.checked })} className="w-3.5 h-3.5 accent-blue-600" />
                 {t('debug.stream')}
               </label>
-              {/* 从资产选用提示词，写入 System */}
-              <select
-                value={selectedPromptId}
-                onChange={e => applyPromptSelection(e.target.value)}
-                title={t('debug.promptSelectTitle')}
-                className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2 py-1 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500 max-w-[160px]"
-              >
-                <option value="">
-                  {promptList.length === 0 ? t('debug.promptEmpty') : t('debug.promptNone')}
-                </option>
-                {promptList.map(p => (
-                  <option key={p.id} value={p.id}>
-                    {p.display_name || p.name}
-                  </option>
-                ))}
-              </select>
-              <button onClick={() => setPanel({ showSystem: !showSystem })}
-                className={`text-xs px-2 py-1 rounded-md transition-colors ${showSystem ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300' : 'text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}>
-                System
-              </button>
-            </>
-          )}
-
-          {conversation.length > 0 && (
-            <button onClick={handleClearChat}
-              className="ml-auto text-xs text-zinc-400 dark:text-zinc-500 hover:text-red-500 dark:hover:text-red-400 transition-colors"
-              title={t('debug.clearChat')}>
-              {t('debug.clearChat')}
-            </button>
-          )}
-        </div>
-
-        {/* System prompt：手动编辑后取消提示词选中态 */}
-        {!imageMode && showSystem && (
-          <textarea
-            value={systemPrompt}
-            onChange={e => {
-              setSelectedPromptId('');
-              setPanel({ systemPrompt: e.target.value });
-            }}
-            rows={6}
-            placeholder={t('debug.systemPh')}
-            className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 resize-y min-h-[7.5rem] max-h-[40vh]"
-          />
-        )}
-        </div>
+            )}
+            {/* 图像：比例 / 分辨率放顶部 */}
+            {imageMode && (
+              <>
+                <select value={imageRatio} onChange={e => setPanel({ imageRatio: e.target.value })}
+                  className={`${fieldCls} px-2 py-1.5`}>
+                  <option value="">{t('debug.ratioDefault')}</option>
+                  {['1:1','4:3','3:4','16:9','9:16','3:2','2:3','21:9'].map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+                <select value={imageResolution} onChange={e => setPanel({ imageResolution: e.target.value })}
+                  className={`${fieldCls} px-2 py-1.5`}>
+                  <option value="">{t('debug.resolutionDefault')}</option>
+                  {['1k','2k','4k'].map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </>
+            )}
+          </div>
         )}
 
       </div>
@@ -2253,30 +2331,29 @@ export default function Debug() {
 
         <div className="flex flex-col flex-1 min-w-0 min-h-0">
       {/* ── Message list / Agent UI ── */}
-      <div className="flex-1 overflow-y-auto px-4 pt-3 pb-4 space-y-4">
+      <div className="flex-1 overflow-y-auto px-4 pt-3 pb-4 space-y-4 min-h-0">
         {mode === 'llm' ? (
           /* LLM Mode: Chat messages */
           <>
         {conversation.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-center text-zinc-400 dark:text-zinc-400 select-none">
-            <p className="text-3xl mb-2">{imageMode ? '🎨' : '🐛'}</p>
-            <p className="text-sm">{imageMode ? t('debug.emptyImage') : t('debug.emptyChat')}</p>
+          <div className="flex flex-col items-center justify-center h-full text-center text-zinc-400 dark:text-zinc-500 select-none">
+            <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">{imageMode ? t('debug.modeImage') : t('debug.modeChat')}</p>
+            <p className="text-sm max-w-sm">{imageMode ? t('debug.emptyImage') : t('debug.emptyChat')}</p>
           </div>
         )}
 
         {conversation.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            {msg.role === 'assistant' && (
-              <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs shrink-0 mt-0.5 mr-2">AI</div>
-            )}
             <div className="max-w-[75%]">
               {msg.error ? (
-                <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-2xl px-4 py-2.5 text-sm text-red-600 dark:text-red-400">{msg.error}</div>
+                <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-xl px-4 py-2.5 text-sm text-red-600 dark:text-red-400">{msg.error}</div>
               ) : msg.role === 'assistant' && msg.images !== undefined ? (
-                <div className="rounded-2xl overflow-hidden bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-transparent">
+                <div className="rounded-xl overflow-hidden bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-transparent">
                   {msg.generating ? (
-                    <div className="px-4 py-6 flex items-center gap-2 text-sm text-zinc-400 dark:text-zinc-500">
-                      <span className="w-4 h-4 border-2 border-zinc-700 border-t-blue-500 rounded-full animate-spin" /> {t('debug.generating')}
+                    <div className="px-4 py-6 space-y-2">
+                      <div className="h-3 w-28 rounded bg-zinc-200 dark:bg-zinc-700 animate-pulse" />
+                      <div className="h-36 w-full max-w-xs rounded-lg bg-zinc-100 dark:bg-zinc-800 animate-pulse" />
+                      <p className="text-xs text-zinc-400">{t('debug.generating')}</p>
                     </div>
                   ) : (() => {
                     const displayImages = (msg.images || []).filter(src => src && src !== B64_OMITTED);
@@ -2311,24 +2388,51 @@ export default function Debug() {
                   })()}
                 </div>
               ) : (
-                <div className={`rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap ${
+                <div className={`relative group rounded-xl px-4 py-2.5 text-sm ${
                   msg.role === 'user'
-                    ? 'bg-blue-600 text-white rounded-br-sm'
-                    : 'bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-transparent text-zinc-900 dark:text-zinc-100 rounded-bl-sm'
+                    ? 'bg-blue-600 text-white whitespace-pre-wrap'
+                    : 'bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-transparent text-zinc-900 dark:text-zinc-100'
                 }`}>
-                  {msg.content}
-                  {msg.streaming && <span className="animate-pulse text-blue-300 dark:text-blue-400 ml-0.5">▊</span>}
+                  {msg.role === 'assistant' ? (
+                    <>
+                      <StreamMarkdownContent
+                        content={msg.content || ''}
+                        live={!!msg.streaming}
+                        className="text-sm leading-relaxed"
+                      />
+                      {msg.streaming && (
+                        <span className="animate-pulse text-blue-400 dark:text-blue-400 ml-0.5">▊</span>
+                      )}
+                      {/* 悬停显示复制；复制原文 Markdown */}
+                      {!msg.streaming && String(msg.content || '').trim() && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(msg.content);
+                              setCopiedMsgIdx(i);
+                              setTimeout(() => setCopiedMsgIdx(v => (v === i ? null : v)), 1500);
+                            } catch { /* ignore */ }
+                          }}
+                          className="absolute top-2 right-2 px-2 py-0.5 text-[11px] rounded-lg bg-zinc-100/90 dark:bg-zinc-700/90 text-zinc-500 dark:text-zinc-300 border border-zinc-200/80 dark:border-zinc-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          {copiedMsgIdx === i ? t('debug.copied') : t('debug.copy')}
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    msg.content
+                  )}
                 </div>
               )}
               {msg.timing && (
-                <p className="text-xs text-zinc-400 dark:text-zinc-400 mt-1 px-1">
-                  {msg.timing.firstTokenMs != null ? t('debug.firstToken', { ms: msg.timing.firstTokenMs }) : ''}{t('debug.total', { ms: msg.timing.totalMs })}
+                <p className="text-xs text-zinc-400 dark:text-zinc-400 mt-1 px-1 flex items-center gap-2">
+                  <span>
+                    {msg.timing.firstTokenMs != null ? t('debug.firstToken', { ms: msg.timing.firstTokenMs }) : ''}{t('debug.total', { ms: msg.timing.totalMs })}
+                  </span>
                 </p>
               )}
             </div>
-            {msg.role === 'user' && (
-              <div className="w-7 h-7 rounded-full bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center text-zinc-500 dark:text-zinc-400 text-xs shrink-0 mt-0.5 ml-2">{t('debug.me')}</div>
-            )}
           </div>
         ))}
         <div ref={messagesEndRef} />
@@ -2345,7 +2449,7 @@ export default function Debug() {
               ) : !conversationTurns.length && !currentUserPrompt && !taskSteps.length && !executing ? (
                 <div className="flex-1 flex items-start justify-center text-center text-zinc-400 dark:text-zinc-500 px-6 pt-4">
                   <div className="max-w-md">
-                    <p className="text-3xl mb-2">✨</p>
+                    <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-2">{t('debug.tabs.hub')}</p>
                     <p className="text-sm mb-4">{t('debug.agent.hubEmpty')}</p>
                     <div className="flex items-center justify-center gap-2 text-sm">
                       <span className="text-zinc-500">{t('debug.agent.mainAgentColon')}</span>
@@ -2395,136 +2499,184 @@ export default function Debug() {
         )}
       </div>
 
-      {/* ── Input bar ── */}
-      <div className="shrink-0 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800 px-4 py-3 electron-no-drag relative z-[60]">
+      {/* ── Input bar（毛玻璃；顶缘可拖调高）── */}
+      <div className={`${chromeBottom} px-4 py-3${composerResizing ? ' select-none' : ''}`}>
+        {/* 中间框线：向上拖增高输入区 */}
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          title={t('debug.composerResize')}
+          onMouseDown={onComposerResizeStart}
+          className={`absolute left-0 right-0 top-0 h-1.5 -mt-0.5 z-50 cursor-row-resize group
+            ${composerResizing ? 'bg-blue-400/40' : 'hover:bg-blue-400/25'}`}
+        >
+          <span className={`absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 w-10 h-0.5 rounded-full transition-colors
+            ${composerResizing ? 'bg-blue-500' : 'bg-zinc-300 dark:bg-zinc-600 group-hover:bg-blue-400'}`} />
+        </div>
         {mode === 'llm' ? (
-          /* LLM Mode Input */
-          <div className="flex gap-2 items-end">
-            <textarea ref={textareaRef} value={input} onChange={handleInputChange} onKeyDown={handleKeyDown}
-              placeholder={imageMode ? t('debug.inputImagePh') : t('debug.inputChatPh')}
-              rows={1} style={{ resize: 'none' }}
-              className="flex-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 overflow-hidden" />
-            <button onClick={handleSend} disabled={sending || !input.trim() || !model || !effectiveBase}
-              className="shrink-0 w-9 h-9 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-40 rounded-xl flex items-center justify-center transition-colors">
-              {sending
-                ? <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                : <span className="text-white text-sm">↑</span>}
-            </button>
+          <div className="space-y-2">
+            {/* 提示词模版 / 历史 */}
+            <div className="flex gap-2 items-center flex-wrap">
+              <select
+                value={selectedPromptId}
+                onChange={e => applyPromptSelection(e.target.value)}
+                title={t('debug.promptSelectTitle')}
+                className={`${fieldCls} px-2 py-1 max-w-[160px]`}
+              >
+                {(() => {
+                  // 图像模式只列图片类；对话模式只列文本类（缺省视为文本）
+                  const modePrompts = promptList.filter(p => {
+                    const kind = p?.metadata?.promptKind === 'image' ? 'image' : 'text';
+                    return imageMode ? kind === 'image' : kind === 'text';
+                  });
+                  return (
+                    <>
+                      <option value="">
+                        {modePrompts.length === 0 ? t('debug.promptEmpty') : t('debug.promptNone')}
+                      </option>
+                      {modePrompts.map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.display_name || p.name}
+                        </option>
+                      ))}
+                    </>
+                  );
+                })()}
+              </select>
+              <div className="ml-auto flex items-center gap-2 shrink-0">
+                <button type="button" onClick={() => setLlmHistoryOpen(true)}
+                  className="px-2.5 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors active:scale-[0.97]">
+                  {t('debug.agent.history')}
+                </button>
+                {conversation.length > 0 && (
+                  <button type="button" onClick={startNewLlmSession} disabled={sending}
+                    className="px-2.5 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors active:scale-[0.97] disabled:opacity-40">
+                    {t('debug.agent.newSession')}
+                  </button>
+                )}
+                {conversation.length > 0 && (
+                  <button type="button" onClick={handleClearChat}
+                    className="text-xs text-zinc-400 dark:text-zinc-500 hover:text-red-500 dark:hover:text-red-400 transition-colors px-1"
+                    title={t('debug.clearChat')}>
+                    {t('debug.clearChat')}
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-2 items-end">
+              <textarea ref={textareaRef} value={input} onChange={handleInputChange} onKeyDown={handleKeyDown}
+                placeholder={imageMode ? t('debug.inputImagePh') : t('debug.inputChatPh')}
+                rows={2}
+                style={{ resize: 'none', height: composerTextH, minHeight: COMPOSER_H_MIN }}
+                className="flex-1 bg-zinc-100/90 dark:bg-zinc-800/90 border border-zinc-200/80 dark:border-zinc-700/80 rounded-lg px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 overflow-y-auto" />
+              <button type="button" onClick={handleSend} disabled={sending || !input.trim() || !model || !effectiveBase}
+                className={`${primaryBtn} w-9 h-9`}>
+                {sending
+                  ? <span className="w-3.5 h-3.5 rounded-sm bg-white/70 animate-pulse" />
+                  : <span className="text-white text-sm">↑</span>}
+              </button>
+            </div>
           </div>
         ) : (
-          /* Agent Mode Input */
           <div className="space-y-2">
-            {/* 工作目录：底部选择，符合常见 Agent 交互习惯 */}
-            <div className="flex items-center gap-2">
+            {/* 工作目录 + 历史 / 新会话：始终可见 */}
+            <div className="flex items-center gap-2 flex-wrap">
               <button
                 type="button"
                 onClick={pickWorkingDir}
                 disabled={!activeAgent}
-                className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 transition-colors"
+                className="shrink-0 px-2.5 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 transition-colors active:scale-[0.97]"
               >
                 {t('debug.agent.pickDir')}
               </button>
               {isHubMode && mainAgent && (
-                <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                <span className="shrink-0 text-[11px] text-zinc-500 dark:text-zinc-400">
                   {t('debug.agent.mainShort', { name: mainAgent.name })}
                 </span>
               )}
-              <span className={`flex-1 truncate text-xs font-mono ${
-                agentWorkingDir
-                  ? 'text-zinc-600 dark:text-zinc-400'
-                  : 'text-amber-600 dark:text-amber-400'
-              }`}>
-                {agentWorkingDir || t('debug.agent.noWorkingDir')}
-              </span>
+              {agentWorkingDir ? (
+                <button
+                  type="button"
+                  onClick={() => openLocalPath(agentWorkingDir)}
+                  title={t('debug.preview.clickHint')}
+                  className="flex-1 min-w-0 truncate text-xs font-mono text-left text-blue-600 dark:text-blue-400 hover:underline"
+                >
+                  {agentWorkingDir}
+                </button>
+              ) : (
+                <span className="flex-1 min-w-0 truncate text-xs font-mono text-zinc-400 dark:text-zinc-500">
+                  {t('debug.agent.noWorkingDir')}
+                </span>
+              )}
+              <button type="button" onClick={() => setHistoryOpen(true)}
+                className="shrink-0 px-2.5 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors active:scale-[0.97]">
+                {t('debug.agent.history')}
+              </button>
+              {(conversationTurns.length > 0 || currentUserPrompt || taskSteps.length > 0 || executing || taskCanStop) && (
+                <button type="button" onClick={startNewAgentSession}
+                  className="shrink-0 px-2.5 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors active:scale-[0.97]">
+                  {t('debug.agent.newSession')}
+                </button>
+              )}
             </div>
-            {dirError && (
-              <p className="text-xs text-red-500 dark:text-red-400">{dirError}</p>
-            )}
+            {dirError && <p className="text-xs text-red-500 dark:text-red-400">{dirError}</p>}
 
             <div className="flex gap-2 items-end">
-              <div className="relative flex-1">
-                <textarea
-                  ref={agentTextareaRef}
-                  value={agentPrompt}
-                  onChange={e => setAgentPrompt(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                      e.preventDefault();
-                      if (!taskCanStop && activeAgent && agentPrompt.trim()) {
-                        executeAgent();
-                      }
-                    }
-                  }}
-                  disabled={!activeAgent}
-                  placeholder={
-                    !activeAgent
-                      ? t('debug.agent.needAgent')
-                      : isHubMode
-                        ? t('debug.agent.hubPlaceholder', { name: mainAgent?.name || '' })
-                        : t('debug.agent.directPlaceholder', { name: selectedAgent.name })
+              <textarea
+                ref={agentTextareaRef}
+                value={agentPrompt}
+                onChange={e => setAgentPrompt(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    if (!taskCanStop && activeAgent && agentPrompt.trim()) executeAgent();
                   }
-                  rows={2}
-                  className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 resize-none disabled:opacity-50"
-                />
-              </div>
-              <div className="shrink-0 flex flex-col gap-1.5 items-stretch">
-                <div className="flex flex-row gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setHistoryOpen(true)}
-                    className="flex-1 px-3 h-7 rounded-xl border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors text-xs whitespace-nowrap"
-                  >
-                    {t('debug.agent.history')}
-                  </button>
-                  {(conversationTurns.length > 0 || currentUserPrompt || taskSteps.length > 0 || executing || taskCanStop) && (
-                    <button
-                      type="button"
-                      onClick={startNewAgentSession}
-                      className="flex-1 px-3 h-7 rounded-xl border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors text-xs whitespace-nowrap"
-                    >
-                      {t('debug.agent.newSession')}
-                    </button>
-                  )}
-                </div>
-                {taskCanStop ? (
-                  <button
-                    type="button"
-                    onClick={cancelAgent}
-                    className="px-4 h-9 bg-red-600 hover:bg-red-500 text-white rounded-xl flex items-center justify-center gap-2 transition-colors"
-                  >
-                    <span className="w-3 h-3 bg-white rounded-sm"></span>
-                    <span className="text-sm">{t('debug.agent.stop')}</span>
-                  </button>
-                ) : canResumeContinue ? (
-                  <button
-                    type="button"
-                    onClick={continueInterruptedAgent}
-                    title={t('debug.agent.continueTitle')}
-                    className="px-4 h-9 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white rounded-xl flex items-center justify-center gap-2 transition-colors"
-                  >
-                    <span className="text-sm">▶</span>
-                    <span className="text-sm">{t('debug.agent.continue')}</span>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => executeAgent()}
-                    disabled={!activeAgent || !agentPrompt.trim()}
-                    className="px-4 h-9 bg-blue-600 hover:bg-blue-500 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-40 text-white rounded-xl flex items-center justify-center gap-2 transition-colors"
-                  >
-                    <span className="text-sm">▶</span>
-                    <span className="text-sm">{t('debug.agent.execute')}</span>
-                  </button>
-                )}
-              </div>
+                }}
+                disabled={!activeAgent}
+                placeholder={
+                  !activeAgent
+                    ? t('debug.agent.needAgent')
+                    : isHubMode
+                      ? t('debug.agent.hubPlaceholder', { name: mainAgent?.name || '' })
+                      : t('debug.agent.directPlaceholder', { name: selectedAgent.name })
+                }
+                rows={2}
+                style={{ resize: 'none', height: composerTextH, minHeight: COMPOSER_H_MIN }}
+                className="flex-1 bg-zinc-100/90 dark:bg-zinc-800/90 border border-zinc-200/80 dark:border-zinc-700/80 rounded-lg px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:border-blue-500 overflow-y-auto resize-none disabled:opacity-50"
+              />
+              {taskCanStop ? (
+                <button type="button" onClick={cancelAgent}
+                  className="shrink-0 px-4 h-9 bg-red-600 hover:bg-red-500 text-white rounded-lg flex items-center justify-center gap-2 transition-[transform,colors] duration-100 active:scale-[0.97]">
+                  <span className="w-3 h-3 bg-white rounded-sm" />
+                  <span className="text-sm">{t('debug.agent.stop')}</span>
+                </button>
+              ) : canResumeContinue ? (
+                <button type="button" onClick={continueInterruptedAgent} title={t('debug.agent.continueTitle')}
+                  className={`${primaryBtn} px-4 h-9`}>
+                  <span className="text-sm">{t('debug.agent.continue')}</span>
+                </button>
+              ) : (
+                <button type="button" onClick={() => executeAgent()} disabled={!activeAgent || !agentPrompt.trim()}
+                  className={`${primaryBtn} px-4 h-9`}>
+                  <span className="text-sm">{t('debug.agent.execute')}</span>
+                </button>
+              )}
             </div>
           </div>
         )}
       </div>
       </div>
+
+      {/* 右侧：文件夹 / 文本 / 图片预览侧栏 */}
+      <LocalFilePreviewHost />
       </div>
 
       {/* ── 历史会话 ── */}
+      <LlmSessionHistoryPanel
+        open={llmHistoryOpen && mode === 'llm'}
+        onClose={() => setLlmHistoryOpen(false)}
+        onRestore={restoreLlmSession}
+      />
       <AgentSessionHistoryPanel
         open={historyOpen && mode === 'agent'}
         onClose={() => setHistoryOpen(false)}

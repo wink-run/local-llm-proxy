@@ -1017,8 +1017,13 @@ class AgentExecutor extends EventEmitter {
     try {
       const running = this.runningTasks.get(taskId);
       const stepType = step.stepType || 'output';
-      const content = step.content || '';
-      if (!content.trim() && stepType !== 'system_event') return;
+      let content = step.content || '';
+      // tool_call / tool_result 即使内容为空也要发出（图片 Read 等），否则 UI 无法配对
+      if (!content.trim()) {
+        if (stepType === 'tool_result') content = step.is_error ? '(失败)' : '(无输出)';
+        else if (stepType === 'tool_call') content = '(无参数)';
+        else if (stepType !== 'system_event') return;
+      }
 
       if (stepType === 'system_event' && step.system_subtype === 'api_retry') {
         try {
@@ -1058,6 +1063,7 @@ class AgentExecutor extends EventEmitter {
         stepType,
         content,
         tool_name: step.tool_name || null,
+        tool_use_id: step.tool_use_id || null,
         system_subtype: step.system_subtype || null,
         is_delta: !!step.is_delta,
         is_snapshot: !!step.is_snapshot,

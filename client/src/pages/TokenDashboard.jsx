@@ -485,7 +485,7 @@ function DistBarList({ items, total, barClass }) {
               {item.label}
             </div>
             <div className="flex-1 bg-zinc-100 dark:bg-zinc-700 rounded-full h-2 overflow-hidden">
-              <div className={`h-2 rounded-full ${barClass} transition-all duration-500`} style={{ width: `${barPct}%` }} />
+              <div className={`h-2 rounded-full ${barClass} transition-[width] duration-200 ease-out`} style={{ width: `${barPct}%` }} />
             </div>
             <span className="shrink-0 text-right text-xs text-zinc-500 dark:text-zinc-400 whitespace-nowrap pl-1">
               {item.calls} <span className="text-zinc-400">{share}%</span>

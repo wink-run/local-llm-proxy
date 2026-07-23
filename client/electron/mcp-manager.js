@@ -11,6 +11,7 @@ const shim = require('./shim-installer');
 const { getCatalogItem, listCatalogItems, listCatalogGrouped, MCP_CATEGORY_GROUPS } = require('./mcp-catalog');
 
 const { DELIVERY_POLICY } = require('./agent-delivery-policy');
+const { formatOrchestratorCapabilityHint } = require('./tb-capabilities');
 
 /** 编排层系统提示（Claude / Codex 共用） */
 const ORCHESTRATOR_SYSTEM = [
@@ -23,6 +24,7 @@ const ORCHESTRATOR_SYSTEM = [
   '   仅当没有匹配的专业智能体时，才自行用工具完成，或派发给通用 CLI Agent（claude-code / codex）。',
   '4. 派发后等待结果，汇总后回复用户；不要把本可派发的专业任务自己做完。',
   '5. 涉及 PPT/文件产物时，要求子 Agent / 自身直接写入工作目录，禁止让用户粘贴一键保存脚本。',
+  formatOrchestratorCapabilityHint(),
   '',
   DELIVERY_POLICY,
 ].join('\n');
@@ -32,11 +34,15 @@ const ORCHESTRATOR_AGENTS = new Set(['claude-code', 'codex']);
 
 const BUILTIN_BRIDGE_ID = 'tokenbank-agent-bridge';
 const BUILTIN_PROMPTS_ID = 'tokenbank-prompts';
+const BUILTIN_MODELS_ID = 'tokenbank-models';
+const BUILTIN_RESOURCES_ID = 'tokenbank-resources';
 /** 默认即开发模式（含 Agent 桥 + 已纳管工具 MCP），不再做多 Profile 选择 */
 const DEVELOPMENT_PROFILE_ID = 'development';
 const DEFAULT_PROFILE_ID = DEVELOPMENT_PROFILE_ID;
 const DISPATCH_SCRIPT = path.join(__dirname, 'agent-dispatch-mcp.js');
 const PROMPTS_SCRIPT = path.join(__dirname, 'prompt-mcp.js');
+const MODELS_SCRIPT = path.join(__dirname, 'models-mcp.js');
+const RESOURCES_SCRIPT = path.join(__dirname, 'resources-mcp.js');
 
 /** shell 单引号转义（用于 bridge launcher） */
 function shellQuote(value) {
@@ -186,29 +192,9 @@ class MCPManager {
     const now = Date.now();
 
     this._ensureBuiltinBridge(now);
-
-    // 同构 seed 内置 Prompts MCP：投射门控在同步阶段（filterServersForClient）判定，这里只保证 server 存在
-    const prompts = db.prepare('SELECT id FROM mcp_servers WHERE id = ?').get(BUILTIN_PROMPTS_ID);
-    if (!prompts) {
-      db.prepare(`
-        INSERT INTO mcp_servers
-        (id, name, display_name, type, command, args, env, builtin, status, metadata, created_at, updated_at)
-        VALUES (?, ?, ?, 'stdio', ?, ?, ?, 1, 'active', ?, ?, ?)
-      `).run(
-        BUILTIN_PROMPTS_ID,
-        BUILTIN_PROMPTS_ID,
-        'Token Bank Prompts',
-        '__DYNAMIC_ELECTRON__',
-        JSON.stringify([PROMPTS_SCRIPT]),
-        JSON.stringify({ ELECTRON_RUN_AS_NODE: '1' }),
-        JSON.stringify({
-          description: '内置提示词服务：tb_get_prompt / tb_list_prompts（须先投射提示词到该 Agent）',
-          tools: ['tb_get_prompt', 'tb_list_prompts'],
-        }),
-        now,
-        now,
-      );
-    }
+    this._ensureBuiltinPrompts(now);
+    this._ensureBuiltinModels(now);
+    this._ensureBuiltinResources(now);
 
     const profiles = [
       {
@@ -244,12 +230,112 @@ class MCPManager {
       }
     }
 
-    // Profile ↔ Server 绑定（默认 Profile 均含 bridge）
+    // Profile ↔ Server 绑定（默认 Profile 均含 bridge；models 进默认/开发 Profile）
     for (const profileId of [DEFAULT_PROFILE_ID, 'orchestrator-minimal', DEVELOPMENT_PROFILE_ID]) {
       this._linkBuiltinBridgeToProfile(profileId);
     }
+    for (const profileId of [DEFAULT_PROFILE_ID, DEVELOPMENT_PROFILE_ID]) {
+      this._linkServerToProfile(profileId, BUILTIN_MODELS_ID);
+      this._linkServerToProfile(profileId, BUILTIN_RESOURCES_ID);
+    }
 
     this._seeded = true;
+  }
+
+  /** 确保内置 Prompts MCP 存在 */
+  _ensureBuiltinPrompts(now = Date.now()) {
+    const db = this._getDb();
+    const prompts = db.prepare('SELECT id FROM mcp_servers WHERE id = ?').get(BUILTIN_PROMPTS_ID);
+    const meta = JSON.stringify({
+      description: '内置提示词服务：tb_get_prompt / tb_list_prompts（须先投射提示词到该 Agent）',
+      tools: ['tb_get_prompt', 'tb_list_prompts'],
+    });
+    if (!prompts) {
+      db.prepare(`
+        INSERT INTO mcp_servers
+        (id, name, display_name, type, command, args, env, builtin, status, metadata, created_at, updated_at)
+        VALUES (?, ?, ?, 'stdio', ?, ?, ?, 1, 'active', ?, ?, ?)
+      `).run(
+        BUILTIN_PROMPTS_ID,
+        BUILTIN_PROMPTS_ID,
+        'Token Bank Prompts',
+        '__DYNAMIC_ELECTRON__',
+        JSON.stringify([PROMPTS_SCRIPT]),
+        JSON.stringify({ ELECTRON_RUN_AS_NODE: '1' }),
+        meta,
+        now,
+        now,
+      );
+    } else {
+      db.prepare('UPDATE mcp_servers SET status = ?, metadata = ?, updated_at = ? WHERE id = ?')
+        .run('active', meta, now, BUILTIN_PROMPTS_ID);
+    }
+  }
+
+  /** 确保内置 Models MCP 存在（常驻：查可用模型 / 动态切换） */
+  _ensureBuiltinModels(now = Date.now()) {
+    const db = this._getDb();
+    const row = db.prepare('SELECT id FROM mcp_servers WHERE id = ?').get(BUILTIN_MODELS_ID);
+    const meta = JSON.stringify({
+      description: '内置模型资源：tb_list_models / tb_resolve_model（查询网关可用模型并动态切换）',
+      tools: ['tb_list_models', 'tb_resolve_model'],
+    });
+    if (!row) {
+      db.prepare(`
+        INSERT INTO mcp_servers
+        (id, name, display_name, type, command, args, env, builtin, status, metadata, created_at, updated_at)
+        VALUES (?, ?, ?, 'stdio', ?, ?, ?, 1, 'active', ?, ?, ?)
+      `).run(
+        BUILTIN_MODELS_ID,
+        BUILTIN_MODELS_ID,
+        'Token Bank Models',
+        '__DYNAMIC_ELECTRON__',
+        JSON.stringify([MODELS_SCRIPT]),
+        JSON.stringify({ ELECTRON_RUN_AS_NODE: '1' }),
+        meta,
+        now,
+        now,
+      );
+    } else {
+      db.prepare('UPDATE mcp_servers SET status = ?, metadata = ?, updated_at = ? WHERE id = ?')
+        .run('active', meta, now, BUILTIN_MODELS_ID);
+    }
+    for (const profileId of [DEFAULT_PROFILE_ID, DEVELOPMENT_PROFILE_ID]) {
+      this._linkServerToProfile(profileId, BUILTIN_MODELS_ID);
+    }
+  }
+
+  /** 确保内置 Resources MCP 存在（能力总览 + 已纳管/社区资源发现） */
+  _ensureBuiltinResources(now = Date.now()) {
+    const db = this._getDb();
+    const row = db.prepare('SELECT id FROM mcp_servers WHERE id = ?').get(BUILTIN_RESOURCES_ID);
+    const meta = JSON.stringify({
+      description: '内置资源发现：tb_capabilities / tb_list_resources / tb_get_resource / tb_list_catalog / tb_list_gateway',
+      tools: ['tb_capabilities', 'tb_list_resources', 'tb_get_resource', 'tb_list_catalog', 'tb_list_gateway'],
+    });
+    if (!row) {
+      db.prepare(`
+        INSERT INTO mcp_servers
+        (id, name, display_name, type, command, args, env, builtin, status, metadata, created_at, updated_at)
+        VALUES (?, ?, ?, 'stdio', ?, ?, ?, 1, 'active', ?, ?, ?)
+      `).run(
+        BUILTIN_RESOURCES_ID,
+        BUILTIN_RESOURCES_ID,
+        'Token Bank Resources',
+        '__DYNAMIC_ELECTRON__',
+        JSON.stringify([RESOURCES_SCRIPT]),
+        JSON.stringify({ ELECTRON_RUN_AS_NODE: '1' }),
+        meta,
+        now,
+        now,
+      );
+    } else {
+      db.prepare('UPDATE mcp_servers SET status = ?, metadata = ?, updated_at = ? WHERE id = ?')
+        .run('active', meta, now, BUILTIN_RESOURCES_ID);
+    }
+    for (const profileId of [DEFAULT_PROFILE_ID, DEVELOPMENT_PROFILE_ID]) {
+      this._linkServerToProfile(profileId, BUILTIN_RESOURCES_ID);
+    }
   }
 
   /** 确保内置 Agent Bridge 存在、启用，并绑定到编排默认 Profile */
@@ -420,6 +506,9 @@ class MCPManager {
     this.init();
     if (serverId === BUILTIN_BRIDGE_ID) {
       throw new Error('内置 Agent Bridge 不可卸载');
+    }
+    if (serverId === BUILTIN_PROMPTS_ID || serverId === BUILTIN_MODELS_ID || serverId === BUILTIN_RESOURCES_ID) {
+      throw new Error('内置 MCP 不可卸载');
     }
     const db = this._getDb();
     db.prepare('DELETE FROM mcp_profile_servers WHERE server_id = ?').run(serverId);
@@ -903,7 +992,7 @@ class MCPManager {
     fs.mkdirSync(mcpDir, { recursive: true });
     const cleanupFns = [];
     const ctx = { taskId, workingDir, mainAgentId, sessionKey, sessionInstanceId };
-    // bridge / prompts 用 shell 脚本保证 ELECTRON_RUN_AS_NODE，避免 Electron 子进程 GUI 初始化崩溃
+    // bridge / prompts / models 用 shell 脚本保证 ELECTRON_RUN_AS_NODE，避免 Electron 子进程 GUI 初始化崩溃
     ctx.bridgeLauncher = writeBridgeMcpLauncher({ ...ctx, mcpDir });
     cleanupFns.push(() => { try { fs.unlinkSync(ctx.bridgeLauncher); } catch {} });
     if (servers.some(s => s.id === BUILTIN_PROMPTS_ID || s.name === BUILTIN_PROMPTS_ID)) {
@@ -913,6 +1002,22 @@ class MCPManager {
         env: { TB_CLIENT_ID: mainAgentId || '' },
       });
       cleanupFns.push(() => { try { fs.unlinkSync(ctx.promptsLauncher); } catch {} });
+    }
+    if (servers.some(s => s.id === BUILTIN_MODELS_ID || s.name === BUILTIN_MODELS_ID)) {
+      ctx.modelsLauncher = writeElectronAsNodeLauncher({
+        name: `models-orch-${taskId}`,
+        scriptPath: MODELS_SCRIPT,
+        env: {},
+      });
+      cleanupFns.push(() => { try { fs.unlinkSync(ctx.modelsLauncher); } catch {} });
+    }
+    if (servers.some(s => s.id === BUILTIN_RESOURCES_ID || s.name === BUILTIN_RESOURCES_ID)) {
+      ctx.resourcesLauncher = writeElectronAsNodeLauncher({
+        name: `resources-orch-${taskId}`,
+        scriptPath: RESOURCES_SCRIPT,
+        env: {},
+      });
+      cleanupFns.push(() => { try { fs.unlinkSync(ctx.resourcesLauncher); } catch {} });
     }
 
     if (agentId === 'claude-code') {
@@ -994,10 +1099,23 @@ class MCPManager {
 
     // 编排层内置 bridge 始终默认启动（即使用户 Profile 未勾选）
     const bridge = this._ensureBuiltinBridge();
-    if (bridge && !servers.some(s => s.id === BUILTIN_BRIDGE_ID)) {
-      return [bridge, ...servers];
+    let out = servers;
+    if (bridge && !out.some(s => s.id === BUILTIN_BRIDGE_ID)) {
+      out = [bridge, ...out];
     }
-    return servers;
+    // 模型资源 MCP：默认 Profile 始终可用，便于 skill 动态选模
+    this._ensureBuiltinModels();
+    const models = this.getServer(BUILTIN_MODELS_ID);
+    if (models && models.status === 'active' && !out.some(s => s.id === BUILTIN_MODELS_ID)) {
+      out = [...out, models];
+    }
+    // 资源发现 MCP：能力总览 + skill/assistant 列表
+    this._ensureBuiltinResources();
+    const resources = this.getServer(BUILTIN_RESOURCES_ID);
+    if (resources && resources.status === 'active' && !out.some(s => s.id === BUILTIN_RESOURCES_ID)) {
+      out = [...out, resources];
+    }
+    return out;
   }
 
   /** 运行时 Server 配置（内置 bridge 注入 task 上下文） */
@@ -1039,6 +1157,36 @@ class MCPManager {
           name: `prompts-${mainAgentId || 'default'}`,
           scriptPath: PROMPTS_SCRIPT,
           env: { TB_CLIENT_ID: mainAgentId || '' },
+        }),
+        args: [],
+        env: {},
+      };
+    }
+
+    if (serverRow.id === BUILTIN_MODELS_ID || serverRow.name === BUILTIN_MODELS_ID) {
+      if (ctx.modelsLauncher) {
+        return { command: ctx.modelsLauncher, args: [], env: {} };
+      }
+      return {
+        command: writeElectronAsNodeLauncher({
+          name: `models-${mainAgentId || 'default'}`,
+          scriptPath: MODELS_SCRIPT,
+          env: {},
+        }),
+        args: [],
+        env: {},
+      };
+    }
+
+    if (serverRow.id === BUILTIN_RESOURCES_ID || serverRow.name === BUILTIN_RESOURCES_ID) {
+      if (ctx.resourcesLauncher) {
+        return { command: ctx.resourcesLauncher, args: [], env: {} };
+      }
+      return {
+        command: writeElectronAsNodeLauncher({
+          name: `resources-${mainAgentId || 'default'}`,
+          scriptPath: RESOURCES_SCRIPT,
+          env: {},
         }),
         args: [],
         env: {},
@@ -1087,6 +1235,8 @@ module.exports.DEFAULT_PROFILE_ID = DEFAULT_PROFILE_ID;
 module.exports.DEVELOPMENT_PROFILE_ID = DEVELOPMENT_PROFILE_ID;
 module.exports.BUILTIN_BRIDGE_ID = BUILTIN_BRIDGE_ID;
 module.exports.BUILTIN_PROMPTS_ID = BUILTIN_PROMPTS_ID;
+module.exports.BUILTIN_MODELS_ID = BUILTIN_MODELS_ID;
+module.exports.BUILTIN_RESOURCES_ID = BUILTIN_RESOURCES_ID;
 module.exports.buildCodexOrchestratorProfileToml = buildCodexOrchestratorProfileToml;
 module.exports.writeBridgeMcpLauncher = writeBridgeMcpLauncher;
 module.exports.writeElectronAsNodeLauncher = writeElectronAsNodeLauncher;

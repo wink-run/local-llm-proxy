@@ -23,23 +23,15 @@ function parseSize(name) {
   return null;
 }
 
-// Animated ping dot for available models
+// 可用模型指示：实心点（无 ping）
 function PingDot({ color = 'green' }) {
   const colors = {
-    green:  { ring: 'bg-green-400',  dot: 'bg-green-500'  },
-    amber:  { ring: 'bg-amber-400',  dot: 'bg-amber-500'  },
-    gray:   { ring: 'bg-zinc-800',   dot: 'bg-zinc-800'   },
+    green:  'bg-green-500',
+    amber:  'bg-amber-500',
+    gray:   'bg-zinc-800',
   };
-  const c = colors[color] || colors.green;
-  if (color === 'gray') {
-    return <span className={`w-2 h-2 rounded-full shrink-0 ${c.dot}`} />;
-  }
-  return (
-    <span className="relative flex h-2 w-2 shrink-0">
-      <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${c.ring} opacity-60`} />
-      <span className={`relative inline-flex rounded-full h-2 w-2 ${c.dot}`} />
-    </span>
-  );
+  const dot = colors[color] || colors.green;
+  return <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />;
 }
 
 export default function Network() {
@@ -336,15 +328,9 @@ export default function Network() {
                       className="flex items-center gap-3 px-5 py-2.5">
                       <span className="relative flex h-1.5 w-1.5 shrink-0">
                         {w.status === 'busy' ? (
-                          <>
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-60" />
-                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500" />
-                          </>
+                          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500" />
                         ) : (
-                          <>
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60" />
-                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500" />
-                          </>
+                          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500" />
                         )}
                       </span>
                       <div className="flex-1 min-w-0">

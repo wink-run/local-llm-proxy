@@ -43,12 +43,44 @@ function msgText(msg) {
   return '';
 }
 
+/** 抽取 tool_result 可读文本；图片块用占位，避免 Read PNG 时变成空串被丢弃 */
 function toolResultText(content) {
+  if (content == null) return '';
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
-    return content.map(b => b?.text || '').filter(Boolean).join('\n');
+    const parts = [];
+    for (const b of content) {
+      if (b == null) continue;
+      if (typeof b === 'string') {
+        if (b) parts.push(b);
+        continue;
+      }
+      if (typeof b !== 'object') continue;
+      if (typeof b.text === 'string' && b.text) {
+        parts.push(b.text);
+        continue;
+      }
+      // Claude Read 二进制图：{ type:'image', source:{ media_type, data } }
+      const isImage = b.type === 'image'
+        || (b.source && (b.source.type === 'base64' || b.source.media_type))
+        || (typeof b.mime_type === 'string' && b.mime_type.startsWith('image/'));
+      if (isImage) {
+        const mime = b.mime_type || b.source?.media_type || 'image';
+        parts.push(`[图片 ${mime}]`);
+      }
+    }
+    return parts.join('\n');
   }
-  return JSON.stringify(content, null, 2);
+  if (typeof content === 'object') {
+    try { return JSON.stringify(content, null, 2); } catch { return String(content); }
+  }
+  return String(content);
+}
+
+/** tool_result 展示文案：空内容也给占位，保证能与 tool_call 配对 */
+function toolResultDisplay(content, isError = false) {
+  const text = toolResultText(content).trim();
+  return text || (isError ? '(失败)' : '(无输出)');
 }
 
 /** 解析 hook_response.output 内嵌 JSON，提取可读文本 */
@@ -540,14 +572,13 @@ function parseClaudeJsonLine(obj, streamState) {
       const steps = [];
       for (const b of msg.content) {
         if (b?.type === 'tool_result') {
-          const text = toolResultText(b.content).trim();
-          if (!text) continue;
+          // 空/纯图片结果也必须发出，否则 UI 会一直挂起直到 closePending →「未收到结果」
           const toolName = (b.tool_use_id && state?.toolNamesById?.get(b.tool_use_id))
             || null;
           steps.push({
             stepType: 'tool_result',
             tool_name: toolName,
-            content: text,
+            content: toolResultDisplay(b.content, !!b.is_error),
             is_error: !!b.is_error,
             tool_use_id: b.tool_use_id || null,
           });
@@ -636,11 +667,10 @@ function emitUnifiedToolSteps(state, {
   }
   if (callOnly) return steps;
 
-  const outText = toolResultText(output).trim();
   steps.push({
     stepType: 'tool_result',
     tool_name: toolName,
-    content: outText || (isError ? '(失败)' : '(无输出)'),
+    content: toolResultDisplay(output, isError),
     is_error: !!isError,
     tool_use_id: tid,
   });
@@ -1032,16 +1062,13 @@ function parseCursorJsonLine(obj, streamState) {
         );
         if (tu) steps.push(tu);
       } else if (t === 'tool_result') {
-        const text = toolResultText(b.content).trim();
-        if (text) {
-          steps.push({
-            stepType: 'tool_result',
-            tool_name: (b.tool_use_id && state?.toolNamesById?.get(b.tool_use_id)) || b.name || null,
-            content: text,
-            is_error: !!b.is_error,
-            tool_use_id: b.tool_use_id || null,
-          });
-        }
+        steps.push({
+          stepType: 'tool_result',
+          tool_name: (b.tool_use_id && state?.toolNamesById?.get(b.tool_use_id)) || b.name || null,
+          content: toolResultDisplay(b.content, !!b.is_error),
+          is_error: !!b.is_error,
+          tool_use_id: b.tool_use_id || null,
+        });
       } else if (t === 'thinking' || t === 'reasoning' || t === 'redacted_thinking') {
         const think = String(b.thinking || b.text || '').trim();
         if (think) steps.push({ stepType: 'thinking', content: think, is_snapshot: true });
@@ -1054,12 +1081,10 @@ function parseCursorJsonLine(obj, streamState) {
 
   // 部分 Cursor 导出直接给 tool 角色
   if (obj.role === 'tool' || obj.type === 'tool_result') {
-    const text = toolResultText(obj.content ?? obj.message?.content).trim();
-    if (!text) return [];
     return [{
       stepType: 'tool_result',
       tool_name: obj.name || null,
-      content: text,
+      content: toolResultDisplay(obj.content ?? obj.message?.content, !!obj.is_error),
       is_error: !!obj.is_error,
       tool_use_id: obj.tool_use_id || obj.toolCallId || null,
     }];

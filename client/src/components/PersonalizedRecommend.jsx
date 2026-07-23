@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLang } from '../store/lang';
 import ResourceAssetCard, {
   ASSET_BTN_MANAGED,
@@ -8,8 +8,8 @@ import ResourceAssetCard, {
   resourceDisplayName,
 } from './ResourceAssetCard';
 import PortraitShareModal, { PortraitVisualBoard } from './PortraitShareCard';
+import { tagToPurpose } from '../lib/resource-purpose';
 
-const FINDER_CATALOG_ID = 'resource-finder-assistant';
 const FINDER_NAME = 'resource-finder';
 const MAX_RECS = 30;
 const LAST_KEY = 'tokenbank.resources.recommend.last';
@@ -637,7 +637,25 @@ function stepsToText(rows) {
  * 个性化推荐(上半区)。流程:采对话 → 推测「是谁/目标」→ 补充 → 发现资源。
  * 三类统一走发现智能体;安装:技能走 skillhub;智能体优先社区目录级联纳管配套技能。
  */
-export default function PersonalizedRecommend({ typeFilter, LogoComp, onNeedProject, onRefresh, onAdopted }) {
+/** 推荐项是否命中用途筛选（category 多为 SkillHub slug） */
+function recMatchesPurpose(rec, purposeFilter) {
+  if (!purposeFilter) return true;
+  const cat = String(rec?.category || '').trim();
+  if (!cat) return false;
+  if (cat === purposeFilter) return true;
+  return tagToPurpose(cat) === purposeFilter;
+}
+
+export default function PersonalizedRecommend({
+  typeFilter,
+  purposeFilter = '',
+  LogoComp,
+  onNeedProject,
+  onNeedAgent,
+  onRefresh,
+  onAdopted,
+  onItemsChange,
+}) {
   const { t } = useLang();
   const rtype = normType(typeFilter);
   const typeLabel = t(`resources.type.${rtype}`);
@@ -675,6 +693,18 @@ export default function PersonalizedRecommend({ typeFilter, LogoComp, onNeedProj
   const [taskId, setTaskId] = useState(saved0.taskId || null);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
+
+  // 用途筛选：只展示命中 category 的推荐卡
+  const visibleItems = useMemo(() => {
+    if (!items || !items.length) return items;
+    if (!purposeFilter) return items;
+    return items.filter((rec) => recMatchesPurpose(rec, purposeFilter));
+  }, [items, purposeFilter]);
+
+  // 推荐列表变化 → 父级刷新用途芯片
+  useEffect(() => {
+    if (items) onItemsChange?.(items);
+  }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** 终态统一处理(事件与轮询共用,PENDING 去重,先到先处理) */
   const handleTerminalRef = useRef(null);
@@ -869,10 +899,16 @@ export default function PersonalizedRecommend({ typeFilter, LogoComp, onNeedProj
 
   const checkReady = useCallback(async () => {
     try {
+      // 内置资产发现智能体：后端自动纳管并尽量投射
+      if (window.electronAPI?.resource?.ensureBuiltinAssistants) {
+        await window.electronAPI.resource.ensureBuiltinAssistants();
+      }
       const res = await window.electronAPI.resource.listResources({ type: 'assistant' });
       const finder = ((res && res.resources) || []).find((r) => r.name === FINDER_NAME);
-      if (!finder) return setReady({ loading: false, step: 'adopt' });
-      if (!((finder.projections || []).length > 0)) return setReady({ loading: false, step: 'project', finder });
+      if (!finder) return setReady({ loading: false, step: 'needAgent' });
+      if (!((finder.projections || []).length > 0)) {
+        return setReady({ loading: false, step: 'needAgent', finder });
+      }
       return setReady({ loading: false, step: 'ready', finder });
     } catch (e) { setReady({ loading: false, step: 'error' }); setErr(e.message || String(e)); }
   }, []);
@@ -961,12 +997,12 @@ export default function PersonalizedRecommend({ typeFilter, LogoComp, onNeedProj
     setMsg(t('resources.reco.stopped'));
   };
 
-  const adopt = async () => {
+  const retryBuiltinSetup = async () => {
     setErr(''); setMsg(t('resources.reco.enabling'));
+    setReady((s) => ({ ...s, loading: true }));
     try {
-      await window.electronAPI.resource.installCatalog({ catalogId: FINDER_CATALOG_ID });
-      setMsg(t('resources.reco.enabled'));
       await checkReady();
+      setMsg('');
     } catch (e) { setErr(e.message || String(e)); setMsg(''); }
   };
 
@@ -1191,17 +1227,26 @@ export default function PersonalizedRecommend({ typeFilter, LogoComp, onNeedProj
 
   return (
     <div className="space-y-3">
-      {ready.step === 'adopt' && (
+      {ready.step === 'needAgent' && (
         <div className="rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-900/20 p-3 text-xs space-y-2">
-          <p className="text-amber-800 dark:text-amber-200">{t('resources.reco.needFinder')}</p>
-          <button type="button" onClick={adopt} className="px-3 py-1.5 rounded-md bg-amber-600 text-white hover:bg-amber-700">{t('resources.reco.enable')}</button>
-        </div>
-      )}
-      {ready.step === 'project' && (
-        <div className="rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-900/20 p-3 text-xs space-y-2">
-          <p className="text-amber-800 dark:text-amber-200">{t('resources.reco.needProject')}</p>
-          <p className="text-amber-700/80 dark:text-amber-300/70">{t('resources.reco.projectHint')}</p>
-          <button type="button" onClick={() => (onNeedProject ? onNeedProject() : null)} className="px-3 py-1.5 rounded-md bg-amber-600 text-white hover:bg-amber-700">{t('resources.reco.goProject')}</button>
+          <p className="text-amber-800 dark:text-amber-200">{t('resources.reco.needAgent')}</p>
+          <p className="text-amber-700/80 dark:text-amber-300/70">{t('resources.reco.needAgentHint')}</p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => (onNeedAgent ? onNeedAgent() : (onNeedProject ? onNeedProject() : null))}
+              className="px-3 py-1.5 rounded-md bg-amber-600 text-white hover:bg-amber-700"
+            >
+              {t('resources.skillInstall.goManageAgent')}
+            </button>
+            <button
+              type="button"
+              onClick={retryBuiltinSetup}
+              className="px-3 py-1.5 rounded-md border border-amber-400/80 text-amber-800 dark:text-amber-200 hover:bg-amber-100/60 dark:hover:bg-amber-950/40"
+            >
+              {t('resources.skillInstall.retrySetup')}
+            </button>
+          </div>
         </div>
       )}
 
@@ -1251,8 +1296,7 @@ export default function PersonalizedRecommend({ typeFilter, LogoComp, onNeedProj
       {(phase === 'analyzing' || phase === 'discovering') && (
         <div className="rounded-lg border border-violet-200 dark:border-violet-800/50 bg-violet-50/60 dark:bg-violet-900/15 p-4 space-y-3">
           <div className="flex items-center gap-2">
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75" />
+            <span className="relative flex h-2.5 w-2.5" aria-hidden>
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-violet-500" />
             </span>
             <span className="text-xs text-violet-700 dark:text-violet-200 truncate">
@@ -1261,7 +1305,7 @@ export default function PersonalizedRecommend({ typeFilter, LogoComp, onNeedProj
             <span className="ml-auto text-[10px] text-violet-400 whitespace-nowrap tabular-nums">{elapsed}s</span>
           </div>
           <div className="h-1 rounded-full bg-violet-100 dark:bg-violet-900/40 overflow-hidden">
-            <div className="h-full w-1/3 rounded-full bg-violet-500/80 animate-[pr-scan_1.4s_ease-in-out_infinite]" />
+            <div className="h-full w-1/3 rounded-full bg-violet-500/80 tb-pr-scan" />
           </div>
 
           {/* 分析阶段先亮出依据,让用户知道在看什么 */}
@@ -1291,7 +1335,7 @@ export default function PersonalizedRecommend({ typeFilter, LogoComp, onNeedProj
             <p className="text-[10px] text-violet-400/80">{phase === 'analyzing' ? t('resources.reco.analyzingHint') : t('resources.reco.discoveringHint')}</p>
             <button type="button" onClick={stopRun} className="text-[10px] text-zinc-400 hover:text-red-500 shrink-0">{t('resources.reco.stop')}</button>
           </div>
-          <style>{'@keyframes pr-scan{0%{transform:translateX(-100%)}100%{transform:translateX(400%)}}'}</style>
+          <style>{'@keyframes pr-scan{0%{transform:translateX(-100%)}100%{transform:translateX(400%)}}.tb-pr-scan{animation:pr-scan 1.4s var(--ease-in-out,ease-in-out) infinite}@media (prefers-reduced-motion:reduce){.tb-pr-scan{animation:none!important}}'}</style>
         </div>
       )}
 
@@ -1361,7 +1405,11 @@ export default function PersonalizedRecommend({ typeFilter, LogoComp, onNeedProj
       {items && items.length > 0 && phase !== 'analyzing' && phase !== 'discovering' && (
         <>
           <div className="flex items-center justify-between text-[11px] text-zinc-400">
-            <span>{t('resources.reco.forYou', { n: items.length, type: typeLabel, ago: savedAt ? fmtAgo(savedAt, t) : '' })}</span>
+            <span>{t('resources.reco.forYou', {
+              n: purposeFilter ? (visibleItems?.length || 0) : items.length,
+              type: typeLabel,
+              ago: savedAt ? fmtAgo(savedAt, t) : '',
+            })}</span>
             <div className="flex items-center gap-2">
               {hasSharedPortrait && (
                 <button type="button" onClick={reusePortrait} className="text-violet-600 dark:text-violet-300 hover:underline">
@@ -1371,8 +1419,16 @@ export default function PersonalizedRecommend({ typeFilter, LogoComp, onNeedProj
               <span>{t('resources.reco.remineHint')}</span>
             </div>
           </div>
+          {purposeFilter && (!visibleItems || visibleItems.length === 0) ? (
+            <div className="text-center py-6 space-y-2">
+              <p className="text-xs text-zinc-400">{t('resources.emptyTagFiltered')}</p>
+              <p className="text-[11px] text-zinc-400">
+                {t('resources.reco.purposeFilteredHint', { n: items.length })}
+              </p>
+            </div>
+          ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {items.map((rec, idx) => {
+            {(visibleItems || items).map((rec, idx) => {
               const key = recKey(rec) || `x-${idx}`;
               const st = installing[key] || (rec.adopted ? 'done' : undefined);
               const actionLabel = st === 'done' ? (rtype === 'skill' ? t('resources.reco.installed') : t('resources.reco.adopted'))
@@ -1474,6 +1530,7 @@ export default function PersonalizedRecommend({ typeFilter, LogoComp, onNeedProj
               );
             })}
           </div>
+          )}
         </>
       )}
     </div>

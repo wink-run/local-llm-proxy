@@ -125,17 +125,17 @@ description: nested skill
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
-test('scanAllAgentSkills global scope ignores custom dirs', () => {
+test('scanAllAgentSkills merges default and custom dirs', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-skill-'));
   const skillDir = path.join(tmp, '.agents', 'skills', 'only-custom');
   fs.mkdirSync(skillDir, { recursive: true });
   fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '---\nname: only-custom\n---\n');
 
-  const globalOnly = scanAllAgentSkills({ scanScope: 'global', customDirs: [tmp] });
-  assert.ok(!globalOnly.some(i => i.name === 'only-custom'));
+  const merged = scanAllAgentSkills({ customDirs: [tmp] });
+  assert.ok(merged.some(i => i.name === 'only-custom'), 'custom dir skills included');
 
-  const customOnly = scanAllAgentSkills({ scanScope: 'custom', customDirs: [tmp] });
-  assert.ok(customOnly.some(i => i.name === 'only-custom'));
+  const defaultsOnly = scanAllAgentSkills({ customDirs: [] });
+  assert.ok(!defaultsOnly.some(i => i.name === 'only-custom'), 'without customDirs, custom skill absent');
 
   fs.rmSync(tmp, { recursive: true, force: true });
 });

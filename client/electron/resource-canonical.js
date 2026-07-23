@@ -22,11 +22,22 @@ function pathExists(p) {
   }
 }
 
+/** 路径是否同一位置（Windows 忽略大小写） */
+function pathsEqual(a, b) {
+  if (!a || !b) return false;
+  const left = resolvePath(a);
+  const right = resolvePath(b);
+  if (process.platform === 'win32') {
+    return left.toLowerCase() === right.toLowerCase();
+  }
+  return left === right;
+}
+
 /** 将路径规范为 Skill 目录（兼容旧版 SKILL.md 路径） */
 function normalizeSkillDirPath(targetPath, resourceName) {
   if (!targetPath) return null;
   const base = path.basename(targetPath);
-  if (base === 'SKILL.md' || base === 'skill.md') return path.dirname(targetPath);
+  if (/^skill\.md$/i.test(base)) return path.dirname(targetPath);
   return targetPath;
 }
 
@@ -89,4 +100,5 @@ module.exports = {
   copyDirRecursive,
   resolvePath,
   pathExists,
+  pathsEqual,
 };

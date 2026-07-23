@@ -33,6 +33,8 @@ test('mcp-catalog: 缓存项覆盖同 id 且保留内置 MCP', () => {
   assert.ok(ids.has('community-demo'), '缓存项应出现');
   assert.ok(ids.has('tokenbank-agent-bridge'), '内置 bridge 永不丢');
   assert.ok(ids.has('tokenbank-prompts'), '内置 prompts 永不丢');
+  assert.ok(ids.has('tokenbank-models'), '内置 models 永不丢');
+  assert.ok(ids.has('tokenbank-resources'), '内置 resources 永不丢');
   clearCache();
   mcpCatalog.resetCatalogCache();
 });

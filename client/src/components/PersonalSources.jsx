@@ -824,9 +824,9 @@ export function PersonalSourceModelView({
         <div className="flex items-center gap-2 shrink-0">
           {probeTargets.length > 0 && (
             <button type="button" onClick={probeAllPersonal} disabled={!!probing}
-              title="对每个个人源模型逐个发极小请求测速（真实调用，消耗你自己供给源的计费，非积分）"
+              title={t('providers.probe.titlePersonal')}
               className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 disabled:opacity-50 flex items-center gap-1 whitespace-nowrap">
-              {probing ? `测速中 ${probing.done}/${probing.total}` : '⚡ 全部测速'}
+              {probing ? t('providers.probe.running', { done: probing.done, total: probing.total }) : t('providers.probe.all')}
             </button>
           )}
           {trailing}
@@ -910,9 +910,16 @@ export function PersonalSourceModelView({
 }
 
 // ── 第2块：源模板库网格（彩/灰均可点编辑）────────────────────────────────────────
-function templateKindLabel(tpl, t) {
+function templateKindBase(tpl, t) {
   const base = tpl.kind === 'payg' ? t('psrc.kind.payg') : tpl.kind === 'api_sub' ? t('psrc.kind.apiSub') : t('psrc.kind.appSub');
   return tpl.custom ? `${base} · ${t('psrc.tpl.customTag')}` : base;
+}
+
+function templateKindLabel(tpl, t) {
+  const base = templateKindBase(tpl, t);
+  // 免费账户附加标识，便于在源模板库中发现
+  if (tpl.tier === 'free') return `${t('providers.add.freeTag')} · ${base}`;
+  return base;
 }
 
 export function SourceTemplateGrid({
@@ -925,18 +932,31 @@ export function SourceTemplateGrid({
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         {templates.map(tpl => {
           const added = addedKeys.has(tpl.key);
+          const isFree = tpl.tier === 'free';
           return (
             <button key={tpl.key} type="button" onClick={() => onEdit(tpl)}
               title={`${tpl.label} · ${templateKindLabel(tpl, t)}${tpl._override ? ' · ' + t('psrc.tpl.edited') : ''}`}
               className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition
-                ${added ? 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/60'
-                        : 'border-dashed border-zinc-200 dark:border-zinc-700 bg-zinc-50/40 dark:bg-zinc-800/20'}`}>
+                ${added
+                  ? (isFree
+                    ? 'border-teal-300/80 dark:border-teal-700/70 bg-white dark:bg-zinc-800/60 ring-1 ring-teal-200/60 dark:ring-teal-800/40'
+                    : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/60')
+                  : (isFree
+                    ? 'border-dashed border-teal-300/70 dark:border-teal-800/50 bg-teal-50/40 dark:bg-teal-950/10'
+                    : 'border-dashed border-zinc-200 dark:border-zinc-700 bg-zinc-50/40 dark:bg-zinc-800/20')}`}>
               <span className={added ? '' : 'grayscale opacity-50'}>
                 <ServiceIcon id={tpl.key} name={tpl.label} icon={tpl.icon} />
               </span>
               <span className="min-w-0 flex-1">
                 <span className={`block text-xs font-medium truncate ${added ? 'text-zinc-800 dark:text-zinc-200' : 'text-zinc-400'}`}>{tpl.label}</span>
-                <span className="block text-[10px] text-zinc-400">{templateKindLabel(tpl, t)}{tpl._override ? ' · ' + t('psrc.tpl.edited') : ''}</span>
+                <span className="flex flex-wrap items-center gap-1 mt-0.5">
+                  {isFree && (
+                    <span className="text-[10px] px-1 py-0.5 rounded font-semibold bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-200">
+                      {t('providers.add.freeTag')}
+                    </span>
+                  )}
+                  <span className="text-[10px] text-zinc-400">{templateKindBase(tpl, t)}{tpl._override ? ' · ' + t('psrc.tpl.edited') : ''}</span>
+                </span>
               </span>
             </button>
           );
@@ -963,19 +983,30 @@ export function SourcePickerModal({ templates, onPick, onClose, t }) {
         <div className="grid grid-cols-2 gap-2">
           {templates.map(tpl => {
             const ready = templateReadyForInstance(tpl);   // 没配模型的(灰)点击去配置
+            const isFree = tpl.tier === 'free';
             return (
               <button key={tpl.key} type="button" onClick={() => onPick(tpl)}
                 title={ready ? '' : t('psrc.tpl.needConfig')}
                 className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition
-                  ${ready ? 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/60 hover:border-blue-300 dark:hover:border-blue-700'
-                          : 'border-dashed border-zinc-200 dark:border-zinc-700 bg-zinc-50/40 dark:bg-zinc-800/20'}`}>
+                  ${ready
+                    ? (isFree
+                      ? 'border-teal-300/80 dark:border-teal-700/70 bg-white dark:bg-zinc-800/60 hover:border-blue-300 dark:hover:border-blue-700 ring-1 ring-teal-200/60'
+                      : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/60 hover:border-blue-300 dark:hover:border-blue-700')
+                    : 'border-dashed border-zinc-200 dark:border-zinc-700 bg-zinc-50/40 dark:bg-zinc-800/20'}`}>
                 <span className={ready ? '' : 'grayscale opacity-50'}>
                   <ServiceIcon id={tpl.key} name={tpl.label} icon={tpl.icon} />
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className={`block text-xs font-medium truncate ${ready ? 'text-zinc-800 dark:text-zinc-200' : 'text-zinc-400'}`}>{tpl.label}</span>
-                  <span className="block text-[10px] text-zinc-400">
-                    {templateKindLabel(tpl, t)}{ready ? '' : ' · ' + t('psrc.tpl.needConfigTag')}
+                  <span className="flex flex-wrap items-center gap-1 mt-0.5">
+                    {isFree && (
+                      <span className="text-[10px] px-1 py-0.5 rounded font-semibold bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-200">
+                        {t('providers.add.freeTag')}
+                      </span>
+                    )}
+                    <span className="text-[10px] text-zinc-400">
+                      {templateKindBase(tpl, t)}{ready ? '' : ' · ' + t('psrc.tpl.needConfigTag')}
+                    </span>
                   </span>
                 </span>
               </button>
@@ -1046,6 +1077,21 @@ export function accountInstanceAddedOrder(inst, directBilling = {}) {
   return 0;
 }
 
+/** 从源模板预填模型列表（保留 modality / type） */
+function seedModelsFromTemplate(tpl) {
+  const seedModels = [];
+  for (const m of tpl?.models || []) {
+    if (typeof m === 'string') {
+      const mt = tpl.model_types?.[m] || 'chat';
+      seedModels.push(mt === 'chat' ? m : { name: m, type: mt });
+    } else if (m && typeof m === 'object') {
+      const name = m.name || m.id;
+      if (name) seedModels.push({ name, type: m.type || m.modality || 'chat' });
+    }
+  }
+  return seedModels;
+}
+
 export function buildInstancePatch(tpl, { payg = [], subs = [], planId } = {}) {
   const key = tpl.key;
   const isPayg = tpl.kind === 'payg';
@@ -1060,17 +1106,7 @@ export function buildInstancePatch(tpl, { payg = [], subs = [], planId } = {}) {
   if (isPayg) {
     const instId = uid();
     const gateway_id = allocateGatewayId(baseGatewayForPayg(key), usedGw, instId);
-    // 从服务端模板预填模型（保留模态信息）
-    const seedModels = [];
-    for (const m of tpl.models || []) {
-      if (typeof m === 'string') {
-        const mt = tpl.model_types?.[m] || 'chat';
-        seedModels.push(mt === 'chat' ? m : { name: m, type: mt });
-      } else if (m && typeof m === 'object') {
-        const name = m.name || m.id;
-        if (name) seedModels.push({ name, type: m.type || m.modality || 'chat' });
-      }
-    }
+    const seedModels = seedModelsFromTemplate(tpl);
     const inst = {
       id: instId, provider_id: key, gateway_id, label: tpl.label,
       name: nextName(payg, 'provider_id'), icon: tpl.icon, models: seedModels, enabled: true,
@@ -1085,6 +1121,8 @@ export function buildInstancePatch(tpl, { payg = [], subs = [], planId } = {}) {
   const gateway_id = needsGateway
     ? allocateGatewayId(baseGatewayForSubTpl(tpl, isApiSub), usedGw, instId)
     : `acct-${instId}`;
+  // API 订阅与按量一样预填目录模型（如 Kimi Code 的 kimi-for-coding / k3）
+  const seedModels = isApiSub ? seedModelsFromTemplate(tpl) : [];
   const inst = {
     id: instId, subscription_kind: isApiSub ? 'api' : 'app', source_id: key, gateway_id,
     name: nextName(subs, 'source_id'), agent_id: isApiSub ? null : (tpl.agent_id || null),
@@ -1092,7 +1130,7 @@ export function buildInstancePatch(tpl, { payg = [], subs = [], planId } = {}) {
     plan_id: plan.id || 'custom', plan_label: plan.label || plan.id || tpl.label,
     monthly_usd: plan.monthly_usd ?? null,
     subscription_to_api: isApiSub ? true : (tpl.subscription_to_api === true),
-    models: [], // 新建时不预填 catalog 模型，由用户在卡片上添加
+    models: seedModels,
     ...(isApiSub ? { plan_provider_id: tpl.plan_provider_id || key } : {}),
     added_at: addedAt,
   };

@@ -2,6 +2,7 @@
 // Agent 执行结果组件
 import React from 'react';
 import { useLang } from '../store/lang';
+import { PathLink } from './RichMediaContent';
 
 export default function ExecutionResult({ result, task }) {
   const { t } = useLang();
@@ -50,9 +51,11 @@ export default function ExecutionResult({ result, task }) {
                 <span className="text-zinc-500 dark:text-zinc-400">
                   {file.operation === 'created' ? '📝' : file.operation === 'modified' ? '✏️' : '📄'}
                 </span>
-                <span className="text-zinc-700 dark:text-zinc-300 font-mono text-xs">
-                  {file.path || file.file_path}
-                </span>
+                <PathLink
+                  path={file.path || file.file_path}
+                  title={t('debug.preview.clickHint')}
+                  className="text-zinc-700 dark:text-zinc-300 text-xs"
+                />
                 {file.operation && (
                   <span className={`
                     px-1.5 py-0.5 rounded text-xs

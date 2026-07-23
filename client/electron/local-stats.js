@@ -453,30 +453,38 @@ function _tokenTotal({ input_tokens, output_tokens, cache_create_tokens, cache_r
 }
 
 /**
- * 会话补录与网关 proxy 同 request_id 冲突时：若会话侧 token 更完整则合并更新。
- * 保留 proxy 写入的 app_id / api_key，data_source 改为会话源以便 UI 展示「会话补录」。
+ * 会话补录与网关 proxy 同 request_id 冲突时合并更新。
+ * - token 更大：用会话侧覆盖用量
+ * - 已有行为 proxy：即使 token 不大也改 data_source → session-*（shim/OAuth
+ *   流量常无 app_id，不挂会话源则 Claude Code 等应用明细永远为 0）
+ * 保留 proxy 写入的 app_id / api_key。
  */
 function _tryEnrichFromSession(requestId, row) {
   if (!db || !_enrichByRequestIdStmt || !requestId) return false;
   try {
     const ex = db.prepare(
-      'SELECT input_tokens, output_tokens, cache_create_tokens, cache_read_tokens, tokens, data_source FROM requests WHERE request_id = ?'
+      'SELECT input_tokens, output_tokens, cache_create_tokens, cache_read_tokens, tokens, ' +
+      'cost_usd, billing_type, data_source FROM requests WHERE request_id = ?'
     ).get(requestId);
     if (!ex) return false;
     const existTot = _tokenTotal(ex);
     const newTot = (row.inTok || 0) + (row.outTok || 0) + (row.cCreate || 0) + (row.cRead || 0);
-    if (newTot <= existTot) return false;
+    const linkSource = !!(row.data_source
+      && String(row.data_source).startsWith('session')
+      && String(ex.data_source || '') === 'proxy');
+    if (newTot <= existTot && !linkSource) return false;
+    const useNew = newTot > existTot;
     _enrichByRequestIdStmt.run({
       request_id:          requestId,
-      inTok:               row.inTok,
-      outTok:              row.outTok,
-      cCreate:             row.cCreate,
-      cRead:               row.cRead,
-      total:               newTot,
+      inTok:               useNew ? row.inTok : (ex.input_tokens || 0),
+      outTok:              useNew ? row.outTok : (ex.output_tokens || 0),
+      cCreate:             useNew ? row.cCreate : (ex.cache_create_tokens || 0),
+      cRead:               useNew ? row.cRead : (ex.cache_read_tokens || 0),
+      total:               useNew ? newTot : existTot,
       session_id:          row.session_id ?? null,
       model:               row.model ?? null,
-      cost_usd:            row.cost_usd ?? null,
-      billing_type:        row.billing_type ?? null,
+      cost_usd:            useNew ? (row.cost_usd ?? null) : (ex.cost_usd ?? null),
+      billing_type:        row.billing_type ?? ex.billing_type ?? null,
       data_source:         row.data_source ?? null,
     });
     return true;

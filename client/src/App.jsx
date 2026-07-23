@@ -95,7 +95,7 @@ function Layout() {
       {authed && !sidebarCollapsed && (
         <Sidebar onToggleCollapse={cliMode ? toggleSidebar : undefined} />
       )}
-      <main className="relative flex-1 overflow-y-auto min-w-0 bg-zinc-100 dark:bg-zinc-900">
+      <main className="relative flex-1 min-h-0 overflow-y-auto min-w-0 bg-zinc-100 dark:bg-zinc-900">
         {authed && cliMode && sidebarCollapsed && (
           <button
             type="button"

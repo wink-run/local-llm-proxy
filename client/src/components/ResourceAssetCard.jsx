@@ -48,27 +48,27 @@ export function AssetLogo({ type, icon }) {
 }
 
 export const ASSET_CARD_CLASS =
-  'group rounded-2xl border border-zinc-200/80 dark:border-zinc-700/70 bg-white dark:bg-zinc-900/85 p-4 '
-  + 'shadow-[0_1px_2px_rgba(15,23,42,0.04),0_1px_1px_rgba(15,23,42,0.02)] '
+  'group rounded-xl border border-zinc-200/80 dark:border-zinc-700/70 bg-white dark:bg-zinc-900/85 p-4 '
+  + 'shadow-[0_1px_2px_rgba(15,23,42,0.04)] '
   + 'hover:border-zinc-300/90 dark:hover:border-zinc-600 '
-  + 'hover:shadow-[0_10px_28px_-12px_rgba(15,23,42,0.18)] '
-  + 'transition-[box-shadow,border-color,transform] duration-200 ease-out '
-  + 'hover:-translate-y-px';
+  + 'hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.14)] '
+  + 'transition-[box-shadow,border-color,transform] duration-150 ease-out '
+  + 'active:scale-[0.995]';
 
 export const ASSET_BTN_PRIMARY =
-  'text-xs px-3 py-1.5 rounded-lg bg-violet-600 text-white shadow-sm shadow-violet-600/20 '
-  + 'hover:bg-violet-500 active:scale-[0.98] disabled:opacity-45 disabled:shadow-none transition';
+  'tb-press text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white shadow-sm shadow-blue-600/20 '
+  + 'hover:bg-blue-500 disabled:opacity-45 disabled:shadow-none transition-colors';
 
 export const ASSET_BTN_MANAGED =
-  'text-xs px-3 py-1.5 rounded-lg border border-violet-200/90 dark:border-violet-800/80 '
-  + 'bg-violet-50/90 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 '
+  'text-xs px-3 py-1.5 rounded-lg border border-blue-200/90 dark:border-blue-800/80 '
+  + 'bg-blue-50/90 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 '
   + 'disabled:opacity-70 cursor-default';
 
 export const ASSET_BTN_GHOST =
-  'text-xs px-3 py-1.5 rounded-lg border border-zinc-200/90 dark:border-zinc-700 '
+  'tb-press text-xs px-3 py-1.5 rounded-lg border border-zinc-200/90 dark:border-zinc-700 '
   + 'text-zinc-600 dark:text-zinc-300 bg-white/80 dark:bg-zinc-900/60 '
   + 'hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-600 '
-  + 'active:scale-[0.98] disabled:opacity-45 transition';
+  + 'disabled:opacity-45 transition-colors';
 
 /**
  * 统一展示名:技能固定用 name/slug(与落库一致);其它优先 display_name。

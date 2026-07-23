@@ -530,8 +530,8 @@ function DeviceStatBar({ calls, errors }) {
   return (
     <div className="space-y-1">
       <div className="flex h-1.5 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-700 w-full">
-        <div className="bg-blue-400 h-full transition-all" style={{ width: `${okPct}%` }} />
-        {errors > 0 && <div className="bg-red-400 h-full transition-all" style={{ width: `${errPct}%` }} />}
+        <div className="bg-blue-400 h-full transition-[width] duration-200 ease-out" style={{ width: `${okPct}%` }} />
+        {errors > 0 && <div className="bg-red-400 h-full transition-[width] duration-200 ease-out" style={{ width: `${errPct}%` }} />}
       </div>
       <div className="flex items-center gap-2 text-xs text-gray-400">
         <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block"/>成功 {calls - errors}</span>
@@ -663,7 +663,7 @@ function DevicesSection() {
                       <span>{sharePct}%</span>
                     </div>
                     <div className="h-1.5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
-                      <div className="h-full bg-blue-400 rounded-full transition-all" style={{ width: `${sharePct}%` }} />
+                      <div className="h-full bg-blue-400 rounded-full transition-[width] duration-200 ease-out" style={{ width: `${sharePct}%` }} />
                     </div>
                     <DeviceStatBar calls={calls} errors={errors} />
                   </div>

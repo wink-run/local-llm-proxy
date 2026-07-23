@@ -1,7 +1,9 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import ServiceIcon from '../components/ServiceIcon';
 import PersonalizedRecommend from '../components/PersonalizedRecommend';
+import SkillInstallDialog from '../components/SkillInstallDialog';
 import ResourceAssetCard, {
   ASSET_BTN_GHOST,
   ASSET_BTN_MANAGED,
@@ -12,10 +14,16 @@ import ResourceAssetCard, {
 } from '../components/ResourceAssetCard';
 import { useLang } from '../store/lang';
 import { getSyncServerBase } from '../config';
+import {
+  PURPOSE_SLUGS,
+  aggregateTagsWithAi,
+  loadAiPurposeMap,
+  resolvePurposes,
+  tagToPurpose,
+} from '../lib/resource-purpose';
 
 const VIEW_TAB_KEY = 'tokenbank.resources.viewTab';
 const TYPE_FILTER_KEY = 'tokenbank.resources.typeFilter';
-const SCAN_SCOPE_KEY = 'tokenbank.resources.scanScope';
 const SCAN_CUSTOM_DIR_KEY = 'tokenbank.resources.scanCustomDir';
 const APP_FILTER_KEY = 'tokenbank.resources.appFilter';
 const IDLE_DAYS_KEY = 'tokenbank.resources.idleDays';
@@ -34,31 +42,36 @@ function saveIdleDays(days) {
 }
 
 // `.agents` / 自定义扫描等是公共 skill 目录，不是可筛选的 Agent 应用
-const NON_AGENT_APP_IDS = new Set(['agents-hub', 'custom', 'aweskill']);
+const NON_AGENT_APP_IDS = new Set(['agents-hub', 'tokenbank', 'custom', 'aweskill']);
 
 function isAgentAppId(agentId) {
   return !!agentId && !NON_AGENT_APP_IDS.has(agentId);
 }
 
-function readScanScope() {
+/** 用户添加的扫描目录列表（兼容旧版单字符串） */
+function readScanCustomDirs() {
   try {
-    const v = localStorage.getItem(SCAN_SCOPE_KEY);
-    // 未设置时默认全局目录
-    if (!v) return 'global';
-    return v === 'custom' ? 'custom' : 'global';
-  } catch { return 'global'; }
+    const raw = localStorage.getItem(SCAN_CUSTOM_DIR_KEY);
+    if (!raw) return [];
+    if (raw.startsWith('[')) {
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr)
+        ? [...new Set(arr.map(d => String(d || '').trim()).filter(Boolean))]
+        : [];
+    }
+    // 旧版：单个路径字符串
+    const one = raw.trim();
+    return one ? [one] : [];
+  } catch {
+    return [];
+  }
 }
 
-function saveScanScope(scope) {
-  try { localStorage.setItem(SCAN_SCOPE_KEY, scope); } catch {}
-}
-
-function readScanCustomDir() {
-  try { return localStorage.getItem(SCAN_CUSTOM_DIR_KEY) || ''; } catch { return ''; }
-}
-
-function saveScanCustomDir(dir) {
-  try { localStorage.setItem(SCAN_CUSTOM_DIR_KEY, dir || ''); } catch {}
+function saveScanCustomDirs(dirs) {
+  try {
+    const list = [...new Set((dirs || []).map(d => String(d || '').trim()).filter(Boolean))];
+    localStorage.setItem(SCAN_CUSTOM_DIR_KEY, JSON.stringify(list));
+  } catch { /* ignore */ }
 }
 
 
@@ -87,11 +100,12 @@ function saveViewTab(tab) {
 function readTypeFilter() {
   try {
     const v = localStorage.getItem(TYPE_FILTER_KEY);
-    // 空字符串 = 全部；缺省默认 skill
+    // 缺省 / 空 = 全部；记住用户上次选择
+    if (v === null || v === undefined) return '';
     if (v === '') return '';
     if (v === 'prompt' || v === 'skill' || v === 'assistant') return v;
-    return 'skill';
-  } catch { return 'skill'; }
+    return '';
+  } catch { return ''; }
 }
 
 function saveTypeFilter(type) {
@@ -124,6 +138,26 @@ function sourceLabel(source, t) {
   return source;
 }
 
+/** 提示词模版用途：文本对话 / 图像生成（存 metadata.promptKind） */
+function promptKindOf(resource) {
+  return resource?.metadata?.promptKind === 'image' ? 'image' : 'text';
+}
+
+/** 统一读取资源标签（metadata.tags） */
+function resourceTags(item) {
+  const raw = item?.metadata?.tags ?? item?.tags;
+  if (!Array.isArray(raw)) return [];
+  return raw.map(t => String(t || '').trim()).filter(Boolean);
+}
+
+/** 标签输入：逗号/空格分隔 → 数组 */
+function parseTagsInput(text) {
+  return String(text || '')
+    .split(/[,，\s]+/)
+    .map(t => t.trim())
+    .filter(Boolean);
+}
+
 const EMPTY_EDITOR = {
   id: '',
   type: 'prompt',
@@ -131,7 +165,32 @@ const EMPTY_EDITOR = {
   display_name: '',
   description: '',
   content: '',
+  promptKind: 'text',
+  tagsText: '',
+  metadata: {},
 };
+
+/** 是否 Windows 前端环境（路径用反斜杠） */
+function isWindowsPathEnv(sample = '') {
+  const s = String(sample || '');
+  if (s.includes('\\')) return true;
+  if (s.includes('/')) return false;
+  if (typeof navigator !== 'undefined') {
+    return /Win/i.test(navigator.userAgent || '') || /Win/i.test(navigator.platform || '');
+  }
+  return false;
+}
+
+/** 拼本地路径，兼容 Windows `\` 与 POSIX `/` */
+function joinFsPath(base, ...segments) {
+  const sep = isWindowsPathEnv(base) ? '\\' : '/';
+  const parts = [String(base || '').replace(/[/\\]+$/, '')];
+  for (const seg of segments) {
+    const bit = String(seg || '').replace(/^[/\\]+|[/\\]+$/g, '');
+    if (bit) parts.push(bit);
+  }
+  return parts.filter(Boolean).join(sep);
+}
 
 /** Skill 权威目录（用户安装位置） */
 function getSkillLocation(resource) {
@@ -140,8 +199,9 @@ function getSkillLocation(resource) {
 
   const meta = resource.metadata || {};
   let loc = meta.authorityPath || meta.scannedFrom || meta.canonicalPath;
-  if (loc && (loc.endsWith('/SKILL.md') || loc.endsWith('/skill.md') || loc.endsWith('\\SKILL.md'))) {
-    loc = loc.replace(/[/\\][^/\\]+$/, '');
+  // 兼容 / 与 \，以及 SKILL.md / skill.md
+  if (loc && /[/\\]skill\.md$/i.test(String(loc))) {
+    loc = String(loc).replace(/[/\\][^/\\]+$/, '');
   }
   if (loc) return loc;
 
@@ -151,7 +211,7 @@ function getSkillLocation(resource) {
   return originProj?.targetPath || null;
 }
 
-/** 路径归一化后比较（判断是否同一权威目录） */
+/** 路径归一化后比较（判断是否同一权威目录；忽略分隔符与大小写，适配 Windows） */
 function sameSkillDir(a, b) {
   if (!a || !b) return false;
   const norm = (p) => String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
@@ -183,10 +243,12 @@ function canUnprojectProjection(proj, authorityPath) {
 
 /** 资产页：Prompt / Skill / Assistant 纳管与投射 */
 export default function Resources() {
+  const navigate = useNavigate();
   const { t } = useLang();
   const [viewTab, setViewTab] = useState(readViewTab);
   const [typeFilter, setTypeFilter] = useState(readTypeFilter);
   const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [catalog, setCatalog] = useState([]);
   const [discovered, setDiscovered] = useState([]);
   const [scanStats, setScanStats] = useState(null);
@@ -196,6 +258,7 @@ export default function Resources() {
   const [promptAgents, setPromptAgents] = useState([]);
   const [assistantAgents, setAssistantAgents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
@@ -203,9 +266,18 @@ export default function Resources() {
   const [projectMenu, setProjectMenu] = useState(null);
   const [projectSelected, setProjectSelected] = useState([]);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [skillInstallOpen, setSkillInstallOpen] = useState(false);
   const [editorForm, setEditorForm] = useState(EMPTY_EDITOR);
-  const [scanScope, setScanScope] = useState(readScanScope);
-  const [customScanDir, setCustomScanDir] = useState(readScanCustomDir);
+  /** 提示词子筛选：'' | 'text' | 'image' */
+  const [promptKindFilter, setPromptKindFilter] = useState('');
+  /** 用途筛选（空 = 全部；值为 purpose slug） */
+  const [tagFilter, setTagFilter] = useState('');
+  /** AI / 静态聚合后的 tag→用途 映射 */
+  const [purposeAiMap, setPurposeAiMap] = useState(loadAiPurposeMap);
+  /** 个性化推荐结果变更时递增，刷新用途芯片 */
+  const [recoPurposeRev, setRecoPurposeRev] = useState(0);
+  const [customScanDirs, setCustomScanDirs] = useState(readScanCustomDirs);
+  const [defaultScanRoots, setDefaultScanRoots] = useState([]);
   const [scanning, setScanning] = useState(false);
   const [scanExpanded, setScanExpanded] = useState(false);
   const [appFilter, setAppFilter] = useState(readAppFilter);
@@ -216,15 +288,20 @@ export default function Resources() {
   const [idleSelected, setIdleSelected] = useState([]);
   const [idleDays, setIdleDays] = useState(readIdleDays);
   const projectMenuRef = useRef(null);
+  const bootstrappedRef = useRef(false);
+
+  // 搜索防抖：避免每键触发全量扫描/加载
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQuery(query.trim()), 280);
+    return () => clearTimeout(id);
+  }, [query]);
 
   const scanFilters = useCallback(() => ({
-    query: query || undefined,
-    scanScope,
-    customDirs: scanScope === 'custom' && customScanDir.trim()
-      ? [customScanDir.trim()]
-      : [],
+    query: debouncedQuery || undefined,
+    // 默认目录始终扫；customDirs 为用户补充
+    customDirs: customScanDirs,
     includeManaged: true,
-  }), [query, scanScope, customScanDir]);
+  }), [debouncedQuery, customScanDirs]);
 
   const loadBase = useCallback(async ({ silent = false } = {}) => {
     if (!window.electronAPI?.resource) {
@@ -235,7 +312,7 @@ export default function Resources() {
     if (!silent) setLoading(true);
     setError('');
     try {
-      const filters = { type: typeFilter || undefined, query: query || undefined };
+      const filters = { type: typeFilter || undefined, query: debouncedQuery || undefined };
       const [catRes, resRes, agentRes] = await Promise.all([
         window.electronAPI.resource.listCatalog(filters),
         window.electronAPI.resource.listResources(filters),
@@ -254,15 +331,63 @@ export default function Resources() {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [typeFilter, query, t]);
+  }, [typeFilter, debouncedQuery, t]);
+
+  /** 拉取默认监控目录：listScanRoots → scanStatsHint → Agent skillRoot 回退 */
+  const refreshDefaultScanRoots = useCallback(async (filters, scanStatsHint) => {
+    const api = window.electronAPI?.resource;
+    if (!api) return;
+    // 1) 专用 IPC
+    try {
+      if (api.listScanRoots) {
+        const res = await api.listScanRoots(filters || scanFilters());
+        const defaults = (res?.roots || []).filter(r => r.kind === 'default' && r.path);
+        if (res?.success && defaults.length) {
+          setDefaultScanRoots(defaults);
+          return;
+        }
+      }
+    } catch { /* 旧主进程无 handler 时回退 */ }
+    // 2) 扫描统计里附带的 defaultRoots
+    if (Array.isArray(scanStatsHint?.defaultRoots) && scanStatsHint.defaultRoots.length) {
+      setDefaultScanRoots(scanStatsHint.defaultRoots.filter(r => r.path));
+      return;
+    }
+    // 3) 用已安装 Agent 的 skillRoot 拼一份，并补上 .agents
+    try {
+      const agentRes = await api.listAgentTargets();
+      if (agentRes?.success) {
+        const roots = (agentRes.agents || [])
+          .filter(a => a.skillRoot)
+          .map(a => ({
+            id: a.id,
+            label: a.label || a.id,
+            path: a.skillRoot,
+            kind: 'default',
+            exists: true,
+          }));
+        // 从任一 skill 路径反推家目录，补全 .agents / .tokenbank（分隔符随平台）
+        const sample = roots[0]?.path || '';
+        const homeMatch = String(sample).match(/^(.*)[/\\]\.[^/\\]+[/\\]skills(?:-cursor)?$/i);
+        const home = homeMatch?.[1];
+        if (home) {
+          const extras = [
+            { id: 'agents-hub', label: '.agents', path: joinFsPath(home, '.agents', 'skills') },
+            { id: 'tokenbank', label: '.tokenbank', path: joinFsPath(home, '.tokenbank', 'skills') },
+          ];
+          for (const ex of extras) {
+            if (!roots.some(r => r.id === ex.id || sameSkillDir(r.path, ex.path))) {
+              roots.push({ ...ex, kind: 'default', exists: true });
+            }
+          }
+        }
+        if (roots.length) setDefaultScanRoots(roots);
+      }
+    } catch { /* ignore */ }
+  }, [scanFilters]);
 
   const runScan = useCallback(async ({ silent = false } = {}) => {
     if (!window.electronAPI?.resource) return;
-    if (scanScope === 'custom' && !customScanDir.trim()) {
-      setMsg('');
-      setError(t('resources.scanCustomDirRequired'));
-      return;
-    }
     if (!silent) {
       setScanning(true);
       setError('');
@@ -278,6 +403,8 @@ export default function Resources() {
       if (scanRes.success) {
         setDiscovered(scanRes.items || []);
         setScanStats(scanRes.scanStats || null);
+        // 默认目录与扫描结果一并刷新
+        await refreshDefaultScanRoots(filters, scanRes.scanStats);
       } else if (!silent) {
         setError(scanRes.error || t('resources.scanFailed'));
       }
@@ -290,12 +417,12 @@ export default function Resources() {
     } finally {
       if (!silent) setScanning(false);
     }
-  }, [scanFilters, scanScope, customScanDir, t]);
+  }, [scanFilters, refreshDefaultScanRoots, t]);
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async ({ silent = false } = {}) => {
     // 先扫描即纳管（入库），再读取 resources，确保投射菜单能查到刚纳管的 skill
-    await runScan();
-    await loadBase();
+    await runScan({ silent });
+    await loadBase({ silent });
   }, [loadBase, runScan]);
 
   /** 推荐页纳管后的静默刷新:不切 loading,避免卸载 PersonalizedRecommend 丢按钮状态 */
@@ -314,7 +441,34 @@ export default function Resources() {
     refreshAfterAdopt();
   }, [refreshAfterAdopt]);
 
-  useEffect(() => { loadAll(); }, [loadAll]);
+  // 首屏全量加载；之后筛选/搜索走 silent，避免列表被掏空
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const silent = bootstrappedRef.current;
+      if (silent) setSearching(true);
+      try {
+        await loadAll({ silent });
+        if (alive) bootstrappedRef.current = true;
+      } finally {
+        if (alive) setSearching(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [loadAll]);
+
+  // Esc 关闭编辑 / 清理模态（忙碌中不可关）
+  useEffect(() => {
+    if (!editorOpen && !cleanupOpen) return undefined;
+    function onKey(e) {
+      if (e.key !== 'Escape') return;
+      if (busy === 'editor' || busy === 'cleanup') return;
+      if (editorOpen) setEditorOpen(false);
+      if (cleanupOpen) setCleanupOpen(false);
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [editorOpen, cleanupOpen, busy]);
 
   // 成功提示 3 秒后自动消失
   useEffect(() => {
@@ -372,16 +526,17 @@ export default function Resources() {
     saveAppFilter(agentId);
   }
 
-  function changeScanScope(scope) {
-    setScanScope(scope);
-    saveScanScope(scope);
+  function updateCustomScanDirs(dirs) {
+    const next = [...new Set((dirs || []).map(d => String(d || '').trim()).filter(Boolean))];
+    setCustomScanDirs(next);
+    saveScanCustomDirs(next);
   }
 
-  function changeCustomScanDir(dir) {
-    setCustomScanDir(dir);
-    saveScanCustomDir(dir);
+  function removeCustomScanDir(dir) {
+    updateCustomScanDirs(customScanDirs.filter(d => !sameSkillDir(d, dir)));
   }
 
+  /** 添加用户扫描目录（去重）；与默认目录并列，不互斥 */
   async function pickCustomScanDir() {
     if (!window.electronAPI?.resource?.pickImportPath) return;
     try {
@@ -390,11 +545,28 @@ export default function Resources() {
         allowFile: false,
         allowDirectory: true,
       });
-      if (pick.success && pick.path) changeCustomScanDir(pick.path);
+      if (pick.success && pick.path) {
+        const p = String(pick.path).trim();
+        // Windows 路径大小写/分隔符可能不一致，用归一化去重
+        if (p && !customScanDirs.some(d => sameSkillDir(d, p))) {
+          updateCustomScanDirs([...customScanDirs, p]);
+        }
+      }
     } catch (e) {
       setError(e.message);
     }
   }
+
+  // 展开扫描面板时拉取默认监控目录；首次挂载也拉一次
+  useEffect(() => {
+    refreshDefaultScanRoots();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- 仅启动时
+
+  useEffect(() => {
+    if (!scanExpanded) return undefined;
+    refreshDefaultScanRoots();
+    return undefined;
+  }, [scanExpanded, refreshDefaultScanRoots]);
 
   function toggleScanPanel() {
     setScanExpanded(v => !v);
@@ -406,7 +578,7 @@ export default function Resources() {
     try {
       const res = await window.electronAPI.resource.installCatalog({ catalogId });
       if (!res.success) {
-        alert(res.error || t('resources.installFailed'));
+        setError(res.error || t('resources.installFailed'));
         return;
       }
       setMsg(res.alreadyInstalled ? t('resources.alreadyManaged') : t('resources.installOk'));
@@ -420,7 +592,7 @@ export default function Resources() {
       // 级联纳管依赖：静默刷新资源/目录列表（不置 loading）
       if ((res.installedDependencies || []).length) {
         try {
-          const filters = { type: typeFilter || undefined, query: query || undefined };
+          const filters = { type: typeFilter || undefined, query: debouncedQuery || undefined };
           const [catRes, resRes] = await Promise.all([
             window.electronAPI.resource.listCatalog(filters),
             window.electronAPI.resource.listResources(filters),
@@ -431,7 +603,7 @@ export default function Resources() {
       }
       // 留在当前「社区推荐」Tab，不跳转到已纳管
     } catch (e) {
-      alert(e.message);
+      setError(e.message);
     } finally {
       setBusy('');
     }
@@ -441,9 +613,9 @@ export default function Resources() {
     if (!targetPath || !window.electronAPI?.resource?.openPath) return;
     try {
       const res = await window.electronAPI.resource.openPath({ targetPath });
-      if (!res?.success) alert(res?.error || t('resources.openPathFailed'));
+      if (!res?.success) setError(res?.error || t('resources.openPathFailed'));
     } catch (e) {
-      alert(e.message);
+      setError(e.message);
     }
   }
 
@@ -580,7 +752,7 @@ export default function Resources() {
     if (resource.type === 'assistant') {
       const authorityPath = resource.authorityPath || getSkillLocation(resource);
       if (hasProjectedLinks(resource.projections, authorityPath)) {
-        alert(t('resources.deleteNeedUnproject'));
+        setError(t('resources.deleteNeedUnproject'));
         return;
       }
     }
@@ -589,7 +761,7 @@ export default function Resources() {
     try {
       const res = await window.electronAPI.resource.deleteResource(resource.id);
       if (!res.success) {
-        alert(res.error || t('resources.deleteFailed'));
+        setError(res.error || t('resources.deleteFailed'));
         return;
       }
       removeResourceLocally(resource.id, resource);
@@ -609,7 +781,7 @@ export default function Resources() {
     if (!resourceId) return;
     const authorityPath = item.authorityPath || getSkillLocation(item);
     if (hasProjectedLinks(item.projections, authorityPath)) {
-      alert(t('resources.uninstallNeedUnproject'));
+      setError(t('resources.uninstallNeedUnproject'));
       return;
     }
     const name = item.display_name || item.name;
@@ -618,7 +790,7 @@ export default function Resources() {
     try {
       const res = await window.electronAPI.resource.deleteResource(resourceId);
       if (!res.success) {
-        alert(res.error || t('resources.uninstallFailed'));
+        setError(res.error || t('resources.uninstallFailed'));
         return;
       }
       removeResourceLocally(resourceId, { ...item, id: resourceId, type: 'skill' });
@@ -639,14 +811,14 @@ export default function Resources() {
     try {
       const res = await window.electronAPI.resource.listIdleSkills({ days: n });
       if (!res.success) {
-        alert(res.error || t('resources.cleanupScanFailed'));
+        setError(res.error || t('resources.cleanupScanFailed'));
         if (closeOnError) setCleanupOpen(false);
         return;
       }
       setIdleResult(res);
       setIdleSelected((res.items || []).map(i => i.id));
     } catch (e) {
-      alert(e.message);
+      setError(e.message);
       if (closeOnError) setCleanupOpen(false);
     } finally {
       setIdleLoading(false);
@@ -680,7 +852,7 @@ export default function Resources() {
   /** 一键清理勾选的闲置 Skill */
   async function confirmSkillCleanup() {
     if (!idleSelected.length) {
-      alert(t('resources.cleanupPick'));
+      setError(t('resources.cleanupPick'));
       return;
     }
     if (!window.confirm(t('resources.cleanupConfirm', { n: idleSelected.length, days: idleDays }))) {
@@ -690,7 +862,7 @@ export default function Resources() {
     try {
       const res = await window.electronAPI.resource.cleanupSkills({ resourceIds: idleSelected });
       if (!res.success && !res.cleaned) {
-        alert(res.error || t('resources.cleanupFailed'));
+        setError(res.error || t('resources.cleanupFailed'));
         return;
       }
       const failed = (res.results || []).filter(r => !r.success);
@@ -701,7 +873,7 @@ export default function Resources() {
       setIdleResult(null);
       setIdleSelected([]);
       if (failed.length) {
-        alert(t('resources.cleanupPartial', {
+        setError(t('resources.cleanupPartial', {
           ok: res.cleaned || 0,
           fail: failed.length,
         }));
@@ -710,7 +882,7 @@ export default function Resources() {
       }
       // 已在上方 removeResourceLocally，无需 loadAll
     } catch (e) {
-      alert(e.message);
+      setError(e.message);
     } finally {
       setBusy('');
     }
@@ -772,40 +944,44 @@ export default function Resources() {
   async function confirmProject() {
     if (!projectMenu) return;
     if (!projectSelected.length) {
-      alert(t('resources.pickAgent'));
+      setError(t('resources.pickAgent'));
       return;
     }
     const { resourceId } = projectMenu;
     setProjectMenu(null);
     setBusy(resourceId);
+    setError('');
     try {
       const res = await window.electronAPI.resource.project({
         resourceId,
         agentIds: projectSelected,
       });
       if (!res.success) {
-        alert(res.error || t('resources.projectFailed'));
+        setError(res.error || t('resources.projectFailed'));
         return;
       }
       // 目标处存在同名的其他目录：默认不覆盖，询问后再强制
       let finalRes = res;
       if (res.conflicts?.length
-        && window.confirm(`${res.hint}\n\n是否强制覆盖并投射？这会删除目标位置的同名目录，不可撤销。`)) {
+        && window.confirm(t('resources.forceProjectConfirm', { hint: res.hint || '' }))) {
         finalRes = await window.electronAPI.resource.project({
           resourceId,
           agentIds: projectSelected,
           force: true,
         });
-        alert(finalRes.success ? (finalRes.hint || t('resources.projectOk')) : (finalRes.error || t('resources.projectFailed')));
+        if (finalRes.success) setMsg(finalRes.hint || t('resources.projectOk'));
+        else setError(finalRes.error || t('resources.projectFailed'));
+      } else if (res.conflicts?.length) {
+        setMsg(res.hint || t('resources.projectSkippedConflict'));
       } else {
-        alert(res.hint || t('resources.projectOk'));
+        setMsg(res.hint || t('resources.projectOk'));
       }
       // 用返回资源局部更新投射状态，避免整页重刷
       if (finalRes?.success && finalRes.resource) {
         applyResourcePatch(resourceId, finalRes.resource);
       }
     } catch (e) {
-      alert(e.message);
+      setError(e.message);
     } finally {
       setBusy('');
     }
@@ -813,10 +989,11 @@ export default function Resources() {
 
   async function handleUnproject(resource, agentId) {
     setBusy(`${resource.id}-${agentId}`);
+    setError('');
     try {
       const res = await window.electronAPI.resource.unproject({ resourceId: resource.id, agentId });
       if (!res.success) {
-        alert(res.error || t('resources.unprojectFailed'));
+        setError(res.error || t('resources.unprojectFailed'));
         return;
       }
       // 用返回的最新投射列表局部更新，不整页刷新
@@ -825,6 +1002,7 @@ export default function Resources() {
         const nextProjs = (resource.projections || []).filter(p => p.agentId !== agentId);
         applyResourcePatch(resource.id, { ...resource, projections: nextProjs });
       }
+      setMsg(t('resources.unprojectOk'));
     } finally {
       setBusy('');
     }
@@ -834,20 +1012,19 @@ export default function Resources() {
     setEditorForm({
       ...EMPTY_EDITOR,
       type: typeFilter || 'prompt',
+      // 新建时若正筛「图片」提示词，默认归为图片类
+      promptKind: typeFilter === 'prompt' && promptKindFilter === 'image' ? 'image' : 'text',
+      // 当前标签筛选项预填，便于归类
+      tagsText: tagFilter || '',
+      metadata: {},
     });
     setEditorOpen(true);
   }
 
-  /** Skill 类型：引导用户在 Agent / Debug 安装后扫描纳管 */
-  function handleSkillInstallHint() {
-    alert(t('resources.skillInstallHint'));
-    setScanExpanded(true);
-    setMsg(t('resources.skillInstallHintShort'));
-  }
-
+  /** Skill 类型：打开安装对话框，由资源安装智能体执行 */
   function handlePrimaryAction() {
     if (typeFilter === 'skill') {
-      handleSkillInstallHint();
+      setSkillInstallOpen(true);
       return;
     }
     openCreateEditor();
@@ -861,6 +1038,10 @@ export default function Resources() {
       display_name: resource.display_name || resource.name || '',
       description: resource.description || '',
       content: resource.content || '',
+      promptKind: promptKindOf(resource),
+      tagsText: resourceTags(resource).join(', '),
+      // 保留原 metadata，避免编辑时冲掉其它字段
+      metadata: { ...(resource.metadata || {}) },
     });
     setEditorOpen(true);
   }
@@ -868,11 +1049,16 @@ export default function Resources() {
   async function saveEditor() {
     const name = String(editorForm.name || '').trim();
     if (!name) {
-      alert(t('resources.editorNameRequired'));
+      setError(t('resources.editorNameRequired'));
       return;
     }
     setBusy('editor');
     try {
+      const metadata = { ...(editorForm.metadata || {}) };
+      if (editorForm.type === 'prompt') {
+        metadata.promptKind = editorForm.promptKind === 'image' ? 'image' : 'text';
+      }
+      metadata.tags = parseTagsInput(editorForm.tagsText);
       const res = await window.electronAPI.resource.saveResource({
         id: editorForm.id || undefined,
         type: editorForm.type,
@@ -880,9 +1066,10 @@ export default function Resources() {
         display_name: editorForm.display_name || name,
         description: editorForm.description || '',
         content: editorForm.content || '',
+        metadata,
       });
       if (!res.success) {
-        alert(res.error || t('resources.saveFailed'));
+        setError(res.error || t('resources.saveFailed'));
         return;
       }
       setEditorOpen(false);
@@ -890,7 +1077,7 @@ export default function Resources() {
       changeViewTab('managed');
       if (res.resource) upsertResourceLocally(res.resource);
     } catch (e) {
-      alert(e.message);
+      setError(e.message);
     } finally {
       setBusy('');
     }
@@ -903,7 +1090,7 @@ export default function Resources() {
         title: t('resources.importPickTitle'),
       });
       if (!pick.success) {
-        if (!pick.canceled && pick.error) alert(pick.error);
+        if (!pick.canceled && pick.error) setError(pick.error);
         return;
       }
       const res = await window.electronAPI.resource.importFromPath({
@@ -911,22 +1098,109 @@ export default function Resources() {
         type: typeFilter || undefined,
       });
       if (!res.success) {
-        alert(res.error || t('resources.importFailed'));
+        setError(res.error || t('resources.importFailed'));
         return;
       }
-      if (res.hint) alert(res.hint);
-      else if (res.alreadyInstalled) alert(t('resources.alreadyManaged'));
+      if (res.hint) setMsg(res.hint);
+      else if (res.alreadyInstalled) setMsg(t('resources.alreadyManaged'));
       else setMsg(t('resources.importOk'));
       changeViewTab('managed');
       if (res.resource) upsertResourceLocally(res.resource);
     } catch (e) {
-      alert(e.message);
+      setError(e.message);
     } finally {
       setBusy('');
     }
   }
 
-  const filteredCatalog = catalog;
+  // 目录 / 本机：提示词按文本|图片子类筛选
+  const matchPromptKind = (r) => {
+    if (typeFilter !== 'prompt' || !promptKindFilter) return true;
+    if (r.type && r.type !== 'prompt') return true;
+    return promptKindOf(r) === promptKindFilter;
+  };
+
+  /** 资源用途列表（含发现项从已纳管补 tags） */
+  const purposesOf = useCallback((item, managedLookup) => {
+    let probe = item;
+    if (managedLookup && !(resourceTags(item).length || item?.metadata?.category)) {
+      if (item?.resourceId && managedLookup.get(item.resourceId)) {
+        probe = managedLookup.get(item.resourceId);
+      } else if (item?.name) {
+        const byName = [...managedLookup.values()].find(
+          r => r.name === item.name && r.type === (item.type || 'skill'),
+        );
+        if (byName) probe = byName;
+      }
+    }
+    return resolvePurposes(probe, purposeAiMap);
+  }, [purposeAiMap]);
+
+  /** 用途匹配 */
+  const matchTag = (item, managedLookup) => {
+    if (!tagFilter) return true;
+    return purposesOf(item, managedLookup).includes(tagFilter);
+  };
+
+  // 筛选项：目录 + 已纳管 + 个性化推荐缓存里出现的用途
+  const availableTags = useMemo(() => {
+    const present = new Set();
+    const bump = (item) => {
+      if (typeFilter && item.type && item.type !== typeFilter) return;
+      for (const p of resolvePurposes(item, purposeAiMap)) present.add(p);
+    };
+    catalog.forEach(bump);
+    resources.forEach(bump);
+    // 推荐结果的 category（与用途 slug 对齐），避免筛用途时芯片被清空
+    try {
+      const rt = typeFilter === 'prompt' || typeFilter === 'assistant' ? typeFilter : 'skill';
+      const raw = localStorage.getItem(`tokenbank.resources.recommend.last.${rt}`);
+      const doc = raw ? JSON.parse(raw) : null;
+      for (const rec of (doc?.items || [])) {
+        const cat = String(rec?.category || '').trim();
+        if (!cat) continue;
+        if (PURPOSE_SLUGS.includes(cat)) present.add(cat);
+        else {
+          const p = tagToPurpose(cat, purposeAiMap);
+          if (p) present.add(p);
+        }
+      }
+    } catch { /* ignore */ }
+    return PURPOSE_SLUGS.filter(s => present.has(s));
+  }, [catalog, resources, typeFilter, purposeAiMap, recoPurposeRev]);
+
+  // 用途筛选项已不存在时回退
+  useEffect(() => {
+    if (tagFilter && availableTags.length && !availableTags.includes(tagFilter)) {
+      setTagFilter('');
+    }
+  }, [tagFilter, availableTags]);
+
+  // 未知原始标签 → 调本地网关 AI 归入用途（有缓存，失败静默）
+  useEffect(() => {
+    const raw = new Set();
+    const collect = (item) => {
+      if (typeFilter && item.type && item.type !== typeFilter) return;
+      for (const t of resourceTags(item)) raw.add(t);
+      if (item?.metadata?.category) raw.add(item.metadata.category);
+    };
+    catalog.forEach(collect);
+    resources.forEach(collect);
+    const unknown = [...raw].filter(t => !tagToPurpose(t, purposeAiMap));
+    if (!unknown.length) return undefined;
+    let cancelled = false;
+    aggregateTagsWithAi(unknown, purposeAiMap).then((next) => {
+      if (cancelled) return;
+      const grew = unknown.some((t) => {
+        const k = String(t || '').trim().toLowerCase().replace(/[_\s]+/g, '-');
+        return next[k] && next[k] !== purposeAiMap[k];
+      });
+      if (grew) setPurposeAiMap(next);
+    });
+    return () => { cancelled = true; };
+  }, [catalog, resources, typeFilter]); // eslint-disable-line react-hooks/exhaustive-deps -- 仅资源变化时尝试 AI 归类
+
+  const filteredCatalog = catalog.filter(r => matchPromptKind(r) && matchTag(r));
   const managedCount = resources.length;
   const discoveredCount = scanStats?.totalOnDisk ?? discovered.length;
   const showSkillTabs = !typeFilter || typeFilter === 'skill';
@@ -959,9 +1233,14 @@ export default function Resources() {
     return appFilter;
   })();
 
-  const filteredDiscovered = effectiveAppFilter
-    ? discovered.filter(item => (item.agents || []).some(a => a.agentId === effectiveAppFilter))
-    : discovered;
+  const resourcesById = useMemo(
+    () => new Map(resources.map(r => [r.id, r])),
+    [resources],
+  );
+
+  const filteredDiscovered = discovered
+    .filter(item => !effectiveAppFilter || (item.agents || []).some(a => a.agentId === effectiveAppFilter))
+    .filter(item => matchTag(item, resourcesById));
 
   const showAppFilterBar = !typeFilter || typeFilter === 'skill' || typeFilter === 'prompt';
 
@@ -1010,6 +1289,52 @@ export default function Resources() {
     );
   }
 
+  /** 用途筛选条：零散 tag 已聚合成 SkillHub 一级用途 */
+  function purposeLabel(slug) {
+    const key = `resources.reco.cat.${slug}`;
+    const v = t(key);
+    return v === key ? slug : v;
+  }
+
+  function renderTagFilter() {
+    if (availableTags.length === 0) return null;
+    return (
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[11px] text-zinc-400 shrink-0 mr-0.5" title={t('resources.tagFilterHint')}>
+          {t('resources.tagFilter')}
+        </span>
+        <button
+          type="button"
+          onClick={() => setTagFilter('')}
+          className={`tb-press text-[11px] px-2 py-1 rounded-md border transition-colors ${
+            !tagFilter
+              ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
+              : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:border-zinc-300 dark:hover:border-zinc-600'
+          }`}
+        >
+          {t('resources.tagFilterAll')}
+        </button>
+        {availableTags.map(slug => {
+          const active = tagFilter === slug;
+          return (
+            <button
+              key={slug}
+              type="button"
+              onClick={() => setTagFilter(active ? '' : slug)}
+              className={`tb-press text-[11px] px-2 py-1 rounded-md border transition-colors ${
+                active
+                  ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
+                  : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:border-zinc-300 dark:hover:border-zinc-600'
+              }`}
+            >
+              {purposeLabel(slug)}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
   function renderDiscoveredRow(item) {
     // 同名 Skill 可能共用 scanKey（frontmatter name 相同），用 name+hash 保证 key 唯一
     const rowKey = `${item.name}::${item.hash}`;
@@ -1051,7 +1376,7 @@ export default function Resources() {
               <p className="text-[11px] text-zinc-400 mt-2 font-mono truncate">
                 <button
                   type="button"
-                  className="hover:text-violet-600 dark:hover:text-violet-400 hover:underline text-left truncate max-w-full"
+                  className="hover:text-blue-600 dark:hover:text-blue-400 hover:underline text-left truncate max-w-full"
                   title={item.authorityPath}
                   onClick={() => handleOpenPath(item.authorityPath)}
                 >
@@ -1071,7 +1396,7 @@ export default function Resources() {
           <>
             <button
               type="button"
-              disabled={!!busy}
+              disabled={!!busy && busy !== item.resourceId}
               onClick={(e) => openProjectMenu(e, item.resourceId)}
               className={ASSET_BTN_PRIMARY}
             >
@@ -1079,7 +1404,7 @@ export default function Resources() {
             </button>
             <button
               type="button"
-              disabled={!!busy}
+              disabled={!!busy && busy !== item.resourceId}
               onClick={() => handleUninstallSkill(item)}
               className="text-xs px-3 py-1.5 rounded-lg border border-red-200/90 text-red-600 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/30 disabled:opacity-45 transition active:scale-[0.98]"
               title={hasProjectedLinks(item.projections, item.authorityPath || getSkillLocation(item))
@@ -1129,7 +1454,7 @@ export default function Resources() {
               title={hoverTitle}
               className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full cursor-default ${
                 canUnproject
-                  ? 'bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300'
+                  ? 'bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
                   : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400'
               }`}
             >
@@ -1163,6 +1488,9 @@ export default function Resources() {
         type={resource.type}
         item={resource}
         typeLabel={typeBadge(resource.type, t)}
+        categoryLabel={resource.type === 'prompt'
+          ? t(promptKindOf(resource) === 'image' ? 'resources.promptKind.image' : 'resources.promptKind.text')
+          : undefined}
         description={resourceDescription(resource)}
         previewText={buildPreviewText(resource.type, resource)}
         expanded={expanded}
@@ -1183,7 +1511,7 @@ export default function Resources() {
                 {loc ? (
                   <button
                     type="button"
-                    className="hover:text-violet-600 dark:hover:text-violet-400 hover:underline truncate align-baseline max-w-full"
+                    className="hover:text-blue-600 dark:hover:text-blue-400 hover:underline truncate align-baseline max-w-full"
                     title={loc}
                     onClick={() => handleOpenPath(loc)}
                   >
@@ -1194,15 +1522,22 @@ export default function Resources() {
                 )}
               </p>
             )}
-            {(resource.metadata?.tags || []).length > 0 && (
+            {purposesOf(resource).length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-2.5">
-                {resource.metadata.tags.map(tag => (
-                  <span
-                    key={tag}
-                    className="text-[10px] px-2 py-0.5 rounded-md border border-zinc-200/80 dark:border-zinc-700/80 bg-zinc-50/80 dark:bg-zinc-800/70 text-zinc-500 dark:text-zinc-400"
+                {purposesOf(resource).map(slug => (
+                  <button
+                    key={slug}
+                    type="button"
+                    title={t('resources.tagFilterHint')}
+                    onClick={() => setTagFilter(tagFilter === slug ? '' : slug)}
+                    className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${
+                      tagFilter === slug
+                        ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
+                        : 'border-zinc-200/80 dark:border-zinc-700/80 bg-zinc-50/80 dark:bg-zinc-800/70 text-zinc-500 dark:text-zinc-400 hover:border-blue-300'
+                    }`}
                   >
-                    {tag}
-                  </span>
+                    {purposeLabel(slug)}
+                  </button>
                 ))}
               </div>
             )}
@@ -1212,7 +1547,7 @@ export default function Resources() {
         actions={catalogMode ? (
           <button
             type="button"
-            disabled={!!busy || resource.installed}
+            disabled={(!!busy && busy !== resource.catalogId) || resource.installed}
             onClick={() => handleInstall(resource.catalogId)}
             className={resource.installed ? ASSET_BTN_MANAGED : ASSET_BTN_PRIMARY}
           >
@@ -1224,22 +1559,22 @@ export default function Resources() {
               type="button"
               className={ASSET_BTN_GHOST}
               onClick={() => openEditEditor(resource)}
-              disabled={!!busy}
+              disabled={busy === 'editor' || busy === 'cleanup'}
             >
               {t('resources.edit')}
             </button>
             <button
               type="button"
-              disabled={!!busy}
+              disabled={!!busy && busy !== resource.id}
               onClick={(e) => openProjectMenu(e, resource.id)}
               className={ASSET_BTN_PRIMARY}
             >
               {busy === resource.id ? t('resources.busy') : t('resources.project')}
             </button>
-            {resource.source !== 'builtin' && (
+            {resource.source !== 'builtin' && !resource.metadata?.builtin && (
               <button
                 type="button"
-                disabled={!!busy}
+                disabled={!!busy && busy !== resource.id}
                 onClick={() => handleDelete(resource)}
                 className="text-xs px-3 py-1.5 rounded-lg border border-red-200/90 text-red-600 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/30 disabled:opacity-45 transition active:scale-[0.98]"
                 title={resource.type === 'assistant' && hasProjectedLinks(resource.projections, resource.authorityPath || getSkillLocation(resource))
@@ -1272,6 +1607,8 @@ export default function Resources() {
       ? []
       : (typeFilter ? resources : resources.filter(r => r.type !== 'skill')))
       .filter(r => {
+        if (r.type === 'prompt' && !matchPromptKind(r)) return false;
+        if (!matchTag(r)) return false;
         if (!effectiveAppFilter) return true;
         // Prompt / 智能体：按已投射到的 Agent 筛选
         return (r.projections || []).some(p => p.agentId === effectiveAppFilter);
@@ -1288,19 +1625,35 @@ export default function Resources() {
             {renderAppFilter()}
             <div className="text-center py-10 space-y-2">
               <p className="text-xs text-zinc-400">{t('resources.emptyDiscoveredFiltered')}</p>
-              <button type="button" onClick={() => changeAppFilter('')} className="text-xs text-violet-600 hover:underline">
+              <button type="button" onClick={() => changeAppFilter('')} className="text-xs text-blue-600 hover:underline">
                 {t('resources.clearAppFilter')}
               </button>
             </div>
           </div>
         );
       }
+      if (tagFilter && (discovered.length > 0 || resources.length > 0)) {
+        return (
+          <div className="space-y-3">
+            {showAppFilterBar && renderAppFilter()}
+            <div className="text-center py-10 space-y-2">
+              <p className="text-xs text-zinc-400">{t('resources.emptyTagFiltered')}</p>
+              <button type="button" onClick={() => setTagFilter('')} className="text-xs text-blue-600 hover:underline">
+                {t('resources.clearTagFilter')}
+              </button>
+            </div>
+          </div>
+        );
+      }
       return (
-        <div className="text-center py-10 space-y-2">
-          <p className="text-xs text-zinc-400">{t('resources.emptyManaged')}</p>
-          <button type="button" onClick={() => changeViewTab('recommend')} className="text-xs text-violet-600 hover:underline">
-            {t('resources.goCatalog')}
-          </button>
+        <div className="space-y-3">
+          {showAppFilterBar && renderAppFilter()}
+          <div className="text-center py-10 space-y-2">
+            <p className="text-xs text-zinc-400">{t('resources.emptyManaged')}</p>
+            <button type="button" onClick={() => changeViewTab('recommend')} className="text-xs text-blue-600 hover:underline">
+              {t('resources.goCatalog')}
+            </button>
+          </div>
         </div>
       );
     }
@@ -1387,7 +1740,7 @@ export default function Resources() {
           <button
             type="button"
             disabled={targetList.length === 0}
-            className="flex-1 text-xs py-1.5 rounded-lg bg-violet-600 text-white disabled:opacity-40"
+            className="tb-press flex-1 text-xs py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40"
             onClick={confirmProject}
           >
             {t('resources.confirmProject')}
@@ -1399,35 +1752,65 @@ export default function Resources() {
   }
 
   return (
-    <div className="flex flex-col h-full min-h-0">
-      <header className="shrink-0 px-6 pt-6 pb-4 border-b border-zinc-200/60 dark:border-zinc-800">
-        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">{t('resources.title')}</h1>
+    <div className="flex flex-col h-full min-h-0 bg-white dark:bg-zinc-900">
+      <header className="shrink-0 px-5 pt-5 pb-3 border-b border-zinc-200/50 dark:border-zinc-800/50 bg-white/70 dark:bg-zinc-900/70 backdrop-blur-xl backdrop-saturate-150">
+        <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">{t('resources.title')}</h1>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{t('resources.subtitle')}</p>
       </header>
 
-      <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
-        {/* 类型筛选 */}
-        <div className="flex flex-wrap gap-1.5">
-          {TYPE_OPTIONS.map(opt => (
-            <button
-              key={opt.id || 'all'}
-              type="button"
-              onClick={() => changeTypeFilter(opt.id)}
-              className={`text-xs px-3 py-1 rounded-full border transition-colors ${
-                typeFilter === opt.id
-                  ? 'bg-violet-600 text-white border-violet-600'
-                  : 'border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800'
-              }`}
-            >
-              {t(opt.labelKey)}
-            </button>
-          ))}
+      <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
+        {/* 类型筛选：与 Playground 分段同系 */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex flex-wrap rounded-lg border border-zinc-200/80 dark:border-zinc-700/80 p-0.5 bg-zinc-100/80 dark:bg-zinc-900/80 gap-0.5">
+            {TYPE_OPTIONS.map(opt => (
+              <button
+                key={opt.id || 'all'}
+                type="button"
+                onClick={() => {
+                  changeTypeFilter(opt.id);
+                  if (opt.id !== 'prompt') setPromptKindFilter('');
+                }}
+                className={`tb-press text-xs px-3 py-1.5 rounded-lg transition-colors ${
+                  typeFilter === opt.id
+                    ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                    : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
+                }`}
+              >
+                {t(opt.labelKey)}
+              </button>
+            ))}
+          </div>
+          {/* 提示词：文本 / 图片 子分类 */}
+          {typeFilter === 'prompt' && (
+            <div className="inline-flex rounded-lg border border-zinc-200/80 dark:border-zinc-700/80 p-0.5 bg-zinc-100/80 dark:bg-zinc-900/80 gap-0.5">
+              {[
+                { id: '', labelKey: 'resources.promptKind.all' },
+                { id: 'text', labelKey: 'resources.promptKind.text' },
+                { id: 'image', labelKey: 'resources.promptKind.image' },
+              ].map(opt => (
+                <button
+                  key={opt.id || 'kind-all'}
+                  type="button"
+                  onClick={() => setPromptKindFilter(opt.id)}
+                  className={`tb-press text-xs px-2.5 py-1.5 rounded-lg transition-colors ${
+                    promptKindFilter === opt.id
+                      ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                      : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
+                  }`}
+                >
+                  {t(opt.labelKey)}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
+        {/* 标签筛选：目录 + 已纳管聚合 */}
+        {renderTagFilter()}
 
         {/* 子 Tab + 搜索 + 操作 */}
         <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="inline-flex rounded-lg border border-zinc-200 dark:border-zinc-700 p-0.5 bg-zinc-50 dark:bg-zinc-900">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-lg border border-zinc-200/80 dark:border-zinc-700/80 p-0.5 bg-zinc-100/80 dark:bg-zinc-900/80">
               {[
                 { id: 'managed', label: t('resources.tab.managed'), count: localCount },
                 { id: 'recommend', label: t('resources.tab.recommend') },
@@ -1436,7 +1819,7 @@ export default function Resources() {
                   key={tab.id}
                   type="button"
                   onClick={() => changeViewTab(tab.id)}
-                  className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
+                  className={`tb-press text-xs px-3 py-1.5 rounded-lg transition-colors ${
                     viewTab === tab.id
                       ? 'bg-white dark:bg-zinc-800 shadow-sm text-zinc-900 dark:text-zinc-100'
                       : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
@@ -1447,26 +1830,33 @@ export default function Resources() {
                 </button>
               ))}
             </div>
-            <input
-              type="search"
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              placeholder={t('resources.searchPlaceholder')}
-              className="flex-1 min-w-[160px] max-w-xs text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900"
-            />
+            <div className="relative flex-1 min-w-[160px] max-w-xs">
+              <input
+                type="search"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder={t('resources.searchPlaceholder')}
+                className="w-full text-xs px-3 py-1.5 pr-14 rounded-lg border border-zinc-200/80 dark:border-zinc-700/80 bg-zinc-100/90 dark:bg-zinc-800/90 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-blue-500"
+              />
+              {searching && (
+                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 pointer-events-none">
+                  {t('resources.searching')}
+                </span>
+              )}
+            </div>
             <button
               type="button"
-              disabled={!!busy}
+              disabled={busy === 'editor' || busy === 'cleanup'}
               onClick={handlePrimaryAction}
-              className="text-xs px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50"
+              className="tb-press text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50"
             >
               {typeFilter === 'skill' ? t('resources.skillInstall') : t('resources.create')}
             </button>
             <button
               type="button"
-              disabled={!!busy}
+              disabled={busy === 'import' || busy === 'cleanup' || busy === 'editor'}
               onClick={handleImportFile}
-              className="text-xs px-3 py-1.5 rounded-lg border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-900/30 disabled:opacity-50"
+              className="tb-press text-xs px-3 py-1.5 rounded-lg border border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30 disabled:opacity-50"
             >
               {busy === 'import' ? t('resources.busy') : t('resources.import')}
             </button>
@@ -1474,9 +1864,9 @@ export default function Resources() {
               <button
                 type="button"
                 onClick={toggleScanPanel}
-                className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+                className={`tb-press text-xs px-3 py-1.5 rounded-lg border transition-colors ${
                   scanExpanded
-                    ? 'border-violet-300 dark:border-violet-600 bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300'
+                    ? 'border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
                     : 'border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800'
                 }`}
               >
@@ -1487,77 +1877,99 @@ export default function Resources() {
             {showSkillTabs && viewTab === 'managed' && (
               <button
                 type="button"
-                disabled={!!busy || idleLoading}
+                disabled={busy === 'cleanup' || idleLoading}
                 onClick={openSkillCleanup}
-                className="text-xs px-3 py-1.5 rounded-lg border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/20 disabled:opacity-50"
+                className="tb-press text-xs px-3 py-1.5 rounded-lg border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/20 disabled:opacity-50"
               >
                 {idleLoading ? t('resources.cleanupScanning') : t('resources.cleanup')}
               </button>
             )}
           </div>
 
-          {/* 点击「扫描」展开：范围选项 */}
+          {/* 点击「扫描」展开：默认目录 ∪ 用户添加目录（并列，列出全部监控路径） */}
           {showSkillTabs && scanExpanded && (
-            <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl border border-zinc-200/80 dark:border-zinc-700/80 bg-zinc-50/50 dark:bg-zinc-900/40">
-              <span className="text-xs text-zinc-500 shrink-0">{t('resources.scanScopeLabel')}</span>
-              <label className="inline-flex items-center gap-1.5 text-xs text-zinc-700 dark:text-zinc-300 cursor-pointer">
-                <input
-                  type="radio"
-                  name="scanScope"
-                  checked={scanScope === 'global'}
-                  onChange={() => changeScanScope('global')}
-                />
-                {t('resources.scanScopeGlobal')}
-              </label>
-              <label className="inline-flex items-center gap-1.5 text-xs text-zinc-700 dark:text-zinc-300 cursor-pointer">
-                <input
-                  type="radio"
-                  name="scanScope"
-                  checked={scanScope === 'custom'}
-                  onChange={() => changeScanScope('custom')}
-                />
-                {t('resources.scanScopeCustom')}
-              </label>
-              {scanScope === 'custom' && (
-                <>
-                  <input
-                    type="text"
-                    value={customScanDir}
-                    onChange={e => changeCustomScanDir(e.target.value)}
-                    placeholder={t('resources.scanCustomDirPlaceholder')}
-                    className="flex-1 min-w-[200px] text-xs px-2.5 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={pickCustomScanDir}
-                    className="text-xs px-2.5 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 hover:bg-white dark:hover:bg-zinc-800"
+            <div className="space-y-2 p-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-950/50">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-zinc-500 shrink-0">{t('resources.scanScopeLabel')}</span>
+                <span className="text-[11px] text-zinc-400">
+                  {t('resources.scanRootsCount', {
+                    n: defaultScanRoots.length + customScanDirs.length,
+                  })}
+                </span>
+                <button
+                  type="button"
+                  disabled={scanning || busy === 'cleanup' || busy === 'editor'}
+                  onClick={runScan}
+                  className="tb-press ml-auto text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 shrink-0"
+                >
+                  {scanning ? t('resources.scanning') : t('resources.scanStart')}
+                </button>
+              </div>
+              <ul className="space-y-1 max-h-48 overflow-y-auto">
+                {defaultScanRoots.map(root => (
+                  <li
+                    key={root.id || root.path}
+                    className="flex items-center gap-2 text-[11px] bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2.5 py-1.5"
                   >
-                    {t('resources.scanBrowse')}
-                  </button>
-                </>
-              )}
-              <button
-                type="button"
-                disabled={scanning || !!busy}
-                onClick={runScan}
-                className="text-xs px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 shrink-0"
-              >
-                {scanning ? t('resources.scanning') : t('resources.scanStart')}
-              </button>
-              <p className="w-full text-[11px] text-zinc-400">
-                {scanScope === 'global'
-                  ? t('resources.scanScopeGlobalHint')
-                  : t('resources.scanScopeCustomHint')}
-              </p>
+                    <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border border-sky-200/70 dark:border-sky-800/60">
+                      {t('resources.scanRootDefault')}
+                    </span>
+                    <span className="shrink-0 text-zinc-500">{root.label}</span>
+                    <span className="flex-1 min-w-0 truncate font-mono text-zinc-600 dark:text-zinc-300" title={root.path}>
+                      {root.path}
+                    </span>
+                    {!root.exists && (
+                      <span className="shrink-0 text-[10px] text-zinc-400">{t('resources.scanRootMissing')}</span>
+                    )}
+                  </li>
+                ))}
+                {customScanDirs.map(dir => (
+                  <li
+                    key={dir}
+                    className="flex items-center gap-2 text-[11px] bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2.5 py-1.5"
+                  >
+                    <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200/70 dark:border-amber-800/60">
+                      {t('resources.scanRootCustom')}
+                    </span>
+                    <span className="flex-1 min-w-0 truncate font-mono text-zinc-600 dark:text-zinc-300" title={dir}>
+                      {dir}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeCustomScanDir(dir)}
+                      className="shrink-0 text-zinc-400 hover:text-red-500 px-1"
+                      title={t('resources.scanCustomDirRemove')}
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={pickCustomScanDir}
+                  className="tb-press text-xs px-2.5 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 hover:bg-white dark:hover:bg-zinc-800"
+                >
+                  {t('resources.scanCustomDirAdd')}
+                </button>
+                <p className="text-[11px] text-zinc-400 flex-1 min-w-[12rem]">
+                  {t('resources.scanScopeMergedHint')}
+                </p>
+              </div>
             </div>
           )}
         </div>
 
-        {msg && <p className="text-xs text-violet-600 dark:text-violet-400">{msg}</p>}
+        {msg && <p className="text-xs text-blue-600 dark:text-blue-400">{msg}</p>}
         {error && <p className="text-xs text-red-500">{error}</p>}
 
         {loading ? (
-          <p className="text-xs text-zinc-400 py-8 text-center">{t('resources.loading')}</p>
+          <div className="space-y-3 py-2" aria-busy="true">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="h-20 rounded-xl bg-zinc-100 dark:bg-zinc-800/80 animate-pulse" />
+            ))}
+          </div>
         ) : viewTab === 'managed' ? (
           renderLocalList()
         ) : viewTab === 'recommend' ? (
@@ -1565,16 +1977,28 @@ export default function Resources() {
             {/* 上半:个性化挖掘(按类型分流)*/}
             <PersonalizedRecommend
               typeFilter={typeFilter}
+              purposeFilter={tagFilter}
               LogoComp={AssetLogo}
               onNeedProject={() => changeViewTab('managed')}
+              onNeedAgent={() => navigate('/gateway')}
               onRefresh={refreshAfterAdopt}
               onAdopted={handleRecoAdopted}
+              onItemsChange={() => setRecoPurposeRev((n) => n + 1)}
             />
             {/* 下半:原社区推荐 */}
-            <div className="space-y-2 border-t border-zinc-100 dark:border-zinc-800 pt-4">
-              <p className="text-xs text-zinc-400">社区推荐</p>
+            <div className="space-y-2 border-t border-zinc-200/80 dark:border-zinc-800 pt-4">
+              <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{t('resources.catalogSection')}</p>
               {filteredCatalog.length === 0 ? (
-                <p className="text-xs text-zinc-400 text-center py-6">{t('resources.emptyCatalog')}</p>
+                <div className="text-center py-6 space-y-2">
+                  <p className="text-xs text-zinc-400">
+                    {tagFilter ? t('resources.emptyTagFiltered') : t('resources.emptyCatalog')}
+                  </p>
+                  {tagFilter && (
+                    <button type="button" onClick={() => setTagFilter('')} className="text-xs text-blue-600 hover:underline">
+                      {t('resources.clearTagFilter')}
+                    </button>
+                  )}
+                </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {filteredCatalog.map(item => renderResourceRow(item, { catalogMode: true }))}
@@ -1650,7 +2074,7 @@ export default function Resources() {
                 <>
                   <div className="flex items-center justify-between text-[10px] text-zinc-400">
                     <span>{t('resources.cleanupSummary', { n: idleResult.items.length, total: idleResult.totalManaged })}</span>
-                    <button type="button" onClick={toggleIdleSelectAll} className="text-violet-600 dark:text-violet-400 hover:underline">
+                    <button type="button" onClick={toggleIdleSelectAll} className="text-blue-600 dark:text-blue-400 hover:underline">
                       {idleSelected.length === idleResult.items.length
                         ? t('resources.cleanupDeselectAll')
                         : t('resources.cleanupSelectAll')}
@@ -1718,9 +2142,31 @@ export default function Resources() {
         </div>
       )}
 
+      <SkillInstallDialog
+        open={skillInstallOpen}
+        onClose={() => setSkillInstallOpen(false)}
+        onNeedAgent={() => {
+          // 无可投射 Agent：跳转网关页纳管 Agent 应用
+          setSkillInstallOpen(false);
+          navigate('/gateway');
+        }}
+        onInstalled={async () => {
+          // 安装完成后静默扫描，把新 skill 纳入列表
+          await runScan({ silent: true });
+          await loadAll({ silent: true });
+          setScanExpanded(true);
+        }}
+      />
+
       {editorOpen && (
-        <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/40">
-          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl">
+        <div
+          className="fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/40"
+          onClick={() => { if (busy !== 'editor') setEditorOpen(false); }}
+        >
+          <div
+            className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl"
+            onClick={e => e.stopPropagation()}
+          >
             <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800">
               <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                 {editorForm.id ? t('resources.editTitle') : t('resources.createTitle')}
@@ -1741,6 +2187,20 @@ export default function Resources() {
                   ))}
                 </select>
               </label>
+              {editorForm.type === 'prompt' && (
+                <label className="block text-xs text-zinc-500">
+                  {t('resources.editorPromptKind')}
+                  <select
+                    value={editorForm.promptKind === 'image' ? 'image' : 'text'}
+                    onChange={e => setEditorForm(prev => ({ ...prev, promptKind: e.target.value }))}
+                    className="mt-1 w-full text-xs px-2 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-950"
+                  >
+                    <option value="text">{t('resources.promptKind.text')}</option>
+                    <option value="image">{t('resources.promptKind.image')}</option>
+                  </select>
+                  <span className="block mt-1 text-[10px] text-zinc-400">{t('resources.editorPromptKindHint')}</span>
+                </label>
+              )}
               <label className="block text-xs text-zinc-500">
                 {t('resources.editorName')}
                 <input
@@ -1766,6 +2226,16 @@ export default function Resources() {
                   onChange={e => setEditorForm(prev => ({ ...prev, description: e.target.value }))}
                   className="mt-1 w-full text-xs px-2 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-950"
                 />
+              </label>
+              <label className="block text-xs text-zinc-500">
+                {t('resources.editorTags')}
+                <input
+                  value={editorForm.tagsText || ''}
+                  onChange={e => setEditorForm(prev => ({ ...prev, tagsText: e.target.value }))}
+                  placeholder={t('resources.editorTagsPh')}
+                  className="mt-1 w-full text-xs px-2 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-950"
+                />
+                <span className="block mt-1 text-[10px] text-zinc-400">{t('resources.editorTagsHint')}</span>
               </label>
               {editorForm.type === 'assistant' && (
                 <p className="text-[11px] text-zinc-400">{t('resources.assistantRuntimeHint')}</p>
@@ -1800,7 +2270,7 @@ export default function Resources() {
                 type="button"
                 disabled={!!busy}
                 onClick={saveEditor}
-                className="text-xs px-3 py-1.5 rounded-lg bg-violet-600 text-white disabled:opacity-50"
+                className="tb-press text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50"
               >
                 {busy === 'editor' ? t('resources.busy') : t('resources.save')}
               </button>
