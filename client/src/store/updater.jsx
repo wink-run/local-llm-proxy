@@ -4,12 +4,18 @@ const UpdaterContext = createContext(null);
 
 /** 桌面端自动更新状态（底部弹窗 + 侧栏待重启标识共用） */
 export function UpdaterProvider({ children }) {
-  const [phase, setPhase] = useState('idle'); // idle | downloading | ready | dismissed
+  const [phase, setPhase] = useState('idle'); // idle | downloading | ready | dismissed | installing
   const [version, setVersion] = useState('');
   const [percent, setPercent] = useState(0);
 
   const install = useCallback(() => {
-    window.electronAPI?.updater?.install?.();
+    setPhase('installing');
+    try {
+      window.electronAPI?.updater?.install?.();
+    } catch {
+      // 主进程会退出；若仍停留在此页，允许再次点击
+      setPhase('ready');
+    }
   }, []);
 
   const dismissToast = useCallback(() => {
@@ -22,7 +28,9 @@ export function UpdaterProvider({ children }) {
 
   // 已下载、用户点「稍后」后仍保留，供侧栏展示
   const pendingVersion =
-    version && (phase === 'ready' || phase === 'dismissed') ? version : null;
+    version && (phase === 'ready' || phase === 'dismissed' || phase === 'installing')
+      ? version
+      : null;
 
   useEffect(() => {
     if (!window.electronAPI?.updater) return;

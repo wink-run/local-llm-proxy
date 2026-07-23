@@ -27,22 +27,28 @@ export default function UpdateNotification() {
           </>
         )}
 
-        {phase === 'ready' && (
+        {(phase === 'ready' || phase === 'installing') && (
           <>
             <p className="text-sm font-medium text-gray-800 dark:text-gray-100">
               Token Bank <span className="text-blue-500">v{version}</span> 已准备好安装
             </p>
-            <p className="mt-0.5 text-xs text-gray-500">重启后即可完成更新</p>
-            <div className="mt-3 flex gap-2">
+            <p className="mt-0.5 text-xs text-gray-500">
+              {phase === 'installing' ? '正在安装并重启…' : '重启后即可完成更新'}
+            </p>
+            <div className="mt-3 flex gap-2 electron-no-drag">
               <button
+                type="button"
                 onClick={install}
-                className="tb-press flex-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] text-white text-sm font-medium py-1.5"
+                disabled={phase === 'installing'}
+                className="tb-press flex-1 rounded-lg bg-blue-500 hover:bg-blue-600 dark:bg-[#3f6699] dark:hover:bg-[#4a73a8] disabled:opacity-60 text-white text-sm font-medium py-1.5"
               >
-                立即重启
+                {phase === 'installing' ? '安装中…' : '立即重启'}
               </button>
               <button
+                type="button"
                 onClick={dismissToast}
-                className="tb-press flex-1 rounded-lg border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 text-sm font-medium py-1.5"
+                disabled={phase === 'installing'}
+                className="tb-press flex-1 rounded-lg border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-60 text-gray-600 dark:text-gray-300 text-sm font-medium py-1.5"
               >
                 稍后
               </button>

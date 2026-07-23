@@ -7,3 +7,6 @@ assets/
 
 # 生成的 release notes（gen-changelog.js）
 release-notes.md
+
+# 本地签名配置，勿入库
+embedded.provisionprofile

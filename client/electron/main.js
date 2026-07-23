@@ -1545,7 +1545,10 @@ function setupAutoUpdater() {
   }
 
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  // macOS：MacUpdater 在 autoInstallOnAppQuit=true 时会在下载后预取 Squirrel；
+  // 预取失败时 UI 已显示「就绪」，但 quitAndInstall 不会再次 checkForUpdates → 立即重启无反应。
+  // 设为 false，让「立即重启」时再触发 Squirrel 拉取并安装。普通退出本身也不会装包。
+  autoUpdater.autoInstallOnAppQuit = process.platform !== 'darwin';
   autoUpdater.logger = console;
   applyUpdaterAllowPrerelease();
   bindUpdaterEvents();
@@ -1573,6 +1576,62 @@ function setupAutoUpdater() {
   }
 
   setInterval(() => runUpdaterCheck(), CHECK_INTERVAL_MS);
+}
+
+/** 清理失效的 ShipIt 状态，避免卡住后续自动安装 */
+function clearStaleShipItState() {
+  if (process.platform !== 'darwin') return;
+  try {
+    const statePath = path.join(os.homedir(), 'Library/Caches', 'com.tokenbank.app.ShipIt', 'ShipItState.plist');
+    if (!fs.existsSync(statePath)) return;
+    const raw = fs.readFileSync(statePath, 'utf8').trim();
+    let state = null;
+    try { state = JSON.parse(raw); } catch { /* 旧版可能是 XML plist */ }
+    const updateUrl = state?.updateBundleURL || '';
+    if (!updateUrl.startsWith('file://')) return;
+    const localPath = decodeURIComponent(updateUrl.replace(/^file:\/\//, ''));
+    if (localPath && !fs.existsSync(localPath)) {
+      console.warn('[updater] clearing stale ShipItState pointing to missing', localPath);
+      fs.unlinkSync(statePath);
+    }
+  } catch (e) {
+    console.warn('[updater] clearStaleShipItState:', e.message);
+  }
+}
+
+/** 退出前清理：托盘驻留 / 关窗隐藏会拦住 quitAndInstall */
+function prepareQuitForUpdateInstall() {
+  isQuitting = true;
+  app.removeAllListeners('window-all-closed');
+  try { destroyTray(); } catch (e) {
+    console.warn('[updater] destroyTray before install:', e.message);
+  }
+  for (const win of BrowserWindow.getAllWindows()) {
+    try {
+      if (win.isDestroyed()) continue;
+      win.removeAllListeners('close');
+      win.removeAllListeners('minimize');
+      win.close();
+    } catch { /* ignore */ }
+  }
+}
+
+function runExitCleanupForUpdate() {
+  try { agent.stop(); } catch { /* ignore */ }
+  try { gateway.stop(); } catch { /* ignore */ }
+  try { localStats.close(); } catch { /* ignore */ }
+  try { revertCliInstanceEndpointConfigs(); } catch { /* ignore */ }
+  try { agentLinker.revertEverythingOnExit(); } catch { /* ignore */ }
+}
+
+/** 自动安装卡住时，打开对应 dmg 供手动覆盖安装 */
+function openManualUpdateDmg(version) {
+  const ver = String(version || '').replace(/^v/i, '');
+  if (!ver) return;
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const url = `https://github.com/wink-run/local-llm-proxy/releases/download/v${ver}/Token-Bank-${ver}-${arch}.dmg`;
+  console.warn('[updater] opening manual update dmg:', url);
+  shell.openExternal(url).catch((e) => console.error('[updater] open dmg failed:', e.message));
 }
 
 // ── Agent config helpers ──────────────────────────────────────────────────────
@@ -2360,12 +2419,42 @@ function registerIPC() {
   });
 
   ipcMain.handle('update:install', () => {
+    const version = pendingUpdateReady?.version || '';
     pendingUpdateReady = null;
-    // 关闭窗口默认隐藏到托盘；安装更新须真正退出进程
-    isQuitting = true;
     setImmediate(() => {
-      autoUpdater.quitAndInstall(false, true);
+      try {
+        clearStaleShipItState();
+        prepareQuitForUpdateInstall();
+
+        // macOS：quitAndInstall 常只关窗不退出；且须等 Squirrel 拉完包
+        if (process.platform === 'darwin') {
+          try {
+            const { autoUpdater: nativeUpdater } = require('electron');
+            nativeUpdater.once('before-quit-for-update', () => {
+              runExitCleanupForUpdate();
+              app.exit(0);
+            });
+          } catch (e) {
+            console.warn('[updater] before-quit-for-update hook:', e.message);
+          }
+        }
+
+        autoUpdater.quitAndInstall(false, true);
+
+        // 仍存活：自动安装未生效 → 打开 dmg 手动覆盖，再强制退出
+        setTimeout(() => {
+          console.warn('[updater] quitAndInstall stalled, falling back to manual dmg');
+          openManualUpdateDmg(version);
+          runExitCleanupForUpdate();
+          app.exit(0);
+        }, 4000);
+      } catch (e) {
+        console.error('[updater] quitAndInstall failed:', e.message);
+        openManualUpdateDmg(version);
+        app.exit(0);
+      }
     });
+    return { ok: true, version };
   });
 
   ipcMain.handle('updater:status', () => ({
