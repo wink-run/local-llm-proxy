@@ -44,6 +44,7 @@ import {
   closePendingToolSteps,
 } from '../lib/debug-agent-store';
 import { useLang } from '../store/lang';
+import { usePinBottomScroll } from '../lib/use-pin-bottom-scroll';
 import {
   mergeStreamText,
   splitInlineReasoning,
@@ -59,7 +60,8 @@ import ExecutionLog from '../components/ExecutionLog';
 import AgentSessionHistoryPanel from '../components/AgentSessionHistoryPanel';
 import LlmSessionHistoryPanel from '../components/LlmSessionHistoryPanel';
 import LocalFilePreviewHost from '../components/LocalFilePreview';
-import { openLocalPath, StreamMarkdownContent } from '../components/RichMediaContent';
+import { StreamMarkdownContent } from '../components/RichMediaContent';
+import { openLocalPath } from '../lib/local-path';
 import { saveAgentSessionSnapshot, saveLlmSessionSnapshot } from '../lib/debug-session-history';
 
 /** 下拉 value：同 id 跨层时用 tier:id，避免 HTML option 重复 value 选中错位 */
@@ -115,7 +117,10 @@ function dedupeThinkingSteps(steps) {
   return out;
 }
 
-/** 合并被重复 output 步骤（快照与 delta 交替） */
+/** 合并被重复 output 步骤（快照与 delta 交替）
+ * 仅合并「相邻」output（中间可夹泄漏 thinking）；禁止跨 tool_* 合并，
+ * 否则会把工具后的终稿拽到工具前，造成回复/调用顺序错乱。
+ */
 function dedupeOutputSteps(steps) {
   if (!steps?.length) return steps;
   const out = [];
@@ -128,7 +133,8 @@ function dedupeOutputSteps(steps) {
     while (j >= 0 && out[j].stepType === 'thinking' && looksLikeLeakedReasoning(out[j].content)) {
       j -= 1;
     }
-    const prevOut = [...out].reverse().find(s => s.stepType === 'output');
+    // 必须紧邻（跳过泄漏 thinking 后仍是 output）；中间有工具则保留独立步骤
+    const prevOut = (j >= 0 && out[j].stepType === 'output') ? out[j] : null;
     if (prevOut) {
       const prevLeaked = looksLikeLeakedReasoning(prevOut.content);
       const nextLeaked = looksLikeLeakedReasoning(step.content);
@@ -714,6 +720,42 @@ export default function Debug() {
 
   const messagesEndRef = useRef(null);
   const textareaRef    = useRef(null);
+
+  // LLM 对话：仅贴底时跟随（必须与其它 hooks 同层，不可放在中部函数之后）
+  const llmPinKey = useMemo(() => {
+    const lastUser = [...conversation].reverse().find((m) => m.role === 'user');
+    return `${conversation.filter((m) => m.role === 'user').length}|${String(lastUser?.content || '').slice(0, 80)}`;
+  }, [conversation]);
+  usePinBottomScroll(messagesEndRef, conversation, { forcePinKey: llmPinKey });
+
+  // 向上拖中间框线 → 增高底部输入区（提前声明，避免 hooks 穿插在普通函数中间）
+  const onComposerResizeStart = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startY = e.clientY;
+    const startH = composerTextHRef.current;
+    setComposerResizing(true);
+    const prevCursor = document.body.style.cursor;
+    const prevSelect = document.body.style.userSelect;
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMove = (ev) => {
+      const next = clampComposerTextH(startH + (startY - ev.clientY));
+      composerTextHRef.current = next;
+      setComposerTextH(next);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevSelect;
+      setComposerResizing(false);
+      try { localStorage.setItem(COMPOSER_H_KEY, String(composerTextHRef.current)); } catch { /* ignore */ }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, []);
 
   // 进入游乐场即预加载 Agent / 提示词（切换模式时无需再等）
   useEffect(() => {
@@ -2005,8 +2047,6 @@ export default function Debug() {
     if (imageMode ? kind !== 'image' : kind !== 'text') setSelectedPromptId('');
   }, [imageMode, promptList, selectedPromptId]);
 
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [conversation]);
-
   // 聊天记录落盘：流式/生成中不写，避免频繁 IO
   useEffect(() => {
     if (sending) return;
@@ -2149,35 +2189,6 @@ export default function Debug() {
   function handleInputChange(e) {
     setPanel({ input: e.target.value });
   }
-
-  // 向上拖中间框线 → 增高底部输入区
-  const onComposerResizeStart = useCallback((e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const startY = e.clientY;
-    const startH = composerTextHRef.current;
-    setComposerResizing(true);
-    const prevCursor = document.body.style.cursor;
-    const prevSelect = document.body.style.userSelect;
-    document.body.style.cursor = 'row-resize';
-    document.body.style.userSelect = 'none';
-
-    const onMove = (ev) => {
-      const next = clampComposerTextH(startH + (startY - ev.clientY));
-      composerTextHRef.current = next;
-      setComposerTextH(next);
-    };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      document.body.style.cursor = prevCursor;
-      document.body.style.userSelect = prevSelect;
-      setComposerResizing(false);
-      try { localStorage.setItem(COMPOSER_H_KEY, String(composerTextHRef.current)); } catch { /* ignore */ }
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  }, []);
 
   // 共用：分段控件 / 主按钮 / 毛玻璃条
   const segTrack = 'inline-flex rounded-lg border border-zinc-200/80 dark:border-zinc-700/80 p-0.5 bg-zinc-100/80 dark:bg-zinc-900/80';
@@ -2447,7 +2458,7 @@ export default function Debug() {
                   <p className="text-sm">{t('debug.agent.noAgents')}</p>
                 </div>
               ) : !conversationTurns.length && !currentUserPrompt && !taskSteps.length && !executing ? (
-                <div className="flex-1 flex items-start justify-center text-center text-zinc-400 dark:text-zinc-500 px-6 pt-4">
+                <div className="flex-1 flex items-center justify-center text-center text-zinc-400 dark:text-zinc-500 px-6">
                   <div className="max-w-md">
                     <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-2">{t('debug.tabs.hub')}</p>
                     <p className="text-sm mb-4">{t('debug.agent.hubEmpty')}</p>

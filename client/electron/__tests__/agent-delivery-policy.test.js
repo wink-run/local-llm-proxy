@@ -59,5 +59,13 @@ test('orchestrator prefers specialized assistants before CLI fallback', () => {
   const { ORCHESTRATOR_SYSTEM } = require('../mcp-manager');
   assert.ok(ORCHESTRATOR_SYSTEM.includes('专业智能体'));
   assert.ok(ORCHESTRATOR_SYSTEM.includes('assistant:'));
-  assert.ok(ORCHESTRATOR_SYSTEM.includes('仅当没有匹配'));
+  assert.ok(ORCHESTRATOR_SYSTEM.includes('必须') && ORCHESTRATOR_SYSTEM.includes('派发'));
+  assert.ok(ORCHESTRATOR_SYSTEM.includes('不是默认执行者'));
+  // 分析 / 派发 / 汇总 流水线
+  assert.ok(ORCHESTRATOR_SYSTEM.includes('分析'));
+  assert.ok(ORCHESTRATOR_SYSTEM.includes('汇总'));
+  // 异常兜底
+  assert.ok(ORCHESTRATOR_SYSTEM.includes('异常兜底'));
+  assert.ok(ORCHESTRATOR_SYSTEM.includes('降级'));
+  assert.ok(ORCHESTRATOR_SYSTEM.includes('重试'));
 });

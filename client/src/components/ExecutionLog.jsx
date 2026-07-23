@@ -13,6 +13,8 @@ import {
 } from '../../shared/stream-text-merge.js';
 import { MarkdownContent, StreamMarkdownContent, PathLink } from './RichMediaContent';
 import { useLang } from '../store/lang';
+import { usePinBottomScroll } from '../lib/use-pin-bottom-scroll';
+import { closePendingToolSteps, hasOpenToolCalls } from '../lib/debug-agent-store';
 
 /** 启动/Hook 类系统事件：只进「正在执行」细节，不单独占卡片 */
 function isEphemeralSystemEvent(ev) {
@@ -448,7 +450,10 @@ function collapseAdjacentThinkingGroups(items) {
   return out;
 }
 
-/** 去重内容相同/互为前缀的 assistant 气泡 */
+/** 去重内容相同/互为前缀的 assistant 气泡
+ * 仅合并时间线上「紧邻」的两条；中间夹了工具/派发等则不合并，
+ * 避免把工具后的终稿合并进工具前的气泡，打乱回复与调用顺序。
+ */
 function dedupeAssistantItems(items) {
   const out = [];
   for (const item of items) {
@@ -456,25 +461,22 @@ function dedupeAssistantItems(items) {
       out.push(item);
       continue;
     }
-    let merged = false;
-    for (let i = out.length - 1; i >= 0; i--) {
-      if (out[i].kind !== 'assistant') continue;
-      const pa = normalizeLoose(out[i].content);
+    const prev = out[out.length - 1];
+    if (prev?.kind === 'assistant') {
+      const pa = normalizeLoose(prev.content);
       const pb = normalizeLoose(item.content);
-      if (!pa || !pb) continue;
-      if (pa === pb || pa.startsWith(pb) || pb.startsWith(pa)) {
-        const prevLeaked = looksLikeLeakedReasoning(out[i].content);
+      if (pa && pb && (pa === pb || pa.startsWith(pb) || pb.startsWith(pa))) {
+        const prevLeaked = looksLikeLeakedReasoning(prev.content);
         const nextLeaked = looksLikeLeakedReasoning(item.content);
-        let keep = out[i];
+        let keep = prev;
         if (prevLeaked && !nextLeaked) keep = item;
-        else if (!prevLeaked && nextLeaked) keep = out[i];
-        else if (String(item.content || '').length > String(out[i].content || '').length) keep = item;
-        out[i] = { ...keep };
-        merged = true;
-        break;
+        else if (!prevLeaked && nextLeaked) keep = prev;
+        else if (String(item.content || '').length > String(prev.content || '').length) keep = item;
+        out[out.length - 1] = { ...keep };
+        continue;
       }
     }
-    if (!merged) out.push({ ...item });
+    out.push({ ...item });
   }
   return out;
 }
@@ -540,8 +542,18 @@ function groupNestedSteps(steps = []) {
 }
 
 /** 将轮次 steps 与 result 摘要合并为时间线条目 */
-function buildTurnTimeline(turn, delegations = {}, agentNames = {}) {
-  let items = buildTimeline(turn.user, turn.steps || [], delegations, agentNames);
+function buildTurnTimeline(turn, delegations = {}, agentNames = {}, t) {
+  // 历史轮次若曾漏闭合工具，展示前补齐，避免满屏「未完成」且后半段像被截断
+  const rawSteps = Array.isArray(turn.steps) ? turn.steps : [];
+  const steps = hasOpenToolCalls(rawSteps)
+    ? closePendingToolSteps(
+      rawSteps,
+      turn.status === 'cancelled'
+        ? (t?.('debug.agent.aborted') || '已中止')
+        : (t?.('debug.agent.noResult') || '未收到结果'),
+    )
+    : rawSteps;
+  let items = buildTimeline(turn.user, steps, delegations, agentNames);
   const hasCleanAssistant = items.some(
     it => it.kind === 'assistant' && it.content?.trim() && !looksLikeLeakedReasoning(it.content),
   );
@@ -968,9 +980,9 @@ function ToolGroupCard({ step, live = false }) {
   const payload = formatToolPayload(callContent || '');
   const summary = toolCompactSummary(callContent, t);
   const err = !!step.is_error;
-  // 仅任务仍在跑时显示「执行中」；已收尾但无结果 → 未完成
-  const pending = !!step.pending && resultContent == null && live;
-  const incomplete = !!step.pending && resultContent == null && !live;
+  // 已有结果（含失败）绝不再显示「执行中」；仅任务仍在跑且尚无结果时才 pending
+  const pending = !err && !!step.pending && resultContent == null && live;
+  const incomplete = !err && !!step.pending && resultContent == null && !live;
   const hasDetail = (!payload.empty && callContent != null)
     || (resultContent != null && String(resultContent).trim());
   const [open, setOpen] = useState(false);
@@ -1017,7 +1029,10 @@ function ToolGroupCard({ step, live = false }) {
             </span>
           )}
           {summary && (
-            <span className="min-w-0 flex-1 truncate text-[10px] text-zinc-400 dark:text-zinc-500 font-mono">
+            <span
+              className="min-w-0 flex-1 truncate text-[10px] text-zinc-400 dark:text-zinc-500 font-mono"
+              title={summary}
+            >
               {summary}
             </span>
           )}
@@ -1439,12 +1454,14 @@ export default function ExecutionLog({
 }) {
   const { t } = useLang();
   const endRef = useRef(null);
+  // 本轮用户消息变化时重新钉住底部（刚发送应看到最新输出）
+  const pinKey = `${conversationTurns.length}|${String(userPrompt || '')}`;
 
   /** 合并历史轮次 + 当前轮次；currentStart 之后才是本轮（呼吸光标只挂这里） */
   const { timeline, currentStart } = useMemo(() => {
     const items = [];
     for (const turn of conversationTurns) {
-      items.push(...buildTurnTimeline(turn, turn.delegations || {}, agentNames));
+      items.push(...buildTurnTimeline(turn, turn.delegations || {}, agentNames, t));
     }
     const currentStart = items.length;
     items.push(...buildTimeline(userPrompt, steps, delegations, agentNames));
@@ -1462,7 +1479,7 @@ export default function ExecutionLog({
       }
     }
     return { timeline: items, currentStart };
-  }, [conversationTurns, userPrompt, steps, delegations, agentNames, status, result, task?.completed_at]);
+  }, [conversationTurns, userPrompt, steps, delegations, agentNames, status, result, task?.completed_at, t]);
 
   // 仅在本轮内找「正在流式」的气泡，避免光标粘在历史回复上
   const lastAssistantIdx = useMemo(() => {
@@ -1493,9 +1510,12 @@ export default function ExecutionLog({
     return true;
   }, [status, userPrompt, timeline, currentStart]);
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [timeline, status, result, conversationTurns]);
+  usePinBottomScroll(
+    endRef,
+    timeline,
+    // 新一轮用户输入时重新贴底；上滑阅读时不打断
+    { forcePinKey: pinKey },
+  );
 
   const empty = !conversationTurns.length && !userPrompt && timeline.length === 0;
 

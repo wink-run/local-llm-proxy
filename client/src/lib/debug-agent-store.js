@@ -201,6 +201,9 @@ function mapDbSteps(status) {
     stepType: s.step_type,
     content: s.content,
     tool_name: s.tool_name || null,
+    // DB 列 / 流式字段双读，避免恢复时丢掉配对与失败态
+    tool_use_id: s.tool_use_id || s.toolUseId || null,
+    is_error: !!(s.is_error || s.isError || s.status === 'error'),
     timestamp: s.created_at,
     agentId: status.agent_id,
     parentTaskId: status.context?.parentTaskId || null,
@@ -215,12 +218,16 @@ export function stepsFromTaskStatus(status) {
 /**
  * 归档/收尾时选取更完整的步骤。
  * Codex 等流式 Agent 在 DB 按 JSONL 行入库，条数会虚高，需按折叠后内容量比较。
+ * 若 DB 侧仍有未配对 tool_call、而内存侧已有结果，优先内存（避免「失败」被冲成「执行中」）。
  */
 export function preferRicherSteps(dbSteps = [], storedSteps = []) {
   const stored = Array.isArray(storedSteps) ? storedSteps : [];
   const db = Array.isArray(dbSteps) ? dbSteps : [];
   if (!stored.length) return db;
   if (!db.length) return stored;
+
+  // 内存已收齐工具结果、DB 仍缺结果 → 保留内存（含 closePending / is_error）
+  if (hasOpenToolCalls(db) && !hasOpenToolCalls(stored)) return stored;
 
   const detailTypes = new Set(['thinking', 'tool_call', 'tool_result', 'terminal', 'code_edit', 'system_event']);
   const countDetail = (arr) => arr.filter(s => detailTypes.has(s.stepType)).length;
@@ -235,6 +242,9 @@ export function preferRicherSteps(dbSteps = [], storedSteps = []) {
   if (dbFold > storedFold) return db;
 
   if (stored.some(s => s.is_delta || s.is_snapshot)) return stored;
+  // 平局时优先带 is_error 的一侧，避免失败态被冲掉
+  const errCount = (arr) => arr.filter(s => s.stepType === 'tool_result' && s.is_error).length;
+  if (errCount(stored) > errCount(db)) return stored;
   return stored;
 }
 
@@ -390,7 +400,7 @@ export function mergeTaskIntoStore(status) {
     patchDelegation(parentKey, status.id, {
       agentId: status.agent_id,
       prompt: status.prompt,
-      steps,
+      steps: preferRicherSteps(steps, getStoreSession(parentKey).delegations?.[status.id]?.steps || []),
       status: status.status,
       result: status.result,
       sessionInstanceId: ctx.sessionInstanceId || getStoreSession(parentKey).sessionInstanceId,
@@ -399,12 +409,14 @@ export function mergeTaskIntoStore(status) {
     const agentKey = resolveSessionKey(status.agent_id, []) || status.agent_id;
     if (agentKey && agentKey !== parentKey) {
       routeTaskMirror(status.id, agentKey);
+      const mirrorPrev = getStoreSession(agentKey);
+      const mergedSteps = preferRicherSteps(steps, mirrorPrev.taskSteps || []);
       if (running) {
         syncDelegatedToAgentTab(agentKey, {
           taskId: status.id,
           parentTaskId: ctx.parentTaskId,
           prompt: status.prompt,
-          steps,
+          steps: mergedSteps,
           executing: true,
         });
       } else if (status.prompt) {
@@ -412,7 +424,7 @@ export function mergeTaskIntoStore(status) {
         if (isFreshAgentSession(getStoreSession(agentKey))) return;
         archiveCompletedTurn(agentKey, {
           user: status.prompt,
-          steps,
+          steps: mergedSteps,
           result: status.result || null,
           status: status.status,
           taskId: status.id,
@@ -438,9 +450,9 @@ export function mergeTaskIntoStore(status) {
     // 误归档后后端仍在跑：从 conversationTurns 撤回本 task，恢复为当前轮
     const turns = (prev.conversationTurns || []).filter(t => t.taskId !== status.id);
     const fromArchive = (prev.conversationTurns || []).find(t => t.taskId === status.id);
-    const restoredSteps = steps.length
-      ? steps
-      : (prev.taskSteps?.length ? prev.taskSteps : (fromArchive?.steps || []));
+    const fallback = prev.taskSteps?.length ? prev.taskSteps : (fromArchive?.steps || []);
+    // 勿用 DB 步骤整表覆盖内存：否则会丢掉 tool_result / is_error，失败工具变回「执行中」
+    const restoredSteps = preferRicherSteps(steps, fallback);
     patchStoreSession(key, {
       conversationTurns: turns,
       currentUserPrompt: status.prompt || prev.currentUserPrompt || fromArchive?.user || '',
@@ -456,7 +468,7 @@ export function mergeTaskIntoStore(status) {
   patchStoreSession(key, {
     currentUserPrompt: '',
     currentTask: status,
-    taskSteps: steps.length ? steps : prev.taskSteps,
+    taskSteps: preferRicherSteps(steps, prev.taskSteps || []),
     executing: false,
     taskResult: status.result || null,
   });
@@ -464,7 +476,7 @@ export function mergeTaskIntoStore(status) {
   if (status.prompt) {
     archiveCompletedTurn(key, {
       user: status.prompt,
-      steps,
+      steps: preferRicherSteps(steps, prev.taskSteps || []),
       result: status.result || null,
       status: status.status,
       taskId: status.id,
@@ -643,14 +655,31 @@ export function closePendingToolSteps(steps = [], reason) {
   return list;
 }
 
-/** 步骤「丰富度」评分，用于归档 upsert */
+/** 步骤「丰富度」评分，用于归档 upsert（含工具，避免只比 thinking 丢掉后半段工具链） */
 function stepsRichnessScore(steps = []) {
-  return foldedTypeChars(steps, 'output') + foldedTypeChars(steps, 'thinking');
+  const list = Array.isArray(steps) ? steps : [];
+  const textScore = foldedTypeChars(list, 'output') + foldedTypeChars(list, 'thinking');
+  const toolCalls = list.filter(s => (s.stepType || s.kind) === 'tool_call').length;
+  const toolResults = list.filter(s => (s.stepType || s.kind) === 'tool_result').length;
+  const other = list.filter(s => {
+    const t = s.stepType || s.kind;
+    return t && t !== 'output' && t !== 'thinking' && t !== 'tool_call' && t !== 'tool_result';
+  }).length;
+  // 每条工具/结果加权，避免「思考字多但工具链被截断」的残缺归档胜出
+  return textScore + toolCalls * 80 + toolResults * 120 + other * 40;
 }
 
 function pickRicherResult(a, b) {
   const len = (r) => String(r?.summary || r?.output || '').length;
   return len(b) > len(a) ? b : a;
+}
+
+/** 归档前闭合未完成工具，避免历史里长期显示「未完成」且后半段像被截断 */
+function finalizeStepsForArchive(steps = [], status) {
+  const reason = status === 'cancelled'
+    ? uiT('debug.agent.aborted')
+    : uiT('debug.agent.noResult');
+  return closePendingToolSteps(steps, reason);
 }
 
 /** 任务完成后归档为一轮对话（同 taskId 以更完整内容 upsert） */
@@ -659,27 +688,31 @@ export function archiveCompletedTurn(sessionKey, turn) {
   const s = getStoreSession(sessionKey);
   const turns = [...(s.conversationTurns || [])];
   const existingIdx = turn.taskId ? turns.findIndex(t => t.taskId === turn.taskId) : -1;
+  const incomingSteps = finalizeStepsForArchive(turn.steps || [], turn.status);
 
   if (existingIdx >= 0) {
     const prev = turns[existingIdx];
-    const mergedSteps = preferRicherSteps(turn.steps || [], prev.steps || []);
+    const prevSteps = finalizeStepsForArchive(prev.steps || [], prev.status);
+    const mergedSteps = preferRicherSteps(incomingSteps, prevSteps);
     const mergedResult = pickRicherResult(turn.result, prev.result);
-    const richer = stepsRichnessScore(mergedSteps) > stepsRichnessScore(prev.steps || [])
+    const richer = stepsRichnessScore(mergedSteps) > stepsRichnessScore(prevSteps)
       || String(mergedResult?.summary || mergedResult?.output || '').length
-        > String(prev.result?.summary || prev.result?.output || '').length;
-    if (!richer) return;
+        > String(prev.result?.summary || prev.result?.output || '').length
+      || (mergedSteps.length > (prev.steps || []).length);
+    // 即使「不够更富」也要用闭合后的步骤回写，消掉历史里的「未完成」
+    if (!richer && !hasOpenToolCalls(prev.steps || [])) return;
     turns[existingIdx] = {
       ...prev,
-      steps: mergedSteps,
+      steps: richer ? mergedSteps : prevSteps,
       delegations: { ...(prev.delegations || {}), ...(turn.delegations || {}) },
-      result: mergedResult,
+      result: richer ? mergedResult : (prev.result || mergedResult),
       status: turn.status || prev.status,
       timestamp: turn.timestamp || prev.timestamp,
     };
   } else {
     turns.push({
       user: turn.user,
-      steps: turn.steps || [],
+      steps: incomingSteps,
       delegations: turn.delegations || {},
       result: turn.result || null,
       status: turn.status || 'completed',

@@ -21,6 +21,10 @@ import {
   resolvePurposes,
   tagToPurpose,
 } from '../lib/resource-purpose';
+import {
+  analyzeIdleSkillsWithAi,
+  sortIdleByRecommendation,
+} from '../lib/idle-skill-ai';
 
 const VIEW_TAB_KEY = 'tokenbank.resources.viewTab';
 const TYPE_FILTER_KEY = 'tokenbank.resources.typeFilter';
@@ -241,10 +245,50 @@ function canUnprojectProjection(proj, authorityPath) {
   return false;
 }
 
+/** 闲置清理加载态：扫帚清扫尘埃 + 可选分批进度 */
+function CleanupSweepMotion({ label, progress }) {
+  const pct = progress && progress.total > 0
+    ? Math.min(100, Math.round((progress.done / progress.total) * 100))
+    : null;
+  return (
+    <div className="py-8 flex flex-col items-center gap-3">
+      <div className="tb-cleanup-sweep" aria-hidden="true">
+        <span className="tb-cleanup-sweep__dust" />
+        <span className="tb-cleanup-sweep__dust" />
+        <span className="tb-cleanup-sweep__dust" />
+        <span className="tb-cleanup-sweep__dust" />
+        <span className="tb-cleanup-sweep__dust" />
+        <span className="tb-cleanup-sweep__floor" />
+        <span className="tb-cleanup-sweep__trail" />
+        <span className="tb-cleanup-sweep__broom">
+          <span className="tb-cleanup-sweep__handle" />
+          <span className="tb-cleanup-sweep__head" />
+        </span>
+      </div>
+      <p className="text-xs text-zinc-500 dark:text-zinc-400 text-center">{label}</p>
+      {pct != null && (
+        <div className="w-48 space-y-1">
+          <div className="h-1 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-amber-500/80 transition-[width] duration-300"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <p className="text-[10px] text-zinc-400 text-center">
+            {progress.batches > 0
+              ? `${progress.done}/${progress.total} · ${progress.batch}/${progress.batches}`
+              : `${progress.done}/${progress.total}`}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** 资产页：Prompt / Skill / Assistant 纳管与投射 */
 export default function Resources() {
   const navigate = useNavigate();
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const [viewTab, setViewTab] = useState(readViewTab);
   const [typeFilter, setTypeFilter] = useState(readTypeFilter);
   const [query, setQuery] = useState('');
@@ -284,9 +328,16 @@ export default function Resources() {
   /** Skill 闲置清理 */
   const [cleanupOpen, setCleanupOpen] = useState(false);
   const [idleLoading, setIdleLoading] = useState(false);
+  const [idleAiLoading, setIdleAiLoading] = useState(false);
   const [idleResult, setIdleResult] = useState(null);
   const [idleSelected, setIdleSelected] = useState([]);
   const [idleDays, setIdleDays] = useState(readIdleDays);
+  /** id → { recommend, reason, source } 大模型/启发式分析结果 */
+  const [idleAiMap, setIdleAiMap] = useState({});
+  const [idleAiMeta, setIdleAiMeta] = useState({ source: '', error: '' });
+  /** 分批分析进度：done/total/batch/batches */
+  const [idleAiProgress, setIdleAiProgress] = useState(null);
+  const idleAiAbortRef = useRef(null);
   const projectMenuRef = useRef(null);
   const bootstrappedRef = useRef(false);
 
@@ -462,13 +513,16 @@ export default function Resources() {
     if (!editorOpen && !cleanupOpen) return undefined;
     function onKey(e) {
       if (e.key !== 'Escape') return;
-      if (busy === 'editor' || busy === 'cleanup') return;
+      if (busy === 'editor' || busy === 'cleanup' || idleLoading) return;
       if (editorOpen) setEditorOpen(false);
-      if (cleanupOpen) setCleanupOpen(false);
+      if (cleanupOpen) {
+        abortIdleAi();
+        setCleanupOpen(false);
+      }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [editorOpen, cleanupOpen, busy]);
+  }, [editorOpen, cleanupOpen, busy, idleLoading]);
 
   // 成功提示 3 秒后自动消失
   useEffect(() => {
@@ -799,15 +853,73 @@ export default function Resources() {
     }
   }
 
-  /** 按指定天数扫描闲置 Skill */
+  /** 中止进行中的闲置 AI 分析（关面板 / 重新扫描） */
+  function abortIdleAi() {
+    try { idleAiAbortRef.current?.abort(); } catch { /* ignore */ }
+    idleAiAbortRef.current = null;
+  }
+
+  /** 根据分析结果同步默认勾选（只勾推荐项） */
+  function applyIdleSelectionFromMap(items, map) {
+    const recommended = (items || [])
+      .filter((it) => map?.[it.id]?.recommend)
+      .map((it) => it.id);
+    setIdleSelected(recommended.length ? recommended : (items || []).map((it) => it.id));
+  }
+
+  /** 对闲置列表做大模型分析（分批，避免过多卡死） */
+  async function analyzeIdleWithAi(items, days) {
+    abortIdleAi();
+    const ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    idleAiAbortRef.current = ac;
+    setIdleAiLoading(true);
+    setIdleAiMeta({ source: '', error: '' });
+    setIdleAiProgress({ done: 0, total: (items || []).length, batch: 0, batches: 0 });
+    try {
+      const { map, source, error, skippedHeuristic } = await analyzeIdleSkillsWithAi(items, {
+        days,
+        lang: lang === 'en' ? 'en' : 'zh',
+        signal: ac?.signal,
+        onProgress: (p) => setIdleAiProgress(p),
+        // 启发式立刻上屏，每批模型结果增量覆盖
+        onPartial: (partial) => {
+          setIdleAiMap(partial || {});
+          applyIdleSelectionFromMap(items, partial || {});
+        },
+      });
+      if (ac?.signal?.aborted) return;
+      setIdleAiMap(map || {});
+      setIdleAiMeta({
+        source: source || '',
+        error: error || '',
+        skippedHeuristic: skippedHeuristic || 0,
+      });
+      applyIdleSelectionFromMap(items, map || {});
+    } catch (e) {
+      if (String(e.message || e) === 'aborted') return;
+      setIdleAiMap({});
+      setIdleAiMeta({ source: 'heuristic', error: e.message || String(e) });
+      setIdleSelected((items || []).map((it) => it.id));
+    } finally {
+      if (idleAiAbortRef.current === ac) idleAiAbortRef.current = null;
+      setIdleAiLoading(false);
+      setIdleAiProgress(null);
+    }
+  }
+
+  /** 按指定天数扫描闲置 Skill，并自动触发大模型分析 */
   async function scanIdleSkills(days = idleDays, { closeOnError = false } = {}) {
     if (!window.electronAPI?.resource?.listIdleSkills) return;
+    abortIdleAi();
     const n = Math.max(1, Math.min(3650, Math.floor(Number(days) || DEFAULT_IDLE_DAYS)));
     setIdleDays(n);
     saveIdleDays(n);
     setIdleLoading(true);
     setIdleResult(null);
     setIdleSelected([]);
+    setIdleAiMap({});
+    setIdleAiMeta({ source: '', error: '' });
+    setIdleAiProgress(null);
     try {
       const res = await window.electronAPI.resource.listIdleSkills({ days: n });
       if (!res.success) {
@@ -816,10 +928,13 @@ export default function Resources() {
         return;
       }
       setIdleResult(res);
-      setIdleSelected((res.items || []).map(i => i.id));
+      setIdleLoading(false);
+      // 扫描完成后分批分析，避免一次性卡死
+      await analyzeIdleWithAi(res.items || [], n);
     } catch (e) {
       setError(e.message);
       if (closeOnError) setCleanupOpen(false);
+      setIdleLoading(false);
     } finally {
       setIdleLoading(false);
     }
@@ -845,8 +960,13 @@ export default function Resources() {
   }
 
   function toggleIdleSelectAll() {
-    const all = (idleResult?.items || []).map(i => i.id);
-    setIdleSelected(prev => (prev.length === all.length ? [] : all));
+    const items = idleResult?.items || [];
+    const recommended = items.filter((it) => idleAiMap[it.id]?.recommend).map((it) => it.id);
+    // 有推荐时：全选推荐 ↔ 清空；无推荐：全选全部 ↔ 清空
+    const target = recommended.length ? recommended : items.map((i) => i.id);
+    setIdleSelected((prev) => (
+      prev.length === target.length && target.every((id) => prev.includes(id)) ? [] : target
+    ));
   }
 
   /** 一键清理勾选的闲置 Skill */
@@ -2023,9 +2143,17 @@ export default function Resources() {
 
       {/* 闲置 Skill 清理 */}
       {cleanupOpen && (
-        <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/40" onClick={() => !busy && setCleanupOpen(false)}>
+        <div
+          className="fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/40"
+          onClick={() => {
+            if (!busy && !idleLoading && !idleAiLoading) {
+              abortIdleAi();
+              setCleanupOpen(false);
+            }
+          }}
+        >
           <div
-            className="w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl"
+            className="w-full max-w-xl max-h-[85vh] overflow-hidden flex flex-col rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl"
             onClick={e => e.stopPropagation()}
           >
             <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 space-y-2">
@@ -2034,6 +2162,9 @@ export default function Resources() {
               </h3>
               <p className="text-[10px] text-zinc-400">
                 {t('resources.cleanupHint', { days: idleDays })}
+              </p>
+              <p className="text-[10px] text-violet-600/90 dark:text-violet-400/90">
+                {t('resources.cleanupAiHint')}
               </p>
               <div className="flex items-center gap-2">
                 <label className="text-[11px] text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
@@ -2057,64 +2188,180 @@ export default function Resources() {
                 <span className="text-[11px] text-zinc-400">{t('resources.cleanupDaysUnit')}</span>
                 <button
                   type="button"
-                  disabled={idleLoading || busy === 'cleanup'}
+                  disabled={idleLoading || idleAiLoading || busy === 'cleanup'}
                   onClick={() => scanIdleSkills(idleDays)}
                   className="ml-auto px-2.5 py-1 text-[11px] rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 disabled:opacity-50"
                 >
-                  {idleLoading ? t('resources.cleanupScanning') : t('resources.cleanupRescan')}
+                  {idleLoading || idleAiLoading
+                    ? (idleAiLoading ? t('resources.cleanupAiAnalyzing') : t('resources.cleanupScanning'))
+                    : t('resources.cleanupRescan')}
                 </button>
               </div>
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-2">
               {idleLoading ? (
-                <p className="text-xs text-zinc-400 py-6 text-center">{t('resources.cleanupScanning')}</p>
+                <CleanupSweepMotion label={t('resources.cleanupScanning')} />
               ) : !(idleResult?.items || []).length ? (
                 <p className="text-xs text-zinc-400 py-6 text-center">{t('resources.cleanupEmpty', { days: idleDays })}</p>
               ) : (
                 <>
-                  <div className="flex items-center justify-between text-[10px] text-zinc-400">
-                    <span>{t('resources.cleanupSummary', { n: idleResult.items.length, total: idleResult.totalManaged })}</span>
-                    <button type="button" onClick={toggleIdleSelectAll} className="text-blue-600 dark:text-blue-400 hover:underline">
-                      {idleSelected.length === idleResult.items.length
-                        ? t('resources.cleanupDeselectAll')
-                        : t('resources.cleanupSelectAll')}
-                    </button>
-                  </div>
-                  {idleResult.items.map(item => {
-                    const checked = idleSelected.includes(item.id);
+                  {(() => {
+                    const sorted = sortIdleByRecommendation(idleResult.items, idleAiMap);
+                    const recommendCount = sorted.filter((it) => idleAiMap[it.id]?.recommend).length;
                     return (
-                      <label
-                        key={item.id}
-                        className={`flex items-start gap-2 p-2.5 rounded-xl border cursor-pointer ${
-                          checked
-                            ? 'border-amber-300 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-900/20'
-                            : 'border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/40'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleIdleSelected(item.id)}
-                          className="mt-0.5 rounded border-zinc-300 dark:border-zinc-600"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">
-                            {item.display_name || item.name}
-                          </p>
-                          <p className="text-[10px] text-zinc-400 mt-0.5">
-                            {t('resources.cleanupIdleDays', { n: item.idleDays })}
-                            {' · '}
-                            {t('resources.cleanupLastActivity')}: {formatIdleTime(item.lastActivityAt)}
-                          </p>
-                          {item.authorityPath && (
-                            <p className="text-[10px] text-zinc-400 font-mono truncate mt-0.5" title={item.authorityPath}>
-                              {item.authorityPath}
-                            </p>
-                          )}
+                      <>
+                        {idleAiLoading && (
+                          <div className="rounded-xl border border-amber-200/80 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/20 px-3 py-2.5 space-y-2">
+                            <div className="flex items-center gap-3">
+                              <div className="tb-cleanup-sweep scale-75 origin-left shrink-0" aria-hidden="true" style={{ width: '5.5rem', height: '2.4rem', margin: 0 }}>
+                                <span className="tb-cleanup-sweep__dust" />
+                                <span className="tb-cleanup-sweep__dust" />
+                                <span className="tb-cleanup-sweep__dust" />
+                                <span className="tb-cleanup-sweep__floor" />
+                                <span className="tb-cleanup-sweep__trail" />
+                                <span className="tb-cleanup-sweep__broom">
+                                  <span className="tb-cleanup-sweep__handle" />
+                                  <span className="tb-cleanup-sweep__head" />
+                                </span>
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-[11px] text-amber-800 dark:text-amber-200">
+                                  {t('resources.cleanupAiAnalyzing')}
+                                </p>
+                                {idleAiProgress && idleAiProgress.total > 0 && (
+                                  <p className="text-[10px] text-zinc-400 mt-0.5">
+                                    {t('resources.cleanupAiBatchProgress', {
+                                      done: idleAiProgress.done,
+                                      total: idleAiProgress.total,
+                                      batch: idleAiProgress.batch || 0,
+                                      batches: idleAiProgress.batches || 0,
+                                    })}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                            {idleAiProgress && idleAiProgress.total > 0 && (
+                              <div className="h-1 rounded-full bg-amber-100 dark:bg-amber-900/40 overflow-hidden">
+                                <div
+                                  className="h-full rounded-full bg-amber-500/85 transition-[width] duration-300"
+                                  style={{
+                                    width: `${Math.min(100, Math.round((idleAiProgress.done / idleAiProgress.total) * 100))}%`,
+                                  }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between gap-2 text-[10px] text-zinc-400">
+                          <span>
+                            {t('resources.cleanupSummary', { n: idleResult.items.length, total: idleResult.totalManaged })}
+                            {recommendCount > 0 && (
+                              <>
+                                {' · '}
+                                <span className="text-amber-600 dark:text-amber-400">
+                                  {t('resources.cleanupAiRecommendN', { n: recommendCount })}
+                                </span>
+                              </>
+                            )}
+                          </span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              type="button"
+                              disabled={idleAiLoading || busy === 'cleanup'}
+                              onClick={() => analyzeIdleWithAi(idleResult.items, idleDays)}
+                              className="text-violet-600 dark:text-violet-400 hover:underline disabled:opacity-50"
+                            >
+                              {t('resources.cleanupAiRetry')}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={idleAiLoading}
+                              onClick={toggleIdleSelectAll}
+                              className="text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50"
+                            >
+                              {idleSelected.length
+                                ? t('resources.cleanupDeselectAll')
+                                : t('resources.cleanupSelectRecommended')}
+                            </button>
+                          </div>
                         </div>
-                      </label>
+                        {!idleAiLoading && idleAiMeta.source === 'ai' && (
+                          <p className="text-[10px] text-violet-600/80 dark:text-violet-400/80">
+                            {t('resources.cleanupAiDone')}
+                            {idleAiMeta.skippedHeuristic > 0
+                              ? ` ${t('resources.cleanupAiPartial', { n: idleAiMeta.skippedHeuristic })}`
+                              : ''}
+                          </p>
+                        )}
+                        {!idleAiLoading && idleAiMeta.source === 'heuristic' && (
+                          <p className="text-[10px] text-zinc-400">
+                            {t('resources.cleanupAiFallback')}
+                            {idleAiMeta.error ? ` (${idleAiMeta.error})` : ''}
+                          </p>
+                        )}
+                        {sorted.map((item) => {
+                          const checked = idleSelected.includes(item.id);
+                          const ai = idleAiMap[item.id];
+                          const recommended = !!ai?.recommend;
+                          return (
+                            <label
+                              key={item.id}
+                              className={`flex items-start gap-2 p-2.5 rounded-xl border cursor-pointer ${
+                                checked
+                                  ? recommended
+                                    ? 'border-amber-300 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-900/20'
+                                    : 'border-zinc-300 dark:border-zinc-600 bg-zinc-50/80 dark:bg-zinc-800/50'
+                                  : recommended
+                                    ? 'border-amber-200/80 dark:border-amber-900/50 hover:bg-amber-50/40 dark:hover:bg-amber-950/20'
+                                    : 'border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/40'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleIdleSelected(item.id)}
+                                className="mt-0.5 rounded border-zinc-300 dark:border-zinc-600"
+                              />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <p className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">
+                                    {item.display_name || item.name}
+                                  </p>
+                                  {recommended && (
+                                    <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+                                      {t('resources.cleanupAiBadge')}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[10px] text-zinc-400 mt-0.5">
+                                  {t('resources.cleanupIdleDays', { n: item.idleDays })}
+                                  {' · '}
+                                  {t('resources.cleanupLastActivity')}: {formatIdleTime(item.lastActivityAt)}
+                                </p>
+                                {ai?.reason && (
+                                  <p className={`text-[11px] mt-1 leading-snug ${
+                                    recommended
+                                      ? 'text-amber-800/90 dark:text-amber-200/90'
+                                      : 'text-zinc-500 dark:text-zinc-400'
+                                  }`}
+                                  >
+                                    {recommended
+                                      ? t('resources.cleanupAiReason', { reason: ai.reason })
+                                      : t('resources.cleanupAiKeep', { reason: ai.reason })}
+                                  </p>
+                                )}
+                                {item.authorityPath && (
+                                  <p className="text-[10px] text-zinc-400 font-mono truncate mt-0.5" title={item.authorityPath}>
+                                    {item.authorityPath}
+                                  </p>
+                                )}
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </>
                     );
-                  })}
+                  })()}
                 </>
               )}
             </div>
@@ -2122,14 +2369,17 @@ export default function Resources() {
               <button
                 type="button"
                 disabled={!!busy}
-                onClick={() => setCleanupOpen(false)}
-                className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-600"
+                onClick={() => {
+                  abortIdleAi();
+                  setCleanupOpen(false);
+                }}
+                className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-600 disabled:opacity-50"
               >
                 {t('resources.cancel')}
               </button>
               <button
                 type="button"
-                disabled={!!busy || idleLoading || !idleSelected.length}
+                disabled={!!busy || idleLoading || idleAiLoading || !idleSelected.length}
                 onClick={confirmSkillCleanup}
                 className="text-xs px-3 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-40"
               >

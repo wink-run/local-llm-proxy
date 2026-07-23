@@ -1,53 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { resolveMediaUrl } from '../lib/mediaUrl';
+import { isMarkdownStable, softenStreamingMarkdown } from '../lib/stream-markdown';
+import {
+  looksLikeLocalPath,
+  openLocalPath,
+  trimPathEdgePunct,
+} from '../lib/local-path';
 
 const IMG_RE = /!\[([^\]]*)\]\(([^)]+)\)/g;
-
-/**
- * 流式正文尚未闭合的 Markdown 标记会把后续字吃进 code/加粗。
- * 软化:补齐未闭合围栏;奇数反引号时暂不按行内 code 解析(改纯文本段)。
- */
-export function softenStreamingMarkdown(text) {
-  let s = String(text || '');
-  if (!s) return s;
-
-  // 未闭合 ``` 围栏:补一个收尾,避免整段被当成代码吞掉后续
-  const fenceLines = s.split('\n').filter((ln) => ln.trim().startsWith('```'));
-  if (fenceLines.length % 2 === 1) s = `${s}\n\`\`\``;
-
-  // 行内反引号不成对:去掉末尾孤立 `,避免 `foo 吃到句末
-  const ticks = (s.match(/`/g) || []).length;
-  if (ticks % 2 === 1) {
-    const idx = s.lastIndexOf('`');
-    if (idx >= 0) s = `${s.slice(0, idx)}${s.slice(idx + 1)}`;
-  }
-
-  // 未闭合 ** / __ :去掉最后一个开标签星号对的一半,避免吞字
-  const boldStars = (s.match(/\*\*/g) || []).length;
-  if (boldStars % 2 === 1) {
-    const idx = s.lastIndexOf('**');
-    if (idx >= 0) s = `${s.slice(0, idx)}${s.slice(idx + 2)}`;
-  }
-
-  return s;
-}
-
-/** 是否适合立刻走 Markdown(闭合标记齐全);否则流式期用纯文本更稳 */
-export function isMarkdownStable(text) {
-  const s = String(text || '');
-  if (!s) return true;
-  const fences = s.split('\n').filter((ln) => ln.trim().startsWith('```')).length;
-  if (fences % 2 === 1) return false;
-  if (((s.match(/`/g) || []).length) % 2 === 1) return false;
-  if (((s.match(/\*\*/g) || []).length) % 2 === 1) return false;
-  return true;
-}
 
 /**
  * 流式文本展示:延迟渲染 + 定期用最新内容重绘,修正先前不完整片段造成的错版。
  * live=false 时立即用完整 Markdown。
  */
-export function useStableStreamText(raw, {
+function useStableStreamText(raw, {
   live = false,
   debounceMs = 220,
   refreshMs = 700,
@@ -106,40 +72,6 @@ export function StreamMarkdownContent({
   return <MarkdownContent content={display} className={className} theme={theme} />;
 }
 
-/** 本地绝对路径（含扩展名），用于聊天内点击预览 */
-function looksLikeLocalPath(s) {
-  const t = String(s || '').trim();
-  if (t.length < 4 || t.length > 600) return false;
-  if (/[\n\r\s]/.test(t)) return false;
-  if (/^(https?:|mailto:|file:)/i.test(t)) return false;
-  if (!/^(\/|~\/|[A-Za-z]:[\\/])/.test(t)) return false;
-  // 文件产物优先；目录路径也允许（无扩展名但含分隔符）
-  return /\.[A-Za-z0-9]{1,12}$/.test(t) || /[/\\]/.test(t.slice(1));
-}
-
-/** 优先应用内预览文件夹 / 文本 / 图片；其它类型回退系统默认应用 */
-export async function openLocalPath(filePath) {
-  const target = String(filePath || '').trim().replace(/^file:\/\//i, '');
-  if (!target) return;
-  // 动态导入，避免与 LocalFilePreview ↔ MarkdownContent 循环依赖
-  try {
-    const { looksLikeAbsoluteLocalPath, openLocalFilePreview } = await import('./LocalFilePreview');
-    if (looksLikeAbsoluteLocalPath(target)) {
-      const handled = await openLocalFilePreview(target);
-      if (handled) return;
-    }
-  } catch (err) {
-    console.warn('[RichMedia] preview failed:', err);
-  }
-  const api = typeof window !== 'undefined' ? window.electronAPI?.resource?.openPath : null;
-  if (!api) return;
-  try {
-    await api({ targetPath: target, action: 'open' });
-  } catch (err) {
-    console.warn('[RichMedia] openPath failed:', err);
-  }
-}
-
 /** 可点击本地路径（用 code/span，避免嵌套 button） */
 export function PathLink({ path, className, title }) {
   return (
@@ -170,15 +102,20 @@ export function PathLink({ path, className, title }) {
 function renderTextWithPaths(text, keyPrefix, pathClassName) {
   const s = String(text || '');
   if (!s) return null;
-  // 匹配绝对路径：带扩展名文件，或目录（可无扩展名 / 以 / 结尾）
-  const re = /(?:^|[\s「『"'(=:：])((?:\/(?:Users|home|tmp|var|opt|private|Volumes)|~\/|[A-Za-z]:[\\/])[^\s`'"<>|]+?)(?=[\s」』"'.,;:：!)\]}]|$)/g;
+  // 勿把 `.` 列入终止符，否则 `/path/file.pptx` 会在扩展名前断开
+  const re = /(?:^|[\s「『"'(=:：])((?:\/(?:Users|home|tmp|var|opt|private|Volumes)|~\/|[A-Za-z]:[\\/])[^\s`'"<>|]+)/g;
   const nodes = [];
   let last = 0;
   let m;
   let i = 0;
   while ((m = re.exec(s)) !== null) {
-    const full = m[1];
-    const start = m.index + (m[0].length - full.length);
+    const raw = m[1];
+    const full = trimPathEdgePunct(raw);
+    const start = m.index + (m[0].length - raw.length);
+    if (!full) {
+      last = Math.max(last, start + raw.length);
+      continue;
+    }
     if (start > last) {
       nodes.push(<React.Fragment key={`${keyPrefix}-t${i++}`}>{s.slice(last, start)}</React.Fragment>);
     }
@@ -187,6 +124,7 @@ function renderTextWithPaths(text, keyPrefix, pathClassName) {
     } else {
       nodes.push(<React.Fragment key={`${keyPrefix}-t${i++}`}>{full}</React.Fragment>);
     }
+    // 剥离的句末标点留给后续纯文本片段
     last = start + full.length;
   }
   if (last < s.length) {

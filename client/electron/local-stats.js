@@ -213,6 +213,9 @@ const MIGRATIONS = [
   'ALTER TABLE requests ADD COLUMN agent_id TEXT',
   'ALTER TABLE requests ADD COLUMN mcp_server_id TEXT',
   'ALTER TABLE requests ADD COLUMN mcp_capability TEXT',
+  // 工具步骤：保留配对 id 与失败态，避免恢复任务时「失败」变回「执行中」
+  'ALTER TABLE agent_task_steps ADD COLUMN tool_use_id TEXT',
+  'ALTER TABLE agent_task_steps ADD COLUMN is_error INTEGER DEFAULT 0',
 ];
 
 // Agent 聚合系统表
@@ -239,6 +242,8 @@ const AGENT_SCHEMA = `
     tool_name           TEXT,
     tool_input          TEXT,
     tool_output         TEXT,
+    tool_use_id         TEXT,
+    is_error            INTEGER DEFAULT 0,
     status              TEXT,
     created_at          INTEGER NOT NULL,
     FOREIGN KEY (task_id) REFERENCES agent_tasks(id)

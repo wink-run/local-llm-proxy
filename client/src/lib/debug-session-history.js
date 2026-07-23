@@ -30,10 +30,19 @@ function readStore() {
 }
 
 function writeStore(data) {
+  const payload = JSON.stringify(data);
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    localStorage.setItem(STORAGE_KEY, payload);
+    return true;
   } catch {
-    // quota 超限等：忽略
+    // quota 超限：丢掉更旧条目后重试，尽量保住最新完整会话
+    try {
+      const items = Array.isArray(data.items) ? data.items.slice(0, Math.max(5, Math.floor((data.items || []).length / 2))) : [];
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...data, items }));
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 

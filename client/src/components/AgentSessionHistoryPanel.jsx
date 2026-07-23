@@ -5,7 +5,7 @@ import {
   formatSessionTime,
   listAgentSessionSnapshots,
 } from '../lib/debug-session-history';
-import { stepsFromTaskStatus } from '../lib/debug-agent-store';
+import { closePendingToolSteps, stepsFromTaskStatus } from '../lib/debug-agent-store';
 import { useLang } from '../store/lang';
 
 function taskMatchesSessionKey(task, sessionKey) {
@@ -95,10 +95,14 @@ export default function AgentSessionHistoryPanel({
       const res = await window.electronAPI.agent.getTaskStatus(item.taskId);
       if (!res.success || !res.status) return;
       const status = res.status;
+      const steps = closePendingToolSteps(
+        stepsFromTaskStatus(status),
+        status.status === 'cancelled' ? t('debug.agent.aborted') : t('debug.agent.noResult'),
+      );
       onRestore?.({
         conversationTurns: [{
           user: status.prompt || item.title,
-          steps: stepsFromTaskStatus(status),
+          steps,
           delegations: {},
           result: status.result || null,
           status: status.status === 'cancelled' ? 'failed' : (status.status || 'completed'),

@@ -30,7 +30,7 @@ const CAPABILITY_DOMAINS = [
     mcp: 'tokenbank-agent-bridge',
     title: 'Agent 派发（编排层）',
     tools: ['tb_list_agents', 'tb_dispatch_agent'],
-    when: '编排主 Agent：优先派发给专业智能体 assistant:*，勿在 shell 直接跑 CLI',
+    when: '编排主 Agent：分析→list→匹配 assistant:* 必派发→汇总；失败则换助手/降级 CLI/自做并说明',
   },
 ];
 
@@ -88,8 +88,8 @@ function formatCapabilitiesOverview() {
 /** 编排层系统提示中的精简能力指引 */
 function formatOrchestratorCapabilityHint() {
   return [
-    '6. 不确定本软件能力时，先 tb_capabilities；模型用 tb_list_models / tb_resolve_model；',
-    '   资源用 tb_list_resources / tb_get_resource；提示词用 tb_list_prompts / tb_get_prompt。',
+    '- 不确定本软件能力时先 tb_capabilities；模型用 tb_list_models / tb_resolve_model；',
+    '  资源用 tb_list_resources / tb_get_resource；提示词用 tb_list_prompts / tb_get_prompt。',
   ].join('\n');
 }
 

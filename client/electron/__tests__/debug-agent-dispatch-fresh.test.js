@@ -155,3 +155,34 @@ test('归档轮次：同 taskId 以更完整步骤 upsert', () => {
   assert.equal(turns.length, 1);
   assert.ok(turns[0].steps.some(s => /床前明月光/.test(s.content)));
 });
+
+test('preferRicherSteps：DB 缺 tool_result 时保留内存失败态，避免变回执行中', () => {
+  const db = [
+    { stepType: 'thinking', content: 'working' },
+    { stepType: 'tool_call', tool_use_id: 'tu1', content: '{}' },
+  ];
+  const stored = [
+    { stepType: 'tool_call', tool_use_id: 'tu1', content: '{}' },
+    { stepType: 'tool_result', tool_use_id: 'tu1', content: 'boom', is_error: true },
+  ];
+  const got = S.preferRicherSteps(db, stored);
+  assert.equal(got, stored);
+  assert.ok(got.some(s => s.is_error), '应保留 is_error');
+  assert.equal(S.hasOpenToolCalls(got), false);
+});
+
+test('archiveCompletedTurn：归档时闭合未完成工具，避免历史显示不全', () => {
+  S.clearSessionTaskState('__hub__');
+  S.archiveCompletedTurn('__hub__', {
+    user: '生成 PPT',
+    steps: [
+      { stepType: 'output', content: '开始生成' },
+      { stepType: 'tool_call', tool_use_id: 'm1', tool_name: 'tb_resolve_model', content: '{"preferred":"jimeng-5.0"}' },
+    ],
+    status: 'cancelled',
+    taskId: 't-hist-1',
+  });
+  const turn = S.getStoreSession('__hub__').conversationTurns[0];
+  assert.ok(turn.steps.some(s => s.stepType === 'tool_result' && s.tool_use_id === 'm1'));
+  assert.equal(S.hasOpenToolCalls(turn.steps), false);
+});

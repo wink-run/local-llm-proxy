@@ -15,12 +15,12 @@ const WORKING_DIR = process.env.TB_WORKING_DIR || process.cwd();
 const TOOLS = [
   {
     name: 'tb_list_agents',
-    description: '列出 Token Bank 已纳管、可派发的目标：专业智能体（assistant:*）与通用 CLI Agent。派发前必先调用，优先选专业智能体。',
+    description: '列出可派发目标。专业智能体（assistant:*）优先。编排必先调用：匹配则派发；无匹配再自做/派 CLI；列表空则降级并告知用户。',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'tb_dispatch_agent',
-    description: '向指定 Agent/专业智能体派发子任务并等待完成。优先派发给匹配的专业智能体（assistant:*）；无匹配时再派发通用 CLI（codex/claude-code）。禁止自己在终端运行 CLI。',
+    description: '向指定目标派发子任务并等待完成。优先 assistant:<id>；prompt 须含目标+约束+期望产出。失败可换助手或降级 CLI。禁止在终端自行跑 CLI 代替派发。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -30,7 +30,7 @@ const TOOLS = [
         },
         prompt: {
           type: 'string',
-          description: '交给该 Agent 的具体任务描述',
+          description: '自洽任务描述：目标、输入/上下文、约束、期望产出（路径/格式）；勿省略用户关键细节',
         },
       },
       required: ['agent_id', 'prompt'],
@@ -75,10 +75,17 @@ async function handleToolCall(name, args = {}) {
       const caps = (a.capabilities || []).join(', ');
       const desc = a.description ? ` — ${String(a.description).slice(0, 160)}` : '';
       const ver = a.version ? ` (v${a.version})` : '';
-      return `- ${a.id}: ${a.name}${ver} [${kind}]${caps ? ` (${caps})` : ''}${desc}`;
+      const runtime = a.runtimeName ? ` @${a.runtimeName}` : '';
+      return `- ${a.id}: ${a.name}${ver}${runtime} [${kind}]${caps ? ` (${caps})` : ''}${desc}`;
     });
-    const hint = '提示：有匹配的专业智能体时优先 tb_dispatch_agent 派发；无匹配再自行执行或派发 CLI。';
-    return textResult(lines.length ? `${hint}\n${lines.join('\n')}` : '（无可用 Agent）');
+    const hint = [
+      '【编排规则】',
+      '1. 优先匹配下方「专业智能体」，用 tb_dispatch_agent 派发；有匹配必须派发，勿自己做。',
+      '2. 子任务 prompt 写清：目标 + 约束 + 期望产出；多步可拆分，失败可换相近助手或降级 CLI。',
+      '3. 仅当无匹配专业智能体时，才派发 CLI（codex / claude-code）或自行完成。',
+      '4. 列表为空时：告知用户后降级 CLI/自做，勿空等。',
+    ].join('\n');
+    return textResult(lines.length ? `${hint}\n\n${lines.join('\n')}` : `${hint}\n\n（无可用 Agent — 请降级派发 CLI 或自行完成，并告知用户）`);
   }
 
   if (name === 'tb_dispatch_agent') {

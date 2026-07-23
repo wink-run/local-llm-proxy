@@ -1049,11 +1049,31 @@ class AgentExecutor extends EventEmitter {
         try {
           db.prepare(`
             INSERT INTO agent_task_steps
-            (id, task_id, step_number, step_type, content, tool_name, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'completed', ?)
-          `).run(stepId, taskId, stepNumber, stepType, content, step.tool_name || null, Date.now());
+            (id, task_id, step_number, step_type, content, tool_name, tool_use_id, is_error, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            stepId,
+            taskId,
+            stepNumber,
+            stepType,
+            content,
+            step.tool_name || null,
+            step.tool_use_id || null,
+            step.is_error ? 1 : 0,
+            step.is_error ? 'error' : 'completed',
+            Date.now(),
+          );
         } catch (e) {
-          console.warn('[AgentExecutor] step persist failed:', e.message);
+          // 旧库尚未迁移列时回退（避免步骤整段丢失）
+          try {
+            db.prepare(`
+              INSERT INTO agent_task_steps
+              (id, task_id, step_number, step_type, content, tool_name, status, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, 'completed', ?)
+            `).run(stepId, taskId, stepNumber, stepType, content, step.tool_name || null, Date.now());
+          } catch (e2) {
+            console.warn('[AgentExecutor] step persist failed:', e2.message || e.message);
+          }
         }
       }
 

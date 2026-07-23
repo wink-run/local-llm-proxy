@@ -1,53 +1,8 @@
 // 游乐场本地路径应用内预览（右侧栏）：文件夹浏览 / Markdown / 文本 / 图片
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { MarkdownContent } from './RichMediaContent';
+import { registerLocalFilePreview } from '../lib/local-path';
 import { useLang } from '../store/lang';
-
-/** 可直接按扩展名判定的文件类型（目录一律走 IPC） */
-const PREVIEW_FILE_EXTS = new Set([
-  '.md', '.markdown', '.mdx',
-  '.txt', '.log', '.csv', '.tsv', '.json', '.yaml', '.yml', '.xml', '.html', '.htm',
-  '.css', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.py', '.sh', '.bash', '.zsh',
-  '.env', '.toml', '.ini', '.conf', '.cfg', '.rst', '.sql', '.go', '.rs', '.java',
-  '.kt', '.swift', '.rb', '.php', '.c', '.h', '.cpp', '.hpp', '.vue', '.svelte',
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.ico',
-]);
-
-let _openPreview = null;
-
-/** Host 挂载后注册打开函数 */
-export function registerLocalFilePreview(fn) {
-  _openPreview = typeof fn === 'function' ? fn : null;
-}
-
-/** 绝对本地路径（含目录） */
-export function looksLikeAbsoluteLocalPath(filePath) {
-  const s = String(filePath || '').trim().replace(/^file:\/\//i, '');
-  if (s.length < 2 || s.length > 800) return false;
-  if (/[\n\r]/.test(s)) return false;
-  return /^(\/|~\/|[A-Za-z]:[\\/])/.test(s);
-}
-
-/** 已知可预览的文件扩展名（目录不在此列，由 open 时 IPC 判断） */
-export function isInAppPreviewablePath(filePath) {
-  const s = String(filePath || '').trim().replace(/^file:\/\//i, '');
-  if (!looksLikeAbsoluteLocalPath(s)) return false;
-  if (/[/\\]$/.test(s)) return true;
-  const m = /\.([A-Za-z0-9]{1,12})$/.exec(s);
-  if (m) return PREVIEW_FILE_EXTS.has(`.${m[1].toLowerCase()}`);
-  return true;
-}
-
-/**
- * 打开应用内预览；成功由 Host 处理则返回 true。
- * Host 未挂载时返回 false（调用方可回退系统打开）。
- */
-export async function openLocalFilePreview(filePath) {
-  if (!_openPreview) return false;
-  const p = String(filePath || '').trim().replace(/^file:\/\//i, '');
-  if (!p || !looksLikeAbsoluteLocalPath(p)) return false;
-  return _openPreview(p);
-}
 
 function fmtSize(n) {
   const v = Number(n) || 0;
