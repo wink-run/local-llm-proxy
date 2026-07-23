@@ -213,7 +213,10 @@ const MIGRATIONS = [
   'ALTER TABLE requests ADD COLUMN agent_id TEXT',
   'ALTER TABLE requests ADD COLUMN mcp_server_id TEXT',
   'ALTER TABLE requests ADD COLUMN mcp_capability TEXT',
-  // 工具步骤：保留配对 id 与失败态，避免恢复任务时「失败」变回「执行中」
+];
+
+/** agent_task_steps 列迁移：必须在 AGENT_SCHEMA 建表之后执行，否则新库会 no such table 拖垮 init */
+const AGENT_STEP_MIGRATIONS = [
   'ALTER TABLE agent_task_steps ADD COLUMN tool_use_id TEXT',
   'ALTER TABLE agent_task_steps ADD COLUMN is_error INTEGER DEFAULT 0',
 ];
@@ -393,6 +396,11 @@ function init(dbDir) {
     }
     // Agent 聚合系统表初始化
     db.exec(AGENT_SCHEMA);
+    for (const sql of AGENT_STEP_MIGRATIONS) {
+      try { db.exec(sql); } catch (e) {
+        if (!/duplicate column name/i.test(e.message)) throw e;
+      }
+    }
     db.exec(MCP_SCHEMA);
     db.exec(RESOURCE_SCHEMA);
     db.exec(SKILL_CALLS_SCHEMA);
