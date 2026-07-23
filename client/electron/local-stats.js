@@ -4,6 +4,7 @@
 'use strict';
 
 let db = null;
+let _lastInitError = null;
 let _insertStmt = null;
 let _enrichByRequestIdStmt = null;
 let _getImportStateStmt = null;
@@ -378,9 +379,24 @@ const TOOL_CALLS_SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_tool_calls_path ON tool_calls(source_path);
 `;
 
-/** @param {string} dbDir  Directory that will hold local-stats.db */
-function init(dbDir) {
-  if (db) return;
+/** @param {string} dbDir  Directory that will hold local-stats.db
+ *  @param {{ force?: boolean }} [opts] force=true 时关闭已有连接并重新打开（测试隔离用）
+ */
+function init(dbDir, opts = {}) {
+  if (opts.force && db) {
+    try { db.close(); } catch { /* ignore */ }
+    db = null;
+    _insertStmt = null;
+    _getImportStateStmt = null;
+    _setImportStateStmt = null;
+    _enrichByRequestIdStmt = null;
+    _insertSkillCallStmt = null;
+    _deleteSkillCallsByPathStmt = null;
+    _insertToolCallStmt = null;
+    _deleteToolCallsByPathStmt = null;
+  }
+  if (db) return db;
+  _lastInitError = null;
   const fs       = require('fs');
   const path     = require('path');
   const Database = require('better-sqlite3');
@@ -391,14 +407,15 @@ function init(dbDir) {
     db.exec(SCHEMA);
     for (const sql of MIGRATIONS) {
       try { db.exec(sql); } catch (e) {
-        if (!/duplicate column name/i.test(e.message)) throw e;
+        // duplicate：旧库已有列；no such table：表尚未建（由后续 SCHEMA 创建）
+        if (!/duplicate column name|no such table/i.test(e.message)) throw e;
       }
     }
     // Agent 聚合系统表初始化
     db.exec(AGENT_SCHEMA);
     for (const sql of AGENT_STEP_MIGRATIONS) {
       try { db.exec(sql); } catch (e) {
-        if (!/duplicate column name/i.test(e.message)) throw e;
+        if (!/duplicate column name|no such table/i.test(e.message)) throw e;
       }
     }
     db.exec(MCP_SCHEMA);
@@ -438,11 +455,14 @@ function init(dbDir) {
       'VALUES (@ts, @agent_id, @session_id, @tool_key, @tool_raw, @tool_kind, @mcp_server, @data_source, @source_path, @call_uid)'
     );
     _deleteToolCallsByPathStmt = db.prepare('DELETE FROM tool_calls WHERE source_path = ?');
+    return db;
   } catch (e) {
     console.error('[local-stats] failed to open DB:', e.message);
+    _lastInitError = e;
     try { db?.close(); } catch {}
     db = null;
     _insertStmt = null;
+    return null;
   }
 }
 
@@ -455,7 +475,10 @@ function ensureReady(dbDir) {
 /** 获取 DB 实例，未就绪时抛错（供 Agent/MCP/Resources 模块使用） */
 function requireDb(dbDir) {
   ensureReady(dbDir);
-  if (!db) throw new Error('Database not initialized');
+  if (!db) {
+    const detail = _lastInitError?.message ? `: ${_lastInitError.message}` : '';
+    throw new Error(`Database not initialized${detail}`);
+  }
   return db;
 }
 

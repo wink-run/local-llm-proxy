@@ -383,10 +383,11 @@ function listDefaultSkillScanRoots() {
 
 /**
  * 扫描全部监控目录：默认全局目录 ∪ 用户添加的目录（并列补充，非互斥）
+ * 经 module.exports 调用 scanGlobalSkills，便于单测 stub 掉本机默认目录。
  */
 function scanAllAgentSkills(options = {}) {
   const flat = [];
-  flat.push(...scanGlobalSkills());
+  flat.push(...module.exports.scanGlobalSkills());
   const dirs = [...new Set((options.customDirs || []).map(d => path.resolve(String(d || '').trim())).filter(Boolean))];
   for (const dir of dirs) {
     flat.push(...scanCustomSkillTree(dir, options));

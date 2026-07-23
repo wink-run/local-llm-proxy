@@ -3,26 +3,33 @@
 // CI 无 Codex Desktop/CLI，须 stub 安装探测与可投射目录，避免误依赖本机环境。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 const rm = require('../resource-manager');
 const ae = require('../agent-executor');
 const targets = require('../resource-agent-targets');
 const cl = require('../config-loader');
+const localStats = require('../local-stats');
 
 const NAME = 'zzz-debug-gate';
 const ID = `res-assistant-${NAME}`;
 const RUNTIME = 'codex';
 
 function cleanup() {
-  const localStats = require('../local-stats');
-  const { STATS_DIR } = require('../../shared/telemetry');
-  const db = localStats.requireDb(STATS_DIR);
-  try { db.prepare('DELETE FROM resource_projections WHERE resource_id = ?').run(ID); } catch {}
-  try { db.prepare('DELETE FROM resources WHERE id = ?').run(ID); } catch {}
+  const db = localStats.getDb?.() || null;
+  if (db) {
+    try { db.prepare('DELETE FROM resource_projections WHERE resource_id = ?').run(ID); } catch {}
+    try { db.prepare('DELETE FROM resources WHERE id = ?').run(ID); } catch {}
+  }
   try { ae.invalidateAgentListCache?.(); } catch {}
 }
 
 test('智能体 Debug 可见性由运行时投射门控', async () => {
+  const statsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-debug-gate-'));
+  localStats.close();
+  assert.ok(localStats.init(statsDir, { force: true }), '测试 DB 应初始化成功');
   cleanup();
 
   const origInstalled = targets.isAgentInstalled;
@@ -60,5 +67,7 @@ test('智能体 Debug 可见性由运行时投射门控', async () => {
     targets.isAgentInstalled = origInstalled;
     cl.appEntitiesExpanded = origExpanded;
     cleanup();
+    localStats.close();
+    try { fs.rmSync(statsDir, { recursive: true, force: true }); } catch {}
   }
 });

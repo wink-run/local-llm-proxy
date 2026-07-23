@@ -9,6 +9,7 @@ const path = require('path');
 
 const localStats = require('../local-stats');
 const resourceManager = require('../resource-manager');
+const scanner = require('../resource-skill-scanner');
 
 function writeSkill(dir, name, body) {
   const skillDir = path.join(dir, name);
@@ -23,13 +24,19 @@ function writeSkill(dir, name, body) {
 test('syncDiscoveredSkills 扫描即纳管，且幂等 + 内容变更自动更新', () => {
   const statsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-sync-db-'));
   const skillsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-sync-skills-'));
-  // 绑定 DB 到临时目录（在 resourceManager 触碰 DB 之前）
-  localStats.init(statsDir);
+  // 强制绑定到临时库，避免被其它用例的 init/close 单例状态污染
+  localStats.close();
+  const opened = localStats.init(statsDir, { force: true });
+  assert.ok(opened, '临时 local-stats DB 应初始化成功');
+
+  // 屏蔽本机默认 skills 目录，只验证 customDirs 内的两份 skill
+  const origScanGlobal = scanner.scanGlobalSkills;
+  scanner.scanGlobalSkills = () => [];
 
   writeSkill(skillsDir, 'alpha-skill', '# Alpha v1');
   writeSkill(skillsDir, 'beta-skill', '# Beta v1');
 
-  const filters = { scanScope: 'custom', customDirs: [skillsDir] };
+  const filters = { customDirs: [skillsDir] };
 
   try {
     // 首次同步：两个都应纳管
@@ -66,6 +73,8 @@ test('syncDiscoveredSkills 扫描即纳管，且幂等 + 内容变更自动更�
       .find(r => r.name === 'alpha-skill');
     assert.notEqual(alphaAfter.hash, alphaBefore.hash, '库内 hash 应随内容更新');
   } finally {
+    scanner.scanGlobalSkills = origScanGlobal;
+    localStats.close();
     fs.rmSync(statsDir, { recursive: true, force: true });
     fs.rmSync(skillsDir, { recursive: true, force: true });
   }
